@@ -28,9 +28,9 @@ jobs:
           mv "$package" joint-bob.tar.gz
           tar -tzf joint-bob.tar.gz | grep -q 'package/bin/joint-bob.mjs'
           sha256sum joint-bob.tar.gz > joint-bob.tar.gz.sha256
-      - run: npm publish --provenance --access public
       - uses: softprops/action-gh-release@v2
         with:
           files: |
             joint-bob.tar.gz
             joint-bob.tar.gz.sha256
+      - run: npm publish --provenance --access public

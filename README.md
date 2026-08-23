@@ -2,16 +2,23 @@
 
 ## TL;DR
 
-Install a node:
+Install on macOS or Linux:
 
 ```bash
-npx joint-bob install
+curl -fsSL https://raw.githubusercontent.com/iliagerman/joint-bob/main/scripts/install.sh | bash
 ```
 
-Open `http://127.0.0.1:8787`, create the administrator, then authenticate Pi and Claude for that OS user. For phone access, install Tailscale and run:
+Open the URL printed by the installer and create the administrator. To use both agents, authenticate them as the same OS user:
 
 ```bash
-npm run serve:https
+~/.local/share/joint-bob/app/node_modules/.bin/pi
+~/.local/share/joint-bob/app/node_modules/.bin/claude
+```
+
+For private phone access, install Tailscale and run:
+
+```bash
+~/.local/share/joint-bob/app/scripts/serve-https.sh
 ```
 
 Add another node from **Settings → Nodes** using that node's private Tailscale URL and pairing token. Do not pair over public HTTP.
@@ -20,15 +27,7 @@ Joint Bob runs as `joint-bob.service` on Linux or `com.joint-bob.node` on macOS.
 
 ## Install
 
-Latest verified release:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/iliagerman/joint-bob/main/scripts/install.sh | bash
-```
-
-Or use `npx joint-bob install`.
-
-The installer pins Node.js, Pi, Claude Code, and Syncthing. It preserves projects, credentials, settings, tasks, and cluster identity when migrating a prior installation. Pi and Claude authentication can be completed after Joint Bob starts.
+The curl command downloads the latest GitHub release, verifies its SHA-256 checksum, and installs a native user service. It pins Node.js, Pi, Claude Code, and Syncthing. Existing projects, credentials, settings, tasks, and cluster identity are preserved during upgrades and prior-installation migration.
 
 ## Add another node
 
