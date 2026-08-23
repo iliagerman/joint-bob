@@ -15,6 +15,7 @@ test("Joint Bob package is public, executable, and pinned", async () => {
   assert.equal(dependencies["@earendil-works/pi-coding-agent"], "0.84.2");
   assert.equal(dependencies["@anthropic-ai/claude-code"], "2.1.239");
   assert.deepEqual(packageJson.publishConfig, { access: "public", provenance: true, registry: "https://registry.npmjs.org" });
+  assert.ok((packageJson.files as string[]).includes(".joint-bob-release"));
   await access("bin/joint-bob.mjs");
   await access("npm-shrinkwrap.json");
 });
@@ -32,7 +33,10 @@ test("one manifest pins every managed prerequisite", async () => {
 });
 
 test("fresh install supports latest verified release and immutable pins", async () => {
-  const installer = await text("scripts/install.sh");
+  const [installer, workflow] = await Promise.all([
+    text("scripts/install.sh"),
+    text(".github/workflows/release.yml"),
+  ]);
 
   assert.match(installer, /iliagerman\/joint-bob\/releases\/latest\/download\/joint-bob\.tar\.gz/);
   assert.match(installer, /joint-bob\.tar\.gz\.sha256/);
@@ -40,6 +44,8 @@ test("fresh install supports latest verified release and immutable pins", async 
   assert.match(installer, /JOINT_BOB_ARCHIVE_SHA256/);
   assert.match(installer, /Downloaded archive checksum mismatch/);
   assert.ok(installer.indexOf("Downloaded archive checksum mismatch") < installer.indexOf("tar -xzf"));
+  assert.match(workflow, /printf 'commit=%s\\n' "\$GITHUB_SHA" > \.joint-bob-release/);
+  assert.match(workflow, /package\/\.joint-bob-release/);
 });
 
 test("existing installations migrate to Joint Bob names", async () => {

@@ -24,9 +24,11 @@ jobs:
       - run: npm run build
       - name: Pack and smoke test
         run: |
+          printf 'commit=%s\n' "$GITHUB_SHA" > .joint-bob-release
           package=$(npm pack --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s)[0].filename))')
           mv "$package" joint-bob.tar.gz
           tar -tzf joint-bob.tar.gz | grep -q 'package/bin/joint-bob.mjs'
+          tar -xOf joint-bob.tar.gz package/.joint-bob-release | grep -qx "commit=$GITHUB_SHA"
           sha256sum joint-bob.tar.gz > joint-bob.tar.gz.sha256
       - uses: softprops/action-gh-release@v2
         with:

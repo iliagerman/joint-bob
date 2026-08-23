@@ -1,6 +1,6 @@
 {
   "name": "joint-bob",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Private multi-node workspace for Pi and Claude coding agents",
   "private": false,
   "license": "MIT",
@@ -17,6 +17,7 @@
     "LICENSE",
     "README.md",
     "SECURITY.md",
+    ".joint-bob-release",
     "npm-shrinkwrap.json",
     "tsconfig.json"
   ],
