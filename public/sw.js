@@ -1,4 +1,4 @@
-const CACHE_NAME = "joint-bob-v9";
+const CACHE_NAME = "joint-bob-v11";
 const APP_SHELL = ["/", "/index.html", "/styles.css", "/app.js", "/board.js", "/markdown.js", "/manifest.webmanifest", "/icon.svg", "/icon-192.png", "/icon-512.png"];
 
 self.addEventListener("install", (event) => {

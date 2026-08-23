@@ -17,8 +17,10 @@ test("conversation search composes with status filtering", async () => {
 test("desktop chat uses available width and project header actions do not cover title", async () => {
   const styles = await readFile("public/styles.css", "utf8");
 
-  assert.match(styles, /#projectsPanel \.panel-bar[^}]*flex-wrap:\s*wrap/);
-  assert.match(styles, /#projectsPanel \.project-actions[^}]*width:\s*100%[^}]*justify-content:\s*flex-end/);
+  assert.doesNotMatch(styles, /#projectsPanel \.panel-bar[^}]*flex-wrap:\s*wrap/);
+  assert.match(styles, /\.project-actions \{[^}]*flex:\s*0 0 auto/);
+  assert.match(styles, /\.brand \{[^}]*flex:\s*1[^}]*min-width:\s*0/);
+  assert.match(styles, /\.brand-copy strong, \.brand-copy span \{[^}]*text-overflow:\s*ellipsis/);
   assert.match(styles, /@media \(min-width: 1024px\)[\s\S]*\.message\.assistant[\s\S]*width:\s*100%[\s\S]*max-width:\s*100%/);
   assert.match(styles, /@media \(min-width: 1024px\)[\s\S]*textarea[^}]*max-height:\s*min\(40dvh, 360px\)/);
 });
