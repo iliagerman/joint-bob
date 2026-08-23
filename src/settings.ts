@@ -20,14 +20,14 @@ export interface SettingsInput {
   pi: RuntimeSettings;
   claude: RuntimeSettings;
   syncthing: SyncthingSettings;
-  projects?: { rootPath: string };
+  projects?: { rootPath: string; personalRootPath?: string; workRootPath?: string };
 }
 
 export interface SettingsResponse {
   pi: RuntimeSettings;
   claude: RuntimeSettings;
   syncthing: { endpoint: string; apiKeyConfigured: boolean };
-  projects: { rootPath: string };
+  projects: { rootPath: string; personalRootPath: string; workRootPath: string };
   restartRequired: { pi: boolean; claude: boolean };
 }
 
@@ -50,6 +50,10 @@ function settingsDatabase(): DatabaseSync {
       updated_at TEXT NOT NULL
     );
   `);
+  const seed = database.prepare("INSERT OR IGNORE INTO node_settings (key, value, is_secret, updated_at) VALUES (?, ?, 0, ?)");
+  const now = new Date().toISOString();
+  seed.run("projects.personalRootPath", path.join(os.homedir(), "Projects"), now);
+  seed.run("projects.workRootPath", path.join(os.homedir(), "Work"), now);
   ensureAuditSchema(database);
   return database;
 }
@@ -140,7 +144,11 @@ export function getSettings(): SettingsResponse {
       endpoint: value("syncthing.endpoint"),
       apiKeyConfigured: Boolean(setting("syncthing.apiKey")),
     },
-    projects: { rootPath: value("projects.rootPath") },
+    projects: {
+      rootPath: value("projects.rootPath"),
+      personalRootPath: value("projects.personalRootPath"),
+      workRootPath: value("projects.workRootPath"),
+    },
     restartRequired: { pi: false, claude: false },
   };
 }
@@ -160,7 +168,11 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
   const db = settingsDatabase();
   const previous = getSettings();
   const projectRootPath = input.projects?.rootPath ?? previous.projects.rootPath;
+  const personalRootPath = input.projects?.personalRootPath ?? previous.projects.personalRootPath;
+  const workRootPath = input.projects?.workRootPath ?? previous.projects.workRootPath;
   if (projectRootPath && !path.isAbsolute(projectRootPath)) throw new Error("Project root path must be blank or absolute");
+  if (personalRootPath && !path.isAbsolute(personalRootPath)) throw new Error("Personal project folder must be blank or absolute");
+  if (workRootPath && !path.isAbsolute(workRootPath)) throw new Error("Work project folder must be blank or absolute");
   db.exec("BEGIN");
   try {
     for (const [prefix, settings] of [["pi", input.pi], ["claude", input.claude]] as const) {
@@ -170,6 +182,8 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
     }
     save(db, "syncthing.endpoint", input.syncthing.endpoint);
     save(db, "projects.rootPath", projectRootPath ? path.resolve(projectRootPath) : "");
+    save(db, "projects.personalRootPath", personalRootPath ? path.resolve(personalRootPath) : "");
+    save(db, "projects.workRootPath", workRootPath ? path.resolve(workRootPath) : "");
     if (input.syncthing.apiKey !== undefined) {
       if (input.syncthing.apiKey) save(db, "syncthing.apiKey", input.syncthing.apiKey, true);
       else db.prepare("DELETE FROM node_settings WHERE key = 'syncthing.apiKey'").run();
@@ -185,6 +199,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
         claudeChanged: JSON.stringify(previous.claude) !== JSON.stringify(settings.claude),
         syncthingChanged: previous.syncthing.endpoint !== settings.syncthing.endpoint || previous.syncthing.apiKeyConfigured !== settings.syncthing.apiKeyConfigured,
         projectRootChanged: previous.projects.rootPath !== settings.projects.rootPath,
+        projectFoldersChanged: previous.projects.personalRootPath !== settings.projects.personalRootPath || previous.projects.workRootPath !== settings.projects.workRootPath,
         apiKeyConfigured: settings.syncthing.apiKeyConfigured,
       },
     });

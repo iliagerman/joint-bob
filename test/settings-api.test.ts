@@ -51,7 +51,11 @@ test("settings API persists runtime and Syncthing choices without returning secr
         pi: { executable: "/usr/local/bin/pi", configPath: "/tmp/pi-config", sessionPath: "/tmp/pi-sessions" },
         claude: { executable: "/usr/local/bin/claude", configPath: "/tmp/claude-config", sessionPath: "/tmp/claude-sessions" },
         syncthing: { endpoint: "http://127.0.0.1:8384", apiKey: "secret-api-key" },
-        projects: { rootPath: path.join(root, "projects") },
+        projects: {
+          rootPath: path.join(root, "projects"),
+          personalRootPath: path.join(root, "personal"),
+          workRootPath: path.join(root, "work"),
+        },
       }),
     });
     assert.equal(saved.status, 200);
@@ -59,7 +63,11 @@ test("settings API persists runtime and Syncthing choices without returning secr
       pi: { executable: "/usr/local/bin/pi", configPath: "/tmp/pi-config", sessionPath: "/tmp/pi-sessions" },
       claude: { executable: "/usr/local/bin/claude", configPath: "/tmp/claude-config", sessionPath: "/tmp/claude-sessions" },
       syncthing: { endpoint: "http://127.0.0.1:8384", apiKeyConfigured: true },
-      projects: { rootPath: path.join(root, "projects") },
+      projects: {
+        rootPath: path.join(root, "projects"),
+        personalRootPath: path.join(root, "personal"),
+        workRootPath: path.join(root, "work"),
+      },
       restartRequired: { pi: true, claude: true },
     });
 
@@ -69,7 +77,11 @@ test("settings API persists runtime and Syncthing choices without returning secr
       pi: { executable: "/usr/local/bin/pi", configPath: "/tmp/pi-config", sessionPath: "/tmp/pi-sessions" },
       claude: { executable: "/usr/local/bin/claude", configPath: "/tmp/claude-config", sessionPath: "/tmp/claude-sessions" },
       syncthing: { endpoint: "http://127.0.0.1:8384", apiKeyConfigured: true },
-      projects: { rootPath: path.join(root, "projects") },
+      projects: {
+        rootPath: path.join(root, "projects"),
+        personalRootPath: path.join(root, "personal"),
+        workRootPath: path.join(root, "work"),
+      },
       restartRequired: { pi: false, claude: false },
     });
 
@@ -80,11 +92,24 @@ test("settings API persists runtime and Syncthing choices without returning secr
         pi: { executable: "", configPath: "", sessionPath: "" },
         claude: { executable: "", configPath: "", sessionPath: "" },
         syncthing: { endpoint: "https://not-local.example", apiKey: "must-not-send" },
-        projects: { rootPath: "" },
+        projects: { rootPath: "", personalRootPath: "relative", workRootPath: "" },
       }),
     });
     assert.equal(remoteEndpoint.status, 400);
     assert.deepEqual(await remoteEndpoint.json(), { error: "Syncthing endpoint must use a loopback host" });
+
+    const relativeProjectFolder = await fetch(`${node.baseUrl}/api/settings`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({
+        pi: { executable: "", configPath: "", sessionPath: "" },
+        claude: { executable: "", configPath: "", sessionPath: "" },
+        syncthing: { endpoint: "http://127.0.0.1:8384" },
+        projects: { rootPath: "", personalRootPath: "relative", workRootPath: "" },
+      }),
+    });
+    assert.equal(relativeProjectFolder.status, 400);
+    assert.deepEqual(await relativeProjectFolder.json(), { error: "Personal project folder must be blank or absolute" });
   } finally {
     if (node) await node.close();
     if (previousDataDir === undefined) delete process.env.PI_WEB_DATA_DIR;

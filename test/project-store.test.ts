@@ -12,8 +12,10 @@ test("project store persists and updates the paired Mac path", async () => {
   try {
     const project = await addProject("demo", path.join(root, "server", "demo"), {
       macPath: "/Users/example/Work/demo",
+      type: "work",
     });
     assert.equal(project.macPath, "/Users/example/Work/demo");
+    assert.equal(project.type, "work");
 
     const updated = await updateProjectMacPath(project.id, "/Users/example/Projects/demo");
     assert.equal(updated.macPath, "/Users/example/Projects/demo");
@@ -27,6 +29,7 @@ test("project store persists and updates the paired Mac path", async () => {
     const stored = await listProjects();
     assert.equal(stored.length, 1);
     assert.equal(stored[0].macPath, "/Users/example/Code/demo");
+    assert.equal(stored[0].type, "work");
 
     const importedPath = path.join(root, "mac", "shared");
     await mkdir(importedPath, { recursive: true });
@@ -39,6 +42,7 @@ test("project store persists and updates the paired Mac path", async () => {
     assert.equal(imported.id, "shared-project-id");
     assert.equal(imported.path, importedPath);
     assert.equal(imported.macPath, path.join(root, "server", "shared"));
+    assert.equal(imported.type, "work");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

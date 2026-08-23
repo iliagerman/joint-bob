@@ -3,9 +3,12 @@ export interface ProjectLocation {
   path: string;
 }
 
+export type ProjectType = "personal" | "work";
+
 export interface ProjectRecord {
   id: string;
   name: string;
+  type?: ProjectType;
   path: string;
   macPath?: string;
   syncFolderId?: string;

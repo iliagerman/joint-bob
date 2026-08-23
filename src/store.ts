@@ -3,17 +3,19 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { nanoid } from "nanoid";
-import type { ProjectRecord } from "./types.js";
+import type { ProjectRecord, ProjectType } from "./types.js";
 
 interface AddProjectOptions {
   synced?: boolean;
   macPath?: string;
   syncFolderId?: string;
+  type?: ProjectType;
 }
 
 interface ProjectRow {
   id: string;
   name: string;
+  project_type: ProjectType;
   path: string;
   mac_path: string | null;
   sync_folder_id: string | null;
@@ -54,6 +56,7 @@ function rowToProject(db: DatabaseSync, row: ProjectRow): ProjectRecord {
   return {
     id: row.id,
     name: row.name,
+    type: row.project_type,
     path: row.path,
     ...(row.mac_path ? { macPath: row.mac_path } : {}),
     ...(row.sync_folder_id ? { syncFolderId: row.sync_folder_id } : {}),
@@ -78,6 +81,7 @@ function projectValues(project: ProjectRecord): SQLInputValue[] {
   return [
     project.id,
     project.name,
+    project.type ?? "personal",
     project.path,
     project.macPath ?? null,
     project.syncFolderId ?? null,
@@ -88,10 +92,11 @@ function projectValues(project: ProjectRecord): SQLInputValue[] {
 
 function saveProject(db: DatabaseSync, project: ProjectRecord): void {
   db.prepare(`
-    INSERT INTO projects (id, name, path, mac_path, sync_folder_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO projects (id, name, project_type, path, mac_path, sync_folder_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
+      project_type = excluded.project_type,
       path = excluded.path,
       mac_path = excluded.mac_path,
       sync_folder_id = excluded.sync_folder_id,
@@ -277,6 +282,7 @@ async function projectDatabase(): Promise<DatabaseSync> {
     CREATE TABLE IF NOT EXISTS projects (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
+      project_type TEXT NOT NULL DEFAULT 'personal' CHECK (project_type IN ('personal', 'work')),
       path TEXT NOT NULL UNIQUE,
       mac_path TEXT,
       sync_folder_id TEXT,
@@ -298,6 +304,9 @@ async function projectDatabase(): Promise<DatabaseSync> {
     );
     CREATE INDEX IF NOT EXISTS project_aliases_project_id ON project_aliases(project_id);
   `);
+  if (!tableHasColumn(database, "projects", "project_type")) {
+    database.exec("ALTER TABLE projects ADD COLUMN project_type TEXT NOT NULL DEFAULT 'personal' CHECK (project_type IN ('personal', 'work'))");
+  }
   await migrateLegacyProjects(database);
   return database;
 }
@@ -378,8 +387,10 @@ export async function addProject(name: string, folderPath: string, options: AddP
   const row = db.prepare("SELECT * FROM projects WHERE path = ?").get(resolvedPath) as ProjectRow | undefined;
   if (row) {
     const duplicate = rowToProject(db, row);
-    if (options.macPath && duplicate.macPath !== path.resolve(options.macPath)) {
-      duplicate.macPath = path.resolve(options.macPath);
+    const requestedMacPath = options.macPath ? path.resolve(options.macPath) : undefined;
+    if ((requestedMacPath && duplicate.macPath !== requestedMacPath) || (options.type && duplicate.type !== options.type)) {
+      if (requestedMacPath) duplicate.macPath = requestedMacPath;
+      if (options.type) duplicate.type = options.type;
       duplicate.updatedAt = new Date().toISOString();
       saveProject(db, duplicate);
     }
@@ -393,6 +404,7 @@ export async function addProject(name: string, folderPath: string, options: AddP
   const project: ProjectRecord = {
     id,
     name: projectName,
+    type: options.type ?? "personal",
     path: resolvedPath,
     ...(configuredRemotePath ? { macPath: path.resolve(configuredRemotePath) } : {}),
     ...(options.synced ? { syncFolderId: options.syncFolderId ?? generatedSyncFolderId({ id, name: projectName }) } : {}),
@@ -417,6 +429,7 @@ export async function importProject(project: ProjectRecord, localPath?: string, 
   if (existingRow) {
     const existing = rowToProject(db, existingRow);
     existing.name = project.name;
+    existing.type = project.type ?? existing.type ?? "personal";
     existing.macPath ??= path.resolve(project.path);
     existing.syncFolderId = project.syncFolderId ?? existing.syncFolderId;
     existing.updatedAt = new Date().toISOString();

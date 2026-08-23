@@ -282,6 +282,24 @@
 
         <section class="settings-panel" id="settingsPanel-projects" role="tabpanel" aria-labelledby="settingsTab-projects" tabindex="0" hidden>
           <fieldset class="phase-settings">
+            <legend>Local project folders</legend>
+            <label>
+              Personal projects
+              <div class="folder-input-row">
+                <input id="settingsPersonalProjectRoot" autocomplete="off" data-testid="settings-personal-project-root-input" />
+                <button class="ghost" type="button" id="settingsPersonalProjectRootBrowseButton" data-testid="settings-personal-project-root-browse-button">Browse</button>
+              </div>
+            </label>
+            <label>
+              Work projects
+              <div class="folder-input-row">
+                <input id="settingsWorkProjectRoot" autocomplete="off" data-testid="settings-work-project-root-input" />
+                <button class="ghost" type="button" id="settingsWorkProjectRootBrowseButton" data-testid="settings-work-project-root-browse-button">Browse</button>
+              </div>
+            </label>
+            <p>New projects use the folder configured for their type on this node.</p>
+          </fieldset>
+          <fieldset class="phase-settings">
             <legend>Automatic mapping</legend>
             <label>
               Mapping root

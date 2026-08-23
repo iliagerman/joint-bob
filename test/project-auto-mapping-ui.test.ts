@@ -12,10 +12,14 @@ test("project creation, project roots, and imported mappings use node folder pic
   assert.match(html, /data-testid="project-form-browse-button"/);
   assert.match(html, /data-testid="settings-project-root-input"/);
   assert.match(html, /data-testid="settings-project-root-browse-button"/);
+  assert.match(html, /data-testid="settings-personal-project-root-input"/);
+  assert.match(html, /data-testid="settings-work-project-root-input"/);
   assert.match(app, /openFolderPicker/);
   assert.match(app, /\/api\/cluster\/projects\/discover/);
   assert.match(app, /mapOnPeer/);
   assert.match(app, /Project is not mapped on this node/);
+  assert.match(app, /replace\(\/\\s\+\/g, "_"\)/);
+  assert.doesNotMatch(app, /value === "work" \? "Work" : "Projects"/);
   assert.match(server, /\/api\/cluster\/peers\/:peerId\/filesystem\/directories/);
   assert.match(server, /\/api\/cluster\/peers\/:peerId\/projects\/:projectId\/map/);
 });

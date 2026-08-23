@@ -37,7 +37,7 @@ import { listAuditEvents } from "./audit.js";
 import { getUserPreferences, updateUserPreferences } from "./preferences.js";
 import { markConversationReviewed, syncConversationReviewStates } from "./conversation-reviews.js";
 import { resetSyncthingConnection } from "./syncthing.js";
-import type { ChatMessage, ProjectRecord, SessionStatus, TaskPhase, TaskPhaseConfig, TaskRecord } from "./types.js";
+import type { ChatMessage, ProjectRecord, ProjectType, SessionStatus, TaskPhase, TaskPhaseConfig, TaskRecord } from "./types.js";
 import { webSocketCloseReason } from "./websocket.js";
 
 type PiSessionHandle = Awaited<ReturnType<typeof createPiSession>>;
@@ -136,6 +136,7 @@ let startupError: Error | undefined;
 const absolutePathSchema = z.string().trim().min(1).max(1000).refine(path.isAbsolute, "Path must be absolute");
 const projectSchema = z.object({
   name: z.string().trim().min(1).max(80),
+  type: z.enum(["personal", "work"]).optional().default("personal"),
   path: absolutePathSchema,
   synced: z.boolean().optional(),
   macPath: absolutePathSchema.optional(),
@@ -315,7 +316,11 @@ const settingsSchema = z.object({
   pi: runtimeSettingsSchema,
   claude: runtimeSettingsSchema,
   syncthing: z.object({ endpoint: z.string().max(500), apiKey: z.string().max(500).nullable().optional() }),
-  projects: z.object({ rootPath: z.string().max(1000) }).optional(),
+  projects: z.object({
+    rootPath: z.string().max(1000),
+    personalRootPath: z.string().max(1000).optional(),
+    workRootPath: z.string().max(1000).optional(),
+  }).optional(),
 });
 const auditQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional().default(100),
@@ -510,8 +515,10 @@ async function importProjectsFromPeer(peer: ClusterPeer): Promise<ProjectImportR
       }
     }
     if (!existing && !localPath) {
-      const localRoot = getSettings().projects.rootPath;
-      localPath = relativeProjectPath(remoteProject.path, inventory.projectRoot, localRoot);
+      const typedRoot = projectTypeRoot(remoteProject.type);
+      localPath = typedRoot
+        ? path.join(typedRoot, projectFolderName(remoteProject.name))
+        : relativeProjectPath(remoteProject.path, inventory.projectRoot, getSettings().projects.rootPath);
     }
     if (!existing && !localPath) {
       pending.push({
@@ -520,7 +527,7 @@ async function importProjectsFromPeer(peer: ClusterPeer): Promise<ProjectImportR
         name: remoteProject.name,
         remotePath: remoteProject.path,
         ...(remoteProject.syncFolderId ? { syncFolderId: remoteProject.syncFolderId } : {}),
-        suggestedPath: path.join(getSettings().projects.rootPath || os.homedir(), remoteProject.name),
+        suggestedPath: path.join(projectTypeRoot(remoteProject.type) || getSettings().projects.rootPath || os.homedir(), projectFolderName(remoteProject.name)),
       });
       continue;
     }
@@ -536,6 +543,15 @@ async function importProjectsFromPeer(peer: ClusterPeer): Promise<ProjectImportR
 function requirePathInsideHome(candidate: string, homeDirectory: string): void {
   const relative = path.relative(homeDirectory, candidate);
   if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("Folder must be inside this node's home directory");
+}
+
+function projectFolderName(name: string): string {
+  return name.trim().replace(/\s+/g, "_");
+}
+
+function projectTypeRoot(type: ProjectType | undefined): string {
+  const projects = getSettings().projects;
+  return type === "work" ? projects.workRootPath : projects.personalRootPath;
 }
 
 function relativeProjectPath(remotePath: string, remoteRoot: string | undefined, localRoot: string): string | undefined {
@@ -730,7 +746,8 @@ app.put("/api/settings", (request, response, next) => {
     if (error instanceof Error && (
       error.message === "Syncthing endpoint must use a loopback host" ||
       /^(Pi|Claude) (config path|session path) must be blank or absolute$/.test(error.message) ||
-      /^(Pi|Claude) executable must be a command name or absolute path$/.test(error.message)
+      /^(Pi|Claude) executable must be a command name or absolute path$/.test(error.message) ||
+      /^(Project root path|Personal project folder|Work project folder) must be blank or absolute$/.test(error.message)
     )) {
       sendError(response, 400, error.message);
       return;
@@ -1527,7 +1544,7 @@ app.get("/api/projects/:projectId", async (request, response, next) => {
 app.post("/api/projects", async (request, response, next) => {
   try {
     const payload = projectSchema.parse(request.body);
-    const project = await addProject(payload.name, payload.path, { synced: payload.synced, macPath: payload.macPath });
+    const project = await addProject(payload.name, payload.path, { synced: payload.synced, macPath: payload.macPath, type: payload.type });
     if (payload.synced && project.syncFolderId) {
       await ensureSyncthingFolder(project.syncFolderId, project.name, project.path);
     }
