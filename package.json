@@ -1,0 +1,72 @@
+{
+  "name": "joint-bob",
+  "version": "0.1.0",
+  "description": "Private multi-node workspace for Pi and Claude coding agents",
+  "private": false,
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "joint-bob": "bin/joint-bob.mjs"
+  },
+  "files": [
+    "bin",
+    "deploy",
+    "public",
+    "scripts",
+    "src",
+    "LICENSE",
+    "README.md",
+    "SECURITY.md",
+    "npm-shrinkwrap.json",
+    "tsconfig.json"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iliagerman/joint-bob.git"
+  },
+  "bugs": {
+    "url": "https://github.com/iliagerman/joint-bob/issues"
+  },
+  "homepage": "https://github.com/iliagerman/joint-bob#readme",
+  "keywords": [
+    "coding-agent",
+    "pi",
+    "claude",
+    "syncthing",
+    "tailscale"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true,
+    "registry": "https://registry.npmjs.org"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/server.ts",
+    "prepack": "npm run build",
+    "start": "npm run build && node dist/server.js",
+    "serve:https": "bash scripts/serve-https.sh",
+    "test": "node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.239",
+    "@earendil-works/pi-coding-agent": "0.84.2",
+    "express": "^4.19.2",
+    "nanoid": "^5.0.7",
+    "web-push": "^3.6.7",
+    "ws": "^8.18.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.2",
+    "@types/web-push": "^3.6.4",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

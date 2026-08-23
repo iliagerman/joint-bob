@@ -1,0 +1,61 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.*
+
+# Build artifacts
+/dist/
+/build/
+/coverage/
+*.tsbuildinfo
+
+# Runtime state and local data
+.pi-mobile-web/
+.joint-bob/
+.pi-mobile-web-attachments/
+.joint-bob-release
+.master-bob-release
+/app.js
+/index.html
+/server.ts
+/styles.css
+/sw.js
+*.local
+
+# Local lifecycle records may contain machine-specific acceptance data
+/aidlc-docs/
+
+# Terraform runtime files
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+id_rsa*
+id_ed25519*
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Sync tooling and conflict artifacts
+.stfolder/
+.stignore
+*.sync-conflict-*

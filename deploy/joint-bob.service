@@ -1,0 +1,14 @@
+[Unit]
+Description=Joint Bob node
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=__REPO_ROOT__
+Environment="PATH=__SERVICE_PATH__"
+ExecStart=__RUNNER__
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

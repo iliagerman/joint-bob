@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Pack and smoke test
+        run: |
+          package=$(npm pack --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s)[0].filename))')
+          mv "$package" joint-bob.tar.gz
+          tar -tzf joint-bob.tar.gz | grep -q 'package/bin/joint-bob.mjs'
+          sha256sum joint-bob.tar.gz > joint-bob.tar.gz.sha256
+      - run: npm publish --provenance --access public
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            joint-bob.tar.gz
+            joint-bob.tar.gz.sha256

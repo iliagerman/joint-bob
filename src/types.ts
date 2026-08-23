@@ -1,0 +1,106 @@
+export interface ProjectLocation {
+  nodeId: string;
+  path: string;
+}
+
+export interface ProjectRecord {
+  id: string;
+  name: string;
+  path: string;
+  macPath?: string;
+  syncFolderId?: string;
+  locations?: ProjectLocation[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type HarnessId = "pi" | "claude";
+
+export interface SessionSummary {
+  id: string;
+  path: string;
+  harnessId: HarnessId;
+  title: string;
+  createdAt?: string;
+  updatedAt?: string;
+  firstMessage?: string;
+  taskStatus?: TaskStatus;
+  taskId?: string;
+  running?: boolean;
+  reviewState?: "running" | "needs_review" | "reviewed";
+}
+
+export type TaskStatus = "backlog" | "planning" | "in_progress" | "review" | "done";
+
+export type TaskEngine = "pi" | "claude";
+
+export type TaskExecutionState = "idle" | "running" | "handoff_pending" | "failed";
+
+export type TaskPhase = "planning" | "in_progress" | "review";
+
+export interface TaskPhaseConfig {
+  engine: TaskEngine;
+  provider: string;
+  modelId: string;
+  effort: string;
+}
+
+export interface TaskRecord {
+  id: string;
+  title: string;
+  description: string;
+  status: TaskStatus;
+  engine: TaskEngine;
+  planMode: boolean;
+  reviewMode: boolean;
+  phaseConfig: Partial<Record<TaskPhase, TaskPhaseConfig>>;
+  // Conversation created when the task was started (pi session file path or claude:<path>).
+  sessionPath: string | null;
+  worktreePath: string | null;
+  worktreeBranch: string | null;
+  mergedAt: string | null;
+  currentNodeId: string;
+  leaseOwnerNodeId: string | null;
+  leaseExpiresAt: string | null;
+  executionState: TaskExecutionState;
+  handoffContext: string | null;
+  originNodeId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: string;
+  text: string;
+  // Present on tool roles so the client can label the collapsed tool bubble.
+  toolName?: string;
+}
+
+export interface ModelSummary {
+  provider: string;
+  id: string;
+  label: string;
+}
+
+export interface SessionStatus {
+  sessionFile?: string;
+  sessionId: string;
+  sessionName?: string;
+  model?: ModelSummary;
+  thinkingLevel: string;
+  availableThinkingLevels: string[];
+  isStreaming: boolean;
+  isCompacting: boolean;
+  isRetrying: boolean;
+  isBashRunning: boolean;
+  pendingMessageCount: number;
+  messageCount: number;
+  activeTools: string[];
+  promptTemplates: string[];
+  safeguardsEnabled?: boolean;
+}
+
+export interface ApiErrorBody {
+  error: string;
+}

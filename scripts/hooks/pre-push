@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+REMOTE_NAME="${1:-origin}"
+while read -r _local_ref local_sha remote_ref _remote_sha; do
+  [ "${remote_ref}" = "refs/heads/main" ] || continue
+  [ "${local_sha}" != "0000000000000000000000000000000000000000" ] || continue
+  log_dir="${HOME}/.joint-bob/logs"
+  mkdir -p "${log_dir}"
+  chmod 700 "${HOME}/.joint-bob" "${log_dir}"
+  nohup "${ROOT}/scripts/wait-for-main-and-deploy.sh" "${local_sha}" "${REMOTE_NAME}" >> "${log_dir}/push-deploy.log" 2>&1 </dev/null &
+done

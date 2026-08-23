@@ -1,0 +1,618 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <title>Joint Bob</title>
+    <meta name="theme-color" content="#f2f2f0" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Joint Bob" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon-192.png" sizes="192x192" type="image/png" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="view-projects">
+    <div class="shell">
+      <section class="panel view-panel" id="projectsPanel" aria-label="Projects">
+        <header class="panel-bar">
+          <div class="brand">
+            <div class="brand-mark" aria-hidden="true"><svg class="mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5.5v13"/><path d="M8 5.5h3.6a3.25 3.25 0 0 1 0 6.5H8"/><path d="M8 12h4.4a3.25 3.25 0 0 1 0 6.5H8"/><rect class="mark-cursor" x="15.4" y="15" width="3.4" height="3.4" rx="0.9" fill="currentColor" stroke="none"/></svg></div>
+            <div class="brand-copy">
+              <strong>Joint Bob</strong>
+              <span>agent workspace</span>
+            </div>
+          </div>
+          <div class="project-actions">
+            <button class="primary icon-button" id="newProjectButton" type="button" aria-label="Add project" title="Add project" data-testid="project-create-button">+</button>
+            <button class="ghost icon-button" id="projectsMenuButton" type="button" aria-label="Workspace options" data-testid="projects-menu-button">⋯</button>
+          </div>
+        </header>
+        <div class="panel-toolbar" id="projectsToolbar" hidden>
+          <button class="ghost icon-button theme-toggle" id="themeToggleButton" type="button" aria-label="Switch to dark theme" title="Switch to dark theme">☾</button>
+          <button class="ghost compact" id="githubSettingsButton" type="button" aria-label="GitHub credential settings" title="GitHub credential settings">GitHub</button>
+          <button class="ghost compact" id="settingsButton" type="button" data-testid="settings-open-button">Settings</button>
+          <button class="ghost compact" id="clusterButton" type="button" data-testid="cluster-open-button">Nodes</button>
+        </div>
+        <div class="list-loading" id="projectsLoading" role="progressbar" aria-label="Loading projects" data-testid="project-list-loading-bar"><span></span></div>
+        <label class="search-shell" for="projectSearchInput">
+          <span class="sr-only">Search projects</span>
+          <input id="projectSearchInput" type="search" autocomplete="off" placeholder="Search projects" data-testid="project-list-search-input" />
+        </label>
+        <div class="panel-scroll project-list" id="projectList"></div>
+      </section>
+
+      <section class="panel view-panel" id="chatsPanel" aria-label="Conversations">
+        <header class="panel-bar">
+          <button class="ghost icon-button back-button" id="backToProjectsButton" type="button" aria-label="Back to projects" data-testid="chats-back-button">‹</button>
+          <div class="panel-title">
+            <h1 id="projectName">No project selected</h1>
+            <p id="projectPath">Create or select a local folder.</p>
+          </div>
+          <button class="ghost compact" id="openBoardButton" type="button" data-testid="chats-open-board-button">Board</button>
+        </header>
+        <div class="list-loading" id="sessionsLoading" role="progressbar" aria-label="Loading conversations" data-testid="session-list-loading-bar" hidden><span></span></div>
+        <div class="new-chat-row">
+          <button class="primary" id="newSessionButton" type="button" disabled data-testid="session-create-button">＋ Pi chat</button>
+          <button class="primary claude" id="newClaudeSessionButton" type="button" disabled data-testid="session-create-claude-button">＋ Claude chat</button>
+        </div>
+        <div class="section-title live-row">
+          <span>Conversations</span>
+          <span class="live-dot" id="chatsLiveDot" title="Auto-refreshing" hidden></span>
+        </div>
+        <label class="search-shell conversation-search" for="sessionSearchInput">
+          <span class="sr-only">Search conversations</span>
+          <input id="sessionSearchInput" type="search" autocomplete="off" placeholder="Search conversations" data-testid="conversation-list-search-input" />
+        </label>
+        <div class="chat-filters" id="chatFilters" role="group" aria-label="Filter conversations">
+          <button type="button" class="active" data-filter="all" data-testid="chats-filter-all-button">All <span data-filter-count="all">0</span></button>
+          <button type="button" data-filter="active" data-testid="chats-filter-active-button">Running <span data-filter-count="active">0</span></button>
+          <button type="button" data-filter="review" data-testid="chats-filter-review-button">Needs review <span data-filter-count="review">0</span></button>
+          <button type="button" data-filter="done" data-testid="chats-filter-done-button">Reviewed <span data-filter-count="done">0</span></button>
+        </div>
+        <div class="panel-scroll session-list" id="sessionList"></div>
+      </section>
+
+      <section class="panel view-panel board" id="boardPanel" aria-label="Kanban board">
+        <header class="panel-bar">
+          <button class="ghost icon-button back-button" id="backToChatsButton" type="button" aria-label="Back to conversations" data-testid="board-back-button">‹</button>
+          <div class="panel-title">
+            <h1 id="boardProjectName">Board</h1>
+            <p>Tasks for this project</p>
+          </div>
+          <button class="primary compact" id="newTaskButton" type="button" disabled data-testid="task-create-button">+ Task</button>
+        </header>
+        <div class="board-columns" id="boardColumns"></div>
+      </section>
+
+      <main class="panel view-panel chat" id="chatPanel" aria-label="Chat with Pi">
+        <header class="chat-topbar">
+          <button class="ghost icon-button back-button" id="backToSessionsButton" type="button" aria-label="Back to conversations" data-testid="chat-back-button">‹</button>
+          <div class="chat-title-block">
+            <h2 id="sessionTitle">Select a conversation</h2>
+            <div class="chat-title-meta">
+              <div class="mini-status" id="miniStatus">No model loaded</div>
+              <button class="task-backlink" id="taskBacklinkButton" type="button" hidden data-testid="chat-task-backlink-button">Ticket</button>
+            </div>
+          </div>
+          <div class="chat-actions">
+            <div class="status-pill" id="connectionStatus">Idle</div>
+            <button class="ghost compact danger" id="abortButton" type="button" disabled data-testid="chat-abort-button">Stop</button>
+          </div>
+        </header>
+        <div class="chat-toolbar panel-toolbar" id="chatToolbar">
+          <div class="chat-session-controls">
+            <label class="chat-control" for="chatNodeSelect">
+              <span>Runs on</span>
+              <select id="chatNodeSelect" aria-label="Execution node" data-testid="chat-node-select"></select>
+            </label>
+            <label class="chat-control" for="chatHarnessSelect">
+              <span>Agent</span>
+              <select id="chatHarnessSelect" aria-label="Harness" data-testid="chat-harness-select"></select>
+            </label>
+            <label class="chat-control" for="chatSessionSelect">
+              <span>Conversation</span>
+              <select id="chatSessionSelect" aria-label="Session" data-testid="chat-session-select"></select>
+            </label>
+          </div>
+          <div class="chat-control chat-model-control">
+            <span>Model</span>
+            <button class="ghost compact model-button" id="modelButton" type="button" disabled data-testid="chat-model-button">Model</button>
+          </div>
+          <button class="ghost compact safeguards-button" id="safeguardsButton" type="button" aria-pressed="true" title="Safe Guard checks are active for this Pi session" disabled data-testid="chat-safeguards-button">Safeguards on</button>
+          <button class="ghost compact transfer-session-button" id="transferSessionButton" type="button" disabled data-testid="chat-transfer-button">Continue on…</button>
+          <button class="ghost compact" id="notifyButton" type="button" aria-pressed="false" title="Notify when an agent finishes" data-testid="chat-notify-button">Notify</button>
+          <button class="ghost compact" id="renameSessionButton" type="button" disabled data-testid="chat-rename-button">Rename</button>
+          <button class="ghost compact" id="installAppButton" type="button" hidden data-testid="chat-install-button">Install</button>
+        </div>
+
+        <section class="messages" id="messages" aria-live="polite">
+          <div class="empty-state">
+            <div class="orb" aria-hidden="true"><svg class="mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5.5v13"/><path d="M8 5.5h3.6a3.25 3.25 0 0 1 0 6.5H8"/><path d="M8 12h4.4a3.25 3.25 0 0 1 0 6.5H8"/><rect class="mark-cursor" x="15.4" y="15" width="3.4" height="3.4" rx="0.9" fill="currentColor" stroke="none"/></svg></div>
+            <h2>Your server-side Pi, in your pocket.</h2>
+            <p>Select a project and start a Pi or Claude conversation on any connected node.</p>
+          </div>
+          <button class="jump-latest" id="jumpLatestButton" type="button" hidden>↓ Latest</button>
+        </section>
+
+        <div class="reconnect-banner" id="reconnectBanner" role="status" data-testid="chat-reconnect-banner" hidden>
+          <span class="reconnect-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span id="reconnectBannerText">Connecting…</span>
+        </div>
+
+        <div class="command-strip" aria-label="Quick slash commands">
+          <button type="button" data-command="/help">/help</button>
+          <button type="button" data-command="/skill:">/skill</button>
+          <button type="button" data-command="/model">/model</button>
+          <button type="button" data-command="/tools">/tools</button>
+          <button type="button" data-command="/compact">/compact</button>
+        </div>
+        <form class="composer" id="composer">
+          <div class="attachment-list" id="attachmentList" aria-live="polite"></div>
+          <div class="composer-row">
+            <input class="sr-only" id="attachmentInput" type="file" multiple accept="image/*,.txt,.md,.markdown,.json,.yaml,.yml,.csv,.tsv,.log,.js,.jsx,.ts,.tsx,.py,.rb,.go,.rs,.java,.kt,.swift,.css,.scss,.html,.xml,.sh,.env" />
+            <button class="ghost attach-button icon-button" id="attachButton" type="button" disabled aria-label="Attach files" data-testid="chat-attach-button">+</button>
+            <label class="sr-only" for="messageInput">Message Pi</label>
+            <textarea id="messageInput" rows="1" placeholder="Ask Pi to work..." disabled data-testid="chat-message-input"></textarea>
+            <button class="send" id="sendButton" type="submit" disabled aria-label="Send" data-testid="chat-send-button">↑</button>
+          </div>
+        </form>
+      </main>
+    </div>
+
+    <nav class="mobile-nav" aria-label="Main navigation">
+      <button class="active" id="navProjectsButton" type="button" data-testid="nav-projects-button"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 7a2 2 0 0 1 2-2h4l2 2.5h7a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg></span>Projects</button>
+      <button id="navSessionsButton" type="button" data-testid="nav-chats-button"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5a2 2 0 0 1-2 2H8l-4.5 4v-14a2 2 0 0 1 2-2H18a2 2 0 0 1 2 2z"/></svg></span>Chats</button>
+      <button id="navBoardButton" type="button" data-testid="nav-board-button"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M10 4v16M16 4v16"/></svg></span>Board</button>
+      <button id="navChatButton" type="button" data-testid="nav-chat-button"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M7.5 10l2.5 2-2.5 2"/><path d="M12.5 14.5h4"/></svg></span>Chat</button>
+    </nav>
+
+    <div class="install-banner" id="installBanner" role="dialog" aria-label="Install Joint Bob" hidden>
+      <div class="install-banner-mark" aria-hidden="true"><svg class="mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5.5v13"/><path d="M8 5.5h3.6a3.25 3.25 0 0 1 0 6.5H8"/><path d="M8 12h4.4a3.25 3.25 0 0 1 0 6.5H8"/><rect class="mark-cursor" x="15.4" y="15" width="3.4" height="3.4" rx="0.9" fill="currentColor" stroke="none"/></svg></div>
+      <div class="install-banner-copy">
+        <strong>Install Joint Bob</strong>
+        <span>Add it to your home screen for a full-screen, app-like experience.</span>
+      </div>
+      <div class="install-banner-actions">
+        <button class="ghost compact" id="dismissInstallButton" type="button">Not now</button>
+        <button class="primary compact" id="installBannerButton" type="button">Install</button>
+      </div>
+    </div>
+
+    <dialog id="loginDialog" data-testid="login-dialog">
+      <form class="dialog-card" id="loginForm">
+        <div>
+          <span class="eyebrow">Secure sign in</span>
+          <h2>Welcome to Joint Bob</h2>
+          <p id="loginMessage">Sign in to this node.</p>
+        </div>
+        <label>
+          Username
+          <input id="loginUsernameInput" name="username" autocomplete="username" required data-testid="login-username-input" />
+        </label>
+        <label id="loginPasswordLabel">
+          Password
+          <input id="loginPasswordInput" name="password" type="password" autocomplete="current-password" required data-testid="login-password-input" />
+        </label>
+        <label id="newPasswordLabel" hidden>
+          New password
+          <input id="newPasswordInput" name="newPassword" type="password" autocomplete="new-password" minlength="16" data-testid="login-new-password-input" />
+        </label>
+        <p id="loginError" role="alert" hidden></p>
+        <div class="dialog-actions">
+          <button class="primary" id="loginSubmitButton" type="submit" data-testid="login-submit-button">Sign in</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="settingsDialog" data-testid="settings-dialog">
+      <form method="dialog" class="dialog-card settings-card" id="settingsForm">
+        <div>
+          <span class="eyebrow">Node configuration</span>
+          <h2>Settings</h2>
+          <p>Paths and credentials are stored only in this node's encrypted SQLite state.</p>
+        </div>
+
+        <div class="settings-tabs" role="tablist" aria-label="Settings sections">
+          <button class="settings-tab" type="button" data-settings-tab="account" role="tab" id="settingsTab-account" aria-controls="settingsPanel-account" aria-selected="true" data-testid="settings-tab-account">Account</button>
+          <button class="settings-tab" type="button" data-settings-tab="notifications" role="tab" id="settingsTab-notifications" aria-controls="settingsPanel-notifications" aria-selected="false" tabindex="-1" data-testid="settings-tab-notifications">Notifications</button>
+          <button class="settings-tab" type="button" data-settings-tab="github" role="tab" id="settingsTab-github" aria-controls="settingsPanel-github" aria-selected="false" tabindex="-1" data-testid="settings-tab-github">GitHub</button>
+          <button class="settings-tab" type="button" data-settings-tab="cluster" role="tab" id="settingsTab-cluster" aria-controls="settingsPanel-cluster" aria-selected="false" tabindex="-1" data-testid="settings-tab-cluster">Cluster</button>
+          <button class="settings-tab" type="button" data-settings-tab="projects" role="tab" id="settingsTab-projects" aria-controls="settingsPanel-projects" aria-selected="false" tabindex="-1" data-testid="settings-tab-projects">Projects</button>
+          <button class="settings-tab" type="button" data-settings-tab="engines" role="tab" id="settingsTab-engines" aria-controls="settingsPanel-engines" aria-selected="false" tabindex="-1" data-testid="settings-tab-engines">Engines</button>
+        </div>
+
+        <section class="settings-panel" id="settingsPanel-account" role="tabpanel" aria-labelledby="settingsTab-account" tabindex="0">
+          <p>Manage login sessions for this administrator account. Revoking this device signs it out.</p>
+          <output id="settingsUsername"></output>
+          <div class="settings-session-list" id="settingsSessionList"></div>
+          <button class="ghost danger" id="settingsLogoutButton" type="button">Log out</button>
+        </section>
+
+        <section class="settings-panel" id="settingsPanel-notifications" role="tabpanel" aria-labelledby="settingsTab-notifications" tabindex="0" hidden>
+          <p>Get a browser notification when an agent finishes. Custom sounds play while Joint Bob is open; background notification sound follows your device settings.</p>
+          <button class="ghost" id="notificationToggleButton" type="button" aria-pressed="false" data-testid="notifications-toggle-button">Enable browser notifications</button>
+          <label>
+            Completion sound
+            <select id="completionSoundSelect" data-testid="notifications-sound-select">
+              <option value="off">Off</option>
+              <option value="chime">Chime</option>
+              <option value="bell">Bell</option>
+            </select>
+          </label>
+          <button class="ghost compact" id="previewSoundButton" type="button" data-testid="notifications-sound-preview-button">Preview sound</button>
+        </section>
+
+        <section class="settings-panel" id="settingsPanel-github" role="tabpanel" aria-labelledby="settingsTab-github" tabindex="0" hidden>
+          <p>Groups hold the tokens used by Git commands. Each project picks a group; projects that pick none use the default group.</p>
+          <div class="github-group-list" id="githubGroupList" data-testid="github-group-list"></div>
+          <button class="ghost" type="button" id="githubGroupAddButton" data-testid="github-group-add-button">Add group</button>
+        </section>
+
+        <section class="settings-panel" id="settingsPanel-cluster" role="tabpanel" aria-labelledby="settingsTab-cluster" tabindex="0" hidden>
+          <p>To add a node: install and open Joint Bob there, set its private Tailscale URL below, copy its pairing token, then paste that URL and token into an existing node.</p>
+          <div class="cluster-inventory" id="clusterInventory"></div>
+          <label>
+            This machine name
+            <input id="clusterNodeNameInput" autocomplete="off" data-testid="cluster-node-name-input" />
+          </label>
+          <label>
+            This machine Tailscale URL
+            <input id="clusterNodeUrlInput" type="url" autocomplete="off" placeholder="https://machine.tailnet.ts.net" data-testid="cluster-node-url-input" />
+          </label>
+          <label>
+            This node's pairing token
+            <div class="cluster-token-row">
+              <input id="clusterLocalToken" readonly aria-readonly="true" autocomplete="off" />
+              <button class="ghost compact" id="copyClusterLocalTokenButton" type="button">Copy token</button>
+            </div>
+          </label>
+          <label>
+            New node URL
+            <input id="clusterPeerUrlInput" type="url" autocomplete="off" placeholder="https://peer.tailnet.ts.net" data-testid="cluster-peer-url-input" />
+          </label>
+          <label>
+            New node pairing token
+            <input id="clusterPeerTokenInput" type="password" autocomplete="off" placeholder="Paste the remote node token" data-testid="cluster-peer-token-input" />
+          </label>
+          <button class="ghost" type="button" id="clusterSaveButton" data-testid="cluster-save-button">Save and add node</button>
+        </section>
+
+        <section class="settings-panel" id="settingsPanel-projects" role="tabpanel" aria-labelledby="settingsTab-projects" tabindex="0" hidden>
+          <fieldset class="phase-settings">
+            <legend>Automatic mapping</legend>
+            <label>
+              Mapping root
+              <div class="folder-input-row">
+                <input id="settingsProjectRoot" autocomplete="off" placeholder="Choose a root to preserve relative paths" data-testid="settings-project-root-input" />
+                <button class="ghost" type="button" id="settingsProjectRootBrowseButton" data-testid="settings-project-root-browse-button">Browse</button>
+              </div>
+            </label>
+            <p>Projects below this root map to the same relative path on other nodes that also configure a root.</p>
+          </fieldset>
+          <fieldset class="phase-settings">
+            <legend>Syncthing</legend>
+            <label>Local API endpoint<input id="settingsSyncthingEndpoint" type="url" autocomplete="off" placeholder="http://127.0.0.1:8384" data-testid="settings-syncthing-endpoint-input" /></label>
+            <label>API key<input id="settingsSyncthingApiKey" type="password" autocomplete="new-password" placeholder="Leave blank to keep current key" data-testid="settings-syncthing-api-key-input" /></label>
+            <p id="settingsSyncthingApiKeyStatus"></p>
+          </fieldset>
+        </section>
+
+        <section class="settings-panel" id="settingsPanel-engines" role="tabpanel" aria-labelledby="settingsTab-engines" tabindex="0" hidden>
+          <fieldset class="phase-settings">
+            <legend>Pi</legend>
+            <label>Executable<input id="settingsPiExecutable" autocomplete="off" data-testid="settings-pi-executable-input" /></label>
+            <label>Config path<input id="settingsPiConfigPath" autocomplete="off" data-testid="settings-pi-config-input" /></label>
+            <label>Session path<input id="settingsPiSessionPath" autocomplete="off" data-testid="settings-pi-session-input" /></label>
+          </fieldset>
+          <fieldset class="phase-settings">
+            <legend>Claude</legend>
+            <label>Executable<input id="settingsClaudeExecutable" autocomplete="off" data-testid="settings-claude-executable-input" /></label>
+            <label>Config path<input id="settingsClaudeConfigPath" autocomplete="off" data-testid="settings-claude-config-input" /></label>
+            <label>Session path<input id="settingsClaudeSessionPath" autocomplete="off" data-testid="settings-claude-session-input" /></label>
+          </fieldset>
+        </section>
+
+        <p class="settings-restart-message" id="settingsRestartMessage" role="status" hidden></p>
+        <div class="dialog-actions">
+          <button class="ghost" type="button" id="cancelSettingsButton" data-testid="settings-cancel-button">Close</button>
+          <button class="primary" type="submit" data-testid="settings-save-button">Save settings</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="githubGroupDialog" data-testid="github-group-dialog">
+      <form method="dialog" class="dialog-card" id="githubGroupForm">
+        <div>
+          <span class="eyebrow">Node credentials</span>
+          <h2 id="githubGroupTitle">Add GitHub group</h2>
+          <p>Tokens stay on this node and are scoped to Git commands started for projects in this group.</p>
+        </div>
+        <label>
+          Group name
+          <input id="githubGroupLabelInput" name="label" autocomplete="off" required maxlength="64" placeholder="Personal" data-testid="github-group-label-input" />
+        </label>
+        <label>
+          Token <span class="credential-state" id="githubGroupTokenState"></span>
+          <input id="githubGroupTokenInput" name="token" type="password" autocomplete="off" placeholder="Leave blank to keep current token" data-testid="github-group-token-input" />
+        </label>
+        <label class="checkbox-row"><input id="githubGroupDefaultInput" type="checkbox" data-testid="github-group-default-input" /> Use as the default group</label>
+        <div class="dialog-actions">
+          <button class="ghost" type="button" id="cancelGithubGroupButton" data-testid="github-group-cancel-button">Cancel</button>
+          <button class="primary" type="submit" data-testid="github-group-save-button">Save group</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="projectImportDialog" data-testid="project-import-dialog">
+      <form method="dialog" class="dialog-card" id="projectImportForm">
+        <div>
+          <span class="eyebrow">Node mapping</span>
+          <h2 id="projectImportTitle">Map imported project</h2>
+          <p id="projectImportRemotePath" class="muted compact-copy"></p>
+        </div>
+        <label>
+          Local project folder on this node
+          <div class="folder-input-row">
+            <input id="projectImportPathInput" name="localPath" autocomplete="off" required data-testid="project-import-path-input" />
+            <button class="ghost" type="button" id="projectImportBrowseButton" data-testid="project-import-browse-button">Browse</button>
+          </div>
+        </label>
+        <section class="folder-browser" id="projectImportBrowser" aria-label="Folders on this node" hidden>
+          <div class="folder-browser-toolbar">
+            <button class="ghost compact" type="button" id="projectImportParentButton" data-testid="project-import-parent-button">Parent</button>
+            <code id="projectImportCurrentPath"></code>
+          </div>
+          <div class="folder-browser-list" id="projectImportDirectoryList"></div>
+          <button class="ghost" type="button" id="projectImportUseFolderButton" data-testid="project-import-use-folder-button">Use this folder</button>
+        </section>
+        <div class="dialog-actions">
+          <button class="ghost" type="button" id="cancelProjectImportButton" data-testid="project-import-cancel-button">Cancel</button>
+          <button class="ghost" type="button" id="skipProjectImportButton" data-testid="project-import-skip-button">Skip</button>
+          <button class="primary" value="default" type="submit" data-testid="project-import-save-button">Map and sync</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="folderPickerDialog" data-testid="folder-picker-dialog">
+      <div class="dialog-card">
+        <div>
+          <span class="eyebrow">Node filesystem</span>
+          <h2 id="folderPickerTitle">Choose folder</h2>
+          <p>Select a folder on the execution node.</p>
+        </div>
+        <section class="folder-browser" aria-label="Folders on node">
+          <div class="folder-browser-toolbar">
+            <button class="ghost compact" type="button" id="folderPickerParentButton" data-testid="folder-picker-parent-button">Parent</button>
+            <code id="folderPickerCurrentPath"></code>
+          </div>
+          <div class="folder-browser-list" id="folderPickerDirectoryList"></div>
+        </section>
+        <div class="dialog-actions">
+          <button class="ghost" type="button" id="folderPickerCancelButton" data-testid="folder-picker-cancel-button">Cancel</button>
+          <button class="primary" type="button" id="folderPickerUseButton" data-testid="folder-picker-use-button">Use this folder</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="sessionTransferDialog" data-testid="session-transfer-dialog">
+      <form method="dialog" class="dialog-card" id="sessionTransferForm">
+        <div>
+          <span class="eyebrow">Continue elsewhere</span>
+          <h2>Continue on another node</h2>
+          <p>Copies this Pi conversation to the destination and opens the new copy there. The source conversation remains available.</p>
+        </div>
+        <label>
+          Destination node
+          <select id="sessionTransferNodeSelect" required data-testid="session-transfer-node-select"></select>
+        </label>
+        <div class="dialog-actions">
+          <button class="ghost" type="button" id="cancelSessionTransferButton" data-testid="session-transfer-cancel-button">Cancel</button>
+          <button class="primary" type="submit" data-testid="session-transfer-submit-button">Continue there</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="modelDialog" data-testid="model-dialog">
+      <div class="dialog-card">
+        <div>
+          <span class="eyebrow">Session model</span>
+          <h2 id="modelDialogTitle">Choose model</h2>
+        </div>
+        <div class="model-dialog-list" id="modelDialogList"></div>
+        <label class="model-dialog-effort" id="modelDialogEffort" hidden>
+          Reasoning effort
+          <select id="claudeEffortSelect" class="effort-select" aria-label="Claude effort level" data-testid="chat-claude-effort-select">
+            <option value="default">Effort: default</option>
+            <option value="low">Effort: low</option>
+            <option value="medium">Effort: medium</option>
+            <option value="high">Effort: high</option>
+            <option value="xhigh">Effort: xhigh</option>
+            <option value="max">Effort: max</option>
+          </select>
+        </label>
+        <div class="dialog-actions">
+          <button class="ghost" type="button" id="closeModelDialogButton" data-testid="model-dialog-close-button">Close</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="renameDialog">
+      <form method="dialog" class="dialog-card" id="renameForm">
+        <div>
+          <span class="eyebrow">Session label</span>
+          <h2>Rename conversation</h2>
+          <p>The name syncs to your other nodes. Leave blank to restore the original title.</p>
+        </div>
+        <label>
+          Name
+          <input id="sessionNameInput" name="name" autocomplete="off" placeholder="Feature review" data-testid="rename-session-input" />
+        </label>
+        <div class="dialog-actions">
+          <button class="ghost" value="cancel" type="button" id="cancelRenameButton">Cancel</button>
+          <button class="primary" value="default" type="submit" data-testid="rename-session-save-button">Save name</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="projectGithubDialog">
+      <form method="dialog" class="dialog-card" id="projectGithubForm">
+        <div>
+          <span class="eyebrow">Project credential</span>
+          <h2 id="projectGithubTitle">GitHub access</h2>
+          <p>Pick the group whose token this project should use, or provide a token used only by this project.</p>
+        </div>
+        <label>
+          Credential group
+          <select id="projectGithubGroupInput" name="group" data-testid="project-github-group-input"></select>
+        </label>
+        <label>
+          Project token override <span class="credential-state" id="projectTokenState"></span>
+          <input id="projectGithubTokenInput" name="token" type="password" autocomplete="off" placeholder="Leave blank to keep current override" />
+        </label>
+        <label class="checkbox-row"><input id="clearProjectGithubTokenInput" type="checkbox" /> Remove project override</label>
+        <p class="muted compact-copy" id="projectGithubSummary"></p>
+        <div class="dialog-actions">
+          <button class="ghost" type="button" id="cancelProjectGithubButton">Cancel</button>
+          <button class="primary" type="submit">Save project access</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="projectDialog">
+      <form method="dialog" class="dialog-card" id="projectForm">
+        <div>
+          <span class="eyebrow">New workspace</span>
+          <h2>Add project folder</h2>
+          <p>Choose a local folder on this node. The folder is created if it does not exist.</p>
+        </div>
+        <label>
+          Project type
+          <select id="projectTypeInput" name="type" data-testid="project-form-type-select">
+            <option value="personal">Personal</option>
+            <option value="work">Work</option>
+          </select>
+        </label>
+        <label>
+          Project name
+          <input id="projectNameInput" name="name" autocomplete="off" placeholder="Home assistant plugins" required data-testid="project-form-name-input" />
+        </label>
+        <label>
+          Local project folder
+          <div class="folder-input-row">
+            <input id="projectBasePathInput" name="basePath" autocomplete="off" required data-testid="project-form-base-path-input" />
+            <button class="ghost" type="button" id="projectBrowseButton" data-testid="project-form-browse-button">Browse</button>
+          </div>
+        </label>
+        <label class="checkbox-row">
+          <input id="projectSyncedInput" name="synced" type="checkbox" />
+          Synchronize with cluster nodes
+        </label>
+        <input id="projectMacBasePathInput" name="legacyRemoteBasePath" type="hidden" value="" />
+        <p class="muted compact-copy">Creates AGENTS.md with sync instructions and adds the local folder to the auto-discovered Syncthing instance. Every other node chooses its own local path.</p>
+        <div class="dialog-actions">
+          <button class="ghost" value="cancel" type="button" id="cancelProjectButton">Cancel</button>
+          <button class="primary" value="default" type="submit" data-testid="project-form-save-button">Create project</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="projectRenameDialog">
+      <form method="dialog" class="dialog-card" id="projectRenameForm">
+        <div>
+          <span class="eyebrow">Project label</span>
+          <h2>Rename project</h2>
+          <p>The name syncs to your other nodes. The folder on disk is not renamed.</p>
+        </div>
+        <label>
+          Name
+          <input id="projectRenameInput" name="name" autocomplete="off" required data-testid="project-rename-input" />
+        </label>
+        <div class="dialog-actions">
+          <button class="ghost" value="cancel" type="button" id="cancelProjectRenameButton">Cancel</button>
+          <button class="primary" value="default" type="submit" data-testid="project-rename-save-button">Save name</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="projectPathDialog">
+      <form method="dialog" class="dialog-card" id="projectPathForm" data-testid="project-path-form">
+        <div>
+          <span class="eyebrow">Session discovery</span>
+          <h2 id="projectPathTitle">Project session paths</h2>
+          <p>Paths from paired nodes are learned automatically. This legacy field can add one older session location.</p>
+        </div>
+        <label>
+          Current node project path
+          <input id="projectHomeserverPathInput" name="homeserverPath" readonly data-testid="project-path-homeserver-input" />
+        </label>
+        <label>
+          Legacy additional project path
+          <input id="projectMacPathInput" name="macPath" autocomplete="off" placeholder="Optional absolute path from an older node" data-testid="project-path-mac-input" />
+        </label>
+        <div class="dialog-actions">
+          <button class="ghost" value="cancel" type="button" id="cancelProjectPathButton" data-testid="project-path-cancel-button">Cancel</button>
+          <button class="primary" value="default" type="submit" data-testid="project-path-save-button">Save mapping</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="taskDialog">
+      <form method="dialog" class="dialog-card" id="taskForm">
+        <div>
+          <span class="eyebrow">Kanban</span>
+          <h2 id="taskDialogTitle">New task</h2>
+        </div>
+        <label>
+          Title
+          <input id="taskTitleInput" name="title" autocomplete="off" placeholder="Fix login flow" required data-testid="task-form-title-input" />
+        </label>
+        <label>
+          Task description
+          <textarea id="taskDescriptionInput" name="description" rows="3" placeholder="Details, links, acceptance criteria..." required data-testid="task-form-description-input"></textarea>
+        </label>
+        <label>
+          Agent
+          <select id="taskEngineInput" name="engine" data-testid="task-form-engine-select">
+            <option value="pi">Pi</option>
+            <option value="claude">Claude</option>
+          </select>
+        </label>
+        <label class="checkbox-row">
+          <input id="taskPlanModeInput" name="planMode" type="checkbox" data-testid="task-form-plan-mode-input" />
+          Plan mode
+        </label>
+        <label class="checkbox-row">
+          <input id="taskReviewModeInput" name="reviewMode" type="checkbox" data-testid="task-form-review-mode-input" />
+          Review mode
+        </label>
+        <fieldset class="phase-settings">
+          <legend>Phase agents</legend>
+          <label>Planning<select id="taskPlanningModelInput" data-phase="planning"></select></label>
+          <label>Implementation<select id="taskImplementationModelInput" data-phase="in_progress"></select></label>
+          <label>Review<select id="taskReviewModelInput" data-phase="review"></select></label>
+        </fieldset>
+        <label>
+          Status
+          <select id="taskStatusInput" name="status" data-testid="task-form-status-select">
+            <option value="backlog">Backlog</option>
+            <option value="planning">Planning</option>
+            <option value="in_progress">In progress</option>
+            <option value="review">Review</option>
+            <option value="done">Done</option>
+          </select>
+        </label>
+        <p class="muted compact-copy">Plan mode adds a Planning phase. Use ▶ to get a plan, iterate in chat, then move to In progress to implement. Completed implementation moves to Review.</p>
+        <div class="dialog-actions">
+          <button class="ghost danger" value="cancel" type="button" id="deleteTaskButton" hidden data-testid="task-form-delete-button">Delete</button>
+          <button class="ghost" value="cancel" type="button" id="cancelTaskButton">Cancel</button>
+          <button class="primary" value="default" type="submit" data-testid="task-form-save-button">Save task</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
