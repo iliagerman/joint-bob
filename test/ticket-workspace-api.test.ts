@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -94,13 +94,40 @@ test("ticket API creates Git-free workspaces and removes them on archive and del
     });
     assert.equal(saved.status, 200, node.output());
 
+    const importSource = path.join(node.homeDir, "existing-project");
+    await mkdir(path.join(importSource, ".git"), { recursive: true });
+    await mkdir(path.join(importSource, "node_modules", "fixture"), { recursive: true });
+    await writeFile(path.join(importSource, ".git", "HEAD"), "ref: refs/heads/main\n");
+    await writeFile(path.join(importSource, "node_modules", "fixture", "index.js"), "export {};\n");
+    const imported = await fetch(`${node.baseUrl}/api/projects`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ name: "Imported", type: "work", synced: true, sourcePath: importSource, importMode: "move-link" }),
+    });
+    assert.equal(imported.status, 201, node.output());
+    const importedProject = (await imported.json() as { project: { path: string; macPath: string } }).project;
+    assert.equal(importedProject.path, path.join(homePath, "projects", "work", "Imported"));
+    assert.equal(importedProject.macPath, importSource);
+    assert.equal((await lstat(importSource)).isSymbolicLink(), true);
+    assert.equal(await realpath(importSource), await realpath(importedProject.path));
+    assert.equal(await readFile(path.join(importedProject.path, ".git", "HEAD"), "utf8"), "ref: refs/heads/main\n");
+    assert.equal(await readFile(path.join(importedProject.path, "node_modules", "fixture", "index.js"), "utf8"), "export {};\n");
+    assert.equal(await isMissing(path.join(importedProject.path, "AGENTS.md")), true);
+
     const created = await fetch(`${node.baseUrl}/api/projects`, {
       method: "POST",
       headers,
       body: JSON.stringify({ name: "No Git", type: "personal", synced: true }),
     });
     assert.equal(created.status, 201, node.output());
-    const project = (await created.json() as { project: { id: string } }).project;
+    const project = (await created.json() as { project: { id: string; path: string } }).project;
+    const duplicateImport = await fetch(`${node.baseUrl}/api/projects`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ name: "Duplicate", type: "personal", synced: true, sourcePath: project.path, importMode: "move" }),
+    });
+    assert.equal(duplicateImport.status, 409, node.output());
+    assert.equal((await lstat(project.path)).isDirectory(), true);
     const ignore = await readFile(path.join(homePath, ".gitignore"), "utf8");
     assert.match(ignore, /^\/projects\/$/m);
     assert.match(ignore, /^\/tickets\/$/m);

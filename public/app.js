@@ -196,8 +196,13 @@ const elements = {
   cancelProjectButton: document.querySelector("#cancelProjectButton"),
   projectTypeInput: document.querySelector("#projectTypeInput"),
   projectNameInput: document.querySelector("#projectNameInput"),
+  projectSourcePathInput: document.querySelector("#projectSourcePathInput"),
+  projectSourceBrowseButton: document.querySelector("#projectSourceBrowseButton"),
+  projectImportModeLabel: document.querySelector("#projectImportModeLabel"),
+  projectImportModeInput: document.querySelector("#projectImportModeInput"),
   projectBasePathInput: document.querySelector("#projectBasePathInput"),
   projectMacBasePathInput: document.querySelector("#projectMacBasePathInput"),
+  projectSaveButton: document.querySelector("#projectForm [data-testid='project-form-save-button']"),
   renameDialog: document.querySelector("#renameDialog"),
   renameForm: document.querySelector("#renameForm"),
   sessionNameInput: document.querySelector("#sessionNameInput"),
@@ -2585,6 +2590,12 @@ async function fillProjectBases() {
   elements.projectMacBasePathInput.value = "";
 }
 
+function updateProjectImportControls() {
+  const importing = Boolean(elements.projectSourcePathInput.value.trim());
+  elements.projectImportModeLabel.hidden = !importing;
+  elements.projectSaveButton.textContent = importing ? "Import project" : "Create project";
+}
+
 elements.githubSettingsButton.addEventListener("click", () => openSettings("github").catch((error) => toast(error.message)));
 elements.settingsButton.addEventListener("click", () => openSettings().catch((error) => toast(error.message)));
 for (const tab of elements.settingsTabs) {
@@ -2645,7 +2656,10 @@ elements.folderPickerParentButton.addEventListener("click", () => {
 });
 elements.folderPickerCancelButton.addEventListener("click", () => elements.folderPickerDialog.close());
 elements.folderPickerUseButton.addEventListener("click", () => {
-  if (state.folderPickerTarget && state.folderPickerPath) state.folderPickerTarget.value = state.folderPickerPath;
+  if (state.folderPickerTarget && state.folderPickerPath) {
+    state.folderPickerTarget.value = state.folderPickerPath;
+    state.folderPickerTarget.dispatchEvent(new Event("input", { bubbles: true }));
+  }
   elements.folderPickerDialog.close();
   state.folderPickerTarget?.focus();
 });
@@ -2740,10 +2754,13 @@ elements.projectGithubForm.addEventListener("submit", async (event) => {
 
 elements.newProjectButton.addEventListener("click", () => {
   elements.projectForm.reset();
+  updateProjectImportControls();
   elements.projectDialog.showModal();
   fillProjectBases().catch((error) => toast(error.message));
 });
 elements.projectTypeInput.addEventListener("change", () => fillProjectBases().catch((error) => toast(error.message)));
+elements.projectSourcePathInput.addEventListener("input", updateProjectImportControls);
+elements.projectSourceBrowseButton.addEventListener("click", () => openFolderPicker(elements.projectSourcePathInput, "Choose project folder to import").catch((error) => toast(error.message, 8000)));
 elements.projectNameInput.addEventListener("input", () => {
   if (!state.projectDefaultBase || elements.projectBasePathInput.value !== state.projectAutofilledPath) return;
   state.projectAutofilledPath = elements.projectNameInput.value.trim()
@@ -2756,12 +2773,14 @@ elements.projectForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
     const name = elements.projectNameInput.value.trim();
+    const sourcePath = elements.projectSourcePathInput.value.trim();
     const response = await api("/api/projects", {
       method: "POST",
       body: JSON.stringify({
         name,
         type: elements.projectTypeInput.value,
         synced: true,
+        ...(sourcePath ? { sourcePath, importMode: elements.projectImportModeInput.value } : {}),
       }),
     });
     elements.projectDialog.close();

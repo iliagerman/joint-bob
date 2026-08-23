@@ -42,5 +42,5 @@ test("settings tabs absorb notification, GitHub, and cluster configuration", asy
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.settings-tab/);
 
   // Installed PWA clients must not keep the old shell.
-  assert.match(serviceWorker, /joint-bob-v[2-9]\d*/);
+  assert.match(serviceWorker, /joint-bob-v(?:[2-9]|\d{2,})/);
 });

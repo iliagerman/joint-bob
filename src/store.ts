@@ -10,6 +10,7 @@ interface AddProjectOptions {
   macPath?: string;
   syncFolderId?: string;
   type?: ProjectType;
+  writeInstructions?: boolean;
 }
 
 interface ProjectRow {
@@ -411,7 +412,7 @@ export async function addProject(name: string, folderPath: string, options: AddP
     createdAt: now,
     updatedAt: now,
   };
-  if (options.synced) await writeProjectInstructions(project);
+  if (options.synced && options.writeInstructions !== false) await writeProjectInstructions(project);
   saveProject(db, project);
   return project;
 }

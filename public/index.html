@@ -486,7 +486,7 @@
         <div>
           <span class="eyebrow">New workspace</span>
           <h2>Add project folder</h2>
-          <p>The managed folder is created if it does not exist.</p>
+          <p>Create an empty managed folder or import an existing local project.</p>
         </div>
         <label>
           Project type
@@ -500,11 +500,26 @@
           <input id="projectNameInput" name="name" autocomplete="off" placeholder="Home assistant plugins" required data-testid="project-form-name-input" />
         </label>
         <label>
-          Local project folder
+          Existing project folder <span class="muted">(optional)</span>
+          <div class="folder-input-row">
+            <input id="projectSourcePathInput" name="sourcePath" autocomplete="off" placeholder="Select a folder to import" data-testid="project-form-source-path-input" />
+            <button class="ghost" type="button" id="projectSourceBrowseButton" data-testid="project-form-source-browse-button">Browse</button>
+          </div>
+        </label>
+        <label id="projectImportModeLabel" hidden>
+          Import action
+          <select id="projectImportModeInput" name="importMode" data-testid="project-form-import-mode-select">
+            <option value="move-link">Move into Joint Bob and leave a symlink</option>
+            <option value="move">Move into Joint Bob</option>
+            <option value="copy">Copy into Joint Bob</option>
+          </select>
+        </label>
+        <label>
+          Managed project folder
           <input id="projectBasePathInput" name="basePath" readonly aria-readonly="true" data-testid="project-form-base-path-input" />
         </label>
         <input id="projectMacBasePathInput" name="legacyRemoteBasePath" type="hidden" value="" />
-        <p class="muted compact-copy">This project synchronizes automatically using its per-project Syncthing folder. .git remains node-local and is ignored by Syncthing.</p>
+        <p class="muted compact-copy">Projects synchronize automatically. Local .git and node_modules contents stay on this node and are ignored by Syncthing.</p>
         <div class="dialog-actions">
           <button class="ghost" value="cancel" type="button" id="cancelProjectButton">Cancel</button>
           <button class="primary" value="default" type="submit" data-testid="project-form-save-button">Create project</button>

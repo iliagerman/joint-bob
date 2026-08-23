@@ -21,6 +21,16 @@ test("managed home project creation and imported mappings use node folder picker
   assert.match(app, /\/projects\//);
   assert.match(app, /projectTypeInput\.value/);
   assert.match(app, /synced:\s*true/);
+  assert.match(html, /data-testid="project-form-source-path-input"/);
+  assert.match(html, /data-testid="project-form-source-browse-button"/);
+  assert.match(html, /data-testid="project-form-import-mode-select"/);
+  assert.match(html, /value="move-link"/);
+  assert.match(html, /value="move"/);
+  assert.match(html, /value="copy"/);
+  assert.match(app, /sourcePath/);
+  assert.match(app, /importMode/);
+  assert.match(app, /projectSourceBrowseButton/);
+  assert.match(server, /importProjectDirectory/);
   assert.doesNotMatch(app, /api\("\/api\/projects",\s*\{[\s\S]{0,300}path:/);
   assert.match(app, /openFolderPicker/);
   assert.match(app, /\/api\/cluster\/projects\/discover/);

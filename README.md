@@ -54,7 +54,9 @@ On every node, choose **Settings → Projects → Joint Bob home folder**. New p
 <home>/tickets/<project-id>/<ticket-id>
 ```
 
-Existing projects are not moved automatically. Projects created through the UI synchronize automatically using existing per-project Syncthing folders. Joint Bob configures `<home>/tickets` as the Syncthing folder `joint-bob-ticket-workspaces` and shares it with paired cluster nodes. `.git` files, directories, and their contents are always node-local and excluded from every Syncthing-managed folder. Dependencies, build output, environment files, credentials, and logs are also excluded. GitHub credentials use encrypted cluster replication, never filesystem sync.
+Projects created through the UI synchronize automatically using per-project Syncthing folders. To import an existing project, select its source folder and choose **Move into Joint Bob and leave a symlink**, **Move into Joint Bob**, or **Copy into Joint Bob**. The first option preserves the original path as a directory symlink to the managed folder, so both paths access the same files.
+
+Joint Bob copies or moves the complete local folder, including `.git`, `node_modules`, and hidden files. `.git` and `node_modules` remain available on that node but are excluded at every depth from Syncthing. Build output, environment files, credentials, and logs are also excluded. Joint Bob configures `<home>/tickets` as the Syncthing folder `joint-bob-ticket-workspaces` and shares it with paired cluster nodes. GitHub credentials use encrypted cluster replication, never filesystem sync.
 
 Ticket agents work inside this synchronized workspace. Handoff waits until the destination reports the folder synchronized, then transfers task ownership without a Git bundle. Archiving moves the ticket to Done and removes its workspace. Deleting a ticket removes both its workspace and task record. Syncthing propagates workspace deletion to the other nodes.
 

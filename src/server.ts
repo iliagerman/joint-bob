@@ -35,6 +35,7 @@ import { listHarnesses, listHarnessSessions } from "./harnesses.js";
 import { authenticate, authenticationStatus, changePassword, clearSessionCookieValue, createAdministrator, listLoginSessions, revokeSession, revokeUserSession, sessionCookieValue, sessionForId, type AuthSession } from "./auth.js";
 import { getSettings, updateSettings } from "./settings.js";
 import { ensureManagedHome, managedHomePaths, managedProjectPath } from "./managed-home.js";
+import { importProjectDirectory, ProjectDirectoryImportError } from "./project-directory-import.js";
 import { listAuditEvents } from "./audit.js";
 import { getUserPreferences, updateUserPreferences } from "./preferences.js";
 import { markConversationReviewed, syncConversationReviewStates } from "./conversation-reviews.js";
@@ -144,9 +145,11 @@ const projectSchema = z.object({
   name: z.string().trim().min(1).max(80),
   type: z.enum(["personal", "work"]).optional().default("personal"),
   path: absolutePathSchema.optional(),
+  sourcePath: absolutePathSchema.optional(),
+  importMode: z.enum(["copy", "move", "move-link"]).optional().default("move-link"),
   synced: z.boolean().optional(),
   macPath: absolutePathSchema.optional(),
-});
+}).refine((payload) => !(payload.path && payload.sourcePath), "Project path and import source cannot both be set");
 const projectPathMappingSchema = z.object({
   macPath: absolutePathSchema,
 });
@@ -1600,9 +1603,26 @@ app.get("/api/projects/:projectId", async (request, response, next) => {
 app.post("/api/projects", async (request, response, next) => {
   try {
     const payload = projectSchema.parse(request.body);
-    const projectPath = payload.path ?? managedProjectPath(getSettings().projects.homePath, payload.type, payload.name);
-    if (!payload.path) await ensureManagedHome(getSettings().projects.homePath);
-    const project = await addProject(payload.name, projectPath, { synced: payload.synced, macPath: payload.macPath, type: payload.type });
+    const homePath = getSettings().projects.homePath;
+    const projectPath = payload.path ?? managedProjectPath(homePath, payload.type, payload.name);
+    if (!payload.path) await ensureManagedHome(homePath);
+    if (payload.sourcePath) {
+      const projects = await listProjects();
+      if (projects.some((project) => path.resolve(project.path) === path.resolve(projectPath))) {
+        throw new ProjectDirectoryImportError("Managed project folder is already registered");
+      }
+      const sourcePath = await mappedPathInsideHome(payload.sourcePath);
+      if (projects.some((project) => path.resolve(project.path) === sourcePath)) {
+        throw new ProjectDirectoryImportError("Source project folder is already registered");
+      }
+      await importProjectDirectory(sourcePath, projectPath, payload.importMode);
+    }
+    const project = await addProject(payload.name, projectPath, {
+      synced: payload.synced,
+      macPath: payload.macPath ?? payload.sourcePath,
+      type: payload.type,
+      writeInstructions: !payload.sourcePath,
+    });
     if (payload.synced && project.syncFolderId) {
       await ensureSyncthingFolder(project.syncFolderId, project.name, project.path);
     }
@@ -2150,7 +2170,7 @@ app.use((error: unknown, _request: Request, response: Response, _next: NextFunct
     return;
   }
   const message = error instanceof Error ? error.message : "Unexpected server error";
-  sendError(response, error instanceof TaskWorktreeError || error instanceof TaskWorkspaceError ? 409 : 500, message);
+  sendError(response, error instanceof TaskWorktreeError || error instanceof TaskWorkspaceError || error instanceof ProjectDirectoryImportError ? 409 : 500, message);
 });
 
 function send(socket: WebSocket, payload: unknown): void {
