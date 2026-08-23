@@ -71,6 +71,7 @@ async function waitForTask(node: NodeProcess, auth: Session, projectId: string, 
 class FakeSyncthing {
   readonly requests: Array<{ method: string; url: string }> = [];
   readonly folders: Array<{ id: string; label: string; path: string; type: string; devices: Array<{ deviceID: string }> }> = [];
+  readonly devices: Array<{ deviceID: string; name: string; addresses: string[] }> = [];
   statusSequence: SyncthingStatus[] = [];
   status: SyncthingStatus = { state: "idle", needTotalItems: 0, needBytes: 0 };
   server!: Server;
@@ -84,6 +85,8 @@ class FakeSyncthing {
       request.on("end", () => {
         response.setHeader("Content-Type", "application/json");
         if (request.method === "GET" && url === "/rest/config/folders") { response.end(JSON.stringify(this.folders)); return; }
+        if (request.method === "GET" && url === "/rest/config/devices") { response.end(JSON.stringify(this.devices)); return; }
+        if (request.method === "POST" && url === "/rest/config/devices") { this.devices.push(JSON.parse(body)); response.end("{}"); return; }
         if (request.method === "POST" && url === "/rest/config/folders") { this.folders.push(JSON.parse(body)); response.end("{}"); return; }
         if (request.method === "PUT" && url.startsWith("/rest/config/folders/")) {
           const folder = JSON.parse(body) as { id: string };

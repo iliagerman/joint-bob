@@ -111,21 +111,26 @@ test("rejects merge when ticket worktree has uncommitted changes", async () => {
   }
 });
 
-test("new tickets persist their isolated worktree metadata", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "pi-mobile-web-task-worktree-"));
+test("new tickets persist a synchronized workspace without a Git branch", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "pi-mobile-web-task-workspace-"));
   const dataDir = path.join(root, "data");
+  const ticketRoot = path.join(root, "tickets");
+  const previousTicketRoot = process.env.JOINT_BOB_TICKET_ROOT;
   process.env.PI_WEB_DATA_DIR = dataDir;
+  process.env.JOINT_BOB_TICKET_ROOT = ticketRoot;
   try {
     const repository = await createRepository(root);
     const { createTask } = await import("../src/tasks.js");
-    const task = await createTask("project-one", repository, "Persist worktree", "Test task", "backlog", "pi", false, false, {});
+    const task = await createTask("project-one", repository, "Persist workspace", "Test task", "backlog", "pi", false, false, {});
 
-    assert.match(task.worktreeBranch || "", /^pi-ticket\//);
-    assert.ok(task.worktreePath);
-    assert.equal(await git(task.worktreePath, "branch", "--show-current"), task.worktreeBranch);
+    assert.equal(task.worktreeBranch, null);
+    assert.equal(task.worktreePath, path.join(ticketRoot, "project-one", task.id));
+    assert.equal(await readFile(path.join(task.worktreePath!, "README.md"), "utf8"), "initial\n");
     assert.equal(task.mergedAt, null);
     await assert.rejects(access(path.join(dataDir, "tasks", "project-one.json")));
   } finally {
+    if (previousTicketRoot === undefined) delete process.env.JOINT_BOB_TICKET_ROOT;
+    else process.env.JOINT_BOB_TICKET_ROOT = previousTicketRoot;
     await rm(root, { recursive: true, force: true });
   }
 });

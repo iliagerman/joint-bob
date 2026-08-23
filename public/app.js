@@ -132,12 +132,8 @@ const elements = {
   settingsTabs: Array.from(document.querySelectorAll("[data-settings-tab]")),
   settingsPanels: Array.from(document.querySelectorAll(".settings-panel")),
   settingsRestartMessage: document.querySelector("#settingsRestartMessage"),
-  settingsProjectRoot: document.querySelector("#settingsProjectRoot"),
-  settingsProjectRootBrowseButton: document.querySelector("#settingsProjectRootBrowseButton"),
-  settingsPersonalProjectRoot: document.querySelector("#settingsPersonalProjectRoot"),
-  settingsPersonalProjectRootBrowseButton: document.querySelector("#settingsPersonalProjectRootBrowseButton"),
-  settingsWorkProjectRoot: document.querySelector("#settingsWorkProjectRoot"),
-  settingsWorkProjectRootBrowseButton: document.querySelector("#settingsWorkProjectRootBrowseButton"),
+  settingsProjectHome: document.querySelector("#settingsProjectHome"),
+  settingsProjectHomeBrowseButton: document.querySelector("#settingsProjectHomeBrowseButton"),
   settingsPiExecutable: document.querySelector("#settingsPiExecutable"),
   settingsPiConfigPath: document.querySelector("#settingsPiConfigPath"),
   settingsPiSessionPath: document.querySelector("#settingsPiSessionPath"),
@@ -201,8 +197,6 @@ const elements = {
   projectTypeInput: document.querySelector("#projectTypeInput"),
   projectNameInput: document.querySelector("#projectNameInput"),
   projectBasePathInput: document.querySelector("#projectBasePathInput"),
-  projectBrowseButton: document.querySelector("#projectBrowseButton"),
-  projectSyncedInput: document.querySelector("#projectSyncedInput"),
   projectMacBasePathInput: document.querySelector("#projectMacBasePathInput"),
   renameDialog: document.querySelector("#renameDialog"),
   renameForm: document.querySelector("#renameForm"),
@@ -494,9 +488,7 @@ async function openSettings(tab = "account") {
   renderLoginSessions(authSessions);
   elements.settingsRestartMessage.hidden = true;
   elements.settingsRestartMessage.textContent = "";
-  elements.settingsProjectRoot.value = settings.projects.rootPath;
-  elements.settingsPersonalProjectRoot.value = settings.projects.personalRootPath;
-  elements.settingsWorkProjectRoot.value = settings.projects.workRootPath;
+  elements.settingsProjectHome.value = settings.projects.homePath;
   elements.settingsPiExecutable.value = settings.pi.executable;
   elements.settingsPiConfigPath.value = settings.pi.configPath;
   elements.settingsPiSessionPath.value = settings.pi.sessionPath;
@@ -520,11 +512,7 @@ async function saveSettings(event) {
       pi: { executable: elements.settingsPiExecutable.value.trim(), configPath: elements.settingsPiConfigPath.value.trim(), sessionPath: elements.settingsPiSessionPath.value.trim() },
       claude: { executable: elements.settingsClaudeExecutable.value.trim(), configPath: elements.settingsClaudeConfigPath.value.trim(), sessionPath: elements.settingsClaudeSessionPath.value.trim() },
       syncthing: { endpoint: elements.settingsSyncthingEndpoint.value.trim(), ...(apiKey ? { apiKey } : {}) },
-      projects: {
-        rootPath: elements.settingsProjectRoot.value.trim(),
-        personalRootPath: elements.settingsPersonalProjectRoot.value.trim(),
-        workRootPath: elements.settingsWorkProjectRoot.value.trim(),
-      },
+      projects: { homePath: elements.settingsProjectHome.value.trim() },
     }),
   });
   const restartRequired = [
@@ -2223,7 +2211,7 @@ function renderBoardView() {
     },
     onMerge: mergeTask,
     onHandoff: handoffTask,
-    onArchive: (task) => moveTask(task, "done"),
+    onArchive: archiveTask,
     onDelete: deleteTaskFromCard,
     onSettings: openEditTaskDialog,
   });
@@ -2368,6 +2356,18 @@ async function handoffTask(task) {
     if (!selected.eligible) throw new Error(selected.reasons.join("; "));
     if (!confirm(`Handoff "${task.title}" to ${selected.node.name}?`)) return;
     await handoffTaskToPeer(task, selected.node);
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function archiveTask(task) {
+  if (!confirm(`Archive "${task.title}" and remove its synchronized workspace?`)) return;
+  try {
+    const body = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/tasks/${encodeURIComponent(task.id)}/archive`, { method: "POST" });
+    state.tasks = state.tasks.map((item) => item.id === task.id ? body.task : item);
+    renderBoardView();
+    toast(`Archived "${task.title}"`);
   } catch (error) {
     toast(error.message);
   }
@@ -2577,10 +2577,8 @@ function joinProjectPath(basePath, projectName) {
 
 async function fillProjectBases() {
   const settings = await api("/api/settings");
-  state.projectDefaultBase = elements.projectTypeInput.value === "work"
-    ? settings.projects.workRootPath
-    : settings.projects.personalRootPath;
-  state.projectAutofilledPath = elements.projectNameInput.value.trim() && state.projectDefaultBase
+  state.projectDefaultBase = `${settings.projects.homePath.replace(/\/+$/, "")}/projects/${elements.projectTypeInput.value}`;
+  state.projectAutofilledPath = elements.projectNameInput.value.trim()
     ? joinProjectPath(state.projectDefaultBase, elements.projectNameInput.value)
     : state.projectDefaultBase;
   elements.projectBasePathInput.value = state.projectAutofilledPath;
@@ -2651,10 +2649,7 @@ elements.folderPickerUseButton.addEventListener("click", () => {
   elements.folderPickerDialog.close();
   state.folderPickerTarget?.focus();
 });
-elements.settingsProjectRootBrowseButton.addEventListener("click", () => openFolderPicker(elements.settingsProjectRoot, "Choose automatic mapping root").catch((error) => toast(error.message, 8000)));
-elements.settingsPersonalProjectRootBrowseButton.addEventListener("click", () => openFolderPicker(elements.settingsPersonalProjectRoot, "Choose personal projects folder").catch((error) => toast(error.message, 8000)));
-elements.settingsWorkProjectRootBrowseButton.addEventListener("click", () => openFolderPicker(elements.settingsWorkProjectRoot, "Choose work projects folder").catch((error) => toast(error.message, 8000)));
-elements.projectBrowseButton.addEventListener("click", () => openFolderPicker(elements.projectBasePathInput, "Choose project base folder").catch((error) => toast(error.message, 8000)));
+elements.settingsProjectHomeBrowseButton.addEventListener("click", () => openFolderPicker(elements.settingsProjectHome, "Choose Joint Bob home folder").catch((error) => toast(error.message, 8000)));
 elements.projectImportBrowseButton.addEventListener("click", async () => {
   const pending = state.activeProjectImport;
   if (pending?.mapOnPeer) {
@@ -2766,8 +2761,7 @@ elements.projectForm.addEventListener("submit", async (event) => {
       body: JSON.stringify({
         name,
         type: elements.projectTypeInput.value,
-        path: elements.projectBasePathInput.value.trim(),
-        synced: elements.projectSyncedInput.checked,
+        synced: true,
       }),
     });
     elements.projectDialog.close();

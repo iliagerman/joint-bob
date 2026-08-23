@@ -212,7 +212,7 @@
         <div>
           <span class="eyebrow">Node configuration</span>
           <h2>Settings</h2>
-          <p>Paths and credentials are stored only in this node's encrypted SQLite state.</p>
+          <p>Paths are node-local. GitHub credentials replicate through authenticated cluster links, never Syncthing.</p>
         </div>
 
         <div class="settings-tabs" role="tablist" aria-label="Settings sections">
@@ -282,33 +282,15 @@
 
         <section class="settings-panel" id="settingsPanel-projects" role="tabpanel" aria-labelledby="settingsTab-projects" tabindex="0" hidden>
           <fieldset class="phase-settings">
-            <legend>Local project folders</legend>
+            <legend>Managed workspace</legend>
             <label>
-              Personal projects
+              Joint Bob home folder
               <div class="folder-input-row">
-                <input id="settingsPersonalProjectRoot" autocomplete="off" data-testid="settings-personal-project-root-input" />
-                <button class="ghost" type="button" id="settingsPersonalProjectRootBrowseButton" data-testid="settings-personal-project-root-browse-button">Browse</button>
+                <input id="settingsProjectHome" autocomplete="off" data-testid="settings-project-home-input" />
+                <button class="ghost" type="button" id="settingsProjectHomeBrowseButton" data-testid="settings-project-home-browse-button">Browse</button>
               </div>
             </label>
-            <label>
-              Work projects
-              <div class="folder-input-row">
-                <input id="settingsWorkProjectRoot" autocomplete="off" data-testid="settings-work-project-root-input" />
-                <button class="ghost" type="button" id="settingsWorkProjectRootBrowseButton" data-testid="settings-work-project-root-browse-button">Browse</button>
-              </div>
-            </label>
-            <p>New projects use the folder configured for their type on this node.</p>
-          </fieldset>
-          <fieldset class="phase-settings">
-            <legend>Automatic mapping</legend>
-            <label>
-              Mapping root
-              <div class="folder-input-row">
-                <input id="settingsProjectRoot" autocomplete="off" placeholder="Choose a root to preserve relative paths" data-testid="settings-project-root-input" />
-                <button class="ghost" type="button" id="settingsProjectRootBrowseButton" data-testid="settings-project-root-browse-button">Browse</button>
-              </div>
-            </label>
-            <p>Projects below this root map to the same relative path on other nodes that also configure a root.</p>
+            <p>New projects use &lt;home&gt;/projects/&lt;type&gt;/...; board cards use &lt;home&gt;/tickets/... Existing projects are not moved.</p>
           </fieldset>
           <fieldset class="phase-settings">
             <legend>Syncthing</legend>
@@ -346,7 +328,7 @@
         <div>
           <span class="eyebrow">Node credentials</span>
           <h2 id="githubGroupTitle">Add GitHub group</h2>
-          <p>Tokens stay on this node and are scoped to Git commands started for projects in this group.</p>
+          <p>Tokens replicate through authenticated cluster links and are injected only into agent sessions for projects in this group.</p>
         </div>
         <label>
           Group name
@@ -504,7 +486,7 @@
         <div>
           <span class="eyebrow">New workspace</span>
           <h2>Add project folder</h2>
-          <p>Choose a local folder on this node. The folder is created if it does not exist.</p>
+          <p>The managed folder is created if it does not exist.</p>
         </div>
         <label>
           Project type
@@ -519,17 +501,10 @@
         </label>
         <label>
           Local project folder
-          <div class="folder-input-row">
-            <input id="projectBasePathInput" name="basePath" autocomplete="off" required data-testid="project-form-base-path-input" />
-            <button class="ghost" type="button" id="projectBrowseButton" data-testid="project-form-browse-button">Browse</button>
-          </div>
-        </label>
-        <label class="checkbox-row">
-          <input id="projectSyncedInput" name="synced" type="checkbox" />
-          Synchronize with cluster nodes
+          <input id="projectBasePathInput" name="basePath" readonly aria-readonly="true" data-testid="project-form-base-path-input" />
         </label>
         <input id="projectMacBasePathInput" name="legacyRemoteBasePath" type="hidden" value="" />
-        <p class="muted compact-copy">Creates AGENTS.md with sync instructions and adds the local folder to the auto-discovered Syncthing instance. Every other node chooses its own local path.</p>
+        <p class="muted compact-copy">This project synchronizes automatically using its per-project Syncthing folder. .git remains node-local and is ignored by Syncthing.</p>
         <div class="dialog-actions">
           <button class="ghost" value="cancel" type="button" id="cancelProjectButton">Cancel</button>
           <button class="primary" value="default" type="submit" data-testid="project-form-save-button">Create project</button>

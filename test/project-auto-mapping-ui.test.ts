@@ -2,18 +2,26 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("project creation, project roots, and imported mappings use node folder pickers", async () => {
+test("managed home project creation and imported mappings use node folder pickers", async () => {
   const [html, app, server] = await Promise.all([
     readFile("public/index.html", "utf8"),
     readFile("public/app.js", "utf8"),
     readFile("src/server.ts", "utf8"),
   ]);
 
-  assert.match(html, /data-testid="project-form-browse-button"/);
-  assert.match(html, /data-testid="settings-project-root-input"/);
-  assert.match(html, /data-testid="settings-project-root-browse-button"/);
-  assert.match(html, /data-testid="settings-personal-project-root-input"/);
-  assert.match(html, /data-testid="settings-work-project-root-input"/);
+  assert.equal([...html.matchAll(/data-testid="settings-project-home-input"/g)].length, 1);
+  assert.equal([...html.matchAll(/data-testid="settings-project-home-browse-button"/g)].length, 1);
+  assert.doesNotMatch(html, /data-testid="settings-project-root-input"/);
+  assert.doesNotMatch(html, /data-testid="settings-project-root-browse-button"/);
+  assert.doesNotMatch(html, /data-testid="settings-personal-project-root-input"/);
+  assert.doesNotMatch(html, /data-testid="settings-personal-project-root-browse-button"/);
+  assert.doesNotMatch(html, /data-testid="settings-work-project-root-input"/);
+  assert.doesNotMatch(html, /data-testid="settings-work-project-root-browse-button"/);
+  assert.match(app, /settings\.projects\.homePath/);
+  assert.match(app, /\/projects\//);
+  assert.match(app, /projectTypeInput\.value/);
+  assert.match(app, /synced:\s*true/);
+  assert.doesNotMatch(app, /api\("\/api\/projects",\s*\{[\s\S]{0,300}path:/);
   assert.match(app, /openFolderPicker/);
   assert.match(app, /\/api\/cluster\/projects\/discover/);
   assert.match(app, /mapOnPeer/);

@@ -25,19 +25,21 @@ import {
   simplifyMessages,
 } from "./pi-service.js";
 import { deletePushSubscription, getVapidPublicKey, notifySessionFinished, savePushSubscription } from "./push.js";
-import { abortOutgoingTaskHandoff, abortPreparedTaskHandoff, acknowledgeIncomingTaskHandoff, acknowledgeOutgoingTaskHandoff, beginOutgoingTaskHandoff, claimTaskLease, commitPreparedTaskHandoff, completeTaskHandoff, completeTaskLease, createTask, deleteTask, getTaskHandoff, isTaskHandoffRejected, listTasks, listUnfinishedOutgoingTaskHandoffs, markOutgoingTaskHandoff, prepareTaskHandoff, rejectTaskHandoff, releaseTaskLease, reserveTaskHandoff, taskHandoffDeletion, updateTask, type TaskHandoffRecord } from "./tasks.js";
+import { abortOutgoingTaskHandoff, abortPreparedTaskHandoff, acknowledgeIncomingTaskHandoff, acknowledgeOutgoingTaskHandoff, assertTaskCanBeDeleted, beginOutgoingTaskHandoff, claimTaskLease, commitPreparedTaskHandoff, completeTaskHandoff, completeTaskLease, createTask, deleteTask, getTaskHandoff, isTaskHandoffRejected, listTasks, listUnfinishedOutgoingTaskHandoffs, markOutgoingTaskHandoff, prepareTaskHandoff, rejectTaskHandoff, releaseTaskLease, reserveTaskHandoff, taskHandoffDeletion, updateTask, type TaskHandoffRecord } from "./tasks.js";
 import { assertTaskWorktreeTransferable, exportTaskBranchBundle, mergeTaskWorktree, prepareTaskWorktreeFromBundle, removePreparedTaskWorktree, TaskWorktreeError, validateTaskRepository, type PreparedTaskWorktree } from "./worktrees.js";
-import { assertSyncthingFolderReady, ensureSyncthingFolder, reconcileSyncthingProjectFolders, syncthingDeviceId, syncthingFolderIdForPath, syncthingPathForFolderId } from "./syncthing.js";
+import { assertSyncthingFolderReady, ensureSyncthingDevice, ensureSyncthingFolder, ensureTicketWorkspaceFolder, reconcileSyncthingProjectFolders, syncthingDeviceId, syncthingFolderIdForPath, syncthingPathForFolderId } from "./syncthing.js";
+import { assertTaskWorkspaceReady, removeTaskWorkspace, taskWorkspaceKey, TaskWorkspaceError, TICKET_WORKSPACE_FOLDER_ID, ticketWorkspaceRoot } from "./task-workspaces.js";
 import { SessionWatcher } from "./watcher.js";
 import { buildHandoffContext, claudeSessionFilePath, loadClaudeMessages, runClaudePrompt, type ClaudeRunHandle } from "./claude-service.js";
 import { listHarnesses, listHarnessSessions } from "./harnesses.js";
 import { authenticate, authenticationStatus, changePassword, clearSessionCookieValue, createAdministrator, listLoginSessions, revokeSession, revokeUserSession, sessionCookieValue, sessionForId, type AuthSession } from "./auth.js";
 import { getSettings, updateSettings } from "./settings.js";
+import { ensureManagedHome, managedHomePaths, managedProjectPath } from "./managed-home.js";
 import { listAuditEvents } from "./audit.js";
 import { getUserPreferences, updateUserPreferences } from "./preferences.js";
 import { markConversationReviewed, syncConversationReviewStates } from "./conversation-reviews.js";
 import { resetSyncthingConnection } from "./syncthing.js";
-import type { ChatMessage, ProjectRecord, ProjectType, SessionStatus, TaskPhase, TaskPhaseConfig, TaskRecord } from "./types.js";
+import type { ChatMessage, ProjectRecord, SessionStatus, TaskPhase, TaskPhaseConfig, TaskRecord } from "./types.js";
 import { webSocketCloseReason } from "./websocket.js";
 
 type PiSessionHandle = Awaited<ReturnType<typeof createPiSession>>;
@@ -106,6 +108,7 @@ const machineRoutes = new Set([
   "POST /cluster/tasks/abort",
   "PATCH /cluster/tasks/update",
   "DELETE /cluster/tasks/delete",
+  "POST /cluster/tasks/archive",
   "POST /cluster/tasks/merge",
   "POST /cluster/tasks/handoff",
 ]);
@@ -130,6 +133,9 @@ let replicationFlushInProgress = false;
 let githubCredentialFlushInProgress = false;
 let membershipFlushInProgress = false;
 let taskHandoffReconciliationInProgress = false;
+let ticketWorkspaceSyncInProgress = false;
+let ticketWorkspaceSyncRetryAt = 0;
+const configuredTicketWorkspacePeers = new Set<string>();
 let startupReady = true;
 let startupError: Error | undefined;
 
@@ -137,7 +143,7 @@ const absolutePathSchema = z.string().trim().min(1).max(1000).refine(path.isAbso
 const projectSchema = z.object({
   name: z.string().trim().min(1).max(80),
   type: z.enum(["personal", "work"]).optional().default("personal"),
-  path: absolutePathSchema,
+  path: absolutePathSchema.optional(),
   synced: z.boolean().optional(),
   macPath: absolutePathSchema.optional(),
 });
@@ -177,6 +183,7 @@ const clusterProjectMapSchema = clusterProjectImportSchema.extend({
 const clusterSyncShareSchema = z.object({
   folderId: z.string().min(1).max(120),
   deviceId: z.string().min(1).max(120),
+  deviceName: z.string().trim().min(1).max(80).optional(),
 });
 const replicationEventSchema = z.object({
   id: z.string().uuid(),
@@ -317,7 +324,8 @@ const settingsSchema = z.object({
   claude: runtimeSettingsSchema,
   syncthing: z.object({ endpoint: z.string().max(500), apiKey: z.string().max(500).nullable().optional() }),
   projects: z.object({
-    rootPath: z.string().max(1000),
+    homePath: z.string().max(1000).optional(),
+    rootPath: z.string().max(1000).optional(),
     personalRootPath: z.string().max(1000).optional(),
     workRootPath: z.string().max(1000).optional(),
   }).optional(),
@@ -455,6 +463,16 @@ async function abortPeerTaskHandoff(peer: ClusterPeer, handoffId: string): Promi
   return false;
 }
 
+async function assertTaskFilesReady(project: ProjectRecord, task: TaskRecord): Promise<void> {
+  if (task.worktreePath && !task.worktreeBranch) {
+    await assertSyncthingFolderReady(TICKET_WORKSPACE_FOLDER_ID);
+    await assertTaskWorkspaceReady(taskWorkspaceKey(task.worktreePath, task.id), task.id);
+    return;
+  }
+  if (project.syncFolderId) await assertSyncthingFolderReady(project.syncFolderId);
+  if (task.worktreeBranch) await validateTaskRepository(project.path);
+}
+
 async function taskHandoffEligibility(projectId: string, task: TaskRecord): Promise<string[]> {
   const project = await getProject(projectId);
   if (!project) return ["Project is not mapped on this node"];
@@ -464,13 +482,8 @@ async function taskHandoffEligibility(projectId: string, task: TaskRecord): Prom
     return ["Mapped project path is not available on this node"];
   }
   const reasons = await runtimeAvailable(task.engine);
-  if (project.syncFolderId) {
-    try { await assertSyncthingFolderReady(project.syncFolderId); }
-    catch (error) { reasons.push(error instanceof Error ? error.message : "Syncthing folder is not synchronized on this node"); }
-  }
-  if (task.worktreeBranch) {
-    try { await validateTaskRepository(project.path); } catch (error) { reasons.push(error instanceof Error ? `Git repository is not ready: ${error.message}` : "Git repository is not ready"); }
-  }
+  try { await assertTaskFilesReady(project, task); }
+  catch (error) { reasons.push(error instanceof Error ? error.message : "Ticket files are not ready on this node"); }
   return reasons;
 }
 
@@ -515,10 +528,7 @@ async function importProjectsFromPeer(peer: ClusterPeer): Promise<ProjectImportR
       }
     }
     if (!existing && !localPath) {
-      const typedRoot = projectTypeRoot(remoteProject.type);
-      localPath = typedRoot
-        ? path.join(typedRoot, projectFolderName(remoteProject.name))
-        : relativeProjectPath(remoteProject.path, inventory.projectRoot, getSettings().projects.rootPath);
+      localPath = managedProjectPath(getSettings().projects.homePath, remoteProject.type ?? "personal", remoteProject.name);
     }
     if (!existing && !localPath) {
       pending.push({
@@ -527,7 +537,7 @@ async function importProjectsFromPeer(peer: ClusterPeer): Promise<ProjectImportR
         name: remoteProject.name,
         remotePath: remoteProject.path,
         ...(remoteProject.syncFolderId ? { syncFolderId: remoteProject.syncFolderId } : {}),
-        suggestedPath: path.join(projectTypeRoot(remoteProject.type) || getSettings().projects.rootPath || os.homedir(), projectFolderName(remoteProject.name)),
+        suggestedPath: managedProjectPath(getSettings().projects.homePath, remoteProject.type ?? "personal", remoteProject.name),
       });
       continue;
     }
@@ -545,20 +555,14 @@ function requirePathInsideHome(candidate: string, homeDirectory: string): void {
   if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("Folder must be inside this node's home directory");
 }
 
-function projectFolderName(name: string): string {
-  return name.trim().replace(/\s+/g, "_");
-}
-
-function projectTypeRoot(type: ProjectType | undefined): string {
-  const projects = getSettings().projects;
-  return type === "work" ? projects.workRootPath : projects.personalRootPath;
-}
-
-function relativeProjectPath(remotePath: string, remoteRoot: string | undefined, localRoot: string): string | undefined {
-  if (!remoteRoot || !localRoot) return undefined;
-  const relative = path.relative(remoteRoot, remotePath);
-  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return undefined;
-  return path.join(localRoot, relative);
+async function assertManagedHomeChangeAllowed(nextHomePath: string): Promise<void> {
+  const currentHomePath = getSettings().projects.homePath;
+  if (path.resolve(currentHomePath) === path.resolve(nextHomePath)) return;
+  for (const project of await listProjects()) {
+    if ((await listTasks(project.id)).some((task) => task.worktreePath && !task.worktreeBranch)) {
+      throw new TaskWorkspaceError("Archive or delete board cards before changing the Joint Bob home folder");
+    }
+  }
 }
 
 async function mappedPathInsideHome(candidate: string): Promise<string> {
@@ -584,13 +588,14 @@ async function mapProjectFromPeer(peer: ClusterPeer, inventory: PeerInventory, e
   const remoteProject = entry.project;
   const localPath = await mappedPathInsideHome(requestedPath);
   if (remoteProject.syncFolderId) {
+    if (inventory.syncDeviceId) await ensureSyncthingDevice(inventory.syncDeviceId, inventory.node.name);
     await ensureSyncthingFolder(remoteProject.syncFolderId, remoteProject.name, localPath, inventory.syncDeviceId);
     const localDeviceId = await syncthingDeviceId();
     if (localDeviceId) {
       const shareResponse = await fetch(`${peer.url}/api/cluster/sync/share`, {
         method: "POST",
         headers: { ...(peer.token ? { Authorization: `Bearer ${peer.token}` } : {}), "Content-Type": "application/json" },
-        body: JSON.stringify({ folderId: remoteProject.syncFolderId, deviceId: localDeviceId }),
+        body: JSON.stringify({ folderId: remoteProject.syncFolderId, deviceId: localDeviceId, deviceName: (await getClusterNode()).name }),
         signal: AbortSignal.timeout(10_000),
       });
       if (!shareResponse.ok) throw new Error(`Peer Syncthing share failed: ${shareResponse.status}`);
@@ -733,11 +738,17 @@ app.get("/api/settings", (_request, response) => {
   response.json(getSettings());
 });
 
-app.put("/api/settings", (request, response, next) => {
+app.put("/api/settings", async (request, response, next) => {
   try {
     const session = response.locals.authSession as AuthSession;
-    response.json(updateSettings(settingsSchema.parse(request.body), session.userId));
+    const payload = settingsSchema.parse(request.body);
+    const homePath = payload.projects?.homePath ?? getSettings().projects.homePath;
+    if (!homePath.trim() || !path.isAbsolute(homePath)) throw new Error("Joint Bob home folder must be absolute");
+    await assertManagedHomeChangeAllowed(homePath);
+    await ensureManagedHome(homePath);
+    const settings = updateSettings(payload, session.userId);
     resetSyncthingConnection();
+    response.json(settings);
   } catch (error) {
     if (error instanceof z.ZodError) {
       sendError(response, 400, error.errors.map((issue) => issue.message).join(", "));
@@ -745,9 +756,9 @@ app.put("/api/settings", (request, response, next) => {
     }
     if (error instanceof Error && (
       error.message === "Syncthing endpoint must use a loopback host" ||
+      error.message === "Joint Bob home folder must be absolute" ||
       /^(Pi|Claude) (config path|session path) must be blank or absolute$/.test(error.message) ||
-      /^(Pi|Claude) executable must be a command name or absolute path$/.test(error.message) ||
-      /^(Project root path|Personal project folder|Work project folder) must be blank or absolute$/.test(error.message)
+      /^(Pi|Claude) executable must be a command name or absolute path$/.test(error.message)
     )) {
       sendError(response, 400, error.message);
       return;
@@ -802,7 +813,7 @@ app.get("/api/cluster/local-inventory", async (_request, response, next) => {
       aliases: await projectAliasIds(project.id),
       tasks: await listTasks(project.id),
     })));
-    response.json({ node, syncDeviceId, syncError, projectRoot: getSettings().projects.rootPath || undefined, projects: inventory, generatedAt: new Date().toISOString() });
+    response.json({ node, syncDeviceId, syncError, projectRoot: managedHomePaths(getSettings().projects.homePath).projects, projects: inventory, generatedAt: new Date().toISOString() });
   } catch (error) {
     next(error);
   }
@@ -964,7 +975,7 @@ app.post("/api/cluster/tasks/prepare", async (request, response, next) => {
     const project = await getProject(payload.projectId);
     if (!project) throw new Error("Eligible project disappeared");
     const local = await getClusterNode();
-    if (project.syncFolderId) await assertSyncthingFolderReady(project.syncFolderId);
+    await assertTaskFilesReady(project, task);
     const reservation = await reserveTaskHandoff(payload.handoffId, project.id, payload.projectId, task, local.id, payload.handoffContext, payload.handoffVersion);
     if (reservation.status === "prepared" || reservation.status === "committed") {
       response.status(201).json({ task: (await listTasks(project.id)).find((candidate) => candidate.id === task.id) });
@@ -996,7 +1007,7 @@ app.post("/api/cluster/tasks/commit", async (request, response, next) => {
     if (!record) { sendError(response, 404, "Prepared handoff not found"); return; }
     const project = await getProject(record.projectId);
     if (!project) throw new Error("Prepared handoff project is not mapped on this node");
-    if (project.syncFolderId) await assertSyncthingFolderReady(project.syncFolderId);
+    await assertTaskFilesReady(project, record.task);
     const local = await getClusterNode();
     const task = await commitPreparedTaskHandoff(payload.handoffId, local.id);
     broadcastToProject(record.projectId, { type: "tasksChanged" });
@@ -1056,6 +1067,33 @@ async function mergeOwnedTask(project: ProjectRecord, task: TaskRecord): Promise
   return merged;
 }
 
+function assertTaskWorkspaceCanClose(task: TaskRecord): void {
+  assertTaskNotHandoffPending(task);
+  if (taskRunActive(task.id)) throw new TaskWorkspaceError("Wait for task agent to finish before closing its workspace");
+  assertTaskCanBeDeleted(task);
+}
+
+async function archiveOwnedTask(project: ProjectRecord, task: TaskRecord): Promise<TaskRecord> {
+  assertTaskWorkspaceCanClose(task);
+  const synchronizedWorkspace = !task.worktreeBranch;
+  const workspaceKey = task.worktreePath ? taskWorkspaceKey(task.worktreePath, task.id) : project.id;
+  const archived = await updateTask(project.id, task.id, {
+    status: "done",
+    ...(synchronizedWorkspace ? { worktreePath: null } : {}),
+  });
+  if (synchronizedWorkspace) await removeTaskWorkspace(workspaceKey, task.id);
+  broadcastToProject(project.id, { type: "tasksChanged" });
+  return archived;
+}
+
+async function deleteOwnedTask(project: ProjectRecord, task: TaskRecord): Promise<void> {
+  assertTaskWorkspaceCanClose(task);
+  const workspaceKey = task.worktreePath ? taskWorkspaceKey(task.worktreePath, task.id) : project.id;
+  await deleteTask(project.id, task.id);
+  if (!task.worktreeBranch) await removeTaskWorkspace(workspaceKey, task.id);
+  broadcastToProject(project.id, { type: "tasksChanged" });
+}
+
 type RemoteHandoffStatus = "pending" | "prepared" | "committed" | "aborted" | "missing";
 
 async function remoteHandoffStatus(record: TaskHandoffRecord, peer: ClusterPeer): Promise<RemoteHandoffStatus> {
@@ -1081,7 +1119,7 @@ async function commitOutgoingTaskHandoff(record: TaskHandoffRecord): Promise<Tas
   if (!peer) throw new Error("Peer not found");
   const project = await getProject(record.projectId);
   if (!project) throw new Error("Handoff project is not mapped on this node");
-  if (project.syncFolderId) await assertSyncthingFolderReady(project.syncFolderId);
+  await assertTaskFilesReady(project, record.task);
   const response = await fetch(`${peer.url}/api/cluster/tasks/commit`, { method: "POST", headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ handoffId: record.handoffId }), signal: AbortSignal.timeout(30_000) });
   if (!response.ok) throw new Error(`Peer handoff commit failed: ${response.status}`);
   const committed = z.object({ task: z.object({ id: z.string(), currentNodeId: z.string().uuid(), executionState: z.literal("idle") }).passthrough().nullable(), deleted: taskHandoffDeletionSchema.optional() }).parse(await response.json());
@@ -1108,13 +1146,13 @@ async function resumeRemotePendingHandoff(record: TaskHandoffRecord, peer: Clust
   if (!project) throw new Error("Handoff project is not mapped on this node");
   const task = record.task;
   let bundle: Awaited<ReturnType<typeof exportTaskBranchBundle>> | null = null;
-  if (task.worktreePath || task.worktreeBranch) {
-    if (!task.worktreePath || !task.worktreeBranch) throw new TaskWorktreeError("Task worktree metadata is incomplete.");
+  if (task.worktreeBranch) {
+    if (!task.worktreePath) throw new TaskWorktreeError("Task worktree metadata is incomplete.");
     await assertTaskWorktreeTransferable(project.path, task.worktreePath, task.worktreeBranch);
     bundle = await exportTaskBranchBundle(project.path, task.worktreePath, task.worktreeBranch);
   }
   const handoffContext = await taskHandoffContext(project, task);
-  if (project.syncFolderId) await assertSyncthingFolderReady(project.syncFolderId);
+  await assertTaskFilesReady(project, task);
   const response = await fetch(`${peer.url}/api/cluster/tasks/prepare`, { method: "POST", headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ projectId: record.projectId, task, handoffId: record.handoffId, handoffContext, handoffVersion: record.createdAt, bundle }), signal: AbortSignal.timeout(30_000) });
   if (!response.ok) return undefined;
   await markOutgoingTaskHandoff(record.handoffId, "prepared");
@@ -1176,7 +1214,7 @@ async function handoffOwnedTask(project: ProjectRecord, task: TaskRecord, peerId
   const eligibilityResult = z.object({ eligible: z.boolean(), reasons: z.array(z.string()) }).parse(await eligibility.json());
   if (!eligibilityResult.eligible) throw new TaskWorktreeError(eligibilityResult.reasons.join("; "));
   const previous = (await listUnfinishedOutgoingTaskHandoffs()).find((candidate) => candidate.projectId === project.id && candidate.taskId === task.id && candidate.destinationNodeId === peer.id);
-  if (project.syncFolderId) await assertSyncthingFolderReady(project.syncFolderId);
+  await assertTaskFilesReady(project, task);
   let outgoing = await beginOutgoingTaskHandoff(project.id, task, local.id, peer.id);
   let outgoingWasNew = !previous;
   if (previous?.status === "pending") {
@@ -1197,8 +1235,8 @@ async function handoffOwnedTask(project: ProjectRecord, task: TaskRecord, peerId
   let bundle: Awaited<ReturnType<typeof exportTaskBranchBundle>> | null;
   let handoffContext: string;
   try {
-    if (task.worktreePath || task.worktreeBranch) {
-      if (!task.worktreePath || !task.worktreeBranch) throw new TaskWorktreeError("Task worktree metadata is incomplete.");
+    if (task.worktreeBranch) {
+      if (!task.worktreePath) throw new TaskWorktreeError("Task worktree metadata is incomplete.");
       await assertTaskWorktreeTransferable(project.path, task.worktreePath, task.worktreeBranch);
     }
     bundle = task.worktreePath && task.worktreeBranch ? await exportTaskBranchBundle(project.path, task.worktreePath, task.worktreeBranch) : null;
@@ -1208,7 +1246,7 @@ async function handoffOwnedTask(project: ProjectRecord, task: TaskRecord, peerId
     throw error;
   }
   try {
-    if (project.syncFolderId) await assertSyncthingFolderReady(project.syncFolderId);
+    await assertTaskFilesReady(project, task);
     const prepared = await fetch(`${peer.url}/api/cluster/tasks/prepare`, { method: "POST", headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ projectId: project.id, task: outgoing.task, handoffId: outgoing.handoffId, handoffContext, handoffVersion: outgoing.createdAt, bundle }), signal: AbortSignal.timeout(30_000) });
     if (!prepared.ok) return pendingHandoffResponse((await listTasks(project.id)).find((candidate) => candidate.id === task.id) as TaskRecord, peer);
   } catch {
@@ -1259,12 +1297,27 @@ app.delete("/api/cluster/tasks/delete", async (request, response, next) => {
     if (!task) { sendError(response, 404, "Task not found"); return; }
     const local = await getClusterNode();
     if (task.currentNodeId !== local.id) { sendError(response, 409, "Task is not owned by this node"); return; }
-    assertTaskNotHandoffPending(task);
-    await deleteTask(project.id, task.id);
-    broadcastToProject(project.id, { type: "tasksChanged" });
+    await deleteOwnedTask(project, task);
     response.status(204).send();
   } catch (error) {
-    if (error instanceof Error && error.message === "Wait for task agent to finish before deleting") { sendError(response, 409, error.message); return; }
+    if (error instanceof TaskWorkspaceError || (error instanceof Error && error.message === "Wait for task agent to finish before deleting")) { sendError(response, 409, error.message); return; }
+    next(error);
+  }
+});
+
+app.post("/api/cluster/tasks/archive", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const payload = routedTaskSchema.parse(request.body);
+    const project = await getProject(payload.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    const task = (await listTasks(project.id)).find((candidate) => candidate.id === payload.taskId);
+    if (!task) { sendError(response, 404, "Task not found"); return; }
+    const local = await getClusterNode();
+    if (task.currentNodeId !== local.id) { sendError(response, 409, "Task is not owned by this node"); return; }
+    response.json({ task: await archiveOwnedTask(project, task) });
+  } catch (error) {
+    if (error instanceof TaskWorkspaceError || (error instanceof Error && error.message === "Wait for task agent to finish before deleting")) { sendError(response, 409, error.message); return; }
     next(error);
   }
 });
@@ -1375,11 +1428,14 @@ app.post("/api/cluster/peers/:peerId/projects/:projectId/map", async (request, r
 app.post("/api/cluster/sync/share", async (request, response, next) => {
   try {
     const payload = clusterSyncShareSchema.parse(request.body);
-    const folderPath = await syncthingPathForFolderId(payload.folderId);
-    if (!folderPath) {
-      sendError(response, 404, "Syncthing folder not found");
+    if (payload.folderId === TICKET_WORKSPACE_FOLDER_ID) {
+      await ensureTicketWorkspaceFolder(ticketWorkspaceRoot(), payload.deviceId, payload.deviceName);
+      response.json({ ok: true });
       return;
     }
+    const folderPath = await syncthingPathForFolderId(payload.folderId);
+    if (!folderPath) { sendError(response, 404, "Syncthing folder not found"); return; }
+    await ensureSyncthingDevice(payload.deviceId, payload.deviceName ?? payload.deviceId);
     await ensureSyncthingFolder(payload.folderId, payload.folderId, folderPath, payload.deviceId);
     response.json({ ok: true });
   } catch (error) {
@@ -1544,7 +1600,9 @@ app.get("/api/projects/:projectId", async (request, response, next) => {
 app.post("/api/projects", async (request, response, next) => {
   try {
     const payload = projectSchema.parse(request.body);
-    const project = await addProject(payload.name, payload.path, { synced: payload.synced, macPath: payload.macPath, type: payload.type });
+    const projectPath = payload.path ?? managedProjectPath(getSettings().projects.homePath, payload.type, payload.name);
+    if (!payload.path) await ensureManagedHome(getSettings().projects.homePath);
+    const project = await addProject(payload.name, projectPath, { synced: payload.synced, macPath: payload.macPath, type: payload.type });
     if (payload.synced && project.syncFolderId) {
       await ensureSyncthingFolder(project.syncFolderId, project.name, project.path);
     }
@@ -1916,6 +1974,7 @@ app.post("/api/projects/:projectId/tasks", async (request, response, next) => {
       return;
     }
     const payload = taskCreateSchema.parse(request.body);
+    await ensureTicketWorkspaceFolder();
     const engine = payload.engine ?? "pi";
     const planMode = payload.planMode === true;
     if (payload.status === "planning" && !planMode) {
@@ -1982,6 +2041,27 @@ app.post("/api/projects/:projectId/tasks/:taskId/handoff", async (request, respo
   }
 });
 
+app.post("/api/projects/:projectId/tasks/:taskId/archive", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    const task = (await listTasks(project.id)).find((candidate) => candidate.id === request.params.taskId);
+    if (!task) { sendError(response, 404, "Task not found"); return; }
+    const local = await getClusterNode();
+    const peer = await ownerPeer(task, local.id);
+    if (peer) {
+      const routed = await fetch(`${peer.url}/api/cluster/tasks/archive`, { method: "POST", headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ projectId: project.id, taskId: task.id }), signal: AbortSignal.timeout(30_000) });
+      await mirrorTaskResponse(response, routed);
+      return;
+    }
+    if (task.currentNodeId !== local.id) { sendError(response, 409, "Task owner is unavailable"); return; }
+    response.json({ task: await archiveOwnedTask(project, task) });
+  } catch (error) {
+    if (error instanceof TaskWorkspaceError || (error instanceof Error && error.message === "Wait for task agent to finish before deleting")) { sendError(response, 409, error.message); return; }
+    next(error);
+  }
+});
+
 app.post("/api/projects/:projectId/tasks/:taskId/merge", async (request, response, next) => {
   try {
     const project = await getProject(request.params.projectId);
@@ -2017,12 +2097,10 @@ app.delete("/api/projects/:projectId/tasks/:taskId", async (request, response, n
       return;
     }
     if (task.currentNodeId !== local.id) { sendError(response, 409, "Task owner is unavailable"); return; }
-    assertTaskNotHandoffPending(task);
-    await deleteTask(project.id, task.id);
-    broadcastToProject(project.id, { type: "tasksChanged" });
+    await deleteOwnedTask(project, task);
     response.status(204).send();
   } catch (error) {
-    if (error instanceof Error && error.message === "Wait for task agent to finish before deleting") { sendError(response, 409, error.message); return; }
+    if (error instanceof TaskWorkspaceError || (error instanceof Error && error.message === "Wait for task agent to finish before deleting")) { sendError(response, 409, error.message); return; }
     next(error);
   }
 });
@@ -2072,7 +2150,7 @@ app.use((error: unknown, _request: Request, response: Response, _next: NextFunct
     return;
   }
   const message = error instanceof Error ? error.message : "Unexpected server error";
-  sendError(response, error instanceof TaskWorktreeError ? 409 : 500, message);
+  sendError(response, error instanceof TaskWorktreeError || error instanceof TaskWorkspaceError ? 409 : 500, message);
 });
 
 function send(socket: WebSocket, payload: unknown): void {
@@ -2285,11 +2363,13 @@ async function taskHandoffContext(project: ProjectRecord, task: TaskRecord): Pro
 async function taskPromptText(project: ProjectRecord, task: TaskRecord, phase: TaskPhase, engine: ChatEngine): Promise<string> {
   const prompt = [task.title, task.description].filter(Boolean).join("\n\n");
   const instruction = phase === "planning" && task.planMode ? planInstructions : phase === "review" ? reviewInstructions : "";
-  const worktreeInstruction = task.worktreePath
-    ? `Ticket worktree: ${task.worktreePath}\nTicket branch: ${task.worktreeBranch}\nWork only in this worktree.${phase === "in_progress" ? " Before finishing, commit all ticket changes to this branch using a Conventional Commit message." : ""}`
-    : "";
+  const workspaceInstruction = !task.worktreePath
+    ? ""
+    : task.worktreeBranch
+      ? `Ticket Git worktree: ${task.worktreePath}\nTicket branch: ${task.worktreeBranch}\nWork only in this worktree.${phase === "in_progress" ? " Before finishing, commit all ticket changes to this branch using a Conventional Commit message." : ""}`
+      : `Ticket synchronized workspace: ${task.worktreePath}\nWork only in this workspace. Git is optional; Syncthing transfers these files between nodes.`;
   const handoff = phase === "planning" ? "" : task.handoffContext ?? await taskHandoffContext(project, task);
-  return [instruction, worktreeInstruction, handoff, prompt].filter(Boolean).join("\n\n");
+  return [instruction, workspaceInstruction, handoff, prompt].filter(Boolean).join("\n\n");
 }
 
 async function finishTaskPhase(project: ProjectRecord, task: TaskRecord, phase: TaskPhase, sessionPath: string | null, leaseToken: string): Promise<void> {
@@ -2998,6 +3078,49 @@ async function initializeStartupReadiness(): Promise<void> {
   }
 }
 
+async function configureTicketWorkspacePeer(peer: ClusterPeer, localDeviceId: string, localDeviceName: string): Promise<void> {
+  const inventory = await fetchPeerInventory(peer);
+  if (!inventory.syncDeviceId) throw new Error("Peer Syncthing device ID is unavailable");
+  await ensureTicketWorkspaceFolder(ticketWorkspaceRoot(), inventory.syncDeviceId, inventory.node.name);
+  const response = await fetch(`${peer.url}/api/cluster/sync/share`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ folderId: TICKET_WORKSPACE_FOLDER_ID, deviceId: localDeviceId, deviceName: localDeviceName }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) throw new Error(`Peer ticket workspace share failed: ${response.status}`);
+}
+
+async function reconcileTicketWorkspaceSync(): Promise<void> {
+  if (ticketWorkspaceSyncInProgress || Date.now() < ticketWorkspaceSyncRetryAt) return;
+  ticketWorkspaceSyncInProgress = true;
+  let failed = false;
+  try {
+    const peers = await listClusterPeers();
+    const localDeviceId = await syncthingDeviceId();
+    if (!localDeviceId) return;
+    await ensureTicketWorkspaceFolder();
+    if (!peers.length) return;
+    const localNode = await getClusterNode();
+    for (const peer of peers) {
+      if (configuredTicketWorkspacePeers.has(peer.id)) continue;
+      try {
+        await configureTicketWorkspacePeer(peer, localDeviceId, localNode.name);
+        configuredTicketWorkspacePeers.add(peer.id);
+      } catch (error) {
+        failed = true;
+        console.warn(`Ticket workspace sync to ${peer.id} failed`, error);
+      }
+    }
+  } catch (error) {
+    failed = true;
+    throw error;
+  } finally {
+    if (failed) ticketWorkspaceSyncRetryAt = Date.now() + 60_000;
+    ticketWorkspaceSyncInProgress = false;
+  }
+}
+
 async function flushMembershipOutbox(): Promise<void> {
   if (membershipFlushInProgress) return;
   membershipFlushInProgress = true;
@@ -3106,12 +3229,15 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const address = server.address();
     const listeningPort = typeof address === "object" && address ? address.port : port;
     console.log(`Joint Bob listening on http://0.0.0.0:${listeningPort}`);
-    initializeStartupReadiness();
+    initializeStartupReadiness()
+      .then(() => reconcileTicketWorkspaceSync())
+      .catch((error) => console.warn("Ticket workspace sync failed", error));
     flushMembershipOutbox().catch((error) => console.warn("Membership flush failed", error));
     flushReplicationOutbox().catch((error) => console.warn("Replication flush failed", error));
     flushGitHubCredentialOutbox().catch((error) => console.warn("GitHub credential flush failed", error));
     reconcileTaskHandoffs().catch((error) => console.warn("Task handoff reconciliation failed", error));
     setInterval(() => {
+      reconcileTicketWorkspaceSync().catch((error) => console.warn("Ticket workspace sync failed", error));
       flushMembershipOutbox().catch((error) => console.warn("Membership flush failed", error));
       flushReplicationOutbox().catch((error) => console.warn("Replication flush failed", error));
       flushGitHubCredentialOutbox().catch((error) => console.warn("GitHub credential flush failed", error));

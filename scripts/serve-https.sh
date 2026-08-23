@@ -11,7 +11,7 @@
 # Run this ON THE HOME SERVER, after the app is started (`npm run start`).
 #
 # Usage:
-#   ./scripts/serve-https.sh                         # app on 8790 -> HTTPS :8443
+#   ./scripts/serve-https.sh                         # installed app on 8787 -> HTTPS :8443
 #   PORT=9000 ./scripts/serve-https.sh               # custom app port
 #   HTTPS_PORT=443 ./scripts/serve-https.sh          # serve on 443 if it is free
 #
@@ -22,7 +22,7 @@
 #
 set -euo pipefail
 
-PORT="${PORT:-8790}"
+PORT="${PORT:-8787}"
 HTTPS_PORT="${HTTPS_PORT:-8443}"
 
 if ! command -v tailscale >/dev/null 2>&1; then

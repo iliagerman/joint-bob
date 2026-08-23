@@ -21,7 +21,7 @@ For private phone access, install Tailscale and run:
 ~/.local/share/joint-bob/app/scripts/serve-https.sh
 ```
 
-Add another node from **Settings → Nodes** using that node's private Tailscale URL and pairing token. Do not pair over public HTTP.
+Add another node from **Settings → Cluster** using that node's private Tailscale URL and pairing token. Do not pair over public HTTP.
 
 Joint Bob runs as `joint-bob.service` on Linux or `com.joint-bob.node` on macOS. Code lives in `~/.local/share/joint-bob/app`; state lives in `~/.joint-bob`.
 
@@ -34,16 +34,31 @@ The curl command downloads the latest GitHub release, verifies its SHA-256 check
 Install Joint Bob on the new machine, then:
 
 1. Open the new node and create its administrator.
-2. Open **Settings → Nodes** on the new node.
+2. Open **Settings → Cluster** on the new node.
 3. Set its name and private HTTPS URL, normally its Tailscale Serve URL.
 4. Copy the new node's pairing token.
-5. On an existing node, open **Settings → Nodes**.
+5. On an existing node, open **Settings → Cluster**.
 6. Enter the new node URL and token, then choose **Save and add node**.
-7. Configure **Settings → Projects → Automatic mapping root** on each node, or map imported projects when prompted.
+7. Select **Settings → Projects → Joint Bob home folder** on each node. New peer projects map automatically beneath that node's selected home; existing projects are not moved automatically.
 
 Pairing is two-sided automatically. One successful pairing exchanges membership and project inventory. Do not pair nodes over plain public HTTP because pairing tokens are machine credentials.
 
 A cluster supports five active nodes. Remove an old node before adding a sixth.
+
+## Managed projects and ticket workspaces
+
+On every node, choose **Settings → Projects → Joint Bob home folder**. New projects and board-card workspaces use that node's selected home:
+
+```text
+<home>/projects/<personal|work>/<project-name>
+<home>/tickets/<project-id>/<ticket-id>
+```
+
+Existing projects are not moved automatically. Projects created through the UI synchronize automatically using existing per-project Syncthing folders. Joint Bob configures `<home>/tickets` as the Syncthing folder `joint-bob-ticket-workspaces` and shares it with paired cluster nodes. `.git` files, directories, and their contents are always node-local and excluded from every Syncthing-managed folder. Dependencies, build output, environment files, credentials, and logs are also excluded. GitHub credentials use encrypted cluster replication, never filesystem sync.
+
+Ticket agents work inside this synchronized workspace. Handoff waits until the destination reports the folder synchronized, then transfers task ownership without a Git bundle. Archiving moves the ticket to Done and removes its workspace. Deleting a ticket removes both its workspace and task record. Syncthing propagates workspace deletion to the other nodes.
+
+Existing Git-backed tickets keep their worktree and merge behavior. New tickets have no branch and do not show **Merge to main**.
 
 ## Private HTTPS
 

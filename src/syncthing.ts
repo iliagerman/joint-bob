@@ -2,9 +2,12 @@ import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { getSettings, syncthingApiKey } from "./settings.js";
+import { TICKET_WORKSPACE_FOLDER_ID, TICKET_WORKSPACE_FOLDER_LABEL, ticketWorkspaceRoot } from "./task-workspaces.js";
 
 interface SyncthingDevice {
   deviceID: string;
+  name?: string;
+  addresses?: string[];
 }
 
 interface SyncthingFolder {
@@ -39,7 +42,9 @@ export interface SyncthingConnection {
 
 const projectIgnorePatterns = [
   ".git",
+  ".git/**",
   "**/.git",
+  "**/.git/**",
   "node_modules/",
   ".venv/",
   "venv/",
@@ -202,8 +207,24 @@ export async function assertSyncthingFolderReady(folderId: string): Promise<void
   }
 }
 
+export async function ensureSyncthingDevice(deviceId: string, name: string): Promise<void> {
+  if (!await connection()) throw new Error("Syncthing is not configured on this node");
+  const devices = await request<SyncthingDevice[]>("/rest/config/devices");
+  if (devices.some((device) => device.deviceID === deviceId)) return;
+  await request<void>("/rest/config/devices", {
+    method: "POST",
+    body: JSON.stringify({ deviceID: deviceId, name, addresses: ["dynamic"] }),
+  });
+}
+
+export async function ensureTicketWorkspaceFolder(folderPath = ticketWorkspaceRoot(), peerDeviceId?: string, peerName = peerDeviceId ?? ""): Promise<void> {
+  if (peerDeviceId) await ensureSyncthingDevice(peerDeviceId, peerName);
+  await ensureSyncthingFolder(TICKET_WORKSPACE_FOLDER_ID, TICKET_WORKSPACE_FOLDER_LABEL, folderPath, peerDeviceId);
+}
+
 export async function ensureSyncthingFolder(folderId: string, label: string, folderPath: string, peerDeviceId?: string): Promise<void> {
   if (!await connection()) throw new Error("Syncthing is not configured on this node");
+  const requestedPath = path.resolve(folderPath);
   const folders = await listSyncthingFolders();
   const existing = folders.find((folder) => folder.id === folderId);
   const localDeviceId = await syncthingDeviceId();
@@ -212,19 +233,20 @@ export async function ensureSyncthingFolder(folderId: string, label: string, fol
     localDeviceId,
     peerDeviceId,
   ].filter((deviceId): deviceId is string => Boolean(deviceId)))];
+  const pathChanged = Boolean(existing && path.resolve(existing.path) !== requestedPath);
   const folder = existing
-    ? { ...existing, devices: deviceIds.map((deviceID) => ({ deviceID })) }
+    ? { ...existing, path: requestedPath, devices: deviceIds.map((deviceID) => ({ deviceID })) }
     : {
         id: folderId,
         label,
-        path: path.resolve(folderPath),
+        path: requestedPath,
         type: "sendreceive",
         devices: deviceIds.map((deviceID) => ({ deviceID })),
         markerName: ".stfolder",
       };
   if (!existing) {
     await request<void>("/rest/config/folders", { method: "POST", body: JSON.stringify(folder) });
-  } else if (deviceIds.length !== existing.devices.length) {
+  } else if (pathChanged || deviceIds.length !== existing.devices.length) {
     await request<void>(`/rest/config/folders/${encodeURIComponent(folderId)}`, { method: "PUT", body: JSON.stringify(folder) });
   }
   await setProjectIgnores(folderId);

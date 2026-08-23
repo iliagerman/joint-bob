@@ -7,7 +7,8 @@ import { nanoid } from "nanoid";
 import { getClusterNode } from "./cluster.js";
 import { enqueueReplicationEvent, ensureReplicationSchema, ensureTaskSchema } from "./replication.js";
 import type { TaskEngine, TaskExecutionState, TaskPhaseConfig, TaskRecord, TaskStatus } from "./types.js";
-import { createTaskWorktree, type PreparedTaskWorktree } from "./worktrees.js";
+import { type PreparedTaskWorktree } from "./worktrees.js";
+import { createTaskWorkspace, expectedTaskWorkspacePath, removeTaskWorkspace, taskWorkspaceKey } from "./task-workspaces.js";
 import { appendAuditEvent, ensureAuditSchema } from "./audit.js";
 
 const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
@@ -88,8 +89,28 @@ async function taskRows(projectId: string): Promise<TaskRow[]> { await migrateLe
 export async function listTasks(projectId: string): Promise<TaskRecord[]> { return (await taskRows(projectId)).map(rowToTask); }
 function publishTask(db: DatabaseSync, projectId: string, task: TaskRecord): void { enqueueReplicationEvent(db, { originNodeId: task.originNodeId, entityType: "task", entityKey: `${projectId}:${task.id}`, operation: "upsert", payload: { projectId, task, originNodeId: task.originNodeId } }); }
 function saveTask(db: DatabaseSync, projectId: string, task: TaskRecord): void { db.prepare(`INSERT INTO tasks (id, project_id, title, description, status, engine, plan_mode, review_mode, phase_config, session_path, worktree_path, worktree_branch, merged_at, created_at, updated_at, current_node_id, lease_owner_node_id, lease_expires_at, lease_token, execution_state, handoff_context, origin_node_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET title=excluded.title, description=excluded.description, status=excluded.status, engine=excluded.engine, plan_mode=excluded.plan_mode, review_mode=excluded.review_mode, phase_config=excluded.phase_config, session_path=excluded.session_path, worktree_path=excluded.worktree_path, worktree_branch=excluded.worktree_branch, merged_at=excluded.merged_at, updated_at=excluded.updated_at, current_node_id=excluded.current_node_id, lease_owner_node_id=excluded.lease_owner_node_id, lease_expires_at=excluded.lease_expires_at, lease_token=CASE WHEN excluded.lease_owner_node_id IS NULL THEN NULL ELSE tasks.lease_token END, execution_state=excluded.execution_state, handoff_context=excluded.handoff_context, origin_node_id=excluded.origin_node_id`).run(task.id, projectId, task.title, task.description, task.status, task.engine, task.planMode ? 1 : 0, task.reviewMode ? 1 : 0, JSON.stringify(task.phaseConfig), task.sessionPath, task.worktreePath, task.worktreeBranch, task.mergedAt, task.createdAt, task.updatedAt, task.currentNodeId, task.leaseOwnerNodeId, task.leaseExpiresAt, task.executionState, task.handoffContext, task.originNodeId); }
-export async function createTask(projectId: string, projectPath: string, title: string, description: string, status: TaskStatus, engine: TaskEngine, planMode: boolean, reviewMode: boolean, phaseConfig: TaskRecord["phaseConfig"]): Promise<TaskRecord> { await migrateLegacyTasks(projectId); const worktree = await createTaskWorktree(projectPath, nanoid(10), title); const node = await getClusterNode(); const now = new Date().toISOString(); const task: TaskRecord = { id: path.basename(worktree.path), title, description, status, engine, planMode, reviewMode, phaseConfig, sessionPath: null, worktreePath: worktree.path, worktreeBranch: worktree.branch, mergedAt: null, currentNodeId: node.id, leaseOwnerNodeId: null, leaseExpiresAt: null, executionState: "idle", handoffContext: null, originNodeId: node.id, createdAt: now, updatedAt: now }; const db = await taskDatabase(); db.exec("BEGIN IMMEDIATE"); try { saveTask(db, projectId, task); publishTask(db, projectId, task); appendAuditEvent(db, { eventType: "task.created", actorType: "node", actorId: node.id, entityType: "task", entityId: task.id, details: { status: task.status, currentNodeId: task.currentNodeId } }); db.exec("COMMIT"); return task; } catch (error) { db.exec("ROLLBACK"); throw error; } }
-export interface TaskUpdate { title?: string; description?: string; status?: TaskStatus; engine?: TaskEngine; planMode?: boolean; reviewMode?: boolean; phaseConfig?: Partial<Record<"planning" | "in_progress" | "review", TaskPhaseConfig>>; sessionPath?: string | null; mergedAt?: string | null; }
+export async function createTask(projectId: string, projectPath: string, title: string, description: string, status: TaskStatus, engine: TaskEngine, planMode: boolean, reviewMode: boolean, phaseConfig: TaskRecord["phaseConfig"]): Promise<TaskRecord> {
+  await migrateLegacyTasks(projectId);
+  const taskId = nanoid(10);
+  const workspacePath = await createTaskWorkspace(projectPath, projectId, taskId);
+  const node = await getClusterNode();
+  const now = new Date().toISOString();
+  const task: TaskRecord = { id: taskId, title, description, status, engine, planMode, reviewMode, phaseConfig, sessionPath: null, worktreePath: workspacePath, worktreeBranch: null, mergedAt: null, currentNodeId: node.id, leaseOwnerNodeId: null, leaseExpiresAt: null, executionState: "idle", handoffContext: null, originNodeId: node.id, createdAt: now, updatedAt: now };
+  const db = await taskDatabase();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    saveTask(db, projectId, task);
+    publishTask(db, projectId, task);
+    appendAuditEvent(db, { eventType: "task.created", actorType: "node", actorId: node.id, entityType: "task", entityId: task.id, details: { status: task.status, currentNodeId: task.currentNodeId } });
+    db.exec("COMMIT");
+    return task;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    await removeTaskWorkspace(projectId, taskId);
+    throw error;
+  }
+}
+export interface TaskUpdate { title?: string; description?: string; status?: TaskStatus; engine?: TaskEngine; planMode?: boolean; reviewMode?: boolean; phaseConfig?: Partial<Record<"planning" | "in_progress" | "review", TaskPhaseConfig>>; sessionPath?: string | null; worktreePath?: string | null; mergedAt?: string | null; }
 export async function updateTask(projectId: string, taskId: string, update: TaskUpdate): Promise<TaskRecord> {
   await migrateLegacyTasks(projectId);
   const [node, db] = await Promise.all([getClusterNode(), taskDatabase()]);
@@ -352,7 +373,10 @@ export async function prepareTaskHandoff(handoffId: string, projectId: string, p
     if (!record || record.direction !== "incoming" || record.status !== "pending") throw new Error(`Handoff ${handoffId} is not pending`);
     const current = db.prepare("SELECT * FROM tasks WHERE project_id = ? AND id = ?").get(projectId, incomingTask.id) as unknown as TaskRow | undefined;
     assertIncomingTaskCanReplace(current, incomingTask, handoffVersion, handoffId);
-    const task: TaskRecord = { ...incomingTask, sessionPath: null, worktreePath: worktree?.path ?? null, worktreeBranch: worktree?.branch ?? null, leaseOwnerNodeId: null, leaseExpiresAt: null, executionState: "handoff_pending", handoffContext, originNodeId: incomingTask.originNodeId };
+    const synchronizedWorkspace = incomingTask.worktreePath && !incomingTask.worktreeBranch
+      ? expectedTaskWorkspacePath(taskWorkspaceKey(incomingTask.worktreePath, incomingTask.id), incomingTask.id)
+      : null;
+    const task: TaskRecord = { ...incomingTask, sessionPath: null, worktreePath: worktree?.path ?? synchronizedWorkspace, worktreeBranch: worktree?.branch ?? null, leaseOwnerNodeId: null, leaseExpiresAt: null, executionState: "handoff_pending", handoffContext, originNodeId: incomingTask.originNodeId };
     saveTask(db, projectId, task);
     db.prepare("UPDATE tasks SET active_handoff_id = ? WHERE project_id = ? AND id = ?").run(handoffId, projectId, task.id);
     const now = new Date().toISOString();

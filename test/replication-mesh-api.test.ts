@@ -92,7 +92,7 @@ async function pair(source: NodeProcess, auth: Session, target: NodeProcess, tok
   assert.equal(response.status, 201, `${source.output()}\n${target.output()}`);
 }
 
-async function saveProjectRoot(node: NodeProcess, auth: Session, rootPath: string): Promise<void> {
+async function saveProjectHome(node: NodeProcess, auth: Session, homePath: string): Promise<void> {
   const response = await fetch(`${node.baseUrl}/api/settings`, {
     method: "PUT",
     headers: auth.headers,
@@ -100,7 +100,7 @@ async function saveProjectRoot(node: NodeProcess, auth: Session, rootPath: strin
       pi: { executable: "", configPath: "", sessionPath: "" },
       claude: { executable: "", configPath: "", sessionPath: "" },
       syncthing: { endpoint: "" },
-      projects: { rootPath },
+      projects: { homePath },
     }),
   });
   assert.equal(response.status, 200, node.output());
@@ -117,7 +117,7 @@ async function waitForName(node: NodeProcess, auth: Session, projectId: string):
   throw new Error(`Project name did not replicate\n${node.output()}`);
 }
 
-test("configured project roots auto-map peer projects by relative path", { timeout: 120_000 }, async () => {
+test("managed homes auto-map peer projects by type and name", { timeout: 120_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "pi-mobile-web-auto-map-"));
   const nodes: NodeProcess[] = [];
   try {
@@ -127,15 +127,14 @@ test("configured project roots auto-map peer projects by relative path", { timeo
     await Promise.all([configure(source, sourceAuth, "Source"), configure(destination, destinationAuth, "Destination")]);
     await pair(source, sourceAuth, destination, await invite(destination, destinationAuth));
 
-    const sourceRoot = path.join(source.homeDir, "code");
-    const destinationRoot = path.join(destination.homeDir, "workspaces");
-    await Promise.all([mkdir(path.join(sourceRoot, "clients", "demo"), { recursive: true }), mkdir(destinationRoot, { recursive: true })]);
-    await Promise.all([saveProjectRoot(source, sourceAuth, sourceRoot), saveProjectRoot(destination, destinationAuth, destinationRoot)]);
+    const sourceHome = path.join(source.homeDir, "JointBob");
+    const destinationHome = path.join(destination.homeDir, "JointBob");
+    await Promise.all([saveProjectHome(source, sourceAuth, sourceHome), saveProjectHome(destination, destinationAuth, destinationHome)]);
 
     const created = await fetch(`${source.baseUrl}/api/projects`, {
       method: "POST",
       headers: sourceAuth.headers,
-      body: JSON.stringify({ name: "demo", path: path.join(sourceRoot, "clients", "demo") }),
+      body: JSON.stringify({ name: "demo", type: "personal" }),
     });
     assert.equal(created.status, 201, source.output());
     const projectId = (await created.json() as { project: { id: string } }).project.id;
@@ -147,7 +146,7 @@ test("configured project roots auto-map peer projects by relative path", { timeo
     assert.deepEqual(result.imported, ["demo"]);
 
     const projects = (await (await fetch(`${destination.baseUrl}/api/projects`, { headers: destinationAuth.headers })).json() as { projects: Array<{ id: string; path: string }> }).projects;
-    assert.equal(projects.find((project) => project.id === projectId)?.path, path.join(destinationRoot, "clients", "demo"));
+    assert.equal(projects.find((project) => project.id === projectId)?.path, path.join(destinationHome, "projects", "personal", "demo"));
 
     const destinationId = (await (await fetch(`${destination.baseUrl}/api/cluster/node`, { headers: destinationAuth.headers })).json() as { node: { id: string } }).node.id;
     const sessionNodes = await fetch(`${source.baseUrl}/api/projects/${projectId}/session-nodes`, { headers: sourceAuth.headers });
@@ -181,8 +180,12 @@ test("project name override converges across paired process-isolated nodes", { t
     await Promise.all([configure(a, aAuth, "A"), configure(b, bAuth, "B")]);
     await pair(a, aAuth, b, await invite(b, bAuth));
 
+    const aHome = path.join(a.homeDir, "JointBob");
+    const bHome = path.join(b.homeDir, "JointBob");
+    await Promise.all([saveProjectHome(a, aAuth, aHome), saveProjectHome(b, bAuth, bHome)]);
+
     const created = await fetch(`${a.baseUrl}/api/projects`, {
-      method: "POST", headers: aAuth.headers, body: JSON.stringify({ name: "shared", path: path.join(root, "a-project", "shared") }),
+      method: "POST", headers: aAuth.headers, body: JSON.stringify({ name: "shared", type: "personal" }),
     });
     assert.equal(created.status, 201, a.output());
     const project = (await created.json() as { project: { id: string } }).project;
@@ -194,14 +197,9 @@ test("project name override converges across paired process-isolated nodes", { t
       method: "POST", headers: bAuth.headers, body: JSON.stringify({ peerId: aId }),
     });
     assert.equal(imported.status, 200, b.output());
-    const pending = (await imported.json() as { pending: Array<{ projectId: string }> }).pending;
-    assert.equal(pending.length, 1);
-    assert.equal(pending[0].projectId, project.id);
-    const mapped = await fetch(`${b.baseUrl}/api/cluster/projects/map`, {
-      method: "POST", headers: bAuth.headers,
-      body: JSON.stringify({ peerId: aId, projectId: project.id, localPath: path.join(b.homeDir, "b-project", "different-local-folder") }),
-    });
-    assert.equal(mapped.status, 201, b.output());
+    const importedBody = await imported.json() as { imported: string[]; pending: unknown[] };
+    assert.deepEqual(importedBody.pending, []);
+    assert.deepEqual(importedBody.imported, ["shared"]);
 
     const renamed = await fetch(`${a.baseUrl}/api/projects/${project.id}`, {
       method: "PATCH", headers: aAuth.headers, body: JSON.stringify({ name: "Replicated name" }),

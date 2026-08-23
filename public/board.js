@@ -66,21 +66,21 @@ function taskCard(task, handlers) {
     openChat.addEventListener("click", () => handlers.onOpenChat(task));
     actions.append(openChat);
   }
-  const merge = document.createElement("button");
-  merge.type = "button";
-  merge.className = "ghost compact task-merge";
-  merge.textContent = task.mergedAt ? "Merged" : "Merge to main";
-  merge.setAttribute("data-testid", "board-task-merge-button");
-  merge.disabled = task.status !== "done" || !task.worktreePath || Boolean(task.mergedAt);
-  merge.title = task.mergedAt
-    ? "Ticket merged into main"
-    : !task.worktreePath
-      ? "Ticket has no isolated worktree"
+  if (task.worktreeBranch) {
+    const merge = document.createElement("button");
+    merge.type = "button";
+    merge.className = "ghost compact task-merge";
+    merge.textContent = task.mergedAt ? "Merged" : "Merge to main";
+    merge.setAttribute("data-testid", "board-task-merge-button");
+    merge.disabled = task.status !== "done" || !task.worktreePath || Boolean(task.mergedAt);
+    merge.title = task.mergedAt
+      ? "Ticket merged into main"
       : task.status !== "done"
         ? "Move ticket to Done before merging"
         : "Merge committed ticket changes into main";
-  merge.addEventListener("click", () => handlers.onMerge(task));
-  actions.append(merge);
+    merge.addEventListener("click", () => handlers.onMerge(task));
+    actions.append(merge);
+  }
 
   const handoff = document.createElement("button");
   handoff.type = "button";
@@ -103,6 +103,7 @@ function taskCard(task, handlers) {
     archive.className = "ghost compact task-archive";
     archive.textContent = "Archive";
     archive.setAttribute("data-testid", "board-task-archive-button");
+    archive.disabled = task.executionState === "running" || task.executionState === "handoff_pending";
     archive.addEventListener("click", () => handlers.onArchive(task));
     actions.append(archive);
   }

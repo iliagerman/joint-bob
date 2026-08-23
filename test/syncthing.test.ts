@@ -7,7 +7,9 @@ import test from "node:test";
 
 const managedIgnorePatterns = [
   ".git",
+  ".git/**",
   "**/.git",
+  "**/.git/**",
   "node_modules/",
   ".venv/",
   "venv/",
@@ -113,6 +115,47 @@ test("an existing Syncthing folder gains every newly paired node device", async 
   }
 });
 
+test("an existing Syncthing folder updates when its requested path changes", async () => {
+  const requests: Array<{ method: string; url: string; body: unknown }> = [];
+  await withSyncthingApi((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      requests.push({ method: request.method ?? "", url: request.url ?? "", body: body ? JSON.parse(body) : null });
+      response.setHeader("Content-Type", "application/json");
+      if (request.method === "GET" && request.url === "/rest/config/folders") {
+        response.end(JSON.stringify([{ id: "demo", label: "Demo", path: "/old/demo", type: "sendreceive", devices: [{ deviceID: "LOCAL" }] }]));
+        return;
+      }
+      if (request.method === "GET" && request.url === "/rest/system/status") {
+        response.end(JSON.stringify({ myID: "LOCAL" }));
+        return;
+      }
+      if (request.method === "GET" && request.url === "/rest/db/ignores?folder=demo") {
+        response.end(JSON.stringify({ ignore: [] }));
+        return;
+      }
+      if (request.method === "POST" && request.url === "/rest/db/ignores?folder=demo") {
+        response.end("{}");
+        return;
+      }
+      if (request.method === "PUT" && request.url === "/rest/config/folders/demo") {
+        response.end("{}");
+        return;
+      }
+      response.statusCode = 404;
+      response.end();
+    });
+  }, async (syncthing) => {
+    await syncthing.ensureSyncthingFolder("demo", "Demo", "/new/demo");
+  });
+
+  const update = requests.find((request) => request.method === "PUT" && request.url === "/rest/config/folders/demo");
+  assert.ok(update);
+  assert.equal((update.body as { path: string }).path, path.resolve("/new/demo"));
+  assert.deepEqual((update.body as { devices: Array<{ deviceID: string }> }).devices, [{ deviceID: "LOCAL" }]);
+});
+
 test("Syncthing treats a null ignore list as empty", async () => {
   let postedIgnore: string[] | undefined;
   await withSyncthingApi((request, response) => {
@@ -212,6 +255,41 @@ test("Syncthing folder readiness requires an idle folder with no outstanding dat
       else await assert.rejects(syncthing.assertSyncthingFolderReady("demo"), { message: "Syncthing folder is not synchronized on this node" });
     });
   }
+});
+
+test("ticket workspace folder uses one stable path and gains paired devices", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-ticket-sync-"));
+  const folders: Array<{ id: string; label: string; path: string; type: string; devices: Array<{ deviceID: string }> }> = [];
+  const devices: Array<{ deviceID: string; name: string; addresses: string[] }> = [];
+  await withSyncthingApi((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      response.setHeader("Content-Type", "application/json");
+      if (request.method === "GET" && request.url === "/rest/config/folders") { response.end(JSON.stringify(folders)); return; }
+      if (request.method === "GET" && request.url === "/rest/config/devices") { response.end(JSON.stringify(devices)); return; }
+      if (request.method === "POST" && request.url === "/rest/config/devices") { devices.push(JSON.parse(body)); response.end("{}"); return; }
+      if (request.method === "GET" && request.url === "/rest/system/status") { response.end(JSON.stringify({ myID: "LOCAL" })); return; }
+      if (request.method === "POST" && request.url === "/rest/config/folders") { folders.push(JSON.parse(body)); response.end("{}"); return; }
+      if (request.method === "PUT" && request.url === "/rest/config/folders/joint-bob-ticket-workspaces") { folders[0] = JSON.parse(body); response.end("{}"); return; }
+      if (request.method === "GET" && request.url === "/rest/db/ignores?folder=joint-bob-ticket-workspaces") { response.end(JSON.stringify({ ignore: [] })); return; }
+      if (request.method === "POST" && request.url === "/rest/db/ignores?folder=joint-bob-ticket-workspaces") { response.end("{}"); return; }
+      response.statusCode = 404;
+      response.end();
+    });
+  }, async (syncthing) => {
+    await syncthing.ensureTicketWorkspaceFolder(root, "NODE-A", "Node A");
+    await syncthing.ensureTicketWorkspaceFolder(root, "NODE-B", "Node B");
+  });
+  assert.equal(folders.length, 1);
+  assert.equal(folders[0].id, "joint-bob-ticket-workspaces");
+  assert.equal(folders[0].path, path.resolve(root));
+  assert.deepEqual(folders[0].devices, [{ deviceID: "LOCAL" }, { deviceID: "NODE-A" }, { deviceID: "NODE-B" }]);
+  assert.deepEqual(devices, [
+    { deviceID: "NODE-A", name: "Node A", addresses: ["dynamic"] },
+    { deviceID: "NODE-B", name: "Node B", addresses: ["dynamic"] },
+  ]);
+  await rm(root, { recursive: true, force: true });
 });
 
 test("reconciliation updates ignores for existing synced folders without recreating them", async () => {
