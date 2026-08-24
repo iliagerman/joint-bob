@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { Express } from "express";
 import os from "node:os";
@@ -15,6 +15,16 @@ async function listen(app: Express) {
     baseUrl: `http://127.0.0.1:${address.port}`,
     close: () => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
   };
+}
+
+async function isMissing(filePath: string): Promise<boolean> {
+  try {
+    await access(filePath);
+    return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw error;
+  }
 }
 
 function sessionCookie(response: Response): string {
@@ -90,12 +100,44 @@ test("project types are listed, created with a GitHub group, and drive managed p
       body: JSON.stringify({ name: "client site", type: "client-work" }),
     });
     assert.equal(project.status, 201);
-    const projectBody = await project.json() as { project: { path: string; type: string } };
+    const projectBody = await project.json() as { project: { id: string; path: string; type: string } };
     assert.equal(projectBody.project.type, "client-work");
     assert.equal(projectBody.project.path, path.join(homePath, "client-work", "client_site"));
 
     const inUse = await fetch(`${node.baseUrl}/api/project-types/client-work`, { method: "DELETE", headers: requestHeaders });
     assert.equal(inUse.status, 400);
+
+    await writeFile(path.join(projectBody.project.path, "content.txt"), "preserved\n");
+    const moved = await fetch(`${node.baseUrl}/api/projects/${projectBody.project.id}`, {
+      method: "PATCH",
+      headers: requestHeaders,
+      body: JSON.stringify({ type: "personal" }),
+    });
+    assert.equal(moved.status, 200);
+    const movedBody = await moved.json() as { project: { path: string; type: string } };
+    const personalPath = path.join(homePath, "personal", "client_site");
+    assert.equal(movedBody.project.type, "personal");
+    assert.equal(movedBody.project.path, personalPath);
+    assert.equal(await isMissing(projectBody.project.path), true);
+    assert.equal(await readFile(path.join(personalPath, "content.txt"), "utf8"), "preserved\n");
+
+    await mkdir(projectBody.project.path, { recursive: true });
+    await writeFile(path.join(projectBody.project.path, "marker.txt"), "occupied\n");
+    const occupied = await fetch(`${node.baseUrl}/api/projects/${projectBody.project.id}`, {
+      method: "PATCH",
+      headers: requestHeaders,
+      body: JSON.stringify({ type: "client-work" }),
+    });
+    assert.equal(occupied.status, 409);
+    assert.equal(await readFile(path.join(personalPath, "content.txt"), "utf8"), "preserved\n");
+    assert.equal(await readFile(path.join(projectBody.project.path, "marker.txt"), "utf8"), "occupied\n");
+
+    const unknown = await fetch(`${node.baseUrl}/api/projects/${projectBody.project.id}`, {
+      method: "PATCH",
+      headers: requestHeaders,
+      body: JSON.stringify({ type: "does-not-exist" }),
+    });
+    assert.equal(unknown.status, 400);
 
     const removed = await fetch(`${node.baseUrl}/api/project-types/work`, { method: "DELETE", headers: requestHeaders });
     assert.equal(removed.status, 204);

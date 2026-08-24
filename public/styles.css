@@ -441,6 +441,18 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
 .chat-badge-active { color: var(--live); background: color-mix(in srgb, var(--live) 12%, transparent); }
 .chat-badge-review { color: var(--amber); background: color-mix(in srgb, var(--amber) 13%, transparent); }
 .chat-badge-done { color: var(--muted); background: var(--field); }
+.project-sync-status, .session-agent-label {
+  display: inline-block;
+  margin-left: 5px;
+  font: 600 9.5px/1 var(--mono);
+  font-style: normal;
+  letter-spacing: 0.04em;
+}
+.project-sync-status-synced { color: var(--live); }
+.project-sync-status-syncing { color: var(--accent); }
+.project-sync-status-paused { color: var(--amber); }
+.project-sync-status-error { color: var(--danger); }
+.project-sync-status-unavailable, .session-agent-label { color: var(--muted); }
 .chat-status-dot { width: 6px; height: 6px; border-radius: 999px; background: currentColor; }
 .chat-badge-active .chat-status-dot { animation: dot-breathe 1.2s ease-in-out infinite; }
 

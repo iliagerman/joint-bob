@@ -7,12 +7,14 @@ import test from "node:test";
 test("project store persists and updates the paired Mac path", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "pi-mobile-web-project-store-"));
   process.env.PI_WEB_DATA_DIR = path.join(root, "data");
-  const { addProject, importProject, listProjects, updateProjectMacPath } = await import("../src/store.js");
+  const { addProject, importProject, listProjects, updateProjectMacPath, updateProjectTypeAndPath } = await import("../src/store.js");
 
   try {
     const project = await addProject("demo", path.join(root, "server", "demo"), {
       macPath: "/Users/example/Work/demo",
       type: "work",
+      synced: true,
+      syncFolderId: "demo-sync-folder",
     });
     assert.equal(project.macPath, "/Users/example/Work/demo");
     assert.equal(project.type, "work");
@@ -43,6 +45,24 @@ test("project store persists and updates the paired Mac path", async () => {
     assert.equal(imported.path, importedPath);
     assert.equal(imported.macPath, project.macPath);
     assert.equal(imported.type, "work");
+
+    await importProject({ ...project, path: project.path }, undefined, "node-a");
+    const relocatedPath = path.join(root, "server", "personal", "demo");
+    const relocated = await updateProjectTypeAndPath(project.id, "personal", relocatedPath);
+    assert.equal(relocated.id, project.id);
+    assert.equal(relocated.type, "personal");
+    assert.equal(relocated.path, path.resolve(relocatedPath));
+    assert.equal(relocated.macPath, duplicate.macPath);
+    assert.equal(relocated.syncFolderId, project.syncFolderId);
+    assert.deepEqual(relocated.locations, [{ nodeId: "node-a", path: path.resolve(relocatedPath) }]);
+
+    const listed = await listProjects();
+    const storedRelocated = listed.find((entry) => entry.id === project.id);
+    assert.equal(storedRelocated?.type, "personal");
+    assert.equal(storedRelocated?.path, path.resolve(relocatedPath));
+    assert.equal(storedRelocated?.macPath, duplicate.macPath);
+    assert.equal(storedRelocated?.syncFolderId, project.syncFolderId);
+    assert.deepEqual(storedRelocated?.locations, [{ nodeId: "node-a", path: path.resolve(relocatedPath) }]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

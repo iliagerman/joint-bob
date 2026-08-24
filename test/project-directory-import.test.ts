@@ -3,7 +3,7 @@ import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, stat, utimes, wri
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { importProjectDirectory, ProjectDirectoryImportError } from "../src/project-directory-import.js";
+import { importProjectDirectory, ProjectDirectoryImportError, relocateProjectDirectory } from "../src/project-directory-import.js";
 
 const projectModifiedAt = new Date("2026-01-02T03:04:05.000Z");
 
@@ -63,6 +63,44 @@ test("move-link import leaves the original path linked to the managed project", 
     await assertCompleteProject(destination);
     await writeFile(path.join(source, "through-link.txt"), "shared\n");
     assert.equal(await readFile(path.join(destination, "through-link.txt"), "utf8"), "shared\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("relocation preserves a move-link alias", async () => {
+  const { root, source } = await fixture();
+  try {
+    const workPath = path.join(root, "JointBob", "work", "demo");
+    const personalPath = path.join(root, "JointBob", "personal", "demo");
+    await importProjectDirectory(source, workPath, "move-link");
+    await relocateProjectDirectory(workPath, personalPath, source);
+    await assert.rejects(lstat(workPath), { code: "ENOENT" });
+    assert.equal((await lstat(source)).isSymbolicLink(), true);
+    assert.equal(await realpath(source), await realpath(personalPath));
+    await assertCompleteProject(personalPath);
+    await writeFile(path.join(source, "through-relocation-link.txt"), "shared\n");
+    assert.equal(await readFile(path.join(personalPath, "through-relocation-link.txt"), "utf8"), "shared\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("relocation refuses an occupied destination without changing its alias", async () => {
+  const { root, source } = await fixture();
+  try {
+    const workPath = path.join(root, "JointBob", "work", "demo");
+    const personalPath = path.join(root, "JointBob", "personal", "demo");
+    await importProjectDirectory(source, workPath, "move-link");
+    await mkdir(personalPath, { recursive: true });
+    await writeFile(path.join(personalPath, "marker.txt"), "occupied\n");
+    await assert.rejects(
+      relocateProjectDirectory(workPath, personalPath, source),
+      (error) => error instanceof ProjectDirectoryImportError && error.message === "Managed project folder already exists",
+    );
+    assert.equal(await realpath(source), await realpath(workPath));
+    await assertCompleteProject(workPath);
+    assert.equal(await readFile(path.join(personalPath, "marker.txt"), "utf8"), "occupied\n");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

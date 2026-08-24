@@ -11,7 +11,7 @@ import { promisify } from "node:util";
 import WebSocket, { WebSocketServer } from "ws";
 import { z } from "zod";
 import { projectNameOverrides, setProjectName, setSessionTitle } from "./names.js";
-import { addProject, deleteProjectType, getProject, importProject, listProjects, listProjectTypes, projectAliasIds, ProjectTypeError, registerProjectAliases, removeProject, renameProject, saveProjectType, touchProject, updateProjectMacPath, updateProjectSyncFolderId } from "./store.js";
+import { addProject, deleteProjectType, getProject, importProject, listProjects, listProjectTypes, projectAliasIds, ProjectTypeError, registerProjectAliases, removeProject, renameProject, saveProjectType, touchProject, updateProjectMacPath, updateProjectSyncFolderId, updateProjectTypeAndPath } from "./store.js";
 import { createClusterPeer, dueMembershipDeliveries, getClusterMachineToken, getClusterMembership, getClusterNode, getClusterPeer, listClusterPeers, markClusterPeerSeen, mergeClusterMembership, recordMembershipDelivered, recordMembershipFailure, removeClusterPeer, saveClusterPeer, updateClusterNode, type ClusterPeer } from "./cluster.js";
 import { eventsForPeer, receiveReplicationBatch, recordPeerFailure, recordPeerReceipt, type ReplicationBatch } from "./replication.js";
 import { deleteGitHubGroup, ensureGitHubCredentialMigration, getGitHubAuthStatus, gitHubEnvironment, githubCredentialEventsForPeer, receiveGitHubCredentialEvents, recordGitHubCredentialFailure, recordGitHubCredentialReceipt, removeProjectGitHubAuth, saveGitHubGroup, updateProjectGitHubAuth, type GitHubCredentialEvent } from "./github-auth.js";
@@ -27,20 +27,20 @@ import {
 import { deletePushSubscription, getVapidPublicKey, notifySessionFinished, savePushSubscription } from "./push.js";
 import { abortOutgoingTaskHandoff, abortPreparedTaskHandoff, acknowledgeIncomingTaskHandoff, acknowledgeOutgoingTaskHandoff, assertTaskCanBeDeleted, beginOutgoingTaskHandoff, claimTaskLease, commitPreparedTaskHandoff, completeTaskHandoff, completeTaskLease, createTask, deleteTask, getTaskHandoff, isTaskHandoffRejected, listTasks, listUnfinishedOutgoingTaskHandoffs, markOutgoingTaskHandoff, prepareTaskHandoff, rejectTaskHandoff, releaseTaskLease, reserveTaskHandoff, taskHandoffDeletion, updateTask, type TaskHandoffRecord } from "./tasks.js";
 import { assertTaskWorktreeTransferable, exportTaskBranchBundle, mergeTaskWorktree, prepareTaskWorktreeFromBundle, removePreparedTaskWorktree, TaskWorktreeError, validateTaskRepository, type PreparedTaskWorktree } from "./worktrees.js";
-import { assertSyncthingFolderReady, engineSyncFolders, ensureEngineSyncFolders, ensureSyncthingDevice, ensureSyncthingFolder, ensureTicketWorkspaceFolder, PI_ENGINE_SYNC_FOLDER_ID, reconcileSyncthingProjectFolders, syncthingDeviceId, syncthingFolderIdForPath, syncthingPathForFolderId } from "./syncthing.js";
+import { assertSyncthingFolderReady, engineSyncFolders, ensureEngineSyncFolders, ensureSyncthingDevice, ensureSyncthingFolder, ensureTicketWorkspaceFolder, PI_ENGINE_SYNC_FOLDER_ID, reconcileSyncthingProjectFolders, syncthingDeviceId, syncthingFolderIdForPath, syncthingFolderStatuses, syncthingPathForFolderId } from "./syncthing.js";
 import { assertTaskWorkspaceReady, removeTaskWorkspace, taskWorkspaceKey, TaskWorkspaceError, TICKET_WORKSPACE_FOLDER_ID, ticketWorkspaceRoot } from "./task-workspaces.js";
 import { SessionWatcher } from "./watcher.js";
 import { buildHandoffContext, claudeSessionFilePath, loadClaudeMessages, runClaudePrompt, type ClaudeRunHandle } from "./claude-service.js";
 import { listHarnesses, listHarnessSessions } from "./harnesses.js";
 import { authenticate, authenticationStatus, changePassword, clearSessionCookieValue, createAdministrator, listLoginSessions, revokeSession, revokeUserSession, sessionCookieValue, sessionForId, type AuthSession } from "./auth.js";
 import { getSettings, updateSettings } from "./settings.js";
-import { ensureManagedHome, managedProjectPath } from "./managed-home.js";
-import { importProjectDirectory, ProjectDirectoryImportError } from "./project-directory-import.js";
+import { ensureManagedHome, managedProjectPath, managedProjectRelocationPath } from "./managed-home.js";
+import { importProjectDirectory, ProjectDirectoryImportError, relocateProjectDirectory } from "./project-directory-import.js";
 import { listAuditEvents } from "./audit.js";
 import { getUserPreferences, updateUserPreferences } from "./preferences.js";
 import { markConversationReviewed, syncConversationReviewStates } from "./conversation-reviews.js";
 import { resetSyncthingConnection } from "./syncthing.js";
-import type { ChatMessage, ProjectRecord, SessionStatus, TaskPhase, TaskPhaseConfig, TaskRecord } from "./types.js";
+import type { ChatMessage, ProjectRecord, ProjectSyncStatus, ProjectView, SessionStatus, TaskPhase, TaskPhaseConfig, TaskRecord } from "./types.js";
 import { webSocketCloseReason } from "./websocket.js";
 
 type PiSessionHandle = Awaited<ReturnType<typeof createPiSession>>;
@@ -248,7 +248,10 @@ const taskPhaseConfigMapSchema = z.object({
   in_progress: taskPhaseConfigSchema.optional(),
   review: taskPhaseConfigSchema.optional(),
 }).optional();
-const projectRenameSchema = z.object({ name: z.string().trim().min(1).max(120) });
+const projectUpdateSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  type: z.string().trim().min(1).max(40).optional(),
+}).refine((payload) => payload.name !== undefined || payload.type !== undefined, "Provide a project name or type");
 const sessionTitleSchema = z.object({
   sessionPath: z.string().min(1),
   title: z.string().trim().max(200),
@@ -523,8 +526,12 @@ async function importProjectsFromPeer(peer: ClusterPeer): Promise<ProjectImportR
   const pending: ProjectImportResult["pending"] = [];
   for (const entry of inventory.projects) {
     const remoteProject = entry.project;
+    const localType = await localProjectTypeId(remoteProject.type);
     const existing = await getProject(remoteProject.id) ?? localProjects.find((project) => remoteProject.syncFolderId !== undefined && project.syncFolderId === remoteProject.syncFolderId);
     let localPath = existing?.path;
+    if (existing && existing.type !== localType) {
+      localPath = (await relocateProjectType(existing, localType)).path;
+    }
     if (!localPath && remoteProject.syncFolderId) {
       try {
         localPath = await syncthingPathForFolderId(remoteProject.syncFolderId);
@@ -533,7 +540,7 @@ async function importProjectsFromPeer(peer: ClusterPeer): Promise<ProjectImportR
       }
     }
     if (!existing && !localPath) {
-      localPath = managedProjectPath(getSettings().projects.homePath, await localProjectTypeId(remoteProject.type), remoteProject.name);
+      localPath = managedProjectPath(getSettings().projects.homePath, localType, remoteProject.name);
     }
     if (!existing && !localPath) {
       pending.push({
@@ -542,13 +549,13 @@ async function importProjectsFromPeer(peer: ClusterPeer): Promise<ProjectImportR
         name: remoteProject.name,
         remotePath: remoteProject.path,
         ...(remoteProject.syncFolderId ? { syncFolderId: remoteProject.syncFolderId } : {}),
-        suggestedPath: managedProjectPath(getSettings().projects.homePath, await localProjectTypeId(remoteProject.type), remoteProject.name),
+        suggestedPath: managedProjectPath(getSettings().projects.homePath, localType, remoteProject.name),
       });
       continue;
     }
     const importedProject = !existing && localPath
       ? await mapProjectFromPeer(peer, inventory, entry, localPath)
-      : await importProject({ ...remoteProject, type: await localProjectTypeId(remoteProject.type) }, localPath, inventory.node.id);
+      : await importProject({ ...remoteProject, type: localType }, localPath, inventory.node.id);
     await registerProjectAliases(importedProject.id, [remoteProject.id, ...(entry.aliases ?? [])]);
     imported.push(remoteProject.name);
   }
@@ -1588,9 +1595,87 @@ app.delete("/api/github-auth/groups/:groupId", async (request, response, next) =
   }
 });
 
-async function projectsWithSharedNames(): Promise<ProjectRecord[]> {
+function unavailableProjectStatus(): ProjectSyncStatus {
+  return { state: "unavailable", remainingFiles: 0, remainingBytes: 0, message: "No Syncthing folder is configured" };
+}
+
+async function projectsWithSharedNames(): Promise<ProjectView[]> {
   const [projects, overrides] = await Promise.all([listProjects(), projectNameOverrides()]);
-  return projects.map((project) => ({ ...project, name: overrides[project.id] ?? project.name }));
+  const statuses = await syncthingFolderStatuses(projects.flatMap((project) => project.syncFolderId ? [project.syncFolderId] : []));
+  return projects.map((project) => ({
+    ...project,
+    name: overrides[project.id] ?? project.name,
+    syncStatus: project.syncFolderId ? statuses[project.syncFolderId] ?? unavailableProjectStatus() : unavailableProjectStatus(),
+  }));
+}
+
+async function projectView(project: ProjectRecord): Promise<ProjectView> {
+  const views = await projectsWithSharedNames();
+  return views.find((view) => view.id === project.id)!;
+}
+
+async function assertProjectRelocationIdle(project: ProjectRecord): Promise<void> {
+  if ((await listTasks(project.id)).some((task) => task.executionState === "running")) {
+    throw new ProjectDirectoryImportError("Wait for this project's task to finish before changing its type");
+  }
+  for (const session of new Set(sharedSessions.values())) {
+    if (session.projectId === project.id && (session.clients.size || session.handle.session.isStreaming)) {
+      throw new ProjectDirectoryImportError("Close or finish this project's Pi conversations before changing its type");
+    }
+  }
+  if ([...claudeClients.values()].some((client) => client.project.id === project.id)) {
+    throw new ProjectDirectoryImportError("Close this project's Claude conversations before changing its type");
+  }
+  if ([...piTaskRuns.values()].some((run) => run.projectId === project.id) || [...claudeTaskRuns.values()].some((run) => run.projectId === project.id)) {
+    throw new ProjectDirectoryImportError("Wait for this project's task run to finish before changing its type");
+  }
+}
+
+async function relocateProjectType(project: ProjectRecord, nextType: string): Promise<ProjectRecord> {
+  const destination = managedProjectRelocationPath(getSettings().projects.homePath, project.type ?? "personal", project.path, nextType);
+  if (!destination || path.resolve(destination) === path.resolve(project.path)) return updateProjectTypeAndPath(project.id, nextType, project.path);
+  await assertProjectRelocationIdle(project);
+  let moved = false;
+  let syncthingAttempted = false;
+  try {
+    await relocateProjectDirectory(project.path, destination, project.macPath);
+    moved = true;
+    if (project.syncFolderId) {
+      syncthingAttempted = true;
+      await ensureSyncthingFolder(project.syncFolderId, project.name, destination);
+    }
+    const updated = await updateProjectTypeAndPath(project.id, nextType, destination);
+    sessionWatcher.ensureProject(updated);
+    return updated;
+  } catch (error) {
+    if (!moved) throw error;
+    const rollbackFailures: unknown[] = [];
+    try { await relocateProjectDirectory(destination, project.path, project.macPath); }
+    catch (rollbackError) { rollbackFailures.push(rollbackError); }
+    if (syncthingAttempted && project.syncFolderId) {
+      try { await ensureSyncthingFolder(project.syncFolderId, project.name, project.path); }
+      catch (rollbackError) { rollbackFailures.push(rollbackError); }
+    }
+    if (rollbackFailures.length) throw new AggregateError([error, ...rollbackFailures], "Project relocation rollback failed");
+    throw error;
+  }
+}
+
+async function notifyPeersOfProjectInventory(): Promise<void> {
+  const [local, peers] = await Promise.all([getClusterNode(), listClusterPeers()]);
+  await Promise.all(peers.map(async (peer) => {
+    try {
+      const response = await fetch(`${peer.url}/api/cluster/projects/import`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ peerId: local.id }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) throw new Error(`Peer returned ${response.status}`);
+    } catch (error) {
+      console.warn(`Project inventory notification to ${peer.id} failed`, error);
+    }
+  }));
 }
 
 const projectTypeSchema = z.object({
@@ -1642,7 +1727,7 @@ app.get("/api/projects/:projectId", async (request, response, next) => {
       sendError(response, 404, "Project not found");
       return;
     }
-    response.json({ project });
+    response.json({ project: await projectView(project) });
   } catch (error) {
     next(error);
   }
@@ -1680,7 +1765,7 @@ app.post("/api/projects", async (request, response, next) => {
       await ensureSyncthingFolder(project.syncFolderId, project.name, project.path);
     }
     sessionWatcher.ensureProject(project);
-    response.status(201).json({ project });
+    response.status(201).json({ project: await projectView(project) });
   } catch (error) {
     next(error);
   }
@@ -1739,10 +1824,19 @@ app.patch("/api/projects/:projectId", async (request, response, next) => {
       sendError(response, 404, "Project not found");
       return;
     }
-    const payload = projectRenameSchema.parse(request.body);
-    const project = await renameProject(existing.id, payload.name);
-    await setProjectName(project.id, payload.name);
-    response.json({ project });
+    const payload = projectUpdateSchema.parse(request.body);
+    if (payload.type && !(await listProjectTypes()).some((type) => type.id === payload.type)) {
+      throw new ProjectTypeError(`Unknown project type "${payload.type}"`);
+    }
+    let project = existing;
+    const typeChanged = Boolean(payload.type && payload.type !== existing.type);
+    if (typeChanged && payload.type) project = await relocateProjectType(project, payload.type);
+    if (payload.name !== undefined) {
+      project = await renameProject(project.id, payload.name);
+      await setProjectName(project.id, payload.name);
+    }
+    if (typeChanged) await notifyPeersOfProjectInventory();
+    response.json({ project: await projectView(project) });
   } catch (error) {
     next(error);
   }
@@ -1826,8 +1920,16 @@ app.get("/api/projects/:projectId/sessions", async (request, response, next) => 
     const listedSessions = sessions.map((session) => {
       const task = tasksBySessionPath.get(session.path);
       const shared = sharedSessions.get(sessionKey(task ? taskCwd(project, task) : project.path, session.path));
+      const config = task?.executionState === "running" ? taskConfig(task, taskPhase(task)) : undefined;
+      const agentLabel = config ? (config.engine === "pi" ? "Pi" : "Claude") : session.agentLabel;
+      const livePiModel = (!config || config.engine === "pi") && shared
+        ? getSessionStatus(shared.handle.session, shared.handle.safeguardsEnabled).model?.label
+        : undefined;
+      const agentModel = config?.modelId || livePiModel;
       return {
         ...session,
+        agentLabel,
+        ...(agentModel ? { agentModel } : {}),
         taskStatus: task?.status,
         taskId: task?.id,
         running: Boolean(shared?.handle.session.isStreaming || task?.executionState === "running"),

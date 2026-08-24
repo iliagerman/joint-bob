@@ -24,10 +24,12 @@ test("managed home project creation and imported mappings use node folder picker
   assert.match(html, /data-testid="project-form-source-path-input"/);
   assert.match(html, /data-testid="project-form-source-browse-button"/);
   assert.match(html, /id="projectImportModeInput"[^>]*required[^>]*data-testid="project-form-import-mode-select"/);
-  assert.match(html, /value="" selected disabled>Choose copy or move/);
-  assert.match(html, /value="move-link"/);
+  assert.match(html, /value="move-link" selected>Move into Joint Bob and leave a symlink/);
+  assert.doesNotMatch(html, /value="" selected disabled/);
   assert.match(html, /value="move"/);
   assert.match(html, /value="copy"/);
+  assert.match(html, /data-testid="project-edit-type-select"/);
+  assert.match(html, /<h2>Edit project<\/h2>[\s\S]*Managed projects move between group folders/);
   assert.match(app, /sourcePath/);
   assert.match(app, /importMode/);
   assert.match(app, /projectSourceBrowseButton/);
@@ -41,6 +43,11 @@ test("managed home project creation and imported mappings use node folder picker
   assert.doesNotMatch(app, /value === "work" \? "Work" : "Projects"/);
   assert.match(server, /\/api\/cluster\/peers\/:peerId\/filesystem\/directories/);
   assert.match(server, /\/api\/cluster\/peers\/:peerId\/projects\/:projectId\/map/);
+  assert.match(app, /project-sync-status/);
+  for (const label of ["Synced", "Syncing", "Paused", "Error", "Unavailable"]) assert.match(app, new RegExp(label));
+  assert.match(app, /refreshProjectsQuietly/);
+  assert.match(app, /10_000/);
+  assert.match(app, /if \(state\.authenticated\) startProjectSyncPolling\(\)/);
 });
 
 test("chat keeps node, harness, and session selectors visible", async () => {

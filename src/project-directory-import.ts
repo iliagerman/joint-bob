@@ -1,4 +1,4 @@
-import { chmod, cp, lstat, mkdir, rename, rm, symlink, utimes } from "node:fs/promises";
+import { chmod, cp, lstat, mkdir, realpath, rename, rm, symlink, utimes } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -61,7 +61,12 @@ async function moveDirectory(sourcePath: string, destinationPath: string): Promi
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
     await copyDirectory(sourcePath, destinationPath);
-    await rm(sourcePath, { recursive: true });
+    try {
+      await rm(sourcePath, { recursive: true });
+    } catch (removeError) {
+      await rm(destinationPath, { recursive: true, force: true });
+      throw removeError;
+    }
   }
 }
 
@@ -105,4 +110,40 @@ export async function importProjectDirectory(source: string, destination: string
     return;
   }
   await moveDirectoryWithLink(sourcePath, destinationPath);
+}
+
+async function aliasTargetsSource(aliasPath: string | undefined, sourcePath: string): Promise<boolean> {
+  if (!aliasPath) return false;
+  try {
+    if (!(await lstat(aliasPath)).isSymbolicLink()) return false;
+    return await realpath(aliasPath) === await realpath(sourcePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+/** Move a managed directory and preserve a proven move-link source alias. */
+export async function relocateProjectDirectory(source: string, destination: string, alias?: string): Promise<void> {
+  const sourcePath = path.resolve(source);
+  const destinationPath = path.resolve(destination);
+  const aliasPath = alias ? path.resolve(alias) : undefined;
+  await assertImportPaths(sourcePath, destinationPath);
+  const replaceAlias = await aliasTargetsSource(aliasPath, sourcePath);
+  await mkdir(path.dirname(destinationPath), { recursive: true });
+  await moveDirectory(sourcePath, destinationPath);
+  if (!replaceAlias || !aliasPath) return;
+  try {
+    await rm(aliasPath);
+    await symlink(destinationPath, aliasPath, "dir");
+  } catch (error) {
+    try {
+      await moveDirectory(destinationPath, sourcePath);
+      await rm(aliasPath, { force: true });
+      await symlink(sourcePath, aliasPath, "dir");
+    } catch (rollbackError) {
+      throw new AggregateError([error, rollbackError], "Project relocation alias rollback failed");
+    }
+    throw error;
+  }
 }

@@ -212,6 +212,7 @@ async function summarizeSession(sessionInfo: unknown): Promise<SessionSummary> {
     id: String(record.id ?? record.path ?? randomUUID()),
     path: sessionPath,
     harnessId: "pi",
+    agentLabel: "Pi",
     title: titleFromSession(record),
     createdAt: typeof record.created === "string" ? record.created : fileStat?.birthtime.toISOString(),
     updatedAt: typeof record.modified === "string" ? record.modified : fileStat?.mtime.toISOString(),

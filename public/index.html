@@ -522,8 +522,7 @@
         <label id="projectImportModeLabel" hidden>
           Import action
           <select id="projectImportModeInput" name="importMode" required data-testid="project-form-import-mode-select">
-            <option value="" selected disabled>Choose copy or move…</option>
-            <option value="move-link">Move into Joint Bob and leave a symlink</option>
+            <option value="move-link" selected>Move into Joint Bob and leave a symlink</option>
             <option value="move">Move into Joint Bob</option>
             <option value="copy">Copy into Joint Bob</option>
           </select>
@@ -544,17 +543,21 @@
     <dialog id="projectRenameDialog">
       <form method="dialog" class="dialog-card" id="projectRenameForm">
         <div>
-          <span class="eyebrow">Project label</span>
-          <h2>Rename project</h2>
-          <p>The name syncs to your other nodes. The folder on disk is not renamed.</p>
+          <span class="eyebrow">Project settings</span>
+          <h2>Edit project</h2>
+          <p>Managed projects move between group folders. External paths stay in place.</p>
         </div>
         <label>
           Name
           <input id="projectRenameInput" name="name" autocomplete="off" required data-testid="project-rename-input" />
         </label>
+        <label>
+          Project type
+          <select id="projectGroupInput" name="type" data-testid="project-edit-type-select"></select>
+        </label>
         <div class="dialog-actions">
           <button class="ghost" value="cancel" type="button" id="cancelProjectRenameButton">Cancel</button>
-          <button class="primary" value="default" type="submit" data-testid="project-rename-save-button">Save name</button>
+          <button class="primary" value="default" type="submit" data-testid="project-rename-save-button">Save project</button>
         </div>
       </form>
     </dialog>

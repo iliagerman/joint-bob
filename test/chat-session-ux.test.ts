@@ -29,6 +29,10 @@ test("chat names its controls and exposes conversation transfer", async () => {
   assert.match(app, /transferSessionPath/);
   assert.match(app, /state\.activeTaskId = session\.taskId \|\| null/);
   assert.match(app, /openSession\(session\.path, shortSessionTitle\(session\), false, Boolean\(state\.activeTaskId\)\)/);
+  assert.match(app, /dataset\.testid = "session-agent-label"/);
+  assert.match(app, /session\.agentLabel/);
+  assert.match(app, /session\.agentModel/);
   assert.match(server, /POST \/cluster\/sessions\/transfer/);
+  assert.match(server, /\(!config \|\| config\.engine === "pi"\) && shared/);
   assert.match(server, /sourceNodeId/);
 });

@@ -25,8 +25,11 @@ test("the projects list is grouped by type and each group collapses", async () =
 
   assert.match(styles, /\.project-group-summary \{/);
   assert.match(styles, /\.project-group\[open\] > \.project-group-summary::before/);
+  for (const selector of [".message-content.md", ".task-card", ".settings-tabs", ".reconnect-banner", ".folder-browser", ".project-sync-status", ".session-agent-label"]) {
+    assert.ok(styles.includes(selector));
+  }
 
-  assert.match(serviceWorker, /joint-bob-v(?:[2-9]|\d{2,})/);
+  assert.match(serviceWorker, /joint-bob-v19/);
 });
 
 test("the app holds a boot screen until the first load settles", async () => {

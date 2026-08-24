@@ -86,6 +86,7 @@ export async function listClaudeSessions(project: SessionProjectPaths): Promise<
       id: `claude:${path.basename(filePath)}`,
       path: `claude:${filePath}`,
       harnessId: "claude",
+      agentLabel: "Claude",
       title: `[Claude] ${title}`,
       createdAt: fileStat.birthtime.toISOString(),
       updatedAt: fileStat.mtime.toISOString(),

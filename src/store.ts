@@ -560,6 +560,26 @@ export async function renameProject(projectId: string, name: string): Promise<Pr
   return project;
 }
 
+export async function updateProjectTypeAndPath(projectId: string, type: ProjectType, folderPath: string): Promise<ProjectRecord> {
+  const db = await projectDatabase();
+  const canonicalId = resolveProjectId(db, projectId);
+  if (!canonicalId) throw new Error("Project not found");
+  const row = db.prepare("SELECT * FROM projects WHERE id = ?").get(canonicalId) as unknown as ProjectRow;
+  const project = rowToProject(db, row);
+  const nextPath = path.resolve(folderPath);
+  const updatedAt = new Date().toISOString();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare("UPDATE projects SET project_type = ?, path = ?, updated_at = ? WHERE id = ?").run(type, nextPath, updatedAt, canonicalId);
+    db.prepare("UPDATE project_locations SET path = ? WHERE project_id = ? AND path = ?").run(nextPath, canonicalId, project.path);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  return (await getProject(canonicalId))!;
+}
+
 export async function updateProjectMacPath(projectId: string, macPath: string): Promise<ProjectRecord> {
   const project = await getProject(projectId);
   if (!project) throw new Error("Project not found");

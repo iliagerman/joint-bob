@@ -230,6 +230,59 @@ async function withSyncthingApi(handler: Parameters<typeof createServer>[0], run
   }
 }
 
+test("Syncthing folder statuses report every project sync state", async () => {
+  await withSyncthingApi((request, response) => {
+    response.setHeader("Content-Type", "application/json");
+    if (request.method === "GET" && request.url === "/rest/config/folders") {
+      response.end(JSON.stringify([
+        { id: "synced", label: "Synced", path: "/tmp/synced", type: "sendreceive", devices: [] },
+        { id: "syncing", label: "Syncing", path: "/tmp/syncing", type: "sendreceive", devices: [] },
+        { id: "paused-config", label: "Paused config", path: "/tmp/paused-config", type: "sendreceive", devices: [], paused: true },
+        { id: "paused-state", label: "Paused state", path: "/tmp/paused-state", type: "sendreceive", devices: [] },
+        { id: "errored", label: "Errored", path: "/tmp/errored", type: "sendreceive", devices: [] },
+      ]));
+      return;
+    }
+    if (request.method === "GET" && request.url?.startsWith("/rest/db/status?folder=")) {
+      const id = new URL(request.url, "http://localhost").searchParams.get("folder");
+      const status = id === "syncing"
+        ? { state: "scanning", needTotalItems: 2, needBytes: 123 }
+        : id === "paused-state"
+          ? { state: "paused", needTotalItems: 0, needBytes: 0 }
+          : id === "errored"
+            ? { state: "idle", needTotalItems: 0, needBytes: 0, errors: 1 }
+            : { state: "idle", needTotalItems: 0, needBytes: 0 };
+      response.end(JSON.stringify(status));
+      return;
+    }
+    response.statusCode = 404;
+    response.end();
+  }, async (syncthing) => {
+    const statuses = await syncthing.syncthingFolderStatuses(["synced", "syncing", "paused-config", "paused-state", "errored", "missing"]);
+    assert.equal(statuses.synced.state, "synced");
+    assert.deepEqual(statuses.syncing, { state: "syncing", remainingFiles: 2, remainingBytes: 123, message: "Syncthing is synchronizing this folder" });
+    assert.equal(statuses["paused-config"].state, "paused");
+    assert.equal(statuses["paused-state"].state, "paused");
+    assert.equal(statuses.errored.state, "error");
+    assert.equal(statuses.missing.state, "error");
+  });
+});
+
+test("Syncthing folder status is unavailable when configuration cannot be listed", async () => {
+  await withSyncthingApi((request, response) => {
+    if (request.method === "GET" && request.url === "/rest/config/folders") {
+      response.statusCode = 500;
+      response.end(JSON.stringify({ error: "failed" }));
+      return;
+    }
+    response.statusCode = 404;
+    response.end();
+  }, async (syncthing) => {
+    const statuses = await syncthing.syncthingFolderStatuses(["demo"]);
+    assert.equal(statuses.demo.state, "unavailable");
+  });
+});
+
 test("Syncthing folder readiness requires an idle folder with no outstanding data or errors", async () => {
   const cases: Array<[string, { state: string; needTotalItems: number; needBytes: number; errors?: unknown[] | number } | null, boolean]> = [
     ["idle", { state: "idle", needTotalItems: 0, needBytes: 0 }, true],

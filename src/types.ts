@@ -12,6 +12,15 @@ export interface ProjectTypeRecord {
   githubGroup: string | null;
 }
 
+export type ProjectSyncState = "synced" | "syncing" | "paused" | "error" | "unavailable";
+
+export interface ProjectSyncStatus {
+  state: ProjectSyncState;
+  remainingFiles: number;
+  remainingBytes: number;
+  message?: string;
+}
+
 export interface ProjectRecord {
   id: string;
   name: string;
@@ -24,12 +33,18 @@ export interface ProjectRecord {
   updatedAt: string;
 }
 
+export interface ProjectView extends ProjectRecord {
+  syncStatus: ProjectSyncStatus;
+}
+
 export type HarnessId = "pi" | "claude";
 
 export interface SessionSummary {
   id: string;
   path: string;
   harnessId: HarnessId;
+  agentLabel: string;
+  agentModel?: string;
   title: string;
   createdAt?: string;
   updatedAt?: string;

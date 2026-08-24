@@ -115,7 +115,7 @@ test("ticket API creates Git-free workspaces and removes them on archive and del
       body: JSON.stringify({ name: "Imported", type: "work", synced: true, sourcePath: importSource, importMode: "move-link" }),
     });
     assert.equal(imported.status, 201, node.output());
-    const importedProject = (await imported.json() as { project: { path: string; macPath: string } }).project;
+    const importedProject = (await imported.json() as { project: { id: string; path: string; macPath: string } }).project;
     assert.equal(importedProject.path, path.join(homePath, "work", "imported"));
     assert.equal(importedProject.macPath, importSource);
     assert.equal((await lstat(importSource)).isSymbolicLink(), true);
@@ -123,6 +123,10 @@ test("ticket API creates Git-free workspaces and removes them on archive and del
     assert.equal(await readFile(path.join(importedProject.path, ".git", "HEAD"), "utf8"), "ref: refs/heads/main\n");
     assert.equal(await readFile(path.join(importedProject.path, "node_modules", "fixture", "index.js"), "utf8"), "export {};\n");
     assert.equal(await isMissing(path.join(importedProject.path, "AGENTS.md")), true);
+    const projects = await fetch(`${node.baseUrl}/api/projects`, { headers });
+    assert.equal(projects.status, 200, node.output());
+    const projectList = await projects.json() as { projects: Array<{ id: string; syncStatus: { state: string } }> };
+    assert.equal(projectList.projects.find((candidate) => candidate.id === importedProject.id)?.syncStatus.state, "synced");
 
     const created = await fetch(`${node.baseUrl}/api/projects`, {
       method: "POST",

@@ -38,6 +38,12 @@ export function managedProjectPath(homePath: string, type: ProjectType, name: st
   return path.join(managedTypeRoot(homePath, type), managedFolderName(name, "project"));
 }
 
+export function managedProjectRelocationPath(homePath: string, currentType: ProjectType, projectPath: string, nextType: ProjectType): string | undefined {
+  const resolvedPath = path.resolve(projectPath);
+  if (path.dirname(resolvedPath) !== managedTypeRoot(homePath, currentType)) return undefined;
+  return path.join(managedTypeRoot(homePath, nextType), path.basename(resolvedPath));
+}
+
 export async function ensureManagedHome(homePath: string, typeFolders: ProjectType[] = []): Promise<void> {
   const home = path.resolve(homePath);
   await mkdir(home, { recursive: true });

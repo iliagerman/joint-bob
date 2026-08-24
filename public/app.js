@@ -7,6 +7,7 @@ const state = {
   projectsLoading: true,
   sessionsLoading: false,
   sessionsRefreshing: false,
+  projectSyncTimer: null,
   tasks: [],
   editingTaskId: null,
   githubProjectId: null,
@@ -116,6 +117,7 @@ const elements = {
   projectRenameDialog: document.querySelector("#projectRenameDialog"),
   projectRenameForm: document.querySelector("#projectRenameForm"),
   projectRenameInput: document.querySelector("#projectRenameInput"),
+  projectGroupInput: document.querySelector("#projectGroupInput"),
   cancelProjectRenameButton: document.querySelector("#cancelProjectRenameButton"),
   abortButton: document.querySelector("#abortButton"),
   newProjectButton: document.querySelector("#newProjectButton"),
@@ -319,6 +321,8 @@ function showLogin() {
 }
 
 function showSignedOut() {
+  if (state.projectSyncTimer) clearInterval(state.projectSyncTimer);
+  state.projectSyncTimer = null;
   state.authenticated = false;
   state.preferencesLoaded = false;
   state.username = "";
@@ -396,6 +400,7 @@ async function initializeApplication() {
   if (state.initialProjectId || state.initialSessionPath) {
     savePreferencesInBackground({ activeProjectId: state.activeProjectId, activeSessionPath: state.activeSessionPath, activeSessionId: state.activeSessionId });
   }
+  if (state.authenticated) startProjectSyncPolling();
 }
 
 async function submitLogin(event) {
@@ -1186,6 +1191,14 @@ let projectPendingRename = null;
 function openProjectRename(project) {
   projectPendingRename = project;
   elements.projectRenameInput.value = project.name;
+  elements.projectGroupInput.replaceChildren();
+  for (const type of projectTypes) {
+    const option = document.createElement("option");
+    option.value = type.id;
+    option.textContent = type.label;
+    elements.projectGroupInput.append(option);
+  }
+  elements.projectGroupInput.value = project.type;
   elements.projectRenameDialog.showModal();
 }
 
@@ -1280,16 +1293,26 @@ function projectRow(project) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `project-card${project.id === state.activeProjectId ? " active" : ""}`;
-    button.innerHTML = `<strong></strong><span></span>`;
-    button.querySelector("strong").textContent = project.name;
-    button.querySelector("span").textContent = project.path;
+    const name = document.createElement("strong");
+    name.textContent = project.name;
+    const projectPath = document.createElement("span");
+    projectPath.textContent = project.path;
+    const syncStatus = document.createElement("em");
+    const status = project.syncStatus || { state: "unavailable", message: "Syncthing status is unavailable" };
+    const syncLabels = { synced: "Synced", syncing: "Syncing", paused: "Paused", error: "Error", unavailable: "Unavailable" };
+    syncStatus.className = `project-sync-status project-sync-status-${status.state}`;
+    syncStatus.dataset.testid = "project-sync-status";
+    syncStatus.textContent = syncLabels[status.state] || syncLabels.unavailable;
+    syncStatus.title = status.message || "";
+    projectPath.append(" ", syncStatus);
+    button.append(name, projectPath);
     button.addEventListener("click", () => selectProject(project.id));
 
     const renameButton = document.createElement("button");
     renameButton.type = "button";
     renameButton.className = "ghost icon-button row-action-button rename-button";
-    renameButton.setAttribute("aria-label", `Rename ${project.name}`);
-    renameButton.title = "Rename project";
+    renameButton.setAttribute("aria-label", `Edit ${project.name}`);
+    renameButton.title = "Edit project";
     renameButton.textContent = "✎";
     renameButton.dataset.testid = "project-rename-button";
     renameButton.addEventListener("click", (event) => {
@@ -1406,10 +1429,16 @@ function renderSessions() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `session-card${sessionActive ? " active" : ""}`;
-    button.innerHTML = `<strong></strong><span></span>`;
-    button.querySelector("strong").textContent = shortSessionTitle(session);
-    const meta = button.querySelector("span");
+    const sessionName = document.createElement("strong");
+    sessionName.textContent = shortSessionTitle(session);
+    const meta = document.createElement("span");
     meta.textContent = formatDate(session.updatedAt || session.createdAt);
+    const agent = document.createElement("em");
+    agent.className = "session-agent-label";
+    agent.dataset.testid = "session-agent-label";
+    agent.textContent = `${session.agentLabel}${session.agentModel ? ` · ${session.agentModel}` : ""}`;
+    meta.append(" ", agent);
+    button.append(sessionName, meta);
     const chatState = sessionChatState(session);
     const badge = document.createElement("em");
     badge.className = `chat-badge chat-badge-${chatState}`;
@@ -1951,6 +1980,20 @@ async function loadSessionNodes(projectId) {
   state.activeNodeId = selected?.id || null;
   if (state.preferencesLoaded && state.activeNodeId !== previousNodeId) savePreferencesInBackground({ activeNodeId: state.activeNodeId });
   renderChatSessionControls();
+}
+
+async function refreshProjectsQuietly() {
+  try {
+    state.projects = (await api("/api/projects")).projects;
+    renderProjects();
+  } catch (error) {
+    console.warn("Could not refresh project sync status", error);
+  }
+}
+
+function startProjectSyncPolling() {
+  if (state.projectSyncTimer) clearInterval(state.projectSyncTimer);
+  state.projectSyncTimer = setInterval(() => refreshProjectsQuietly(), 10_000);
 }
 
 async function loadProjects() {
@@ -2670,16 +2713,17 @@ elements.projectRenameForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const project = projectPendingRename;
   const name = elements.projectRenameInput.value.trim();
+  const type = elements.projectGroupInput.value;
   elements.projectRenameDialog.close();
-  if (!project || !name || name === project.name) return;
+  if (!project || !name || (name === project.name && type === project.type)) return;
   try {
     await api(`/api/projects/${encodeURIComponent(project.id)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, type }),
     });
     await loadProjects();
-    toast("Project renamed");
+    toast("Project updated");
   } catch (error) {
     toast(error.message, 8000);
   }
@@ -2905,6 +2949,7 @@ elements.projectGithubForm.addEventListener("submit", async (event) => {
 
 elements.newProjectButton.addEventListener("click", () => {
   elements.projectForm.reset();
+  elements.projectImportModeInput.value = "move-link";
   updateProjectImportControls();
   elements.projectDialog.showModal();
   loadProjectTypes().then(() => fillProjectBases()).catch((error) => toast(error.message));
@@ -2942,6 +2987,7 @@ elements.projectForm.addEventListener("submit", async (event) => {
     });
     elements.projectDialog.close();
     elements.projectForm.reset();
+    elements.projectImportModeInput.value = "move-link";
     elements.projectSearchInput.value = "";
     state.projects = [response.project, ...state.projects.filter((project) => project.id !== response.project.id)];
     renderProjects();

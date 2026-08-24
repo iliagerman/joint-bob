@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { getSettings, syncthingApiKey } from "./settings.js";
 import { TICKET_WORKSPACE_FOLDER_ID, TICKET_WORKSPACE_FOLDER_LABEL, ticketWorkspaceRoot } from "./task-workspaces.js";
+import type { ProjectSyncStatus } from "./types.js";
 
 interface SyncthingDevice {
   deviceID: string;
@@ -10,12 +11,13 @@ interface SyncthingDevice {
   addresses?: string[];
 }
 
-interface SyncthingFolder {
+export interface SyncthingFolder {
   id: string;
   label: string;
   path: string;
   type: string;
   devices: SyncthingDevice[];
+  paused?: boolean;
   [key: string]: unknown;
 }
 
@@ -27,11 +29,12 @@ interface SyncthingIgnores {
   ignore: string[] | null;
 }
 
-interface SyncthingFolderStatus {
+export interface SyncthingFolderStatus {
   state: string;
   needTotalItems: number;
   needBytes: number;
   errors?: unknown[] | number;
+  paused?: boolean;
 }
 
 export const PI_ENGINE_SYNC_FOLDER_ID = "dot-pi";
@@ -219,6 +222,49 @@ async function setProjectIgnores(folderId: string): Promise<void> {
 export async function reconcileSyncthingProjectFolders(projects: Array<{ syncFolderId?: string }>): Promise<void> {
   const folderIds = [...new Set(projects.flatMap((project) => project.syncFolderId ? [project.syncFolderId] : []))];
   await Promise.all(folderIds.map(setProjectIgnores));
+}
+
+function remaining(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+function statusErrors(errors: unknown): number {
+  return typeof errors === "number" ? Math.max(0, errors) : Array.isArray(errors) ? errors.length : 0;
+}
+
+function unavailableStatus(message: string): ProjectSyncStatus {
+  return { state: "unavailable", remainingFiles: 0, remainingBytes: 0, message };
+}
+
+export async function syncthingFolderStatuses(folderIds: string[]): Promise<Record<string, ProjectSyncStatus>> {
+  const ids = [...new Set(folderIds.filter(Boolean))];
+  if (!ids.length) return {};
+  if (!await connection()) return Object.fromEntries(ids.map((id) => [id, unavailableStatus("Syncthing is not configured on this node")]));
+  let folders: SyncthingFolder[];
+  try {
+    folders = await request<SyncthingFolder[]>("/rest/config/folders");
+  } catch {
+    return Object.fromEntries(ids.map((id) => [id, unavailableStatus("Syncthing folder list is unavailable")]));
+  }
+  const configured = new Map(folders.map((folder) => [folder.id, folder]));
+  const entries = await Promise.all(ids.map(async (id): Promise<[string, ProjectSyncStatus]> => {
+    const folder = configured.get(id);
+    if (!folder) return [id, { state: "error", remainingFiles: 0, remainingBytes: 0, message: "Syncthing folder is missing from configuration" }];
+    if (folder.paused) return [id, { state: "paused", remainingFiles: 0, remainingBytes: 0, message: "Syncthing folder is paused" }];
+    try {
+      const status = await request<SyncthingFolderStatus>(`/rest/db/status?folder=${encodeURIComponent(id)}`);
+      const remainingFiles = remaining(status.needTotalItems);
+      const remainingBytes = remaining(status.needBytes);
+      const errors = statusErrors(status.errors);
+      if (status.paused || status.state === "paused") return [id, { state: "paused", remainingFiles, remainingBytes, message: "Syncthing folder is paused" }];
+      if (errors || status.state === "error") return [id, { state: "error", remainingFiles, remainingBytes, message: errors ? "Syncthing reported folder errors" : "Syncthing folder is in an error state" }];
+      if (status.state === "idle" && remainingFiles === 0 && remainingBytes === 0) return [id, { state: "synced", remainingFiles, remainingBytes, message: "Safe to start work" }];
+      return [id, { state: "syncing", remainingFiles, remainingBytes, message: "Syncthing is synchronizing this folder" }];
+    } catch {
+      return [id, { state: "error", remainingFiles: 0, remainingBytes: 0, message: "Syncthing folder status is unavailable" }];
+    }
+  }));
+  return Object.fromEntries(entries);
 }
 
 export async function assertSyncthingFolderReady(folderId: string): Promise<void> {

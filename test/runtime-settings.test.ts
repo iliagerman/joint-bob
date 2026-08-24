@@ -33,6 +33,7 @@ test("runtime settings drive Claude session discovery and execution", async () =
     const sessions = await claude.listClaudeSessions({ path: projectCwd });
     assert.equal(sessions.length, 1);
     assert.equal(sessions[0].path, `claude:${transcriptPath}`);
+    assert.equal(sessions[0].agentLabel, "Claude");
     assert.deepEqual(await claude.loadClaudeMessages(sessions[0].path), [{ id: "0", role: "user", text: "hello Claude" }]);
 
     const outsidePath = path.join(root, "outside.jsonl");

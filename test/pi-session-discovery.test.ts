@@ -34,6 +34,7 @@ test("Pi discovery includes flat Joint Bob sessions and standard cwd session dir
 
     assert.equal(sessions.length, 2);
     assert.equal(new Set(sessions.map((session) => session.path)).size, 2);
+    assert.ok(sessions.every((session) => session.agentLabel === "Pi"));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
