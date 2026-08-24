@@ -12,9 +12,16 @@
     <link rel="icon" href="/icon-192.png" sizes="192x192" type="image/png" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
+    <script src="/boot.js"></script>
     <link rel="stylesheet" href="/styles.css" />
   </head>
-  <body class="view-projects">
+  <body class="view-projects booting">
+    <div class="app-boot" id="appBoot" role="status" aria-label="Loading Joint Bob">
+      <div class="app-boot-inner">
+        <div class="brand-mark" aria-hidden="true"><svg class="mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5.5v13"/><path d="M8 5.5h3.6a3.25 3.25 0 0 1 0 6.5H8"/><path d="M8 12h4.4a3.25 3.25 0 0 1 0 6.5H8"/><rect class="mark-cursor" x="15.4" y="15" width="3.4" height="3.4" rx="0.9" fill="currentColor" stroke="none"/></svg></div>
+        <div class="list-loading"><span></span></div>
+      </div>
+    </div>
     <div class="shell">
       <section class="panel view-panel" id="projectsPanel" aria-label="Projects">
         <header class="panel-bar">

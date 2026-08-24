@@ -123,6 +123,21 @@ h2 { font-size: 17px; line-height: 1.25; }
 }
 .section-title { color: var(--muted); }
 
+/* Boot gate: the shell stays hidden until the app has its preferences, so nothing
+   renders half-built and the theme never visibly swaps. */
+.app-boot {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+}
+.app-boot-inner { display: grid; justify-items: center; gap: 16px; }
+.app-boot .brand-mark { width: 44px; height: 44px; border-radius: 12px; }
+.app-boot .list-loading { width: 150px; border-radius: 999px; }
+body:not(.booting) .app-boot { display: none; }
+body.booting :is(.shell, .mobile-nav) { visibility: hidden; }
 
 /* ---- App shell: mobile-first, one full-screen panel at a time ---- */
 .shell {
@@ -480,6 +495,46 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
   overflow-wrap: anywhere;
 }
 .project-card span { font-family: var(--mono); font-size: 10px; }
+
+/* Projects are grouped by type; the header is a <summary> so the browser handles collapsing. */
+.project-group { display: grid; gap: 2px; }
+.project-group-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  margin-top: 6px;
+  padding: 0 8px;
+  border-radius: 7px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.project-group:first-child > .project-group-summary { margin-top: 0; }
+.project-group-summary::-webkit-details-marker { display: none; }
+.project-group-summary::before {
+  content: "▸";
+  display: inline-block;
+  font-size: 9px;
+  transition: transform 140ms ease;
+}
+.project-group[open] > .project-group-summary::before { transform: rotate(90deg); }
+.project-group-summary:hover { color: var(--text); background: var(--field); }
+.project-group-count {
+  margin-left: auto;
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--field);
+  color: var(--muted);
+  font-size: 9.5px;
+  text-align: center;
+}
 
 /* ---- Kanban board ---- */
 .board-columns {

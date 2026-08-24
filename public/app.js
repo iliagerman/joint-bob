@@ -388,6 +388,7 @@ async function initializeApplication() {
     console.warn("Could not discover peer projects", error);
     return { pending: [] };
   });
+  await loadProjectTypes();
   await loadProjects();
   if (discovery.pending.length) openProjectImportMapping(discovery.pending);
   setMobileView(preferences.mobileView);
@@ -1220,7 +1221,59 @@ function renderProjects() {
     return;
   }
 
+  for (const group of groupedProjects(projects)) {
+    elements.projectList.append(projectGroupElement(group));
+  }
+}
+
+/** Remembered for this page view only — preferences live on the server and Web Storage is banned here. */
+const collapsedProjectGroups = new Set();
+
+/** Groups follow the order types are configured in Settings; anything unknown sorts last. */
+function groupedProjects(projects) {
+  const byType = new Map();
   for (const project of projects) {
+    const typeId = project.type || "personal";
+    if (!byType.has(typeId)) byType.set(typeId, []);
+    byType.get(typeId).push(project);
+  }
+  const configured = projectTypes.map((type) => type.id).filter((typeId) => byType.has(typeId));
+  const unknown = [...byType.keys()].filter((typeId) => !configured.includes(typeId)).sort();
+  return [...configured, ...unknown].map((typeId) => ({
+    id: typeId,
+    label: projectTypes.find((type) => type.id === typeId)?.label || typeId,
+    projects: byType.get(typeId),
+  }));
+}
+
+/** A native <details> so collapsing, keyboard support, and accessibility come for free. */
+function projectGroupElement(group) {
+  const details = document.createElement("details");
+  details.className = "project-group";
+  details.dataset.testid = "project-group";
+  details.dataset.projectType = group.id;
+  details.open = !collapsedProjectGroups.has(group.id);
+  details.addEventListener("toggle", () => {
+    if (details.open) collapsedProjectGroups.delete(group.id);
+    else collapsedProjectGroups.add(group.id);
+  });
+
+  const summary = document.createElement("summary");
+  summary.className = "project-group-summary";
+  summary.dataset.testid = "project-group-toggle";
+  const label = document.createElement("span");
+  label.textContent = group.label;
+  const count = document.createElement("span");
+  count.className = "project-group-count";
+  count.textContent = String(group.projects.length);
+  summary.append(label, count);
+  details.append(summary);
+
+  for (const project of group.projects) details.append(projectRow(project));
+  return details;
+}
+
+function projectRow(project) {
     const row = document.createElement("div");
     row.className = `list-row${project.id === state.activeProjectId ? " active" : ""}`;
 
@@ -1292,8 +1345,7 @@ function renderProjects() {
     });
 
     row.append(button, renameButton, mappingButton, authButton, removeButton);
-    elements.projectList.append(row);
-  }
+    return row;
 }
 
 function markSessionReviewed(session) {
@@ -3163,7 +3215,9 @@ if ("serviceWorker" in navigator) {
   });
 }
 
-setTheme(matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
 syncNotifyButton();
 updateInstallButton();
-initializeApplication().catch((error) => toast(error.message));
+initializeApplication()
+  .catch((error) => toast(error.message))
+  .finally(() => document.body.classList.remove("booting"));
