@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
-import { basename } from "node:path";
+import path, { basename } from "node:path";
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -219,16 +219,29 @@ async function summarizeSession(sessionInfo: unknown): Promise<SessionSummary> {
   };
 }
 
-export async function listPiSessions(project: SessionProjectPaths): Promise<SessionSummary[]> {
-  const sessions = await Promise.all(sessionCwds(project).map(async (sessionCwd) => {
+function piSessionDirectories(cwd: string): Array<string | undefined> {
+  const root = piSessionPath();
+  if (!root) return [undefined];
+  const safeCwd = `--${path.resolve(cwd).replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+  return [root, path.join(root, safeCwd)];
+}
+
+async function sessionsForCwd(cwd: string): Promise<unknown[]> {
+  const results = await Promise.all(piSessionDirectories(cwd).map(async (sessionDirectory) => {
     try {
-      return await SessionManager.list(sessionCwd, piSessionPath()) as unknown[];
+      return await SessionManager.list(cwd, sessionDirectory) as unknown[];
     } catch (error) {
-      console.warn(`Could not list Pi sessions for ${sessionCwd}`, error);
+      console.warn(`Could not list Pi sessions for ${cwd}`, error);
       return [];
     }
   }));
-  return Promise.all(sessions.flat().map(summarizeSession));
+  return results.flat();
+}
+
+export async function listPiSessions(project: SessionProjectPaths): Promise<SessionSummary[]> {
+  const sessions = (await Promise.all(sessionCwds(project).map(sessionsForCwd))).flat();
+  const unique = [...new Map(sessions.map((session) => [String(asRecord(session).path), session])).values()];
+  return Promise.all(unique.map(summarizeSession));
 }
 
 export function isPermissionSafeguardExtension(extensionPath: string): boolean {

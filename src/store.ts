@@ -509,7 +509,9 @@ export async function importProject(project: ProjectRecord, localPath?: string, 
     const existing = rowToProject(db, existingRow);
     existing.name = project.name;
     existing.type = project.type ?? existing.type ?? "personal";
-    existing.macPath ??= path.resolve(project.path);
+    if (!existing.macPath || existing.macPath === path.resolve(project.path)) {
+      existing.macPath = path.resolve(project.macPath ?? project.path);
+    }
     existing.syncFolderId = project.syncFolderId ?? existing.syncFolderId;
     existing.updatedAt = new Date().toISOString();
     db.exec("BEGIN IMMEDIATE");
@@ -534,7 +536,7 @@ export async function importProject(project: ProjectRecord, localPath?: string, 
   const imported: ProjectRecord = {
     ...project,
     path: resolvedPath,
-    macPath: path.resolve(project.path),
+    macPath: path.resolve(project.macPath ?? project.path),
     updatedAt: new Date().toISOString(),
   };
   db.exec("BEGIN IMMEDIATE");

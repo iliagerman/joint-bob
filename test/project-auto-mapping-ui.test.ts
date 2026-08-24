@@ -23,7 +23,8 @@ test("managed home project creation and imported mappings use node folder picker
   assert.match(app, /synced:\s*true/);
   assert.match(html, /data-testid="project-form-source-path-input"/);
   assert.match(html, /data-testid="project-form-source-browse-button"/);
-  assert.match(html, /data-testid="project-form-import-mode-select"/);
+  assert.match(html, /id="projectImportModeInput"[^>]*required[^>]*data-testid="project-form-import-mode-select"/);
+  assert.match(html, /value="" selected disabled>Choose copy or move/);
   assert.match(html, /value="move-link"/);
   assert.match(html, /value="move"/);
   assert.match(html, /value="copy"/);
@@ -36,7 +37,7 @@ test("managed home project creation and imported mappings use node folder picker
   assert.match(app, /\/api\/cluster\/projects\/discover/);
   assert.match(app, /mapOnPeer/);
   assert.match(app, /Project is not mapped on this node/);
-  assert.match(app, /replace\(\/\\s\+\/g, "_"\)/);
+  assert.ok(app.includes('.replace(/[^a-z0-9._-]+/g, "_")'));
   assert.doesNotMatch(app, /value === "work" \? "Work" : "Projects"/);
   assert.match(server, /\/api\/cluster\/peers\/:peerId\/filesystem\/directories/);
   assert.match(server, /\/api\/cluster\/peers\/:peerId\/projects\/:projectId\/map/);

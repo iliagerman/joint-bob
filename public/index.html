@@ -521,7 +521,8 @@
         </label>
         <label id="projectImportModeLabel" hidden>
           Import action
-          <select id="projectImportModeInput" name="importMode" data-testid="project-form-import-mode-select">
+          <select id="projectImportModeInput" name="importMode" required data-testid="project-form-import-mode-select">
+            <option value="" selected disabled>Choose copy or move…</option>
             <option value="move-link">Move into Joint Bob and leave a symlink</option>
             <option value="move">Move into Joint Bob</option>
             <option value="copy">Copy into Joint Bob</option>

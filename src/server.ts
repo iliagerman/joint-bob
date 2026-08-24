@@ -146,10 +146,12 @@ const projectSchema = z.object({
   type: z.string().trim().min(1).max(40).optional().default("personal"),
   path: absolutePathSchema.optional(),
   sourcePath: absolutePathSchema.optional(),
-  importMode: z.enum(["copy", "move", "move-link"]).optional().default("move-link"),
+  importMode: z.enum(["copy", "move", "move-link"]).optional(),
   synced: z.boolean().optional(),
   macPath: absolutePathSchema.optional(),
-}).refine((payload) => !(payload.path && payload.sourcePath), "Project path and import source cannot both be set");
+})
+  .refine((payload) => !(payload.path && payload.sourcePath), "Project path and import source cannot both be set")
+  .refine((payload) => !payload.sourcePath || payload.importMode, { message: "Choose how to import the project", path: ["importMode"] });
 const projectPathMappingSchema = z.object({
   macPath: absolutePathSchema,
 });
@@ -1657,6 +1659,7 @@ app.post("/api/projects", async (request, response, next) => {
     const projectPath = payload.path ?? managedProjectPath(homePath, payload.type, payload.name);
     if (!payload.path) await ensureManagedHome(homePath, projectTypes.map((type) => type.id));
     if (payload.sourcePath) {
+      if (!payload.importMode) throw new ProjectDirectoryImportError("Choose how to import the project");
       const projects = await listProjects();
       if (projects.some((project) => path.resolve(project.path) === path.resolve(projectPath))) {
         throw new ProjectDirectoryImportError("Managed project folder is already registered");

@@ -52,13 +52,15 @@ test("explicit import mapping preserves shared identity and local path", async (
     };
 
     const imported = await store.importProject(remote, localPath);
-    const reimported = await store.importProject({ ...remote, path: "/changed/remote/path" });
+    const originalSourcePath = "/Users/example/Work/sample";
+    const reimported = await store.importProject({ ...remote, macPath: originalSourcePath });
 
     assert.equal(imported.id, remote.id);
     assert.equal(imported.path, localPath);
     assert.equal(imported.macPath, remote.path);
     assert.equal(imported.syncFolderId, "julian");
     assert.equal(reimported.path, localPath);
+    assert.equal(reimported.macPath, originalSourcePath);
     assert.equal((await store.listProjects()).length, 1);
   });
 });

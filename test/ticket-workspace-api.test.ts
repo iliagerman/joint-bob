@@ -94,6 +94,16 @@ test("ticket API creates Git-free workspaces and removes them on archive and del
     });
     assert.equal(saved.status, 200, node.output());
 
+    const missingModeSource = path.join(node.homeDir, "needs-import-choice");
+    await mkdir(missingModeSource);
+    const missingMode = await fetch(`${node.baseUrl}/api/projects`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ name: "Needs choice", type: "work", synced: true, sourcePath: missingModeSource }),
+    });
+    assert.equal(missingMode.status, 400, node.output());
+    assert.equal((await lstat(missingModeSource)).isDirectory(), true);
+
     const importSource = path.join(node.homeDir, "existing-project");
     await mkdir(path.join(importSource, ".git"), { recursive: true });
     await mkdir(path.join(importSource, "node_modules", "fixture"), { recursive: true });

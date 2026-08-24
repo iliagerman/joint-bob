@@ -41,7 +41,7 @@ test("project store persists and updates the paired Mac path", async () => {
     }, importedPath);
     assert.equal(imported.id, "shared-project-id");
     assert.equal(imported.path, importedPath);
-    assert.equal(imported.macPath, path.join(root, "server", "shared"));
+    assert.equal(imported.macPath, project.macPath);
     assert.equal(imported.type, "work");
   } finally {
     await rm(root, { recursive: true, force: true });
