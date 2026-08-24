@@ -106,7 +106,7 @@ test("ticket API creates Git-free workspaces and removes them on archive and del
     });
     assert.equal(imported.status, 201, node.output());
     const importedProject = (await imported.json() as { project: { path: string; macPath: string } }).project;
-    assert.equal(importedProject.path, path.join(homePath, "projects", "work", "Imported"));
+    assert.equal(importedProject.path, path.join(homePath, "work", "Imported"));
     assert.equal(importedProject.macPath, importSource);
     assert.equal((await lstat(importSource)).isSymbolicLink(), true);
     assert.equal(await realpath(importSource), await realpath(importedProject.path));

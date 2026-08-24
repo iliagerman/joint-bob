@@ -179,6 +179,9 @@ const elements = {
   projectGithubForm: document.querySelector("#projectGithubForm"),
   projectGithubTitle: document.querySelector("#projectGithubTitle"),
   projectGithubGroupInput: document.querySelector("#projectGithubGroupInput"),
+  projectTypeList: document.querySelector("#projectTypeList"),
+  projectTypeNameInput: document.querySelector("#projectTypeNameInput"),
+  projectTypeAddButton: document.querySelector("#projectTypeAddButton"),
   projectGithubTokenInput: document.querySelector("#projectGithubTokenInput"),
   projectTokenState: document.querySelector("#projectTokenState"),
   clearProjectGithubTokenInput: document.querySelector("#clearProjectGithubTokenInput"),
@@ -477,6 +480,7 @@ function renderLoginSessions(authSessions) {
 
 /** Shows one settings panel and hides the rest, keeping the tablist's roving tabindex correct. */
 function selectSettingsTab(name) {
+  elements.settingsForm.dataset.tab = name;
   for (const tab of elements.settingsTabs) {
     const selected = tab.dataset.settingsTab === name;
     tab.setAttribute("aria-selected", selected ? "true" : "false");
@@ -490,6 +494,7 @@ async function openSettings(tab = "account") {
   elements.settingsUsername.textContent = state.username;
   selectSettingsTab(tab);
   await Promise.all([loadGithubGroups(), loadClusterPanel()]);
+  await loadProjectTypes();
   renderLoginSessions(authSessions);
   elements.settingsRestartMessage.hidden = true;
   elements.settingsRestartMessage.textContent = "";
@@ -1035,6 +1040,110 @@ function renderGithubGroups() {
   }
 }
 
+let projectTypes = [];
+
+async function loadProjectTypes() {
+  projectTypes = (await api("/api/project-types")).types;
+  renderProjectTypes();
+  fillProjectTypeSelect();
+}
+
+/** Keeps the create-project picker in step with the types configured in Settings. */
+function fillProjectTypeSelect() {
+  const previous = elements.projectTypeInput.value;
+  elements.projectTypeInput.replaceChildren();
+  for (const type of projectTypes) {
+    const option = document.createElement("option");
+    option.value = type.id;
+    option.textContent = type.label;
+    elements.projectTypeInput.append(option);
+  }
+  elements.projectTypeInput.value = projectTypes.some((type) => type.id === previous) ? previous : projectTypes[0]?.id ?? "";
+}
+
+function projectTypeGroupPicker(type) {
+  const picker = document.createElement("select");
+  picker.dataset.testid = "project-type-group-select";
+  picker.setAttribute("aria-label", `GitHub group for ${type.label}`);
+  const fallback = document.createElement("option");
+  fallback.value = "";
+  fallback.textContent = "Default group";
+  picker.append(fallback);
+  for (const group of githubGroups) {
+    const option = document.createElement("option");
+    option.value = group.id;
+    option.textContent = group.label;
+    picker.append(option);
+  }
+  picker.value = type.githubGroup || "";
+  picker.addEventListener("change", async () => {
+    try {
+      await api("/api/project-types", {
+        method: "PUT",
+        body: JSON.stringify({ id: type.id, label: type.label, githubGroup: picker.value || null }),
+      });
+      await loadProjectTypes();
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+  return picker;
+}
+
+function renderProjectTypes() {
+  elements.projectTypeList.replaceChildren();
+  if (!projectTypes.length) {
+    const empty = document.createElement("p");
+    empty.className = "project-type-empty";
+    empty.textContent = "No project types yet. Add one to choose where new projects land.";
+    elements.projectTypeList.append(empty);
+    return;
+  }
+  for (const type of projectTypes) {
+    const row = document.createElement("div");
+    row.className = "project-type-row";
+    row.dataset.testid = "project-type-row";
+
+    const name = document.createElement("strong");
+    name.textContent = type.label;
+    row.append(name);
+
+    const folder = document.createElement("code");
+    folder.textContent = `/${type.id}`;
+    row.append(folder);
+
+    row.append(projectTypeGroupPicker(type));
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "ghost compact danger";
+    remove.textContent = "Delete";
+    remove.dataset.testid = "project-type-delete-button";
+    remove.addEventListener("click", async () => {
+      if (!confirm(`Delete the "${type.label}" project type? Its folder stays on disk.`)) return;
+      try {
+        await api(`/api/project-types/${encodeURIComponent(type.id)}`, { method: "DELETE" });
+        await loadProjectTypes();
+        toast(`Deleted ${type.label}`);
+      } catch (error) {
+        toast(error.message);
+      }
+    });
+    row.append(remove);
+
+    elements.projectTypeList.append(row);
+  }
+}
+
+async function addProjectType() {
+  const label = elements.projectTypeNameInput.value.trim();
+  if (!label) return;
+  await api("/api/project-types", { method: "PUT", body: JSON.stringify({ label }) });
+  elements.projectTypeNameInput.value = "";
+  await loadProjectTypes();
+  toast(`Added ${label}`);
+}
+
 let editingGithubGroup = null;
 
 function openGithubGroupDialog(group = null) {
@@ -1064,7 +1173,7 @@ async function openProjectGithubSettings(project) {
   elements.projectGithubGroupInput.replaceChildren();
   const none = document.createElement("option");
   none.value = "";
-  none.textContent = githubGroups.some((group) => group.isDefault) ? "Use the default group" : "No group";
+  none.textContent = "Inherit from the project type";
   elements.projectGithubGroupInput.append(none);
   for (const group of githubGroups) {
     const option = document.createElement("option");
@@ -1075,7 +1184,7 @@ async function openProjectGithubSettings(project) {
   elements.projectGithubGroupInput.value = status.project.group || "";
   elements.projectGithubTokenInput.value = "";
   elements.clearProjectGithubTokenInput.checked = false;
-  elements.projectTokenState.textContent = status.project.hasOverride ? "Override saved" : "Using account default";
+  elements.projectTokenState.textContent = status.project.hasOverride ? "Override saved" : "Inherited token";
   elements.projectGithubSummary.textContent = status.project.configured ? "GitHub access configured." : "No token resolves for this project yet.";
   elements.projectGithubDialog.showModal();
 }
@@ -2582,7 +2691,7 @@ function joinProjectPath(basePath, projectName) {
 
 async function fillProjectBases() {
   const settings = await api("/api/settings");
-  state.projectDefaultBase = `${settings.projects.homePath.replace(/\/+$/, "")}/projects/${elements.projectTypeInput.value}`;
+  state.projectDefaultBase = `${settings.projects.homePath.replace(/\/+$/, "")}/${elements.projectTypeInput.value}`;
   state.projectAutofilledPath = elements.projectNameInput.value.trim()
     ? joinProjectPath(state.projectDefaultBase, elements.projectNameInput.value)
     : state.projectDefaultBase;
@@ -2756,9 +2865,15 @@ elements.newProjectButton.addEventListener("click", () => {
   elements.projectForm.reset();
   updateProjectImportControls();
   elements.projectDialog.showModal();
-  fillProjectBases().catch((error) => toast(error.message));
+  loadProjectTypes().then(() => fillProjectBases()).catch((error) => toast(error.message));
 });
 elements.projectTypeInput.addEventListener("change", () => fillProjectBases().catch((error) => toast(error.message)));
+elements.projectTypeAddButton.addEventListener("click", () => addProjectType().catch((error) => toast(error.message)));
+elements.projectTypeNameInput.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  addProjectType().catch((error) => toast(error.message));
+});
 elements.projectSourcePathInput.addEventListener("input", updateProjectImportControls);
 elements.projectSourceBrowseButton.addEventListener("click", () => openFolderPicker(elements.projectSourcePathInput, "Choose project folder to import").catch((error) => toast(error.message, 8000)));
 elements.projectNameInput.addEventListener("input", () => {

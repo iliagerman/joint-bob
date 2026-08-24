@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { nanoid } from "nanoid";
-import type { ProjectRecord, ProjectType } from "./types.js";
+import type { ProjectRecord, ProjectType, ProjectTypeRecord } from "./types.js";
 
 interface AddProjectOptions {
   synced?: boolean;
@@ -33,10 +33,16 @@ interface LegacyStore {
   projects?: ProjectRecord[];
 }
 
+export class ProjectTypeError extends Error {}
+
+/** These names are taken by the managed home's own folders, so a type cannot use them. */
+const reservedProjectTypeIds = new Set(["projects", "tickets"]);
+
 const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
 const legacyStorePath = path.join(dataDir, "projects.json");
 const databasePath = path.join(dataDir, "node.db");
 let database: DatabaseSync | null = null;
+let databaseInitialization: Promise<DatabaseSync> | null = null;
 
 function slug(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "project";
@@ -274,42 +280,114 @@ async function migrateLegacyProjects(db: DatabaseSync): Promise<void> {
   }
 }
 
+/** Homes created before user-defined types still carry a two-value CHECK; rebuild the table to drop it. */
+function dropProjectTypeCheckConstraint(db: DatabaseSync): void {
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'projects'").get() as { sql: string } | undefined;
+  if (!row || !/CHECK\s*\(\s*project_type/i.test(row.sql)) return;
+  // Foreign keys stay off across the swap so dropping the old table does not cascade into
+  // project_locations and project_aliases. PRAGMA foreign_keys is a no-op inside a transaction.
+  db.exec("PRAGMA foreign_keys = OFF");
+  try {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.exec(`
+        CREATE TABLE projects_rebuilt (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          project_type TEXT NOT NULL DEFAULT 'personal',
+          path TEXT NOT NULL UNIQUE,
+          mac_path TEXT,
+          sync_folder_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        INSERT INTO projects_rebuilt (id, name, project_type, path, mac_path, sync_folder_id, created_at, updated_at)
+          SELECT id, name, project_type, path, mac_path, sync_folder_id, created_at, updated_at FROM projects;
+        DROP TABLE projects;
+        ALTER TABLE projects_rebuilt RENAME TO projects;
+        CREATE UNIQUE INDEX IF NOT EXISTS projects_sync_folder_id
+          ON projects(sync_folder_id) WHERE sync_folder_id IS NOT NULL;
+      `);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
+  }
+}
+
+/** Seeded once, on a brand-new node only, so a deleted type stays deleted across restarts. */
+function seedProjectTypes(db: DatabaseSync): void {
+  const existing = db.prepare("SELECT COUNT(*) AS total FROM project_types").get() as { total: number };
+  if (existing.total > 0) return;
+  const now = new Date().toISOString();
+  const seed = db.prepare("INSERT INTO project_types (id, label, github_group, created_at, updated_at) VALUES (?, ?, NULL, ?, ?)");
+  seed.run("personal", "Personal", now, now);
+  seed.run("work", "Work", now, now);
+}
+
+/** One in-flight initialisation is shared, so concurrent first callers cannot build rival handles. */
 async function projectDatabase(): Promise<DatabaseSync> {
   if (database) return database;
+  databaseInitialization ??= initializeProjectDatabase().catch((error) => {
+    databaseInitialization = null;
+    throw error;
+  });
+  return databaseInitialization;
+}
+
+async function initializeProjectDatabase(): Promise<DatabaseSync> {
   await fs.mkdir(dataDir, { recursive: true, mode: 0o700 });
-  database = new DatabaseSync(databasePath);
-  database.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS projects (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      project_type TEXT NOT NULL DEFAULT 'personal' CHECK (project_type IN ('personal', 'work')),
-      path TEXT NOT NULL UNIQUE,
-      mac_path TEXT,
-      sync_folder_id TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE UNIQUE INDEX IF NOT EXISTS projects_sync_folder_id
-      ON projects(sync_folder_id) WHERE sync_folder_id IS NOT NULL;
-    CREATE TABLE IF NOT EXISTS project_locations (
-      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-      node_id TEXT NOT NULL,
-      path TEXT NOT NULL,
-      PRIMARY KEY (project_id, node_id)
-    );
-    CREATE TABLE IF NOT EXISTS project_aliases (
-      alias_id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-      created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS project_aliases_project_id ON project_aliases(project_id);
-  `);
-  if (!tableHasColumn(database, "projects", "project_type")) {
-    database.exec("ALTER TABLE projects ADD COLUMN project_type TEXT NOT NULL DEFAULT 'personal' CHECK (project_type IN ('personal', 'work'))");
+  const db = new DatabaseSync(databasePath);
+  try {
+    db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS projects (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        project_type TEXT NOT NULL DEFAULT 'personal',
+        path TEXT NOT NULL UNIQUE,
+        mac_path TEXT,
+        sync_folder_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS projects_sync_folder_id
+        ON projects(sync_folder_id) WHERE sync_folder_id IS NOT NULL;
+      CREATE TABLE IF NOT EXISTS project_locations (
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        node_id TEXT NOT NULL,
+        path TEXT NOT NULL,
+        PRIMARY KEY (project_id, node_id)
+      );
+      CREATE TABLE IF NOT EXISTS project_aliases (
+        alias_id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS project_aliases_project_id ON project_aliases(project_id);
+      CREATE TABLE IF NOT EXISTS project_types (
+        id TEXT PRIMARY KEY,
+        label TEXT NOT NULL,
+        github_group TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+    if (!tableHasColumn(db, "projects", "project_type")) {
+      db.exec("ALTER TABLE projects ADD COLUMN project_type TEXT NOT NULL DEFAULT 'personal'");
+    }
+    dropProjectTypeCheckConstraint(db);
+    seedProjectTypes(db);
+    await migrateLegacyProjects(db);
+  } catch (error) {
+    db.close();
+    throw error;
   }
-  await migrateLegacyProjects(database);
-  return database;
+  database = db;
+  return db;
 }
 
 function syncInstructions(project: ProjectRecord): string {
@@ -533,4 +611,45 @@ export async function touchProject(projectId: string): Promise<void> {
   const db = await projectDatabase();
   const canonicalId = resolveProjectId(db, projectId);
   if (canonicalId) db.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").run(new Date().toISOString(), canonicalId);
+}
+
+export function projectTypeIdFromLabel(label: string): string {
+  return label.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[-._]+|[-._]+$/g, "");
+}
+
+export async function listProjectTypes(): Promise<ProjectTypeRecord[]> {
+  const db = await projectDatabase();
+  const rows = db.prepare("SELECT id, label, github_group FROM project_types ORDER BY created_at, id")
+    .all() as unknown as Array<{ id: string; label: string; github_group: string | null }>;
+  return rows.map((row) => ({ id: row.id, label: row.label, githubGroup: row.github_group }));
+}
+
+export async function saveProjectType(input: { id?: string; label: string; githubGroup?: string | null }): Promise<ProjectTypeRecord> {
+  const db = await projectDatabase();
+  const label = input.label.trim();
+  if (!label || label.length > 40) throw new ProjectTypeError("Project type name must be 1 to 40 characters");
+  // Canonicalise first: an explicit id like "../tickets" must be reduced before the reserved check.
+  const id = projectTypeIdFromLabel(input.id?.trim() || label);
+  if (!id) throw new ProjectTypeError("Project type name must contain a letter or a number");
+  if (reservedProjectTypeIds.has(id)) throw new ProjectTypeError(`"${id}" is reserved by the managed workspace`);
+  const githubGroup = input.githubGroup?.trim() || null;
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO project_types (id, label, github_group, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      label = excluded.label,
+      github_group = excluded.github_group,
+      updated_at = excluded.updated_at
+  `).run(id, label, githubGroup, now, now);
+  return { id, label, githubGroup };
+}
+
+export async function deleteProjectType(typeId: string): Promise<void> {
+  const db = await projectDatabase();
+  const used = db.prepare("SELECT COUNT(*) AS total FROM projects WHERE project_type = ?").get(typeId) as { total: number };
+  if (used.total > 0) throw new ProjectTypeError("Move or delete this type's projects before deleting it");
+  const remaining = db.prepare("SELECT COUNT(*) AS total FROM project_types").get() as { total: number };
+  if (remaining.total <= 1) throw new ProjectTypeError("Keep at least one project type");
+  db.prepare("DELETE FROM project_types WHERE id = ?").run(typeId);
 }

@@ -3,7 +3,14 @@ export interface ProjectLocation {
   path: string;
 }
 
-export type ProjectType = "personal" | "work";
+/** Project types are user-defined; the id doubles as the folder name under the managed home. */
+export type ProjectType = string;
+
+export interface ProjectTypeRecord {
+  id: string;
+  label: string;
+  githubGroup: string | null;
+}
 
 export interface ProjectRecord {
   id: string;

@@ -208,8 +208,8 @@
     </dialog>
 
     <dialog id="settingsDialog" data-testid="settings-dialog">
-      <form method="dialog" class="dialog-card settings-card" id="settingsForm">
-        <div>
+      <form method="dialog" class="dialog-card settings-card" id="settingsForm" data-tab="account">
+        <div class="dialog-heading" tabindex="-1" autofocus>
           <span class="eyebrow">Node configuration</span>
           <h2>Settings</h2>
           <p>Paths are node-local. GitHub credentials replicate through authenticated cluster links, never Syncthing.</p>
@@ -246,7 +246,7 @@
         </section>
 
         <section class="settings-panel" id="settingsPanel-github" role="tabpanel" aria-labelledby="settingsTab-github" tabindex="0" hidden>
-          <p>Groups hold the tokens used by Git commands. Each project picks a group; projects that pick none use the default group.</p>
+          <p>Groups hold the tokens used by Git commands. A project uses its own group, then its project type's group, then the default group.</p>
           <div class="github-group-list" id="githubGroupList" data-testid="github-group-list"></div>
           <button class="ghost" type="button" id="githubGroupAddButton" data-testid="github-group-add-button">Add group</button>
         </section>
@@ -290,7 +290,17 @@
                 <button class="ghost" type="button" id="settingsProjectHomeBrowseButton" data-testid="settings-project-home-browse-button">Browse</button>
               </div>
             </label>
-            <p>New projects use &lt;home&gt;/projects/&lt;type&gt;/...; board cards use &lt;home&gt;/tickets/... Existing projects are not moved.</p>
+            <p>New projects use &lt;home&gt;/&lt;type&gt;/...; board cards use &lt;home&gt;/tickets/... Existing projects are not moved.</p>
+          </fieldset>
+          <fieldset class="phase-settings">
+            <legend>Project types</legend>
+            <p>Each type is a folder directly under the Joint Bob home folder. Projects of a type use its GitHub group unless the project sets its own.</p>
+            <div class="project-type-list" id="projectTypeList" data-testid="project-type-list"></div>
+            <div class="project-type-add">
+              <label class="sr-only" for="projectTypeNameInput">New project type name</label>
+              <input id="projectTypeNameInput" autocomplete="off" placeholder="New type name" data-testid="project-type-name-input" />
+              <button class="ghost" type="button" id="projectTypeAddButton" data-testid="project-type-add-button">Add type</button>
+            </div>
           </fieldset>
           <fieldset class="phase-settings">
             <legend>Syncthing</legend>
@@ -490,10 +500,7 @@
         </div>
         <label>
           Project type
-          <select id="projectTypeInput" name="type" data-testid="project-form-type-select">
-            <option value="personal">Personal</option>
-            <option value="work">Work</option>
-          </select>
+          <select id="projectTypeInput" name="type" data-testid="project-form-type-select"></select>
         </label>
         <label>
           Project name

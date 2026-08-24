@@ -268,6 +268,19 @@ function projectAuth(projectId: string): ProjectGitHubAuth {
   return row ? { group: row.account || null, ...(row.token ? { token: decrypt(row.token) } : {}) } : { group: null };
 }
 
+/** A project with no group of its own inherits the group assigned to its project type. */
+function projectTypeGroupId(projectId: string): string | null {
+  const db = authDatabase();
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'project_types'").get()) return null;
+  const row = db.prepare(`
+    SELECT project_types.github_group AS groupId
+    FROM projects
+    JOIN project_types ON project_types.id = projects.project_type
+    WHERE projects.id = ?
+  `).get(resolveProjectAlias(db, projectId)) as { groupId: string | null } | undefined;
+  return row?.groupId ?? null;
+}
+
 export async function listGitHubGroups(): Promise<GitHubGroup[]> {
   const rows = authDatabase().prepare("SELECT account, label, is_default FROM github_accounts ORDER BY label COLLATE NOCASE").all() as unknown as Array<{ account: string; label: string; is_default: number }>;
   return rows.map((row) => ({ id: row.account, label: row.label || row.account, isDefault: Boolean(row.is_default) }));
@@ -278,11 +291,22 @@ function defaultGroupId(): string | null {
   return row?.account ?? null;
 }
 
+/** Tries each source in order and keeps the first that still has a token, so a deleted group
+    assigned to a project or a project type falls through instead of blocking the chain. */
+function projectToken(projectId: string, project: ProjectGitHubAuth): string | undefined {
+  if (project.token) return project.token;
+  for (const groupId of [project.group, projectTypeGroupId(projectId), defaultGroupId()]) {
+    const token = groupToken(groupId);
+    if (token) return token;
+  }
+  return undefined;
+}
+
 export async function getGitHubAuthStatus(projectId?: string): Promise<GitHubAuthStatus> {
   const status: GitHubAuthStatus = { groups: await listGitHubGroups() };
   if (projectId) {
     const project = projectAuth(projectId);
-    status.project = { group: project.group, hasOverride: Boolean(project.token), configured: Boolean(project.token || groupToken(project.group ?? defaultGroupId())) };
+    status.project = { group: project.group, hasOverride: Boolean(project.token), configured: Boolean(projectToken(projectId, project)) };
   }
   return status;
 }
@@ -511,7 +535,7 @@ export async function recordGitHubCredentialFailure(peerId: string, eventIds: st
 export function gitHubEnvironment(projectId: string): NodeJS.ProcessEnv {
   ensureLocalFiles();
   const project = projectAuth(projectId);
-  const token = project.token || groupToken(project.group ?? defaultGroupId());
+  const token = projectToken(projectId, project);
   if (!token) return {};
   return { GH_TOKEN: token, GITHUB_TOKEN: token, PI_GITHUB_TOKEN: token, GIT_ASKPASS: askPassPath, GIT_TERMINAL_PROMPT: "0" };
 }

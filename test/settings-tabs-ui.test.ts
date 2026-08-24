@@ -41,6 +41,22 @@ test("settings tabs absorb notification, GitHub, and cluster configuration", asy
   assert.match(styles, /\.settings-tab\[aria-selected="true"\]/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.settings-tab/);
 
+  // Project types are data now, not two hardcoded options.
+  assert.match(html, /id="projectTypeList"/);
+  assert.match(html, /id="projectTypeAddButton"/);
+  assert.doesNotMatch(html, /<option value="personal">Personal<\/option>/);
+  assert.match(app, /api\("\/api\/project-types"\)/);
+  assert.match(app, /function fillProjectTypeSelect/);
+
+  // The dialog widens on the dense tabs, and its opening focus draws no ring.
+  assert.match(app, /elements\.settingsForm\.dataset\.tab = name/);
+  assert.match(styles, /\.settings-card\[data-tab="projects"\]/);
+  assert.match(html, /class="dialog-heading" tabindex="-1" autofocus/);
+  assert.match(styles, /\.dialog-heading:focus \{ outline: none; \}/);
+
+  // Managed project folders sit directly under the home folder.
+  assert.doesNotMatch(app, /\/projects\/\$\{elements\.projectTypeInput\.value\}/);
+
   // Installed PWA clients must not keep the old shell.
   assert.match(serviceWorker, /joint-bob-v(?:[2-9]|\d{2,})/);
 });

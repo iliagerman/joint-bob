@@ -4,7 +4,7 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promise
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { ensureManagedHome, managedHomePaths, managedProjectPath } from "../src/managed-home.js";
+import { ensureManagedHome, managedProjectPath, managedTypeRoot } from "../src/managed-home.js";
 import {
   assertTaskWorkspaceReady,
   createTaskWorkspace,
@@ -41,7 +41,7 @@ test("managed project paths cannot escape their type root", () => {
   const home = path.join(os.tmpdir(), `joint-bob-managed-project-${randomUUID()}`);
   for (const name of ["../../escape", "..\\..\\escape", "...", "name/child"]) {
     const result = managedProjectPath(home, "personal", name);
-    const relative = path.relative(managedHomePaths(home).personalProjects, result);
+    const relative = path.relative(managedTypeRoot(home, "personal"), result);
     assert.notEqual(relative, "");
     assert.equal(path.isAbsolute(relative), false);
     assert.equal(relative.startsWith(".."), false);

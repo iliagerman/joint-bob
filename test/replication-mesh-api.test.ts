@@ -146,7 +146,7 @@ test("managed homes auto-map peer projects by type and name", { timeout: 120_000
     assert.deepEqual(result.imported, ["demo"]);
 
     const projects = (await (await fetch(`${destination.baseUrl}/api/projects`, { headers: destinationAuth.headers })).json() as { projects: Array<{ id: string; path: string }> }).projects;
-    assert.equal(projects.find((project) => project.id === projectId)?.path, path.join(destinationHome, "projects", "personal", "demo"));
+    assert.equal(projects.find((project) => project.id === projectId)?.path, path.join(destinationHome, "personal", "demo"));
 
     const destinationId = (await (await fetch(`${destination.baseUrl}/api/cluster/node`, { headers: destinationAuth.headers })).json() as { node: { id: string } }).node.id;
     const sessionNodes = await fetch(`${source.baseUrl}/api/projects/${projectId}/session-nodes`, { headers: sourceAuth.headers });

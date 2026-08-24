@@ -11,7 +11,7 @@ import { promisify } from "node:util";
 import WebSocket, { WebSocketServer } from "ws";
 import { z } from "zod";
 import { projectNameOverrides, setProjectName, setSessionTitle } from "./names.js";
-import { addProject, getProject, importProject, listProjects, projectAliasIds, registerProjectAliases, removeProject, renameProject, touchProject, updateProjectMacPath, updateProjectSyncFolderId } from "./store.js";
+import { addProject, deleteProjectType, getProject, importProject, listProjects, listProjectTypes, projectAliasIds, ProjectTypeError, registerProjectAliases, removeProject, renameProject, saveProjectType, touchProject, updateProjectMacPath, updateProjectSyncFolderId } from "./store.js";
 import { createClusterPeer, dueMembershipDeliveries, getClusterMachineToken, getClusterMembership, getClusterNode, getClusterPeer, listClusterPeers, markClusterPeerSeen, mergeClusterMembership, recordMembershipDelivered, recordMembershipFailure, removeClusterPeer, saveClusterPeer, updateClusterNode, type ClusterPeer } from "./cluster.js";
 import { eventsForPeer, receiveReplicationBatch, recordPeerFailure, recordPeerReceipt, type ReplicationBatch } from "./replication.js";
 import { deleteGitHubGroup, ensureGitHubCredentialMigration, getGitHubAuthStatus, gitHubEnvironment, githubCredentialEventsForPeer, receiveGitHubCredentialEvents, recordGitHubCredentialFailure, recordGitHubCredentialReceipt, removeProjectGitHubAuth, saveGitHubGroup, updateProjectGitHubAuth, type GitHubCredentialEvent } from "./github-auth.js";
@@ -34,7 +34,7 @@ import { buildHandoffContext, claudeSessionFilePath, loadClaudeMessages, runClau
 import { listHarnesses, listHarnessSessions } from "./harnesses.js";
 import { authenticate, authenticationStatus, changePassword, clearSessionCookieValue, createAdministrator, listLoginSessions, revokeSession, revokeUserSession, sessionCookieValue, sessionForId, type AuthSession } from "./auth.js";
 import { getSettings, updateSettings } from "./settings.js";
-import { ensureManagedHome, managedHomePaths, managedProjectPath } from "./managed-home.js";
+import { ensureManagedHome, managedProjectPath } from "./managed-home.js";
 import { importProjectDirectory, ProjectDirectoryImportError } from "./project-directory-import.js";
 import { listAuditEvents } from "./audit.js";
 import { getUserPreferences, updateUserPreferences } from "./preferences.js";
@@ -143,7 +143,7 @@ let startupError: Error | undefined;
 const absolutePathSchema = z.string().trim().min(1).max(1000).refine(path.isAbsolute, "Path must be absolute");
 const projectSchema = z.object({
   name: z.string().trim().min(1).max(80),
-  type: z.enum(["personal", "work"]).optional().default("personal"),
+  type: z.string().trim().min(1).max(40).optional().default("personal"),
   path: absolutePathSchema.optional(),
   sourcePath: absolutePathSchema.optional(),
   importMode: z.enum(["copy", "move", "move-link"]).optional().default("move-link"),
@@ -531,7 +531,7 @@ async function importProjectsFromPeer(peer: ClusterPeer): Promise<ProjectImportR
       }
     }
     if (!existing && !localPath) {
-      localPath = managedProjectPath(getSettings().projects.homePath, remoteProject.type ?? "personal", remoteProject.name);
+      localPath = managedProjectPath(getSettings().projects.homePath, await localProjectTypeId(remoteProject.type), remoteProject.name);
     }
     if (!existing && !localPath) {
       pending.push({
@@ -540,13 +540,13 @@ async function importProjectsFromPeer(peer: ClusterPeer): Promise<ProjectImportR
         name: remoteProject.name,
         remotePath: remoteProject.path,
         ...(remoteProject.syncFolderId ? { syncFolderId: remoteProject.syncFolderId } : {}),
-        suggestedPath: managedProjectPath(getSettings().projects.homePath, remoteProject.type ?? "personal", remoteProject.name),
+        suggestedPath: managedProjectPath(getSettings().projects.homePath, await localProjectTypeId(remoteProject.type), remoteProject.name),
       });
       continue;
     }
     const importedProject = !existing && localPath
       ? await mapProjectFromPeer(peer, inventory, entry, localPath)
-      : await importProject(remoteProject, localPath, inventory.node.id);
+      : await importProject({ ...remoteProject, type: await localProjectTypeId(remoteProject.type) }, localPath, inventory.node.id);
     await registerProjectAliases(importedProject.id, [remoteProject.id, ...(entry.aliases ?? [])]);
     imported.push(remoteProject.name);
   }
@@ -556,6 +556,13 @@ async function importProjectsFromPeer(peer: ClusterPeer): Promise<ProjectImportR
 function requirePathInsideHome(candidate: string, homeDirectory: string): void {
   const relative = path.relative(homeDirectory, candidate);
   if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("Folder must be inside this node's home directory");
+}
+
+/** A peer can carry a type this node never defined; fall back to a local one rather than inventing a folder. */
+async function localProjectTypeId(candidate: string | undefined): Promise<string> {
+  const types = await listProjectTypes();
+  if (candidate && types.some((type) => type.id === candidate)) return candidate;
+  return types[0]?.id ?? "personal";
 }
 
 async function assertManagedHomeChangeAllowed(nextHomePath: string): Promise<void> {
@@ -604,7 +611,7 @@ async function mapProjectFromPeer(peer: ClusterPeer, inventory: PeerInventory, e
       if (!shareResponse.ok) throw new Error(`Peer Syncthing share failed: ${shareResponse.status}`);
     }
   }
-  const project = await importProject(remoteProject, localPath, inventory.node.id);
+  const project = await importProject({ ...remoteProject, type: await localProjectTypeId(remoteProject.type) }, localPath, inventory.node.id);
   await registerProjectAliases(project.id, [remoteProject.id, ...(entry.aliases ?? [])]);
   sessionWatcher.ensureProject(project);
   return project;
@@ -748,7 +755,7 @@ app.put("/api/settings", async (request, response, next) => {
     const homePath = payload.projects?.homePath ?? getSettings().projects.homePath;
     if (!homePath.trim() || !path.isAbsolute(homePath)) throw new Error("Joint Bob home folder must be absolute");
     await assertManagedHomeChangeAllowed(homePath);
-    await ensureManagedHome(homePath);
+    await ensureManagedHome(homePath, (await listProjectTypes()).map((type) => type.id));
     const settings = updateSettings(payload, session.userId);
     resetSyncthingConnection();
     response.json(settings);
@@ -816,7 +823,7 @@ app.get("/api/cluster/local-inventory", async (_request, response, next) => {
       aliases: await projectAliasIds(project.id),
       tasks: await listTasks(project.id),
     })));
-    response.json({ node, syncDeviceId, syncError, projectRoot: managedHomePaths(getSettings().projects.homePath).projects, projects: inventory, generatedAt: new Date().toISOString() });
+    response.json({ node, syncDeviceId, syncError, projectRoot: getSettings().projects.homePath, projects: inventory, generatedAt: new Date().toISOString() });
   } catch (error) {
     next(error);
   }
@@ -1579,6 +1586,40 @@ async function projectsWithSharedNames(): Promise<ProjectRecord[]> {
   return projects.map((project) => ({ ...project, name: overrides[project.id] ?? project.name }));
 }
 
+const projectTypeSchema = z.object({
+  id: z.string().trim().max(40).optional(),
+  label: z.string().trim().min(1).max(40),
+  githubGroup: z.string().trim().max(64).nullable().optional(),
+});
+
+app.get("/api/project-types", async (_request, response, next) => {
+  try {
+    response.json({ types: await listProjectTypes() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put("/api/project-types", async (request, response, next) => {
+  try {
+    const payload = projectTypeSchema.parse(request.body);
+    const type = await saveProjectType(payload);
+    await ensureManagedHome(getSettings().projects.homePath, (await listProjectTypes()).map((entry) => entry.id));
+    response.json({ type });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/api/project-types/:typeId", async (request, response, next) => {
+  try {
+    await deleteProjectType(request.params.typeId);
+    response.status(204).end();
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get("/api/projects", async (_request, response, next) => {
   try {
     response.json({ projects: await projectsWithSharedNames() });
@@ -1604,8 +1645,12 @@ app.post("/api/projects", async (request, response, next) => {
   try {
     const payload = projectSchema.parse(request.body);
     const homePath = getSettings().projects.homePath;
+    const projectTypes = await listProjectTypes();
+    if (!projectTypes.some((type) => type.id === payload.type)) {
+      throw new ProjectTypeError(`Unknown project type "${payload.type}"`);
+    }
     const projectPath = payload.path ?? managedProjectPath(homePath, payload.type, payload.name);
-    if (!payload.path) await ensureManagedHome(homePath);
+    if (!payload.path) await ensureManagedHome(homePath, projectTypes.map((type) => type.id));
     if (payload.sourcePath) {
       const projects = await listProjects();
       if (projects.some((project) => path.resolve(project.path) === path.resolve(projectPath))) {
@@ -2170,6 +2215,10 @@ app.use((error: unknown, _request: Request, response: Response, _next: NextFunct
     return;
   }
   const message = error instanceof Error ? error.message : "Unexpected server error";
+  if (error instanceof ProjectTypeError) {
+    sendError(response, 400, message);
+    return;
+  }
   sendError(response, error instanceof TaskWorktreeError || error instanceof TaskWorkspaceError || error instanceof ProjectDirectoryImportError ? 409 : 500, message);
 });
 
