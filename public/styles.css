@@ -123,8 +123,7 @@ h2 { font-size: 17px; line-height: 1.25; }
 }
 .section-title { color: var(--muted); }
 
-/* Boot gate: the shell stays hidden until the app has its preferences, so nothing
-   renders half-built and the theme never visibly swaps. */
+/* Boot gate: theme first, slow project and session discovery afterward. */
 .app-boot {
   position: fixed;
   inset: 0;
@@ -133,9 +132,71 @@ h2 { font-size: 17px; line-height: 1.25; }
   place-items: center;
   background: var(--bg);
 }
-.app-boot-inner { display: grid; justify-items: center; gap: 16px; }
-.app-boot .brand-mark { width: 44px; height: 44px; border-radius: 12px; }
-.app-boot .list-loading { width: 150px; border-radius: 999px; }
+.app-boot-inner { display: grid; justify-items: center; }
+.app-boot-mark { width: 112px; height: 112px; filter: drop-shadow(0 18px 28px rgba(20, 22, 24, 0.18)); }
+.boot-tile { fill: #141618; }
+.boot-smoke {
+  stroke: #37cfab;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: boot-smoke-rise 2.4s ease-out infinite;
+}
+.boot-smoke-right { animation-delay: 280ms; }
+.boot-joint {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.boot-joint rect { fill: #f7f3e8; }
+.boot-joint path { stroke: #d8d2c4; stroke-width: 12; }
+.boot-joint-left { animation: boot-joint-left 700ms cubic-bezier(0.22, 0.9, 0.28, 1) both; }
+.boot-joint-right { animation: boot-joint-right 700ms cubic-bezier(0.22, 0.9, 0.28, 1) both; }
+.boot-ember {
+  fill: #37cfab;
+  stroke: #141618;
+  stroke-width: 12;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: boot-ember-pulse 1.4s ease-in-out 600ms infinite;
+}
+.boot-ember-core { fill: #f7f3e8; stroke: none; }
+.app-boot-wordmark {
+  margin-top: 16px;
+  color: var(--heading);
+  font-family: var(--serif);
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1;
+}
+.app-boot-tagline {
+  margin-top: 9px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+@keyframes boot-joint-left {
+  from { opacity: 0; transform: translate(-34px, 18px) rotate(-31deg); }
+  to { opacity: 1; transform: rotate(-22deg); }
+}
+@keyframes boot-joint-right {
+  from { opacity: 0; transform: translate(34px, 18px) rotate(31deg); }
+  to { opacity: 1; transform: rotate(22deg); }
+}
+@keyframes boot-smoke-rise {
+  0%, 24% { opacity: 0; transform: translateY(14px) scale(0.92); }
+  48% { opacity: 0.9; }
+  100% { opacity: 0; transform: translateY(-16px) scale(1.04); }
+}
+@keyframes boot-ember-pulse {
+  0%, 100% { opacity: 0.72; transform: scale(0.88); }
+  50% { opacity: 1; transform: scale(1.08); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .boot-smoke, .boot-joint, .boot-ember { animation: none; }
+}
 body:not(.booting) .app-boot { display: none; }
 body.booting :is(.shell, .mobile-nav) { visibility: hidden; }
 
@@ -259,31 +320,9 @@ body.view-chat #chatPanel :is(.panel-scroll, .board-columns, .messages) {
 /* ---- Brand ---- */
 .brand { display: flex; gap: 11px; align-items: center; flex: 1; min-width: 0; }
 .project-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
-.brand-mark, .orb, .install-banner-mark {
-  display: grid;
-  place-items: center;
-  color: #fafafa;
-  background: #141618;
-  border: 1px solid transparent;
-  box-shadow: none;
-}
-:root[data-theme="dark"] .brand-mark,
-:root[data-theme="dark"] .orb,
-:root[data-theme="dark"] .install-banner-mark { border-color: rgba(255, 255, 255, 0.14); }
-.brand-mark { width: 32px; height: 32px; border-radius: 9px; flex: 0 0 auto; }
-.brand-mark svg, .install-banner-mark svg { width: 60%; height: 60%; }
-.mark-cursor { color: var(--accent); }
-.orb svg { width: 56%; height: 56%; }
-.orb .mark path {
-  stroke-dasharray: 40;
-  stroke-dashoffset: 40;
-  animation: mark-draw 900ms cubic-bezier(0.65, 0, 0.35, 1) forwards;
-}
-.orb .mark path:nth-child(2) { animation-delay: 130ms; }
-.orb .mark path:nth-child(3) { animation-delay: 260ms; }
-.orb .mark-cursor { color: var(--accent); opacity: 0; animation: cursor-wake 1.05s steps(1) 900ms infinite; }
-@keyframes mark-draw { to { stroke-dashoffset: 0; } }
-@keyframes cursor-wake { 0%, 55% { opacity: 1; } 56%, 100% { opacity: 0; } }
+.brand-mark, .orb, .install-banner-mark { flex: 0 0 auto; }
+.brand-mark { width: 32px; height: 32px; }
+.brand-mark img, .orb img, .install-banner-mark img { display: block; width: 100%; height: 100%; }
 .brand-copy { display: grid; min-width: 0; }
 .brand-copy strong, .brand-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .brand-copy strong { font-family: var(--serif); font-size: 19px; font-weight: 600; line-height: 1.25; letter-spacing: -0.005em; color: var(--heading); }

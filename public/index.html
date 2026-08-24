@@ -18,15 +18,23 @@
   <body class="view-projects booting">
     <div class="app-boot" id="appBoot" role="status" aria-label="Loading Joint Bob">
       <div class="app-boot-inner">
-        <div class="brand-mark" aria-hidden="true"><svg class="mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5.5v13"/><path d="M8 5.5h3.6a3.25 3.25 0 0 1 0 6.5H8"/><path d="M8 12h4.4a3.25 3.25 0 0 1 0 6.5H8"/><rect class="mark-cursor" x="15.4" y="15" width="3.4" height="3.4" rx="0.9" fill="currentColor" stroke="none"/></svg></div>
-        <div class="list-loading"><span></span></div>
+        <svg class="app-boot-mark" viewBox="0 0 512 512" aria-hidden="true">
+          <rect class="boot-tile" width="512" height="512" rx="112"/>
+          <g class="boot-smoke boot-smoke-left" fill="none" stroke-width="24" stroke-linecap="round"><path d="M251 247c-35-25-39-53-12-72 30-21 25-53-7-70"/></g>
+          <g class="boot-smoke boot-smoke-right" fill="none" stroke-width="24" stroke-linecap="round"><path d="M264 247c34-29 43-57 20-80-24-25-10-54 27-69"/></g>
+          <g class="boot-joint boot-joint-left"><rect x="76" y="286" width="220" height="60" rx="30"/><path d="M118 288v56"/></g>
+          <g class="boot-joint boot-joint-right"><rect x="216" y="286" width="220" height="60" rx="30"/><path d="M394 288v56"/></g>
+          <g class="boot-ember"><circle cx="256" cy="276" r="25"/><circle class="boot-ember-core" cx="256" cy="276" r="8"/></g>
+        </svg>
+        <div class="app-boot-wordmark">Joint Bob</div>
+        <div class="app-boot-tagline">Agents, together.</div>
       </div>
     </div>
     <div class="shell">
       <section class="panel view-panel" id="projectsPanel" aria-label="Projects">
         <header class="panel-bar">
           <div class="brand">
-            <div class="brand-mark" aria-hidden="true"><svg class="mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5.5v13"/><path d="M8 5.5h3.6a3.25 3.25 0 0 1 0 6.5H8"/><path d="M8 12h4.4a3.25 3.25 0 0 1 0 6.5H8"/><rect class="mark-cursor" x="15.4" y="15" width="3.4" height="3.4" rx="0.9" fill="currentColor" stroke="none"/></svg></div>
+            <div class="brand-mark" aria-hidden="true"><img src="/icon.svg" alt="" width="32" height="32" /></div>
             <div class="brand-copy">
               <strong>Joint Bob</strong>
               <span>agent workspace</span>
@@ -133,7 +141,7 @@
 
         <section class="messages" id="messages" aria-live="polite">
           <div class="empty-state">
-            <div class="orb" aria-hidden="true"><svg class="mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5.5v13"/><path d="M8 5.5h3.6a3.25 3.25 0 0 1 0 6.5H8"/><path d="M8 12h4.4a3.25 3.25 0 0 1 0 6.5H8"/><rect class="mark-cursor" x="15.4" y="15" width="3.4" height="3.4" rx="0.9" fill="currentColor" stroke="none"/></svg></div>
+            <div class="orb" aria-hidden="true"><img src="/icon.svg" alt="" width="56" height="56" /></div>
             <h2>Your server-side Pi, in your pocket.</h2>
             <p>Select a project and start a Pi or Claude conversation on any connected node.</p>
           </div>
@@ -173,7 +181,7 @@
     </nav>
 
     <div class="install-banner" id="installBanner" role="dialog" aria-label="Install Joint Bob" hidden>
-      <div class="install-banner-mark" aria-hidden="true"><svg class="mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5.5v13"/><path d="M8 5.5h3.6a3.25 3.25 0 0 1 0 6.5H8"/><path d="M8 12h4.4a3.25 3.25 0 0 1 0 6.5H8"/><rect class="mark-cursor" x="15.4" y="15" width="3.4" height="3.4" rx="0.9" fill="currentColor" stroke="none"/></svg></div>
+      <div class="install-banner-mark" aria-hidden="true"><img src="/icon.svg" alt="" width="40" height="40" /></div>
       <div class="install-banner-copy">
         <strong>Install Joint Bob</strong>
         <span>Add it to your home screen for a full-screen, app-like experience.</span>

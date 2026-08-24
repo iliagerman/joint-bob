@@ -1,9 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Joint Bob icon">
   <rect width="512" height="512" rx="112" fill="#141618"/>
-  <g stroke="#fafafa" stroke-width="40" stroke-linecap="round" stroke-linejoin="round" fill="none">
-    <path d="M168 150v212"/>
-    <path d="M168 150h72a53 53 0 0 1 0 106h-72"/>
-    <path d="M168 256h84a53 53 0 0 1 0 106h-84"/>
+  <g id="smoke" fill="none" stroke="#37cfab" stroke-width="24" stroke-linecap="round">
+    <path d="M251 247c-35-25-39-53-12-72 30-21 25-53-7-70"/>
+    <path d="M264 247c34-29 43-57 20-80-24-25-10-54 27-69"/>
   </g>
-  <rect x="330" y="318" width="44" height="44" rx="10" fill="#3cb9a0"/>
+  <g id="joint-left" transform="rotate(-22 183 316)">
+    <rect x="76" y="286" width="220" height="60" rx="30" fill="#f7f3e8"/>
+    <path d="M118 288v56" stroke="#d8d2c4" stroke-width="12"/>
+  </g>
+  <g id="joint-right" transform="rotate(22 329 316)">
+    <rect x="216" y="286" width="220" height="60" rx="30" fill="#f7f3e8"/>
+    <path d="M394 288v56" stroke="#d8d2c4" stroke-width="12"/>
+  </g>
+  <circle id="ember" cx="256" cy="276" r="25" fill="#37cfab" stroke="#141618" stroke-width="12"/>
+  <circle cx="256" cy="276" r="8" fill="#f7f3e8"/>
 </svg>

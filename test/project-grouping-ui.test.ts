@@ -29,10 +29,10 @@ test("the projects list is grouped by type and each group collapses", async () =
     assert.ok(styles.includes(selector));
   }
 
-  assert.match(serviceWorker, /joint-bob-v19/);
+  assert.match(serviceWorker, /joint-bob-v20/);
 });
 
-test("the app holds a boot screen until the first load settles", async () => {
+test("the branded boot screen releases before project discovery", async () => {
   const [html, app, styles, boot] = await Promise.all([
     readFile("public/index.html", "utf8"),
     readFile("public/app.js", "utf8"),
@@ -45,9 +45,21 @@ test("the app holds a boot screen until the first load settles", async () => {
   assert.match(boot, /document\.documentElement\.dataset\.theme = theme;/);
   assert.doesNotMatch(boot, /localStorage|sessionStorage/);
 
-  // The shell stays hidden until initialisation settles, success or failure.
   assert.match(html, /<body class="view-projects booting">/);
   assert.match(html, /class="app-boot"/);
+  assert.match(html, /class="boot-smoke/);
+  assert.match(html, /class="app-boot-wordmark">Joint Bob</);
+  assert.doesNotMatch(html.match(/<div class="app-boot"[\s\S]*?<\/div>\s*<\/div>/)?.[0] || "", /list-loading/);
   assert.match(styles, /body\.booting :is\(\.shell, \.mobile-nav\) \{ visibility: hidden; \}/);
-  assert.match(app, /\.finally\(\(\) => document\.body\.classList\.remove\("booting"\)\)/);
+  assert.match(styles, /@keyframes boot-smoke-rise/);
+  assert.match(styles, /prefers-reduced-motion: reduce/);
+  assert.match(app, /const BOOT_MINIMUM_MS = 700;/);
+  assert.match(app, /function revealApplication\(\)/);
+  assert.match(app, /if \(!status\.authenticated\) \{\s*revealApplication\(\);\s*showLogin\(\);/);
+  assert.match(app, /void api\("\/api\/cluster\/projects\/discover"[\s\S]*?\.then\(async \(discovery\) =>/);
+
+  const themeReady = app.indexOf("setTheme(preferences.theme");
+  const reveal = app.indexOf("revealApplication();", themeReady);
+  const discovery = app.indexOf('api("/api/cluster/projects/discover"', themeReady);
+  assert.ok(themeReady >= 0 && reveal > themeReady && reveal < discovery, "boot must release before project discovery");
 });

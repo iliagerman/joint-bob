@@ -65,6 +65,10 @@ const state = {
   initialSessionPath: new URLSearchParams(location.search).get("sessionPath"),
 };
 
+const BOOT_MINIMUM_MS = 700;
+const bootStartedAt = performance.now();
+let bootRevealTimer = null;
+
 const LEGACY_PREFERENCE_KEYS = [
   "piWebTheme",
   "piWebNotifications",
@@ -349,6 +353,19 @@ function showSignedOut() {
   showLogin();
 }
 
+function revealApplication() {
+  if (!document.body.classList.contains("booting") || bootRevealTimer) return;
+  const delay = Math.max(0, BOOT_MINIMUM_MS - (performance.now() - bootStartedAt));
+  if (delay) {
+    bootRevealTimer = setTimeout(() => {
+      bootRevealTimer = null;
+      document.body.classList.remove("booting");
+    }, delay);
+    return;
+  }
+  document.body.classList.remove("booting");
+}
+
 function applyAuthStatus(status) {
   state.authenticated = status.authenticated;
   state.username = status.username || "";
@@ -367,10 +384,12 @@ async function initializeApplication() {
   const status = await api("/api/auth/status");
   applyAuthStatus(status);
   if (!status.authenticated) {
+    revealApplication();
     showLogin();
     return;
   }
   if (status.mustChangePassword) {
+    revealApplication();
     showLogin();
     return;
   }
@@ -388,13 +407,16 @@ async function initializeApplication() {
   syncNotifyButton();
   updateInstallButton();
   setMobileView(preferences.mobileView);
-  const discovery = await api("/api/cluster/projects/discover", { method: "POST" }).catch((error) => {
-    console.warn("Could not discover peer projects", error);
-    return { pending: [] };
-  });
+  revealApplication();
   await loadProjectTypes();
   await loadProjects();
-  if (discovery.pending.length) openProjectImportMapping(discovery.pending);
+  void api("/api/cluster/projects/discover", { method: "POST" })
+    .then(async (discovery) => {
+      await loadProjectTypes();
+      await refreshProjectsQuietly();
+      if (discovery.pending.length) openProjectImportMapping(discovery.pending);
+    })
+    .catch((error) => console.warn("Could not discover peer projects", error));
   setMobileView(preferences.mobileView);
   state.preferencesLoaded = true;
   if (state.initialProjectId || state.initialSessionPath) {
@@ -3270,4 +3292,4 @@ syncNotifyButton();
 updateInstallButton();
 initializeApplication()
   .catch((error) => toast(error.message))
-  .finally(() => document.body.classList.remove("booting"));
+  .finally(revealApplication);
