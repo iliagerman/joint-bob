@@ -12,6 +12,11 @@ export interface ProjectTypeRecord {
   githubGroup: string | null;
 }
 
+/** A fixed palette keeps project accents legible in both themes. */
+export const PROJECT_COLORS = ["slate", "teal", "blue", "violet", "magenta", "amber", "green", "red"] as const;
+
+export type ProjectColor = (typeof PROJECT_COLORS)[number];
+
 export type ProjectSyncState = "synced" | "syncing" | "paused" | "error" | "unavailable";
 
 export interface ProjectSyncStatus {
@@ -25,6 +30,7 @@ export interface ProjectRecord {
   id: string;
   name: string;
   type?: ProjectType;
+  color?: string;
   path: string;
   macPath?: string;
   syncFolderId?: string;

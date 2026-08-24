@@ -14,7 +14,7 @@ test("workspace exposes a responsive professional visual system", async () => {
   assert.match(styles, /--accent:\s*#0e8a74/);
   assert.match(styles, /--surface:\s*#ffffff/);
   assert.match(styles, /:focus-visible[^{]*\{[^}]*outline:\s*2px solid var\(--focus-ring\)/);
-  assert.match(styles, /@media \(min-width: 1024px\)[\s\S]*grid-template-columns:\s*clamp\(274px, 18vw, 320px\) clamp\(300px, 20vw, 356px\) minmax\(0, 1fr\)/);
+  assert.match(styles, /@media \(min-width: 1024px\)[\s\S]*--col-projects: clamp\(274px, 18vw, 320px\);[\s\S]*--col-chats: clamp\(300px, 20vw, 356px\);[\s\S]*grid-template-columns: var\(--col-projects\) var\(--col-chats\) minmax\(0, 1fr\)/);
   assert.match(styles, /@media \(min-width: 1024px\)[\s\S]*\.list-row:is\(:hover, :focus-within\)[\s\S]*\.row-action-button[^{]*\{[^}]*opacity:\s*1/);
   assert.match(styles, /@media \(max-width: 1023px\)[\s\S]*\.mobile-nav[^{]*\{[^}]*bottom:\s*max\(8px, env\(safe-area-inset-bottom\)\)/);
   assert.match(styles, /\.mobile-nav button[^{]*\{[^}]*min-height:\s*48px/);

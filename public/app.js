@@ -4,6 +4,10 @@ import { renderBoard } from "./board.js";
 const state = {
   projects: [],
   sessions: [],
+  skills: [],
+  skillsLoading: false,
+  pinnedProjectIds: [],
+  pinnedSessionPaths: [],
   projectsLoading: true,
   sessionsLoading: false,
   sessionsRefreshing: false,
@@ -107,6 +111,17 @@ const elements = {
   sessionTransferForm: document.querySelector("#sessionTransferForm"),
   sessionTransferNodeSelect: document.querySelector("#sessionTransferNodeSelect"),
   cancelSessionTransferButton: document.querySelector("#cancelSessionTransferButton"),
+  projectsPanel: document.querySelector("#projectsPanel"),
+  chatsPanel: document.querySelector("#chatsPanel"),
+  collapseProjectsButton: document.querySelector("#collapseProjectsButton"),
+  expandProjectsButton: document.querySelector("#expandProjectsButton"),
+  collapseChatsButton: document.querySelector("#collapseChatsButton"),
+  expandChatsButton: document.querySelector("#expandChatsButton"),
+  skillsDialog: document.querySelector("#skillsDialog"),
+  skillsDialogList: document.querySelector("#skillsDialogList"),
+  skillsDialogSearchInput: document.querySelector("#skillsDialogSearchInput"),
+  closeSkillsDialogButton: document.querySelector("#closeSkillsDialogButton"),
+  projectColorSwatches: document.querySelector("#projectColorSwatches"),
   modelDialog: document.querySelector("#modelDialog"),
   modelDialogTitle: document.querySelector("#modelDialogTitle"),
   modelDialogList: document.querySelector("#modelDialogList"),
@@ -225,7 +240,6 @@ const elements = {
   chatToolbar: document.querySelector("#chatToolbar"),
   chatNodeSelect: document.querySelector("#chatNodeSelect"),
   chatHarnessSelect: document.querySelector("#chatHarnessSelect"),
-  chatSessionSelect: document.querySelector("#chatSessionSelect"),
   newClaudeSessionButton: document.querySelector("#newClaudeSessionButton"),
   claudeEffortSelect: document.querySelector("#claudeEffortSelect"),
   chatsLiveDot: document.querySelector("#chatsLiveDot"),
@@ -404,6 +418,10 @@ async function initializeApplication() {
   state.activeSessionPath = preferences.activeSessionPath;
   state.activeSessionId = preferences.activeSessionId;
   state.activeNodeId = preferences.activeNodeId;
+  state.pinnedProjectIds = preferences.pinnedProjectIds || [];
+  state.pinnedSessionPaths = preferences.pinnedSessionPaths || [];
+  setPanelCollapsed("projects", Boolean(preferences.projectsPanelCollapsed));
+  setPanelCollapsed("chats", Boolean(preferences.chatsPanelCollapsed));
   syncNotifyButton();
   updateInstallButton();
   setMobileView(preferences.mobileView);
@@ -719,6 +737,19 @@ function shortSessionTitle(session) {
   if (!session?.path) return title;
   if (title && !title.endsWith(".jsonl") && title !== "Untitled Pi session") return title;
   return `Pi session • ${formatDate(session.updatedAt || session.createdAt)}`;
+}
+
+/**
+ * Desktop-only: the mobile layout already shows a single panel at a time, so the
+ * body class simply narrows one grid column down to the rail width.
+ */
+function setPanelCollapsed(panel, collapsed) {
+  const panelElement = panel === "projects" ? elements.projectsPanel : elements.chatsPanel;
+  document.body.classList.toggle(`${panel}-collapsed`, collapsed);
+  panelElement.classList.toggle("collapsed", collapsed);
+  if (!state.preferencesLoaded) return;
+  if (panel === "projects") savePreferencesInBackground({ projectsPanelCollapsed: collapsed });
+  else savePreferencesInBackground({ chatsPanelCollapsed: collapsed });
 }
 
 function setMobileView(view, updateHistory = true) {
@@ -1210,9 +1241,33 @@ async function openProjectGithubSettings(project) {
 
 let projectPendingRename = null;
 
+function renderProjectColorSwatches(selected) {
+  elements.projectColorSwatches.replaceChildren();
+  for (const color of [null, ...PROJECT_COLORS]) {
+    const swatch = document.createElement("button");
+    swatch.type = "button";
+    swatch.className = `color-swatch${color ? "" : " color-swatch-none"}${selected === color ? " selected" : ""}`;
+    swatch.dataset.testid = "project-color-swatch";
+    swatch.dataset.colorValue = color || "";
+    swatch.setAttribute("role", "radio");
+    swatch.setAttribute("aria-checked", String(selected === color));
+    swatch.setAttribute("aria-label", color || "No colour");
+    swatch.title = color || "No colour";
+    if (color) swatch.dataset.color = color;
+    swatch.addEventListener("click", () => renderProjectColorSwatches(color));
+    elements.projectColorSwatches.append(swatch);
+  }
+}
+
+function selectedProjectColor() {
+  const selected = elements.projectColorSwatches.querySelector(".color-swatch.selected");
+  return selected?.dataset.colorValue || null;
+}
+
 function openProjectRename(project) {
   projectPendingRename = project;
   elements.projectRenameInput.value = project.name;
+  renderProjectColorSwatches(project.color || null);
   elements.projectGroupInput.replaceChildren();
   for (const type of projectTypes) {
     const option = document.createElement("option");
@@ -1235,6 +1290,54 @@ async function renameActiveSession(title) {
   // Pi keeps its own live session name, so mirror it while the socket is open.
   if (!sessionPath.startsWith("claude:") && title) sendSocket({ type: "rename", name: title });
   await loadSessions();
+}
+
+/** The fixed palette mirrors PROJECT_COLORS in src/types.ts. */
+const PROJECT_COLORS = ["slate", "teal", "blue", "violet", "magenta", "amber", "green", "red"];
+
+function isProjectPinned(projectId) {
+  return state.pinnedProjectIds.includes(projectId);
+}
+
+function isSessionPinned(sessionPath) {
+  return state.pinnedSessionPaths.includes(sessionPath);
+}
+
+/** Stable within each side of the split, so pinning never reshuffles the rest of the list. */
+function sortPinnedFirst(items, isPinned) {
+  return [...items.filter(isPinned), ...items.filter((item) => !isPinned(item))];
+}
+
+function togglePinnedProject(projectId) {
+  state.pinnedProjectIds = isProjectPinned(projectId)
+    ? state.pinnedProjectIds.filter((id) => id !== projectId)
+    : [...state.pinnedProjectIds, projectId];
+  if (state.preferencesLoaded) savePreferencesInBackground({ pinnedProjectIds: state.pinnedProjectIds });
+  renderProjects();
+}
+
+function togglePinnedSession(sessionPath) {
+  state.pinnedSessionPaths = isSessionPinned(sessionPath)
+    ? state.pinnedSessionPaths.filter((path) => path !== sessionPath)
+    : [...state.pinnedSessionPaths, sessionPath];
+  if (state.preferencesLoaded) savePreferencesInBackground({ pinnedSessionPaths: state.pinnedSessionPaths });
+  renderSessions();
+}
+
+function pinButton({ pinned, label, testid, onToggle }) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `ghost icon-button row-action-button pin-button${pinned ? " pinned" : ""}`;
+  button.setAttribute("aria-label", label);
+  button.setAttribute("aria-pressed", String(pinned));
+  button.title = label;
+  button.textContent = "\u{1F4CC}";
+  button.dataset.testid = testid;
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    onToggle();
+  });
+  return button;
 }
 
 function renderProjects() {
@@ -1277,7 +1380,7 @@ function groupedProjects(projects) {
   return [...configured, ...unknown].map((typeId) => ({
     id: typeId,
     label: projectTypes.find((type) => type.id === typeId)?.label || typeId,
-    projects: byType.get(typeId),
+    projects: sortPinnedFirst(byType.get(typeId), (project) => isProjectPinned(project.id)),
   }));
 }
 
@@ -1309,16 +1412,21 @@ function projectGroupElement(group) {
 }
 
 function projectRow(project) {
+    const pinned = isProjectPinned(project.id);
     const row = document.createElement("div");
     row.className = `list-row${project.id === state.activeProjectId ? " active" : ""}`;
+    if (project.color) row.dataset.color = project.color;
 
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `project-card${project.id === state.activeProjectId ? " active" : ""}`;
+    button.className = `project-card${project.id === state.activeProjectId ? " active" : ""}${pinned ? " pinned" : ""}`;
+    if (project.color) button.dataset.color = project.color;
     const name = document.createElement("strong");
     name.textContent = project.name;
     const projectPath = document.createElement("span");
     projectPath.textContent = project.path;
+    // The sync status is a sibling of the path, not a child: the path truncates,
+    // and a truncated path used to swallow the status entirely.
     const syncStatus = document.createElement("em");
     const status = project.syncStatus || { state: "unavailable", message: "Syncthing status is unavailable" };
     const syncLabels = { synced: "Synced", syncing: "Syncing", paused: "Paused", error: "Error", unavailable: "Unavailable" };
@@ -1326,9 +1434,15 @@ function projectRow(project) {
     syncStatus.dataset.testid = "project-sync-status";
     syncStatus.textContent = syncLabels[status.state] || syncLabels.unavailable;
     syncStatus.title = status.message || "";
-    projectPath.append(" ", syncStatus);
-    button.append(name, projectPath);
+    button.append(name, projectPath, syncStatus);
     button.addEventListener("click", () => selectProject(project.id));
+
+    const pinToggle = pinButton({
+      pinned,
+      label: pinned ? `Unpin ${project.name}` : `Pin ${project.name}`,
+      testid: "project-pin-button",
+      onToggle: () => togglePinnedProject(project.id),
+    });
 
     const renameButton = document.createElement("button");
     renameButton.type = "button";
@@ -1389,7 +1503,7 @@ function projectRow(project) {
       await loadProjects();
     });
 
-    row.append(button, renameButton, mappingButton, authButton, removeButton);
+    row.append(button, pinToggle, renameButton, mappingButton, authButton, removeButton);
     return row;
 }
 
@@ -1443,14 +1557,15 @@ function renderSessions() {
     return;
   }
 
-  for (const session of sessions) {
+  for (const session of sortPinnedFirst(sessions, (candidate) => isSessionPinned(candidate.path))) {
+    const sessionPinned = isSessionPinned(session.path);
     const row = document.createElement("div");
     const sessionActive = state.activeSessionId ? session.id === state.activeSessionId : session.path === state.activeSessionPath;
     row.className = `list-row${sessionActive ? " active" : ""}`;
 
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `session-card${sessionActive ? " active" : ""}`;
+    button.className = `session-card${sessionActive ? " active" : ""}${sessionPinned ? " pinned" : ""}`;
     const sessionName = document.createElement("strong");
     sessionName.textContent = shortSessionTitle(session);
     const meta = document.createElement("span");
@@ -1472,6 +1587,13 @@ function renderSessions() {
     badge.append(dot, statusLabel);
     meta.append(" ", badge);
     button.addEventListener("click", () => openListedSession(session));
+
+    const pinToggle = pinButton({
+      pinned: sessionPinned,
+      label: sessionPinned ? `Unpin ${shortSessionTitle(session)}` : `Pin ${shortSessionTitle(session)}`,
+      testid: "session-pin-button",
+      onToggle: () => togglePinnedSession(session.path),
+    });
 
     const transferButton = document.createElement("button");
     transferButton.type = "button";
@@ -1525,7 +1647,7 @@ function renderSessions() {
       await refreshSessionsQuietly();
     });
 
-    row.append(button, transferButton, removeButton);
+    row.append(button, pinToggle, transferButton, removeButton);
     elements.sessionList.append(row);
   }
 }
@@ -1743,6 +1865,7 @@ const CLAUDE_MODEL_OPTIONS = [
   { id: "fable", label: "Fable" },
   { id: "claude-opus-5", label: "Opus 5" },
   { id: "sonnet", label: "Sonnet" },
+  { id: "haiku", label: "Haiku 4.5" },
 ];
 // Pi harness offers the GPT (openai-codex) and GLM (zai) models; Claude harness offers Fable/Opus/Sonnet.
 const PI_MODEL_PROVIDERS = [
@@ -1780,6 +1903,84 @@ function modelOptionButton({ key, label, active, onSelect }) {
     elements.modelDialog.close();
   });
   return option;
+}
+
+/** Pi runs a skill as /skill:<name>; Claude runs it as a bare slash command. */
+function skillInvocation(skill) {
+  return skill.harness === "pi" ? `/skill:${skill.name} ` : `/${skill.name} `;
+}
+
+function renderSkillsDialog() {
+  elements.skillsDialogList.replaceChildren();
+  if (state.skillsLoading) {
+    const loading = document.createElement("span");
+    loading.className = "model-shortcuts-empty";
+    loading.textContent = "Loading skills…";
+    elements.skillsDialogList.append(loading);
+    return;
+  }
+
+  const query = normalizedQuery(elements.skillsDialogSearchInput.value || "");
+  const matches = state.skills
+    .filter((skill) => skill.harness === state.engine)
+    .filter((skill) => !query || `${skill.name}\n${skill.description}`.toLowerCase().includes(query));
+
+  if (!matches.length) {
+    const empty = document.createElement("span");
+    empty.className = "model-shortcuts-empty";
+    empty.textContent = query ? "No matching skills." : "No skills installed for this agent.";
+    elements.skillsDialogList.append(empty);
+    return;
+  }
+
+  for (const skill of matches) {
+    const option = document.createElement("button");
+    option.type = "button";
+    option.className = "skill-option";
+    option.dataset.testid = "skill-option";
+    const name = document.createElement("strong");
+    name.textContent = skill.name;
+    if (skill.scope === "project") {
+      const scope = document.createElement("em");
+      scope.className = "skill-option-scope";
+      scope.textContent = "project";
+      name.append(" ", scope);
+    }
+    const description = document.createElement("span");
+    description.className = "skill-option-description";
+    description.textContent = skill.description;
+    option.append(name, description);
+    option.addEventListener("click", () => {
+      const invocation = skillInvocation(skill);
+      elements.skillsDialog.close();
+      elements.messageInput.value = invocation;
+      elements.messageInput.focus();
+      elements.messageInput.setSelectionRange(invocation.length, invocation.length);
+    });
+    elements.skillsDialogList.append(option);
+  }
+}
+
+async function openSkillsDialog() {
+  elements.skillsDialogSearchInput.value = "";
+  elements.skillsDialog.showModal();
+  if (!state.activeProjectId) {
+    state.skills = [];
+    renderSkillsDialog();
+    return;
+  }
+  state.skillsLoading = true;
+  renderSkillsDialog();
+  try {
+    state.skills = (await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/skills`)).skills;
+  } catch (error) {
+    state.skills = [];
+    toast(error.message);
+  } finally {
+    state.skillsLoading = false;
+    renderSkillsDialog();
+    elements.skillsDialogSearchInput.focus();
+  }
 }
 
 function renderModelDialog() {
@@ -1860,10 +2061,6 @@ function sendSocket(payload) {
   return true;
 }
 
-function sessionHarnessId(session) {
-  return session?.harnessId || (session?.path?.startsWith("claude:") ? "claude" : "pi");
-}
-
 function renderTaskBacklink() {
   const task = state.activeTaskId ? state.tasks.find((candidate) => candidate.id === state.activeTaskId) : null;
   elements.taskBacklinkButton.hidden = !task;
@@ -1895,30 +2092,8 @@ function renderChatSessionControls() {
   elements.chatHarnessSelect.value = state.engine;
   elements.chatHarnessSelect.disabled = !state.activeProjectId || !state.harnesses.length;
 
-  elements.chatSessionSelect.replaceChildren();
-  const harness = state.harnesses.find((candidate) => candidate.id === state.engine);
-  if (harness) {
-    const newOption = document.createElement("option");
-    newOption.value = harness.newSessionPath;
-    newOption.textContent = `Start new ${harness.label} conversation`;
-    elements.chatSessionSelect.append(newOption);
-  }
-  for (const session of state.sessions.filter((candidate) => sessionHarnessId(candidate) === state.engine)) {
-    const option = document.createElement("option");
-    option.value = session.path;
-    option.textContent = shortSessionTitle(session);
-    elements.chatSessionSelect.append(option);
-  }
+  // Conversations are picked in the conversations panel; the toolbar no longer duplicates it.
   const selectedSession = state.sessions.find((session) => session.id === state.activeSessionId);
-  const activePath = selectedSession?.path || state.activeSessionPath;
-  if (!selectedSession && activePath && !["new", "claude:new"].includes(activePath)) {
-    const activeOption = document.createElement("option");
-    activeOption.value = activePath;
-    activeOption.textContent = elements.sessionTitle.textContent || "Active conversation";
-    elements.chatSessionSelect.append(activeOption);
-  }
-  elements.chatSessionSelect.value = activePath || harness?.newSessionPath || "";
-  elements.chatSessionSelect.disabled = !state.activeProjectId || !harness;
 
   const destinations = state.sessionNodes.filter((node) => node.id !== state.activeNodeId && node.online);
   const transferable = selectedSession && state.engine === "pi" && socketOpen() && !state.activeTaskId && destinations.length;
@@ -2619,7 +2794,7 @@ async function saveTaskFromDialog() {
     reviewMode: elements.taskReviewModeInput.checked,
     phaseConfig: phaseConfigFromInputs(),
   };
-  if (!payload.title) return;
+  if (!payload.title) throw new Error("Task title is required");
   const projectId = encodeURIComponent(state.activeProjectId);
   if (state.editingTaskId) {
     const body = await api(`/api/projects/${projectId}/tasks/${encodeURIComponent(state.editingTaskId)}`, {
@@ -2736,13 +2911,15 @@ elements.projectRenameForm.addEventListener("submit", async (event) => {
   const project = projectPendingRename;
   const name = elements.projectRenameInput.value.trim();
   const type = elements.projectGroupInput.value;
+  const color = selectedProjectColor();
   elements.projectRenameDialog.close();
-  if (!project || !name || (name === project.name && type === project.type)) return;
+  if (!project || !name) return;
+  if (name === project.name && type === project.type && color === (project.color || null)) return;
   try {
     await api(`/api/projects/${encodeURIComponent(project.id)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, type }),
+      body: JSON.stringify({ name, type, color }),
     });
     await loadProjects();
     toast("Project updated");
@@ -3101,19 +3278,12 @@ elements.chatHarnessSelect.addEventListener("change", () => {
     openSession(harness.newSessionPath, `New ${harness.label} conversation`);
   }
 });
-elements.chatSessionSelect.addEventListener("change", () => {
-  const session = state.sessions.find((candidate) => candidate.path === elements.chatSessionSelect.value);
-  if (session) {
-    openListedSession(session);
-    return;
-  }
-  state.activeTaskId = null;
-  const harness = state.harnesses.find((candidate) => candidate.id === state.engine);
-  if (harness) {
-    state.activeSessionId = null;
-    openSession(harness.newSessionPath, `New ${harness.label} conversation`);
-  }
-});
+elements.collapseProjectsButton.addEventListener("click", () => setPanelCollapsed("projects", true));
+elements.expandProjectsButton.addEventListener("click", () => setPanelCollapsed("projects", false));
+elements.collapseChatsButton.addEventListener("click", () => setPanelCollapsed("chats", true));
+elements.expandChatsButton.addEventListener("click", () => setPanelCollapsed("chats", false));
+elements.skillsDialogSearchInput.addEventListener("input", () => renderSkillsDialog());
+elements.closeSkillsDialogButton.addEventListener("click", () => elements.skillsDialog.close());
 elements.modelButton.addEventListener("click", () => {
   renderModelDialog();
   elements.modelDialog.showModal();
@@ -3230,6 +3400,10 @@ elements.attachmentInput.addEventListener("change", async (event) => {
 document.querySelectorAll(".command-strip button[data-command]").forEach((button) => {
   button.addEventListener("click", () => {
     const command = button.dataset.command || "";
+    if (command === "/skill") {
+      void openSkillsDialog();
+      return;
+    }
     elements.messageInput.value = command;
     elements.messageInput.focus();
     elements.messageInput.setSelectionRange(command.length, command.length);

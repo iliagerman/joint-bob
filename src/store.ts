@@ -17,6 +17,7 @@ interface ProjectRow {
   id: string;
   name: string;
   project_type: ProjectType;
+  color: string | null;
   path: string;
   mac_path: string | null;
   sync_folder_id: string | null;
@@ -64,6 +65,7 @@ function rowToProject(db: DatabaseSync, row: ProjectRow): ProjectRecord {
     id: row.id,
     name: row.name,
     type: row.project_type,
+    ...(row.color ? { color: row.color } : {}),
     path: row.path,
     ...(row.mac_path ? { macPath: row.mac_path } : {}),
     ...(row.sync_folder_id ? { syncFolderId: row.sync_folder_id } : {}),
@@ -89,6 +91,7 @@ function projectValues(project: ProjectRecord): SQLInputValue[] {
     project.id,
     project.name,
     project.type ?? "personal",
+    project.color ?? null,
     project.path,
     project.macPath ?? null,
     project.syncFolderId ?? null,
@@ -99,11 +102,12 @@ function projectValues(project: ProjectRecord): SQLInputValue[] {
 
 function saveProject(db: DatabaseSync, project: ProjectRecord): void {
   db.prepare(`
-    INSERT INTO projects (id, name, project_type, path, mac_path, sync_folder_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO projects (id, name, project_type, color, path, mac_path, sync_folder_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
       project_type = excluded.project_type,
+      color = excluded.color,
       path = excluded.path,
       mac_path = excluded.mac_path,
       sync_folder_id = excluded.sync_folder_id,
@@ -348,6 +352,7 @@ async function initializeProjectDatabase(): Promise<DatabaseSync> {
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         project_type TEXT NOT NULL DEFAULT 'personal',
+        color TEXT,
         path TEXT NOT NULL UNIQUE,
         mac_path TEXT,
         sync_folder_id TEXT,
@@ -380,6 +385,9 @@ async function initializeProjectDatabase(): Promise<DatabaseSync> {
       db.exec("ALTER TABLE projects ADD COLUMN project_type TEXT NOT NULL DEFAULT 'personal'");
     }
     dropProjectTypeCheckConstraint(db);
+    if (!tableHasColumn(db, "projects", "color")) {
+      db.exec("ALTER TABLE projects ADD COLUMN color TEXT");
+    }
     seedProjectTypes(db);
     await migrateLegacyProjects(db);
   } catch (error) {
@@ -555,6 +563,16 @@ export async function renameProject(projectId: string, name: string): Promise<Pr
   const project = await getProject(projectId);
   if (!project) throw new Error("Project not found");
   project.name = name.trim();
+  project.updatedAt = new Date().toISOString();
+  saveProject(await projectDatabase(), project);
+  return project;
+}
+
+export async function updateProjectColor(projectId: string, color: string | null): Promise<ProjectRecord> {
+  const project = await getProject(projectId);
+  if (!project) throw new Error("Project not found");
+  if (color) project.color = color;
+  else delete project.color;
   project.updatedAt = new Date().toISOString();
   saveProject(await projectDatabase(), project);
   return project;

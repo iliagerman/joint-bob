@@ -25,9 +25,9 @@ test("chat provides independent harness and session selectors", async () => {
   ]);
 
   assert.match(html, /id="chatHarnessSelect"[^>]*aria-label="Harness"[^>]*data-testid="chat-harness-select"/);
-  assert.match(html, /id="chatSessionSelect"[^>]*aria-label="Session"[^>]*data-testid="chat-session-select"/);
+  assert.doesNotMatch(html, /id="chatSessionSelect"/);
   assert.match(app, /function renderChatSessionControls\(\)/);
-  assert.match(app, /chatSessionSelect\.addEventListener\("change"/);
+  assert.doesNotMatch(app, /chatSessionSelect/);
   assert.match(app, /openSession\(session\.path/);
   assert.match(app, /api\("\/api\/harnesses"\)/);
 });

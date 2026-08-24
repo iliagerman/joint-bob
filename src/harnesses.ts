@@ -50,17 +50,26 @@ export function harnessForSessionPath(sessionPath: string): HarnessAdapter {
   return harness;
 }
 
-export async function listHarnessSessions(project: HarnessProject): Promise<SessionSummary[]> {
+/**
+ * The recency cap keeps the list cheap to render. Pinned conversations are hoisted
+ * above it first so a deliberately kept conversation can never fall off the end.
+ */
+export async function listHarnessSessions(project: HarnessProject, pinnedSessionPaths: string[] = []): Promise<SessionSummary[]> {
   const overrides = await sessionTitleOverrides();
   const sessions = (await Promise.all(adapters.map((adapter) => adapter.listSessions(project)))).flat();
   const seen = new Set<string>();
-  return sessions
+  const pinned = new Set(pinnedSessionPaths);
+  const ordered = sessions
     .filter((session) => {
       if (!session.path || seen.has(session.path)) return false;
       seen.add(session.path);
       return true;
     })
     .map((session) => ({ ...session, title: overrides[sessionKey(session.path)] ?? session.title }))
-    .sort((left, right) => (right.updatedAt ?? right.createdAt ?? "").localeCompare(left.updatedAt ?? left.createdAt ?? ""))
-    .slice(0, 50);
+    .sort((left, right) => (right.updatedAt ?? right.createdAt ?? "").localeCompare(left.updatedAt ?? left.createdAt ?? ""));
+
+  return [
+    ...ordered.filter((session) => pinned.has(session.path)),
+    ...ordered.filter((session) => !pinned.has(session.path)),
+  ].slice(0, 50);
 }

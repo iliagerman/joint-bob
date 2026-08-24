@@ -480,6 +480,20 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
 .chat-badge-active { color: var(--live); background: color-mix(in srgb, var(--live) 12%, transparent); }
 .chat-badge-review { color: var(--amber); background: color-mix(in srgb, var(--amber) 13%, transparent); }
 .chat-badge-done { color: var(--muted); background: var(--field); }
+.project-card .project-sync-status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 4px 0 0;
+}
+.project-card .project-sync-status::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  flex: none;
+}
 .project-sync-status, .session-agent-label {
   display: inline-block;
   margin-left: 5px;
@@ -501,7 +515,7 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
   content: "";
   position: absolute;
   inset: 0 0 0 auto;
-  width: 155px;
+  width: 190px;
   z-index: 0;
   pointer-events: none;
   border-radius: 0 var(--radius-ctl) var(--radius-ctl) 0;
@@ -1109,12 +1123,19 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 @media (min-width: 1024px) {
   .shell {
     display: grid;
-    grid-template-columns: clamp(274px, 18vw, 320px) clamp(300px, 20vw, 356px) minmax(0, 1fr);
+    --col-projects: clamp(274px, 18vw, 320px);
+    --col-chats: clamp(300px, 20vw, 356px);
+    grid-template-columns: var(--col-projects) var(--col-chats) minmax(0, 1fr);
     gap: 10px;
     padding: 10px;
   }
   .mobile-nav { display: none; }
   .back-button { display: none; }
+  body.projects-collapsed { --col-projects: 46px; }
+  body.chats-collapsed { --col-chats: 46px; }
+  .collapse-button { display: inline-flex; }
+  .view-panel.collapsed > :not(.panel-rail) { display: none; }
+  .view-panel.collapsed .panel-rail { display: flex; }
   #projectsPanel, #chatsPanel { display: flex; }
   #chatPanel { display: flex; }
   #boardPanel { display: none; }
@@ -1160,3 +1181,101 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
+
+/* ---- Collapsible side panels (desktop only) ---- */
+/* The rail is the only thing left when a panel collapses, so the way back is never lost. */
+.panel-rail { display: none; }
+.view-panel.collapsed .panel-rail {
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  min-width: 0;
+}
+.panel-rail-label {
+  writing-mode: vertical-rl;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.collapse-button { display: none; font-size: 15px; }
+
+/* ---- Pinned projects and conversations ---- */
+.pin-button { font-size: 12px; opacity: 0.55; }
+.pin-button.pinned { opacity: 1; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.project-list .pin-button { right: 138px; }
+.session-list .pin-button { right: 74px; }
+.project-card.pinned strong::after,
+.session-card.pinned strong::after {
+  content: "📌";
+  margin-left: 6px;
+  font-size: 9px;
+  vertical-align: 1px;
+}
+
+/* ---- Skills browser ---- */
+.skills-dialog-list { display: grid; gap: 4px; min-width: 0; max-height: 52dvh; overflow-y: auto; }
+.skill-option {
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-ctl);
+  background: transparent;
+  color: var(--text);
+  padding: 9px 12px;
+  transition: background-color 120ms ease;
+}
+.skill-option:hover { background: var(--field); }
+.skill-option strong { display: block; font-size: 12.5px; font-family: var(--mono); }
+.skill-option-scope {
+  font: 600 9px/1 var(--mono);
+  font-style: normal;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.skill-option-description {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* ---- Project colours ---- */
+.field-group { display: grid; gap: 6px; }
+.field-label { color: var(--muted); font-size: 11px; }
+.color-swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+.color-swatch {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: var(--project-hue, var(--field));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink, #000) 18%, transparent);
+}
+.color-swatch.selected { border-color: var(--heading); }
+.color-swatch-none { background: var(--field); }
+.color-swatch-none::after { content: "✕"; color: var(--muted); font-size: 11px; }
+
+[data-color="slate"] { --project-hue: #7b8794; }
+[data-color="teal"] { --project-hue: #2bb8a3; }
+[data-color="blue"] { --project-hue: #4a86e8; }
+[data-color="violet"] { --project-hue: #8a6ef0; }
+[data-color="magenta"] { --project-hue: #d264b6; }
+[data-color="amber"] { --project-hue: #e0a33a; }
+[data-color="green"] { --project-hue: #46b35e; }
+[data-color="red"] { --project-hue: #e05c4b; }
+
+/* The accent bar makes a project findable by colour before the name is read. */
+.project-card[data-color] { box-shadow: inset 3px 0 0 var(--project-hue); border-radius: 3px var(--radius-ctl) var(--radius-ctl) 3px; }
+.project-card[data-color].active { box-shadow: inset 3px 0 0 var(--project-hue), var(--raise); }

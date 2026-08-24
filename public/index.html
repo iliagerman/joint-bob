@@ -9,6 +9,7 @@
     <meta name="apple-mobile-web-app-title" content="Joint Bob" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon-192.png" sizes="32x32" type="image/png" />
     <link rel="icon" href="/icon-192.png" sizes="192x192" type="image/png" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
@@ -41,6 +42,7 @@
             </div>
           </div>
           <div class="project-actions">
+            <button class="ghost icon-button collapse-button" id="collapseProjectsButton" type="button" aria-label="Collapse projects panel" title="Collapse projects panel" data-testid="projects-panel-collapse-button">‹</button>
             <button class="primary icon-button" id="newProjectButton" type="button" aria-label="Add project" title="Add project" data-testid="project-create-button">+</button>
             <button class="ghost icon-button" id="settingsButton" type="button" aria-label="Settings" title="Settings" data-testid="settings-open-button">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -53,6 +55,10 @@
           <input id="projectSearchInput" type="search" autocomplete="off" placeholder="Search projects" data-testid="project-list-search-input" />
         </label>
         <div class="panel-scroll project-list" id="projectList"></div>
+        <div class="panel-rail">
+          <button class="ghost icon-button" id="expandProjectsButton" type="button" aria-label="Expand projects panel" title="Expand projects panel" data-testid="projects-panel-expand-button">›</button>
+          <span class="panel-rail-label">Projects</span>
+        </div>
       </section>
 
       <section class="panel view-panel" id="chatsPanel" aria-label="Conversations">
@@ -63,6 +69,7 @@
             <p id="projectPath">Create or select a local folder.</p>
           </div>
           <button class="ghost compact" id="openBoardButton" type="button" data-testid="chats-open-board-button">Board</button>
+          <button class="ghost icon-button collapse-button" id="collapseChatsButton" type="button" aria-label="Collapse conversations panel" title="Collapse conversations panel" data-testid="chats-panel-collapse-button">‹</button>
         </header>
         <div class="list-loading" id="sessionsLoading" role="progressbar" aria-label="Loading conversations" data-testid="session-list-loading-bar" hidden><span></span></div>
         <div class="new-chat-row">
@@ -84,6 +91,10 @@
           <button type="button" data-filter="done" data-testid="chats-filter-done-button">Reviewed <span data-filter-count="done">0</span></button>
         </div>
         <div class="panel-scroll session-list" id="sessionList"></div>
+        <div class="panel-rail">
+          <button class="ghost icon-button" id="expandChatsButton" type="button" aria-label="Expand conversations panel" title="Expand conversations panel" data-testid="chats-panel-expand-button">›</button>
+          <span class="panel-rail-label">Conversations</span>
+        </div>
       </section>
 
       <section class="panel view-panel board" id="boardPanel" aria-label="Kanban board">
@@ -123,10 +134,6 @@
               <span>Agent</span>
               <select id="chatHarnessSelect" aria-label="Harness" data-testid="chat-harness-select"></select>
             </label>
-            <label class="chat-control" for="chatSessionSelect">
-              <span>Conversation</span>
-              <select id="chatSessionSelect" aria-label="Session" data-testid="chat-session-select"></select>
-            </label>
           </div>
           <div class="chat-control chat-model-control">
             <span>Model</span>
@@ -155,7 +162,7 @@
 
         <div class="command-strip" aria-label="Quick slash commands">
           <button type="button" data-command="/help">/help</button>
-          <button type="button" data-command="/skill:">/skill</button>
+          <button type="button" data-command="/skill" data-testid="chat-skills-button">/skill</button>
           <button type="button" data-command="/model">/model</button>
           <button type="button" data-command="/tools">/tools</button>
           <button type="button" data-command="/compact">/compact</button>
@@ -439,6 +446,23 @@
       </form>
     </dialog>
 
+    <dialog id="skillsDialog" data-testid="skills-dialog">
+      <div class="dialog-card">
+        <div>
+          <span class="eyebrow">Available skills</span>
+          <h2 id="skillsDialogTitle">Skills</h2>
+        </div>
+        <label class="search-shell" for="skillsDialogSearchInput">
+          <span class="sr-only">Search skills</span>
+          <input id="skillsDialogSearchInput" type="search" autocomplete="off" placeholder="Search skills" data-testid="skills-dialog-search-input" />
+        </label>
+        <div class="skills-dialog-list" id="skillsDialogList"></div>
+        <div class="dialog-actions">
+          <button class="ghost" type="button" id="closeSkillsDialogButton" data-testid="skills-dialog-close-button">Close</button>
+        </div>
+      </div>
+    </dialog>
+
     <dialog id="modelDialog" data-testid="model-dialog">
       <div class="dialog-card">
         <div>
@@ -563,6 +587,10 @@
           Project type
           <select id="projectGroupInput" name="type" data-testid="project-edit-type-select"></select>
         </label>
+        <div class="field-group">
+          <span class="field-label">Colour</span>
+          <div class="color-swatches" id="projectColorSwatches" role="radiogroup" aria-label="Project colour" data-testid="project-color-swatches"></div>
+        </div>
         <div class="dialog-actions">
           <button class="ghost" value="cancel" type="button" id="cancelProjectRenameButton">Cancel</button>
           <button class="primary" value="default" type="submit" data-testid="project-rename-save-button">Save project</button>
@@ -603,8 +631,8 @@
           <input id="taskTitleInput" name="title" autocomplete="off" placeholder="Fix login flow" required data-testid="task-form-title-input" />
         </label>
         <label>
-          Task description
-          <textarea id="taskDescriptionInput" name="description" rows="3" placeholder="Details, links, acceptance criteria..." required data-testid="task-form-description-input"></textarea>
+          Task description (optional)
+          <textarea id="taskDescriptionInput" name="description" rows="3" placeholder="Details, links, acceptance criteria..." data-testid="task-form-description-input"></textarea>
         </label>
         <label>
           Agent

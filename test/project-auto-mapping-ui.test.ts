@@ -59,7 +59,7 @@ test("chat keeps node, harness, and session selectors visible", async () => {
   assert.doesNotMatch(html, /id="chatToolbar"[^>]*hidden/);
   assert.match(html, /id="chatNodeSelect"[^>]*data-testid="chat-node-select"/);
   assert.match(html, /id="chatHarnessSelect"[^>]*data-testid="chat-harness-select"/);
-  assert.match(html, /id="chatSessionSelect"[^>]*data-testid="chat-session-select"/);
+  assert.doesNotMatch(html, /id="chatSessionSelect"/);
   assert.match(app, /searchParams\.set\("nodeId"/);
   assert.match(app, /chatNodeSelect\.addEventListener\("change"/);
   const server = await readFile("src/server.ts", "utf8");

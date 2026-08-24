@@ -14,6 +14,10 @@ export interface UserPreferences {
   activeSessionId: string | null;
   activeNodeId: string | null;
   legacyMigrated: boolean;
+  pinnedProjectIds: string[];
+  pinnedSessionPaths: string[];
+  projectsPanelCollapsed: boolean;
+  chatsPanelCollapsed: boolean;
 }
 
 interface PreferenceRow {
@@ -27,6 +31,10 @@ interface PreferenceRow {
   active_session_id: string | null;
   active_node_id: string | null;
   legacy_migrated: number;
+  pinned_project_ids: string;
+  pinned_session_paths: string;
+  projects_panel_collapsed: number;
+  chats_panel_collapsed: number;
 }
 
 const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
@@ -51,6 +59,10 @@ function preferencesDatabase(): DatabaseSync {
       active_session_id TEXT,
       active_node_id TEXT,
       legacy_migrated INTEGER NOT NULL DEFAULT 0,
+      pinned_project_ids TEXT NOT NULL DEFAULT '[]',
+      pinned_session_paths TEXT NOT NULL DEFAULT '[]',
+      projects_panel_collapsed INTEGER NOT NULL DEFAULT 0,
+      chats_panel_collapsed INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL
     );
   `);
@@ -58,6 +70,10 @@ function preferencesDatabase(): DatabaseSync {
   if (!columns.some((column) => column.name === "completion_sound")) database.exec("ALTER TABLE user_preferences ADD COLUMN completion_sound TEXT NOT NULL DEFAULT 'chime'");
   if (!columns.some((column) => column.name === "active_session_id")) database.exec("ALTER TABLE user_preferences ADD COLUMN active_session_id TEXT");
   if (!columns.some((column) => column.name === "active_node_id")) database.exec("ALTER TABLE user_preferences ADD COLUMN active_node_id TEXT");
+  if (!columns.some((column) => column.name === "pinned_project_ids")) database.exec("ALTER TABLE user_preferences ADD COLUMN pinned_project_ids TEXT NOT NULL DEFAULT '[]'");
+  if (!columns.some((column) => column.name === "pinned_session_paths")) database.exec("ALTER TABLE user_preferences ADD COLUMN pinned_session_paths TEXT NOT NULL DEFAULT '[]'");
+  if (!columns.some((column) => column.name === "projects_panel_collapsed")) database.exec("ALTER TABLE user_preferences ADD COLUMN projects_panel_collapsed INTEGER NOT NULL DEFAULT 0");
+  if (!columns.some((column) => column.name === "chats_panel_collapsed")) database.exec("ALTER TABLE user_preferences ADD COLUMN chats_panel_collapsed INTEGER NOT NULL DEFAULT 0");
   return database;
 }
 
@@ -67,6 +83,16 @@ function ensurePreferences(userId: string): void {
     VALUES (?, ?)
     ON CONFLICT(user_id) DO NOTHING
   `).run(userId, new Date().toISOString());
+}
+
+/** Stored as a JSON array in one column; a hand-edited row must not take the app down. */
+function parseStringList(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 function preferencesFromRow(row: PreferenceRow): UserPreferences {
@@ -81,13 +107,18 @@ function preferencesFromRow(row: PreferenceRow): UserPreferences {
     activeSessionId: row.active_session_id,
     activeNodeId: row.active_node_id,
     legacyMigrated: row.legacy_migrated === 1,
+    pinnedProjectIds: parseStringList(row.pinned_project_ids),
+    pinnedSessionPaths: parseStringList(row.pinned_session_paths),
+    projectsPanelCollapsed: row.projects_panel_collapsed === 1,
+    chatsPanelCollapsed: row.chats_panel_collapsed === 1,
   };
 }
 
 function currentPreferences(userId: string): UserPreferences {
   const row = preferencesDatabase().prepare(`
     SELECT theme, notifications_enabled, completion_sound, install_dismissed, mobile_view,
-      active_project_id, active_session_path, active_session_id, active_node_id, legacy_migrated
+      active_project_id, active_session_path, active_session_id, active_node_id, legacy_migrated,
+      pinned_project_ids, pinned_session_paths, projects_panel_collapsed, chats_panel_collapsed
     FROM user_preferences WHERE user_id = ?
   `).get(userId) as unknown as PreferenceRow;
   return preferencesFromRow(row);
@@ -112,6 +143,10 @@ export function updateUserPreferences(userId: string, partial: Partial<UserPrefe
     ["activeSessionId", "active_session_id", (value) => value as string | null],
     ["activeNodeId", "active_node_id", (value) => value as string | null],
     ["legacyMigrated", "legacy_migrated", (value) => value ? 1 : 0],
+    ["pinnedProjectIds", "pinned_project_ids", (value) => JSON.stringify(value)],
+    ["pinnedSessionPaths", "pinned_session_paths", (value) => JSON.stringify(value)],
+    ["projectsPanelCollapsed", "projects_panel_collapsed", (value) => value ? 1 : 0],
+    ["chatsPanelCollapsed", "chats_panel_collapsed", (value) => value ? 1 : 0],
   ];
   for (const [property, column, serialize] of fields) {
     if (partial[property] === undefined) continue;

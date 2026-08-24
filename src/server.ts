@@ -11,7 +11,7 @@ import { promisify } from "node:util";
 import WebSocket, { WebSocketServer } from "ws";
 import { z } from "zod";
 import { projectNameOverrides, setProjectName, setSessionTitle } from "./names.js";
-import { addProject, deleteProjectType, getProject, importProject, listProjects, listProjectTypes, projectAliasIds, ProjectTypeError, registerProjectAliases, removeProject, renameProject, saveProjectType, touchProject, updateProjectMacPath, updateProjectSyncFolderId, updateProjectTypeAndPath } from "./store.js";
+import { addProject, deleteProjectType, getProject, importProject, listProjects, listProjectTypes, projectAliasIds, ProjectTypeError, registerProjectAliases, removeProject, renameProject, saveProjectType, touchProject, updateProjectColor, updateProjectMacPath, updateProjectSyncFolderId, updateProjectTypeAndPath } from "./store.js";
 import { createClusterPeer, dueMembershipDeliveries, getClusterMachineToken, getClusterMembership, getClusterNode, getClusterPeer, listClusterPeers, markClusterPeerSeen, mergeClusterMembership, recordMembershipDelivered, recordMembershipFailure, removeClusterPeer, saveClusterPeer, updateClusterNode, type ClusterPeer } from "./cluster.js";
 import { eventsForPeer, receiveReplicationBatch, recordPeerFailure, recordPeerReceipt, type ReplicationBatch } from "./replication.js";
 import { deleteGitHubGroup, ensureGitHubCredentialMigration, getGitHubAuthStatus, gitHubEnvironment, githubCredentialEventsForPeer, receiveGitHubCredentialEvents, recordGitHubCredentialFailure, recordGitHubCredentialReceipt, removeProjectGitHubAuth, saveGitHubGroup, updateProjectGitHubAuth, type GitHubCredentialEvent } from "./github-auth.js";
@@ -32,6 +32,7 @@ import { assertTaskWorkspaceReady, removeTaskWorkspace, taskWorkspaceKey, TaskWo
 import { SessionWatcher } from "./watcher.js";
 import { buildHandoffContext, claudeSessionFilePath, loadClaudeMessages, runClaudePrompt, type ClaudeRunHandle } from "./claude-service.js";
 import { listHarnesses, listHarnessSessions } from "./harnesses.js";
+import { listSkills } from "./skills.js";
 import { authenticate, authenticationStatus, changePassword, clearSessionCookieValue, createAdministrator, listLoginSessions, revokeSession, revokeUserSession, sessionCookieValue, sessionForId, type AuthSession } from "./auth.js";
 import { getSettings, updateSettings } from "./settings.js";
 import { ensureManagedHome, managedProjectPath, managedProjectRelocationPath } from "./managed-home.js";
@@ -40,6 +41,7 @@ import { listAuditEvents } from "./audit.js";
 import { getUserPreferences, updateUserPreferences } from "./preferences.js";
 import { markConversationReviewed, syncConversationReviewStates } from "./conversation-reviews.js";
 import { resetSyncthingConnection } from "./syncthing.js";
+import { PROJECT_COLORS } from "./types.js";
 import type { ChatMessage, ProjectRecord, ProjectSyncStatus, ProjectView, SessionStatus, TaskPhase, TaskPhaseConfig, TaskRecord } from "./types.js";
 import { webSocketCloseReason } from "./websocket.js";
 
@@ -73,6 +75,7 @@ const CLAUDE_MODEL_LABELS = new Map([
   ["fable", "Claude Fable"],
   ["claude-opus-5", "Claude Opus 5"],
   ["sonnet", "Claude Sonnet"],
+  ["haiku", "Claude Haiku 4.5"],
 ]);
 const CLAUDE_MODELS = [...CLAUDE_MODEL_LABELS.keys()];
 
@@ -251,14 +254,18 @@ const taskPhaseConfigMapSchema = z.object({
 const projectUpdateSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   type: z.string().trim().min(1).max(40).optional(),
-}).refine((payload) => payload.name !== undefined || payload.type !== undefined, "Provide a project name or type");
+  color: z.enum(PROJECT_COLORS).nullable().optional(),
+}).refine(
+  (payload) => payload.name !== undefined || payload.type !== undefined || payload.color !== undefined,
+  "Provide a project name, type, or color",
+);
 const sessionTitleSchema = z.object({
   sessionPath: z.string().min(1),
   title: z.string().trim().max(200),
 });
 const taskCreateSchema = z.object({
   title: z.string().trim().min(1).max(200),
-  description: z.string().trim().min(1).max(4000),
+  description: z.string().trim().max(4000),
   status: taskStatusSchema.optional(),
   engine: taskEngineSchema.optional(),
   planMode: z.boolean().optional(),
@@ -352,6 +359,10 @@ const userPreferencesSchema = z.object({
   activeSessionId: z.string().trim().min(1).max(200).nullable().optional(),
   activeNodeId: z.string().uuid().nullable().optional(),
   legacyMigrated: z.boolean().optional(),
+  pinnedProjectIds: z.array(z.string().trim().min(1).max(120)).max(200).optional(),
+  pinnedSessionPaths: z.array(z.string().trim().min(1).max(2000)).max(200).optional(),
+  projectsPanelCollapsed: z.boolean().optional(),
+  chatsPanelCollapsed: z.boolean().optional(),
 }).strict();
 const socketMessageSchema = z.object({
   type: z.string().max(40),
@@ -628,6 +639,11 @@ async function mapProjectFromPeer(peer: ClusterPeer, inventory: PeerInventory, e
 
 app.use(securityHeaders);
 app.set("trust proxy", 1);
+// Browsers request /favicon.ico regardless of the <link rel="icon"> tags; without
+// this the path falls through to the SPA and the tab gets HTML instead of an image.
+app.get("/favicon.ico", (_request, response) => {
+  response.type("image/png").sendFile(path.join(publicDir, "icon-192.png"));
+});
 app.use(express.static(publicDir));
 app.use(express.json({ limit: "12mb" }));
 
@@ -1835,6 +1851,7 @@ app.patch("/api/projects/:projectId", async (request, response, next) => {
       project = await renameProject(project.id, payload.name);
       await setProjectName(project.id, payload.name);
     }
+    if (payload.color !== undefined) project = await updateProjectColor(project.id, payload.color);
     if (typeChanged) await notifyPeersOfProjectInventory();
     response.json({ project: await projectView(project) });
   } catch (error) {
@@ -1903,6 +1920,19 @@ app.get("/api/projects/:projectId/session-nodes", async (request, response, next
   }
 });
 
+app.get("/api/projects/:projectId/skills", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project) {
+      sendError(response, 404, "Project not found");
+      return;
+    }
+    response.json({ skills: await listSkills(project.path) });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get("/api/projects/:projectId/sessions", async (request, response, next) => {
   try {
     const project = await getProject(request.params.projectId);
@@ -1912,10 +1942,11 @@ app.get("/api/projects/:projectId/sessions", async (request, response, next) => 
     }
     await touchProject(project.id);
     const tasks = await listTasks(project.id);
+    const pinnedSessionPaths = getUserPreferences((response.locals.authSession as AuthSession).userId).pinnedSessionPaths;
     const sessions = await listHarnessSessions({
       ...project,
       additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []),
-    });
+    }, pinnedSessionPaths);
     const tasksBySessionPath = new Map(tasks.filter((task) => task.sessionPath).map((task) => [task.sessionPath, task]));
     const listedSessions = sessions.map((session) => {
       const task = tasksBySessionPath.get(session.path);

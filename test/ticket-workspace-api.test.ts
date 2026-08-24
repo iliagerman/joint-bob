@@ -147,13 +147,14 @@ test("ticket API creates Git-free workspaces and removes them on archive and del
     assert.match(ignore, /^\/tickets\/$/m);
     const create = async (title: string) => {
       const createdTask = await fetch(`${node!.baseUrl}/api/projects/${project.id}/tasks`, {
-        method: "POST", headers, body: JSON.stringify({ title, description: "workspace" }),
+        method: "POST", headers, body: JSON.stringify({ title, description: "" }),
       });
       assert.equal(createdTask.status, 201, node!.output());
-      return (await createdTask.json() as { task: { id: string; worktreePath: string | null; worktreeBranch: string | null; status: string } }).task;
+      return (await createdTask.json() as { task: { id: string; description: string; worktreePath: string | null; worktreeBranch: string | null; status: string } }).task;
     };
 
     const archivedTask = await create("Archive me");
+    assert.equal(archivedTask.description, "");
     assert.equal(archivedTask.worktreeBranch, null);
     assert.equal(archivedTask.worktreePath, path.join(homePath, "tickets", project.id, archivedTask.id));
 

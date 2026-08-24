@@ -18,11 +18,12 @@ test("chat names its controls and exposes conversation transfer", async () => {
 
   assert.match(html, /<span>Runs on<\/span>[\s\S]*id="chatNodeSelect"/);
   assert.match(html, /<span>Agent<\/span>[\s\S]*id="chatHarnessSelect"/);
-  assert.match(html, /<span>Conversation<\/span>[\s\S]*id="chatSessionSelect"/);
+  // The chat toolbar no longer carries a conversation picker: the conversations panel owns that.
+  assert.doesNotMatch(html, /id="chatSessionSelect"/);
   assert.match(html, /<span>Model<\/span>[\s\S]*id="modelButton"/);
   assert.match(html, /id="transferSessionButton"[^>]*data-testid="chat-transfer-button"/);
   assert.match(html, /id="sessionTransferDialog"[^>]*data-testid="session-transfer-dialog"/);
-  assert.match(app, /Start new \$\{harness\.label\} conversation/);
+  assert.match(app, /New \$\{harness\.label\} conversation/);
   assert.match(html, /Continue on another node/);
   assert.match(app, /sourceNodeId:\s*state\.activeNodeId/);
   assert.match(app, /map project first/);
