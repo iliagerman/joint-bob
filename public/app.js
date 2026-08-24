@@ -2721,8 +2721,12 @@ elements.deleteTaskButton.addEventListener("click", async () => {
     toast(error.message);
   }
 });
+/** Mirrors managedFolderName in src/managed-home.ts so the suggested path matches what the server creates. */
 function projectFolderName(projectName) {
-  return projectName.trim().replace(/\s+/g, "_");
+  return projectName.trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "_")
+    .replace(/^[._-]+|[._-]+$/g, "") || "project";
 }
 
 function joinProjectPath(basePath, projectName) {

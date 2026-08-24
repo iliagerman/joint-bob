@@ -37,6 +37,16 @@ test("managed homes ignore projects and tickets", async () => {
   }
 });
 
+test("managed project folders are lowercase snake_case", () => {
+  const home = path.join(os.tmpdir(), `joint-bob-folder-case-${randomUUID()}`);
+
+  assert.equal(managedProjectPath(home, "personal", "Guitar Player"), path.join(home, "personal", "guitar_player"));
+  assert.equal(managedProjectPath(home, "personal", "  Home Assistant Plugins  "), path.join(home, "personal", "home_assistant_plugins"));
+  assert.equal(managedProjectPath(home, "client-work", "ACME Portal"), path.join(home, "client-work", "acme_portal"));
+  // A hyphenated type id keeps its hyphens; only the case changes.
+  assert.equal(managedTypeRoot(home, "Client-Work"), path.join(home, "client-work"));
+});
+
 test("managed project paths cannot escape their type root", () => {
   const home = path.join(os.tmpdir(), `joint-bob-managed-project-${randomUUID()}`);
   for (const name of ["../../escape", "..\\..\\escape", "...", "name/child"]) {

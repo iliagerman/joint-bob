@@ -21,7 +21,8 @@ export function managedHomePaths(homePath: string): ManagedHomePaths {
 /** Type ids and project names both become single path segments, so neither can escape the home. */
 function managedFolderName(value: string, fallback: string): string {
   return value.trim()
-    .replace(/[^A-Za-z0-9._-]+/g, "_")
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "_")
     .replace(/^[._-]+|[._-]+$/g, "") || fallback;
 }
 
