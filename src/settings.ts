@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { accessSync, constants as fsConstants, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -123,11 +123,28 @@ function loopbackEndpoint(endpoint: string): boolean {
   }
 }
 
+function detectedExecutable(command: "pi" | "claude"): string {
+  const configured = value(`${command}.executable`);
+  if (configured) return configured;
+  for (const directory of (process.env.PATH ?? "").split(path.delimiter).filter(Boolean)) {
+    const candidate = path.join(directory, command);
+    try {
+      accessSync(candidate, fsConstants.X_OK);
+      return candidate;
+    } catch (error) {
+      if (!["EACCES", "ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+    }
+  }
+  return command;
+}
+
 function runtime(prefix: "pi" | "claude"): RuntimeSettings {
+  const configPath = prefix === "pi" ? path.join(os.homedir(), ".pi", "agent") : path.join(os.homedir(), ".claude");
+  const sessionPath = prefix === "pi" ? path.join(configPath, "sessions") : path.join(configPath, "projects");
   return {
-    executable: value(`${prefix}.executable`),
-    configPath: value(`${prefix}.configPath`),
-    sessionPath: value(`${prefix}.sessionPath`),
+    executable: detectedExecutable(prefix),
+    configPath: value(`${prefix}.configPath`) || configPath,
+    sessionPath: value(`${prefix}.sessionPath`) || sessionPath,
   };
 }
 

@@ -21,6 +21,7 @@ const state = {
   folderPickerTarget: null,
   projectDefaultBase: null,
   projectAutofilledPath: null,
+  syncthingEndpoint: "",
   engine: "pi",
   safeguardsEnabled: true,
   sessionBusy: false,
@@ -140,9 +141,6 @@ const elements = {
   settingsClaudeExecutable: document.querySelector("#settingsClaudeExecutable"),
   settingsClaudeConfigPath: document.querySelector("#settingsClaudeConfigPath"),
   settingsClaudeSessionPath: document.querySelector("#settingsClaudeSessionPath"),
-  settingsSyncthingEndpoint: document.querySelector("#settingsSyncthingEndpoint"),
-  settingsSyncthingApiKey: document.querySelector("#settingsSyncthingApiKey"),
-  settingsSyncthingApiKeyStatus: document.querySelector("#settingsSyncthingApiKeyStatus"),
   clusterButton: document.querySelector("#clusterButton"),
   clusterSaveButton: document.querySelector("#clusterSaveButton"),
   clusterInventory: document.querySelector("#clusterInventory"),
@@ -505,9 +503,7 @@ async function openSettings(tab = "account") {
   elements.settingsClaudeExecutable.value = settings.claude.executable;
   elements.settingsClaudeConfigPath.value = settings.claude.configPath;
   elements.settingsClaudeSessionPath.value = settings.claude.sessionPath;
-  elements.settingsSyncthingEndpoint.value = settings.syncthing.endpoint;
-  elements.settingsSyncthingApiKey.value = "";
-  elements.settingsSyncthingApiKeyStatus.textContent = settings.syncthing.apiKeyConfigured ? "API key configured" : "No API key configured";
+  state.syncthingEndpoint = settings.syncthing.endpoint;
   elements.completionSoundSelect.value = state.completionSound;
   syncNotifyButton();
   if (!elements.settingsDialog.open) elements.settingsDialog.showModal();
@@ -515,13 +511,12 @@ async function openSettings(tab = "account") {
 
 async function saveSettings(event) {
   event.preventDefault();
-  const apiKey = elements.settingsSyncthingApiKey.value.trim();
   const saved = await api("/api/settings", {
     method: "PUT",
     body: JSON.stringify({
       pi: { executable: elements.settingsPiExecutable.value.trim(), configPath: elements.settingsPiConfigPath.value.trim(), sessionPath: elements.settingsPiSessionPath.value.trim() },
       claude: { executable: elements.settingsClaudeExecutable.value.trim(), configPath: elements.settingsClaudeConfigPath.value.trim(), sessionPath: elements.settingsClaudeSessionPath.value.trim() },
-      syncthing: { endpoint: elements.settingsSyncthingEndpoint.value.trim(), ...(apiKey ? { apiKey } : {}) },
+      syncthing: { endpoint: state.syncthingEndpoint },
       projects: { homePath: elements.settingsProjectHome.value.trim() },
     }),
   });

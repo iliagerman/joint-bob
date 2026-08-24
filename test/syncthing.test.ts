@@ -295,6 +295,44 @@ test("ticket workspace folder uses one stable path and gains paired devices", as
   await rm(root, { recursive: true, force: true });
 });
 
+test("engine config and session folders are created and shared without credentials", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-engine-sync-"));
+  const folders: Array<{ id: string; label: string; path: string; type: string; devices: Array<{ deviceID: string }> }> = [];
+  const devices: Array<{ deviceID: string; name: string; addresses: string[] }> = [];
+  const ignores = new Map<string, string[]>();
+  await withSyncthingApi((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      response.setHeader("Content-Type", "application/json");
+      if (request.method === "GET" && request.url === "/rest/config/folders") { response.end(JSON.stringify(folders)); return; }
+      if (request.method === "GET" && request.url === "/rest/config/devices") { response.end(JSON.stringify(devices)); return; }
+      if (request.method === "POST" && request.url === "/rest/config/devices") { devices.push(JSON.parse(body)); response.end("{}"); return; }
+      if (request.method === "GET" && request.url === "/rest/system/status") { response.end(JSON.stringify({ myID: "LOCAL" })); return; }
+      if (request.method === "POST" && request.url === "/rest/config/folders") { folders.push(JSON.parse(body)); response.end("{}"); return; }
+      const ignoreFolder = new URL(request.url ?? "", "http://localhost").searchParams.get("folder");
+      if (request.method === "GET" && request.url?.startsWith("/rest/db/ignores?") && ignoreFolder) { response.end(JSON.stringify({ ignore: ignores.get(ignoreFolder) ?? [] })); return; }
+      if (request.method === "POST" && request.url?.startsWith("/rest/db/ignores?") && ignoreFolder) { ignores.set(ignoreFolder, (JSON.parse(body) as { ignore: string[] }).ignore); response.end("{}"); return; }
+      response.statusCode = 404;
+      response.end();
+    });
+  }, async (syncthing) => {
+    await syncthing.ensureEngineSyncFolders(root, "NODE-A", "Node A");
+  });
+  assert.deepEqual(folders.map((folder) => ({ id: folder.id, path: folder.path, devices: folder.devices })), [
+    { id: "dot-pi", path: path.join(root, ".pi"), devices: [{ deviceID: "LOCAL" }, { deviceID: "NODE-A" }] },
+    { id: "dot-claude", path: path.join(root, ".claude"), devices: [{ deviceID: "LOCAL" }, { deviceID: "NODE-A" }] },
+  ]);
+  assert.ok(ignores.get("dot-pi")?.includes("/agent/auth.json"));
+  assert.ok(ignores.get("dot-pi")?.includes("/agent/models.json"));
+  assert.ok(ignores.get("dot-claude")?.includes("/.credentials.json"));
+  assert.ok(ignores.get("dot-claude")?.includes("/daemon/"));
+  assert.ok(ignores.get("dot-claude")?.includes("/settings.json"));
+  assert.ok(ignores.get("dot-claude")?.includes("/.mcp.json"));
+  assert.deepEqual(devices, [{ deviceID: "NODE-A", name: "Node A", addresses: ["dynamic"] }]);
+  await rm(root, { recursive: true, force: true });
+});
+
 test("reconciliation updates ignores for existing synced folders without recreating them", async () => {
   const requests: Array<{ method: string; url: string }> = [];
   await withSyncthingApi((request, response) => {

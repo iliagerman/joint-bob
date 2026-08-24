@@ -304,13 +304,12 @@
           </fieldset>
           <fieldset class="phase-settings">
             <legend>Syncthing</legend>
-            <label>Local API endpoint<input id="settingsSyncthingEndpoint" type="url" autocomplete="off" placeholder="http://127.0.0.1:8384" data-testid="settings-syncthing-endpoint-input" /></label>
-            <label>API key<input id="settingsSyncthingApiKey" type="password" autocomplete="new-password" placeholder="Leave blank to keep current key" data-testid="settings-syncthing-api-key-input" /></label>
-            <p id="settingsSyncthingApiKeyStatus"></p>
+            <p>Syncthing is installed, started, discovered, and configured automatically. Project files, ticket workspaces, shareable engine configuration, and sessions are shared when nodes pair. Authentication and credential-bearing settings stay on each node.</p>
           </fieldset>
         </section>
 
         <section class="settings-panel" id="settingsPanel-engines" role="tabpanel" aria-labelledby="settingsTab-engines" tabindex="0" hidden>
+          <p>Engine paths are detected automatically. Edit these only to override a non-standard installation. Shareable configuration and sessions synchronize; authentication and credential-bearing settings stay node-local.</p>
           <fieldset class="phase-settings">
             <legend>Pi</legend>
             <label>Executable<input id="settingsPiExecutable" autocomplete="off" data-testid="settings-pi-executable-input" /></label>

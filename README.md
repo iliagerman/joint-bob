@@ -27,7 +27,7 @@ Joint Bob runs as `joint-bob.service` on Linux or `com.joint-bob.node` on macOS.
 
 ## Install
 
-The curl command downloads the latest GitHub release, verifies its SHA-256 checksum, and installs a native user service. It pins Node.js, Pi, Claude Code, and Syncthing. Existing projects, credentials, settings, tasks, and cluster identity are preserved during upgrades and prior-installation migration.
+The curl command downloads the latest GitHub release, verifies its SHA-256 checksum, and installs a native user service. It pins Node.js, Pi, Claude Code, and Syncthing, starts Syncthing, and discovers its local API configuration automatically. Existing projects, credentials, settings, tasks, and cluster identity are preserved during upgrades and prior-installation migration.
 
 ## Add another node
 
@@ -41,7 +41,7 @@ Install Joint Bob on the new machine, then:
 6. Enter the new node URL and token, then choose **Save and add node**.
 7. Select **Settings → Projects → Joint Bob home folder** on each node. New peer projects map automatically beneath that node's selected home; existing projects are not moved automatically.
 
-Pairing is two-sided automatically. One successful pairing exchanges membership and project inventory. Do not pair nodes over plain public HTTP because pairing tokens are machine credentials.
+Pairing is two-sided automatically. One successful pairing exchanges membership and project inventory. Joint Bob also creates and shares `dot-pi` and `dot-claude` Syncthing folders for shareable engine configuration and sessions. Pi authentication/model credential files and Claude credentials, credential-bearing settings, MCP authentication, OAuth locks, and daemon control keys remain node-local. Do not pair nodes over plain public HTTP because pairing tokens are machine credentials.
 
 A cluster supports five active nodes. Remove an old node before adding a sixth.
 

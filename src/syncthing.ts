@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { getSettings, syncthingApiKey } from "./settings.js";
@@ -34,11 +34,28 @@ interface SyncthingFolderStatus {
   errors?: unknown[] | number;
 }
 
+export const PI_ENGINE_SYNC_FOLDER_ID = "dot-pi";
+export const CLAUDE_ENGINE_SYNC_FOLDER_ID = "dot-claude";
+
+export interface EngineSyncFolder {
+  id: typeof PI_ENGINE_SYNC_FOLDER_ID | typeof CLAUDE_ENGINE_SYNC_FOLDER_ID;
+  label: string;
+  path: string;
+}
+
 export interface SyncthingConnection {
   url: string;
   apiKey: string;
   configPath?: string;
 }
+
+const enginePrivateIgnorePatterns: Record<EngineSyncFolder["id"], string[]> = {
+  [PI_ENGINE_SYNC_FOLDER_ID]: ["/.update-check", "/agent/auth.json", "/agent/models.json", "/agent/models-store.json", "/agent/bin/"],
+  [CLAUDE_ENGINE_SYNC_FOLDER_ID]: [
+    "/.credentials.json", "/.oauth_refresh.lock", "/.last-*", "/settings.json", "/settings.local.json", "/.mcp.json", "/mcp.json", "/mcp-needs-auth-cache.json",
+    "/backups/", "/cache/", "/chrome/", "/daemon/", "/debug/", "/file-history/", "/ide/", "/image-cache/", "/jobs/", "/paste-cache/", "/shell-snapshots/", "/statsig/", "/telemetry/", "/history.jsonl", "/history.*",
+  ],
+};
 
 const projectIgnorePatterns = [
   ".git",
@@ -80,6 +97,13 @@ const projectIgnorePatterns = [
   "credentials.json",
   "service-account*.json",
 ];
+
+export function engineSyncFolders(homePath = os.homedir()): EngineSyncFolder[] {
+  return [
+    { id: PI_ENGINE_SYNC_FOLDER_ID, label: "Pi configuration and sessions", path: path.join(homePath, ".pi") },
+    { id: CLAUDE_ENGINE_SYNC_FOLDER_ID, label: "Claude configuration and sessions", path: path.join(homePath, ".claude") },
+  ];
+}
 
 function defaultConfigPaths(): string[] {
   return process.platform === "darwin"
@@ -183,9 +207,11 @@ async function setProjectIgnores(folderId: string): Promise<void> {
   const endpoint = `/rest/db/ignores?folder=${encodeURIComponent(folderId)}`;
   const existing = await request<SyncthingIgnores>(endpoint);
   const existingIgnore = existing.ignore ?? [];
-  const managedPatterns = new Set(projectIgnorePatterns);
+  const enginePatterns = enginePrivateIgnorePatterns[folderId as EngineSyncFolder["id"]] ?? [];
+  const folderPatterns = [...projectIgnorePatterns, ...enginePatterns];
+  const managedPatterns = new Set([...projectIgnorePatterns, ...Object.values(enginePrivateIgnorePatterns).flat()]);
   const userRules = [...new Set(existingIgnore.filter((rule) => !managedPatterns.has(rule)))];
-  const ignore = [...projectIgnorePatterns, ...userRules];
+  const ignore = [...folderPatterns, ...userRules];
   if (ignore.length === existingIgnore.length && ignore.every((rule, index) => rule === existingIgnore[index])) return;
   await request<void>(endpoint, { method: "POST", body: JSON.stringify({ ignore }) });
 }
@@ -223,6 +249,15 @@ export async function ensureSyncthingDevice(deviceId: string, name: string): Pro
 export async function ensureTicketWorkspaceFolder(folderPath = ticketWorkspaceRoot(), peerDeviceId?: string, peerName = peerDeviceId ?? ""): Promise<void> {
   if (peerDeviceId) await ensureSyncthingDevice(peerDeviceId, peerName);
   await ensureSyncthingFolder(TICKET_WORKSPACE_FOLDER_ID, TICKET_WORKSPACE_FOLDER_LABEL, folderPath, peerDeviceId);
+}
+
+export async function ensureEngineSyncFolders(homePath = os.homedir(), peerDeviceId?: string, peerName = peerDeviceId ?? ""): Promise<void> {
+  const folders = engineSyncFolders(homePath);
+  if (peerDeviceId) await ensureSyncthingDevice(peerDeviceId, peerName);
+  for (const folder of folders) {
+    await mkdir(folder.path, { recursive: true });
+    await ensureSyncthingFolder(folder.id, folder.label, folder.path, peerDeviceId);
+  }
 }
 
 export async function ensureSyncthingFolder(folderId: string, label: string, folderPath: string, peerDeviceId?: string): Promise<void> {

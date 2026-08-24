@@ -27,7 +27,7 @@ import {
 import { deletePushSubscription, getVapidPublicKey, notifySessionFinished, savePushSubscription } from "./push.js";
 import { abortOutgoingTaskHandoff, abortPreparedTaskHandoff, acknowledgeIncomingTaskHandoff, acknowledgeOutgoingTaskHandoff, assertTaskCanBeDeleted, beginOutgoingTaskHandoff, claimTaskLease, commitPreparedTaskHandoff, completeTaskHandoff, completeTaskLease, createTask, deleteTask, getTaskHandoff, isTaskHandoffRejected, listTasks, listUnfinishedOutgoingTaskHandoffs, markOutgoingTaskHandoff, prepareTaskHandoff, rejectTaskHandoff, releaseTaskLease, reserveTaskHandoff, taskHandoffDeletion, updateTask, type TaskHandoffRecord } from "./tasks.js";
 import { assertTaskWorktreeTransferable, exportTaskBranchBundle, mergeTaskWorktree, prepareTaskWorktreeFromBundle, removePreparedTaskWorktree, TaskWorktreeError, validateTaskRepository, type PreparedTaskWorktree } from "./worktrees.js";
-import { assertSyncthingFolderReady, ensureSyncthingDevice, ensureSyncthingFolder, ensureTicketWorkspaceFolder, reconcileSyncthingProjectFolders, syncthingDeviceId, syncthingFolderIdForPath, syncthingPathForFolderId } from "./syncthing.js";
+import { assertSyncthingFolderReady, engineSyncFolders, ensureEngineSyncFolders, ensureSyncthingDevice, ensureSyncthingFolder, ensureTicketWorkspaceFolder, PI_ENGINE_SYNC_FOLDER_ID, reconcileSyncthingProjectFolders, syncthingDeviceId, syncthingFolderIdForPath, syncthingPathForFolderId } from "./syncthing.js";
 import { assertTaskWorkspaceReady, removeTaskWorkspace, taskWorkspaceKey, TaskWorkspaceError, TICKET_WORKSPACE_FOLDER_ID, ticketWorkspaceRoot } from "./task-workspaces.js";
 import { SessionWatcher } from "./watcher.js";
 import { buildHandoffContext, claudeSessionFilePath, loadClaudeMessages, runClaudePrompt, type ClaudeRunHandle } from "./claude-service.js";
@@ -1440,6 +1440,11 @@ app.post("/api/cluster/sync/share", async (request, response, next) => {
     const payload = clusterSyncShareSchema.parse(request.body);
     if (payload.folderId === TICKET_WORKSPACE_FOLDER_ID) {
       await ensureTicketWorkspaceFolder(ticketWorkspaceRoot(), payload.deviceId, payload.deviceName);
+      response.json({ ok: true });
+      return;
+    }
+    if (engineSyncFolders().some((folder) => folder.id === payload.folderId)) {
+      await ensureEngineSyncFolders(undefined, payload.deviceId, payload.deviceName);
       response.json({ ok: true });
       return;
     }
@@ -3151,13 +3156,16 @@ async function configureTicketWorkspacePeer(peer: ClusterPeer, localDeviceId: st
   const inventory = await fetchPeerInventory(peer);
   if (!inventory.syncDeviceId) throw new Error("Peer Syncthing device ID is unavailable");
   await ensureTicketWorkspaceFolder(ticketWorkspaceRoot(), inventory.syncDeviceId, inventory.node.name);
-  const response = await fetch(`${peer.url}/api/cluster/sync/share`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ folderId: TICKET_WORKSPACE_FOLDER_ID, deviceId: localDeviceId, deviceName: localDeviceName }),
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (!response.ok) throw new Error(`Peer ticket workspace share failed: ${response.status}`);
+  await ensureEngineSyncFolders(undefined, inventory.syncDeviceId, inventory.node.name);
+  for (const folderId of [TICKET_WORKSPACE_FOLDER_ID, PI_ENGINE_SYNC_FOLDER_ID]) {
+    const response = await fetch(`${peer.url}/api/cluster/sync/share`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ folderId, deviceId: localDeviceId, deviceName: localDeviceName }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) throw new Error(`Peer managed folder share failed: ${response.status}`);
+  }
 }
 
 async function reconcileTicketWorkspaceSync(): Promise<void> {
@@ -3169,6 +3177,7 @@ async function reconcileTicketWorkspaceSync(): Promise<void> {
     const localDeviceId = await syncthingDeviceId();
     if (!localDeviceId) return;
     await ensureTicketWorkspaceFolder();
+    await ensureEngineSyncFolders();
     if (!peers.length) return;
     const localNode = await getClusterNode();
     for (const peer of peers) {

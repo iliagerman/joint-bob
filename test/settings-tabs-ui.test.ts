@@ -54,6 +54,12 @@ test("settings tabs absorb notification, GitHub, and cluster configuration", asy
   assert.match(html, /class="dialog-heading" tabindex="-1" autofocus/);
   assert.match(styles, /\.dialog-heading:focus \{ outline: none; \}/);
 
+  // Engine paths and Syncthing are automatic; normal settings do not ask for Syncthing credentials.
+  assert.match(html, /Engine paths are detected automatically/);
+  assert.match(html, /Syncthing is installed, started, discovered, and configured automatically/);
+  assert.doesNotMatch(html, /settingsSyncthingEndpoint|settingsSyncthingApiKey/);
+  assert.doesNotMatch(app, /settingsSyncthingEndpoint|settingsSyncthingApiKey/);
+
   // Managed project folders sit directly under the home folder.
   assert.doesNotMatch(app, /\/projects\/\$\{elements\.projectTypeInput\.value\}/);
 
