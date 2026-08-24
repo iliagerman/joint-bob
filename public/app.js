@@ -113,8 +113,6 @@ const elements = {
   completionSoundSelect: document.querySelector("#completionSoundSelect"),
   previewSoundButton: document.querySelector("#previewSoundButton"),
   renameSessionButton: document.querySelector("#renameSessionButton"),
-  projectsMenuButton: document.querySelector("#projectsMenuButton"),
-  projectsToolbar: document.querySelector("#projectsToolbar"),
   projectRenameDialog: document.querySelector("#projectRenameDialog"),
   projectRenameForm: document.querySelector("#projectRenameForm"),
   projectRenameInput: document.querySelector("#projectRenameInput"),
@@ -122,7 +120,6 @@ const elements = {
   abortButton: document.querySelector("#abortButton"),
   newProjectButton: document.querySelector("#newProjectButton"),
   themeToggleButton: document.querySelector("#themeToggleButton"),
-  githubSettingsButton: document.querySelector("#githubSettingsButton"),
   settingsButton: document.querySelector("#settingsButton"),
   settingsDialog: document.querySelector("#settingsDialog"),
   settingsForm: document.querySelector("#settingsForm"),
@@ -141,7 +138,6 @@ const elements = {
   settingsClaudeExecutable: document.querySelector("#settingsClaudeExecutable"),
   settingsClaudeConfigPath: document.querySelector("#settingsClaudeConfigPath"),
   settingsClaudeSessionPath: document.querySelector("#settingsClaudeSessionPath"),
-  clusterButton: document.querySelector("#clusterButton"),
   clusterSaveButton: document.querySelector("#clusterSaveButton"),
   clusterInventory: document.querySelector("#clusterInventory"),
   clusterNodeNameInput: document.querySelector("#clusterNodeNameInput"),
@@ -546,7 +542,7 @@ function setTheme(theme) {
   if (state.preferencesLoaded) savePreferencesInBackground({ theme });
 
   const isDark = theme === "dark";
-  elements.themeToggleButton.textContent = isDark ? "☀" : "☾";
+  elements.themeToggleButton.textContent = isDark ? "☀ Switch to light theme" : "☾ Switch to dark theme";
   elements.themeToggleButton.setAttribute("aria-label", `Switch to ${isDark ? "light" : "dark"} theme`);
   elements.themeToggleButton.title = elements.themeToggleButton.getAttribute("aria-label");
   document.querySelector('meta[name="theme-color"]').content = isDark ? "#0d0e10" : "#f2f2f0";
@@ -2617,9 +2613,6 @@ elements.openBoardButton.addEventListener("click", () => {
   renderBoardView();
   setMobileView("board");
 });
-elements.projectsMenuButton.addEventListener("click", () => {
-  elements.projectsToolbar.hidden = !elements.projectsToolbar.hidden;
-});
 elements.cancelProjectRenameButton.addEventListener("click", () => elements.projectRenameDialog.close());
 elements.projectRenameForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -2700,7 +2693,6 @@ function updateProjectImportControls() {
   elements.projectSaveButton.textContent = importing ? "Import project" : "Create project";
 }
 
-elements.githubSettingsButton.addEventListener("click", () => openSettings("github").catch((error) => toast(error.message)));
 elements.settingsButton.addEventListener("click", () => openSettings().catch((error) => toast(error.message)));
 for (const tab of elements.settingsTabs) {
   tab.addEventListener("click", () => selectSettingsTab(tab.dataset.settingsTab));
@@ -2724,7 +2716,6 @@ elements.settingsLogoutButton.addEventListener("click", async () => {
   }
 });
 elements.settingsForm.addEventListener("submit", (event) => saveSettings(event).catch((error) => toast(error.message)));
-elements.clusterButton.addEventListener("click", () => openSettings("cluster").catch((error) => toast(error.message)));
 elements.clusterSaveButton.addEventListener("click", () => saveClusterNode().catch((error) => toast(error.message)));
 elements.githubGroupAddButton.addEventListener("click", () => openGithubGroupDialog());
 elements.cancelGithubGroupButton.addEventListener("click", () => elements.githubGroupDialog.close());

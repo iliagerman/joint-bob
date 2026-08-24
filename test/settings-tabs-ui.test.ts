@@ -30,9 +30,11 @@ test("settings tabs absorb notification, GitHub, and cluster configuration", asy
   assert.doesNotMatch(app, /personalTokenInput|selaTokenInput/);
   assert.match(html, /id="projectGithubGroupInput"/);
 
-  // Toolbar shortcuts open settings on the matching tab instead of separate dialogs.
-  assert.match(app, /openSettings\("github"\)/);
-  assert.match(app, /openSettings\("cluster"\)/);
+  // One gear button opens Settings; the old toolbar strip and its shortcuts are gone.
+  assert.match(html, /id="settingsButton"[^>]*aria-label="Settings"/);
+  assert.doesNotMatch(html, /id="projectsToolbar"/);
+  assert.doesNotMatch(app, /projectsMenuButton|githubSettingsButton|clusterButton/);
+  assert.match(html, /id="settingsPanel-account"[\s\S]*id="themeToggleButton"/);
   assert.match(app, /function selectSettingsTab/);
   assert.match(app, /ArrowRight|ArrowLeft/);
 
@@ -50,7 +52,9 @@ test("settings tabs absorb notification, GitHub, and cluster configuration", asy
 
   // The dialog widens on the dense tabs, and its opening focus draws no ring.
   assert.match(app, /elements\.settingsForm\.dataset\.tab = name/);
-  assert.match(styles, /\.settings-card\[data-tab="projects"\]/);
+  assert.doesNotMatch(styles, /\.settings-card\[data-tab=/);
+  assert.match(styles, /\.settings-card \{[^}]*width: min\(900px/);
+  assert.match(styles, /\.settings-panel \{[^}]*height: min\(440px/);
   assert.match(html, /class="dialog-heading" tabindex="-1" autofocus/);
   assert.match(styles, /\.dialog-heading:focus \{ outline: none; \}/);
 

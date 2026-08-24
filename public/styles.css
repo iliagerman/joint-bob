@@ -244,7 +244,6 @@ body.view-chat #chatPanel :is(.panel-scroll, .board-columns, .messages) {
 /* ---- Brand ---- */
 .brand { display: flex; gap: 11px; align-items: center; flex: 1; min-width: 0; }
 .project-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
-.theme-toggle { font-size: 17px; }
 .brand-mark, .orb, .install-banner-mark {
   display: grid;
   place-items: center;
@@ -880,16 +879,11 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 .phase-settings { display: grid; gap: 10px; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); }
 .phase-settings legend { padding: 0 6px; color: var(--muted); font-family: var(--mono); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
 .settings-session-list { display: grid; gap: 6px; }
-/* Wider than a plain dialog, and wider again on the tabs that hold dense forms. */
+/* The theme button sits in a grid fieldset; keep it at its own width instead of stretching. */
+#themeToggleButton { justify-self: start; }
+/* One size for every tab: switching tabs must never move or resize the dialog. */
 .settings-card {
   gap: 14px;
-  width: min(680px, calc(100vw - 24px));
-  transition: width 200ms cubic-bezier(0.22, 0.9, 0.28, 1);
-}
-.settings-card[data-tab="github"],
-.settings-card[data-tab="cluster"],
-.settings-card[data-tab="projects"],
-.settings-card[data-tab="engines"] {
   width: min(900px, calc(100vw - 24px));
 }
 /* Tab strip: scrolls sideways on narrow screens rather than wrapping into a tall block. */
@@ -921,7 +915,18 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 }
 .settings-tab:hover { color: var(--text); }
 .settings-tab[aria-selected="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.18)); }
-.settings-panel { display: grid; gap: 12px; }
+/* A fixed panel box, so a short tab and a long tab leave the dialog the same height.
+   `align-content: start` stops the grid stretching rows to fill it. */
+.settings-panel {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  height: min(440px, 58dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
 .settings-panel[hidden] { display: none; }
 .github-group-list { display: grid; gap: 8px; }
 .github-group-row { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
@@ -940,7 +945,7 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 
 /* The wide tabs earn a second column instead of one very tall stack. */
 @media (min-width: 940px) {
-  .settings-card[data-tab="engines"] #settingsPanel-engines { grid-template-columns: 1fr 1fr; }
+  #settingsPanel-engines { grid-template-columns: 1fr 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {
   .settings-tab { transition: none; }
@@ -1040,7 +1045,6 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   .brand-copy span { display: none; }
   .brand-copy strong { font-size: 14px; white-space: nowrap; }
   .project-actions { gap: 2px; }
-  #clusterButton { padding-inline: 10px; }
   #newProjectButton { padding-inline: 11px; }
 
   .install-banner { align-items: flex-start; }
