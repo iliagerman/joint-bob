@@ -8,6 +8,12 @@
 - Run `npm run typecheck`, `npm test`, and `npm run build` before delivery.
 - Run Terraform format, validate, and tests when `deploy/aws-ec2-test` changes.
 
+## AI-DLC bypass
+
+- Bypass AI-DLC for one request only when the user explicitly says `bypass AI-DLC` or `skip AI-DLC`.
+- Park any active AI-DLC workflow before changing feature code under that bypass.
+- Never infer a bypass from urgency, blanket approval, or a request to avoid questions.
+
 ## Deployment
 
 Production services run from `~/.local/share/joint-bob/app`, never from a source checkout.
