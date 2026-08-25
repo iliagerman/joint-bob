@@ -207,6 +207,10 @@ export async function syncthingPathForFolderId(folderId: string): Promise<string
   return (await listSyncthingFolders()).find((folder) => folder.id === folderId)?.path;
 }
 
+export async function rescanSyncthingFolder(folderId: string): Promise<void> {
+  await request<void>(`/rest/db/scan?folder=${encodeURIComponent(folderId)}`, { method: "POST" });
+}
+
 async function setProjectIgnores(folderId: string): Promise<void> {
   const endpoint = `/rest/db/ignores?folder=${encodeURIComponent(folderId)}`;
   const existing = await request<SyncthingIgnores>(endpoint);

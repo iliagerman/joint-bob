@@ -1411,6 +1411,35 @@ function projectGroupElement(group) {
   return details;
 }
 
+function projectRescanButton(project) {
+  const rescanButton = document.createElement("button");
+  rescanButton.type = "button";
+  rescanButton.className = "ghost icon-button row-action-button rescan-button";
+  rescanButton.setAttribute("aria-label", `Rescan ${project.name}`);
+  rescanButton.title = project.syncFolderId ? "Rescan project with Syncthing" : "Project is not synchronized with Syncthing";
+  rescanButton.textContent = "↻";
+  rescanButton.disabled = !project.syncFolderId;
+  rescanButton.dataset.testid = "project-rescan-button";
+  rescanButton.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    if (!project.syncFolderId) return;
+    rescanButton.disabled = true;
+    rescanButton.textContent = "…";
+    toast(`Rescanning ${project.name}`);
+    try {
+      await api(`/api/projects/${encodeURIComponent(project.id)}/sync/rescan`, { method: "POST" });
+      await refreshProjectsQuietly();
+      toast(`Rescan complete for ${project.name}`);
+    } catch (error) {
+      toast(error.message, 8000);
+    } finally {
+      rescanButton.textContent = "↻";
+      rescanButton.disabled = !project.syncFolderId;
+    }
+  });
+  return rescanButton;
+}
+
 function projectRow(project) {
     const pinned = isProjectPinned(project.id);
     const row = document.createElement("div");
@@ -1443,6 +1472,8 @@ function projectRow(project) {
       testid: "project-pin-button",
       onToggle: () => togglePinnedProject(project.id),
     });
+
+    const rescanButton = projectRescanButton(project);
 
     const renameButton = document.createElement("button");
     renameButton.type = "button";
@@ -1503,7 +1534,7 @@ function projectRow(project) {
       await loadProjects();
     });
 
-    row.append(button, pinToggle, renameButton, mappingButton, authButton, removeButton);
+    row.append(button, pinToggle, rescanButton, renameButton, mappingButton, authButton, removeButton);
     return row;
 }
 

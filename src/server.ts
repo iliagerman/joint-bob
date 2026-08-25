@@ -27,7 +27,7 @@ import {
 import { deletePushSubscription, getVapidPublicKey, notifySessionFinished, savePushSubscription } from "./push.js";
 import { abortOutgoingTaskHandoff, abortPreparedTaskHandoff, acknowledgeIncomingTaskHandoff, acknowledgeOutgoingTaskHandoff, assertTaskCanBeDeleted, beginOutgoingTaskHandoff, claimTaskLease, commitPreparedTaskHandoff, completeTaskHandoff, completeTaskLease, createTask, deleteTask, getTaskHandoff, isTaskHandoffRejected, listTasks, listUnfinishedOutgoingTaskHandoffs, markOutgoingTaskHandoff, prepareTaskHandoff, rejectTaskHandoff, releaseTaskLease, reserveTaskHandoff, taskHandoffDeletion, updateTask, type TaskHandoffRecord } from "./tasks.js";
 import { assertTaskWorktreeTransferable, exportTaskBranchBundle, mergeTaskWorktree, prepareTaskWorktreeFromBundle, removePreparedTaskWorktree, TaskWorktreeError, validateTaskRepository, type PreparedTaskWorktree } from "./worktrees.js";
-import { assertSyncthingFolderReady, CLAUDE_ENGINE_SYNC_FOLDER_ID, engineSyncFolders, ensureEngineSyncFolders, ensureSyncthingDevice, ensureSyncthingFolder, ensureTicketWorkspaceFolder, PI_ENGINE_SYNC_FOLDER_ID, reconcileSyncthingProjectFolders, syncthingDeviceId, syncthingFolderIdForPath, syncthingFolderStatuses, syncthingPathForFolderId } from "./syncthing.js";
+import { assertSyncthingFolderReady, CLAUDE_ENGINE_SYNC_FOLDER_ID, engineSyncFolders, ensureEngineSyncFolders, ensureSyncthingDevice, ensureSyncthingFolder, ensureTicketWorkspaceFolder, PI_ENGINE_SYNC_FOLDER_ID, reconcileSyncthingProjectFolders, rescanSyncthingFolder, syncthingDeviceId, syncthingFolderIdForPath, syncthingFolderStatuses, syncthingPathForFolderId } from "./syncthing.js";
 import { assertTaskWorkspaceReady, removeTaskWorkspace, taskWorkspaceKey, TaskWorkspaceError, TICKET_WORKSPACE_FOLDER_ID, ticketWorkspaceRoot } from "./task-workspaces.js";
 import { SessionWatcher } from "./watcher.js";
 import { buildHandoffContext, claudeSessionFilePath, loadClaudeMessages, runClaudePrompt, type ClaudeRunHandle } from "./claude-service.js";
@@ -1778,6 +1778,24 @@ app.get("/api/projects/:projectId", async (request, response, next) => {
       return;
     }
     response.json({ project: await projectView(project) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/projects/:projectId/sync/rescan", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project) {
+      sendError(response, 404, "Project not found");
+      return;
+    }
+    if (!project.syncFolderId) {
+      sendError(response, 409, "Project is not synchronized with Syncthing");
+      return;
+    }
+    await rescanSyncthingFolder(project.syncFolderId);
+    response.json({ ok: true });
   } catch (error) {
     next(error);
   }

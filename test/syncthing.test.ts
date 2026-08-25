@@ -230,6 +230,15 @@ async function withSyncthingApi(handler: Parameters<typeof createServer>[0], run
   }
 }
 
+test("Syncthing folder rescan posts the encoded folder ID", async () => {
+  let scanRequest: { method?: string; url?: string } | undefined;
+  await withSyncthingApi((request, response) => {
+    scanRequest = { method: request.method, url: request.url };
+    response.end();
+  }, async (syncthing) => syncthing.rescanSyncthingFolder("project folder"));
+  assert.deepEqual(scanRequest, { method: "POST", url: "/rest/db/scan?folder=project%20folder" });
+});
+
 test("Syncthing folder statuses report every project sync state", async () => {
   await withSyncthingApi((request, response) => {
     response.setHeader("Content-Type", "application/json");

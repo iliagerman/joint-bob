@@ -387,6 +387,7 @@ body.view-chat #chatPanel :is(.panel-scroll, .board-columns, .messages) {
 .transfer-button { color: var(--accent); }
 .mapping-button { right: 74px; }
 .rename-button { right: 106px; }
+.rescan-button { right: 138px; }
 .mapping-button.missing { color: var(--danger); }
 .credential-state { float: right; color: var(--accent); font-size: 10px; }
 .section-title {
@@ -523,6 +524,7 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
   opacity: 0;
   transition: opacity 130ms ease;
 }
+.project-list .list-row::after { width: 222px; }
 .list-row:is(:hover, :focus-within)::after { opacity: 1; }
 .list-row.active::after { background: linear-gradient(90deg, transparent, var(--surface) 40%); }
 .project-card, .session-card {
@@ -1207,7 +1209,7 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 /* ---- Pinned projects and conversations ---- */
 .pin-button { font-size: 12px; opacity: 0.55; }
 .pin-button.pinned { opacity: 1; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
-.project-list .pin-button { right: 138px; }
+.project-list .pin-button { right: 170px; }
 .session-list .pin-button { right: 74px; }
 .project-card.pinned strong::after,
 .session-card.pinned strong::after {
