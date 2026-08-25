@@ -2080,7 +2080,7 @@ function renderChatSessionControls() {
     elements.chatNodeSelect.append(option);
   }
   elements.chatNodeSelect.value = state.activeNodeId || "";
-  elements.chatNodeSelect.disabled = Boolean(state.activeTaskId) || !state.activeProjectId || !state.sessionNodes.length;
+  elements.chatNodeSelect.disabled = !state.activeProjectId || !state.sessionNodes.length;
 
   elements.chatHarnessSelect.replaceChildren();
   for (const harness of state.harnesses) {
@@ -2095,16 +2095,26 @@ function renderChatSessionControls() {
   // Conversations are picked in the conversations panel; the toolbar no longer duplicates it.
   const selectedSession = state.sessions.find((session) => session.id === state.activeSessionId);
 
+  const activeTask = state.activeTaskId ? state.tasks.find((task) => task.id === state.activeTaskId) : null;
+  const ticketDestinations = activeTask && state.sessionNodes.filter((node) => node.id !== activeTask.currentNodeId);
   const destinations = state.sessionNodes.filter((node) => node.id !== state.activeNodeId && node.online);
-  const transferable = selectedSession && state.engine === "pi" && socketOpen() && !state.activeTaskId && destinations.length;
+  const transferable = activeTask
+    ? Boolean(activeTask.sessionPath && activeTask.executionState === "idle" && ticketDestinations?.length)
+    : Boolean(selectedSession && state.engine === "pi" && socketOpen() && destinations.length);
   elements.transferSessionButton.disabled = !transferable;
-  elements.transferSessionButton.title = transferable
-    ? destinations.some((node) => node.mapped)
-      ? "Copy this conversation and continue it on another node"
-      : "Map this project, then continue the conversation on another node"
-    : state.engine === "claude"
-      ? "Claude conversation transfer is not available yet"
-      : selectedSession ? "No other online node is available" : "Send a message first, then continue this conversation on another node";
+  elements.transferSessionButton.title = activeTask
+    ? !activeTask.sessionPath
+      ? "Send a message first, then continue this ticket on another node"
+      : activeTask.executionState !== "idle"
+        ? "Wait for the ticket agent to finish before continuing on another node"
+        : transferable ? "Move this ticket conversation to another node" : "No other node is available for this ticket"
+    : transferable
+      ? destinations.some((node) => node.mapped)
+        ? "Copy this conversation and continue it on another node"
+        : "Map this project, then continue the conversation on another node"
+      : state.engine === "claude"
+        ? "Claude conversation transfer is not available yet"
+        : selectedSession ? "No other online node is available" : "Send a message first, then continue this conversation on another node";
   renderTaskBacklink();
 }
 
@@ -2735,6 +2745,7 @@ async function handoffTaskToPeer(task, peer) {
   state.tasks = state.tasks.map((item) => item.id === task.id ? body.task : item);
   renderBoardView();
   toast(body.handoffPendingCommit ? `${body.destination.name}: destination commit pending` : `Handed off to ${body.destination.name}`);
+  return body;
 }
 
 async function handoffTask(task) {
@@ -3200,7 +3211,24 @@ function activeChatSession() {
   return state.sessions.find((session) => state.activeSessionId ? session.id === state.activeSessionId : session.path === state.activeSessionPath);
 }
 
-function openSessionTransferDialog() {
+async function openSessionTransferDialog() {
+  const task = state.activeTaskId ? state.tasks.find((candidate) => candidate.id === state.activeTaskId) : null;
+  if (state.activeTaskId && !task) throw new Error("Active ticket was not found");
+  if (task) {
+    if (!task.sessionPath) throw new Error("Send a message first, then continue this ticket on another node");
+    if (task.executionState !== "idle") throw new Error("Wait for the ticket agent to finish before continuing on another node");
+    const eligibility = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/tasks/${encodeURIComponent(task.id)}/eligibility`);
+    elements.sessionTransferNodeSelect.replaceChildren(...eligibility.nodes.map((entry) => {
+      const option = document.createElement("option");
+      option.value = entry.node.id;
+      option.disabled = !entry.eligible;
+      option.textContent = `${entry.node.name}${entry.eligible ? "" : ` — ${entry.reasons.join("; ")}`}`;
+      return option;
+    }));
+    if (!eligibility.nodes.length) throw new Error("No destination nodes are available");
+    elements.sessionTransferDialog.showModal();
+    return;
+  }
   const session = activeChatSession();
   const destinations = state.sessionNodes.filter((node) => node.id !== state.activeNodeId && node.online);
   if (!session) { toast("Send the first message before continuing on another node"); return; }
@@ -3226,21 +3254,42 @@ async function continueSessionOnNode(session, destination, sourceNodeId = state.
   toast(`Continuing on ${destination.name}`);
 }
 
+async function continueTaskOnNode(task, destination) {
+  if (!task) throw new Error("Active ticket was not found");
+  if (!task.sessionPath) throw new Error("Send a message first, then continue this ticket on another node");
+  if (task.executionState !== "idle") throw new Error("Wait for the ticket agent to finish before continuing on another node");
+  if (!destination) throw new Error("Destination node was not found");
+  const body = await handoffTaskToPeer(task, destination);
+  if (body.handoffPendingCommit) throw new Error(body.message);
+  if (!body.task?.sessionPath) throw new Error("Ticket conversation is not available on the destination node");
+  state.activeNodeId = destination.id;
+  state.activeSessionId = null;
+  if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: destination.id, activeSessionId: null });
+  openSession(body.task.sessionPath, task.title, false, true);
+}
+
 async function transferActiveSession(event) {
   event.preventDefault();
+  const task = state.activeTaskId ? state.tasks.find((candidate) => candidate.id === state.activeTaskId) : null;
   const session = activeChatSession();
   const destination = state.sessionNodes.find((node) => node.id === elements.sessionTransferNodeSelect.value);
-  if (!session || !destination) return;
-  if (!destination.mapped) {
-    elements.sessionTransferDialog.close();
-    const project = selectedProject();
-    openProjectImportMapping([{ peerId: destination.id, projectId: project.id, name: project.name, remotePath: project.path, suggestedPath: "", mapOnPeer: true, transferSessionId: session.id, transferSessionPath: session.path, transferSessionName: shortSessionTitle(session), sourceNodeId: state.activeNodeId }]);
-    return;
-  }
   const submit = elements.sessionTransferForm.querySelector('[type="submit"]');
   submit.disabled = true;
   try {
-    await continueSessionOnNode(session, destination);
+    if (!destination) throw new Error("Destination node was not found");
+    if (state.activeTaskId) {
+      if (!task) throw new Error("Active ticket was not found");
+      await continueTaskOnNode(task, destination);
+    } else {
+      if (!session) throw new Error("Send the first message before continuing on another node");
+      if (!destination.mapped) {
+        elements.sessionTransferDialog.close();
+        const project = selectedProject();
+        openProjectImportMapping([{ peerId: destination.id, projectId: project.id, name: project.name, remotePath: project.path, suggestedPath: "", mapOnPeer: true, transferSessionId: session.id, transferSessionPath: session.path, transferSessionName: shortSessionTitle(session), sourceNodeId: state.activeNodeId }]);
+        return;
+      }
+      await continueSessionOnNode(session, destination);
+    }
     elements.sessionTransferDialog.close();
   } catch (error) {
     toast(error.message, 8000);
@@ -3258,16 +3307,35 @@ elements.newClaudeSessionButton.addEventListener("click", () => {
   state.activeSessionId = null;
   openSession("claude:new", "New Claude conversation");
 });
-elements.chatNodeSelect.addEventListener("change", () => {
+elements.chatNodeSelect.addEventListener("change", async () => {
+  const destination = state.sessionNodes.find((node) => node.id === elements.chatNodeSelect.value);
+  const task = state.activeTaskId ? state.tasks.find((candidate) => candidate.id === state.activeTaskId) : null;
+  if (state.activeTaskId) {
+    if (!task || !destination) {
+      toast(!task ? "Active ticket was not found" : "Destination node was not found");
+      return;
+    }
+    const ownerId = task.currentNodeId;
+    if (destination.id === ownerId) return;
+    try {
+      await continueTaskOnNode(task, destination);
+    } catch (error) {
+      state.activeNodeId = ownerId;
+      elements.chatNodeSelect.value = ownerId;
+      if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: ownerId });
+      toast(error.message, 8000);
+    }
+    return;
+  }
   state.activeNodeId = elements.chatNodeSelect.value;
   if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: state.activeNodeId });
-  if (!activeChatSession() && !state.activeTaskId) {
+  if (!activeChatSession()) {
     state.activeSessionId = null;
     const harness = state.harnesses.find((candidate) => candidate.id === state.engine);
     openSession(harness?.newSessionPath, `New ${harness?.label || "Pi"} conversation`);
     return;
   }
-  openSession(state.activeSessionPath, elements.sessionTitle.textContent || "Conversation", false, Boolean(state.activeTaskId));
+  openSession(state.activeSessionPath, elements.sessionTitle.textContent || "Conversation", false);
 });
 elements.chatHarnessSelect.addEventListener("change", () => {
   const harness = state.harnesses.find((candidate) => candidate.id === elements.chatHarnessSelect.value);
@@ -3302,7 +3370,7 @@ elements.safeguardsButton.addEventListener("click", () => {
   state.sessionBusy = true;
   syncSafeguardsButton();
 });
-elements.transferSessionButton.addEventListener("click", openSessionTransferDialog);
+elements.transferSessionButton.addEventListener("click", () => openSessionTransferDialog().catch((error) => toast(error.message, 8000)));
 elements.cancelSessionTransferButton.addEventListener("click", () => elements.sessionTransferDialog.close());
 elements.sessionTransferForm.addEventListener("submit", transferActiveSession);
 elements.closeModelDialogButton.addEventListener("click", () => elements.modelDialog.close());

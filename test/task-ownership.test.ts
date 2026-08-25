@@ -28,7 +28,7 @@ test("task handoff start atomically blocks mutations and source completion stays
       planMode: false,
       reviewMode: false,
       phaseConfig: {},
-      sessionPath: "/source/session.jsonl",
+      sessionPath: "/source/.pi/agent/sessions/session.jsonl",
       worktreePath: "/source/worktree",
       worktreeBranch: "pi-ticket/task-ownership-replicated",
       mergedAt: null,

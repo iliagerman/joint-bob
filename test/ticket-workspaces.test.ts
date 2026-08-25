@@ -132,8 +132,10 @@ test("incoming handoff resolves the destination-local synchronized workspace", a
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-ticket-handoff-"));
   const previousDataDir = process.env.PI_WEB_DATA_DIR;
   const previousTicketRoot = process.env.JOINT_BOB_TICKET_ROOT;
+  const previousHome = process.env.HOME;
   process.env.PI_WEB_DATA_DIR = path.join(root, "data");
   process.env.JOINT_BOB_TICKET_ROOT = path.join(root, "tickets");
+  process.env.HOME = path.join(root, "destination-home");
   try {
     const tasks = await import(new URL(`../src/tasks.ts?ticket-workspace=${Date.now()}`, import.meta.url).href);
     const cluster = await import(new URL(`../src/cluster.ts?ticket-workspace=${Date.now()}`, import.meta.url).href);
@@ -146,7 +148,7 @@ test("incoming handoff resolves the destination-local synchronized workspace", a
     await mkdir(localWorkspace, { recursive: true });
     const incoming = {
       id: taskId, title: "Synced handoff", description: "No Git", status: "backlog" as const, engine: "pi" as const,
-      planMode: false, reviewMode: false, phaseConfig: {}, sessionPath: null,
+      planMode: false, reviewMode: false, phaseConfig: {}, sessionPath: "/source-home/.pi/agent/sessions/synced-handoff.jsonl",
       worktreePath: "/source/tickets/source-project/synced-handoff", worktreeBranch: null, mergedAt: null,
       currentNodeId: sourceNodeId, leaseOwnerNodeId: null, leaseExpiresAt: null, executionState: "idle" as const,
       handoffContext: null, originNodeId: sourceNodeId, createdAt: "2026-08-23T00:00:00.000Z", updatedAt: "2026-08-23T00:00:00.000Z",
@@ -156,11 +158,14 @@ test("incoming handoff resolves the destination-local synchronized workspace", a
 
     assert.equal(prepared.worktreePath, localWorkspace);
     assert.equal(prepared.worktreeBranch, null);
+    assert.equal(prepared.sessionPath, path.join(process.env.HOME, ".pi", "agent", "sessions", "synced-handoff.jsonl"));
   } finally {
     if (previousDataDir === undefined) delete process.env.PI_WEB_DATA_DIR;
     else process.env.PI_WEB_DATA_DIR = previousDataDir;
     if (previousTicketRoot === undefined) delete process.env.JOINT_BOB_TICKET_ROOT;
     else process.env.JOINT_BOB_TICKET_ROOT = previousTicketRoot;
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
     await rm(root, { recursive: true, force: true });
   }
 });

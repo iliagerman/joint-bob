@@ -61,6 +61,15 @@ test("task handoff prepares then routes later updates to its new owner", { timeo
     await waitForTask(a, aAuth, project.id, taskId, (item) => item.currentNodeId === bId && item.executionState === "idle"); await waitForTask(b, bAuth, project.id, taskId, (item) => item.currentNodeId === bId && item.executionState === "idle");
     const patched = await fetch(`${a.baseUrl}/api/projects/${project.id}/tasks/${taskId}`, { method: "PATCH", headers: aAuth.headers, body: JSON.stringify({ title: "After" }) }); assert.equal(patched.status, 200, a.output()); assert.equal((await patched.json() as { task: any }).task.title, "After");
     await waitForTask(b, bAuth, project.id, taskId, (item) => item.title === "After"); await waitForTask(a, aAuth, project.id, taskId, (item) => item.title === "After");
+    const returnEligibility = await fetch(`${a.baseUrl}/api/projects/${project.id}/tasks/${taskId}/eligibility`, { headers: aAuth.headers });
+    assert.equal(returnEligibility.status, 200, a.output());
+    const eligibleNodes = (await returnEligibility.json() as { nodes: Array<{ node: { id: string }; eligible: boolean }> }).nodes;
+    assert.ok(eligibleNodes.some((entry) => entry.node.id === aId && entry.eligible));
+    assert.equal(eligibleNodes.some((entry) => entry.node.id === bId), false);
+    const returned = await fetch(`${a.baseUrl}/api/projects/${project.id}/tasks/${taskId}/handoff`, { method: "POST", headers: aAuth.headers, body: JSON.stringify({ peerId: aId }) });
+    assert.equal(returned.status, 200, a.output());
+    await waitForTask(a, aAuth, project.id, taskId, (item) => item.currentNodeId === aId && item.executionState === "idle");
+    await waitForTask(b, bAuth, project.id, taskId, (item) => item.currentNodeId === aId && item.executionState === "idle");
   } finally { await Promise.all(nodes.map(stopNode)); await rm(root, { recursive: true, force: true }); }
 });
 

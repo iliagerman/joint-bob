@@ -10,6 +10,7 @@ import type { TaskEngine, TaskExecutionState, TaskPhaseConfig, TaskRecord, TaskS
 import { type PreparedTaskWorktree } from "./worktrees.js";
 import { createTaskWorkspace, expectedTaskWorkspacePath, removeTaskWorkspace, taskWorkspaceKey } from "./task-workspaces.js";
 import { appendAuditEvent, ensureAuditSchema } from "./audit.js";
+import { resolveLocalSessionPath } from "./session-paths.js";
 
 const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
 const databasePath = path.join(dataDir, "node.db");
@@ -359,6 +360,7 @@ export async function reserveTaskHandoff(handoffId: string, projectId: string, p
 }
 
 export async function prepareTaskHandoff(handoffId: string, projectId: string, protocolProjectId: string, incomingTask: TaskRecord, destinationNodeId: string, worktree: PreparedTaskWorktree | null, handoffContext: string, handoffVersion: string): Promise<TaskRecord> {
+  const sessionPath = incomingTask.sessionPath ? resolveLocalSessionPath(incomingTask.sessionPath).path : null;
   const reservation = await reserveTaskHandoff(handoffId, projectId, protocolProjectId, incomingTask, destinationNodeId, handoffContext, handoffVersion);
   const [db, localNode] = await Promise.all([taskDatabase(), getClusterNode()]);
   db.exec("BEGIN IMMEDIATE");
@@ -376,7 +378,7 @@ export async function prepareTaskHandoff(handoffId: string, projectId: string, p
     const synchronizedWorkspace = incomingTask.worktreePath && !incomingTask.worktreeBranch
       ? expectedTaskWorkspacePath(taskWorkspaceKey(incomingTask.worktreePath, incomingTask.id), incomingTask.id)
       : null;
-    const task: TaskRecord = { ...incomingTask, sessionPath: null, worktreePath: worktree?.path ?? synchronizedWorkspace, worktreeBranch: worktree?.branch ?? null, leaseOwnerNodeId: null, leaseExpiresAt: null, executionState: "handoff_pending", handoffContext, originNodeId: incomingTask.originNodeId };
+    const task: TaskRecord = { ...incomingTask, sessionPath, worktreePath: worktree?.path ?? synchronizedWorkspace, worktreeBranch: worktree?.branch ?? null, leaseOwnerNodeId: null, leaseExpiresAt: null, executionState: "handoff_pending", handoffContext, originNodeId: incomingTask.originNodeId };
     saveTask(db, projectId, task);
     db.prepare("UPDATE tasks SET active_handoff_id = ? WHERE project_id = ? AND id = ?").run(handoffId, projectId, task.id);
     const now = new Date().toISOString();
@@ -411,7 +413,7 @@ export async function commitPreparedTaskHandoff(handoffId: string, destinationNo
     }
     const current = db.prepare("SELECT * FROM tasks WHERE project_id = ? AND id = ?").get(record.projectId, record.taskId) as unknown as TaskRow | undefined;
     if (!current) throw new Error("Task has another active handoff");
-    const result = db.prepare("UPDATE tasks SET current_node_id = ?, session_path = NULL, worktree_path = ?, worktree_branch = ?, lease_owner_node_id = NULL, lease_expires_at = NULL, lease_token = NULL, execution_state = 'idle', handoff_context = ?, active_handoff_id = NULL, updated_at = ?, origin_node_id = ? WHERE project_id = ? AND id = ? AND active_handoff_id = ?").run(destinationNodeId, record.worktreePath, record.worktreeBranch, record.handoffContext, nextTaskUpdatedAt(current.updated_at), destinationNodeId, record.projectId, record.taskId, handoffId);
+    const result = db.prepare("UPDATE tasks SET current_node_id = ?, worktree_path = ?, worktree_branch = ?, lease_owner_node_id = NULL, lease_expires_at = NULL, lease_token = NULL, execution_state = 'idle', handoff_context = ?, active_handoff_id = NULL, updated_at = ?, origin_node_id = ? WHERE project_id = ? AND id = ? AND active_handoff_id = ?").run(destinationNodeId, record.worktreePath, record.worktreeBranch, record.handoffContext, nextTaskUpdatedAt(current.updated_at), destinationNodeId, record.projectId, record.taskId, handoffId);
     if (!result.changes) throw new Error("Task has another active handoff");
     const task = rowToTask(db.prepare("SELECT * FROM tasks WHERE project_id = ? AND id = ?").get(record.projectId, record.taskId) as unknown as TaskRow);
     publishTask(db, record.projectId, task);

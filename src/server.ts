@@ -27,7 +27,7 @@ import {
 import { deletePushSubscription, getVapidPublicKey, notifySessionFinished, savePushSubscription } from "./push.js";
 import { abortOutgoingTaskHandoff, abortPreparedTaskHandoff, acknowledgeIncomingTaskHandoff, acknowledgeOutgoingTaskHandoff, assertTaskCanBeDeleted, beginOutgoingTaskHandoff, claimTaskLease, commitPreparedTaskHandoff, completeTaskHandoff, completeTaskLease, createTask, deleteTask, getTaskHandoff, isTaskHandoffRejected, listTasks, listUnfinishedOutgoingTaskHandoffs, markOutgoingTaskHandoff, prepareTaskHandoff, rejectTaskHandoff, releaseTaskLease, reserveTaskHandoff, taskHandoffDeletion, updateTask, type TaskHandoffRecord } from "./tasks.js";
 import { assertTaskWorktreeTransferable, exportTaskBranchBundle, mergeTaskWorktree, prepareTaskWorktreeFromBundle, removePreparedTaskWorktree, TaskWorktreeError, validateTaskRepository, type PreparedTaskWorktree } from "./worktrees.js";
-import { assertSyncthingFolderReady, engineSyncFolders, ensureEngineSyncFolders, ensureSyncthingDevice, ensureSyncthingFolder, ensureTicketWorkspaceFolder, PI_ENGINE_SYNC_FOLDER_ID, reconcileSyncthingProjectFolders, syncthingDeviceId, syncthingFolderIdForPath, syncthingFolderStatuses, syncthingPathForFolderId } from "./syncthing.js";
+import { assertSyncthingFolderReady, CLAUDE_ENGINE_SYNC_FOLDER_ID, engineSyncFolders, ensureEngineSyncFolders, ensureSyncthingDevice, ensureSyncthingFolder, ensureTicketWorkspaceFolder, PI_ENGINE_SYNC_FOLDER_ID, reconcileSyncthingProjectFolders, syncthingDeviceId, syncthingFolderIdForPath, syncthingFolderStatuses, syncthingPathForFolderId } from "./syncthing.js";
 import { assertTaskWorkspaceReady, removeTaskWorkspace, taskWorkspaceKey, TaskWorkspaceError, TICKET_WORKSPACE_FOLDER_ID, ticketWorkspaceRoot } from "./task-workspaces.js";
 import { SessionWatcher } from "./watcher.js";
 import { buildHandoffContext, claudeSessionFilePath, loadClaudeMessages, runClaudePrompt, type ClaudeRunHandle } from "./claude-service.js";
@@ -44,6 +44,7 @@ import { resetSyncthingConnection } from "./syncthing.js";
 import { PROJECT_COLORS } from "./types.js";
 import type { ChatMessage, ProjectRecord, ProjectSyncStatus, ProjectView, SessionStatus, TaskPhase, TaskPhaseConfig, TaskRecord } from "./types.js";
 import { webSocketCloseReason } from "./websocket.js";
+import { resolveLocalSessionPath } from "./session-paths.js";
 
 type PiSessionHandle = Awaited<ReturnType<typeof createPiSession>>;
 
@@ -138,6 +139,7 @@ let githubCredentialFlushInProgress = false;
 let membershipFlushInProgress = false;
 let taskHandoffReconciliationInProgress = false;
 let ticketWorkspaceSyncInProgress = false;
+let projectDiscoveryInProgress = false;
 let ticketWorkspaceSyncRetryAt = 0;
 const configuredTicketWorkspacePeers = new Set<string>();
 let startupReady = true;
@@ -482,14 +484,26 @@ async function abortPeerTaskHandoff(peer: ClusterPeer, handoffId: string): Promi
   return false;
 }
 
+async function assertTaskSessionReady(sessionPath: string): Promise<void> {
+  const session = resolveLocalSessionPath(sessionPath);
+  const label = session.engine === "claude" ? "Claude" : "Pi";
+  const filePath = session.engine === "claude" ? session.path.slice("claude:".length) : session.path;
+  try {
+    await assertSyncthingFolderReady(session.engine === "claude" ? CLAUDE_ENGINE_SYNC_FOLDER_ID : PI_ENGINE_SYNC_FOLDER_ID);
+    const info = await lstat(filePath);
+    if (!info.isFile() || info.isSymbolicLink()) throw new Error("Conversation is not a regular file");
+  } catch {
+    throw new Error(`${label} conversation is not synchronized on this node`);
+  }
+}
+
 async function assertTaskFilesReady(project: ProjectRecord, task: TaskRecord): Promise<void> {
   if (task.worktreePath && !task.worktreeBranch) {
     await assertSyncthingFolderReady(TICKET_WORKSPACE_FOLDER_ID);
     await assertTaskWorkspaceReady(taskWorkspaceKey(task.worktreePath, task.id), task.id);
-    return;
-  }
-  if (project.syncFolderId) await assertSyncthingFolderReady(project.syncFolderId);
+  } else if (project.syncFolderId) await assertSyncthingFolderReady(project.syncFolderId);
   if (task.worktreeBranch) await validateTaskRepository(project.path);
+  if (task.sessionPath) await assertTaskSessionReady(task.sessionPath);
 }
 
 async function taskHandoffEligibility(projectId: string, task: TaskRecord): Promise<string[]> {
@@ -529,7 +543,7 @@ type ProjectImportResult = {
   pending: Array<{ peerId: string; projectId: string; name: string; remotePath: string; syncFolderId?: string; suggestedPath: string }>;
 };
 
-async function importProjectsFromPeer(peer: ClusterPeer): Promise<ProjectImportResult> {
+async function importProjectsFromPeer(peer: ClusterPeer, missingOnly = false): Promise<ProjectImportResult> {
   const inventory = await fetchPeerInventory(peer);
   const imported: string[] = [];
   const skipped: string[] = [];
@@ -539,6 +553,10 @@ async function importProjectsFromPeer(peer: ClusterPeer): Promise<ProjectImportR
     const remoteProject = entry.project;
     const localType = await localProjectTypeId(remoteProject.type);
     const existing = await getProject(remoteProject.id) ?? localProjects.find((project) => remoteProject.syncFolderId !== undefined && project.syncFolderId === remoteProject.syncFolderId);
+    if (existing && missingOnly) {
+      skipped.push(remoteProject.name);
+      continue;
+    }
     let localPath = existing?.path;
     if (existing && existing.type !== localType) {
       localPath = (await relocateProjectType(existing, localType)).path;
@@ -571,6 +589,22 @@ async function importProjectsFromPeer(peer: ClusterPeer): Promise<ProjectImportR
     imported.push(remoteProject.name);
   }
   return { imported, skipped, pending };
+}
+
+async function discoverMissingPeerProjects(): Promise<void> {
+  if (!startupReady || projectDiscoveryInProgress) return;
+  projectDiscoveryInProgress = true;
+  try {
+    for (const peer of await listClusterPeers()) {
+      try {
+        await importProjectsFromPeer(peer, true);
+      } catch (error) {
+        console.warn(`Project discovery from ${peer.id} failed`, error);
+      }
+    }
+  } finally {
+    projectDiscoveryInProgress = false;
+  }
 }
 
 function requirePathInsideHome(candidate: string, homeDirectory: string): void {
@@ -1157,7 +1191,7 @@ async function commitOutgoingTaskHandoff(record: TaskHandoffRecord): Promise<Tas
   await assertTaskFilesReady(project, record.task);
   const response = await fetch(`${peer.url}/api/cluster/tasks/commit`, { method: "POST", headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ handoffId: record.handoffId }), signal: AbortSignal.timeout(30_000) });
   if (!response.ok) throw new Error(`Peer handoff commit failed: ${response.status}`);
-  const committed = z.object({ task: z.object({ id: z.string(), currentNodeId: z.string().uuid(), executionState: z.literal("idle") }).passthrough().nullable(), deleted: taskHandoffDeletionSchema.optional() }).parse(await response.json());
+  const committed = z.object({ task: z.object({ id: z.string(), currentNodeId: z.string().uuid(), executionState: z.literal("idle"), sessionPath: z.string().nullable() }).passthrough().nullable(), deleted: taskHandoffDeletionSchema.optional() }).parse(await response.json());
   if (committed.task === null) {
     if (!committed.deleted) throw new Error("Peer returned a deleted task without a deletion version");
     const task = await completeTaskHandoff(record.handoffId, record.projectId, record.taskId, record.sourceNodeId, record.destinationNodeId, committed.deleted);
@@ -1168,12 +1202,12 @@ async function commitOutgoingTaskHandoff(record: TaskHandoffRecord): Promise<Tas
     return task;
   }
   if (committed.task.id !== record.taskId || committed.task.currentNodeId !== record.destinationNodeId) throw new Error("Peer returned an invalid committed task");
-  const task = await completeTaskHandoff(record.handoffId, record.projectId, record.taskId, record.sourceNodeId, record.destinationNodeId);
+  await completeTaskHandoff(record.handoffId, record.projectId, record.taskId, record.sourceNodeId, record.destinationNodeId);
   await markOutgoingTaskHandoff(record.handoffId, "committed");
   if (await settlePeerTaskHandoff(peer, record.handoffId)) await acknowledgeOutgoingTaskHandoff(record.handoffId);
   broadcastToProject(record.projectId, { type: "tasksChanged" });
   broadcastToProject(record.projectId, { type: "sessionsChanged" });
-  return task;
+  return committed.task as unknown as TaskRecord;
 }
 
 async function resumeRemotePendingHandoff(record: TaskHandoffRecord, peer: ClusterPeer): Promise<TaskRecord | null | undefined> {
@@ -2151,7 +2185,13 @@ app.get("/api/projects/:projectId/tasks/:taskId/eligibility", async (request, re
     if (!project) { sendError(response, 404, "Project not found"); return; }
     const task = (await listTasks(project.id)).find((candidate) => candidate.id === request.params.taskId);
     if (!task) { sendError(response, 404, "Task not found"); return; }
-    const nodes = await Promise.all((await listClusterPeers()).map(async (peer) => {
+    const local = await getClusterNode();
+    const nodes = [] as Array<{ node: { id: string; name: string; local?: boolean; online: boolean }; eligible: boolean; reasons: string[] }>;
+    if (task.currentNodeId !== local.id) {
+      const reasons = await taskHandoffEligibility(project.id, task);
+      nodes.push({ node: { id: local.id, name: local.name, local: true, online: true }, eligible: reasons.length === 0, reasons });
+    }
+    const peerNodes = await Promise.all((await listClusterPeers()).filter((peer) => peer.id !== task.currentNodeId).map(async (peer) => {
       const node = publicClusterPeer(peer);
       try {
         const remote = await fetch(`${peer.url}/api/cluster/tasks/eligibility`, {
@@ -2168,7 +2208,7 @@ app.get("/api/projects/:projectId/tasks/:taskId/eligibility", async (request, re
         return { node: { ...node, online: false }, eligible: false, reasons: [error instanceof Error ? `Peer unreachable: ${error.message}` : "Peer unreachable"] };
       }
     }));
-    response.json({ nodes });
+    response.json({ nodes: [...nodes, ...peerNodes] });
   } catch (error) { next(error); }
 });
 
@@ -3450,6 +3490,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     flushReplicationOutbox().catch((error) => console.warn("Replication flush failed", error));
     flushGitHubCredentialOutbox().catch((error) => console.warn("GitHub credential flush failed", error));
     reconcileTaskHandoffs().catch((error) => console.warn("Task handoff reconciliation failed", error));
+    discoverMissingPeerProjects().catch((error) => console.warn("Project discovery failed", error));
+    setInterval(() => discoverMissingPeerProjects().catch((error) => console.warn("Project discovery failed", error)), 10_000).unref();
     setInterval(() => {
       reconcileTicketWorkspaceSync().catch((error) => console.warn("Ticket workspace sync failed", error));
       flushMembershipOutbox().catch((error) => console.warn("Membership flush failed", error));

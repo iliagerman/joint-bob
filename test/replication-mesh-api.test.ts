@@ -117,6 +117,17 @@ async function waitForName(node: NodeProcess, auth: Session, projectId: string):
   throw new Error(`Project name did not replicate\n${node.output()}`);
 }
 
+async function waitForProject(node: NodeProcess, auth: Session, projectId: string): Promise<Array<{ id: string; path: string }>> {
+  for (let attempt = 0; attempt < 75; attempt += 1) {
+    const response = await fetch(`${node.baseUrl}/api/projects`, { headers: auth.headers });
+    assert.equal(response.status, 200, node.output());
+    const projects = (await response.json() as { projects: Array<{ id: string; path: string }> }).projects;
+    if (projects.some((project) => project.id === projectId)) return projects;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  throw new Error(`Project did not auto-map\n${node.output()}`);
+}
+
 test("managed homes auto-map peer projects by type and name", { timeout: 120_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "pi-mobile-web-auto-map-"));
   const nodes: NodeProcess[] = [];
@@ -139,13 +150,7 @@ test("managed homes auto-map peer projects by type and name", { timeout: 120_000
     assert.equal(created.status, 201, source.output());
     const projectId = (await created.json() as { project: { id: string } }).project.id;
 
-    const discovered = await fetch(`${destination.baseUrl}/api/cluster/projects/discover`, { method: "POST", headers: destinationAuth.headers });
-    assert.equal(discovered.status, 200, destination.output());
-    const result = await discovered.json() as { imported: string[]; pending: unknown[] };
-    assert.deepEqual(result.pending, []);
-    assert.deepEqual(result.imported, ["demo"]);
-
-    const projects = (await (await fetch(`${destination.baseUrl}/api/projects`, { headers: destinationAuth.headers })).json() as { projects: Array<{ id: string; path: string }> }).projects;
+    const projects = await waitForProject(destination, destinationAuth, projectId);
     assert.equal(projects.find((project) => project.id === projectId)?.path, path.join(destinationHome, "personal", "demo"));
 
     const destinationId = (await (await fetch(`${destination.baseUrl}/api/cluster/node`, { headers: destinationAuth.headers })).json() as { node: { id: string } }).node.id;

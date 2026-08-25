@@ -9,6 +9,22 @@ test("an empty connected conversation stays usable until its first message is sa
   assert.match(app, /if \(!sendSocket\(payload\)\) \{\s*toast\("Conversation is not connected yet"\);\s*return;\s*\}/);
 });
 
+test("ticket chat controls hand off ownership instead of reconnecting", async () => {
+  const app = await readFile("public/app.js", "utf8");
+
+  assert.match(app, /chatNodeSelect\.disabled = !state\.activeProjectId/);
+  assert.doesNotMatch(app, /chatNodeSelect\.disabled = Boolean\(state\.activeTaskId\)/);
+  assert.match(app, /eligibility\.nodes\.map\(\(entry\)/);
+  assert.match(app, /entry\.reasons\.join\("; "\)/);
+  assert.match(app, /Boolean\(activeTask\.sessionPath && activeTask\.executionState === "idle" && ticketDestinations\?\.length\)/);
+  assert.match(app, /Send a message first, then continue this ticket on another node/);
+  assert.match(app, /if \(state\.activeTaskId\) \{[\s\S]*await continueTaskOnNode\(task, destination\)/);
+  assert.match(app, /await continueTaskOnNode\(task, destination\)/);
+  assert.match(app, /if \(!task\.sessionPath\) throw new Error\("Send a message first, then continue this ticket on another node"\);[\s\S]*const body = await handoffTaskToPeer\(task, destination\);/);
+  assert.match(app, /tasks\/\$\{encodeURIComponent\(task\.id\)\}\/handoff/);
+  assert.match(app, /openSession\(body\.task\.sessionPath, task\.title, false, true\)/);
+});
+
 test("chat names its controls and exposes conversation transfer", async () => {
   const [html, app, server] = await Promise.all([
     readFile("public/index.html", "utf8"),

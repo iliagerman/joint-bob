@@ -6,6 +6,28 @@ export interface SessionProjectPaths extends Pick<ProjectRecord, "path" | "macPa
   additionalPaths?: string[];
 }
 
+export interface LocalSessionPath {
+  engine: "pi" | "claude";
+  path: string;
+}
+
+export function resolveLocalSessionPath(sessionPath: string, homePath = os.homedir()): LocalSessionPath {
+  const engine = sessionPath.startsWith("claude:") ? "claude" : "pi";
+  const root = engine === "claude" ? ".claude" : ".pi";
+  const sourcePath = (engine === "claude" ? sessionPath.slice("claude:".length) : sessionPath).replace(/\\/g, "/");
+  const segments = sourcePath.split("/");
+  const rootIndex = segments.lastIndexOf(root);
+  const label = engine === "claude" ? "Claude" : "Pi";
+  if (rootIndex === -1) throw new Error(`${label} conversation path is outside the synchronized ${root} root`);
+  const suffix = segments.slice(rootIndex + 1);
+  if (!suffix.length) throw new Error(`${label} conversation path has no session file`);
+  if (suffix.some((segment) => !segment || segment === "." || segment === "..")) {
+    throw new Error(`${label} conversation path has an invalid session segment`);
+  }
+  const localPath = path.join(path.resolve(homePath), root, ...suffix);
+  return { engine, path: engine === "claude" ? `claude:${localPath}` : localPath };
+}
+
 export function sessionCwds(project: SessionProjectPaths): string[] {
   const paths = [
     project.path,
