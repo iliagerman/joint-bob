@@ -45,6 +45,7 @@ test("managed home project creation and imported mappings use node folder picker
   assert.match(server, /\/api\/cluster\/peers\/:peerId\/projects\/:projectId\/map/);
   assert.match(app, /project-sync-status/);
   for (const label of ["Synced", "Syncing", "Paused", "Error", "Unavailable"]) assert.match(app, new RegExp(label));
+  assert.ok(app.includes('status.state === "error" && status.message ? `Error: ${status.message}`'));
   assert.match(app, /refreshProjectsQuietly/);
   assert.match(app, /10_000/);
   assert.match(app, /if \(state\.authenticated\) startProjectSyncPolling\(\)/);

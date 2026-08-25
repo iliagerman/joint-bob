@@ -250,7 +250,7 @@ test("Syncthing folder statuses report every project sync state", async () => {
         : id === "paused-state"
           ? { state: "paused", needTotalItems: 0, needBytes: 0 }
           : id === "errored"
-            ? { state: "idle", needTotalItems: 0, needBytes: 0, errors: 1 }
+            ? { state: "error", needTotalItems: 0, needBytes: 0, error: "Insufficient space on disk" }
             : { state: "idle", needTotalItems: 0, needBytes: 0 };
       response.end(JSON.stringify(status));
       return;
@@ -263,7 +263,7 @@ test("Syncthing folder statuses report every project sync state", async () => {
     assert.deepEqual(statuses.syncing, { state: "syncing", remainingFiles: 2, remainingBytes: 123, message: "Syncthing is synchronizing this folder" });
     assert.equal(statuses["paused-config"].state, "paused");
     assert.equal(statuses["paused-state"].state, "paused");
-    assert.equal(statuses.errored.state, "error");
+    assert.deepEqual(statuses.errored, { state: "error", remainingFiles: 0, remainingBytes: 0, message: "Insufficient space on disk" });
     assert.equal(statuses.missing.state, "error");
   });
 });

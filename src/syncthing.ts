@@ -34,6 +34,7 @@ export interface SyncthingFolderStatus {
   needTotalItems: number;
   needBytes: number;
   errors?: unknown[] | number;
+  error?: string;
   paused?: boolean;
 }
 
@@ -257,7 +258,7 @@ export async function syncthingFolderStatuses(folderIds: string[]): Promise<Reco
       const remainingBytes = remaining(status.needBytes);
       const errors = statusErrors(status.errors);
       if (status.paused || status.state === "paused") return [id, { state: "paused", remainingFiles, remainingBytes, message: "Syncthing folder is paused" }];
-      if (errors || status.state === "error") return [id, { state: "error", remainingFiles, remainingBytes, message: errors ? "Syncthing reported folder errors" : "Syncthing folder is in an error state" }];
+      if (errors || status.state === "error") return [id, { state: "error", remainingFiles, remainingBytes, message: status.error?.trim() || (errors ? "Syncthing reported folder errors" : "Syncthing folder is in an error state") }];
       if (status.state === "idle" && remainingFiles === 0 && remainingBytes === 0) return [id, { state: "synced", remainingFiles, remainingBytes, message: "Safe to start work" }];
       return [id, { state: "syncing", remainingFiles, remainingBytes, message: "Syncthing is synchronizing this folder" }];
     } catch {

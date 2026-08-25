@@ -1432,7 +1432,7 @@ function projectRow(project) {
     const syncLabels = { synced: "Synced", syncing: "Syncing", paused: "Paused", error: "Error", unavailable: "Unavailable" };
     syncStatus.className = `project-sync-status project-sync-status-${status.state}`;
     syncStatus.dataset.testid = "project-sync-status";
-    syncStatus.textContent = syncLabels[status.state] || syncLabels.unavailable;
+    syncStatus.textContent = status.state === "error" && status.message ? `Error: ${status.message}` : syncLabels[status.state] || syncLabels.unavailable;
     syncStatus.title = status.message || "";
     button.append(name, projectPath, syncStatus);
     button.addEventListener("click", () => selectProject(project.id));
