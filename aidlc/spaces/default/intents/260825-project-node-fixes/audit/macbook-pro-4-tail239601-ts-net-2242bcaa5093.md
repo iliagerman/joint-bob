@@ -439,3 +439,151 @@
 **Message**: wait for it to finish then review and run the checks
 
 ---
+
+## Human Turn
+**Timestamp**: 2026-08-26T20:33:41Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-08-26T20:33:44Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Session End
+**Timestamp**: 2026-08-26T20:34:15Z
+**Event**: SESSION_ENDED
+**Reason**: clear
+
+---
+
+## Session Start
+**Timestamp**: 2026-08-26T20:34:15Z
+**Event**: SESSION_STARTED
+**Source**: clear
+
+---
+
+## Session End
+**Timestamp**: 2026-08-26T20:34:18Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Human Turn
+**Timestamp**: 2026-08-26T20:35:35Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-08-26T20:35:42Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-08-26T20:36:43Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**: 
+**Agent ID**: af8fec92c24356f29
+**Message**: wait for it to finish and run the checks
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-08-26T20:40:25Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**: 
+**Agent ID**: afc1e19f1ab67972f
+**Message**: One issue, one behaviour change:\n\n**Fixed:** GitHub tokens were pushed to every paired node automatically, with no way to opt out. Cause was a single SQL statement in `src/github-auth.ts` — the "what'
+
+---
+
+## Human Turn
+**Timestamp**: 2026-08-26T20:56:31Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-08-26T20:56:46Z
+**Event**: SESSION_ENDED
+**Reason**: clear
+
+---
+
+## Session Start
+**Timestamp**: 2026-08-26T20:56:46Z
+**Event**: SESSION_STARTED
+**Source**: clear
+
+---
+
+## Human Turn
+**Timestamp**: 2026-08-26T20:57:12Z
+**Event**: HUMAN_TURN
+
+---
+
+## Human Turn
+**Timestamp**: 2026-08-26T20:57:32Z
+**Event**: HUMAN_TURN
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-08-26T21:10:30Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**: 
+**Agent ID**: ad3f46602e309b6d3
+**Message**: implement the cache
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-08-26T21:11:37Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**: 
+**Agent ID**: a84f21256a9ff6c16
+**Message**: GitHub tokens no longer sync between nodes automatically; you now push them from a new Sync to nodes button in Settings, GitHub. Everything is built, tested (234 pass), and committed. Next: reload the
+
+---
+
+## Human Turn
+**Timestamp**: 2026-08-26T21:48:32Z
+**Event**: HUMAN_TURN
+
+---
+
+## Human Turn
+**Timestamp**: 2026-08-26T21:49:09Z
+**Event**: HUMAN_TURN
+
+---
+
+## Human Turn
+**Timestamp**: 2026-08-26T21:49:52Z
+**Event**: HUMAN_TURN
+
+---
+
+## Human Turn
+**Timestamp**: 2026-08-26T21:51:40Z
+**Event**: HUMAN_TURN
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-08-26T21:57:09Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**: 
+**Agent ID**: a9ade74196c6c4f9a
+**Message**: run the full test suite
+
+---
