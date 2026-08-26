@@ -68,6 +68,7 @@ test("preferences are authenticated, validated, and persist across listener rest
       pinnedSessionPaths: [],
       projectsPanelCollapsed: false,
       chatsPanelCollapsed: false,
+      recentSessions: [],
     });
 
     const values = {
@@ -85,6 +86,7 @@ test("preferences are authenticated, validated, and persist across listener rest
       pinnedSessionPaths: ["/tmp/session.jsonl"],
       projectsPanelCollapsed: true,
       chatsPanelCollapsed: true,
+      recentSessions: [{ projectId: "project-123", sessionPath: "/tmp/session.jsonl", title: "Session 123", openedAt: "2026-08-27T10:00:00.000Z" }],
     };
     const updated = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify(values) });
     assert.equal(updated.status, 200);

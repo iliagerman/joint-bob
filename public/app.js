@@ -8,6 +8,7 @@ const state = {
   skillsLoading: false,
   pinnedProjectIds: [],
   pinnedSessionPaths: [],
+  recentSessions: [],
   projectsLoading: true,
   projectsRefreshing: false,
   sessionsLoading: false,
@@ -158,6 +159,10 @@ const elements = {
   abortButton: document.querySelector("#abortButton"),
   newProjectButton: document.querySelector("#newProjectButton"),
   themeToggleButton: document.querySelector("#themeToggleButton"),
+  recentSessionsButton: document.querySelector("#recentSessionsButton"),
+  recentSessionsDialog: document.querySelector("#recentSessionsDialog"),
+  recentSessionsList: document.querySelector("#recentSessionsList"),
+  closeRecentSessionsButton: document.querySelector("#closeRecentSessionsButton"),
   settingsButton: document.querySelector("#settingsButton"),
   settingsDialog: document.querySelector("#settingsDialog"),
   settingsForm: document.querySelector("#settingsForm"),
@@ -444,6 +449,7 @@ async function initializeApplication() {
   state.activeNodeId = preferences.activeNodeId;
   state.pinnedProjectIds = preferences.pinnedProjectIds || [];
   state.pinnedSessionPaths = preferences.pinnedSessionPaths || [];
+  state.recentSessions = preferences.recentSessions || [];
   setPanelCollapsed("projects", Boolean(preferences.projectsPanelCollapsed));
   setPanelCollapsed("chats", Boolean(preferences.chatsPanelCollapsed));
   syncNotifyButton();
@@ -1643,9 +1649,91 @@ async function markAllSessionsReviewed() {
 
 function openListedSession(session) {
   markSessionReviewed(session);
+  rememberRecentSession(session);
   state.activeSessionId = session.id;
   state.activeTaskId = session.taskId || null;
   openSession(session.path, shortSessionTitle(session), false, Boolean(state.activeTaskId));
+}
+
+/** Newest first; the cap keeps the dialog and the stored preference small. */
+const RECENT_SESSIONS_LIMIT = 20;
+
+function rememberRecentSession(session) {
+  const entry = {
+    projectId: state.activeProjectId,
+    sessionPath: session.path,
+    title: shortSessionTitle(session),
+    openedAt: new Date().toISOString(),
+  };
+  const others = state.recentSessions.filter((candidate) =>
+    candidate.projectId !== entry.projectId || candidate.sessionPath !== entry.sessionPath);
+  state.recentSessions = [entry, ...others].slice(0, RECENT_SESSIONS_LIMIT);
+  if (state.preferencesLoaded) savePreferencesInBackground({ recentSessions: state.recentSessions });
+}
+
+function forgetRecentSession(entry) {
+  state.recentSessions = state.recentSessions.filter((candidate) =>
+    candidate.projectId !== entry.projectId || candidate.sessionPath !== entry.sessionPath);
+  if (state.preferencesLoaded) savePreferencesInBackground({ recentSessions: state.recentSessions });
+  renderRecentSessionsDialog();
+}
+
+/**
+ * The recents list can outlive the conversation or the project it points at, so a stale
+ * entry is dropped on the click that discovers it rather than checked up front.
+ */
+async function openRecentSession(entry) {
+  elements.recentSessionsDialog.close();
+  if (state.activeProjectId !== entry.projectId) await selectProject(entry.projectId);
+  const session = state.sessions.find((candidate) => candidate.path === entry.sessionPath);
+  if (!session) {
+    forgetRecentSession(entry);
+    toast("That conversation is no longer available");
+    return;
+  }
+  openListedSession(session);
+}
+
+function renderRecentSessionsDialog() {
+  elements.recentSessionsList.replaceChildren();
+  if (!state.recentSessions.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "No conversations opened yet.";
+    elements.recentSessionsList.append(empty);
+    return;
+  }
+
+  for (const entry of sortPinnedFirst(state.recentSessions, (entry) => isSessionPinned(entry.sessionPath))) {
+    const pinned = isSessionPinned(entry.sessionPath);
+    const row = document.createElement("div");
+    row.className = "list-row";
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `session-card${pinned ? " pinned" : ""}`;
+    button.dataset.testid = "recent-session-option";
+    const title = document.createElement("strong");
+    title.textContent = entry.title;
+    const meta = document.createElement("span");
+    const project = state.projects.find((candidate) => candidate.id === entry.projectId);
+    meta.textContent = `${project ? project.name : "Unknown project"} · ${formatDate(entry.openedAt)}`;
+    button.append(title, meta);
+    button.addEventListener("click", () => openRecentSession(entry).catch((error) => toast(error.message)));
+
+    const pinToggle = pinButton({
+      pinned,
+      label: pinned ? `Unpin ${entry.title}` : `Pin ${entry.title}`,
+      testid: "recent-session-pin-button",
+      onToggle: () => {
+        togglePinnedSession(entry.sessionPath);
+        renderRecentSessionsDialog();
+      },
+    });
+
+    row.append(button, pinToggle);
+    elements.recentSessionsList.append(row);
+  }
 }
 
 function renderSessions() {
@@ -3575,6 +3663,11 @@ elements.chatHarnessSelect.addEventListener("change", () => {
   }
 });
 elements.collapseProjectsButton.addEventListener("click", () => setPanelCollapsed("projects", true));
+elements.recentSessionsButton.addEventListener("click", () => {
+  renderRecentSessionsDialog();
+  elements.recentSessionsDialog.showModal();
+});
+elements.closeRecentSessionsButton.addEventListener("click", () => elements.recentSessionsDialog.close());
 elements.expandProjectsButton.addEventListener("click", () => setPanelCollapsed("projects", false));
 elements.collapseChatsButton.addEventListener("click", () => setPanelCollapsed("chats", true));
 elements.expandChatsButton.addEventListener("click", () => setPanelCollapsed("chats", false));

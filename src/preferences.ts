@@ -3,6 +3,14 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+/** One conversation the user opened, newest first, capped by the client. */
+export interface RecentSession {
+  projectId: string;
+  sessionPath: string;
+  title: string;
+  openedAt: string;
+}
+
 export interface UserPreferences {
   theme: "light" | "dark" | null;
   notificationsEnabled: boolean;
@@ -18,6 +26,7 @@ export interface UserPreferences {
   pinnedSessionPaths: string[];
   projectsPanelCollapsed: boolean;
   chatsPanelCollapsed: boolean;
+  recentSessions: RecentSession[];
 }
 
 interface PreferenceRow {
@@ -35,6 +44,7 @@ interface PreferenceRow {
   pinned_session_paths: string;
   projects_panel_collapsed: number;
   chats_panel_collapsed: number;
+  recent_sessions: string;
 }
 
 const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
@@ -74,6 +84,7 @@ function preferencesDatabase(): DatabaseSync {
   if (!columns.some((column) => column.name === "pinned_session_paths")) database.exec("ALTER TABLE user_preferences ADD COLUMN pinned_session_paths TEXT NOT NULL DEFAULT '[]'");
   if (!columns.some((column) => column.name === "projects_panel_collapsed")) database.exec("ALTER TABLE user_preferences ADD COLUMN projects_panel_collapsed INTEGER NOT NULL DEFAULT 0");
   if (!columns.some((column) => column.name === "chats_panel_collapsed")) database.exec("ALTER TABLE user_preferences ADD COLUMN chats_panel_collapsed INTEGER NOT NULL DEFAULT 0");
+  if (!columns.some((column) => column.name === "recent_sessions")) database.exec("ALTER TABLE user_preferences ADD COLUMN recent_sessions TEXT NOT NULL DEFAULT '[]'");
   return database;
 }
 
@@ -95,6 +106,23 @@ function parseStringList(value: string): string[] {
   }
 }
 
+/** Same hand-edited-row tolerance as parseStringList, for the recents object list. */
+function parseRecentSessions(value: string): RecentSession[] {
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((entry): entry is RecentSession =>
+      typeof entry === "object"
+      && entry !== null
+      && typeof entry.projectId === "string"
+      && typeof entry.sessionPath === "string"
+      && typeof entry.title === "string"
+      && typeof entry.openedAt === "string");
+  } catch {
+    return [];
+  }
+}
+
 function preferencesFromRow(row: PreferenceRow): UserPreferences {
   return {
     theme: row.theme,
@@ -111,6 +139,7 @@ function preferencesFromRow(row: PreferenceRow): UserPreferences {
     pinnedSessionPaths: parseStringList(row.pinned_session_paths),
     projectsPanelCollapsed: row.projects_panel_collapsed === 1,
     chatsPanelCollapsed: row.chats_panel_collapsed === 1,
+    recentSessions: parseRecentSessions(row.recent_sessions),
   };
 }
 
@@ -118,7 +147,8 @@ function currentPreferences(userId: string): UserPreferences {
   const row = preferencesDatabase().prepare(`
     SELECT theme, notifications_enabled, completion_sound, install_dismissed, mobile_view,
       active_project_id, active_session_path, active_session_id, active_node_id, legacy_migrated,
-      pinned_project_ids, pinned_session_paths, projects_panel_collapsed, chats_panel_collapsed
+      pinned_project_ids, pinned_session_paths, projects_panel_collapsed, chats_panel_collapsed,
+      recent_sessions
     FROM user_preferences WHERE user_id = ?
   `).get(userId) as unknown as PreferenceRow;
   return preferencesFromRow(row);
@@ -147,6 +177,7 @@ export function updateUserPreferences(userId: string, partial: Partial<UserPrefe
     ["pinnedSessionPaths", "pinned_session_paths", (value) => JSON.stringify(value)],
     ["projectsPanelCollapsed", "projects_panel_collapsed", (value) => value ? 1 : 0],
     ["chatsPanelCollapsed", "chats_panel_collapsed", (value) => value ? 1 : 0],
+    ["recentSessions", "recent_sessions", (value) => JSON.stringify(value)],
   ];
   for (const [property, column, serialize] of fields) {
     if (partial[property] === undefined) continue;

@@ -320,6 +320,9 @@ body.view-chat #chatPanel :is(.panel-scroll, .board-columns, .messages) {
 /* ---- Brand ---- */
 .brand { display: flex; gap: 11px; align-items: center; flex: 1; min-width: 0; }
 .project-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+/* Four controls share this header, so they run one step smaller than a stock icon button. */
+.project-actions .icon-button { min-width: 31px; width: 31px; min-height: 31px; font-size: 14px; }
+.project-actions .icon-button svg { width: 16px; height: 16px; }
 .brand-mark, .orb, .install-banner-mark { flex: 0 0 auto; }
 .brand-mark { width: 32px; height: 32px; }
 .brand-mark img, .orb img, .install-banner-mark img { display: block; width: 100%; height: 100%; }
@@ -1302,6 +1305,10 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 
 /* ---- Skills browser ---- */
 .skills-dialog-list { display: grid; gap: 4px; min-width: 0; max-height: 52dvh; overflow-y: auto; }
+.recent-sessions-list { display: grid; gap: 4px; min-width: 0; max-height: 52dvh; overflow-y: auto; }
+/* The dialog has no hover-reveal affordance, so its pin stays visible at every width. */
+.recent-sessions-list .pin-button { right: 10px; opacity: 1; pointer-events: auto; transform: translateY(-50%); }
+.recent-sessions-list .pin-button:not(.pinned) { opacity: 0.55; }
 .skill-option {
   width: 100%;
   min-width: 0;

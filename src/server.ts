@@ -379,6 +379,12 @@ const userPreferencesSchema = z.object({
   pinnedSessionPaths: z.array(z.string().trim().min(1).max(2000)).max(200).optional(),
   projectsPanelCollapsed: z.boolean().optional(),
   chatsPanelCollapsed: z.boolean().optional(),
+  recentSessions: z.array(z.object({
+    projectId: z.string().trim().min(1).max(120),
+    sessionPath: z.string().trim().min(1).max(2000),
+    title: z.string().max(300),
+    openedAt: z.string().max(40),
+  })).max(50).optional(),
 }).strict();
 const socketMessageSchema = z.object({
   type: z.string().max(40),
