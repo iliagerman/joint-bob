@@ -19,8 +19,9 @@ async function runRunner(port?: string): Promise<string> {
     await mkdir(bin);
     await cp("scripts/run-node.sh", path.join(scripts, "run-node.sh"));
     await chmod(path.join(scripts, "run-node.sh"), 0o755);
-    await writeFile(path.join(state, "env"), port ? `PORT=${port}\n` : "PI_CLAUDE_MCP_AUTOLOAD=off\n");
-    await writeFile(path.join(bin, "npm"), "#!/usr/bin/env bash\nprintf 'PORT:%s\\n' \"${PORT}\"\n");
+    const portSetting = port ? `PORT=${port}\n` : "PI_CLAUDE_MCP_AUTOLOAD=off\n";
+    await writeFile(path.join(state, "env"), `${portSetting}ANTHROPIC_BASE_URL=http://127.0.0.1:8788\nOPENAI_BASE_URL=http://127.0.0.1:8788/v1\n`);
+    await writeFile(path.join(bin, "npm"), "#!/usr/bin/env bash\nprintf 'PORT:%s\\nANTHROPIC_BASE_URL:%s\\nOPENAI_BASE_URL:%s\\n' \"${PORT}\" \"${ANTHROPIC_BASE_URL:-}\" \"${OPENAI_BASE_URL:-}\"\n");
     await chmod(path.join(bin, "npm"), 0o755);
     const { PORT: _port, ...environment } = process.env;
     const result = await execFileAsync("bash", [path.join(scripts, "run-node.sh")], {
@@ -32,9 +33,9 @@ async function runRunner(port?: string): Promise<string> {
   }
 }
 
-test("runner uses the persisted port and defaults to 8787 when it is absent", async () => {
-  assert.equal(await runRunner("9123"), "PORT:9123");
-  assert.equal(await runRunner(), "PORT:8787");
+test("runner keeps its port while removing provider proxy URLs", async () => {
+  assert.equal(await runRunner("9123"), "PORT:9123\nANTHROPIC_BASE_URL:\nOPENAI_BASE_URL:");
+  assert.equal(await runRunner(), "PORT:8787\nANTHROPIC_BASE_URL:\nOPENAI_BASE_URL:");
 });
 
 test("installer computes and polls one port after sourcing persisted state", async () => {

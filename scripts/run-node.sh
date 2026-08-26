@@ -12,6 +12,7 @@ if [ -f "${STATE_DIR}/env" ]; then
   source "${STATE_DIR}/env"
   set +a
 fi
+unset ANTHROPIC_BASE_URL OPENAI_BASE_URL
 export JOINT_BOB_DATA_DIR="${STATE_DIR}"
 export PI_WEB_DATA_DIR="${STATE_DIR}"
 export PORT="${PORT:-8787}"
