@@ -3651,6 +3651,41 @@ elements.messageInput.addEventListener("keydown", (event) => {
   elements.composer.requestSubmit();
 });
 
+elements.messageInput.addEventListener("paste", async (event) => {
+  const images = [...event.clipboardData.files].filter((file) => file.type.startsWith("image/"));
+  if (!images.length) return;
+  if (!event.clipboardData.getData("text/plain")) event.preventDefault();
+  try {
+    await addAttachments(images);
+  } catch (error) {
+    toast(error.message);
+  }
+});
+
+elements.composer.addEventListener("dragover", (event) => {
+  if (!event.dataTransfer.types.includes("Files")) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "copy";
+  elements.composer.classList.add("dragging");
+});
+
+elements.composer.addEventListener("dragleave", (event) => {
+  if (elements.composer.contains(event.relatedTarget)) return;
+  elements.composer.classList.remove("dragging");
+});
+
+elements.composer.addEventListener("drop", async (event) => {
+  if (!event.dataTransfer.types.includes("Files")) return;
+  event.preventDefault();
+  elements.composer.classList.remove("dragging");
+  if (elements.attachmentInput.disabled) return;
+  try {
+    await addAttachments(event.dataTransfer.files);
+  } catch (error) {
+    toast(error.message);
+  }
+});
+
 elements.messageInput.addEventListener("input", () => {
   elements.messageInput.style.height = "auto";
   const maxHeight = matchMedia("(min-width: 1024px)").matches ? Math.min(innerHeight * 0.4, 360) : 160;
