@@ -1096,6 +1096,8 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 }
 .settings-panel[hidden] { display: none; }
 .github-group-list { display: grid; gap: 8px; }
+.github-group-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.github-sync-node-list { display: grid; gap: 8px; max-height: 240px; overflow-y: auto; }
 .github-group-row { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
 .github-group-row strong { flex: 1; min-width: 0; color: var(--text); font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
 .github-group-default { padding: 2px 7px; border-radius: 999px; background: var(--field); color: var(--muted); font-family: var(--mono); font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; }

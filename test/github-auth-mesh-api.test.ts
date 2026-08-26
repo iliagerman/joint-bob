@@ -85,6 +85,9 @@ test("authenticated GitHub credential mesh never exposes tokens", { timeout: 120
     const account = await fetch(`${a.baseUrl}/api/github-auth/groups`, { method: "POST", headers: aAuth.headers, body: JSON.stringify({ label: "Personal", token: accountToken }) });
     assert.equal(account.status, 201, a.output());
     assert.doesNotMatch(JSON.stringify(await account.json()), /mesh-account-token/);
+    const peers = (await (await fetch(`${a.baseUrl}/api/cluster/peers`, { headers: aAuth.headers })).json() as { peers: Array<{ id: string }> }).peers;
+    const bPeerId = peers[0].id;
+    await fetch(`${a.baseUrl}/api/github-auth/sync`, { method: "POST", headers: aAuth.headers, body: JSON.stringify({ peerIds: [bPeerId] }) });
     await waitFor(b, async () => {
       const response = await fetch(`${b.baseUrl}/api/github-auth`, { headers: bAuth.headers });
       const body = await response.text();
@@ -96,6 +99,9 @@ test("authenticated GitHub credential mesh never exposes tokens", { timeout: 120
     const saved = await fetch(`${b.baseUrl}/api/projects/${projects[1].id}/github-auth`, { method: "PUT", headers: bAuth.headers, body: JSON.stringify({ group: "sela", token: projectToken }) });
     assert.equal(saved.status, 200, b.output());
     assert.doesNotMatch(JSON.stringify(await saved.json()), /mesh-project-token/);
+    const aPeers = (await (await fetch(`${b.baseUrl}/api/cluster/peers`, { headers: bAuth.headers })).json() as { peers: Array<{ id: string }> }).peers;
+    const aPeerId = aPeers[0].id;
+    await fetch(`${b.baseUrl}/api/github-auth/sync`, { method: "POST", headers: bAuth.headers, body: JSON.stringify({ peerIds: [aPeerId] }) });
     await waitFor(a, async () => {
       const response = await fetch(`${a.baseUrl}/api/projects/${projects[0].id}/github-auth`, { headers: aAuth.headers });
       const body = await response.text();
@@ -106,6 +112,8 @@ test("authenticated GitHub credential mesh never exposes tokens", { timeout: 120
 
     assert.equal((await fetch(`${b.baseUrl}/api/projects/${projects[1].id}/github-auth`, { method: "PUT", headers: bAuth.headers, body: JSON.stringify({ group: null, token: null }) })).status, 200, b.output());
     assert.equal((await fetch(`${a.baseUrl}/api/github-auth/groups/personal`, { method: "DELETE", headers: aAuth.headers })).status, 200, a.output());
+    await fetch(`${a.baseUrl}/api/github-auth/sync`, { method: "POST", headers: aAuth.headers, body: JSON.stringify({ peerIds: [bPeerId] }) });
+    await fetch(`${b.baseUrl}/api/github-auth/sync`, { method: "POST", headers: bAuth.headers, body: JSON.stringify({ peerIds: [aPeerId] }) });
     await waitFor(b, async () => (await (await fetch(`${b.baseUrl}/api/github-auth`, { headers: bAuth.headers })).json() as { groups: Array<{ id: string }> }).groups.some((group) => group.id === "personal") ? undefined : true);
     await waitFor(a, async () => {
       const status = await (await fetch(`${a.baseUrl}/api/projects/${projects[0].id}/github-auth`, { headers: aAuth.headers })).json() as { project?: { configured: boolean } };

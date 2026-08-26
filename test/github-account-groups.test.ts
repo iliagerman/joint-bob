@@ -133,6 +133,7 @@ test("account credential events carry the group label and accept the legacy toke
   try {
     const auth = await loadAuth("events");
     const group = (await auth.saveGitHubGroup({ label: "Work", token: "work-token" })) as GitHubGroup;
+    await auth.enqueueGitHubCredentialSync(["11111111-1111-4111-8111-111111111111"]);
     const events = await auth.githubCredentialEventsForPeer("11111111-1111-4111-8111-111111111111");
     const accountEvent = events.find((event: any) => event.entityType === "account" && event.key === group.id);
     assert.deepEqual(accountEvent.value, { label: "Work", token: "work-token", isDefault: true });

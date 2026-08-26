@@ -199,6 +199,12 @@ const elements = {
   skipProjectImportButton: document.querySelector("#skipProjectImportButton"),
   githubGroupList: document.querySelector("#githubGroupList"),
   githubGroupAddButton: document.querySelector("#githubGroupAddButton"),
+  githubSyncButton: document.querySelector("#githubSyncButton"),
+  githubSyncDialog: document.querySelector("#githubSyncDialog"),
+  githubSyncForm: document.querySelector("#githubSyncForm"),
+  githubSyncAllInput: document.querySelector("#githubSyncAllInput"),
+  githubSyncNodeList: document.querySelector("#githubSyncNodeList"),
+  cancelGithubSyncButton: document.querySelector("#cancelGithubSyncButton"),
   githubGroupDialog: document.querySelector("#githubGroupDialog"),
   githubGroupForm: document.querySelector("#githubGroupForm"),
   githubGroupTitle: document.querySelector("#githubGroupTitle"),
@@ -1106,6 +1112,49 @@ function renderGithubGroups() {
 
     elements.githubGroupList.append(row);
   }
+}
+
+/** Lists paired nodes with a checkbox each so the user can push credentials to some or all of them. */
+async function openGithubSyncDialog() {
+  const { peers } = await api("/api/cluster/peers");
+  elements.githubSyncNodeList.replaceChildren();
+  elements.githubSyncAllInput.checked = false;
+  if (!peers.length) {
+    const empty = document.createElement("p");
+    empty.className = "github-group-empty";
+    empty.textContent = "No paired nodes yet. Add one in the Cluster tab first.";
+    elements.githubSyncNodeList.append(empty);
+  }
+  for (const peer of peers) {
+    const row = document.createElement("label");
+    row.className = "checkbox-row";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.value = peer.id;
+    input.dataset.testid = "github-sync-node-input";
+    input.addEventListener("change", () => {
+      elements.githubSyncAllInput.checked = githubSyncSelectedIds().length === peers.length;
+    });
+    row.append(input, document.createTextNode(` ${peer.name}${peer.online ? "" : " (offline)"}`));
+    elements.githubSyncNodeList.append(row);
+  }
+  elements.githubSyncDialog.showModal();
+}
+
+function githubSyncSelectedIds() {
+  return [...elements.githubSyncNodeList.querySelectorAll("input[type=checkbox]")].filter((input) => input.checked).map((input) => input.value);
+}
+
+async function submitGithubSync() {
+  const peerIds = githubSyncSelectedIds();
+  if (!peerIds.length) {
+    toast("Pick at least one node");
+    return;
+  }
+  const { results } = await api("/api/github-auth/sync", { method: "POST", body: JSON.stringify({ peerIds }) });
+  const failed = results.filter((result) => result.error);
+  elements.githubSyncDialog.close();
+  toast(failed.length ? `Synced ${results.length - failed.length} of ${results.length} nodes; ${failed[0].name}: ${failed[0].error}` : `Synced credentials to ${results.length} ${results.length === 1 ? "node" : "nodes"}`);
 }
 
 let projectTypes = [];
@@ -3133,6 +3182,15 @@ elements.settingsLogoutButton.addEventListener("click", async () => {
 elements.settingsForm.addEventListener("submit", (event) => saveSettings(event).catch((error) => toast(error.message)));
 elements.clusterSaveButton.addEventListener("click", () => saveClusterNode().catch((error) => toast(error.message)));
 elements.githubGroupAddButton.addEventListener("click", () => openGithubGroupDialog());
+elements.githubSyncButton.addEventListener("click", () => openGithubSyncDialog().catch((error) => toast(error.message)));
+elements.cancelGithubSyncButton.addEventListener("click", () => elements.githubSyncDialog.close());
+elements.githubSyncAllInput.addEventListener("change", () => {
+  for (const input of elements.githubSyncNodeList.querySelectorAll("input[type=checkbox]")) input.checked = elements.githubSyncAllInput.checked;
+});
+elements.githubSyncForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  submitGithubSync().catch((error) => toast(error.message));
+});
 elements.cancelGithubGroupButton.addEventListener("click", () => elements.githubGroupDialog.close());
 elements.githubGroupForm.addEventListener("submit", async (event) => {
   event.preventDefault();
