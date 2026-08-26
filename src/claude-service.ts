@@ -1,3 +1,4 @@
+import type { Stats } from "node:fs";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { readdir, readFile, stat } from "node:fs/promises";
 import os from "node:os";
@@ -93,6 +94,33 @@ function claudeMessageText(record: UnknownRecord): string {
   return blockText(asRecord(record.message).content);
 }
 
+// Parsing a transcript costs a full read plus a JSON.parse per line, and the
+// session watcher re-lists on every transcript write. Cache the two parsed
+// facts per file so only a transcript whose size or mtime changed is read again.
+interface ClaudeSessionFacts {
+  mtimeMs: number;
+  size: number;
+  cwds: Set<string>;
+  title: string;
+}
+
+const claudeSessionFactsCache = new Map<string, ClaudeSessionFacts>();
+
+async function claudeSessionFacts(filePath: string, fileStat: Stats): Promise<ClaudeSessionFacts> {
+  const cached = claudeSessionFactsCache.get(filePath);
+  if (cached && cached.mtimeMs === fileStat.mtimeMs && cached.size === fileStat.size) return cached;
+  const records = (await readFile(filePath, "utf8")).split("\n").filter(Boolean).map((line) => JSON.parse(line) as UnknownRecord);
+  const first = records.find((record) => record.type === "user" && claudeMessageText(record).trim());
+  const facts: ClaudeSessionFacts = {
+    mtimeMs: fileStat.mtimeMs,
+    size: fileStat.size,
+    cwds: new Set(records.map((record) => String(record.cwd ?? ""))),
+    title: claudeMessageText(first ?? {}).trim().split("\n")[0].slice(0, 80) || "Claude conversation",
+  };
+  claudeSessionFactsCache.set(filePath, facts);
+  return facts;
+}
+
 export async function listClaudeSessions(project: SessionProjectPaths): Promise<SessionSummary[]> {
   const cwds = new Set(sessionCwds(project));
   const files = (await Promise.all(claudeProjectDirs(project, claudeProjectsRoot()).map(async (dir) => {
@@ -104,19 +132,17 @@ export async function listClaudeSessions(project: SessionProjectPaths): Promise<
   }))).flat();
   const summaries = await Promise.all(files.map(async (filePath): Promise<SessionSummary | null> => {
     const fileStat = await stat(filePath);
-    const records = (await readFile(filePath, "utf8")).split("\n").filter(Boolean).map((line) => JSON.parse(line) as UnknownRecord);
-    if (!records.some((record) => cwds.has(String(record.cwd ?? "")))) return null;
-    const first = records.find((record) => record.type === "user" && claudeMessageText(record).trim());
-    const title = claudeMessageText(first ?? {}).trim().split("\n")[0].slice(0, 80) || "Claude conversation";
+    const facts = await claudeSessionFacts(filePath, fileStat);
+    if (![...facts.cwds].some((cwd) => cwds.has(cwd))) return null;
     return {
       id: `claude:${path.basename(filePath)}`,
       path: `claude:${filePath}`,
       harnessId: "claude",
       agentLabel: "Claude",
-      title: `[Claude] ${title}`,
+      title: `[Claude] ${facts.title}`,
       createdAt: fileStat.birthtime.toISOString(),
       updatedAt: fileStat.mtime.toISOString(),
-      firstMessage: title,
+      firstMessage: facts.title,
     };
   }));
   return summaries.filter((summary): summary is SessionSummary => Boolean(summary));
