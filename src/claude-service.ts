@@ -51,7 +51,9 @@ function blockText(content: unknown): string {
 }
 
 function claudeConfigPath(): string | undefined {
-  return getSettings().claude.configPath || undefined;
+  const configPath = getSettings().claude.configPath;
+  const defaultPath = path.join(os.homedir(), ".claude");
+  return configPath && path.resolve(configPath) !== defaultPath ? configPath : undefined;
 }
 
 function claudeProjectsRoot(): string {

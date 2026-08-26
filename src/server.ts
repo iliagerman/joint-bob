@@ -45,7 +45,7 @@ import { PROJECT_COLORS } from "./types.js";
 import type { ChatMessage, ProjectRecord, ProjectSyncStatus, ProjectView, SessionStatus, TaskPhase, TaskPhaseConfig, TaskRecord } from "./types.js";
 import { webSocketCloseReason } from "./websocket.js";
 import { resolveLocalSessionPath } from "./session-paths.js";
-import { openTerminal, TerminalLaunchError } from "./terminal.js";
+import { attachTerminalSession } from "./terminal-session.js";
 
 type PiSessionHandle = Awaited<ReturnType<typeof createPiSession>>;
 
@@ -100,7 +100,6 @@ const machineRoutes = new Set([
   "POST /cluster/membership/sync",
   "POST /cluster/projects/import",
   "POST /cluster/projects/map",
-  "POST /cluster/projects/terminal",
   "GET /cluster/filesystem/directories",
   "POST /cluster/sync/share",
   "POST /cluster/sessions/receive",
@@ -164,19 +163,6 @@ const projectPathMappingSchema = z.object({
 });
 const projectListQuerySchema = z.object({
   syncStatus: z.enum(["true", "false"]).optional().default("true"),
-});
-const projectTerminalSchema = z.object({
-  nodeId: z.string().uuid(),
-});
-const clusterProjectTerminalSchema = z.object({
-  projectId: z.string().min(1).max(120),
-});
-const terminalOpenResponseSchema = z.object({
-  opened: z.literal(true),
-  nodeId: z.string().uuid(),
-});
-const terminalErrorResponseSchema = z.object({
-  error: z.string(),
 });
 const clusterNodeSchema = z.object({
   name: z.string().trim().min(1).max(80),
@@ -1681,11 +1667,6 @@ async function projectsWithSharedNames(includeSyncStatus = true): Promise<Projec
   }));
 }
 
-async function openProjectTerminal(project: ProjectRecord): Promise<{ opened: true; nodeId: string }> {
-  await openTerminal(project.path);
-  return { opened: true, nodeId: (await getClusterNode()).id };
-}
-
 async function projectView(project: ProjectRecord): Promise<ProjectView> {
   const views = await projectsWithSharedNames();
   return views.find((view) => view.id === project.id)!;
@@ -1807,51 +1788,6 @@ app.get("/api/projects/:projectId", async (request, response, next) => {
     }
     response.json({ project: await projectView(project) });
   } catch (error) {
-    next(error);
-  }
-});
-
-app.post("/api/cluster/projects/terminal", async (request, response, next) => {
-  try {
-    const payload = clusterProjectTerminalSchema.parse(request.body);
-    const project = await getProject(payload.projectId);
-    if (!project) { sendError(response, 404, "Project not found"); return; }
-    response.json(await openProjectTerminal(project));
-  } catch (error) {
-    if (error instanceof TerminalLaunchError) { sendError(response, 409, error.message); return; }
-    next(error);
-  }
-});
-
-app.post("/api/projects/:projectId/terminal", async (request, response, next) => {
-  try {
-    const project = await getProject(request.params.projectId);
-    if (!project) { sendError(response, 404, "Project not found"); return; }
-    const payload = projectTerminalSchema.parse(request.body);
-    const local = await getClusterNode();
-    if (payload.nodeId === local.id) {
-      response.json(await openProjectTerminal(project));
-      return;
-    }
-    const peer = await getClusterPeer(payload.nodeId);
-    if (!peer) { sendError(response, 404, "Execution node not found"); return; }
-    const peerResponse = await fetch(`${peer.url}/api/cluster/projects/terminal`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId: project.id }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    const result: unknown = await peerResponse.json();
-    if (!peerResponse.ok) {
-      const parsed = terminalErrorResponseSchema.safeParse(result);
-      sendError(response, peerResponse.status, parsed.success ? parsed.data.error : "Could not open terminal on execution node");
-      return;
-    }
-    const opened = terminalOpenResponseSchema.parse(result);
-    if (opened.nodeId !== peer.id) { sendError(response, 502, "Execution node returned the wrong identity"); return; }
-    response.json(opened);
-  } catch (error) {
-    if (error instanceof TerminalLaunchError) { sendError(response, 409, error.message); return; }
     next(error);
   }
 });
@@ -3291,6 +3227,10 @@ webSocketServer.on("connection", async (socket, request) => {
       socket.close(1008, "Unauthorized");
       return;
     }
+  }
+  if (url.searchParams.get("mode") === "terminal") {
+    attachTerminalSession(socket, project.path, local.id);
+    return;
   }
 
   let rawSessionPath = rawSessionPathFromUrl;

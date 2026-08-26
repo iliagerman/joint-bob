@@ -27,7 +27,7 @@ test("harness selection becomes the draft used when execution node changes", asy
   assert.match(handler, /sendSocket\(\{ type: "setEngine", engine: harness\.id \}\)/);
 });
 
-test("chat exposes a terminal action for the selected project and node", async () => {
+test("chat exposes an embedded terminal on the selected project and node", async () => {
   const [html, app, server] = await Promise.all([
     readFile("public/index.html", "utf8"),
     readFile("public/app.js", "utf8"),
@@ -35,9 +35,12 @@ test("chat exposes a terminal action for the selected project and node", async (
   ]);
 
   assert.match(html, /id="openTerminalButton"[^>]*data-testid="chat-open-terminal-button"/);
-  assert.match(app, /openTerminalButton: document\.querySelector\("#openTerminalButton"\)/);
-  assert.match(app, /`\/api\/projects\/\$\{encodeURIComponent\(state\.activeProjectId\)\}\/terminal`/);
-  assert.match(app, /body: JSON\.stringify\(\{ nodeId: state\.activeNodeId \}\)/);
-  assert.match(server, /app\.post\("\/api\/projects\/:projectId\/terminal"/);
-  assert.match(server, /app\.post\("\/api\/cluster\/projects\/terminal"/);
+  assert.match(html, /id="terminalDialog"[^>]*data-testid="terminal-dialog"/);
+  assert.match(html, /id="terminalOutput"[^>]*data-testid="terminal-output"/);
+  assert.match(html, /id="terminalInput"[^>]*data-testid="terminal-input"/);
+  assert.match(app, /url\.searchParams\.set\("mode", "terminal"\)/);
+  assert.match(app, /type: "terminalInput", data:/);
+  assert.match(server, /url\.searchParams\.get\("mode"\) === "terminal"/);
+  assert.doesNotMatch(server, /app\.post\("\/api\/projects\/:projectId\/terminal"/);
+  assert.doesNotMatch(server, /app\.post\("\/api\/cluster\/projects\/terminal"/);
 });

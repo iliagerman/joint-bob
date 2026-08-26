@@ -998,6 +998,33 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 .dialog-card label { color: var(--text); font-size: 12px; font-weight: 550; }
 .dialog-card :is(input, textarea, select) { background-color: var(--panel); }
 .dialog-card p { margin-top: 6px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.terminal-card { width: min(820px, calc(100vw - 24px)); }
+.terminal-heading { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
+.terminal-status { max-width: 62%; color: var(--muted); font: 10.5px var(--mono); text-align: right; overflow-wrap: anywhere; }
+.terminal-output {
+  height: min(54dvh, 520px);
+  min-height: 260px;
+  margin: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--code-line);
+  border-radius: var(--radius-ctl);
+  background: var(--code-bg);
+  color: var(--code-text);
+  padding: 16px;
+  font: 12.5px/1.55 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 2;
+}
+.terminal-form {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+.terminal-prompt { color: var(--accent); font: 700 14px var(--mono); }
+.terminal-form input { min-width: 0; font-family: var(--mono); }
 .checkbox-row { display: flex; flex-direction: row; align-items: center; gap: 10px; color: var(--text); font-weight: 500; }
 .checkbox-row input { width: 16px; height: 16px; min-width: auto; accent-color: var(--ink); }
 .phase-settings { display: grid; gap: 10px; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); }
@@ -1202,6 +1229,8 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 }
 
 @media (max-width: 430px) {
+  .terminal-heading { flex-direction: column; gap: 6px; }
+  .terminal-status { max-width: 100%; text-align: left; }
   .brand-copy span { display: none; }
   .brand-copy strong { font-size: 14px; white-space: nowrap; }
   .project-actions { gap: 2px; }

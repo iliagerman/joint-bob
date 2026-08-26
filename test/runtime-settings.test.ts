@@ -58,6 +58,15 @@ console.log(JSON.stringify({ type: "system", subtype: "init", session_id: "fixtu
     assert.equal(result.ok, true);
     assert.equal(await readFile(markerPath, "utf8"), configRoot);
 
+    settings.updateSettings({
+      pi: { executable: "pi", configPath: piConfigRoot, sessionPath: piSessionRoot },
+      claude: { executable: executablePath, configPath: path.join(os.homedir(), ".claude"), sessionPath: path.join(os.homedir(), ".claude", "projects") },
+      syncthing: { endpoint: "" },
+    });
+    const defaultConfigRun = claude.runClaudePrompt({ cwd: projectCwd, prompt: "hello", onEvent: () => {} });
+    assert.equal((await defaultConfigRun.done).ok, true);
+    assert.equal(await readFile(markerPath, "utf8"), "");
+
     const validInput = {
       pi: { executable: "pi", configPath: piConfigRoot, sessionPath: piSessionRoot },
       claude: { executable: executablePath, configPath: configRoot, sessionPath: sessionRoot },

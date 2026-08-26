@@ -452,6 +452,29 @@
       </form>
     </dialog>
 
+    <dialog id="terminalDialog" data-testid="terminal-dialog">
+      <div class="dialog-card terminal-card">
+        <div class="terminal-heading">
+          <div>
+            <span class="eyebrow">Selected node shell</span>
+            <h2>Terminal</h2>
+          </div>
+          <span class="terminal-status" id="terminalStatus" role="status">Disconnected</span>
+        </div>
+        <pre class="terminal-output" id="terminalOutput" role="log" aria-label="Terminal output" tabindex="0" data-testid="terminal-output"></pre>
+        <form class="terminal-form" id="terminalForm">
+          <span class="terminal-prompt" aria-hidden="true">$</span>
+          <label class="sr-only" for="terminalInput">Terminal command</label>
+          <input id="terminalInput" name="command" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="16000" disabled data-testid="terminal-input" />
+          <button class="primary compact" id="terminalRunButton" type="submit" disabled data-testid="terminal-run-button">Run</button>
+        </form>
+        <div class="dialog-actions">
+          <button class="ghost compact" id="clearTerminalButton" type="button" data-testid="terminal-clear-button">Clear</button>
+          <button class="ghost compact" id="closeTerminalButton" type="button" data-testid="terminal-close-button">Close terminal</button>
+        </div>
+      </div>
+    </dialog>
+
     <dialog id="skillsDialog" data-testid="skills-dialog">
       <div class="dialog-card">
         <div>

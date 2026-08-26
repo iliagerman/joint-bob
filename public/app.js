@@ -56,6 +56,9 @@ const state = {
   availableThinkingLevels: [],
   claudeEffort: "default",
   attachments: [],
+  terminalSocket: null,
+  terminalHistory: [],
+  terminalHistoryIndex: 0,
   installPromptEvent: null,
   installDismissed: false,
   notificationsEnabled: false,
@@ -111,6 +114,14 @@ const elements = {
   safeguardsButton: document.querySelector("#safeguardsButton"),
   transferSessionButton: document.querySelector("#transferSessionButton"),
   openTerminalButton: document.querySelector("#openTerminalButton"),
+  terminalDialog: document.querySelector("#terminalDialog"),
+  terminalStatus: document.querySelector("#terminalStatus"),
+  terminalOutput: document.querySelector("#terminalOutput"),
+  terminalForm: document.querySelector("#terminalForm"),
+  terminalInput: document.querySelector("#terminalInput"),
+  terminalRunButton: document.querySelector("#terminalRunButton"),
+  clearTerminalButton: document.querySelector("#clearTerminalButton"),
+  closeTerminalButton: document.querySelector("#closeTerminalButton"),
   sessionTransferDialog: document.querySelector("#sessionTransferDialog"),
   sessionTransferForm: document.querySelector("#sessionTransferForm"),
   sessionTransferNodeSelect: document.querySelector("#sessionTransferNodeSelect"),
@@ -3268,19 +3279,65 @@ function activeChatSession() {
   return state.sessions.find((session) => state.activeSessionId ? session.id === state.activeSessionId : session.path === state.activeSessionPath);
 }
 
-async function openProjectTerminal() {
+const TERMINAL_OUTPUT_LIMIT = 200_000;
+
+function appendTerminalOutput(text) {
+  const output = `${elements.terminalOutput.textContent || ""}${text}`;
+  elements.terminalOutput.textContent = output.slice(-TERMINAL_OUTPUT_LIMIT);
+  elements.terminalOutput.scrollTop = elements.terminalOutput.scrollHeight;
+}
+
+function closeTerminalSocket() {
+  const socket = state.terminalSocket;
+  state.terminalSocket = null;
+  if (socket) socket.close();
+  elements.terminalInput.disabled = true;
+  elements.terminalRunButton.disabled = true;
+}
+
+function terminalWebsocketUrl() {
+  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  const url = new URL(`${protocol}//${location.host}/ws`);
+  url.searchParams.set("mode", "terminal");
+  url.searchParams.set("projectId", state.activeProjectId);
+  url.searchParams.set("nodeId", state.activeNodeId);
+  return url;
+}
+
+function openProjectTerminal() {
   if (!state.activeProjectId || !state.activeNodeId) throw new Error("Select a project and execution node first");
   const node = state.sessionNodes.find((candidate) => candidate.id === state.activeNodeId);
-  elements.openTerminalButton.disabled = true;
-  try {
-    await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/terminal`, {
-      method: "POST",
-      body: JSON.stringify({ nodeId: state.activeNodeId }),
-    });
-    toast(`Opened Terminal on ${node?.name || "the selected node"}`);
-  } finally {
-    renderChatSessionControls();
-  }
+  closeTerminalSocket();
+  elements.terminalOutput.textContent = "";
+  elements.terminalInput.value = "";
+  elements.terminalStatus.textContent = `Connecting to ${node?.name || "node"}…`;
+  elements.terminalDialog.showModal();
+
+  const socket = new WebSocket(terminalWebsocketUrl());
+  state.terminalSocket = socket;
+  socket.addEventListener("message", (event) => {
+    if (state.terminalSocket !== socket) return;
+    const payload = JSON.parse(event.data);
+    if (payload.type === "terminalReady") {
+      elements.terminalStatus.textContent = `${node?.name || "Node"} · ${payload.cwd}`;
+      elements.terminalInput.disabled = false;
+      elements.terminalRunButton.disabled = false;
+      elements.terminalInput.focus();
+    }
+    if (payload.type === "terminalOutput") appendTerminalOutput(payload.data || "");
+    if (payload.type === "terminalError") appendTerminalOutput(`\nError: ${payload.error}\n`);
+    if (payload.type === "terminalExit") appendTerminalOutput(`\n[Shell exited${payload.code === null ? "" : ` with code ${payload.code}`}]\n`);
+  });
+  socket.addEventListener("close", () => {
+    if (state.terminalSocket !== socket) return;
+    state.terminalSocket = null;
+    elements.terminalStatus.textContent = "Disconnected";
+    elements.terminalInput.disabled = true;
+    elements.terminalRunButton.disabled = true;
+  });
+  socket.addEventListener("error", () => {
+    if (state.terminalSocket === socket) appendTerminalOutput("\nCould not connect to terminal.\n");
+  });
 }
 
 async function openSessionTransferDialog() {
@@ -3447,7 +3504,30 @@ elements.safeguardsButton.addEventListener("click", () => {
   syncSafeguardsButton();
 });
 elements.transferSessionButton.addEventListener("click", () => openSessionTransferDialog().catch((error) => toast(error.message, 8000)));
-elements.openTerminalButton.addEventListener("click", () => openProjectTerminal().catch((error) => toast(error.message, 8000)));
+elements.openTerminalButton.addEventListener("click", () => {
+  try { openProjectTerminal(); }
+  catch (error) { toast(error.message, 8000); }
+});
+elements.terminalForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const command = elements.terminalInput.value;
+  if (!command.trim() || state.terminalSocket?.readyState !== WebSocket.OPEN) return;
+  appendTerminalOutput(`$ ${command}\n`);
+  state.terminalHistory = [...state.terminalHistory, command].slice(-100);
+  state.terminalHistoryIndex = state.terminalHistory.length;
+  state.terminalSocket.send(JSON.stringify({ type: "terminalInput", data: `${command}\n` }));
+  elements.terminalInput.value = "";
+});
+elements.terminalInput.addEventListener("keydown", (event) => {
+  if (!state.terminalHistory.length || !["ArrowUp", "ArrowDown"].includes(event.key)) return;
+  event.preventDefault();
+  const offset = event.key === "ArrowUp" ? -1 : 1;
+  state.terminalHistoryIndex = Math.max(0, Math.min(state.terminalHistory.length, state.terminalHistoryIndex + offset));
+  elements.terminalInput.value = state.terminalHistory[state.terminalHistoryIndex] || "";
+});
+elements.clearTerminalButton.addEventListener("click", () => { elements.terminalOutput.textContent = ""; });
+elements.closeTerminalButton.addEventListener("click", () => elements.terminalDialog.close());
+elements.terminalDialog.addEventListener("close", closeTerminalSocket);
 elements.cancelSessionTransferButton.addEventListener("click", () => elements.sessionTransferDialog.close());
 elements.sessionTransferForm.addEventListener("submit", transferActiveSession);
 elements.closeModelDialogButton.addEventListener("click", () => elements.modelDialog.close());
