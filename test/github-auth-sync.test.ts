@@ -45,6 +45,7 @@ test("legacy GitHub credentials migrate into encrypted node-local SQLite and enq
 
     assert.deepEqual((await auth.getGitHubAuthStatus()).groups, [{ id: "personal", label: "Personal", isDefault: true }]);
     assert.equal(auth.gitHubEnvironment("project").GH_TOKEN, "legacy-token");
+    await auth.enqueueGitHubCredentialSync(["11111111-1111-4111-8111-111111111111"]);
     const events = await auth.githubCredentialEventsForPeer("11111111-1111-4111-8111-111111111111");
     assert.equal(events.length, 2);
     assert.ok(events.some((event) => event.entityType === "account" && event.key === "personal" && event.operation === "upsert"));
@@ -255,6 +256,7 @@ test("changed legacy snapshots authoritatively clear accounts and project overri
     await initial.getGitHubAuthStatus();
     process.env.PI_WEB_DATA_DIR = peerDataDir;
     const peer = await import(`../src/github-auth.js?rollback-clear-peer=${Date.now()}`);
+    await initial.enqueueGitHubCredentialSync([peerId]);
     const initialEvents = await initial.githubCredentialEventsForPeer(peerId);
     await peer.receiveGitHubCredentialEvents(initialEvents);
     await initial.recordGitHubCredentialReceipt(peerId, initialEvents.map((event) => event.id));
@@ -272,6 +274,7 @@ test("changed legacy snapshots authoritatively clear accounts and project overri
     assert.equal(credentialRowExists(localDataDir, "github_project_auth", "project_id", "removed"), false);
     assert.equal(credentialRowExists(localDataDir, "github_project_auth_tombstones", "project_id", "removed"), true);
 
+    await rollback.enqueueGitHubCredentialSync([peerId]);
     const clearEvents = await rollback.githubCredentialEventsForPeer(peerId);
     assert.ok(clearEvents.some((event) => event.entityType === "account" && event.key === "sela" && event.operation === "delete"));
     assert.ok(clearEvents.some((event) => event.entityType === "project" && event.key === "removed" && event.operation === "delete"));
@@ -302,6 +305,7 @@ test("changed legacy snapshots emit one newer credential rotation event", async 
     const initial = await import(`../src/github-auth.js?rollback-rotation-initial=${Date.now()}`);
     process.env.PI_WEB_DATA_DIR = peerDataDir;
     const peer = await import(`../src/github-auth.js?rollback-rotation-peer=${Date.now()}`);
+    await initial.enqueueGitHubCredentialSync([peerId]);
     const historicalEvents = await initial.githubCredentialEventsForPeer(peerId);
     const historical = historicalEvents.find((event) => event.entityType === "account" && event.key === "personal" && event.operation === "upsert");
     assert.ok(historical);
@@ -311,6 +315,7 @@ test("changed legacy snapshots emit one newer credential rotation event", async 
     await writeFile(legacyPath, JSON.stringify({ accounts: { personal: "new-token" }, projects: {} }));
     process.env.PI_WEB_DATA_DIR = localDataDir;
     const rotation = await import(`../src/github-auth.js?rollback-rotation-changed=${Date.now()}`);
+    await rotation.enqueueGitHubCredentialSync([peerId]);
     const rotationEvents = await rotation.githubCredentialEventsForPeer(peerId);
     const rotated = rotationEvents.find((event) => event.entityType === "account" && event.key === "personal" && event.operation === "upsert");
     assert.ok(rotated);
@@ -344,6 +349,7 @@ test("GitHub account and project credentials converge through encrypted idempote
 
     await mac.saveGitHubGroup({ id: "personal", label: "Personal", token: "mac-personal-token" });
     await mac.updateProjectGitHubAuth("shared-project", "personal", "mac-project-token");
+    await mac.enqueueGitHubCredentialSync([homeId]);
     const first = await mac.githubCredentialEventsForPeer(homeId);
     assert.deepEqual(await home.receiveGitHubCredentialEvents(first), first.map((event) => event.id));
     await mac.recordGitHubCredentialReceipt(homeId, first.map((event) => event.id));
@@ -352,6 +358,7 @@ test("GitHub account and project credentials converge through encrypted idempote
 
     await home.saveGitHubGroup({ id: "personal", label: "Personal", token: "home-personal-token" });
     await home.updateProjectGitHubAuth("shared-project", "sela", "home-project-token");
+    await home.enqueueGitHubCredentialSync([macId]);
     const second = await home.githubCredentialEventsForPeer(macId);
     assert.deepEqual(await mac.receiveGitHubCredentialEvents(second), second.map((event) => event.id));
     await home.recordGitHubCredentialReceipt(macId, second.map((event) => event.id));
@@ -363,7 +370,9 @@ test("GitHub account and project credentials converge through encrypted idempote
 
     await home.deleteGitHubGroup("personal");
     await mac.removeProjectGitHubAuth("shared-project");
+    await home.enqueueGitHubCredentialSync([macId]);
     const homeClears = await home.githubCredentialEventsForPeer(macId);
+    await mac.enqueueGitHubCredentialSync([homeId]);
     const macClear = await mac.githubCredentialEventsForPeer(homeId);
     await mac.receiveGitHubCredentialEvents(homeClears);
     await home.receiveGitHubCredentialEvents(macClear);
@@ -374,6 +383,7 @@ test("GitHub account and project credentials converge through encrypted idempote
 
     await mac.saveGitHubGroup({ id: "personal", label: "Personal", token: "retry-token" });
     const retryAt = new Date("2030-01-01T00:00:00.000Z");
+    await mac.enqueueGitHubCredentialSync([homeId]);
     const retryEvents = await mac.githubCredentialEventsForPeer(homeId, retryAt);
     await mac.recordGitHubCredentialFailure(homeId, retryEvents.map((event) => event.id), "offline", retryAt);
     assert.equal((await mac.githubCredentialEventsForPeer(homeId, new Date("2030-01-01T00:00:01.999Z"))).length, 0);
@@ -383,6 +393,43 @@ test("GitHub account and project credentials converge through encrypted idempote
       assert.doesNotMatch(await databaseText(macData), new RegExp(secret));
       assert.doesNotMatch(await databaseText(homeData), new RegExp(secret));
     }
+  } finally {
+    if (previousDataDir === undefined) delete process.env.PI_WEB_DATA_DIR; else process.env.PI_WEB_DATA_DIR = previousDataDir;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("GitHub credentials stay node-local until a sync is requested", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-github-manual-sync-"));
+  const previousDataDir = process.env.PI_WEB_DATA_DIR;
+  try {
+    const macData = path.join(root, "mac");
+    const homeData = path.join(root, "home");
+    process.env.PI_WEB_DATA_DIR = macData;
+    const mac = await import(`../src/github-auth.js?manual-mac=${Date.now()}`);
+    process.env.PI_WEB_DATA_DIR = homeData;
+    const home = await import(`../src/github-auth.js?manual-home=${Date.now()}`);
+    const homeId = "66666666-6666-4666-8666-666666666666";
+
+    await mac.saveGitHubGroup({ id: "personal", label: "Personal", token: "manual-token" });
+    assert.deepEqual(await mac.githubCredentialEventsForPeer(homeId), []);
+
+    await mac.enqueueGitHubCredentialSync([homeId]);
+    const events = await mac.githubCredentialEventsForPeer(homeId);
+    assert.ok(events.length > 0);
+    await home.receiveGitHubCredentialEvents(events);
+    await mac.recordGitHubCredentialReceipt(homeId, events.map((event) => event.id));
+    assert.equal(home.gitHubEnvironment("any-project").GH_TOKEN, "manual-token");
+
+    await mac.saveGitHubGroup({ id: "personal", label: "Personal", token: "rotated-token" });
+    assert.deepEqual(await mac.githubCredentialEventsForPeer(homeId), []);
+
+    await mac.enqueueGitHubCredentialSync([homeId]);
+    const rotation = await mac.githubCredentialEventsForPeer(homeId);
+    assert.ok(rotation.length > 0);
+    await home.receiveGitHubCredentialEvents(rotation);
+    await mac.recordGitHubCredentialReceipt(homeId, rotation.map((event) => event.id));
+    assert.equal(home.gitHubEnvironment("any-project").GH_TOKEN, "rotated-token");
   } finally {
     if (previousDataDir === undefined) delete process.env.PI_WEB_DATA_DIR; else process.env.PI_WEB_DATA_DIR = previousDataDir;
     await rm(root, { recursive: true, force: true });

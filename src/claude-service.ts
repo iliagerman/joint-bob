@@ -32,6 +32,9 @@ export interface ClaudeRunOptions {
   effort?: string;
   env?: NodeJS.ProcessEnv;
   onEvent: (payload: UnknownRecord) => void;
+  // Fires as soon as Claude reports its session id, so callers can mark the
+  // conversation running before the turn finishes.
+  onSessionId?: (sessionId: string) => void;
 }
 
 function asRecord(value: unknown): UnknownRecord {
@@ -63,6 +66,27 @@ function claudeProjectsRoot(): string {
 
 export function claudeSessionFilePath(cwd: string, sessionId: string): string {
   return path.join(claudeProjectDir(cwd, claudeProjectsRoot()), `${sessionId}.jsonl`);
+}
+
+// A conversation-list summary id is `claude:<id>.jsonl`, which never matches the
+// bare run id the live-run registry is keyed on, so reattach resolves the id
+// from the session path instead.
+export function claudeRunIdFromSessionPath(sessionPath: string): string | null {
+  if (sessionPath === "claude:new") return null;
+  return path.basename(sessionPath.replace(/^claude:/, ""), ".jsonl");
+}
+
+// Records one outgoing turn event for replay to a client that reconnects
+// mid-turn. Consecutive text and thinking deltas merge so the buffer stays the
+// size of the response instead of the number of chunks.
+export function appendLiveEvent(buffer: UnknownRecord[], payload: UnknownRecord): void {
+  const previous = buffer[buffer.length - 1];
+  const isDelta = payload.type === "textDelta" || payload.type === "thinkingDelta";
+  if (isDelta && previous && previous.type === payload.type && typeof previous.text === "string" && typeof payload.text === "string") {
+    previous.text = previous.text + payload.text;
+    return;
+  }
+  buffer.push({ ...payload });
 }
 
 function claudeMessageText(record: UnknownRecord): string {
@@ -231,6 +255,7 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
     }
     if (record.type === "system" && record.subtype === "init") {
       state.sessionId = typeof record.session_id === "string" ? record.session_id : null;
+      if (state.sessionId) options.onSessionId?.(state.sessionId);
       return;
     }
     if (record.type === "stream_event") {

@@ -31,6 +31,19 @@ test("conversation review state starts reviewed and tracks later completion per 
 
     const otherAccount = reviews.syncConversationReviewStates("user-b", "project", [{ path: "session", updatedAt: "2026-01-01T00:01:00.000Z", running: false }]);
     assert.equal(otherAccount.get("session"), "reviewed");
+
+    const bulkTime = new Date(Date.now() + 1000).toISOString();
+    const bulkSessions = [
+      { path: "bulk-a", updatedAt: bulkTime, running: false },
+      { path: "bulk-b", updatedAt: bulkTime, running: false },
+    ];
+    const bulkPending = reviews.syncConversationReviewStates("user-a", "project", bulkSessions);
+    assert.equal(bulkPending.get("bulk-a"), "needs_review");
+    assert.equal(bulkPending.get("bulk-b"), "needs_review");
+    reviews.markConversationsReviewed("user-a", "project", ["bulk-a", "bulk-b"]);
+    const bulkReviewed = reviews.syncConversationReviewStates("user-a", "project", bulkSessions);
+    assert.equal(bulkReviewed.get("bulk-a"), "reviewed");
+    assert.equal(bulkReviewed.get("bulk-b"), "reviewed");
   } finally {
     if (previous === undefined) delete process.env.PI_WEB_DATA_DIR;
     else process.env.PI_WEB_DATA_DIR = previous;
@@ -57,4 +70,9 @@ test("conversation UI exposes state counts, automatic review, notifications, and
   assert.match(app, /session\.reviewState/);
   assert.match(styles, /\.chat-status-dot/);
   assert.match(server, /sessions\/reviewed/);
+  assert.match(html, /id="markAllReviewedButton"[^>]*data-testid="chats-mark-all-reviewed-button"/);
+  assert.match(app, /markAllSessionsReviewed/);
+  assert.match(styles, /\.mark-all-reviewed-button/);
+  assert.match(server, /sessions\/reviewed-all/);
+  assert.match(server, /runningClaudeSessionPaths/);
 });

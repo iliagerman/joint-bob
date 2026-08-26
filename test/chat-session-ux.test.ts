@@ -53,3 +53,19 @@ test("chat names its controls and exposes conversation transfer", async () => {
   assert.match(server, /\(!config \|\| config\.engine === "pi"\) && shared/);
   assert.match(server, /sourceNodeId/);
 });
+
+test("switching projects discards in-flight responses from the previous project", async () => {
+  const app = await readFile("public/app.js", "utf8");
+
+  // selectProject clears the old list up front and abandons a late response.
+  assert.match(app, /state\.sessionNodes = \[\];\s*state\.sessions = \[\];/);
+  assert.match(app, /if \(state\.activeProjectId === projectId\) setListLoading\("sessions", false\);/);
+  assert.match(app, /if \(state\.activeProjectId !== projectId\) return;\s*state\.sessions = body\.sessions;/);
+
+  // refreshSessionsQuietly and loadTasks capture the project id instead of
+  // re-reading it after the await.
+  assert.match(app, /async function refreshSessionsQuietly\(\) \{\s*const projectId = state\.activeProjectId;/);
+  assert.match(app, /async function loadTasks\(\) \{\s*const projectId = state\.activeProjectId;/);
+  assert.doesNotMatch(app, /encodeURIComponent\(state\.activeProjectId\)\}\/sessions`\)/);
+  assert.doesNotMatch(app, /encodeURIComponent\(state\.activeProjectId\)\}\/tasks`\)/);
+});

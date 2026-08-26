@@ -120,13 +120,27 @@ export function syncConversationReviewStates(userId: string, projectId: string, 
   }
 }
 
-export function markConversationReviewed(userId: string, projectId: string, sessionPath: string): void {
+export function markConversationsReviewed(userId: string, projectId: string, sessionPaths: string[]): void {
+  if (!sessionPaths.length) return;
+  const db = reviewDatabase();
   const now = new Date().toISOString();
-  reviewDatabase().prepare(`
+  const statement = db.prepare(`
     INSERT INTO conversation_review_states
       (user_id, project_id, session_path, last_activity_at, reviewed_at, was_running)
     VALUES (?, ?, ?, ?, ?, 0)
     ON CONFLICT(user_id, project_id, session_path) DO UPDATE SET
       reviewed_at = conversation_review_states.last_activity_at
-  `).run(userId, projectId, sessionPath, now, now);
+  `);
+  db.exec("BEGIN");
+  try {
+    for (const sessionPath of sessionPaths) statement.run(userId, projectId, sessionPath, now, now);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+export function markConversationReviewed(userId: string, projectId: string, sessionPath: string): void {
+  markConversationsReviewed(userId, projectId, [sessionPath]);
 }

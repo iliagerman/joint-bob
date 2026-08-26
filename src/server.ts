@@ -14,7 +14,7 @@ import { projectNameOverrides, setProjectName, setSessionTitle } from "./names.j
 import { addProject, deleteProjectType, getProject, importProject, listProjects, listProjectTypes, projectAliasIds, ProjectTypeError, registerProjectAliases, removeProject, renameProject, saveProjectType, touchProject, updateProjectColor, updateProjectMacPath, updateProjectSyncFolderId, updateProjectTypeAndPath } from "./store.js";
 import { createClusterPeer, dueMembershipDeliveries, getClusterMachineToken, getClusterMembership, getClusterNode, getClusterPeer, listClusterPeers, markClusterPeerSeen, mergeClusterMembership, recordMembershipDelivered, recordMembershipFailure, removeClusterPeer, saveClusterPeer, updateClusterNode, type ClusterPeer } from "./cluster.js";
 import { eventsForPeer, receiveReplicationBatch, recordPeerFailure, recordPeerReceipt, type ReplicationBatch } from "./replication.js";
-import { deleteGitHubGroup, ensureGitHubCredentialMigration, getGitHubAuthStatus, gitHubEnvironment, githubCredentialEventsForPeer, receiveGitHubCredentialEvents, recordGitHubCredentialFailure, recordGitHubCredentialReceipt, removeProjectGitHubAuth, saveGitHubGroup, updateProjectGitHubAuth, type GitHubCredentialEvent } from "./github-auth.js";
+import { deleteGitHubGroup, enqueueGitHubCredentialSync, ensureGitHubCredentialMigration, getGitHubAuthStatus, gitHubEnvironment, githubCredentialEventsForPeer, receiveGitHubCredentialEvents, recordGitHubCredentialFailure, recordGitHubCredentialReceipt, removeProjectGitHubAuth, saveGitHubGroup, updateProjectGitHubAuth, type GitHubCredentialEvent } from "./github-auth.js";
 import {
   createPiSession,
   eventPayload,
@@ -30,7 +30,7 @@ import { assertTaskWorktreeTransferable, exportTaskBranchBundle, mergeTaskWorktr
 import { assertSyncthingFolderReady, CLAUDE_ENGINE_SYNC_FOLDER_ID, engineSyncFolders, ensureEngineSyncFolders, ensureSyncthingDevice, ensureSyncthingFolder, ensureTicketWorkspaceFolder, PI_ENGINE_SYNC_FOLDER_ID, reconcileSyncthingProjectFolders, rescanSyncthingFolder, syncthingDeviceId, syncthingFolderIdForPath, syncthingFolderStatuses, syncthingPathForFolderId } from "./syncthing.js";
 import { assertTaskWorkspaceReady, removeTaskWorkspace, taskWorkspaceKey, TaskWorkspaceError, TICKET_WORKSPACE_FOLDER_ID, ticketWorkspaceRoot } from "./task-workspaces.js";
 import { SessionWatcher } from "./watcher.js";
-import { buildHandoffContext, claudeSessionFilePath, loadClaudeMessages, runClaudePrompt, type ClaudeRunHandle } from "./claude-service.js";
+import { appendLiveEvent, buildHandoffContext, claudeRunIdFromSessionPath, claudeSessionFilePath, loadClaudeMessages, runClaudePrompt, type ClaudeRunHandle } from "./claude-service.js";
 import { listHarnesses, listHarnessSessions } from "./harnesses.js";
 import { listSkills } from "./skills.js";
 import { authenticate, authenticationStatus, changePassword, clearSessionCookieValue, createAdministrator, listLoginSessions, revokeSession, revokeUserSession, sessionCookieValue, sessionForId, type AuthSession } from "./auth.js";
@@ -39,7 +39,7 @@ import { ensureManagedHome, managedProjectPath, managedProjectRelocationPath } f
 import { importProjectDirectory, ProjectDirectoryImportError, relocateProjectDirectory } from "./project-directory-import.js";
 import { listAuditEvents } from "./audit.js";
 import { getUserPreferences, updateUserPreferences } from "./preferences.js";
-import { markConversationReviewed, syncConversationReviewStates } from "./conversation-reviews.js";
+import { markConversationReviewed, markConversationsReviewed, syncConversationReviewStates } from "./conversation-reviews.js";
 import { resetSyncthingConnection } from "./syncthing.js";
 import { PROJECT_COLORS } from "./types.js";
 import type { ChatMessage, ProjectRecord, ProjectSyncStatus, ProjectView, SessionStatus, TaskPhase, TaskPhaseConfig, TaskRecord } from "./types.js";
@@ -70,6 +70,9 @@ interface ClaudeChatState {
   lastRunEndedAt: number;
   model: string | null;
   effort: string | null;
+  // Turn events already streamed to the client, replayed verbatim when a socket
+  // drops mid-turn and the browser reconnects.
+  liveEvents: Record<string, unknown>[];
 }
 
 // "opus" is pinned to the explicit Opus 5 id so the CLI alias cannot drift.
@@ -135,6 +138,9 @@ const localWriteGraceMs = 15_000;
 const watchClients = new Map<string, Set<WebSocket>>();
 const claudeClients = new Map<WebSocket, ChatConnection>();
 const activeClaudeConnections = new Map<string, ChatConnection>();
+// Interactive Claude turns run on a socket connection, not in `sharedSessions`,
+// so the conversation list needs its own record of which files are streaming.
+const runningClaudeSessionPaths = new Set<string>();
 let replicationFlushInProgress = false;
 let githubCredentialFlushInProgress = false;
 let membershipFlushInProgress = false;
@@ -219,6 +225,7 @@ const githubCredentialEventSchema = z.union([
   z.object({ id: z.string().uuid(), entityType: z.enum(["account", "project"]), key: z.string().trim().min(1).max(300), operation: z.literal("delete"), updatedAt: z.string().datetime(), originNodeId: z.string().uuid(), createdAt: z.string().datetime() }).strict(),
 ]);
 const githubCredentialBatchSchema = z.object({ events: z.array(githubCredentialEventSchema).max(100) });
+const githubCredentialSyncSchema = z.object({ peerIds: z.array(z.string().uuid()).min(1).max(50) });
 const directoryBrowseSchema = z.object({
   path: absolutePathSchema.optional(),
 });
@@ -326,6 +333,9 @@ const pushUnsubscribeSchema = z.object({
 });
 const sessionReviewedSchema = z.object({
   sessionPath: z.string().trim().min(1).max(2000),
+}).strict();
+const sessionsReviewedSchema = z.object({
+  sessionPaths: z.array(z.string().trim().min(1).max(2000)).min(1).max(500),
 }).strict();
 const loginSchema = z.object({
   username: z.string().trim().min(1).max(80),
@@ -1649,6 +1659,28 @@ app.delete("/api/github-auth/groups/:groupId", async (request, response, next) =
   }
 });
 
+app.post("/api/github-auth/sync", async (request, response, next) => {
+  try {
+    const session = response.locals.authSession as AuthSession;
+    const { peerIds } = githubCredentialSyncSchema.parse(request.body);
+    const peers = await listClusterPeers();
+    const selected = peerIds.map((peerId) => peers.find((peer) => peer.id === peerId));
+    const missing = peerIds.filter((_, index) => !selected[index]);
+    if (missing.length) {
+      sendError(response, 404, `Unknown node: ${missing.join(", ")}`);
+      return;
+    }
+    await enqueueGitHubCredentialSync(peerIds, session.userId);
+    const results = await Promise.all((selected as ClusterPeer[]).map(async (peer) => {
+      const outcome = await pushGitHubCredentialsToPeer(peer);
+      return { peerId: peer.id, name: peer.name, delivered: outcome.delivered, ...(outcome.error ? { error: outcome.error } : {}) };
+    }));
+    response.json({ results });
+  } catch (error) {
+    next(error);
+  }
+});
+
 function unavailableProjectStatus(message = "No Syncthing folder is configured"): ProjectSyncStatus {
   return { state: "unavailable", remainingFiles: 0, remainingBytes: 0, message };
 }
@@ -2021,7 +2053,11 @@ app.get("/api/projects/:projectId/sessions", async (request, response, next) => 
         ...(agentModel ? { agentModel } : {}),
         taskStatus: task?.status,
         taskId: task?.id,
-        running: Boolean(shared?.handle.session.isStreaming || task?.executionState === "running"),
+        running: Boolean(
+          shared?.handle.session.isStreaming
+          || task?.executionState === "running"
+          || runningClaudeSessionPaths.has(claudeRunKey(project.id, session.path)),
+        ),
       };
     });
     const authSession = response.locals.authSession as AuthSession;
@@ -2079,6 +2115,33 @@ app.put("/api/projects/:projectId/sessions/reviewed", async (request, response, 
     }
     const authSession = response.locals.authSession as AuthSession;
     markConversationReviewed(authSession.userId, project.id, sessionPath);
+    response.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put("/api/projects/:projectId/sessions/reviewed-all", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project) {
+      sendError(response, 404, "Project not found");
+      return;
+    }
+    const { sessionPaths } = sessionsReviewedSchema.parse(request.body);
+    const tasks = await listTasks(project.id);
+    const sessions = await listHarnessSessions({
+      ...project,
+      additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []),
+    });
+    const known = new Set(sessions.map((session) => session.path));
+    const targets = sessionPaths.filter((sessionPath) => known.has(sessionPath));
+    if (!targets.length) {
+      sendError(response, 404, "No matching conversations");
+      return;
+    }
+    const authSession = response.locals.authSession as AuthSession;
+    markConversationsReviewed(authSession.userId, project.id, targets);
     response.status(204).send();
   } catch (error) {
     next(error);
@@ -2868,7 +2931,7 @@ function sendClaudeStatus(connection: ChatConnection): void {
 }
 
 function emptyClaudeState(): ClaudeChatState {
-  return { sessionId: null, filePath: null, child: null, transcript: [], lastRunEndedAt: 0, model: null, effort: null };
+  return { sessionId: null, filePath: null, child: null, transcript: [], lastRunEndedAt: 0, model: null, effort: null, liveEvents: [] };
 }
 
 function pushTranscript(connection: ChatConnection, role: string, text: string): void {
@@ -2879,55 +2942,99 @@ function claudeConnectionKey(projectId: string, sessionId: string | null): strin
   return `${projectId}:${sessionId ?? "claude:new"}`;
 }
 
+function claudeRunKey(projectId: string, sessionPath: string): string {
+  return `${projectId}\n${sessionPath}`;
+}
+
 async function runClaudeTurn(connection: ChatConnection, promptText: string, displayText: string): Promise<void> {
   if (connection.claude.child) throw new Error("Claude is still working — stop it first or wait");
   send(connection.socket, { type: "userMessage", text: displayText });
   pushTranscript(connection, "user", promptText);
-  send(connection.socket, { type: "agent_start" });
+  // Buffer every turn event so a browser that reconnects mid-turn can replay it.
+  connection.claude.liveEvents = [];
+  const onEvent = (payload: Record<string, unknown>): void => {
+    appendLiveEvent(connection.claude.liveEvents, payload);
+    send(connection.socket, payload);
+  };
+  onEvent({ type: "agent_start" });
   const fullPrompt = connection.handoffContext ? `${connection.handoffContext}${promptText}` : promptText;
   connection.handoffContext = null;
-  const onEvent = (payload: Record<string, unknown>): void => send(connection.socket, payload);
+
+  const runningKeys = new Set<string>();
+  const markClaudeRunning = (sessionFilePath: string): void => {
+    const key = claudeRunKey(connection.project.id, `claude:${sessionFilePath}`);
+    if (runningClaudeSessionPaths.has(key)) return;
+    runningClaudeSessionPaths.add(key);
+    runningKeys.add(key);
+    broadcastToProject(connection.project.id, { type: "sessionsChanged" });
+  };
+
+  let activeKey = claudeConnectionKey(connection.project.id, connection.claude.sessionId);
+  activeClaudeConnections.set(activeKey, connection);
+
+  // A new conversation only learns its real id part-way through the turn. Re-key
+  // the live run right away, otherwise tapping the conversation as it appears in
+  // the list opens a fresh connection and orphans this run.
+  const adoptSessionId = (sessionId: string): void => {
+    if (connection.claude.sessionId === sessionId) return;
+    if (activeClaudeConnections.get(activeKey) === connection) activeClaudeConnections.delete(activeKey);
+    connection.claude.sessionId = sessionId;
+    connection.claude.filePath = claudeSessionFilePath(connection.cwd, sessionId);
+    activeKey = claudeConnectionKey(connection.project.id, sessionId);
+    activeClaudeConnections.set(activeKey, connection);
+    send(connection.socket, { type: "sessionFile", sessionId, sessionFile: `claude:${connection.claude.filePath}` });
+  };
+  const onSessionId = (sessionId: string): void => {
+    markClaudeRunning(claudeSessionFilePath(connection.cwd, sessionId));
+    adoptSessionId(sessionId);
+  };
+  if (connection.claude.filePath) markClaudeRunning(connection.claude.filePath);
 
   const runOptions = {
     model: connection.claude.model ?? undefined,
     effort: connection.claude.effort ?? undefined,
   };
-  let run = runClaudePrompt({
-    cwd: connection.cwd,
-    prompt: fullPrompt,
-    env: gitHubEnvironment(connection.project.id),
-    resumeSessionId: connection.claude.sessionId ?? undefined,
-    ...runOptions,
-    onEvent,
-  });
-  connection.claude.child = run.child;
-  const activeKey = claudeConnectionKey(connection.project.id, connection.claude.sessionId);
-  activeClaudeConnections.set(activeKey, connection);
-  sendClaudeStatus(connection);
-  let result = await run.done;
-
-  if (!result.ok && !result.sawOutput && connection.claude.sessionId) {
-    // Resume can fail when a synchronized session lives under another node's
-    // encoded project dir. Fall back to a fresh session seeded with
-    // the transcript so the conversation continues.
-    connection.claude.sessionId = null;
-    const seeded = `${buildHandoffContext(connection.claude.transcript.slice(0, -1))}${promptText}`;
-    run = runClaudePrompt({ cwd: connection.cwd, prompt: seeded, env: gitHubEnvironment(connection.project.id), ...runOptions, onEvent });
+  try {
+    let run = runClaudePrompt({
+      cwd: connection.cwd,
+      prompt: fullPrompt,
+      env: gitHubEnvironment(connection.project.id),
+      resumeSessionId: connection.claude.sessionId ?? undefined,
+      ...runOptions,
+      onEvent,
+      onSessionId,
+    });
     connection.claude.child = run.child;
-    result = await run.done;
-  }
+    sendClaudeStatus(connection);
+    let result = await run.done;
 
-  connection.claude.child = null;
-  if (activeClaudeConnections.get(activeKey) === connection) activeClaudeConnections.delete(activeKey);
-  connection.claude.lastRunEndedAt = Date.now();
-  if (result.sessionId) {
-    connection.claude.sessionId = result.sessionId;
-    connection.claude.filePath = claudeSessionFilePath(connection.cwd, result.sessionId);
-    send(connection.socket, { type: "sessionFile", sessionId: connection.claude.sessionId, sessionFile: `claude:${connection.claude.filePath}` });
+    if (!result.ok && !result.sawOutput && connection.claude.sessionId) {
+      // Resume can fail when a synchronized session lives under another node's
+      // encoded project dir. Fall back to a fresh session seeded with
+      // the transcript so the conversation continues.
+      connection.claude.sessionId = null;
+      const seeded = `${buildHandoffContext(connection.claude.transcript.slice(0, -1))}${promptText}`;
+      run = runClaudePrompt({ cwd: connection.cwd, prompt: seeded, env: gitHubEnvironment(connection.project.id), ...runOptions, onEvent, onSessionId });
+      connection.claude.child = run.child;
+      result = await run.done;
+    }
+
+    connection.claude.child = null;
+    connection.claude.lastRunEndedAt = Date.now();
+    if (result.sessionId) {
+      connection.claude.sessionId = result.sessionId;
+      connection.claude.filePath = claudeSessionFilePath(connection.cwd, result.sessionId);
+      send(connection.socket, { type: "sessionFile", sessionId: connection.claude.sessionId, sessionFile: `claude:${connection.claude.filePath}` });
+    }
+    if (result.assistantText) pushTranscript(connection, "assistant", result.assistantText);
+    send(connection.socket, { type: "agent_end" });
+    sendClaudeStatus(connection);
+  } finally {
+    connection.claude.child = null;
+    if (activeClaudeConnections.get(activeKey) === connection) activeClaudeConnections.delete(activeKey);
+    connection.claude.liveEvents = [];
+    for (const key of runningKeys) runningClaudeSessionPaths.delete(key);
   }
-  if (result.assistantText) pushTranscript(connection, "assistant", result.assistantText);
-  send(connection.socket, { type: "agent_end" });
-  sendClaudeStatus(connection);
   broadcastToProject(connection.project.id, { type: "sessionsChanged" });
   if (connection.claude.filePath) {
     notifySessionFinished(connection.project.id, `claude:${connection.claude.filePath}`, "Claude").catch((error) => console.warn("Push notification failed", error));
@@ -3268,8 +3375,9 @@ webSocketServer.on("connection", async (socket, request) => {
   };
 
   if (requestedSessionPath?.startsWith("claude:")) {
-    const requestedClaudeId = requestedSessionId
-      ?? (requestedSessionPath === "claude:new" ? null : path.basename(requestedSessionPath.replace(/^claude:/, ""), ".jsonl"));
+    // The client sends the conversation-list summary id (`claude:<id>.jsonl`),
+    // which never matches the bare run id, so resolve the id from the path.
+    const requestedClaudeId = claudeRunIdFromSessionPath(requestedSessionPath);
     const active = activeClaudeConnections.get(claudeConnectionKey(project.id, requestedClaudeId));
     if (active?.claude.child) {
       active.socket = socket;
@@ -3297,6 +3405,9 @@ webSocketServer.on("connection", async (socket, request) => {
       status: claudeStatus(connection),
       models: await listAvailableModels(),
     });
+    // Replay the in-flight turn so a reconnecting client sees the text and tool
+    // calls that streamed while its socket was down.
+    for (const event of connection.claude.liveEvents) send(socket, event);
   } else {
     let sharedSession: SharedPiSession;
     try {
@@ -3448,29 +3559,42 @@ async function reconcileTaskHandoffs(): Promise<void> {
   }
 }
 
+/** Pushes everything currently enrolled for this peer, one 100-event batch at a time,
+    until the peer has acknowledged all of it or a batch fails. */
+async function pushGitHubCredentialsToPeer(peer: ClusterPeer): Promise<{ delivered: number; error?: string }> {
+  let delivered = 0;
+  for (;;) {
+    const events = await githubCredentialEventsForPeer(peer.id);
+    if (!events.length) return { delivered };
+    try {
+      const response = await fetch(`${peer.url}/api/cluster/github/events`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ events }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) throw new Error(`Peer returned ${response.status}`);
+      const receipt = replicationReceiptSchema.parse(await response.json());
+      // A peer that acknowledges nothing would loop forever on the same batch.
+      if (!receipt.received.length) throw new Error("Peer acknowledged no events");
+      await recordGitHubCredentialReceipt(peer.id, receipt.received);
+      delivered += receipt.received.length;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Peer GitHub credential replication failed";
+      await recordGitHubCredentialFailure(peer.id, events.map((event) => event.id), message);
+      console.warn(`GitHub credential replication to ${peer.id} failed: ${message}`);
+      return { delivered, error: message };
+    }
+  }
+}
+
+/** Retries deliveries a manual sync enrolled but could not complete. It never enrolls
+    anything itself, so credential changes are not replicated until the user asks. */
 async function flushGitHubCredentialOutbox(): Promise<void> {
   if (githubCredentialFlushInProgress) return;
   githubCredentialFlushInProgress = true;
   try {
-    for (const peer of await listClusterPeers()) {
-      const events = await githubCredentialEventsForPeer(peer.id);
-      if (!events.length) continue;
-      try {
-        const response = await fetch(`${peer.url}/api/cluster/github/events`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ events }),
-          signal: AbortSignal.timeout(10_000),
-        });
-        if (!response.ok) throw new Error(`Peer returned ${response.status}`);
-        const receipt = replicationReceiptSchema.parse(await response.json());
-        await recordGitHubCredentialReceipt(peer.id, receipt.received);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Peer GitHub credential replication failed";
-        await recordGitHubCredentialFailure(peer.id, events.map((event) => event.id), message);
-        console.warn(`GitHub credential replication to ${peer.id} failed: ${message}`);
-      }
-    }
+    for (const peer of await listClusterPeers()) await pushGitHubCredentialsToPeer(peer);
   } finally {
     githubCredentialFlushInProgress = false;
   }

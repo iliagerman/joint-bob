@@ -420,6 +420,21 @@ body.view-chat #chatPanel :is(.panel-scroll, .board-columns, .messages) {
 }
 .live-dot[hidden] { display: none; }
 
+/* `order: 1` puts the action after the .section-title hairline, so the label keeps the left edge. */
+.mark-all-reviewed-button {
+  order: 1;
+  flex: 0 0 auto;
+  min-height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+}
+.mark-all-reviewed-button:hover:not(:disabled) { color: var(--text); background: var(--field); }
+.mark-all-reviewed-button:disabled { opacity: 0.4; cursor: not-allowed; }
+
 /* ---- Search + inputs ---- */
 .search-shell { display: block; margin: 12px 12px 2px; }
 input, textarea, select {

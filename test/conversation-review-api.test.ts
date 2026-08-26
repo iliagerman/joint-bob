@@ -118,6 +118,21 @@ test("session API persists automatic review transitions for the signed-in accoun
     });
     assert.equal(reviewed.status, 204);
     assert.equal((await list()).reviewState, "reviewed");
+
+    // One bulk call clears every conversation that needs review.
+    const followUp = { type: "assistant", cwd: fixture.projectPath, message: { role: "assistant", content: [{ type: "text", text: "more work" }] } };
+    await writeFile(fixture.sessionFile, `${JSON.stringify(firstRecord)}\n${JSON.stringify(assistant)}\n${JSON.stringify(followUp)}\n`);
+    const later = new Date(Date.now() + 2000);
+    await utimes(fixture.sessionFile, later, later);
+    const pending = await list();
+    assert.equal(pending.reviewState, "needs_review");
+    const bulk = await fetch(`${node.baseUrl}/api/projects/${fixture.projectId}/sessions/reviewed-all`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ sessionPaths: [pending.path] }),
+    });
+    assert.equal(bulk.status, 204);
+    assert.equal((await list()).reviewState, "reviewed");
   } finally {
     await new Promise<void>((resolve) => node.server.close(() => resolve()));
     node.restoreEnvironment();

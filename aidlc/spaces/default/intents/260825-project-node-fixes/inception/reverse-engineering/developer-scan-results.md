@@ -1,0 +1,238 @@
+## Developer Code Scan Results
+
+### Scan Coverage
+- **Analyzed deeply**:
+  - `src/` including all 27 TypeScript modules
+  - `public/app.js`
+  - `public/board.js`
+  - `public/markdown.js`
+  - `public/index.html`
+  - `public/boot.js`
+  - `public/sw.js`
+  - `public/manifest.webmanifest`
+  - `public/icon.svg`
+  - `scripts/`
+  - `deploy/`
+  - `.github/workflows/release.yml`
+  - `package.json`
+  - `tsconfig.json`
+  - `Justfile`
+  - `README.md`
+  - `AGENTS.md`
+  - `CONTRIBUTING.md`
+  - `SECURITY.md`
+  - `CODE_OF_CONDUCT.md`
+  - `.gitignore`
+  - `.stignore`
+  - `test/auth-api.test.ts`
+  - `test/chat-session-ux.test.ts`
+  - `test/desktop-conversation-workspace.test.ts`
+  - `test/harness-registry.test.ts`
+  - `test/runtime-settings.test.ts`
+  - `test/session-paths.test.ts`
+  - `test/syncthing.test.ts`
+  - `test/task-routing-api.test.ts`
+  - `test/websocket-auth.test.ts`
+  - `test/websocket-proxy-errors.test.ts`
+- **Skimmed only**:
+  - Remaining `test/` files. All 75 files and 213 test names were inventoried; selected test bodies were read deeply.
+  - `public/styles.css`. Design tokens, responsive rules, accessibility rules, animations, and major component selectors were inspected.
+  - `public/icon-192.png` and `public/icon-512.png`. Dimensions and formats verified.
+  - `package-lock.json` and `npm-shrinkwrap.json`. Dependency metadata was parsed, but all 279 transitive packages were not reviewed individually.
+  - `dist/`. Generated output only.
+  - Ignored root copies `app.js`, `server.ts`, `styles.css`, `sw.js`, and `index.html`.
+  - `node_modules/`. Only installed top-level versions were queried.
+  - `.pi-mobile-web/` and `.pi-mobile-web-attachments/`. Runtime and attachment state excluded from deep inspection.
+  - `.claude/`, `aidlc/`, and `aidlc.archive/`. Only the required reverse-engineering instructions and active state were read.
+  - Deleted tracked `.aidlc-rule-details/` paths were unavailable in the working tree.
+
+### Packages Found
+- `joint-bob` - npm application and public CLI package - TypeScript/JavaScript - Private multi-node workspace for Pi and Claude coding agents.
+- `src/server.ts` - application composition and transport layer - TypeScript - Express REST API, WebSocket server, peer proxying, task execution, background reconciliation, static-file serving.
+- `src/auth.ts`, `src/preferences.ts`, `src/settings.ts`, `src/audit.ts` - account and node-state modules - TypeScript - Administrator authentication, sessions, CSRF state, preferences, encrypted settings, audit events.
+- `src/store.ts`, `src/types.ts` - project domain and persistence - TypeScript - Project records, project aliases, project types, paths, colours, SQLite migrations.
+- `src/tasks.ts`, `src/task-workspaces.ts`, `src/worktrees.ts` - task domain - TypeScript - Kanban tasks, leases, handoffs, synchronized workspaces, Git worktrees, bundle transfer, merge.
+- `src/cluster.ts`, `src/replication.ts`, `src/names.ts` - cluster domain - TypeScript - Five-node membership, encrypted peer credentials, tombstones, replicated tasks and names, retry outboxes.
+- `src/github-auth.ts` - credential domain - TypeScript - Encrypted GitHub groups and project overrides, authenticated cluster replication, legacy migration.
+- `src/pi-service.ts`, `src/claude-service.ts`, `src/harnesses.ts` - agent adapters - TypeScript - Pi SDK sessions, Claude CLI execution, transcript conversion, model selection, engine switching.
+- `src/session-paths.ts`, `src/watcher.ts`, `src/conversation-reviews.ts` - conversation discovery - TypeScript - Cross-node path mapping, filesystem watching, review status.
+- `src/syncthing.ts` - synchronization adapter - TypeScript - Syncthing discovery, folder/device management, ignore rules, readiness checks, rescans.
+- `src/push.ts` - notification adapter - TypeScript - VAPID keys, push subscriptions, completion notifications.
+- `src/project-directory-import.ts`, `src/managed-home.ts` - filesystem management - TypeScript - Copy/move/link imports, managed project roots, relocation rollback.
+- `src/skills.ts` - skill discovery - TypeScript - Pi and Claude user/project skill inventory.
+- `public/` - native browser PWA - JavaScript/HTML/CSS - Projects, conversations, chat streaming, settings, cluster pairing, kanban board, notifications.
+- `bin/joint-bob.mjs` - npm CLI - JavaScript - `install` and `doctor` commands.
+- `scripts/` and `deploy/` - packaging and operations - Bash, Terraform, systemd, launchd - Installation, runtime pinning, deployment, Syncthing setup, EC2 smoke testing.
+- No npm workspaces or independent internal packages. Deployment Terraform is a separate operational module, not an npm package.
+
+### Build System
+- **Type**: npm with TypeScript compiler. Bash drives installation and deployment. Terraform drives temporary EC2 smoke infrastructure.
+- **Config Files**:
+  - `package.json`
+  - `package-lock.json`
+  - `npm-shrinkwrap.json`
+  - `tsconfig.json`
+  - `Justfile`
+  - `.github/workflows/release.yml`
+  - `scripts/versions.sh`
+  - `deploy/aws-ec2-test/*.tf`
+- **Build Dependencies**:
+  - `npm run build` invokes `tsc`.
+  - `tsconfig.json` compiles `src/**/*.ts` to `dist/` using `NodeNext`, ES2022, strict mode, and `skipLibCheck`.
+  - `public/` is served and packaged without compilation or bundling.
+  - `src/server.ts` imports nearly every backend module and is the central composition root.
+  - `src/app.ts` only re-exports the Express app for tests.
+  - `npm start` rebuilds and then runs `dist/server.js`.
+  - `npm run dev` runs `tsx watch src/server.ts`.
+  - `npm test` runs `node --import tsx --test test/*.test.ts`.
+  - `prepack` builds TypeScript before package creation.
+  - The package publishes `bin`, `deploy`, `public`, `scripts`, `src`, documentation, release metadata, shrinkwrap, and TypeScript config.
+  - `package-lock.json` and `npm-shrinkwrap.json` are byte-identical lockfile-version-3 files.
+  - GitHub release workflow runs install, typecheck, tests, build, package smoke checks, GitHub release creation, and npm publication on `v*` tags.
+  - `scripts/deploy-installed-nodes.sh` packages an exact Git commit, backs up SQLite, installs it into `~/.local/share/joint-bob/app`, and verifies release health.
+  - Production services do not run from the source checkout.
+  - Terraform requires `>= 1.9, < 2.0`; AWS provider constraint is `~> 6.0`.
+
+### APIs Discovered
+- REST API - `src/server.ts` - 83 method/path registrations under `/api`.
+  - Authentication, 7:
+    - `GET /api/auth/status`
+    - `POST /api/auth/setup`
+    - `POST /api/auth/login`
+    - `POST /api/auth/change-password`
+    - `POST /api/auth/logout`
+    - `GET /api/auth/sessions`
+    - `DELETE /api/auth/sessions/:sessionId`
+  - Health and account state, 6:
+    - `GET /api/health`
+    - `GET|PUT /api/preferences`
+    - `GET /api/audit`
+    - `GET|PUT /api/settings`
+  - Cluster and machine-to-machine operations, 32:
+    - Node identity, invite, inventory, peers, membership sync, project import/mapping, filesystem browsing, Syncthing sharing, replication, GitHub credential replication, session transfer, task eligibility and handoff protocol.
+  - Project operations, 25:
+    - Project CRUD, path mapping, GitHub auth, sync rescan, session listing/title/review/transfer/deletion, skills, task CRUD/handoff/archive/merge/eligibility, project-file download.
+  - Project types, 3.
+  - GitHub groups, 4.
+  - Push notifications, 3.
+  - Harness registry, 1.
+  - Model inventory, 1.
+  - Local filesystem directory browsing, 1.
+- WebSocket API - `src/server.ts` at `/ws` - one endpoint with chat, project-watch, task-owner proxy, and selected-node proxy modes.
+  - Accepted command types include `ping`, `prompt`, `setEngine`, `setModel`, `setEffort`, `setSafeguards`, `rename`, `models`, `cycleModel`, `setThinking`, `cycleThinking`, and `abort`.
+  - Server events include readiness, status, text/thinking deltas, tool lifecycle, assistant completion/errors, session changes, task changes, queue state, engine changes, and reconnect signals.
+- Syncthing REST integration - `src/syncthing.ts` - system status, folders, devices, ignores, folder status, scan, create/update folder.
+- Pi SDK integration - `src/pi-service.ts` - model inventory, session discovery/open/create, prompts, tools, safeguards, event streaming.
+- Claude CLI integration - `src/claude-service.ts` - `claude -p --output-format stream-json`, resume, model, effort, transcript discovery.
+- Git subprocess integration - `src/worktrees.ts` - repository validation, worktree operations, branch bundles, fast-forward preparation, merge and abort.
+- Web Push integration - `src/push.ts` - VAPID generation and push delivery.
+- Filesystem contracts - project/session directories, synchronized ticket workspaces, skill manifests, legacy JSON migrations.
+- API validation uses Zod at HTTP and WebSocket boundaries.
+- Browser API uses a secure session cookie plus CSRF header. Selected machine routes may authenticate with a timing-safe bearer-token comparison.
+- WebSocket browser authentication requires a valid changed-password session and an exact origin/host match.
+- No OpenAPI, AsyncAPI, JSON Schema export, or generated client exists.
+
+### Frameworks & Libraries
+- Node.js - engine `>=22.19.0`; managed and CI runtime `22.23.2` - server runtime, built-in test runner, built-in `node:sqlite`.
+- TypeScript - manifest `^5.7.2`; locked/installed `5.9.3` - backend source and tests.
+- Express - manifest `^4.19.2`; locked/installed `4.22.2` - HTTP API and static assets.
+- `ws` - manifest `^8.18.0`; locked/installed `8.21.3` - WebSocket server, client, and proxy.
+- Zod - manifest `^3.23.8`; locked/installed `3.25.76` - request and socket validation.
+- `@earendil-works/pi-coding-agent` - `0.84.2` - embedded Pi runtime and SDK.
+- `@anthropic-ai/claude-code` - `2.1.239` - bundled Claude CLI.
+- `nanoid` - manifest `^5.0.7`; locked/installed `5.1.16` - project, task, user, and session identifiers.
+- `web-push` - `3.6.7` - browser push delivery.
+- `tsx` - manifest `^4.19.2`; locked/installed `4.23.12` - development and test TypeScript loader.
+- Native browser APIs - no frontend framework - ES modules, DOM APIs, Fetch, WebSocket, Service Worker, PushManager, Notifications, Web Audio, History API.
+- Native CSS - responsive desktop/mobile shell, light/dark tokens, reduced-motion handling, safe-area support.
+- Syncthing - pinned `2.1.3` - filesystem synchronization.
+- Terraform - `>=1.9,<2.0` - temporary AWS test environment.
+- AWS provider - `~>6.0`.
+- GitHub Actions - `actions/checkout@v4`, `actions/setup-node@v4`, `softprops/action-gh-release@v2`.
+- Direct dependency lock contains 279 transitive package entries.
+- Dependency audit was attempted but the configured npm registry returned HTTP 400. Vulnerability status remains unverified.
+
+### Test Coverage
+- **Test Directories**: `test/`, with Terraform tests in `deploy/aws-ec2-test/tests/`.
+- **Test Frameworks**:
+  - Node built-in `node:test`
+  - `node:assert/strict`
+  - `tsx` TypeScript loader
+  - `ws` for WebSocket integration
+  - Terraform native test framework
+- **Coverage Config**: absent. No coverage script, reporter, threshold, or committed coverage result.
+- 75 TypeScript test files.
+- 213 discovered test cases.
+- About 8,992 lines of test code.
+- Approximate file-level test mix:
+  - 24 direct module unit/integration files
+  - 12 in-process API/network integration files
+  - 18 spawned-process integration files
+  - 21 static source-contract files
+- Strong test areas:
+  - Authentication, CSRF, WebSocket origin enforcement, session deletion boundaries.
+  - SQLite persistence and legacy migrations.
+  - Multi-node membership, tombstones, replication retries, aliases, task ownership.
+  - Task handoff settlement and Git bundle integrity.
+  - Syncthing readiness, ignore rules, project status, ticket workspaces.
+  - Installer rollback, release metadata, service ports, runtime version pinning.
+  - Project/session UI contracts and accessibility hooks.
+- Gaps:
+  - No measured line, branch, or function coverage.
+  - No real-browser end-to-end suite.
+  - Many UI tests inspect source with regular expressions instead of executing DOM behavior.
+  - No load, soak, fault-injection, or performance suite.
+  - No automated security scanner result.
+  - Terraform tests are not run by the tag release workflow.
+- Tests were not executed during this inspection-only scan.
+
+### Code Quality Indicators
+- **Linting**: no ESLint, Prettier, Biome, ShellCheck, markdown lint, or Terraform lint configuration. No lint script.
+- **CI/CD**:
+  - `.github/workflows/release.yml` runs only for `v*` tags.
+  - Release checks include `npm ci`, typecheck, tests, build, package smoke checks, GitHub release, and npm publication with provenance.
+  - No pull-request or ordinary `main` push validation workflow.
+  - Local pre-push hook waits for exact remote `main`, then deploys installed nodes. It is deployment automation, not centralized CI.
+  - Linux systemd and macOS launchd service templates exist.
+  - EC2 smoke runner provisions encrypted storage, IMDSv2, and operator-only `/32` ingress.
+- **Documentation**:
+  - `README.md` covers installation, pairing, project synchronization, ticket workspaces, private HTTPS, service management, deployment, EC2 smoke tests, security, and persistence.
+  - `SECURITY.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, and `AGENTS.md` are present.
+  - Inline comments explain synchronization, migration, security, and handoff logic where needed.
+  - No REST/WebSocket API reference, database schema document, migration ledger, or architecture diagram.
+- Strict TypeScript is enabled.
+- `skipLibCheck` is enabled.
+- HTTP and socket inputs receive explicit Zod validation.
+- SQLite writes commonly use explicit transactions and rollback.
+- Credentials use AES-256-GCM with a mode-`0600` 32-byte local key.
+- Security headers include CSP, HSTS, frame denial, MIME sniff prevention, and referrer policy.
+- Service worker cache `joint-bob-v25` includes existing app-shell assets; all listed assets exist.
+
+### Technical Debt Signals
+- `src/server.ts` is 3,521 lines and owns routing, WebSockets, task orchestration, peer proxying, reconciliation, and startup.
+- `public/app.js` is 3,568 lines and owns nearly all browser state, API calls, rendering, dialogs, routing, and socket handling.
+- Other large modules include `src/store.ts` at 695 lines, `src/cluster.ts` at 592, `src/tasks.ts` at 561, and `src/github-auth.ts` at 541.
+- At least 19 detected functions exceed 50 lines. Largest examples include `runClaudePrompt`, `mergeClusterMembership`, `handleSocketMessage`, `renderSessions`, and `taskCard`.
+- `src/tasks.ts` and `src/replication.ts` contain dense single-line functions and SQL statements that hinder review and debugging.
+- SQLite schema ownership is scattered across modules. Source declares 43 tables and 23 guarded `ALTER TABLE` operations without a centralized migration version or ordered migration runner.
+- Multiple modules independently open handles to the same `node.db`. WAL reduces contention, but lifecycle, busy-timeout, and schema sequencing differ by module.
+- AES-GCM key loading and encryption helpers are duplicated in `cluster.ts`, `github-auth.ts`, `settings.ts`, and `push.ts`.
+- Legacy compatibility remains broad: `PI_WEB_*`, `PI_MOBILE_WEB_*`, and `MASTER_BOB_*` aliases; old JSON stores; old service names; `.pi-mobile-web` paths; legacy project and task identities.
+- Two identical lockfiles must remain synchronized manually.
+- No linting, formatting, coverage, or pull-request CI gate exists.
+- Static regex tests make refactoring risky because behavior-preserving source changes can fail tests.
+- Native frontend JavaScript has no static typing or module bundling. Frontend/server contracts are manually duplicated.
+- REST and WebSocket contracts have no machine-readable specification.
+- `GET /api/projects/:projectId/file` checks lexical containment with `path.relative` but uses `stat` and `createReadStream`, which follow symlinks. A symlink inside a project can escape the project root during authenticated file download.
+- Claude runs with `--permission-mode bypassPermissions`. Pi safeguards can also be disabled per session. Security therefore depends heavily on account authentication, private-network deployment, and filesystem boundaries.
+- Generic error middleware returns internal exception messages in HTTP 500 responses.
+- Claude session listing reads and parses complete JSONL transcripts before applying the 50-session display cap. Large histories can make session listing expensive.
+- Session title overrides use only `path.basename(sessionPath)` as the key. Equal filenames in different project/session directories can collide.
+- Conversation discovery intentionally spans `project.path`, `macPath`, every learned node location, and ticket workspaces. Claude discovery also scans encoded directories for each project path and its parent. This supports migration and synchronization but broadens isolation logic.
+- Current conversation identities are otherwise path-based. Active Claude connections include `projectId` and `sessionId`; shared Pi connections include `cwd` and session path.
+- For non-task chat, the browser sends `nodeId` in the WebSocket URL. `src/server.ts` proxies the socket to that peer, and Claude executes on the node that terminates the proxied socket.
+- Task chats ignore the UI node override and route through `TaskRecord.currentNodeId`, preserving task ownership.
+- No terminal-opening feature exists. There is no terminal REST route, WebSocket mode, PTY integration, frontend action, or terminal dependency. Existing adjacent capabilities are filesystem browsing, project-file download, Git subprocess execution, and agent subprocess execution.
+- Ignored root copies of application files remain in the workspace alongside canonical `src/` and `public/` files.
+- Ignored `dist/pi-service.sync-conflict-20260604-204139-5CHB2CY.js` indicates prior synchronization conflict residue in generated output.
+- The working tree already contained substantial AI-DLC migration changes and deleted legacy rule files before this scan. No repository files were modified during inspection.

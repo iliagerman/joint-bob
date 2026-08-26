@@ -79,6 +79,7 @@
         <div class="section-title live-row">
           <span>Conversations</span>
           <span class="live-dot" id="chatsLiveDot" title="Auto-refreshing" hidden></span>
+          <button type="button" class="mark-all-reviewed-button" id="markAllReviewedButton" disabled title="Mark every conversation needing review as reviewed" data-testid="chats-mark-all-reviewed-button">Mark all reviewed</button>
         </div>
         <label class="search-shell conversation-search" for="sessionSearchInput">
           <span class="sr-only">Search conversations</span>
@@ -236,7 +237,7 @@
         <div class="dialog-heading" tabindex="-1" autofocus>
           <span class="eyebrow">Node configuration</span>
           <h2>Settings</h2>
-          <p>Paths are node-local. GitHub credentials replicate through authenticated cluster links, never Syncthing.</p>
+          <p>Paths are node-local. GitHub credentials never leave this node until you sync them to a node you pick.</p>
         </div>
 
         <div class="settings-tabs" role="tablist" aria-label="Settings sections">
@@ -276,7 +277,11 @@
         <section class="settings-panel" id="settingsPanel-github" role="tabpanel" aria-labelledby="settingsTab-github" tabindex="0" hidden>
           <p>Groups hold the tokens used by Git commands. A project uses its own group, then its project type's group, then the default group.</p>
           <div class="github-group-list" id="githubGroupList" data-testid="github-group-list"></div>
-          <button class="ghost" type="button" id="githubGroupAddButton" data-testid="github-group-add-button">Add group</button>
+          <div class="github-group-actions">
+            <button class="ghost" type="button" id="githubGroupAddButton" data-testid="github-group-add-button">Add group</button>
+            <button class="ghost" type="button" id="githubSyncButton" data-testid="github-sync-open-button">Sync to nodes</button>
+          </div>
+          <p>Tokens stay on this node. Sync to copy them to other nodes.</p>
         </section>
 
         <section class="settings-panel" id="settingsPanel-cluster" role="tabpanel" aria-labelledby="settingsTab-cluster" tabindex="0" hidden>
@@ -379,6 +384,22 @@
         <div class="dialog-actions">
           <button class="ghost" type="button" id="cancelGithubGroupButton" data-testid="github-group-cancel-button">Cancel</button>
           <button class="primary" type="submit" data-testid="github-group-save-button">Save group</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="githubSyncDialog" data-testid="github-sync-dialog">
+      <form method="dialog" class="dialog-card" id="githubSyncForm">
+        <div>
+          <span class="eyebrow">Node credentials</span>
+          <h2>Sync GitHub credentials</h2>
+          <p>Copies every group and project token stored on this node to the nodes you pick, over the authenticated cluster link.</p>
+        </div>
+        <label class="checkbox-row"><input id="githubSyncAllInput" type="checkbox" data-testid="github-sync-all-input" /> All nodes</label>
+        <div class="github-sync-node-list" id="githubSyncNodeList" data-testid="github-sync-node-list"></div>
+        <div class="dialog-actions">
+          <button class="ghost" type="button" id="cancelGithubSyncButton" data-testid="github-sync-cancel-button">Cancel</button>
+          <button class="primary" type="submit" data-testid="github-sync-submit-button">Sync</button>
         </div>
       </form>
     </dialog>

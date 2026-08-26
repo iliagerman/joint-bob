@@ -462,19 +462,33 @@ function backfillLegacyEvents(db: DatabaseSync, nodeId: string): void {
   }
 }
 
-export async function githubCredentialEventsForPeer(peerId: string, now = new Date()): Promise<GitHubCredentialEvent[]> {
+/** Enrolls every stored credential event for delivery to `peerIds` and clears any retry
+    backoff, so a manual sync starts pushing straight away. Nothing is ever enrolled
+    automatically: credentials stay on this node until the user asks for a sync. */
+export async function enqueueGitHubCredentialSync(peerIds: string[], actorId?: string): Promise<number> {
   const local = await getClusterNode();
   const db = authDatabase();
-  const at = now.toISOString();
+  const at = new Date().toISOString();
   db.exec("BEGIN IMMEDIATE");
   try {
     backfillLegacyEvents(db, local.id);
-    db.prepare("INSERT OR IGNORE INTO github_credential_deliveries (event_id, peer_id, attempts, next_attempt_at, delivered_at, last_error) SELECT event_id, ?, 0, ?, NULL, NULL FROM github_credential_events").run(peerId, at);
-    const rows = db.prepare("SELECT e.event_id, e.entity_type, e.entity_key, e.operation, e.payload_encrypted, e.updated_at, e.origin_node_id, e.created_at FROM github_credential_events e JOIN github_credential_deliveries d ON d.event_id = e.event_id WHERE d.peer_id = ? AND d.delivered_at IS NULL AND d.next_attempt_at <= ? ORDER BY e.created_at, e.event_id LIMIT 100").all(peerId, at) as unknown as CredentialEventRow[];
-    const events = rows.map(eventFromRow);
+    let enrolled = 0;
+    for (const peerId of peerIds) {
+      enrolled += Number(db.prepare("INSERT OR IGNORE INTO github_credential_deliveries (event_id, peer_id, attempts, next_attempt_at, delivered_at, last_error) SELECT event_id, ?, 0, ?, NULL, NULL FROM github_credential_events").run(peerId, at).changes);
+      db.prepare("UPDATE github_credential_deliveries SET attempts = 0, next_attempt_at = ?, last_error = NULL WHERE peer_id = ? AND delivered_at IS NULL").run(at, peerId);
+    }
+    appendAuditEvent(db, { eventType: "github.credentials.sync", actorType: actorId ? "user" : "system", actorId, entityType: "github.credentials", entityId: "sync", details: { peers: peerIds.length, enrolled } });
     db.exec("COMMIT");
-    return events;
+    return enrolled;
   } catch (error) { db.exec("ROLLBACK"); throw error; }
+}
+
+/** Returns only what an explicit `enqueueGitHubCredentialSync` has already enrolled for this peer. */
+export async function githubCredentialEventsForPeer(peerId: string, now = new Date()): Promise<GitHubCredentialEvent[]> {
+  const db = authDatabase();
+  const at = now.toISOString();
+  const rows = db.prepare("SELECT e.event_id, e.entity_type, e.entity_key, e.operation, e.payload_encrypted, e.updated_at, e.origin_node_id, e.created_at FROM github_credential_events e JOIN github_credential_deliveries d ON d.event_id = e.event_id WHERE d.peer_id = ? AND d.delivered_at IS NULL AND d.next_attempt_at <= ? ORDER BY e.created_at, e.event_id LIMIT 100").all(peerId, at) as unknown as CredentialEventRow[];
+  return rows.map(eventFromRow);
 }
 
 export async function receiveGitHubCredentialEvents(events: GitHubCredentialEvent[]): Promise<string[]> {

@@ -1,0 +1,16 @@
+[
+  {
+    "uuid": "01a033ac-fcb7-77ce-bfd1-cddcb792d291",
+    "slug": "project-work-readiness",
+    "dirName": "260824-project-work-readiness",
+    "scope": "project-work-readiness",
+    "status": "in-flight"
+  },
+  {
+    "uuid": "01a03ada-7581-75a4-b89a-220fe836f378",
+    "slug": "project-node-fixes",
+    "dirName": "260825-project-node-fixes",
+    "scope": "express",
+    "status": "in-flight"
+  }
+]

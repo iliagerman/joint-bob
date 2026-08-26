@@ -260,6 +260,7 @@ const elements = {
   chatHarnessSelect: document.querySelector("#chatHarnessSelect"),
   newClaudeSessionButton: document.querySelector("#newClaudeSessionButton"),
   chatsLiveDot: document.querySelector("#chatsLiveDot"),
+  markAllReviewedButton: document.querySelector("#markAllReviewedButton"),
   boardColumns: document.querySelector("#boardColumns"),
   boardProjectName: document.querySelector("#boardProjectName"),
   newTaskButton: document.querySelector("#newTaskButton"),
@@ -1569,6 +1570,28 @@ function markSessionReviewed(session) {
   });
 }
 
+function reviewableSessions() {
+  return state.sessions.filter((session) => session.reviewState === "needs_review" && !session.running);
+}
+
+async function markAllSessionsReviewed() {
+  const targets = reviewableSessions();
+  if (!state.activeProjectId || !targets.length) return;
+  const sessionPaths = targets.map((session) => session.path);
+  for (const session of targets) session.reviewState = "reviewed";
+  renderSessions();
+  try {
+    await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/reviewed-all`, {
+      method: "PUT",
+      body: JSON.stringify({ sessionPaths }),
+    });
+  } catch (error) {
+    for (const session of targets) session.reviewState = "needs_review";
+    renderSessions();
+    toast(error.message);
+  }
+}
+
 function openListedSession(session) {
   markSessionReviewed(session);
   state.activeSessionId = session.id;
@@ -1585,6 +1608,7 @@ function renderSessions() {
   elements.newSessionButton.disabled = !project || !state.sessionNodes.length;
   elements.newClaudeSessionButton.disabled = !project || !state.sessionNodes.length;
   updateChatFilterCounts();
+  elements.markAllReviewedButton.disabled = !project || !reviewableSessions().length;
 
   if (!project || state.sessionsLoading) return;
   const sessions = filteredSessions();
@@ -2330,6 +2354,7 @@ async function selectProject(projectId, shouldRender = true, preserveSession = f
   setComposerEnabled(false);
   elements.sessionTitle.textContent = "Select a conversation";
   state.sessionNodes = [];
+  state.sessions = [];
   setListLoading("sessions", true);
   renderSessions();
   setMobileView("sessions");
@@ -2338,8 +2363,11 @@ async function selectProject(projectId, shouldRender = true, preserveSession = f
   try {
     body = await api(`/api/projects/${encodeURIComponent(projectId)}/sessions`);
   } finally {
-    setListLoading("sessions", false);
+    if (state.activeProjectId === projectId) setListLoading("sessions", false);
   }
+  // A newer switch can land while this request is in flight; a late response
+  // must never paint one project's conversations under another.
+  if (state.activeProjectId !== projectId) return;
   state.sessions = body.sessions;
   if (shouldRender) renderProjects();
   renderSessions();
@@ -2594,10 +2622,10 @@ function handleSocketMessage(payload) {
   }
   if (payload.type === "assistantError") {
     clearThinkingBubble();
-    appendMessage("tool", `Pi error: ${payload.error}`);
+    appendMessage("tool", `${state.engine === "claude" ? "Claude" : "Pi"} error: ${payload.error}`);
   }
   if (payload.type === "agent_start") {
-    setStatus("Pi is working", true);
+    setStatus(`${state.engine === "claude" ? "Claude" : "Pi"} is working`, true);
     state.lastTurnStartedAt = Date.now();
     state.sessionBusy = true;
     syncSafeguardsButton();
@@ -2636,11 +2664,15 @@ function handleSocketMessage(payload) {
 }
 
 async function refreshSessionsQuietly() {
-  if (!state.activeProjectId || state.sessionsRefreshing) return;
+  const projectId = state.activeProjectId;
+  if (!projectId || state.sessionsRefreshing) return;
   state.sessionsRefreshing = true;
   const previousStates = new Map(state.sessions.map((session) => [session.path, session.reviewState]));
   try {
-    const body = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions`);
+    const body = await api(`/api/projects/${encodeURIComponent(projectId)}/sessions`);
+    // The active project can change mid-request; a late response must not
+    // overwrite the newly selected project's conversations.
+    if (state.activeProjectId !== projectId) return;
     const newlyNeedsReview = body.sessions.some((session) => session.reviewState === "needs_review" && previousStates.get(session.path) !== "needs_review");
     state.sessions = body.sessions;
     if (newlyNeedsReview) playCompletionSound().catch((error) => console.warn("Completion sound failed", error));
@@ -2703,13 +2735,17 @@ function focusTaskCard(taskId) {
 }
 
 async function loadTasks() {
-  if (!state.activeProjectId) {
+  const projectId = state.activeProjectId;
+  if (!projectId) {
     state.tasks = [];
     renderBoardView();
     return;
   }
   try {
-    const body = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/tasks`);
+    const body = await api(`/api/projects/${encodeURIComponent(projectId)}/tasks`);
+    // The active project can change mid-request; a late response must not
+    // show one project's tasks on another project's board.
+    if (state.activeProjectId !== projectId) return;
     state.tasks = body.tasks;
     const activeTask = state.tasks.find((task) => task.id === state.activeTaskId);
     if (activeTask) state.activeNodeId = activeTask.currentNodeId;
@@ -3024,6 +3060,7 @@ for (const button of elements.chatFilters.querySelectorAll("button[data-filter]"
     renderSessions();
   });
 }
+elements.markAllReviewedButton.addEventListener("click", () => { void markAllSessionsReviewed(); });
 elements.cancelTaskButton.addEventListener("click", () => elements.taskDialog.close());
 elements.taskForm.addEventListener("submit", async (event) => {
   event.preventDefault();
