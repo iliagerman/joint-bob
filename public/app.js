@@ -9,6 +9,7 @@ const state = {
   pinnedProjectIds: [],
   pinnedSessionPaths: [],
   projectsLoading: true,
+  projectsRefreshing: false,
   sessionsLoading: false,
   sessionsRefreshing: false,
   projectSyncTimer: null,
@@ -109,6 +110,7 @@ const elements = {
   modelButton: document.querySelector("#modelButton"),
   safeguardsButton: document.querySelector("#safeguardsButton"),
   transferSessionButton: document.querySelector("#transferSessionButton"),
+  openTerminalButton: document.querySelector("#openTerminalButton"),
   sessionTransferDialog: document.querySelector("#sessionTransferDialog"),
   sessionTransferForm: document.querySelector("#sessionTransferForm"),
   sessionTransferNodeSelect: document.querySelector("#sessionTransferNodeSelect"),
@@ -1569,8 +1571,8 @@ function renderSessions() {
   const project = selectedProject();
   elements.projectName.textContent = project?.name || "No project selected";
   elements.projectPath.textContent = project?.path || "Create or select a local folder.";
-  elements.newSessionButton.disabled = !project;
-  elements.newClaudeSessionButton.disabled = !project;
+  elements.newSessionButton.disabled = !project || !state.sessionNodes.length;
+  elements.newClaudeSessionButton.disabled = !project || !state.sessionNodes.length;
   updateChatFilterCounts();
 
   if (!project || state.sessionsLoading) return;
@@ -2153,6 +2155,11 @@ function renderChatSessionControls() {
     ? Boolean(activeTask.sessionPath && activeTask.executionState === "idle" && ticketDestinations?.length)
     : Boolean(selectedSession && state.engine === "pi" && socketOpen() && destinations.length);
   elements.transferSessionButton.disabled = !transferable;
+  const terminalNode = state.sessionNodes.find((node) => node.id === state.activeNodeId);
+  elements.openTerminalButton.disabled = !state.activeProjectId || !terminalNode?.online || !terminalNode.mapped;
+  elements.openTerminalButton.title = terminalNode
+    ? `Open the project folder in Terminal on ${terminalNode.name}`
+    : "Select an execution node first";
   elements.transferSessionButton.title = activeTask
     ? !activeTask.sessionPath
       ? "Send a message first, then continue this ticket on another node"
@@ -2228,21 +2235,26 @@ async function loadHarnesses() {
 
 async function loadSessionNodes(projectId) {
   const body = await api(`/api/projects/${encodeURIComponent(projectId)}/session-nodes`);
+  if (state.activeProjectId !== projectId) return;
   state.sessionNodes = body.nodes;
   const previousNodeId = state.activeNodeId;
   const selected = state.sessionNodes.find((node) => node.id === state.activeNodeId && node.online && node.mapped)
     || state.sessionNodes.find((node) => node.local);
   state.activeNodeId = selected?.id || null;
   if (state.preferencesLoaded && state.activeNodeId !== previousNodeId) savePreferencesInBackground({ activeNodeId: state.activeNodeId });
-  renderChatSessionControls();
+  renderSessions();
 }
 
 async function refreshProjectsQuietly() {
+  if (state.projectsRefreshing) return;
+  state.projectsRefreshing = true;
   try {
     state.projects = (await api("/api/projects")).projects;
     renderProjects();
   } catch (error) {
     console.warn("Could not refresh project sync status", error);
+  } finally {
+    state.projectsRefreshing = false;
   }
 }
 
@@ -2254,15 +2266,12 @@ function startProjectSyncPolling() {
 async function loadProjects() {
   setListLoading("projects", true);
   try {
-    const [, , body] = await Promise.all([
-      loadModels().catch((error) => console.warn("Could not load models", error)),
-      loadHarnesses().catch((error) => console.warn("Could not load harnesses", error)),
-      api("/api/projects"),
-    ]);
+    const body = await api("/api/projects?syncStatus=false");
     state.projects = body.projects;
   } finally {
     setListLoading("projects", false);
   }
+  void loadHarnesses().catch((error) => console.warn("Could not load harnesses", error));
 
   if (state.initialProjectId) state.activeProjectId = state.initialProjectId;
   if (state.initialSessionPath) state.activeSessionPath = state.initialSessionPath;
@@ -2275,6 +2284,7 @@ async function loadProjects() {
   }
 
   renderProjects();
+  void refreshProjectsQuietly();
   if (!state.activeProjectId) {
     setMobileView("projects");
     return;
@@ -2308,15 +2318,14 @@ async function selectProject(projectId, shouldRender = true, preserveSession = f
   clearAttachments();
   setComposerEnabled(false);
   elements.sessionTitle.textContent = "Select a conversation";
+  state.sessionNodes = [];
   setListLoading("sessions", true);
   renderSessions();
   setMobileView("sessions");
+  void loadSessionNodes(projectId).catch((error) => toast(error.message, 8000));
   let body;
   try {
-    [body] = await Promise.all([
-      api(`/api/projects/${encodeURIComponent(projectId)}/sessions`),
-      loadSessionNodes(projectId),
-    ]);
+    body = await api(`/api/projects/${encodeURIComponent(projectId)}/sessions`);
   } finally {
     setListLoading("sessions", false);
   }
@@ -3259,6 +3268,21 @@ function activeChatSession() {
   return state.sessions.find((session) => state.activeSessionId ? session.id === state.activeSessionId : session.path === state.activeSessionPath);
 }
 
+async function openProjectTerminal() {
+  if (!state.activeProjectId || !state.activeNodeId) throw new Error("Select a project and execution node first");
+  const node = state.sessionNodes.find((candidate) => candidate.id === state.activeNodeId);
+  elements.openTerminalButton.disabled = true;
+  try {
+    await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/terminal`, {
+      method: "POST",
+      body: JSON.stringify({ nodeId: state.activeNodeId }),
+    });
+    toast(`Opened Terminal on ${node?.name || "the selected node"}`);
+  } finally {
+    renderChatSessionControls();
+  }
+}
+
 async function openSessionTransferDialog() {
   const task = state.activeTaskId ? state.tasks.find((candidate) => candidate.id === state.activeTaskId) : null;
   if (state.activeTaskId && !task) throw new Error("Active ticket was not found");
@@ -3389,8 +3413,12 @@ elements.chatHarnessSelect.addEventListener("change", () => {
   const harness = state.harnesses.find((candidate) => candidate.id === elements.chatHarnessSelect.value);
   if (!harness || harness.id === state.engine) return;
   state.activeTaskId = null;
+  state.engine = harness.id;
+  state.activeSessionPath = harness.newSessionPath;
+  state.activeSessionId = null;
+  if (state.preferencesLoaded) savePreferencesInBackground({ activeSessionPath: state.activeSessionPath, activeSessionId: null });
+  syncEngineUI();
   if (!sendSocket({ type: "setEngine", engine: harness.id })) {
-    state.activeSessionId = null;
     openSession(harness.newSessionPath, `New ${harness.label} conversation`);
   }
 });
@@ -3419,6 +3447,7 @@ elements.safeguardsButton.addEventListener("click", () => {
   syncSafeguardsButton();
 });
 elements.transferSessionButton.addEventListener("click", () => openSessionTransferDialog().catch((error) => toast(error.message, 8000)));
+elements.openTerminalButton.addEventListener("click", () => openProjectTerminal().catch((error) => toast(error.message, 8000)));
 elements.cancelSessionTransferButton.addEventListener("click", () => elements.sessionTransferDialog.close());
 elements.sessionTransferForm.addEventListener("submit", transferActiveSession);
 elements.closeModelDialogButton.addEventListener("click", () => elements.modelDialog.close());

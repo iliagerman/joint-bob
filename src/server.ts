@@ -45,6 +45,7 @@ import { PROJECT_COLORS } from "./types.js";
 import type { ChatMessage, ProjectRecord, ProjectSyncStatus, ProjectView, SessionStatus, TaskPhase, TaskPhaseConfig, TaskRecord } from "./types.js";
 import { webSocketCloseReason } from "./websocket.js";
 import { resolveLocalSessionPath } from "./session-paths.js";
+import { openTerminal, TerminalLaunchError } from "./terminal.js";
 
 type PiSessionHandle = Awaited<ReturnType<typeof createPiSession>>;
 
@@ -99,6 +100,7 @@ const machineRoutes = new Set([
   "POST /cluster/membership/sync",
   "POST /cluster/projects/import",
   "POST /cluster/projects/map",
+  "POST /cluster/projects/terminal",
   "GET /cluster/filesystem/directories",
   "POST /cluster/sync/share",
   "POST /cluster/sessions/receive",
@@ -159,6 +161,22 @@ const projectSchema = z.object({
   .refine((payload) => !payload.sourcePath || payload.importMode, { message: "Choose how to import the project", path: ["importMode"] });
 const projectPathMappingSchema = z.object({
   macPath: absolutePathSchema,
+});
+const projectListQuerySchema = z.object({
+  syncStatus: z.enum(["true", "false"]).optional().default("true"),
+});
+const projectTerminalSchema = z.object({
+  nodeId: z.string().uuid(),
+});
+const clusterProjectTerminalSchema = z.object({
+  projectId: z.string().min(1).max(120),
+});
+const terminalOpenResponseSchema = z.object({
+  opened: z.literal(true),
+  nodeId: z.string().uuid(),
+});
+const terminalErrorResponseSchema = z.object({
+  error: z.string(),
 });
 const clusterNodeSchema = z.object({
   name: z.string().trim().min(1).max(80),
@@ -526,10 +544,10 @@ function projectWithLocalLocation(project: ProjectRecord, nodeId: string): Proje
   return { ...project, locations: [...locations.values()].sort((left, right) => left.nodeId.localeCompare(right.nodeId)) };
 }
 
-async function fetchPeerInventory(peer: ClusterPeer): Promise<PeerInventory> {
+async function fetchPeerInventory(peer: ClusterPeer, timeoutMs = 10_000): Promise<PeerInventory> {
   const response = await fetch(`${peer.url}/api/cluster/local-inventory`, {
     headers: peer.token ? { Authorization: `Bearer ${peer.token}` } : {},
-    signal: AbortSignal.timeout(10_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) throw new Error(`Peer returned ${response.status}`);
   const inventory = await response.json() as PeerInventory;
@@ -1645,18 +1663,27 @@ app.delete("/api/github-auth/groups/:groupId", async (request, response, next) =
   }
 });
 
-function unavailableProjectStatus(): ProjectSyncStatus {
-  return { state: "unavailable", remainingFiles: 0, remainingBytes: 0, message: "No Syncthing folder is configured" };
+function unavailableProjectStatus(message = "No Syncthing folder is configured"): ProjectSyncStatus {
+  return { state: "unavailable", remainingFiles: 0, remainingBytes: 0, message };
 }
 
-async function projectsWithSharedNames(): Promise<ProjectView[]> {
+async function projectsWithSharedNames(includeSyncStatus = true): Promise<ProjectView[]> {
   const [projects, overrides] = await Promise.all([listProjects(), projectNameOverrides()]);
-  const statuses = await syncthingFolderStatuses(projects.flatMap((project) => project.syncFolderId ? [project.syncFolderId] : []));
+  const statuses = includeSyncStatus
+    ? await syncthingFolderStatuses(projects.flatMap((project) => project.syncFolderId ? [project.syncFolderId] : []))
+    : {};
   return projects.map((project) => ({
     ...project,
     name: overrides[project.id] ?? project.name,
-    syncStatus: project.syncFolderId ? statuses[project.syncFolderId] ?? unavailableProjectStatus() : unavailableProjectStatus(),
+    syncStatus: project.syncFolderId
+      ? statuses[project.syncFolderId] ?? unavailableProjectStatus("Loading sync status")
+      : unavailableProjectStatus(),
   }));
+}
+
+async function openProjectTerminal(project: ProjectRecord): Promise<{ opened: true; nodeId: string }> {
+  await openTerminal(project.path);
+  return { opened: true, nodeId: (await getClusterNode()).id };
 }
 
 async function projectView(project: ProjectRecord): Promise<ProjectView> {
@@ -1762,9 +1789,10 @@ app.delete("/api/project-types/:typeId", async (request, response, next) => {
   }
 });
 
-app.get("/api/projects", async (_request, response, next) => {
+app.get("/api/projects", async (request, response, next) => {
   try {
-    response.json({ projects: await projectsWithSharedNames() });
+    const query = projectListQuerySchema.parse(request.query);
+    response.json({ projects: await projectsWithSharedNames(query.syncStatus === "true") });
   } catch (error) {
     next(error);
   }
@@ -1779,6 +1807,51 @@ app.get("/api/projects/:projectId", async (request, response, next) => {
     }
     response.json({ project: await projectView(project) });
   } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/cluster/projects/terminal", async (request, response, next) => {
+  try {
+    const payload = clusterProjectTerminalSchema.parse(request.body);
+    const project = await getProject(payload.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    response.json(await openProjectTerminal(project));
+  } catch (error) {
+    if (error instanceof TerminalLaunchError) { sendError(response, 409, error.message); return; }
+    next(error);
+  }
+});
+
+app.post("/api/projects/:projectId/terminal", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    const payload = projectTerminalSchema.parse(request.body);
+    const local = await getClusterNode();
+    if (payload.nodeId === local.id) {
+      response.json(await openProjectTerminal(project));
+      return;
+    }
+    const peer = await getClusterPeer(payload.nodeId);
+    if (!peer) { sendError(response, 404, "Execution node not found"); return; }
+    const peerResponse = await fetch(`${peer.url}/api/cluster/projects/terminal`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId: project.id }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const result: unknown = await peerResponse.json();
+    if (!peerResponse.ok) {
+      const parsed = terminalErrorResponseSchema.safeParse(result);
+      sendError(response, peerResponse.status, parsed.success ? parsed.data.error : "Could not open terminal on execution node");
+      return;
+    }
+    const opened = terminalOpenResponseSchema.parse(result);
+    if (opened.nodeId !== peer.id) { sendError(response, 502, "Execution node returned the wrong identity"); return; }
+    response.json(opened);
+  } catch (error) {
+    if (error instanceof TerminalLaunchError) { sendError(response, 409, error.message); return; }
     next(error);
   }
 });
@@ -1954,19 +2027,16 @@ app.get("/api/projects/:projectId/session-nodes", async (request, response, next
     const project = await getProject(request.params.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
     const local = await getClusterNode();
-    const nodes: Array<{ id: string; name: string; local: boolean; online: boolean; mapped: boolean }> = [
-      { id: local.id, name: local.name, local: true, online: true, mapped: true },
-    ];
-    for (const peer of await listClusterPeers()) {
+    const peerNodes = await Promise.all((await listClusterPeers()).map(async (peer) => {
       try {
-        const inventory = await fetchPeerInventory(peer);
+        const inventory = await fetchPeerInventory(peer, 3_000);
         const mapped = inventory.projects.some((entry) => entry.project.id === project.id || entry.aliases?.includes(project.id) || Boolean(project.syncFolderId && entry.project.syncFolderId === project.syncFolderId));
-        nodes.push({ id: peer.id, name: peer.name, local: false, online: true, mapped });
+        return { id: peer.id, name: peer.name, local: false, online: true, mapped };
       } catch {
-        nodes.push({ id: peer.id, name: peer.name, local: false, online: false, mapped: false });
+        return { id: peer.id, name: peer.name, local: false, online: false, mapped: false };
       }
-    }
-    response.json({ nodes });
+    }));
+    response.json({ nodes: [{ id: local.id, name: local.name, local: true, online: true, mapped: true }, ...peerNodes] });
   } catch (error) {
     next(error);
   }
