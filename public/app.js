@@ -51,6 +51,8 @@ const state = {
   models: [],
   activeModelKey: "",
   activeModelLabel: "",
+  thinkingLevel: "off",
+  availableThinkingLevels: [],
   claudeEffort: "default",
   attachments: [],
   installPromptEvent: null,
@@ -125,7 +127,9 @@ const elements = {
   modelDialog: document.querySelector("#modelDialog"),
   modelDialogTitle: document.querySelector("#modelDialogTitle"),
   modelDialogList: document.querySelector("#modelDialogList"),
-  modelDialogEffort: document.querySelector("#modelDialogEffort"),
+  modelDialogReasoning: document.querySelector("#modelDialogReasoning"),
+  modelDialogReasoningLabel: document.querySelector("#modelDialogReasoningLabel"),
+  reasoningLevelSelect: document.querySelector("#reasoningLevelSelect"),
   closeModelDialogButton: document.querySelector("#closeModelDialogButton"),
   installAppButton: document.querySelector("#installAppButton"),
   notifyButton: document.querySelector("#notifyButton"),
@@ -238,10 +242,10 @@ const elements = {
   taskBacklinkButton: document.querySelector("#taskBacklinkButton"),
   openBoardButton: document.querySelector("#openBoardButton"),
   chatToolbar: document.querySelector("#chatToolbar"),
+  chatMoreMenu: document.querySelector("#chatMoreMenu"),
   chatNodeSelect: document.querySelector("#chatNodeSelect"),
   chatHarnessSelect: document.querySelector("#chatHarnessSelect"),
   newClaudeSessionButton: document.querySelector("#newClaudeSessionButton"),
-  claudeEffortSelect: document.querySelector("#claudeEffortSelect"),
   chatsLiveDot: document.querySelector("#chatsLiveDot"),
   boardColumns: document.querySelector("#boardColumns"),
   boardProjectName: document.querySelector("#boardProjectName"),
@@ -1914,7 +1918,8 @@ function syncModelButton() {
     if (name) label = `${name}${effort}`;
   } else {
     const active = state.models.find((model) => `${model.provider}/${model.id}` === state.activeModelKey);
-    label = active ? active.label : state.activeModelLabel || "Model";
+    const name = active ? active.label : state.activeModelLabel || "Model";
+    label = state.thinkingLevel !== "off" ? `${name} · ${state.thinkingLevel}` : name;
   }
   elements.modelButton.textContent = label;
   elements.modelButton.classList.toggle("claude", isClaude);
@@ -2014,10 +2019,24 @@ async function openSkillsDialog() {
   }
 }
 
+function renderReasoningOptions() {
+  const isClaude = state.engine === "claude";
+  elements.modelDialogReasoningLabel.textContent = isClaude ? "Reasoning effort" : "Thinking level";
+  elements.reasoningLevelSelect.replaceChildren();
+  for (const level of state.availableThinkingLevels) {
+    const option = document.createElement("option");
+    option.value = level;
+    option.textContent = `${isClaude ? "Effort" : "Thinking"}: ${level}`;
+    elements.reasoningLevelSelect.append(option);
+  }
+  elements.reasoningLevelSelect.value = state.thinkingLevel;
+  elements.modelDialogReasoning.hidden = state.availableThinkingLevels.length === 0;
+}
+
 function renderModelDialog() {
   const isClaude = state.engine === "claude";
+  renderReasoningOptions();
   elements.modelDialogTitle.textContent = isClaude ? "Claude model" : "Pi model";
-  elements.modelDialogEffort.hidden = !isClaude;
   elements.modelDialogList.classList.toggle("claude", isClaude);
   elements.modelDialogList.replaceChildren();
   if (isClaude) {
@@ -2071,6 +2090,7 @@ function setComposerEnabled(enabled) {
   elements.attachmentInput.disabled = !enabled;
   elements.renameSessionButton.disabled = !enabled;
   elements.modelButton.disabled = !enabled;
+  elements.reasoningLevelSelect.disabled = !enabled;
   syncSafeguardsButton();
 }
 
@@ -2156,14 +2176,11 @@ function syncEngineUI() {
   syncSafeguardsButton();
 }
 
-function syncClaudeControls(status) {
-  if (!status?.model || status.model.provider !== "claude") return;
-  const effort = status.thinkingLevel || "default";
-  state.claudeEffort = effort;
-  if ([...elements.claudeEffortSelect.options].some((option) => option.value === effort)) {
-    elements.claudeEffortSelect.value = effort;
-  }
-  syncModelButton();
+function syncReasoningControls(status) {
+  state.thinkingLevel = status.thinkingLevel || (state.engine === "claude" ? "default" : "off");
+  Object.assign(state, { availableThinkingLevels: status.availableThinkingLevels || [] });
+  if (state.engine === "claude") state.claudeEffort = state.thinkingLevel;
+  if (elements.modelDialog.open) renderReasoningOptions();
 }
 
 function updateStatus(status) {
@@ -2180,8 +2197,8 @@ function updateStatus(status) {
   if (status.sessionName) elements.sessionTitle.textContent = status.sessionName;
   state.activeModelKey = status.model ? `${status.model.provider}/${status.model.id}` : "";
   state.activeModelLabel = status.model ? status.model.label : "";
+  syncReasoningControls(status);
   syncModelButton();
-  syncClaudeControls(status);
   syncSafeguardsButton();
 }
 
@@ -3405,8 +3422,18 @@ elements.transferSessionButton.addEventListener("click", () => openSessionTransf
 elements.cancelSessionTransferButton.addEventListener("click", () => elements.sessionTransferDialog.close());
 elements.sessionTransferForm.addEventListener("submit", transferActiveSession);
 elements.closeModelDialogButton.addEventListener("click", () => elements.modelDialog.close());
-elements.claudeEffortSelect.addEventListener("change", () => {
-  if (!sendSocket({ type: "setEffort", effort: elements.claudeEffortSelect.value })) toast("Not connected");
+elements.reasoningLevelSelect.addEventListener("change", () => {
+  const selectedLevel = elements.reasoningLevelSelect.value;
+  const sent = state.engine === "claude"
+    ? sendSocket({ type: "setEffort", effort: selectedLevel })
+    : sendSocket({ type: "setThinking", level: selectedLevel });
+  if (!sent) toast("Not connected");
+});
+elements.chatMoreMenu.addEventListener("click", (event) => {
+  if (event.target instanceof Element && event.target.closest("button")) elements.chatMoreMenu.removeAttribute("open");
+});
+document.addEventListener("click", (event) => {
+  if (event.target instanceof Node && !elements.chatMoreMenu.contains(event.target)) elements.chatMoreMenu.removeAttribute("open");
 });
 elements.composer.addEventListener("submit", (event) => {
   event.preventDefault();

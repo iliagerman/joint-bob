@@ -139,11 +139,16 @@
             <span>Model</span>
             <button class="ghost compact model-button" id="modelButton" type="button" disabled data-testid="chat-model-button">Model</button>
           </div>
-          <button class="ghost compact safeguards-button" id="safeguardsButton" type="button" aria-pressed="true" title="Safe Guard checks are active for this Pi session" disabled data-testid="chat-safeguards-button">Safeguards on</button>
-          <button class="ghost compact transfer-session-button" id="transferSessionButton" type="button" disabled data-testid="chat-transfer-button">Continue on…</button>
-          <button class="ghost compact" id="notifyButton" type="button" aria-pressed="false" title="Notify when an agent finishes" data-testid="chat-notify-button">Notify</button>
-          <button class="ghost compact" id="renameSessionButton" type="button" disabled data-testid="chat-rename-button">Rename</button>
-          <button class="ghost compact" id="installAppButton" type="button" hidden data-testid="chat-install-button">Install</button>
+          <details class="chat-more" id="chatMoreMenu">
+            <summary class="ghost compact" aria-label="More chat actions" data-testid="chat-more-button">More</summary>
+            <div class="chat-more-actions">
+              <button class="ghost compact safeguards-button" id="safeguardsButton" type="button" aria-pressed="true" title="Safe Guard checks are active for this Pi session" disabled data-testid="chat-safeguards-button">Safeguards on</button>
+              <button class="ghost compact transfer-session-button" id="transferSessionButton" type="button" disabled data-testid="chat-transfer-button">Continue on…</button>
+              <button class="ghost compact" id="notifyButton" type="button" aria-pressed="false" title="Notify when an agent finishes" data-testid="chat-notify-button">Notify</button>
+              <button class="ghost compact" id="renameSessionButton" type="button" disabled data-testid="chat-rename-button">Rename</button>
+              <button class="ghost compact" id="installAppButton" type="button" hidden data-testid="chat-install-button">Install</button>
+            </div>
+          </details>
         </div>
 
         <section class="messages" id="messages" aria-live="polite">
@@ -470,16 +475,9 @@
           <h2 id="modelDialogTitle">Choose model</h2>
         </div>
         <div class="model-dialog-list" id="modelDialogList"></div>
-        <label class="model-dialog-effort" id="modelDialogEffort" hidden>
-          Reasoning effort
-          <select id="claudeEffortSelect" class="effort-select" aria-label="Claude effort level" data-testid="chat-claude-effort-select">
-            <option value="default">Effort: default</option>
-            <option value="low">Effort: low</option>
-            <option value="medium">Effort: medium</option>
-            <option value="high">Effort: high</option>
-            <option value="xhigh">Effort: xhigh</option>
-            <option value="max">Effort: max</option>
-          </select>
+        <label class="model-dialog-effort" id="modelDialogReasoning" hidden>
+          <span id="modelDialogReasoningLabel">Reasoning effort</span>
+          <select id="reasoningLevelSelect" class="effort-select" aria-labelledby="modelDialogReasoningLabel" data-testid="chat-reasoning-select"></select>
         </label>
         <div class="dialog-actions">
           <button class="ghost" type="button" id="closeModelDialogButton" data-testid="model-dialog-close-button">Close</button>
