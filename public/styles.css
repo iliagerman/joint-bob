@@ -928,6 +928,7 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
 .command-strip button { flex: 0 0 auto; min-height: 26px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; padding: 0 9px; font-family: var(--mono); font-size: 11px; font-weight: 500; }
 .command-strip button:hover { color: var(--text); background: var(--field); }
 .composer { display: grid; gap: 6px; padding: 8px 12px 14px; background: var(--header); }
+.composer.dragging { outline: 2px dashed var(--accent); outline-offset: -4px; }
 .composer-row { width: 100%; max-width: 1100px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; }
 .attachment-list { display: flex; gap: 8px; flex-wrap: wrap; }
 .attachment-list:empty { display: none; }
@@ -1225,6 +1226,7 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   .search-shell input, input, select { font-size: 16px; }
   .project-list .list-row:not(.active) .row-action-button,
   .session-list .list-row:not(.active) .row-action-button { display: none; }
+  .list-row.active :is(.project-card, .session-card).pinned strong::after { content: none; }
 
 }
 
@@ -1278,6 +1280,8 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   font-size: 9px;
   vertical-align: 1px;
 }
+/* The pin button is the live control; the inline marker only stands in while it is hidden. */
+.list-row:is(:hover, :focus-within) :is(.project-card, .session-card).pinned strong::after { content: none; }
 
 /* ---- Skills browser ---- */
 .skills-dialog-list { display: grid; gap: 4px; min-width: 0; max-height: 52dvh; overflow-y: auto; }
@@ -1339,5 +1343,6 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 [data-color="red"] { --project-hue: #e05c4b; }
 
 /* The accent bar makes a project findable by colour before the name is read. */
-.project-card[data-color] { box-shadow: inset 3px 0 0 var(--project-hue); border-radius: 3px var(--radius-ctl) var(--radius-ctl) 3px; }
-.project-card[data-color].active { box-shadow: inset 3px 0 0 var(--project-hue), var(--raise); }
+.project-card[data-color] { box-shadow: inset 3px 0 0 var(--project-hue); border-radius: 3px var(--radius-ctl) var(--radius-ctl) 3px; background: color-mix(in srgb, var(--project-hue) 12%, transparent); }
+.project-card[data-color]:hover { background: color-mix(in srgb, var(--project-hue) 22%, var(--field)); }
+.project-card[data-color].active { box-shadow: inset 3px 0 0 var(--project-hue), var(--raise); background: color-mix(in srgb, var(--project-hue) 18%, var(--surface)); }

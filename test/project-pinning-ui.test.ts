@@ -23,6 +23,11 @@ test("projects and conversations can be pinned to the top of their list", async 
   assert.doesNotMatch(app, /\.setItem\(/);
 
   assert.match(styles, /\.pin-button\.pinned/);
+
+  // The inline pin marker stands in only while the pin button is hidden; when the
+  // button is on screen the marker is suppressed so the row shows exactly one pin.
+  assert.match(styles, /\.list-row:is\(:hover, :focus-within\) :is\(\.project-card, \.session-card\)\.pinned strong::after \{ content: none; \}/);
+  assert.match(styles, /\.list-row\.active :is\(\.project-card, \.session-card\)\.pinned strong::after \{ content: none; \}/);
 });
 
 test("a pinned conversation survives the recency cap on the session list", async () => {

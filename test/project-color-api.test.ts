@@ -56,4 +56,9 @@ test("the project editor offers the fixed colour palette", async () => {
   assert.match(app, /row\.dataset\.color/);
   assert.match(styles, /\[data-color="teal"\] \{ --project-hue/);
   assert.match(styles, /\.project-card\[data-color\] \{ box-shadow: inset 3px 0 0 var\(--project-hue\)/);
+
+  // A colour change has to be visible across the whole row, not just the accent sliver.
+  assert.match(styles, /\.project-card\[data-color\][^\n]*background: color-mix\(in srgb, var\(--project-hue\)/);
+  assert.match(styles, /\.project-card\[data-color\]:hover \{ background: color-mix\(in srgb, var\(--project-hue\)/);
+  assert.match(styles, /\.project-card\[data-color\]\.active \{[^\n]*background: color-mix\(in srgb, var\(--project-hue\)/);
 });
