@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import path, { basename } from "node:path";
 import {
   createAgentSession,
@@ -227,10 +227,44 @@ function piSessionDirectories(cwd: string): Array<string | undefined> {
   return [root, path.join(root, safeCwd)];
 }
 
+interface PiSessionListCacheEntry {
+  fingerprint: string;
+  sessions: unknown[];
+}
+
+const piSessionListCache = new Map<string, PiSessionListCacheEntry>();
+
+// Filesystem boundary: a session directory for a cwd that has never been used
+// does not exist, and a transcript can be removed between readdir and stat.
+// Both mean "no usable fingerprint", which forces a fresh listing.
+async function sessionDirectoryFingerprint(directory: string): Promise<string> {
+  try {
+    const names = (await readdir(directory)).filter((name) => name.endsWith(".jsonl")).sort();
+    const parts = await Promise.all(names.map(async (name) => {
+      const info = await stat(path.join(directory, name));
+      return `${name}:${info.mtimeMs}:${info.size}`;
+    }));
+    return parts.join("|");
+  } catch {
+    return "";
+  }
+}
+
+async function listSessionsForDirectory(cwd: string, sessionDirectory: string | undefined): Promise<unknown[]> {
+  if (!sessionDirectory) return await SessionManager.list(cwd, sessionDirectory) as unknown[];
+  const key = JSON.stringify([cwd, sessionDirectory]);
+  const fingerprint = await sessionDirectoryFingerprint(sessionDirectory);
+  const cached = piSessionListCache.get(key);
+  if (cached && cached.fingerprint === fingerprint) return cached.sessions;
+  const sessions = await SessionManager.list(cwd, sessionDirectory) as unknown[];
+  piSessionListCache.set(key, { fingerprint, sessions });
+  return sessions;
+}
+
 async function sessionsForCwd(cwd: string): Promise<unknown[]> {
   const results = await Promise.all(piSessionDirectories(cwd).map(async (sessionDirectory) => {
     try {
-      return await SessionManager.list(cwd, sessionDirectory) as unknown[];
+      return await listSessionsForDirectory(cwd, sessionDirectory);
     } catch (error) {
       console.warn(`Could not list Pi sessions for ${cwd}`, error);
       return [];

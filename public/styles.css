@@ -839,7 +839,7 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
   .reconnect-dots i, .chat-badge-active .chat-status-dot { animation: none; opacity: 0.8; }
 }
 
-.message { flex: 0 0 auto; max-width: 94%; border: 1px solid var(--line); border-radius: var(--radius-card); padding: 10px 13px; font-size: var(--read); line-height: var(--read-leading); animation: message-in 260ms cubic-bezier(0.22, 0.9, 0.28, 1) both; }
+.message { flex: 0 0 auto; max-width: 94%; border: 1px solid var(--line); border-radius: var(--radius-card); padding: 10px 13px; font-size: var(--read); line-height: var(--read-leading); animation: message-in 260ms cubic-bezier(0.22, 0.9, 0.28, 1) both; content-visibility: auto; contain-intrinsic-size: auto 220px; }
 @keyframes message-in {
   from { opacity: 0; transform: translateY(8px) scale(0.995); }
   to { opacity: 1; transform: none; }

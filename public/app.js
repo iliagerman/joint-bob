@@ -2017,11 +2017,32 @@ function renderToolContent(container, text) {
 
 // Renders are coalesced with requestAnimationFrame so a burst of streaming
 // deltas costs at most one re-render per frame, regardless of bubble type.
-function renderBubbleContent(bubble, text) {
+// A full markdown re-render measures about 23 ms at 1 MB, longer than one
+// frame, so a long message updates on an interval instead of on every frame.
+const LARGE_MESSAGE_CHARS = 20000;
+const LARGE_MESSAGE_RENDER_MS = 250;
+
+function renderBubbleContent(bubble, text, flush = false) {
   bubble._raw = text;
   if (bubble._renderRaf) return;
+  const wait = flush || text.length <= LARGE_MESSAGE_CHARS
+    ? 0
+    : Math.max(0, LARGE_MESSAGE_RENDER_MS - (Date.now() - (bubble._lastRenderAt || 0)));
+  if (wait) {
+    if (bubble._renderTimer) return;
+    bubble._renderTimer = setTimeout(() => {
+      bubble._renderTimer = 0;
+      renderBubbleContent(bubble, bubble._raw);
+    }, wait);
+    return;
+  }
+  if (bubble._renderTimer) {
+    clearTimeout(bubble._renderTimer);
+    bubble._renderTimer = 0;
+  }
   bubble._renderRaf = requestAnimationFrame(() => {
     bubble._renderRaf = 0;
+    bubble._lastRenderAt = Date.now();
     const content = bubble.querySelector(".message-content") || bubble;
     const role = bubble.dataset.role;
     if (role === "assistant" || role === "user") renderMarkdown(content, bubble._raw);
@@ -2748,7 +2769,7 @@ function handleSocketMessage(payload) {
   if (payload.type === "assistantFinal") {
     clearThinkingBubble();
     if (!state.assistantBubble) appendMessage("assistant", payload.text);
-    else renderBubbleContent(state.assistantBubble, payload.text);
+    else renderBubbleContent(state.assistantBubble, payload.text, true);
     state.assistantBubble = null;
     return;
   }

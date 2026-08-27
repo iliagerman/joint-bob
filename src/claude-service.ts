@@ -106,6 +106,25 @@ interface ClaudeSessionFacts {
 
 const claudeSessionFactsCache = new Map<string, ClaudeSessionFacts>();
 
+// Reading every transcript in a directory at once peaked above 1 GB of
+// resident memory on a 340-file project, so listing reads a fixed number at
+// a time instead.
+const CLAUDE_LIST_CONCURRENCY = 8;
+
+async function mapWithConcurrency<T, R>(items: T[], limit: number, map: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      results[index] = await map(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 async function claudeSessionFacts(filePath: string, fileStat: Stats): Promise<ClaudeSessionFacts> {
   const cached = claudeSessionFactsCache.get(filePath);
   if (cached && cached.mtimeMs === fileStat.mtimeMs && cached.size === fileStat.size) return cached;
@@ -130,7 +149,7 @@ export async function listClaudeSessions(project: SessionProjectPaths): Promise<
       return [];
     }
   }))).flat();
-  const summaries = await Promise.all(files.map(async (filePath): Promise<SessionSummary | null> => {
+  const summaries = await mapWithConcurrency(files, CLAUDE_LIST_CONCURRENCY, async (filePath): Promise<SessionSummary | null> => {
     const fileStat = await stat(filePath);
     const facts = await claudeSessionFacts(filePath, fileStat);
     if (![...facts.cwds].some((cwd) => cwds.has(cwd))) return null;
@@ -144,7 +163,7 @@ export async function listClaudeSessions(project: SessionProjectPaths): Promise<
       updatedAt: fileStat.mtime.toISOString(),
       firstMessage: facts.title,
     };
-  }));
+  });
   return summaries.filter((summary): summary is SessionSummary => Boolean(summary));
 }
 
