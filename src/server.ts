@@ -15,7 +15,8 @@ import { getProjectLock, projectLocks, setProjectLock } from "./project-locks.js
 import { addProject, deleteProjectType, getProject, importProject, listProjects, listProjectTypes, projectAliasIds, ProjectTypeError, registerProjectAliases, removeProject, renameProject, saveProjectType, touchProject, updateProjectColor, updateProjectMacPath, updateProjectSyncFolderId, updateProjectTypeAndPath } from "./store.js";
 import { createClusterPeer, dueMembershipDeliveries, getClusterMachineToken, getClusterMembership, getClusterNode, getClusterPeer, listClusterPeers, markClusterPeerSeen, mergeClusterMembership, recordMembershipDelivered, recordMembershipFailure, removeClusterPeer, saveClusterPeer, updateClusterNode, type ClusterPeer } from "./cluster.js";
 import { eventsForPeer, receiveReplicationBatch, recordPeerFailure, recordPeerReceipt, type ReplicationBatch } from "./replication.js";
-import { deleteGitHubGroup, enqueueGitHubCredentialSync, ensureGitHubCredentialMigration, getGitHubAuthStatus, gitHubEnvironment, githubCredentialEventsForPeer, receiveGitHubCredentialEvents, recordGitHubCredentialFailure, recordGitHubCredentialReceipt, removeProjectGitHubAuth, saveGitHubGroup, updateProjectGitHubAuth, type GitHubCredentialEvent } from "./github-auth.js";
+import { deleteGitHubGroup, enqueueGitHubCredentialSync, ensureGitHubCredentialMigration, getGitHubAuthStatus, githubCredentialEventsForPeer, receiveGitHubCredentialEvents, recordGitHubCredentialFailure, recordGitHubCredentialReceipt, removeProjectGitHubAuth, saveGitHubGroup, updateProjectGitHubAuth, type GitHubCredentialEvent } from "./github-auth.js";
+import { agentCredentialContext, agentEnvironment, deleteSecretAccount, getScopeSecretAccounts, listSecretAccounts, saveSecretAccount, setScopeSecretAccounts } from "./secrets.js";
 import {
   createPiSession,
   eventPayload,
@@ -252,6 +253,10 @@ const projectGitHubAuthSchema = z.object({
   group: githubGroupIdSchema.nullable(),
   token: z.string().trim().min(1).max(500).nullable().optional(),
 });
+const secretVariableSchema = z.object({ name: z.string().trim().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), kind: z.enum(["value", "file"]), value: z.string().max(100000).optional() }).strict();
+const secretAccountSchema = z.object({ id: z.string().uuid().optional(), label: z.string().trim().min(1).max(64).refine((value) => !/[\x00-\x1f\x7f]/.test(value), "Secret account label cannot contain control characters"), provider: z.enum(["aws", "google", "custom"]), variables: z.array(secretVariableSchema).min(1).max(20) }).strict();
+const secretScopeParamsSchema = z.object({ scopeType: z.enum(["project", "project_type"]), scopeId: z.string().trim().min(1).max(300) });
+const secretScopeSchema = z.object({ accountIds: z.array(z.string().uuid()).max(100) }).strict();
 const taskStatusSchema = z.enum(["backlog", "planning", "in_progress", "review", "done"]);
 const taskEngineSchema = z.enum(["pi", "claude"]);
 const taskPhaseConfigSchema = z.object({
@@ -1798,6 +1803,25 @@ const projectTypeSchema = z.object({
   githubGroup: z.string().trim().max(64).nullable().optional(),
 });
 
+app.get("/api/secrets", async (_request, response, next) => {
+  try { response.json({ accounts: await listSecretAccounts() }); } catch (error) { next(error); }
+});
+app.post("/api/secrets/accounts", async (request, response, next) => {
+  try { const account = await saveSecretAccount(secretAccountSchema.omit({ id: true }).parse(request.body)); response.status(201).json({ accounts: await listSecretAccounts(), account }); } catch (error) { next(error); }
+});
+app.put("/api/secrets/accounts/:accountId", async (request, response, next) => {
+  try { const account = await saveSecretAccount({ ...secretAccountSchema.omit({ id: true }).parse(request.body), id: z.string().uuid().parse(request.params.accountId) }); response.json({ accounts: await listSecretAccounts(), account }); } catch (error) { next(error); }
+});
+app.delete("/api/secrets/accounts/:accountId", async (request, response, next) => {
+  try { await deleteSecretAccount(z.string().uuid().parse(request.params.accountId)); response.json({ accounts: await listSecretAccounts() }); } catch (error) { next(error); }
+});
+app.get("/api/secrets/scopes/:scopeType/:scopeId", async (request, response, next) => {
+  try { const scope = secretScopeParamsSchema.parse(request.params); response.json(await getScopeSecretAccounts(scope.scopeType, scope.scopeId)); } catch (error) { next(error); }
+});
+app.put("/api/secrets/scopes/:scopeType/:scopeId", async (request, response, next) => {
+  try { const scope = secretScopeParamsSchema.parse(request.params); const payload = secretScopeSchema.parse(request.body); await setScopeSecretAccounts(scope.scopeType, scope.scopeId, payload.accountIds); response.json(await getScopeSecretAccounts(scope.scopeType, scope.scopeId)); } catch (error) { next(error); }
+});
+
 app.get("/api/project-types", async (_request, response, next) => {
   try {
     response.json({ types: await listProjectTypes() });
@@ -2784,11 +2808,13 @@ async function startTaskRun(project: ProjectRecord, task: TaskRecord, requestedP
     const cwd = taskCwd(project, claimed);
     const prompt = await taskPromptText(project, claimed, phase, config.engine);
     if (config.engine === "claude") {
+      const resumeSessionId = task.sessionPath?.startsWith("claude:") ? path.basename(task.sessionPath.replace(/^claude:/, ""), ".jsonl") : undefined;
+      const claudePrompt = resumeSessionId ? prompt : [agentCredentialContext(project.id), prompt].filter(Boolean).join("\n\n");
       const run = runClaudePrompt({
         cwd,
-        prompt,
-        env: gitHubEnvironment(project.id),
-        resumeSessionId: task.sessionPath?.startsWith("claude:") ? path.basename(task.sessionPath.replace(/^claude:/, ""), ".jsonl") : undefined,
+        prompt: claudePrompt,
+        env: agentEnvironment(project.id),
+        resumeSessionId,
         model: config.modelId || undefined,
         effort: config.effort && config.effort !== "default" ? config.effort : undefined,
         onEvent: () => undefined,
@@ -3008,7 +3034,8 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
     send(connection.socket, payload);
   };
   onEvent({ type: "agent_start" });
-  const fullPrompt = connection.handoffContext ? `${connection.handoffContext}${promptText}` : promptText;
+  const basePrompt = connection.handoffContext ? `${connection.handoffContext}${promptText}` : promptText;
+  const fullPrompt = connection.claude.sessionId ? basePrompt : [agentCredentialContext(connection.project.id), basePrompt].filter(Boolean).join("\n\n");
   connection.handoffContext = null;
 
   const runningKeys = new Set<string>();
@@ -3049,7 +3076,7 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
     let run = runClaudePrompt({
       cwd: connection.cwd,
       prompt: fullPrompt,
-      env: gitHubEnvironment(connection.project.id),
+      env: agentEnvironment(connection.project.id),
       resumeSessionId: connection.claude.sessionId ?? undefined,
       ...runOptions,
       onEvent,
@@ -3065,7 +3092,8 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
       // the transcript so the conversation continues.
       connection.claude.sessionId = null;
       const seeded = `${buildHandoffContext(connection.claude.transcript.slice(0, -1))}${promptText}`;
-      run = runClaudePrompt({ cwd: connection.cwd, prompt: seeded, env: gitHubEnvironment(connection.project.id), ...runOptions, onEvent, onSessionId });
+      const freshPrompt = [agentCredentialContext(connection.project.id), seeded].filter(Boolean).join("\n\n");
+      run = runClaudePrompt({ cwd: connection.cwd, prompt: freshPrompt, env: agentEnvironment(connection.project.id), ...runOptions, onEvent, onSessionId });
       connection.claude.child = run.child;
       result = await run.done;
     }

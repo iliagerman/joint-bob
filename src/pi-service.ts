@@ -12,7 +12,7 @@ import {
   type AgentSession,
   type AgentSessionEvent,
 } from "@earendil-works/pi-coding-agent";
-import { gitHubEnvironment } from "./github-auth.js";
+import { agentCredentialContext, agentEnvironment } from "./secrets.js";
 import { sessionCwds, type SessionProjectPaths } from "./session-paths.js";
 import { getSettings } from "./settings.js";
 import type { ChatMessage, ModelSummary, SessionStatus, SessionSummary } from "./types.js";
@@ -303,31 +303,27 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
     : SessionManager.create(options.cwd, piSessionPath());
   const safeguardsEnabled = options.safeguardsEnabled ?? sessionSafeguardsEnabled(sessionManager);
   const bashTool = createBashTool(options.cwd, {
-    spawnHook: (context) => ({ ...context, env: { ...context.env, ...gitHubEnvironment(options.projectId) } }),
+    spawnHook: (context) => ({ ...context, env: { ...context.env, ...agentEnvironment(options.projectId) } }),
   });
-  const unsafeResources = !safeguardsEnabled
-    ? (() => {
-        const agentDir = getAgentDir();
-        const settingsManager = SettingsManager.create(options.cwd, agentDir);
-        const resourceLoader = new DefaultResourceLoader({
-          cwd: options.cwd,
-          agentDir,
-          settingsManager,
-          extensionsOverride: (base) => ({
-            ...base,
-            extensions: base.extensions.filter((extension) => !isPermissionSafeguardExtension(extension.resolvedPath)),
-          }),
-        });
-        return { agentDir, settingsManager, resourceLoader };
-      })()
-    : undefined;
-  if (unsafeResources) await unsafeResources.resourceLoader.reload();
+  const agentDir = getAgentDir();
+  const settingsManager = SettingsManager.create(options.cwd, agentDir);
+  const credentialContext = agentCredentialContext(options.projectId);
+  const resourceLoader = new DefaultResourceLoader({
+    cwd: options.cwd,
+    agentDir,
+    settingsManager,
+    ...(credentialContext ? { agentsFilesOverride: (current) => ({ agentsFiles: [...current.agentsFiles, { path: "/virtual/JOINT_BOB_CREDENTIALS.md", content: credentialContext }] }) } : {}),
+    ...(!safeguardsEnabled ? { extensionsOverride: (base) => ({ ...base, extensions: base.extensions.filter((extension) => !isPermissionSafeguardExtension(extension.resolvedPath)) }) } : {}),
+  });
+  await resourceLoader.reload();
   const result = await createAgentSession({
     cwd: options.cwd,
     sessionManager,
     modelRuntime,
     customTools: [bashTool],
-    ...unsafeResources,
+    agentDir,
+    settingsManager,
+    resourceLoader,
   });
   const session = result.session;
   if (isSupersededGlm(session.model)) {

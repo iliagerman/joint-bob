@@ -309,6 +309,21 @@ const elements = {
   loginPasswordInput: document.querySelector("#loginPasswordInput"),
   newPasswordLabel: document.querySelector("#newPasswordLabel"),
   newPasswordInput: document.querySelector("#newPasswordInput"),
+  secretAccountList: document.querySelector("#secretAccountList"),
+  secretAccountAddButton: document.querySelector("#secretAccountAddButton"),
+  secretAccountDialog: document.querySelector("#secretAccountDialog"),
+  secretAccountForm: document.querySelector("#secretAccountForm"),
+  secretAccountTitle: document.querySelector("#secretAccountTitle"),
+  secretAccountLabelInput: document.querySelector("#secretAccountLabelInput"),
+  secretAccountProviderInput: document.querySelector("#secretAccountProviderInput"),
+  secretVariableRows: document.querySelector("#secretVariableRows"),
+  secretVariableAddButton: document.querySelector("#secretVariableAddButton"),
+  secretAccountCancelButton: document.querySelector("#secretAccountCancelButton"),
+  secretScopeDialog: document.querySelector("#secretScopeDialog"),
+  secretScopeForm: document.querySelector("#secretScopeForm"),
+  secretScopeTitle: document.querySelector("#secretScopeTitle"),
+  secretScopeList: document.querySelector("#secretScopeList"),
+  secretScopeCancelButton: document.querySelector("#secretScopeCancelButton"),
   loginSubmitButton: document.querySelector("#loginSubmitButton"),
 };
 
@@ -563,7 +578,7 @@ function selectSettingsTab(name) {
 }
 
 async function openSettings(tab = "account") {
-  const [settings, authSessions] = await Promise.all([api("/api/settings"), api("/api/auth/sessions")]);
+  const [settings, authSessions] = await Promise.all([api("/api/settings"), api("/api/auth/sessions"), loadSecretAccounts()]);
   elements.settingsUsername.textContent = state.username;
   selectSettingsTab(tab);
   await Promise.all([loadGithubGroups(), loadClusterPanel()]);
@@ -1223,6 +1238,14 @@ function renderProjectTypes() {
     empty.className = "project-type-empty";
     empty.textContent = "No project types yet. Add one to choose where new projects land.";
     elements.projectTypeList.append(empty);
+    const secrets = document.createElement("button");
+    secrets.type = "button";
+    secrets.className = "ghost compact";
+    secrets.textContent = "Secrets";
+    secrets.dataset.testid = "project-type-secrets-button";
+    secrets.addEventListener("click", () => openSecretScope("project_type", type.id, type.label).catch((error) => toast(error.message)));
+    row.append(secrets);
+
     return;
   }
   for (const type of projectTypes) {
@@ -1600,6 +1623,11 @@ function projectMenuItems(project) {
       label: "Edit project",
       testid: "project-rename-button",
       onSelect: () => openProjectRename(project),
+    {
+      label: "Secret accounts",
+      testid: "project-secrets-button",
+      onSelect: () => openSecretScope("project", project.id, project.name).catch((error) => toast(error.message)),
+    },
     },
     {
       label: project.lock ? "Unlock from this node" : "Lock to this node",
@@ -4006,6 +4034,127 @@ window.addEventListener("online", () => {
   ensureWatchSocket();
 });
 window.addEventListener("focus", () => resumeConnection());
+
+// Generic secret accounts are deliberately node-local; only metadata is ever rendered.
+const secretAccounts = [];
+let editingSecretAccountId = null;
+let secretScopeTarget = null;
+
+function secretRow(variable = { name: "", kind: "value", configured: false }) {
+  const row = document.createElement("div");
+  row.className = "secret-variable-row";
+  const name = document.createElement("input");
+  name.placeholder = "ENV_NAME";
+  name.value = variable.name;
+  name.setAttribute("aria-label", "Environment variable name");
+  name.dataset.secretName = "";
+  name.dataset.testid = "secret-variable-name-input";
+  const kind = document.createElement("select");
+  kind.setAttribute("aria-label", "Secret kind");
+  kind.dataset.secretKind = "";
+  kind.dataset.testid = "secret-variable-kind-select";
+  for (const value of ["value", "file"]) { const option = document.createElement("option"); option.value = value; option.textContent = value === "file" ? "File content" : "Value"; kind.append(option); }
+  kind.value = variable.kind;
+  const value = document.createElement("textarea");
+  value.setAttribute("aria-label", "Secret value");
+  value.placeholder = variable.configured ? "Leave blank to keep saved value" : "Secret value";
+  value.dataset.secretValue = "";
+  value.dataset.testid = "secret-variable-value-input";
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "ghost compact";
+  remove.textContent = "Remove";
+  remove.dataset.testid = "secret-variable-remove-button";
+  remove.addEventListener("click", () => row.remove());
+  row.append(name, kind, value, remove);
+  elements.secretVariableRows.append(row);
+}
+
+function renderSecretAccounts() {
+  elements.secretAccountList.replaceChildren();
+  if (!secretAccounts.length) { elements.secretAccountList.textContent = "No node-local secret accounts."; return; }
+  for (const account of secretAccounts) {
+    const row = document.createElement("div"); row.className = "secret-account-row";
+    const meta = document.createElement("span"); meta.className = "secret-account-meta";
+    meta.textContent = `${account.label} (${account.provider}): ${account.variables.map((item) => `${item.name}${item.kind === "file" ? " (file)" : ""}`).join(", ")}`;
+    const edit = document.createElement("button"); edit.type = "button"; edit.className = "ghost compact"; edit.textContent = "Edit"; edit.dataset.testid = "secret-account-edit-button";
+    edit.addEventListener("click", () => openSecretAccount(account));
+    const remove = document.createElement("button"); remove.type = "button"; remove.className = "ghost compact danger"; remove.textContent = "Delete"; remove.dataset.testid = "secret-account-delete-button";
+    remove.addEventListener("click", () => deleteSecretAccount(account));
+    row.append(meta, edit, remove); elements.secretAccountList.append(row);
+  }
+}
+
+async function loadSecretAccounts() {
+  const payload = await api("/api/secrets");
+  secretAccounts.splice(0, secretAccounts.length, ...payload.accounts);
+  renderSecretAccounts();
+}
+
+async function deleteSecretAccount(account) {
+  if (!confirm(`Delete ${account.label}?`)) return;
+  await api(`/api/secrets/accounts/${encodeURIComponent(account.id)}`, { method: "DELETE" });
+  await loadSecretAccounts();
+  toast("Secret account deleted");
+}
+
+function openSecretAccount(account = null) {
+  editingSecretAccountId = account?.id ?? null;
+  elements.secretAccountTitle.textContent = account ? "Edit secret account" : "Add secret account";
+  elements.secretAccountLabelInput.value = account?.label ?? "";
+  elements.secretAccountProviderInput.value = account?.provider ?? "custom";
+  elements.secretVariableRows.replaceChildren();
+  (account?.variables ?? [{ name: "", kind: "value" }]).forEach((item) => secretRow(item));
+  elements.secretAccountDialog.showModal();
+}
+
+async function openSecretScope(scopeType, scopeId, label) {
+  await loadSecretAccounts();
+  const { accountIds } = await api(`/api/secrets/scopes/${encodeURIComponent(scopeType)}/${encodeURIComponent(scopeId)}`);
+  secretScopeTarget = { scopeType, scopeId };
+  elements.secretScopeTitle.textContent = `Secret accounts: ${label}`;
+  elements.secretScopeList.replaceChildren();
+  if (!secretAccounts.length) elements.secretScopeList.textContent = "No node-local secret accounts. Add one in Settings.";
+  for (const account of secretAccounts) {
+    const item = document.createElement("label"); item.className = "checkbox-row";
+    const input = document.createElement("input"); input.type = "checkbox"; input.value = account.id; input.checked = accountIds.includes(account.id); input.dataset.testid = "secret-scope-account-checkbox";
+    item.append(input, document.createTextNode(` ${account.label} (${account.provider})`)); elements.secretScopeList.append(item);
+  }
+  elements.secretScopeDialog.showModal();
+}
+
+elements.secretScopeCancelButton.addEventListener("click", () => elements.secretScopeDialog.close());
+elements.secretScopeForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!secretScopeTarget) throw new Error("Secret scope target is missing");
+  const accountIds = [...elements.secretScopeList.querySelectorAll("input:checked")].map((input) => input.value);
+  await api(`/api/secrets/scopes/${encodeURIComponent(secretScopeTarget.scopeType)}/${encodeURIComponent(secretScopeTarget.scopeId)}`, { method: "PUT", body: JSON.stringify({ accountIds }) });
+  elements.secretScopeDialog.close(); toast("Secret accounts saved");
+});
+elements.secretAccountAddButton.addEventListener("click", () => openSecretAccount());
+elements.secretVariableAddButton.addEventListener("click", () => secretRow());
+elements.secretAccountCancelButton.addEventListener("click", () => elements.secretAccountDialog.close());
+elements.secretAccountProviderInput.addEventListener("change", () => {
+  if (editingSecretAccountId || elements.secretVariableRows.children.length > 1 || elements.secretVariableRows.querySelector("[data-secret-name]").value) return;
+  elements.secretVariableRows.replaceChildren();
+  const presets = elements.secretAccountProviderInput.value === "aws" ? [{ name: "AWS_ACCESS_KEY_ID", kind: "value" }, { name: "AWS_SECRET_ACCESS_KEY", kind: "value" }]
+    : elements.secretAccountProviderInput.value === "google" ? [{ name: "GOOGLE_APPLICATION_CREDENTIALS", kind: "file" }]
+      : [{ name: "", kind: "value" }];
+  presets.forEach((item) => secretRow(item));
+});
+elements.secretAccountForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const variables = [...elements.secretVariableRows.children].map((row) => {
+    const name = row.querySelector("[data-secret-name]").value.trim();
+    const kind = row.querySelector("[data-secret-kind]").value;
+    const value = row.querySelector("[data-secret-value]").value;
+    return { name, kind, ...(value === "" ? {} : { value }) };
+  });
+  if (!variables.every((item) => item.name) || new Set(variables.map((item) => item.name)).size !== variables.length || (!editingSecretAccountId && variables.some((item) => item.value === undefined))) throw new Error("Enter unique variable names and values");
+  const payload = { label: elements.secretAccountLabelInput.value.trim(), provider: elements.secretAccountProviderInput.value, variables };
+  await api(editingSecretAccountId ? `/api/secrets/accounts/${encodeURIComponent(editingSecretAccountId)}` : "/api/secrets/accounts", { method: editingSecretAccountId ? "PUT" : "POST", body: JSON.stringify(payload) });
+  elements.secretAccountDialog.close(); await loadSecretAccounts(); toast("Secret account saved");
+});
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {

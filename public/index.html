@@ -240,13 +240,13 @@
         <div class="dialog-heading" tabindex="-1" autofocus>
           <span class="eyebrow">Node configuration</span>
           <h2>Settings</h2>
-          <p>Paths are node-local. GitHub credentials never leave this node until you sync them to a node you pick.</p>
+          <p>Paths and generic secret accounts are node-local. GitHub credentials move only by explicit sync to a node you pick.</p>
         </div>
 
         <div class="settings-tabs" role="tablist" aria-label="Settings sections">
           <button class="settings-tab" type="button" data-settings-tab="account" role="tab" id="settingsTab-account" aria-controls="settingsPanel-account" aria-selected="true" data-testid="settings-tab-account">Account</button>
           <button class="settings-tab" type="button" data-settings-tab="notifications" role="tab" id="settingsTab-notifications" aria-controls="settingsPanel-notifications" aria-selected="false" tabindex="-1" data-testid="settings-tab-notifications">Notifications</button>
-          <button class="settings-tab" type="button" data-settings-tab="github" role="tab" id="settingsTab-github" aria-controls="settingsPanel-github" aria-selected="false" tabindex="-1" data-testid="settings-tab-github">GitHub</button>
+          <button class="settings-tab" type="button" data-settings-tab="github" role="tab" id="settingsTab-github" aria-controls="settingsPanel-github" aria-selected="false" tabindex="-1" data-testid="settings-tab-github">Secrets</button>
           <button class="settings-tab" type="button" data-settings-tab="cluster" role="tab" id="settingsTab-cluster" aria-controls="settingsPanel-cluster" aria-selected="false" tabindex="-1" data-testid="settings-tab-cluster">Cluster</button>
           <button class="settings-tab" type="button" data-settings-tab="projects" role="tab" id="settingsTab-projects" aria-controls="settingsPanel-projects" aria-selected="false" tabindex="-1" data-testid="settings-tab-projects">Projects</button>
           <button class="settings-tab" type="button" data-settings-tab="engines" role="tab" id="settingsTab-engines" aria-controls="settingsPanel-engines" aria-selected="false" tabindex="-1" data-testid="settings-tab-engines">Engines</button>
@@ -278,13 +278,14 @@
         </section>
 
         <section class="settings-panel" id="settingsPanel-github" role="tabpanel" aria-labelledby="settingsTab-github" tabindex="0" hidden>
-          <p>Groups hold the tokens used by Git commands. A project uses its own group, then its project type's group, then the default group.</p>
-          <div class="github-group-list" id="githubGroupList" data-testid="github-group-list"></div>
+          <p>GitHub groups can sync between nodes. Secret accounts below are encrypted and node-local.</p>
+          <fieldset class="phase-settings"><legend>GitHub</legend><div class="github-group-list" id="githubGroupList" data-testid="github-group-list"></div>
           <div class="github-group-actions">
             <button class="ghost" type="button" id="githubGroupAddButton" data-testid="github-group-add-button">Add group</button>
             <button class="ghost" type="button" id="githubSyncButton" data-testid="github-sync-open-button">Sync to nodes</button>
           </div>
-          <p>Tokens stay on this node. Sync to copy them to other nodes.</p>
+          <p>Tokens stay on this node. Sync to copy them to other nodes.</p></fieldset>
+          <fieldset class="phase-settings"><legend>Secret accounts</legend><p>Named AWS, Google, and custom accounts stay on this node.</p><div id="secretAccountList" class="secret-account-list" data-testid="secret-account-list"></div><button class="ghost" type="button" id="secretAccountAddButton" data-testid="secret-account-add-button">Add account</button></fieldset>
         </section>
 
         <section class="settings-panel" id="settingsPanel-cluster" role="tabpanel" aria-labelledby="settingsTab-cluster" tabindex="0" hidden>
@@ -569,6 +570,24 @@
       <form method="dialog" class="dialog-card" id="projectGithubForm">
         <div>
           <span class="eyebrow">Project credential</span>
+    <dialog id="secretAccountDialog" data-testid="secret-account-dialog">
+      <form method="dialog" class="dialog-card" id="secretAccountForm">
+        <div><span class="eyebrow">Node-local credentials</span><h2 id="secretAccountTitle">Secret account</h2><p>File entries store their content privately; the environment receives the private file path.</p></div>
+        <label>Label<input id="secretAccountLabelInput" required data-testid="secret-account-label-input" /></label>
+        <label>Provider<select id="secretAccountProviderInput" data-testid="secret-account-provider-input"><option value="aws">AWS</option><option value="google">Google</option><option value="custom">Custom</option></select></label>
+        <div id="secretVariableRows" data-testid="secret-variable-rows"></div>
+        <button type="button" class="ghost" id="secretVariableAddButton" data-testid="secret-variable-add-button">Add environment variable</button>
+        <div class="dialog-actions"><button type="button" class="ghost" id="secretAccountCancelButton" data-testid="secret-account-cancel-button">Cancel</button><button type="submit" class="primary" data-testid="secret-account-save-button">Save account</button></div>
+      </form>
+    </dialog>
+    <dialog id="secretScopeDialog" data-testid="secret-scope-dialog">
+      <form method="dialog" class="dialog-card" id="secretScopeForm">
+        <div><span class="eyebrow">Node-local credentials</span><h2 id="secretScopeTitle">Secret accounts</h2><p>Select accounts available to new agent sessions in this scope.</p></div>
+        <div id="secretScopeList" class="secret-scope-list" data-testid="secret-scope-list"></div>
+        <div class="dialog-actions"><button type="button" class="ghost" id="secretScopeCancelButton" data-testid="secret-scope-cancel-button">Cancel</button><button type="submit" class="primary" data-testid="secret-scope-save-button">Save accounts</button></div>
+      </form>
+    </dialog>
+
           <h2 id="projectGithubTitle">GitHub access</h2>
           <p>Pick the group whose token this project should use, or provide a token used only by this project.</p>
         </div>
