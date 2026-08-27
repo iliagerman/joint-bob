@@ -386,12 +386,6 @@ body.view-chat #chatPanel :is(.panel-scroll, .board-columns, .messages) {
 .icon-button { display: inline-grid; place-items: center; min-width: 36px; width: 36px; min-height: 36px; padding: 0; border-radius: var(--radius-ctl); font-size: 16px; flex: 0 0 auto; }
 .back-button { font-size: 22px; }
 .row-action-button { position: absolute; top: 50%; right: 10px; transform: translateY(-50%); z-index: 2; min-height: 28px; min-width: 28px; width: 28px; font-size: 12.5px; background: var(--field); }
-.credential-button, .transfer-button { right: 42px; }
-.transfer-button { color: var(--accent); }
-.mapping-button { right: 74px; }
-.rename-button { right: 106px; }
-.rescan-button { right: 138px; }
-.mapping-button.missing { color: var(--danger); }
 .credential-state { float: right; color: var(--accent); font-size: 10px; }
 .section-title {
   display: flex;
@@ -529,22 +523,7 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
 .chat-badge-active .chat-status-dot { animation: dot-breathe 1.2s ease-in-out infinite; }
 
 /* ---- Lists ---- */
-.list-row { position: relative; }
-.list-row::after {
-  content: "";
-  position: absolute;
-  inset: 0 0 0 auto;
-  width: 190px;
-  z-index: 0;
-  pointer-events: none;
-  border-radius: 0 var(--radius-ctl) var(--radius-ctl) 0;
-  background: linear-gradient(90deg, transparent, var(--field) 40%);
-  opacity: 0;
-  transition: opacity 130ms ease;
-}
-.project-list .list-row::after { width: 222px; }
-.list-row:is(:hover, :focus-within)::after { opacity: 1; }
-.list-row.active::after { background: linear-gradient(90deg, transparent, var(--surface) 40%); }
+.list-row { position: relative; min-width: 0; }
 .project-card, .session-card {
   width: 100%;
   min-width: 0;
@@ -554,7 +533,8 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
   border-radius: var(--radius-ctl);
   background: transparent;
   color: var(--text);
-  padding: 10px 12px;
+  /* The right pad is the menu button's lane, so a long title never runs under it. */
+  padding: 10px 46px 10px 12px;
   overflow: hidden;
   transition: background-color 120ms ease;
 }
@@ -1202,8 +1182,6 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   input, select { padding: 10px 13px; }
   .toast { bottom: 20px; }
   .install-banner { bottom: 16px; }
-  .list-row .row-action-button { opacity: 0; pointer-events: none; transform: translateY(-50%) scale(0.94); transition: opacity 130ms ease, transform 130ms ease, background-color 130ms ease; }
-  .list-row:is(:hover, :focus-within) .row-action-button { opacity: 1; pointer-events: auto; transform: translateY(-50%) scale(1); }
 }
 
 @media (max-width: 1023px) {
@@ -1236,7 +1214,6 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
     box-shadow: var(--shadow-soft);
   }
   .chat-more-actions > button { width: 100%; text-align: left; }
-  .list-row.active::after { opacity: 1; }
   :root { --read: 15px; --read-leading: 1.68; --measure: none; }
   .mobile-nav { bottom: max(8px, env(safe-area-inset-bottom)); }
   .panel-bar, .chat-topbar { min-height: 58px; padding: 10px 12px; padding-top: calc(10px + env(safe-area-inset-top, 0px)); }
@@ -1244,9 +1221,10 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   .composer { padding: 6px 8px 10px; }
   .dialog-card { padding: 20px; }
   .search-shell input, input, select { font-size: 16px; }
-  .project-list .list-row:not(.active) .row-action-button,
-  .session-list .list-row:not(.active) .row-action-button { display: none; }
-  .list-row.active :is(.project-card, .session-card).pinned strong::after { content: none; }
+  /* The menu is the only way to reach a row's actions, so it needs a real touch target,
+     and a wider lane to sit in so the title still clears it. */
+  .row-menu-button { min-height: 34px; min-width: 34px; }
+  .project-card, .session-card { padding-right: 52px; }
 
 }
 
@@ -1291,8 +1269,6 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 /* ---- Pinned projects and conversations ---- */
 .pin-button { font-size: 12px; opacity: 0.55; }
 .pin-button.pinned { opacity: 1; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
-.project-list .pin-button { right: 170px; }
-.session-list .pin-button { right: 74px; }
 .project-card.pinned strong::after,
 .session-card.pinned strong::after {
   content: "📌";
@@ -1300,15 +1276,10 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   font-size: 9px;
   vertical-align: 1px;
 }
-/* The pin button is the live control; the inline marker only stands in while it is hidden. */
-.list-row:is(:hover, :focus-within) :is(.project-card, .session-card).pinned strong::after { content: none; }
 
 /* ---- Skills browser ---- */
 .skills-dialog-list { display: grid; gap: 4px; min-width: 0; max-height: 52dvh; overflow-y: auto; }
-.recent-sessions-list { display: grid; gap: 4px; min-width: 0; max-height: 52dvh; overflow-y: auto; }
-/* The dialog has no hover-reveal affordance, so its pin stays visible at every width. */
-.recent-sessions-list .pin-button { right: 10px; opacity: 1; pointer-events: auto; transform: translateY(-50%); }
-.recent-sessions-list .pin-button:not(.pinned) { opacity: 0.55; }
+
 .skill-option {
   width: 100%;
   min-width: 0;
@@ -1339,6 +1310,55 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   font-size: 11px;
   line-height: 1.4;
 }
+
+/* ---- Row overflow menu ---- */
+.row-menu-button { font-size: 15px; line-height: 1; }
+/* A popover so the scrolling lists cannot clip it; inset:auto lets JS place it. */
+.row-menu {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  width: min(232px, calc(100vw - 16px));
+  padding: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  color: var(--text);
+}
+.row-menu button {
+  display: block;
+  width: 100%;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-ctl);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-size: 13px;
+}
+.row-menu button:hover:not(:disabled) { background: var(--field); }
+.row-menu button.danger { color: var(--danger); }
+.row-menu button:disabled { opacity: 0.45; }
+
+/* ---- Recent conversations ---- */
+.recent-sessions-list { display: grid; gap: 6px; min-width: 0; max-height: 52dvh; overflow-y: auto; }
+/* Outlined rows, like the skills dialog: a plain text list of 20 titles is unreadable. */
+.recent-sessions-list .session-card { min-height: 0; border: 1px solid var(--line); }
+/* One line each keeps every row the same height and the list scannable. */
+.recent-sessions-list .session-card strong {
+  margin-bottom: 2px;
+  overflow: hidden;
+  overflow-wrap: normal;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.recent-sessions-list .session-card span { -webkit-line-clamp: 1; }
+/* The pin button never hides here, so the inline marker would only duplicate it. */
+.recent-sessions-list .session-card.pinned strong::after { content: none; }
+.recent-sessions-list .session-card.pinned { border-color: color-mix(in srgb, var(--accent) 34%, var(--line)); }
+.recent-sessions-list .pin-button:not(.pinned) { opacity: 0.55; }
 
 /* ---- Project colours ---- */
 .field-group { display: grid; gap: 6px; }
@@ -1372,8 +1392,5 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 .project-card[data-color].active { box-shadow: inset 3px 0 0 var(--project-hue), var(--raise); background: color-mix(in srgb, var(--project-hue) 18%, var(--surface)); }
 
 /* ---- Project node lock ---- */
-.lock-button { font-size: 12px; opacity: 0.55; }
-.lock-button.locked { opacity: 1; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
-.project-list .lock-button { right: 202px; }
 .project-card .project-lock-badge { display: block; margin: 3px 0 0; font-size: 10px; font-style: normal; color: var(--accent); }
 .project-card .project-lock-badge.foreign { color: var(--danger); }

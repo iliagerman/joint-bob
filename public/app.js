@@ -9,6 +9,7 @@ const state = {
   pinnedProjectIds: [],
   pinnedSessionPaths: [],
   recentSessions: [],
+  renameSessionPath: null,
   projectsLoading: true,
   projectsRefreshing: false,
   sessionsLoading: false,
@@ -162,6 +163,7 @@ const elements = {
   recentSessionsButton: document.querySelector("#recentSessionsButton"),
   recentSessionsDialog: document.querySelector("#recentSessionsDialog"),
   recentSessionsList: document.querySelector("#recentSessionsList"),
+  rowMenu: document.querySelector("#rowMenu"),
   closeRecentSessionsButton: document.querySelector("#closeRecentSessionsButton"),
   settingsButton: document.querySelector("#settingsButton"),
   settingsDialog: document.querySelector("#settingsDialog"),
@@ -284,6 +286,7 @@ const elements = {
   taskEngineInput: document.querySelector("#taskEngineInput"),
   taskPlanModeInput: document.querySelector("#taskPlanModeInput"),
   taskReviewModeInput: document.querySelector("#taskReviewModeInput"),
+  taskSaveButton: document.querySelector("#taskForm [data-testid='task-form-save-button']"),
   taskPlanningModelInput: document.querySelector("#taskPlanningModelInput"),
   taskImplementationModelInput: document.querySelector("#taskImplementationModelInput"),
   taskReviewModelInput: document.querySelector("#taskReviewModelInput"),
@@ -1352,17 +1355,26 @@ function openProjectRename(project) {
   elements.projectRenameDialog.showModal();
 }
 
-async function renameActiveSession(title) {
-  const sessionPath = state.activeSessionPath;
+async function renameSession(sessionPath, title) {
   if (!state.activeProjectId || !sessionPath) return;
   await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/title`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ sessionPath, title }),
   });
-  // Pi keeps its own live session name, so mirror it while the socket is open.
-  if (!sessionPath.startsWith("claude:") && title) sendSocket({ type: "rename", name: title });
+  // Pi keeps its own live session name, so mirror it while the socket is open. Only the
+  // open conversation has a socket, so a renamed row elsewhere just reloads the list.
+  if (sessionPath === state.activeSessionPath && !sessionPath.startsWith("claude:") && title) {
+    sendSocket({ type: "rename", name: title });
+  }
   await loadSessions();
+}
+
+/** The dialog is shared, so it remembers which conversation it was opened for. */
+function openRenameDialog(sessionPath, currentTitle) {
+  state.renameSessionPath = sessionPath;
+  elements.sessionNameInput.value = currentTitle || "";
+  elements.renameDialog.showModal();
 }
 
 /** The fixed palette mirrors PROJECT_COLORS in src/types.ts. */
@@ -1397,6 +1409,44 @@ function togglePinnedSession(sessionPath) {
   renderSessions();
 }
 
+/**
+ * One shared menu serves every row: building a popup per row would clip it inside the
+ * list's own scroll box. `popover` puts it in the top layer and handles Escape and
+ * click-outside for us, so this only has to place it.
+ */
+function openRowMenu(anchor, items) {
+  const menu = elements.rowMenu;
+  menu.replaceChildren(...items.map((item) => {
+    const entry = document.createElement("button");
+    entry.type = "button";
+    entry.className = item.danger ? "danger" : "";
+    entry.textContent = item.label;
+    entry.disabled = Boolean(item.disabled);
+    if (item.title) entry.title = item.title;
+    entry.dataset.testid = item.testid;
+    entry.addEventListener("click", () => {
+      menu.hidePopover();
+      item.onSelect();
+    });
+    return entry;
+  }));
+  menu.showPopover();
+  placeRowMenu(anchor);
+  menu.querySelector("button:not(:disabled)")?.focus();
+}
+
+/** Anchor positioning is not in every browser yet, so the coordinates are measured here. */
+function placeRowMenu(anchor) {
+  const menu = elements.rowMenu;
+  const button = anchor.getBoundingClientRect();
+  const { width, height } = menu.getBoundingClientRect();
+  const left = Math.min(Math.max(8, button.right - width), innerWidth - width - 8);
+  const below = button.bottom + 6;
+  const top = below + height > innerHeight - 8 ? Math.max(8, button.top - height - 6) : below;
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+}
+
 function pinButton({ pinned, label, testid, onToggle }) {
   const button = document.createElement("button");
   button.type = "button";
@@ -1414,6 +1464,8 @@ function pinButton({ pinned, label, testid, onToggle }) {
 }
 
 function renderProjects() {
+  // A background refresh must not leave a menu floating over rows that just moved.
+  elements.rowMenu.togglePopover(false);
   const projects = filteredProjects();
   elements.projectList.replaceChildren();
   if (state.projectsLoading) return;
@@ -1484,34 +1536,6 @@ function projectGroupElement(group) {
   return details;
 }
 
-function projectRescanButton(project) {
-  const rescanButton = document.createElement("button");
-  rescanButton.type = "button";
-  rescanButton.className = "ghost icon-button row-action-button rescan-button";
-  rescanButton.setAttribute("aria-label", `Rescan ${project.name}`);
-  rescanButton.title = project.syncFolderId ? "Rescan project with Syncthing" : "Project is not synchronized with Syncthing";
-  rescanButton.textContent = "↻";
-  rescanButton.disabled = !project.syncFolderId;
-  rescanButton.dataset.testid = "project-rescan-button";
-  rescanButton.addEventListener("click", async (event) => {
-    event.stopPropagation();
-    if (!project.syncFolderId) return;
-    rescanButton.disabled = true;
-    rescanButton.textContent = "…";
-    toast(`Rescanning ${project.name}`);
-    try {
-      await api(`/api/projects/${encodeURIComponent(project.id)}/sync/rescan`, { method: "POST" });
-      await refreshProjectsQuietly();
-      toast(`Rescan complete for ${project.name}`);
-    } catch (error) {
-      toast(error.message, 8000);
-    } finally {
-      rescanButton.textContent = "↻";
-      rescanButton.disabled = !project.syncFolderId;
-    }
-  });
-  return rescanButton;
-}
 
 function projectRow(project) {
     const pinned = isProjectPinned(project.id);
@@ -1546,97 +1570,96 @@ function projectRow(project) {
     }
     button.addEventListener("click", () => selectProject(project.id));
 
-    const pinToggle = pinButton({
-      pinned,
-      label: pinned ? `Unpin ${project.name}` : `Pin ${project.name}`,
-      testid: "project-pin-button",
-      onToggle: () => togglePinnedProject(project.id),
-    });
-
-    const lockToggle = document.createElement("button");
-    lockToggle.type = "button";
-    lockToggle.className = `ghost icon-button row-action-button lock-button${project.lock ? " locked" : ""}`;
-    const lockLabel = project.lock ? `Unlock ${project.name}` : `Lock ${project.name} to this node`;
-    lockToggle.setAttribute("aria-label", lockLabel);
-    lockToggle.setAttribute("aria-pressed", String(Boolean(project.lock)));
-    lockToggle.title = project.lockedElsewhere ? `Locked by ${project.lock.nodeName} — click to unlock` : lockLabel;
-    lockToggle.textContent = project.lock ? "\u{1F512}" : "\u{1F513}";
-    lockToggle.dataset.testid = "project-lock-button";
-    lockToggle.addEventListener("click", async (event) => {
+    const menuButton = document.createElement("button");
+    menuButton.type = "button";
+    menuButton.className = "ghost icon-button row-action-button row-menu-button";
+    menuButton.setAttribute("aria-label", `Actions for ${project.name}`);
+    menuButton.setAttribute("aria-haspopup", "true");
+    menuButton.title = "Project actions";
+    menuButton.textContent = "\u22EE";
+    menuButton.dataset.testid = "project-menu-button";
+    menuButton.addEventListener("click", (event) => {
       event.stopPropagation();
-      lockToggle.disabled = true;
-      try {
-        await api(`/api/projects/${encodeURIComponent(project.id)}/lock`, { method: "PUT", body: JSON.stringify({ locked: !project.lock }) });
-        await refreshProjectsQuietly();
-      } catch (error) {
-        toast(error.message, 6000);
-        lockToggle.disabled = false;
-      }
+      openRowMenu(menuButton, projectMenuItems(project));
     });
 
-    const rescanButton = projectRescanButton(project);
-
-    const renameButton = document.createElement("button");
-    renameButton.type = "button";
-    renameButton.className = "ghost icon-button row-action-button rename-button";
-    renameButton.setAttribute("aria-label", `Edit ${project.name}`);
-    renameButton.title = "Edit project";
-    renameButton.textContent = "✎";
-    renameButton.dataset.testid = "project-rename-button";
-    renameButton.addEventListener("click", (event) => {
-      event.stopPropagation();
-      openProjectRename(project);
-    });
-
-    const mappingButton = document.createElement("button");
-    mappingButton.type = "button";
-    mappingButton.className = "ghost icon-button row-action-button mapping-button";
-    mappingButton.setAttribute("aria-label", `View session paths for ${project.name}`);
-    mappingButton.title = "Session path mappings";
-    mappingButton.textContent = "↔";
-    mappingButton.dataset.testid = "project-path-mapping-button";
-    mappingButton.addEventListener("click", (event) => {
-      event.stopPropagation();
-      openProjectPathMapping(project);
-    });
-
-    const authButton = document.createElement("button");
-    authButton.type = "button";
-    authButton.className = "ghost icon-button row-action-button credential-button";
-    authButton.setAttribute("aria-label", `Configure GitHub access for ${project.name}`);
-    authButton.title = "GitHub access";
-    authButton.textContent = "GH";
-    authButton.addEventListener("click", async (event) => {
-      event.stopPropagation();
-      await openProjectGithubSettings(project);
-    });
-
-    const removeButton = document.createElement("button");
-    removeButton.type = "button";
-    removeButton.className = "ghost danger icon-button row-action-button";
-    removeButton.setAttribute("aria-label", `Remove ${project.name}`);
-    removeButton.title = "Remove project";
-    removeButton.textContent = "✕";
-    removeButton.addEventListener("click", async (event) => {
-      event.stopPropagation();
-      if (!confirm(`Remove ${project.name} from Joint Bob? Files are not deleted.`)) return;
-      await api(`/api/projects/${encodeURIComponent(project.id)}`, { method: "DELETE" });
-      if (state.activeProjectId === project.id) {
-        state.activeProjectId = null;
-        state.activeSessionPath = null;
-        state.activeSessionId = null;
-        state.activeTaskId = null;
-        if (state.preferencesLoaded) savePreferencesInBackground({ activeProjectId: null, activeSessionPath: null, activeSessionId: null });
-        state.sessions = [];
-        state.tasks = [];
-        closeWatchSocket();
-        renderBoardView();
-      }
-      await loadProjects();
-    });
-
-    row.append(button, lockToggle, pinToggle, rescanButton, renameButton, mappingButton, authButton, removeButton);
+    row.append(button, menuButton);
     return row;
+}
+
+/** Seven inline buttons crowded the row off the screen; they all live in the menu now. */
+function projectMenuItems(project) {
+  const pinned = isProjectPinned(project.id);
+  return [
+    {
+      label: pinned ? "Unpin from top" : "Pin to top",
+      testid: "project-pin-button",
+      onSelect: () => togglePinnedProject(project.id),
+    },
+    {
+      label: "Edit project",
+      testid: "project-rename-button",
+      onSelect: () => openProjectRename(project),
+    },
+    {
+      label: project.lock ? "Unlock from this node" : "Lock to this node",
+      testid: "project-lock-button",
+      title: project.lockedElsewhere ? `Locked by ${project.lock.nodeName} — select to unlock` : "",
+      onSelect: () => toggleProjectLock(project).catch((error) => toast(error.message, 6000)),
+    },
+    {
+      label: "Session path mappings",
+      testid: "project-path-mapping-button",
+      onSelect: () => openProjectPathMapping(project),
+    },
+    {
+      label: "GitHub access",
+      testid: "project-github-button",
+      onSelect: () => openProjectGithubSettings(project).catch((error) => toast(error.message)),
+    },
+    {
+      label: "Rescan with Syncthing",
+      testid: "project-rescan-button",
+      disabled: !project.syncFolderId,
+      title: project.syncFolderId ? "Rescan project with Syncthing" : "Project is not synchronized with Syncthing",
+      onSelect: () => rescanProject(project).catch((error) => toast(error.message, 8000)),
+    },
+    {
+      label: "Remove",
+      testid: "project-remove-button",
+      danger: true,
+      onSelect: () => removeProject(project).catch((error) => toast(error.message)),
+    },
+  ];
+}
+
+async function toggleProjectLock(project) {
+  await api(`/api/projects/${encodeURIComponent(project.id)}/lock`, { method: "PUT", body: JSON.stringify({ locked: !project.lock }) });
+  await refreshProjectsQuietly();
+}
+
+async function rescanProject(project) {
+  toast(`Rescanning ${project.name}`);
+  await api(`/api/projects/${encodeURIComponent(project.id)}/sync/rescan`, { method: "POST" });
+  await refreshProjectsQuietly();
+  toast(`Rescan complete for ${project.name}`);
+}
+
+async function removeProject(project) {
+  if (!confirm(`Remove ${project.name} from Joint Bob? Files are not deleted.`)) return;
+  await api(`/api/projects/${encodeURIComponent(project.id)}`, { method: "DELETE" });
+  if (state.activeProjectId === project.id) {
+    state.activeProjectId = null;
+    state.activeSessionPath = null;
+    state.activeSessionId = null;
+    state.activeTaskId = null;
+    if (state.preferencesLoaded) savePreferencesInBackground({ activeProjectId: null, activeSessionPath: null, activeSessionId: null });
+    state.sessions = [];
+    state.tasks = [];
+    closeWatchSocket();
+    renderBoardView();
+  }
+  await loadProjects();
 }
 
 function markSessionReviewed(session) {
@@ -1741,6 +1764,8 @@ function renderRecentSessionsDialog() {
     button.type = "button";
     button.className = `session-card${pinned ? " pinned" : ""}`;
     button.dataset.testid = "recent-session-option";
+    // Rows are single-line, so the full title lives in the tooltip.
+    button.title = entry.title;
     const title = document.createElement("strong");
     title.textContent = entry.title;
     const meta = document.createElement("span");
@@ -1765,6 +1790,8 @@ function renderRecentSessionsDialog() {
 }
 
 function renderSessions() {
+  // A background refresh must not leave a menu floating over rows that just moved.
+  elements.rowMenu.togglePopover(false);
   elements.sessionList.replaceChildren();
   renderChatSessionControls();
   const project = selectedProject();
@@ -1825,68 +1852,87 @@ function renderSessions() {
     meta.append(" ", badge);
     button.addEventListener("click", () => openListedSession(session));
 
-    const pinToggle = pinButton({
-      pinned: sessionPinned,
-      label: sessionPinned ? `Unpin ${shortSessionTitle(session)}` : `Pin ${shortSessionTitle(session)}`,
-      testid: "session-pin-button",
-      onToggle: () => togglePinnedSession(session.path),
-    });
-
-    const transferButton = document.createElement("button");
-    transferButton.type = "button";
-    transferButton.className = "ghost icon-button row-action-button transfer-button";
-    transferButton.setAttribute("aria-label", `Transfer ${shortSessionTitle(session)}`);
-    transferButton.title = session.path.startsWith("claude:") ? "Claude transfer is not available yet" : "Transfer this idle Pi session";
-    transferButton.textContent = "↗";
-    transferButton.disabled = session.path.startsWith("claude:");
-    transferButton.addEventListener("click", async (event) => {
+    const menuButton = document.createElement("button");
+    menuButton.type = "button";
+    menuButton.className = "ghost icon-button row-action-button row-menu-button";
+    menuButton.setAttribute("aria-label", `Actions for ${shortSessionTitle(session)}`);
+    menuButton.setAttribute("aria-haspopup", "true");
+    menuButton.title = "Conversation actions";
+    menuButton.textContent = "\u22EE";
+    menuButton.dataset.testid = "session-menu-button";
+    menuButton.addEventListener("click", (event) => {
       event.stopPropagation();
-      try {
-        const peers = (await api("/api/cluster/peers")).peers;
-        if (!peers.length) throw new Error("Pair a destination node first");
-        const peer = peers.length === 1
-          ? peers[0]
-          : peers.find((candidate) => candidate.id === prompt(`Destination node ID:\n${peers.map((candidate) => `${candidate.name}: ${candidate.id}`).join("\n")}`));
-        if (!peer) return;
-        if (!confirm(`Transfer this idle Pi session to ${peer.name}?`)) return;
-        const result = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/transfer`, {
-          method: "POST",
-          body: JSON.stringify({ peerId: peer.id, sessionPath: session.path, sessionName: shortSessionTitle(session) }),
-        });
-        toast(`Transferred to ${peer.name}: ${result.sessionPath || "ready"}`);
-      } catch (error) {
-        toast(error.message);
-      }
+      openRowMenu(menuButton, sessionMenuItems(session, sessionActive));
     });
 
-    const removeButton = document.createElement("button");
-    removeButton.type = "button";
-    removeButton.className = "ghost danger icon-button row-action-button";
-    removeButton.setAttribute("aria-label", `Remove ${shortSessionTitle(session)}`);
-    removeButton.title = "Remove session";
-    removeButton.textContent = "✕";
-    removeButton.addEventListener("click", async (event) => {
-      event.stopPropagation();
-      if (!confirm(`Remove session \"${shortSessionTitle(session)}\"?`)) return;
-      await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions?sessionPath=${encodeURIComponent(session.path)}`, { method: "DELETE" });
-      if (sessionActive) {
-        state.activeTaskId = null;
-        closeSocket();
-        clearChat();
-        clearAttachments();
-        state.activeSessionPath = null;
-        state.activeSessionId = null;
-        if (state.preferencesLoaded) savePreferencesInBackground({ activeSessionPath: null, activeSessionId: null });
-        elements.sessionTitle.textContent = "Select a conversation";
-        setComposerEnabled(false);
-        setMobileView("sessions");
-      }
-      await refreshSessionsQuietly();
-    });
-
-    row.append(button, pinToggle, transferButton, removeButton);
+    row.append(button, menuButton);
     elements.sessionList.append(row);
   }
+}
+
+/** Every row action lives in the overflow menu, so the row itself stays one tap target. */
+function sessionMenuItems(session, sessionActive) {
+  const name = shortSessionTitle(session);
+  const pinned = isSessionPinned(session.path);
+  const isClaude = session.path.startsWith("claude:");
+  return [
+    {
+      label: pinned ? "Unpin from top" : "Pin to top",
+      testid: "session-pin-button",
+      onSelect: () => togglePinnedSession(session.path),
+    },
+    {
+      label: "Rename",
+      testid: "session-rename-button",
+      onSelect: () => openRenameDialog(session.path, name),
+    },
+    {
+      label: "Continue on another node",
+      testid: "session-transfer-button",
+      disabled: isClaude,
+      title: isClaude ? "Claude transfer is not available yet" : "Transfer this idle Pi session",
+      onSelect: () => transferSessionFromRow(session).catch((error) => toast(error.message)),
+    },
+    {
+      label: "Remove",
+      testid: "session-remove-button",
+      danger: true,
+      onSelect: () => removeSessionFromRow(session, sessionActive).catch((error) => toast(error.message)),
+    },
+  ];
+}
+
+async function transferSessionFromRow(session) {
+  const peers = (await api("/api/cluster/peers")).peers;
+  if (!peers.length) throw new Error("Pair a destination node first");
+  const peer = peers.length === 1
+    ? peers[0]
+    : peers.find((candidate) => candidate.id === prompt(`Destination node ID:\n${peers.map((candidate) => `${candidate.name}: ${candidate.id}`).join("\n")}`));
+  if (!peer) return;
+  if (!confirm(`Transfer this idle Pi session to ${peer.name}?`)) return;
+  const result = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/transfer`, {
+    method: "POST",
+    body: JSON.stringify({ peerId: peer.id, sessionPath: session.path, sessionName: shortSessionTitle(session) }),
+  });
+  toast(`Transferred to ${peer.name}: ${result.sessionPath || "ready"}`);
+}
+
+async function removeSessionFromRow(session, sessionActive) {
+  if (!confirm(`Remove session "${shortSessionTitle(session)}"?`)) return;
+  await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions?sessionPath=${encodeURIComponent(session.path)}`, { method: "DELETE" });
+  if (sessionActive) {
+    state.activeTaskId = null;
+    closeSocket();
+    clearChat();
+    clearAttachments();
+    state.activeSessionPath = null;
+    state.activeSessionId = null;
+    if (state.preferencesLoaded) savePreferencesInBackground({ activeSessionPath: null, activeSessionId: null });
+    elements.sessionTitle.textContent = "Select a conversation";
+    setComposerEnabled(false);
+    setMobileView("sessions");
+  }
+  await refreshSessionsQuietly();
 }
 
 function clearThinkingBubble() {
@@ -3232,11 +3278,19 @@ elements.markAllReviewedButton.addEventListener("click", () => { void markAllSes
 elements.cancelTaskButton.addEventListener("click", () => elements.taskDialog.close());
 elements.taskForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  const creating = !state.editingTaskId;
+  elements.taskSaveButton.disabled = true;
+  elements.taskSaveButton.textContent = creating ? "Creating ticket…" : "Saving…";
+  elements.taskForm.setAttribute("aria-busy", "true");
   try {
     await saveTaskFromDialog();
     elements.taskDialog.close();
   } catch (error) {
     toast(error.message, 8000);
+  } finally {
+    elements.taskSaveButton.disabled = false;
+    elements.taskSaveButton.textContent = "Save task";
+    elements.taskForm.removeAttribute("aria-busy");
   }
 });
 elements.deleteTaskButton.addEventListener("click", async () => {
@@ -3785,8 +3839,7 @@ elements.composer.addEventListener("submit", (event) => {
 });
 
 elements.renameSessionButton.addEventListener("click", () => {
-  elements.sessionNameInput.value = elements.sessionTitle.textContent || "";
-  elements.renameDialog.showModal();
+  openRenameDialog(state.activeSessionPath, elements.sessionTitle.textContent);
 });
 elements.cancelRenameButton.addEventListener("click", () => elements.renameDialog.close());
 elements.renameForm.addEventListener("submit", async (event) => {
@@ -3794,7 +3847,7 @@ elements.renameForm.addEventListener("submit", async (event) => {
   const title = elements.sessionNameInput.value.trim();
   elements.renameDialog.close();
   try {
-    await renameActiveSession(title);
+    await renameSession(state.renameSessionPath, title);
     toast(title ? "Conversation renamed" : "Original title restored");
   } catch (error) {
     toast(error.message, 8000);
@@ -3864,8 +3917,18 @@ document.querySelectorAll(".command-strip button[data-command]").forEach((button
   });
 });
 
+/**
+ * Pointer capability, not viewport width: a narrow desktop window still has a keyboard,
+ * and a phone's return key has to keep inserting newlines because it is the only one.
+ */
+function enterKeySends() {
+  return matchMedia("(hover: hover) and (pointer: fine)").matches;
+}
+
 elements.messageInput.addEventListener("keydown", (event) => {
-  if (event.key !== "Enter" || !event.shiftKey) return;
+  // isComposing means Enter is confirming an IME candidate, not ending the message.
+  if (event.key !== "Enter" || event.isComposing) return;
+  if (event.shiftKey || !enterKeySends()) return;
   event.preventDefault();
   elements.composer.requestSubmit();
 });

@@ -24,10 +24,12 @@ test("projects and conversations can be pinned to the top of their list", async 
 
   assert.match(styles, /\.pin-button\.pinned/);
 
-  // The inline pin marker stands in only while the pin button is hidden; when the
-  // button is on screen the marker is suppressed so the row shows exactly one pin.
-  assert.match(styles, /\.list-row:is\(:hover, :focus-within\) :is\(\.project-card, \.session-card\)\.pinned strong::after \{ content: none; \}/);
-  assert.match(styles, /\.list-row\.active :is\(\.project-card, \.session-card\)\.pinned strong::after \{ content: none; \}/);
+  // Pinning moved into the row overflow menu on both lists, so no row carries a pin
+  // button any more and the inline marker is the only indicator — it always shows.
+  assert.match(styles, /\.project-card\.pinned strong::after,\n\.session-card\.pinned strong::after \{[^}]*content: "\u{1F4CC}"/u);
+  // The recents dialog still suppresses it — that list keeps a real pin button — but
+  // no row in either main list does.
+  assert.doesNotMatch(styles, /\.list-row[^\n]*\.pinned strong::after \{ content: none; \}/);
 });
 
 test("a pinned conversation survives the recency cap on the session list", async () => {

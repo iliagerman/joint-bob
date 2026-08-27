@@ -136,6 +136,8 @@ test("the lock is exposed through the API, guards writes, and appears in the pro
 
   assert.match(app, /project-lock-button/);
   assert.match(app, /project-lock-badge/);
-  assert.match(styles, /\.project-list \.lock-button \{ right: 202px; \}/);
+  // The lock control moved into the row overflow menu, so the row itself carries the
+  // state as a badge rather than as a button of its own.
+  assert.match(styles, /\.project-lock-badge \{/);
   assert.doesNotMatch(worker, /joint-bob-v33/);
 });
