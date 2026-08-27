@@ -124,12 +124,12 @@ test("session API persists automatic review transitions for the signed-in accoun
     await writeFile(fixture.sessionFile, `${JSON.stringify(firstRecord)}\n${JSON.stringify(assistant)}\n${JSON.stringify(followUp)}\n`);
     const later = new Date(Date.now() + 2000);
     await utimes(fixture.sessionFile, later, later);
-    const pending = await list();
-    assert.equal(pending.reviewState, "needs_review");
+    // Mark immediately. The endpoint must use the fresh session timestamp from its
+    // own listing instead of requiring a separate list request to synchronize state.
     const bulk = await fetch(`${node.baseUrl}/api/projects/${fixture.projectId}/sessions/reviewed-all`, {
       method: "PUT",
       headers,
-      body: JSON.stringify({ sessionPaths: [pending.path] }),
+      body: JSON.stringify({ sessionPaths: [finished.path] }),
     });
     assert.equal(bulk.status, 204);
     assert.equal((await list()).reviewState, "reviewed");

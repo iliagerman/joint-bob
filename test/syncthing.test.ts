@@ -19,7 +19,7 @@ const managedIgnorePatterns = [
   "dist/",
   "build/",
   "coverage/",
-  "__pycache__/",
+  "(?d)__pycache__/",
   ".DS_Store",
   ".env",
   ".env.*",
@@ -84,7 +84,7 @@ test("an existing Syncthing folder gains every newly paired node device", async 
         return;
       }
       if (request.method === "GET" && request.url === "/rest/db/ignores?folder=demo") {
-        response.end(JSON.stringify({ ignore: ["secrets/", "*.pem", ".git", "secrets/"] }));
+        response.end(JSON.stringify({ ignore: ["secrets/", "*.pem", ".git", "__pycache__/", "secrets/"] }));
         return;
       }
       response.end("{}");

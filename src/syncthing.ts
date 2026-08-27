@@ -75,7 +75,7 @@ const projectIgnorePatterns = [
   "dist/",
   "build/",
   "coverage/",
-  "__pycache__/",
+  "(?d)__pycache__/",
   ".DS_Store",
   ".env",
   ".env.*",
@@ -217,7 +217,7 @@ async function setProjectIgnores(folderId: string): Promise<void> {
   const existingIgnore = existing.ignore ?? [];
   const enginePatterns = enginePrivateIgnorePatterns[folderId as EngineSyncFolder["id"]] ?? [];
   const folderPatterns = [...projectIgnorePatterns, ...enginePatterns];
-  const managedPatterns = new Set([...projectIgnorePatterns, ...Object.values(enginePrivateIgnorePatterns).flat()]);
+  const managedPatterns = new Set([...projectIgnorePatterns, "__pycache__/", ...Object.values(enginePrivateIgnorePatterns).flat()]);
   const userRules = [...new Set(existingIgnore.filter((rule) => !managedPatterns.has(rule)))];
   const ignore = [...folderPatterns, ...userRules];
   if (ignore.length === existingIgnore.length && ignore.every((rule, index) => rule === existingIgnore[index])) return;

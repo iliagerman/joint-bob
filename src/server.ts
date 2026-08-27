@@ -2152,12 +2152,13 @@ app.put("/api/projects/:projectId/sessions/reviewed", async (request, response, 
       ...project,
       additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []),
     });
-    if (!sessions.some((session) => session.path === sessionPath)) {
+    const session = sessions.find((candidate) => candidate.path === sessionPath);
+    if (!session) {
       sendError(response, 404, "Conversation not found");
       return;
     }
     const authSession = response.locals.authSession as AuthSession;
-    markConversationReviewed(authSession.userId, project.id, sessionPath);
+    markConversationReviewed(authSession.userId, project.id, session);
     response.status(204).send();
   } catch (error) {
     next(error);
@@ -2177,8 +2178,8 @@ app.put("/api/projects/:projectId/sessions/reviewed-all", async (request, respon
       ...project,
       additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []),
     });
-    const known = new Set(sessions.map((session) => session.path));
-    const targets = sessionPaths.filter((sessionPath) => known.has(sessionPath));
+    const requested = new Set(sessionPaths);
+    const targets = sessions.filter((session) => requested.has(session.path));
     if (!targets.length) {
       sendError(response, 404, "No matching conversations");
       return;

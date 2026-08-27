@@ -2015,39 +2015,21 @@ function renderToolContent(container, text) {
   container.replaceChildren(...nodes);
 }
 
-// Renders are coalesced with requestAnimationFrame so a burst of streaming
-// deltas costs at most one re-render per frame, regardless of bubble type.
-// A full markdown re-render measures about 23 ms at 1 MB, longer than one
-// frame, so a long message updates on an interval instead of on every frame.
-const LARGE_MESSAGE_CHARS = 20000;
-const LARGE_MESSAGE_RENDER_MS = 250;
-
+// Coalesce bursts to one paint per frame. Assistant deltas stay plain text while
+// streaming so markdown parsing cannot block the composer; the final event formats once.
 function renderBubbleContent(bubble, text, flush = false) {
   bubble._raw = text;
+  bubble._renderFinal = bubble._renderFinal || flush;
   if (bubble._renderRaf) return;
-  const wait = flush || text.length <= LARGE_MESSAGE_CHARS
-    ? 0
-    : Math.max(0, LARGE_MESSAGE_RENDER_MS - (Date.now() - (bubble._lastRenderAt || 0)));
-  if (wait) {
-    if (bubble._renderTimer) return;
-    bubble._renderTimer = setTimeout(() => {
-      bubble._renderTimer = 0;
-      renderBubbleContent(bubble, bubble._raw);
-    }, wait);
-    return;
-  }
-  if (bubble._renderTimer) {
-    clearTimeout(bubble._renderTimer);
-    bubble._renderTimer = 0;
-  }
   bubble._renderRaf = requestAnimationFrame(() => {
     bubble._renderRaf = 0;
-    bubble._lastRenderAt = Date.now();
     const content = bubble.querySelector(".message-content") || bubble;
     const role = bubble.dataset.role;
-    if (role === "assistant" || role === "user") renderMarkdown(content, bubble._raw);
+    if (role === "assistant" && !bubble._renderFinal) content.textContent = bubble._raw;
+    else if (role === "assistant" || role === "user") renderMarkdown(content, bubble._raw);
     else if (role === "tool-output") renderToolContent(content, bubble._raw);
     else content.textContent = prettyText(bubble._raw);
+    bubble._renderFinal = false;
     stickyScroll();
   });
 }
@@ -2061,7 +2043,7 @@ function appendMessage(role, text) {
   const content = document.createElement(isMarkdown ? "div" : "pre");
   content.className = `message-content${isMarkdown ? " md" : ""}`;
   bubble.append(content);
-  renderBubbleContent(bubble, text);
+  renderBubbleContent(bubble, text, true);
   elements.messages.insertBefore(bubble, elements.jumpLatestButton);
   stickyScroll();
   return bubble;

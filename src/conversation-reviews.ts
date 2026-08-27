@@ -120,8 +120,12 @@ export function syncConversationReviewStates(userId: string, projectId: string, 
   }
 }
 
-export function markConversationsReviewed(userId: string, projectId: string, sessionPaths: string[]): void {
-  if (!sessionPaths.length) return;
+export function markConversationsReviewed(
+  userId: string,
+  projectId: string,
+  sessions: Array<Pick<ConversationStateInput, "path" | "updatedAt">>,
+): void {
+  if (!sessions.length) return;
   const db = reviewDatabase();
   const now = new Date().toISOString();
   const statement = db.prepare(`
@@ -129,11 +133,15 @@ export function markConversationsReviewed(userId: string, projectId: string, ses
       (user_id, project_id, session_path, last_activity_at, reviewed_at, was_running)
     VALUES (?, ?, ?, ?, ?, 0)
     ON CONFLICT(user_id, project_id, session_path) DO UPDATE SET
-      reviewed_at = conversation_review_states.last_activity_at
+      last_activity_at = MAX(conversation_review_states.last_activity_at, excluded.last_activity_at),
+      reviewed_at = MAX(conversation_review_states.last_activity_at, excluded.last_activity_at)
   `);
   db.exec("BEGIN");
   try {
-    for (const sessionPath of sessionPaths) statement.run(userId, projectId, sessionPath, now, now);
+    for (const session of sessions) {
+      const observedAt = activityTime(session.updatedAt, now);
+      statement.run(userId, projectId, session.path, observedAt, observedAt);
+    }
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
@@ -141,6 +149,10 @@ export function markConversationsReviewed(userId: string, projectId: string, ses
   }
 }
 
-export function markConversationReviewed(userId: string, projectId: string, sessionPath: string): void {
-  markConversationsReviewed(userId, projectId, [sessionPath]);
+export function markConversationReviewed(
+  userId: string,
+  projectId: string,
+  session: Pick<ConversationStateInput, "path" | "updatedAt">,
+): void {
+  markConversationsReviewed(userId, projectId, [session]);
 }

@@ -4,15 +4,16 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-test("a long streamed message re-renders on an interval instead of on every frame", async () => {
+test("streamed assistant text paints cheaply before the final markdown render", async () => {
   const app = await readFile("public/app.js", "utf8");
 
-  assert.match(app, /const LARGE_MESSAGE_CHARS = 20000;/);
-  assert.match(app, /const LARGE_MESSAGE_RENDER_MS = 250;/);
   assert.match(app, /function renderBubbleContent\(bubble, text, flush = false\)/);
-  assert.match(app, /bubble\._renderTimer = setTimeout\(/);
-  // A finished message paints at once instead of waiting on a pending timer.
+  assert.match(app, /bubble\._renderFinal = bubble\._renderFinal \|\| flush;/);
+  assert.match(app, /role === "assistant" && !bubble\._renderFinal/);
+  assert.match(app, /content\.textContent = bubble\._raw/);
+  assert.match(app, /renderBubbleContent\(bubble, text, true\)/);
   assert.match(app, /renderBubbleContent\(state\.assistantBubble, payload\.text, true\)/);
+  assert.doesNotMatch(app, /LARGE_MESSAGE_RENDER_MS|bubble\._renderTimer/);
 });
 
 test("off-screen chat bubbles are skipped during layout", async () => {

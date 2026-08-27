@@ -25,7 +25,7 @@ test("conversation review state starts reviewed and tracks later completion per 
     const finished = reviews.syncConversationReviewStates("user-a", "project", [{ path: "session", updatedAt: "2026-01-01T00:01:00.000Z", running: false }]);
     assert.equal(finished.get("session"), "needs_review");
 
-    reviews.markConversationReviewed("user-a", "project", "session");
+    reviews.markConversationReviewed("user-a", "project", { path: "session", updatedAt: "2026-01-01T00:01:00.000Z" });
     const reviewed = reviews.syncConversationReviewStates("user-a", "project", [{ path: "session", updatedAt: "2026-01-01T00:01:00.000Z", running: false }]);
     assert.equal(reviewed.get("session"), "reviewed");
 
@@ -40,7 +40,7 @@ test("conversation review state starts reviewed and tracks later completion per 
     const bulkPending = reviews.syncConversationReviewStates("user-a", "project", bulkSessions);
     assert.equal(bulkPending.get("bulk-a"), "needs_review");
     assert.equal(bulkPending.get("bulk-b"), "needs_review");
-    reviews.markConversationsReviewed("user-a", "project", ["bulk-a", "bulk-b"]);
+    reviews.markConversationsReviewed("user-a", "project", bulkSessions);
     const bulkReviewed = reviews.syncConversationReviewStates("user-a", "project", bulkSessions);
     assert.equal(bulkReviewed.get("bulk-a"), "reviewed");
     assert.equal(bulkReviewed.get("bulk-b"), "reviewed");
