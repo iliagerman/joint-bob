@@ -17,6 +17,7 @@ export interface ReplicationEvent {
 export interface ReplicationBatch { events: ReplicationEvent[]; }
 interface OutboxRow { event_id: string; origin_node_id: string; entity_type: string; entity_key: string; operation: string; payload: string; created_at: string; }
 interface NamePayload { scope: "projects" | "sessions"; key: string; name: string | null; updatedAt: string; originNodeId: string; }
+interface ProjectLockPayload { projectId: string; lock: { nodeId: string; nodeName: string; lockedAt: string } | null; updatedAt: string; originNodeId: string; }
 interface TaskPayload { projectId: string; task: TaskRecord | null; originNodeId: string; updatedAt?: string; }
 
 const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
@@ -51,6 +52,10 @@ function ensureNameSchema(db: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS name_override_tombstones (scope TEXT NOT NULL, key TEXT NOT NULL, updated_at TEXT NOT NULL, origin_node_id TEXT NOT NULL, PRIMARY KEY (scope, key));`);
   const columns = db.prepare("PRAGMA table_info(name_overrides)").all() as unknown as Array<{ name: string }>;
   if (!columns.some((column) => column.name === "origin_node_id")) db.exec("ALTER TABLE name_overrides ADD COLUMN origin_node_id TEXT NOT NULL DEFAULT ''");
+}
+
+function ensureProjectLockSchema(db: DatabaseSync): void {
+  db.exec(`CREATE TABLE IF NOT EXISTS project_locks (project_id TEXT PRIMARY KEY, node_id TEXT, node_name TEXT, locked_at TEXT, updated_at TEXT NOT NULL, origin_node_id TEXT NOT NULL);`);
 }
 
 async function replicationDatabase(): Promise<DatabaseSync> {
@@ -94,6 +99,25 @@ function applyNameEvent(db: DatabaseSync, event: ReplicationEvent): void {
   db.prepare("INSERT INTO name_overrides (scope, key, name, updated_at, origin_node_id) VALUES (?, ?, ?, ?, ?) ON CONFLICT(scope, key) DO UPDATE SET name=excluded.name, updated_at=excluded.updated_at, origin_node_id=excluded.origin_node_id").run(payload.scope, key, payload.name, payload.updatedAt, payload.originNodeId); db.prepare("DELETE FROM name_override_tombstones WHERE scope = ? AND key = ?").run(payload.scope, key);
 }
 
+function projectLockPayload(event: ReplicationEvent): ProjectLockPayload {
+  if (event.entityType !== "project.lock" || !["upsert", "delete"].includes(event.operation)) throw new Error("Unsupported replication event");
+  const value = event.payload as Partial<ProjectLockPayload>;
+  if (!value || typeof value !== "object" || Array.isArray(value) || typeof value.projectId !== "string" || typeof value.updatedAt !== "string" || typeof value.originNodeId !== "string" || value.originNodeId !== event.originNodeId || event.entityKey !== value.projectId) throw new Error("Malformed project lock replication payload");
+  const lock = value.lock;
+  if ((event.operation === "upsert") !== Boolean(lock)) throw new Error("Malformed project lock replication payload");
+  if (lock && (typeof lock.nodeId !== "string" || typeof lock.nodeName !== "string" || typeof lock.lockedAt !== "string")) throw new Error("Malformed project lock replication payload");
+  return value as ProjectLockPayload;
+}
+
+function applyProjectLockEvent(db: DatabaseSync, event: ReplicationEvent): void {
+  const payload = projectLockPayload(event);
+  const current = db.prepare("SELECT updated_at, origin_node_id FROM project_locks WHERE project_id = ?").get(payload.projectId) as { updated_at: string; origin_node_id: string } | undefined;
+  if (current && `${payload.updatedAt}\n${payload.originNodeId}` <= `${current.updated_at}\n${current.origin_node_id}`) return;
+  db.prepare(`INSERT INTO project_locks (project_id, node_id, node_name, locked_at, updated_at, origin_node_id) VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(project_id) DO UPDATE SET node_id = excluded.node_id, node_name = excluded.node_name, locked_at = excluded.locked_at, updated_at = excluded.updated_at, origin_node_id = excluded.origin_node_id`)
+    .run(payload.projectId, payload.lock?.nodeId ?? null, payload.lock?.nodeName ?? null, payload.lock?.lockedAt ?? null, payload.updatedAt, payload.originNodeId);
+}
+
 function taskPayload(event: ReplicationEvent): TaskPayload {
   if (event.entityType !== "task" || !["upsert", "delete"].includes(event.operation)) throw new Error("Unsupported replication event");
   const payload = event.payload as Partial<TaskPayload>; const task = payload?.task;
@@ -131,7 +155,7 @@ function applyTaskEvent(db: DatabaseSync, event: ReplicationEvent): boolean {
 }
 
 export async function receiveReplicationBatch(batch: ReplicationBatch): Promise<string[]> {
-  const db = await replicationDatabase(); ensureNameSchema(db); ensureTaskSchema(db); db.exec("BEGIN IMMEDIATE");
+  const db = await replicationDatabase(); ensureNameSchema(db); ensureTaskSchema(db); ensureProjectLockSchema(db); db.exec("BEGIN IMMEDIATE");
   try {
     const insert = db.prepare("INSERT OR IGNORE INTO replication_inbox (event_id, origin_node_id, received_at) VALUES (?, ?, ?)");
     const remove = db.prepare("DELETE FROM replication_inbox WHERE event_id = ?");
@@ -142,7 +166,7 @@ export async function receiveReplicationBatch(batch: ReplicationBatch): Promise<
         received.push(event.id);
         continue;
       }
-      const applied = event.entityType === "name.override" ? (applyNameEvent(db, event), true) : event.entityType === "task" ? applyTaskEvent(db, event) : (() => { throw new Error("Unsupported replication event"); })();
+      const applied = event.entityType === "name.override" ? (applyNameEvent(db, event), true) : event.entityType === "project.lock" ? (applyProjectLockEvent(db, event), true) : event.entityType === "task" ? applyTaskEvent(db, event) : (() => { throw new Error("Unsupported replication event"); })();
       if (!applied) {
         remove.run(event.id);
         continue;

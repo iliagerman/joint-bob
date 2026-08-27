@@ -11,6 +11,7 @@ import { promisify } from "node:util";
 import WebSocket, { WebSocketServer } from "ws";
 import { z } from "zod";
 import { projectNameOverrides, setProjectName, setSessionTitle } from "./names.js";
+import { getProjectLock, projectLocks, setProjectLock } from "./project-locks.js";
 import { addProject, deleteProjectType, getProject, importProject, listProjects, listProjectTypes, projectAliasIds, ProjectTypeError, registerProjectAliases, removeProject, renameProject, saveProjectType, touchProject, updateProjectColor, updateProjectMacPath, updateProjectSyncFolderId, updateProjectTypeAndPath } from "./store.js";
 import { createClusterPeer, dueMembershipDeliveries, getClusterMachineToken, getClusterMembership, getClusterNode, getClusterPeer, listClusterPeers, markClusterPeerSeen, mergeClusterMembership, recordMembershipDelivered, recordMembershipFailure, removeClusterPeer, saveClusterPeer, updateClusterNode, type ClusterPeer } from "./cluster.js";
 import { eventsForPeer, receiveReplicationBatch, recordPeerFailure, recordPeerReceipt, type ReplicationBatch } from "./replication.js";
@@ -272,6 +273,7 @@ const projectUpdateSchema = z.object({
   (payload) => payload.name !== undefined || payload.type !== undefined || payload.color !== undefined,
   "Provide a project name, type, or color",
 );
+const projectLockSchema = z.object({ locked: z.boolean() });
 const sessionTitleSchema = z.object({
   sessionPath: z.string().min(1),
   title: z.string().trim().max(200),
@@ -1692,17 +1694,33 @@ function unavailableProjectStatus(message = "No Syncthing folder is configured")
 }
 
 async function projectsWithSharedNames(includeSyncStatus = true): Promise<ProjectView[]> {
-  const [projects, overrides] = await Promise.all([listProjects(), projectNameOverrides()]);
+  const [projects, overrides, locks, local] = await Promise.all([listProjects(), projectNameOverrides(), projectLocks(), getClusterNode()]);
   const statuses = includeSyncStatus
     ? await syncthingFolderStatuses(projects.flatMap((project) => project.syncFolderId ? [project.syncFolderId] : []))
     : {};
-  return projects.map((project) => ({
-    ...project,
-    name: overrides[project.id] ?? project.name,
-    syncStatus: project.syncFolderId
-      ? statuses[project.syncFolderId] ?? unavailableProjectStatus("Loading sync status")
-      : unavailableProjectStatus(),
-  }));
+  return projects.map((project) => {
+    const lock = locks[project.id];
+    return {
+      ...project,
+      name: overrides[project.id] ?? project.name,
+      syncStatus: project.syncFolderId
+        ? statuses[project.syncFolderId] ?? unavailableProjectStatus("Loading sync status")
+        : unavailableProjectStatus(),
+      ...(lock ? { lock, lockedElsewhere: lock.nodeId !== local.id } : {}),
+    };
+  });
+}
+
+/** A project locked to a peer node must not be edited here. This prevents accidental parallel
+    edits across nodes; any node may clear the lock, so it is not a security boundary. */
+class ProjectLockedError extends Error {}
+
+async function assertProjectEditable(project: ProjectRecord): Promise<void> {
+  const lock = await getProjectLock(project.id);
+  if (!lock) return;
+  const local = await getClusterNode();
+  if (lock.nodeId === local.id) return;
+  throw new ProjectLockedError(`${project.name} is locked by ${lock.nodeName}. Unlock it to edit from this node.`);
 }
 
 async function projectView(project: ProjectRecord): Promise<ProjectView> {
@@ -1893,6 +1911,7 @@ app.put("/api/projects/:projectId/path-mapping", async (request, response, next)
       sendError(response, 404, "Project not found");
       return;
     }
+    await assertProjectEditable(existing);
     const payload = projectPathMappingSchema.parse(request.body);
     const project = await updateProjectMacPath(existing.id, payload.macPath);
     sessionWatcher.ensureProject(project);
@@ -1939,6 +1958,7 @@ app.patch("/api/projects/:projectId", async (request, response, next) => {
       sendError(response, 404, "Project not found");
       return;
     }
+    await assertProjectEditable(existing);
     const payload = projectUpdateSchema.parse(request.body);
     if (payload.type && !(await listProjectTypes()).some((type) => type.id === payload.type)) {
       throw new ProjectTypeError(`Unknown project type "${payload.type}"`);
@@ -1952,6 +1972,22 @@ app.patch("/api/projects/:projectId", async (request, response, next) => {
     }
     if (payload.color !== undefined) project = await updateProjectColor(project.id, payload.color);
     if (typeChanged) await notifyPeersOfProjectInventory();
+    response.json({ project: await projectView(project) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Any node may lock or unlock. The lock only stops accidental edits from a second node.
+app.put("/api/projects/:projectId/lock", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project) {
+      sendError(response, 404, "Project not found");
+      return;
+    }
+    const payload = projectLockSchema.parse(request.body);
+    await setProjectLock(project.id, payload.locked);
     response.json({ project: await projectView(project) });
   } catch (error) {
     next(error);
@@ -1982,6 +2018,7 @@ app.delete("/api/projects/:projectId", async (request, response, next) => {
       sendError(response, 404, "Project not found");
       return;
     }
+    await assertProjectEditable(project);
     await removeProject(project.id);
     const session = response.locals.authSession as AuthSession;
     await removeProjectGitHubAuth(project.id, session.userId);
@@ -2222,6 +2259,7 @@ app.delete("/api/projects/:projectId/sessions", async (request, response, next) 
       sendError(response, 404, "Project not found");
       return;
     }
+    await assertProjectEditable(project);
     const sessionPath = typeof request.query.sessionPath === "string" ? request.query.sessionPath : "";
     if (!sessionPath || sessionPath === "new" || sessionPath === "claude:new") {
       sendError(response, 400, "Session path is required");
@@ -2312,6 +2350,7 @@ app.post("/api/projects/:projectId/tasks", async (request, response, next) => {
       sendError(response, 404, "Project not found");
       return;
     }
+    await assertProjectEditable(project);
     const payload = taskCreateSchema.parse(request.body);
     await ensureTicketWorkspaceFolder();
     const engine = payload.engine ?? "pi";
@@ -2335,6 +2374,7 @@ app.patch("/api/projects/:projectId/tasks/:taskId", async (request, response, ne
   try {
     const project = await getProject(request.params.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
+    await assertProjectEditable(project);
     const payload = taskUpdateSchema.parse(request.body);
     const existing = (await listTasks(project.id)).find((task) => task.id === request.params.taskId);
     if (!existing) { sendError(response, 404, "Task not found"); return; }
@@ -2360,6 +2400,7 @@ app.post("/api/projects/:projectId/tasks/:taskId/handoff", async (request, respo
   try {
     const project = await getProject(request.params.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
+    await assertProjectEditable(project);
     const payload = taskHandoffSchema.parse(request.body);
     const task = (await listTasks(project.id)).find((candidate) => candidate.id === request.params.taskId);
     if (!task) { sendError(response, 404, "Task not found"); return; }
@@ -2384,6 +2425,7 @@ app.post("/api/projects/:projectId/tasks/:taskId/archive", async (request, respo
   try {
     const project = await getProject(request.params.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
+    await assertProjectEditable(project);
     const task = (await listTasks(project.id)).find((candidate) => candidate.id === request.params.taskId);
     if (!task) { sendError(response, 404, "Task not found"); return; }
     const local = await getClusterNode();
@@ -2405,6 +2447,7 @@ app.post("/api/projects/:projectId/tasks/:taskId/merge", async (request, respons
   try {
     const project = await getProject(request.params.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
+    await assertProjectEditable(project);
     const task = (await listTasks(project.id)).find((candidate) => candidate.id === request.params.taskId);
     if (!task) { sendError(response, 404, "Task not found"); return; }
     const local = await getClusterNode();
@@ -2426,6 +2469,7 @@ app.delete("/api/projects/:projectId/tasks/:taskId", async (request, response, n
   try {
     const project = await getProject(request.params.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
+    await assertProjectEditable(project);
     const task = (await listTasks(project.id)).find((candidate) => candidate.id === request.params.taskId);
     if (!task) { sendError(response, 404, "Task not found"); return; }
     const local = await getClusterNode();
@@ -2493,7 +2537,7 @@ app.use((error: unknown, _request: Request, response: Response, _next: NextFunct
     sendError(response, 400, message);
     return;
   }
-  sendError(response, error instanceof TaskWorktreeError || error instanceof TaskWorkspaceError || error instanceof ProjectDirectoryImportError ? 409 : 500, message);
+  sendError(response, error instanceof TaskWorktreeError || error instanceof TaskWorkspaceError || error instanceof ProjectDirectoryImportError || error instanceof ProjectLockedError ? 409 : 500, message);
 });
 
 function send(socket: WebSocket, payload: unknown): void {
@@ -3341,7 +3385,16 @@ webSocketServer.on("connection", async (socket, request) => {
       return;
     }
   }
+  // Only a browser sitting on this node is blocked. A socket routed here by a peer already
+  // passed that peer's check, and the read-only `watch` socket below is never blocked.
+  const heldLock = browserAuthenticated ? await getProjectLock(project.id) : undefined;
+  const lockedByPeer = heldLock && heldLock.nodeId !== local.id ? heldLock : undefined;
+
   if (url.searchParams.get("mode") === "terminal") {
+    if (lockedByPeer) {
+      socket.close(1008, `Project is locked by ${lockedByPeer.nodeName}`);
+      return;
+    }
     attachTerminalSession(socket, project.path, local.id);
     return;
   }
@@ -3365,6 +3418,11 @@ webSocketServer.on("connection", async (socket, request) => {
       if (payload.type === "ping") send(socket, { type: "pong" });
     });
     socket.on("close", () => clients.delete(socket));
+    return;
+  }
+
+  if (lockedByPeer) {
+    socket.close(1008, `Project is locked by ${lockedByPeer.nodeName}`);
     return;
   }
 

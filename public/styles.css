@@ -1370,3 +1370,10 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 .project-card[data-color] { box-shadow: inset 3px 0 0 var(--project-hue); border-radius: 3px var(--radius-ctl) var(--radius-ctl) 3px; background: color-mix(in srgb, var(--project-hue) 12%, transparent); }
 .project-card[data-color]:hover { background: color-mix(in srgb, var(--project-hue) 22%, var(--field)); }
 .project-card[data-color].active { box-shadow: inset 3px 0 0 var(--project-hue), var(--raise); background: color-mix(in srgb, var(--project-hue) 18%, var(--surface)); }
+
+/* ---- Project node lock ---- */
+.lock-button { font-size: 12px; opacity: 0.55; }
+.lock-button.locked { opacity: 1; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.project-list .lock-button { right: 202px; }
+.project-card .project-lock-badge { display: block; margin: 3px 0 0; font-size: 10px; font-style: normal; color: var(--accent); }
+.project-card .project-lock-badge.foreign { color: var(--danger); }

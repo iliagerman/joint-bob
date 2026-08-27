@@ -1537,6 +1537,13 @@ function projectRow(project) {
     syncStatus.textContent = status.state === "error" && status.message ? `Error: ${status.message}` : syncLabels[status.state] || syncLabels.unavailable;
     syncStatus.title = status.message || "";
     button.append(name, projectPath, syncStatus);
+    if (project.lock) {
+      const lockBadge = document.createElement("em");
+      lockBadge.className = `project-lock-badge${project.lockedElsewhere ? " foreign" : ""}`;
+      lockBadge.dataset.testid = "project-lock-badge";
+      lockBadge.textContent = project.lockedElsewhere ? `\u{1F512} Locked by ${project.lock.nodeName}` : "\u{1F512} Locked to this node";
+      button.append(lockBadge);
+    }
     button.addEventListener("click", () => selectProject(project.id));
 
     const pinToggle = pinButton({
@@ -1544,6 +1551,27 @@ function projectRow(project) {
       label: pinned ? `Unpin ${project.name}` : `Pin ${project.name}`,
       testid: "project-pin-button",
       onToggle: () => togglePinnedProject(project.id),
+    });
+
+    const lockToggle = document.createElement("button");
+    lockToggle.type = "button";
+    lockToggle.className = `ghost icon-button row-action-button lock-button${project.lock ? " locked" : ""}`;
+    const lockLabel = project.lock ? `Unlock ${project.name}` : `Lock ${project.name} to this node`;
+    lockToggle.setAttribute("aria-label", lockLabel);
+    lockToggle.setAttribute("aria-pressed", String(Boolean(project.lock)));
+    lockToggle.title = project.lockedElsewhere ? `Locked by ${project.lock.nodeName} — click to unlock` : lockLabel;
+    lockToggle.textContent = project.lock ? "\u{1F512}" : "\u{1F513}";
+    lockToggle.dataset.testid = "project-lock-button";
+    lockToggle.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      lockToggle.disabled = true;
+      try {
+        await api(`/api/projects/${encodeURIComponent(project.id)}/lock`, { method: "PUT", body: JSON.stringify({ locked: !project.lock }) });
+        await refreshProjectsQuietly();
+      } catch (error) {
+        toast(error.message, 6000);
+        lockToggle.disabled = false;
+      }
     });
 
     const rescanButton = projectRescanButton(project);
@@ -1607,7 +1635,7 @@ function projectRow(project) {
       await loadProjects();
     });
 
-    row.append(button, pinToggle, rescanButton, renameButton, mappingButton, authButton, removeButton);
+    row.append(button, lockToggle, pinToggle, rescanButton, renameButton, mappingButton, authButton, removeButton);
     return row;
 }
 

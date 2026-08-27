@@ -26,6 +26,12 @@ export interface ProjectSyncStatus {
   message?: string;
 }
 
+export interface ProjectLock {
+  nodeId: string;
+  nodeName: string;
+  lockedAt: string;
+}
+
 export interface ProjectRecord {
   id: string;
   name: string;
@@ -41,6 +47,9 @@ export interface ProjectRecord {
 
 export interface ProjectView extends ProjectRecord {
   syncStatus: ProjectSyncStatus;
+  lock?: ProjectLock;
+  /** True when another node holds the lock, so this node must not edit the project. */
+  lockedElsewhere?: boolean;
 }
 
 export type HarnessId = "pi" | "claude";
