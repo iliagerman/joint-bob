@@ -14,9 +14,10 @@ node --import tsx --test test/conversation-ownership.test.ts test/replication.te
 node --import tsx --test test/streaming-render-performance.test.ts test/claude-session-reattach.test.ts test/websocket-chat-streaming.test.ts
 node --import tsx --test test/conversation-status-indicators.test.ts test/conversation-review-api.test.ts
 node --import tsx --test test/syncthing.test.ts
+node --import tsx --test test/preferences-api.test.ts test/recent-conversations-ui.test.ts
 ```
 
-Expected result: 17, 4, 10, 3, and 12 tests pass respectively, with zero failures.
+Expected result: 17, 4, 10, 3, 12, and 9 tests pass respectively, with zero failures.
 
 ## Test data and cleanup
 

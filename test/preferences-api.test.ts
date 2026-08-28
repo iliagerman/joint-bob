@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import type { Express } from "express";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 async function listen(app: Express) {
@@ -92,6 +93,36 @@ test("preferences are authenticated, validated, and persist across listener rest
     assert.equal(updated.status, 200);
     assert.deepEqual(await updated.json(), values);
 
+    const canonicalPath = "/tmp/session.jsonl";
+    const duplicateSessions = [
+      { projectId: "project-123", sessionPath: "/tmp/session.sync-conflict-20260827-120000-ABC.jsonl", title: "Newest", openedAt: "2026-08-27T12:00:00.000Z" },
+      { projectId: "project-123", sessionPath: "/tmp/session.sync-conflict-20260827-110000-ABC.jsonl", title: "Older conflict", openedAt: "2026-08-27T11:00:00.000Z" },
+      { projectId: "project-123", sessionPath: canonicalPath, title: "Older canonical", openedAt: "2026-08-27T10:00:00.000Z" },
+      { projectId: "other-project", sessionPath: canonicalPath, title: "Other project", openedAt: "2026-08-27T09:00:00.000Z" },
+    ];
+    const cleanedSessions = [
+      { ...duplicateSessions[0], sessionPath: canonicalPath },
+      duplicateSessions[3],
+    ];
+    const deduplicated = await fetch(`${node.baseUrl}/api/preferences`, {
+      method: "PUT",
+      headers: requestHeaders,
+      body: JSON.stringify({ recentSessions: duplicateSessions }),
+    });
+    assert.equal(deduplicated.status, 200);
+    assert.deepEqual((await deduplicated.json() as { recentSessions: unknown }).recentSessions, cleanedSessions);
+
+    const persistenceDb = new DatabaseSync(path.join(root, "node.db"));
+    const stored = persistenceDb.prepare("SELECT recent_sessions FROM user_preferences").get() as { recent_sessions: string };
+    assert.deepEqual(JSON.parse(stored.recent_sessions), cleanedSessions);
+
+    const staleSessions = [duplicateSessions[2], duplicateSessions[0], duplicateSessions[0], duplicateSessions[3], { projectId: 1 }];
+    persistenceDb.prepare("UPDATE user_preferences SET recent_sessions = ?").run(JSON.stringify(staleSessions));
+    persistenceDb.close();
+    const repaired = await fetch(`${node.baseUrl}/api/preferences`, { headers: { Cookie: cookie } });
+    assert.equal(repaired.status, 200);
+    assert.deepEqual((await repaired.json() as { recentSessions: unknown }).recentSessions, [duplicateSessions[2], duplicateSessions[3]]);
+
     const invalidEnum = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ mobileView: "invalid" }) });
     assert.equal(invalidEnum.status, 400);
     const invalidSound = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ completionSound: "siren" }) });
@@ -111,7 +142,10 @@ test("preferences are authenticated, validated, and persist across listener rest
     node = await listen(app.createApp());
     const persisted = await fetch(`${node.baseUrl}/api/preferences`, { headers: { Cookie: cookie } });
     assert.equal(persisted.status, 200);
-    assert.deepEqual(await persisted.json(), values);
+    assert.deepEqual(await persisted.json(), {
+      ...values,
+      recentSessions: [duplicateSessions[2], duplicateSessions[3]],
+    });
   } finally {
     if (node) await node.close();
     if (previousDataDir === undefined) delete process.env.PI_WEB_DATA_DIR;

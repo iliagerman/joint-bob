@@ -1254,3 +1254,258 @@
 **Options**: Keep deployment-evidence distinction,Keep npm-audit registry fallback,Keep both,Nothing to keep or add,Add a note
 
 ---
+
+## Decision Recorded
+**Timestamp**: 2026-08-28T16:56:26Z
+**Event**: DECISION_RECORDED
+**Stage**: build-and-test
+**Decision**: Build and Test found stale sync-conflict entries duplicating one canonical conversation in Recent Conversations. Candidate fix: canonicalize and deduplicate stored recent-session paths, use Ctrl/Cmd+K to open the dialog, and map 1-9 then 0 to the top ten. Estimated impact: low effort, zero financial cost, low risk. Loop-backs used: 0/3. How would you like to proceed?
+**Options**: Retry with fix,Accept failure,Abort
+
+---
+
+## Error Logged
+**Timestamp**: 2026-08-28T16:58:43Z
+**Event**: ERROR_LOGGED
+**Tool**: aidlc-log
+**Command**: aidlc-log answer --stage build-and-test --details Retry with fix
+**Error**: Refusing to record this answer: a real human has not acted at this checkpoint this turn. Type your answer in the session (which records a human turn) before logging it.
+
+---
+
+## Human Turn
+**Timestamp**: 2026-08-28T16:58:55Z
+**Event**: HUMAN_TURN
+
+---
+
+## Question Answered
+**Timestamp**: 2026-08-28T16:58:55Z
+**Event**: QUESTION_ANSWERED
+**Stage**: build-and-test
+**Details**: Retry with fix
+
+---
+
+## Stage Jump
+**Timestamp**: 2026-08-28T16:59:21Z
+**Event**: STAGE_JUMPED
+**Direction**: BACKWARD
+**Source**: build-and-test
+**Target**: code-generation
+**Scope**: bugfix
+**Details**: BACKWARD jump from build-and-test to code-generation (3.5). Scope: bugfix.
+**Source Baseline**: sha256:65dac1b9f886a22b6b033c1ab0cec54292b9ececf072a72806b23cb41cade77b
+
+---
+
+## Stage Start
+**Timestamp**: 2026-08-28T16:59:21Z
+**Event**: STAGE_STARTED
+**Stage**: code-generation
+**Agent**: aidlc-developer-agent
+**Source Baseline**: sha256:65dac1b9f886a22b6b033c1ab0cec54292b9ececf072a72806b23cb41cade77b
+
+---
+
+## Error Logged
+**Timestamp**: 2026-08-28T17:01:38Z
+**Event**: ERROR_LOGGED
+**Tool**: aidlc-utility
+**Command**: aidlc-utility --status
+**Error**: Unknown command "undefined". Run `aidlc-utility help` for what this tool can do.\n\nAvailable commands: help, version, status, doctor, intent-create, intent, space, space-create, codekb-path, codekb-scope-diff, detect, select-plugins, plugin-list, plugin-sync, recompose, scope-change, config-change, config-get, config-list, set-status, detect-scope, resolve-env-scope, scope-table, stage-table, upgrade\nCommon options: [--project-dir <path>] [--scope <scope>] [--json]
+
+---
+
+## Decision Recorded
+**Timestamp**: 2026-08-28T17:01:57Z
+**Event**: DECISION_RECORDED
+**Stage**: code-generation
+**Decision**: Add clickable local filesystem paths to the active bug-fix workflow by revising requirements and replaying implementation
+**Options**: Approve change,Keep current scope
+
+---
+
+## Workflow Parked
+**Timestamp**: 2026-08-28T17:04:29Z
+**Event**: WORKFLOW_PARKED
+**Stage**: code-generation
+
+---
+
+## Error Logged
+**Timestamp**: 2026-08-28T17:06:26Z
+**Event**: ERROR_LOGGED
+**Tool**: aidlc-log
+**Command**: aidlc-log review --help
+**Error**: --help expects a value, got end of arguments.
+
+---
+
+## Review Requested
+**Timestamp**: 2026-08-28T17:06:43Z
+**Event**: REVIEW_REQUESTED
+**Stage**: code-generation
+**Reviewer**: aidlc-architecture-reviewer-agent
+**Iteration**: 1
+**Artifact Fingerprint**: sha256:78480501ceea10d57dc0fbe60bd1242056aaf305044ce0f9bafb5de12a693799
+**Source Fingerprint**: 76964ae689f03ecf9ec37f69681c61868a6f479e
+
+---
+
+## Error Logged
+**Timestamp**: 2026-08-28T17:13:11Z
+**Event**: ERROR_LOGGED
+**Tool**: aidlc-log
+**Command**: aidlc-log review --stage code-generation --reviewer aidlc-architecture-reviewer-agent --iteration 1 --verdict READY
+**Error**: Refusing REVIEW_COMPLETED for "code-generation": workspace source changed after REVIEW_REQUESTED iteration 1. Re-dispatch that exact iteration with --retry-pending so the reviewer inspects the current bytes.
+
+---
+
+## Review Requested
+**Timestamp**: 2026-08-28T17:13:31Z
+**Event**: REVIEW_REQUESTED
+**Stage**: code-generation
+**Reviewer**: aidlc-architecture-reviewer-agent
+**Iteration**: 1
+**Retry**: pending-request
+**Artifact Fingerprint**: sha256:78480501ceea10d57dc0fbe60bd1242056aaf305044ce0f9bafb5de12a693799
+**Source Fingerprint**: 6f10f2c234509c2b3f834b8510a2ac8027934605
+
+---
+
+## Review Completed
+**Timestamp**: 2026-08-28T17:16:40Z
+**Event**: REVIEW_COMPLETED
+**Stage**: code-generation
+**Reviewer**: aidlc-architecture-reviewer-agent
+**Iteration**: 1
+**Verdict**: READY
+**Artifact Fingerprint**: sha256:78480501ceea10d57dc0fbe60bd1242056aaf305044ce0f9bafb5de12a693799
+**Source Fingerprint**: 6f10f2c234509c2b3f834b8510a2ac8027934605
+
+---
+
+## Stage Awaiting Approval
+**Timestamp**: 2026-08-28T17:16:50Z
+**Event**: STAGE_AWAITING_APPROVAL
+**Stage**: code-generation
+
+---
+
+## Human Turn
+**Timestamp**: 2026-08-28T17:18:14Z
+**Event**: HUMAN_TURN
+
+---
+
+## Gate Approved
+**Timestamp**: 2026-08-28T17:18:15Z
+**Event**: GATE_APPROVED
+**Stage**: code-generation
+**User Input**: Approve
+
+---
+
+## Stage Completion
+**Timestamp**: 2026-08-28T17:18:15Z
+**Event**: STAGE_COMPLETED
+**Stage**: code-generation
+**Validation Basis**: {"graphContract":"sha256:ac0ef7ae03ae2fcfab9e2a94500d84c4fe00d00384d1f8dcff92c96b2e1f50de","inputs":[{"artifact":"requirements","contentHash":"sha256:4531dab6c9e0e4e3fba47e2144d6c9af20756a9fe3987f7b14b6542817dc2a1a","instanceCount":1,"presentCount":1,"producer":"requirements-analysis","required":true,"structureHash":"sha256:b6fc6e5f4a233e51abcaa3ee61513fe3348e760ed5797d7d58d24ef40544456b"},{"artifact":"unit-of-work","contentHash":"sha256:7abedd53ab040e1b66555e50bfa3f6ed2736865fbd38a8210ba04141da4e4442","instanceCount":1,"presentCount":0,"producer":"units-generation","required":true,"structureHash":"sha256:37e84e2c66e88cc2264a5b140e742dc3bb33ebf428ab6e56013603a69be0b085"}],"outputs":[{"artifact":"code-generation-plan","contentHash":"sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","instanceCount":0,"presentCount":0,"producer":"code-generation","required":true,"structureHash":"sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"},{"artifact":"code-summary","contentHash":"sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","instanceCount":0,"presentCount":0,"producer":"code-generation","required":true,"structureHash":"sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"},{"artifact":"traceability","contentHash":"sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","instanceCount":0,"presentCount":0,"producer":"code-generation","required":true,"structureHash":"sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"},{"artifact":"unit-test-instructions","contentHash":"sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","instanceCount":0,"presentCount":0,"producer":"code-generation","required":true,"structureHash":"sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"}],"projectType":"brownfield","schema":2}
+**Details**: Stage Code Generation approved by gate
+
+---
+
+## Stage Start
+**Timestamp**: 2026-08-28T17:18:15Z
+**Event**: STAGE_STARTED
+**Stage**: build-and-test
+**Agent**: aidlc-quality-agent
+
+---
+
+## Decision Recorded
+**Timestamp**: 2026-08-28T17:21:21Z
+**Event**: DECISION_RECORDED
+**Stage**: build-and-test
+**Decision**: Which Build-and-Test learning should be kept for future runs, and is there anything to add?
+**Options**: Keep recent-session canonicalization rule,Keep concurrent PWA cache coordination rule,Keep both,Nothing to keep or add,Add a note
+
+---
+
+## Human Turn
+**Timestamp**: 2026-08-28T18:01:08Z
+**Event**: HUMAN_TURN
+
+---
+
+## Question Answered
+**Timestamp**: 2026-08-28T18:01:08Z
+**Event**: QUESTION_ANSWERED
+**Stage**: build-and-test
+**Details**: Nothing to keep or add
+
+---
+
+## Stage Awaiting Approval
+**Timestamp**: 2026-08-28T18:01:24Z
+**Event**: STAGE_AWAITING_APPROVAL
+**Stage**: build-and-test
+
+---
+
+## Human Turn
+**Timestamp**: 2026-08-28T18:03:25Z
+**Event**: HUMAN_TURN
+
+---
+
+## Gate Approved
+**Timestamp**: 2026-08-28T18:03:25Z
+**Event**: GATE_APPROVED
+**Stage**: build-and-test
+**User Input**: Approve
+
+---
+
+## Stage Completion
+**Timestamp**: 2026-08-28T18:03:25Z
+**Event**: STAGE_COMPLETED
+**Stage**: build-and-test
+**Validation Basis**: {"graphContract":"sha256:96b8f13dd5dc4ed374a013c67c59513754aa4e6f9c23c96a9953c7cb00d73f5c","inputs":[{"artifact":"code-generation-plan","contentHash":"sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","instanceCount":0,"presentCount":0,"producer":"code-generation","required":true,"structureHash":"sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"},{"artifact":"code-summary","contentHash":"sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","instanceCount":0,"presentCount":0,"producer":"code-generation","required":true,"structureHash":"sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"},{"artifact":"unit-test-instructions","contentHash":"sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","instanceCount":0,"presentCount":0,"producer":"code-generation","required":true,"structureHash":"sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"}],"outputs":[{"artifact":"build-and-test-summary","contentHash":"sha256:fd3bf2dd5ea78d55bf8c9a2e2e5fdb9b26048fbcc0d09c0b3cacd287ef85e7c6","instanceCount":1,"presentCount":1,"producer":"build-and-test","required":true,"structureHash":"sha256:abe92d83ba86cd0521617f1dfd44aa40bf9b7bf8972051dd086c51db19930e87"},{"artifact":"build-instructions","contentHash":"sha256:3f5a5f7abbbc9e9410a8578c295138916bd2e4c26eab79259e2802686ed17724","instanceCount":1,"presentCount":1,"producer":"build-and-test","required":true,"structureHash":"sha256:213611ad7c44a6ec6284f0e258f491615adf4bc9c61761dcdff876ce4ea8294b"},{"artifact":"build-test-results","contentHash":"sha256:e4acbfaca0d1bcdb41a42343d8a3752c9523cc9e238da9d6a1f28d768d9b98eb","instanceCount":1,"presentCount":1,"producer":"build-and-test","required":true,"structureHash":"sha256:c0813ad1d3fa9af9d8336785ae1f17d3f584a114d519ba114872981094d0379a"},{"artifact":"cross-unit-traceability","contentHash":"sha256:a492c0fecc6d55ad2fae5921b3ac6daebc8897ed04e19f18aa86c2f05b539281","instanceCount":1,"presentCount":1,"producer":"build-and-test","required":true,"structureHash":"sha256:b3cef7e54c01c5b034635a73b12d53e2fa8f171fbd95baa80e3964c6534d56cf"},{"artifact":"integration-test-instructions","contentHash":"sha256:df616a6684ef12167f44addc2cd83e47469376adf253457fb6cc989c914c1d5a","instanceCount":1,"presentCount":1,"producer":"build-and-test","required":true,"structureHash":"sha256:952b65f8e77a65e52ed42b8babb7112f0fbd467f9785065a96f1ef20407785d9"},{"artifact":"performance-test-instructions","contentHash":"sha256:98ea08c052189a098e90ba32a391ea88060cb04a87d898a1256bc017f90b9efc","instanceCount":1,"presentCount":1,"producer":"build-and-test","required":true,"structureHash":"sha256:301031e91e88b9833f5c40695b2d27cd11bd34984fc3f93317a7c2490bdefab1"},{"artifact":"security-test-instructions","contentHash":"sha256:5aea6e2ff088111de159f3f8f139a6aa24593cedf1cf0c7f694f02674b46cab7","instanceCount":1,"presentCount":1,"producer":"build-and-test","required":true,"structureHash":"sha256:9932ea85ff9fa87487a8de42ac80f528131f1fe25a38a32e4cc7f621325bd470"}],"projectType":"brownfield","schema":2}
+**Details**: Stage Build and Test approved by gate
+
+---
+
+## Phase Completion
+**Timestamp**: 2026-08-28T18:03:25Z
+**Event**: PHASE_COMPLETED
+**From phase**: construction
+**To phase**: (end)
+**Stages completed**: 7
+
+---
+
+## Phase Verification
+**Timestamp**: 2026-08-28T18:03:25Z
+**Event**: PHASE_VERIFIED
+**Phase boundary**: construction → end
+
+---
+
+## Workflow Completion
+**Timestamp**: 2026-08-28T18:03:25Z
+**Event**: WORKFLOW_COMPLETED
+**Scope**: bugfix
+**Details**: Scope: bugfix, 7 stages completed
+**Tokens In**: 190
+**Tokens Out**: 62377
+**Cache Read**: 10855743
+**Cache Write**: 614324
+**Cost USD**: 13.13
+**By Model**: opus-5=13.13
+**By Agent**: main=13.13
+**Tokens By Model**: opus-5=190/62.4k/10.9M/614.3k
+**Tokens By Agent**: main=190/62.4k/10.9M/614.3k
+
+---

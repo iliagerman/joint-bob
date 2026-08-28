@@ -30,3 +30,4 @@
 - 2026-08-28T14:20:00Z — bound machine bearer credentials to persisted peer identities; ownership apply and transfer receive now derive source authorship from authentication and reject Pi and Claude spoof assertions
 - 2026-08-28T14:20:00Z — held process-isolated Pi and Claude owner stub turns open while non-owner continuations were rejected; each boundary proves exactly one engine invocation and two-record transcript mutation
 - 2026-08-28T14:20:00Z — marked FR5.3 and NFR8 `Deferred`, the validator's accepted unmet status, until Build and Test runs beecomm and installed-node checks
+- 2026-08-28T16:59:21Z — loop-back 1 canonicalizes recent-session conflict paths at the preference read/write boundary, deduplicates by project and canonical path, simplifies the global opener to `Ctrl/Cmd+K`, maps `1`-`9` then `0` to the top ten, and requires a PWA cache bump; a concurrent transcript-formatting shell change advanced the final shared cache version to `joint-bob-v41`

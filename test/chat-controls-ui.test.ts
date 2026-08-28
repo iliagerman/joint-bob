@@ -28,5 +28,5 @@ test("mobile chat controls use a fixed grid and More menu", async () => {
   assert.ok(mobileStyles, "mobile styles must define a max-width: 1023px section");
   assert.match(mobileStyles, /\.chat-toolbar[^\{]*\{[^}]*display:\s*grid[^}]*overflow(?:-x)?:\s*visible/);
   assert.doesNotMatch(styles, /\.chat-toolbar[^\{]*\{[^}]*overflow-x:\s*auto/);
-  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v39";/);
+  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v42";/);
 });

@@ -2810,26 +2810,40 @@ app.get("/api/projects/:projectId/file", async (request, response, next) => {
       sendError(response, 400, "File path is required");
       return;
     }
-    const projectRoot = path.resolve(project.path);
-    const resolved = path.resolve(projectRoot, requestedPath);
-    const relative = path.relative(projectRoot, resolved);
-    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    const projectRoot = await realpath(project.path);
+    const projectAbsolutePrefix = `${projectRoot}${path.sep}`;
+    const isProjectAbsolute = requestedPath === projectRoot || requestedPath.startsWith(projectAbsolutePrefix);
+    const projectPath = path.isAbsolute(requestedPath) && !isProjectAbsolute
+      ? requestedPath.replace(/^[/\\]+/, "")
+      : requestedPath;
+    const requestedFile = path.resolve(projectRoot, projectPath);
+    const requestedRelative = path.relative(projectRoot, requestedFile);
+    if (requestedRelative.startsWith("..") || path.isAbsolute(requestedRelative)) {
       sendError(response, 403, "File is outside the project directory");
       return;
     }
+    let resolved;
     let info;
     try {
+      resolved = await realpath(requestedFile);
       info = await stat(resolved);
     } catch {
       sendError(response, 404, "File not found");
+      return;
+    }
+    const resolvedRelative = path.relative(projectRoot, resolved);
+    if (resolvedRelative.startsWith("..") || path.isAbsolute(resolvedRelative)) {
+      sendError(response, 403, "File is outside the project directory");
       return;
     }
     if (!info.isFile()) {
       sendError(response, 400, "Path is not a file");
       return;
     }
-    const fileName = path.basename(resolved);
-    response.setHeader("Content-Disposition", `attachment; filename="${fileName.replace(/["\r\n]/g, "")}"`);
+    const fileName = path.basename(resolved).replace(/["\r\n]/g, "");
+    const disposition = request.query.download === "1" ? "attachment" : "inline";
+    response.type(resolved);
+    response.setHeader("Content-Disposition", `${disposition}; filename="${fileName}"`);
     response.setHeader("Content-Length", String(info.size));
     createReadStream(resolved).pipe(response);
   } catch (error) {

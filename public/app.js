@@ -1721,15 +1721,19 @@ function openListedSession(session) {
 /** Newest first; the cap keeps the dialog and the stored preference small. */
 const RECENT_SESSIONS_LIMIT = 20;
 
+function canonicalSessionPath(sessionPath) {
+  return sessionPath.replace(/\.sync-conflict-[^/\\]+(?=\.jsonl$)/, "");
+}
+
 function rememberRecentSession(session) {
   const entry = {
     projectId: state.activeProjectId,
-    sessionPath: session.path,
+    sessionPath: canonicalSessionPath(session.path),
     title: shortSessionTitle(session),
     openedAt: new Date().toISOString(),
   };
   const others = state.recentSessions.filter((candidate) =>
-    candidate.projectId !== entry.projectId || candidate.sessionPath !== entry.sessionPath);
+    candidate.projectId !== entry.projectId || canonicalSessionPath(candidate.sessionPath) !== entry.sessionPath);
   state.recentSessions = [entry, ...others].slice(0, RECENT_SESSIONS_LIMIT);
   if (state.preferencesLoaded) savePreferencesInBackground({ recentSessions: state.recentSessions });
 }
@@ -1763,8 +1767,8 @@ async function openRecentSession(entry) {
   openListedSession(session);
 }
 
-/** Rows 1-9 carry a digit shortcut; the list is renumbered whenever the search narrows it. */
-const RECENT_SESSION_SHORTCUT_LIMIT = 9;
+/** Rows 1-10 carry a digit shortcut; the list is renumbered whenever the search narrows it. */
+const RECENT_SESSION_SHORTCUT_LIMIT = 10;
 let recentSessionShortcuts = [];
 
 function renderRecentSessionsDialog() {
@@ -1799,7 +1803,7 @@ function renderRecentSessionsDialog() {
       const index = document.createElement("span");
       index.className = "recent-session-index";
       index.dataset.testid = "recent-session-index";
-      index.textContent = String(recentSessionShortcuts.length);
+      index.textContent = recentSessionShortcuts.length === 10 ? "0" : String(recentSessionShortcuts.length);
       button.append(index);
     }
     const title = document.createElement("strong");
@@ -2042,10 +2046,10 @@ function stickyScroll(force = false) {
   elements.messages.scrollTop = elements.messages.scrollHeight;
 }
 
-function toolDownloadUrl(filePath) {
+function projectFileUrl(filePath, download = false) {
   if (!state.activeProjectId || !filePath) return null;
   const url = `/api/projects/${encodeURIComponent(state.activeProjectId)}/file?path=${encodeURIComponent(filePath)}`;
-  return url;
+  return download ? `${url}&download=1` : url;
 }
 
 const FILE_PATH_RE = /(^|[\s()\[\]{}'"])((?:\.\/?|\.\.\/|(?:\/|[A-Z]:\\)?(?:[\w.-]+\/)+)[\w.-]+\.[A-Za-z0-9]{1,8})/g;
@@ -2070,7 +2074,7 @@ function renderToolContent(container, text) {
     }
     if (match.index > last) nodes.push(document.createTextNode(source.slice(last, match.index)));
     if (prefix) nodes.push(document.createTextNode(prefix));
-    const href = toolDownloadUrl(candidate);
+    const href = projectFileUrl(candidate, true);
     if (href) {
       const anchor = document.createElement("a");
       anchor.className = "tool-download";
@@ -2117,7 +2121,9 @@ function renderBubbleContent(bubble, text, flush = false) {
     bubble._renderRaf = 0;
     const role = bubble.dataset.role;
     if (role === "assistant" && !bubble._renderFinal) content.textContent = bubble._raw;
-    else if (role === "assistant" || role === "user") renderMarkdown(content, bubble._raw);
+    else if (role === "assistant" || role === "user") {
+      renderMarkdown(content, bubble._raw, { resolveFileUrl: role === "assistant" ? projectFileUrl : undefined });
+    }
     else if (role === "tool-output") renderToolContent(content, bubble._raw);
     else content.textContent = prettyText(bubble._raw);
     bubble._renderFinal = false;
@@ -3798,7 +3804,7 @@ function openRecentSessionsDialog() {
   elements.recentSessionsSearchInput.value = "";
   renderRecentSessionsDialog();
   elements.recentSessionsDialog.showModal();
-  // Digits 1-9 are shortcuts, so focus must start on the list rather than in the search field.
+  // Digits are shortcuts, so focus must start on the list rather than in the search field.
   elements.recentSessionsList.focus();
 }
 for (const trigger of document.querySelectorAll("[data-recent-sessions-open]")) {
@@ -3808,16 +3814,16 @@ elements.recentSessionsSearchInput.addEventListener("input", () => renderRecentS
 elements.recentSessionsDialog.addEventListener("keydown", (event) => {
   if (event.target === elements.recentSessionsSearchInput) return;
   if (event.metaKey || event.ctrlKey || event.altKey) return;
-  const position = Number(event.key);
+  const position = event.key === "0" ? 10 : Number(event.key);
   if (!Number.isInteger(position) || position < 1 || position > RECENT_SESSION_SHORTCUT_LIMIT) return;
   const entry = recentSessionShortcuts[position - 1];
   if (!entry) return;
   event.preventDefault();
   openRecentSession(entry).catch((error) => toast(error.message));
 });
-/** Ctrl/Cmd+Shift+K reaches the recents list from any view, including mid-conversation. */
+/** Ctrl/Cmd+K reaches the recents list from any view, including mid-conversation. */
 document.addEventListener("keydown", (event) => {
-  if (!(event.metaKey || event.ctrlKey) || !event.shiftKey) return;
+  if (!(event.metaKey || event.ctrlKey) || event.shiftKey) return;
   if (event.key.toLowerCase() !== "k") return;
   event.preventDefault();
   if (elements.recentSessionsDialog.open) {

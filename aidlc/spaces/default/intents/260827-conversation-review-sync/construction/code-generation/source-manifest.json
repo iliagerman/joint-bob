@@ -1,8 +1,7 @@
 {
   "stage": "code-generation",
   "unit": "code-generation",
-  "version": 3,
-  "repair_iteration": 3,
+  "version": 1,
   "writes": [
     { "path": "public/app.js" },
     { "path": "public/sw.js" },
@@ -10,6 +9,7 @@
     { "path": "src/conversation-ownership.ts" },
     { "path": "src/conversation-reviews.ts" },
     { "path": "src/pi-service.ts" },
+    { "path": "src/preferences.ts" },
     { "path": "src/replication.ts" },
     { "path": "src/server.ts" },
     { "path": "src/session-paths.ts" },
@@ -20,7 +20,9 @@
     { "path": "test/conversation-review-api.test.ts" },
     { "path": "test/conversation-status-indicators.test.ts" },
     { "path": "test/pi-session-discovery.test.ts" },
+    { "path": "test/preferences-api.test.ts" },
     { "path": "test/project-grouping-ui.test.ts" },
+    { "path": "test/recent-conversations-ui.test.ts" },
     { "path": "test/secrets-ui.test.ts" },
     { "path": "test/streaming-render-performance.test.ts" },
     { "path": "test/websocket-chat-streaming.test.ts" }

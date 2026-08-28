@@ -9,6 +9,7 @@
 ## Deviations
 <!-- example: 2026-05-29T10:14:32Z — skipped the optional caching layer the stage prose suggested; the dataset is small enough that it adds risk -->
 - 2026-08-28T14:48:08Z — created concise integration, performance, and security instruction artifacts even though Minimal strategy requires no additional suites; the stage's resolved produces list requires these files, and they document already-required targeted regressions rather than expanding scope.
+- 2026-08-28T16:58:55Z — looped back after live homeserver evidence showed stale `.sync-conflict-*` paths duplicating a canonical entry in Recent Conversations; the bounded fix also expands numeric selection to `1`-`9`, then `0`, and simplifies the opener to `Ctrl/Cmd+K`.
 
 ## Tradeoffs
 <!-- example: 2026-05-29T10:14:32Z — picked TDD over BDD this run; the team is unit-first and the domain is well-understood -->

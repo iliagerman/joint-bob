@@ -28,6 +28,26 @@ test("history rendering routes each transcript role to its own bubble", async ()
   assert.equal(app.match(/appendTranscript\(payload\.messages\)/g)?.length, 2);
 });
 
+test("assistant filesystem paths open through the authenticated project file route", async () => {
+  const [app, markdown, server, serviceWorker] = await Promise.all([
+    readFile("public/app.js", "utf8"),
+    readFile("public/markdown.js", "utf8"),
+    readFile("src/server.ts", "utf8"),
+    readFile("public/sw.js", "utf8"),
+  ]);
+
+  assert.match(markdown, /const FILE_PATH_RE/);
+  assert.match(markdown, /dataset\.testid = "chat-file-link"/);
+  assert.match(markdown, /const linksToFile = Boolean\(resolveFileUrl\) && isFilePath\(groups\.url\)/);
+  assert.match(app, /resolveFileUrl: role === "assistant" \? projectFileUrl : undefined/);
+  assert.match(app, /download \? `\$\{url\}&download=1` : url/);
+  assert.match(server, /request\.query\.download === "1" \? "attachment" : "inline"/);
+  assert.match(server, /resolved = await realpath\(requestedFile\)/);
+  assert.match(server, /requestedPath\.replace\(\/\^\[\/\\\\\]\+\//);
+  assert.match(server, /File is outside the project directory/);
+  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v42"/);
+});
+
 test("empty states never stack up in the transcript", async () => {
   const [app, html] = await Promise.all([
     readFile("public/app.js", "utf8"),

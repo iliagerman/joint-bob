@@ -106,18 +106,34 @@ function parseStringList(value: string): string[] {
   }
 }
 
+function canonicalSessionPath(sessionPath: string): string {
+  return sessionPath.replace(/\.sync-conflict-[^/\\]+(?=\.jsonl$)/, "");
+}
+
+function canonicalRecentSessions(sessions: RecentSession[]): RecentSession[] {
+  const identities = new Set<string>();
+  return sessions.flatMap((entry) => {
+    const canonicalEntry = { ...entry, sessionPath: canonicalSessionPath(entry.sessionPath) };
+    const identity = `${entry.projectId}\0${canonicalEntry.sessionPath}`;
+    if (identities.has(identity)) return [];
+    identities.add(identity);
+    return [canonicalEntry];
+  });
+}
+
 /** Same hand-edited-row tolerance as parseStringList, for the recents object list. */
 function parseRecentSessions(value: string): RecentSession[] {
   try {
     const parsed = JSON.parse(value);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter((entry): entry is RecentSession =>
+    const sessions = parsed.filter((entry): entry is RecentSession =>
       typeof entry === "object"
       && entry !== null
       && typeof entry.projectId === "string"
       && typeof entry.sessionPath === "string"
       && typeof entry.title === "string"
       && typeof entry.openedAt === "string");
+    return canonicalRecentSessions(sessions);
   } catch {
     return [];
   }
@@ -177,7 +193,7 @@ export function updateUserPreferences(userId: string, partial: Partial<UserPrefe
     ["pinnedSessionPaths", "pinned_session_paths", (value) => JSON.stringify(value)],
     ["projectsPanelCollapsed", "projects_panel_collapsed", (value) => value ? 1 : 0],
     ["chatsPanelCollapsed", "chats_panel_collapsed", (value) => value ? 1 : 0],
-    ["recentSessions", "recent_sessions", (value) => JSON.stringify(value)],
+    ["recentSessions", "recent_sessions", (value) => JSON.stringify(canonicalRecentSessions(value as RecentSession[]))],
   ];
   for (const [property, column, serialize] of fields) {
     if (partial[property] === undefined) continue;

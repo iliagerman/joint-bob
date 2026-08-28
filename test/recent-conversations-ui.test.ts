@@ -68,7 +68,11 @@ test("recent conversations are recorded, pinnable, and reopenable", async () => 
 
   assert.match(app, /recentSessions: \[\]/);
   assert.match(app, /state\.recentSessions = preferences\.recentSessions \|\| \[\];/);
+  assert.match(app, /function canonicalSessionPath\(sessionPath\)/);
+  assert.match(app, /sessionPath\.replace\(\/\\\.sync-conflict-/);
   assert.match(app, /function rememberRecentSession\(session\)/);
+  assert.match(app, /sessionPath: canonicalSessionPath\(session\.path\)/);
+  assert.match(app, /canonicalSessionPath\(candidate\.sessionPath\) !== entry\.sessionPath/);
   assert.match(app, /async function openRecentSession\(entry\)/);
   assert.match(app, /savePreferencesInBackground\(\{ recentSessions: state\.recentSessions \}\)/);
 
@@ -122,15 +126,16 @@ test("the recents dialog can be searched", async () => {
   assert.match(app.slice(start, end), /elements\.recentSessionsSearchInput\.value = ""/);
 });
 
-test("the first nine recents are numbered and open with a digit key", async () => {
+test("the first ten recents are numbered and open with a digit key", async () => {
   const [app, styles] = await Promise.all([
     readFile("public/app.js", "utf8"),
     readFile("public/styles.css", "utf8"),
   ]);
 
-  assert.match(app, /const RECENT_SESSION_SHORTCUT_LIMIT = 9;/);
+  assert.match(app, /const RECENT_SESSION_SHORTCUT_LIMIT = 10;/);
   assert.match(app, /index\.dataset\.testid = "recent-session-index"/);
   assert.match(app, /recentSessionShortcuts\.push\(entry\)/);
+  assert.match(app, /recentSessionShortcuts\.length === 10 \? "0" : String\(recentSessionShortcuts\.length\)/);
   assert.match(styles, /\.recent-sessions-list \.recent-session-index \{/);
 
   // The digit must reach the list, not the search field the user is typing in.
@@ -139,6 +144,7 @@ test("the first nine recents are numbered and open with a digit key", async () =
   assert.ok(start >= 0, "Missing recents dialog keydown handler");
   const handler = app.slice(start, end);
   assert.match(handler, /event\.target === elements\.recentSessionsSearchInput/);
+  assert.match(handler, /event\.key === "0" \? 10 : Number\(event\.key\)/);
   assert.match(handler, /recentSessionShortcuts\[position - 1\]/);
   assert.match(handler, /openRecentSession\(entry\)/);
 
@@ -154,7 +160,8 @@ test("a global shortcut opens the recents dialog", async () => {
   assert.ok(start >= 0, "Missing global keydown handler");
   const handler = app.slice(start, end);
   assert.match(handler, /event\.metaKey \|\| event\.ctrlKey/);
-  assert.match(handler, /event\.shiftKey/);
+  assert.match(handler, /\|\| event\.shiftKey\) return/);
+  assert.doesNotMatch(handler, /!event\.shiftKey/);
   assert.match(handler, /event\.key\.toLowerCase\(\) !== "k"/);
   assert.match(handler, /openRecentSessionsDialog\(\)/);
 });

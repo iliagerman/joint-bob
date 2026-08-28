@@ -42,6 +42,14 @@ node --import tsx --test test/conversation-status-indicators.test.ts test/conver
 node --import tsx --test test/syncthing.test.ts
 ```
 
+### Recent conversation canonicalization and quick keys
+
+```bash
+node --import tsx --test test/preferences-api.test.ts test/recent-conversations-ui.test.ts
+```
+
+This loop-back regression covers stale stored canonical/conflict duplicates, duplicate payload cleanup, first-row preservation, `Ctrl/Cmd+K`, numeric labels `1`-`9` then `0`, tenth-row selection, and normal digit input while search is focused.
+
 ## Test data
 
 - Build Pi transcript fixtures as newline-delimited JSON with a supported `session` header, stable event IDs, ISO timestamps, and canonical/conflict filenames for one session ID.
@@ -54,6 +62,7 @@ node --import tsx --test test/syncthing.test.ts
 - Streaming fixtures emit `textDelta`, completion, queued prompt, queue status, abort, and unsupported-command events in controlled order for both Pi and Claude.
 - Review fixtures carry both displayed click watermarks and later server-observed activity timestamps. Cover before, equal, and after relationships.
 - Syncthing fixtures use the existing local fake HTTP server. Seed `__pycache__/`, protected ignores, arbitrary user rules, and duplicates; inspect the exact posted ignore list.
+- Recent-session fixtures use one project with canonical, conflict, and exact-duplicate paths plus a second project sharing the same canonical path. Preserve the first row for each identity and inspect the raw SQLite JSON after update.
 
 ## Mocking and isolation
 

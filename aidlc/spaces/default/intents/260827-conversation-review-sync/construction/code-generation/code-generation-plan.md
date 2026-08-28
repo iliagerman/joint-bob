@@ -94,6 +94,9 @@ Already present and preserved:
 - [x] **Step 13. Verify the already-present Syncthing fix.** Do not rewrite `src/syncthing.ts`. Run its narrow test to prove obsolete `__pycache__/` removal, exact `(?d)__pycache__/` insertion, preservation of user rules, and no delete-allowed prefix on credentials, environment files, logs, source, or arbitrary ignores. Record the operational beecomm rescan/status check for Build and Test rather than hard-coding a node-specific folder. **Traceability:** FR5-FR5.3, NFR5, NFR7.
 - [x] **Step 14. Update the frontend shell cache only if Step 9 changes shell assets.** If a new or modified frontend module enters `APP_SHELL`, bump `CACHE_NAME` in `public/sw.js` and verify every listed asset exists. Do not disturb the unrelated notification-tag edit already present. **Traceability:** FR3, NFR7.
 - [x] **Step 15. Run focused checks and prepare handoff artifacts.** Run every exact file-scoped command from `unit-test-instructions.md`. Then, before delivery in Build and Test, run `npm run typecheck`, `npm test`, and `npm run build`, plus the two production-node deployment checks selected by the user. Create `code-summary.md`, `source-manifest.json`, and `traceability.json` from actual Part 2 writes only, excluding pre-existing unrelated changes. **Traceability:** all FRs, NFR1-NFR8.
+- [x] **Step 16. Repair stale Recent Conversations identities after Build-and-Test loop-back 1.** Canonicalize `.sync-conflict-*` recent-session paths at the SQLite preference read/write boundary and deduplicate by project plus canonical path while preserving the first, newest row. Use the same canonical identity when the browser remembers a session. **Traceability:** FR1, FR1.1, FR1.6, NFR3, NFR5.
+- [x] **Step 17. Expand quick conversation keyboard access.** Change the global opener to `Ctrl/Cmd+K`; label the first ten rows `1` through `9`, then `0`; map `0` to row ten; retain normal digit input while search is focused. Bump the service-worker cache for the changed shell. **Traceability:** FR3, NFR5, NFR7.
+- [x] **Step 18. Add and run loop-back regressions.** Extend preference API and recent-conversation UI tests for canonical/conflict deduplication, persisted cleanup, first-row preservation, the top-ten key map, search focus, opener chord, and cache version. Run the focused command, typecheck, full suite, and build. **Traceability:** FR1, FR3, NFR7, NFR8.
 
 ## Completion-gate repair status
 
@@ -102,12 +105,13 @@ Already present and preserved:
 - [x] Pi and Claude transfers require a replicated source fence, authenticated source binding, destination idempotency, and lost-acknowledgement reconciliation.
 - [x] Ownership is required at every transcript mutation and agent/task invocation while non-owner listing and open remain read-only.
 - [x] The ownership mesh regression starts two isolated servers and exercises real HTTP and WebSocket claim, prompt, transfer, lost-acknowledgement, and restart paths through a stubbed engine boundary.
+- [x] Recent-session preferences self-heal canonical/conflict duplicates, and `Ctrl/Cmd+K` plus `1`-`9`,`0` provide direct access to the top ten conversations.
 
 ## Requirement coverage map
 
-- **FR1, FR1.1-FR1.6:** Steps 5-6.
+- **FR1, FR1.1-FR1.6:** Steps 5-6 and 16.
 - **FR2, FR2.1-FR2.5:** Steps 3-4 and 7-8.
-- **FR3, FR3.1-FR3.2:** Steps 9-10 and conditional Step 14.
+- **FR3, FR3.1-FR3.2:** Steps 9-10, conditional Step 14, and Steps 17-18.
 - **FR4, FR4.1-FR4.2:** Steps 11-12.
 - **FR5, FR5.1-FR5.3:** Step 13.
 - **NFR1:** Step 8.
@@ -120,6 +124,6 @@ Already present and preserved:
 
 ## Planned source and test surface
 
-Expected application paths: `src/conversation-ownership.ts` as the one justified new module; focused edits to `src/replication.ts`, `src/session-paths.ts`, `src/pi-service.ts`, `src/claude-service.ts`, `src/conversation-reviews.ts`, `src/server.ts`, `src/watcher.ts`, and `public/app.js`; conditional `public/sw.js` edit only for cache correctness. `src/syncthing.ts` needs no intent-related code edit.
+Expected application paths: `src/conversation-ownership.ts` as the one justified new module; focused edits to `src/replication.ts`, `src/session-paths.ts`, `src/pi-service.ts`, `src/claude-service.ts`, `src/conversation-reviews.ts`, `src/preferences.ts`, `src/server.ts`, `src/watcher.ts`, and `public/app.js`; `public/sw.js` changes only for cache correctness. `src/syncthing.ts` needs no intent-related code edit.
 
-Expected tests: extend `test/pi-session-discovery.test.ts`, `test/claude-sync-conflict.test.ts`, `test/conversation-review-api.test.ts`, `test/conversation-status-indicators.test.ts`, `test/streaming-render-performance.test.ts`, `test/claude-session-reattach.test.ts`, and `test/syncthing.test.ts`; add only the narrow ownership and WebSocket process tests named in `unit-test-instructions.md` when existing files cannot reproduce those boundaries.
+Expected tests: extend `test/pi-session-discovery.test.ts`, `test/claude-sync-conflict.test.ts`, `test/conversation-review-api.test.ts`, `test/conversation-status-indicators.test.ts`, `test/streaming-render-performance.test.ts`, `test/claude-session-reattach.test.ts`, `test/preferences-api.test.ts`, `test/recent-conversations-ui.test.ts`, and `test/syncthing.test.ts`; add only the narrow ownership and WebSocket process tests named in `unit-test-instructions.md` when existing files cannot reproduce those boundaries.

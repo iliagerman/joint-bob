@@ -39,8 +39,47 @@ function safeUrl(value) {
 
 const INLINE_RE =
   /(?<code>`+)(?<codeText>[\s\S]*?)\k<code>|(?<bold>\*\*)(?<boldText>[\s\S]+?)\*\*(?!\*)|(?<ital>\*)(?<italText>[^*]+?)\*(?!\*)|(?<strike>~~)(?<strikeText>[\s\S]+?)~~(?!~)|(?<link>\[(?<linkText>(?:[^\]\\]|\\.)+)\]\((?<url>[^)\s]+)\))/g;
+const FILE_PATH_RE = /(?:(?:\.{1,2}[\\/]|[\\/]|[A-Za-z]:\\)(?:[^\s"'`()\[\]{}<>:]+[\\/])*|(?:[^\s"'`()\[\]{}<>:]+[\\/])+)[^\s"'`()\[\]{}<>:]+\.[A-Za-z0-9]{1,12}/g;
 
-function inlineNodes(text) {
+function isFilePath(value) {
+  FILE_PATH_RE.lastIndex = 0;
+  const match = FILE_PATH_RE.exec(value);
+  FILE_PATH_RE.lastIndex = 0;
+  return match?.index === 0 && match[0].length === value.length;
+}
+
+function fileLink(path, resolveFileUrl, child) {
+  const href = resolveFileUrl?.(path);
+  if (!href) return child;
+  const anchor = document.createElement("a");
+  anchor.className = "file-link";
+  anchor.dataset.testid = "chat-file-link";
+  anchor.href = href;
+  anchor.target = "_blank";
+  anchor.rel = "noopener noreferrer";
+  anchor.title = `Open ${path}`;
+  anchor.append(child);
+  return anchor;
+}
+
+function pathNodes(text, resolveFileUrl) {
+  const nodes = [];
+  const source = String(text ?? "");
+  FILE_PATH_RE.lastIndex = 0;
+  let last = 0;
+  let match;
+  while ((match = FILE_PATH_RE.exec(source))) {
+    const preceding = source.slice(0, match.index);
+    if (match[0].startsWith("//") && /[A-Za-z][\w+.-]*:$/.test(preceding)) continue;
+    if (match.index > last) nodes.push(textNode(unescapeInline(source.slice(last, match.index))));
+    nodes.push(fileLink(match[0], resolveFileUrl, textNode(match[0])));
+    last = match.index + match[0].length;
+  }
+  if (last < source.length) nodes.push(textNode(unescapeInline(source.slice(last))));
+  return nodes;
+}
+
+function inlineNodes(text, resolveFileUrl) {
   const nodes = [];
   const source = String(text ?? "");
   // Collect every match first, then build nodes. Building can recurse into
@@ -54,26 +93,28 @@ function inlineNodes(text) {
   }
   let last = 0;
   for (match of matches) {
-    if (match.index > last) nodes.push(textNode(unescapeInline(source.slice(last, match.index))));
+    if (match.index > last) nodes.push(...pathNodes(source.slice(last, match.index), resolveFileUrl));
     const groups = match.groups;
     if (groups.code !== undefined) {
       const code = document.createElement("code");
-      code.textContent = groups.codeText.replace(/\n+$/, "");
-      nodes.push(code);
+      const codeText = groups.codeText.replace(/\n+$/, "");
+      code.textContent = codeText;
+      nodes.push(isFilePath(codeText) ? fileLink(codeText, resolveFileUrl, code) : code);
     } else if (groups.bold !== undefined) {
       const strong = document.createElement("strong");
-      strong.append(...inlineNodes(groups.boldText));
+      strong.append(...inlineNodes(groups.boldText, resolveFileUrl));
       nodes.push(strong);
     } else if (groups.ital !== undefined) {
       const em = document.createElement("em");
-      em.append(...inlineNodes(groups.italText));
+      em.append(...inlineNodes(groups.italText, resolveFileUrl));
       nodes.push(em);
     } else if (groups.strike !== undefined) {
       const del = document.createElement("del");
-      del.append(...inlineNodes(groups.strikeText));
+      del.append(...inlineNodes(groups.strikeText, resolveFileUrl));
       nodes.push(del);
     } else if (groups.link !== undefined) {
-      const href = safeUrl(groups.url);
+      const linksToFile = Boolean(resolveFileUrl) && isFilePath(groups.url);
+      const href = linksToFile ? resolveFileUrl(groups.url) : safeUrl(groups.url);
       if (!href) {
         nodes.push(textNode(match[0]));
       } else {
@@ -81,18 +122,23 @@ function inlineNodes(text) {
         anchor.href = href;
         anchor.target = "_blank";
         anchor.rel = "noopener noreferrer";
-        anchor.append(...inlineNodes(groups.linkText));
+        if (linksToFile) {
+          anchor.className = "file-link";
+          anchor.dataset.testid = "chat-file-link";
+          anchor.title = `Open ${groups.url}`;
+        }
+        anchor.append(...inlineNodes(groups.linkText, resolveFileUrl));
         nodes.push(anchor);
       }
     }
     last = match.index + match[0].length;
   }
-  if (last < source.length) nodes.push(textNode(unescapeInline(source.slice(last))));
+  if (last < source.length) nodes.push(...pathNodes(source.slice(last), resolveFileUrl));
   return nodes;
 }
 
-function appendInline(target, text) {
-  target.append(...inlineNodes(text));
+function appendInline(target, text, resolveFileUrl) {
+  target.append(...inlineNodes(text, resolveFileUrl));
 }
 
 function indentWidth(value) {
@@ -124,11 +170,11 @@ function startsBlock(line) {
   );
 }
 
-function renderParagraph(text) {
+function renderParagraph(text, resolveFileUrl) {
   const paragraph = document.createElement("p");
   const lines = text.split("\n");
   lines.forEach((line, index) => {
-    appendInline(paragraph, line);
+    appendInline(paragraph, line, resolveFileUrl);
     if (index < lines.length - 1) paragraph.append(document.createElement("br"));
   });
   return paragraph;
@@ -177,13 +223,13 @@ function splitTableRow(line) {
   return trimmed.split("|").map((cell) => cell.trim());
 }
 
-function buildTable(headerLine, rows) {
+function buildTable(headerLine, rows, resolveFileUrl) {
   const table = document.createElement("table");
   const head = document.createElement("thead");
   const headRow = document.createElement("tr");
   for (const cell of splitTableRow(headerLine)) {
     const th = document.createElement("th");
-    appendInline(th, cell);
+    appendInline(th, cell, resolveFileUrl);
     headRow.append(th);
   }
   head.append(headRow);
@@ -193,7 +239,7 @@ function buildTable(headerLine, rows) {
     const tr = document.createElement("tr");
     for (const cell of splitTableRow(row)) {
       const td = document.createElement("td");
-      appendInline(td, cell);
+      appendInline(td, cell, resolveFileUrl);
       tr.append(td);
     }
     body.append(tr);
@@ -221,7 +267,7 @@ function stripIndent(lines, amount) {
   });
 }
 
-function buildList(lines, baseIndent) {
+function buildList(lines, baseIndent, resolveFileUrl) {
   const firstMarker = lines.find((line) => LIST_ITEM_RE.test(line)) || "";
   const ordered = /^\s*\d+[.)]/.test(firstMarker);
   const list = document.createElement(ordered ? "ol" : "ul");
@@ -235,7 +281,7 @@ function buildList(lines, baseIndent) {
     const itemIndent = indentWidth(match[1]);
     if (itemIndent < baseIndent) break;
     const li = document.createElement("li");
-    appendInline(li, match[3]);
+    appendInline(li, match[3], resolveFileUrl);
     i += 1;
     const childLines = [];
     while (i < lines.length) {
@@ -262,7 +308,7 @@ function buildList(lines, baseIndent) {
     if (childLines.length) {
       const stripped = stripIndent(childLines, itemIndent);
       const fragment = document.createDocumentFragment();
-      renderMarkdownInto(fragment, stripped.join("\n"));
+      renderMarkdownInto(fragment, stripped.join("\n"), resolveFileUrl);
       li.append(fragment);
     }
     list.append(li);
@@ -304,7 +350,7 @@ function nextBlock(ctx) {
     ctx.i += 1;
     const level = Math.min(heading[1].length, 6);
     const h = document.createElement(`h${level}`);
-    appendInline(h, heading[2].trim());
+    appendInline(h, heading[2].trim(), ctx.resolveFileUrl);
     return h;
   }
 
@@ -323,7 +369,7 @@ function nextBlock(ctx) {
       ctx.i += 1;
     }
     const blockquote = document.createElement("blockquote");
-    renderMarkdownInto(blockquote, inner.join("\n"));
+    renderMarkdownInto(blockquote, inner.join("\n"), ctx.resolveFileUrl);
     return blockquote;
   }
 
@@ -348,7 +394,7 @@ function nextBlock(ctx) {
       break;
     }
     while (blockLines.length && blockLines[blockLines.length - 1] === "") blockLines.pop();
-    return buildList(blockLines, 0);
+    return buildList(blockLines, 0, ctx.resolveFileUrl);
   }
 
   if (line.includes("|") && ctx.i + 1 < lines.length && TABLE_SEP_RE.test(lines[ctx.i + 1])) {
@@ -359,7 +405,7 @@ function nextBlock(ctx) {
       rows.push(lines[ctx.i]);
       ctx.i += 1;
     }
-    return buildTable(headerLine, rows);
+    return buildTable(headerLine, rows, ctx.resolveFileUrl);
   }
 
   const paraLines = [];
@@ -371,20 +417,20 @@ function nextBlock(ctx) {
     ctx.i += 1;
     return null;
   }
-  return renderParagraph(paraLines.join("\n"));
+  return renderParagraph(paraLines.join("\n"), ctx.resolveFileUrl);
 }
 
-function renderMarkdownInto(root, source) {
+function renderMarkdownInto(root, source, resolveFileUrl) {
   const text = String(source ?? "");
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
-  const ctx = { lines, i: 0 };
+  const ctx = { lines, i: 0, resolveFileUrl };
   while (ctx.i < lines.length) {
     const node = nextBlock(ctx);
     if (node) root.append(node);
   }
 }
 
-export function renderMarkdown(container, source) {
+export function renderMarkdown(container, source, options = {}) {
   container.replaceChildren();
-  renderMarkdownInto(container, source);
+  renderMarkdownInto(container, source, options.resolveFileUrl);
 }
