@@ -12,5 +12,12 @@
     "dirName": "260825-project-node-fixes",
     "scope": "express",
     "status": "in-flight"
+  },
+  {
+    "uuid": "01a04462-04b9-7622-9e63-814f39506904",
+    "slug": "conversation-review-sync",
+    "dirName": "260827-conversation-review-sync",
+    "scope": "bugfix",
+    "status": "in-flight"
   }
 ]

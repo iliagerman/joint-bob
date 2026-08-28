@@ -1,0 +1,23 @@
+{
+  "stage_slug": "requirements-analysis",
+  "space": "default",
+  "intent": "260827-conversation-review-sync",
+  "selections": [
+    {
+      "candidate_id": "c1",
+      "type": "learning",
+      "scope": "project",
+      "heading": "Corrections",
+      "text": "Determine transcript recency from the latest valid conversation event, not filesystem modification time, because synchronization can change file timestamps.",
+      "source": "orchestrator"
+    },
+    {
+      "candidate_id": "c3",
+      "type": "learning",
+      "scope": "project",
+      "heading": "Corrections",
+      "text": "When resolving synchronized transcript conflicts, move obsolete copies to temporary storage rather than merging divergent event streams or deleting recovery data directly.",
+      "source": "orchestrator"
+    }
+  ]
+}

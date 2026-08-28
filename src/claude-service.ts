@@ -3,7 +3,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { readdir, readFile, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { claudeProjectDir, claudeProjectDirs, sessionCwds, type SessionProjectPaths } from "./session-paths.js";
+import { claudeProjectDir, claudeProjectDirs, isSyncConflictPath, sessionCwds, type SessionProjectPaths } from "./session-paths.js";
 import { getSettings } from "./settings.js";
 import type { ChatMessage, SessionSummary } from "./types.js";
 
@@ -29,6 +29,7 @@ export interface ClaudeRunOptions {
   cwd: string;
   prompt: string;
   resumeSessionId?: string;
+  sessionId?: string;
   model?: string;
   effort?: string;
   env?: NodeJS.ProcessEnv;
@@ -144,7 +145,7 @@ export async function listClaudeSessions(project: SessionProjectPaths): Promise<
   const cwds = new Set(sessionCwds(project));
   const files = (await Promise.all(claudeProjectDirs(project, claudeProjectsRoot()).map(async (dir) => {
     try {
-      return (await readdir(dir)).filter((file) => file.endsWith(".jsonl")).map((file) => path.join(dir, file));
+      return (await readdir(dir)).filter((file) => file.endsWith(".jsonl") && !isSyncConflictPath(file)).map((file) => path.join(dir, file));
     } catch {
       return [];
     }
@@ -208,6 +209,7 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
     "bypassPermissions",
   ];
   if (options.resumeSessionId) args.push("--resume", options.resumeSessionId);
+  else if (options.sessionId) args.push("--session-id", options.sessionId);
   if (options.model) args.push("--model", options.model);
   if (options.effort) args.push("--effort", options.effort);
 

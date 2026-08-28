@@ -10,6 +10,9 @@ test("streamed assistant text paints cheaply before the final markdown render", 
   assert.match(app, /function renderBubbleContent\(bubble, text, flush = false\)/);
   assert.match(app, /bubble\._renderFinal = bubble\._renderFinal \|\| flush;/);
   assert.match(app, /role === "assistant" && !bubble\._renderFinal/);
+  assert.match(app, /!bubble\._hasRenderedText/);
+  assert.match(app, /cancelAnimationFrame\(bubble\._renderRaf\)/);
+  assert.match(app, /content\.textContent = text;[\s\S]*return;/);
   assert.match(app, /content\.textContent = bubble\._raw/);
   assert.match(app, /renderBubbleContent\(bubble, text, true\)/);
   assert.match(app, /renderBubbleContent\(state\.assistantBubble, payload\.text, true\)/);

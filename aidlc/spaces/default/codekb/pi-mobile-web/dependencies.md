@@ -1,105 +1,68 @@
 # Dependencies
 
-## External runtime dependencies
+## External Runtime Dependencies
 
-| Dependency | Consumer | Contract | Operational effect |
+| Dependency | Main consumers | Contract | Failure/security boundary |
 |---|---|---|---|
-| Pi coding-agent SDK | `src/pi-service.ts`, `src/harnesses.ts`, `src/server.ts` | In-process sessions, models, prompts, tools, safeguards, events | Pi availability and credentials are node-local |
-| Claude Code CLI | `src/claude-service.ts`, `src/harnesses.ts`, `src/server.ts` | Spawned stream-JSON process and JSONL transcripts | Executable, config, credentials, model and effort support vary by node |
-| Syncthing REST and daemon | `src/syncthing.ts` | Device, folder, ignore, status, scan APIs | Required for project and ticket-workspace synchronization |
-| Git executable | `src/worktrees.ts`, deployment scripts | Worktrees, bundles, merge, commit packaging | Required for legacy Git-backed tasks and exact-commit deployment |
-| Peer Joint Bob nodes | `src/server.ts`, cluster modules | Bearer-authenticated REST and proxied WebSockets | Adds network, mapping, membership, retry, and partial-failure boundaries |
-| Web Push service | `src/push.ts` | VAPID Push API | Completion delivery depends on browser subscription and push network |
-| Local filesystem | Most modules | Projects, transcripts, skills, workspaces, runtime config | Permissions, path identity, symlinks, and sync changes affect correctness |
-| SQLite file | Persistence modules | Synchronous `node:sqlite` connections to `~/.joint-bob/node.db` | Shared schema and write contention across module-owned handles |
-| Tailscale Serve | Operations only | Private HTTPS proxy | Recommended access and origin for phones and peers |
-| AWS | `deploy/aws-ec2-test` | Temporary EC2 test environment | Used for smoke testing, not the normal production topology |
+| Pi SDK | `pi-service.ts`, `harnesses.ts`, `server.ts` | In-process sessions, models, prompts, tools, events | Node-local auth/models; broad agent capability |
+| Claude CLI | `claude-service.ts`, `harnesses.ts`, `server.ts` | Child process and stream-JSON events | Process exit, malformed stream, credentials, bypassed permission prompts |
+| Syncthing | `syncthing.ts` | Loopback REST for config, ignores, folders, status, scans | Readiness and eventual consistency; ignore rules can permit deletion |
+| Git | `worktrees.ts`, scripts | Worktrees, bundles, merge, release/deploy commits | Subprocess and repository integrity |
+| Peer Joint Bob nodes | `server.ts`, cluster/replication modules | Bearer REST and proxied WebSocket | Network partition, unsafe URL, token exposure |
+| Web Push | `push.ts` | VAPID Push API | External delivery and expired subscriptions |
+| Filesystem | Most modules | Projects, transcripts, skills, workspaces, settings | Path identity, permissions, symlinks, concurrent sync |
+| SQLite | Persistence modules | Shared `~/.joint-bob/node.db` | Shared schema, lock contention, migration order |
+| Tailscale Serve | Operations | Private HTTPS reverse proxy | Recommended deployment boundary, not enforced by app |
+| AWS | `deploy/aws-ec2-test` | Temporary EC2 smoke environment | Test-only cloud cost and exposure |
 
-## npm dependency roles
+## npm Dependency Roles
 
-### Production dependencies
+Production dependencies are `express`, `ws`, `zod`, `@earendil-works/pi-coding-agent`, `@anthropic-ai/claude-code`, `nanoid`, and `web-push`. Development dependencies are TypeScript, `tsx`, and `@types/*`. The package relies heavily on Node built-ins, especially `node:sqlite`, crypto, HTTP, filesystem, and child processes.
 
-- `express` provides HTTP routing, middleware, and static serving.
-- `ws` provides server, client, and proxy WebSockets.
-- `zod` validates untrusted HTTP and socket input.
-- `@earendil-works/pi-coding-agent` provides the embedded Pi runtime.
-- `@anthropic-ai/claude-code` packages the Claude executable.
-- `nanoid` creates application identifiers.
-- `web-push` manages VAPID and notification delivery.
+The two committed lockfiles represent the same resolved graph but impose a synchronization obligation. The explicit public-registry production audit found zero vulnerabilities during this scan.
 
-### Development dependencies
+## Internal Dependency Topology
 
-- TypeScript and `@types/*` packages typecheck and compile backend code.
-- `tsx` loads TypeScript for development and Node tests.
+| Upstream | Downstream dependencies | Coupling note |
+|---|---|---|
+| `src/server.ts` | Nearly every backend module | Highest fan-out; owns complete transactions |
+| Browser PWA | REST, `/ws`, `board.js`, `markdown.js` | Handwritten, unversioned contract |
+| Tasks/workspaces | Cluster, replication, Syncthing, worktrees, agents | Crosses persistence, network, filesystem, process boundaries |
+| Agent adapters | Settings, session paths, filesystem, GitHub environment | Engine-specific execution beneath normalized events |
+| Cluster/replication | Settings/crypto, SQLite, peer HTTP | Eventual convergence and retry state |
+| Conversation discovery/review | Project paths, transcripts, watchers, SQLite | Path aliases and timestamps define correctness |
+| Syncthing adapter | Settings, task workspace paths, external daemon | Managed ignore ownership mixed with preserved user rules |
 
-The two committed lockfiles are identical but create a manual synchronization obligation. The lock contains 279 transitive entries. Individual transitive packages were not all reviewed. The npm registry returned HTTP 400 during the attempted audit, so dependency vulnerability status is unverified.
+Most source imports are acyclic, but module boundaries do not imply isolated data ownership because many components open the same SQLite file.
 
-## Internal dependency structure
+## Critical Dependency Chains
 
-```mermaid
-flowchart TD
-    Server[src/server.ts] --> Account[auth preferences settings audit]
-    Server --> Project[store names types]
-    Server --> Task[tasks task-workspaces worktrees]
-    Server --> Cluster[cluster replication github-auth]
-    Server --> Agents[pi-service claude-service harnesses]
-    Server --> Discovery[session-paths watcher conversation-reviews]
-    Server --> Integrations[syncthing push skills filesystem management]
-    Task --> Cluster
-    Task --> Discovery
-    Cluster --> Account
-    Agents --> Discovery
-    Agents --> Account
-    Integrations --> Account
-    Browser[public/app.js] --> Board[public/board.js]
-    Browser --> Markdown[public/markdown.js]
-    Browser --> Server
-```
+### Streamed Conversation
 
-`src/server.ts` has the broadest fan-out and is the only module that composes full business transactions. Most dependencies point toward utility or persistence modules, but shared SQLite state and server-owned orchestration prevent strict layer isolation.
+`public/app.js` → `/ws` in `src/server.ts` → local or peer/task-owner routing → `pi-service.ts` or `claude-service.ts` → normalized `textDelta` events → browser batching and `renderBubbleContent()`.
 
-## Important internal chains
+Correctness depends on event timing across SDK/CLI, server broadcast, WebSocket delivery, animation-frame/timer batching, and visible DOM paint.
 
-### Conversation execution
+### Conversation Review
 
-`public/app.js` -> `/ws` in `src/server.ts` -> selected-node proxy or task-owner proxy -> `harnesses.ts` plus `pi-service.ts` or `claude-service.ts` -> project and transcript filesystem.
+Session discovery → `syncConversationReviewStates()` → `conversation_review_states` → single/bulk review route → `markConversationsReviewed()` → next session listing. Current activity timestamps must be reconciled before advancing `reviewed_at`; otherwise stale persistence can reclassify a just-reviewed conversation.
 
-Model configuration crosses the same chain. Pi `setModel` and thinking commands call SDK session methods. Claude `setModel` and `setEffort` update connection state, then `claude-service.ts` turns them into CLI arguments on the next prompt.
+### Task Handoff
 
-### Task execution and handoff
+Browser/board → owner-routed REST → `tasks.ts` → `task-workspaces.ts` or `worktrees.ts` → `syncthing.ts` and destination peer → prepare/commit/settle/acknowledge. Readiness, ownership, and idempotent recovery are all required.
 
-`public/app.js` and `public/board.js` -> project task REST or task WebSocket -> `tasks.ts` -> `task-workspaces.ts` or `worktrees.ts` -> `syncthing.ts` and peer routes -> destination `tasks.ts` -> agent adapter.
+### Project Synchronization
 
-Task phase data depends on `types.ts` and Zod schemas in `server.ts`. `effort` is stored for each phase, while current task editor options encode only `default` and provide no separate effort selector.
+Project API → `managed-home.ts` / `project-directory-import.ts` → `store.ts` → `syncthing.ts` → peer Syncthing device. Managed ignore reconciliation must remove obsolete generated-cache rules without reclassifying user rules or sensitive ignores as delete-allowed.
 
-### Project import and synchronization
+## Persistence Coupling
 
-Project API -> `managed-home.ts` -> `project-directory-import.ts` -> `store.ts` -> `syncthing.ts` -> peer Syncthing device. Project names and mappings also feed `names.ts`, `replication.ts`, and cluster inventory.
+Authentication, audit, cluster, conversation reviews, GitHub auth, names, preferences, push, replication, settings, projects, and tasks use one `node.db`, often through separately cached `DatabaseSync` handles. WAL and busy timeouts reduce contention, but schema creation and guarded `ALTER TABLE` statements remain distributed with no central version ledger.
 
-### Authentication and secrets
+## Dependency Risks and Mitigations
 
-Express middleware -> `auth.ts` -> `audit.ts` and SQLite. Settings, cluster tokens, GitHub credentials, and push keys each depend on AES-GCM key handling, but four modules implement overlapping helpers independently.
-
-## Persistence coupling
-
-At least the following components open the same `node.db`: audit, authentication, cluster, conversation reviews, GitHub auth, names, preferences, push, replication, settings, store, and tasks. WAL helps concurrent access, but each module controls some combination of connection lifecycle, busy timeout, schema creation, and guarded alterations.
-
-The code declares 43 tables and 23 guarded `ALTER TABLE` operations without a central schema version. A startup ordering or partial migration failure can therefore cross module boundaries even when the source imports look acyclic.
-
-## Build and deployment dependencies
-
-- `src/**/*.ts` depends on TypeScript compilation; `public/` does not.
-- `src/app.ts` imports `src/server.ts`, so API tests load the full composition root.
-- `npm start` depends on a successful build every start.
-- `prepack` depends on the build and publishes source plus compiled-at-install expectations through package metadata.
-- Release automation depends on npm install, typecheck, tests, build, package smoke checks, GitHub Releases, and npm provenance publication.
-- Installed-node deployment depends on Git commit availability, tar packaging, SQLite backup, service manager access, and release health verification.
-- EC2 smoke tests depend on Terraform, the AWS provider, Instance Connect, and operator `/32` ingress.
-
-## Dependency risk notes
-
-- Claude and Pi run with broad local filesystem and subprocess capability. Claude explicitly bypasses permission prompts; Pi safeguards are mutable per session.
-- Peer operations rely on private HTTPS and bearer tokens. Pairing over public HTTP is documented as unsafe.
-- Filesystem identity is central to project and conversation isolation. Legacy aliases and broad discovery paths make path handling a cross-cutting dependency.
-- The project-file route follows symlinks after lexical containment checking.
-- The native frontend manually mirrors server contracts, model enums, task phase shapes, and event names.
+- Keep Syncthing REST loopback-only and never broaden `(?d)` beyond proven generated caches.
+- Keep peer traffic on private HTTPS; current general URL acceptance leaves administrator-configured SSRF and credential-exposure risk.
+- Add realpath/lstat enforcement to project file reads before trusting lexical path containment.
+- Preserve cookie, CSRF, origin, and timing-safe machine-token checks for every new transport path.
+- Add contract tests or a published schema before splitting the handwritten browser/server protocol.

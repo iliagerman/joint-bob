@@ -44,7 +44,7 @@
           <div class="project-actions">
             <button class="ghost icon-button collapse-button" id="collapseProjectsButton" type="button" aria-label="Collapse projects panel" title="Collapse projects panel" data-testid="projects-panel-collapse-button">‹</button>
             <button class="primary icon-button" id="newProjectButton" type="button" aria-label="Add project" title="Add project" data-testid="project-create-button">+</button>
-            <button class="ghost icon-button" id="recentSessionsButton" type="button" aria-label="Recent conversations" title="Recent conversations" data-testid="recent-sessions-open-button">
+            <button class="ghost icon-button" id="recentSessionsButton" type="button" data-recent-sessions-open aria-label="Recent conversations" title="Recent conversations" data-testid="recent-sessions-open-button">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.6-6.4"/><path d="M3 4v4h4"/><path d="M12 7v5l3.2 1.9"/></svg>
             </button>
             <button class="ghost icon-button" id="settingsButton" type="button" aria-label="Settings" title="Settings" data-testid="settings-open-button">
@@ -72,6 +72,9 @@
             <p id="projectPath">Create or select a local folder.</p>
           </div>
           <button class="ghost compact" id="openBoardButton" type="button" data-testid="chats-open-board-button">Board</button>
+          <button class="ghost icon-button" id="chatsRecentSessionsButton" type="button" data-recent-sessions-open aria-label="Recent conversations" title="Recent conversations" data-testid="chats-recent-sessions-open-button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.6-6.4"/><path d="M3 4v4h4"/><path d="M12 7v5l3.2 1.9"/></svg>
+          </button>
           <button class="ghost icon-button collapse-button" id="collapseChatsButton" type="button" aria-label="Collapse conversations panel" title="Collapse conversations panel" data-testid="chats-panel-collapse-button">‹</button>
         </header>
         <div class="list-loading" id="sessionsLoading" role="progressbar" aria-label="Loading conversations" data-testid="session-list-loading-bar" hidden><span></span></div>
@@ -147,6 +150,7 @@
             <summary class="ghost compact" aria-label="More chat actions" data-testid="chat-more-button">More</summary>
             <div class="chat-more-actions">
               <button class="ghost compact safeguards-button" id="safeguardsButton" type="button" aria-pressed="true" title="Safe Guard checks are active for this Pi session" disabled data-testid="chat-safeguards-button">Safeguards on</button>
+              <button class="ghost compact" id="chatRecentSessionsButton" type="button" data-recent-sessions-open data-testid="chat-recent-sessions-open-button">Recents</button>
               <button class="ghost compact transfer-session-button" id="transferSessionButton" type="button" disabled data-testid="chat-transfer-button">Continue on…</button>
               <button class="ghost compact" id="openTerminalButton" type="button" disabled data-testid="chat-open-terminal-button">Terminal</button>
               <button class="ghost compact" id="notifyButton" type="button" aria-pressed="false" title="Notify when an agent finishes" data-testid="chat-notify-button">Notify</button>
@@ -180,7 +184,7 @@
         <form class="composer" id="composer">
           <div class="attachment-list" id="attachmentList" aria-live="polite"></div>
           <div class="composer-row">
-            <input class="sr-only" id="attachmentInput" type="file" multiple accept="image/*,.txt,.md,.markdown,.json,.yaml,.yml,.csv,.tsv,.log,.js,.jsx,.ts,.tsx,.py,.rb,.go,.rs,.java,.kt,.swift,.css,.scss,.html,.xml,.sh,.env" />
+            <input class="sr-only" id="attachmentInput" type="file" multiple />
             <button class="ghost attach-button icon-button" id="attachButton" type="button" disabled aria-label="Attach files" data-testid="chat-attach-button">+</button>
             <label class="sr-only" for="messageInput">Message Pi</label>
             <textarea id="messageInput" rows="1" placeholder="Ask Pi to work..." disabled data-testid="chat-message-input"></textarea>
@@ -505,9 +509,13 @@
         <div>
           <span class="eyebrow">Jump back in</span>
           <h2>Recent conversations</h2>
-          <p>Conversations you opened recently, across every project. Pin one to keep it at the top.</p>
+          <p>Conversations you opened recently, across every project. Press 1-9 to open one, or Ctrl/Cmd + Shift + K to reopen this list. Pin one to keep it at the top.</p>
         </div>
-        <div class="recent-sessions-list" id="recentSessionsList"></div>
+        <label class="search-shell" for="recentSessionsSearchInput">
+          <span class="sr-only">Search recent conversations</span>
+          <input id="recentSessionsSearchInput" type="search" autocomplete="off" placeholder="Search recent conversations" data-testid="recent-sessions-search-input" />
+        </label>
+        <div class="recent-sessions-list" id="recentSessionsList" tabindex="-1"></div>
         <div class="dialog-actions">
           <button class="ghost" type="button" id="closeRecentSessionsButton" data-testid="recent-sessions-close-button">Close</button>
         </div>
@@ -566,10 +574,6 @@
       </form>
     </dialog>
 
-    <dialog id="projectGithubDialog">
-      <form method="dialog" class="dialog-card" id="projectGithubForm">
-        <div>
-          <span class="eyebrow">Project credential</span>
     <dialog id="secretAccountDialog" data-testid="secret-account-dialog">
       <form method="dialog" class="dialog-card" id="secretAccountForm">
         <div><span class="eyebrow">Node-local credentials</span><h2 id="secretAccountTitle">Secret account</h2><p>File entries store their content privately; the environment receives the private file path.</p></div>
@@ -588,6 +592,10 @@
       </form>
     </dialog>
 
+    <dialog id="projectGithubDialog">
+      <form method="dialog" class="dialog-card" id="projectGithubForm">
+        <div>
+          <span class="eyebrow">Project credential</span>
           <h2 id="projectGithubTitle">GitHub access</h2>
           <p>Pick the group whose token this project should use, or provide a token used only by this project.</p>
         </div>

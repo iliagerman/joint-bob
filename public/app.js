@@ -160,9 +160,9 @@ const elements = {
   abortButton: document.querySelector("#abortButton"),
   newProjectButton: document.querySelector("#newProjectButton"),
   themeToggleButton: document.querySelector("#themeToggleButton"),
-  recentSessionsButton: document.querySelector("#recentSessionsButton"),
   recentSessionsDialog: document.querySelector("#recentSessionsDialog"),
   recentSessionsList: document.querySelector("#recentSessionsList"),
+  recentSessionsSearchInput: document.querySelector("#recentSessionsSearchInput"),
   rowMenu: document.querySelector("#rowMenu"),
   closeRecentSessionsButton: document.querySelector("#closeRecentSessionsButton"),
   settingsButton: document.querySelector("#settingsButton"),
@@ -309,6 +309,7 @@ const elements = {
   loginPasswordInput: document.querySelector("#loginPasswordInput"),
   newPasswordLabel: document.querySelector("#newPasswordLabel"),
   newPasswordInput: document.querySelector("#newPasswordInput"),
+  loginSubmitButton: document.querySelector("#loginSubmitButton"),
   secretAccountList: document.querySelector("#secretAccountList"),
   secretAccountAddButton: document.querySelector("#secretAccountAddButton"),
   secretAccountDialog: document.querySelector("#secretAccountDialog"),
@@ -324,7 +325,6 @@ const elements = {
   secretScopeTitle: document.querySelector("#secretScopeTitle"),
   secretScopeList: document.querySelector("#secretScopeList"),
   secretScopeCancelButton: document.querySelector("#secretScopeCancelButton"),
-  loginSubmitButton: document.querySelector("#loginSubmitButton"),
 };
 
 function headers() {
@@ -859,25 +859,12 @@ function filteredProjects() {
   return state.projects.filter((project) => `${project.name}\n${project.path}`.toLowerCase().includes(query));
 }
 
-function isTextAttachment(file) {
-  return file.type.startsWith("text/") || /\.(txt|md|markdown|json|ya?ml|csv|tsv|log|js|jsx|ts|tsx|py|rb|go|rs|java|kt|swift|css|scss|html|xml|sh|env)$/i.test(file.name);
-}
-
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(`${reader.result || ""}`);
     reader.onerror = () => reject(new Error(`Could not read ${file.name}`));
     reader.readAsDataURL(file);
-  });
-}
-
-function fileToText(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(`${reader.result || ""}`);
-    reader.onerror = () => reject(new Error(`Could not read ${file.name}`));
-    reader.readAsText(file);
   });
 }
 
@@ -917,12 +904,9 @@ async function addAttachments(fileList) {
       nextAttachments.push({ id: crypto.randomUUID(), kind: "image", name: file.name, mimeType: file.type || "image/png", data });
       continue;
     }
-    if (isTextAttachment(file)) {
-      const content = await fileToText(file);
-      nextAttachments.push({ id: crypto.randomUUID(), kind: "text", name: file.name, mimeType: file.type || "text/plain", content: content.slice(0, 120000) });
-      continue;
-    }
-    throw new Error(`${file.name} is not supported yet. Attach images or text/code files.`);
+    const dataUrl = await fileToDataUrl(file);
+    const [, data = ""] = dataUrl.split(",", 2);
+    nextAttachments.push({ id: crypto.randomUUID(), kind: "file", name: file.name, mimeType: file.type || "application/octet-stream", data });
   }
   state.attachments = [...state.attachments, ...nextAttachments];
   renderAttachments();
@@ -1238,14 +1222,6 @@ function renderProjectTypes() {
     empty.className = "project-type-empty";
     empty.textContent = "No project types yet. Add one to choose where new projects land.";
     elements.projectTypeList.append(empty);
-    const secrets = document.createElement("button");
-    secrets.type = "button";
-    secrets.className = "ghost compact";
-    secrets.textContent = "Secrets";
-    secrets.dataset.testid = "project-type-secrets-button";
-    secrets.addEventListener("click", () => openSecretScope("project_type", type.id, type.label).catch((error) => toast(error.message)));
-    row.append(secrets);
-
     return;
   }
   for (const type of projectTypes) {
@@ -1262,6 +1238,14 @@ function renderProjectTypes() {
     row.append(folder);
 
     row.append(projectTypeGroupPicker(type));
+
+    const secrets = document.createElement("button");
+    secrets.type = "button";
+    secrets.className = "ghost compact";
+    secrets.textContent = "Secrets";
+    secrets.dataset.testid = "project-type-secrets-button";
+    secrets.addEventListener("click", () => openSecretScope("project_type", type.id, type.label).catch((error) => toast(error.message)));
+    row.append(secrets);
 
     const remove = document.createElement("button");
     remove.type = "button";
@@ -1623,11 +1607,6 @@ function projectMenuItems(project) {
       label: "Edit project",
       testid: "project-rename-button",
       onSelect: () => openProjectRename(project),
-    {
-      label: "Secret accounts",
-      testid: "project-secrets-button",
-      onSelect: () => openSecretScope("project", project.id, project.name).catch((error) => toast(error.message)),
-    },
     },
     {
       label: project.lock ? "Unlock from this node" : "Lock to this node",
@@ -1644,6 +1623,11 @@ function projectMenuItems(project) {
       label: "GitHub access",
       testid: "project-github-button",
       onSelect: () => openProjectGithubSettings(project).catch((error) => toast(error.message)),
+    },
+    {
+      label: "Secret accounts",
+      testid: "project-secrets-button",
+      onSelect: () => openSecretScope("project", project.id, project.name).catch((error) => toast(error.message)),
     },
     {
       label: "Rescan with Syncthing",
@@ -1696,7 +1680,7 @@ function markSessionReviewed(session) {
   renderSessions();
   void api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/reviewed`, {
     method: "PUT",
-    body: JSON.stringify({ sessionPath: session.path }),
+    body: JSON.stringify({ sessionPath: session.path, updatedAt: session.updatedAt }),
   }).catch((error) => {
     session.reviewState = "needs_review";
     renderSessions();
@@ -1711,13 +1695,13 @@ function reviewableSessions() {
 async function markAllSessionsReviewed() {
   const targets = reviewableSessions();
   if (!state.activeProjectId || !targets.length) return;
-  const sessionPaths = targets.map((session) => session.path);
+  const sessions = targets.map((session) => ({ sessionPath: session.path, updatedAt: session.updatedAt }));
   for (const session of targets) session.reviewState = "reviewed";
   renderSessions();
   try {
     await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/reviewed-all`, {
       method: "PUT",
-      body: JSON.stringify({ sessionPaths }),
+      body: JSON.stringify({ sessions }),
     });
   } catch (error) {
     for (const session of targets) session.reviewState = "needs_review";
@@ -1750,6 +1734,12 @@ function rememberRecentSession(session) {
   if (state.preferencesLoaded) savePreferencesInBackground({ recentSessions: state.recentSessions });
 }
 
+/** Searching covers the project name too, since the same title repeats across projects. */
+function recentSessionSearchText(entry) {
+  const project = state.projects.find((candidate) => candidate.id === entry.projectId);
+  return `${entry.title}\n${project ? project.name : ""}`.toLowerCase();
+}
+
 function forgetRecentSession(entry) {
   state.recentSessions = state.recentSessions.filter((candidate) =>
     candidate.projectId !== entry.projectId || candidate.sessionPath !== entry.sessionPath);
@@ -1773,17 +1763,27 @@ async function openRecentSession(entry) {
   openListedSession(session);
 }
 
+/** Rows 1-9 carry a digit shortcut; the list is renumbered whenever the search narrows it. */
+const RECENT_SESSION_SHORTCUT_LIMIT = 9;
+let recentSessionShortcuts = [];
+
 function renderRecentSessionsDialog() {
   elements.recentSessionsList.replaceChildren();
-  if (!state.recentSessions.length) {
+  recentSessionShortcuts = [];
+
+  const query = normalizedQuery(elements.recentSessionsSearchInput.value || "");
+  const ordered = sortPinnedFirst(state.recentSessions, (entry) => isSessionPinned(entry.sessionPath));
+  const matches = ordered.filter((entry) => !query || recentSessionSearchText(entry).includes(query));
+
+  if (!matches.length) {
     const empty = document.createElement("p");
     empty.className = "muted";
-    empty.textContent = "No conversations opened yet.";
+    empty.textContent = query ? "No conversations match that search." : "No conversations opened yet.";
     elements.recentSessionsList.append(empty);
     return;
   }
 
-  for (const entry of sortPinnedFirst(state.recentSessions, (entry) => isSessionPinned(entry.sessionPath))) {
+  for (const entry of matches) {
     const pinned = isSessionPinned(entry.sessionPath);
     const row = document.createElement("div");
     row.className = "list-row";
@@ -1794,6 +1794,14 @@ function renderRecentSessionsDialog() {
     button.dataset.testid = "recent-session-option";
     // Rows are single-line, so the full title lives in the tooltip.
     button.title = entry.title;
+    if (recentSessionShortcuts.length < RECENT_SESSION_SHORTCUT_LIMIT) {
+      recentSessionShortcuts.push(entry);
+      const index = document.createElement("span");
+      index.className = "recent-session-index";
+      index.dataset.testid = "recent-session-index";
+      index.textContent = String(recentSessionShortcuts.length);
+      button.append(index);
+    }
     const title = document.createElement("strong");
     title.textContent = entry.title;
     const meta = document.createElement("span");
@@ -2093,11 +2101,20 @@ function renderToolContent(container, text) {
 // streaming so markdown parsing cannot block the composer; the final event formats once.
 function renderBubbleContent(bubble, text, flush = false) {
   bubble._raw = text;
+  const content = bubble.querySelector(".message-content") || bubble;
+  if (bubble.dataset.role === "assistant" && text && !flush && !bubble._hasRenderedText) {
+    if (bubble._renderRaf) cancelAnimationFrame(bubble._renderRaf);
+    bubble._renderRaf = 0;
+    bubble._renderFinal = false;
+    bubble._hasRenderedText = true;
+    content.textContent = text;
+    stickyScroll();
+    return;
+  }
   bubble._renderFinal = bubble._renderFinal || flush;
   if (bubble._renderRaf) return;
   bubble._renderRaf = requestAnimationFrame(() => {
     bubble._renderRaf = 0;
-    const content = bubble.querySelector(".message-content") || bubble;
     const role = bubble.dataset.role;
     if (role === "assistant" && !bubble._renderFinal) content.textContent = bubble._raw;
     else if (role === "assistant" || role === "user") renderMarkdown(content, bubble._raw);
@@ -3776,9 +3793,38 @@ elements.chatHarnessSelect.addEventListener("change", () => {
   }
 });
 elements.collapseProjectsButton.addEventListener("click", () => setPanelCollapsed("projects", true));
-elements.recentSessionsButton.addEventListener("click", () => {
+/** One dialog, several triggers: the projects header, the conversations header, and the chat menu. */
+function openRecentSessionsDialog() {
+  elements.recentSessionsSearchInput.value = "";
   renderRecentSessionsDialog();
   elements.recentSessionsDialog.showModal();
+  // Digits 1-9 are shortcuts, so focus must start on the list rather than in the search field.
+  elements.recentSessionsList.focus();
+}
+for (const trigger of document.querySelectorAll("[data-recent-sessions-open]")) {
+  trigger.addEventListener("click", openRecentSessionsDialog);
+}
+elements.recentSessionsSearchInput.addEventListener("input", () => renderRecentSessionsDialog());
+elements.recentSessionsDialog.addEventListener("keydown", (event) => {
+  if (event.target === elements.recentSessionsSearchInput) return;
+  if (event.metaKey || event.ctrlKey || event.altKey) return;
+  const position = Number(event.key);
+  if (!Number.isInteger(position) || position < 1 || position > RECENT_SESSION_SHORTCUT_LIMIT) return;
+  const entry = recentSessionShortcuts[position - 1];
+  if (!entry) return;
+  event.preventDefault();
+  openRecentSession(entry).catch((error) => toast(error.message));
+});
+/** Ctrl/Cmd+Shift+K reaches the recents list from any view, including mid-conversation. */
+document.addEventListener("keydown", (event) => {
+  if (!(event.metaKey || event.ctrlKey) || !event.shiftKey) return;
+  if (event.key.toLowerCase() !== "k") return;
+  event.preventDefault();
+  if (elements.recentSessionsDialog.open) {
+    elements.recentSessionsDialog.close();
+    return;
+  }
+  openRecentSessionsDialog();
 });
 elements.closeRecentSessionsButton.addEventListener("click", () => elements.recentSessionsDialog.close());
 elements.expandProjectsButton.addEventListener("click", () => setPanelCollapsed("projects", false));
@@ -3853,7 +3899,7 @@ elements.composer.addEventListener("submit", (event) => {
     type: "prompt",
     message,
     images: state.attachments.filter((attachment) => attachment.kind === "image").map(({ name, mimeType, data }) => ({ name, mimeType, data })),
-    textAttachments: state.attachments.filter((attachment) => attachment.kind === "text").map(({ name, mimeType, content }) => ({ name, mimeType, content })),
+    files: state.attachments.filter((attachment) => attachment.kind === "file").map(({ name, mimeType, data }) => ({ name, mimeType, data })),
   };
   if (!sendSocket(payload)) {
     toast("Conversation is not connected yet");
@@ -4035,6 +4081,19 @@ window.addEventListener("online", () => {
 });
 window.addEventListener("focus", () => resumeConnection());
 
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch((error) => console.warn("Service worker registration failed", error));
+  });
+}
+
+setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+syncNotifyButton();
+updateInstallButton();
+initializeApplication()
+  .catch((error) => toast(error.message))
+  .finally(revealApplication);
+
 // Generic secret accounts are deliberately node-local; only metadata is ever rendered.
 const secretAccounts = [];
 let editingSecretAccountId = null;
@@ -4155,16 +4214,3 @@ elements.secretAccountForm.addEventListener("submit", async (event) => {
   await api(editingSecretAccountId ? `/api/secrets/accounts/${encodeURIComponent(editingSecretAccountId)}` : "/api/secrets/accounts", { method: editingSecretAccountId ? "PUT" : "POST", body: JSON.stringify(payload) });
   elements.secretAccountDialog.close(); await loadSecretAccounts(); toast("Secret account saved");
 });
-
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").catch((error) => console.warn("Service worker registration failed", error));
-  });
-}
-
-setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
-syncNotifyButton();
-updateInstallButton();
-initializeApplication()
-  .catch((error) => toast(error.message))
-  .finally(revealApplication);

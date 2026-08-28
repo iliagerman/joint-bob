@@ -13,7 +13,7 @@ import {
   type AgentSessionEvent,
 } from "@earendil-works/pi-coding-agent";
 import { agentCredentialContext, agentEnvironment } from "./secrets.js";
-import { sessionCwds, type SessionProjectPaths } from "./session-paths.js";
+import { discoverPiSessionDirectory, sessionCwds, type SessionProjectPaths } from "./session-paths.js";
 import { getSettings } from "./settings.js";
 import type { ChatMessage, ModelSummary, SessionStatus, SessionSummary } from "./types.js";
 
@@ -27,6 +27,7 @@ interface PiSessionOptions {
   cwd: string;
   projectId: string;
   sessionPath?: string;
+  sessionId?: string;
   safeguardsEnabled?: boolean;
 }
 
@@ -237,27 +238,34 @@ const piSessionListCache = new Map<string, PiSessionListCacheEntry>();
 // Filesystem boundary: a session directory for a cwd that has never been used
 // does not exist, and a transcript can be removed between readdir and stat.
 // Both mean "no usable fingerprint", which forces a fresh listing.
-async function sessionDirectoryFingerprint(directory: string): Promise<string> {
+async function fingerprintNames(directory: string, names: string[]): Promise<string> {
+  const parts = await Promise.all(names.sort().map(async (name) => {
+    const info = await stat(path.join(directory, name));
+    return `${name}:${info.mtimeMs}:${info.size}`;
+  }));
+  return parts.join("|");
+}
+
+async function sessionDirectorySnapshot(directory: string): Promise<{ names: string[]; fingerprint: string }> {
   try {
-    const names = (await readdir(directory)).filter((name) => name.endsWith(".jsonl")).sort();
-    const parts = await Promise.all(names.map(async (name) => {
-      const info = await stat(path.join(directory, name));
-      return `${name}:${info.mtimeMs}:${info.size}`;
-    }));
-    return parts.join("|");
+    const names = (await readdir(directory)).filter((name) => name.endsWith(".jsonl"));
+    return { names, fingerprint: await fingerprintNames(directory, names) };
   } catch {
-    return "";
+    return { names: [], fingerprint: "" };
   }
 }
 
 async function listSessionsForDirectory(cwd: string, sessionDirectory: string | undefined): Promise<unknown[]> {
   if (!sessionDirectory) return await SessionManager.list(cwd, sessionDirectory) as unknown[];
   const key = JSON.stringify([cwd, sessionDirectory]);
-  const fingerprint = await sessionDirectoryFingerprint(sessionDirectory);
+  const snapshot = await sessionDirectorySnapshot(sessionDirectory);
   const cached = piSessionListCache.get(key);
-  if (cached && cached.fingerprint === fingerprint) return cached.sessions;
-  const sessions = await SessionManager.list(cwd, sessionDirectory) as unknown[];
-  piSessionListCache.set(key, { fingerprint, sessions });
+  if (cached && cached.fingerprint === snapshot.fingerprint) return cached.sessions;
+  const availablePaths = await discoverPiSessionDirectory(sessionDirectory, snapshot.names, cwd);
+  const sessions = (await SessionManager.list(cwd, sessionDirectory) as unknown[])
+    .filter((session) => availablePaths.has(path.resolve(String(asRecord(session).path))));
+  const names = [...availablePaths].map((filePath) => path.basename(filePath));
+  piSessionListCache.set(key, { fingerprint: await fingerprintNames(sessionDirectory, names), sessions });
   return sessions;
 }
 
@@ -300,7 +308,7 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
   await reloadPiAuth();
   const sessionManager = options.sessionPath
     ? SessionManager.open(options.sessionPath, piSessionPath(), options.cwd)
-    : SessionManager.create(options.cwd, piSessionPath());
+    : SessionManager.create(options.cwd, piSessionPath(), options.sessionId ? { id: options.sessionId } : undefined);
   const safeguardsEnabled = options.safeguardsEnabled ?? sessionSafeguardsEnabled(sessionManager);
   const bashTool = createBashTool(options.cwd, {
     spawnHook: (context) => ({ ...context, env: { ...context.env, ...agentEnvironment(options.projectId) } }),

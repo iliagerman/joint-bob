@@ -44,6 +44,15 @@ test("conversation review state starts reviewed and tracks later completion per 
     const bulkReviewed = reviews.syncConversationReviewStates("user-a", "project", bulkSessions);
     assert.equal(bulkReviewed.get("bulk-a"), "reviewed");
     assert.equal(bulkReviewed.get("bulk-b"), "reviewed");
+
+    const clickWatermark = new Date(Date.now() + 2000).toISOString();
+    const afterClick = new Date(Date.now() + 3000).toISOString();
+    reviews.syncConversationReviewStates("user-a", "project", [{ path: "race", updatedAt: clickWatermark, running: false }]);
+    reviews.syncConversationReviewStates("user-a", "project", [{ path: "race", updatedAt: afterClick, running: false }]);
+    reviews.markConversationReviewed("user-a", "project", { path: "race", updatedAt: clickWatermark });
+    const race = reviews.syncConversationReviewStates("user-a", "project", [{ path: "race", updatedAt: afterClick, running: false }]);
+    assert.equal(race.get("race"), "needs_review");
+    assert.throws(() => reviews.markConversationReviewed("user-a", "project", { path: "race" }), /watermark is invalid/);
   } finally {
     if (previous === undefined) delete process.env.PI_WEB_DATA_DIR;
     else process.env.PI_WEB_DATA_DIR = previous;

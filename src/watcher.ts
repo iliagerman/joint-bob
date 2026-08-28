@@ -1,7 +1,7 @@
 import { watch, type FSWatcher } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { claudeProjectDirs, sessionCwds, type SessionProjectPaths } from "./session-paths.js";
+import { canonicalPiTranscriptName, claudeProjectDirs, sessionCwds, type SessionProjectPaths } from "./session-paths.js";
 import type { ProjectRecord } from "./types.js";
 
 // Debounced fs.watch over the session directories (Pi + Claude) of each
@@ -87,7 +87,7 @@ export class SessionWatcher {
     if (!project) return;
     const name = typeof fileName === "string" ? fileName : "";
     if (name && !name.endsWith(".jsonl")) return;
-    if (name) project.pendingFiles.add(path.join(dir, name));
+    if (name) project.pendingFiles.add(path.join(dir, canonicalPiTranscriptName(name)));
     if (project.debounceTimer) return;
     project.debounceTimer = setTimeout(() => {
       project.debounceTimer = null;

@@ -100,7 +100,7 @@ test("session API persists automatic review transitions for the signed-in accoun
     const list = async () => {
       const response = await fetch(`${node.baseUrl}/api/projects/${fixture.projectId}/sessions`, { headers: { Cookie: cookie } });
       assert.equal(response.status, 200);
-      return (await response.json() as { sessions: Array<{ path: string; reviewState: string }> }).sessions[0];
+      return (await response.json() as { sessions: Array<{ path: string; updatedAt: string; reviewState: string }> }).sessions[0];
     };
     assert.equal((await list()).reviewState, "reviewed");
 
@@ -114,25 +114,35 @@ test("session API persists automatic review transitions for the signed-in accoun
     const reviewed = await fetch(`${node.baseUrl}/api/projects/${fixture.projectId}/sessions/reviewed`, {
       method: "PUT",
       headers,
-      body: JSON.stringify({ sessionPath: finished.path }),
+      body: JSON.stringify({ sessionPath: finished.path, updatedAt: finished.updatedAt }),
     });
     assert.equal(reviewed.status, 204);
     assert.equal((await list()).reviewState, "reviewed");
 
-    // One bulk call clears every conversation that needs review.
     const followUp = { type: "assistant", cwd: fixture.projectPath, message: { role: "assistant", content: [{ type: "text", text: "more work" }] } };
     await writeFile(fixture.sessionFile, `${JSON.stringify(firstRecord)}\n${JSON.stringify(assistant)}\n${JSON.stringify(followUp)}\n`);
     const later = new Date(Date.now() + 2000);
     await utimes(fixture.sessionFile, later, later);
-    // Mark immediately. The endpoint must use the fresh session timestamp from its
-    // own listing instead of requiring a separate list request to synchronize state.
+    const clickSnapshot = await list();
+    assert.equal(clickSnapshot.reviewState, "needs_review");
+
+    const afterClick = { type: "assistant", cwd: fixture.projectPath, message: { role: "assistant", content: [{ type: "text", text: "after click" }] } };
+    await writeFile(fixture.sessionFile, `${JSON.stringify(firstRecord)}\n${JSON.stringify(assistant)}\n${JSON.stringify(followUp)}\n${JSON.stringify(afterClick)}\n`);
+    const newest = new Date(Date.now() + 3000);
+    await utimes(fixture.sessionFile, newest, newest);
     const bulk = await fetch(`${node.baseUrl}/api/projects/${fixture.projectId}/sessions/reviewed-all`, {
-      method: "PUT",
-      headers,
-      body: JSON.stringify({ sessionPaths: [finished.path] }),
+      method: "PUT", headers,
+      body: JSON.stringify({ sessions: [{ sessionPath: clickSnapshot.path, updatedAt: clickSnapshot.updatedAt }] }),
     });
     assert.equal(bulk.status, 204);
-    assert.equal((await list()).reviewState, "reviewed");
+    const pendingAfterClick = await list();
+    assert.equal(pendingAfterClick.reviewState, "needs_review");
+
+    const missing = await fetch(`${node.baseUrl}/api/projects/${fixture.projectId}/sessions/reviewed-all`, {
+      method: "PUT", headers,
+      body: JSON.stringify({ sessions: [{ sessionPath: "missing", updatedAt: pendingAfterClick.updatedAt }] }),
+    });
+    assert.equal(missing.status, 409);
   } finally {
     await new Promise<void>((resolve) => node.server.close(() => resolve()));
     node.restoreEnvironment();

@@ -1,50 +1,50 @@
-# Business overview
+# Business Overview
 
-## Purpose and domain
+## Purpose and Domain
 
-Joint Bob is a private, multi-node workspace for running Pi and Claude coding agents against local software projects. It gives an administrator one browser interface for project discovery, agent conversations, task planning, task ownership, node handoff, filesystem synchronization, and completion notifications.
+Joint Bob is a private, multi-node workspace for running Pi and Claude coding agents against local software projects. It gives one authenticated administrator a browser interface for projects, conversations, Kanban tasks, agent execution, review tracking, node handoff, synchronized workspaces, terminals, and completion notifications.
 
-The product assumes trusted machines connected over a private network. Each node runs its own Joint Bob service and keeps account and application state in `~/.joint-bob`. Repositories, transcripts, worktrees, ticket workspaces, and synchronized agent data remain files on disk.
+Each macOS or Linux node runs one Joint Bob service. Application-owned state stays in node-local SQLite under `~/.joint-bob`; repositories, transcripts, worktrees, ticket workspaces, and Syncthing content remain filesystem-owned. Production runs from `~/.local/share/joint-bob/app`, not a source checkout.
 
-## Users and operating model
+## Users and Operating Model
 
-The primary actor is a single administrator who installs Joint Bob on macOS or Linux nodes, pairs up to five active nodes, maps projects to node-local paths, and starts agent work from desktop or mobile browsers. Peer Joint Bob nodes are also actors. They exchange membership, replicated records, credentials, project inventories, task handoff messages, and proxied WebSocket traffic.
+The primary actor is an administrator using desktop or mobile browsers. The administrator installs nodes, maps local projects, pairs up to five active nodes, chooses execution locations, and supervises coding-agent work. Peer Joint Bob nodes act as authenticated machine clients for membership, replication, project mapping, credential delivery, task handoff, and proxied WebSockets.
 
-Production services run from `~/.local/share/joint-bob/app`, not from a source checkout. Linux uses `joint-bob.service`; macOS uses `com.joint-bob.node`.
+The intended network boundary is a trusted private network, normally Tailscale Serve over HTTPS. Pairing tokens are machine credentials and must not cross public HTTP.
 
-## Current business capabilities
+## Business Capabilities
 
-- Create, import, classify, rename, colour, synchronize, rescan, map, and delete projects.
-- Discover Pi and Claude conversations across local, legacy, mapped, synchronized, and ticket-workspace paths.
-- Start or resume agent conversations, stream text, thinking, and tool activity, attach files, rename sessions, mark reviews, abort runs, and request completion notifications.
-- Choose the execution node for non-task chat. The browser includes `nodeId` in the WebSocket URL, and the local service proxies the socket to that node when needed.
-- Route task chat by `TaskRecord.currentNodeId`. Task ownership overrides the browser's non-task node selection.
-- Manage Kanban tasks through backlog, planning, in-progress, review, and done states. Tasks can use synchronized ticket workspaces or legacy Git worktrees.
-- Hand tasks to another node after eligibility and synchronization checks. Legacy Git-backed work can transfer a branch bundle and merge to `main`.
-- Pair nodes, replicate cluster state and GitHub credential assignments, and configure Syncthing folders and devices.
-- Browse local or peer directories, download project files, discover Pi and Claude skills, and manage runtime settings.
+- Create, import, classify, rename, colour, map, synchronize, rescan, and remove projects.
+- Discover Pi and Claude conversations across canonical, mapped, legacy, synchronized, and ticket-workspace paths.
+- Start, resume, steer, abort, rename, transfer, and review conversations while receiving streamed text, thinking, tool, and status events.
+- Mark one or all conversations reviewed; preserve per-user review state in SQLite.
+- Select an execution node for ordinary chat; route task chat to `TaskRecord.currentNodeId`.
+- Manage tasks through board states, phase-specific agent settings, synchronized ticket workspaces, and legacy Git worktrees.
+- Hand task ownership to another node using readiness checks and a prepare/commit/settle protocol.
+- Pair nodes, converge membership and replicated records, and synchronize approved filesystem content through Syncthing.
+- Manage encrypted GitHub credentials, runtime settings, push subscriptions, skills, files, and project-scoped terminal sessions.
+- Install, diagnose, update, roll back, smoke-test, package, and release the service.
 
-## Model, thinking, and effort controls
-
-Current conversation controls are split by agent engine:
-
-- Pi models come from the embedded Pi model runtime. The browser presents configured `openai-codex` and `zai` models. WebSocket commands support `setModel`, `setThinking`, and `cycleThinking`, and session status reports the active thinking level and available levels. The current browser model dialog does not expose a Pi thinking-level selector.
-- Claude presents Fable, Opus 5, Sonnet, and Haiku 4.5 choices. The same dialog exposes reasoning effort values `default`, `low`, `medium`, `high`, `xhigh`, and `max`. The browser sends `setEffort`; the server passes non-default effort to the Claude CLI as `--effort`.
-- Task phase configuration stores `engine`, `provider`, `modelId`, and `effort` for planning, in-progress, and review phases. Current task model options encode `default` effort only; the task editor has no separate effort selector.
-
-These controls are session or task configuration. No repository-wide model policy is exposed in the browser.
-
-## Mobile navigation and top bar
-
-The PWA is mobile-first. Below 1024 pixels, it displays one full-screen panel at a time and switches among Projects, Chats, Board, and Chat with a fixed four-button bottom navigation. `setMobileView` changes body classes, persists the view preference, and writes browser history so Back can return to the prior panel.
-
-Each panel has a compact top bar. The chat top bar contains Back, a truncated conversation title, a truncated status line, an optional ticket backlink, connection status, and Stop. Execution node, agent, model, safeguards, transfer, notification, rename, and install controls sit in a second `.chat-toolbar` row. That row currently uses `overflow-x: auto` with its scrollbar hidden, so narrow screens require horizontal sliding to reach controls that do not fit.
-
-## Business constraints and boundaries
+## Business Rules and Constraints
 
 - Cluster membership is capped at five active nodes.
-- Pairing tokens are machine credentials. Documentation prohibits pairing over public HTTP and recommends Tailscale private HTTPS.
-- GitHub credentials replicate through encrypted application records, not Syncthing.
-- `.git`, `node_modules`, credentials, environment files, build output, and logs are excluded from synchronized project content.
-- New ticket workspaces have no branch and no merge action. Existing Git-backed tasks retain worktree and merge behavior.
-- No terminal-opening business capability exists in the scanned code. There is no terminal route, PTY, frontend action, or terminal dependency.
+- Task ownership overrides the non-task node selected in the browser.
+- GitHub credentials use encrypted application replication, never Syncthing.
+- New ticket workspaces are synchronized folders without branches; legacy Git-backed tasks retain worktree, bundle, and merge behavior.
+- `.git`, dependencies, credentials, environment files, logs, and generated output are excluded from project synchronization.
+- Syncthing delete-allowed ignore semantics may apply only to proven generated caches. They must never be broadened to credentials, environment files, source, or arbitrary user rules.
+- Agent execution is powerful: Claude uses `--permission-mode bypassPermissions`, and Pi safeguards can be changed. Authentication, project path boundaries, and private networking are therefore primary controls.
+
+## Current Bug Context and Traceability
+
+| Concern | Business impact | Evidence | Required verification |
+|---|---|---|---|
+| Delayed streamed replies | Users cannot steer a conversation before the turn ends | Pi and Claude emit delta events; `public/app.js` batches long-message rendering | A browser-visible delta must appear before final completion, then accept a follow-up prompt during the turn |
+| Mark-all-reviewed reverts | The review inbox cannot be cleared reliably | `conversation-reviews.ts` marks against stored `last_activity_at`; current activity can race the bulk operation | Bulk and single review regressions must distinguish pre-click from genuine post-click activity |
+| Syncthing `beecomm` errors | Remote deletes remain blocked and folder readiness fails | Live errors cite ignored `__pycache__`; the managed rule lacks Syncthing `(?d)` semantics | Migrate only the generated-cache rule and preserve all non-cache/user ignore semantics |
+
+## Assumptions and Unknowns
+
+- **Assumption:** The reported streamed-delay symptom affects one or both agent engines. The scan found the intended event chain but no runtime timing evidence proving the failing boundary.
+- **Assumption:** `beecomm` is the intended folder; the reported spelling `beccomm` was not found.
+- **Unknown:** No formal compliance regime, data-retention policy, or service-level objective is documented. Security observations here are engineering controls, not a compliance certification.

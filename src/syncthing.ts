@@ -177,6 +177,7 @@ async function request<T>(pathname: string, init: RequestInit = {}): Promise<T> 
   if (!configured) throw new Error("Syncthing is not configured on this node");
   const response = await fetch(new URL(pathname, configured.url), {
     ...init,
+    signal: init.signal ?? AbortSignal.timeout(10_000),
     headers: { ...init.headers, "Content-Type": "application/json", "X-API-Key": configured.apiKey },
   });
   if (!response.ok) throw new Error(`Syncthing request failed: ${response.status} ${response.statusText}`);

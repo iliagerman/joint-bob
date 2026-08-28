@@ -1,79 +1,62 @@
-# Technology stack
+# Technology Stack
 
-## Languages and runtimes
+## Languages and Runtimes
 
-| Technology | Declared or pinned version | Observed use |
+| Technology | Version | Use |
 |---|---|---|
-| Node.js | Engine `>=22.19.0`; managed and CI `22.23.2` | Server runtime, `node:test`, `node:sqlite`, crypto, HTTP, filesystem, subprocesses |
-| TypeScript | Manifest `^5.7.2`; locked and installed `5.9.3` | Backend source and all TypeScript tests |
-| JavaScript | Native ES modules | Browser PWA, service worker, npm CLI |
-| HTML5 | Browser native | Application shell, dialogs, controls, accessibility structure |
-| CSS | Browser native | Responsive layout, tokens, themes, animations, safe areas, reduced motion |
-| Bash | System shell | Install, deployment, service management, runtime pinning, smoke tests |
+| Node.js | Required `>=22.19.0`; pinned/observed `22.23.2` | Server, `node:test`, `node:sqlite`, crypto, HTTP, filesystem, subprocesses |
+| TypeScript | Declared `^5.7.2`; resolved `5.9.3` | Strict backend source and tests |
+| JavaScript | Native ES modules | Browser PWA, service worker, CLI |
+| HTML/CSS | Browser native | UI shell, components, responsive and accessible presentation |
+| Bash | Host shell | Installation, services, deployment, smoke testing |
 | HCL | Terraform `>=1.9,<2.0` | Temporary AWS EC2 smoke infrastructure |
 
-`tsconfig.json` targets ES2022 with `NodeNext` modules and resolution, strict mode, casing enforcement, interoperability, `skipLibCheck`, and `dist/` output.
+`tsconfig.json` uses ES2022, NodeNext modules/resolution, strict checking, casing enforcement, `esModuleInterop`, `skipLibCheck`, and `dist/` output.
 
-## Backend frameworks and libraries
+## Application Libraries
 
-| Dependency | Manifest version | Locked/installed version | Role |
+| Dependency | Declared | Resolved | Role |
 |---|---:|---:|---|
-| Express | `^4.19.2` | `4.22.2` | REST API, middleware, static serving |
-| `ws` | `^8.18.0` | `8.21.3` | WebSocket server, client, and peer proxy |
-| Zod | `^3.23.8` | `3.25.76` | HTTP and WebSocket boundary validation |
-| `@earendil-works/pi-coding-agent` | `0.84.2` | `0.84.2` | Embedded Pi runtime, SDK, tools, sessions, model inventory |
-| `@anthropic-ai/claude-code` | `2.1.239` | `2.1.239` | Bundled Claude CLI |
-| `nanoid` | `^5.0.7` | `5.1.16` | Project, task, user, and session identifiers |
-| `web-push` | `3.6.7` | `3.6.7` | VAPID and browser push delivery |
-| `node:sqlite` | Node built-in | Node runtime | Synchronous SQLite persistence |
-| Node crypto | Node built-in | Node runtime | scrypt, timing-safe comparison, AES-256-GCM, hashing, random IDs |
+| Express | `^4.19.2` | `4.22.2` | HTTP API, middleware, static PWA |
+| `ws` | `^8.18.0` | `8.21.3` | Browser/peer WebSockets |
+| Zod | `^3.23.8` | `3.25.76` | HTTP and socket input validation |
+| `@earendil-works/pi-coding-agent` | `0.84.2` | `0.84.2` | Embedded Pi sessions, tools, models, events |
+| `@anthropic-ai/claude-code` | `2.1.239` | `2.1.239` | Installed Claude CLI runtime |
+| `nanoid` | `^5.0.7` | `5.1.16` | Application identifiers |
+| `web-push` | `3.6.7` | `3.6.7` | VAPID push notifications |
+| `node:sqlite` | Node built-in | Runtime | Synchronous SQLite persistence |
 
-## Frontend platform
+## Browser Platform
 
-The frontend has no framework or bundler. It uses:
+The frontend has no React, Vue, Svelte, or build bundler. It uses DOM APIs, Fetch, WebSocket, History, Service Worker, Cache Storage, PushManager, Notifications, Web Audio, native dialogs, and CSS media queries. `public/sw.js` uses cache `joint-bob-v34`; every `APP_SHELL` asset existed during the scan.
 
-- DOM and ES module APIs for state, rendering, events, and dialogs.
-- Fetch for REST and WebSocket for chat and watch streams.
-- Service Worker, Cache Storage, PushManager, Notifications, and install prompts for PWA behavior.
-- History API for mobile panel navigation.
-- Web Audio for completion sounds.
-- Native CSS media queries, `env(safe-area-inset-*)`, colour tokens, dark/light themes, and `prefers-reduced-motion`.
+Pi supplies models and thinking levels through the SDK. Claude runs with `-p`, `--output-format stream-json`, `--include-partial-messages`, optional resume/model/effort arguments, and `--permission-mode bypassPermissions`.
 
-`public/sw.js` uses cache `joint-bob-v25`. Every path in `APP_SHELL` existed during the scan.
+## Build and Test Tooling
 
-## Agent and model runtime
-
-Pi model availability comes from `ModelRuntime`. The current preference order checks configured `JOINT_BOB_MODEL` or legacy `PI_MOBILE_WEB_MODEL`, then GPT-5.6 Sol, Terra, Luna, Gemini 3.1 Pro preview, Gemini 2.5 Pro, and remaining non-deprecated models. The browser filters the displayed Pi list to `openai-codex` and `zai` providers. The active Pi session exposes available thinking levels through the SDK.
-
-Claude execution spawns `claude -p --output-format stream-json --verbose --include-partial-messages --permission-mode bypassPermissions`. Optional `--resume`, `--model`, and `--effort` arguments come from the session or task configuration. The browser currently offers Fable, Opus 5, Sonnet, Haiku 4.5 and effort values through `max`.
-
-## Build and test tooling
-
-| Tool | Version or configuration | Role |
+| Tool | Version/configuration | Role |
 |---|---|---|
-| npm | Lockfile version 3 | Dependency install, scripts, package publication |
-| TypeScript compiler | Locked `5.9.3` | Build and typecheck |
-| `tsx` | Manifest `^4.19.2`; locked `4.23.12` | Development watch and TypeScript test loader |
-| `node:test` | Node built-in | Main test framework |
-| `node:assert/strict` | Node built-in | Assertions |
-| Terraform native tests | Terraform `>=1.9,<2.0` | AWS security configuration tests |
-| Just | External command runner | Installed-node update commands |
+| npm | npm 10; lockfile version 3 | Install, scripts, packing, publication |
+| TypeScript compiler | `5.9.3` resolved | Typecheck and build |
+| `tsx` | Declared `^4.19.2`; resolved `4.23.12` | Watch mode and TypeScript test loading |
+| `node:test` / `node:assert/strict` | Node built-ins | Test framework and assertions |
+| Terraform native tests | Terraform `>=1.9,<2.0` | EC2 security assertions |
+| Just | External | Installed-node update commands |
 
-No linter, formatter, coverage reporter, browser E2E framework, or frontend typechecker is configured.
+No JavaScript/TypeScript linter, repository formatter, coverage tool, browser E2E framework, or frontend typechecker is configured.
 
-## Infrastructure and delivery stack
+## Infrastructure and Delivery
 
-| Technology | Version or pin | Use |
+| Technology | Version/pin | Use |
 |---|---|---|
-| Syncthing | `2.1.3` | Project, ticket workspace, and selected engine-data synchronization |
-| Terraform | `>=1.9,<2.0` | EC2 smoke environment |
-| AWS provider | `~>6.0` | EC2, network, and storage resources |
-| GitHub Actions | `checkout@v4`, `setup-node@v4`, `softprops/action-gh-release@v2` | Tag release pipeline |
-| systemd | Host native | Linux user service |
-| launchd | Host native | macOS launch agent |
-| Tailscale Serve | Host external | Private HTTPS access |
-| Git | Host external | Worktrees, bundles, release packaging, deployment commit selection |
+| Syncthing | Repository pin `2.1.3`; live scan observed `2.1.1` | Filesystem synchronization |
+| Terraform | `>=1.9,<2.0`; observed `1.14.1` | EC2 smoke environment |
+| AWS provider | `~>6.0` | Network, EC2, encrypted storage |
+| GitHub Actions | `checkout@v4`, `setup-node@v4`, `softprops/action-gh-release@v2` | Tagged releases |
+| systemd / launchd | Host native | Linux/macOS user services |
+| Tailscale Serve | Host external | Private HTTPS |
+| Git | Host external | Worktrees, bundles, releases, deployment |
 
-## Version and audit notes
+## Version and Audit Notes
 
-The direct lock contains 279 transitive package entries. `package-lock.json` and `npm-shrinkwrap.json` are byte-identical. The configured npm registry returned HTTP 400 when dependency audit was attempted, so vulnerability status is unverified.
+`package-lock.json` and `npm-shrinkwrap.json` contain the resolved integrity graph and must stay synchronized. The explicit public-registry production audit reported zero vulnerabilities across 279 dependency records. The configured proxy audit endpoint returned HTTP 400; that failure is environmental. Syncthing runtime drift remains an operational concern even though the current folder error is explained by ignore semantics.

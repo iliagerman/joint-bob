@@ -107,8 +107,7 @@ export function syncConversationReviewStates(userId: string, projectId: string, 
         states.set(session.path, session.running ? "running" : observedAt > reviewedAt ? "needs_review" : "reviewed");
         continue;
       }
-      let lastActivityAt = observedAt > row.last_activity_at ? observedAt : row.last_activity_at;
-      if (row.was_running === 1 && !session.running && now > lastActivityAt) lastActivityAt = now;
+      const lastActivityAt = observedAt > row.last_activity_at ? observedAt : row.last_activity_at;
       statements.update.run(lastActivityAt, session.running ? 1 : 0, userId, projectId, session.path);
       states.set(session.path, session.running ? "running" : lastActivityAt > row.reviewed_at ? "needs_review" : "reviewed");
     }
@@ -127,26 +126,30 @@ export function markConversationsReviewed(
 ): void {
   if (!sessions.length) return;
   const db = reviewDatabase();
-  const now = new Date().toISOString();
   const statement = db.prepare(`
     INSERT INTO conversation_review_states
       (user_id, project_id, session_path, last_activity_at, reviewed_at, was_running)
     VALUES (?, ?, ?, ?, ?, 0)
     ON CONFLICT(user_id, project_id, session_path) DO UPDATE SET
       last_activity_at = MAX(conversation_review_states.last_activity_at, excluded.last_activity_at),
-      reviewed_at = MAX(conversation_review_states.last_activity_at, excluded.last_activity_at)
+      reviewed_at = MAX(conversation_review_states.reviewed_at, excluded.reviewed_at)
   `);
-  db.exec("BEGIN");
+  db.exec("BEGIN IMMEDIATE");
   try {
     for (const session of sessions) {
-      const observedAt = activityTime(session.updatedAt, now);
-      statement.run(userId, projectId, session.path, observedAt, observedAt);
+      if (!session.updatedAt || !validReviewWatermark(session.updatedAt)) throw new Error("Conversation review watermark is invalid");
+      const reviewedAt = new Date(session.updatedAt).toISOString();
+      statement.run(userId, projectId, session.path, reviewedAt, reviewedAt);
     }
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
     throw error;
   }
+}
+
+function validReviewWatermark(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}T/.test(value) && Number.isFinite(Date.parse(value));
 }
 
 export function markConversationReviewed(

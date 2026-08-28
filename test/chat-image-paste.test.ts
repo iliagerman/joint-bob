@@ -23,6 +23,29 @@ test("pasted text still reaches the composer when the clipboard also carries an 
   assert.match(handler, /if \(!event\.clipboardData\.getData\("text\/plain"\)\) event\.preventDefault\(\);/);
 });
 
+test("file picker accepts every file type", async () => {
+  const html = await readFile("public/index.html", "utf8");
+  const input = /<input[^>]+id="attachmentInput"[^>]*>/.exec(html)?.[0];
+
+  assert.ok(input, "index.html must include the attachment input");
+  assert.doesNotMatch(input, /\saccept=/);
+});
+
+test("non-image files are uploaded as binary attachments", async () => {
+  const [client, server] = await Promise.all([
+    readFile("public/app.js", "utf8"),
+    readFile("src/server.ts", "utf8"),
+  ]);
+
+  assert.match(client, /kind: "file"/);
+  assert.match(client, /files: state\.attachments\.filter\(\(attachment\) => attachment\.kind === "file"\)/);
+  assert.match(server, /files: z\.array\(fileAttachmentSchema\)/);
+  assert.match(server, /persistFileAttachments/);
+  assert.match(server, /File attachments:\\n/);
+  assert.doesNotMatch(client, /isTextAttachment/);
+  assert.doesNotMatch(client, /is not supported yet/);
+});
+
 test("dropping files on the composer adds them as attachments", async () => {
   const [app, styles] = await Promise.all([
     readFile("public/app.js", "utf8"),

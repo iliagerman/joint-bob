@@ -1,0 +1,15 @@
+{
+  "stage_slug": "reverse-engineering",
+  "space": "default",
+  "intent": "260827-conversation-review-sync",
+  "selections": [
+    {
+      "candidate_id": "c1",
+      "type": "learning",
+      "scope": "project",
+      "heading": "Corrections",
+      "text": "Always disclose when a repository rescan replaces a broader knowledge store with narrower deep coverage, including the discarded paths recoverable from Git history.",
+      "source": "orchestrator"
+    }
+  ]
+}

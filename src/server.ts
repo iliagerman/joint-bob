@@ -2,7 +2,7 @@ import express, { type NextFunction, type Request, type Response } from "express
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { execFile } from "node:child_process";
 import { constants as fsConstants, createReadStream } from "node:fs";
-import { access, lstat, mkdir, readdir, realpath, stat, unlink, writeFile } from "node:fs/promises";
+import { access, appendFile, lstat, mkdir, readdir, realpath, stat, unlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -27,12 +27,12 @@ import {
   simplifyMessages,
 } from "./pi-service.js";
 import { deletePushSubscription, getVapidPublicKey, notifySessionFinished, savePushSubscription } from "./push.js";
-import { abortOutgoingTaskHandoff, abortPreparedTaskHandoff, acknowledgeIncomingTaskHandoff, acknowledgeOutgoingTaskHandoff, assertTaskCanBeDeleted, beginOutgoingTaskHandoff, claimTaskLease, commitPreparedTaskHandoff, completeTaskHandoff, completeTaskLease, createTask, deleteTask, getTaskHandoff, isTaskHandoffRejected, listTasks, listUnfinishedOutgoingTaskHandoffs, markOutgoingTaskHandoff, prepareTaskHandoff, rejectTaskHandoff, releaseTaskLease, reserveTaskHandoff, taskHandoffDeletion, updateTask, type TaskHandoffRecord } from "./tasks.js";
+import { abortOutgoingTaskHandoff, abortPreparedTaskHandoff, acknowledgeIncomingTaskHandoff, acknowledgeOutgoingTaskHandoff, assertTaskCanBeDeleted, beginOutgoingTaskHandoff, claimTaskLease, commitPreparedTaskHandoff, completeTaskHandoff, completeTaskLease, createTask, deleteTask, getTaskHandoff, isTaskHandoffRejected, listTasks, listUnfinishedOutgoingTaskHandoffs, markOutgoingTaskHandoff, prepareTaskHandoff, rejectTaskHandoff, releaseTaskLease, reserveTaskHandoff, taskHandoffDeletion, updateTask, updateTaskSessionPath, type TaskHandoffRecord } from "./tasks.js";
 import { assertTaskWorktreeTransferable, exportTaskBranchBundle, mergeTaskWorktree, prepareTaskWorktreeFromBundle, removePreparedTaskWorktree, TaskWorktreeError, validateTaskRepository, type PreparedTaskWorktree } from "./worktrees.js";
 import { assertSyncthingFolderReady, CLAUDE_ENGINE_SYNC_FOLDER_ID, engineSyncFolders, ensureEngineSyncFolders, ensureSyncthingDevice, ensureSyncthingFolder, ensureTicketWorkspaceFolder, PI_ENGINE_SYNC_FOLDER_ID, reconcileSyncthingProjectFolders, rescanSyncthingFolder, syncthingDeviceId, syncthingFolderIdForPath, syncthingFolderStatuses, syncthingPathForFolderId } from "./syncthing.js";
 import { assertTaskWorkspaceReady, removeTaskWorkspace, taskWorkspaceKey, TaskWorkspaceError, TICKET_WORKSPACE_FOLDER_ID, ticketWorkspaceRoot } from "./task-workspaces.js";
 import { SessionWatcher } from "./watcher.js";
-import { appendLiveEvent, buildHandoffContext, claudeRunIdFromSessionPath, claudeSessionFilePath, loadClaudeMessages, runClaudePrompt, type ClaudeRunHandle } from "./claude-service.js";
+import { appendLiveEvent, buildHandoffContext, claudeRunIdFromSessionPath, claudeSessionFilePath, loadClaudeMessages, runClaudePrompt, type ClaudeRunHandle, type ClaudeRunResult } from "./claude-service.js";
 import { listHarnesses, listHarnessSessions } from "./harnesses.js";
 import { listSkills } from "./skills.js";
 import { authenticate, authenticationStatus, changePassword, clearSessionCookieValue, createAdministrator, listLoginSessions, revokeSession, revokeUserSession, sessionCookieValue, sessionForId, type AuthSession } from "./auth.js";
@@ -46,7 +46,8 @@ import { resetSyncthingConnection } from "./syncthing.js";
 import { PROJECT_COLORS } from "./types.js";
 import type { ChatMessage, ProjectRecord, ProjectSyncStatus, ProjectView, SessionStatus, TaskPhase, TaskPhaseConfig, TaskRecord } from "./types.js";
 import { webSocketCloseReason } from "./websocket.js";
-import { resolveLocalSessionPath } from "./session-paths.js";
+import { capturePiRecoverySnapshot, recoverPiSessionDirectory, resolveLocalSessionPath } from "./session-paths.js";
+import { beginConversationRecovery, beginConversationTransfer, commitConversationTransfer, compareAndSetConversationOwnership, ConversationOwnershipError, finalizeConversationClaim, finishConversationRecovery, getConversationOwnership, sameConversationOwnership, type ConversationEngine, type ConversationOwnership, type OwnershipApplyResult } from "./conversation-ownership.js";
 import { attachTerminalSession } from "./terminal-session.js";
 
 type PiSessionHandle = Awaited<ReturnType<typeof createPiSession>>;
@@ -64,10 +65,17 @@ interface SharedPiSession {
 
 type ChatEngine = "pi" | "claude";
 
+interface ClaudeQueuedPrompt {
+  promptText: string;
+  displayText: string;
+  acknowledged: boolean;
+}
+
 interface ClaudeChatState {
   sessionId: string | null;
   filePath: string | null;
   child: ClaudeRunHandle["child"] | null;
+  promptQueue: ClaudeQueuedPrompt[];
   transcript: ChatMessage[];
   lastRunEndedAt: number;
   model: string | null;
@@ -109,6 +117,11 @@ const machineRoutes = new Set([
   "POST /cluster/sync/share",
   "POST /cluster/sessions/receive",
   "POST /cluster/sessions/transfer",
+  "GET /cluster/sessions/ownership",
+  "POST /cluster/sessions/ownership/claim",
+  "POST /cluster/sessions/ownership/claim/cas",
+  "POST /cluster/sessions/ownership/claim/commit",
+  "POST /cluster/sessions/ownership/apply",
   "POST /cluster/events",
   "POST /cluster/github/events",
   "POST /cluster/tasks/eligibility",
@@ -153,6 +166,7 @@ let ticketWorkspaceSyncRetryAt = 0;
 const configuredTicketWorkspacePeers = new Set<string>();
 let startupReady = true;
 let startupError: Error | undefined;
+let droppedTestTransferAck = false;
 
 const absolutePathSchema = z.string().trim().min(1).max(1000).refine(path.isAbsolute, "Path must be absolute");
 const projectSchema = z.object({
@@ -241,9 +255,21 @@ const sessionTransferSchema = z.object({
 const routedSessionTransferSchema = sessionTransferSchema.omit({ sourceNodeId: true }).extend({ projectId: z.string().min(1) });
 const receivedSessionTransferSchema = z.object({
   projectId: z.string().min(1),
-  sessionName: z.string().trim().max(120).optional(),
-  messages: z.array(z.object({ id: z.string(), role: z.string(), text: z.string(), toolName: z.string().max(120).optional() })).min(1).max(200),
+  engine: z.enum(["pi", "claude"]),
+  sessionId: z.string().min(1).max(240),
+  sessionPath: z.string().min(1).max(2000),
+  sourceNodeId: z.string().uuid(),
+  sourceEpoch: z.number().int().positive(),
+  messages: z.array(z.object({ id: z.string(), role: z.string(), text: z.string(), toolName: z.string().max(120).optional() })).max(200).optional(),
 });
+const ownershipSchema = z.object({
+  engine: z.enum(["pi", "claude"]), sessionId: z.string().min(1).max(240), ownerNodeId: z.string().uuid(),
+  epoch: z.number().int().positive(), status: z.enum(["claiming", "owned", "recovering", "transferring", "conflict"]), transferToNodeId: z.string().uuid().nullable(),
+});
+const nullableOwnershipSchema = ownershipSchema.nullable();
+const ownershipClaimSchema = z.object({ engine: z.enum(["pi", "claude"]), sessionId: z.string().min(1).max(240), ownerNodeId: z.string().uuid() });
+const ownershipCasSchema = z.object({ expected: nullableOwnershipSchema, proposed: ownershipSchema, originNodeId: z.string().uuid() });
+const sessionRecoverySchema = z.object({ engine: z.literal("pi"), sessionId: z.string().min(1).max(240), sessionPath: z.string().min(1).max(2000) });
 const githubGroupSaveSchema = z.object({
   label: githubGroupLabelSchema,
   token: z.string().trim().min(1).max(5000).optional(),
@@ -317,10 +343,10 @@ const imageAttachmentSchema = z.object({
   mimeType: z.string().trim().min(1).max(120),
   data: z.string().min(1).max(6_000_000),
 });
-const textAttachmentSchema = z.object({
+const fileAttachmentSchema = z.object({
   name: z.string().trim().min(1).max(240),
   mimeType: z.string().trim().min(1).max(120),
-  content: z.string().max(120_000),
+  data: z.string().min(1).max(6_000_000),
 });
 const pushSubscriptionSchema = z.object({
   endpoint: z.string().url(),
@@ -340,9 +366,10 @@ const pushUnsubscribeSchema = z.object({
 });
 const sessionReviewedSchema = z.object({
   sessionPath: z.string().trim().min(1).max(2000),
+  updatedAt: z.string().datetime(),
 }).strict();
 const sessionsReviewedSchema = z.object({
-  sessionPaths: z.array(z.string().trim().min(1).max(2000)).min(1).max(500),
+  sessions: z.array(sessionReviewedSchema).min(1).max(500),
 }).strict();
 const loginSchema = z.object({
   username: z.string().trim().min(1).max(80),
@@ -403,7 +430,7 @@ const socketMessageSchema = z.object({
   engine: z.enum(["pi", "claude"]).optional(),
   effort: z.enum(["default", "low", "medium", "high", "xhigh", "max"]).optional(),
   images: z.array(imageAttachmentSchema).max(4).optional(),
-  textAttachments: z.array(textAttachmentSchema).max(6).optional(),
+  files: z.array(fileAttachmentSchema).max(6).optional(),
   safeguardsEnabled: z.boolean().optional(),
 });
 
@@ -436,10 +463,20 @@ function requestCookie(request: Request, name: string): string | undefined {
   return request.header("cookie")?.split(";").map((entry) => entry.trim()).find((entry) => entry.startsWith(prefix))?.slice(prefix.length);
 }
 
+async function machineCredentialNodeId(token: string): Promise<string | undefined> {
+  const [local, localToken, peers] = await Promise.all([getClusterNode(), getClusterMachineToken(), listClusterPeers()]);
+  if (machineTokenMatches(token, localToken)) return local.id;
+  return peers.find((peer) => machineTokenMatches(token, peer.token))?.id;
+}
+
 async function requireHttpAuth(request: Request, response: Response, next: NextFunction): Promise<void> {
   const token = bearerToken(request);
-  if (machineRoutes.has(`${request.method} ${request.path}`) && token && machineTokenMatches(token, await getClusterMachineToken())) {
+  const machineNodeId = machineRoutes.has(`${request.method} ${request.path}`) && token
+    ? await machineCredentialNodeId(token)
+    : undefined;
+  if (machineNodeId) {
     response.locals.machineAuth = true;
+    response.locals.machineNodeId = machineNodeId;
     next();
     return;
   }
@@ -2027,6 +2064,9 @@ app.put("/api/projects/:projectId/sessions/title", async (request, response, nex
       return;
     }
     const payload = sessionTitleSchema.parse(request.body);
+    const session = (await listHarnessSessions(project)).find((candidate) => candidate.path === payload.sessionPath);
+    if (!session) { sendError(response, 404, "Conversation not found"); return; }
+    await requireLocalConversationOwner(session.path.startsWith("claude:") ? "claude" : "pi", conversationOwnershipId(session));
     await setSessionTitle(payload.sessionPath, payload.title);
     broadcastToProject(project.id, { type: "sessionsChanged" });
     response.json({ ok: true });
@@ -2137,30 +2177,239 @@ app.get("/api/projects/:projectId/sessions", async (request, response, next) => 
   }
 });
 
-async function transferLocalPiSession(project: ProjectRecord, payload: z.infer<typeof sessionTransferSchema>): Promise<unknown> {
-  const sessions = await listHarnessSessions(project);
-  const matching = payload.sessionId
-    ? sessions.find((session) => session.id === payload.sessionId)
-    : sessions.find((session) => session.path === payload.sessionPath);
-  if (!matching) throw new TaskWorktreeError("Conversation was not found on the source node");
-  if (matching.path.startsWith("claude:")) throw new TaskWorktreeError("Claude session transfer is not available yet");
-  const sessionPath = matching.path;
-  const active = [...new Set(sharedSessions.values())].find((session) => session.projectId === project.id && session.handle.session.sessionFile === sessionPath);
-  if (active?.handle.session.isStreaming) throw new TaskWorktreeError("Wait for the current turn to finish before transferring");
-  const peer = await getClusterPeer(payload.peerId);
-  if (!peer) throw new Error("Peer not found");
-  const source = await createPiSession({ cwd: project.path, projectId: project.id, sessionPath });
-  const messages = simplifyMessages(source.session.messages as unknown[]);
-  source.dispose();
-  const peerResponse = await fetch(`${peer.url}/api/cluster/sessions/receive`, {
+function ownershipEvent(record: ConversationOwnership, originNodeId: string) {
+  return {
+    id: randomUUID(), originNodeId, entityType: "conversation.ownership", entityKey: `${record.engine}:${record.sessionId}`,
+    operation: "upsert", payload: { ...record, originNodeId }, createdAt: new Date().toISOString(),
+  };
+}
+
+async function applyOwnershipToPeer(peer: ClusterPeer, record: ConversationOwnership, originNodeId: string): Promise<OwnershipApplyResult> {
+  const token = await getClusterMachineToken();
+  const response = await fetch(`${peer.url}/api/cluster/sessions/ownership/apply`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ projectId: project.id, sessionName: payload.sessionName, messages }),
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ record, originNodeId }), signal: AbortSignal.timeout(3_000),
+  });
+  const result = await response.json() as OwnershipApplyResult & { error?: string };
+  if (!response.ok) throw new Error(result.error || `Ownership acknowledgement failed from ${peer.name}`);
+  return result;
+}
+
+async function ownershipFromPeer(peer: ClusterPeer, engine: ConversationEngine, sessionId: string): Promise<ConversationOwnership | null> {
+  const url = new URL("/api/cluster/sessions/ownership", peer.url);
+  url.searchParams.set("engine", engine);
+  url.searchParams.set("sessionId", sessionId);
+  const response = await fetch(url, { headers: { Authorization: `Bearer ${peer.token}` }, signal: AbortSignal.timeout(3_000) });
+  if (!response.ok) throw new Error(`Ownership read failed from ${peer.name}`);
+  return (await response.json() as { ownership: ConversationOwnership | null }).ownership;
+}
+
+async function claimCasOnPeer(peer: ClusterPeer, expected: ConversationOwnership | null, proposed: ConversationOwnership, originNodeId: string): Promise<OwnershipApplyResult> {
+  const response = await fetch(`${peer.url}/api/cluster/sessions/ownership/claim/cas`, {
+    method: "POST", headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ expected, proposed, originNodeId }), signal: AbortSignal.timeout(3_000),
+  });
+  const result = await response.json() as OwnershipApplyResult & { error?: string };
+  if (!response.ok) throw new Error(result.error || `Ownership compare-and-set failed on ${peer.name}`);
+  return result;
+}
+
+function assertClaimAccepted(results: OwnershipApplyResult[], proposed: ConversationOwnership): void {
+  const rejected = results.find((result) => !result.accepted || !sameConversationOwnership(result.current ?? undefined, proposed));
+  if (rejected) throw new Error(`Ownership claim rejected; current state: ${JSON.stringify(rejected.current)}`);
+}
+
+async function finalizeClaimOnOwner(ownerNodeId: string, peers: ClusterPeer[], proposed: ConversationOwnership): Promise<ConversationOwnership> {
+  const local = await getClusterNode();
+  if (ownerNodeId === local.id) return finalizeConversationClaim(proposed, ownerNodeId);
+  const peer = peers.find((candidate) => candidate.id === ownerNodeId);
+  if (!peer) throw new Error("Ownership claimant left the captured membership");
+  const response = await fetch(`${peer.url}/api/cluster/sessions/ownership/claim/commit`, {
+    method: "POST", headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ proposed }), signal: AbortSignal.timeout(3_000),
+  });
+  const result = await response.json() as { ownership?: ConversationOwnership; error?: string };
+  if (!response.ok || !result.ownership) throw new Error(result.error || "Ownership claim commit failed");
+  return result.ownership;
+}
+
+function claimStateMatches(record: ConversationOwnership | null, proposed: ConversationOwnership): boolean {
+  if (!record) return true;
+  if (sameConversationOwnership(record, proposed)) return true;
+  return record.status === "owned" && sameConversationOwnership(record, { ...proposed, status: "owned" });
+}
+
+async function commitPreparedClaim(localId: string, peers: ClusterPeer[], proposed: ConversationOwnership): Promise<ConversationOwnership> {
+  const owned = { ...proposed, status: "owned" as const };
+  const nonOwnerResults: OwnershipApplyResult[] = [];
+  if (localId !== proposed.ownerNodeId) nonOwnerResults.push(await compareAndSetConversationOwnership(proposed, owned, proposed.ownerNodeId));
+  const remoteResults = await Promise.all(peers.filter((peer) => peer.id !== proposed.ownerNodeId)
+    .map((peer) => claimCasOnPeer(peer, proposed, owned, proposed.ownerNodeId)));
+  assertClaimAccepted([...nonOwnerResults, ...remoteResults], owned);
+  return finalizeClaimOnOwner(proposed.ownerNodeId, peers, proposed);
+}
+
+async function coordinateOwnershipClaim(engine: ConversationEngine, sessionId: string, ownerNodeId: string): Promise<ConversationOwnership> {
+  const local = await getClusterNode();
+  const peers = await listClusterPeers();
+  const memberIds = [local.id, ...peers.map((peer) => peer.id)].sort();
+  if (memberIds[0] !== local.id) throw new Error("Ownership claim reached a non-coordinator node");
+  if (!memberIds.includes(ownerNodeId)) throw new Error("Ownership claimant is not a captured cluster member");
+  const currents = await Promise.all([getConversationOwnership(engine, sessionId).then((value) => value ?? null), ...peers.map((peer) => ownershipFromPeer(peer, engine, sessionId))]);
+  const retry = currents.find((record) => record?.status === "claiming" || record?.status === "owned");
+  const proposed = retry ? { ...retry, status: "claiming" as const } : { engine, sessionId, ownerNodeId, epoch: 1, status: "claiming" as const, transferToNodeId: null };
+  if (proposed.ownerNodeId !== ownerNodeId) throw new ConversationOwnershipError(retry!);
+  if (currents.some((record) => !claimStateMatches(record, proposed))) throw new Error("Ownership claim states differ across captured members");
+  if (currents.every((record) => record?.status === "owned")) return { ...proposed, status: "owned" };
+  const localPrepare = currents[0]?.status === "owned"
+    ? Promise.resolve({ accepted: true, current: proposed })
+    : compareAndSetConversationOwnership(currents[0] ?? undefined, proposed, local.id);
+  const remotePrepare = peers.map((peer, index) => currents[index + 1]?.status === "owned"
+    ? Promise.resolve({ accepted: true, current: proposed })
+    : claimCasOnPeer(peer, currents[index + 1], proposed, local.id));
+  const prepareResults = await Promise.all([localPrepare, ...remotePrepare]);
+  assertClaimAccepted(prepareResults, proposed);
+  return commitPreparedClaim(local.id, peers, proposed);
+}
+
+async function claimConversationAcrossCluster(engine: ConversationEngine, sessionId: string, localNodeId: string): Promise<ConversationOwnership> {
+  const current = await getConversationOwnership(engine, sessionId);
+  if (current?.ownerNodeId === localNodeId && current.status === "owned") return current;
+  if (current && current.status !== "claiming") throw new ConversationOwnershipError(current);
+  const peers = await listClusterPeers();
+  const coordinatorId = [localNodeId, ...peers.map((peer) => peer.id)].sort()[0];
+  if (coordinatorId === localNodeId) return coordinateOwnershipClaim(engine, sessionId, localNodeId);
+  const coordinator = peers.find((peer) => peer.id === coordinatorId)!;
+  const response = await fetch(`${coordinator.url}/api/cluster/sessions/ownership/claim`, {
+    method: "POST", headers: { Authorization: `Bearer ${coordinator.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ engine, sessionId, ownerNodeId: localNodeId }), signal: AbortSignal.timeout(5_000),
+  });
+  const result = await response.json() as { ownership?: ConversationOwnership; error?: string };
+  if (!response.ok || !result.ownership || result.ownership.status !== "owned") throw new Error(result.error || "Ownership claim failed");
+  return result.ownership;
+}
+
+async function assertLocalConversationOwner(engine: ConversationEngine, sessionId: string): Promise<void> {
+  const local = await getClusterNode();
+  const ownership = await getConversationOwnership(engine, sessionId);
+  if (!ownership) throw new Error("Conversation ownership is not established");
+  if (ownership.ownerNodeId !== local.id || ownership.status !== "owned") throw new ConversationOwnershipError(ownership);
+}
+
+async function requireLocalConversationOwner(engine: ConversationEngine, sessionId: string): Promise<void> {
+  const local = await getClusterNode();
+  if (!await getConversationOwnership(engine, sessionId)) await claimConversationAcrossCluster(engine, sessionId, local.id);
+  await assertLocalConversationOwner(engine, sessionId);
+}
+
+app.get("/api/cluster/sessions/ownership", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const engine = z.enum(["pi", "claude"]).parse(request.query.engine);
+    const sessionId = z.string().min(1).max(240).parse(request.query.sessionId);
+    response.json({ ownership: await getConversationOwnership(engine, sessionId) ?? null });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/cluster/sessions/ownership/claim", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const payload = ownershipClaimSchema.parse(request.body);
+    response.json({ ownership: await coordinateOwnershipClaim(payload.engine, payload.sessionId, payload.ownerNodeId) });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/cluster/sessions/ownership/claim/cas", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const payload = ownershipCasSchema.parse(request.body);
+    response.json(await compareAndSetConversationOwnership(payload.expected ?? undefined, payload.proposed, payload.originNodeId));
+  } catch (error) { next(error); }
+});
+
+app.post("/api/cluster/sessions/ownership/claim/commit", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const { proposed } = z.object({ proposed: ownershipSchema }).parse(request.body);
+    const local = await getClusterNode();
+    response.json({ ownership: await finalizeConversationClaim(proposed, local.id) });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/cluster/sessions/ownership/apply", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const payload = z.object({ record: ownershipSchema, originNodeId: z.string().uuid() }).parse(request.body);
+    const originNodeId = response.locals.machineNodeId as string;
+    if (payload.originNodeId !== originNodeId) { sendError(response, 403, "Ownership origin does not match authenticated peer"); return; }
+    await receiveReplicationBatch({ events: [ownershipEvent(payload.record, originNodeId)] });
+    const current = await getConversationOwnership(payload.record.engine, payload.record.sessionId) ?? null;
+    response.json({ accepted: sameConversationOwnership(current ?? undefined, payload.record), current });
+  } catch (error) { next(error); }
+});
+
+function conversationIsActive(projectId: string, engine: ConversationEngine, sessionId: string, sessionPath: string): boolean {
+  if (engine === "claude") return Boolean(activeClaudeConnections.get(claudeConnectionKey(projectId, sessionId))?.claude.child);
+  const active = [...new Set(sharedSessions.values())].find((session) => session.projectId === projectId && session.handle.session.sessionFile === sessionPath);
+  return Boolean(active?.handle.session.isStreaming);
+}
+
+function conversationSessionIsOpen(projectId: string, engine: ConversationEngine, sessionId: string, sessionPath: string): boolean {
+  if (engine === "claude") return activeClaudeConnections.has(claudeConnectionKey(projectId, sessionId));
+  return [...new Set(sharedSessions.values())].some((session) => session.projectId === projectId && session.handle.session.sessionFile === sessionPath);
+}
+
+async function replicateExactOwnership(peers: ClusterPeer[], record: ConversationOwnership, originNodeId: string): Promise<void> {
+  const results = await Promise.all(peers.map((peer) => applyOwnershipToPeer(peer, record, originNodeId)));
+  const rejected = results.find((result) => !result.accepted || !sameConversationOwnership(result.current ?? undefined, record));
+  if (rejected) throw new Error(`Peer rejected ownership state: ${JSON.stringify(rejected.current)}`);
+}
+
+async function transferLocalSession(project: ProjectRecord, payload: z.infer<typeof sessionTransferSchema>): Promise<unknown> {
+  const sessions = await listHarnessSessions(project);
+  const matching = payload.sessionId ? sessions.find((session) => session.id === payload.sessionId) : sessions.find((session) => session.path === payload.sessionPath);
+  if (!matching) throw new TaskWorktreeError("Conversation was not found on the source node");
+  const engine: ConversationEngine = matching.path.startsWith("claude:") ? "claude" : "pi";
+  const sessionId = conversationOwnershipId(matching);
+  if (conversationIsActive(project.id, engine, sessionId, matching.path)) throw new TaskWorktreeError("Wait for the current turn to finish before transferring");
+  const [local, peer, peers] = await Promise.all([getClusterNode(), getClusterPeer(payload.peerId), listClusterPeers()]);
+  if (!peer) throw new Error("Peer not found");
+  await requireLocalConversationOwner(engine, sessionId);
+  const transferring = await beginConversationTransfer(engine, sessionId, local.id, peer.id);
+  const priorCommit = await destinationOwnership(peer, engine, sessionId);
+  if (priorCommit?.ownerNodeId === peer.id && priorCommit.status === "owned" && priorCommit.epoch === transferring.epoch + 1) {
+    return { sessionPath: matching.path, ownership: priorCommit };
+  }
+  await replicateExactOwnership(peers, transferring, local.id);
+  try { return await requestDestinationTransfer(peer, project.id, matching.path, transferring, local.id); }
+  catch (error) {
+    const committed = await destinationOwnership(peer, engine, sessionId);
+    if (committed?.ownerNodeId === peer.id && committed.status === "owned" && committed.epoch === transferring.epoch + 1) return { sessionPath: matching.path, ownership: committed };
+    throw error;
+  }
+}
+
+async function requestDestinationTransfer(peer: ClusterPeer, projectId: string, sessionPath: string, ownership: ConversationOwnership, sourceNodeId: string): Promise<unknown> {
+  const token = await getClusterMachineToken();
+  const response = await fetch(`${peer.url}/api/cluster/sessions/receive`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ projectId, engine: ownership.engine, sessionId: ownership.sessionId, sessionPath, sourceNodeId, sourceEpoch: ownership.epoch }),
     signal: AbortSignal.timeout(30_000),
   });
-  const result = await peerResponse.json() as { error?: string; sessionPath?: string };
-  if (!peerResponse.ok) throw new TaskWorktreeError(result.error || `Peer transfer failed: ${peerResponse.status}`);
+  const result = await response.json() as { error?: string };
+  if (!response.ok) throw new TaskWorktreeError(result.error || `Peer transfer failed: ${response.status}`);
   return result;
+}
+
+async function destinationOwnership(peer: ClusterPeer, engine: ConversationEngine, sessionId: string): Promise<ConversationOwnership | null> {
+  const url = new URL("/api/cluster/sessions/ownership", peer.url);
+  url.searchParams.set("engine", engine);
+  url.searchParams.set("sessionId", sessionId);
+  const response = await fetch(url, { headers: { Authorization: `Bearer ${peer.token}` }, signal: AbortSignal.timeout(3_000) });
+  if (!response.ok) return null;
+  return (await response.json() as { ownership: ConversationOwnership | null }).ownership;
 }
 
 app.put("/api/projects/:projectId/sessions/reviewed", async (request, response, next) => {
@@ -2170,19 +2419,17 @@ app.put("/api/projects/:projectId/sessions/reviewed", async (request, response, 
       sendError(response, 404, "Project not found");
       return;
     }
-    const { sessionPath } = sessionReviewedSchema.parse(request.body);
+    const submitted = sessionReviewedSchema.parse(request.body);
     const tasks = await listTasks(project.id);
     const sessions = await listHarnessSessions({
       ...project,
       additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []),
     });
-    const session = sessions.find((candidate) => candidate.path === sessionPath);
-    if (!session) {
-      sendError(response, 404, "Conversation not found");
-      return;
-    }
+    const session = sessions.find((candidate) => candidate.path === submitted.sessionPath);
+    if (!session) { sendError(response, 404, "Conversation not found"); return; }
+    if (!session.updatedAt || submitted.updatedAt > session.updatedAt) { sendError(response, 409, "Conversation review watermark is newer than current activity"); return; }
     const authSession = response.locals.authSession as AuthSession;
-    markConversationReviewed(authSession.userId, project.id, session);
+    markConversationReviewed(authSession.userId, project.id, { path: submitted.sessionPath, updatedAt: submitted.updatedAt });
     response.status(204).send();
   } catch (error) {
     next(error);
@@ -2196,20 +2443,20 @@ app.put("/api/projects/:projectId/sessions/reviewed-all", async (request, respon
       sendError(response, 404, "Project not found");
       return;
     }
-    const { sessionPaths } = sessionsReviewedSchema.parse(request.body);
+    const { sessions: submitted } = sessionsReviewedSchema.parse(request.body);
     const tasks = await listTasks(project.id);
     const sessions = await listHarnessSessions({
       ...project,
       additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []),
     });
-    const requested = new Set(sessionPaths);
-    const targets = sessions.filter((session) => requested.has(session.path));
-    if (!targets.length) {
-      sendError(response, 404, "No matching conversations");
-      return;
-    }
+    const currentByPath = new Map(sessions.map((session) => [session.path, session]));
+    const invalid = submitted.find((watermark) => {
+      const current = currentByPath.get(watermark.sessionPath);
+      return !current || !current.updatedAt || watermark.updatedAt > current.updatedAt;
+    });
+    if (invalid) { sendError(response, 409, `Conversation review watermark is stale or missing: ${invalid.sessionPath}`); return; }
     const authSession = response.locals.authSession as AuthSession;
-    markConversationsReviewed(authSession.userId, project.id, targets);
+    markConversationsReviewed(authSession.userId, project.id, submitted.map((watermark) => ({ path: watermark.sessionPath, updatedAt: watermark.updatedAt })));
     response.status(204).send();
   } catch (error) {
     next(error);
@@ -2227,7 +2474,7 @@ app.post("/api/projects/:projectId/sessions/transfer", async (request, response,
       if (!source) { sendError(response, 404, "Source node not found"); return; }
       const peerResponse = await fetch(`${source.url}/api/cluster/sessions/transfer`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${source.token}`, "Content-Type": "application/json" },
+        headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
         body: JSON.stringify({ projectId: project.id, peerId: payload.peerId, sessionId: payload.sessionId, sessionPath: payload.sessionPath, sessionName: payload.sessionName }),
         signal: AbortSignal.timeout(35_000),
       });
@@ -2236,7 +2483,7 @@ app.post("/api/projects/:projectId/sessions/transfer", async (request, response,
       response.json(result);
       return;
     }
-    response.json(await transferLocalPiSession(project, payload));
+    response.json(await transferLocalSession(project, payload));
   } catch (error) {
     if (error instanceof TaskWorktreeError) { sendError(response, 409, error.message); return; }
     if (error instanceof Error && error.message === "Peer not found") { sendError(response, 404, error.message); return; }
@@ -2250,7 +2497,7 @@ app.post("/api/cluster/sessions/transfer", async (request, response, next) => {
     const payload = routedSessionTransferSchema.parse(request.body);
     const project = await getProject(payload.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
-    response.json(await transferLocalPiSession(project, payload));
+    response.json(await transferLocalSession(project, payload));
   } catch (error) {
     if (error instanceof TaskWorktreeError) { sendError(response, 409, error.message); return; }
     if (error instanceof Error && error.message === "Peer not found") { sendError(response, 404, error.message); return; }
@@ -2260,21 +2507,57 @@ app.post("/api/cluster/sessions/transfer", async (request, response, next) => {
 
 app.post("/api/cluster/sessions/receive", async (request, response, next) => {
   try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const payload = receivedSessionTransferSchema.parse(request.body);
     const project = await getProject(payload.projectId);
-    if (!project) {
-      sendError(response, 404, "Project is not imported on this node");
+    if (!project) { sendError(response, 404, "Project is not imported on this node"); return; }
+    const local = await getClusterNode();
+    const sourceNodeId = response.locals.machineNodeId as string;
+    if (payload.sourceNodeId !== sourceNodeId) throw new Error("Transfer source does not match authenticated peer");
+    if (!await getClusterPeer(sourceNodeId)) throw new Error("Transfer source is not a paired node");
+    const mapped = resolveLocalSessionPath(payload.sessionPath);
+    if (mapped.engine !== payload.engine) throw new Error("Transferred conversation engine does not match its path");
+    const transferring = await getConversationOwnership(payload.engine, payload.sessionId);
+    const validTransfer = transferring?.ownerNodeId === sourceNodeId && transferring.epoch === payload.sourceEpoch
+      && transferring.status === "transferring" && transferring.transferToNodeId === local.id;
+    if (!validTransfer) throw new Error("Replicated source transfer fence is missing or stale");
+    const localPath = mapped.path.replace(/^claude:/, "");
+    await access(localPath, fsConstants.R_OK);
+    if (payload.engine === "pi") {
+      const target = await createPiSession({ cwd: project.path, projectId: project.id, sessionPath: localPath });
+      target.dispose();
+    } else await loadClaudeMessages(`claude:${localPath}`);
+    const ownership = await commitConversationTransfer(payload.engine, payload.sessionId, local.id, payload.sourceEpoch);
+    if (process.env.NODE_ENV === "test" && process.env.JOINT_BOB_TEST_DROP_TRANSFER_ACK_ONCE === "1" && !droppedTestTransferAck) {
+      droppedTestTransferAck = true;
+      request.socket.destroy();
       return;
     }
-    const target = await createPiSession({ cwd: project.path, projectId: project.id });
-    if (payload.sessionName) target.session.setSessionName(payload.sessionName);
-    await target.session.prompt(`${buildHandoffContext(payload.messages)}The previous session has been transferred to this machine. Acknowledge the handoff and wait for the user's next instruction.`);
-    const sessionPath = target.session.sessionFile;
-    target.dispose();
-    response.status(201).json({ sessionPath });
-  } catch (error) {
-    next(error);
-  }
+    response.status(201).json({ sessionPath: mapped.path, ownership });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/projects/:projectId/sessions/recover", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    const payload = sessionRecoverySchema.parse(request.body);
+    const local = await getClusterNode();
+    const mapped = resolveLocalSessionPath(payload.sessionPath);
+    if (mapped.engine !== "pi") throw new Error("Only Pi transcripts support conflict recovery");
+    if (conversationSessionIsOpen(project.id, "pi", payload.sessionId, mapped.path)) throw new Error("Close the local conversation before recovery");
+    await requireLocalConversationOwner("pi", payload.sessionId);
+    const peers = await listClusterPeers();
+    const fenced = await beginConversationRecovery("pi", payload.sessionId, local.id);
+    await replicateExactOwnership(peers, fenced, local.id);
+    if (conversationSessionIsOpen(project.id, "pi", payload.sessionId, mapped.path)) throw new Error("Conversation opened during recovery fencing");
+    const snapshot = await capturePiRecoverySnapshot(mapped.path);
+    const names = await readdir(path.dirname(mapped.path));
+    await recoverPiSessionDirectory(path.dirname(mapped.path), names, snapshot, project.path);
+    const owned = await finishConversationRecovery("pi", payload.sessionId, local.id);
+    await replicateExactOwnership(peers, owned, local.id);
+    response.json({ ownership: owned, sessionPath: mapped.path });
+  } catch (error) { next(error); }
 });
 
 app.delete("/api/projects/:projectId/sessions", async (request, response, next) => {
@@ -2300,6 +2583,7 @@ app.delete("/api/projects/:projectId/sessions", async (request, response, next) 
       sendError(response, 404, "Session not found");
       return;
     }
+    const engine: ConversationEngine = session.path.startsWith("claude:") ? "claude" : "pi";
     const filePath = session.path.startsWith("claude:") ? session.path.slice("claude:".length) : session.path;
     try {
       const fileStats = await lstat(filePath);
@@ -2307,6 +2591,7 @@ app.delete("/api/projects/:projectId/sessions", async (request, response, next) 
         sendError(response, 400, "Session path is not a regular file");
         return;
       }
+      await requireLocalConversationOwner(engine, conversationOwnershipId(session));
       await unlink(filePath);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -2574,7 +2859,7 @@ function broadcast(session: SharedPiSession, payload: unknown): void {
 }
 
 function parseSessionPath(value: string | null): string | undefined {
-  if (!value || value === "new") return undefined;
+  if (!value || value === "new" || value === "claude:new") return undefined;
   return value;
 }
 
@@ -2710,6 +2995,7 @@ interface PiTaskRun {
   taskId: string;
   leaseToken: string;
   phase: TaskPhase;
+  sessionPath: string | null;
 }
 
 interface ClaudeTaskRun {
@@ -2722,6 +3008,16 @@ interface ClaudeTaskRun {
 
 const piTaskRuns = new Map<SharedPiSession, PiTaskRun>();
 const claudeTaskRuns = new Map<string, ClaudeTaskRun>();
+
+async function persistPiTaskSession(session: SharedPiSession): Promise<void> {
+  const run = piTaskRuns.get(session);
+  const sessionPath = session.handle.session.sessionFile;
+  if (!run || !sessionPath || run.sessionPath === sessionPath) return;
+  run.sessionPath = sessionPath;
+  const local = await getClusterNode();
+  const task = await updateTaskSessionPath(run.projectId, run.taskId, local.id, run.leaseToken, sessionPath);
+  if (task) broadcastToProject(run.projectId, { type: "tasksChanged" });
+}
 
 function taskRunActive(taskId: string): boolean {
   if (claudeTaskRuns.has(taskId)) return true;
@@ -2755,6 +3051,13 @@ function taskConfig(task: TaskRecord, phase: TaskPhase): TaskPhaseConfig {
 
 function taskCwd(project: ProjectRecord, task: TaskRecord): string {
   return task.worktreePath ?? project.path;
+}
+
+function conversationOwnershipId(session: { id: string; path: string }): string {
+  if (!session.path.startsWith("claude:")) return session.id;
+  const sessionId = claudeRunIdFromSessionPath(session.path);
+  if (!sessionId) throw new Error("Claude conversation has no ownership identity");
+  return sessionId;
 }
 
 async function sessionCwd(project: ProjectRecord, sessionPath: string | undefined): Promise<string> {
@@ -2801,6 +3104,7 @@ async function startTaskRun(project: ProjectRecord, task: TaskRecord, requestedP
   const local = await getClusterNode();
   if (task.currentNodeId !== local.id) return;
   const { task: claimed, leaseToken } = await claimTaskLease(project.id, task.id, local.id);
+  broadcastToProject(project.id, { type: "tasksChanged" });
   let shared: SharedPiSession | undefined;
   try {
     const phase = requestedPhase ?? taskPhase(claimed);
@@ -2809,12 +3113,15 @@ async function startTaskRun(project: ProjectRecord, task: TaskRecord, requestedP
     const prompt = await taskPromptText(project, claimed, phase, config.engine);
     if (config.engine === "claude") {
       const resumeSessionId = task.sessionPath?.startsWith("claude:") ? path.basename(task.sessionPath.replace(/^claude:/, ""), ".jsonl") : undefined;
+      const sessionId = resumeSessionId ?? randomUUID();
+      await claimConversationAcrossCluster("claude", sessionId, local.id);
       const claudePrompt = resumeSessionId ? prompt : [agentCredentialContext(project.id), prompt].filter(Boolean).join("\n\n");
       const run = runClaudePrompt({
         cwd,
         prompt: claudePrompt,
         env: agentEnvironment(project.id),
         resumeSessionId,
+        sessionId: resumeSessionId ? undefined : sessionId,
         model: config.modelId || undefined,
         effort: config.effort && config.effort !== "default" ? config.effort : undefined,
         onEvent: () => undefined,
@@ -2844,16 +3151,22 @@ async function startTaskRun(project: ProjectRecord, task: TaskRecord, requestedP
     }
 
     const samePiSession = claimed.sessionPath && !claimed.sessionPath.startsWith("claude:") ? claimed.sessionPath : undefined;
-    shared = await getSharedSession(project.id, cwd, samePiSession);
+    const newSessionId = samePiSession ? undefined : randomUUID();
+    if (samePiSession) {
+      const listed = (await listHarnessSessions({ ...project, additionalPaths: [cwd] })).find((session) => session.path === samePiSession);
+      if (!listed) throw new Error("Task conversation was not found");
+      await claimConversationAcrossCluster("pi", conversationOwnershipId(listed), local.id);
+    } else await claimConversationAcrossCluster("pi", newSessionId!, local.id);
+    shared = await getSharedSession(project.id, cwd, samePiSession, newSessionId);
     if (config.provider && config.modelId) await setSessionModel(shared.handle.session, config.provider, config.modelId);
-    piTaskRuns.set(shared, { projectId: project.id, taskId: claimed.id, leaseToken, phase });
+    piTaskRuns.set(shared, { projectId: project.id, taskId: claimed.id, leaseToken, phase, sessionPath: null });
     shared.handle.session.prompt(prompt)
       .then(async () => {
         if (piTaskRuns.get(shared!)?.leaseToken !== leaseToken) {
           console.warn("Ignoring stale Pi task callback", claimed.id);
           return;
         }
-        await finishPiTaskRun({ projectId: project.id, taskId: claimed.id, leaseToken, phase }, shared!.handle.session.sessionFile ?? null);
+        await finishPiTaskRun({ projectId: project.id, taskId: claimed.id, leaseToken, phase, sessionPath: null }, shared!.handle.session.sessionFile ?? null);
         if (piTaskRuns.get(shared!)?.leaseToken === leaseToken) piTaskRuns.delete(shared!);
       })
       .catch((error) => {
@@ -2890,6 +3203,7 @@ function subscribeSharedSession(session: SharedPiSession): () => void {
       sharedSessions.set(sessionKey(session.cwd, handle.session.sessionFile), session);
     }
     broadcast(session, eventPayload(event));
+    persistPiTaskSession(session).catch((error) => console.warn("Could not save Pi task session", error));
     if (event.type === "message_end" || event.type === "turn_end" || event.type === "agent_end") {
       broadcast(session, { type: "status", status: getSessionStatus(handle.session, handle.safeguardsEnabled) });
       // Notify only when the whole task finished, not on every intermediate
@@ -2904,7 +3218,7 @@ function subscribeSharedSession(session: SharedPiSession): () => void {
   });
 }
 
-async function getSharedSession(projectId: string, cwd: string, sessionPath: string | undefined): Promise<SharedPiSession> {
+async function getSharedSession(projectId: string, cwd: string, sessionPath: string | undefined, sessionId?: string): Promise<SharedPiSession> {
   if (sessionPath) {
     const existing = sharedSessions.get(sessionKey(cwd, sessionPath));
     if (existing) {
@@ -2913,7 +3227,7 @@ async function getSharedSession(projectId: string, cwd: string, sessionPath: str
     }
   }
 
-  const handle = await createPiSession({ cwd, projectId, sessionPath });
+  const handle = await createPiSession({ cwd, projectId, sessionPath, sessionId });
   const key = sessionKey(cwd, sessionPath ?? handle.session.sessionFile ?? `new:${Date.now()}:${Math.random()}`);
   const session: SharedPiSession = {
     handle,
@@ -2940,23 +3254,23 @@ async function finishPiTaskRun(taskRun: PiTaskRun, sessionPath: string | null): 
   await finishTaskPhase(project, task, taskRun.phase, sessionPath, taskRun.leaseToken);
 }
 
-function promptDisplayText(message: string, imageNames: string[], textAttachmentNames: string[]): string {
+function promptDisplayText(message: string, imageNames: string[], fileNames: string[]): string {
   const body = message.trim();
-  const attachmentNames = [...imageNames, ...textAttachmentNames];
+  const attachmentNames = [...imageNames, ...fileNames];
   if (!attachmentNames.length) return body;
   const suffix = `Attached: ${attachmentNames.join(", ")}`;
   return body ? `${body}\n\n${suffix}` : suffix;
 }
 
-function promptTextWithAttachments(message: string, imageAttachments: Array<{ name: string; path: string }>, textAttachments: Array<{ name: string; content: string }>): string {
+function promptTextWithAttachments(message: string, imageAttachments: Array<{ name: string; path: string }>, fileAttachments: Array<{ name: string; path: string }>): string {
   const parts: string[] = [];
   const body = message.trim();
   if (body) parts.push(body);
   if (imageAttachments.length) {
     parts.push(`Image attachments:\n${imageAttachments.map((image) => `- ${image.name}: ${image.path}`).join("\n")}\nAnalyze them alongside the request. Use these paths when a tool needs the original image file.`);
   }
-  for (const attachment of textAttachments) {
-    parts.push(`Attachment: ${attachment.name}\n\n\`\`\`\n${attachment.content}\n\`\`\``);
+  if (fileAttachments.length) {
+    parts.push(`File attachments:\n${fileAttachments.map((file) => `- ${file.name}: ${file.path}`).join("\n")}\nOpen these files from their paths when needed.`);
   }
   return parts.join("\n\n").trim();
 }
@@ -2976,6 +3290,19 @@ async function persistImageAttachments(cwd: string, images: Array<{ name: string
     savedImages.push({ name: image.name, path: filePath });
   }
   return savedImages;
+}
+
+async function persistFileAttachments(cwd: string, files: Array<{ name: string; data: string }>): Promise<Array<{ name: string; path: string }>> {
+  if (!files.length) return [];
+  const attachmentDir = path.join(cwd, ".joint-bob-attachments");
+  await mkdir(attachmentDir, { recursive: true });
+  const savedFiles: Array<{ name: string; path: string }> = [];
+  for (const file of files) {
+    const filePath = path.join(attachmentDir, `${Date.now()}-${randomUUID()}-${safeAttachmentName(file.name)}`);
+    await writeFile(filePath, Buffer.from(file.data, "base64"));
+    savedFiles.push({ name: file.name, path: filePath });
+  }
+  return savedFiles;
 }
 
 type SocketPayload = z.infer<typeof socketMessageSchema>;
@@ -3007,8 +3334,8 @@ function sendClaudeStatus(connection: ChatConnection): void {
   send(connection.socket, { type: "status", status: claudeStatus(connection) });
 }
 
-function emptyClaudeState(): ClaudeChatState {
-  return { sessionId: null, filePath: null, child: null, transcript: [], lastRunEndedAt: 0, model: null, effort: null, liveEvents: [] };
+function emptyClaudeState(sessionId: string | null = null): ClaudeChatState {
+  return { sessionId, filePath: null, child: null, promptQueue: [], transcript: [], lastRunEndedAt: 0, model: null, effort: null, liveEvents: [] };
 }
 
 function pushTranscript(connection: ChatConnection, role: string, text: string): void {
@@ -3023,9 +3350,47 @@ function claudeRunKey(projectId: string, sessionPath: string): string {
   return `${projectId}\n${sessionPath}`;
 }
 
-async function runClaudeTurn(connection: ChatConnection, promptText: string, displayText: string): Promise<void> {
+async function waitForTestEngineRelease(engine: ChatEngine): Promise<void> {
+  const holdDir = process.env.NODE_ENV === "test" ? process.env.JOINT_BOB_TEST_ENGINE_HOLD_DIR : undefined;
+  if (!holdDir) return;
+  const releasePath = path.join(holdDir, `${engine}.release`);
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    try { await access(releasePath); return; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  throw new Error(`Stubbed ${engine} turn release timed out`);
+}
+
+async function logStubbedEngineInvocation(engine: ChatEngine): Promise<boolean> {
+  const invocationLog = process.env.NODE_ENV === "test" ? process.env.JOINT_BOB_TEST_ENGINE_LOG : undefined;
+  if (!invocationLog) return false;
+  await appendFile(invocationLog, `${engine}:${(await getClusterNode()).id}\n`);
+  await waitForTestEngineRelease(engine);
+  return true;
+}
+
+async function runStubbedClaudePrompt(connection: ChatConnection, promptText: string, onEvent: (payload: Record<string, unknown>) => void): Promise<ClaudeRunResult | undefined> {
+  if (!await logStubbedEngineInvocation("claude")) return undefined;
+  if (!connection.claude.filePath || !connection.claude.sessionId) throw new Error("Stubbed Claude session has no transcript path");
+  const timestamp = new Date().toISOString();
+  const records = [
+    { type: "user", sessionId: connection.claude.sessionId, cwd: connection.cwd, timestamp, message: { role: "user", content: promptText } },
+    { type: "assistant", sessionId: connection.claude.sessionId, cwd: connection.cwd, timestamp, message: { role: "assistant", content: [{ type: "text", text: "stubbed response" }] } },
+  ];
+  await appendFile(connection.claude.filePath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
+  onEvent({ type: "textDelta", delta: "stubbed response" });
+  return { ok: true, sessionId: connection.claude.sessionId, sawOutput: true, assistantText: "stubbed response" };
+}
+
+async function runClaudeTurn(connection: ChatConnection, promptText: string, displayText: string, showUserMessage = true): Promise<void> {
   if (connection.claude.child) throw new Error("Claude is still working — stop it first or wait");
-  send(connection.socket, { type: "userMessage", text: displayText });
+  if (!connection.claude.sessionId) throw new Error("Conversation has no ownership identity");
+  await requireLocalConversationOwner("claude", connection.claude.sessionId);
+  if (showUserMessage) send(connection.socket, { type: "userMessage", text: displayText });
   pushTranscript(connection, "user", promptText);
   // Buffer every turn event so a browser that reconnects mid-turn can replay it.
   connection.claude.liveEvents = [];
@@ -3035,7 +3400,7 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
   };
   onEvent({ type: "agent_start" });
   const basePrompt = connection.handoffContext ? `${connection.handoffContext}${promptText}` : promptText;
-  const fullPrompt = connection.claude.sessionId ? basePrompt : [agentCredentialContext(connection.project.id), basePrompt].filter(Boolean).join("\n\n");
+  const fullPrompt = connection.claude.filePath ? basePrompt : [agentCredentialContext(connection.project.id), basePrompt].filter(Boolean).join("\n\n");
   connection.handoffContext = null;
 
   const runningKeys = new Set<string>();
@@ -3073,30 +3438,24 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
     effort: connection.claude.effort ?? undefined,
   };
   try {
-    let run = runClaudePrompt({
-      cwd: connection.cwd,
-      prompt: fullPrompt,
-      env: agentEnvironment(connection.project.id),
-      resumeSessionId: connection.claude.sessionId ?? undefined,
-      ...runOptions,
-      onEvent,
-      onSessionId,
-    });
-    connection.claude.child = run.child;
-    sendClaudeStatus(connection);
-    let result = await run.done;
-
-    if (!result.ok && !result.sawOutput && connection.claude.sessionId) {
-      // Resume can fail when a synchronized session lives under another node's
-      // encoded project dir. Fall back to a fresh session seeded with
-      // the transcript so the conversation continues.
-      connection.claude.sessionId = null;
-      const seeded = `${buildHandoffContext(connection.claude.transcript.slice(0, -1))}${promptText}`;
-      const freshPrompt = [agentCredentialContext(connection.project.id), seeded].filter(Boolean).join("\n\n");
-      run = runClaudePrompt({ cwd: connection.cwd, prompt: freshPrompt, env: agentEnvironment(connection.project.id), ...runOptions, onEvent, onSessionId });
+    let result = await runStubbedClaudePrompt(connection, fullPrompt, onEvent);
+    if (!result) {
+      const run = runClaudePrompt({
+        cwd: connection.cwd,
+        prompt: fullPrompt,
+        env: agentEnvironment(connection.project.id),
+        resumeSessionId: connection.claude.filePath ? connection.claude.sessionId ?? undefined : undefined,
+        sessionId: connection.claude.filePath ? undefined : connection.claude.sessionId ?? undefined,
+        ...runOptions,
+        onEvent,
+        onSessionId,
+      });
       connection.claude.child = run.child;
+      sendClaudeStatus(connection);
       result = await run.done;
     }
+
+    if (!result.ok && !result.sawOutput) throw new Error("Claude turn failed before producing output");
 
     connection.claude.child = null;
     connection.claude.lastRunEndedAt = Date.now();
@@ -3120,20 +3479,33 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
   }
 }
 
-async function handleClaudeCommand(connection: ChatConnection, payload: SocketPayload): Promise<void> {
-  if (payload.type === "prompt") {
-    const textAttachments = payload.textAttachments ?? [];
-    const imageAttachments = await persistImageAttachments(connection.cwd, payload.images ?? []);
-    const promptText = promptTextWithAttachments(payload.message ?? "", imageAttachments, textAttachments);
-    if (!promptText) return;
-    const displayText = promptDisplayText(payload.message ?? "", imageAttachments.map((image) => image.name), textAttachments.map((attachment) => attachment.name));
-    await runClaudeTurn(connection, promptText, displayText);
-    return;
+async function drainClaudePromptQueue(connection: ChatConnection): Promise<void> {
+  while (!connection.claude.child && connection.claude.promptQueue.length) {
+    const queued = connection.claude.promptQueue.shift()!;
+    send(connection.socket, { type: "queueUpdate", pending: connection.claude.promptQueue.length });
+    await runClaudeTurn(connection, queued.promptText, queued.displayText, !queued.acknowledged);
   }
+}
+
+async function handleClaudeCommand(connection: ChatConnection, payload: SocketPayload): Promise<void> {
   if (payload.type === "abort") {
     connection.claude.child?.kill("SIGTERM");
     return;
   }
+  if (payload.type === "prompt") {
+    const imageAttachments = await persistImageAttachments(connection.cwd, payload.images ?? []);
+    const fileAttachments = await persistFileAttachments(connection.cwd, payload.files ?? []);
+    const promptText = promptTextWithAttachments(payload.message ?? "", imageAttachments, fileAttachments);
+    if (!promptText) return;
+    const displayText = promptDisplayText(payload.message ?? "", imageAttachments.map((image) => image.name), fileAttachments.map((file) => file.name));
+    const acknowledged = Boolean(connection.claude.child || connection.claude.promptQueue.length);
+    if (acknowledged) send(connection.socket, { type: "userMessage", text: displayText, queued: true });
+    connection.claude.promptQueue.push({ promptText, displayText, acknowledged });
+    send(connection.socket, { type: "queueUpdate", pending: connection.claude.promptQueue.length });
+    await drainClaudePromptQueue(connection);
+    return;
+  }
+  if (connection.claude.child) throw new Error(`Cannot ${payload.type} while Claude is working`);
   if (payload.type === "setModel") {
     if (!payload.modelId || !CLAUDE_MODELS.includes(payload.modelId)) throw new Error(`Claude model must be one of: ${CLAUDE_MODELS.join(", ")}`);
     connection.claude.model = payload.modelId;
@@ -3162,8 +3534,11 @@ async function switchEngine(connection: ChatConnection, engine: ChatEngine): Pro
       scheduleIdleDispose(connection.shared);
       connection.shared = null;
     }
+    const local = await getClusterNode();
+    const sessionId = randomUUID();
+    await claimConversationAcrossCluster("claude", sessionId, local.id);
     connection.engine = "claude";
-    connection.claude = { ...emptyClaudeState(), transcript };
+    connection.claude = { ...emptyClaudeState(sessionId), transcript };
     connection.handoffContext = transcript.length ? buildHandoffContext(transcript) : null;
     claudeClients.set(connection.socket, connection);
     send(connection.socket, { type: "engineChanged", engine: "claude" });
@@ -3176,7 +3551,10 @@ async function switchEngine(connection: ChatConnection, engine: ChatEngine): Pro
   claudeClients.delete(connection.socket);
   const transcript = connection.claude.transcript;
   connection.handoffContext = transcript.length ? buildHandoffContext(transcript) : null;
-  const sharedSession = await getSharedSession(connection.project.id, connection.cwd, undefined);
+  const local = await getClusterNode();
+  const sessionId = randomUUID();
+  await claimConversationAcrossCluster("pi", sessionId, local.id);
+  const sharedSession = await getSharedSession(connection.project.id, connection.cwd, undefined, sessionId);
   sharedSession.clients.add(connection.socket);
   connection.shared = sharedSession;
   connection.engine = "pi";
@@ -3199,6 +3577,11 @@ async function handleChatMessage(connection: ChatConnection, raw: Buffer): Promi
     return;
   }
 
+  if (payload.type !== "models") {
+    const sessionId = connection.engine === "claude" ? connection.claude.sessionId : connection.shared?.handle.session.sessionId;
+    if (!sessionId) throw new Error("Conversation has no ownership identity");
+    await requireLocalConversationOwner(connection.engine, sessionId);
+  }
   if (connection.engine === "claude") {
     await handleClaudeCommand(connection, payload);
     return;
@@ -3209,6 +3592,22 @@ async function handleChatMessage(connection: ChatConnection, raw: Buffer): Promi
   await handlePiCommand(connection, shared, payload);
 }
 
+async function runStubbedPiPrompt(shared: SharedPiSession, promptText: string): Promise<boolean> {
+  if (!await logStubbedEngineInvocation("pi")) return false;
+  const sessionFile = shared.handle.session.sessionFile;
+  if (!sessionFile) throw new Error("Stubbed Pi session has no transcript path");
+  const timestamp = new Date().toISOString();
+  const userId = randomUUID();
+  const records = [
+    { type: "message", id: userId, parentId: null, timestamp, message: { role: "user", content: [{ type: "text", text: promptText }], timestamp: Date.parse(timestamp) } },
+    { type: "message", id: randomUUID(), parentId: userId, timestamp, message: { role: "assistant", content: [{ type: "text", text: "stubbed response" }], timestamp: Date.parse(timestamp) } },
+  ];
+  await appendFile(sessionFile, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
+  broadcast(shared, { type: "textDelta", delta: "stubbed response" });
+  broadcast(shared, { type: "agent_end" });
+  return true;
+}
+
 async function handlePiCommand(connection: ChatConnection, shared: SharedPiSession, payload: SocketPayload): Promise<void> {
   const handle = shared.handle;
   const socket = connection.socket;
@@ -3216,15 +3615,15 @@ async function handlePiCommand(connection: ChatConnection, shared: SharedPiSessi
 
   if (payload.type === "prompt") {
     await reloadPiAuth();
-    const textAttachments = payload.textAttachments ?? [];
     const imageAttachments = await persistImageAttachments(cwd, payload.images ?? []);
-    let promptText = promptTextWithAttachments(payload.message ?? "", imageAttachments, textAttachments);
+    const fileAttachments = await persistFileAttachments(cwd, payload.files ?? []);
+    let promptText = promptTextWithAttachments(payload.message ?? "", imageAttachments, fileAttachments);
     if (!promptText) return;
     if (connection.handoffContext) {
       promptText = `${connection.handoffContext}${promptText}`;
       connection.handoffContext = null;
     }
-    send(socket, { type: "userMessage", text: promptDisplayText(payload.message ?? "", imageAttachments.map((image) => image.name), textAttachments.map((attachment) => attachment.name)) });
+    send(socket, { type: "userMessage", text: promptDisplayText(payload.message ?? "", imageAttachments.map((image) => image.name), fileAttachments.map((file) => file.name)) });
     const options = {
       ...(handle.session.isStreaming ? { streamingBehavior: "followUp" as const } : {}),
       ...(payload.images?.length
@@ -3237,7 +3636,8 @@ async function handlePiCommand(connection: ChatConnection, shared: SharedPiSessi
           }
         : {}),
     };
-    await handle.session.prompt(promptText, options);
+    if (handle.session.isStreaming) send(socket, { type: "queueUpdate", pending: handle.session.pendingMessageCount + 1 });
+    if (!await runStubbedPiPrompt(shared, promptText)) await handle.session.prompt(promptText, options);
     send(socket, { type: "sessionsChanged" });
     sendStatus(socket, handle);
     return;
@@ -3455,29 +3855,39 @@ webSocketServer.on("connection", async (socket, request) => {
     return;
   }
 
+  const requestedEngine: ConversationEngine = rawSessionPath?.startsWith("claude:") ? "claude" : "pi";
   const requestedSessionPath = parseSessionPath(rawSessionPath);
   const cwd = await sessionCwd(project, requestedSessionPath);
+  const listed = requestedSessionPath ? await listHarnessSessions(project) : [];
+  const listedSession = listed.find((candidate) => candidate.path === requestedSessionPath);
+  if (requestedSessionPath && !listedSession) {
+    socket.close(1008, "Conversation not found");
+    return;
+  }
+  const ownershipSessionId = listedSession ? conversationOwnershipId(listedSession) : randomUUID();
+  try {
+    if (!listedSession) await claimConversationAcrossCluster(requestedEngine, ownershipSessionId, local.id);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Conversation ownership claim failed";
+    socket.close(1008, webSocketCloseReason(message));
+    return;
+  }
   let connection: ChatConnection = {
-    socket,
-    project,
-    cwd,
-    engine: "pi",
-    shared: null,
-    claude: emptyClaudeState(),
-    handoffContext: null,
+    socket, project, cwd, engine: "pi", shared: null,
+    claude: emptyClaudeState(ownershipSessionId), handoffContext: null,
   };
 
-  if (requestedSessionPath?.startsWith("claude:")) {
+  if (requestedEngine === "claude") {
     // The client sends the conversation-list summary id (`claude:<id>.jsonl`),
     // which never matches the bare run id, so resolve the id from the path.
-    const requestedClaudeId = claudeRunIdFromSessionPath(requestedSessionPath);
+    const requestedClaudeId = requestedSessionPath ? claudeRunIdFromSessionPath(requestedSessionPath) : ownershipSessionId;
     const active = activeClaudeConnections.get(claudeConnectionKey(project.id, requestedClaudeId));
     if (active?.claude.child) {
       active.socket = socket;
       connection = active;
     } else {
       connection.engine = "claude";
-      if (requestedSessionPath !== "claude:new") {
+      if (requestedSessionPath) {
         try {
           connection.claude.transcript = await loadClaudeMessages(requestedSessionPath);
           connection.claude.filePath = path.resolve(requestedSessionPath.replace(/^claude:/, ""));
@@ -3504,7 +3914,7 @@ webSocketServer.on("connection", async (socket, request) => {
   } else {
     let sharedSession: SharedPiSession;
     try {
-      sharedSession = await getSharedSession(project.id, cwd, requestedSessionPath);
+      sharedSession = await getSharedSession(project.id, cwd, requestedSessionPath, ownershipSessionId);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not start Pi session";
       send(socket, { type: "error", error: message });

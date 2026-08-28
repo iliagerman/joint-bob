@@ -1,0 +1,16 @@
+NARROWER: replacing the store discards deep knowledge of:
+  - public/boot.js
+  - public/manifest.webmanifest
+  - public/icon.svg
+  - CODE_OF_CONDUCT.md
+  - .gitignore
+  - .stignore
+  - test/auth-api.test.ts
+  - test/desktop-conversation-workspace.test.ts
+  - test/harness-registry.test.ts
+  - test/runtime-settings.test.ts
+  - test/session-paths.test.ts
+  - test/task-routing-api.test.ts
+  - test/websocket-auth.test.ts
+  - test/websocket-proxy-errors.test.ts
+(store intent: 260825-project-node-fixes; incoming intent: 260827-conversation-review-sync)

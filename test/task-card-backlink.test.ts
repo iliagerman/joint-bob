@@ -12,6 +12,10 @@ test("a chat opened from a board card links back to that card", async () => {
 
   // The card is addressable from the DOM.
   assert.match(board, /card\.dataset\.taskId = task\.id;/);
+  assert.match(board, /task\.executionState === "running" \? " · Running"/);
+  assert.match(board, /if \(task\.sessionPath\)/);
+  assert.match(app, /Creating ticket…/);
+  assert.match(app, /taskForm\.setAttribute\("aria-busy", "true"\)/);
 
   // The chat header owns a hidden back-link control.
   assert.match(html, /id="taskBacklinkButton"[^>]*hidden/);

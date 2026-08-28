@@ -45,7 +45,7 @@ function taskCard(task, handlers) {
   body.append(titleRow);
   const ownership = document.createElement("span");
   ownership.className = "task-node";
-  ownership.textContent = `${task.currentNodeId.slice(0, 8)}${task.executionState !== "idle" ? ` · ${task.executionState}` : ""}`;
+  ownership.textContent = `${task.currentNodeId.slice(0, 8)}${task.executionState === "running" ? " · Running" : task.executionState !== "idle" ? ` · ${task.executionState}` : ""}`;
   body.append(ownership);
   if (task.description) {
     const description = document.createElement("span");

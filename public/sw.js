@@ -1,4 +1,4 @@
-const CACHE_NAME = "joint-bob-v38";
+const CACHE_NAME = "joint-bob-v39";
 const APP_SHELL = ["/", "/index.html", "/styles.css", "/boot.js", "/app.js", "/board.js", "/markdown.js", "/manifest.webmanifest", "/icon.svg", "/icon-192.png", "/icon-512.png"];
 
 self.addEventListener("install", (event) => {
@@ -17,7 +17,7 @@ self.addEventListener("push", (event) => {
   const payload = event.data ? event.data.json() : {};
   event.waitUntil(self.registration.showNotification(payload.title || "Pi finished", {
     body: payload.body || "Tap to open the conversation.",
-    tag: payload.url || "joint-bob",
+    tag: payload.url || "/",
     renotify: true,
     icon: "/icon-192.png",
     badge: "/icon-192.png",

@@ -388,6 +388,11 @@ test("task lease claims are exclusive for the same node and permit expired lease
     assert.ok(claimed?.leaseExpiresAt);
     const successfulClaim = claims.find((result): result is PromiseFulfilledResult<{ task: TaskRecord; leaseToken: string }> => result.status === "fulfilled");
     if (!successfulClaim) throw new Error("Expected a successful lease claim");
+    const sessionPath = "/tmp/task-session.jsonl";
+    const attached = await tasks.updateTaskSessionPath(projectId, idle.id, local.id, successfulClaim.value.leaseToken, sessionPath);
+    assert.equal(attached?.sessionPath, sessionPath);
+    assert.equal(attached?.executionState, "running");
+    assert.equal(await tasks.updateTaskSessionPath(projectId, idle.id, local.id, "stale-token", "/tmp/stale-session.jsonl"), undefined);
     const released = await tasks.releaseTaskLease(projectId, idle.id, local.id, successfulClaim.value.leaseToken);
     assert(Date.parse(released.updatedAt) > Date.parse(successfulClaim.value.task.updatedAt));
 

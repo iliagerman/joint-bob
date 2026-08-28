@@ -1,194 +1,223 @@
 # Architecture
 
-## Architecture analysis
+## System Overview
 
-### System overview
+Joint Bob is a stateful Node.js modular monolith deployed independently on each participating machine. One process hosts an Express REST API, a `ws` WebSocket endpoint, the static PWA, peer proxying, background reconciliation, agent execution, terminal attachment, and startup readiness. Nodes communicate directly over authenticated HTTP/WebSocket; Syncthing replicates selected filesystem trees outside the process.
 
-Joint Bob is a stateful Node.js application deployed once per participating machine. One process hosts an Express REST API, a `ws` WebSocket endpoint, static PWA files, peer proxying, background reconciliation, and agent execution. Nodes communicate directly over HTTP and WebSocket. Syncthing handles selected filesystem replication outside the process.
+Source modules separate domain and integration concerns, but deployment and data boundaries remain shared. Most persistent modules open the same node-local SQLite file, while repositories, transcripts, worktrees, ticket workspaces, and synchronized data remain on disk.
 
-The dominant style is a modular monolith with peer-to-peer cluster behavior. The TypeScript modules separate persistence and integration concerns, but `src/server.ts` remains the 3,521-line composition root and workflow orchestrator. Modules share one node-local SQLite file and often open independent handles to it, so data ownership is weaker than the source-file boundaries suggest.
-
-### Component relationships
+## Component Architecture
 
 ```mermaid
 flowchart LR
-    Browser[Browser PWA] -->|REST and WebSocket| Transport[Application composition and transport]
-    Transport --> Account[Account and node state]
-    Transport --> Projects[Project domain and persistence]
-    Transport --> Tasks[Task domain and workspaces]
-    Transport --> Cluster[Cluster and replication]
-    Transport --> Agents[Agent adapters]
-    Transport --> Discovery[Conversation discovery]
-    Transport --> Sync[Syncthing adapter]
-    Transport --> Push[Push notifications]
-    Transport --> Files[Filesystem management]
-    Transport --> Skills[Skill discovery]
-    Tasks --> Git[Git worktree operations]
-    Cluster -->|peer REST| Peer[Peer Joint Bob node]
-    Transport --> DB[(node.db)]
+    User[Administrator Browser] -->|HTTPS REST and WebSocket| App[Application Composition and Transport]
+    App --> Account[Account and Node State]
+    App --> Projects[Project Domain and Persistence]
+    App --> Tasks[Task Domain and Workspaces]
+    App --> Reviews[Conversation Discovery and Review]
+    App --> Agents[Agent Adapters]
+    App --> Cluster[Cluster and Replication]
+    App --> Sync[Syncthing Adapter]
+    App --> Terminal[Terminal Session]
+    App --> Push[Push Notifications]
+    Tasks --> Worktrees[Git Worktree Operations]
+    App --> DB[(Node-local SQLite)]
+    Account --> DB
     Projects --> DB
     Tasks --> DB
+    Reviews --> DB
     Cluster --> DB
-    Account --> DB
-    Agents --> Disk[(Projects and transcripts)]
-    Discovery --> Disk
-    Files --> Disk
-    Sync --> Syncthing[Syncthing service]
+    Agents --> Files[(Projects and Transcripts)]
+    Reviews --> Files
+    Sync --> Syncthing[Syncthing Daemon]
+    Cluster -->|Authenticated peer API| Peer[Peer Joint Bob Node]
     Agents --> Pi[Pi SDK]
     Agents --> Claude[Claude CLI]
 ```
+<!-- Plain-text fallback: The browser reaches one Joint Bob process. That process composes account, project, task, review, agent, cluster, synchronization, terminal, push, Git, SQLite, and filesystem components, and calls peer nodes, Syncthing, Pi, and Claude through adapters. -->
 
-**Plain-text fallback:** Browser PWA calls the Node transport. The transport coordinates account, project, task, cluster, agent, discovery, sync, push, filesystem, skill, and Git modules. Application state goes to node-local SQLite; repositories and transcripts stay on disk. Peer nodes use REST and proxied WebSockets. Syncthing, Pi, and Claude are external processes or runtimes.
+The dominant style is a modular monolith with peer-to-peer cluster behavior and event-driven streaming inside persistent WebSocket connections. It is not a microservice system: components deploy together, share process memory, and share SQLite.
 
-## Interaction diagrams
+## Data Ownership and Flow
 
-### Non-task chat on the UI-selected node
+| Data | Logical owner | Storage/movement |
+|---|---|---|
+| Users, login sessions, preferences, settings, audit | Account and node state | `~/.joint-bob/node.db`; sensitive values encrypted |
+| Projects, aliases, types, locks, names, locations | Project domain | SQLite plus filesystem paths; selected records replicate |
+| Tasks, leases, handoffs, tombstones | Task domain | SQLite transactions and authenticated peer messages |
+| Review state | Conversation discovery/review | Per-user/project/session SQLite rows |
+| Repositories, worktrees, ticket workspaces | Filesystem/Git/task workspace components | Local disk; selected trees use Syncthing |
+| Pi/Claude transcripts | Agent engines | Engine-owned files discovered and watched by Joint Bob |
+| GitHub, machine, push, and settings secrets | Owning credential modules | AES-256-GCM encrypted SQLite values with node-local key |
+| PWA shell | Browser PWA/service worker | `public/`; app-shell cache `joint-bob-v34` |
 
-```mermaid
-sequenceDiagram
-    actor User
-    participant PWA as Browser PWA
-    participant Local as Local Joint Bob
-    participant Peer as Selected peer node
-    participant Adapter as Pi or Claude adapter
-    participant Files as Project and transcript files
+Data ownership is logical rather than physically isolated. Independent module-owned schema setup against one SQLite file makes startup order and migration correctness cross-component concerns.
 
-    User->>PWA: Select project, node, engine, and conversation
-    PWA->>Local: WebSocket /ws with projectId, sessionPath, nodeId
-    alt selected node is remote
-        Local->>Peer: Proxy authenticated WebSocket
-        Peer->>Peer: Resolve project and local session path
-        Peer->>Adapter: Open or create session in project cwd
-        Adapter->>Files: Read or append transcript
-        PWA->>Peer: Prompt through proxied socket
-        Peer->>Adapter: Run prompt with model and effort settings
-        Adapter-->>PWA: Status, thinking, text, tools, completion
-    else selected node is local
-        Local->>Adapter: Open or create session in project cwd
-        PWA->>Local: Prompt
-        Adapter-->>PWA: Stream events
-    end
-```
+## Interaction Diagrams
 
-**Plain-text fallback:** The browser puts the selected `nodeId` in the WebSocket URL. The local server handles local execution or proxies the socket to the chosen peer. The node that terminates the socket resolves the project path, opens Pi or Claude in that directory, and streams events back over the same connection.
-
-### Task chat and ownership routing
+### Stream and Steer an Agent Turn
 
 ```mermaid
 sequenceDiagram
     actor User
     participant PWA as Browser PWA
-    participant Entry as Connected Joint Bob node
-    participant Owner as Task owner node
-    participant Tasks as Task domain
-    participant Workspace as Ticket workspace or Git worktree
-    participant Agent as Pi or Claude adapter
+    participant Server as Joint Bob WebSocket
+    participant Adapter as Pi or Claude Adapter
+    participant Renderer as Stream Renderer
 
-    User->>PWA: Open task chat and send prompt
-    PWA->>Entry: WebSocket /ws with projectId and taskId
-    Entry->>Tasks: Load TaskRecord
-    Tasks-->>Entry: currentNodeId and execution state
-    alt owner is another node
-        Entry->>Owner: Proxy socket to currentNodeId
+    User->>PWA: Send prompt
+    PWA->>Server: prompt with streamingBehavior
+    Server->>Adapter: Run or resume turn
+    loop While model generates
+        Adapter-->>Server: textDelta and tool events
+        Server-->>PWA: Normalized event
+        PWA->>Renderer: Batch and render visible delta
     end
-    Owner->>Workspace: Resolve task cwd
-    Owner->>Tasks: Claim lease
-    Owner->>Agent: Run configured phase engine and model
-    Agent-->>Owner: Stream run events
-    Owner->>Tasks: Complete or fail lease and advance state
-    Owner-->>PWA: Events and task changes
+    User->>PWA: Send follow-up during stream
+    PWA->>Server: prompt with followUp behavior
+    Adapter-->>Server: assistantFinal or agent_end
+    Server-->>PWA: Completion event
 ```
+<!-- Plain-text fallback: A prompt enters through the browser WebSocket, the Pi or Claude adapter emits deltas, the server forwards each normalized event, and the browser batches and paints it. The user can queue a follow-up before the final completion event. -->
 
-**Plain-text fallback:** Task routing reads `TaskRecord.currentNodeId`; it does not honor a non-task UI node override. The owner node resolves the ticket workspace or legacy worktree, claims a lease, executes the configured phase through Pi or Claude, records the outcome, and streams updates to the browser.
+**Risk:** the intended chain exists, but no timing-aware browser test proves that an intermediate delta paints before completion. Commit `9ab9b04` changed long-message batching and is the highest-risk regression area, not a confirmed root cause.
 
-### Task handoff between nodes
+### Mark All Conversations Reviewed
 
 ```mermaid
 sequenceDiagram
     actor User
-    participant Source as Source node
-    participant SourceTasks as Source task domain
-    participant Sync as Syncthing and filesystem
-    participant Destination as Destination node
-    participant DestTasks as Destination task domain
-    participant Git as Git worktree operations
+    participant PWA as Browser PWA
+    participant API as Conversation API
+    participant Discovery as Session Discovery
+    participant Reviews as Review Store
+    participant DB as SQLite
+
+    User->>PWA: Mark all reviewed
+    PWA->>API: PUT reviewed-all
+    API->>Discovery: List current project sessions
+    Discovery-->>API: Paths and activity timestamps
+    API->>Reviews: Reconcile activity and mark targets
+    Reviews->>DB: Atomic review-state transaction
+    API-->>PWA: Updated result
+    PWA->>API: List sessions
+    API->>Reviews: Classify current states
+    Reviews-->>PWA: reviewed unless newer post-click activity exists
+```
+<!-- Plain-text fallback: The bulk route must discover current sessions, reconcile their latest activity, and advance review timestamps in one server-controlled operation. A later list should stay reviewed unless genuinely newer activity occurred after the click. -->
+
+**Current defect hypothesis:** `markConversationsReviewed()` advances `reviewed_at` only to stored `last_activity_at`. Activity not synchronized before the mark can make the next listing return `needs_review` again.
+
+### Reconcile Syncthing Project Ignores
+
+```mermaid
+sequenceDiagram
+    participant App as Syncthing Adapter
+    participant API as Syncthing REST
+    participant Rules as Managed Ignore Policy
+    participant Folder as Project Folder
+
+    App->>API: GET current ignores
+    API-->>App: Managed and user rules
+    App->>Rules: Classify old managed rules
+    Rules-->>App: Delete-allowed generated-cache rule only
+    App->>API: POST reconciled ignores
+    API->>Folder: Permit remote parent delete over generated cache
+    API-->>App: Folder status and errors
+```
+<!-- Plain-text fallback: Joint Bob reads existing ignores, separates managed rules from user rules, migrates only the proven generated-cache rule to delete-allowed semantics, writes the exact reconciled list, and checks folder status. -->
+
+The live `beecomm` folder had 55 pull errors because remotely deleted directories contained ignored `__pycache__` content. The fix boundary must not grant delete permission to credentials, environment files, logs, source, or arbitrary user ignores.
+
+### Hand Off Task Ownership
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Source as Source Node
+    participant Sync as Workspace Readiness
+    participant Destination as Destination Node
+    participant Tasks as Task Store
+    participant Agent as Agent Adapter
 
     User->>Source: Request handoff
-    Source->>Destination: Check task eligibility
-    Destination->>Sync: Check project or ticket workspace readiness
-    alt synchronized ticket workspace
-        Sync-->>Destination: Folder ready
-    else legacy Git-backed task
-        Source->>Git: Export branch bundle and checksum
-        Source->>Destination: Prepare handoff with bundle
-        Destination->>Git: Validate and prepare worktree
-    end
-    Source->>SourceTasks: Reserve outgoing handoff
-    Source->>Destination: Commit handoff
-    Destination->>DestTasks: Set currentNodeId and settle ownership
-    Destination-->>Source: Acknowledge settlement
-    Source->>SourceTasks: Complete outgoing handoff
+    Source->>Destination: Check eligibility
+    Destination->>Sync: Verify Syncthing or Git preparation
+    Sync-->>Destination: Ready
+    Source->>Tasks: Reserve outgoing handoff
+    Source->>Destination: Prepare and commit
+    Destination->>Tasks: Settle ownership
+    Destination-->>Source: Acknowledge
+    Source->>Tasks: Complete outgoing handoff
+    Destination->>Agent: Continue task when requested
 ```
+<!-- Plain-text fallback: Source and destination verify eligibility and workspace readiness, reserve and commit a handoff, settle ownership on the destination, acknowledge it, and then allow execution on the new owner. -->
 
-**Plain-text fallback:** Source and destination first verify eligibility. Ticket workspaces rely on Syncthing readiness. Legacy worktrees use a checksummed Git bundle. A prepare, commit, settle, and acknowledgement protocol moves `currentNodeId` while preserving recoverable handoff state.
+## Architectural Decisions
 
-### Project import and synchronization
+These are observed/recommended directions, not historical ADRs. No repository ADR set documents the original decisions.
 
-```mermaid
-sequenceDiagram
-    actor Admin
-    participant PWA as Browser PWA
-    participant API as Project API
-    participant Import as Filesystem management
-    participant Store as Project persistence
-    participant Sync as Syncthing adapter
-    participant Peer as Peer node
+### AD-1: Preserve the Stateful Modular Monolith
 
-    Admin->>PWA: Import folder with copy, move, or move-link
-    PWA->>API: POST /api/projects
-    API->>Import: Copy or relocate project
-    Import-->>API: Managed path
-    API->>Store: Save project and aliases
-    API->>Sync: Ensure project folder and ignore rules
-    Sync->>Peer: Share Syncthing folder
-    API-->>PWA: Project with sync status
-```
+**Decision:** Keep one Node.js deployable per machine and improve internal boundaries rather than splitting services for the active fixes.
 
-**Plain-text fallback:** The API validates an import request, copies or relocates the directory, saves project aliases in SQLite, configures a Syncthing folder with ignore rules, shares it with peers, and returns project sync state.
+**Consequences:** Installation and local debugging remain simple; all capabilities still scale and fail together; `server.ts` remains a coupling hotspot until transaction orchestration is extracted behind internal interfaces.
 
-## Data flow and ownership
+**Alternatives:**
+1. **Microservices per domain:** improves independent deployment and isolation, but adds service discovery, distributed transactions, observability, and credential distribution without a proven scaling need.
+2. **Serverless control plane:** can scale sporadic HTTP work, but conflicts with long-lived WebSockets, local repositories, agent subprocesses, terminals, and node-local SQLite.
 
-| Data | Current owner | Storage and movement |
-|---|---|---|
-| Administrator, login sessions, preferences, settings, audit | Account and node-state modules | Tables in `~/.joint-bob/node.db`; sensitive settings encrypted with AES-256-GCM |
-| Projects, aliases, types, locations, names | Project modules | SQLite plus filesystem paths; selected names and mappings replicate |
-| Tasks, leases, handoffs, outboxes | Task and replication modules | SQLite transactions, peer REST, retry reconciliation |
-| Repositories and worktrees | Filesystem and Git modules | Local disk; Git subprocesses and branch bundles |
-| Ticket workspaces and shareable engine data | Filesystem and Syncthing adapter | Local disk synchronized by Syncthing |
-| Pi and Claude transcripts | Agent adapters and discovery | Engine-owned filesystem JSON or JSONL files |
-| GitHub, peer, push, and settings secrets | Credential-owning modules | Encrypted SQLite records using a local mode-`0600` key |
-| PWA shell | Static server and service worker | `public/`, cache `joint-bob-v25` |
+**Security/compliance:** One private-network process reduces exposed service endpoints, but a compromised administrator session has broad filesystem and agent reach. No compliance regime is documented; future separation would require explicit data-flow and credential-boundary review.
 
-The source declares 43 SQLite tables and 23 guarded `ALTER TABLE` statements across modules. There is no central migration version or ordered migration runner.
+### AD-2: Keep Event-Driven WebSocket Streaming
 
-## Observed design decisions and trade-offs
+**Decision:** Repair and test the SDK/CLI → normalized WebSocket → browser-render path.
 
-No ADRs record the original alternatives. The alternatives below are architectural comparisons, not claims about historical team decisions.
+**Consequences:** Steering remains low latency and uses existing authentication. Timing-aware tests are harder than source-contract tests, and reconnect replay must avoid duplication.
 
-1. **Single deployable process instead of independent services.** This keeps installation, private-network operation, and debugging simple. It also concentrates routing and reconciliation in `src/server.ts` and scales all capabilities together. Separate services would isolate failures and ownership but add deployment and distributed-operations cost.
-2. **Node-local SQLite plus filesystem ownership instead of a central database.** Nodes can operate near local repositories and agent installations without a central control plane. Replication, path mapping, tombstones, handoff settlement, and conflict handling become application responsibilities. A central store would simplify consistency but weaken local autonomy and require network availability.
-3. **Syncthing for file replication instead of application-level file transfer.** Syncthing supplies device and folder synchronization while Joint Bob manages readiness and ignore policy. This creates an external operational dependency and eventual-consistency boundary. Direct file transfer would increase application code and security responsibility.
-4. **Native browser modules instead of a frontend framework and build pipeline.** Static files package and serve directly. The cost is a 3,568-line `public/app.js`, manually duplicated contracts, no frontend static types, and source-regex tests.
-5. **Pi SDK adapter plus Claude CLI adapter.** Joint Bob can expose two engines through one UI, but their model and reasoning controls are not symmetrical. Pi exposes runtime thinking APIs; Claude uses CLI `--effort`. Claude runs with `--permission-mode bypassPermissions`.
+**Alternatives:**
+1. **Poll transcript files:** simpler browser state but increases filesystem reads and delays steering.
+2. **Add a second streaming service/port:** could isolate throughput, but duplicates authentication and creates another exposed boundary.
 
-Security depends on authenticated administration, strict WebSocket origin checks, encrypted secrets, private networking, and filesystem boundaries. No compliance regime is documented. The symlink-following project file download and bypassable agent safeguards make filesystem isolation a material boundary.
+**Security/compliance:** Preserve cookie authentication, same-origin checks, machine bearer checks, and bounded attachment validation. Never make `/ws` anonymous to solve reconnect or streaming latency.
 
-## Coupling hotspots and architectural risks
+### AD-3: Reconcile Review Activity Server-Side and Atomically
 
-- `src/server.ts` imports nearly every backend module and owns HTTP, WebSocket, peer routing, task execution, background reconciliation, and startup.
-- Multiple modules write the same SQLite database through separate handles with different lifecycle and migration behavior.
-- Encryption and key-loading logic is duplicated across four credential modules.
-- `public/app.js` combines client state, rendering, routing, API calls, dialogs, board coordination, and WebSocket handling.
-- Conversation discovery intentionally spans current, mapped, legacy, learned-node, parent-encoded Claude, and ticket-workspace paths. This supports migration but makes isolation rules difficult to reason about.
-- Browser/server REST and socket contracts have no generated shared schema.
-- The mobile chat top bar is compact, but its associated control toolbar scrolls horizontally with a hidden scrollbar. The fixed bottom navigation itself uses four equal grid columns and does not slide.
+**Decision:** Use current server-observed session activity when advancing per-user review state.
+
+**Consequences:** Cross-tab behavior becomes deterministic and stale clients cannot suppress real activity. The operation must define a clear click-time boundary so post-click activity still becomes `needs_review`.
+
+**Alternatives:**
+1. **Client retry/optimistic suppression:** improves appearance but leaves stale persistence and fails across tabs/nodes.
+2. **Replicate review state cluster-wide:** could unify reading state, but leaks per-user behavior and adds conflict resolution without a requirement.
+
+**Security/compliance:** Keep review rows scoped by `user_id`, `project_id`, and `session_path`. Review behavior is user activity data; do not replicate it without an explicit privacy requirement.
+
+### AD-4: Use Delete-Allowed Ignores Only for Proven Generated Caches
+
+**Decision:** Migrate the managed Python `__pycache__` rule to Syncthing delete-allowed semantics and remove the obsolete managed form.
+
+**Consequences:** Remote parent deletion can clear generated bytecode and folder errors stop recurring. Misclassification could delete local ignored data, so matching must be exact and regression-tested.
+
+**Alternatives:**
+1. **Manual cache cleanup and rescan:** resolves current files but errors recur after caches return.
+2. **Apply `(?d)` to all ignores:** removes many conflicts but creates unacceptable credential and data-loss risk.
+
+**Security/compliance:** Never apply delete-allowed semantics to `.env`, keys, credentials, logs, source, all ignored files, or user-authored rules. This is a destructive synchronization permission, not cosmetic syntax.
+
+## Architectural Risks and Improvement Opportunities
+
+- Split route registration and business orchestration out of `src/server.ts` only when active change pressure proves the boundary; do not create speculative services.
+- Isolate stream-render scheduling behind browser-testable behavior and add real timing assertions for Pi and Claude.
+- Centralize ordered SQLite migrations or at least a schema ledger; preserve mode-`0600` database and backup permissions.
+- Publish a shared REST/WebSocket contract before adding more browser/server enum duplication.
+- Enforce realpath/lstat containment for project-file reads; lexical checks alone follow symlinks.
+- Sanitize unexpected HTTP 500 messages before returning them to authenticated clients.
+- Add HTTPS/private-address policy or explicit warnings for peer URLs to reduce SSRF and machine-token exposure.
+
+## Assumptions and Evidence Limits
+
+- **Assumption:** The active streaming symptom is in browser batching or an upstream timing boundary; the scan did not capture runtime timestamps.
+- **Evidence:** The review race follows directly from current persistence semantics, but exact user timing still needs a targeted regression.
+- **Evidence:** Syncthing's live API errors explicitly name ignored generated content as the blocked-delete cause.
+- **Unknown:** Throughput, availability targets, retention requirements, and formal compliance obligations are not documented.

@@ -1355,9 +1355,32 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 .row-menu button:disabled { opacity: 0.45; }
 
 /* ---- Recent conversations ---- */
-.recent-sessions-list { display: grid; gap: 6px; min-width: 0; max-height: 52dvh; overflow-y: auto; }
+/* The shared search shell is inset for a panel header; inside this dialog it lines up with the list. */
+#recentSessionsDialog .search-shell { margin: 0; }
+/* The 3px pad is the focus ring's lane: the scroll box would otherwise clip its offset. */
+.recent-sessions-list { display: grid; gap: 6px; min-width: 0; max-height: 52dvh; overflow-y: auto; padding: 3px; }
+/* The list takes focus so digit shortcuts work, but it is not itself a control. */
+.recent-sessions-list:focus { outline: none; }
 /* Outlined rows, like the skills dialog: a plain text list of 20 titles is unreadable. */
-.recent-sessions-list .session-card { min-height: 0; border: 1px solid var(--line); }
+/* The left pad is the shortcut number's lane. */
+.recent-sessions-list .session-card { position: relative; min-height: 0; border: 1px solid var(--line); padding-left: 38px; }
+.recent-sessions-list .recent-session-index {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
 /* One line each keeps every row the same height and the list scannable. */
 .recent-sessions-list .session-card strong {
   margin-bottom: 2px;

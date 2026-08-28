@@ -112,6 +112,21 @@ export async function createTask(projectId: string, projectPath: string, title: 
   }
 }
 export interface TaskUpdate { title?: string; description?: string; status?: TaskStatus; engine?: TaskEngine; planMode?: boolean; reviewMode?: boolean; phaseConfig?: Partial<Record<"planning" | "in_progress" | "review", TaskPhaseConfig>>; sessionPath?: string | null; worktreePath?: string | null; mergedAt?: string | null; }
+export async function updateTaskSessionPath(projectId: string, taskId: string, nodeId: string, leaseToken: string, sessionPath: string): Promise<TaskRecord | undefined> {
+  const db = await taskDatabase();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const row = db.prepare("SELECT * FROM tasks WHERE project_id = ? AND id = ? AND lease_owner_node_id = ? AND lease_token = ?").get(projectId, taskId, nodeId, leaseToken) as unknown as TaskRow | undefined;
+    if (!row || row.session_path === sessionPath) { db.exec("COMMIT"); return row ? rowToTask(row) : undefined; }
+    const updatedAt = nextTaskUpdatedAt(row.updated_at);
+    db.prepare("UPDATE tasks SET session_path = ?, updated_at = ?, origin_node_id = ? WHERE project_id = ? AND id = ? AND lease_owner_node_id = ? AND lease_token = ?").run(sessionPath, updatedAt, nodeId, projectId, taskId, nodeId, leaseToken);
+    const task = rowToTask(db.prepare("SELECT * FROM tasks WHERE project_id = ? AND id = ?").get(projectId, taskId) as unknown as TaskRow);
+    publishTask(db, projectId, task);
+    db.exec("COMMIT");
+    return task;
+  } catch (error) { db.exec("ROLLBACK"); throw error; }
+}
+
 export async function updateTask(projectId: string, taskId: string, update: TaskUpdate): Promise<TaskRecord> {
   await migrateLegacyTasks(projectId);
   const [node, db] = await Promise.all([getClusterNode(), taskDatabase()]);
