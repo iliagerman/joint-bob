@@ -29,23 +29,49 @@ test("history rendering routes each transcript role to its own bubble", async ()
 });
 
 test("assistant filesystem paths open through the authenticated project file route", async () => {
-  const [app, markdown, server, serviceWorker] = await Promise.all([
+  const [app, markdown, server, serviceWorker, html, styles] = await Promise.all([
     readFile("public/app.js", "utf8"),
     readFile("public/markdown.js", "utf8"),
     readFile("src/server.ts", "utf8"),
     readFile("public/sw.js", "utf8"),
+    readFile("public/index.html", "utf8"),
+    readFile("public/styles.css", "utf8"),
   ]);
 
   assert.match(markdown, /const FILE_PATH_RE/);
   assert.match(markdown, /dataset\.testid = "chat-file-link"/);
+  assert.match(markdown, /dataset\.filePath = path/);
+  assert.match(markdown, /dataset\.filePath = groups\.url/);
   assert.match(markdown, /const linksToFile = Boolean\(resolveFileUrl\) && isFilePath\(groups\.url\)/);
   assert.match(app, /resolveFileUrl: role === "assistant" \? projectFileUrl : undefined/);
-  assert.match(app, /download \? `\$\{url\}&download=1` : url/);
-  assert.match(server, /request\.query\.download === "1" \? "attachment" : "inline"/);
+  assert.match(app, /url\.searchParams\.set\("nodeId", state\.activeNodeId\)/);
+  assert.match(app, /url\.searchParams\.set\("download", "1"\)/);
+  assert.match(app, /closest\("a\[data-file-path\]"\)/);
+  assert.match(app, /file-content/);
+  assert.match(app, /async function saveProjectFile\(\) \{[\s\S]*const session = activeChatSession\(\);[\s\S]*Open a persisted conversation before editing files/);
+  assert.match(app, /content: elements\.fileEditorTextarea\.value, version, sessionId: session\.id/);
+  assert.match(server, /async function assertProjectFileConversationOwner\([\s\S]*listHarnessSessions\(project\)[\s\S]*conversationOwnershipId\(session\)[\s\S]*requireLocalConversationOwner/);
+  assert.match(server, /await assertProjectEditable\(project\);\s*await assertProjectFileConversationOwner\(project, payload\.sessionId\);[\s\S]*await readFile\(resolved\)/);
+  for (const testid of ["file-action-dialog", "file-action-download-link", "file-action-cancel-button", "file-action-edit-button", "file-editor-textarea", "file-editor-cancel-button", "file-editor-save-button"]) assert.ok(html.includes(testid));
+  assert.ok(html.indexOf('id="fileActionCancelButton"') < html.indexOf('id="fileActionDownloadLink"'));
+  assert.match(styles, /\.file-editor-card\s*\{[^}]*width:\s*min\(440px,/);
+  assert.match(styles, /\.file-editor-card:has\(#fileEditorView:not\(\[hidden\]\)\)/);
+  assert.match(styles, /\.file-editor-path\s*\{[^}]*border:\s*1px solid var\(--line\)/);
+  assert.match(styles, /\.file-editor-actions\s*\{[^}]*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\)/);
+  assert.match(styles, /#fileActionDownloadLink\s*\{[^}]*text-decoration:\s*none;[^}]*background:\s*var\(--field\)/);
+  assert.match(styles, /#fileActionEditButton\s*\{[^}]*background:\s*var\(--accent\)/);
+  assert.match(html, /id="fileActionEditButton"[^>]*autofocus/);
+  assert.match(app, /Discard unsaved changes\?/);
+  assert.match(server, /app\.get\("\/api\/cluster\/project-file"/);
+  assert.match(server, /Readable\.fromWeb\(routed\.body as unknown as import\("node:stream\/web"\)\.ReadableStream\)\.pipe\(response\)/);
   assert.match(server, /resolved = await realpath\(requestedFile\)/);
   assert.match(server, /requestedPath\.replace\(\/\^\[\/\\\\\]\+\//);
   assert.match(server, /File is outside the project directory/);
-  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v42"/);
+  assert.match(server, /project-file-content/);
+  assert.match(server, /await rename\(temporary, resolved\)/);
+  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v47"/);
+  assert.match(serviceWorker, /self\.addEventListener\("fetch"/);
+  assert.match(serviceWorker, /fetch\(request\)\.catch\(async \(\) => \(await caches\.match\(request\)\) \|\| caches\.match\("\/"\)\)/);
 });
 
 test("empty states never stack up in the transcript", async () => {

@@ -43,7 +43,10 @@
           </div>
           <div class="project-actions">
             <button class="ghost icon-button collapse-button" id="collapseProjectsButton" type="button" aria-label="Collapse projects panel" title="Collapse projects panel" data-testid="projects-panel-collapse-button">‹</button>
-            <button class="primary icon-button" id="newProjectButton" type="button" aria-label="Add project" title="Add project" data-testid="project-create-button">+</button>
+            <button class="ghost icon-button reviews-button" id="pendingReviewsButton" type="button" data-pending-reviews-open aria-label="Pending reviews" title="Pending reviews" data-testid="pending-reviews-open-button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 13h4l1.6 2.5h4.8L16 13h4"/><path d="M4 13 6.4 5.6A2 2 0 0 1 8.3 4.2h7.4a2 2 0 0 1 1.9 1.4L20 13v4.3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>
+              <span class="reviews-badge" id="pendingReviewsBadge" data-testid="pending-reviews-badge" hidden>0</span>
+            </button>
             <button class="ghost icon-button" id="recentSessionsButton" type="button" data-recent-sessions-open aria-label="Recent conversations" title="Recent conversations" data-testid="recent-sessions-open-button">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.6-6.4"/><path d="M3 4v4h4"/><path d="M12 7v5l3.2 1.9"/></svg>
             </button>
@@ -53,10 +56,13 @@
           </div>
         </header>
         <div class="list-loading" id="projectsLoading" role="progressbar" aria-label="Loading projects" data-testid="project-list-loading-bar"><span></span></div>
-        <label class="search-shell" for="projectSearchInput">
-          <span class="sr-only">Search projects</span>
-          <input id="projectSearchInput" type="search" autocomplete="off" placeholder="Search projects" data-testid="project-list-search-input" />
-        </label>
+        <div class="project-search-row">
+          <label class="search-shell" for="projectSearchInput">
+            <span class="sr-only">Search projects</span>
+            <input id="projectSearchInput" type="search" autocomplete="off" placeholder="Search projects" data-testid="project-list-search-input" />
+          </label>
+          <button class="primary icon-button" id="newProjectButton" type="button" aria-label="Add project" title="Add project" data-testid="project-create-button">+</button>
+        </div>
         <div class="panel-scroll project-list" id="projectList"></div>
         <div class="panel-rail">
           <button class="ghost icon-button" id="expandProjectsButton" type="button" aria-label="Expand projects panel" title="Expand projects panel" data-testid="projects-panel-expand-button">›</button>
@@ -122,6 +128,7 @@
           <div class="chat-title-block">
             <h2 id="sessionTitle">Select a conversation</h2>
             <div class="chat-title-meta">
+              <span class="chat-project-name" id="chatProjectName" data-testid="chat-project-name">No project selected</span>
               <div class="mini-status" id="miniStatus">No model loaded</div>
               <button class="task-backlink" id="taskBacklinkButton" type="button" hidden data-testid="chat-task-backlink-button">Ticket</button>
             </div>
@@ -135,22 +142,26 @@
           <div class="chat-session-controls">
             <label class="chat-control" for="chatNodeSelect">
               <span>Runs on</span>
-              <select id="chatNodeSelect" aria-label="Execution node" data-testid="chat-node-select"></select>
+              <select id="chatNodeSelect" class="chat-toolbar-control" aria-label="Execution node" data-testid="chat-node-select"></select>
             </label>
             <label class="chat-control" for="chatHarnessSelect">
               <span>Agent</span>
-              <select id="chatHarnessSelect" aria-label="Harness" data-testid="chat-harness-select"></select>
+              <select id="chatHarnessSelect" class="chat-toolbar-control" aria-label="Harness" data-testid="chat-harness-select"></select>
             </label>
           </div>
           <div class="chat-control chat-model-control">
             <span>Model</span>
-            <button class="ghost compact model-button" id="modelButton" type="button" disabled data-testid="chat-model-button">Model</button>
+            <button class="ghost compact model-button chat-toolbar-control" id="modelButton" type="button" disabled data-testid="chat-model-button"><span id="modelButtonName">Model</span><span class="model-button-mode" id="modelButtonMode"></span></button>
           </div>
+          <label class="chat-control chat-mode-control" id="chatModeControl" for="mobileReasoningLevelSelect" hidden>
+            <span>Mode</span>
+            <select id="mobileReasoningLevelSelect" class="chat-toolbar-control" aria-label="Mode" data-testid="chat-mobile-reasoning-select"></select>
+          </label>
+          <button class="ghost compact chat-recents-button" id="chatRecentSessionsButton" type="button" data-recent-sessions-open data-testid="chat-recent-sessions-open-button">Recents</button>
           <details class="chat-more" id="chatMoreMenu">
             <summary class="ghost compact" aria-label="More chat actions" data-testid="chat-more-button">More</summary>
             <div class="chat-more-actions">
               <button class="ghost compact safeguards-button" id="safeguardsButton" type="button" aria-pressed="true" title="Safe Guard checks are active for this Pi session" disabled data-testid="chat-safeguards-button">Safeguards on</button>
-              <button class="ghost compact" id="chatRecentSessionsButton" type="button" data-recent-sessions-open data-testid="chat-recent-sessions-open-button">Recents</button>
               <button class="ghost compact transfer-session-button" id="transferSessionButton" type="button" disabled data-testid="chat-transfer-button">Continue on…</button>
               <button class="ghost compact" id="openTerminalButton" type="button" disabled data-testid="chat-open-terminal-button">Terminal</button>
               <button class="ghost compact" id="notifyButton" type="button" aria-pressed="false" title="Notify when an agent finishes" data-testid="chat-notify-button">Notify</button>
@@ -199,6 +210,7 @@
       <button id="navSessionsButton" type="button" data-testid="nav-chats-button"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5a2 2 0 0 1-2 2H8l-4.5 4v-14a2 2 0 0 1 2-2H18a2 2 0 0 1 2 2z"/></svg></span>Chats</button>
       <button id="navBoardButton" type="button" data-testid="nav-board-button"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M10 4v16M16 4v16"/></svg></span>Board</button>
       <button id="navChatButton" type="button" data-testid="nav-chat-button"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M7.5 10l2.5 2-2.5 2"/><path d="M12.5 14.5h4"/></svg></span>Chat</button>
+      <button class="reviews-button" id="navReviewsButton" type="button" data-pending-reviews-open data-testid="nav-reviews-button"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 13h4l1.6 2.5h4.8L16 13h4"/><path d="M4 13 6.4 5.6A2 2 0 0 1 8.3 4.2h7.4a2 2 0 0 1 1.9 1.4L20 13v4.3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg></span>Reviews<span class="reviews-badge" id="navPendingReviewsBadge" data-testid="nav-pending-reviews-badge" hidden>0</span></button>
     </nav>
 
     <div class="install-banner" id="installBanner" role="dialog" aria-label="Install Joint Bob" hidden>
@@ -474,8 +486,14 @@
           Destination node
           <select id="sessionTransferNodeSelect" required data-testid="session-transfer-node-select"></select>
         </label>
+        <section class="session-transfer-progress" id="sessionTransferProgress" role="status" hidden>
+          <span id="sessionTransferStatus">Waiting for Syncthing…</span>
+          <progress id="sessionTransferWaitProgress" max="5" value="5"></progress>
+          <button class="ghost compact" type="button" id="skipSessionTransferWaitButton">Skip wait</button>
+        </section>
         <div class="dialog-actions">
           <button class="ghost" type="button" id="cancelSessionTransferButton" data-testid="session-transfer-cancel-button">Cancel</button>
+          <button class="ghost" type="button" id="sessionTakeOwnershipButton" data-testid="session-take-ownership-button">Take ownership</button>
           <button class="primary" type="submit" data-testid="session-transfer-submit-button">Continue there</button>
         </div>
       </form>
@@ -522,6 +540,21 @@
       </div>
     </dialog>
 
+    <dialog id="pendingReviewsDialog" data-testid="pending-reviews-dialog">
+      <div class="dialog-card">
+        <div>
+          <span class="eyebrow">Waiting on you</span>
+          <h2>Pending reviews</h2>
+          <p>Conversations that finished since you last looked, across every project.</p>
+        </div>
+        <div class="pending-reviews-list" id="pendingReviewsList"></div>
+        <div class="dialog-actions">
+          <button class="ghost" type="button" id="markAllPendingReviewedButton" data-testid="pending-reviews-mark-all-button" disabled>Mark all as read</button>
+          <button class="ghost" type="button" id="closePendingReviewsButton" data-testid="pending-reviews-close-button">Close</button>
+        </div>
+      </div>
+    </dialog>
+
     <dialog id="skillsDialog" data-testid="skills-dialog">
       <div class="dialog-card">
         <div>
@@ -547,11 +580,35 @@
         </div>
         <div class="model-dialog-list" id="modelDialogList"></div>
         <label class="model-dialog-effort" id="modelDialogReasoning" hidden>
-          <span id="modelDialogReasoningLabel">Reasoning effort</span>
+          <span id="modelDialogReasoningLabel">Thinking level</span>
           <select id="reasoningLevelSelect" class="effort-select" aria-labelledby="modelDialogReasoningLabel" data-testid="chat-reasoning-select"></select>
         </label>
         <div class="dialog-actions">
           <button class="ghost" type="button" id="closeModelDialogButton" data-testid="model-dialog-close-button">Close</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="fileActionDialog" data-testid="file-action-dialog">
+      <div class="dialog-card file-editor-card">
+        <div class="file-editor-heading">
+          <span class="eyebrow">Project file</span>
+          <h2>Open file</h2>
+          <p class="file-editor-path" id="fileActionPath"></p>
+        </div>
+        <div id="fileActionView" class="file-editor-actions">
+          <button class="ghost" id="fileActionCancelButton" type="button" data-testid="file-action-cancel-button">Cancel</button>
+          <a class="ghost" id="fileActionDownloadLink" data-testid="file-action-download-link" download>Download</a>
+          <button class="primary" id="fileActionEditButton" type="button" data-testid="file-action-edit-button" autofocus>Edit</button>
+        </div>
+        <div id="fileEditorView" hidden>
+          <label for="fileEditorTextarea">File contents</label>
+          <textarea id="fileEditorTextarea" class="file-editor-textarea" spellcheck="false" data-testid="file-editor-textarea"></textarea>
+          <p id="fileEditorStatus" role="status" aria-live="polite"></p>
+          <div class="dialog-actions">
+            <button class="ghost" id="fileEditorCancelButton" type="button" data-testid="file-editor-cancel-button">Cancel</button>
+            <button class="primary" id="fileEditorSaveButton" type="button" data-testid="file-editor-save-button">Save</button>
+          </div>
         </div>
       </div>
     </dialog>

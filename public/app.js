@@ -9,6 +9,8 @@ const state = {
   pinnedProjectIds: [],
   pinnedSessionPaths: [],
   recentSessions: [],
+  pendingReviews: [],
+  pendingReviewsTimer: null,
   renameSessionPath: null,
   projectsLoading: true,
   projectsRefreshing: false,
@@ -75,8 +77,12 @@ const state = {
   preferencesLoaded: false,
   initialProjectId: new URLSearchParams(location.search).get("projectId"),
   initialSessionPath: new URLSearchParams(location.search).get("sessionPath"),
+  fileEditor: { path: null, version: null, original: "", loading: false, saving: false },
 };
 
+const TAKE_OWNERSHIP_WAIT_SECONDS = 5;
+let ownershipWait = null;
+let ownershipTaking = false;
 const BOOT_MINIMUM_MS = 700;
 const bootStartedAt = performance.now();
 let bootRevealTimer = null;
@@ -99,6 +105,7 @@ const elements = {
   sessionSearchInput: document.querySelector("#sessionSearchInput"),
   projectName: document.querySelector("#projectName"),
   projectPath: document.querySelector("#projectPath"),
+  chatProjectName: document.querySelector("#chatProjectName"),
   sessionTitle: document.querySelector("#sessionTitle"),
   connectionStatus: document.querySelector("#connectionStatus"),
   messages: document.querySelector("#messages"),
@@ -113,6 +120,8 @@ const elements = {
   reconnectBanner: document.querySelector("#reconnectBanner"),
   reconnectBannerText: document.querySelector("#reconnectBannerText"),
   modelButton: document.querySelector("#modelButton"),
+  modelButtonName: document.querySelector("#modelButtonName"),
+  modelButtonMode: document.querySelector("#modelButtonMode"),
   safeguardsButton: document.querySelector("#safeguardsButton"),
   transferSessionButton: document.querySelector("#transferSessionButton"),
   openTerminalButton: document.querySelector("#openTerminalButton"),
@@ -128,6 +137,11 @@ const elements = {
   sessionTransferForm: document.querySelector("#sessionTransferForm"),
   sessionTransferNodeSelect: document.querySelector("#sessionTransferNodeSelect"),
   cancelSessionTransferButton: document.querySelector("#cancelSessionTransferButton"),
+  sessionTakeOwnershipButton: document.querySelector("#sessionTakeOwnershipButton"),
+  sessionTransferProgress: document.querySelector("#sessionTransferProgress"),
+  sessionTransferStatus: document.querySelector("#sessionTransferStatus"),
+  sessionTransferWaitProgress: document.querySelector("#sessionTransferWaitProgress"),
+  skipSessionTransferWaitButton: document.querySelector("#skipSessionTransferWaitButton"),
   projectsPanel: document.querySelector("#projectsPanel"),
   chatsPanel: document.querySelector("#chatsPanel"),
   collapseProjectsButton: document.querySelector("#collapseProjectsButton"),
@@ -144,7 +158,9 @@ const elements = {
   modelDialogList: document.querySelector("#modelDialogList"),
   modelDialogReasoning: document.querySelector("#modelDialogReasoning"),
   modelDialogReasoningLabel: document.querySelector("#modelDialogReasoningLabel"),
+  chatModeControl: document.querySelector("#chatModeControl"),
   reasoningLevelSelect: document.querySelector("#reasoningLevelSelect"),
+  mobileReasoningLevelSelect: document.querySelector("#mobileReasoningLevelSelect"),
   closeModelDialogButton: document.querySelector("#closeModelDialogButton"),
   installAppButton: document.querySelector("#installAppButton"),
   notifyButton: document.querySelector("#notifyButton"),
@@ -165,6 +181,12 @@ const elements = {
   recentSessionsSearchInput: document.querySelector("#recentSessionsSearchInput"),
   rowMenu: document.querySelector("#rowMenu"),
   closeRecentSessionsButton: document.querySelector("#closeRecentSessionsButton"),
+  pendingReviewsBadge: document.querySelector("#pendingReviewsBadge"),
+  navPendingReviewsBadge: document.querySelector("#navPendingReviewsBadge"),
+  pendingReviewsDialog: document.querySelector("#pendingReviewsDialog"),
+  pendingReviewsList: document.querySelector("#pendingReviewsList"),
+  markAllPendingReviewedButton: document.querySelector("#markAllPendingReviewedButton"),
+  closePendingReviewsButton: document.querySelector("#closePendingReviewsButton"),
   settingsButton: document.querySelector("#settingsButton"),
   settingsDialog: document.querySelector("#settingsDialog"),
   settingsForm: document.querySelector("#settingsForm"),
@@ -325,6 +347,17 @@ const elements = {
   secretScopeTitle: document.querySelector("#secretScopeTitle"),
   secretScopeList: document.querySelector("#secretScopeList"),
   secretScopeCancelButton: document.querySelector("#secretScopeCancelButton"),
+  fileActionDialog: document.querySelector("#fileActionDialog"),
+  fileActionPath: document.querySelector("#fileActionPath"),
+  fileActionView: document.querySelector("#fileActionView"),
+  fileActionDownloadLink: document.querySelector("#fileActionDownloadLink"),
+  fileActionCancelButton: document.querySelector("#fileActionCancelButton"),
+  fileActionEditButton: document.querySelector("#fileActionEditButton"),
+  fileEditorView: document.querySelector("#fileEditorView"),
+  fileEditorTextarea: document.querySelector("#fileEditorTextarea"),
+  fileEditorCancelButton: document.querySelector("#fileEditorCancelButton"),
+  fileEditorSaveButton: document.querySelector("#fileEditorSaveButton"),
+  fileEditorStatus: document.querySelector("#fileEditorStatus"),
 };
 
 function headers() {
@@ -1417,6 +1450,59 @@ function togglePinnedSession(sessionPath) {
 }
 
 /**
+ * Row menu icons, in the same stroked 24px style as the nav bar. Paths only, so the
+ * builder below stays a single loop.
+ */
+const rowMenuIconPaths = {
+  pin: [
+    "M12 17v5",
+    "M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z",
+  ],
+  pencil: ["M12 20h9", "M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"],
+  lock: [
+    "M5 11h14a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1z",
+    "M8 11V7a4 4 0 0 1 8 0v4",
+  ],
+  folder: ["M3.5 7a2 2 0 0 1 2-2h4l2 2.5h7a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"],
+  github: [
+    "M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4",
+    "M9 18c-4.51 2-5-2-7-2",
+  ],
+  key: [
+    "M2.6 17.4A2 2 0 0 0 2 18.8V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.2a2 2 0 0 0 1.4-.6l.8-.8a6.5 6.5 0 1 0-4-4z",
+    "M16.5 7.5h.01",
+  ],
+  refresh: ["M3 12a9 9 0 1 0 2.6-6.4", "M3 4v4h4"],
+  transfer: ["M14 4h5a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-5", "M10 8l4 4-4 4", "M14 12H4"],
+  trash: [
+    "M4 7h16",
+    "M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13",
+    "M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2",
+    "M10 11v6",
+    "M14 11v6",
+  ],
+};
+
+/** Decorative: the button's own text already names the action. */
+function menuIcon(name) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.8");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("class", "row-menu-icon");
+  for (const d of rowMenuIconPaths[name]) {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d);
+    svg.append(path);
+  }
+  return svg;
+}
+
+/**
  * One shared menu serves every row: building a popup per row would clip it inside the
  * list's own scroll box. `popover` puts it in the top layer and handles Escape and
  * click-outside for us, so this only has to place it.
@@ -1427,7 +1513,9 @@ function openRowMenu(anchor, items) {
     const entry = document.createElement("button");
     entry.type = "button";
     entry.className = item.danger ? "danger" : "";
-    entry.textContent = item.label;
+    const label = document.createElement("span");
+    label.textContent = item.label;
+    entry.append(menuIcon(item.icon), label);
     entry.disabled = Boolean(item.disabled);
     if (item.title) entry.title = item.title;
     entry.dataset.testid = item.testid;
@@ -1600,37 +1688,44 @@ function projectMenuItems(project) {
   return [
     {
       label: pinned ? "Unpin from top" : "Pin to top",
+      icon: "pin",
       testid: "project-pin-button",
       onSelect: () => togglePinnedProject(project.id),
     },
     {
       label: "Edit project",
+      icon: "pencil",
       testid: "project-rename-button",
       onSelect: () => openProjectRename(project),
     },
     {
       label: project.lock ? "Unlock from this node" : "Lock to this node",
+      icon: "lock",
       testid: "project-lock-button",
       title: project.lockedElsewhere ? `Locked by ${project.lock.nodeName} — select to unlock` : "",
       onSelect: () => toggleProjectLock(project).catch((error) => toast(error.message, 6000)),
     },
     {
       label: "Session path mappings",
+      icon: "folder",
       testid: "project-path-mapping-button",
       onSelect: () => openProjectPathMapping(project),
     },
     {
       label: "GitHub access",
+      icon: "github",
       testid: "project-github-button",
       onSelect: () => openProjectGithubSettings(project).catch((error) => toast(error.message)),
     },
     {
       label: "Secret accounts",
+      icon: "key",
       testid: "project-secrets-button",
       onSelect: () => openSecretScope("project", project.id, project.name).catch((error) => toast(error.message)),
     },
     {
       label: "Rescan with Syncthing",
+      icon: "refresh",
       testid: "project-rescan-button",
       disabled: !project.syncFolderId,
       title: project.syncFolderId ? "Rescan project with Syncthing" : "Project is not synchronized with Syncthing",
@@ -1638,6 +1733,7 @@ function projectMenuItems(project) {
     },
     {
       label: "Remove",
+      icon: "trash",
       testid: "project-remove-button",
       danger: true,
       onSelect: () => removeProject(project).catch((error) => toast(error.message)),
@@ -1708,6 +1804,107 @@ async function markAllSessionsReviewed() {
     renderSessions();
     toast(error.message);
   }
+}
+
+/**
+ * The review inbox spans every project, so the badge and the dialog read one server snapshot
+ * rather than the active project's in-memory conversations.
+ */
+async function refreshPendingReviews() {
+  const body = await api("/api/reviews/pending");
+  state.pendingReviews = body.projects;
+  renderPendingReviewsBadge();
+}
+
+function pendingReviewCount() {
+  return state.pendingReviews.reduce((total, group) => total + group.sessions.length, 0);
+}
+
+function renderPendingReviewsBadge() {
+  const count = pendingReviewCount();
+  for (const badge of [elements.pendingReviewsBadge, elements.navPendingReviewsBadge]) {
+    badge.textContent = count > 99 ? "99+" : String(count);
+    badge.hidden = count === 0;
+  }
+  elements.markAllPendingReviewedButton.disabled = count === 0;
+}
+
+function renderPendingReviewsDialog() {
+  elements.pendingReviewsList.replaceChildren();
+  if (!pendingReviewCount()) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "Nothing is waiting for review.";
+    elements.pendingReviewsList.append(empty);
+    return;
+  }
+  for (const group of state.pendingReviews) {
+    const heading = document.createElement("div");
+    heading.className = "pending-reviews-group";
+    heading.dataset.testid = "pending-reviews-group";
+    heading.textContent = group.projectName;
+    elements.pendingReviewsList.append(heading);
+    for (const entry of group.sessions) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "session-card";
+      button.dataset.testid = "pending-review-option";
+      // Rows are single-line, so the full title lives in the tooltip.
+      button.title = entry.title;
+      const title = document.createElement("strong");
+      title.textContent = entry.title;
+      const meta = document.createElement("span");
+      meta.textContent = `${entry.agentLabel} · ${formatDate(entry.updatedAt)}`;
+      button.append(title, meta);
+      button.addEventListener("click", () => openPendingReview(group, entry).catch((error) => toast(error.message)));
+      elements.pendingReviewsList.append(button);
+    }
+  }
+}
+
+/**
+ * The snapshot can outlive the conversation it points at, so a stale row is dropped on the
+ * click that discovers it rather than checked up front.
+ */
+async function openPendingReview(group, entry) {
+  elements.pendingReviewsDialog.close();
+  if (state.activeProjectId !== group.projectId) await selectProject(group.projectId);
+  const session = state.sessions.find((candidate) => candidate.path === entry.path);
+  if (!session) {
+    toast("That conversation is no longer available");
+    await refreshPendingReviews();
+    return;
+  }
+  openListedSession(session);
+  await refreshPendingReviews();
+}
+
+async function markAllPendingReviewed() {
+  const groups = state.pendingReviews;
+  if (!groups.length) return;
+  for (const group of groups) {
+    await api(`/api/projects/${encodeURIComponent(group.projectId)}/sessions/reviewed-all`, {
+      method: "PUT",
+      body: JSON.stringify({ sessions: group.sessions.map((entry) => ({ sessionPath: entry.path, updatedAt: entry.updatedAt })) }),
+    });
+  }
+  // The open conversation list holds its own copy of the state the server just cleared.
+  for (const session of state.sessions) {
+    if (session.reviewState === "needs_review") session.reviewState = "reviewed";
+  }
+  renderSessions();
+  await refreshPendingReviews();
+  renderPendingReviewsDialog();
+  toast("All conversations marked as read");
+}
+
+function openPendingReviewsDialog() {
+  renderPendingReviewsDialog();
+  elements.pendingReviewsDialog.showModal();
+  // The badge may be up to a minute stale, and mark-all sends these exact watermarks.
+  refreshPendingReviews()
+    .then(renderPendingReviewsDialog)
+    .catch((error) => toast(error.message));
 }
 
 function openListedSession(session) {
@@ -1837,6 +2034,8 @@ function renderSessions() {
   const project = selectedProject();
   elements.projectName.textContent = project?.name || "No project selected";
   elements.projectPath.textContent = project?.path || "Create or select a local folder.";
+  elements.chatProjectName.textContent = project?.name || "No project selected";
+  elements.chatProjectName.title = project?.name || "";
   elements.newSessionButton.disabled = !project || !state.sessionNodes.length;
   elements.newClaudeSessionButton.disabled = !project || !state.sessionNodes.length;
   updateChatFilterCounts();
@@ -1918,16 +2117,19 @@ function sessionMenuItems(session, sessionActive) {
   return [
     {
       label: pinned ? "Unpin from top" : "Pin to top",
+      icon: "pin",
       testid: "session-pin-button",
       onSelect: () => togglePinnedSession(session.path),
     },
     {
       label: "Rename",
+      icon: "pencil",
       testid: "session-rename-button",
       onSelect: () => openRenameDialog(session.path, name),
     },
     {
       label: "Continue on another node",
+      icon: "transfer",
       testid: "session-transfer-button",
       disabled: isClaude,
       title: isClaude ? "Claude transfer is not available yet" : "Transfer this idle Pi session",
@@ -1935,6 +2137,7 @@ function sessionMenuItems(session, sessionActive) {
     },
     {
       label: "Remove",
+      icon: "trash",
       testid: "session-remove-button",
       danger: true,
       onSelect: () => removeSessionFromRow(session, sessionActive).catch((error) => toast(error.message)),
@@ -2048,8 +2251,80 @@ function stickyScroll(force = false) {
 
 function projectFileUrl(filePath, download = false) {
   if (!state.activeProjectId || !filePath) return null;
-  const url = `/api/projects/${encodeURIComponent(state.activeProjectId)}/file?path=${encodeURIComponent(filePath)}`;
-  return download ? `${url}&download=1` : url;
+  const url = projectFileApiUrl("file", filePath);
+  if (download) url.searchParams.set("download", "1");
+  return `${url.pathname}${url.search}`;
+}
+
+function projectFileApiUrl(route, filePath) {
+  const url = new URL(`/api/projects/${encodeURIComponent(state.activeProjectId)}/${route}`, location.origin);
+  url.searchParams.set("path", filePath);
+  if (state.activeNodeId) url.searchParams.set("nodeId", state.activeNodeId);
+  return url;
+}
+
+function projectFileContentUrl(filePath) {
+  const url = projectFileApiUrl("file-content", filePath);
+  return `${url.pathname}${url.search}`;
+}
+
+function resetFileEditor() {
+  state.fileEditor = { path: null, version: null, original: "", loading: false, saving: false };
+  elements.fileActionView.hidden = false;
+  elements.fileEditorView.hidden = true;
+  elements.fileEditorTextarea.value = "";
+  elements.fileEditorStatus.textContent = "";
+}
+
+function openFileAction(path) {
+  if (!state.activeProjectId || !path) return;
+  resetFileEditor();
+  state.fileEditor.path = path;
+  elements.fileActionPath.textContent = path;
+  elements.fileActionDownloadLink.href = projectFileUrl(path, true);
+  elements.fileActionDialog.showModal();
+}
+
+async function editProjectFile() {
+  const path = state.fileEditor.path;
+  if (!path) return;
+  state.fileEditor.loading = true;
+  elements.fileActionEditButton.disabled = true;
+  elements.fileEditorStatus.textContent = "Loading…";
+  try {
+    const body = await api(projectFileContentUrl(path));
+    state.fileEditor.version = body.version;
+    state.fileEditor.original = body.content;
+    elements.fileEditorTextarea.value = body.content;
+    elements.fileActionView.hidden = true;
+    elements.fileEditorView.hidden = false;
+    elements.fileEditorStatus.textContent = "";
+    elements.fileEditorTextarea.focus();
+  } catch (error) { toast(error.message, 8000); elements.fileEditorStatus.textContent = error.message; }
+  finally { state.fileEditor.loading = false; elements.fileActionEditButton.disabled = false; }
+}
+
+function attemptCloseFileEditor() {
+  if (state.fileEditor.saving) return;
+  if (!elements.fileEditorView.hidden && elements.fileEditorTextarea.value !== state.fileEditor.original && !confirm("Discard unsaved changes?")) return;
+  elements.fileActionDialog.close();
+  resetFileEditor();
+}
+
+async function saveProjectFile() {
+  const { path, version } = state.fileEditor;
+  if (!path || !version) return;
+  const session = activeChatSession();
+  if (!session?.id) { toast("Open a persisted conversation before editing files"); return; }
+  state.fileEditor.saving = true;
+  elements.fileEditorSaveButton.disabled = true;
+  try {
+    await api(projectFileContentUrl(path), { method: "PUT", body: JSON.stringify({ content: elements.fileEditorTextarea.value, version, sessionId: session.id }) });
+    elements.fileActionDialog.close();
+    resetFileEditor();
+    toast("File saved");
+  } catch (error) { toast(error.message, 8000); }
+  finally { state.fileEditor.saving = false; elements.fileEditorSaveButton.disabled = false; }
 }
 
 const FILE_PATH_RE = /(^|[\s()\[\]{}'"])((?:\.\/?|\.\.\/|(?:\/|[A-Z]:\\)?(?:[\w.-]+\/)+)[\w.-]+\.[A-Za-z0-9]{1,8})/g;
@@ -2215,15 +2490,16 @@ function syncModelButton() {
   let label = "Model";
   if (isClaude) {
     const active = CLAUDE_MODEL_OPTIONS.find((option) => state.activeModelKey === `claude/${option.id}`);
-    const name = active ? active.label : state.activeModelLabel;
-    const effort = state.claudeEffort && state.claudeEffort !== "default" ? ` · ${state.claudeEffort}` : "";
-    if (name) label = `${name}${effort}`;
+    label = active?.label || state.activeModelLabel || "Model";
   } else {
     const active = state.models.find((model) => `${model.provider}/${model.id}` === state.activeModelKey);
-    const name = active ? active.label : state.activeModelLabel || "Model";
-    label = state.thinkingLevel !== "off" ? `${name} · ${state.thinkingLevel}` : name;
+    label = active?.label || state.activeModelLabel || "Model";
   }
-  elements.modelButton.textContent = label;
+  const suffix = isClaude
+    ? state.claudeEffort && state.claudeEffort !== "default" ? ` · ${state.claudeEffort}` : ""
+    : state.thinkingLevel !== "off" ? ` · ${state.thinkingLevel}` : "";
+  elements.modelButtonName.textContent = label;
+  elements.modelButtonMode.textContent = suffix;
   elements.modelButton.classList.toggle("claude", isClaude);
   if (elements.modelDialog.open) renderModelDialog();
 }
@@ -2321,18 +2597,24 @@ async function openSkillsDialog() {
   }
 }
 
-function renderReasoningOptions() {
-  const isClaude = state.engine === "claude";
-  elements.modelDialogReasoningLabel.textContent = isClaude ? "Reasoning effort" : "Thinking level";
-  elements.reasoningLevelSelect.replaceChildren();
+function populateReasoningSelect(select) {
+  select.replaceChildren();
   for (const level of state.availableThinkingLevels) {
     const option = document.createElement("option");
     option.value = level;
-    option.textContent = `${isClaude ? "Effort" : "Thinking"}: ${level}`;
-    elements.reasoningLevelSelect.append(option);
+    option.textContent = level;
+    select.append(option);
   }
-  elements.reasoningLevelSelect.value = state.thinkingLevel;
-  elements.modelDialogReasoning.hidden = state.availableThinkingLevels.length === 0;
+  select.value = state.thinkingLevel;
+}
+
+function renderReasoningOptions() {
+  const hasLevels = state.availableThinkingLevels.length > 0;
+  elements.modelDialogReasoningLabel.textContent = state.engine === "claude" ? "Reasoning effort" : "Thinking level";
+  populateReasoningSelect(elements.reasoningLevelSelect);
+  populateReasoningSelect(elements.mobileReasoningLevelSelect);
+  elements.modelDialogReasoning.hidden = !hasLevels;
+  elements.chatModeControl.hidden = !hasLevels;
 }
 
 function renderModelDialog() {
@@ -2393,6 +2675,7 @@ function setComposerEnabled(enabled) {
   elements.renameSessionButton.disabled = !enabled;
   elements.modelButton.disabled = !enabled;
   elements.reasoningLevelSelect.disabled = !enabled;
+  elements.mobileReasoningLevelSelect.disabled = !enabled;
   syncSafeguardsButton();
 }
 
@@ -2487,7 +2770,7 @@ function syncReasoningControls(status) {
   state.thinkingLevel = status.thinkingLevel || (state.engine === "claude" ? "default" : "off");
   Object.assign(state, { availableThinkingLevels: status.availableThinkingLevels || [] });
   if (state.engine === "claude") state.claudeEffort = state.thinkingLevel;
-  if (elements.modelDialog.open) renderReasoningOptions();
+  renderReasoningOptions();
 }
 
 function updateStatus(status) {
@@ -2561,6 +2844,13 @@ async function refreshProjectsQuietly() {
 function startProjectSyncPolling() {
   if (state.projectSyncTimer) clearInterval(state.projectSyncTimer);
   state.projectSyncTimer = setInterval(() => refreshProjectsQuietly(), 10_000);
+  // Scanning every project's transcripts is far heavier than a project list refresh,
+  // so the review badge runs on its own, slower clock.
+  if (state.pendingReviewsTimer) clearInterval(state.pendingReviewsTimer);
+  state.pendingReviewsTimer = setInterval(() => {
+    refreshPendingReviews().catch((error) => console.warn("Could not refresh pending reviews", error));
+  }, 60_000);
+  refreshPendingReviews().catch((error) => console.warn("Could not load pending reviews", error));
 }
 
 async function loadProjects() {
@@ -3746,6 +4036,21 @@ async function transferActiveSession(event) {
   }
 }
 
+elements.messages.addEventListener("click", (event) => {
+  const link = event.target.closest("a[data-file-path]");
+  if (!link) return;
+  event.preventDefault();
+  openFileAction(link.dataset.filePath);
+});
+elements.fileActionEditButton.addEventListener("click", () => editProjectFile());
+elements.fileActionCancelButton.addEventListener("click", attemptCloseFileEditor);
+elements.fileEditorSaveButton.addEventListener("click", () => saveProjectFile());
+elements.fileEditorCancelButton.addEventListener("click", attemptCloseFileEditor);
+elements.fileActionDialog.addEventListener("cancel", (event) => { event.preventDefault(); attemptCloseFileEditor(); });
+elements.fileActionDownloadLink.addEventListener("click", () => setTimeout(() => {
+  elements.fileActionDialog.close();
+  resetFileEditor();
+}));
 elements.loginForm.addEventListener("submit", submitLogin);
 elements.newSessionButton.addEventListener("click", () => {
   state.activeSessionId = null;
@@ -3833,6 +4138,15 @@ document.addEventListener("keydown", (event) => {
   openRecentSessionsDialog();
 });
 elements.closeRecentSessionsButton.addEventListener("click", () => elements.recentSessionsDialog.close());
+
+for (const trigger of document.querySelectorAll("[data-pending-reviews-open]")) {
+  trigger.addEventListener("click", openPendingReviewsDialog);
+}
+elements.markAllPendingReviewedButton.addEventListener("click", () => {
+  markAllPendingReviewed().catch((error) => toast(error.message));
+});
+elements.closePendingReviewsButton.addEventListener("click", () => elements.pendingReviewsDialog.close());
+
 elements.expandProjectsButton.addEventListener("click", () => setPanelCollapsed("projects", false));
 elements.collapseChatsButton.addEventListener("click", () => setPanelCollapsed("chats", true));
 elements.expandChatsButton.addEventListener("click", () => setPanelCollapsed("chats", false));
@@ -3842,6 +4156,13 @@ elements.modelButton.addEventListener("click", () => {
   renderModelDialog();
   elements.modelDialog.showModal();
 });
+function changeReasoningLevel(event) {
+  const level = event.currentTarget.value;
+  const payload = state.engine === "claude" ? { type: "setEffort", effort: level } : { type: "setThinking", level };
+  if (!sendSocket(payload)) toast("Not connected");
+}
+elements.reasoningLevelSelect.addEventListener("change", changeReasoningLevel);
+elements.mobileReasoningLevelSelect.addEventListener("change", changeReasoningLevel);
 elements.safeguardsButton.addEventListener("click", () => {
   if (!socketOpen()) {
     toast("Conversation is not connected yet");
@@ -3881,16 +4202,86 @@ elements.terminalInput.addEventListener("keydown", (event) => {
 elements.clearTerminalButton.addEventListener("click", () => { elements.terminalOutput.textContent = ""; });
 elements.closeTerminalButton.addEventListener("click", () => elements.terminalDialog.close());
 elements.terminalDialog.addEventListener("close", closeTerminalSocket);
-elements.cancelSessionTransferButton.addEventListener("click", () => elements.sessionTransferDialog.close());
+function setOwnershipTransferControls(disabled) {
+  elements.sessionTransferNodeSelect.disabled = disabled;
+  elements.sessionTransferForm.querySelector('[type="submit"]').disabled = disabled;
+  elements.sessionTakeOwnershipButton.disabled = disabled;
+}
+
+function resetOwnershipWait() {
+  if (ownershipWait) ownershipWait.resolve(false);
+  ownershipWait = null;
+  ownershipTaking = false;
+  elements.sessionTransferProgress.hidden = true;
+  elements.sessionTransferWaitProgress.value = TAKE_OWNERSHIP_WAIT_SECONDS;
+  elements.sessionTransferStatus.textContent = "Waiting for Syncthing…";
+  elements.skipSessionTransferWaitButton.disabled = false;
+  setOwnershipTransferControls(false);
+}
+
+function waitForOwnershipSync() {
+  if (ownershipWait) return ownershipWait.promise;
+  elements.sessionTransferProgress.hidden = false;
+  setOwnershipTransferControls(true);
+  let seconds = TAKE_OWNERSHIP_WAIT_SECONDS;
+  elements.sessionTransferStatus.textContent = `Waiting ${seconds}s for Syncthing to finish…`;
+  const wait = { promise: null, resolve: null, settled: false };
+  const promise = new Promise((resolve) => {
+    const finish = (value) => {
+      if (wait.settled) return;
+      wait.settled = true;
+      clearInterval(interval);
+      resolve(value);
+    };
+    const interval = setInterval(() => {
+      seconds -= 1;
+      elements.sessionTransferWaitProgress.value = seconds;
+      elements.sessionTransferStatus.textContent = seconds ? `Waiting ${seconds}s for Syncthing to finish…` : "Syncthing wait finished.";
+      if (!seconds) finish(true);
+    }, 1000);
+    wait.resolve = finish;
+  });
+  wait.promise = promise;
+  ownershipWait = wait;
+  return promise;
+}
+
+function skipOwnershipWait() {
+  ownershipWait?.resolve(true);
+}
+
+async function takeActiveSessionOwnership() {
+  const session = activeChatSession();
+  if (ownershipWait || ownershipTaking || state.activeTaskId || state.engine !== "pi" || !state.activeProjectId || !session) return;
+  const destination = state.sessionNodes.find((node) => node.id === elements.sessionTransferNodeSelect.value);
+  if (!destination?.mapped) throw new Error("Map project first on the destination node");
+  const proceed = await waitForOwnershipSync();
+  if (!proceed) return;
+  ownershipTaking = true;
+  elements.sessionTransferStatus.textContent = "Taking ownership…";
+  try {
+    const result = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/take-ownership`, {
+      method: "POST", body: JSON.stringify({ peerId: destination.id, sessionId: session.id, sessionPath: session.path, sessionName: shortSessionTitle(session) }),
+    });
+    state.activeNodeId = destination.id;
+    state.activeSessionId = null;
+    if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: destination.id, activeSessionId: null });
+    elements.sessionTransferDialog.close();
+    openSession(result.sessionPath, shortSessionTitle(session));
+    toast(result.pendingPeerIds?.length ? "Ownership taken; offline nodes will update when they return" : "Ownership taken");
+  } catch (error) { resetOwnershipWait(); throw error; }
+}
+
+elements.transferSessionButton.addEventListener("click", () => {
+  elements.sessionTakeOwnershipButton.hidden = Boolean(state.activeTaskId || state.engine !== "pi");
+  resetOwnershipWait();
+});
+elements.cancelSessionTransferButton.addEventListener("click", () => { resetOwnershipWait(); elements.sessionTransferDialog.close(); });
+elements.sessionTransferDialog.addEventListener("close", resetOwnershipWait);
+elements.sessionTakeOwnershipButton.addEventListener("click", () => takeActiveSessionOwnership().catch((error) => toast(error.message, 8000)));
+elements.skipSessionTransferWaitButton.addEventListener("click", skipOwnershipWait);
 elements.sessionTransferForm.addEventListener("submit", transferActiveSession);
 elements.closeModelDialogButton.addEventListener("click", () => elements.modelDialog.close());
-elements.reasoningLevelSelect.addEventListener("change", () => {
-  const selectedLevel = elements.reasoningLevelSelect.value;
-  const sent = state.engine === "claude"
-    ? sendSocket({ type: "setEffort", effort: selectedLevel })
-    : sendSocket({ type: "setThinking", level: selectedLevel });
-  if (!sent) toast("Not connected");
-});
 elements.chatMoreMenu.addEventListener("click", (event) => {
   if (event.target instanceof Element && event.target.closest("button")) elements.chatMoreMenu.removeAttribute("open");
 });

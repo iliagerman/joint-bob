@@ -25,17 +25,23 @@ function piSessionDir(cwd: string): string {
   return path.join(os.homedir(), ".pi/agent/sessions", safePath);
 }
 
+function flatPiSessionDir(): string {
+  return path.join(os.homedir(), ".pi/agent/sessions");
+}
+
 export function sessionWatchDirs(project: SessionProjectPaths): string[] {
   return [...new Set([...sessionCwds(project).map(piSessionDir), ...claudeProjectDirs(project)])];
 }
 
 export class SessionWatcher {
   private projects = new Map<string, WatchedProject>();
+  private flatWatcher: FSWatcher | null = null;
   private rescanTimer: NodeJS.Timeout;
 
   constructor(private listener: SessionChangeListener) {
     this.rescanTimer = setInterval(() => this.rescan(), RESCAN_MS);
     this.rescanTimer.unref();
+    this.watchFlatDir();
   }
 
   ensureProject(project: ProjectRecord): void {
@@ -52,6 +58,17 @@ export class SessionWatcher {
     if (project.debounceTimer) clearTimeout(project.debounceTimer);
     for (const watcher of project.dirWatchers.values()) watcher.close();
     this.projects.delete(projectId);
+  }
+
+  close(): void {
+    clearInterval(this.rescanTimer);
+    this.flatWatcher?.close();
+    this.flatWatcher = null;
+    for (const project of this.projects.values()) {
+      if (project.debounceTimer) clearTimeout(project.debounceTimer);
+      for (const watcher of project.dirWatchers.values()) watcher.close();
+    }
+    this.projects.clear();
   }
 
   private watchDirs(projectId: string): void {
@@ -78,7 +95,26 @@ export class SessionWatcher {
     }
   }
 
+  private watchFlatDir(): void {
+    if (this.flatWatcher) return;
+    const dir = flatPiSessionDir();
+    try {
+      const watcher = watch(dir, (_eventType, fileName) => {
+        for (const projectId of this.projects.keys()) this.handleEvent(projectId, dir, fileName);
+      });
+      watcher.unref();
+      watcher.on("error", () => {
+        watcher.close();
+        if (this.flatWatcher === watcher) this.flatWatcher = null;
+      });
+      this.flatWatcher = watcher;
+    } catch {
+      // Directory does not exist yet (e.g. no flat sessions created); rescan picks it up later.
+    }
+  }
+
   private rescan(): void {
+    this.watchFlatDir();
     for (const projectId of this.projects.keys()) this.watchDirs(projectId);
   }
 

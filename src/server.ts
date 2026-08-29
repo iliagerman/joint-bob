@@ -1,10 +1,11 @@
 import express, { type NextFunction, type Request, type Response } from "express";
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { execFile } from "node:child_process";
 import { constants as fsConstants, createReadStream } from "node:fs";
-import { access, appendFile, lstat, mkdir, readdir, realpath, stat, unlink, writeFile } from "node:fs/promises";
+import { access, appendFile, lstat, mkdir, readdir, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import os from "node:os";
+import { Readable } from "node:stream";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -44,10 +45,10 @@ import { getUserPreferences, updateUserPreferences } from "./preferences.js";
 import { markConversationReviewed, markConversationsReviewed, syncConversationReviewStates } from "./conversation-reviews.js";
 import { resetSyncthingConnection } from "./syncthing.js";
 import { PROJECT_COLORS } from "./types.js";
-import type { ChatMessage, ProjectRecord, ProjectSyncStatus, ProjectView, SessionStatus, TaskPhase, TaskPhaseConfig, TaskRecord } from "./types.js";
+import type { ChatMessage, ProjectRecord, ProjectSyncStatus, ProjectView, SessionStatus, SessionSummary, TaskPhase, TaskPhaseConfig, TaskRecord } from "./types.js";
 import { webSocketCloseReason } from "./websocket.js";
 import { capturePiRecoverySnapshot, recoverPiSessionDirectory, resolveLocalSessionPath } from "./session-paths.js";
-import { beginConversationRecovery, beginConversationTransfer, commitConversationTransfer, compareAndSetConversationOwnership, ConversationOwnershipError, finalizeConversationClaim, finishConversationRecovery, getConversationOwnership, sameConversationOwnership, type ConversationEngine, type ConversationOwnership, type OwnershipApplyResult } from "./conversation-ownership.js";
+import { beginConversationRecovery, beginConversationTransfer, commitConversationTransfer, compareAndSetConversationOwnership, ConversationOwnershipError, finalizeConversationClaim, finishConversationRecovery, getConversationOwnership, sameConversationOwnership, takeConversationOwnership, type ConversationEngine, type ConversationOwnership, type OwnershipApplyResult } from "./conversation-ownership.js";
 import { attachTerminalSession } from "./terminal-session.js";
 
 type PiSessionHandle = Awaited<ReturnType<typeof createPiSession>>;
@@ -114,9 +115,13 @@ const machineRoutes = new Set([
   "POST /cluster/projects/import",
   "POST /cluster/projects/map",
   "GET /cluster/filesystem/directories",
+  "GET /cluster/project-file",
+  "GET /cluster/project-file-content",
+  "PUT /cluster/project-file-content",
   "POST /cluster/sync/share",
   "POST /cluster/sessions/receive",
   "POST /cluster/sessions/transfer",
+  "POST /cluster/sessions/take-ownership",
   "GET /cluster/sessions/ownership",
   "POST /cluster/sessions/ownership/claim",
   "POST /cluster/sessions/ownership/claim/cas",
@@ -245,6 +250,12 @@ const githubCredentialSyncSchema = z.object({ peerIds: z.array(z.string().uuid()
 const directoryBrowseSchema = z.object({
   path: absolutePathSchema.optional(),
 });
+const TEXT_FILE_LIMIT = 1_048_576;
+const projectFileUpdateSchema = z.object({
+  content: z.string().max(TEXT_FILE_LIMIT),
+  version: z.string().regex(/^[0-9a-f]{64}$/),
+  sessionId: z.string().min(1).max(240),
+}).strict();
 const sessionTransferSchema = z.object({
   peerId: z.string().uuid(),
   sourceNodeId: z.string().uuid().optional(),
@@ -253,6 +264,7 @@ const sessionTransferSchema = z.object({
   sessionName: z.string().trim().max(120).optional(),
 });
 const routedSessionTransferSchema = sessionTransferSchema.omit({ sourceNodeId: true }).extend({ projectId: z.string().min(1) });
+const routedSessionTakeOwnershipSchema = sessionTransferSchema.pick({ peerId: true, sessionId: true, sessionPath: true, sessionName: true }).extend({ projectId: z.string().min(1) });
 const receivedSessionTransferSchema = z.object({
   projectId: z.string().min(1),
   engine: z.enum(["pi", "claude"]),
@@ -2130,6 +2142,44 @@ app.get("/api/projects/:projectId/skills", async (request, response, next) => {
   }
 });
 
+/**
+ * Shared by the per-project conversation list and the cross-project review inbox, so both
+ * see the same running detection and the same persisted review watermarks.
+ */
+async function listProjectSessionsWithReviewState(project: ProjectRecord, userId: string): Promise<SessionSummary[]> {
+  const tasks = await listTasks(project.id);
+  const pinnedSessionPaths = getUserPreferences(userId).pinnedSessionPaths;
+  const sessions = await listHarnessSessions({
+    ...project,
+    additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []),
+  }, pinnedSessionPaths);
+  const tasksBySessionPath = new Map(tasks.filter((task) => task.sessionPath).map((task) => [task.sessionPath, task]));
+  const listedSessions = sessions.map((session) => {
+    const task = tasksBySessionPath.get(session.path);
+    const shared = sharedSessions.get(sessionKey(task ? taskCwd(project, task) : project.path, session.path));
+    const config = task?.executionState === "running" ? taskConfig(task, taskPhase(task)) : undefined;
+    const agentLabel = config ? (config.engine === "pi" ? "Pi" : "Claude") : session.agentLabel;
+    const livePiModel = (!config || config.engine === "pi") && shared
+      ? getSessionStatus(shared.handle.session, shared.handle.safeguardsEnabled).model?.label
+      : undefined;
+    const agentModel = config?.modelId || livePiModel;
+    return {
+      ...session,
+      agentLabel,
+      ...(agentModel ? { agentModel } : {}),
+      taskStatus: task?.status,
+      taskId: task?.id,
+      running: Boolean(
+        shared?.handle.session.isStreaming
+        || task?.executionState === "running"
+        || runningClaudeSessionPaths.has(claudeRunKey(project.id, session.path)),
+      ),
+    };
+  });
+  const reviewStates = syncConversationReviewStates(userId, project.id, listedSessions);
+  return listedSessions.map((session) => ({ ...session, reviewState: reviewStates.get(session.path) }));
+}
+
 app.get("/api/projects/:projectId/sessions", async (request, response, next) => {
   try {
     const project = await getProject(request.params.projectId);
@@ -2138,40 +2188,8 @@ app.get("/api/projects/:projectId/sessions", async (request, response, next) => 
       return;
     }
     await touchProject(project.id);
-    const tasks = await listTasks(project.id);
-    const pinnedSessionPaths = getUserPreferences((response.locals.authSession as AuthSession).userId).pinnedSessionPaths;
-    const sessions = await listHarnessSessions({
-      ...project,
-      additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []),
-    }, pinnedSessionPaths);
-    const tasksBySessionPath = new Map(tasks.filter((task) => task.sessionPath).map((task) => [task.sessionPath, task]));
-    const listedSessions = sessions.map((session) => {
-      const task = tasksBySessionPath.get(session.path);
-      const shared = sharedSessions.get(sessionKey(task ? taskCwd(project, task) : project.path, session.path));
-      const config = task?.executionState === "running" ? taskConfig(task, taskPhase(task)) : undefined;
-      const agentLabel = config ? (config.engine === "pi" ? "Pi" : "Claude") : session.agentLabel;
-      const livePiModel = (!config || config.engine === "pi") && shared
-        ? getSessionStatus(shared.handle.session, shared.handle.safeguardsEnabled).model?.label
-        : undefined;
-      const agentModel = config?.modelId || livePiModel;
-      return {
-        ...session,
-        agentLabel,
-        ...(agentModel ? { agentModel } : {}),
-        taskStatus: task?.status,
-        taskId: task?.id,
-        running: Boolean(
-          shared?.handle.session.isStreaming
-          || task?.executionState === "running"
-          || runningClaudeSessionPaths.has(claudeRunKey(project.id, session.path)),
-        ),
-      };
-    });
     const authSession = response.locals.authSession as AuthSession;
-    const reviewStates = syncConversationReviewStates(authSession.userId, project.id, listedSessions);
-    response.json({
-      sessions: listedSessions.map((session) => ({ ...session, reviewState: reviewStates.get(session.path) })),
-    });
+    response.json({ sessions: await listProjectSessionsWithReviewState(project, authSession.userId) });
   } catch (error) {
     next(error);
   }
@@ -2184,6 +2202,8 @@ function ownershipEvent(record: ConversationOwnership, originNodeId: string) {
   };
 }
 
+class OwnershipAcknowledgementError extends Error {}
+
 async function applyOwnershipToPeer(peer: ClusterPeer, record: ConversationOwnership, originNodeId: string): Promise<OwnershipApplyResult> {
   const token = await getClusterMachineToken();
   const response = await fetch(`${peer.url}/api/cluster/sessions/ownership/apply`, {
@@ -2192,7 +2212,7 @@ async function applyOwnershipToPeer(peer: ClusterPeer, record: ConversationOwner
     body: JSON.stringify({ record, originNodeId }), signal: AbortSignal.timeout(3_000),
   });
   const result = await response.json() as OwnershipApplyResult & { error?: string };
-  if (!response.ok) throw new Error(result.error || `Ownership acknowledgement failed from ${peer.name}`);
+  if (!response.ok) throw new OwnershipAcknowledgementError(result.error || `Ownership acknowledgement failed from ${peer.name}`);
   return result;
 }
 
@@ -2390,6 +2410,30 @@ async function transferLocalSession(project: ProjectRecord, payload: z.infer<typ
   }
 }
 
+async function takeLocalSessionOwnership(project: ProjectRecord, payload: z.infer<typeof routedSessionTakeOwnershipSchema>): Promise<{ sessionPath: string; ownership: ConversationOwnership; pendingPeerIds: string[] }> {
+  const [local, sessions, peers] = await Promise.all([getClusterNode(), listHarnessSessions(project), listClusterPeers()]);
+  if (payload.peerId !== local.id) throw new Error("Takeover destination is not this node");
+  const matching = payload.sessionId ? sessions.find((session) => session.id === payload.sessionId) : sessions.find((session) => session.path === payload.sessionPath);
+  if (!matching) throw new TaskWorktreeError("Conversation was not found on the destination node");
+  if (matching.path.startsWith("claude:")) throw new TaskWorktreeError("Only Pi conversations can be taken over");
+  const sessionId = conversationOwnershipId(matching);
+  if (conversationIsActive(project.id, "pi", sessionId, matching.path)) throw new TaskWorktreeError("Wait for the current turn to finish before taking ownership");
+  const ownership = await takeConversationOwnership("pi", sessionId, local.id);
+  const settled = await Promise.allSettled(peers.map((peer) => applyOwnershipToPeer(peer, ownership, local.id)));
+  const pendingPeerIds: string[] = [];
+  for (const [index, result] of settled.entries()) {
+    if (result.status === "rejected") {
+      const error = result.reason;
+      if (error instanceof TypeError || error instanceof DOMException && error.name === "TimeoutError") { pendingPeerIds.push(peers[index].id); continue; }
+      throw error;
+    }
+    if (!result.value.accepted || !sameConversationOwnership(result.value.current ?? undefined, ownership)) {
+      throw new Error(`Peer rejected ownership state: ${JSON.stringify(result.value.current)}`);
+    }
+  }
+  return { sessionPath: matching.path, ownership, pendingPeerIds };
+}
+
 async function requestDestinationTransfer(peer: ClusterPeer, projectId: string, sessionPath: string, ownership: ConversationOwnership, sourceNodeId: string): Promise<unknown> {
   const token = await getClusterMachineToken();
   const response = await fetch(`${peer.url}/api/cluster/sessions/receive`, {
@@ -2463,6 +2507,36 @@ app.put("/api/projects/:projectId/sessions/reviewed-all", async (request, respon
   }
 });
 
+/**
+ * The review inbox spans every project, so it scans them all. Sessions without an `updatedAt`
+ * carry no watermark and could never be marked reviewed, so they are left out.
+ */
+app.get("/api/reviews/pending", async (_request, response, next) => {
+  try {
+    const authSession = response.locals.authSession as AuthSession;
+    const projects = await projectsWithSharedNames(false);
+    const groups = await Promise.all(projects.map(async (project) => {
+      const sessions = await listProjectSessionsWithReviewState(project, authSession.userId);
+      return {
+        projectId: project.id,
+        projectName: project.name,
+        sessions: sessions
+          .filter((session) => session.reviewState === "needs_review" && !session.running && session.updatedAt)
+          .map((session) => ({
+            id: session.id,
+            path: session.path,
+            title: session.title,
+            agentLabel: session.agentLabel,
+            updatedAt: session.updatedAt,
+          })),
+      };
+    }));
+    response.json({ projects: groups.filter((group) => group.sessions.length > 0) });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/api/projects/:projectId/sessions/transfer", async (request, response, next) => {
   try {
     const project = await getProject(request.params.projectId);
@@ -2503,6 +2577,36 @@ app.post("/api/cluster/sessions/transfer", async (request, response, next) => {
     if (error instanceof Error && error.message === "Peer not found") { sendError(response, 404, error.message); return; }
     next(error);
   }
+});
+
+app.post("/api/cluster/sessions/take-ownership", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const payload = routedSessionTakeOwnershipSchema.parse(request.body);
+    const project = await getProject(payload.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    response.json(await takeLocalSessionOwnership(project, payload));
+  } catch (error) {
+    if (error instanceof TaskWorktreeError) { sendError(response, 409, error.message); return; }
+    next(error);
+  }
+});
+
+app.post("/api/projects/:projectId/sessions/take-ownership", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    const payload = sessionTransferSchema.pick({ peerId: true, sessionId: true, sessionPath: true, sessionName: true }).parse(request.body);
+    const local = await getClusterNode();
+    if (payload.peerId === local.id) { response.json(await takeLocalSessionOwnership(project, { ...payload, projectId: project.id })); return; }
+    const peer = await getClusterPeer(payload.peerId);
+    if (!peer) { sendError(response, 404, "Peer not found"); return; }
+    const routed = await fetch(`${peer.url}/api/cluster/sessions/take-ownership`, {
+      method: "POST", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ ...payload, projectId: project.id }), signal: AbortSignal.timeout(35_000),
+    });
+    response.status(routed.status).json(await routed.json());
+  } catch (error) { next(error); }
 });
 
 app.post("/api/cluster/sessions/receive", async (request, response, next) => {
@@ -2798,58 +2902,181 @@ app.delete("/api/projects/:projectId/tasks/:taskId", async (request, response, n
   }
 });
 
-app.get("/api/projects/:projectId/file", async (request, response, next) => {
+class ProjectFileError extends Error {
+  constructor(readonly status: number, message: string) { super(message); }
+}
+
+async function resolveProjectFile(projectId: string, requestedPath: string): Promise<{ project: ProjectRecord; resolved: string; info: Awaited<ReturnType<typeof stat>> }> {
+  const project = await getProject(projectId);
+  if (!project) throw new ProjectFileError(404, "Project not found");
+  if (!requestedPath.trim()) throw new ProjectFileError(400, "File path is required");
+  const projectRoot = await realpath(project.path);
+  const prefix = `${projectRoot}${path.sep}`;
+  const projectPath = path.isAbsolute(requestedPath) && requestedPath !== projectRoot && !requestedPath.startsWith(prefix) ? requestedPath.replace(/^[/\\]+/, "") : requestedPath;
+  const requestedFile = path.resolve(projectRoot, projectPath);
+  if (path.relative(projectRoot, requestedFile).startsWith("..") || path.isAbsolute(path.relative(projectRoot, requestedFile))) throw new ProjectFileError(403, "File is outside the project directory");
+  let resolved: string;
+  let info: Awaited<ReturnType<typeof stat>>;
+  try { resolved = await realpath(requestedFile); info = await stat(resolved); }
+  catch { throw new ProjectFileError(404, "File not found"); }
+  if (path.relative(projectRoot, resolved).startsWith("..") || path.isAbsolute(path.relative(projectRoot, resolved))) throw new ProjectFileError(403, "File is outside the project directory");
+  if (!info.isFile()) throw new ProjectFileError(400, "Path is not a file");
+  return { project, resolved, info };
+}
+
+function fileVersion(bytes: Buffer): string { return createHash("sha256").update(bytes).digest("hex"); }
+
+function textFile(bytes: Buffer): string {
+  if (bytes.includes(0)) throw new ProjectFileError(415, "File is not valid UTF-8 text");
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+  catch { throw new ProjectFileError(415, "File is not valid UTF-8 text"); }
+}
+
+async function sendProjectFile(response: Response, projectId: string, requestedPath: string, download: boolean): Promise<void> {
   try {
-    const project = await getProject(request.params.projectId);
-    if (!project) {
-      sendError(response, 404, "Project not found");
-      return;
-    }
-    const requestedPath = typeof request.query.path === "string" ? request.query.path : "";
-    if (!requestedPath.trim()) {
-      sendError(response, 400, "File path is required");
-      return;
-    }
-    const projectRoot = await realpath(project.path);
-    const projectAbsolutePrefix = `${projectRoot}${path.sep}`;
-    const isProjectAbsolute = requestedPath === projectRoot || requestedPath.startsWith(projectAbsolutePrefix);
-    const projectPath = path.isAbsolute(requestedPath) && !isProjectAbsolute
-      ? requestedPath.replace(/^[/\\]+/, "")
-      : requestedPath;
-    const requestedFile = path.resolve(projectRoot, projectPath);
-    const requestedRelative = path.relative(projectRoot, requestedFile);
-    if (requestedRelative.startsWith("..") || path.isAbsolute(requestedRelative)) {
-      sendError(response, 403, "File is outside the project directory");
-      return;
-    }
-    let resolved;
-    let info;
-    try {
-      resolved = await realpath(requestedFile);
-      info = await stat(resolved);
-    } catch {
-      sendError(response, 404, "File not found");
-      return;
-    }
-    const resolvedRelative = path.relative(projectRoot, resolved);
-    if (resolvedRelative.startsWith("..") || path.isAbsolute(resolvedRelative)) {
-      sendError(response, 403, "File is outside the project directory");
-      return;
-    }
-    if (!info.isFile()) {
-      sendError(response, 400, "Path is not a file");
-      return;
-    }
+    const { resolved, info } = await resolveProjectFile(projectId, requestedPath);
     const fileName = path.basename(resolved).replace(/["\r\n]/g, "");
-    const disposition = request.query.download === "1" ? "attachment" : "inline";
     response.type(resolved);
-    response.setHeader("Content-Disposition", `${disposition}; filename="${fileName}"`);
+    response.setHeader("Content-Disposition", `${download ? "attachment" : "inline"}; filename="${fileName}"`);
     response.setHeader("Content-Length", String(info.size));
     createReadStream(resolved).pipe(response);
   } catch (error) {
-    next(error);
+    if (error instanceof ProjectFileError) { sendError(response, error.status, error.message); return; }
+    throw error;
   }
+}
+
+async function projectFileContent(projectId: string, requestedPath: string): Promise<{ path: string; content: string; version: string }> {
+  const { resolved, info } = await resolveProjectFile(projectId, requestedPath);
+  if (info.size > TEXT_FILE_LIMIT) throw new ProjectFileError(413, "File is too large to edit");
+  const bytes = await readFile(resolved);
+  return { path: requestedPath, content: textFile(bytes), version: fileVersion(bytes) };
+}
+
+async function assertProjectFileConversationOwner(project: ProjectRecord, sessionId: string): Promise<void> {
+  const session = (await listHarnessSessions(project)).find((candidate) => candidate.id === sessionId);
+  if (!session) throw new ProjectFileError(409, "Conversation was not found on this node");
+  try {
+    await requireLocalConversationOwner(session.path.startsWith("claude:") ? "claude" : "pi", conversationOwnershipId(session));
+  } catch (error) {
+    if (error instanceof ConversationOwnershipError) throw new ProjectFileError(409, error.message);
+    throw error;
+  }
+}
+
+async function updateProjectFileContent(projectId: string, requestedPath: string, payload: z.infer<typeof projectFileUpdateSchema>): Promise<{ path: string; version: string }> {
+  const { project, resolved, info } = await resolveProjectFile(projectId, requestedPath);
+  await assertProjectEditable(project);
+  await assertProjectFileConversationOwner(project, payload.sessionId);
+  const nextBytes = Buffer.from(payload.content, "utf8");
+  if (nextBytes.length > TEXT_FILE_LIMIT) throw new ProjectFileError(413, "File is too large to edit");
+  const current = await readFile(resolved);
+  if (fileVersion(current) !== payload.version) throw new ProjectFileError(409, "File changed since it was opened");
+  textFile(current);
+  const temporary = path.join(path.dirname(resolved), `.${path.basename(resolved)}.${randomUUID()}.tmp`);
+  try { await writeFile(temporary, nextBytes, { mode: Number(info.mode) }); await rename(temporary, resolved); }
+  catch (error) {
+    try { await unlink(temporary); }
+    catch (cleanupError) {
+      if ((cleanupError as NodeJS.ErrnoException).code !== "ENOENT") throw cleanupError;
+    }
+    throw error;
+  }
+  return { path: requestedPath, version: fileVersion(nextBytes) };
+}
+
+async function proxyProjectFile(response: Response, peer: ClusterPeer, projectId: string, requestedPath: string, download: boolean): Promise<void> {
+  const url = new URL("/api/cluster/project-file", peer.url);
+  url.searchParams.set("projectId", projectId);
+  url.searchParams.set("path", requestedPath);
+  if (download) url.searchParams.set("download", "1");
+  const routed = await fetch(url, { headers: { Authorization: `Bearer ${peer.token}` }, signal: AbortSignal.timeout(30_000) });
+  for (const header of ["content-type", "content-disposition", "content-length"] as const) {
+    const value = routed.headers.get(header);
+    if (value) response.setHeader(header, value);
+  }
+  response.status(routed.status);
+  if (!routed.body) { response.end(); return; }
+  Readable.fromWeb(routed.body as unknown as import("node:stream/web").ReadableStream).pipe(response);
+}
+
+app.get("/api/cluster/project-file", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const projectId = typeof request.query.projectId === "string" ? request.query.projectId : "";
+    const requestedPath = typeof request.query.path === "string" ? request.query.path : "";
+    await sendProjectFile(response, projectId, requestedPath, request.query.download === "1");
+  } catch (error) { next(error); }
 });
+
+app.get("/api/projects/:projectId/file", async (request, response, next) => {
+  try {
+    const requestedPath = typeof request.query.path === "string" ? request.query.path : "";
+    const requestedNodeId = typeof request.query.nodeId === "string" ? request.query.nodeId : "";
+    const local = await getClusterNode();
+    if (requestedNodeId && requestedNodeId !== local.id) {
+      const peer = await getClusterPeer(requestedNodeId);
+      if (!peer) { sendError(response, 404, "File node not found"); return; }
+      await proxyProjectFile(response, peer, request.params.projectId, requestedPath, request.query.download === "1");
+      return;
+    }
+    await sendProjectFile(response, request.params.projectId, requestedPath, request.query.download === "1");
+  } catch (error) { next(error); }
+});
+
+async function proxyProjectFileContent(response: Response, peer: ClusterPeer, projectId: string, requestedPath: string, request?: Request): Promise<void> {
+  const url = new URL("/api/cluster/project-file-content", peer.url);
+  url.searchParams.set("projectId", projectId);
+  url.searchParams.set("path", requestedPath);
+  const routed = await fetch(url, {
+    method: request?.method ?? "GET",
+    headers: { Authorization: `Bearer ${peer.token}`, ...(request ? { "Content-Type": "application/json" } : {}) },
+    ...(request ? { body: JSON.stringify(request.body) } : {}),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const contentType = routed.headers.get("content-type");
+  if (contentType) response.setHeader("Content-Type", contentType);
+  response.status(routed.status).send(await routed.text());
+}
+
+async function sendProjectFileContent(response: Response, projectId: string, requestedPath: string, payload?: z.infer<typeof projectFileUpdateSchema>): Promise<void> {
+  try { response.json(payload ? await updateProjectFileContent(projectId, requestedPath, payload) : await projectFileContent(projectId, requestedPath)); }
+  catch (error) {
+    if (error instanceof ProjectFileError) { sendError(response, error.status, error.message); return; }
+    throw error;
+  }
+}
+
+app.get("/api/cluster/project-file-content", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    await sendProjectFileContent(response, String(request.query.projectId ?? ""), String(request.query.path ?? ""));
+  } catch (error) { next(error); }
+});
+
+app.put("/api/cluster/project-file-content", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    await sendProjectFileContent(response, String(request.query.projectId ?? ""), String(request.query.path ?? ""), projectFileUpdateSchema.parse(request.body));
+  } catch (error) { next(error); }
+});
+
+for (const method of ["get", "put"] as const) {
+  app[method]("/api/projects/:projectId/file-content", async (request, response, next) => {
+    try {
+      const requestedPath = typeof request.query.path === "string" ? request.query.path : "";
+      const nodeId = typeof request.query.nodeId === "string" ? request.query.nodeId : "";
+      const local = await getClusterNode();
+      if (nodeId && nodeId !== local.id) {
+        const peer = await getClusterPeer(nodeId);
+        if (!peer) { sendError(response, 404, "File node not found"); return; }
+        await proxyProjectFileContent(response, peer, request.params.projectId, requestedPath, method === "put" ? request : undefined);
+        return;
+      }
+      await sendProjectFileContent(response, request.params.projectId, requestedPath, method === "put" ? projectFileUpdateSchema.parse(request.body) : undefined);
+    } catch (error) { next(error); }
+  });
+}
 
 app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
   if (error instanceof z.ZodError) {

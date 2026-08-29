@@ -68,20 +68,15 @@ async function pairNode(local: NodeFixture, remote: NodeFixture, home: string): 
 
 function startNode(node: NodeFixture, home: string, invocationLog: string, holdDir: string, dropAck = false): Promise<ChildProcess> {
   return new Promise((resolve, reject) => {
-    const code = `
-      const { server } = await import('./src/server.ts');
-      server.listen(Number(process.argv[1]), '127.0.0.1', () => console.log('READY'));
-      process.on('SIGTERM', () => server.close(() => process.exit(0)));
-    `;
-    const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", code, String(node.port)], {
+    const child = spawn(process.execPath, ["--import", "tsx", "src/server.ts"], {
       cwd: process.cwd(),
-      env: { ...process.env, NODE_ENV: "test", HOME: home, JOINT_BOB_DATA_DIR: node.dataDir, JOINT_BOB_TEST_ENGINE_LOG: invocationLog, JOINT_BOB_TEST_ENGINE_HOLD_DIR: holdDir, ...(dropAck ? { JOINT_BOB_TEST_DROP_TRANSFER_ACK_ONCE: "1" } : {}) },
+      env: { ...process.env, PORT: String(node.port), NODE_ENV: "test", HOME: home, JOINT_BOB_DATA_DIR: node.dataDir, JOINT_BOB_TEST_ENGINE_LOG: invocationLog, JOINT_BOB_TEST_ENGINE_HOLD_DIR: holdDir, ...(dropAck ? { JOINT_BOB_TEST_DROP_TRANSFER_ACK_ONCE: "1" } : {}) },
       stdio: ["ignore", "pipe", "pipe"],
     });
     const timeout = setTimeout(() => reject(new Error("Server startup timed out")), 10_000);
     child.once("exit", (status) => reject(new Error(`Server exited during startup: ${status}`)));
     child.stdout!.on("data", (chunk) => {
-      if (!String(chunk).includes("READY")) return;
+      if (!String(chunk).includes("Joint Bob listening")) return;
       clearTimeout(timeout);
       resolve(child);
     });
@@ -102,6 +97,22 @@ async function machinePostAs(authenticator: NodeFixture, target: NodeFixture, ro
 
 function machinePost(node: NodeFixture, route: string, body: unknown): Promise<{ status: number; body: Record<string, unknown> }> {
   return machinePostAs(node, node, route, body);
+}
+
+async function machineGetAs(authenticator: NodeFixture, target: NodeFixture, route: string): Promise<{ status: number; body: Record<string, unknown> }> {
+  const response = await fetch(`${target.url}${route}`, { headers: { Authorization: `Bearer ${authenticator.token}` } });
+  return { status: response.status, body: await response.json() as Record<string, unknown> };
+}
+
+async function waitForOwnership(node: NodeFixture, authenticator: NodeFixture, sessionId: string, ownerNodeId: string, epoch: number): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const result = await machineGetAs(authenticator, node, `/api/cluster/sessions/ownership?engine=pi&sessionId=${encodeURIComponent(sessionId)}`);
+    const ownership = result.body.ownership as Record<string, unknown> | null;
+    if (result.status === 200 && ownership?.ownerNodeId === ownerNodeId && ownership.epoch === epoch) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("Timed out waiting for replicated ownership");
 }
 
 async function waitForInvocation(invocationLog: string, expected: string): Promise<void> {
@@ -229,6 +240,30 @@ async function exercisePiOwnership(
   assert.deepEqual((await readFile(invocationLog, "utf8")).trim().split("\n"), [
     `claude:${source.id}`, `pi:${source.id}`, `pi:${destination.id}`, `pi:${destination.id}`,
   ]);
+  for (const socket of sockets.splice(0)) socket.terminate();
+  await stopNode(children.pop()!);
+  const takeover = await machinePost(source, "/api/cluster/sessions/take-ownership", {
+    projectId: source.projectId, peerId: source.id, sessionId, sessionPath: transcriptPath,
+  });
+  assert.equal(takeover.status, 200, JSON.stringify(takeover.body));
+  const ownership = takeover.body.ownership as Record<string, unknown>;
+  assert.equal(ownership.ownerNodeId, source.id);
+  assert.equal(ownership.epoch, 3);
+  assert.deepEqual(takeover.body.pendingPeerIds, [destination.id]);
+  const sourceTakeoverSocket = await openConversation(source, source.projectId, transcriptPath);
+  sockets.push(sourceTakeoverSocket);
+  assert.equal((await prompt(sourceTakeoverSocket, "source takeover write")).type, "textDelta");
+  children.push(await startNode(destination, home, invocationLog, holdDir));
+  await waitForOwnership(destination, source, sessionId, source.id, Number(ownership.epoch));
+  const staleDestinationSocket = await openConversation(destination, source.projectId, transcriptPath);
+  sockets.push(staleDestinationSocket);
+  const staleWrite = await prompt(staleDestinationSocket, "stale destination write");
+  assert.equal(staleWrite.type, "error");
+  assert.match(String(staleWrite.error), new RegExp(source.id));
+  assert.equal((await readFile(invocationLog, "utf8")).trim().split("\n").includes(`pi:${destination.id}`), true);
+  const invocations = (await readFile(invocationLog, "utf8")).trim().split("\n");
+  assert.equal(invocations.filter((entry) => entry === `pi:${destination.id}`).length, 2);
+  assert.equal(invocations[invocations.length - 1], `pi:${source.id}`);
   assert.equal((await readdir(sessionRoot)).some((name) => name.includes(".sync-conflict-")), false);
 }
 

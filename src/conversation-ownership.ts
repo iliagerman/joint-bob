@@ -166,6 +166,15 @@ export async function finalizeConversationClaim(record: ConversationOwnership, n
   throw new Error("Ownership claim state changed before commit");
 }
 
+export async function takeConversationOwnership(engine: ConversationEngine, sessionId: string, destinationNodeId: string): Promise<ConversationOwnership> {
+  const db = await ownershipDatabase();
+  return ownershipTransaction(db, () => {
+    const current = selectOwnership(db, engine, sessionId);
+    if (current?.ownerNodeId === destinationNodeId && current.status === "owned") return current;
+    return { engine, sessionId, ownerNodeId: destinationNodeId, epoch: (current?.epoch ?? 0) + 1, status: "owned", transferToNodeId: null };
+  }, destinationNodeId);
+}
+
 export async function beginConversationRecovery(engine: ConversationEngine, sessionId: string, nodeId: string): Promise<ConversationOwnership> {
   const db = await ownershipDatabase();
   return ownershipTransaction(db, () => {

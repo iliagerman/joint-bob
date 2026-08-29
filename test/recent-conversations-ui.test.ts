@@ -30,9 +30,10 @@ test("the projects header opens a recent conversations dialog", async () => {
 });
 
 test("recent conversations are reachable from the conversations list and an open chat", async () => {
-  const [html, app] = await Promise.all([
+  const [html, app, styles] = await Promise.all([
     readFile("public/index.html", "utf8"),
     readFile("public/app.js", "utf8"),
+    readFile("public/styles.css", "utf8"),
   ]);
 
   // Mobile shows one panel at a time, so the projects header alone leaves the recents
@@ -51,13 +52,22 @@ test("recent conversations are reachable from the conversations list and an open
     "recents button is not in the conversations panel header",
   );
 
-  const moreStart = html.indexOf('<div class="chat-more-actions">');
-  const moreEnd = html.indexOf("</div>", moreStart);
-  assert.ok(moreStart >= 0, "Missing chat-more-actions");
-  assert.ok(
-    html.slice(moreStart, moreEnd).includes('id="chatRecentSessionsButton"'),
-    "recents button is not in the chat actions menu",
-  );
+  const toolbarStart = html.indexOf('<div class="chat-toolbar panel-toolbar" id="chatToolbar">');
+  const toolbarEnd = html.indexOf('\n        <section class="messages"', toolbarStart);
+  assert.ok(toolbarStart >= 0 && toolbarEnd >= 0, "Missing chat toolbar");
+  const toolbar = html.slice(toolbarStart, toolbarEnd);
+  const modeStart = toolbar.indexOf('id="chatModeControl"');
+  const recentsStart = toolbar.indexOf('id="chatRecentSessionsButton"');
+  const moreStart = toolbar.indexOf('id="chatMoreMenu"');
+  assert.ok(modeStart >= 0, "Missing chat Mode control");
+  assert.ok(recentsStart > modeStart, "recents button must follow the Mode control");
+  assert.ok(moreStart > recentsStart, "recents button must precede the More menu");
+  assert.doesNotMatch(toolbar.slice(toolbar.indexOf('<div class="chat-more-actions">')), /id="chatRecentSessionsButton"/);
+
+  // On larger screens Projects is the only visible recents location.
+  assert.match(styles, /#chatsRecentSessionsButton, #chatRecentSessionsButton \{ display: none; \}/);
+  assert.match(styles, /@media \(min-width: 1024px\)[\s\S]*?#chatsRecentSessionsButton, #chatRecentSessionsButton, #chatModeControl \{ display: none !important; \}/);
+  assert.match(styles, /@media \(max-width: 1023px\)[\s\S]*?#chatsRecentSessionsButton \{ display: inline-grid; \}[\s\S]*?#chatRecentSessionsButton \{ display: inline-flex; \}/);
 
   // The triggers stay declarative: no per-button listener may be re-introduced.
   assert.doesNotMatch(app, /elements\.recentSessionsButton\.addEventListener/);

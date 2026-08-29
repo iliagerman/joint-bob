@@ -1,4 +1,4 @@
-const CACHE_NAME = "joint-bob-v42";
+const CACHE_NAME = "joint-bob-v47";
 const APP_SHELL = ["/", "/index.html", "/styles.css", "/boot.js", "/app.js", "/board.js", "/markdown.js", "/manifest.webmanifest", "/icon.svg", "/icon-192.png", "/icon-512.png"];
 
 self.addEventListener("install", (event) => {
@@ -28,21 +28,16 @@ self.addEventListener("push", (event) => {
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const targetUrl = new URL(event.notification.data?.url || "/", self.location.origin).href;
-  event.waitUntil(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((windowClients) => {
-      const client = windowClients.find((candidate) => candidate.url === targetUrl) || windowClients[0];
-      if (client) {
-        client.navigate(targetUrl);
-        return client.focus();
-      }
-      return self.clients.openWindow(targetUrl);
-    }),
-  );
+  event.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((openClients) => {
+    const client = openClients.find((candidate) => candidate.url === targetUrl) || openClients[0];
+    if (!client) return self.clients.openWindow(targetUrl);
+    return client.navigate(targetUrl).then(() => client.focus());
+  }));
 });
 
 self.addEventListener("fetch", (event) => {
-  const request = event.request;
+  const { request } = event;
   const url = new URL(request.url);
   if (request.method !== "GET" || url.pathname.startsWith("/api/") || url.pathname.startsWith("/ws")) return;
-  event.respondWith(fetch(request).catch(() => caches.match(request).then((cached) => cached || caches.match("/"))));
+  event.respondWith(fetch(request).catch(async () => (await caches.match(request)) || caches.match("/")));
 });

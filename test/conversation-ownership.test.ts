@@ -42,12 +42,16 @@ test("conversation ownership is epoch-monotonic, persistent, and transfer-idempo
     assert.equal(committed.epoch, 2);
     assert.equal(committed.ownerNodeId, destinationNodeId);
     assert.deepEqual(await ownership.commitConversationTransfer(engine, sessionId, destinationNodeId, 1), committed);
+    const taken = await ownership.takeConversationOwnership(engine, sessionId, sourceNodeId);
+    assert.equal(taken.epoch, committed.epoch + 1);
+    assert.equal(taken.ownerNodeId, sourceNodeId);
+    assert.deepEqual(await ownership.takeConversationOwnership(engine, sessionId, sourceNodeId), taken);
 
     const output = await runNode(dataDir, `
       const ownership = await import('./src/conversation-ownership.ts');
       console.log(JSON.stringify(await ownership.getConversationOwnership('pi', '${sessionId}')));
     `);
-    assert.deepEqual(JSON.parse(output), committed);
+    assert.deepEqual(JSON.parse(output), taken);
   } finally {
     if (previous === undefined) delete process.env.JOINT_BOB_DATA_DIR; else process.env.JOINT_BOB_DATA_DIR = previous;
     await rm(dataDir, { recursive: true, force: true });

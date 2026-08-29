@@ -40,12 +40,13 @@ function safeUrl(value) {
 const INLINE_RE =
   /(?<code>`+)(?<codeText>[\s\S]*?)\k<code>|(?<bold>\*\*)(?<boldText>[\s\S]+?)\*\*(?!\*)|(?<ital>\*)(?<italText>[^*]+?)\*(?!\*)|(?<strike>~~)(?<strikeText>[\s\S]+?)~~(?!~)|(?<link>\[(?<linkText>(?:[^\]\\]|\\.)+)\]\((?<url>[^)\s]+)\))/g;
 const FILE_PATH_RE = /(?:(?:\.{1,2}[\\/]|[\\/]|[A-Za-z]:\\)(?:[^\s"'`()\[\]{}<>:]+[\\/])*|(?:[^\s"'`()\[\]{}<>:]+[\\/])+)[^\s"'`()\[\]{}<>:]+\.[A-Za-z0-9]{1,12}/g;
+const FILE_NAME_RE = /^[^\s"'`()\[\]{}<>:\\/]+\.[A-Za-z0-9]{1,12}$/;
 
 function isFilePath(value) {
   FILE_PATH_RE.lastIndex = 0;
   const match = FILE_PATH_RE.exec(value);
   FILE_PATH_RE.lastIndex = 0;
-  return match?.index === 0 && match[0].length === value.length;
+  return FILE_NAME_RE.test(value) || (match?.index === 0 && match[0].length === value.length);
 }
 
 function fileLink(path, resolveFileUrl, child) {
@@ -54,6 +55,7 @@ function fileLink(path, resolveFileUrl, child) {
   const anchor = document.createElement("a");
   anchor.className = "file-link";
   anchor.dataset.testid = "chat-file-link";
+  anchor.dataset.filePath = path;
   anchor.href = href;
   anchor.target = "_blank";
   anchor.rel = "noopener noreferrer";
@@ -125,6 +127,7 @@ function inlineNodes(text, resolveFileUrl) {
         if (linksToFile) {
           anchor.className = "file-link";
           anchor.dataset.testid = "chat-file-link";
+          anchor.dataset.filePath = groups.url;
           anchor.title = `Open ${groups.url}`;
         }
         anchor.append(...inlineNodes(groups.linkText, resolveFileUrl));
