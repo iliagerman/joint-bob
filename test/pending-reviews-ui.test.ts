@@ -62,3 +62,21 @@ test("the pending reviews dialog lists every project and marks them all read", a
   assert.match(app, /async function markAllPendingReviewed\(\)/);
   assert.match(app, /sessions\/reviewed-all/);
 });
+
+test("scrolling lists keep full-height rows instead of squashing them", async () => {
+  const styles = await readFile("public/styles.css", "utf8");
+  // A capped grid shrinks its auto rows once the content overflows, and rows that opt out of
+  // the 56px floor collapse to a clipped sliver. max-content pins each row to its own height.
+  for (const list of [".pending-reviews-list", ".recent-sessions-list"]) {
+    const rule = styles.match(new RegExp(`\\${list}\\s*\\{[^}]*\\}`));
+    assert.ok(rule, `Missing ${list} rule`);
+    assert.match(rule[0], /max-height:/);
+    assert.match(rule[0], /grid-auto-rows:\s*max-content/);
+  }
+  // The row title is one line with the full text in the tooltip, so rows stay a uniform height.
+  assert.match(
+    styles,
+    /\.pending-reviews-list \.session-card strong\s*\{[^}]*white-space:\s*nowrap[^}]*text-overflow:\s*ellipsis/,
+  );
+  assert.match(styles, /\.pending-reviews-list \.session-card span\s*\{[^}]*-webkit-line-clamp:\s*1/);
+});

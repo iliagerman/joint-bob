@@ -1416,8 +1416,19 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 
 /* ---- Pending reviews ---- */
 /* The 3px pad is the focus ring's lane: the scroll box would otherwise clip its offset. */
-.pending-reviews-list { display: grid; gap: 6px; min-width: 0; max-height: 52dvh; overflow-y: auto; padding: 3px; }
+/* max-content keeps every row at its own height: a capped grid otherwise shrinks its auto rows
+   once the list overflows, and rows that opt out of the 56px floor collapse to a clipped sliver. */
+.pending-reviews-list { display: grid; grid-auto-rows: max-content; gap: 6px; min-width: 0; max-height: 52dvh; overflow-y: auto; padding: 3px; }
 .pending-reviews-list .session-card { min-height: 0; border: 1px solid var(--line); }
+/* One line each keeps every row the same height and the list scannable; the tooltip has the rest. */
+.pending-reviews-list .session-card strong {
+  margin-bottom: 2px;
+  overflow: hidden;
+  overflow-wrap: normal;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.pending-reviews-list .session-card span { -webkit-line-clamp: 1; }
 /* Project names label the rows beneath them rather than acting as controls. */
 .pending-reviews-group {
   margin-top: 6px;
@@ -1433,7 +1444,7 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 /* The shared search shell is inset for a panel header; inside this dialog it lines up with the list. */
 #recentSessionsDialog .search-shell { margin: 0; }
 /* The 3px pad is the focus ring's lane: the scroll box would otherwise clip its offset. */
-.recent-sessions-list { display: grid; gap: 6px; min-width: 0; max-height: 52dvh; overflow-y: auto; padding: 3px; }
+.recent-sessions-list { display: grid; grid-auto-rows: max-content; gap: 6px; min-width: 0; max-height: 52dvh; overflow-y: auto; padding: 3px; }
 /* The list takes focus so digit shortcuts work, but it is not itself a control. */
 .recent-sessions-list:focus { outline: none; }
 /* Outlined rows, like the skills dialog: a plain text list of 20 titles is unreadable. */
