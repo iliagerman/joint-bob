@@ -22,8 +22,10 @@ test("settings tabs absorb notification, GitHub, and cluster configuration", asy
   assert.doesNotMatch(html, /<dialog id="githubSettingsDialog"/);
   assert.doesNotMatch(html, /<dialog id="clusterDialog"/);
   assert.match(html, /id="settingsPanel-cluster"[\s\S]*id="clusterNodeNameInput"/);
-  assert.match(html, /id="settingsPanel-github"[\s\S]*id="githubGroupList"/);
+  // GitHub groups moved to the Projects tab; the Secrets tab keeps node-local accounts only.
+  assert.match(html, /id="settingsPanel-projects"[\s\S]*id="githubGroupList"/);
   assert.match(html, /id="githubGroupAddButton"/);
+  assert.match(html, /id="settingsPanel-github"[\s\S]*id="secretAccountList"/);
 
   // Personal/Sela are no longer hardcoded anywhere in the UI.
   assert.doesNotMatch(html, /personalTokenInput|selaTokenInput/);

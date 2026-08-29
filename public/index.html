@@ -157,9 +157,9 @@
             <span id="chatModeLabel">Thinking</span>
             <select id="reasoningLevelSelect" class="chat-toolbar-control" aria-labelledby="chatModeLabel" data-testid="chat-reasoning-select"></select>
           </label>
-          <button class="ghost compact chat-recents-button" id="chatRecentSessionsButton" type="button" data-recent-sessions-open data-testid="chat-recent-sessions-open-button">Recents</button>
+          <button class="ghost icon-button chat-recents-button" id="chatRecentSessionsButton" type="button" aria-label="Recent conversations" title="Recent conversations" data-recent-sessions-open data-testid="chat-recent-sessions-open-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" /><path d="M3 4v4h4" /><path d="M12 7.5V12l3.2 1.9" /></svg></button>
           <details class="chat-more" id="chatMoreMenu">
-            <summary class="ghost compact" aria-label="More chat actions" data-testid="chat-more-button">More</summary>
+            <summary class="ghost icon-button" aria-label="More chat actions" title="More chat actions" data-testid="chat-more-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7" fill="currentColor" /><circle cx="12" cy="12" r="1.7" fill="currentColor" /><circle cx="19" cy="12" r="1.7" fill="currentColor" /></svg></summary>
             <div class="chat-more-actions">
               <button class="ghost compact safeguards-button" id="safeguardsButton" type="button" aria-pressed="true" title="Safe Guard checks are active for this Pi session" disabled data-testid="chat-safeguards-button">Safeguards on</button>
               <button class="ghost compact transfer-session-button" id="transferSessionButton" type="button" disabled data-testid="chat-transfer-button">Continue on…</button>
@@ -302,13 +302,7 @@
         </section>
 
         <section class="settings-panel" id="settingsPanel-github" role="tabpanel" aria-labelledby="settingsTab-github" tabindex="0" hidden>
-          <p>GitHub groups can sync between nodes. Secret accounts below are encrypted and node-local.</p>
-          <fieldset class="phase-settings"><legend>GitHub</legend><div class="github-group-list" id="githubGroupList" data-testid="github-group-list"></div>
-          <div class="github-group-actions">
-            <button class="ghost" type="button" id="githubGroupAddButton" data-testid="github-group-add-button">Add group</button>
-            <button class="ghost" type="button" id="githubSyncButton" data-testid="github-sync-open-button">Sync to nodes</button>
-          </div>
-          <p>Tokens stay on this node. Sync to copy them to other nodes.</p></fieldset>
+          <p>Named AWS, Google, and custom accounts are encrypted and stay on this node. GitHub groups live under Projects.</p>
           <fieldset class="phase-settings"><legend>Secret accounts</legend><p>Named AWS, Google, and custom accounts stay on this node.</p><div id="secretAccountList" class="secret-account-list" data-testid="secret-account-list"></div><button class="ghost" type="button" id="secretAccountAddButton" data-testid="secret-account-add-button">Add account</button></fieldset>
         </section>
 
@@ -352,6 +346,16 @@
               </div>
             </label>
             <p>New projects use &lt;home&gt;/&lt;type&gt;/...; board cards use &lt;home&gt;/tickets/... Existing projects are not moved.</p>
+          </fieldset>
+          <fieldset class="phase-settings">
+            <legend>GitHub groups</legend>
+            <p>A group is a named GitHub identity. Projects and project types pick the group they push with.</p>
+            <div class="github-group-list" id="githubGroupList" data-testid="github-group-list"></div>
+            <div class="github-group-actions">
+              <button class="ghost" type="button" id="githubGroupAddButton" data-testid="github-group-add-button">Add group</button>
+              <button class="ghost" type="button" id="githubSyncButton" data-testid="github-sync-open-button">Sync to nodes</button>
+            </div>
+            <p>Tokens stay on this node. Sync to copy them to other nodes.</p>
           </fieldset>
           <fieldset class="phase-settings">
             <legend>Project types</legend>

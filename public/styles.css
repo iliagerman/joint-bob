@@ -762,7 +762,17 @@ select.chat-toolbar-control {
 #chatHarnessSelect { max-width: min(24vw, 120px); }
 .chat-model-control, .chat-mode-control { align-self: stretch; }
 #chatsRecentSessionsButton, #chatRecentSessionsButton { display: none; }
-.chat-recents-button { min-height: 32px; white-space: nowrap; }
+.chat-toolbar-icon { width: 17px; height: 17px; flex: none; }
+.chat-recents-button, .chat-more > summary {
+  min-height: 32px;
+  min-width: 32px;
+  width: 32px;
+  border: 1px solid var(--line);
+  background: var(--field);
+  color: var(--muted);
+}
+.chat-recents-button:hover:not(:disabled), .chat-more > summary:hover { color: var(--text); }
+.chat-more[open] > summary { color: var(--text); border-color: var(--line-strong); }
 .transfer-session-button { align-self: end; min-height: 32px; white-space: nowrap; color: var(--accent); }
 .safeguards-button { align-self: end; min-height: 32px; white-space: nowrap; }
 .safeguards-button.unsafe { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); background: color-mix(in srgb, var(--danger) 10%, transparent); }
@@ -1127,6 +1137,9 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
   overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: var(--line-strong) transparent;
+  /* A scroll box clips whatever overflows it. A focused control paints a 3px ring and a
+     2px outline 2px outside its border, so the panel reserves that much on every side. */
+  padding: 5px;
 }
 .settings-panel[hidden] { display: none; }
 .github-group-list { display: grid; gap: 8px; }
@@ -1266,7 +1279,7 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   .chat-recents-button { grid-column: 3; grid-row: 2; }
   .model-button { width: 100%; max-width: none; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .chat-more { grid-column: 3; grid-row: 1; position: relative; display: block; align-self: end; }
-  .chat-more > summary { display: inline-flex; align-items: center; list-style: none; cursor: pointer; }
+  .chat-more > summary { display: inline-flex; align-items: center; justify-content: center; list-style: none; cursor: pointer; }
   .chat-more > summary::-webkit-details-marker { display: none; }
   .chat-more:not([open]) > .chat-more-actions { display: none; }
   .chat-more[open] > .chat-more-actions {
