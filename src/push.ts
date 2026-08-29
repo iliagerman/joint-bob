@@ -7,6 +7,7 @@ import webpush, { type PushSubscription } from "web-push";
 
 interface PushRecord {
   subscription: PushSubscription;
+  userId: string;
   projectId: string;
   sessionPath: string;
   title: string;
@@ -24,6 +25,14 @@ interface VapidRow {
 
 interface SubscriptionRow {
   subscription: string;
+}
+
+interface UserRow {
+  user_id: string;
+}
+
+interface ColumnRow {
+  name: string;
 }
 
 const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
@@ -99,20 +108,26 @@ function legacyStore(): PushStore | undefined {
 
 function saveSubscription(db: DatabaseSync, record: PushRecord): void {
   const digest = endpointDigest(record.subscription.endpoint);
-  if (record.sessionPath === "*") {
+  // A device asking for every project supersedes its per-project rows, exactly as a project-wide
+  // session subscription supersedes that project's per-conversation rows.
+  if (record.projectId === "*") {
+    db.prepare("DELETE FROM push_session_subscriptions WHERE endpoint_digest = ?").run(digest);
+  } else if (record.sessionPath === "*") {
     db.prepare("DELETE FROM push_session_subscriptions WHERE endpoint_digest = ? AND project_id = ?")
       .run(digest, record.projectId);
   }
   db.prepare(`
     INSERT INTO push_session_subscriptions
-      (subscription_key, endpoint_digest, project_id, session_path, title, subscription)
-    VALUES (?, ?, ?, ?, ?, ?)
+      (subscription_key, endpoint_digest, user_id, project_id, session_path, title, subscription)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(subscription_key) DO UPDATE SET
+      user_id = excluded.user_id,
       title = excluded.title,
       subscription = excluded.subscription
   `).run(
     subscriptionKey(record.subscription.endpoint, record.projectId, record.sessionPath),
     digest,
+    record.userId,
     record.projectId,
     record.sessionPath,
     record.title,
@@ -143,6 +158,7 @@ function pushDatabase(): DatabaseSync {
     CREATE TABLE IF NOT EXISTS push_session_subscriptions (
       subscription_key TEXT PRIMARY KEY,
       endpoint_digest TEXT NOT NULL,
+      user_id TEXT NOT NULL DEFAULT '',
       project_id TEXT NOT NULL,
       session_path TEXT NOT NULL,
       title TEXT NOT NULL,
@@ -163,6 +179,10 @@ function pushDatabase(): DatabaseSync {
       version INTEGER PRIMARY KEY
     );
   `);
+  const columns = database.prepare("PRAGMA table_info(push_session_subscriptions)").all() as unknown as ColumnRow[];
+  if (!columns.some((column) => column.name === "user_id")) {
+    database.exec("ALTER TABLE push_session_subscriptions ADD COLUMN user_id TEXT NOT NULL DEFAULT ''");
+  }
   if (database.prepare("SELECT version FROM push_migrations WHERE version = 1").get()) return database;
 
   const legacy = legacyStore();
@@ -174,7 +194,7 @@ function pushDatabase(): DatabaseSync {
         VALUES (1, ?, ?, ?)
       `).run(legacy.vapidKeys.publicKey, encrypt(legacy.vapidKeys.privateKey), new Date().toISOString());
     }
-    for (const record of legacy?.subscriptions ?? []) saveSubscription(database, record);
+    for (const record of legacy?.subscriptions ?? []) saveSubscription(database, { ...record, userId: "" });
     if (!database.prepare("SELECT singleton FROM push_vapid_keys WHERE singleton = 1").get()) {
       const vapidKeys = webpush.generateVAPIDKeys();
       database.prepare(`
@@ -207,9 +227,21 @@ export async function getVapidPublicKey(): Promise<string> {
   return keys.publicKey;
 }
 
-export async function savePushSubscription(subscription: PushSubscription, projectId: string, sessionPath: string, title: string): Promise<void> {
+export async function savePushSubscription(subscription: PushSubscription, userId: string, projectId: string, sessionPath: string, title: string): Promise<void> {
   configureWebPush();
-  saveSubscription(pushDatabase(), { subscription, projectId, sessionPath, title });
+  saveSubscription(pushDatabase(), { subscription, userId, projectId, sessionPath, title });
+}
+
+/**
+ * The accounts with a device waiting on this project, so review notifications are only computed for
+ * someone who actually asked for them.
+ */
+export async function listPushSubscriberUserIds(projectId: string): Promise<string[]> {
+  const rows = pushDatabase().prepare(`
+    SELECT DISTINCT user_id FROM push_session_subscriptions
+    WHERE (project_id = ? OR project_id = '*') AND user_id <> ''
+  `).all(projectId) as unknown as UserRow[];
+  return rows.map((row) => row.user_id);
 }
 
 export async function deletePushSubscription(endpoint: string): Promise<void> {
@@ -217,16 +249,18 @@ export async function deletePushSubscription(endpoint: string): Promise<void> {
   pushDatabase().prepare("DELETE FROM push_session_subscriptions WHERE endpoint_digest = ?").run(endpointDigest(endpoint));
 }
 
-export async function notifySessionFinished(projectId: string, sessionPath: string, title: string): Promise<void> {
+export async function notifyConversationReview(userId: string, projectId: string, sessionPath: string, title: string): Promise<void> {
   configureWebPush();
   const rows = pushDatabase().prepare(`
     SELECT subscription FROM push_session_subscriptions
-    WHERE project_id = ? AND (session_path = ? OR session_path = '*')
-  `).all(projectId, sessionPath) as unknown as SubscriptionRow[];
+    WHERE user_id = ?
+      AND (project_id = ? OR project_id = '*')
+      AND (session_path = ? OR session_path = '*')
+  `).all(userId, projectId, sessionPath) as unknown as SubscriptionRow[];
   if (!rows.length) return;
 
   const payload = JSON.stringify({
-    title: `${title || "Pi"} finished`,
+    title: `${title || "Conversation"} needs review`,
     body: "Tap to open the conversation and review the result.",
     url: `/?projectId=${encodeURIComponent(projectId)}&sessionPath=${encodeURIComponent(sessionPath)}`,
   });

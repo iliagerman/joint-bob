@@ -27,7 +27,7 @@ import {
   setSessionModel,
   simplifyMessages,
 } from "./pi-service.js";
-import { deletePushSubscription, getVapidPublicKey, notifySessionFinished, savePushSubscription } from "./push.js";
+import { deletePushSubscription, getVapidPublicKey, listPushSubscriberUserIds, notifyConversationReview, savePushSubscription } from "./push.js";
 import { abortOutgoingTaskHandoff, abortPreparedTaskHandoff, acknowledgeIncomingTaskHandoff, acknowledgeOutgoingTaskHandoff, assertTaskCanBeDeleted, beginOutgoingTaskHandoff, claimTaskLease, commitPreparedTaskHandoff, completeTaskHandoff, completeTaskLease, createTask, deleteTask, getTaskHandoff, isTaskHandoffRejected, listTasks, listUnfinishedOutgoingTaskHandoffs, markOutgoingTaskHandoff, prepareTaskHandoff, rejectTaskHandoff, releaseTaskLease, reserveTaskHandoff, taskHandoffDeletion, updateTask, updateTaskSessionPath, type TaskHandoffRecord } from "./tasks.js";
 import { assertTaskWorktreeTransferable, exportTaskBranchBundle, mergeTaskWorktree, prepareTaskWorktreeFromBundle, removePreparedTaskWorktree, TaskWorktreeError, validateTaskRepository, type PreparedTaskWorktree } from "./worktrees.js";
 import { assertSyncthingFolderReady, CLAUDE_ENGINE_SYNC_FOLDER_ID, engineSyncFolders, ensureEngineSyncFolders, ensureSyncthingDevice, ensureSyncthingFolder, ensureTicketWorkspaceFolder, PI_ENGINE_SYNC_FOLDER_ID, reconcileSyncthingProjectFolders, rescanSyncthingFolder, syncthingDeviceId, syncthingFolderIdForPath, syncthingFolderStatuses, syncthingPathForFolderId } from "./syncthing.js";
@@ -43,7 +43,7 @@ import { ensureManagedHome, managedProjectPath, managedProjectRelocationPath } f
 import { importProjectDirectory, ProjectDirectoryImportError, relocateProjectDirectory } from "./project-directory-import.js";
 import { listAuditEvents } from "./audit.js";
 import { getUserPreferences, updateUserPreferences } from "./preferences.js";
-import { markConversationReviewed, markConversationsReviewed, syncConversationReviewStates } from "./conversation-reviews.js";
+import { claimReviewNotifications, markConversationReviewed, markConversationsReviewed, syncConversationReviewStates } from "./conversation-reviews.js";
 import { resetSyncthingConnection } from "./syncthing.js";
 import { PROJECT_COLORS } from "./types.js";
 import type { ChatMessage, ProjectRecord, ProjectSyncStatus, ProjectView, SessionStatus, SessionSummary, TaskPhase, TaskPhaseConfig, TaskRecord } from "./types.js";
@@ -1658,7 +1658,8 @@ app.get("/api/push/vapid-public-key", async (_request, response, next) => {
 app.post("/api/push/subscribe", async (request, response, next) => {
   try {
     const payload = pushSubscribeSchema.parse(request.body);
-    await savePushSubscription(payload.subscription, payload.projectId, payload.sessionPath, payload.title || "Pi");
+    const authSession = response.locals.authSession as AuthSession;
+    await savePushSubscription(payload.subscription, authSession.userId, payload.projectId, payload.sessionPath, payload.title || "Pi");
     response.status(204).send();
   } catch (error) {
     next(error);
@@ -3263,8 +3264,47 @@ function invalidateExternallyChangedSessions(projectId: string, changedFiles: st
   }
 }
 
+/**
+ * Conversations enter review both when an agent finishes here and when another node's transcript
+ * lands via Syncthing, so notifications are driven off the review state itself rather than off the
+ * local agent lifecycle. The quiet period lets a transcript that is still being written settle, so a
+ * conversation buzzes the phone when it stops moving instead of on every intermediate write.
+ */
+const REVIEW_NOTIFICATION_QUIET_MS = 10_000;
+const reviewNotificationTimers = new Map<string, NodeJS.Timeout>();
+
+async function notifyPendingReviews(projectId: string): Promise<void> {
+  const userIds = await listPushSubscriberUserIds(projectId);
+  if (!userIds.length) return;
+  const project = await getProject(projectId);
+  if (!project) return;
+  for (const userId of userIds) {
+    const sessions = await listProjectSessionsWithReviewState(project, userId);
+    const pending = new Map(sessions
+      .filter((session) => session.reviewState === "needs_review" && !session.running)
+      .map((session) => [session.path, session]));
+    for (const sessionPath of claimReviewNotifications(userId, projectId, [...pending.keys()])) {
+      const session = pending.get(sessionPath);
+      if (!session) continue;
+      await notifyConversationReview(userId, projectId, sessionPath, session.title || project.name);
+    }
+  }
+}
+
+function scheduleReviewNotifications(projectId: string): void {
+  const pending = reviewNotificationTimers.get(projectId);
+  if (pending) clearTimeout(pending);
+  const timer = setTimeout(() => {
+    reviewNotificationTimers.delete(projectId);
+    notifyPendingReviews(projectId).catch((error) => console.warn("Review notification failed", error));
+  }, REVIEW_NOTIFICATION_QUIET_MS);
+  timer.unref();
+  reviewNotificationTimers.set(projectId, timer);
+}
+
 function handleSessionChange(projectId: string, changedFiles: string[]): void {
   broadcastToProject(projectId, { type: "sessionsChanged" });
+  scheduleReviewNotifications(projectId);
   invalidateExternallyChangedSessions(projectId, changedFiles);
   reloadClaudeClients(projectId, changedFiles).catch((error) => console.warn("Claude reload failed", error));
 }
@@ -3491,7 +3531,7 @@ function subscribeSharedSession(session: SharedPiSession): () => void {
       // assistant message within a turn.
       const finishedSessionPath = handle.session.sessionFile;
       if (event.type === "agent_end" && finishedSessionPath) {
-        notifySessionFinished(session.projectId, finishedSessionPath, handle.session.sessionName || "Pi").catch((error) => console.warn("Push notification failed", error));
+        scheduleReviewNotifications(session.projectId);
         broadcastToProject(session.projectId, { type: "sessionsChanged" });
       }
       if (!session.clients.size) scheduleIdleDispose(session);
@@ -3755,9 +3795,7 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
     for (const key of runningKeys) runningClaudeSessionPaths.delete(key);
   }
   broadcastToProject(connection.project.id, { type: "sessionsChanged" });
-  if (connection.claude.filePath) {
-    notifySessionFinished(connection.project.id, `claude:${connection.claude.filePath}`, "Claude").catch((error) => console.warn("Push notification failed", error));
-  }
+  scheduleReviewNotifications(connection.project.id);
 }
 
 async function drainClaudePromptQueue(connection: ChatConnection): Promise<void> {

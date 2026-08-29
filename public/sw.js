@@ -1,4 +1,4 @@
-const CACHE_NAME = "joint-bob-v49";
+const CACHE_NAME = "joint-bob-v50";
 const APP_SHELL = ["/", "/index.html", "/styles.css", "/boot.js", "/app.js", "/board.js", "/markdown.js", "/manifest.webmanifest", "/icon.svg", "/icon-192.png", "/icon-512.png"];
 
 self.addEventListener("install", (event) => {
@@ -19,6 +19,10 @@ self.addEventListener("push", (event) => {
     body: payload.body || "Tap to open the conversation.",
     tag: payload.url || "/",
     renotify: true,
+    // A phone with the app closed only announces a conversation through the notification itself, so
+    // it must ring and buzz rather than arrive silently.
+    silent: false,
+    vibrate: [200, 100, 200],
     icon: "/icon-192.png",
     badge: "/icon-192.png",
     data: { url: payload.url || "/" },

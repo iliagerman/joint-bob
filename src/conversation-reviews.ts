@@ -17,6 +17,10 @@ interface ConversationStateRow {
   was_running: number;
 }
 
+interface ColumnRow {
+  name: string;
+}
+
 interface ReviewStatements {
   selectTracking: StatementSync;
   insertTracking: StatementSync;
@@ -48,9 +52,14 @@ function reviewDatabase(): DatabaseSync {
       last_activity_at TEXT NOT NULL,
       reviewed_at TEXT NOT NULL,
       was_running INTEGER NOT NULL DEFAULT 0,
+      notified INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (user_id, project_id, session_path)
     );
   `);
+  const columns = database.prepare("PRAGMA table_info(conversation_review_states)").all() as unknown as ColumnRow[];
+  if (!columns.some((column) => column.name === "notified")) {
+    database.exec("ALTER TABLE conversation_review_states ADD COLUMN notified INTEGER NOT NULL DEFAULT 0");
+  }
   return database;
 }
 
@@ -77,12 +86,12 @@ function reviewStatements(db: DatabaseSync): ReviewStatements {
     `),
     insert: db.prepare(`
       INSERT INTO conversation_review_states
-        (user_id, project_id, session_path, last_activity_at, reviewed_at, was_running)
-      VALUES (?, ?, ?, ?, ?, ?)
+        (user_id, project_id, session_path, last_activity_at, reviewed_at, was_running, notified)
+      VALUES (?, ?, ?, ?, ?, ?, 0)
     `),
     update: db.prepare(`
       UPDATE conversation_review_states
-      SET last_activity_at = ?, was_running = ?
+      SET last_activity_at = ?, was_running = ?, notified = CASE WHEN ? = 1 THEN 0 ELSE notified END
       WHERE user_id = ? AND project_id = ? AND session_path = ?
     `),
   };
@@ -108,7 +117,7 @@ export function syncConversationReviewStates(userId: string, projectId: string, 
         continue;
       }
       const lastActivityAt = observedAt > row.last_activity_at ? observedAt : row.last_activity_at;
-      statements.update.run(lastActivityAt, session.running ? 1 : 0, userId, projectId, session.path);
+      statements.update.run(lastActivityAt, session.running ? 1 : 0, session.running ? 1 : 0, userId, projectId, session.path);
       states.set(session.path, session.running ? "running" : lastActivityAt > row.reviewed_at ? "needs_review" : "reviewed");
     }
     db.exec("COMMIT");
@@ -128,11 +137,12 @@ export function markConversationsReviewed(
   const db = reviewDatabase();
   const statement = db.prepare(`
     INSERT INTO conversation_review_states
-      (user_id, project_id, session_path, last_activity_at, reviewed_at, was_running)
-    VALUES (?, ?, ?, ?, ?, 0)
+      (user_id, project_id, session_path, last_activity_at, reviewed_at, was_running, notified)
+    VALUES (?, ?, ?, ?, ?, 0, 0)
     ON CONFLICT(user_id, project_id, session_path) DO UPDATE SET
       last_activity_at = MAX(conversation_review_states.last_activity_at, excluded.last_activity_at),
-      reviewed_at = MAX(conversation_review_states.reviewed_at, excluded.reviewed_at)
+      reviewed_at = MAX(conversation_review_states.reviewed_at, excluded.reviewed_at),
+      notified = 0
   `);
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -158,4 +168,37 @@ export function markConversationReviewed(
   session: Pick<ConversationStateInput, "path" | "updatedAt">,
 ): void {
   markConversationsReviewed(userId, projectId, [session]);
+}
+
+/**
+ * Marks the conversations that still owe this account a review notification and returns them, so a
+ * conversation buzzes the phone once per review cycle no matter how often its transcript is rewritten
+ * by a locally running agent or by one synchronized in from another node.
+ */
+export function claimReviewNotifications(userId: string, projectId: string, sessionPaths: string[]): string[] {
+  if (!sessionPaths.length) return [];
+  const db = reviewDatabase();
+  const select = db.prepare(`
+    SELECT session_path FROM conversation_review_states
+    WHERE user_id = ? AND project_id = ? AND session_path = ?
+      AND notified = 0 AND last_activity_at > reviewed_at
+  `);
+  const claim = db.prepare(`
+    UPDATE conversation_review_states SET notified = 1
+    WHERE user_id = ? AND project_id = ? AND session_path = ?
+  `);
+  const claimed: string[] = [];
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (const sessionPath of sessionPaths) {
+      if (!select.get(userId, projectId, sessionPath)) continue;
+      claim.run(userId, projectId, sessionPath);
+      claimed.push(sessionPath);
+    }
+    db.exec("COMMIT");
+    return claimed;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }

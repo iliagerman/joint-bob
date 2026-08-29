@@ -51,14 +51,14 @@ test("push SQLite state persists generated VAPID keys and encrypts credentials",
     const p256dh = "p256dh-secret-value";
     const auth = "auth-secret-value";
     const subscription = { endpoint, keys: { p256dh, auth } };
-    await push.savePushSubscription(subscription, "project", "watch", "Pi");
-    await push.savePushSubscription(subscription, "project", "second-session", "Claude");
+    await push.savePushSubscription(subscription, "user-a", "project", "watch", "Pi");
+    await push.savePushSubscription(subscription, "user-a", "project", "second-session", "Claude");
 
     assert.equal(first, second);
     const db = new DatabaseSync(path.join(dataDir, "node.db"));
     const subscriptionCount = db.prepare("SELECT COUNT(*) AS count FROM push_session_subscriptions").get() as { count: number };
     assert.equal(subscriptionCount.count, 2);
-    await push.savePushSubscription(subscription, "project", "*", "Joint Bob");
+    await push.savePushSubscription(subscription, "user-a", "project", "*", "Joint Bob");
     const projectSubscription = db.prepare("SELECT session_path FROM push_session_subscriptions WHERE project_id = ?").all("project") as Array<{ session_path: string }>;
     assert.equal(projectSubscription.length, 1);
     assert.equal(projectSubscription[0].session_path, "*");
