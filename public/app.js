@@ -695,7 +695,7 @@ function notificationPermissionGranted() {
 function syncNotifyButton() {
   const enabled = state.notificationsEnabled && notificationPermissionGranted();
   elements.notifyButton.setAttribute("aria-pressed", enabled ? "true" : "false");
-  elements.notifyButton.title = enabled ? "Notifications on — tap to turn off" : "Notify when an agent finishes";
+  elements.notifyButton.title = enabled ? "Notifications on — tap to turn off" : "Notify when a conversation needs review";
   elements.notifyButton.classList.toggle("active", enabled);
   elements.notificationToggleButton.setAttribute("aria-pressed", enabled ? "true" : "false");
   elements.notificationToggleButton.textContent = enabled ? "Browser notifications enabled" : state.notificationsEnabled ? "Enable notifications on this device" : "Enable browser notifications";
@@ -725,8 +725,10 @@ async function enableNotifications() {
   await subscribeToPush();
 }
 
+// Conversations enter review in every project, not only the open one, so a device subscribes once
+// for all of them and stays subscribed before any project is selected.
 async function subscribeToPush() {
-  if (!state.notificationsEnabled || !notificationPermissionGranted() || !state.activeProjectId) return;
+  if (!state.notificationsEnabled || !notificationPermissionGranted()) return;
   const registration = await navigator.serviceWorker.ready;
   const existing = await registration.pushManager.getSubscription();
   const subscription = existing || await registration.pushManager.subscribe({
@@ -737,7 +739,7 @@ async function subscribeToPush() {
     method: "POST",
     body: JSON.stringify({
       subscription: subscription.toJSON(),
-      projectId: state.activeProjectId,
+      projectId: "*",
       sessionPath: "*",
       title: "Joint Bob",
     }),
@@ -2472,6 +2474,11 @@ function appendTranscript(messages) {
     }
     appendMessage(message.role === "user" ? "user" : "assistant", message.text);
   }
+  // Bubbles render their markdown on the next animation frame, so the height
+  // during the loop above is not final and the scroll events it fires can clear
+  // stickToBottom. Pin to the bottom after that frame so an opened conversation
+  // starts on the newest message.
+  requestAnimationFrame(() => stickyScroll(true));
 }
 
 // Opus is pinned to the explicit Opus 5 id so the CLI's "opus" alias cannot
