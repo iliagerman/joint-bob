@@ -46,6 +46,7 @@ const state = {
   activeProjectId: null,
   activeSessionPath: null,
   activeTaskId: null,
+  conversationLock: null,
   socket: null,
   reconnectTimer: null,
   heartbeatTimer: null,
@@ -111,6 +112,11 @@ const elements = {
   messages: document.querySelector("#messages"),
   jumpLatestButton: document.querySelector("#jumpLatestButton"),
   composer: document.querySelector("#composer"),
+  commandStrip: document.querySelector("#commandStrip"),
+  conversationLock: document.querySelector("#conversationLock"),
+  conversationLockDetail: document.querySelector("#conversationLockDetail"),
+  conversationLockStatus: document.querySelector("#conversationLockStatus"),
+  conversationLockTakeButton: document.querySelector("#conversationLockTakeButton"),
   attachmentList: document.querySelector("#attachmentList"),
   attachmentInput: document.querySelector("#attachmentInput"),
   attachButton: document.querySelector("#attachButton"),
@@ -121,7 +127,6 @@ const elements = {
   reconnectBannerText: document.querySelector("#reconnectBannerText"),
   modelButton: document.querySelector("#modelButton"),
   modelButtonName: document.querySelector("#modelButtonName"),
-  modelButtonMode: document.querySelector("#modelButtonMode"),
   safeguardsButton: document.querySelector("#safeguardsButton"),
   transferSessionButton: document.querySelector("#transferSessionButton"),
   openTerminalButton: document.querySelector("#openTerminalButton"),
@@ -156,11 +161,9 @@ const elements = {
   modelDialog: document.querySelector("#modelDialog"),
   modelDialogTitle: document.querySelector("#modelDialogTitle"),
   modelDialogList: document.querySelector("#modelDialogList"),
-  modelDialogReasoning: document.querySelector("#modelDialogReasoning"),
-  modelDialogReasoningLabel: document.querySelector("#modelDialogReasoningLabel"),
   chatModeControl: document.querySelector("#chatModeControl"),
+  chatModeLabel: document.querySelector("#chatModeLabel"),
   reasoningLevelSelect: document.querySelector("#reasoningLevelSelect"),
-  mobileReasoningLevelSelect: document.querySelector("#mobileReasoningLevelSelect"),
   closeModelDialogButton: document.querySelector("#closeModelDialogButton"),
   installAppButton: document.querySelector("#installAppButton"),
   notifyButton: document.querySelector("#notifyButton"),
@@ -2495,11 +2498,7 @@ function syncModelButton() {
     const active = state.models.find((model) => `${model.provider}/${model.id}` === state.activeModelKey);
     label = active?.label || state.activeModelLabel || "Model";
   }
-  const suffix = isClaude
-    ? state.claudeEffort && state.claudeEffort !== "default" ? ` · ${state.claudeEffort}` : ""
-    : state.thinkingLevel !== "off" ? ` · ${state.thinkingLevel}` : "";
   elements.modelButtonName.textContent = label;
-  elements.modelButtonMode.textContent = suffix;
   elements.modelButton.classList.toggle("claude", isClaude);
   if (elements.modelDialog.open) renderModelDialog();
 }
@@ -2597,29 +2596,30 @@ async function openSkillsDialog() {
   }
 }
 
-function populateReasoningSelect(select) {
-  select.replaceChildren();
+function renderReasoningOptions() {
+  const hasLevels = state.availableThinkingLevels.length > 0;
+  elements.chatModeLabel.textContent = state.engine === "claude" ? "Effort" : "Thinking";
+  elements.reasoningLevelSelect.replaceChildren();
   for (const level of state.availableThinkingLevels) {
     const option = document.createElement("option");
     option.value = level;
     option.textContent = level;
-    select.append(option);
+    elements.reasoningLevelSelect.append(option);
   }
-  select.value = state.thinkingLevel;
+  elements.reasoningLevelSelect.value = state.thinkingLevel;
+  elements.chatModeControl.hidden = !hasLevels;
 }
 
-function renderReasoningOptions() {
-  const hasLevels = state.availableThinkingLevels.length > 0;
-  elements.modelDialogReasoningLabel.textContent = state.engine === "claude" ? "Reasoning effort" : "Thinking level";
-  populateReasoningSelect(elements.reasoningLevelSelect);
-  populateReasoningSelect(elements.mobileReasoningLevelSelect);
-  elements.modelDialogReasoning.hidden = !hasLevels;
-  elements.chatModeControl.hidden = !hasLevels;
+function changeReasoningLevel(event) {
+  const level = event.currentTarget.value;
+  const payload = state.engine === "claude"
+    ? { type: "setEffort", effort: level }
+    : { type: "setThinking", level };
+  if (!sendSocket(payload)) toast("Not connected");
 }
 
 function renderModelDialog() {
   const isClaude = state.engine === "claude";
-  renderReasoningOptions();
   elements.modelDialogTitle.textContent = isClaude ? "Claude model" : "Pi model";
   elements.modelDialogList.classList.toggle("claude", isClaude);
   elements.modelDialogList.replaceChildren();
@@ -2668,15 +2668,37 @@ function renderModelDialog() {
 }
 
 function setComposerEnabled(enabled) {
-  elements.messageInput.disabled = !enabled;
-  elements.sendButton.disabled = !enabled;
-  elements.attachButton.disabled = !enabled;
-  elements.attachmentInput.disabled = !enabled;
-  elements.renameSessionButton.disabled = !enabled;
-  elements.modelButton.disabled = !enabled;
-  elements.reasoningLevelSelect.disabled = !enabled;
-  elements.mobileReasoningLevelSelect.disabled = !enabled;
+  // A conversation owned elsewhere fences every write on the owner node, so the
+  // composer stays dead no matter how healthy this node's socket looks.
+  const allowed = enabled && !state.conversationLock;
+  elements.messageInput.disabled = !allowed;
+  elements.sendButton.disabled = !allowed;
+  elements.attachButton.disabled = !allowed;
+  elements.attachmentInput.disabled = !allowed;
+  elements.renameSessionButton.disabled = !allowed;
+  elements.modelButton.disabled = !allowed;
+  elements.reasoningLevelSelect.disabled = !allowed;
   syncSafeguardsButton();
+}
+
+function renderConversationLock() {
+  const lock = state.conversationLock;
+  elements.conversationLock.hidden = !lock;
+  elements.composer.hidden = Boolean(lock);
+  elements.commandStrip.hidden = Boolean(lock);
+  if (!lock) {
+    elements.conversationLockStatus.textContent = "";
+    return;
+  }
+  const takeable = state.engine === "pi" && !state.activeTaskId;
+  elements.conversationLockDetail.textContent = lock.status === "conflict"
+    ? `Ownership is conflicted between this node and ${lock.nodeName}. Writes stay fenced until one node takes ownership.`
+    : takeable
+      ? `This conversation is owned by ${lock.nodeName}. Anything you send from here is rejected until you take ownership.`
+      : `This conversation is owned by ${lock.nodeName}. Open it there to continue \u2014 only Pi conversations can be taken over.`;
+  elements.conversationLockTakeButton.hidden = !takeable;
+  elements.conversationLockTakeButton.disabled = !takeable || ownershipTaking || Boolean(ownershipWait);
+  elements.conversationLockTakeButton.title = takeable ? `Move ownership to this node from ${lock.nodeName}` : "";
 }
 
 function syncSafeguardsButton() {
@@ -2762,6 +2784,7 @@ function renderChatSessionControls() {
 function syncEngineUI() {
   elements.chatHarnessSelect.value = state.engine;
   renderChatSessionControls();
+  renderReasoningOptions();
   syncModelButton();
   syncSafeguardsButton();
 }
@@ -3031,6 +3054,8 @@ function openSession(sessionPath, title = "New Pi conversation", preserveChat = 
     showChatEmptyState("Connecting…", `Opening this conversation on ${node?.name || "the selected node"}.`);
   }
   state.activeSessionPath = sessionPath || "new";
+  state.conversationLock = null;
+  renderConversationLock();
   if (state.preferencesLoaded) savePreferencesInBackground({ activeSessionPath: state.activeSessionPath, activeSessionId: state.activeSessionId });
   state.engine = state.activeSessionPath.startsWith("claude:") ? "claude" : "pi";
   elements.sessionTitle.textContent = title;
@@ -3072,8 +3097,10 @@ function handleSocketMessage(payload) {
   }
   if (payload.type === "ready") {
     const openingDraft = ["new", "claude:new"].includes(state.activeSessionPath);
-    setComposerEnabled(true);
+    state.conversationLock = payload.ownership ?? null;
     state.engine = payload.engine || "pi";
+    setComposerEnabled(true);
+    renderConversationLock();
     state.activeSessionId = payload.sessionId || state.activeSessionId;
     syncEngineUI();
     if (payload.sessionFile) {
@@ -3097,6 +3124,12 @@ function handleSocketMessage(payload) {
     updateStatus(payload.status);
     subscribeToPush().catch((error) => console.warn("Push subscription failed", error));
     refreshSessionsQuietly();
+    return;
+  }
+  if (payload.type === "ownership") {
+    state.conversationLock = payload.ownership ?? null;
+    setComposerEnabled(socketOpen());
+    renderConversationLock();
     return;
   }
   if (payload.type === "engineChanged") {
@@ -4103,6 +4136,7 @@ elements.chatHarnessSelect.addEventListener("change", () => {
     openSession(harness.newSessionPath, `New ${harness.label} conversation`);
   }
 });
+elements.reasoningLevelSelect.addEventListener("change", changeReasoningLevel);
 elements.collapseProjectsButton.addEventListener("click", () => setPanelCollapsed("projects", true));
 /** One dialog, several triggers: the projects header, the conversations header, and the chat menu. */
 function openRecentSessionsDialog() {
@@ -4156,13 +4190,6 @@ elements.modelButton.addEventListener("click", () => {
   renderModelDialog();
   elements.modelDialog.showModal();
 });
-function changeReasoningLevel(event) {
-  const level = event.currentTarget.value;
-  const payload = state.engine === "claude" ? { type: "setEffort", effort: level } : { type: "setThinking", level };
-  if (!sendSocket(payload)) toast("Not connected");
-}
-elements.reasoningLevelSelect.addEventListener("change", changeReasoningLevel);
-elements.mobileReasoningLevelSelect.addEventListener("change", changeReasoningLevel);
 elements.safeguardsButton.addEventListener("click", () => {
   if (!socketOpen()) {
     toast("Conversation is not connected yet");
@@ -4217,14 +4244,16 @@ function resetOwnershipWait() {
   elements.sessionTransferStatus.textContent = "Waiting for Syncthing…";
   elements.skipSessionTransferWaitButton.disabled = false;
   setOwnershipTransferControls(false);
+  elements.conversationLockStatus.textContent = "";
+  renderConversationLock();
 }
 
-function waitForOwnershipSync() {
+// Syncthing may still be copying the owner node's transcript, so both takeover
+// entry points count the same grace period down before fencing the owner.
+function countdownOwnershipWait(report) {
   if (ownershipWait) return ownershipWait.promise;
-  elements.sessionTransferProgress.hidden = false;
-  setOwnershipTransferControls(true);
   let seconds = TAKE_OWNERSHIP_WAIT_SECONDS;
-  elements.sessionTransferStatus.textContent = `Waiting ${seconds}s for Syncthing to finish…`;
+  report(`Waiting ${seconds}s for Syncthing to finish…`, seconds);
   const wait = { promise: null, resolve: null, settled: false };
   const promise = new Promise((resolve) => {
     const finish = (value) => {
@@ -4235,8 +4264,7 @@ function waitForOwnershipSync() {
     };
     const interval = setInterval(() => {
       seconds -= 1;
-      elements.sessionTransferWaitProgress.value = seconds;
-      elements.sessionTransferStatus.textContent = seconds ? `Waiting ${seconds}s for Syncthing to finish…` : "Syncthing wait finished.";
+      report(seconds ? `Waiting ${seconds}s for Syncthing to finish…` : "Syncthing wait finished.", seconds);
       if (!seconds) finish(true);
     }, 1000);
     wait.resolve = finish;
@@ -4246,19 +4274,32 @@ function waitForOwnershipSync() {
   return promise;
 }
 
+function waitForOwnershipSync() {
+  elements.sessionTransferProgress.hidden = false;
+  setOwnershipTransferControls(true);
+  return countdownOwnershipWait((text, seconds) => {
+    elements.sessionTransferStatus.textContent = text;
+    elements.sessionTransferWaitProgress.value = seconds;
+  });
+}
+
+function waitForLockOwnershipSync() {
+  elements.conversationLockTakeButton.disabled = true;
+  return countdownOwnershipWait((text) => { elements.conversationLockStatus.textContent = text; });
+}
+
 function skipOwnershipWait() {
   ownershipWait?.resolve(true);
 }
 
-async function takeActiveSessionOwnership() {
+async function takeSessionOwnership(destination, wait, report) {
   const session = activeChatSession();
   if (ownershipWait || ownershipTaking || state.activeTaskId || state.engine !== "pi" || !state.activeProjectId || !session) return;
-  const destination = state.sessionNodes.find((node) => node.id === elements.sessionTransferNodeSelect.value);
   if (!destination?.mapped) throw new Error("Map project first on the destination node");
-  const proceed = await waitForOwnershipSync();
+  const proceed = await wait();
   if (!proceed) return;
   ownershipTaking = true;
-  elements.sessionTransferStatus.textContent = "Taking ownership…";
+  report("Taking ownership…");
   try {
     const result = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/take-ownership`, {
       method: "POST", body: JSON.stringify({ peerId: destination.id, sessionId: session.id, sessionPath: session.path, sessionName: shortSessionTitle(session) }),
@@ -4272,6 +4313,18 @@ async function takeActiveSessionOwnership() {
   } catch (error) { resetOwnershipWait(); throw error; }
 }
 
+function takeActiveSessionOwnership() {
+  const destination = state.sessionNodes.find((node) => node.id === elements.sessionTransferNodeSelect.value);
+  return takeSessionOwnership(destination, waitForOwnershipSync, (text) => { elements.sessionTransferStatus.textContent = text; });
+}
+
+// The locked-conversation notice always takes ownership onto the node the user
+// is already looking at, so there is no destination to pick.
+function takeLockedConversationOwnership() {
+  const destination = state.sessionNodes.find((node) => node.id === state.activeNodeId);
+  return takeSessionOwnership(destination, waitForLockOwnershipSync, (text) => { elements.conversationLockStatus.textContent = text; });
+}
+
 elements.transferSessionButton.addEventListener("click", () => {
   elements.sessionTakeOwnershipButton.hidden = Boolean(state.activeTaskId || state.engine !== "pi");
   resetOwnershipWait();
@@ -4279,6 +4332,7 @@ elements.transferSessionButton.addEventListener("click", () => {
 elements.cancelSessionTransferButton.addEventListener("click", () => { resetOwnershipWait(); elements.sessionTransferDialog.close(); });
 elements.sessionTransferDialog.addEventListener("close", resetOwnershipWait);
 elements.sessionTakeOwnershipButton.addEventListener("click", () => takeActiveSessionOwnership().catch((error) => toast(error.message, 8000)));
+elements.conversationLockTakeButton.addEventListener("click", () => takeLockedConversationOwnership().catch((error) => { resetOwnershipWait(); toast(error.message, 8000); }));
 elements.skipSessionTransferWaitButton.addEventListener("click", skipOwnershipWait);
 elements.sessionTransferForm.addEventListener("submit", transferActiveSession);
 elements.closeModelDialogButton.addEventListener("click", () => elements.modelDialog.close());

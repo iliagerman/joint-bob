@@ -48,7 +48,7 @@ import { PROJECT_COLORS } from "./types.js";
 import type { ChatMessage, ProjectRecord, ProjectSyncStatus, ProjectView, SessionStatus, SessionSummary, TaskPhase, TaskPhaseConfig, TaskRecord } from "./types.js";
 import { webSocketCloseReason } from "./websocket.js";
 import { capturePiRecoverySnapshot, recoverPiSessionDirectory, resolveLocalSessionPath } from "./session-paths.js";
-import { beginConversationRecovery, beginConversationTransfer, commitConversationTransfer, compareAndSetConversationOwnership, ConversationOwnershipError, finalizeConversationClaim, finishConversationRecovery, getConversationOwnership, sameConversationOwnership, takeConversationOwnership, type ConversationEngine, type ConversationOwnership, type OwnershipApplyResult } from "./conversation-ownership.js";
+import { beginConversationRecovery, beginConversationTransfer, commitConversationTransfer, compareAndSetConversationOwnership, ConversationOwnershipError, finalizeConversationClaim, finishConversationRecovery, getConversationOwnership, sameConversationOwnership, takeConversationOwnership, type ConversationEngine, type ConversationOwnership, type ConversationOwnershipStatus, type OwnershipApplyResult } from "./conversation-ownership.js";
 import { attachTerminalSession } from "./terminal-session.js";
 
 type PiSessionHandle = Awaited<ReturnType<typeof createPiSession>>;
@@ -2317,6 +2317,37 @@ async function assertLocalConversationOwner(engine: ConversationEngine, sessionI
   if (ownership.ownerNodeId !== local.id || ownership.status !== "owned") throw new ConversationOwnershipError(ownership);
 }
 
+interface ForeignConversationOwner { nodeId: string; nodeName: string; status: ConversationOwnershipStatus }
+
+// The browser locks its composer on this, so a conversation owned elsewhere is
+// reported by name instead of letting the user type a prompt that node rejects.
+async function describeConversationOwner(ownership: ConversationOwnership, localId: string): Promise<ForeignConversationOwner | null> {
+  if (ownership.ownerNodeId === localId) return null;
+  const peer = await getClusterPeer(ownership.ownerNodeId);
+  return { nodeId: ownership.ownerNodeId, nodeName: peer?.name ?? "another node", status: ownership.status };
+}
+
+async function foreignConversationOwner(engine: ConversationEngine, sessionId: string, localId: string): Promise<ForeignConversationOwner | null> {
+  const ownership = await getConversationOwnership(engine, sessionId);
+  return ownership ? describeConversationOwner(ownership, localId) : null;
+}
+
+// Opening a conversation is what establishes its owner. Claiming only on the
+// first prompt left every unprompted conversation ownerless, so a second node
+// had nothing to report and its composer stayed open.
+async function openConversationOwnership(engine: ConversationEngine, sessionId: string, localId: string): Promise<ForeignConversationOwner | null> {
+  const foreign = await foreignConversationOwner(engine, sessionId, localId);
+  if (foreign) return foreign;
+  if (await getConversationOwnership(engine, sessionId)) return null;
+  try {
+    await claimConversationAcrossCluster(engine, sessionId, localId);
+    return null;
+  } catch (error) {
+    if (!(error instanceof ConversationOwnershipError)) throw error;
+    return describeConversationOwner(error.ownership, localId);
+  }
+}
+
 async function requireLocalConversationOwner(engine: ConversationEngine, sessionId: string): Promise<void> {
   const local = await getClusterNode();
   if (!await getConversationOwnership(engine, sessionId)) await claimConversationAcrossCluster(engine, sessionId, local.id);
@@ -4106,12 +4137,18 @@ webSocketServer.on("connection", async (socket, request) => {
     return;
   }
   const ownershipSessionId = listedSession ? conversationOwnershipId(listedSession) : randomUUID();
+  let foreignOwner: ForeignConversationOwner | null = null;
   try {
-    if (!listedSession) await claimConversationAcrossCluster(requestedEngine, ownershipSessionId, local.id);
+    foreignOwner = await openConversationOwnership(requestedEngine, ownershipSessionId, local.id);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Conversation ownership claim failed";
-    socket.close(1008, webSocketCloseReason(message));
-    return;
+    // A new conversation with no owner is unusable, but an existing one still
+    // reads fine: the send-time fence catches whatever the claim could not.
+    if (!listedSession) {
+      socket.close(1008, webSocketCloseReason(message));
+      return;
+    }
+    console.warn("Conversation ownership claim failed on open", error);
   }
   let connection: ChatConnection = {
     socket, project, cwd, engine: "pi", shared: null,
@@ -4148,6 +4185,7 @@ webSocketServer.on("connection", async (socket, request) => {
       messages: connection.claude.transcript,
       status: claudeStatus(connection),
       models: await listAvailableModels(),
+      ownership: foreignOwner,
     });
     // Replay the in-flight turn so a reconnecting client sees the text and tool
     // calls that streamed while its socket was down.
@@ -4174,6 +4212,7 @@ webSocketServer.on("connection", async (socket, request) => {
       messages: simplifyMessages(sharedSession.handle.session.messages as unknown[]),
       status: getSessionStatus(sharedSession.handle.session, sharedSession.handle.safeguardsEnabled),
       models: await listAvailableModels(),
+      ownership: foreignOwner,
     });
   }
 
@@ -4183,6 +4222,9 @@ webSocketServer.on("connection", async (socket, request) => {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Command failed";
       send(socket, { type: "error", error: message });
+      if (error instanceof ConversationOwnershipError) {
+        send(socket, { type: "ownership", ownership: await describeConversationOwner(error.ownership, local.id) });
+      }
       if (connection.engine === "pi" && connection.shared) sendStatus(socket, connection.shared.handle);
     }
   });

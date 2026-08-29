@@ -48,7 +48,8 @@ test("chat names its controls and exposes conversation transfer", async () => {
   assert.match(app, /function waitForOwnershipSync/);
   assert.doesNotMatch(app, /ownershipWait\.promise = promise;\s*}\);/);
   assert.match(app, /function setOwnershipTransferControls\(disabled\)[\s\S]*sessionTransferNodeSelect\.disabled = disabled;[\s\S]*querySelector\('\[type="submit"\]'\)\.disabled = disabled;[\s\S]*sessionTakeOwnershipButton\.disabled = disabled;/);
-  assert.match(app, /sessionTransferStatus\.textContent = "Taking ownership…";[\s\S]*await api\(/);
+  assert.match(app, /report\("Taking ownership…"\);[\s\S]*await api\(/);
+  assert.match(app, /function takeActiveSessionOwnership\(\)[\s\S]*sessionTransferNodeSelect\.value[\s\S]*sessionTransferStatus\.textContent = text/);
   assert.match(app, /const session = activeChatSession\(\);[\s\S]*state\.activeTaskId \|\| state\.engine !== "pi"[\s\S]*!session/);
   assert.match(app, /function skipOwnershipWait/);
   assert.match(app, /skipSessionTransferWaitButton\.addEventListener\("click", skipOwnershipWait\)/);

@@ -762,7 +762,6 @@ select.chat-toolbar-control {
 #chatHarnessSelect { max-width: min(24vw, 120px); }
 .chat-model-control, .chat-mode-control { align-self: stretch; }
 #chatsRecentSessionsButton, #chatRecentSessionsButton { display: none; }
-#chatModeControl { display: none; }
 .chat-recents-button { min-height: 32px; white-space: nowrap; }
 .transfer-session-button { align-self: end; min-height: 32px; white-space: nowrap; color: var(--accent); }
 .safeguards-button { align-self: end; min-height: 32px; white-space: nowrap; }
@@ -771,7 +770,6 @@ select.chat-toolbar-control {
 .model-shortcuts-empty { color: var(--muted); font-size: 11px; white-space: nowrap; }
 .model-button { display: flex; align-items: center; max-width: 44vw; min-width: 0; overflow: hidden; white-space: nowrap; padding: 0 12px; }
 #modelButtonName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.model-button-mode { flex: 0 0 auto; }
 .model-button.claude { color: var(--claude); border-color: color-mix(in srgb, var(--claude) 30%, transparent); background: transparent; }
 .chat-more, .chat-more-actions { display: contents; }
 .chat-more > summary { display: none; }
@@ -797,8 +795,6 @@ select.chat-toolbar-control {
 .model-option:hover { background: var(--field); }
 .model-option.active { background: var(--btn-bg); border-color: var(--btn-border); color: var(--btn-fg); }
 .model-dialog-list.claude .model-option.active { background: var(--btn-bg); }
-.model-dialog-effort { display: grid; gap: 6px; }
-.model-dialog-effort .effort-select { justify-self: start; }
 .status-pill { border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px; color: var(--muted); font-size: 10px; white-space: nowrap; }
 .status-pill.live { color: var(--live); border-color: color-mix(in srgb, var(--live) 35%, transparent); background: color-mix(in srgb, var(--live) 9%, transparent); }
 .status-pill.live::before {
@@ -951,6 +947,13 @@ select.chat-toolbar-control {
 .command-strip::-webkit-scrollbar { display: none; }
 .command-strip button { flex: 0 0 auto; min-height: 26px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; padding: 0 9px; font-family: var(--mono); font-size: 11px; font-weight: 500; }
 .command-strip button:hover { color: var(--text); background: var(--field); }
+.conversation-lock { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--amber) 8%, var(--header)); }
+.conversation-lock[hidden] { display: none; }
+.conversation-lock-copy { display: grid; gap: 2px; min-width: 0; }
+.conversation-lock-copy strong { color: var(--amber); font-size: 12px; font-weight: 600; }
+.conversation-lock-copy span { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.conversation-lock-status:empty { display: none; }
+.conversation-lock button { flex: 0 0 auto; }
 .composer { display: grid; gap: 6px; padding: 8px 12px 14px; background: var(--header); }
 .composer.dragging { outline: 2px dashed var(--accent); outline-offset: -4px; }
 .composer-row { width: 100%; max-width: 1100px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; }
@@ -1242,7 +1245,7 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   input, select { padding: 10px 13px; }
   .toast { bottom: 20px; }
   .install-banner { bottom: 16px; }
-  #chatsRecentSessionsButton, #chatRecentSessionsButton, #chatModeControl { display: none !important; }
+  #chatsRecentSessionsButton, #chatRecentSessionsButton { display: none !important; }
 }
 
 @media (max-width: 1023px) {
@@ -1258,7 +1261,6 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   #chatModeControl { display: grid; }
   #chatsRecentSessionsButton { display: inline-grid; }
   #chatRecentSessionsButton { display: inline-flex; }
-  .model-button-mode { display: none; }
   .chat-model-control { grid-column: 1; grid-row: 2; min-width: 0; }
   .chat-mode-control { grid-column: 2; grid-row: 2; min-width: 0; }
   .chat-recents-button { grid-column: 3; grid-row: 2; }

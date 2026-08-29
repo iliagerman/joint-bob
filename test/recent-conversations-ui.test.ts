@@ -66,7 +66,7 @@ test("recent conversations are reachable from the conversations list and an open
 
   // On larger screens Projects is the only visible recents location.
   assert.match(styles, /#chatsRecentSessionsButton, #chatRecentSessionsButton \{ display: none; \}/);
-  assert.match(styles, /@media \(min-width: 1024px\)[\s\S]*?#chatsRecentSessionsButton, #chatRecentSessionsButton, #chatModeControl \{ display: none !important; \}/);
+  assert.match(styles, /@media \(min-width: 1024px\)[\s\S]*?#chatsRecentSessionsButton, #chatRecentSessionsButton \{ display: none !important; \}/);
   assert.match(styles, /@media \(max-width: 1023px\)[\s\S]*?#chatsRecentSessionsButton \{ display: inline-grid; \}[\s\S]*?#chatRecentSessionsButton \{ display: inline-flex; \}/);
 
   // The triggers stay declarative: no per-button listener may be re-introduced.

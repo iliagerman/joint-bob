@@ -151,11 +151,11 @@
           </div>
           <div class="chat-control chat-model-control">
             <span>Model</span>
-            <button class="ghost compact model-button chat-toolbar-control" id="modelButton" type="button" disabled data-testid="chat-model-button"><span id="modelButtonName">Model</span><span class="model-button-mode" id="modelButtonMode"></span></button>
+            <button class="ghost compact model-button chat-toolbar-control" id="modelButton" type="button" disabled data-testid="chat-model-button"><span id="modelButtonName">Model</span></button>
           </div>
-          <label class="chat-control chat-mode-control" id="chatModeControl" for="mobileReasoningLevelSelect" hidden>
-            <span>Mode</span>
-            <select id="mobileReasoningLevelSelect" class="chat-toolbar-control" aria-label="Mode" data-testid="chat-mobile-reasoning-select"></select>
+          <label class="chat-control chat-mode-control" id="chatModeControl" for="reasoningLevelSelect" hidden>
+            <span id="chatModeLabel">Thinking</span>
+            <select id="reasoningLevelSelect" class="chat-toolbar-control" aria-labelledby="chatModeLabel" data-testid="chat-reasoning-select"></select>
           </label>
           <button class="ghost compact chat-recents-button" id="chatRecentSessionsButton" type="button" data-recent-sessions-open data-testid="chat-recent-sessions-open-button">Recents</button>
           <details class="chat-more" id="chatMoreMenu">
@@ -185,12 +185,20 @@
           <span id="reconnectBannerText">Connecting…</span>
         </div>
 
-        <div class="command-strip" aria-label="Quick slash commands">
+        <div class="command-strip" id="commandStrip" aria-label="Quick slash commands">
           <button type="button" data-command="/help">/help</button>
           <button type="button" data-command="/skill" data-testid="chat-skills-button">/skill</button>
           <button type="button" data-command="/model">/model</button>
           <button type="button" data-command="/tools">/tools</button>
           <button type="button" data-command="/compact">/compact</button>
+        </div>
+        <div class="conversation-lock" id="conversationLock" role="status" data-testid="conversation-lock-notice" hidden>
+          <div class="conversation-lock-copy">
+            <strong>Owned by another node</strong>
+            <span id="conversationLockDetail" data-testid="conversation-lock-detail">This conversation is running on another node.</span>
+            <span class="conversation-lock-status" id="conversationLockStatus"></span>
+          </div>
+          <button class="primary compact" id="conversationLockTakeButton" type="button" data-testid="conversation-lock-take-button">Take ownership</button>
         </div>
         <form class="composer" id="composer">
           <div class="attachment-list" id="attachmentList" aria-live="polite"></div>
@@ -579,10 +587,6 @@
           <h2 id="modelDialogTitle">Choose model</h2>
         </div>
         <div class="model-dialog-list" id="modelDialogList"></div>
-        <label class="model-dialog-effort" id="modelDialogReasoning" hidden>
-          <span id="modelDialogReasoningLabel">Thinking level</span>
-          <select id="reasoningLevelSelect" class="effort-select" aria-labelledby="modelDialogReasoningLabel" data-testid="chat-reasoning-select"></select>
-        </label>
         <div class="dialog-actions">
           <button class="ghost" type="button" id="closeModelDialogButton" data-testid="model-dialog-close-button">Close</button>
         </div>
