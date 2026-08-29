@@ -116,9 +116,11 @@ export function syncConversationReviewStates(userId: string, projectId: string, 
         states.set(session.path, session.running ? "running" : observedAt > reviewedAt ? "needs_review" : "reviewed");
         continue;
       }
-      const lastActivityAt = observedAt > row.last_activity_at ? observedAt : row.last_activity_at;
-      statements.update.run(lastActivityAt, session.running ? 1 : 0, session.running ? 1 : 0, userId, projectId, session.path);
-      states.set(session.path, session.running ? "running" : lastActivityAt > row.reviewed_at ? "needs_review" : "reviewed");
+      // The reported time is authoritative in both directions. Clamping it to the highest value
+      // ever seen made a single bad reading permanent, and a conversation whose recency was
+      // inflated once could never return to reviewed.
+      statements.update.run(observedAt, session.running ? 1 : 0, session.running ? 1 : 0, userId, projectId, session.path);
+      states.set(session.path, session.running ? "running" : observedAt > row.reviewed_at ? "needs_review" : "reviewed");
     }
     db.exec("COMMIT");
     return states;

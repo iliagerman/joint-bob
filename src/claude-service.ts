@@ -103,6 +103,7 @@ interface ClaudeSessionFacts {
   size: number;
   cwds: Set<string>;
   title: string;
+  lastEventAt: string;
 }
 
 const claudeSessionFactsCache = new Map<string, ClaudeSessionFacts>();
@@ -136,6 +137,20 @@ function meaningfulClaudePrompt(record: UnknownRecord): string {
   return text.split("\n")[0].slice(0, 80);
 }
 
+// Timestamps can arrive out of order, so the newest one wins rather than the last line, and
+// the trailing `last-prompt` and `cost-state` records Claude appends carry none at all.
+function newestEventTime(records: UnknownRecord[]): string {
+  let newest = "";
+  for (const record of records) {
+    if (typeof record.timestamp !== "string") continue;
+    const time = Date.parse(record.timestamp);
+    if (Number.isNaN(time)) continue;
+    const normalized = new Date(time).toISOString();
+    if (normalized > newest) newest = normalized;
+  }
+  return newest;
+}
+
 async function claudeSessionFacts(filePath: string, fileStat: Stats): Promise<ClaudeSessionFacts> {
   const cached = claudeSessionFactsCache.get(filePath);
   if (cached && cached.mtimeMs === fileStat.mtimeMs && cached.size === fileStat.size) return cached;
@@ -153,6 +168,7 @@ async function claudeSessionFacts(filePath: string, fileStat: Stats): Promise<Cl
     size: fileStat.size,
     cwds: new Set(records.map((record) => String(record.cwd ?? ""))),
     title: customTitle || aiTitle || prompt || "Claude conversation",
+    lastEventAt: newestEventTime(records),
   };
   claudeSessionFactsCache.set(filePath, facts);
   return facts;
@@ -178,7 +194,10 @@ export async function listClaudeSessions(project: SessionProjectPaths): Promise<
       agentLabel: "Claude",
       title: `[Claude] ${facts.title}`,
       createdAt: fileStat.birthtime.toISOString(),
-      updatedAt: fileStat.mtime.toISOString(),
+      // Syncthing rewrites mtime when a peer advertises new metadata, so a synchronized
+      // transcript looks freshly active with no new message. The transcript itself is the
+      // only honest record of when this conversation last moved.
+      updatedAt: facts.lastEventAt || fileStat.mtime.toISOString(),
       firstMessage: facts.title,
     };
   });
