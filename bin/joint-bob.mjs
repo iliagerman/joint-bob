@@ -42,7 +42,12 @@ function install() {
 
 if (command === "install") install();
 else if (command === "doctor") run(path.join(packageRoot, "scripts", "check-prerequisites.sh"));
-else if (["help", "--help", "-h"].includes(command)) {
+else if (command === "claude-event") {
+  let input = "";
+  for await (const chunk of process.stdin) input += chunk;
+  const runtime = await import("../dist/claude-runtime.js");
+  runtime.recordClaudeHookEvent(JSON.parse(input));
+} else if (["help", "--help", "-h"].includes(command)) {
   console.log("Usage: joint-bob <install|doctor>");
 } else {
   console.error(`Unknown command: ${command}`);

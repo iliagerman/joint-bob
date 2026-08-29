@@ -34,6 +34,7 @@ import { assertSyncthingFolderReady, CLAUDE_ENGINE_SYNC_FOLDER_ID, engineSyncFol
 import { assertTaskWorkspaceReady, removeTaskWorkspace, taskWorkspaceKey, TaskWorkspaceError, TICKET_WORKSPACE_FOLDER_ID, ticketWorkspaceRoot } from "./task-workspaces.js";
 import { SessionWatcher } from "./watcher.js";
 import { appendLiveEvent, buildHandoffContext, claudeRunIdFromSessionPath, claudeSessionFilePath, loadClaudeMessages, runClaudePrompt, type ClaudeRunHandle, type ClaudeRunResult } from "./claude-service.js";
+import { isClaudeSessionRunning } from "./claude-runtime.js";
 import { listHarnesses, listHarnessSessions } from "./harnesses.js";
 import { listSkills } from "./skills.js";
 import { authenticate, authenticationStatus, changePassword, clearSessionCookieValue, createAdministrator, listLoginSessions, revokeSession, revokeUserSession, sessionCookieValue, sessionForId, type AuthSession } from "./auth.js";
@@ -74,6 +75,7 @@ interface ClaudeQueuedPrompt {
 
 interface ClaudeChatState {
   sessionId: string | null;
+  sessionName: string | null;
   filePath: string | null;
   child: ClaudeRunHandle["child"] | null;
   promptQueue: ClaudeQueuedPrompt[];
@@ -2172,7 +2174,8 @@ async function listProjectSessionsWithReviewState(project: ProjectRecord, userId
       running: Boolean(
         shared?.handle.session.isStreaming
         || task?.executionState === "running"
-        || runningClaudeSessionPaths.has(claudeRunKey(project.id, session.path)),
+        || runningClaudeSessionPaths.has(claudeRunKey(project.id, session.path))
+        || (session.harnessId === "claude" && isClaudeSessionRunning(session.path)),
       ),
     };
   });
@@ -3232,7 +3235,10 @@ async function reloadClaudeClients(projectId: string, changedFiles: string[]): P
     try {
       const messages = await loadClaudeMessages(`claude:${connection.claude.filePath}`);
       connection.claude.transcript = messages;
+      const listed = (await listHarnessSessions(connection.project)).find((session) => session.path === `claude:${connection.claude.filePath}`);
+      if (listed) connection.claude.sessionName = listed.title;
       send(connection.socket, { type: "messages", messages });
+      sendClaudeStatus(connection);
     } catch (error) {
       console.warn("Could not reload Claude transcript", error);
     }
@@ -3583,7 +3589,7 @@ function claudeStatus(connection: ChatConnection): SessionStatus {
   return {
     sessionFile: connection.claude.filePath ? `claude:${connection.claude.filePath}` : undefined,
     sessionId: connection.claude.sessionId ?? "claude:new",
-    sessionName: undefined,
+    sessionName: connection.claude.sessionName ?? undefined,
     model: {
       provider: "claude",
       id: connection.claude.model ?? "default",
@@ -3607,7 +3613,7 @@ function sendClaudeStatus(connection: ChatConnection): void {
 }
 
 function emptyClaudeState(sessionId: string | null = null): ClaudeChatState {
-  return { sessionId, filePath: null, child: null, promptQueue: [], transcript: [], lastRunEndedAt: 0, model: null, effort: null, liveEvents: [] };
+  return { sessionId, sessionName: null, filePath: null, child: null, promptQueue: [], transcript: [], lastRunEndedAt: 0, model: null, effort: null, liveEvents: [] };
 }
 
 function pushTranscript(connection: ChatConnection, role: string, text: string): void {
@@ -4170,6 +4176,7 @@ webSocketServer.on("connection", async (socket, request) => {
           connection.claude.transcript = await loadClaudeMessages(requestedSessionPath);
           connection.claude.filePath = path.resolve(requestedSessionPath.replace(/^claude:/, ""));
           connection.claude.sessionId = path.basename(connection.claude.filePath, ".jsonl");
+          connection.claude.sessionName = listedSession?.title ?? null;
         } catch (error) {
           send(socket, { type: "error", error: error instanceof Error ? error.message : "Could not load Claude session" });
         }

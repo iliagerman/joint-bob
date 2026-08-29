@@ -59,3 +59,33 @@ test("Claude session listing re-reads a transcript only when it changes", async 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("Claude titles prefer metadata and skip synthetic command prompts", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-claude-title-"));
+  const previousDataDir = process.env.PI_WEB_DATA_DIR;
+  process.env.PI_WEB_DATA_DIR = root;
+  try {
+    const sessionRoot = path.join(root, "claude-sessions");
+    const projectCwd = path.join(root, "project");
+    await mkdir(projectCwd, { recursive: true });
+    const settings = await import("../src/settings.js");
+    settings.updateSettings({ pi: { executable: "pi", configPath: "", sessionPath: "" }, claude: { executable: "claude", configPath: "", sessionPath: sessionRoot }, syncthing: { endpoint: "" } });
+    const sessionPaths = await import("../src/session-paths.js");
+    const claude = await import("../src/claude-service.js");
+    const projectDir = sessionPaths.claudeProjectDir(projectCwd, sessionRoot);
+    await mkdir(projectDir, { recursive: true });
+    const metadata = path.join(projectDir, "metadata.jsonl");
+    const synthetic = path.join(projectDir, "synthetic.jsonl");
+    const user = (text: string) => ({ type: "user", cwd: projectCwd, message: { role: "user", content: [{ text }] } });
+    await writeFile(metadata, [user("User prompt"), { type: "ai-title", aiTitle: "Old AI" }, { type: "ai-title", aiTitle: "New AI" }, { type: "custom-title", customTitle: "Old custom" }, { type: "custom-title", customTitle: "Latest custom" }].map(JSON.stringify).join("\n"));
+    await writeFile(synthetic, [user("<command-message>synthetic"), user("<local-command-caveat>synthetic"), user("Real later prompt")].map(JSON.stringify).join("\n"));
+    assert.equal(await claude.claudeSessionTitle(`claude:${metadata}`), "Latest custom");
+    assert.equal(await claude.claudeSessionTitle(`claude:${synthetic}`), "Real later prompt");
+    await writeFile(metadata, [user("User prompt"), { type: "ai-title", aiTitle: "AI title" }, { type: "custom-title", customTitle: "" }].map(JSON.stringify).join("\n"));
+    assert.equal(await claude.claudeSessionTitle(`claude:${metadata}`), "AI title");
+  } finally {
+    if (previousDataDir === undefined) delete process.env.PI_WEB_DATA_DIR;
+    else process.env.PI_WEB_DATA_DIR = previousDataDir;
+    await rm(root, { recursive: true, force: true });
+  }
+});

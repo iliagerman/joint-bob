@@ -148,6 +148,13 @@ test("installer sources persisted state before choosing its health port and clea
   assert.match(runner, /export PORT="\$\{PORT:-8787\}"/);
 });
 
+test("service installation configures Claude hooks after health validation", async () => {
+  const installer = await readFile("scripts/install-service.sh", "utf8");
+  const health = installer.indexOf('curl -fsS "http://127.0.0.1:${PORT_VALUE}/api/health"');
+  const hooks = installer.indexOf('scripts/install-claude-hooks.mjs');
+  assert.ok(hooks > health);
+});
+
 test("remote upgrades preserve rollback and migrate native service names", async () => {
   const [bootstrap, installer, runner] = await Promise.all([
     readFile("scripts/install.sh", "utf8"),

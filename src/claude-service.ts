@@ -126,16 +126,33 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, map: (item: T
   return results;
 }
 
+function cleanClaudeTitle(value: unknown): string {
+  return typeof value === "string" ? value.trim().split("\n")[0].slice(0, 80) : "";
+}
+
+function meaningfulClaudePrompt(record: UnknownRecord): string {
+  const text = claudeMessageText(record).trim();
+  if (/^<(local-command-caveat|command-message|command-name|command-args)>/.test(text)) return "";
+  return text.split("\n")[0].slice(0, 80);
+}
+
 async function claudeSessionFacts(filePath: string, fileStat: Stats): Promise<ClaudeSessionFacts> {
   const cached = claudeSessionFactsCache.get(filePath);
   if (cached && cached.mtimeMs === fileStat.mtimeMs && cached.size === fileStat.size) return cached;
   const records = (await readFile(filePath, "utf8")).split("\n").filter(Boolean).map((line) => JSON.parse(line) as UnknownRecord);
-  const first = records.find((record) => record.type === "user" && claudeMessageText(record).trim());
+  let customTitle = "";
+  let aiTitle = "";
+  let prompt = "";
+  for (const record of records) {
+    if (record.type === "custom-title") customTitle = cleanClaudeTitle(record.customTitle) || customTitle;
+    if (record.type === "ai-title") aiTitle = cleanClaudeTitle(record.aiTitle) || aiTitle;
+    if (!prompt && record.type === "user") prompt = meaningfulClaudePrompt(record);
+  }
   const facts: ClaudeSessionFacts = {
     mtimeMs: fileStat.mtimeMs,
     size: fileStat.size,
     cwds: new Set(records.map((record) => String(record.cwd ?? ""))),
-    title: claudeMessageText(first ?? {}).trim().split("\n")[0].slice(0, 80) || "Claude conversation",
+    title: customTitle || aiTitle || prompt || "Claude conversation",
   };
   claudeSessionFactsCache.set(filePath, facts);
   return facts;
@@ -168,11 +185,21 @@ export async function listClaudeSessions(project: SessionProjectPaths): Promise<
   return summaries.filter((summary): summary is SessionSummary => Boolean(summary));
 }
 
-export async function loadClaudeMessages(sessionPath: string): Promise<ChatMessage[]> {
+function resolveClaudeSessionPath(sessionPath: string): string {
   const filePath = path.resolve(sessionPath.replace(/^claude:/, ""));
   const claudeRoot = path.resolve(claudeProjectsRoot());
   const relative = path.relative(claudeRoot, filePath);
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error("Claude session path is outside Claude projects");
+  return filePath;
+}
+
+export async function claudeSessionTitle(sessionPath: string): Promise<string> {
+  const filePath = resolveClaudeSessionPath(sessionPath);
+  return (await claudeSessionFacts(filePath, await stat(filePath))).title;
+}
+
+export async function loadClaudeMessages(sessionPath: string): Promise<ChatMessage[]> {
+  const filePath = resolveClaudeSessionPath(sessionPath);
   const lines = (await readFile(filePath, "utf8")).split("\n").filter(Boolean);
   return lines
     .map((line, index) => {

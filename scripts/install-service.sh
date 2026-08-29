@@ -126,6 +126,7 @@ if [ "${service_healthy}" != true ]; then
   echo "Joint Bob service did not become healthy" >&2
   exit 1
 fi
+"${NODE_BIN}" "${REPO_ROOT}/scripts/install-claude-hooks.mjs" "${NODE_BIN}" "${REPO_ROOT}" "${STATE_DIR}"
 chmod 600 "${STATE_DIR}/node.db" "${STATE_DIR}/node.db-wal" "${STATE_DIR}/node.db-shm" 2>/dev/null || true
 
 if [ "${service_platform}" = Linux ]; then
