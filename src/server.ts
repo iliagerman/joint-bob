@@ -96,6 +96,9 @@ const CLAUDE_MODEL_LABELS = new Map([
   ["haiku", "Claude Haiku 4.5"],
 ]);
 const CLAUDE_MODELS = [...CLAUDE_MODEL_LABELS.keys()];
+// A new chat starts on Opus 5 rather than the CLI default, so the toolbar
+// always names the model that is actually running.
+const CLAUDE_DEFAULT_MODEL = "claude-opus-5";
 
 interface ChatConnection {
   socket: WebSocket;
@@ -3592,8 +3595,8 @@ function claudeStatus(connection: ChatConnection): SessionStatus {
     sessionName: connection.claude.sessionName ?? undefined,
     model: {
       provider: "claude",
-      id: connection.claude.model ?? "default",
-      label: (connection.claude.model ? CLAUDE_MODEL_LABELS.get(connection.claude.model) : undefined) ?? "Claude Code",
+      id: connection.claude.model ?? CLAUDE_DEFAULT_MODEL,
+      label: CLAUDE_MODEL_LABELS.get(connection.claude.model ?? CLAUDE_DEFAULT_MODEL)!,
     },
     thinkingLevel: connection.claude.effort ?? "default",
     availableThinkingLevels: ["default", "low", "medium", "high", "xhigh", "max"],
@@ -3613,7 +3616,7 @@ function sendClaudeStatus(connection: ChatConnection): void {
 }
 
 function emptyClaudeState(sessionId: string | null = null): ClaudeChatState {
-  return { sessionId, sessionName: null, filePath: null, child: null, promptQueue: [], transcript: [], lastRunEndedAt: 0, model: null, effort: null, liveEvents: [] };
+  return { sessionId, sessionName: null, filePath: null, child: null, promptQueue: [], transcript: [], lastRunEndedAt: 0, model: CLAUDE_DEFAULT_MODEL, effort: null, liveEvents: [] };
 }
 
 function pushTranscript(connection: ChatConnection, role: string, text: string): void {
