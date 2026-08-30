@@ -12,6 +12,8 @@ const state = {
   pendingReviews: [],
   pendingReviewsTimer: null,
   renameSessionPath: null,
+  newSessionDraft: null,
+  pendingSessionTitle: null,
   projectsLoading: true,
   projectsRefreshing: false,
   sessionsLoading: false,
@@ -37,6 +39,7 @@ const state = {
   sessionBusy: false,
   harnesses: [],
   sessionNodes: [],
+  appMenuLoaded: false,
   activeNodeId: null,
   activeSessionId: null,
   chatFilter: "all",
@@ -85,6 +88,7 @@ const TAKE_OWNERSHIP_WAIT_SECONDS = 5;
 let ownershipWait = null;
 let ownershipTaking = false;
 const BOOT_MINIMUM_MS = 700;
+const BOOT_REQUEST_TIMEOUT_MS = 8_000;
 const bootStartedAt = performance.now();
 let bootRevealTimer = null;
 
@@ -280,6 +284,10 @@ const elements = {
   renameForm: document.querySelector("#renameForm"),
   sessionNameInput: document.querySelector("#sessionNameInput"),
   cancelRenameButton: document.querySelector("#cancelRenameButton"),
+  newSessionNameDialog: document.querySelector("#newSessionNameDialog"),
+  newSessionNameForm: document.querySelector("#newSessionNameForm"),
+  newSessionNameInput: document.querySelector("#newSessionNameInput"),
+  cancelNewSessionNameButton: document.querySelector("#cancelNewSessionNameButton"),
   installBanner: document.querySelector("#installBanner"),
   installBannerButton: document.querySelector("#installBannerButton"),
   dismissInstallButton: document.querySelector("#dismissInstallButton"),
@@ -287,6 +295,10 @@ const elements = {
   navSessionsButton: document.querySelector("#navSessionsButton"),
   navBoardButton: document.querySelector("#navBoardButton"),
   navChatButton: document.querySelector("#navChatButton"),
+  appMenu: document.querySelector("#appMenu"),
+  appMenuNode: document.querySelector("#appMenuNode"),
+  appMenuVersion: document.querySelector("#appMenuVersion"),
+  appMenuSettingsButton: document.querySelector("#appMenuSettingsButton"),
   backToProjectsButton: document.querySelector("#backToProjectsButton"),
   backToChatsButton: document.querySelector("#backToChatsButton"),
   backToSessionsButton: document.querySelector("#backToSessionsButton"),
@@ -478,7 +490,7 @@ function applyAuthStatus(status) {
 }
 
 async function initializeApplication() {
-  const status = await api("/api/auth/status");
+  const status = await api("/api/auth/status", { signal: AbortSignal.timeout(BOOT_REQUEST_TIMEOUT_MS) });
   applyAuthStatus(status);
   if (!status.authenticated) {
     revealApplication();
@@ -490,7 +502,7 @@ async function initializeApplication() {
     showLogin();
     return;
   }
-  let preferences = await api("/api/preferences");
+  let preferences = await api("/api/preferences", { signal: AbortSignal.timeout(BOOT_REQUEST_TIMEOUT_MS) });
   preferences = await migrateLegacyPreferences(preferences);
   state.preferencesLoaded = false;
   setTheme(preferences.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
@@ -661,10 +673,23 @@ function toast(message, duration = 3200) {
   node.className = "toast";
   node.setAttribute("role", "alert");
   node.setAttribute("aria-live", "assertive");
-  node.textContent = message;
+  const text = document.createElement("span");
+  text.className = "toast-message";
+  text.textContent = message;
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "toast-close";
+  close.textContent = "×";
+  close.setAttribute("aria-label", "Dismiss");
+  close.setAttribute("data-testid", "toast-close-button");
+  const timer = setTimeout(() => node.remove(), duration);
+  close.addEventListener("click", () => {
+    clearTimeout(timer);
+    node.remove();
+  });
+  node.append(text, close);
   const openDialog = document.querySelector("dialog[open]");
   (openDialog || document.body).append(node);
-  setTimeout(() => node.remove(), duration);
 }
 
 function setTheme(theme) {
@@ -795,10 +820,23 @@ function updateInstallButton() {
   elements.installBanner.hidden = !canInstall || dismissed || isStandalone();
 }
 
+// The pill renders as a 12px traffic light, so the state has to reach the user
+// through the tooltip and the accessible name rather than visible text.
 function setStatus(text, live = false, connecting = false) {
   elements.connectionStatus.textContent = text;
+  elements.connectionStatus.title = text;
   elements.connectionStatus.classList.toggle("live", live);
   elements.connectionStatus.classList.toggle("connecting", connecting);
+}
+
+// The node name and release cannot change while this tab is open, so one lazy
+// fetch on first open is enough.
+async function loadAppMenuDetails() {
+  if (state.appMenuLoaded) return;
+  state.appMenuLoaded = true;
+  const [{ node }, health] = await Promise.all([api("/api/cluster/node"), api("/api/health")]);
+  elements.appMenuNode.textContent = node.name;
+  elements.appMenuVersion.textContent = `Version ${/^[0-9a-f]{40}$/i.test(health.release) ? health.release.slice(0, 7) : health.release}`;
 }
 
 // One reusable strip under the transcript. Reconnect attempts repeat, so the
@@ -1422,6 +1460,14 @@ function openRenameDialog(sessionPath, currentTitle) {
   elements.renameDialog.showModal();
 }
 
+/** A named conversation has no transcript until its first turn, so the name is saved when that turn ends. */
+function applyPendingSessionTitle() {
+  if (!state.pendingSessionTitle || ["new", "claude:new"].includes(state.activeSessionPath)) return;
+  const title = state.pendingSessionTitle;
+  state.pendingSessionTitle = null;
+  renameSession(state.activeSessionPath, title).catch((error) => toast(error.message, 8000));
+}
+
 /** The fixed palette mirrors PROJECT_COLORS in src/types.ts. */
 const PROJECT_COLORS = ["slate", "teal", "blue", "violet", "magenta", "amber", "green", "red"];
 
@@ -1478,6 +1524,11 @@ const rowMenuIconPaths = {
     "M16.5 7.5h.01",
   ],
   refresh: ["M3 12a9 9 0 1 0 2.6-6.4", "M3 4v4h4"],
+  copy: [
+    "M9.5 9.5h8a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-8a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1z",
+    "M5.5 14.5h-1a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v1",
+  ],
+  check: ["M4.5 12.5l5 5 10-10"],
   transfer: ["M14 4h5a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-5", "M10 8l4 4-4 4", "M14 12H4"],
   trash: [
     "M4 7h16",
@@ -2411,6 +2462,50 @@ function renderBubbleContent(bubble, text, flush = false) {
   });
 }
 
+// The Claude harness streams text deltas with no completion event, so a bubble
+// left in plain-text mode never gets its markdown pass and shows raw "##" and
+// backticks until the transcript is reloaded. Flush it whenever the stream
+// moves on from the current assistant bubble.
+function finalizeAssistantBubble() {
+  if (state.assistantBubble) renderBubbleContent(state.assistantBubble, state.assistantBubble._raw, true);
+  state.assistantBubble = null;
+}
+
+function copyGlyph(name) {
+  const icon = menuIcon(name);
+  icon.setAttribute("class", "message-copy-icon");
+  return icon;
+}
+
+// The button reads bubble._raw when clicked rather than when built, so copying a
+// streamed assistant message yields its finished text and not its first delta.
+function appendCopyButton(bubble) {
+  const actions = document.createElement("div");
+  actions.className = "message-actions";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "message-copy";
+  button.title = "Copy message";
+  button.setAttribute("aria-label", "Copy message");
+  button.dataset.testid = "message-copy-button";
+  button.append(copyGlyph("copy"));
+  button.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(bubble._raw);
+      button.classList.add("copied");
+      button.replaceChildren(copyGlyph("check"));
+      setTimeout(() => {
+        button.classList.remove("copied");
+        button.replaceChildren(copyGlyph("copy"));
+      }, 1500);
+    } catch (error) {
+      toast(error.message || "Could not copy message");
+    }
+  });
+  actions.append(button);
+  bubble.after(actions);
+}
+
 function appendMessage(role, text) {
   elements.messages.querySelector(".empty-state")?.remove();
   const bubble = document.createElement("article");
@@ -2422,6 +2517,7 @@ function appendMessage(role, text) {
   bubble.append(content);
   renderBubbleContent(bubble, text, true);
   elements.messages.insertBefore(bubble, elements.jumpLatestButton);
+  if (isMarkdown) appendCopyButton(bubble);
   stickyScroll();
   return bubble;
 }
@@ -2808,11 +2904,10 @@ function updateStatus(status) {
   if (!status.isStreaming) clearThinkingBubble();
   state.sessionBusy = Boolean(status.isStreaming || status.isBashRunning || status.isCompacting || status.isRetrying);
   if (typeof status.safeguardsEnabled === "boolean") state.safeguardsEnabled = status.safeguardsEnabled;
-  const model = status.model ? `${status.model.provider}/${status.model.label}` : "No model";
   const busy = status.isStreaming ? "working" : "ready";
   const queue = status.pendingMessageCount ? ` • ${status.pendingMessageCount} queued` : "";
   const node = state.sessionNodes.find((candidate) => candidate.id === state.activeNodeId);
-  elements.miniStatus.textContent = `${node?.name || "Node"} • ${model} • thinking ${status.thinkingLevel} • ${status.messageCount} msgs • ${status.activeTools.length} tools • ${busy}${queue}`;
+  elements.miniStatus.textContent = `${node?.name || "Node"} • thinking ${status.thinkingLevel} • ${status.messageCount} msgs • ${status.activeTools.length} tools • ${busy}${queue}`;
   elements.abortButton.disabled = !status.isStreaming && !status.isBashRunning && !status.isCompacting && !status.isRetrying;
   if (status.sessionName) elements.sessionTitle.textContent = status.sessionName;
   state.activeModelKey = status.model ? `${status.model.provider}/${status.model.id}` : "";
@@ -3055,6 +3150,7 @@ function openSession(sessionPath, title = "New Pi conversation", preserveChat = 
   }
   closeSocket();
   if (!preserveChat) {
+    state.pendingSessionTitle = null;
     clearChat();
     clearAttachments();
     const node = state.sessionNodes.find((candidate) => candidate.id === state.activeNodeId);
@@ -3122,11 +3218,13 @@ function handleSocketPayload(payload) {
       if (state.preferencesLoaded) savePreferencesInBackground({ activeSessionPath: payload.sessionFile, activeSessionId: state.activeSessionId });
     }
     const matchingSession = state.sessions.find((session) => session.path === payload.sessionFile);
-    elements.sessionTitle.textContent = matchingSession
-      ? shortSessionTitle(matchingSession)
-      : openingDraft
-        ? `New ${state.engine === "claude" ? "Claude" : "Pi"} conversation`
-        : state.engine === "claude" ? "Claude conversation" : "Pi conversation";
+    elements.sessionTitle.textContent = state.pendingSessionTitle
+      ? state.pendingSessionTitle
+      : matchingSession
+        ? shortSessionTitle(matchingSession)
+        : openingDraft
+          ? `New ${state.engine === "claude" ? "Claude" : "Pi"} conversation`
+          : state.engine === "claude" ? "Claude conversation" : "Pi conversation";
     clearChat();
     appendTranscript(payload.messages);
     if (!payload.messages?.length) {
@@ -3170,8 +3268,8 @@ function handleSocketPayload(payload) {
     return;
   }
   if (payload.type === "userMessage") {
+    finalizeAssistantBubble();
     appendMessage("user", payload.text);
-    state.assistantBubble = null;
     state.thinkingBubble = null;
     return;
   }
@@ -3205,7 +3303,7 @@ function handleSocketPayload(payload) {
   }
   if (payload.type === "toolStart") {
     clearThinkingBubble();
-    state.assistantBubble = null;
+    finalizeAssistantBubble();
     const bubble = appendToolMessage(payload.toolName, payload.toolCallId);
     state.toolBubbles.set(payload.toolCallId, bubble);
     return;
@@ -3224,6 +3322,7 @@ function handleSocketPayload(payload) {
   }
   if (payload.type === "assistantError") {
     clearThinkingBubble();
+    finalizeAssistantBubble();
     appendMessage("tool", `${state.engine === "claude" ? "Claude" : "Pi"} error: ${payload.error}`);
   }
   if (payload.type === "agent_start") {
@@ -3234,6 +3333,7 @@ function handleSocketPayload(payload) {
   }
   if (payload.type === "agent_end") {
     clearThinkingBubble();
+    finalizeAssistantBubble();
     setStatus("Connected", true);
     state.sessionBusy = false;
     syncSafeguardsButton();
@@ -3241,6 +3341,7 @@ function handleSocketPayload(payload) {
       maybeNotifyTurnComplete().catch((error) => console.warn("Notification failed", error));
       state.lastTurnStartedAt = 0;
     }
+    applyPendingSessionTitle();
   }
   if (payload.type === "queueUpdate") elements.miniStatus.textContent = `${payload.pending || 0} queued messages`;
   if (payload.type === "sessionInfoChanged" && payload.name) elements.sessionTitle.textContent = payload.name;
@@ -3262,7 +3363,7 @@ function handleSocketPayload(payload) {
     openSession(state.activeSessionPath, elements.sessionTitle.textContent || "Pi session", true, Boolean(state.activeTaskId));
     return;
   }
-  if (payload.type === "error") toast(payload.error);
+  if (payload.type === "error") toast(payload.error, 6000);
 }
 
 async function refreshSessionsQuietly() {
@@ -4099,13 +4200,24 @@ elements.fileActionDownloadLink.addEventListener("click", () => setTimeout(() =>
   resetFileEditor();
 }));
 elements.loginForm.addEventListener("submit", submitLogin);
-elements.newSessionButton.addEventListener("click", () => {
+/** A conversation is named up front so the list shows the user's own label from the first turn. */
+function openNewSessionNameDialog(sessionPath, defaultTitle) {
+  state.newSessionDraft = { sessionPath, defaultTitle };
+  elements.newSessionNameInput.value = "";
+  elements.newSessionNameDialog.showModal();
+}
+elements.newSessionButton.addEventListener("click", () => openNewSessionNameDialog(null, "New Pi conversation"));
+elements.newClaudeSessionButton.addEventListener("click", () => openNewSessionNameDialog("claude:new", "New Claude conversation"));
+elements.cancelNewSessionNameButton.addEventListener("click", () => elements.newSessionNameDialog.close());
+elements.newSessionNameForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const draft = state.newSessionDraft;
+  const title = elements.newSessionNameInput.value.trim();
+  elements.newSessionNameDialog.close();
+  state.newSessionDraft = null;
   state.activeSessionId = null;
-  openSession(null, "New Pi conversation");
-});
-elements.newClaudeSessionButton.addEventListener("click", () => {
-  state.activeSessionId = null;
-  openSession("claude:new", "New Claude conversation");
+  openSession(draft.sessionPath, title || draft.defaultTitle);
+  state.pendingSessionTitle = title || null;
 });
 elements.chatNodeSelect.addEventListener("change", async () => {
   const destination = state.sessionNodes.find((node) => node.id === elements.chatNodeSelect.value);
@@ -4355,6 +4467,16 @@ elements.chatMoreMenu.addEventListener("click", (event) => {
 });
 document.addEventListener("click", (event) => {
   if (event.target instanceof Node && !elements.chatMoreMenu.contains(event.target)) elements.chatMoreMenu.removeAttribute("open");
+});
+elements.appMenu.addEventListener("toggle", () => {
+  if (elements.appMenu.open) loadAppMenuDetails().catch((error) => toast(error.message));
+});
+elements.appMenuSettingsButton.addEventListener("click", () => {
+  elements.appMenu.removeAttribute("open");
+  openSettings().catch((error) => toast(error.message));
+});
+document.addEventListener("click", (event) => {
+  if (event.target instanceof Node && !elements.appMenu.contains(event.target)) elements.appMenu.removeAttribute("open");
 });
 elements.composer.addEventListener("submit", (event) => {
   event.preventDefault();

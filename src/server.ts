@@ -3155,6 +3155,15 @@ app.use((error: unknown, _request: Request, response: Response, _next: NextFunct
   sendError(response, error instanceof TaskWorktreeError || error instanceof TaskWorkspaceError || error instanceof ProjectDirectoryImportError || error instanceof ProjectLockedError ? 409 : 500, message);
 });
 
+/** The Pi SDK reports a busy session in SDK terms; the chat surface needs a sentence the user can act on. */
+function chatErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : "Command failed";
+  if (/already processing/i.test(message)) {
+    return "Pi is still working on your previous message. Wait for it to finish or press Stop, then send again.";
+  }
+  return message;
+}
+
 function send(socket: WebSocket, payload: unknown): void {
   if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(payload));
 }
@@ -4481,7 +4490,7 @@ webSocketServer.on("connection", async (socket, request) => {
     try {
       await handleChatMessage(connection, raw as Buffer);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Command failed";
+      const message = chatErrorMessage(error);
       send(socket, { type: "error", error: message });
       if (error instanceof ConversationOwnershipError) {
         send(socket, { type: "ownership", ownership: await describeConversationOwner(error.ownership, local.id) });

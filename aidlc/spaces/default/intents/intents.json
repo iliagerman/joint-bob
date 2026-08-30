@@ -19,5 +19,12 @@
     "dirName": "260827-conversation-review-sync",
     "scope": "bugfix",
     "status": "complete"
+  },
+  {
+    "uuid": "01a051a9-6c9f-7a7b-b173-a1b60179310f",
+    "slug": "claude-session-transfer",
+    "dirName": "260830-claude-session-transfer",
+    "scope": "bugfix",
+    "status": "in-flight"
   }
 ]

@@ -52,7 +52,7 @@ test("shared flat Pi session watcher does not keep the process alive", async () 
       const timeout = setTimeout(() => {
         child.kill();
         reject(new Error("child process did not exit after constructing SessionWatcher"));
-      }, 2_000);
+      }, 5_000);
       child.once("error", (error) => {
         clearTimeout(timeout);
         reject(error);

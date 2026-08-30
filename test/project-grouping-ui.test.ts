@@ -29,7 +29,7 @@ test("the projects list is grouped by type and each group collapses", async () =
     assert.ok(styles.includes(selector));
   }
 
-  assert.match(serviceWorker, /joint-bob-v52/);
+  assert.match(serviceWorker, /joint-bob-v53/);
 });
 
 test("the branded boot screen releases before project discovery", async () => {
@@ -54,6 +54,9 @@ test("the branded boot screen releases before project discovery", async () => {
   assert.match(styles, /@keyframes boot-smoke-rise/);
   assert.match(styles, /prefers-reduced-motion: reduce/);
   assert.match(app, /const BOOT_MINIMUM_MS = 700;/);
+  assert.match(app, /const BOOT_REQUEST_TIMEOUT_MS = 8_000;/);
+  assert.match(app, /api\("\/api\/auth\/status", \{ signal: AbortSignal\.timeout\(BOOT_REQUEST_TIMEOUT_MS\) \}\)/);
+  assert.match(app, /api\("\/api\/preferences", \{ signal: AbortSignal\.timeout\(BOOT_REQUEST_TIMEOUT_MS\) \}\)/);
   assert.match(app, /function revealApplication\(\)/);
   assert.match(app, /if \(!status\.authenticated\) \{\s*revealApplication\(\);\s*showLogin\(\);/);
   assert.match(app, /void api\("\/api\/cluster\/projects\/discover"[\s\S]*?\.then\(async \(discovery\) =>/);

@@ -1,110 +1,314 @@
 # Component Inventory
 
-## Inventory Summary
+One component per source module. Names in this file are matched literally by the reverse-engineering rerun guard against the `analyzed.components` list in `reverse-engineering-timestamp.md`; do not rename a heading without updating that block.
 
-Health reflects structural/change risk, not current process availability.
+Dependency notation: **Depends on** lists internal modules imported. Every persistence component additionally opens `~/.joint-bob/node.db` directly via `node:sqlite`, which is stated once here rather than repeated per row.
 
-| Component | Source | Responsibility | Main dependencies | Health |
-|---|---|---|---|---|
-| Application composition and transport | `server.ts`, `app.ts`, `websocket.ts`, `terminal-session.ts` | REST, WebSocket, proxying, startup, orchestration | All backend components | Degraded |
-| Account and node state | `auth.ts`, `preferences.ts`, `settings.ts`, `audit.ts` | Identity, sessions, preferences, settings, audit | SQLite, crypto | At risk |
-| Project domain and persistence | `store.ts`, `types.ts`, `names.ts`, `project-locks.ts` | Projects, aliases, types, names, locks | SQLite, filesystem, replication | At risk |
-| Task domain and workspaces | `tasks.ts`, `task-workspaces.ts` | Tasks, leases, execution, handoff, ticket workspaces | SQLite, cluster, Syncthing, agents | At risk |
-| Git worktree operations | `worktrees.ts` | Legacy worktrees, bundles, merge, abort | Git, filesystem | Healthy |
-| Cluster and replication | `cluster.ts`, `replication.ts` | Membership, peers, tokens, outbox, receipts | SQLite, crypto, peer REST | At risk |
-| GitHub credential management | `github-auth.ts` | Encrypted credential groups and replication | SQLite, crypto, cluster | At risk |
-| Agent adapters | `pi-service.ts`, `claude-service.ts`, `harnesses.ts` | Engine execution and normalized events | Pi SDK, Claude CLI, filesystem | At risk |
-| Conversation discovery | `session-paths.ts`, `watcher.ts`, `conversation-reviews.ts` | Discovery, watches, review state | Filesystem, project paths, SQLite | At risk |
-| Syncthing adapter | `syncthing.ts` | Devices, folders, ignores, readiness, scans | Syncthing REST, settings | At risk |
-| Push notifications | `push.ts` | VAPID keys, subscriptions, completion push | SQLite, crypto, Web Push | Healthy |
-| Filesystem management | `managed-home.ts`, `project-directory-import.ts` | Managed roots, imports, moves, symlinks | Filesystem, settings | Healthy |
-| Skill discovery | `skills.ts` | Pi and Claude skill inventory | Filesystem, harness IDs | Healthy |
-| Browser PWA | `index.html`, `app.js`, `styles.css`, `boot.js`, `sw.js` | State, navigation, chat, settings, offline shell | REST, WebSocket, browser APIs | Degraded |
-| Kanban board UI | `board.js` | Board and task-card rendering | Browser PWA callbacks | Healthy |
-| Markdown renderer | `markdown.js` | Safe rich message rendering | DOM APIs | Healthy |
-| CLI and packaging | `bin/`, package metadata | Install/doctor entry point and publish set | Node, npm, scripts | At risk |
-| Deployment and smoke infrastructure | `scripts/`, `deploy/`, `Justfile`, release workflow | Install, services, deploy, smoke, release | Bash, Git, Terraform, AWS, GitHub | At risk |
+## Composition Root
 
-## Backend Components
+### HTTP and WebSocket Server
 
-### Application composition and transport
+- **File:** `src/server.ts` — 4,712 lines / 235 KB, ~160 top-level functions.
+- **Responsibility:** Express application, all 105 explicit `app.<verb>()` route handlers plus 2 loop-registered filesystem routes plus 5 `app.use` mounts, the single `/ws` WebSocket server, cross-node socket proxying (`proxySocket`), Claude subprocess orchestration (`runClaudeTurn`, `handleClaudeCommand`, `switchEngine`, lines 3921-4060), the conversation ownership/transfer/receive/takeover/recover region (lines 2370-2760), and six background reconcilers.
+- **Depends on:** ~25 of the 32 sibling modules — `harnesses`, `conversation-ownership`, `replication`, `cluster`, `tasks`, `store`, `update-recovery`, `terminal-session`, `syncthing`, `auth`, `conversation-reviews`, `session-paths`, `claude-service`, `claude-runtime`, `pi-service`, `watcher`, `websocket`, `audit`, `secrets`, `github-auth`, `push`, `settings`, `preferences`, `names`, `project-locks`, `project-directory-import`, `task-workspaces`, `worktrees`, `managed-home`, `types`.
+- **Depended on by:** `src/app.ts` only.
+- **Notes:** Largest structural risk in the repository. Carries three `NODE_ENV === "test"` branches in shipped code (`:2691`, `:3886`, `:3901`).
 
-Registers 86 Express handlers and `/ws`, enforces browser/machine authentication, serves the PWA, proxies peers, attaches terminals, runs tasks, and schedules reconciliation. At 3,719 lines, `server.ts` is the highest fan-in/fan-out component.
+### Application Entry Point
 
-### Account and node state
+- **File:** `src/app.ts` — one line.
+- **Responsibility:** Re-exports `{ app, createApp }` so tests can construct the app without starting the listener.
+- **Depends on:** `server`.
+- **Depended on by:** the test suite.
 
-Owns administrator setup, scrypt verification, browser sessions, cookies, password-change state, preferences, encrypted settings, and audit records. Separate SQLite handles and overlapping encryption utilities increase maintenance risk.
+## Engine Layer
 
-### Project domain and persistence
+### Harness Registry
 
-Owns project records, aliases, types, colours, node paths, replicated names, and project locks. `types.ts` is also a shared domain/transport contract, increasing fan-in.
+- **File:** `src/harnesses.ts`
+- **Responsibility:** Unifies Pi and Claude behind one session listing/loading interface so the client sees a single conversation model.
+- **Depends on:** `pi-service`, `claude-service`, `names`.
+- **Depended on by:** `server`.
 
-### Task domain and workspaces
+### Claude Code Service Adapter
 
-Owns board records, phase settings, leases, task execution state, two-phase handoffs, tombstones, and synchronized ticket workspace lifecycle. It coordinates the largest cross-boundary transaction after the server.
+- **File:** `src/claude-service.ts`
+- **Responsibility:** Drives the `claude` CLI; enumerates and parses Claude transcripts. Key exports: `claudeProjectsRoot()` (settings-aware, honours `settings.claude.sessionPath` / `configPath`), `listClaudeSessions` (line 177, enumerates `claudeProjectDirs(project, claudeProjectsRoot())`), `loadClaudeMessages` (validates the path lies inside `claudeProjectsRoot()`).
+- **Depends on:** `session-paths`, `settings`.
+- **Depended on by:** `harnesses`, `server`.
+- **Notes:** Bounds listing concurrency with `CLAUDE_LIST_CONCURRENCY`; a source comment records a 1 GB memory peak on a 340-file project.
 
-### Git worktree operations
+### Claude Runtime State
 
-Encapsulates legacy Git task validation, worktree creation/removal, checksummed branch bundles, incoming preparation, merge, and abort. New ticket workspaces do not use branches.
+- **File:** `src/claude-runtime.ts`
+- **Responsibility:** Ingests Claude hook events and records running/stopped conversation state in SQLite.
+- **Depends on:** SQLite.
+- **Depended on by:** `server`.
+- **Related:** hooks installed by `scripts/install-claude-hooks.mjs`.
 
-### Cluster and replication
+### Pi Agent Service Adapter
 
-Owns local identity, five-node membership, encrypted machine tokens, tombstones, outboxes, receipts, retries, and convergence. Many peer calls remain composed directly in `server.ts`.
+- **File:** `src/pi-service.ts`
+- **Responsibility:** Pi agent SDK session lifecycle via `SessionManager` / `AgentSession`, model handling, message simplification.
+- **Depends on:** `@earendil-works/pi-coding-agent`, `session-paths`.
+- **Depended on by:** `harnesses`, `server`.
 
-### GitHub credential management
+### Session Path Resolution
 
-Owns encrypted groups, project assignments, credential event delivery, receipts, and legacy migration. Credentials replicate through application records, not Syncthing.
+- **File:** `src/session-paths.ts`
+- **Responsibility:** Derives filesystem paths for Pi and Claude transcripts and recovers Pi transcripts from Syncthing conflict files.
+- **Key exports:** `resolveLocalSessionPath` (line 17), `claudeProjectDir`, `claudeProjectDirs` (line 49), `recoveryDiagnostic`.
+- **Depends on:** none internal.
+- **Depended on by:** `claude-service`, `pi-service`, `watcher`, `tasks`, `server`.
+- **Intent-area notes:** `resolveLocalSessionPath` splits the sender's path at the last `.claude` segment and re-roots the entire remaining suffix — including the sender-encoded project directory name — under the destination's home. `claudeProjectDirs` already computes the locally-correct directory set but returns **multiple** candidates, and its default root is `~/.claude/projects` rather than the settings-aware `claudeProjectsRoot()`. `recoveryDiagnostic` hardcodes `localNodeId: "local"`.
 
-### Agent adapters
+### Session Watcher
 
-Pi runs in-process through the SDK; Claude runs as a stream-JSON child process. Both expose normalized session and event concepts, but execution differences remain visible in transport orchestration.
+- **File:** `src/watcher.ts`
+- **Responsibility:** Watches transcript directories and emits change notifications that become `sessionFile` / `sessionsChanged` frames.
+- **Key export:** `sessionWatchDirs` (line 33).
+- **Depends on:** `session-paths`.
+- **Depended on by:** `server`.
+- **Notes:** Calls `claudeProjectDirs(project)` with **no root argument**, so on a node with a non-default `claude.configPath` it watches directories that `listClaudeSessions` does not read.
 
-### Conversation discovery
+### Update Recovery
 
-Resolves canonical, mapped, legacy, encoded Claude, and ticket-workspace paths; watches transcript changes; and stores per-user review state. Broad compatibility increases isolation and timestamp complexity.
+- **File:** `src/update-recovery.ts`
+- **Responsibility:** Persists in-flight agent runs so a service restart can resume them rather than orphaning the conversation.
+- **Depends on:** SQLite.
+- **Depended on by:** `server`.
+- **Notes:** A source comment on `adoptSessionId` records the orphaned-run case.
 
-### Syncthing adapter
+## Cluster Layer
 
-Discovers loopback configuration and manages devices, folders, ignore lists, readiness, status, and rescans. Current ordinary `__pycache__/` semantics directly cause blocked remote directory deletes in the live `beecomm` folder.
+### Conversation Ownership State Machine
 
-### Push notifications
+- **File:** `src/conversation-ownership.ts`
+- **Responsibility:** Single-writer authority per `(engine, sessionId)`, carrying an epoch and a status. The invariant that makes a replicated transcript safe to continue on another node.
+- **Key exports:** `ConversationEngine = "pi" | "claude"`, `claimConversationOwnership`, `beginConversationTransfer`, `commitConversationTransfer`, `takeConversationOwnership`, `beginConversationRecovery`, `applyConversationOwnershipEvent`, `ownershipPayload`, `ensureConversationOwnershipSchema`.
+- **Depends on:** `replication` (mutual import), SQLite.
+- **Depended on by:** `server`, `replication`.
+- **Intent-area notes:** **Already fully engine-agnostic.** The SQLite table carries `CHECK(engine IN ('pi', 'claude'))`, `ownershipPayload` validates both, and every state-machine function takes `engine` as a parameter with no Pi-specific branch.
 
-Generates/encrypts VAPID keys, persists subscriptions, and sends completion notifications. The service worker displays and routes notification clicks.
+### Replication Outbox
 
-### Filesystem management
+- **File:** `src/replication.ts`
+- **Responsibility:** Event outbox/inbox carrying cluster-wide state changes between peers; idempotent application on receipt.
+- **Depends on:** `conversation-ownership` (mutual import), `cluster`, SQLite.
+- **Depended on by:** `server`, `tasks`, `conversation-ownership`, `github-auth`.
 
-Computes managed roots and performs copy, move, move-with-symlink, relocation, and rollback. Filesystem identity is a security boundary because agents and downloads operate within project paths.
+### Cluster Membership
 
-### Skill discovery
+- **File:** `src/cluster.ts`
+- **Responsibility:** Node identity, peer pairing, machine token issue and verification, membership snapshots and tombstones.
+- **Depends on:** SQLite, `node:crypto`.
+- **Depended on by:** `server`, `tasks`, `replication`.
+- **Notes:** 14 `as unknown as` casts at the SQLite boundary.
 
-Scans Pi and Claude user/project skill locations and returns normalized metadata. It is read-only apart from ordinary filesystem access.
+## Domain Layer
 
-## Browser and Delivery Components
+### Project Store
 
-### Browser PWA
+- **File:** `src/store.ts`
+- **Responsibility:** Projects, project types, aliases and imports.
+- **Depends on:** SQLite.
+- **Depended on by:** `server`, `tasks`.
+- **Notes:** 12 `as unknown as` casts.
 
-An unbundled native JavaScript application. `app.js` owns state, APIs, WebSockets, stream batching, rendering, dialogs, responsive navigation, review actions, terminals, and notifications. Its 4,057-line size and untyped contracts make it a change hotspot.
+### Task Domain
 
-### Kanban board UI
+- **File:** `src/tasks.ts` — 575 lines.
+- **Responsibility:** Kanban tasks, leases, and the cross-node handoff protocol.
+- **Depends on:** `cluster`, `replication`, `worktrees`, `task-workspaces`, `audit`, `session-paths`, SQLite.
+- **Depended on by:** `server`.
+- **Notes:** Holds two overlapping handoff mechanisms — Git bundle/worktree and Syncthing ticket workspace. 35 `as unknown as` casts, the highest count in the repository.
 
-Renders columns/cards and delegates actions to callbacks in `app.js`. The file offers a useful rendering boundary but does not own task state or transport.
+### Git Worktree Operations
 
-### Markdown renderer
+- **File:** `src/worktrees.ts`
+- **Responsibility:** Git worktree creation and Git-bundle task handoff. Documented in `README.md` as the legacy path.
+- **Depends on:** `git` via `execFile`.
+- **Depended on by:** `tasks`.
 
-Converts agent output to safe DOM structures for headings, links, lists, tables, code, copy, and downloads without a third-party Markdown runtime.
+### Task Workspaces
 
-### CLI and packaging
+- **File:** `src/task-workspaces.ts`
+- **Responsibility:** Syncthing ticket workspaces — the current handoff path.
+- **Depends on:** `syncthing`.
+- **Depended on by:** `tasks`.
+- **Notes:** Carries a `.pi-mobile-web/` ignore rule from the pre-rebrand naming.
 
-Publishes `joint-bob` with `install`, `doctor`, and help. Package allowlisting, two lockfiles, runtime pins, and release metadata form the install contract.
+### Conversation Reviews
 
-### Deployment and smoke infrastructure
+- **File:** `src/conversation-reviews.ts`
+- **Responsibility:** Per-user review watermarks and the review inbox that backs `GET /api/reviews/pending`.
+- **Depends on:** SQLite.
+- **Depended on by:** `server`.
 
-Installs pinned Node, Pi, Claude, and Syncthing; configures systemd/launchd; exposes private HTTPS; deploys exact commits; provisions temporary `/32`-restricted EC2 smoke hosts; and publishes tagged releases.
+### Project Locks
 
-## Boundary Findings
+- **File:** `src/project-locks.ts`
+- **Responsibility:** Project-level locking.
+- **Depends on:** SQLite.
+- **Depended on by:** `server`.
 
-- Source modules are independently testable, but shared SQLite weakens ownership isolation.
-- `Application composition and transport` owns business workflows that should remain explicit even if later extracted into smaller internal modules.
-- `Browser PWA` is a second composition root with state, networking, and rendering tightly coupled.
-- External adapters are clear for Pi, Claude, Syncthing, Git, and Web Push; peer HTTP is less isolated.
-- Conversation review and Syncthing ignore migration are small components with high correctness/data-loss consequences and require targeted regressions.
+### Project Directory Import
+
+- **File:** `src/project-directory-import.ts`
+- **Responsibility:** Importing project directories discovered on peer nodes.
+- **Depends on:** `store`, `cluster`.
+- **Depended on by:** `server`.
+
+## Platform Layer
+
+### Authentication and Sessions
+
+- **File:** `src/auth.ts`
+- **Responsibility:** First-run password setup, scrypt password hashing, cookie session issue and verification. Backs the unauthenticated `POST /api/auth/setup` and `POST /api/auth/login`.
+- **Depends on:** `node:crypto`, SQLite.
+- **Depended on by:** `server`.
+
+### Audit Log
+
+- **File:** `src/audit.ts`
+- **Responsibility:** Append-only audit record of privileged operations.
+- **Depends on:** SQLite.
+- **Depended on by:** `server`, `tasks`.
+
+### Secrets Vault
+
+- **File:** `src/secrets.ts`
+- **Responsibility:** AES-encrypted secret storage.
+- **Depends on:** `node:crypto`, SQLite.
+- **Depended on by:** `server`.
+
+### GitHub Credential Groups
+
+- **File:** `src/github-auth.ts`
+- **Responsibility:** GitHub credential groups, encrypted at rest and replicated across the mesh.
+- **Depends on:** `secrets`, `replication`, SQLite.
+- **Depended on by:** `server`, `push` flows.
+- **Notes:** 9 `as unknown as` casts.
+
+### Web Push Notifications
+
+- **File:** `src/push.ts`
+- **Responsibility:** Web push subscription storage and delivery via `web-push`; notifies when a conversation needs review.
+- **Depends on:** `web-push`, `secrets`, SQLite.
+- **Depended on by:** `server`.
+
+### Node Settings
+
+- **File:** `src/settings.ts`
+- **Responsibility:** Per-node settings including `settings.claude.sessionPath` and `settings.claude.configPath`, which `claudeProjectsRoot()` reads.
+- **Depends on:** SQLite.
+- **Depended on by:** `claude-service`, `server`.
+
+### User Preferences
+
+- **File:** `src/preferences.ts`
+- **Responsibility:** Per-user UI preferences.
+- **Depends on:** SQLite.
+- **Depended on by:** `server`.
+
+### Name Overrides
+
+- **File:** `src/names.ts`
+- **Responsibility:** Human-friendly name overrides for nodes and conversations.
+- **Depends on:** filesystem, SQLite.
+- **Depended on by:** `harnesses`, `server`.
+- **Notes:** Reads the legacy `PI_MOBILE_WEB_NAMES_PATH` environment variable.
+
+### Syncthing Adapter
+
+- **File:** `src/syncthing.ts`
+- **Responsibility:** Syncthing REST client (`/rest/...` with `X-API-Key`), folder provisioning and ignore-pattern policy. Defines `CLAUDE_ENGINE_SYNC_FOLDER_ID = "dot-claude"` at line 41 with path `~/.claude` — the mechanism that puts every node's Claude transcripts on every other node.
+- **Depends on:** Syncthing daemon.
+- **Depended on by:** `server`, `task-workspaces`.
+- **Notes:** Ignore rules still reference `.pi-mobile-web/`.
+
+### Managed Home
+
+- **File:** `src/managed-home.ts`
+- **Responsibility:** Managed home-directory layout for agent runs.
+- **Depends on:** filesystem.
+- **Depended on by:** `server`.
+
+### Terminal Session
+
+- **File:** `src/terminal-session.ts`
+- **Responsibility:** Spawns the user's `$SHELL` and frames the `terminalInput` / `terminalOutput` / `terminalReady` / `terminalExit` WebSocket channel.
+- **Depends on:** `$SHELL`.
+- **Depended on by:** `server`.
+
+### WebSocket Transport
+
+- **File:** `src/websocket.ts`
+- **Responsibility:** WebSocket connection plumbing shared by the chat, watch and terminal channels.
+- **Depends on:** `ws`.
+- **Depended on by:** `server`.
+
+### Shared Types
+
+- **File:** `src/types.ts`
+- **Responsibility:** Shared type surface across the server modules.
+- **Depends on:** none.
+- **Depended on by:** most `src/` modules.
+
+## Client Components
+
+### Browser PWA Client
+
+- **File:** `public/app.js` — 4,776 lines, 226 functions.
+- **Responsibility:** The whole application shell — chat, projects, sessions, settings — against one mutable `state` object of ~60 keys and an `elements` map cached by `document.querySelector`.
+- **Depends on:** `public/board.js`, `public/markdown.js`, the `/api/*` HTTP surface, `/ws`.
+- **Intent-area notes:** Holds all three client-side Claude transfer gates — the session row menu entry at `:2172-2174` (`disabled: isClaude`, title `"Claude transfer is not available yet"`), the toolbar transfer button at `:2844-2846`, `:2863-2864` and `:4104` (`transferable` requires `state.engine === "pi"`; `openSessionTransferDialog` emits `"Claude conversation transfer is not available yet"` and returns early), and the take-ownership button at `:4438` (`hidden = Boolean(state.activeTaskId || state.engine !== "pi")`).
+
+### Kanban Board UI
+
+- **File:** `public/board.js`
+- **Responsibility:** The task board view.
+- **Depends on:** the `/api/projects/:id/tasks*` surface.
+- **Coverage:** skimmed only in this scan — head and purpose.
+
+### Markdown Renderer
+
+- **File:** `public/markdown.js`
+- **Responsibility:** Dependency-free, XSS-safe Markdown rendering of assistant output.
+- **Depends on:** none.
+- **Coverage:** skimmed only in this scan — head and purpose.
+
+### Service Worker
+
+- **File:** `public/sw.js`
+- **Responsibility:** Offline shell caching under a manually pinned `CACHE_NAME`, currently `joint-bob-v52`.
+- **Notes:** `AGENTS.md` mandates bumping `CACHE_NAME` on any shell change; nothing enforces it, and two UI tests pin the current value, so a correct bump breaks unrelated tests.
+
+### Boot Loader
+
+- **File:** `public/boot.js`
+- **Responsibility:** Startup bootstrap and service-worker registration.
+
+## Packaging and Operations
+
+### CLI Installer
+
+- **File:** `bin/joint-bob.mjs` — the package `bin` entry.
+- **Responsibility:** `joint-bob install` — staged copy, atomic rename, rollback. Driven by `scripts/install.sh` and `scripts/install-service.sh`.
+
+### Claude Hook Installer
+
+- **File:** `scripts/install-claude-hooks.mjs`
+- **Responsibility:** Installs the Claude Code hooks that post runtime events consumed by `src/claude-runtime.ts`.
+
+### Deployment and Smoke Infrastructure
+
+- **Files:** `deploy/aws-ec2-test/{main,variables,outputs,versions}.tf`, `deploy/aws-ec2-test/tests/security.tftest.hcl`, `deploy/joint-bob.service`, `deploy/com.joint-bob.node.plist`.
+- **Responsibility:** Terraform harness for the EC2 smoke test, a systemd user unit and a macOS launch agent for service management.
+- **Coverage:** skimmed only in this scan.
+
+### Test Suite
+
+- **Files:** `test/*.test.ts` — 115 flat files, 12,565 lines, larger than `src/`.
+- **Responsibility:** `node:test` + `node:assert/strict`, executed as `node --import tsx --test test/*.test.ts`. API tests boot real servers; `test/conversation-ownership-mesh-api.test.ts` spins up two real nodes and exercises transfer across a dropped acknowledgement and a restart. UI tests assert against `public/*.js` and `public/index.html` at DOM level.
+- **Coverage:** 5 files read in this scan; the remaining 110 inventoried by filename.

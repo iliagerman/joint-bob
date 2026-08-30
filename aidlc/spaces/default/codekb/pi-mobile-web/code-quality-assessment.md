@@ -1,107 +1,162 @@
 # Code Quality Assessment
 
-## Assessment Scope
+## Summary
 
-The scan deeply covered all 29 backend TypeScript modules, core browser JavaScript/HTML, operations and infrastructure code, package/configuration files, and tests tied to conversations, reviews, Syncthing, startup, distribution, and node sync. The remaining 88-file test inventory, styles, shell assets, generated output, dependencies, and workflow history received shallow or targeted review.
-
-No coverage instrumentation exists, so the scan cannot claim line, branch, or function coverage percentages.
-
-## Validation Baseline
-
-Validation recorded on `2026-08-27`:
-
-| Check | Result |
+| Dimension | Verdict |
 |---|---|
-| `npm run typecheck` | Passed |
-| `npm test` | 246 passed, 0 failed, 0 skipped |
-| `npm run build` | Passed |
-| `terraform fmt -check -recursive` | Passed |
-| `terraform validate` | Passed |
-| `terraform test` | 1 run passed, 0 failed |
-| Public-registry `npm audit --omit=dev` | 0 production vulnerabilities across 279 records |
+| Type safety | **Strong at the source level, weak at the SQLite boundary.** `strict: true`, zero suppression directives anywhere in `src/` or `public/`, offset by 99 `as unknown as` casts where `node:sqlite` returns untyped rows |
+| Linting | **Absent.** No ESLint, Prettier, Biome or `.editorconfig` |
+| Tests | **Substantial and genuinely integrative.** 115 files, 12,565 lines — larger than `src/`. API tests boot real servers; the ownership mesh test runs two real nodes |
+| Coverage measurement | **Absent.** No `c8`, `nyc`, `--experimental-test-coverage`, and no threshold in `package.json` or CI |
+| CI | **Release-only.** One workflow, triggered on `v*` tags. Nothing runs on push or on a pull request |
+| Documentation | **Good at the repository level, thin at the symbol level.** Seven top-level docs; sparse but high-value inline comments; no JSDoc on most exports |
+| Security posture | **Deliberate and layered.** Three auth classes, `timingSafeEqual`, scrypt, AES at rest, path-escape guards at every filesystem boundary, an audit log, and Terraform security tests |
+| Structural health | **The weakest dimension.** Two files carry most of the system: `src/server.ts` at 4,712 lines and `public/app.js` at 4,776 |
 
-The configured npm proxy audit endpoint returned HTTP 400; the explicit public-registry run succeeded. This is environment evidence, not an application defect.
+## Type Safety
 
-## Strengths
+`tsconfig.json` sets `strict: true` with `target: ES2022` and `NodeNext` module resolution. The codebase contains **zero** `@ts-ignore`, `@ts-expect-error` or `eslint-disable` comments in `src/` or `public/` — the type gate is not being worked around.
 
-- Strict TypeScript backend with no product-source suppression directives found.
-- Zod validation at HTTP and WebSocket trust boundaries.
-- Scrypt password hashing, secure cookie attributes, login rate limiting, CSRF checks, and strict WebSocket origin validation.
-- Timing-safe machine-token checks and AES-256-GCM encrypted secrets with node-local mode-`0600` key material.
-- Explicit SQLite transactions protect many multi-table operations.
-- Process-isolated multi-node tests cover replication, migrations, ownership, handoff races, and filesystem boundaries.
-- Installer rollback, checksums, npm provenance, encrypted EC2 storage, IMDSv2, and `/32` smoke ingress are tested or configured.
-- README, `SECURITY.md`, `CONTRIBUTING.md`, `AGENTS.md`, service templates, and deployment guidance are substantial.
-- No TODO/FIXME/HACK markers were found in product source; debt is visible in structure and behavior instead of hidden markers.
+It is, however, being bypassed at exactly one boundary. `node:sqlite` returns untyped rows, and the codebase bridges that with **99 `as unknown as` casts**, concentrated in:
 
-## Testing Assessment
+| Module | Casts |
+|---|---|
+| `src/tasks.ts` | 35 |
+| `src/cluster.ts` | 14 |
+| `src/store.ts` | 12 |
+| `src/github-auth.ts` | 9 |
+| remainder | 29 |
 
-### Strong Coverage Areas
+`strict` offers no protection there: a schema change that renames a column type-checks cleanly and fails at runtime.
 
-Authentication/CSRF/WebSockets, SQLite migration and convergence, cluster mesh behavior, task ownership/handoff, Syncthing fake API behavior, installer rollback, project/session path mapping, startup readiness, and public package assets have meaningful automated checks.
+## Linting and Formatting
 
-### Active Bug Gaps
+None configured. `tsc --noEmit` is the only automated code check that exists. Style consistency across the repository is therefore held by convention alone — and it does hold well, which is worth recording: naming, module layout and error handling are uniform across all 32 server modules.
 
-1. **Streaming:** no behavioral test proves that a connected browser visibly renders an assistant delta before `assistantFinal`/`agent_end`, or that steering can be queued in the same turn. Existing tests inspect source structure and final flush behavior.
-2. **Review state:** no regression covers transcript activity changing after prior state synchronization but before `reviewed-all`; the existing route test avoids the race by listing first.
-3. **Syncthing:** no regression migrates the old managed Python-cache rule to exact delete-allowed semantics while preserving user and sensitive rules.
+## Test Suite
 
-Bugfix policy requires these targeted regressions and the full existing suite green.
+- **Location:** `test/`, flat, 115 `*.test.ts` files, 12,565 lines.
+- **Runner:** Node's built-in `node:test` with `node:assert/strict`, executed as `node --import tsx --test test/*.test.ts`.
+- **No Jest, Vitest, Mocha or Playwright.** UI tests are DOM-level assertions against `public/*.js` and `public/index.html`; API tests boot real servers.
+- **`test/conversation-ownership-mesh-api.test.ts` spins up two real nodes** and exercises transfer across a dropped acknowledgement and across a restart — the strongest test in the repository and the one that most directly protects the active intent's blast radius.
 
-### General Gaps
+Tests covering the intent area: `session-paths.test.ts`, `conversation-ownership.test.ts`, `conversation-ownership-mesh-api.test.ts`, `conversation-lock-mesh-api.test.ts`, `conversation-lock-ui.test.ts`, `claude-sync-conflict.test.ts`, `claude-session-reattach.test.ts`, `claude-session-cache.test.ts`, `claude-transcript-recency.test.ts`, `claude-runtime.test.ts`, `claude-hook-installer.test.ts`, `claude-default-model.test.ts`, `session-watcher.test.ts`, `session-deletion-security.test.ts`, `session-safeguards.test.ts`, `replication.test.ts`, `replication-mesh-api.test.ts`, `update-session-recovery.test.ts`.
 
-- No measured coverage thresholds or reports.
-- No real-browser E2E runner; many UI tests assert strings/regular expressions rather than runtime DOM behavior.
-- No load, soak, or fault-injection suite.
-- Terraform tests do not run in the tagged release workflow.
-- No PR or ordinary `main`-push hosted CI gate.
+**One test will need to change.** `test/session-paths.test.ts` pins the current path-trusting behaviour of `resolveLocalSessionPath` for Claude: it asserts that `claude:/Users/a/.claude/projects/project/session.jsonl` maps to `claude:/home/b/.claude/projects/project/session.jsonl`, preserving the sender's encoded project directory name verbatim. Any fix that re-derives the directory locally must update this assertion.
 
-## Maintainability
+## CI/CD
 
-| Signal | Evidence | Consequence |
+One workflow: `.github/workflows/release.yml`, triggered **only** on `v*` tags. Its stages:
+
+`npm ci` → `npm run typecheck` → `npm test` → `npm run build` → `npm pack` + tarball smoke test (verifies `bin/joint-bob.mjs` is present in the tarball and that the embedded `.joint-bob-release` commit matches `GITHUB_SHA`) → SHA-256 → GitHub release → `npm publish --provenance`.
+
+**There is no PR or push CI.** Nothing runs the test suite on `main` or on a branch. The de-facto gate is the local `pre-push` hook at `scripts/hooks/pre-push`, which **does not run tests** — it waits for the remote to confirm the commit, then deploys to installed nodes. A change can therefore reach `main` and, through that hook, reach production nodes without any automated test run.
+
+## Documentation
+
+| File | Content |
+|---|---|
+| `README.md` | ~7 KB — install, pairing, managed projects, private HTTPS, service management, deployment, EC2 smoke test, security |
+| `AGENTS.md` | Agent workflow rules, including mandatory `typecheck` / `test` / `build` before delivery and the PWA `CACHE_NAME` bump rule |
+| `CLAUDE.md` | Defers to `AGENTS.md` and `README.md` |
+| `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, `LICENSE` | Standard OSS set; MIT licence |
+
+Inline comments are sparse but the ones that exist are load-bearing and worth preserving:
+
+- the `newestEventTime` note recording that Syncthing rewrites mtime — the same fact the project rule from 2026-08-28 encodes;
+- the `CLAUDE_LIST_CONCURRENCY` note about a 1 GB memory peak on a 340-file project;
+- the `adoptSessionId` note about orphaned runs.
+
+No JSDoc on most exports and no generated API documentation.
+
+## Security Posture
+
+Actively maintained, and stronger than the absence of a linter would suggest:
+
+- `securityHeaders` middleware and CSRF middleware.
+- Machine tokens compared with `timingSafeEqual`; passwords hashed with scrypt; secrets, GitHub tokens and push keys AES-encrypted at rest.
+- State directory `0o700`, files `0o600`.
+- Path-escape guards at every filesystem boundary: `resolveClaudeSessionPath`, `requirePathInsideHome`, `mappedPathInsideHome`, `managedFolderName`.
+- Symlink and regular-file checks before session deletion; `test/session-deletion-security.test.ts` covers it.
+- Append-only audit log (`src/audit.ts`).
+- `deploy/aws-ec2-test/tests/security.tftest.hcl` asserts the smoke-test instance's security properties under `terraform test`.
+
+**Security implication for the active intent.** The receive path's `access(localPath, R_OK)` is a readability check, not an authorisation check; it passes for Claude only because Syncthing mirrors `~/.claude` wholesale. The invariant that actually constrains what can be read is `loadClaudeMessages`'s check that the resolved path sits inside `claudeProjectsRoot()`. Any change to Claude path resolution must preserve that check rather than replace it — otherwise `POST /api/cluster/sessions/receive` becomes an arbitrary-file-read primitive reachable with a machine token.
+
+## Technical Debt Register
+
+Thirteen signals, carried verbatim from the code scan with locations.
+
+### 1. `src/server.ts` is a 4,712-line / 235 KB composition root
+
+~160 top-level functions and 105 routes in one file, spanning routing, ownership coordination, Claude subprocess orchestration, Pi session sharing, task handoff, file proxying, WebSocket proxying, update recovery and six background reconcilers. **The largest structural risk in the repository**; every intent-area change touches it.
+
+*Suggested first cut:* extract the ownership/transfer region (lines 2370-2760) — it is cohesive, it is the intent-area surface, and it would give the transfer state machine a testable home outside the route table.
+
+### 2. Gitignored root-level stale duplicates
+
+`app.js` (129 KB), `index.html` (39 KB), `server.ts` (141 KB), `styles.css` (49 KB) and `sw.js` sit at the repository root, excluded by `.gitignore` lines 18-22 and untracked. They are stale copies from an older layout — root `server.ts` is 141 KB against `src/server.ts`'s 235 KB. **An active trap for greps, editors and agents**, and the most likely way to edit the wrong file in this repository.
+
+### 3. No linter and no PR/push CI
+
+Tests run only on `v*` tag release. A change can reach `main` — and via the `pre-push` hook reach installed production nodes — with no automated test run.
+
+### 4. No coverage measurement
+
+115 test files and no coverage floor. No `c8`, `nyc`, or `--experimental-test-coverage`; no threshold in `package.json` or CI.
+
+### 5. Test-only branches compiled into production code
+
+Three, all guarded by `NODE_ENV === "test"` but shipped:
+
+| Location | Variable | Effect |
 |---|---|---|
-| Oversized backend composition root | `src/server.ts`: 3,719 lines | High collision and cross-domain regression risk |
-| Oversized frontend composition root | `public/app.js`: 4,057 lines | Stream, UI state, transport, and rendering changes interact |
-| Other large modules | `store.ts` 695; `cluster.ts` 592; `tasks.ts` 560; `github-auth.ts` 555 | Functions exceed preferred 50-line project guideline |
-| Distributed schema setup | Many modules create/alter one SQLite database | Migration order and ownership are hard to audit |
-| Multiple DB handles | Module-local cached `DatabaseSync` instances | Transaction ownership and startup behavior are cross-cutting |
-| Duplicated crypto helpers | Cluster, settings, push, GitHub credentials | Security fixes can drift |
-| Handwritten contracts | TypeScript server ↔ untyped browser JavaScript | Enum/event/schema drift is easy |
-| Dual lockfiles | `package-lock.json`, `npm-shrinkwrap.json` | Manual synchronization burden |
-| Compatibility aliases | Old env names, paths, identities | Upgrade support expands core-path branches and tests |
+| `src/server.ts:2691` | `JOINT_BOB_TEST_DROP_TRANSFER_ACK_ONCE` | destroys the socket mid-receive |
+| `src/server.ts:3886` | `JOINT_BOB_TEST_ENGINE_HOLD_DIR` | holds the engine |
+| `src/server.ts:3901` | `JOINT_BOB_TEST_ENGINE_LOG` | engine logging |
 
-Minimal refactoring is preferable during the active bugfix. Extract only seams needed to test the observed behavior.
+The first sits **inside the transfer-receive handler** — the exact code path the active intent extends.
 
-## Tooling and Delivery
+### 6. Incomplete rebrand
 
-No ESLint, Prettier, Biome, ShellCheck, Markdown lint, or repository formatter configuration exists. TypeScript strict mode is the general static gate; Terraform follows `terraform fmt`. Follow existing style rather than introducing a formatter as part of unrelated fixes.
+`PI_WEB_DATA_DIR` fallbacks in 18 modules; `PI_MOBILE_WEB_NAMES_PATH` in `src/names.ts`; `.pi-mobile-web/` ignore rules in `src/syncthing.ts` and `src/task-workspaces.ts`; the repository directory is still `pi-mobile-web` while the package is `joint-bob`. `test/rebrand-audit.test.ts` fences it partially.
 
-`.github/workflows/release.yml` validates only `v*` tags: install, typecheck, tests, build, package smoke checks, checksums, GitHub release, and provenance-enabled npm publication. Local pre-push automation deploys exact `main` commits to installed nodes but is not centralized CI.
+### 7. Schema management by hand
 
-## Security and Privacy Concerns
+No migration framework. `CREATE TABLE IF NOT EXISTS` plus bespoke `RENAME TO …_old` / re-insert / `DROP` sequences — `ensureConversationOwnershipSchema` is the worked example. Every module independently opens the same database and ensures its own schema. **No schema owner and no version table**, so there is no way to ask a node which schema generation it is on.
 
-1. Project file download checks lexical containment, then follows symlinks via `stat`/`createReadStream`; an in-project symlink may escape the project.
-2. Generic HTTP 500 responses expose many internal `Error.message` values.
-3. Claude bypasses permission prompts and Pi safeguards can be disabled, increasing the impact of stolen browser sessions or public exposure.
-4. Peer URLs allow general valid URLs; private HTTPS is documented but not enforced, preserving SSRF and token-exposure risk under unsafe administrator configuration.
-5. There is no API rate limiting beyond login attempts.
-6. Review rows are per-user behavioral data and should not be replicated without a privacy requirement.
-7. Syncthing `(?d)` grants destructive behavior. It must remain restricted to proven generated caches and never apply to credentials, environment files, source, logs, or arbitrary user rules.
+### 8. 99 `as unknown as` casts at the SQLite boundary
 
-No formal regulatory/compliance scope is documented. These findings are not a compliance certification.
+`tasks.ts` (35), `cluster.ts` (14), `store.ts` (12), `github-auth.ts` (9), remainder 29. `node:sqlite` returns untyped rows and `strict` mode gives no protection there.
 
-## Technical Debt Priorities
+### 9. Duplicated Claude project-directory derivation
 
-| Priority | Item | Testable completion signal |
+`claudeProjectDir` in `src/session-paths.ts` defaults its root to `~/.claude/projects`, while `src/claude-service.ts` has its own `claudeProjectsRoot()` honouring `settings.claude.sessionPath` / `configPath`. `src/watcher.ts` calls `claudeProjectDirs(project)` **without** a root, so a node with a non-default `claude.configPath` watches the wrong directories while `listClaudeSessions` reads the right ones. **Latent today and directly adjacent to the active intent's fix** — any path change should unify the three call sites rather than add a fourth resolution rule.
+
+### 10. Two overlapping task handoff mechanisms
+
+`src/tasks.ts` (575 lines) holds both the Git-bundle/worktree path (`src/worktrees.ts`) and the Syncthing ticket-workspace path (`src/task-workspaces.ts`). `README.md` documents the worktree path as legacy-only, so both must be maintained indefinitely.
+
+### 11. Ownership diagnostics hardcode `localNodeId: "local"`
+
+`recoveryDiagnostic` in `src/session-paths.ts` always emits `localNodeId: "local"`, so the structured log line claims the node is `"local"` regardless of which node produced it — degrading cross-node diagnosis of Pi transcript recovery precisely when a multi-node problem is being investigated.
+
+### 12. `public/app.js` is 4,776 lines / 226 functions in one file
+
+A single mutable `state` object of ~60 keys and direct `document.querySelector` element caching. No build step, no module boundaries beyond `board.js` and `markdown.js`, no framework. The three Claude transfer gates the active intent removes are scattered across it at `:2172-2174`, `:2844-2846` / `:2863-2864` / `:4104`, and `:4438`.
+
+### 13. Service-worker cache name is manually versioned
+
+`AGENTS.md` mandates bumping `CACHE_NAME` in `public/sw.js` on any shell change; nothing enforces it. Worse, **two UI tests pin the current value** (`joint-bob-v52`), so a correct bump breaks unrelated tests — the process rule and the test suite are in direct conflict.
+
+## Risk Ranking for the Active Intent
+
+| Rank | Debt item | Why it matters here |
 |---|---|---|
-| P0 | Fix three active defects without broad refactoring | Three targeted regressions plus typecheck, 246+ tests, build, Terraform checks green |
-| P1 | Realpath/lstat project-file boundary | Symlink escape regression fails closed |
-| P1 | Sanitized unexpected errors | Integration test proves internal paths/messages are not returned |
-| P1 | PR/main CI | Hosted workflow runs typecheck, tests, build; Terraform checks when relevant |
-| P2 | Ordered SQLite migration ledger | Deterministic schema version and migration tests across upgrades |
-| P2 | Browser/server contract seam | Runtime or generated contract catches event/enum drift |
-| P2 | Real-browser stream/UI tests | Browser test observes intermediate paint, steering, mobile interactions |
-
-## Overall Assessment
-
-Core authentication, transactions, multi-node convergence, handoff, and delivery controls are serious and currently green. Change safety is reduced by two oversized composition files, shared-schema coupling, untyped browser contracts, source-regex UI tests, and missing PR CI/coverage. The active fixes should be narrow, boundary-tested, and traceable to the three observed failure modes.
+| 1 | #9 duplicated Claude project-directory derivation | The intent's fix lands exactly on top of this; fixing the transfer without unifying the resolver adds a fourth rule |
+| 2 | #1 `src/server.ts` size | The takeover guard and the receive handler both live in the 4,712-line file |
+| 3 | #12 `public/app.js` size | All three client gates are in it, at three unrelated locations |
+| 4 | #5 test branches in production | One of them is inside the receive handler being changed |
+| 5 | #13 `CACHE_NAME` conflict | Removing the client gates changes the shell, so the bump rule fires — and breaks two tests |
+| 6 | #3 no push CI | The change ships to production nodes via `pre-push` with no automated test run |
+| 7 | #2 root-level duplicates | A stale root `server.ts` and `app.js` are the wrong files to edit for this exact intent |

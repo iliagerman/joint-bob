@@ -56,10 +56,15 @@ test("model buttons are name-only and mobile controls use fixed toolbar rows", a
   assert.match(styles, /@media \(min-width: 1024px\)[\s\S]*?#chatsRecentSessionsButton, #chatRecentSessionsButton \{ display: none !important; \}/);
   assert.doesNotMatch(styles, /@media \(min-width: 1024px\)[\s\S]*?#chatModeControl\s*\{\s*display: none !important;/);
   assert.match(styles, /@media \(max-width: 1023px\)[\s\S]*?#chatsRecentSessionsButton \{ display: inline-grid; \}[\s\S]*?#chatRecentSessionsButton \{ display: inline-flex; \}/);
+
+  // The mobile recents button is a flex box, so it needs explicit centring for its icon.
+  const recentsRule = /\.chat-recents-button, \.chat-more > summary \{([^}]*)\}/.exec(styles)?.[1] ?? "";
+  assert.match(recentsRule, /align-items: center;/);
+  assert.match(recentsRule, /justify-content: center;/);
   assert.match(styles, /\.chat-model-control\s*\{[^}]*grid-column:\s*1;[^}]*grid-row:\s*2;/);
   assert.match(styles, /\.chat-mode-control\s*\{[^}]*grid-column:\s*2;[^}]*grid-row:\s*2;/);
   assert.match(styles, /\.chat-recents-button\s*\{[^}]*grid-column:\s*3;[^}]*grid-row:\s*2;/);
   assert.doesNotMatch(styles, /\.model-button-mode/);
   assert.doesNotMatch(styles, /\.chat-toolbar[^\{]*\{[^}]*overflow-x:\s*auto/);
-  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v52";/);
+  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v53";/);
 });

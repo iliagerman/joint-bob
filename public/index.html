@@ -129,13 +129,13 @@
             <h2 id="sessionTitle">Select a conversation</h2>
             <div class="chat-title-meta">
               <span class="chat-project-name" id="chatProjectName" data-testid="chat-project-name">No project selected</span>
-              <div class="mini-status" id="miniStatus">No model loaded</div>
+              <div class="mini-status" id="miniStatus">Not connected</div>
               <button class="task-backlink" id="taskBacklinkButton" type="button" hidden data-testid="chat-task-backlink-button">Ticket</button>
             </div>
           </div>
           <div class="chat-actions">
-            <div class="status-pill" id="connectionStatus">Idle</div>
-            <button class="ghost compact danger" id="abortButton" type="button" disabled data-testid="chat-abort-button">Stop</button>
+            <div class="status-pill" id="connectionStatus" role="status" title="Idle">Idle</div>
+            <button class="ghost icon-button danger" id="abortButton" type="button" disabled aria-label="Stop" title="Stop" data-testid="chat-abort-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"/></svg></button>
           </div>
         </header>
         <div class="chat-toolbar panel-toolbar" id="chatToolbar">
@@ -207,18 +207,28 @@
             <button class="ghost attach-button icon-button" id="attachButton" type="button" disabled aria-label="Attach files" data-testid="chat-attach-button">+</button>
             <label class="sr-only" for="messageInput">Message Pi</label>
             <textarea id="messageInput" rows="1" placeholder="Ask Pi to work..." disabled data-testid="chat-message-input"></textarea>
-            <button class="send" id="sendButton" type="submit" disabled aria-label="Send" data-testid="chat-send-button">↑</button>
+            <button class="send" id="sendButton" type="submit" disabled aria-label="Send" data-testid="chat-send-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 21.7a.5.5 0 0 0 .94-.02l6.5-19a.5.5 0 0 0-.64-.64l-19 6.5a.5.5 0 0 0-.02.94l7.93 3.18a2 2 0 0 1 1.11 1.11z"/><path d="M21.85 2.15 10.91 13.09"/></svg></button>
           </div>
         </form>
       </main>
+      <details class="app-menu" id="appMenu">
+        <summary class="ghost icon-button" aria-label="App menu" title="App menu" data-testid="app-menu-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/></svg></summary>
+        <div class="app-menu-panel">
+          <div class="app-menu-meta">
+            <span class="app-menu-node" id="appMenuNode" data-testid="app-menu-node">This node</span>
+            <span class="app-menu-version" id="appMenuVersion" data-testid="app-menu-version">Version …</span>
+          </div>
+          <button class="ghost compact" id="appMenuSettingsButton" type="button" data-testid="app-menu-settings-button">Settings</button>
+        </div>
+      </details>
     </div>
 
     <nav class="mobile-nav" aria-label="Main navigation">
       <button class="active" id="navProjectsButton" type="button" data-testid="nav-projects-button"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 7a2 2 0 0 1 2-2h4l2 2.5h7a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg></span>Projects</button>
       <button id="navSessionsButton" type="button" data-testid="nav-chats-button"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5a2 2 0 0 1-2 2H8l-4.5 4v-14a2 2 0 0 1 2-2H18a2 2 0 0 1 2 2z"/></svg></span>Chats</button>
-      <button id="navBoardButton" type="button" data-testid="nav-board-button"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M10 4v16M16 4v16"/></svg></span>Board</button>
-      <button id="navChatButton" type="button" data-testid="nav-chat-button"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M7.5 10l2.5 2-2.5 2"/><path d="M12.5 14.5h4"/></svg></span>Chat</button>
+      <button id="navChatButton" type="button" data-testid="nav-chat-button"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M7.5 10l2.5 2-2.5 2"/><path d="M12.5 14.5h4"/></svg></span>Current</button>
       <button class="reviews-button" id="navReviewsButton" type="button" data-pending-reviews-open data-testid="nav-reviews-button"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 13h4l1.6 2.5h4.8L16 13h4"/><path d="M4 13 6.4 5.6A2 2 0 0 1 8.3 4.2h7.4a2 2 0 0 1 1.9 1.4L20 13v4.3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg></span>Reviews<span class="reviews-badge" id="navPendingReviewsBadge" data-testid="nav-pending-reviews-badge" hidden>0</span></button>
+      <button id="navBoardButton" type="button" data-testid="nav-board-button"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M10 4v16M16 4v16"/></svg></span>Board</button>
     </nav>
 
     <div class="install-banner" id="installBanner" role="dialog" aria-label="Install Joint Bob" hidden>
@@ -635,6 +645,24 @@
         <div class="dialog-actions">
           <button class="ghost" value="cancel" type="button" id="cancelRenameButton">Cancel</button>
           <button class="primary" value="default" type="submit" data-testid="rename-session-save-button">Save name</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="newSessionNameDialog" data-testid="new-session-name-dialog">
+      <form method="dialog" class="dialog-card" id="newSessionNameForm">
+        <div>
+          <span class="eyebrow">Conversation name</span>
+          <h2>Name this conversation</h2>
+          <p>The name shows in your conversation list from now on. Leave it blank to keep the automatic title.</p>
+        </div>
+        <label>
+          Name
+          <input id="newSessionNameInput" name="name" autocomplete="off" placeholder="Feature review" data-testid="new-session-name-input" />
+        </label>
+        <div class="dialog-actions">
+          <button class="ghost" value="cancel" type="button" id="cancelNewSessionNameButton" data-testid="new-session-name-cancel-button">Cancel</button>
+          <button class="primary" value="default" type="submit" data-testid="new-session-name-start-button">Start conversation</button>
         </div>
       </form>
     </dialog>

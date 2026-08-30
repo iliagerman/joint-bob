@@ -130,14 +130,15 @@ h2 { font-size: 17px; line-height: 1.25; }
 }
 .section-title { color: var(--muted); }
 
-/* Boot gate: theme first, slow project and session discovery afterward. */
+/* Boot gate: theme first, slow project and session discovery afterward. The ink is pinned rather
+   than themed, because the manifest splash Android paints first has no dark variant to follow. */
 .app-boot {
   position: fixed;
   inset: 0;
   z-index: 90;
   display: grid;
   place-items: center;
-  background: var(--bg);
+  background: #141618;
 }
 .app-boot-inner { display: grid; justify-items: center; }
 .app-boot-mark { width: 112px; height: 112px; filter: drop-shadow(0 18px 28px rgba(20, 22, 24, 0.18)); }
@@ -168,7 +169,7 @@ h2 { font-size: 17px; line-height: 1.25; }
 .boot-ember-core { fill: #f7f3e8; stroke: none; }
 .app-boot-wordmark {
   margin-top: 16px;
-  color: var(--heading);
+  color: #f7f3e8;
   font-family: var(--serif);
   font-size: 28px;
   font-weight: 600;
@@ -177,7 +178,7 @@ h2 { font-size: 17px; line-height: 1.25; }
 }
 .app-boot-tagline {
   margin-top: 9px;
-  color: var(--muted);
+  color: #94999e;
   font-family: var(--mono);
   font-size: 10px;
   font-weight: 600;
@@ -695,7 +696,8 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
 .chat-topbar h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 19px; line-height: 1.25; }
 .chat-title-meta { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .chat-project-name {
-  display: none;
+  display: block;
+  flex: 0 1 38%;
   min-width: 0;
   overflow: hidden;
   color: var(--accent);
@@ -724,6 +726,7 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
 }
 .task-backlink:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
 .chat-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.chat-actions .icon-button svg { width: 18px; height: 18px; }
 .panel-toolbar, .chat-toolbar {
   display: flex;
   align-items: center;
@@ -767,6 +770,8 @@ select.chat-toolbar-control {
   min-height: 32px;
   min-width: 32px;
   width: 32px;
+  align-items: center;
+  justify-content: center;
   border: 1px solid var(--line);
   background: var(--field);
   color: var(--muted);
@@ -805,32 +810,23 @@ select.chat-toolbar-control {
 .model-option:hover { background: var(--field); }
 .model-option.active { background: var(--btn-bg); border-color: var(--btn-border); color: var(--btn-fg); }
 .model-dialog-list.claude .model-option.active { background: var(--btn-bg); }
-.status-pill { border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px; color: var(--muted); font-size: 10px; white-space: nowrap; }
-.status-pill.live { color: var(--live); border-color: color-mix(in srgb, var(--live) 35%, transparent); background: color-mix(in srgb, var(--live) 9%, transparent); }
-.status-pill.live::before {
-  content: "";
-  display: inline-block;
-  width: 5px;
-  height: 5px;
-  margin-right: 6px;
+/* Traffic light: red idle, amber connecting, green live. The text stays as the
+   element's accessible name and is clipped out of the 12px dot. */
+.status-pill {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
   border-radius: 999px;
-  background: currentColor;
-  vertical-align: 1px;
-  animation: dot-breathe 1.4s ease-in-out infinite;
+  background: var(--danger);
+  overflow: hidden;
+  text-indent: -999em;
+  white-space: nowrap;
 }
+.status-pill.live { border-color: color-mix(in srgb, var(--live) 45%, transparent); background: var(--live); animation: dot-breathe 1.4s ease-in-out infinite; }
 @keyframes dot-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
-.status-pill.connecting { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 35%, transparent); background: color-mix(in srgb, var(--amber) 9%, transparent); }
-.status-pill.connecting::before {
-  content: "";
-  display: inline-block;
-  width: 5px;
-  height: 5px;
-  margin-right: 6px;
-  border-radius: 999px;
-  background: currentColor;
-  vertical-align: 1px;
-  animation: dot-breathe 1.1s ease-in-out infinite;
-}
+.status-pill.connecting { border-color: color-mix(in srgb, var(--amber) 45%, transparent); background: var(--amber); animation: dot-breathe 1.1s ease-in-out infinite; }
 #notifyButton.active, #notificationToggleButton.active { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 
 .messages { flex: 1; min-height: 0; overflow: auto; background: transparent; padding: 18px clamp(12px, 2.5vw, 40px); display: flex; flex-direction: column; gap: 10px; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
@@ -849,6 +845,7 @@ select.chat-toolbar-control {
 @keyframes reconnect-dot { 0%, 100% { opacity: 0.2; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-2px); } }
 @media (prefers-reduced-motion: reduce) {
   .reconnect-dots i, .chat-badge-active .chat-status-dot { animation: none; opacity: 0.8; }
+  .status-pill.live, .status-pill.connecting { animation: none; }
 }
 
 .message { flex: 0 0 auto; max-width: 94%; border: 1px solid var(--line); border-radius: var(--radius-card); padding: 10px 13px; font-size: var(--read); line-height: var(--read-leading); animation: message-in 260ms cubic-bezier(0.22, 0.9, 0.28, 1) both; content-visibility: auto; contain-intrinsic-size: auto 220px; }
@@ -920,6 +917,14 @@ select.chat-toolbar-control {
 }
 .message.user .message-content.md code { background: color-mix(in srgb, var(--text) 8%, transparent); }
 .message.assistant { align-self: flex-start; padding: 9px 2px; border-color: transparent; background: transparent; }
+/* A sibling of the bubble, not a child, so the control sits outside the card.
+   The .messages column already supplies 10px of gap, hence the negative margin. */
+.message-actions { display: flex; align-self: flex-end; justify-content: flex-end; margin-top: -4px; }
+.message.assistant + .message-actions { align-self: flex-start; justify-content: flex-start; margin-left: -6px; }
+.message-copy { display: inline-grid; place-items: center; min-width: 28px; min-height: 28px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); opacity: 0.6; transition: background-color 140ms ease, color 140ms ease, opacity 140ms ease; }
+.message-copy:hover, .message-copy:focus-visible { opacity: 1; color: var(--text); background: var(--field); }
+.message-copy.copied { opacity: 1; color: var(--accent); }
+.message-copy-icon { width: 15px; height: 15px; }
 .message.tool { align-self: center; color: var(--amber); font-family: var(--mono); font-size: 11px; padding: 6px 11px; border-radius: 999px; border-color: transparent; background: color-mix(in srgb, var(--amber) 10%, transparent); }
 .message.thinking { align-self: stretch; max-width: 100%; color: var(--muted); border-style: dashed; border-color: var(--line-strong); background: transparent; font-family: var(--mono); font-size: 12px; }
 .message.thinking .message-content::after {
@@ -974,7 +979,9 @@ select.chat-toolbar-control {
 .attachment-chip button { border: 0; background: transparent; color: var(--muted); padding: 0; min-height: auto; }
 .attach-button { font-size: 20px; min-width: 42px; width: 42px; min-height: 44px; border-radius: var(--radius-ctl); }
 textarea { flex: 1; resize: none; max-height: 160px; min-height: 46px; border: 1px solid var(--line); border-radius: 14px; padding: 12px 15px; font-size: 16px; background-color: var(--panel); }
-.send { min-width: 46px; width: 46px; min-height: 46px; padding: 0; border-radius: 14px; font-size: 18px; }
+.send { min-width: 46px; width: 46px; min-height: 46px; padding: 0; border-radius: 14px; color: var(--on-ink); background: var(--accent); border-color: transparent; }
+.send:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, var(--text)); }
+.send svg { width: 20px; height: 20px; }
 
 /* ---- Bottom navigation ---- */
 .mobile-nav {
@@ -1010,6 +1017,31 @@ textarea { flex: 1; resize: none; max-height: 160px; min-height: 46px; border: 1
 .mobile-nav .nav-icon svg { width: 18px; height: 18px; }
 .mobile-nav button.active { color: var(--text); background: var(--field); }
 .mobile-nav button.active .nav-icon { color: var(--hue); }
+
+/* ---- Global app menu ---- */
+.app-menu { display: none; }
+.app-menu > summary { list-style: none; cursor: pointer; }
+.app-menu > summary::-webkit-details-marker { display: none; }
+.app-menu > summary svg { width: 18px; height: 18px; }
+.app-menu:not([open]) > .app-menu-panel { display: none; }
+.app-menu-panel {
+  position: fixed;
+  top: calc(58px + env(safe-area-inset-top, 0px));
+  right: 16px;
+  z-index: 51;
+  display: grid;
+  gap: 8px;
+  width: min(15rem, calc(100vw - 2rem));
+  padding: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-ctl);
+  background: var(--header);
+  box-shadow: var(--shadow-soft);
+}
+.app-menu-meta { display: grid; gap: 3px; min-width: 0; }
+.app-menu-node { overflow: hidden; color: var(--text); font-size: 12.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.app-menu-version { color: var(--muted); font-family: var(--mono); font-size: 10.5px; }
+.app-menu-panel > button { width: 100%; text-align: left; }
 
 /* ---- Pending review badge ---- */
 /* Both triggers position the same badge, so the count anchors to the button itself. */
@@ -1193,6 +1225,9 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   transform: translateX(-50%);
   width: max-content;
   max-width: min(560px, calc(100vw - 32px));
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
   overflow-wrap: anywhere;
   background: var(--btn-bg);
   color: var(--btn-fg);
@@ -1205,6 +1240,20 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   text-align: left;
   z-index: 100;
 }
+.toast-message { min-width: 0; }
+.toast-close {
+  flex: 0 0 auto;
+  min-height: 0;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 15px;
+  line-height: 1.4;
+  opacity: 0.72;
+  cursor: pointer;
+}
+.toast-close:hover { opacity: 1; }
 .install-banner { position: fixed; left: 50%; bottom: calc(var(--nav-height) + 16px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); width: min(560px, calc(100% - 24px)); display: flex; align-items: center; gap: 14px; padding: 12px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); z-index: 45; }
 .install-banner[hidden] { display: none; }
 .install-banner-mark { flex: 0 0 auto; width: 40px; height: 40px; border-radius: var(--radius-ctl); }
@@ -1270,7 +1319,6 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   }
   .chat-session-controls { display: contents; }
   select.chat-toolbar-control { width: 100%; max-width: none; }
-  .chat-project-name { display: block; flex: 0 1 38%; }
   #chatModeControl { display: grid; }
   #chatsRecentSessionsButton { display: inline-grid; }
   #chatRecentSessionsButton { display: inline-flex; }
@@ -1299,7 +1347,10 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   .chat-more-actions > button { width: 100%; text-align: left; }
   :root { --read: 15px; --read-leading: 1.68; --measure: none; }
   .mobile-nav { bottom: max(8px, env(safe-area-inset-bottom)); }
-  .panel-bar, .chat-topbar { min-height: 58px; padding: 10px 12px; padding-top: calc(10px + env(safe-area-inset-top, 0px)); }
+  /* 52px of reserved lane on the right so no header control lands under the fixed app menu. */
+  .panel-bar, .chat-topbar { min-height: 58px; padding: 10px 52px 10px 12px; padding-top: calc(10px + env(safe-area-inset-top, 0px)); }
+  .app-menu { display: block; position: fixed; top: calc(18px + env(safe-area-inset-top, 0px)); right: 16px; z-index: 50; }
+  #settingsButton { display: none; }
   .messages { padding: 12px; }
   .composer { padding: 6px 8px 10px; }
   .dialog-card { padding: 20px; }
