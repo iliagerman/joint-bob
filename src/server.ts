@@ -2071,8 +2071,9 @@ app.patch("/api/projects/:projectId", async (request, response, next) => {
       project = await renameProject(project.id, payload.name);
       await setProjectName(project.id, payload.name);
     }
+    const colorChanged = payload.color !== undefined && payload.color !== (existing.color ?? null);
     if (payload.color !== undefined) project = await updateProjectColor(project.id, payload.color);
-    if (typeChanged) await notifyPeersOfProjectInventory();
+    if (typeChanged || colorChanged) await notifyPeersOfProjectInventory();
     response.json({ project: await projectView(project) });
   } catch (error) {
     next(error);

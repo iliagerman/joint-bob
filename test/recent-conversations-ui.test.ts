@@ -182,3 +182,21 @@ test("the recents list leaves room for the focus ring", async () => {
   // The rows scroll inside the list, so a 2px outline offset needs padding or it is clipped.
   assert.match(styles, /\.recent-sessions-list \{[^}]*padding: 3px;/);
 });
+
+test("every recent conversations button draws the same clock icon", async () => {
+  const html = await readFile("public/index.html", "utf8");
+
+  // The chat toolbar icon is the reference; the panel headers must not drift from it.
+  const iconPaths = (id: string): string[] => {
+    const start = html.indexOf(`id="${id}"`);
+    assert.ok(start >= 0, `${id} is missing`);
+    const button = html.slice(start, html.indexOf("</button>", start));
+    return [...button.matchAll(/\sd="([^"]+)"/g)].map((match) => match[1]);
+  };
+
+  const reference = iconPaths("chatRecentSessionsButton");
+  assert.equal(reference.length, 3, "the reference icon should be three paths");
+  for (const id of ["recentSessionsButton", "chatsRecentSessionsButton"]) {
+    assert.deepEqual(iconPaths(id), reference, `${id} draws a different recents icon`);
+  }
+});

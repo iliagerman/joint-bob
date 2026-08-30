@@ -519,6 +519,9 @@ export async function importProject(project: ProjectRecord, localPath?: string, 
     const existing = rowToProject(db, existingRow);
     existing.name = project.name;
     existing.type = project.type ?? existing.type ?? "personal";
+    // The colour belongs to the shared project, so the source node's choice wins here too.
+    if (project.color) existing.color = project.color;
+    else delete existing.color;
     if (!existing.macPath || existing.macPath === path.resolve(project.path)) {
       existing.macPath = path.resolve(project.macPath ?? project.path);
     }
