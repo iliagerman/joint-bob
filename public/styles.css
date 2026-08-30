@@ -1279,6 +1279,14 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 .project-type-add input { flex: 1; min-width: 0; }
 .project-type-add button { flex: 0 0 auto; }
 
+.changelog-list { display: grid; gap: 12px; max-height: 46dvh; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+.changelog-entry { padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
+.changelog-entry h3 { display: flex; align-items: baseline; gap: 8px; margin: 0; color: var(--text); font-family: var(--mono); font-size: 12px; font-weight: 600; }
+.changelog-date { color: var(--muted); font-size: 10.5px; font-weight: 500; }
+.changelog-entry ul { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 4px; }
+.changelog-entry li { color: var(--text); font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
+.changelog-entry ul:empty { display: none; }
+
 .secret-account-list, .secret-scope-list { display: grid; gap: 8px; }
 .secret-account-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
 .secret-account-meta { display: grid; gap: 2px; flex: 1; min-width: 0; }

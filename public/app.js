@@ -229,6 +229,11 @@ const elements = {
   settingsTabs: Array.from(document.querySelectorAll("[data-settings-tab]")),
   settingsPanels: Array.from(document.querySelectorAll(".settings-panel")),
   settingsRestartMessage: document.querySelector("#settingsRestartMessage"),
+  settingsChangelogList: document.querySelector("#settingsChangelogList"),
+  settingsChangelogVersion: document.querySelector("#settingsChangelogVersion"),
+  whatsNewDialog: document.querySelector("#whatsNewDialog"),
+  whatsNewList: document.querySelector("#whatsNewList"),
+  whatsNewVersion: document.querySelector("#whatsNewVersion"),
   settingsProjectHome: document.querySelector("#settingsProjectHome"),
   settingsProjectHomeBrowseButton: document.querySelector("#settingsProjectHomeBrowseButton"),
   settingsPiExecutable: document.querySelector("#settingsPiExecutable"),
@@ -579,6 +584,7 @@ async function initializeApplication() {
     .catch((error) => console.warn("Could not discover peer projects", error));
   setMobileView(preferences.mobileView);
   state.preferencesLoaded = true;
+  void showWhatsNew(preferences.lastSeenVersion).catch((error) => console.warn("Could not load the changelog", error));
   if (state.initialProjectId || state.initialSessionPath) {
     savePreferencesInBackground({ activeProjectId: state.activeProjectId, activeSessionPath: state.activeSessionPath, activeSessionId: state.activeSessionId });
   }
@@ -660,6 +666,64 @@ function renderLoginSessions(authSessions) {
   }
 }
 
+/** Compares two "major.minor.patch" strings; anything else never counts as newer. */
+function isNewerVersion(candidate, baseline) {
+  const left = String(candidate).split(".").map(Number);
+  const right = String(baseline).split(".").map(Number);
+  for (let index = 0; index < 3; index += 1) {
+    if (left[index] !== right[index]) return left[index] > right[index];
+  }
+  return false;
+}
+
+/** Renders released versions newest first into a container, one section each. */
+function renderChangelogEntries(container, entries) {
+  container.replaceChildren();
+  for (const entry of entries) {
+    const section = document.createElement("section");
+    section.className = "changelog-entry";
+    const heading = document.createElement("h3");
+    heading.textContent = entry.version;
+    if (entry.date) {
+      const date = document.createElement("span");
+      date.className = "changelog-date";
+      date.textContent = entry.date;
+      heading.append(date);
+    }
+    const changes = document.createElement("ul");
+    for (const change of entry.changes) {
+      const item = document.createElement("li");
+      item.textContent = change;
+      changes.append(item);
+    }
+    section.append(heading, changes);
+    container.append(section);
+  }
+}
+
+async function loadChangelogPanel() {
+  const { version, entries } = await api("/api/changelog");
+  elements.settingsChangelogVersion.textContent = version;
+  renderChangelogEntries(elements.settingsChangelogList, entries);
+}
+
+// The dialog is the only sign that a deployment landed, so it opens once per
+// upgrade: never on a first visit, and never on a plain refresh.
+async function showWhatsNew(lastSeenVersion) {
+  const { version, entries } = await api("/api/changelog");
+  if (!lastSeenVersion) {
+    savePreferencesInBackground({ lastSeenVersion: version });
+    return;
+  }
+  if (!isNewerVersion(version, lastSeenVersion)) return;
+  savePreferencesInBackground({ lastSeenVersion: version });
+  const shipped = entries.filter((entry) => isNewerVersion(entry.version, lastSeenVersion));
+  if (!shipped.length) return;
+  elements.whatsNewVersion.textContent = version;
+  renderChangelogEntries(elements.whatsNewList, shipped);
+  elements.whatsNewDialog.showModal();
+}
+
 /** Shows one settings panel and hides the rest, keeping the tablist's roving tabindex correct. */
 function selectSettingsTab(name) {
   elements.settingsForm.dataset.tab = name;
@@ -672,7 +736,7 @@ function selectSettingsTab(name) {
 }
 
 async function openSettings(tab = "account") {
-  const [settings, authSessions] = await Promise.all([api("/api/settings"), api("/api/auth/sessions"), loadSecretAccounts()]);
+  const [settings, authSessions] = await Promise.all([api("/api/settings"), api("/api/auth/sessions"), loadSecretAccounts(), loadChangelogPanel()]);
   elements.settingsUsername.textContent = state.username;
   selectSettingsTab(tab);
   await Promise.all([loadGithubGroups(), loadClusterPanel()]);
@@ -882,7 +946,7 @@ async function loadAppMenuDetails() {
   state.appMenuLoaded = true;
   const [{ node }, health] = await Promise.all([api("/api/cluster/node"), api("/api/health")]);
   elements.appMenuNode.textContent = node.name;
-  elements.appMenuVersion.textContent = `Version ${/^[0-9a-f]{40}$/i.test(health.release) ? health.release.slice(0, 7) : health.release}`;
+  elements.appMenuVersion.textContent = `Version ${health.version}`;
 }
 
 // One reusable strip under the transcript. Reconnect attempts repeat, so the

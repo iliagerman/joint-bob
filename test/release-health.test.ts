@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { appVersion } from "../src/changelog.js";
+
 test("health reports the runtime release", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "master-bob-release-health-"));
   const previousDataDir = process.env.PI_WEB_DATA_DIR;
@@ -23,7 +25,7 @@ test("health reports the runtime release", async () => {
 
     const response = await fetch(`http://127.0.0.1:${address.port}/api/health`);
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { status: "ok", release });
+    assert.deepEqual(await response.json(), { status: "ok", version: appVersion(), release });
   } finally {
     if (server) {
       const testServer = server;

@@ -289,6 +289,7 @@
           <button class="settings-tab" type="button" data-settings-tab="cluster" role="tab" id="settingsTab-cluster" aria-controls="settingsPanel-cluster" aria-selected="false" tabindex="-1" data-testid="settings-tab-cluster">Cluster</button>
           <button class="settings-tab" type="button" data-settings-tab="projects" role="tab" id="settingsTab-projects" aria-controls="settingsPanel-projects" aria-selected="false" tabindex="-1" data-testid="settings-tab-projects">Projects</button>
           <button class="settings-tab" type="button" data-settings-tab="engines" role="tab" id="settingsTab-engines" aria-controls="settingsPanel-engines" aria-selected="false" tabindex="-1" data-testid="settings-tab-engines">Engines</button>
+          <button class="settings-tab" type="button" data-settings-tab="changelog" role="tab" id="settingsTab-changelog" aria-controls="settingsPanel-changelog" aria-selected="false" tabindex="-1" data-testid="settings-tab-changelog">Changelog</button>
         </div>
 
         <section class="settings-panel" id="settingsPanel-account" role="tabpanel" aria-labelledby="settingsTab-account" tabindex="0">
@@ -404,10 +405,29 @@
           </fieldset>
         </section>
 
+        <section class="settings-panel" id="settingsPanel-changelog" role="tabpanel" aria-labelledby="settingsTab-changelog" tabindex="0" hidden>
+          <p>What shipped in the last ten deployments. This node is running <strong id="settingsChangelogVersion" data-testid="settings-changelog-version">…</strong>.</p>
+          <div class="changelog-list" id="settingsChangelogList" data-testid="settings-changelog-list"></div>
+        </section>
+
         <p class="settings-restart-message" id="settingsRestartMessage" role="status" hidden></p>
         <div class="dialog-actions">
           <button class="ghost" type="button" id="cancelSettingsButton" data-testid="settings-cancel-button">Close</button>
           <button class="primary" type="submit" data-testid="settings-save-button">Save settings</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="whatsNewDialog" data-testid="whats-new-dialog">
+      <form method="dialog" class="dialog-card">
+        <div class="dialog-heading" tabindex="-1" autofocus>
+          <span class="eyebrow">Updated</span>
+          <h2>What&rsquo;s new</h2>
+          <p>Joint Bob updated to <strong id="whatsNewVersion" data-testid="whats-new-version">…</strong> on this node.</p>
+        </div>
+        <div class="changelog-list" id="whatsNewList" data-testid="whats-new-list"></div>
+        <div class="dialog-actions">
+          <button class="primary" type="submit" data-testid="whats-new-dismiss-button">Got it</button>
         </div>
       </form>
     </dialog>

@@ -44,6 +44,7 @@ import { ensureManagedHome, managedProjectPath, managedProjectRelocationPath } f
 import { importProjectDirectory, ProjectDirectoryImportError, relocateProjectDirectory } from "./project-directory-import.js";
 import { listAuditEvents } from "./audit.js";
 import { getUserPreferences, updateUserPreferences } from "./preferences.js";
+import { appVersion, readChangelog } from "./changelog.js";
 import { claimReviewNotifications, markConversationReviewed, markConversationsReviewed, syncConversationReviewStates } from "./conversation-reviews.js";
 import { resetSyncthingConnection } from "./syncthing.js";
 import { PROJECT_COLORS } from "./types.js";
@@ -455,6 +456,7 @@ const userPreferencesSchema = z.object({
   pinnedSessionPaths: z.array(z.string().trim().min(1).max(2000)).max(200).optional(),
   projectsPanelCollapsed: z.boolean().optional(),
   chatsPanelCollapsed: z.boolean().optional(),
+  lastSeenVersion: z.string().trim().regex(/^\d+\.\d+\.\d+$/).nullable().optional(),
   recentSessions: z.array(z.object({
     projectId: z.string().trim().min(1).max(120),
     sessionPath: z.string().trim().min(1).max(2000),
@@ -794,12 +796,14 @@ app.get("/api/auth/status", (request, response) => {
 });
 
 app.get("/api/health", (_request, response) => {
+  // The semantic version is what the user sees; the commit stays for diagnostics.
+  const version = appVersion();
   const release = process.env.JOINT_BOB_RELEASE ?? process.env.MASTER_BOB_RELEASE ?? "development";
   if (!startupReady) {
-    response.status(503).json({ status: "starting", release });
+    response.status(503).json({ status: "starting", version, release });
     return;
   }
-  response.json({ status: "ok", release });
+  response.json({ status: "ok", version, release });
 });
 
 app.post("/api/auth/setup", (request, response, next) => {
@@ -3304,6 +3308,10 @@ for (const method of ["get", "put"] as const) {
     } catch (error) { next(error); }
   });
 }
+
+app.get("/api/changelog", (_request, response) => {
+  response.json({ version: appVersion(), entries: readChangelog() });
+});
 
 app.post("/api/update/prepare", async (_request, response, next) => {
   try {

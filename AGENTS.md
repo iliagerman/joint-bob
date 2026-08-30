@@ -34,6 +34,12 @@ Node-specific proxy URLs, model aliases, credentials, and executable overrides b
 
 See `README.md` for installation, node pairing, private HTTPS, EC2 smoke testing, and service commands.
 
+## Changelog
+
+Every deployment is a version. `package.json` holds the semantic version; `CHANGELOG.md` holds one `## <version> — <date>` section per release, newest first. The app shows the newest ten in Settings and opens a "What's new" dialog once after an upgrade.
+
+`scripts/hooks/pre-push` blocks a push to `main` that changes `src/`, `public/`, or `bin/` unless the pushed commits bump `package.json` and add a matching `CHANGELOG.md` section. When they do not, the gate has Claude (Haiku) write both files in the working tree and refuses the push; commit what it wrote and push again. Run `./scripts/install-git-hooks.sh` once per clone to install the hook, and `node scripts/changelog-gate.mjs <base-sha> <head-sha> --check` to check without calling Claude.
+
 ## PWA cache
 
 When changing the frontend shell or icons, bump `CACHE_NAME` in `public/sw.js` and verify every asset in `APP_SHELL` exists.

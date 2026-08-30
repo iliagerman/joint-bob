@@ -70,6 +70,7 @@ test("preferences are authenticated, validated, and persist across listener rest
       projectsPanelCollapsed: false,
       chatsPanelCollapsed: false,
       recentSessions: [],
+      lastSeenVersion: null,
     });
 
     const values = {
@@ -88,6 +89,7 @@ test("preferences are authenticated, validated, and persist across listener rest
       projectsPanelCollapsed: true,
       chatsPanelCollapsed: true,
       recentSessions: [{ projectId: "project-123", sessionPath: "/tmp/session.jsonl", title: "Session 123", openedAt: "2026-08-27T10:00:00.000Z" }],
+      lastSeenVersion: "1.4.2",
     };
     const updated = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify(values) });
     assert.equal(updated.status, 200);

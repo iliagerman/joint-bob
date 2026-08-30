@@ -7,6 +7,8 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
+import { appVersion } from "../src/changelog.js";
+
 interface SyncthingFixture {
   port: number;
   release: () => void;
@@ -140,11 +142,11 @@ test("health stays starting until initial Syncthing ignore reconciliation succee
     await syncthing.requested;
 
     const starting = await waitForHealth(port, 503);
-    assert.deepEqual(await starting.json(), { status: "starting", release: "development" });
+    assert.deepEqual(await starting.json(), { status: "starting", version: appVersion(), release: "development" });
 
     syncthing.release();
     const ready = await waitForHealth(port, 200);
-    assert.deepEqual(await ready.json(), { status: "ok", release: "development" });
+    assert.deepEqual(await ready.json(), { status: "ok", version: appVersion(), release: "development" });
   } finally {
     if (child) await stopServer(child);
     await syncthing.close();
@@ -167,7 +169,7 @@ test("startup migrates legacy GitHub credentials without peers", async () => {
     assert.match(digest.digest, /^[0-9a-f]{64}$/);
     assert.equal(digest.applied_digest, digest.digest);
     const ready = await waitForHealth(port, 200);
-    assert.deepEqual(await ready.json(), { status: "ok", release: "development" });
+    assert.deepEqual(await ready.json(), { status: "ok", version: appVersion(), release: "development" });
 
     const database = new DatabaseSync(path.join(root, "node.db"));
     const migration = database.prepare("SELECT source FROM github_auth_migrations WHERE source = 'json'").get();
@@ -197,7 +199,7 @@ test("failed initial Syncthing ignore reconciliation keeps health starting", asy
     await waitForOutput(started.output, "Startup reconciliation failed");
 
     const starting = await waitForHealth(port, 503);
-    assert.deepEqual(await starting.json(), { status: "starting", release: "development" });
+    assert.deepEqual(await starting.json(), { status: "starting", version: appVersion(), release: "development" });
   } finally {
     if (child) await stopServer(child);
     await syncthing.close();

@@ -27,6 +27,7 @@ export interface UserPreferences {
   projectsPanelCollapsed: boolean;
   chatsPanelCollapsed: boolean;
   recentSessions: RecentSession[];
+  lastSeenVersion: string | null;
 }
 
 interface PreferenceRow {
@@ -45,6 +46,7 @@ interface PreferenceRow {
   projects_panel_collapsed: number;
   chats_panel_collapsed: number;
   recent_sessions: string;
+  last_seen_version: string | null;
 }
 
 const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
@@ -85,6 +87,7 @@ function preferencesDatabase(): DatabaseSync {
   if (!columns.some((column) => column.name === "projects_panel_collapsed")) database.exec("ALTER TABLE user_preferences ADD COLUMN projects_panel_collapsed INTEGER NOT NULL DEFAULT 0");
   if (!columns.some((column) => column.name === "chats_panel_collapsed")) database.exec("ALTER TABLE user_preferences ADD COLUMN chats_panel_collapsed INTEGER NOT NULL DEFAULT 0");
   if (!columns.some((column) => column.name === "recent_sessions")) database.exec("ALTER TABLE user_preferences ADD COLUMN recent_sessions TEXT NOT NULL DEFAULT '[]'");
+  if (!columns.some((column) => column.name === "last_seen_version")) database.exec("ALTER TABLE user_preferences ADD COLUMN last_seen_version TEXT");
   return database;
 }
 
@@ -156,6 +159,7 @@ function preferencesFromRow(row: PreferenceRow): UserPreferences {
     projectsPanelCollapsed: row.projects_panel_collapsed === 1,
     chatsPanelCollapsed: row.chats_panel_collapsed === 1,
     recentSessions: parseRecentSessions(row.recent_sessions),
+    lastSeenVersion: row.last_seen_version,
   };
 }
 
@@ -164,7 +168,7 @@ function currentPreferences(userId: string): UserPreferences {
     SELECT theme, notifications_enabled, completion_sound, install_dismissed, mobile_view,
       active_project_id, active_session_path, active_session_id, active_node_id, legacy_migrated,
       pinned_project_ids, pinned_session_paths, projects_panel_collapsed, chats_panel_collapsed,
-      recent_sessions
+      recent_sessions, last_seen_version
     FROM user_preferences WHERE user_id = ?
   `).get(userId) as unknown as PreferenceRow;
   return preferencesFromRow(row);
@@ -194,6 +198,7 @@ export function updateUserPreferences(userId: string, partial: Partial<UserPrefe
     ["projectsPanelCollapsed", "projects_panel_collapsed", (value) => value ? 1 : 0],
     ["chatsPanelCollapsed", "chats_panel_collapsed", (value) => value ? 1 : 0],
     ["recentSessions", "recent_sessions", (value) => JSON.stringify(canonicalRecentSessions(value as RecentSession[]))],
+    ["lastSeenVersion", "last_seen_version", (value) => value as string | null],
   ];
   for (const [property, column, serialize] of fields) {
     if (partial[property] === undefined) continue;
