@@ -62,3 +62,39 @@ test("the project editor offers the fixed colour palette", async () => {
   assert.match(styles, /\.project-card\[data-color\]:hover \{ background: color-mix\(in srgb, var\(--project-hue\)/);
   assert.match(styles, /\.project-card\[data-color\]\.active \{[^\n]*background: color-mix\(in srgb, var\(--project-hue\)/);
 });
+
+test("a colour chosen at creation is stored on the new project", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-create-color-"));
+  process.env.PI_WEB_DATA_DIR = path.join(root, "data");
+  const { addProject, listProjects } = await import(`../src/store.js?create-color=${Date.now()}-${Math.random()}`);
+
+  try {
+    const project = await addProject("painted", path.join(root, "server", "painted"), { type: "work", color: "violet" });
+    assert.equal(project.color, "violet");
+
+    const reloaded = (await listProjects()).find((candidate) => candidate.id === project.id);
+    assert.equal(reloaded?.color, "violet");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the create-project dialog picks a colour on the same screen as the name", async () => {
+  const [html, app, server] = await Promise.all([
+    readFile("public/index.html", "utf8"),
+    readFile("public/app.js", "utf8"),
+    readFile("src/server.ts", "utf8"),
+  ]);
+
+  // The picker lives inside the create form itself, beside the name field.
+  const createForm = html.slice(html.indexOf('id="projectForm"'), html.indexOf('id="projectRenameDialog"'));
+  assert.match(createForm, /id="projectNameInput"/);
+  assert.match(createForm, /data-testid="new-project-color-swatches"/);
+
+  // Both pickers share one renderer, so the palette cannot drift between dialogs.
+  assert.match(app, /function renderProjectColorSwatches\(selected, container\)/);
+  assert.match(app, /selectedProjectColor\(elements\.newProjectColorSwatches\)/);
+
+  // The create request carries the colour, so no second save is needed.
+  assert.match(server, /color: z\.enum\(PROJECT_COLORS\)\.nullable\(\)\.optional\(\),\n\}\)\n\s*\.refine/);
+});

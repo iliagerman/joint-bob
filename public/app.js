@@ -283,6 +283,7 @@ const elements = {
   cancelProjectPathButton: document.querySelector("#cancelProjectPathButton"),
   newSessionButton: document.querySelector("#newSessionButton"),
   projectDialog: document.querySelector("#projectDialog"),
+  newProjectColorSwatches: document.querySelector("#newProjectColorSwatches"),
   projectForm: document.querySelector("#projectForm"),
   cancelProjectButton: document.querySelector("#cancelProjectButton"),
   projectTypeInput: document.querySelector("#projectTypeInput"),
@@ -1419,8 +1420,9 @@ async function openProjectGithubSettings(project) {
 
 let projectPendingRename = null;
 
-function renderProjectColorSwatches(selected) {
-  elements.projectColorSwatches.replaceChildren();
+/** Both the create dialog and the editor draw the same palette into their own container. */
+function renderProjectColorSwatches(selected, container) {
+  container.replaceChildren();
   for (const color of [null, ...PROJECT_COLORS]) {
     const swatch = document.createElement("button");
     swatch.type = "button";
@@ -1432,20 +1434,20 @@ function renderProjectColorSwatches(selected) {
     swatch.setAttribute("aria-label", color || "No colour");
     swatch.title = color || "No colour";
     if (color) swatch.dataset.color = color;
-    swatch.addEventListener("click", () => renderProjectColorSwatches(color));
-    elements.projectColorSwatches.append(swatch);
+    swatch.addEventListener("click", () => renderProjectColorSwatches(color, container));
+    container.append(swatch);
   }
 }
 
-function selectedProjectColor() {
-  const selected = elements.projectColorSwatches.querySelector(".color-swatch.selected");
+function selectedProjectColor(container) {
+  const selected = container.querySelector(".color-swatch.selected");
   return selected?.dataset.colorValue || null;
 }
 
 function openProjectRename(project) {
   projectPendingRename = project;
   elements.projectRenameInput.value = project.name;
-  renderProjectColorSwatches(project.color || null);
+  renderProjectColorSwatches(project.color || null, elements.projectColorSwatches);
   elements.projectGroupInput.replaceChildren();
   for (const type of projectTypes) {
     const option = document.createElement("option");
@@ -4080,7 +4082,7 @@ elements.projectRenameForm.addEventListener("submit", async (event) => {
   const project = projectPendingRename;
   const name = elements.projectRenameInput.value.trim();
   const type = elements.projectGroupInput.value;
-  const color = selectedProjectColor();
+  const color = selectedProjectColor(elements.projectColorSwatches);
   elements.projectRenameDialog.close();
   if (!project || !name) return;
   if (name === project.name && type === project.type && color === (project.color || null)) return;
@@ -4347,6 +4349,8 @@ elements.projectGithubForm.addEventListener("submit", async (event) => {
 elements.newProjectButton.addEventListener("click", () => {
   elements.projectForm.reset();
   elements.projectImportModeInput.value = "move-link";
+  // A form reset leaves the swatch buttons alone, so redraw the palette unselected.
+  renderProjectColorSwatches(null, elements.newProjectColorSwatches);
   updateProjectImportControls();
   elements.projectDialog.showModal();
   loadProjectTypes().then(() => fillProjectBases()).catch((error) => toast(error.message));
@@ -4373,12 +4377,14 @@ elements.projectForm.addEventListener("submit", async (event) => {
   try {
     const name = elements.projectNameInput.value.trim();
     const sourcePath = elements.projectSourcePathInput.value.trim();
+    const color = selectedProjectColor(elements.newProjectColorSwatches);
     const response = await api("/api/projects", {
       method: "POST",
       body: JSON.stringify({
         name,
         type: elements.projectTypeInput.value,
         synced: true,
+        ...(color ? { color } : {}),
         ...(sourcePath ? { sourcePath, importMode: elements.projectImportModeInput.value } : {}),
       }),
     });
@@ -5083,6 +5089,8 @@ elements.messageInput.addEventListener("keydown", (event) => {
   event.preventDefault();
   elements.composer.requestSubmit();
 });
+
+elements.messageInput.addEventListener("blur", hideCommandAutocomplete);
 
 elements.messageInput.addEventListener("paste", async (event) => {
   const images = [...event.clipboardData.files].filter((file) => file.type.startsWith("image/"));

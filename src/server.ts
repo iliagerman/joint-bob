@@ -199,6 +199,7 @@ const projectSchema = z.object({
   importMode: z.enum(["copy", "move", "move-link"]).optional(),
   synced: z.boolean().optional(),
   macPath: absolutePathSchema.optional(),
+  color: z.enum(PROJECT_COLORS).nullable().optional(),
 })
   .refine((payload) => !(payload.path && payload.sourcePath), "Project path and import source cannot both be set")
   .refine((payload) => !payload.sourcePath || payload.importMode, { message: "Choose how to import the project", path: ["importMode"] });
@@ -1991,6 +1992,7 @@ app.post("/api/projects", async (request, response, next) => {
       synced: payload.synced,
       macPath: payload.macPath ?? payload.sourcePath,
       type: payload.type,
+      color: payload.color ?? undefined,
       writeInstructions: !payload.sourcePath,
     });
     if (payload.synced && project.syncFolderId) {

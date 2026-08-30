@@ -1742,3 +1742,63 @@
 **Event**: HUMAN_TURN
 
 ---
+
+## Session Start
+**Timestamp**: 2026-08-30T14:33:31Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-08-30T14:33:45Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-08-30T14:34:09Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Human Turn
+**Timestamp**: 2026-08-30T14:34:53Z
+**Event**: HUMAN_TURN
+
+---
+
+## Human Turn
+**Timestamp**: 2026-08-30T14:35:10Z
+**Event**: HUMAN_TURN
+
+---
+
+## Sensor Fired
+**Timestamp**: 2026-08-30T14:36:17Z
+**Event**: SENSOR_FIRED
+**Fire id**: f69fef67
+**Sensor ID**: linter
+**Stage slug**: code-generation
+**Output path**: public/app.js
+
+---
+
+## Sensor Passed
+**Timestamp**: 2026-08-30T14:36:18Z
+**Event**: SENSOR_PASSED
+**Fire id**: f69fef67
+**Sensor ID**: linter
+**Stage slug**: code-generation
+**Output path**: public/app.js
+**Duration ms**: 1806
+**Note**: tool-unavailable
+
+---
+
+## Human Turn
+**Timestamp**: 2026-08-30T14:38:51Z
+**Event**: HUMAN_TURN
+
+---

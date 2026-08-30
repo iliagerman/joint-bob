@@ -10,6 +10,7 @@ interface AddProjectOptions {
   macPath?: string;
   syncFolderId?: string;
   type?: ProjectType;
+  color?: string;
   writeInstructions?: boolean;
 }
 
@@ -493,6 +494,7 @@ export async function addProject(name: string, folderPath: string, options: AddP
     name: projectName,
     type: options.type ?? "personal",
     path: resolvedPath,
+    ...(options.color ? { color: options.color } : {}),
     ...(configuredRemotePath ? { macPath: path.resolve(configuredRemotePath) } : {}),
     ...(options.synced ? { syncFolderId: options.syncFolderId ?? generatedSyncFolderId({ id, name: projectName }) } : {}),
     createdAt: now,
