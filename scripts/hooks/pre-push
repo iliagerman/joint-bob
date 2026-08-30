@@ -3,11 +3,29 @@ set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
 REMOTE_NAME="${1:-origin}"
+
+# A GUI Git client runs hooks with a bare PATH, where a version-managed node is
+# invisible. The gate blocks the push, so failing to find node would block every
+# push; look in the stable install locations before giving up.
+resolve_node() {
+  command -v node && return
+  local candidate
+  for candidate in \
+    "${HOME}/.local/share/joint-bob/runtime"/node-v*/bin/node \
+    "${HOME}/.local/share/fnm/aliases/default/bin/node" \
+    /opt/homebrew/bin/node \
+    /usr/local/bin/node; do
+    [ -x "${candidate}" ] && { printf '%s\n' "${candidate}"; return; }
+  done
+  echo "pre-push: node was not found, so the changelog gate cannot run. Push from a shell where node is on PATH." >&2
+  return 1
+}
+
 while read -r _local_ref local_sha remote_ref remote_sha; do
   [ "${remote_ref}" = "refs/heads/main" ] || continue
   [ "${local_sha}" != "0000000000000000000000000000000000000000" ] || continue
   # Blocking: a deployment does not leave without its version and release notes.
-  node "${ROOT}/scripts/changelog-gate.mjs" "${remote_sha}" "${local_sha}" </dev/null >&2
+  "$(resolve_node)" "${ROOT}/scripts/changelog-gate.mjs" "${remote_sha}" "${local_sha}" </dev/null >&2
   log_dir="${HOME}/.joint-bob/logs"
   mkdir -p "${log_dir}"
   chmod 700 "${HOME}/.joint-bob" "${log_dir}"

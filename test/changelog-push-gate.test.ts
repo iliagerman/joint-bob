@@ -119,7 +119,7 @@ test("the pre-push hook blocks on the gate before triggering a deploy", async ()
   const deployLine = hook.indexOf("wait-for-main-and-deploy.sh");
   assert.ok(gateLine >= 0 && deployLine >= 0);
   assert.ok(gateLine < deployLine, "The gate must run before the deploy is triggered");
-  assert.match(hook, /node "\$\{ROOT\}\/scripts\/changelog-gate\.mjs" "\$\{remote_sha\}" "\$\{local_sha\}"/);
+  assert.match(hook, /"\$\(resolve_node\)" "\$\{ROOT\}\/scripts\/changelog-gate\.mjs" "\$\{remote_sha\}" "\$\{local_sha\}"/);
   assert.doesNotMatch(hook, /changelog-gate\.mjs[^\n]*&\s*$/m);
   assert.match(hook, /while read -r _local_ref local_sha remote_ref remote_sha; do/);
 
@@ -128,4 +128,40 @@ test("the pre-push hook blocks on the gate before triggering a deploy", async ()
   assert.match(script, /"--permission-mode", "acceptEdits"/);
   assert.match(script, /spawnSync\("claude"/);
   assert.match(script, /process\.exit\(1\);/);
+});
+
+/** The hook's node lookup, lifted out so it can be exercised on its own. */
+async function resolveNodeFunction(): Promise<string> {
+  const hook = await readFile("scripts/hooks/pre-push", "utf8");
+  const start = hook.indexOf("resolve_node() {");
+  assert.ok(start >= 0, "Missing resolve_node");
+  return hook.slice(start, hook.indexOf("\n}", start) + 2);
+}
+
+test("the hook finds node through the managed runtime when PATH has none", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "joint-bob-node-lookup-"));
+  try {
+    const runtime = path.join(home, ".local", "share", "joint-bob", "runtime", "node-v22.19.0", "bin");
+    await mkdir(runtime, { recursive: true });
+    const shim = path.join(runtime, "node");
+    await writeFile(shim, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+
+    const result = spawnSync("/bin/bash", ["-c", `${await resolveNodeFunction()}\nresolve_node`], {
+      encoding: "utf8",
+      env: { HOME: home, PATH: "/nonexistent" },
+    });
+
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout.trim(), shim);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("the hook fails loudly rather than silently when no node exists", async () => {
+  // The exhausted branch cannot be exercised here: this machine has a real
+  // /opt/homebrew/bin/node, which the lookup rightly finds.
+  const lookup = await resolveNodeFunction();
+  assert.match(lookup, /node was not found, so the changelog gate cannot run/);
+  assert.match(lookup, /return 1\n\}$/);
 });
