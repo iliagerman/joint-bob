@@ -39,3 +39,21 @@ test("a chat opened from a board card links back to that card", async () => {
   assert.match(styles, /\.task-card-focus[^{]*\{[^}]*var\(--accent\)/);
   assert.match(styles, /\.chat-title-meta[^{]*\{[^}]*display: flex/);
 });
+
+test("a ticket conversation links back to its ticket however it was opened", async () => {
+  const app = await readFile("public/app.js", "utf8");
+
+  // Opening the conversation from the Chats list never sets an active ticket, so
+  // matching on the session file is what keeps the link visible there.
+  const resolve = app.slice(app.indexOf("function conversationTask() {"), app.indexOf("function renderTaskBacklink() {"));
+  assert.match(resolve, /candidate\.id === state\.activeTaskId/);
+  assert.match(resolve, /candidate\.sessionPath === state\.activeSessionPath/);
+
+  const render = app.slice(app.indexOf("function renderTaskBacklink() {"), app.indexOf("function renderChatSessionControls()"));
+  assert.match(render, /const task = conversationTask\(\);/);
+  assert.match(render, /elements\.taskBacklinkButton\.hidden = !task;/);
+
+  // The click uses the same resolved ticket, not the state it may not have.
+  const click = app.slice(app.indexOf('elements.taskBacklinkButton.addEventListener("click"'));
+  assert.match(click.slice(0, 300), /const task = conversationTask\(\);[\s\S]*focusTaskCard\(task\.id\);/);
+});

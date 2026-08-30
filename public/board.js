@@ -8,16 +8,22 @@ export const TASK_STATUSES = [
 
 /** Card icons, in the same stroked 24px style as the nav bar and the row menus. */
 const cardIconPaths = {
-  chat: ["M20 15a2 2 0 0 1-2 2H8l-4 3.5V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z"],
+  chat: ["M21 14.5a2 2 0 0 1-2 2H8.5L4 20.5V5.5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z"],
   ticket: [
-    "M4.5 5.5h15a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z",
-    "M8 10h8",
-    "M8 14h5",
+    "M4 6.5h16a1 1 0 0 1 1 1V10a2 2 0 0 0 0 4v2.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V14a2 2 0 0 0 0-4V7.5a1 1 0 0 1 1-1z",
+    "M14.5 6.5v2",
+    "M14.5 11v2",
+    "M14.5 15.5v2",
   ],
-  more: ["M12 6.5h.01", "M12 12h.01", "M12 17.5h.01"],
-  left: ["M14 7l-5 5 5 5"],
-  right: ["M10 7l5 5-5 5"],
-  play: ["M9 6.5l8 5.5-8 5.5z"],
+  // Drawn as three small closed circles so the dots stay solid at 17px.
+  more: [
+    "M12 4.7a1.35 1.35 0 1 0 0 2.7 1.35 1.35 0 1 0 0-2.7z",
+    "M12 10.65a1.35 1.35 0 1 0 0 2.7 1.35 1.35 0 1 0 0-2.7z",
+    "M12 16.6a1.35 1.35 0 1 0 0 2.7 1.35 1.35 0 1 0 0-2.7z",
+  ],
+  left: ["M14 7.5 9.5 12l4.5 4.5"],
+  right: ["M10 7.5l4.5 4.5-4.5 4.5"],
+  play: ["M9.8 6.9 17 12l-7.2 5.1z"],
 };
 
 function cardIcon(name) {
@@ -25,7 +31,7 @@ function cardIcon(name) {
   svg.setAttribute("viewBox", "0 0 24 24");
   svg.setAttribute("fill", "none");
   svg.setAttribute("stroke", "currentColor");
-  svg.setAttribute("stroke-width", "1.8");
+  svg.setAttribute("stroke-width", "1.7");
   svg.setAttribute("stroke-linecap", "round");
   svg.setAttribute("stroke-linejoin", "round");
   svg.setAttribute("aria-hidden", "true");
@@ -33,6 +39,7 @@ function cardIcon(name) {
   for (const d of cardIconPaths[name]) {
     const node = document.createElementNS("http://www.w3.org/2000/svg", "path");
     node.setAttribute("d", d);
+    if (name === "more" || name === "play") node.setAttribute("fill", "currentColor");
     svg.append(node);
   }
   return svg;
@@ -150,7 +157,7 @@ function taskCardActions(task, handlers) {
     label: `Actions for ${task.title}`,
     title: "Ticket actions",
     testid: "board-task-menu-button",
-    onClick: () => handlers.onMenu(menuButton, taskMenuItems(task, handlers)),
+    onClick: () => handlers.onMenu(menuButton, taskMenuItems(task, handlers), task),
   });
   menuButton.setAttribute("aria-haspopup", "true");
   main.append(menuButton);
@@ -236,7 +243,7 @@ function taskCard(task, handlers) {
  * Renders the kanban board into `container`.
  * handlers: { onEdit(task), onMove(task, nextStatus), onAdd(statusId), onOpenChat(task),
  *   onMerge(task), onHandoff(task), onArchive(task), onDelete(task), onSettings(task),
- *   onMenu(anchor, items) }
+ *   onMenu(anchor, items, task) }
  */
 export function renderBoard(container, tasks, handlers) {
   container.replaceChildren();

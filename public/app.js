@@ -51,6 +51,9 @@ const state = {
   activeSessionId: null,
   chatFilter: "all",
   watchSocket: null,
+  watchProjectId: null,
+  rowMenuAnchor: null,
+  rowMenuAnchorSelector: null,
   watchReconnectTimer: null,
   watchPingTimer: null,
   activeProjectId: null,
@@ -1596,8 +1599,10 @@ function menuIcon(name) {
  * list's own scroll box. `popover` puts it in the top layer and handles Escape and
  * click-outside for us, so this only has to place it.
  */
-function openRowMenu(anchor, items) {
+function openRowMenu(anchor, items, anchorSelector = null) {
   const menu = elements.rowMenu;
+  state.rowMenuAnchor = anchor;
+  state.rowMenuAnchorSelector = anchorSelector;
   menu.replaceChildren(...items.map((item) => {
     const entry = document.createElement("button");
     entry.type = "button";
@@ -1614,9 +1619,32 @@ function openRowMenu(anchor, items) {
     });
     return entry;
   }));
-  menu.showPopover();
+  // togglePopover, not showPopover: a menu can now survive a background refresh,
+  // so the same button may be clicked again while it is still open.
+  menu.togglePopover(true);
   placeRowMenu(anchor);
   menu.querySelector("button:not(:disabled)")?.focus();
+}
+
+/**
+ * Background refreshes replace whole rows while a menu is open. Closing the menu
+ * on every refresh made it unusable on a running ticket, whose transcript writes
+ * trigger a sessions refresh about once a second. The menu is re-pointed at the
+ * fresh row instead, and only closes when that row is really gone.
+ */
+function refreshRowMenuAnchor() {
+  if (!elements.rowMenu.matches(":popover-open")) return;
+  if (state.rowMenuAnchor.isConnected) {
+    placeRowMenu(state.rowMenuAnchor);
+    return;
+  }
+  const replacement = state.rowMenuAnchorSelector ? document.querySelector(state.rowMenuAnchorSelector) : null;
+  if (!replacement) {
+    elements.rowMenu.togglePopover(false);
+    return;
+  }
+  state.rowMenuAnchor = replacement;
+  placeRowMenu(replacement);
 }
 
 /** Anchor positioning is not in every browser yet, so the coordinates are measured here. */
@@ -1649,7 +1677,7 @@ function pinButton({ pinned, label, testid, onToggle }) {
 
 function renderProjects() {
   // A background refresh must not leave a menu floating over rows that just moved.
-  elements.rowMenu.togglePopover(false);
+  queueMicrotask(refreshRowMenuAnchor);
   const projects = filteredProjects();
   elements.projectList.replaceChildren();
   if (state.projectsLoading) return;
@@ -2159,7 +2187,7 @@ function renderRecentSessionsDialog() {
 function renderSessions() {
   syncRecentSessionActivity();
   // A background refresh must not leave a menu floating over rows that just moved.
-  elements.rowMenu.togglePopover(false);
+  queueMicrotask(refreshRowMenuAnchor);
   elements.sessionList.replaceChildren();
   renderChatSessionControls();
   const project = selectedProject();
@@ -3093,8 +3121,19 @@ function sendSocket(payload) {
   return true;
 }
 
+/**
+ * The ticket a conversation belongs to. A ticket owns its session file, so the
+ * link holds however the conversation was reached - from the board card, or
+ * straight from the Chats list, which never sets an active ticket.
+ */
+function conversationTask() {
+  const opened = state.tasks.find((candidate) => candidate.id === state.activeTaskId);
+  if (opened) return opened;
+  return state.tasks.find((candidate) => candidate.sessionPath && candidate.sessionPath === state.activeSessionPath);
+}
+
 function renderTaskBacklink() {
-  const task = state.activeTaskId ? state.tasks.find((candidate) => candidate.id === state.activeTaskId) : null;
+  const task = conversationTask();
   elements.taskBacklinkButton.hidden = !task;
   if (!task) return;
   elements.taskBacklinkButton.textContent = `◂ ${task.title}`;
@@ -3707,7 +3746,7 @@ function renderBoardView() {
     elements.boardColumns.replaceChildren();
     return;
   }
-  elements.rowMenu.togglePopover(false);
+  queueMicrotask(refreshRowMenuAnchor);
   renderBoard(elements.boardColumns, state.tasks, {
     onEdit: openEditTaskDialog,
     onMove: moveTask,
@@ -3721,7 +3760,7 @@ function renderBoardView() {
     onArchive: archiveTask,
     onDelete: deleteTaskFromCard,
     onSettings: openEditTaskDialog,
-    onMenu: (anchor, items) => openRowMenu(anchor, items),
+    onMenu: (anchor, items, task) => openRowMenu(anchor, items, `[data-task-id="${CSS.escape(task.id)}"] [data-testid="board-task-menu-button"]`),
   });
 }
 
@@ -3813,6 +3852,8 @@ function openNewTaskDialog(status = "backlog") {
   elements.taskReviewModeInput.checked = false;
   populatePhaseModelInputs();
   elements.deleteTaskButton.hidden = true;
+  conversationTabButton().disabled = true;
+  setTaskDialogTab("settings");
   elements.taskDialog.showModal();
 }
 
@@ -3839,13 +3880,17 @@ function detachChatFromTaskDialog() {
   for (const node of taskChatNodes()) elements.chatPanel.append(node);
 }
 
+function conversationTabButton() {
+  return elements.taskTabs.find((button) => button.dataset.taskTab === "conversation");
+}
+
 function setTaskDialogTab(tab) {
   for (const button of elements.taskTabs) {
     const selected = button.dataset.taskTab === tab;
     button.setAttribute("aria-selected", String(selected));
     button.tabIndex = selected ? 0 : -1;
   }
-  elements.taskForm.hidden = tab !== "ticket";
+  elements.taskForm.hidden = tab !== "settings";
   elements.taskChatHost.hidden = tab !== "conversation";
   if (tab === "conversation") stickyScroll(true);
 }
@@ -3862,12 +3907,11 @@ function openEditTaskDialog(task) {
   populatePhaseModelInputs(task);
   elements.deleteTaskButton.hidden = false;
 
-  const conversationTab = elements.taskTabs.find((button) => button.dataset.taskTab === "conversation");
-  conversationTab.disabled = !task.sessionPath;
+  conversationTabButton().disabled = !task.sessionPath;
   attachChatToTaskDialog();
   // Reading the ticket's own conversation is the common reason to open this, so
   // it wins the default tab whenever there is one to read.
-  setTaskDialogTab(task.sessionPath ? "conversation" : "ticket");
+  setTaskDialogTab(task.sessionPath ? "conversation" : "settings");
   elements.taskDialog.showModal();
   if (task.sessionPath && task.sessionPath !== state.activeSessionPath) {
     state.activeTaskId = task.id;
@@ -4012,6 +4056,7 @@ function closeWatchSocket() {
   state.watchPingTimer = null;
   const socket = state.watchSocket;
   state.watchSocket = null;
+  state.watchProjectId = null;
   if (socket) socket.close();
   elements.chatsLiveDot.hidden = true;
 }
@@ -4021,7 +4066,11 @@ function ensureWatchSocket() {
     closeWatchSocket();
     return;
   }
-  if (state.watchSocket && (state.watchSocket.readyState === WebSocket.OPEN || state.watchSocket.readyState === WebSocket.CONNECTING)) return;
+  // The subscription is bound to one project at connect time. Keeping a socket
+  // that still watches the project we left costs the board every live update -
+  // a ticket that gains a conversation only grows its chat button on a reload.
+  const live = state.watchSocket && (state.watchSocket.readyState === WebSocket.OPEN || state.watchSocket.readyState === WebSocket.CONNECTING);
+  if (live && state.watchProjectId === state.activeProjectId) return;
   closeWatchSocket();
 
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -4031,6 +4080,7 @@ function ensureWatchSocket() {
 
   const socket = new WebSocket(url.toString());
   state.watchSocket = socket;
+  state.watchProjectId = state.activeProjectId;
   socket.addEventListener("open", () => {
     elements.chatsLiveDot.hidden = false;
     state.watchPingTimer = setInterval(() => {
@@ -4068,9 +4118,11 @@ elements.backToProjectsButton.addEventListener("click", () => setMobileView("pro
 elements.backToChatsButton.addEventListener("click", () => setMobileView("sessions"));
 elements.backToSessionsButton.addEventListener("click", () => setMobileView("sessions"));
 elements.taskBacklinkButton.addEventListener("click", () => {
+  const task = conversationTask();
+  if (!task) return;
   renderBoardView();
   setMobileView("board");
-  focusTaskCard(state.activeTaskId);
+  focusTaskCard(task.id);
 });
 elements.openBoardButton.addEventListener("click", () => {
   renderBoardView();

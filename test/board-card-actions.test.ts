@@ -73,7 +73,7 @@ test("every board menu icon is defined in the shared icon set", async () => {
   for (const match of items.matchAll(/icon: "([a-z-]+)"/g)) {
     assert.ok(defined.includes(`${match[1]}:`), `rowMenuIconPaths is missing "${match[1]}"`);
   }
-  assert.match(app, /onMenu: \(anchor, items\) => openRowMenu\(anchor, items\)/);
+  assert.match(app, /onMenu: \(anchor, items, task\) => openRowMenu\(anchor, items,/);
 
   // The card's own icon buttons draw from the board's icon set.
   const cardIcons = functionBody(board, "const cardIconPaths = {");
@@ -87,7 +87,7 @@ test("the card action row is a single non-wrapping strip", async () => {
 
   assert.match(styles, /\.task-card-actions \{[^}]*display: flex;[^}]*/);
   assert.doesNotMatch(functionBodyCss(styles, ".task-card-actions {"), /flex-wrap: wrap/);
-  assert.match(styles, /\.task-card-icon \{[^}]*width: 16px;[^}]*height: 16px;/);
+  assert.match(styles, /\.task-card-icon \{[^}]*width: 17px;[^}]*height: 17px;/);
 });
 
 function functionBodyCss(styles: string, header: string): string {

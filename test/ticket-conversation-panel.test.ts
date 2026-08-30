@@ -11,13 +11,15 @@ function functionBody(source: string, header: string): string {
   return source.slice(start, end);
 }
 
-test("the ticket dialog has a Ticket tab and a Conversation tab", async () => {
+test("the ticket dialog has a Settings tab and a Conversation tab", async () => {
   const html = await readFile("public/index.html", "utf8");
 
-  assert.match(html, /data-task-tab="ticket"[^>]*role="tab"/);
+  assert.match(html, /data-task-tab="settings"[^>]*role="tab"/);
   assert.match(html, /data-task-tab="conversation"[^>]*role="tab"/);
-  assert.match(html, /data-testid="task-tab-ticket"/);
+  assert.match(html, /data-testid="task-tab-settings"/);
   assert.match(html, /data-testid="task-tab-conversation"/);
+  // The ticket's own fields live under Settings; the tab label says so.
+  assert.match(html, /data-testid="task-tab-settings">Settings</);
   // The live chat is moved into this host, so it starts empty.
   assert.match(html, /id="taskChatHost"[^>]*role="tabpanel"/);
 });
@@ -70,7 +72,18 @@ test("a ticket with no conversation cannot open the Conversation tab", async () 
 
   const setTab = functionBody(app, "function setTaskDialogTab(tab) {");
   assert.match(setTab, /aria-selected/);
-  assert.match(functionBody(app, "function openEditTaskDialog(task) {"), /disabled = !task\.sessionPath/);
+  assert.match(setTab, /elements\.taskForm\.hidden = tab !== "settings"/);
+  assert.match(functionBody(app, "function openEditTaskDialog(task) {"), /conversationTabButton\(\)\.disabled = !task\.sessionPath/);
+});
+
+test("the new-ticket dialog opens on Settings with the Conversation tab locked", async () => {
+  const app = await readFile("public/app.js", "utf8");
+
+  // The dialog is shared. Without this reset it reopens on whichever tab the
+  // previously edited ticket left selected, showing an empty chat host.
+  const open = functionBody(app, "function openNewTaskDialog(status = \"backlog\") {");
+  assert.match(open, /conversationTabButton\(\)\.disabled = true/);
+  assert.match(open, /setTaskDialogTab\("settings"\)/);
 });
 
 test("the chat host gives the transcript a bounded, scrollable height", async () => {

@@ -702,17 +702,22 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
 
 .task-card-actions {
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 4px;
-  padding: 6px 8px;
+  gap: 2px;
+  padding: 5px 6px;
   border-top: 1px solid var(--line);
   background: color-mix(in srgb, var(--field) 45%, transparent);
 }
-.task-card-actions-main { flex: 1; display: flex; align-items: center; justify-content: center; gap: 4px; }
-.task-action { min-width: 32px; width: 32px; min-height: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
-.task-action:disabled { opacity: 0.35; }
-.task-card-icon { width: 16px; height: 16px; flex: none; }
-.task-open-chat { color: var(--accent); }
+.task-card-actions-main { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; gap: 2px; }
+.task-action { min-width: 30px; width: 30px; min-height: 30px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+.task-action:disabled { opacity: 0.32; }
+.task-card-icon { width: 17px; height: 17px; flex: none; }
+/* The arrows only move a ticket, so they stay quiet next to the two controls
+   that open something. */
+.task-move { color: var(--muted); }
+.task-open-chat { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.task-open-chat:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
 .task-start { color: var(--live); }
 
 .task-card.dragging { opacity: 0.5; }
