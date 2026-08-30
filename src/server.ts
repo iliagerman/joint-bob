@@ -168,7 +168,12 @@ const activeClaudeConnections = new Map<string, ChatConnection>();
 // Interactive Claude turns run on a socket connection, not in `sharedSessions`,
 // so the conversation list needs its own record of which files are streaming.
 const runningClaudeSessionPaths = new Set<string>();
-const recoveredClaudeRuns = new Set<string>();
+interface RecoveredClaudeChat {
+  claude: ClaudeChatState;
+  connection: ChatConnection | null;
+}
+
+const recoveredClaudeChats = new Map<string, RecoveredClaudeChat>();
 let updatePreparing = false;
 let updatePreparation: Promise<number> | null = null;
 const updateContinuationPrompt = "A service update interrupted this turn. Inspect the transcript and working tree, continue unfinished work, and do not repeat completed side effects.";
@@ -3624,6 +3629,33 @@ async function startTaskRun(project: ProjectRecord, task: TaskRecord, requestedP
   }
 }
 
+async function runRecoveredClaudePrompt(record: UpdateRecoveryRecord, entry: RecoveredClaudeChat, prompt: string): Promise<void> {
+  const state = entry.claude;
+  state.liveEvents = [];
+  const onEvent = (payload: Record<string, unknown>): void => {
+    appendLiveEvent(state.liveEvents, payload);
+    if (entry.connection) send(entry.connection.socket, payload);
+  };
+  onEvent({ type: "agent_start" });
+  const run = runClaudePrompt({
+    cwd: record.cwd, prompt, resumeSessionId: record.sessionId,
+    model: state.model ?? undefined, effort: state.effort ?? undefined,
+    env: agentEnvironment(record.projectId), onEvent,
+  });
+  state.child = run.child;
+  if (entry.connection) sendClaudeStatus(entry.connection);
+  try {
+    const result = await run.done;
+    if (!result.ok) throw new Error("Claude recovery run failed");
+    if (result.assistantText) state.transcript.push({ id: `${state.transcript.length}`, role: "assistant", text: result.assistantText });
+  } finally {
+    state.child = null;
+    state.lastRunEndedAt = Date.now();
+    onEvent({ type: "agent_end" });
+    if (entry.connection) sendClaudeStatus(entry.connection);
+  }
+}
+
 async function recoverChat(record: UpdateRecoveryRecord): Promise<void> {
   if (record.engine === "pi") {
     const shared = await getSharedSession(record.projectId, record.cwd, record.sessionPath, record.sessionId);
@@ -3633,19 +3665,24 @@ async function recoverChat(record: UpdateRecoveryRecord): Promise<void> {
     return;
   }
   const key = claudeRunKey(record.projectId, record.sessionPath);
-  recoveredClaudeRuns.add(key);
+  const claude = emptyClaudeState(record.sessionId);
+  claude.filePath = path.resolve(record.sessionPath.replace(/^claude:/, ""));
+  claude.transcript = await loadClaudeMessages(record.sessionPath);
+  if (record.model) claude.model = record.model;
+  if (record.effort) claude.effort = record.effort;
+  const recovered: RecoveredClaudeChat = { claude, connection: null };
+  recoveredClaudeChats.set(key, recovered);
   runningClaudeSessionPaths.add(key);
   try {
-    const prompts = [updateContinuationPrompt, ...record.queuedPrompts];
-    for (const prompt of prompts) {
-      const result = await runClaudePrompt({ cwd: record.cwd, prompt, resumeSessionId: record.sessionId, model: record.model ?? undefined, effort: record.effort ?? undefined, env: agentEnvironment(record.projectId), onEvent: () => undefined }).done;
-      if (!result.ok) throw new Error("Claude recovery run failed");
+    for (const prompt of [updateContinuationPrompt, ...record.queuedPrompts]) {
+      await runRecoveredClaudePrompt(record, recovered, prompt);
     }
     await completeUpdateRecovery(record.id);
   } finally {
-    recoveredClaudeRuns.delete(key);
+    recoveredClaudeChats.delete(key);
     runningClaudeSessionPaths.delete(key);
     broadcastToProject(record.projectId, { type: "sessionsChanged" });
+    if (recovered.connection) await drainClaudePromptQueue(recovered.connection);
   }
 }
 
@@ -4344,10 +4381,7 @@ webSocketServer.on("connection", async (socket, request) => {
 
   const requestedEngine: ConversationEngine = rawSessionPath?.startsWith("claude:") ? "claude" : "pi";
   const requestedSessionPath = parseSessionPath(rawSessionPath);
-  if (requestedEngine === "claude" && requestedSessionPath && recoveredClaudeRuns.has(claudeRunKey(project.id, requestedSessionPath))) {
-    socket.close(1008, "Conversation is recovering after update");
-    return;
-  }
+  const recovered = requestedSessionPath ? recoveredClaudeChats.get(claudeRunKey(project.id, requestedSessionPath)) : undefined;
   const cwd = await sessionCwd(project, requestedSessionPath);
   const listed = requestedSessionPath ? await listHarnessSessions(project) : [];
   const listedSession = listed.find((candidate) => candidate.path === requestedSessionPath);
@@ -4379,7 +4413,14 @@ webSocketServer.on("connection", async (socket, request) => {
     // which never matches the bare run id, so resolve the id from the path.
     const requestedClaudeId = requestedSessionPath ? claudeRunIdFromSessionPath(requestedSessionPath) : ownershipSessionId;
     const active = activeClaudeConnections.get(claudeConnectionKey(project.id, requestedClaudeId));
-    if (active?.claude.child) {
+    if (recovered) {
+      connection = {
+        socket, project, cwd, engine: "claude", shared: null,
+        claude: recovered.claude, handoffContext: null,
+      };
+      connection.claude.sessionName = listedSession?.title ?? null;
+      recovered.connection = connection;
+    } else if (active?.claude.child) {
       active.socket = socket;
       connection = active;
     } else {
@@ -4457,6 +4498,7 @@ webSocketServer.on("connection", async (socket, request) => {
     // Claude owns its child process on this execution node. Browser and proxy
     // disconnects must not cancel an in-flight turn.
     claudeClients.delete(socket);
+    if (recovered && recovered.connection === connection) recovered.connection = null;
   });
 });
 

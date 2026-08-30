@@ -46,6 +46,14 @@ test("server prepares and recovers active sessions around service updates", asyn
   assert.match(server, /promptQueue\.map\(\(\{ promptText \}\) => promptText\)/);
   assert.match(server, /SIGTERM/);
   assert.match(server, /recoverPendingUpdateRuns\(\)/);
+  assert.match(server, /interface RecoveredClaudeChat\s*\{[\s\S]*claude: ClaudeChatState;[\s\S]*connection: ChatConnection \| null;/);
+  assert.match(server, /const recoveredClaudeChats = new Map<string, RecoveredClaudeChat>\(\);/);
+  assert.match(server, /async function runRecoveredClaudePrompt\([\s\S]*appendLiveEvent\(state\.liveEvents, payload\)[\s\S]*if \(entry\.connection\) send\(entry\.connection\.socket, payload\)/);
+  assert.match(server, /recoveredClaudeChats\.set\(key, recovered\);[\s\S]*runRecoveredClaudePrompt/);
+  assert.match(server, /const recovered = requestedSessionPath \? recoveredClaudeChats\.get\(claudeRunKey\(project\.id, requestedSessionPath\)\) : undefined;/);
+  assert.match(server, /if \(recovered\) \{[\s\S]*claude: recovered\.claude[\s\S]*recovered\.connection = connection;/);
+  assert.match(server, /recoveredClaudeChats\.delete\(key\);[\s\S]*await drainClaudePromptQueue\(recovered\.connection\);/);
+  assert.doesNotMatch(server, /Conversation is recovering after update/);
 });
 
 test("installer coordinates update preparation before native restart", async () => {
