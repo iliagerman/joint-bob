@@ -1892,7 +1892,22 @@ function pinButton({ pinned, label, testid, onToggle }) {
   return button;
 }
 
+/**
+ * Emptying a scroll box resets it to the top, and a running agent rebuilds these
+ * lists about once a second, so the list you were reading kept jumping back up.
+ * The position is restored after the rebuild rather than at each early return,
+ * and before the row menu is re-placed against rows that have not moved yet.
+ */
+function keepListScroll(container) {
+  const top = container.scrollTop;
+  if (!top) return;
+  queueMicrotask(() => {
+    container.scrollTop = top;
+  });
+}
+
 function renderProjects() {
+  keepListScroll(elements.projectList);
   // A background refresh must not leave a menu floating over rows that just moved.
   queueMicrotask(refreshRowMenuAnchor);
   const projects = filteredProjects();
@@ -1979,6 +1994,8 @@ function projectRow(project) {
     const pinned = isProjectPinned(project.id);
     const row = document.createElement("div");
     row.className = `list-row${project.id === state.activeProjectId ? " active" : ""}`;
+    // The row menu is re-pointed at this row after a refresh replaces it.
+    row.dataset.projectId = project.id;
     if (project.color) row.dataset.color = project.color;
 
     const button = document.createElement("button");
@@ -2027,7 +2044,7 @@ function projectRow(project) {
     menuButton.dataset.testid = "project-menu-button";
     menuButton.addEventListener("click", (event) => {
       event.stopPropagation();
-      openRowMenu(menuButton, projectMenuItems(project));
+      openRowMenu(menuButton, projectMenuItems(project), `[data-project-id="${CSS.escape(project.id)}"] [data-testid="project-menu-button"]`);
     });
 
     row.append(button, menuButton);
@@ -2421,6 +2438,7 @@ function renderRecentSessionsDialog() {
 
 function renderSessions() {
   syncRecentSessionActivity();
+  keepListScroll(elements.sessionList);
   // A background refresh must not leave a menu floating over rows that just moved.
   queueMicrotask(refreshRowMenuAnchor);
   elements.sessionList.replaceChildren();
@@ -2462,6 +2480,8 @@ function renderSessions() {
     const sessionActive = state.activeSessionId ? session.id === state.activeSessionId : session.path === state.activeSessionPath;
     row.className = `list-row${sessionActive ? " active" : ""}`;
     row.dataset.sessionDepth = String(depth);
+    // The row menu is re-pointed at this row after a refresh replaces it.
+    row.dataset.sessionPath = session.path;
 
     const button = document.createElement("button");
     button.type = "button";
@@ -2502,7 +2522,7 @@ function renderSessions() {
     menuButton.dataset.testid = "session-menu-button";
     menuButton.addEventListener("click", (event) => {
       event.stopPropagation();
-      openRowMenu(menuButton, sessionMenuItems(session, sessionActive));
+      openRowMenu(menuButton, sessionMenuItems(session, sessionActive), `[data-session-path="${CSS.escape(session.path)}"] [data-testid="session-menu-button"]`);
     });
 
     row.append(button, menuButton);
@@ -3530,25 +3550,35 @@ function renderTaskBacklink() {
   elements.taskBacklinkButton.setAttribute("aria-label", `Back to ticket ${task.title}`);
 }
 
-function renderChatSessionControls() {
-  elements.chatNodeSelect.replaceChildren();
-  for (const node of state.sessionNodes) {
+/**
+ * Replacing a <select>'s options closes it if the user has it open, and these
+ * controls are redrawn on every background refresh - about once a second while an
+ * agent is streaming. The options themselves only change when nodes or harnesses
+ * do, so the rebuild is skipped unless they actually differ.
+ */
+function syncSelectOptions(select, options) {
+  const signature = JSON.stringify(options);
+  if (select.dataset.optionsSignature === signature) return;
+  select.replaceChildren(...options.map((entry) => {
     const option = document.createElement("option");
-    option.value = node.id;
-    option.textContent = `${node.name}${node.local ? " · local" : ""}${!node.online ? " · offline" : !node.mapped ? " · map required" : ""}`;
-    option.disabled = !node.online || !node.mapped;
-    elements.chatNodeSelect.append(option);
-  }
+    option.value = entry.value;
+    option.textContent = entry.label;
+    option.disabled = Boolean(entry.disabled);
+    return option;
+  }));
+  select.dataset.optionsSignature = signature;
+}
+
+function renderChatSessionControls() {
+  syncSelectOptions(elements.chatNodeSelect, state.sessionNodes.map((node) => ({
+    value: node.id,
+    label: `${node.name}${node.local ? " · local" : ""}${!node.online ? " · offline" : !node.mapped ? " · map required" : ""}`,
+    disabled: !node.online || !node.mapped,
+  })));
   elements.chatNodeSelect.value = state.activeNodeId || "";
   elements.chatNodeSelect.disabled = !state.activeProjectId || !state.sessionNodes.length;
 
-  elements.chatHarnessSelect.replaceChildren();
-  for (const harness of state.harnesses) {
-    const option = document.createElement("option");
-    option.value = harness.id;
-    option.textContent = harness.label;
-    elements.chatHarnessSelect.append(option);
-  }
+  syncSelectOptions(elements.chatHarnessSelect, state.harnesses.map((harness) => ({ value: harness.id, label: harness.label })));
   elements.chatHarnessSelect.value = state.engine;
   elements.chatHarnessSelect.disabled = !state.activeProjectId || !state.harnesses.length;
 
