@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import WebSocket, { WebSocketServer } from "ws";
 import { z } from "zod";
-import { projectNameOverrides, setProjectName, setSessionTitle } from "./names.js";
+import { ensureSessionTitle, projectNameOverrides, setProjectName, setSessionTitle } from "./names.js";
 import { getProjectLock, projectLocks, setProjectLock } from "./project-locks.js";
 import { addProject, deleteProjectType, getProject, importProject, listProjects, listProjectTypes, projectAliasIds, ProjectTypeError, registerProjectAliases, removeProject, renameProject, saveProjectType, touchProject, updateProjectColor, updateProjectMacPath, updateProjectSyncFolderId, updateProjectTypeAndPath } from "./store.js";
 import { createClusterPeer, dueMembershipDeliveries, getClusterMachineToken, getClusterMembership, getClusterNode, getClusterPeer, listClusterPeers, markClusterPeerSeen, mergeClusterMembership, recordMembershipDelivered, recordMembershipFailure, removeClusterPeer, saveClusterPeer, updateClusterNode, type ClusterPeer } from "./cluster.js";
@@ -33,9 +33,10 @@ import { assertTaskWorktreeTransferable, exportTaskBranchBundle, mergeTaskWorktr
 import { assertSyncthingFolderReady, CLAUDE_ENGINE_SYNC_FOLDER_ID, engineSyncFolders, ensureEngineSyncFolders, ensureSyncthingDevice, ensureSyncthingFolder, ensureTicketWorkspaceFolder, PI_ENGINE_SYNC_FOLDER_ID, reconcileSyncthingProjectFolders, rescanSyncthingFolder, syncthingDeviceId, syncthingFolderIdForPath, syncthingFolderStatuses, syncthingPathForFolderId } from "./syncthing.js";
 import { assertTaskWorkspaceReady, removeTaskWorkspace, taskWorkspaceKey, TaskWorkspaceError, TICKET_WORKSPACE_FOLDER_ID, ticketWorkspaceRoot } from "./task-workspaces.js";
 import { SessionWatcher } from "./watcher.js";
-import { appendLiveEvent, buildHandoffContext, claudeRunIdFromSessionPath, claudeSessionFilePath, loadClaudeMessages, runClaudePrompt, type ClaudeRunHandle, type ClaudeRunResult } from "./claude-service.js";
+import { appendLiveEvent, buildHandoffContext, claudeRunIdFromSessionPath, claudeSessionFilePath, ensureLocalClaudeTranscript, loadClaudeMessages, runClaudePrompt, type ClaudeRunHandle, type ClaudeRunResult } from "./claude-service.js";
 import { isClaudeSessionRunning } from "./claude-runtime.js";
 import { listHarnesses, listHarnessSessions } from "./harnesses.js";
+import { listHarnessCommands } from "./commands.js";
 import { listSkills } from "./skills.js";
 import { authenticate, authenticationStatus, changePassword, clearSessionCookieValue, createAdministrator, listLoginSessions, revokeSession, revokeUserSession, sessionCookieValue, sessionForId, type AuthSession } from "./auth.js";
 import { getSettings, updateSettings } from "./settings.js";
@@ -308,7 +309,7 @@ const projectGitHubAuthSchema = z.object({
   token: z.string().trim().min(1).max(500).nullable().optional(),
 });
 const secretVariableSchema = z.object({ name: z.string().trim().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), kind: z.enum(["value", "file"]), value: z.string().max(100000).optional() }).strict();
-const secretAccountSchema = z.object({ id: z.string().uuid().optional(), label: z.string().trim().min(1).max(64).refine((value) => !/[\x00-\x1f\x7f]/.test(value), "Secret account label cannot contain control characters"), provider: z.enum(["aws", "google", "custom"]), variables: z.array(secretVariableSchema).min(1).max(20) }).strict();
+const secretAccountSchema = z.object({ id: z.string().uuid().optional(), label: z.string().trim().min(1).max(64).refine((value) => !/[\x00-\x1f\x7f]/.test(value), "Secret account label cannot contain control characters"), provider: z.enum(["aws", "google", "github", "custom"]), variables: z.array(secretVariableSchema).min(1).max(20) }).strict();
 const secretScopeParamsSchema = z.object({ scopeType: z.enum(["project", "project_type"]), scopeId: z.string().trim().min(1).max(300) });
 const secretScopeSchema = z.object({ accountIds: z.array(z.string().uuid()).max(100) }).strict();
 const taskStatusSchema = z.enum(["backlog", "planning", "in_progress", "review", "done"]);
@@ -334,7 +335,8 @@ const projectUpdateSchema = z.object({
 );
 const projectLockSchema = z.object({ locked: z.boolean() });
 const sessionTitleSchema = z.object({
-  sessionPath: z.string().min(1),
+  sessionId: z.string().min(1),
+  engine: z.enum(["pi", "claude"]),
   title: z.string().trim().max(200),
 });
 const taskCreateSchema = z.object({
@@ -2100,10 +2102,10 @@ app.put("/api/projects/:projectId/sessions/title", async (request, response, nex
       return;
     }
     const payload = sessionTitleSchema.parse(request.body);
-    const session = (await listHarnessSessions(project)).find((candidate) => candidate.path === payload.sessionPath);
-    if (!session) { sendError(response, 404, "Conversation not found"); return; }
-    await requireLocalConversationOwner(session.path.startsWith("claude:") ? "claude" : "pi", conversationOwnershipId(session));
-    await setSessionTitle(payload.sessionPath, payload.title);
+    // No conversation-list lookup: a conversation named at creation has no
+    // transcript on disk yet, and the list is where that name matters most.
+    await requireLocalConversationOwner(payload.engine, payload.sessionId);
+    await setSessionTitle(payload.sessionId, payload.title);
     broadcastToProject(project.id, { type: "sessionsChanged" });
     response.json({ ok: true });
   } catch (error) {
@@ -2161,6 +2163,20 @@ app.get("/api/projects/:projectId/skills", async (request, response, next) => {
       return;
     }
     response.json({ skills: await listSkills(project.path) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/projects/:projectId/commands", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project) {
+      sendError(response, 404, "Project not found");
+      return;
+    }
+    const harness = z.enum(["pi", "claude"]).parse(request.query.harness);
+    response.json({ commands: await listHarnessCommands(project.path, harness) });
   } catch (error) {
     next(error);
   }
@@ -2447,7 +2463,7 @@ async function transferLocalSession(project: ProjectRecord, payload: z.infer<typ
   const matching = payload.sessionId ? sessions.find((session) => session.id === payload.sessionId) : sessions.find((session) => session.path === payload.sessionPath);
   if (!matching) throw new TaskWorktreeError("Conversation was not found on the source node");
   const engine: ConversationEngine = matching.path.startsWith("claude:") ? "claude" : "pi";
-  const sessionId = conversationOwnershipId(matching);
+  const sessionId = matching.id;
   if (conversationIsActive(project.id, engine, sessionId, matching.path)) throw new TaskWorktreeError("Wait for the current turn to finish before transferring");
   const [local, peer, peers] = await Promise.all([getClusterNode(), getClusterPeer(payload.peerId), listClusterPeers()]);
   if (!peer) throw new Error("Peer not found");
@@ -2471,10 +2487,10 @@ async function takeLocalSessionOwnership(project: ProjectRecord, payload: z.infe
   if (payload.peerId !== local.id) throw new Error("Takeover destination is not this node");
   const matching = payload.sessionId ? sessions.find((session) => session.id === payload.sessionId) : sessions.find((session) => session.path === payload.sessionPath);
   if (!matching) throw new TaskWorktreeError("Conversation was not found on the destination node");
-  if (matching.path.startsWith("claude:")) throw new TaskWorktreeError("Only Pi conversations can be taken over");
-  const sessionId = conversationOwnershipId(matching);
-  if (conversationIsActive(project.id, "pi", sessionId, matching.path)) throw new TaskWorktreeError("Wait for the current turn to finish before taking ownership");
-  const ownership = await takeConversationOwnership("pi", sessionId, local.id);
+  const engine: ConversationEngine = matching.path.startsWith("claude:") ? "claude" : "pi";
+  const sessionId = matching.id;
+  if (conversationIsActive(project.id, engine, sessionId, matching.path)) throw new TaskWorktreeError("Wait for the current turn to finish before taking ownership");
+  const ownership = await takeConversationOwnership(engine, sessionId, local.id);
   const settled = await Promise.allSettled(peers.map((peer) => applyOwnershipToPeer(peer, ownership, local.id)));
   const pendingPeerIds: string[] = [];
   for (const [index, result] of settled.entries()) {
@@ -2751,7 +2767,7 @@ app.delete("/api/projects/:projectId/sessions", async (request, response, next) 
         sendError(response, 400, "Session path is not a regular file");
         return;
       }
-      await requireLocalConversationOwner(engine, conversationOwnershipId(session));
+      await requireLocalConversationOwner(engine, session.id);
       await unlink(filePath);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -3013,7 +3029,7 @@ async function assertProjectFileConversationOwner(project: ProjectRecord, sessio
   const session = (await listHarnessSessions(project)).find((candidate) => candidate.id === sessionId);
   if (!session) throw new ProjectFileError(409, "Conversation was not found on this node");
   try {
-    await requireLocalConversationOwner(session.path.startsWith("claude:") ? "claude" : "pi", conversationOwnershipId(session));
+    await requireLocalConversationOwner(session.path.startsWith("claude:") ? "claude" : "pi", session.id);
   } catch (error) {
     if (error instanceof ConversationOwnershipError) throw new ProjectFileError(409, error.message);
     throw error;
@@ -3421,6 +3437,8 @@ async function performUpdatePreparation(): Promise<number> {
 interface PiTaskRun {
   projectId: string;
   taskId: string;
+  title: string;
+  conversationId: string;
   leaseToken: string;
   phase: TaskPhase;
   sessionPath: string | null;
@@ -3442,14 +3460,28 @@ interface ClaudeTaskRun {
 const piTaskRuns = new Map<SharedPiSession, PiTaskRun>();
 const claudeTaskRuns = new Map<string, ClaudeTaskRun>();
 
+/**
+ * Links a ticket to the conversation its run owns, as soon as the run owns one.
+ * The board's "Open chat" control reads that link, so waiting for the run to
+ * finish would leave a running ticket with no way back to its conversation.
+ */
+async function persistTaskSessionPath(projectId: string, taskId: string, leaseToken: string, sessionPath: string, conversationId: string, title: string): Promise<void> {
+  const local = await getClusterNode();
+  const task = await updateTaskSessionPath(projectId, taskId, local.id, leaseToken, sessionPath);
+  if (!task) return;
+  // The prompt opens with the workspace preamble, so the harness would otherwise
+  // name the conversation after a file path.
+  await ensureSessionTitle(conversationId, title);
+  broadcastToProject(projectId, { type: "tasksChanged" });
+  broadcastToProject(projectId, { type: "sessionsChanged" });
+}
+
 async function persistPiTaskSession(session: SharedPiSession): Promise<void> {
   const run = piTaskRuns.get(session);
   const sessionPath = session.handle.session.sessionFile;
   if (!run || !sessionPath || run.sessionPath === sessionPath) return;
   run.sessionPath = sessionPath;
-  const local = await getClusterNode();
-  const task = await updateTaskSessionPath(run.projectId, run.taskId, local.id, run.leaseToken, sessionPath);
-  if (task) broadcastToProject(run.projectId, { type: "tasksChanged" });
+  await persistTaskSessionPath(run.projectId, run.taskId, run.leaseToken, sessionPath, run.conversationId, run.title);
 }
 
 function taskRunActive(taskId: string): boolean {
@@ -3484,19 +3516,6 @@ function taskConfig(task: TaskRecord, phase: TaskPhase): TaskPhaseConfig {
 
 function taskCwd(project: ProjectRecord, task: TaskRecord): string {
   return task.worktreePath ?? project.path;
-}
-
-function conversationOwnershipId(session: { id: string; path: string }): string {
-  if (!session.path.startsWith("claude:")) return session.id;
-  const sessionId = claudeRunIdFromSessionPath(session.path);
-  if (!sessionId) throw new Error("Claude conversation has no ownership identity");
-  return sessionId;
-}
-
-async function sessionCwd(project: ProjectRecord, sessionPath: string | undefined): Promise<string> {
-  if (!sessionPath) return project.path;
-  const task = (await listTasks(project.id)).find((candidate) => candidate.sessionPath === sessionPath);
-  return task ? taskCwd(project, task) : project.path;
 }
 
 async function taskHandoffContext(project: ProjectRecord, task: TaskRecord): Promise<string> {
@@ -3576,7 +3595,9 @@ async function startTaskRun(project: ProjectRecord, task: TaskRecord, requestedP
         effort: config.effort && config.effort !== "default" ? config.effort : undefined,
         onEvent: () => undefined,
       });
-      claudeTaskRuns.set(task.id, { child: run.child, projectId: project.id, taskId: claimed.id, leaseToken, phase, cwd, sessionId, sessionPath: resumeSessionId ? task.sessionPath! : `claude:${claudeSessionFilePath(cwd, sessionId)}`, model: config.modelId || null, effort: config.effort || null });
+      const claudeSessionPath = resumeSessionId ? task.sessionPath! : `claude:${claudeSessionFilePath(cwd, sessionId)}`;
+      claudeTaskRuns.set(task.id, { child: run.child, projectId: project.id, taskId: claimed.id, leaseToken, phase, cwd, sessionId, sessionPath: claudeSessionPath, model: config.modelId || null, effort: config.effort || null });
+      await persistTaskSessionPath(project.id, claimed.id, leaseToken, claudeSessionPath, resumeSessionId ?? sessionId, claimed.title);
       run.done
         .then(async (result) => {
           if (claudeTaskRuns.get(task.id)?.leaseToken !== leaseToken) {
@@ -3603,21 +3624,24 @@ async function startTaskRun(project: ProjectRecord, task: TaskRecord, requestedP
 
     const samePiSession = claimed.sessionPath && !claimed.sessionPath.startsWith("claude:") ? claimed.sessionPath : undefined;
     const newSessionId = samePiSession ? undefined : randomUUID();
+    let conversationId: string | undefined = newSessionId;
     if (samePiSession) {
       const listed = (await listHarnessSessions({ ...project, additionalPaths: [cwd] })).find((session) => session.path === samePiSession);
       if (!listed) throw new Error("Task conversation was not found");
-      await claimConversationAcrossCluster("pi", conversationOwnershipId(listed), local.id);
+      conversationId = listed.id;
+      await claimConversationAcrossCluster("pi", listed.id, local.id);
     } else await claimConversationAcrossCluster("pi", newSessionId!, local.id);
     shared = await getSharedSession(project.id, cwd, samePiSession, newSessionId);
     if (config.provider && config.modelId) await setSessionModel(shared.handle.session, config.provider, config.modelId);
-    piTaskRuns.set(shared, { projectId: project.id, taskId: claimed.id, leaseToken, phase, sessionPath: null });
+    piTaskRuns.set(shared, { projectId: project.id, taskId: claimed.id, title: claimed.title, conversationId: conversationId!, leaseToken, phase, sessionPath: null });
+    await persistPiTaskSession(shared);
     shared.handle.session.prompt(prompt)
       .then(async () => {
         if (piTaskRuns.get(shared!)?.leaseToken !== leaseToken) {
           console.warn("Ignoring stale Pi task callback", claimed.id);
           return;
         }
-        await finishPiTaskRun({ projectId: project.id, taskId: claimed.id, leaseToken, phase, sessionPath: null }, shared!.handle.session.sessionFile ?? null);
+        await finishPiTaskRun({ projectId: project.id, taskId: claimed.id, title: claimed.title, conversationId: conversationId!, leaseToken, phase, sessionPath: null }, shared!.handle.session.sessionFile ?? null);
         if (recovery) await completeUpdateRecovery(recovery.recoveryId);
         if (piTaskRuns.get(shared!)?.leaseToken === leaseToken) piTaskRuns.delete(shared!);
       })
@@ -3922,6 +3946,11 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
   if (connection.claude.child) throw new Error("Claude is still working — stop it first or wait");
   if (!connection.claude.sessionId) throw new Error("Conversation has no ownership identity");
   await requireLocalConversationOwner("claude", connection.claude.sessionId);
+  // A conversation taken over from a node whose checkout sits at a different
+  // absolute path still carries that node's encoded transcript directory, and
+  // `claude --resume` only looks under the directory this node's cwd encodes
+  // to. Put the transcript there first, or the resume silently starts over.
+  if (connection.claude.filePath) connection.claude.filePath = await ensureLocalClaudeTranscript(connection.cwd, connection.claude.sessionId);
   if (showUserMessage) send(connection.socket, { type: "userMessage", text: displayText });
   pushTranscript(connection, "user", promptText);
   // Buffer every turn event so a browser that reconnects mid-turn can replay it.
@@ -4391,14 +4420,19 @@ webSocketServer.on("connection", async (socket, request) => {
   const requestedEngine: ConversationEngine = rawSessionPath?.startsWith("claude:") ? "claude" : "pi";
   const requestedSessionPath = parseSessionPath(rawSessionPath);
   const recovered = requestedSessionPath ? recoveredClaudeChats.get(claudeRunKey(project.id, requestedSessionPath)) : undefined;
-  const cwd = await sessionCwd(project, requestedSessionPath);
-  const listed = requestedSessionPath ? await listHarnessSessions(project) : [];
+  const requestedTask = requestedSessionPath ? tasks.find((candidate) => candidate.sessionPath === requestedSessionPath) : undefined;
+  const cwd = requestedTask ? taskCwd(project, requestedTask) : project.path;
+  // Ticket conversations live in the ticket workspace, not the project directory,
+  // so this must search the same paths the conversation list searches.
+  const listed = requestedSessionPath
+    ? await listHarnessSessions({ ...project, additionalPaths: tasks.flatMap((candidate) => candidate.worktreePath ? [candidate.worktreePath] : []) })
+    : [];
   const listedSession = listed.find((candidate) => candidate.path === requestedSessionPath);
   if (requestedSessionPath && !listedSession) {
     socket.close(1008, "Conversation not found");
     return;
   }
-  const ownershipSessionId = listedSession ? conversationOwnershipId(listedSession) : randomUUID();
+  const ownershipSessionId = listedSession ? listedSession.id : randomUUID();
   let foreignOwner: ForeignConversationOwner | null = null;
   try {
     foreignOwner = await openConversationOwnership(requestedEngine, ownershipSessionId, local.id);

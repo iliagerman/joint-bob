@@ -1,6 +1,7 @@
 import { watch, type FSWatcher } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { claudeProjectsRoot } from "./claude-service.js";
 import { canonicalPiTranscriptName, claudeProjectDirs, sessionCwds, type SessionProjectPaths } from "./session-paths.js";
 import type { ProjectRecord } from "./types.js";
 
@@ -30,7 +31,7 @@ function flatPiSessionDir(): string {
 }
 
 export function sessionWatchDirs(project: SessionProjectPaths): string[] {
-  return [...new Set([...sessionCwds(project).map(piSessionDir), ...claudeProjectDirs(project)])];
+  return [...new Set([...sessionCwds(project).map(piSessionDir), ...claudeProjectDirs(project, claudeProjectsRoot())])];
 }
 
 export class SessionWatcher {

@@ -52,8 +52,8 @@ test("project name overrides use stable project IDs and migrate unambiguous base
     assert.equal(overrides["project-api-a"], "API A");
     assert.equal(overrides["project-api-b"], "API B");
 
-    await names.setSessionTitle("/sessions/keep.jsonl", "Session title");
-    assert.equal((await names.sessionTitleOverrides())["keep.jsonl"], "Session title");
+    await names.setSessionTitle("keep-session-id", "Session title");
+    assert.equal((await names.sessionTitleOverrides())["keep-session-id"], "Session title");
 
     const db = new DatabaseSync(path.join(dataDir, "node.db"));
     const legacyRows = db.prepare("SELECT key FROM name_overrides WHERE scope = 'projects' AND key IN ('legacy-single', 'shared') ORDER BY key").all() as Array<{ key: string }>;

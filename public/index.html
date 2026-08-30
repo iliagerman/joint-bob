@@ -130,6 +130,7 @@
             <div class="chat-title-meta">
               <span class="chat-project-name" id="chatProjectName" data-testid="chat-project-name">No project selected</span>
               <div class="mini-status" id="miniStatus">Not connected</div>
+              <span class="turn-timer" id="turnTimer" hidden data-testid="chat-turn-timer"></span>
               <button class="task-backlink" id="taskBacklinkButton" type="button" hidden data-testid="chat-task-backlink-button">Ticket</button>
             </div>
           </div>
@@ -202,11 +203,12 @@
         </div>
         <form class="composer" id="composer">
           <div class="attachment-list" id="attachmentList" aria-live="polite"></div>
+          <div class="command-autocomplete" id="commandAutocomplete" role="listbox" aria-label="Commands" data-testid="chat-command-autocomplete" hidden></div>
           <div class="composer-row">
             <input class="sr-only" id="attachmentInput" type="file" multiple />
             <button class="ghost attach-button icon-button" id="attachButton" type="button" disabled aria-label="Attach files" data-testid="chat-attach-button">+</button>
             <label class="sr-only" for="messageInput">Message Pi</label>
-            <textarea id="messageInput" rows="1" placeholder="Ask Pi to work..." disabled data-testid="chat-message-input"></textarea>
+            <textarea id="messageInput" rows="1" placeholder="Ask Pi to work..." disabled role="combobox" aria-controls="commandAutocomplete" aria-autocomplete="list" aria-expanded="false" data-testid="chat-message-input"></textarea>
             <button class="send" id="sendButton" type="submit" disabled aria-label="Send" data-testid="chat-send-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 21.7a.5.5 0 0 0 .94-.02l6.5-19a.5.5 0 0 0-.64-.64l-19 6.5a.5.5 0 0 0-.02.94l7.93 3.18a2 2 0 0 1 1.11 1.11z"/><path d="M21.85 2.15 10.91 13.09"/></svg></button>
           </div>
         </form>
@@ -801,11 +803,16 @@
     </dialog>
 
     <dialog id="taskDialog">
-      <form method="dialog" class="dialog-card" id="taskForm">
+      <div class="dialog-card task-dialog-card">
         <div>
           <span class="eyebrow">Kanban</span>
           <h2 id="taskDialogTitle">New task</h2>
         </div>
+        <div class="settings-tabs" role="tablist" aria-label="Ticket sections" id="taskTabs">
+          <button class="settings-tab" type="button" data-task-tab="ticket" role="tab" id="taskTab-ticket" aria-controls="taskForm" aria-selected="true" data-testid="task-tab-ticket">Ticket</button>
+          <button class="settings-tab" type="button" data-task-tab="conversation" role="tab" id="taskTab-conversation" aria-controls="taskChatHost" aria-selected="false" tabindex="-1" data-testid="task-tab-conversation">Conversation</button>
+        </div>
+      <form method="dialog" id="taskForm" role="tabpanel" aria-labelledby="taskTab-ticket">
         <label>
           Title
           <input id="taskTitleInput" name="title" autocomplete="off" placeholder="Fix login flow" required data-testid="task-form-title-input" />
@@ -852,6 +859,10 @@
           <button class="primary" value="default" type="submit" data-testid="task-form-save-button">Save task</button>
         </div>
       </form>
+      <!-- The live chat nodes are moved in here while the dialog is open, so the
+           transcript, streaming, tools and attachments are the real ones. -->
+      <section class="task-chat-host" id="taskChatHost" role="tabpanel" aria-labelledby="taskTab-conversation" hidden></section>
+      </div>
     </dialog>
 
     <!-- One shared row menu. It lives in the top layer, so the scrolling lists cannot clip it. -->

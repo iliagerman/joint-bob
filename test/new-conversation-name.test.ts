@@ -49,19 +49,12 @@ test("the picked name is displayed right away and saved once the transcript exis
   const preserveBlock = app.slice(app.indexOf("if (!preserveChat) {", openStart), app.indexOf("state.activeSessionPath = sessionPath", openStart));
   assert.match(preserveBlock, /state\.pendingSessionTitle = null;/);
 
-  // "ready" must not replace the picked name with the placeholder title.
+  // "ready" must not replace the picked name with the placeholder title, and it
+  // is where the name is saved: the conversation has an id there, and waiting for
+  // the first turn to end loses the name if that turn fails or is abandoned.
   const ready = app.slice(app.indexOf('if (payload.type === "ready")'), app.indexOf('if (payload.type === "ownership")'));
-  assert.match(ready, /elements\.sessionTitle\.textContent = state\.pendingSessionTitle\s*\?\s*state\.pendingSessionTitle\s*:/);
-
-  const applyStart = app.indexOf("function applyPendingSessionTitle()");
-  assert.ok(applyStart >= 0, "Missing applyPendingSessionTitle");
-  const apply = app.slice(applyStart, app.indexOf("\n}", applyStart));
-  assert.match(apply, /\["new", "claude:new"\]\.includes\(state\.activeSessionPath\)/);
-  assert.match(apply, /state\.pendingSessionTitle = null;/);
-  assert.match(apply, /renameSession\(state\.activeSessionPath, title\)/);
-
-  const agentEndStart = app.indexOf('if (payload.type === "agent_end") {');
-  assert.ok(agentEndStart >= 0, "Missing agent_end branch");
-  const agentEnd = app.slice(agentEndStart, app.indexOf('if (payload.type === "queueUpdate")', agentEndStart));
-  assert.match(agentEnd, /applyPendingSessionTitle\(\);/);
+  assert.match(ready, /const pendingTitle = state\.pendingSessionTitle;/);
+  assert.match(ready, /state\.pendingSessionTitle = null;/);
+  assert.match(ready, /saveSessionTitle\(payload\.sessionId, state\.engine, pendingTitle\)/);
+  assert.match(ready, /elements\.sessionTitle\.textContent = pendingTitle\s*\?\s*pendingTitle\s*:/);
 });

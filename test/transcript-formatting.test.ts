@@ -50,7 +50,7 @@ test("assistant filesystem paths open through the authenticated project file rou
   assert.match(app, /file-content/);
   assert.match(app, /async function saveProjectFile\(\) \{[\s\S]*const session = activeChatSession\(\);[\s\S]*Open a persisted conversation before editing files/);
   assert.match(app, /content: elements\.fileEditorTextarea\.value, version, sessionId: session\.id/);
-  assert.match(server, /async function assertProjectFileConversationOwner\([\s\S]*listHarnessSessions\(project\)[\s\S]*conversationOwnershipId\(session\)[\s\S]*requireLocalConversationOwner/);
+  assert.match(server, /async function assertProjectFileConversationOwner\([\s\S]*listHarnessSessions\(project\)[\s\S]*requireLocalConversationOwner\([\s\S]*session\.id\)/);
   assert.match(server, /await assertProjectEditable\(project\);\s*await assertProjectFileConversationOwner\(project, payload\.sessionId\);[\s\S]*await readFile\(resolved\)/);
   for (const testid of ["file-action-dialog", "file-action-download-link", "file-action-cancel-button", "file-action-edit-button", "file-editor-textarea", "file-editor-cancel-button", "file-editor-save-button"]) assert.ok(html.includes(testid));
   assert.ok(html.indexOf('id="fileActionCancelButton"') < html.indexOf('id="fileActionDownloadLink"'));
@@ -69,7 +69,7 @@ test("assistant filesystem paths open through the authenticated project file rou
   assert.match(server, /File is outside the project directory/);
   assert.match(server, /project-file-content/);
   assert.match(server, /await rename\(temporary, resolved\)/);
-  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v54"/);
+  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v56"/);
   assert.match(serviceWorker, /self\.addEventListener\("fetch"/);
   assert.match(serviceWorker, /fetch\(request\)\.catch\(async \(\) => \(await caches\.match\(request\)\) \|\| caches\.match\("\/"\)\)/);
 });

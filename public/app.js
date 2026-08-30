@@ -6,12 +6,19 @@ const state = {
   sessions: [],
   skills: [],
   skillsLoading: false,
+  skillsProjectId: null,
+  commands: [],
+  commandsLoading: false,
+  commandsKey: null,
+  commandSuggestions: [],
+  commandAutocompleteIndex: 0,
   pinnedProjectIds: [],
   pinnedSessionPaths: [],
   recentSessions: [],
   pendingReviews: [],
   pendingReviewsTimer: null,
-  renameSessionPath: null,
+  renameSessionId: null,
+  renameSessionEngine: "pi",
   newSessionDraft: null,
   pendingSessionTitle: null,
   projectsLoading: true,
@@ -64,6 +71,11 @@ const state = {
   availableThinkingLevels: [],
   claudeEffort: "default",
   attachments: [],
+  drafts: new Map(),
+  promptHistory: new Map(),
+  historyIndex: -1,
+  historyDraft: "",
+  durationTicker: 0,
   terminalSocket: null,
   terminalHistory: [],
   terminalHistoryIndex: 0,
@@ -125,8 +137,10 @@ const elements = {
   attachmentInput: document.querySelector("#attachmentInput"),
   attachButton: document.querySelector("#attachButton"),
   messageInput: document.querySelector("#messageInput"),
+  commandAutocomplete: document.querySelector("#commandAutocomplete"),
   sendButton: document.querySelector("#sendButton"),
   miniStatus: document.querySelector("#miniStatus"),
+  turnTimer: document.querySelector("#turnTimer"),
   reconnectBanner: document.querySelector("#reconnectBanner"),
   reconnectBannerText: document.querySelector("#reconnectBannerText"),
   modelButton: document.querySelector("#modelButton"),
@@ -314,7 +328,10 @@ const elements = {
   boardColumns: document.querySelector("#boardColumns"),
   boardProjectName: document.querySelector("#boardProjectName"),
   newTaskButton: document.querySelector("#newTaskButton"),
+  chatPanel: document.querySelector("#chatPanel"),
   taskDialog: document.querySelector("#taskDialog"),
+  taskChatHost: document.querySelector("#taskChatHost"),
+  taskTabs: Array.from(document.querySelectorAll("[data-task-tab]")),
   taskForm: document.querySelector("#taskForm"),
   taskDialogTitle: document.querySelector("#taskDialogTitle"),
   taskTitleInput: document.querySelector("#taskTitleInput"),
@@ -1438,34 +1455,35 @@ function openProjectRename(project) {
   elements.projectRenameDialog.showModal();
 }
 
-async function renameSession(sessionPath, title) {
-  if (!state.activeProjectId || !sessionPath) return;
+/**
+ * Names are keyed by conversation id, so a conversation can be named before it
+ * has written a transcript.
+ */
+async function saveSessionTitle(sessionId, engine, title) {
+  if (!state.activeProjectId || !sessionId) return;
   await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/title`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sessionPath, title }),
+    body: JSON.stringify({ sessionId, engine, title }),
   });
+}
+
+async function renameSession(sessionId, engine, title) {
+  await saveSessionTitle(sessionId, engine, title);
   // Pi keeps its own live session name, so mirror it while the socket is open. Only the
   // open conversation has a socket, so a renamed row elsewhere just reloads the list.
-  if (sessionPath === state.activeSessionPath && !sessionPath.startsWith("claude:") && title) {
+  if (sessionId === state.activeSessionId && engine === "pi" && title) {
     sendSocket({ type: "rename", name: title });
   }
   await loadSessions();
 }
 
 /** The dialog is shared, so it remembers which conversation it was opened for. */
-function openRenameDialog(sessionPath, currentTitle) {
-  state.renameSessionPath = sessionPath;
+function openRenameDialog(sessionId, engine, currentTitle) {
+  state.renameSessionId = sessionId;
+  state.renameSessionEngine = engine;
   elements.sessionNameInput.value = currentTitle || "";
   elements.renameDialog.showModal();
-}
-
-/** A named conversation has no transcript until its first turn, so the name is saved when that turn ends. */
-function applyPendingSessionTitle() {
-  if (!state.pendingSessionTitle || ["new", "claude:new"].includes(state.activeSessionPath)) return;
-  const title = state.pendingSessionTitle;
-  state.pendingSessionTitle = null;
-  renameSession(state.activeSessionPath, title).catch((error) => toast(error.message, 8000));
 }
 
 /** The fixed palette mirrors PROJECT_COLORS in src/types.ts. */
@@ -1524,6 +1542,17 @@ const rowMenuIconPaths = {
     "M16.5 7.5h.01",
   ],
   refresh: ["M3 12a9 9 0 1 0 2.6-6.4", "M3 4v4h4"],
+  merge: [
+    "M7 4v9a5 5 0 0 0 5 5h5",
+    "M7 4a2 2 0 1 0 0 4 2 2 0 0 0 0-4z",
+    "M17 16a2 2 0 1 0 0 4 2 2 0 0 0 0-4z",
+  ],
+  sliders: ["M4 8h10", "M18 8h2", "M4 16h4", "M12 16h8", "M16 6v4", "M10 14v4"],
+  archive: [
+    "M3.5 4.5h17a1 1 0 0 1 1 1V8a1 1 0 0 1-1 1h-17a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1z",
+    "M4.5 9v10a1 1 0 0 0 1 1h13a1 1 0 0 0 1-1V9",
+    "M10 13h4",
+  ],
   copy: [
     "M9.5 9.5h8a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-8a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1z",
     "M5.5 14.5h-1a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v1",
@@ -1712,6 +1741,15 @@ function projectRow(project) {
     syncStatus.textContent = status.state === "error" && status.message ? `Error: ${status.message}` : syncLabels[status.state] || syncLabels.unavailable;
     syncStatus.title = status.message || "";
     button.append(name, projectPath, syncStatus);
+    const reviewCount = pendingReviewCountForProject(project.id);
+    if (reviewCount) {
+      const reviewBadge = document.createElement("em");
+      reviewBadge.className = "project-review-badge";
+      reviewBadge.dataset.testid = "project-review-badge";
+      reviewBadge.textContent = `${reviewCount > 99 ? "99+" : reviewCount} to review`;
+      reviewBadge.setAttribute("aria-label", `${reviewCount} conversations need review in ${project.name}`);
+      button.append(reviewBadge);
+    }
     if (project.lock) {
       const lockBadge = document.createElement("em");
       lockBadge.className = `project-lock-badge${project.lockedElsewhere ? " foreign" : ""}`;
@@ -1870,6 +1908,12 @@ async function refreshPendingReviews() {
   const body = await api("/api/reviews/pending");
   state.pendingReviews = body.projects;
   renderPendingReviewsBadge();
+  renderProjects();
+}
+
+/** Reviews pile up in projects you are not looking at, so the row carries the count. */
+function pendingReviewCountForProject(projectId) {
+  return state.pendingReviews.find((group) => group.projectId === projectId)?.sessions.length ?? 0;
 }
 
 function pendingReviewCount() {
@@ -1984,11 +2028,35 @@ function rememberRecentSession(session) {
     sessionPath: canonicalSessionPath(session.path),
     title: shortSessionTitle(session),
     openedAt: new Date().toISOString(),
+    updatedAt: session.updatedAt ?? session.createdAt ?? null,
   };
   const others = state.recentSessions.filter((candidate) =>
     candidate.projectId !== entry.projectId || canonicalSessionPath(candidate.sessionPath) !== entry.sessionPath);
   state.recentSessions = [entry, ...others].slice(0, RECENT_SESSIONS_LIMIT);
   if (state.preferencesLoaded) savePreferencesInBackground({ recentSessions: state.recentSessions });
+}
+
+/** When the conversation last moved, not when this browser last opened it. */
+function recentSessionActivityAt(entry) {
+  return entry.updatedAt || entry.openedAt;
+}
+
+/**
+ * Conversations keep moving while the recents dialog is closed — a ticket run, or
+ * another node writing through Syncthing — so every session-list render refreshes
+ * the stored activity time for the project it just listed.
+ */
+function syncRecentSessionActivity() {
+  let changed = false;
+  state.recentSessions = state.recentSessions.map((entry) => {
+    if (entry.projectId !== state.activeProjectId) return entry;
+    const session = state.sessions.find((candidate) => canonicalSessionPath(candidate.path) === entry.sessionPath);
+    const updatedAt = session?.updatedAt ?? session?.createdAt ?? null;
+    if (!updatedAt || updatedAt === entry.updatedAt) return entry;
+    changed = true;
+    return { ...entry, updatedAt };
+  });
+  if (changed && state.preferencesLoaded) savePreferencesInBackground({ recentSessions: state.recentSessions });
 }
 
 /** Searching covers the project name too, since the same title repeats across projects. */
@@ -2029,7 +2097,9 @@ function renderRecentSessionsDialog() {
   recentSessionShortcuts = [];
 
   const query = normalizedQuery(elements.recentSessionsSearchInput.value || "");
-  const ordered = sortPinnedFirst(state.recentSessions, (entry) => isSessionPinned(entry.sessionPath));
+  const byActivity = [...state.recentSessions].sort((left, right) =>
+    recentSessionActivityAt(right).localeCompare(recentSessionActivityAt(left)));
+  const ordered = sortPinnedFirst(byActivity, (entry) => isSessionPinned(entry.sessionPath));
   const matches = ordered.filter((entry) => !query || recentSessionSearchText(entry).includes(query));
 
   if (!matches.length) {
@@ -2063,7 +2133,7 @@ function renderRecentSessionsDialog() {
     title.textContent = entry.title;
     const meta = document.createElement("span");
     const project = state.projects.find((candidate) => candidate.id === entry.projectId);
-    meta.textContent = `${project ? project.name : "Unknown project"} · ${formatDate(entry.openedAt)}`;
+    meta.textContent = `${project ? project.name : "Unknown project"} · ${formatDate(recentSessionActivityAt(entry))}`;
     button.append(title, meta);
     button.addEventListener("click", () => openRecentSession(entry).catch((error) => toast(error.message)));
 
@@ -2083,6 +2153,7 @@ function renderRecentSessionsDialog() {
 }
 
 function renderSessions() {
+  syncRecentSessionActivity();
   // A background refresh must not leave a menu floating over rows that just moved.
   elements.rowMenu.togglePopover(false);
   elements.sessionList.replaceChildren();
@@ -2181,7 +2252,7 @@ function sessionMenuItems(session, sessionActive) {
       label: "Rename",
       icon: "pencil",
       testid: "session-rename-button",
-      onSelect: () => openRenameDialog(session.path, name),
+      onSelect: () => openRenameDialog(session.id, isClaude ? "claude" : "pi", name),
     },
     {
       label: "Continue on another node",
@@ -2253,8 +2324,66 @@ function showChatEmptyState(title, copy) {
   elements.messages.insertBefore(empty, elements.jumpLatestButton);
 }
 
+// Durations read as "3.4s" under ten seconds, whole seconds up to a minute,
+// then "1m 08s" and "1h 04m", so a glance is enough to compare two runs.
+function formatDuration(ms) {
+  const seconds = Math.max(0, ms) / 1000;
+  if (seconds < 10) return `${seconds.toFixed(1)}s`;
+  const whole = Math.round(seconds);
+  if (whole < 60) return `${whole}s`;
+  const minutes = Math.floor(whole / 60);
+  if (minutes < 60) return `${minutes}m ${String(whole % 60).padStart(2, "0")}s`;
+  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
+}
+
+function messageTimestamp() {
+  const stamp = document.createElement("time");
+  stamp.className = "message-time";
+  stamp.dataset.testid = "message-timestamp";
+  const now = new Date();
+  stamp.dateTime = now.toISOString();
+  stamp.textContent = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return stamp;
+}
+
+// One shared tick drives every "still running" label. A timer per bubble would
+// outlive the bubble on a conversation switch and keep the tab awake for nothing.
+function startDurationTicker() {
+  if (!state.durationTicker) state.durationTicker = setInterval(tickDurations, 1000);
+}
+
+function tickDurations() {
+  for (const bubble of state.toolBubbles.values()) {
+    if (bubble._startedAt) bubble.querySelector(".tool-status").textContent = `Running ${formatDuration(Date.now() - bubble._startedAt)}`;
+  }
+  if (state.lastTurnStartedAt) {
+    elements.turnTimer.hidden = false;
+    elements.turnTimer.textContent = `Working ${formatDuration(Date.now() - state.lastTurnStartedAt)}`;
+  }
+  if (!state.toolBubbles.size && !state.lastTurnStartedAt) {
+    clearInterval(state.durationTicker);
+    state.durationTicker = 0;
+  }
+}
+
+// The finished turn's total belongs next to the answer it produced; the header
+// timer keeps it too, for a turn that ended with tool output and no prose.
+function finishTurnTimer() {
+  const elapsed = Date.now() - state.lastTurnStartedAt;
+  const stamps = elements.messages.querySelectorAll(".message.assistant .message-time");
+  const stamp = stamps[stamps.length - 1];
+  if (stamp && !stamp.dataset.turnDuration) {
+    stamp.dataset.turnDuration = "true";
+    stamp.append(` · took ${formatDuration(elapsed)}`);
+  }
+  elements.turnTimer.hidden = false;
+  elements.turnTimer.textContent = `Took ${formatDuration(elapsed)}`;
+}
+
 function clearChat() {
   elements.messages.replaceChildren(elements.jumpLatestButton);
+  elements.turnTimer.hidden = true;
+  elements.turnTimer.textContent = "";
   state.assistantBubble = null;
   state.thinkingBubble = null;
   state.toolBubbles.clear();
@@ -2506,7 +2635,9 @@ function appendCopyButton(bubble) {
   bubble.after(actions);
 }
 
-function appendMessage(role, text) {
+// A replayed transcript carries no recorded times, so it opts out of the stamp
+// rather than labelling week-old messages with the moment they were re-rendered.
+function appendMessage(role, text, timestamped = true) {
   elements.messages.querySelector(".empty-state")?.remove();
   const bubble = document.createElement("article");
   bubble.className = `message ${role}`;
@@ -2515,6 +2646,7 @@ function appendMessage(role, text) {
   const content = document.createElement(isMarkdown ? "div" : "pre");
   content.className = `message-content${isMarkdown ? " md" : ""}`;
   bubble.append(content);
+  if (timestamped && (role === "user" || role === "assistant")) bubble.append(messageTimestamp());
   renderBubbleContent(bubble, text, true);
   elements.messages.insertBefore(bubble, elements.jumpLatestButton);
   if (isMarkdown) appendCopyButton(bubble);
@@ -2522,10 +2654,13 @@ function appendMessage(role, text) {
   return bubble;
 }
 
-function appendToolMessage(toolName, toolCallId) {
+// startedAt is 0 for a replayed transcript entry: it already finished, at a
+// time this client never saw, so it gets no elapsed label.
+function appendToolMessage(toolName, toolCallId, startedAt = Date.now()) {
   const bubble = document.createElement("details");
   bubble.className = "message tool-output";
   bubble.dataset.role = "tool-output";
+  bubble._startedAt = startedAt;
 
   const summary = document.createElement("summary");
   summary.dataset.testid = `tool-output-toggle-${toolCallId.replace(/[^a-z0-9-]+/gi, "-")}`;
@@ -2554,7 +2689,9 @@ function appendToolMessage(toolName, toolCallId) {
 
 function updateToolMessage(bubble, text, status, isError = false) {
   bubble.dataset.status = isError ? "error" : status.toLowerCase();
-  bubble.querySelector(".tool-status").textContent = status;
+  const elapsed = bubble._startedAt ? formatDuration(Date.now() - bubble._startedAt) : "";
+  const label = !elapsed ? status : status === "Running" ? `${status} ${elapsed}` : `${status} in ${elapsed}`;
+  bubble.querySelector(".tool-status").textContent = label;
   renderBubbleContent(bubble, text);
 }
 
@@ -2564,11 +2701,11 @@ function updateToolMessage(bubble, text, status, isError = false) {
 function appendTranscript(messages) {
   for (const message of messages || []) {
     if (message.role === "toolResult" || message.role === "toolCall") {
-      const bubble = appendToolMessage(message.toolName || "tool", `history-${message.id}`);
+      const bubble = appendToolMessage(message.toolName || "tool", `history-${message.id}`, 0);
       updateToolMessage(bubble, message.text, "Done");
       continue;
     }
-    appendMessage(message.role === "user" ? "user" : "assistant", message.text);
+    appendMessage(message.role === "user" ? "user" : "assistant", message.text, false);
   }
   // Bubbles render their markdown on the next animation frame, so the height
   // during the loop above is not final and the scroll events it fires can clear
@@ -2677,26 +2814,155 @@ function renderSkillsDialog() {
   }
 }
 
-async function openSkillsDialog() {
-  elements.skillsDialogSearchInput.value = "";
-  elements.skillsDialog.showModal();
-  if (!state.activeProjectId) {
+async function loadSkills(force = false) {
+  const projectId = state.activeProjectId;
+  if (!projectId) {
     state.skills = [];
-    renderSkillsDialog();
+    state.skillsProjectId = null;
     return;
   }
+  if ((!force && state.skillsProjectId === projectId) || state.skillsLoading) return;
   state.skillsLoading = true;
   renderSkillsDialog();
   try {
-    state.skills = (await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/skills`)).skills;
+    const body = await api(`/api/projects/${encodeURIComponent(projectId)}/skills`);
+    if (state.activeProjectId !== projectId) return;
+    state.skills = body.skills;
+    state.skillsProjectId = projectId;
   } catch (error) {
-    state.skills = [];
-    toast(error.message);
+    if (state.activeProjectId === projectId) {
+      state.skills = [];
+      state.skillsProjectId = projectId;
+      toast(error.message);
+    }
   } finally {
-    state.skillsLoading = false;
-    renderSkillsDialog();
-    elements.skillsDialogSearchInput.focus();
+    if (state.activeProjectId === projectId) {
+      state.skillsLoading = false;
+      renderSkillsDialog();
+      renderCommandAutocomplete();
+    }
   }
+}
+
+async function openSkillsDialog() {
+  elements.skillsDialogSearchInput.value = "";
+  elements.skillsDialog.showModal();
+  renderSkillsDialog();
+  await loadSkills(true);
+  if (elements.skillsDialog.open) elements.skillsDialogSearchInput.focus();
+}
+
+const LOCAL_COMMANDS = [
+  { name: "skill", description: "Browse installed skills", invocation: "/skill ", kind: "builtin" },
+  { name: "model", description: "Choose the session model", invocation: "/model ", kind: "builtin" },
+  { name: "tools", description: "Configure available tools", invocation: "/tools ", kind: "builtin" },
+  { name: "compact", description: "Compact conversation context", invocation: "/compact ", kind: "builtin" },
+];
+
+function commandSourceKey() {
+  return `${state.activeProjectId}:${state.engine}`;
+}
+
+async function loadCommands() {
+  const projectId = state.activeProjectId;
+  const harness = state.engine;
+  const key = commandSourceKey();
+  if (!projectId || state.commandsLoading || state.commandsKey === key) return;
+  state.commandsLoading = true;
+  try {
+    const body = await api(`/api/projects/${encodeURIComponent(projectId)}/commands?harness=${encodeURIComponent(harness)}`);
+    if (commandSourceKey() !== key) return;
+    state.commands = body.commands;
+    state.commandsKey = key;
+  } catch (error) {
+    if (commandSourceKey() === key) {
+      state.commands = [];
+      state.commandsKey = key;
+      toast(error.message);
+    }
+  } finally {
+    if (commandSourceKey() === key) {
+      state.commandsLoading = false;
+      renderCommandAutocomplete();
+    }
+  }
+}
+
+function slashCommandQuery() {
+  const { selectionStart, selectionEnd, value } = elements.messageInput;
+  if (selectionStart !== selectionEnd || selectionEnd !== value.length) return null;
+  const match = /^\/([^\s]*)$/.exec(value);
+  return match ? match[1].toLowerCase() : null;
+}
+
+function commandMatchesQuery(command, query) {
+  return !query || `${command.name}\n${command.description}`.toLowerCase().includes(query);
+}
+
+function hideCommandAutocomplete() {
+  state.commandSuggestions = [];
+  state.commandAutocompleteIndex = 0;
+  elements.commandAutocomplete.hidden = true;
+  elements.messageInput.setAttribute("aria-expanded", "false");
+  elements.messageInput.removeAttribute("aria-activedescendant");
+}
+
+function commandAutocompleteOpen() {
+  return !elements.commandAutocomplete.hidden && state.commandSuggestions.length > 0;
+}
+
+function selectCommandSuggestion(index = state.commandAutocompleteIndex) {
+  const suggestion = state.commandSuggestions[index];
+  if (!suggestion) return;
+  setInputValue(suggestion.invocation);
+  hideCommandAutocomplete();
+  elements.messageInput.focus();
+}
+
+function renderCommandAutocomplete() {
+  const query = slashCommandQuery();
+  if (query === null || elements.messageInput.disabled) {
+    hideCommandAutocomplete();
+    return;
+  }
+  if (state.activeProjectId && state.commandsKey !== commandSourceKey()) void loadCommands();
+
+  const commands = state.commandsKey === commandSourceKey()
+    ? state.commands
+    : LOCAL_COMMANDS.map((command) => ({ ...command, harness: state.engine }));
+  state.commandSuggestions = commands
+    .filter((command) => command.harness === state.engine)
+    .filter((command) => commandMatchesQuery(command, query))
+    .slice(0, 10);
+  if (!state.commandSuggestions.length) {
+    hideCommandAutocomplete();
+    return;
+  }
+
+  state.commandAutocompleteIndex = Math.min(state.commandAutocompleteIndex, state.commandSuggestions.length - 1);
+  elements.commandAutocomplete.replaceChildren();
+  state.commandSuggestions.forEach((suggestion, index) => {
+    const option = document.createElement("button");
+    option.type = "button";
+    option.id = `command-autocomplete-option-${index}`;
+    option.setAttribute("role", "option");
+    option.setAttribute("aria-selected", String(index === state.commandAutocompleteIndex));
+    option.dataset.testid = "chat-command-autocomplete-option";
+    const name = document.createElement("span");
+    name.className = "command-autocomplete-name";
+    name.textContent = suggestion.invocation.trim();
+    const description = document.createElement("span");
+    description.className = "command-autocomplete-description";
+    description.textContent = suggestion.description;
+    option.append(name, description);
+    option.addEventListener("pointerdown", (event) => event.preventDefault());
+    option.addEventListener("click", () => selectCommandSuggestion(index));
+    elements.commandAutocomplete.append(option);
+  });
+  elements.commandAutocomplete.hidden = false;
+  elements.messageInput.setAttribute("aria-expanded", "true");
+  elements.messageInput.setAttribute("aria-activedescendant", `command-autocomplete-option-${state.commandAutocompleteIndex}`);
+  elements.commandAutocomplete.children[state.commandAutocompleteIndex]?.scrollIntoView({ block: "nearest" });
 }
 
 function renderReasoningOptions() {
@@ -2781,6 +3047,7 @@ function setComposerEnabled(enabled) {
   elements.renameSessionButton.disabled = !allowed;
   elements.modelButton.disabled = !allowed;
   elements.reasoningLevelSelect.disabled = !allowed;
+  if (!allowed) hideCommandAutocomplete();
   syncSafeguardsButton();
 }
 
@@ -2793,12 +3060,12 @@ function renderConversationLock() {
     elements.conversationLockStatus.textContent = "";
     return;
   }
-  const takeable = state.engine === "pi" && !state.activeTaskId;
+  const takeable = !state.activeTaskId;
   elements.conversationLockDetail.textContent = lock.status === "conflict"
     ? `Ownership is conflicted between this node and ${lock.nodeName}. Writes stay fenced until one node takes ownership.`
     : takeable
       ? `This conversation is owned by ${lock.nodeName}. Anything you send from here is rejected until you take ownership.`
-      : `This conversation is owned by ${lock.nodeName}. Open it there to continue \u2014 only Pi conversations can be taken over.`;
+      : `This conversation is owned by ${lock.nodeName}. Open it there to continue \u2014 a ticket conversation stays on its node.`;
   elements.conversationLockTakeButton.hidden = !takeable;
   elements.conversationLockTakeButton.disabled = !takeable || ownershipTaking || Boolean(ownershipWait);
   elements.conversationLockTakeButton.title = takeable ? `Move ownership to this node from ${lock.nodeName}` : "";
@@ -3022,6 +3289,13 @@ async function loadProjects() {
 
 async function selectProject(projectId, shouldRender = true, preserveSession = false) {
   state.activeProjectId = projectId;
+  state.skills = [];
+  state.skillsLoading = false;
+  state.skillsProjectId = null;
+  state.commands = [];
+  state.commandsLoading = false;
+  state.commandsKey = null;
+  hideCommandAutocomplete();
   if (!preserveSession) {
     state.activeSessionPath = null;
     state.activeSessionId = null;
@@ -3143,6 +3417,10 @@ function websocketUrl(sessionPath) {
 }
 
 function openSession(sessionPath, title = "New Pi conversation", preserveChat = false, preserveTask = false) {
+  rememberDraft();
+  // A turn left running on the conversation being left must not keep counting
+  // up in the header of the one being opened.
+  state.lastTurnStartedAt = 0;
   if (!preserveTask) state.activeTaskId = null;
   if (state.activeTaskId) {
     const task = state.tasks.find((candidate) => candidate.id === state.activeTaskId);
@@ -3157,13 +3435,16 @@ function openSession(sessionPath, title = "New Pi conversation", preserveChat = 
     showChatEmptyState("Connecting…", `Opening this conversation on ${node?.name || "the selected node"}.`);
   }
   state.activeSessionPath = sessionPath || "new";
+  restoreDraft();
   state.conversationLock = null;
   renderConversationLock();
   if (state.preferencesLoaded) savePreferencesInBackground({ activeSessionPath: state.activeSessionPath, activeSessionId: state.activeSessionId });
   state.engine = state.activeSessionPath.startsWith("claude:") ? "claude" : "pi";
   elements.sessionTitle.textContent = title;
   renderSessions();
-  setMobileView("chat");
+  // A reconnect reuses this function. Switching panels there would yank the user
+  // off the board (or any other view) every time a socket blips.
+  if (!preserveChat) setMobileView("chat");
   setStatus("Connecting…", false, true);
   setComposerEnabled(false);
 
@@ -3214,12 +3495,21 @@ function handleSocketPayload(payload) {
     state.activeSessionId = payload.sessionId || state.activeSessionId;
     syncEngineUI();
     if (payload.sessionFile) {
-      state.activeSessionPath = payload.sessionFile;
+      setActiveSessionPath(payload.sessionFile);
       if (state.preferencesLoaded) savePreferencesInBackground({ activeSessionPath: payload.sessionFile, activeSessionId: state.activeSessionId });
     }
+    // The conversation now has an id, so a name typed before it existed can be
+    // saved straight away instead of riding on the first turn finishing.
+    const pendingTitle = state.pendingSessionTitle;
+    if (pendingTitle && payload.sessionId) {
+      state.pendingSessionTitle = null;
+      saveSessionTitle(payload.sessionId, state.engine, pendingTitle)
+        .then(() => loadSessions())
+        .catch((error) => toast(error.message, 8000));
+    }
     const matchingSession = state.sessions.find((session) => session.path === payload.sessionFile);
-    elements.sessionTitle.textContent = state.pendingSessionTitle
-      ? state.pendingSessionTitle
+    elements.sessionTitle.textContent = pendingTitle
+      ? pendingTitle
       : matchingSession
         ? shortSessionTitle(matchingSession)
         : openingDraft
@@ -3254,7 +3544,7 @@ function handleSocketPayload(payload) {
   if (payload.type === "sessionFile") {
     if (payload.sessionId) state.activeSessionId = payload.sessionId;
     if (payload.sessionFile) {
-      state.activeSessionPath = payload.sessionFile;
+      setActiveSessionPath(payload.sessionFile);
       if (state.preferencesLoaded) savePreferencesInBackground({ activeSessionPath: payload.sessionFile, activeSessionId: state.activeSessionId });
     }
     return;
@@ -3306,6 +3596,7 @@ function handleSocketPayload(payload) {
     finalizeAssistantBubble();
     const bubble = appendToolMessage(payload.toolName, payload.toolCallId);
     state.toolBubbles.set(payload.toolCallId, bubble);
+    startDurationTicker();
     return;
   }
   if (payload.type === "toolUpdate") {
@@ -3329,6 +3620,7 @@ function handleSocketPayload(payload) {
     setStatus(`${state.engine === "claude" ? "Claude" : "Pi"} is working`, true);
     state.lastTurnStartedAt = Date.now();
     state.sessionBusy = true;
+    startDurationTicker();
     syncSafeguardsButton();
   }
   if (payload.type === "agent_end") {
@@ -3338,10 +3630,10 @@ function handleSocketPayload(payload) {
     state.sessionBusy = false;
     syncSafeguardsButton();
     if (state.lastTurnStartedAt) {
+      finishTurnTimer();
       maybeNotifyTurnComplete().catch((error) => console.warn("Notification failed", error));
       state.lastTurnStartedAt = 0;
     }
-    applyPendingSessionTitle();
   }
   if (payload.type === "queueUpdate") elements.miniStatus.textContent = `${payload.pending || 0} queued messages`;
   if (payload.type === "sessionInfoChanged" && payload.name) elements.sessionTitle.textContent = payload.name;
@@ -3411,6 +3703,7 @@ function renderBoardView() {
     elements.boardColumns.replaceChildren();
     return;
   }
+  elements.rowMenu.togglePopover(false);
   renderBoard(elements.boardColumns, state.tasks, {
     onEdit: openEditTaskDialog,
     onMove: moveTask,
@@ -3424,6 +3717,7 @@ function renderBoardView() {
     onArchive: archiveTask,
     onDelete: deleteTaskFromCard,
     onSettings: openEditTaskDialog,
+    onMenu: (anchor, items) => openRowMenu(anchor, items),
   });
 }
 
@@ -3518,6 +3812,40 @@ function openNewTaskDialog(status = "backlog") {
   elements.taskDialog.showModal();
 }
 
+/**
+ * The five live chat nodes, in the order they sit inside the chat panel. They are
+ * moved into the ticket dialog rather than copied, so streaming, tool bubbles,
+ * attachments and every existing `elements.*` reference keep working untouched.
+ */
+function taskChatNodes() {
+  return [
+    elements.messages,
+    elements.reconnectBanner,
+    elements.commandStrip,
+    elements.conversationLock,
+    elements.composer,
+  ];
+}
+
+function attachChatToTaskDialog() {
+  for (const node of taskChatNodes()) elements.taskChatHost.append(node);
+}
+
+function detachChatFromTaskDialog() {
+  for (const node of taskChatNodes()) elements.chatPanel.append(node);
+}
+
+function setTaskDialogTab(tab) {
+  for (const button of elements.taskTabs) {
+    const selected = button.dataset.taskTab === tab;
+    button.setAttribute("aria-selected", String(selected));
+    button.tabIndex = selected ? 0 : -1;
+  }
+  elements.taskForm.hidden = tab !== "ticket";
+  elements.taskChatHost.hidden = tab !== "conversation";
+  if (tab === "conversation") stickyScroll(true);
+}
+
 function openEditTaskDialog(task) {
   state.editingTaskId = task.id;
   elements.taskDialogTitle.textContent = "Edit task";
@@ -3529,7 +3857,28 @@ function openEditTaskDialog(task) {
   elements.taskReviewModeInput.checked = Boolean(task.reviewMode);
   populatePhaseModelInputs(task);
   elements.deleteTaskButton.hidden = false;
+
+  const conversationTab = elements.taskTabs.find((button) => button.dataset.taskTab === "conversation");
+  conversationTab.disabled = !task.sessionPath;
+  attachChatToTaskDialog();
+  // Reading the ticket's own conversation is the common reason to open this, so
+  // it wins the default tab whenever there is one to read.
+  setTaskDialogTab(task.sessionPath ? "conversation" : "ticket");
   elements.taskDialog.showModal();
+  if (task.sessionPath && task.sessionPath !== state.activeSessionPath) {
+    state.activeTaskId = task.id;
+    // openSession switches the visible panel to the chat; the user opened this
+    // from the board and expects to land back there when the dialog closes.
+    const returnView = history.state?.mobileView ?? "board";
+    openSession(task.sessionPath, task.title, false, true);
+    setMobileView(returnView, false);
+  }
+}
+
+/** Puts the chat back in its panel before the dialog goes away with it inside. */
+function closeTaskDialog() {
+  detachChatFromTaskDialog();
+  elements.taskDialog.close();
 }
 
 async function moveTask(task, nextStatus) {
@@ -3764,7 +4113,18 @@ for (const button of elements.chatFilters.querySelectorAll("button[data-filter]"
   });
 }
 elements.markAllReviewedButton.addEventListener("click", () => { void markAllSessionsReviewed(); });
-elements.cancelTaskButton.addEventListener("click", () => elements.taskDialog.close());
+elements.cancelTaskButton.addEventListener("click", () => closeTaskDialog());
+// Esc and the backdrop close the dialog without touching a button.
+elements.taskDialog.addEventListener("close", () => {
+  if (elements.taskChatHost.firstChild) detachChatFromTaskDialog();
+  elements.taskChatHost.hidden = true;
+  elements.taskForm.hidden = false;
+});
+
+for (const tab of elements.taskTabs) {
+  tab.addEventListener("click", () => setTaskDialogTab(tab.dataset.taskTab));
+}
+
 elements.taskForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const creating = !state.editingTaskId;
@@ -3773,7 +4133,7 @@ elements.taskForm.addEventListener("submit", async (event) => {
   elements.taskForm.setAttribute("aria-busy", "true");
   try {
     await saveTaskFromDialog();
-    elements.taskDialog.close();
+    closeTaskDialog();
   } catch (error) {
     toast(error.message, 8000);
   } finally {
@@ -3786,7 +4146,7 @@ elements.deleteTaskButton.addEventListener("click", async () => {
   if (!confirm("Delete this task?")) return;
   try {
     await deleteEditingTask();
-    elements.taskDialog.close();
+    closeTaskDialog();
   } catch (error) {
     toast(error.message);
   }
@@ -4258,6 +4618,11 @@ elements.chatHarnessSelect.addEventListener("change", () => {
   state.activeSessionId = null;
   if (state.preferencesLoaded) savePreferencesInBackground({ activeSessionPath: state.activeSessionPath, activeSessionId: null });
   syncEngineUI();
+  state.commands = [];
+  state.commandsLoading = false;
+  state.commandsKey = null;
+  state.commandAutocompleteIndex = 0;
+  renderCommandAutocomplete();
   if (!sendSocket({ type: "setEngine", engine: harness.id })) {
     openSession(harness.newSessionPath, `New ${harness.label} conversation`);
   }
@@ -4420,7 +4785,7 @@ function skipOwnershipWait() {
 
 async function takeSessionOwnership(destination, wait, report) {
   const session = activeChatSession();
-  if (ownershipWait || ownershipTaking || state.activeTaskId || state.engine !== "pi" || !state.activeProjectId || !session) return;
+  if (ownershipWait || ownershipTaking || state.activeTaskId || !state.activeProjectId || !session) return;
   if (!destination?.mapped) throw new Error("Map project first on the destination node");
   const proceed = await wait();
   if (!proceed) return;
@@ -4452,7 +4817,7 @@ function takeLockedConversationOwnership() {
 }
 
 elements.transferSessionButton.addEventListener("click", () => {
-  elements.sessionTakeOwnershipButton.hidden = Boolean(state.activeTaskId || state.engine !== "pi");
+  elements.sessionTakeOwnershipButton.hidden = Boolean(state.activeTaskId);
   resetOwnershipWait();
 });
 elements.cancelSessionTransferButton.addEventListener("click", () => { resetOwnershipWait(); elements.sessionTransferDialog.close(); });
@@ -4480,6 +4845,7 @@ document.addEventListener("click", (event) => {
 });
 elements.composer.addEventListener("submit", (event) => {
   event.preventDefault();
+  hideCommandAutocomplete();
   const message = elements.messageInput.value.trim();
   if (!message && state.attachments.length === 0) return;
   const payload = {
@@ -4493,6 +4859,11 @@ elements.composer.addEventListener("submit", (event) => {
     return;
   }
   state.lastTurnStartedAt = Date.now();
+  startDurationTicker();
+  if (message) rememberPrompt(message);
+  state.historyIndex = -1;
+  state.historyDraft = "";
+  state.drafts.delete(state.activeSessionPath);
   elements.messageInput.value = "";
   elements.messageInput.style.height = "auto";
   clearAttachments();
@@ -4500,7 +4871,7 @@ elements.composer.addEventListener("submit", (event) => {
 });
 
 elements.renameSessionButton.addEventListener("click", () => {
-  openRenameDialog(state.activeSessionPath, elements.sessionTitle.textContent);
+  openRenameDialog(state.activeSessionId, state.engine, elements.sessionTitle.textContent);
 });
 elements.cancelRenameButton.addEventListener("click", () => elements.renameDialog.close());
 elements.renameForm.addEventListener("submit", async (event) => {
@@ -4508,7 +4879,7 @@ elements.renameForm.addEventListener("submit", async (event) => {
   const title = elements.sessionNameInput.value.trim();
   elements.renameDialog.close();
   try {
-    await renameSession(state.renameSessionPath, title);
+    await renameSession(state.renameSessionId, state.renameSessionEngine, title);
     toast(title ? "Conversation renamed" : "Original title restored");
   } catch (error) {
     toast(error.message, 8000);
@@ -4578,6 +4949,93 @@ document.querySelectorAll(".command-strip button[data-command]").forEach((button
   });
 });
 
+function hasModifier(event) {
+  return event.shiftKey || event.altKey || event.metaKey || event.ctrlKey;
+}
+
+function autoGrowInput() {
+  elements.messageInput.style.height = "auto";
+  const maxHeight = matchMedia("(min-width: 1024px)").matches ? Math.min(innerHeight * 0.4, 360) : 160;
+  elements.messageInput.style.height = `${Math.min(elements.messageInput.scrollHeight, maxHeight)}px`;
+}
+
+function setInputValue(text) {
+  elements.messageInput.value = text;
+  autoGrowInput();
+  elements.messageInput.setSelectionRange(text.length, text.length);
+}
+
+// An unsent line belongs to the conversation it was typed in, so switching chats
+// parks it here and switching back hands it straight back.
+function rememberDraft() {
+  if (!state.activeSessionPath) return;
+  const text = elements.messageInput.value;
+  if (text.trim()) state.drafts.set(state.activeSessionPath, text);
+  else state.drafts.delete(state.activeSessionPath);
+}
+
+function restoreDraft() {
+  state.historyIndex = -1;
+  state.historyDraft = "";
+  setInputValue(state.drafts.get(state.activeSessionPath) || "");
+}
+
+// A brand-new conversation is keyed "new" until the server names its session
+// file. Carry the draft and the recalled prompts across to the real key.
+function setActiveSessionPath(nextPath) {
+  const previous = state.activeSessionPath;
+  state.activeSessionPath = nextPath;
+  if (!previous || previous === nextPath) return;
+  const draft = state.drafts.get(previous);
+  if (draft !== undefined) {
+    state.drafts.delete(previous);
+    state.drafts.set(nextPath, draft);
+  }
+  const history = state.promptHistory.get(previous);
+  if (history) {
+    state.promptHistory.delete(previous);
+    state.promptHistory.set(nextPath, history);
+  }
+}
+
+function sessionHistory() {
+  const key = state.activeSessionPath || "new";
+  if (!state.promptHistory.has(key)) state.promptHistory.set(key, []);
+  return state.promptHistory.get(key);
+}
+
+function rememberPrompt(message) {
+  const history = sessionHistory();
+  if (history[history.length - 1] === message) return;
+  history.push(message);
+  if (history.length > 100) history.shift();
+}
+
+/**
+ * Terminal-style recall. step is -1 for older and +1 for newer. Entering the
+ * history stashes the half-typed line so walking back past the newest entry
+ * returns it instead of losing it. Returns true when the arrow was consumed.
+ */
+function recallHistory(step) {
+  const history = sessionHistory();
+  if (!history.length) return false;
+  if (state.historyIndex === -1) {
+    if (step > 0) return false;
+    state.historyDraft = elements.messageInput.value;
+    state.historyIndex = history.length;
+  }
+  const next = state.historyIndex + step;
+  if (next < 0) return true;
+  if (next >= history.length) {
+    state.historyIndex = -1;
+    setInputValue(state.historyDraft);
+    return true;
+  }
+  state.historyIndex = next;
+  setInputValue(history[next]);
+  return true;
+}
+
 /**
  * Pointer capability, not viewport width: a narrow desktop window still has a keyboard,
  * and a phone's return key has to keep inserting newlines because it is the only one.
@@ -4587,8 +5045,38 @@ function enterKeySends() {
 }
 
 elements.messageInput.addEventListener("keydown", (event) => {
-  // isComposing means Enter is confirming an IME candidate, not ending the message.
-  if (event.key !== "Enter" || event.isComposing) return;
+  if (event.isComposing) return;
+  if (commandAutocompleteOpen()) {
+    if (["ArrowUp", "ArrowDown"].includes(event.key) && !hasModifier(event)) {
+      event.preventDefault();
+      const offset = event.key === "ArrowUp" ? -1 : 1;
+      state.commandAutocompleteIndex = (state.commandAutocompleteIndex + offset + state.commandSuggestions.length) % state.commandSuggestions.length;
+      renderCommandAutocomplete();
+      return;
+    }
+    if (event.key === "Tab" || event.key === "Enter") {
+      event.preventDefault();
+      selectCommandSuggestion();
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      hideCommandAutocomplete();
+      return;
+    }
+  }
+  if (["ArrowUp", "ArrowDown"].includes(event.key) && !hasModifier(event)) {
+    // A multi-line draft keeps its own line navigation: the arrow only reaches the
+    // history once the caret has nowhere left to go. Once recalling has started,
+    // the arrows stay on the history until the message is sent, as a shell does.
+    const { selectionStart, selectionEnd, value } = elements.messageInput;
+    const atStart = selectionStart === 0 && selectionEnd === 0;
+    const atEnd = selectionStart === value.length && selectionEnd === value.length;
+    const reachedTheEdge = event.key === "ArrowUp" ? atStart : atEnd;
+    if ((state.historyIndex !== -1 || reachedTheEdge) && recallHistory(event.key === "ArrowUp" ? -1 : 1)) event.preventDefault();
+    return;
+  }
+  if (event.key !== "Enter") return;
   if (event.shiftKey || !enterKeySends()) return;
   event.preventDefault();
   elements.composer.requestSubmit();
@@ -4630,9 +5118,9 @@ elements.composer.addEventListener("drop", async (event) => {
 });
 
 elements.messageInput.addEventListener("input", () => {
-  elements.messageInput.style.height = "auto";
-  const maxHeight = matchMedia("(min-width: 1024px)").matches ? Math.min(innerHeight * 0.4, 360) : 160;
-  elements.messageInput.style.height = `${Math.min(elements.messageInput.scrollHeight, maxHeight)}px`;
+  autoGrowInput();
+  state.commandAutocompleteIndex = 0;
+  renderCommandAutocomplete();
 });
 window.addEventListener("beforeinstallprompt", (event) => {
   event.preventDefault();

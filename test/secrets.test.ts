@@ -98,3 +98,31 @@ test("secret scopes reject unknown targets and invalid scope types", async () =>
     if (dataDir) await rm(dataDir, { recursive: true, force: true });
   }
 });
+
+test("GitHub secret accounts store an API token and the agent context explains each provider", async () => {
+  const previous = process.env.PI_WEB_DATA_DIR;
+  let dataDir = "";
+  try {
+    const secrets = await loadSecrets("github");
+    dataDir = secrets.dataDir;
+    const github = await secrets.saveSecretAccount({ label: "Work GitHub", provider: "github", variables: [
+      { name: "GH_TOKEN", kind: "value", value: "ghp-token" },
+      { name: "GITHUB_TOKEN", kind: "value", value: "ghp-token" },
+    ] });
+    const aws = await secrets.saveSecretAccount({ label: "AWS prod", provider: "aws", variables: [{ name: "AWS_ACCESS_KEY_ID", kind: "value", value: "access-key" }] });
+    const google = await secrets.saveSecretAccount({ label: "GCP", provider: "google", variables: [{ name: "GOOGLE_APPLICATION_CREDENTIALS", kind: "file", value: '{"type":"service_account"}' }] });
+    await secrets.setScopeSecretAccounts("project", "project-a", [github.id, aws.id, google.id]);
+    const env = secrets.genericSecretEnvironment("project-a");
+    assert.equal(env.GH_TOKEN, "ghp-token");
+    assert.equal(env.GITHUB_TOKEN, "ghp-token");
+    assert.equal(env.AWS_ACCESS_KEY_ID, "access-key");
+    const context = secrets.agentCredentialContext("project-a");
+    assert.match(context, /gh CLI/);
+    assert.match(context, /AWS CLI/);
+    assert.match(context, /gcloud/);
+    assert.doesNotMatch(context, /ghp-token|access-key|service_account/);
+  } finally {
+    if (previous === undefined) delete process.env.PI_WEB_DATA_DIR; else process.env.PI_WEB_DATA_DIR = previous;
+    if (dataDir) await rm(dataDir, { recursive: true, force: true });
+  }
+});

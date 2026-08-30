@@ -95,7 +95,7 @@ test("recent conversations are recorded, pinnable, and reopenable", async () => 
   // Pinning reuses the existing conversation pin, so a pin set here shows in the chat list too.
   assert.match(app, /testid: "recent-session-pin-button"/);
   assert.match(app, /togglePinnedSession\(entry\.sessionPath\)/);
-  assert.match(app, /sortPinnedFirst\(state\.recentSessions, \(entry\) => isSessionPinned\(entry\.sessionPath\)\)/);
+  assert.match(app, /sortPinnedFirst\(byActivity, \(entry\) => isSessionPinned\(entry\.sessionPath\)\)/);
 
   // Persistence goes through the preferences API, never Web Storage.
   assert.doesNotMatch(app, /\.setItem\(/);

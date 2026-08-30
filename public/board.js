@@ -6,8 +6,166 @@ export const TASK_STATUSES = [
   { id: "done", label: "Done" },
 ];
 
+/** Card icons, in the same stroked 24px style as the nav bar and the row menus. */
+const cardIconPaths = {
+  chat: ["M20 15a2 2 0 0 1-2 2H8l-4 3.5V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z"],
+  ticket: [
+    "M4.5 5.5h15a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z",
+    "M8 10h8",
+    "M8 14h5",
+  ],
+  more: ["M12 6.5h.01", "M12 12h.01", "M12 17.5h.01"],
+  left: ["M14 7l-5 5 5 5"],
+  right: ["M10 7l5 5-5 5"],
+  play: ["M9 6.5l8 5.5-8 5.5z"],
+};
+
+function cardIcon(name) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.8");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("class", "task-card-icon");
+  for (const d of cardIconPaths[name]) {
+    const node = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    node.setAttribute("d", d);
+    svg.append(node);
+  }
+  return svg;
+}
+
 function statusIndex(status) {
   return TASK_STATUSES.findIndex((candidate) => candidate.id === status);
+}
+
+function iconButton({ icon, label, testid, className = "", disabled = false, title, onClick }) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `ghost icon-button task-action ${className}`.trim();
+  button.setAttribute("aria-label", label);
+  button.title = title ?? label;
+  button.dataset.testid = testid;
+  button.disabled = disabled;
+  button.append(cardIcon(icon));
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    onClick();
+  });
+  return button;
+}
+
+/**
+ * Everything that is not "read the conversation", "edit the ticket", or "move the
+ * ticket" lives here, so the card keeps one short row of controls at any width.
+ */
+function taskMenuItems(task, handlers) {
+  const items = [];
+  if (task.worktreeBranch) {
+    items.push({
+      label: task.mergedAt ? "Merged into main" : "Merge to main",
+      icon: "merge",
+      testid: "board-task-merge-button",
+      disabled: task.status !== "done" || !task.worktreePath || Boolean(task.mergedAt),
+      title: task.mergedAt
+        ? "Ticket merged into main"
+        : task.status !== "done"
+          ? "Move ticket to Done before merging"
+          : "Merge committed ticket changes into main",
+      onSelect: () => handlers.onMerge(task),
+    });
+  }
+  items.push({
+    label: "Hand off to another node",
+    icon: "transfer",
+    testid: "board-task-handoff-button",
+    disabled: task.executionState === "running" || task.executionState === "handoff_pending",
+    onSelect: () => handlers.onHandoff(task),
+  });
+  items.push({
+    label: "Models and phases",
+    icon: "sliders",
+    testid: "board-task-models-button",
+    onSelect: () => handlers.onSettings(task),
+  });
+  if (task.status !== "done") {
+    items.push({
+      label: "Archive",
+      icon: "archive",
+      testid: "board-task-archive-button",
+      disabled: task.executionState === "running" || task.executionState === "handoff_pending",
+      onSelect: () => handlers.onArchive(task),
+    });
+  }
+  items.push({
+    label: "Delete",
+    icon: "trash",
+    testid: "board-task-delete-button",
+    danger: true,
+    onSelect: () => handlers.onDelete(task),
+  });
+  return items;
+}
+
+function taskCardActions(task, handlers) {
+  const actions = document.createElement("footer");
+  actions.className = "task-card-actions";
+
+  const index = statusIndex(task.status);
+  const previousStatus = task.status === "in_progress" && !task.planMode ? "backlog" : TASK_STATUSES[index - 1]?.id;
+  const nextStatus = task.status === "backlog" && !task.planMode ? "in_progress" : TASK_STATUSES[index + 1]?.id;
+  const startsAgent = (task.status === "backlog" && !task.planMode) || task.status === "planning";
+
+  actions.append(iconButton({
+    icon: "left",
+    label: `Move ${task.title} left`,
+    testid: "board-task-move-left-button",
+    className: "task-move",
+    disabled: !previousStatus,
+    onClick: () => handlers.onMove(task, previousStatus),
+  }));
+
+  const main = document.createElement("div");
+  main.className = "task-card-actions-main";
+  if (task.sessionPath) {
+    main.append(iconButton({
+      icon: "chat",
+      label: `Open chat for ${task.title}`,
+      testid: "board-task-open-chat-button",
+      className: "task-open-chat",
+      onClick: () => handlers.onOpenChat(task),
+    }));
+  }
+  main.append(iconButton({
+    icon: "ticket",
+    label: `Open ticket ${task.title}`,
+    testid: "board-task-open-ticket-button",
+    onClick: () => handlers.onEdit(task),
+  }));
+  const menuButton = iconButton({
+    icon: "more",
+    label: `Actions for ${task.title}`,
+    title: "Ticket actions",
+    testid: "board-task-menu-button",
+    onClick: () => handlers.onMenu(menuButton, taskMenuItems(task, handlers)),
+  });
+  menuButton.setAttribute("aria-haspopup", "true");
+  main.append(menuButton);
+  actions.append(main);
+
+  actions.append(iconButton({
+    icon: startsAgent ? "play" : "right",
+    label: startsAgent ? `Start ${task.title}` : `Move ${task.title} right`,
+    testid: "board-task-move-right-button",
+    className: startsAgent ? "task-move task-start" : "task-move",
+    disabled: !nextStatus,
+    onClick: () => handlers.onMove(task, nextStatus),
+  }));
+
+  return actions;
 }
 
 function taskCard(task, handlers) {
@@ -27,6 +185,7 @@ function taskCard(task, handlers) {
   body.type = "button";
   body.className = "task-card-body";
   body.setAttribute("data-testid", "board-task-edit-button");
+
   const titleRow = document.createElement("div");
   titleRow.className = "task-card-title";
   const title = document.createElement("strong");
@@ -34,116 +193,50 @@ function taskCard(task, handlers) {
   const engine = document.createElement("span");
   engine.className = `task-engine engine-${task.engine || "pi"}`;
   engine.textContent = task.engine === "claude" ? "Claude" : "Pi";
+  titleRow.append(title, engine);
   if (task.planMode) {
     const plan = document.createElement("span");
     plan.className = "task-engine task-plan";
     plan.textContent = "Plan";
-    titleRow.append(title, engine, plan);
-  } else {
-    titleRow.append(title, engine);
+    titleRow.append(plan);
   }
   body.append(titleRow);
-  const ownership = document.createElement("span");
-  ownership.className = "task-node";
-  ownership.textContent = `${task.currentNodeId.slice(0, 8)}${task.executionState === "running" ? " · Running" : task.executionState !== "idle" ? ` · ${task.executionState}` : ""}`;
-  body.append(ownership);
+
   if (task.description) {
     const description = document.createElement("span");
     description.className = "task-card-description";
     description.textContent = task.description;
     body.append(description);
   }
+
+  const meta = document.createElement("span");
+  meta.className = "task-card-meta";
+  const node = document.createElement("code");
+  node.className = "task-node";
+  node.textContent = task.currentNodeId.slice(0, 8);
+  meta.append(node);
+  if (task.executionState !== "idle") {
+    const state = document.createElement("b");
+    state.className = `task-state task-state-${task.executionState}`;
+    const dot = document.createElement("i");
+    dot.setAttribute("aria-hidden", "true");
+    const label = document.createElement("span");
+    label.textContent = task.executionState === "running" ? "Running" : task.executionState.replace(/_/g, " ");
+    state.append(dot, label);
+    meta.append(state);
+  }
+  body.append(meta);
   body.addEventListener("click", () => handlers.onEdit(task));
 
-  const actions = document.createElement("div");
-  actions.className = "task-card-actions";
-  if (task.sessionPath) {
-    const openChat = document.createElement("button");
-    openChat.type = "button";
-    openChat.className = "ghost compact task-open-chat";
-    openChat.textContent = "Open chat";
-    openChat.setAttribute("data-testid", "board-task-open-chat-button");
-    openChat.addEventListener("click", () => handlers.onOpenChat(task));
-    actions.append(openChat);
-  }
-  if (task.worktreeBranch) {
-    const merge = document.createElement("button");
-    merge.type = "button";
-    merge.className = "ghost compact task-merge";
-    merge.textContent = task.mergedAt ? "Merged" : "Merge to main";
-    merge.setAttribute("data-testid", "board-task-merge-button");
-    merge.disabled = task.status !== "done" || !task.worktreePath || Boolean(task.mergedAt);
-    merge.title = task.mergedAt
-      ? "Ticket merged into main"
-      : task.status !== "done"
-        ? "Move ticket to Done before merging"
-        : "Merge committed ticket changes into main";
-    merge.addEventListener("click", () => handlers.onMerge(task));
-    actions.append(merge);
-  }
-
-  const handoff = document.createElement("button");
-  handoff.type = "button";
-  handoff.className = "ghost compact task-handoff";
-  handoff.textContent = "Handoff";
-  handoff.disabled = task.executionState === "running" || task.executionState === "handoff_pending";
-  handoff.addEventListener("click", () => handlers.onHandoff(task));
-  actions.append(handoff);
-
-  const settings = document.createElement("button");
-  settings.type = "button";
-  settings.className = "ghost compact task-models";
-  settings.textContent = "Models";
-  settings.setAttribute("data-testid", "board-task-models-button");
-  settings.addEventListener("click", () => handlers.onSettings(task));
-  actions.append(settings);
-  if (task.status !== "done") {
-    const archive = document.createElement("button");
-    archive.type = "button";
-    archive.className = "ghost compact task-archive";
-    archive.textContent = "Archive";
-    archive.setAttribute("data-testid", "board-task-archive-button");
-    archive.disabled = task.executionState === "running" || task.executionState === "handoff_pending";
-    archive.addEventListener("click", () => handlers.onArchive(task));
-    actions.append(archive);
-  }
-  const remove = document.createElement("button");
-  remove.type = "button";
-  remove.className = "ghost compact danger task-delete";
-  remove.textContent = "Delete";
-  remove.setAttribute("data-testid", "board-task-delete-button");
-  remove.addEventListener("click", () => handlers.onDelete(task));
-  actions.append(remove);
-  const index = statusIndex(task.status);
-  const previousStatus = task.status === "in_progress" && !task.planMode ? "backlog" : TASK_STATUSES[index - 1]?.id;
-  const nextStatus = task.status === "backlog" && !task.planMode ? "in_progress" : TASK_STATUSES[index + 1]?.id;
-  const moveLeft = document.createElement("button");
-  moveLeft.type = "button";
-  moveLeft.className = "ghost icon-button task-move";
-  moveLeft.textContent = "‹";
-  moveLeft.setAttribute("aria-label", `Move ${task.title} left`);
-  moveLeft.setAttribute("data-testid", "board-task-move-left-button");
-  moveLeft.disabled = !previousStatus;
-  moveLeft.addEventListener("click", () => handlers.onMove(task, previousStatus));
-  const moveRight = document.createElement("button");
-  moveRight.type = "button";
-  moveRight.className = "ghost icon-button task-move";
-  const startsAgent = (task.status === "backlog" && !task.planMode) || task.status === "planning";
-  moveRight.textContent = startsAgent ? "▶" : "›";
-  moveRight.title = startsAgent ? "Start the agent on this task" : "Move right";
-  moveRight.setAttribute("aria-label", startsAgent ? `Start ${task.title}` : `Move ${task.title} right`);
-  moveRight.setAttribute("data-testid", "board-task-move-right-button");
-  moveRight.disabled = !nextStatus;
-  moveRight.addEventListener("click", () => handlers.onMove(task, nextStatus));
-  actions.append(moveLeft, moveRight);
-
-  card.append(body, actions);
+  card.append(body, taskCardActions(task, handlers));
   return card;
 }
 
 /**
  * Renders the kanban board into `container`.
- * handlers: { onEdit(task), onMove(task, nextStatus), onAdd(statusId), onOpenChat(task), onMerge(task), onHandoff(task), onArchive(task), onDelete(task), onSettings(task) }
+ * handlers: { onEdit(task), onMove(task, nextStatus), onAdd(statusId), onOpenChat(task),
+ *   onMerge(task), onHandoff(task), onArchive(task), onDelete(task), onSettings(task),
+ *   onMenu(anchor, items) }
  */
 export function renderBoard(container, tasks, handlers) {
   container.replaceChildren();

@@ -1,0 +1,23 @@
+{
+  "stage": "code-generation",
+  "unit": "code-generation",
+  "version": 1,
+  "writes": [
+    { "path": "src/claude-service.ts" },
+    { "path": "src/watcher.ts" },
+    { "path": "src/server.ts" },
+    { "path": "public/app.js" },
+    { "path": "public/sw.js" },
+    { "path": "test/claude-session-paths-local.test.ts" },
+    { "path": "test/claude-takeover-mesh-api.test.ts" },
+    { "path": "test/session-paths.test.ts" },
+    { "path": "test/conversation-lock-ui.test.ts" },
+    { "path": "test/chat-session-ux.test.ts" },
+    { "path": "test/chat-controls-ui.test.ts" },
+    { "path": "test/project-grouping-ui.test.ts" },
+    { "path": "test/review-notifications.test.ts" },
+    { "path": "test/secrets-ui.test.ts" },
+    { "path": "test/transcript-formatting.test.ts" },
+    { "path": "test/update-session-recovery.test.ts" }
+  ]
+}

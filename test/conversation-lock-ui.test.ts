@@ -44,7 +44,52 @@ test("a conversation owned by another node replaces the composer with a take-own
 
   assert.match(styles, /\.conversation-lock \{/);
   assert.match(styles, /\.conversation-lock\[hidden\] \{ display: none; \}/);
-  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v54";/);
+  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v56";/);
+});
+
+test("the take-ownership controls are engine-neutral, so a Claude conversation can be claimed", async () => {
+  const [app, html] = await Promise.all([
+    readFile("public/app.js", "utf8"),
+    readFile("public/index.html", "utf8"),
+  ]);
+
+  const render = app.slice(app.indexOf("function renderConversationLock()"));
+  const renderBody = render.slice(0, render.indexOf("\n}"));
+  assert.match(renderBody, /const takeable = !state\.activeTaskId;/);
+  // The lock banner offers the same wording to both engines.
+  assert.match(renderBody, /Anything you send from here is rejected until you take ownership/);
+  assert.doesNotMatch(app, /only Pi conversations can be taken over/);
+
+  // The session panel button and the request it fires are gated on the ticket
+  // check alone; neither consults the engine any more.
+  assert.match(app, /elements\.sessionTakeOwnershipButton\.hidden = Boolean\(state\.activeTaskId\);/);
+  const take = app.slice(app.indexOf("async function takeSessionOwnership("));
+  assert.match(take.slice(0, take.indexOf("\n}")), /if \(ownershipWait \|\| ownershipTaking \|\| state\.activeTaskId \|\| !state\.activeProjectId \|\| !session\) return;/);
+  assert.match(html, /id="sessionTakeOwnershipButton" data-testid="session-take-ownership-button"/);
+});
+
+test("push transfer stays blocked for Claude while takeover is opened up", async () => {
+  const app = await readFile("public/app.js", "utf8");
+
+  // Conversation row menu: the transfer entry is still disabled for Claude.
+  assert.match(app, /testid: "session-transfer-button",\s*disabled: isClaude,/);
+  assert.match(app, /title: isClaude \? "Claude transfer is not available yet"/);
+  // Chat toolbar: the transfer button still requires the Pi engine.
+  assert.match(app, /Boolean\(selectedSession && state\.engine === "pi" && socketOpen\(\) && destinations\.length\)/);
+  assert.match(app, /state\.engine === "claude"\s*\? "Claude conversation transfer is not available yet"/);
+});
+
+test("takeover derives the engine from the session path instead of refusing Claude", async () => {
+  const server = await readFile("src/server.ts", "utf8");
+
+  const take = server.slice(server.indexOf("async function takeLocalSessionOwnership("));
+  assert.ok(take.startsWith("async function takeLocalSessionOwnership("), "Missing takeLocalSessionOwnership");
+  const body = take.slice(0, take.indexOf("\n}"));
+  assert.doesNotMatch(body, /Only Pi conversations can be taken over/);
+  assert.match(body, /const engine: ConversationEngine = matching\.path\.startsWith\("claude:"\) \? "claude" : "pi";/);
+  // The preconditions and the epoch bump keep running, now for the derived engine.
+  assert.match(body, /if \(conversationIsActive\(project\.id, engine, sessionId, matching\.path\)\) throw new TaskWorktreeError\("Wait for the current turn to finish before taking ownership"\);/);
+  assert.match(body, /const ownership = await takeConversationOwnership\(engine, sessionId, local\.id\);/);
 });
 
 test("the execution node reports foreign conversation ownership to the browser", async () => {

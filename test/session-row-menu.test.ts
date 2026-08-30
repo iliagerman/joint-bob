@@ -38,8 +38,8 @@ test("conversation rows put every action behind one overflow menu", async () => 
 test("any conversation can be renamed, not only the open one", async () => {
   const app = await readFile("public/app.js", "utf8");
 
-  assert.match(app, /async function renameSession\(sessionPath, title\)/);
-  assert.match(app, /state\.renameSessionPath/);
+  assert.match(app, /async function renameSession\(sessionId, engine, title\)/);
+  assert.match(app, /state\.renameSessionId/);
   // The live-rename mirror only makes sense for the conversation the socket is on.
-  assert.match(app, /sessionPath === state\.activeSessionPath/);
+  assert.match(app, /sessionId === state\.activeSessionId/);
 });

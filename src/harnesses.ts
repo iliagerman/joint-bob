@@ -1,4 +1,4 @@
-import { sessionKey, sessionTitleOverrides } from "./names.js";
+import { sessionTitleOverrides } from "./names.js";
 import { createPiSession, listPiSessions, simplifyMessages } from "./pi-service.js";
 import { listClaudeSessions, loadClaudeMessages } from "./claude-service.js";
 import type { ChatMessage, HarnessId, ProjectRecord, SessionSummary } from "./types.js";
@@ -65,7 +65,7 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
       seen.add(session.path);
       return true;
     })
-    .map((session) => ({ ...session, title: overrides[sessionKey(session.path)] ?? session.title }))
+    .map((session) => ({ ...session, title: overrides[session.id] ?? session.title }))
     .sort((left, right) => (right.updatedAt ?? right.createdAt ?? "").localeCompare(left.updatedAt ?? left.createdAt ?? ""));
 
   return [

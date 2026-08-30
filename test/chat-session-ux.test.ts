@@ -50,12 +50,12 @@ test("chat names its controls and exposes conversation transfer", async () => {
   assert.match(app, /function setOwnershipTransferControls\(disabled\)[\s\S]*sessionTransferNodeSelect\.disabled = disabled;[\s\S]*querySelector\('\[type="submit"\]'\)\.disabled = disabled;[\s\S]*sessionTakeOwnershipButton\.disabled = disabled;/);
   assert.match(app, /report\("Taking ownership…"\);[\s\S]*await api\(/);
   assert.match(app, /function takeActiveSessionOwnership\(\)[\s\S]*sessionTransferNodeSelect\.value[\s\S]*sessionTransferStatus\.textContent = text/);
-  assert.match(app, /const session = activeChatSession\(\);[\s\S]*state\.activeTaskId \|\| state\.engine !== "pi"[\s\S]*!session/);
+  assert.match(app, /const session = activeChatSession\(\);[\s\S]*state\.activeTaskId \|\| !state\.activeProjectId[\s\S]*!session/);
   assert.match(app, /function skipOwnershipWait/);
   assert.match(app, /skipSessionTransferWaitButton\.addEventListener\("click", skipOwnershipWait\)/);
   assert.match(app, /sessionTakeOwnershipButton\.addEventListener\("click"/);
   assert.match(app, /sessions\/take-ownership/);
-  assert.match(app, /state\.activeTaskId \|\| state\.engine !== "pi"/);
+  assert.match(app, /sessionTakeOwnershipButton\.hidden = Boolean\(state\.activeTaskId\)/);
   assert.match(app, /New \$\{harness\.label\} conversation/);
   assert.match(html, /Continue on another node/);
   assert.match(app, /sourceNodeId:\s*state\.activeNodeId/);

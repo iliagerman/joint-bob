@@ -1,6 +1,7 @@
+import { randomUUID } from "node:crypto";
 import type { Stats } from "node:fs";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { access, copyFile, mkdir, readdir, readFile, rename, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { claudeProjectDir, claudeProjectDirs, isSyncConflictPath, sessionCwds, type SessionProjectPaths } from "./session-paths.js";
@@ -61,7 +62,7 @@ function claudeConfigPath(): string | undefined {
   return configPath && path.resolve(configPath) !== defaultPath ? configPath : undefined;
 }
 
-function claudeProjectsRoot(): string {
+export function claudeProjectsRoot(): string {
   const settings = getSettings().claude;
   return settings.sessionPath || (settings.configPath ? path.join(settings.configPath, "projects") : path.join(os.homedir(), ".claude/projects"));
 }
@@ -70,9 +71,65 @@ export function claudeSessionFilePath(cwd: string, sessionId: string): string {
   return path.join(claudeProjectDir(cwd, claudeProjectsRoot()), `${sessionId}.jsonl`);
 }
 
-// A conversation-list summary id is `claude:<id>.jsonl`, which never matches the
-// bare run id the live-run registry is keyed on, so reattach resolves the id
-// from the session path instead.
+export class ClaudeTranscriptNotFoundError extends Error {}
+
+async function exists(filePath: string): Promise<boolean> {
+  try { await access(filePath); return true; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+// Claude stores every transcript one level below the projects root, in a
+// directory whose name encodes the project path of whichever machine started
+// the conversation. A synchronized transcript therefore sits under a foreign
+// directory name, so it is located by session id rather than by the directory
+// this node would have written it to.
+export async function findClaudeTranscript(projectsRoot: string, sessionId: string): Promise<string | null> {
+  const fileName = `${sessionId}.jsonl`;
+  let entries;
+  try { entries = await readdir(projectsRoot, { withFileTypes: true }); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  // Sorted so a transcript that arrived under two encoded names resolves the
+  // same way on every call.
+  const directories = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
+  for (const directory of directories) {
+    const candidate = path.join(projectsRoot, directory, fileName);
+    if (await exists(candidate)) return candidate;
+  }
+  return null;
+}
+
+// Resuming a conversation runs `claude --resume <id>` with this node's cwd, and
+// Claude looks for the transcript under the directory name that cwd encodes to.
+// A transcript taken over from a node whose checkout sits elsewhere is under a
+// different name, so the local path is re-derived here and the transcript is
+// copied into place before the turn. The original is left untouched: the other
+// node still owns that copy on disk.
+export async function ensureLocalClaudeTranscript(cwd: string, sessionId: string): Promise<string> {
+  const projectsRoot = path.resolve(claudeProjectsRoot());
+  const localPath = claudeSessionFilePath(cwd, sessionId);
+  const relative = path.relative(projectsRoot, localPath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`Claude conversation ${sessionId} resolves outside ${projectsRoot}`);
+  if (await exists(localPath)) return localPath;
+  const source = await findClaudeTranscript(projectsRoot, sessionId);
+  if (!source) throw new ClaudeTranscriptNotFoundError(`Claude conversation ${sessionId} has no transcript under ${projectsRoot}`);
+  await mkdir(path.dirname(localPath), { recursive: true });
+  // Copy to a sibling temp name and rename, so the session watcher never reads
+  // a half-written transcript.
+  const temporaryPath = path.join(path.dirname(localPath), `.${sessionId}.${randomUUID()}.tmp`);
+  await copyFile(source, temporaryPath);
+  await rename(temporaryPath, localPath);
+  return localPath;
+}
+
+// The client sends a transcript path (`claude:<dir>/<id>.jsonl`), which never
+// matches the bare run id the live-run registry is keyed on, so reattach
+// resolves the id from the session path instead.
 export function claudeRunIdFromSessionPath(sessionPath: string): string | null {
   if (sessionPath === "claude:new") return null;
   return path.basename(sessionPath.replace(/^claude:/, ""), ".jsonl");
@@ -188,7 +245,7 @@ export async function listClaudeSessions(project: SessionProjectPaths): Promise<
     const facts = await claudeSessionFacts(filePath, fileStat);
     if (![...facts.cwds].some((cwd) => cwds.has(cwd))) return null;
     return {
-      id: `claude:${path.basename(filePath)}`,
+      id: path.basename(filePath, ".jsonl"),
       path: `claude:${filePath}`,
       harnessId: "claude",
       agentLabel: "Claude",
@@ -201,7 +258,13 @@ export async function listClaudeSessions(project: SessionProjectPaths): Promise<
       firstMessage: facts.title,
     };
   });
-  return summaries.filter((summary): summary is SessionSummary => Boolean(summary));
+  // A conversation claimed from another node exists under that node's encoded
+  // directory as well as this node's, so the same transcript is read twice.
+  // `claudeProjectDirs` lists this node's own project path first, so keeping the
+  // first summary per id shows the copy a turn here actually resumes.
+  const byId = new Map<string, SessionSummary>();
+  for (const summary of summaries) if (summary && !byId.has(summary.id)) byId.set(summary.id, summary);
+  return [...byId.values()];
 }
 
 function resolveClaudeSessionPath(sessionPath: string): string {

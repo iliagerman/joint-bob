@@ -1,0 +1,28 @@
+{
+  "stage": "code-generation",
+  "unit": "code-generation",
+  "upstream_ids": ["FR1.1", "FR1.2", "FR1.3", "FR1.4", "FR2.1", "FR2.2", "FR2.3", "FR2.4", "FR3.1", "FR3.2", "FR3.3", "FR3.4", "FR3.5", "FR4.1", "FR4.2", "NFR1", "NFR2", "NFR3", "NFR4", "NFR5", "NFR6"],
+  "coverage": [
+    { "id": "FR1.1", "status": "OK", "target": "src/server.ts" },
+    { "id": "FR1.2", "status": "OK", "target": "src/server.ts" },
+    { "id": "FR1.3", "status": "OK", "target": "src/server.ts" },
+    { "id": "FR1.4", "status": "OK", "target": "test/claude-takeover-mesh-api.test.ts" },
+    { "id": "FR2.1", "status": "OK", "target": "public/app.js" },
+    { "id": "FR2.2", "status": "OK", "target": "public/app.js" },
+    { "id": "FR2.3", "status": "OK", "target": "public/app.js" },
+    { "id": "FR2.4", "status": "OK", "target": "test/conversation-lock-ui.test.ts" },
+    { "id": "FR3.1", "status": "OK", "target": "src/claude-service.ts" },
+    { "id": "FR3.2", "status": "OK", "target": "src/server.ts" },
+    { "id": "FR3.3", "status": "OK", "target": "src/claude-service.ts" },
+    { "id": "FR3.4", "status": "OK", "target": "src/claude-service.ts" },
+    { "id": "FR3.5", "status": "OK", "target": "src/claude-service.ts" },
+    { "id": "FR4.1", "status": "OK", "target": "src/claude-service.ts" },
+    { "id": "FR4.2", "status": "OK", "target": "src/watcher.ts" },
+    { "id": "NFR1", "status": "OK", "target": "test/session-paths.test.ts" },
+    { "id": "NFR2", "status": "OK", "target": "test/claude-takeover-mesh-api.test.ts" },
+    { "id": "NFR3", "status": "OK", "target": "test/claude-session-paths-local.test.ts" },
+    { "id": "NFR4", "status": "OK", "target": "src/server.ts" },
+    { "id": "NFR5", "status": "OK", "target": "src/claude-service.ts" },
+    { "id": "NFR6", "status": "N/A", "justification": "Type safety is a gate, not a file: enforced by `npm run typecheck` (tsc --noEmit, strict) which passes with no new @ts-ignore, @ts-expect-error, or `as unknown as` assertions. There is no source file that implements it." }
+  ]
+}

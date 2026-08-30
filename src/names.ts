@@ -27,10 +27,6 @@ export function projectKey(projectPath: string): string {
   return path.basename(projectPath.replace(/[/\\]+$/, "")).toLowerCase();
 }
 
-export function sessionKey(sessionPath: string): string {
-  return path.basename(sessionPath.replace(/^claude:/, ""));
-}
-
 function projectsTableExists(db: DatabaseSync): boolean {
   return Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'projects'").get());
 }
@@ -172,6 +168,18 @@ export async function setProjectName(projectId: string, name: string): Promise<v
   await setEntry("projects", canonicalId, name);
 }
 
-export async function setSessionTitle(sessionPath: string, title: string): Promise<void> {
-  await setEntry("sessions", sessionKey(sessionPath), title);
+/**
+ * Names are keyed by conversation id, never by transcript path: a conversation
+ * is named before its transcript exists, and a resumed Claude run can land in a
+ * different file.
+ */
+export async function setSessionTitle(conversationId: string, title: string): Promise<void> {
+  await setEntry("sessions", conversationId, title);
+}
+
+/** Names a conversation the first time something owns it, without overwriting a rename. */
+export async function ensureSessionTitle(conversationId: string, title: string): Promise<void> {
+  const overrides = await sessionTitleOverrides();
+  if (overrides[conversationId]) return;
+  await setSessionTitle(conversationId, title);
 }

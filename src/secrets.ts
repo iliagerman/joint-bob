@@ -5,7 +5,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { gitHubEnvironment } from "./github-auth.js";
 
-export type SecretProvider = "aws" | "google" | "custom";
+export type SecretProvider = "aws" | "google" | "github" | "custom";
 export type SecretKind = "value" | "file";
 export type SecretScopeType = "project" | "project_type";
 export interface SecretVariable { name: string; kind: SecretKind; configured: true }
@@ -72,7 +72,7 @@ function assertScope(scopeType: string, scopeId: string): asserts scopeType is S
 }
 
 function assertInput(input: SecretAccountInput): void {
-  if (!(["aws", "google", "custom"] as string[]).includes(input.provider)) throw new Error("Secret provider must be aws, google, or custom");
+  if (!(["aws", "google", "github", "custom"] as string[]).includes(input.provider)) throw new Error("Secret provider must be aws, google, github, or custom");
   if (!input.label.trim() || input.label.trim().length > 64 || /[\x00-\x1f\x7f]/.test(input.label)) throw new Error("Secret account label must be between 1 and 64 characters without control characters");
   if (input.variables.length < 1 || input.variables.length > 20) throw new Error("Secret accounts need between 1 and 20 variables");
   const names = new Set<string>();
@@ -233,15 +233,23 @@ export function agentEnvironment(projectId: string): NodeJS.ProcessEnv {
   return { ...gitHubEnvironment(projectId), ...genericSecretEnvironment(projectId) };
 }
 
+/** Tells the agent which tool each provider's variables already unlock, so it runs the CLI instead of asking for keys. */
+const providerHints: Record<SecretProvider, string> = {
+  aws: "the AWS CLI and AWS SDKs read these automatically",
+  google: "gcloud and the Google SDKs read GOOGLE_APPLICATION_CREDENTIALS automatically",
+  github: "the gh CLI, git, and the GitHub API read these automatically",
+  custom: "plain environment variables for this project",
+};
+
 export function agentCredentialContext(project: string): string {
   const accounts = resolved(project);
   const github = gitHubEnvironment(project);
   if (!accounts.length && !github.GH_TOKEN) return "";
-  const lines = ["## Available secret accounts", "Secret values are hidden and are available to agent commands through environment variables."];
-  if (github.GH_TOKEN) lines.push("- GitHub: GH_TOKEN, GITHUB_TOKEN");
+  const lines = ["## Available secret accounts", "These credentials are already exported into your shell. Use the matching CLI directly and never ask the user for the values, which stay hidden from you."];
+  if (github.GH_TOKEN) lines.push(`- github "GitHub groups": GH_TOKEN, GITHUB_TOKEN - ${providerHints.github}`);
   for (const { row } of accounts) {
     const variables = storedVariables(row).map((item) => `${item.name}${item.kind === "file" ? " (secret file path)" : ""}`).join(", ");
-    lines.push(`- ${row.provider} ${JSON.stringify(row.label)}: ${variables}`);
+    lines.push(`- ${row.provider} ${JSON.stringify(row.label)}: ${variables} - ${providerHints[row.provider]}`);
   }
   return lines.join("\n");
 }
