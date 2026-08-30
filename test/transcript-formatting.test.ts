@@ -69,7 +69,7 @@ test("assistant filesystem paths open through the authenticated project file rou
   assert.match(server, /File is outside the project directory/);
   assert.match(server, /project-file-content/);
   assert.match(server, /await rename\(temporary, resolved\)/);
-  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v53"/);
+  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v54"/);
   assert.match(serviceWorker, /self\.addEventListener\("fetch"/);
   assert.match(serviceWorker, /fetch\(request\)\.catch\(async \(\) => \(await caches\.match\(request\)\) \|\| caches\.match\("\/"\)\)/);
 });

@@ -44,7 +44,7 @@ test("a conversation owned by another node replaces the composer with a take-own
 
   assert.match(styles, /\.conversation-lock \{/);
   assert.match(styles, /\.conversation-lock\[hidden\] \{ display: none; \}/);
-  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v53";/);
+  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v54";/);
 });
 
 test("the execution node reports foreign conversation ownership to the browser", async () => {
