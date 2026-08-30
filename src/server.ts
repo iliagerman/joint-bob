@@ -51,6 +51,7 @@ import { webSocketCloseReason } from "./websocket.js";
 import { capturePiRecoverySnapshot, recoverPiSessionDirectory, resolveLocalSessionPath } from "./session-paths.js";
 import { beginConversationRecovery, beginConversationTransfer, commitConversationTransfer, compareAndSetConversationOwnership, ConversationOwnershipError, finalizeConversationClaim, finishConversationRecovery, getConversationOwnership, sameConversationOwnership, takeConversationOwnership, type ConversationEngine, type ConversationOwnership, type ConversationOwnershipStatus, type OwnershipApplyResult } from "./conversation-ownership.js";
 import { attachTerminalSession } from "./terminal-session.js";
+import { completeUpdateRecovery, failUpdateRecovery, listPendingUpdateRecoveries, saveUpdateRecoveries, type UpdateRecoveryRecord } from "./update-recovery.js";
 
 type PiSessionHandle = Awaited<ReturnType<typeof createPiSession>>;
 
@@ -145,6 +146,7 @@ const machineRoutes = new Set([
   "POST /cluster/tasks/archive",
   "POST /cluster/tasks/merge",
   "POST /cluster/tasks/handoff",
+  "POST /update/prepare",
 ]);
 export const app = express();
 export function createApp(): express.Express {
@@ -166,6 +168,10 @@ const activeClaudeConnections = new Map<string, ChatConnection>();
 // Interactive Claude turns run on a socket connection, not in `sharedSessions`,
 // so the conversation list needs its own record of which files are streaming.
 const runningClaudeSessionPaths = new Set<string>();
+const recoveredClaudeRuns = new Set<string>();
+let updatePreparing = false;
+let updatePreparation: Promise<number> | null = null;
+const updateContinuationPrompt = "A service update interrupted this turn. Inspect the transcript and working tree, continue unfinished work, and do not repeat completed side effects.";
 let replicationFlushInProgress = false;
 let githubCredentialFlushInProgress = false;
 let membershipFlushInProgress = false;
@@ -815,6 +821,13 @@ app.post("/api/auth/login", (request, response, next) => {
 });
 
 app.use("/api", requireHttpAuth, requireCsrf);
+app.use("/api", (request, response, next) => {
+  if (updatePreparing && !["GET", "HEAD", "OPTIONS"].includes(request.method) && request.path !== "/update/prepare") {
+    response.status(503).json({ error: "Server update in progress" });
+    return;
+  }
+  next();
+});
 
 app.post("/api/auth/change-password", (request, response, next) => {
   try {
@@ -3116,6 +3129,14 @@ for (const method of ["get", "put"] as const) {
   });
 }
 
+app.post("/api/update/prepare", async (_request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const recoveryCount = await prepareForUpdate();
+    response.json({ ready: true, recoveryCount });
+  } catch (error) { next(error); }
+});
+
 app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
   if (error instanceof z.ZodError) {
     sendError(response, 400, error.errors.map((issue) => issue.message).join(", "));
@@ -3309,6 +3330,78 @@ function handleSessionChange(projectId: string, changedFiles: string[]): void {
   reloadClaudeClients(projectId, changedFiles).catch((error) => console.warn("Claude reload failed", error));
 }
 
+async function abortPiForUpdate(session: SharedPiSession): Promise<void> {
+  const agent = session.handle.session;
+  agent.abortRetry();
+  agent.abortCompaction();
+  agent.abortBranchSummary();
+  agent.abortBash();
+  await agent.abort();
+}
+
+async function terminateClaudeForUpdate(child: ClaudeRunHandle["child"]): Promise<void> {
+  if (child.exitCode !== null) return;
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = (): void => {
+      child.off("close", onClose);
+      child.off("error", onError);
+    };
+    const onClose = (): void => { cleanup(); resolve(); };
+    const onError = (error: Error): void => { cleanup(); reject(error); };
+    child.once("close", onClose);
+    child.once("error", onError);
+    child.kill("SIGTERM");
+  });
+}
+
+function updateRecoveryRecord(values: Omit<UpdateRecoveryRecord, "id" | "createdAt">): UpdateRecoveryRecord {
+  if (!values.sessionId || !values.sessionPath) throw new Error("Active run has no durable session identity");
+  return { ...values, id: randomUUID(), createdAt: new Date().toISOString() };
+}
+
+function activeUpdateRecoveries(): UpdateRecoveryRecord[] {
+  const records: UpdateRecoveryRecord[] = [];
+  for (const shared of new Set(sharedSessions.values())) {
+    if (piTaskRuns.has(shared) || !sessionIsBusy(shared.handle)) continue;
+    const session = shared.handle.session;
+    records.push(updateRecoveryRecord({ kind: "chat", engine: "pi", projectId: shared.projectId, cwd: shared.cwd, sessionId: session.sessionId, sessionPath: session.sessionFile ?? "", taskId: null, phase: null, queuedPrompts: [...session.getSteeringMessages(), ...session.getFollowUpMessages()], model: null, effort: null }));
+  }
+  for (const connection of new Set(activeClaudeConnections.values())) {
+    if (!connection.claude.child) continue;
+    records.push(updateRecoveryRecord({ kind: "chat", engine: "claude", projectId: connection.project.id, cwd: connection.cwd, sessionId: connection.claude.sessionId ?? "", sessionPath: connection.claude.filePath ? `claude:${connection.claude.filePath}` : "", taskId: null, phase: null, queuedPrompts: connection.claude.promptQueue.map(({ promptText }) => promptText), model: connection.claude.model, effort: connection.claude.effort }));
+  }
+  for (const [shared, run] of piTaskRuns) {
+    const session = shared.handle.session;
+    records.push(updateRecoveryRecord({ kind: "task", engine: "pi", projectId: run.projectId, cwd: shared.cwd, sessionId: session.sessionId, sessionPath: session.sessionFile ?? run.sessionPath ?? "", taskId: run.taskId, phase: run.phase, queuedPrompts: [...session.getSteeringMessages(), ...session.getFollowUpMessages()], model: null, effort: null }));
+  }
+  for (const run of claudeTaskRuns.values()) records.push(updateRecoveryRecord({ kind: "task", engine: "claude", projectId: run.projectId, cwd: run.cwd, sessionId: run.sessionId, sessionPath: run.sessionPath, taskId: run.taskId, phase: run.phase, queuedPrompts: [], model: run.model, effort: run.effort }));
+  return records;
+}
+
+function broadcastUpdatePreparing(): void {
+  for (const client of webSocketServer.clients) send(client, { type: "updatePreparing", message: "Updating... Work will resume automatically." });
+}
+
+function prepareForUpdate(): Promise<number> {
+  if (!updatePreparation) updatePreparation = performUpdatePreparation();
+  return updatePreparation;
+}
+
+async function performUpdatePreparation(): Promise<number> {
+  updatePreparing = true;
+  broadcastUpdatePreparing();
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  const records = activeUpdateRecoveries();
+  await saveUpdateRecoveries(records);
+  for (const shared of new Set(sharedSessions.values())) shared.handle.session.clearQueue();
+  for (const connection of new Set(activeClaudeConnections.values())) connection.claude.promptQueue.splice(0);
+  const pi = [...new Set(sharedSessions.values())].filter((shared) => sessionIsBusy(shared.handle)).map(abortPiForUpdate);
+  const children = [...activeClaudeConnections.values()].map((connection) => connection.claude.child).filter((child): child is ClaudeRunHandle["child"] => Boolean(child));
+  const claude = [...new Set([...children, ...[...claudeTaskRuns.values()].map((run) => run.child)])].map(terminateClaudeForUpdate);
+  await Promise.all([...pi, ...claude]);
+  return records.length;
+}
+
 // ---- Kanban task runs: moving a task to "in progress" starts its agent ----
 
 interface PiTaskRun {
@@ -3325,6 +3418,11 @@ interface ClaudeTaskRun {
   taskId: string;
   leaseToken: string;
   phase: TaskPhase;
+  cwd: string;
+  sessionId: string;
+  sessionPath: string;
+  model: string | null;
+  effort: string | null;
 }
 
 const piTaskRuns = new Map<SharedPiSession, PiTaskRun>();
@@ -3421,7 +3519,24 @@ async function finishTaskPhase(project: ProjectRecord, task: TaskRecord, phase: 
   broadcastToProject(project.id, { type: "sessionsChanged" });
 }
 
-async function startTaskRun(project: ProjectRecord, task: TaskRecord, requestedPhase?: TaskPhase): Promise<void> {
+interface TaskRunRecovery { recoveryId: string; prompt: string; }
+
+async function failTaskRunRecovery(projectId: string, taskId: string, nodeId: string, leaseToken: string, recovery: TaskRunRecovery | undefined, error: unknown): Promise<void> {
+  const message = error instanceof Error ? error.message : "Task run failed";
+  try {
+    await releaseTaskLease(projectId, taskId, nodeId, leaseToken, "failed");
+  } catch (releaseError) {
+    console.warn("Could not release task lease", releaseError);
+  }
+  if (!recovery) return;
+  try {
+    await failUpdateRecovery(recovery.recoveryId, message);
+  } catch (recoveryError) {
+    console.warn("Could not mark update recovery failed", recoveryError);
+  }
+}
+
+async function startTaskRun(project: ProjectRecord, task: TaskRecord, requestedPhase?: TaskPhase, recovery?: TaskRunRecovery): Promise<void> {
   const local = await getClusterNode();
   if (task.currentNodeId !== local.id) return;
   const { task: claimed, leaseToken } = await claimTaskLease(project.id, task.id, local.id);
@@ -3431,7 +3546,7 @@ async function startTaskRun(project: ProjectRecord, task: TaskRecord, requestedP
     const phase = requestedPhase ?? taskPhase(claimed);
     const config = taskConfig(claimed, phase);
     const cwd = taskCwd(project, claimed);
-    const prompt = await taskPromptText(project, claimed, phase, config.engine);
+    const prompt = recovery ? recovery.prompt : await taskPromptText(project, claimed, phase, config.engine);
     if (config.engine === "claude") {
       const resumeSessionId = task.sessionPath?.startsWith("claude:") ? path.basename(task.sessionPath.replace(/^claude:/, ""), ".jsonl") : undefined;
       const sessionId = resumeSessionId ?? randomUUID();
@@ -3447,7 +3562,7 @@ async function startTaskRun(project: ProjectRecord, task: TaskRecord, requestedP
         effort: config.effort && config.effort !== "default" ? config.effort : undefined,
         onEvent: () => undefined,
       });
-      claudeTaskRuns.set(task.id, { child: run.child, projectId: project.id, taskId: claimed.id, leaseToken, phase });
+      claudeTaskRuns.set(task.id, { child: run.child, projectId: project.id, taskId: claimed.id, leaseToken, phase, cwd, sessionId, sessionPath: resumeSessionId ? task.sessionPath! : `claude:${claudeSessionFilePath(cwd, sessionId)}`, model: config.modelId || null, effort: config.effort || null });
       run.done
         .then(async (result) => {
           if (claudeTaskRuns.get(task.id)?.leaseToken !== leaseToken) {
@@ -3457,16 +3572,17 @@ async function startTaskRun(project: ProjectRecord, task: TaskRecord, requestedP
           if (!result.ok) throw new Error("Claude task run failed");
           const sessionPath = result.sessionId ? `claude:${claudeSessionFilePath(cwd, result.sessionId)}` : null;
           await finishTaskPhase(project, claimed, phase, sessionPath, leaseToken);
+          if (recovery) await completeUpdateRecovery(recovery.recoveryId);
           if (claudeTaskRuns.get(task.id)?.leaseToken === leaseToken) claudeTaskRuns.delete(task.id);
         })
-        .catch((error) => {
+        .catch(async (error) => {
           if (claudeTaskRuns.get(task.id)?.leaseToken !== leaseToken) {
             console.warn("Ignoring stale Claude task callback", task.id);
             return;
           }
           claudeTaskRuns.delete(task.id);
           console.warn("Claude task run failed", error);
-          releaseTaskLease(project.id, claimed.id, local.id, leaseToken, "failed").catch((releaseError) => console.warn("Could not release Claude task lease", releaseError));
+          await failTaskRunRecovery(project.id, claimed.id, local.id, leaseToken, recovery, error);
         });
       return;
     }
@@ -3488,22 +3604,71 @@ async function startTaskRun(project: ProjectRecord, task: TaskRecord, requestedP
           return;
         }
         await finishPiTaskRun({ projectId: project.id, taskId: claimed.id, leaseToken, phase, sessionPath: null }, shared!.handle.session.sessionFile ?? null);
+        if (recovery) await completeUpdateRecovery(recovery.recoveryId);
         if (piTaskRuns.get(shared!)?.leaseToken === leaseToken) piTaskRuns.delete(shared!);
       })
-      .catch((error) => {
+      .catch(async (error) => {
         if (piTaskRuns.get(shared!)?.leaseToken !== leaseToken) {
           console.warn("Ignoring stale Pi task callback", claimed.id);
           return;
         }
         console.warn("Pi task run failed", error);
         piTaskRuns.delete(shared!);
-        releaseTaskLease(project.id, claimed.id, local.id, leaseToken, "failed").catch((releaseError) => console.warn("Could not release Pi task lease", releaseError));
+        await failTaskRunRecovery(project.id, claimed.id, local.id, leaseToken, recovery, error);
       });
   } catch (error) {
     if (shared && piTaskRuns.get(shared)?.leaseToken === leaseToken) piTaskRuns.delete(shared);
     if (claudeTaskRuns.get(task.id)?.leaseToken === leaseToken) claudeTaskRuns.delete(task.id);
-    await releaseTaskLease(project.id, claimed.id, local.id, leaseToken, "failed");
+    await failTaskRunRecovery(project.id, claimed.id, local.id, leaseToken, recovery, error);
     throw error;
+  }
+}
+
+async function recoverChat(record: UpdateRecoveryRecord): Promise<void> {
+  if (record.engine === "pi") {
+    const shared = await getSharedSession(record.projectId, record.cwd, record.sessionPath, record.sessionId);
+    await shared.handle.session.prompt(updateContinuationPrompt);
+    for (const prompt of record.queuedPrompts) await shared.handle.session.prompt(prompt);
+    await completeUpdateRecovery(record.id);
+    return;
+  }
+  const key = claudeRunKey(record.projectId, record.sessionPath);
+  recoveredClaudeRuns.add(key);
+  runningClaudeSessionPaths.add(key);
+  try {
+    const prompts = [updateContinuationPrompt, ...record.queuedPrompts];
+    for (const prompt of prompts) {
+      const result = await runClaudePrompt({ cwd: record.cwd, prompt, resumeSessionId: record.sessionId, model: record.model ?? undefined, effort: record.effort ?? undefined, env: agentEnvironment(record.projectId), onEvent: () => undefined }).done;
+      if (!result.ok) throw new Error("Claude recovery run failed");
+    }
+    await completeUpdateRecovery(record.id);
+  } finally {
+    recoveredClaudeRuns.delete(key);
+    runningClaudeSessionPaths.delete(key);
+    broadcastToProject(record.projectId, { type: "sessionsChanged" });
+  }
+}
+
+async function recoverTask(record: UpdateRecoveryRecord): Promise<void> {
+  const project = await getProject(record.projectId);
+  if (!project) throw new Error("Recovery project not found");
+  const task = (await listTasks(record.projectId)).find((candidate) => candidate.id === record.taskId);
+  if (!task) throw new Error("Recovery task not found");
+  const recovered = task.sessionPath === record.sessionPath ? task : await updateTask(record.projectId, task.id, { sessionPath: record.sessionPath });
+  if (!record.phase) throw new Error("Recovery task phase is missing");
+  await startTaskRun(project, recovered, record.phase, { recoveryId: record.id, prompt: updateContinuationPrompt });
+}
+
+async function recoverPendingUpdateRuns(): Promise<void> {
+  for (const record of await listPendingUpdateRecoveries()) {
+    try {
+      if (record.kind === "chat") await recoverChat(record);
+      else await recoverTask(record);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Update recovery failed";
+      console.warn("Update recovery failed", error);
+      await failUpdateRecovery(record.id, message);
+    }
   }
 }
 
@@ -3799,6 +3964,7 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
 }
 
 async function drainClaudePromptQueue(connection: ChatConnection): Promise<void> {
+  if (updatePreparing) return;
   while (!connection.claude.child && connection.claude.promptQueue.length) {
     const queued = connection.claude.promptQueue.shift()!;
     send(connection.socket, { type: "queueUpdate", pending: connection.claude.promptQueue.length });
@@ -3889,6 +4055,8 @@ async function handleChatMessage(connection: ChatConnection, raw: Buffer): Promi
     send(connection.socket, { type: "pong" });
     return;
   }
+
+  if (updatePreparing) throw new Error("Server update in progress");
 
   if (payload.type === "setEngine") {
     if (!payload.engine) throw new Error("Missing engine");
@@ -4176,6 +4344,10 @@ webSocketServer.on("connection", async (socket, request) => {
 
   const requestedEngine: ConversationEngine = rawSessionPath?.startsWith("claude:") ? "claude" : "pi";
   const requestedSessionPath = parseSessionPath(rawSessionPath);
+  if (requestedEngine === "claude" && requestedSessionPath && recoveredClaudeRuns.has(claudeRunKey(project.id, requestedSessionPath))) {
+    socket.close(1008, "Conversation is recovering after update");
+    return;
+  }
   const cwd = await sessionCwd(project, requestedSessionPath);
   const listed = requestedSessionPath ? await listHarnessSessions(project) : [];
   const listedSession = listed.find((candidate) => candidate.path === requestedSessionPath);
@@ -4470,7 +4642,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const listeningPort = typeof address === "object" && address ? address.port : port;
     console.log(`Joint Bob listening on http://0.0.0.0:${listeningPort}`);
     initializeStartupReadiness()
-      .then(() => reconcileTicketWorkspaceSync())
+      .then(async () => { await recoverPendingUpdateRuns(); await reconcileTicketWorkspaceSync(); })
       .catch((error) => console.warn("Ticket workspace sync failed", error));
     flushMembershipOutbox().catch((error) => console.warn("Membership flush failed", error));
     flushReplicationOutbox().catch((error) => console.warn("Replication flush failed", error));

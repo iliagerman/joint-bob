@@ -3094,10 +3094,17 @@ function openSession(sessionPath, title = "New Pi conversation", preserveChat = 
   // The connecting banner already shows this state, and reconnect attempts
   // repeat, so a toast per attempt is pure noise.
   socket.addEventListener("error", () => console.warn("WebSocket connection failed"));
-  socket.addEventListener("message", (event) => handleSocketMessage(JSON.parse(event.data)));
+  socket.addEventListener("message", (event) => handleSocketPayload(JSON.parse(event.data)));
 }
 
-function handleSocketMessage(payload) {
+function handleSocketPayload(payload) {
+  if (payload.type === "updatePreparing") {
+    const message = payload.message || "Updating... Work will resume automatically.";
+    setConnecting(true, message);
+    elements.miniStatus.textContent = message;
+    setComposerEnabled(false);
+    return;
+  }
   if (payload.type === "pong") {
     state.lastPongAt = Date.now();
     return;

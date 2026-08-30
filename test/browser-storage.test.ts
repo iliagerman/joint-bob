@@ -37,7 +37,7 @@ test("preference state changes use the authenticated preferences API", async () 
   const app = await readFile("public/app.js", "utf8");
 
   assert.match(app, /function savePreferences\(partial\)[\s\S]*?\/api\/preferences/);
-  for (const [name, nextName] of [["setTheme", "notificationsSupported"], ["setMobileView", "selectedProject"], ["selectProject", "socketOpen"], ["openSession", "handleSocketMessage"]]) {
+  for (const [name, nextName] of [["setTheme", "notificationsSupported"], ["setMobileView", "selectedProject"], ["selectProject", "socketOpen"], ["openSession", "handleSocketPayload"]]) {
     assert.match(functionSource(app, name, nextName), /savePreferencesInBackground/);
   }
   assert.match(functionSource(app, "enableNotifications", "subscribeToPush"), /savePreferencesInBackground/);
