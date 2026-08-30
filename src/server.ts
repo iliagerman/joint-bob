@@ -105,6 +105,7 @@ const CLAUDE_DEFAULT_MODEL = "claude-opus-5";
 interface ChatConnection {
   socket: WebSocket;
   project: ProjectRecord;
+  taskId: string | null;
   cwd: string;
   engine: ChatEngine;
   shared: SharedPiSession | null;
@@ -3866,6 +3867,16 @@ async function persistFileAttachments(cwd: string, files: Array<{ name: string; 
 
 type SocketPayload = z.infer<typeof socketMessageSchema>;
 
+async function resumeReviewedTask(connection: ChatConnection): Promise<void> {
+  if (!connection.taskId) return;
+  const task = (await listTasks(connection.project.id)).find((candidate) => candidate.id === connection.taskId);
+  if (!task || task.status !== "review") return;
+  const local = await getClusterNode();
+  if (task.currentNodeId !== local.id) throw new Error("Task owner changed");
+  await updateTask(connection.project.id, task.id, { status: "in_progress" });
+  broadcastToProject(connection.project.id, { type: "tasksChanged" });
+}
+
 function claudeStatus(connection: ChatConnection): SessionStatus {
   return {
     sessionFile: connection.claude.filePath ? `claude:${connection.claude.filePath}` : undefined,
@@ -4060,6 +4071,7 @@ async function handleClaudeCommand(connection: ChatConnection, payload: SocketPa
     const fileAttachments = await persistFileAttachments(connection.cwd, payload.files ?? []);
     const promptText = promptTextWithAttachments(payload.message ?? "", imageAttachments, fileAttachments);
     if (!promptText) return;
+    await resumeReviewedTask(connection);
     const displayText = promptDisplayText(payload.message ?? "", imageAttachments.map((image) => image.name), fileAttachments.map((file) => file.name));
     const acknowledged = Boolean(connection.claude.child || connection.claude.promptQueue.length);
     if (acknowledged) send(connection.socket, { type: "userMessage", text: displayText, queued: true });
@@ -4184,6 +4196,7 @@ async function handlePiCommand(connection: ChatConnection, shared: SharedPiSessi
     const fileAttachments = await persistFileAttachments(cwd, payload.files ?? []);
     let promptText = promptTextWithAttachments(payload.message ?? "", imageAttachments, fileAttachments);
     if (!promptText) return;
+    await resumeReviewedTask(connection);
     if (connection.handoffContext) {
       promptText = `${connection.handoffContext}${promptText}`;
       connection.handoffContext = null;
@@ -4450,7 +4463,7 @@ webSocketServer.on("connection", async (socket, request) => {
     console.warn("Conversation ownership claim failed on open", error);
   }
   let connection: ChatConnection = {
-    socket, project, cwd, engine: "pi", shared: null,
+    socket, project, taskId: task?.id ?? null, cwd, engine: "pi", shared: null,
     claude: emptyClaudeState(ownershipSessionId), handoffContext: null,
   };
 
@@ -4461,7 +4474,7 @@ webSocketServer.on("connection", async (socket, request) => {
     const active = activeClaudeConnections.get(claudeConnectionKey(project.id, requestedClaudeId));
     if (recovered) {
       connection = {
-        socket, project, cwd, engine: "claude", shared: null,
+        socket, project, taskId: task?.id ?? null, cwd, engine: "claude", shared: null,
         claude: recovered.claude, handoffContext: null,
       };
       connection.claude.sessionName = listedSession?.title ?? null;
