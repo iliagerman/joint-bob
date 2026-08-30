@@ -56,5 +56,7 @@ test("the picked name is displayed right away and saved once the transcript exis
   assert.match(ready, /const pendingTitle = state\.pendingSessionTitle;/);
   assert.match(ready, /state\.pendingSessionTitle = null;/);
   assert.match(ready, /saveSessionTitle\(payload\.sessionId, state\.engine, pendingTitle\)/);
+  assert.match(ready, /\.then\(\(\) => refreshSessionsQuietly\(\)\)/);
   assert.match(ready, /elements\.sessionTitle\.textContent = pendingTitle\s*\?\s*pendingTitle\s*:/);
+  assert.doesNotMatch(app, /\bloadSessions\s*\(/);
 });

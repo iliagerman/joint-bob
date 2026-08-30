@@ -1479,7 +1479,7 @@ async function renameSession(sessionId, engine, title) {
   if (sessionId === state.activeSessionId && engine === "pi" && title) {
     sendSocket({ type: "rename", name: title });
   }
-  await loadSessions();
+  await refreshSessionsQuietly();
 }
 
 /** The dialog is shared, so it remembers which conversation it was opened for. */
@@ -3508,7 +3508,7 @@ function handleSocketPayload(payload) {
     if (pendingTitle && payload.sessionId) {
       state.pendingSessionTitle = null;
       saveSessionTitle(payload.sessionId, state.engine, pendingTitle)
-        .then(() => loadSessions())
+        .then(() => refreshSessionsQuietly())
         .catch((error) => toast(error.message, 8000));
     }
     const matchingSession = state.sessions.find((session) => session.path === payload.sessionFile);
@@ -4325,7 +4325,7 @@ elements.projectPathForm.addEventListener("submit", async (event) => {
     state.projects = state.projects.map((project) => project.id === response.project.id ? response.project : project);
     elements.projectPathDialog.close();
     renderProjects();
-    await loadSessions();
+    await refreshSessionsQuietly();
     toast("Session paths mapped");
   } catch (error) {
     toast(error.message);
