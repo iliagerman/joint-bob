@@ -51,9 +51,6 @@ const state = {
   activeSessionId: null,
   chatFilter: "all",
   watchSocket: null,
-  watchProjectId: null,
-  rowMenuAnchor: null,
-  rowMenuAnchorSelector: null,
   watchReconnectTimer: null,
   watchPingTimer: null,
   activeProjectId: null,
@@ -1595,14 +1592,70 @@ function menuIcon(name) {
 }
 
 /**
+ * Real published logos, each on the vendor's own 24x24 grid so every mark sits in the
+ * same box and lines up wherever two of them appear side by side. Vendor marks come from
+ * Simple Icons; Pi's comes from pi.dev's own logo, rescaled from its 800x800 art.
+ */
+const brandIconPaths = {
+  aws: [
+    "M6.763 10.036c0 .296.032.535.088.71.064.176.144.368.256.576.04.063.056.127.056.183 0 .08-.048.16-.152.24l-.503.335a.383.383 0 0 1-.208.072c-.08 0-.16-.04-.239-.112a2.47 2.47 0 0 1-.287-.375 6.18 6.18 0 0 1-.248-.471c-.622.734-1.405 1.101-2.347 1.101-.67 0-1.205-.191-1.596-.574-.391-.384-.59-.894-.59-1.533 0-.678.239-1.23.726-1.644.487-.415 1.133-.623 1.955-.623.272 0 .551.024.846.064.296.04.6.104.918.176v-.583c0-.607-.127-1.03-.375-1.277-.255-.248-.686-.367-1.3-.367-.28 0-.568.031-.863.103-.295.072-.583.16-.862.272a2.287 2.287 0 0 1-.28.104.488.488 0 0 1-.127.023c-.112 0-.168-.08-.168-.247v-.391c0-.128.016-.224.056-.28a.597.597 0 0 1 .224-.167c.279-.144.614-.264 1.005-.36a4.84 4.84 0 0 1 1.246-.151c.95 0 1.644.216 2.091.647.439.43.662 1.085.662 1.963v2.586zm-3.24 1.214c.263 0 .534-.048.822-.144.287-.096.543-.271.758-.51.128-.152.224-.32.272-.512.047-.191.08-.423.08-.694v-.335a6.66 6.66 0 0 0-.735-.136 6.02 6.02 0 0 0-.75-.048c-.535 0-.926.104-1.19.32-.263.215-.39.518-.39.917 0 .375.095.655.295.846.191.2.47.296.838.296zm6.41.862c-.144 0-.24-.024-.304-.08-.064-.048-.12-.16-.168-.311L7.586 5.55a1.398 1.398 0 0 1-.072-.32c0-.128.064-.2.191-.2h.783c.151 0 .255.025.31.08.065.048.113.16.16.312l1.342 5.284 1.245-5.284c.04-.16.088-.264.151-.312a.549.549 0 0 1 .32-.08h.638c.152 0 .256.025.32.08.063.048.12.16.151.312l1.261 5.348 1.381-5.348c.048-.16.104-.264.16-.312a.52.52 0 0 1 .311-.08h.743c.127 0 .2.065.2.2 0 .04-.009.08-.017.128a1.137 1.137 0 0 1-.056.2l-1.923 6.17c-.048.16-.104.263-.168.311a.51.51 0 0 1-.303.08h-.687c-.151 0-.255-.024-.32-.08-.063-.056-.119-.16-.15-.32l-1.238-5.148-1.23 5.14c-.04.16-.087.264-.15.32-.065.056-.177.08-.32.08zm10.256.215c-.415 0-.83-.048-1.229-.143-.399-.096-.71-.2-.918-.32-.128-.071-.215-.151-.247-.223a.563.563 0 0 1-.048-.224v-.407c0-.167.064-.247.183-.247.048 0 .096.008.144.024.048.016.12.048.2.08.271.12.566.215.878.279.319.064.63.096.95.096.502 0 .894-.088 1.165-.264a.86.86 0 0 0 .415-.758.777.777 0 0 0-.215-.559c-.144-.151-.416-.287-.807-.415l-1.157-.36c-.583-.183-1.014-.454-1.277-.813a1.902 1.902 0 0 1-.4-1.158c0-.335.073-.63.216-.886.144-.255.335-.479.575-.654.24-.184.51-.32.83-.415.32-.096.655-.136 1.006-.136.175 0 .359.008.535.032.183.024.35.056.518.088.16.04.312.08.455.127.144.048.256.096.336.144a.69.69 0 0 1 .24.2.43.43 0 0 1 .071.263v.375c0 .168-.064.256-.184.256a.83.83 0 0 1-.303-.096 3.652 3.652 0 0 0-1.532-.311c-.455 0-.815.071-1.062.223-.248.152-.375.383-.375.71 0 .224.08.416.24.567.159.152.454.304.877.44l1.134.358c.574.184.99.44 1.237.767.247.327.367.702.367 1.117 0 .343-.072.655-.207.926-.144.272-.336.511-.583.703-.248.2-.543.343-.886.447-.36.111-.734.167-1.142.167zM21.698 16.207c-2.626 1.94-6.442 2.969-9.722 2.969-4.598 0-8.74-1.7-11.87-4.526-.247-.223-.024-.527.272-.351 3.384 1.963 7.559 3.153 11.877 3.153 2.914 0 6.114-.607 9.06-1.852.439-.2.814.287.383.607zM22.792 14.961c-.336-.43-2.22-.207-3.074-.103-.255.032-.295-.192-.063-.36 1.5-1.053 3.967-.75 4.254-.399.287.36-.08 2.826-1.485 4.007-.215.184-.423.088-.327-.151.32-.79 1.03-2.57.695-2.994z",
+  ],
+  google: [
+    "M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z",
+  ],
+  github: [
+    "M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12",
+  ],
+  openai: [
+    "M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z",
+  ],
+  claude: [
+    "m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z",
+  ],
+  // The blocky P and its dot, drawn as plain rectangles on the shared grid.
+  pi: [
+    "M0 0h18v6H0z",
+    "M0 6h6v18H0z",
+    "M12 6h6v6h-6z",
+    "M6 12h6v6H6z",
+    "M18 12h6v12h-6z",
+  ],
+  custom: [
+    "M14.5 2a7.5 7.5 0 0 0-7.16 9.76L2 17.1V22h4.9v-2.2h2.2v-2.2h2.2l1.94-1.94A7.5 7.5 0 1 0 14.5 2zm2.6 4a1.6 1.6 0 1 1 0 3.2 1.6 1.6 0 0 1 0-3.2z",
+  ],
+};
+
+/** Decorative everywhere it is used: a name or label always sits beside it. */
+function brandIcon(name, className) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "currentColor");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("class", className);
+  for (const d of brandIconPaths[name]) {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d);
+    svg.append(path);
+  }
+  return svg;
+}
+
+/** A conversation listed by an older node names no agent, so its path is the fallback. */
+function sessionAgentId(session) {
+  return session.agentId || (session.path.startsWith("claude:") ? "claude" : "pi");
+}
+
+function agentIcon(agentId) {
+  return brandIcon(agentId, `session-agent-icon ${agentId}`);
+}
+
+/**
  * One shared menu serves every row: building a popup per row would clip it inside the
  * list's own scroll box. `popover` puts it in the top layer and handles Escape and
  * click-outside for us, so this only has to place it.
  */
-function openRowMenu(anchor, items, anchorSelector = null) {
+function openRowMenu(anchor, items) {
   const menu = elements.rowMenu;
-  state.rowMenuAnchor = anchor;
-  state.rowMenuAnchorSelector = anchorSelector;
   menu.replaceChildren(...items.map((item) => {
     const entry = document.createElement("button");
     entry.type = "button";
@@ -1619,32 +1672,9 @@ function openRowMenu(anchor, items, anchorSelector = null) {
     });
     return entry;
   }));
-  // togglePopover, not showPopover: a menu can now survive a background refresh,
-  // so the same button may be clicked again while it is still open.
-  menu.togglePopover(true);
+  menu.showPopover();
   placeRowMenu(anchor);
   menu.querySelector("button:not(:disabled)")?.focus();
-}
-
-/**
- * Background refreshes replace whole rows while a menu is open. Closing the menu
- * on every refresh made it unusable on a running ticket, whose transcript writes
- * trigger a sessions refresh about once a second. The menu is re-pointed at the
- * fresh row instead, and only closes when that row is really gone.
- */
-function refreshRowMenuAnchor() {
-  if (!elements.rowMenu.matches(":popover-open")) return;
-  if (state.rowMenuAnchor.isConnected) {
-    placeRowMenu(state.rowMenuAnchor);
-    return;
-  }
-  const replacement = state.rowMenuAnchorSelector ? document.querySelector(state.rowMenuAnchorSelector) : null;
-  if (!replacement) {
-    elements.rowMenu.togglePopover(false);
-    return;
-  }
-  state.rowMenuAnchor = replacement;
-  placeRowMenu(replacement);
 }
 
 /** Anchor positioning is not in every browser yet, so the coordinates are measured here. */
@@ -1677,7 +1707,7 @@ function pinButton({ pinned, label, testid, onToggle }) {
 
 function renderProjects() {
   // A background refresh must not leave a menu floating over rows that just moved.
-  queueMicrotask(refreshRowMenuAnchor);
+  elements.rowMenu.togglePopover(false);
   const projects = filteredProjects();
   elements.projectList.replaceChildren();
   if (state.projectsLoading) return;
@@ -1742,6 +1772,15 @@ function projectGroupElement(group) {
   count.className = "project-group-count";
   count.textContent = String(group.projects.length);
   summary.append(label, count);
+  const groupReviewCount = group.projects.reduce((total, project) => total + pendingReviewCountForProject(project.id), 0);
+  if (groupReviewCount) {
+    const reviewBadge = document.createElement("em");
+    reviewBadge.className = "project-group-review-badge";
+    reviewBadge.dataset.testid = "project-group-review-badge";
+    reviewBadge.textContent = groupReviewCount > 99 ? "99+" : String(groupReviewCount);
+    reviewBadge.setAttribute("aria-label", `${groupReviewCount} conversations need review in ${group.label}`);
+    summary.append(reviewBadge);
+  }
   details.append(summary);
 
   for (const project of group.projects) details.append(projectRow(project));
@@ -1943,13 +1982,20 @@ async function refreshPendingReviews() {
   renderProjects();
 }
 
-/** Reviews pile up in projects you are not looking at, so the row carries the count. */
+/**
+ * Reviews pile up in projects you are not looking at, so the row carries the count.
+ * The open project's own conversations are live, so they beat the once-a-minute snapshot;
+ * mid-switch the list is empty and not yet loaded, so the snapshot still answers for it.
+ */
 function pendingReviewCountForProject(projectId) {
+  if (projectId === state.activeProjectId && !state.sessionsLoading) return reviewableSessions().length;
   return state.pendingReviews.find((group) => group.projectId === projectId)?.sessions.length ?? 0;
 }
 
 function pendingReviewCount() {
-  return state.pendingReviews.reduce((total, group) => total + group.sessions.length, 0);
+  const projectIds = new Set(state.pendingReviews.map((group) => group.projectId));
+  if (state.activeProjectId) projectIds.add(state.activeProjectId);
+  return [...projectIds].reduce((total, projectId) => total + pendingReviewCountForProject(projectId), 0);
 }
 
 function renderPendingReviewsBadge() {
@@ -1986,7 +2032,7 @@ function renderPendingReviewsDialog() {
       const title = document.createElement("strong");
       title.textContent = entry.title;
       const meta = document.createElement("span");
-      meta.textContent = `${entry.agentLabel} · ${formatDate(entry.updatedAt)}`;
+      meta.append(agentIcon(sessionAgentId(entry)), document.createTextNode(`${entry.agentLabel} · ${formatDate(entry.updatedAt)}`));
       button.append(title, meta);
       button.addEventListener("click", () => openPendingReview(group, entry).catch((error) => toast(error.message)));
       elements.pendingReviewsList.append(button);
@@ -2187,9 +2233,11 @@ function renderRecentSessionsDialog() {
 function renderSessions() {
   syncRecentSessionActivity();
   // A background refresh must not leave a menu floating over rows that just moved.
-  queueMicrotask(refreshRowMenuAnchor);
+  elements.rowMenu.togglePopover(false);
   elements.sessionList.replaceChildren();
   renderChatSessionControls();
+  // A conversation entering or leaving review changes its project's badge, so redraw that too.
+  renderProjects();
   const project = selectedProject();
   elements.projectName.textContent = project?.name || "No project selected";
   elements.projectPath.textContent = project?.path || "Create or select a local folder.";
@@ -2232,10 +2280,13 @@ function renderSessions() {
     sessionName.textContent = shortSessionTitle(session);
     const meta = document.createElement("span");
     meta.textContent = formatDate(session.updatedAt || session.createdAt);
+    const agentId = sessionAgentId(session);
     const agent = document.createElement("em");
     agent.className = "session-agent-label";
     agent.dataset.testid = "session-agent-label";
-    agent.textContent = `${session.agentLabel}${session.agentModel ? ` · ${session.agentModel}` : ""}`;
+    const agentMark = agentIcon(agentId);
+    agentMark.dataset.testid = "session-agent-icon";
+    agent.append(agentMark, document.createTextNode(`${session.agentLabel}${session.agentModel ? ` · ${session.agentModel}` : ""}`));
     meta.append(" ", agent);
     button.append(sessionName, meta);
     const chatState = sessionChatState(session);
@@ -3051,7 +3102,9 @@ function renderModelDialog() {
     if (!group.length) continue;
     const heading = document.createElement("div");
     heading.className = "model-dialog-group";
-    heading.textContent = groupLabel;
+    // Z.ai publishes no monochrome mark, so only GPT carries a logo here.
+    if (provider === "openai-codex") heading.append(brandIcon("openai", "model-group-icon"));
+    heading.append(document.createTextNode(groupLabel));
     elements.modelDialogList.append(heading);
     for (const model of group) {
       elements.modelDialogList.append(
@@ -3121,19 +3174,8 @@ function sendSocket(payload) {
   return true;
 }
 
-/**
- * The ticket a conversation belongs to. A ticket owns its session file, so the
- * link holds however the conversation was reached - from the board card, or
- * straight from the Chats list, which never sets an active ticket.
- */
-function conversationTask() {
-  const opened = state.tasks.find((candidate) => candidate.id === state.activeTaskId);
-  if (opened) return opened;
-  return state.tasks.find((candidate) => candidate.sessionPath && candidate.sessionPath === state.activeSessionPath);
-}
-
 function renderTaskBacklink() {
-  const task = conversationTask();
+  const task = state.activeTaskId ? state.tasks.find((candidate) => candidate.id === state.activeTaskId) : null;
   elements.taskBacklinkButton.hidden = !task;
   if (!task) return;
   elements.taskBacklinkButton.textContent = `◂ ${task.title}`;
@@ -3746,7 +3788,7 @@ function renderBoardView() {
     elements.boardColumns.replaceChildren();
     return;
   }
-  queueMicrotask(refreshRowMenuAnchor);
+  elements.rowMenu.togglePopover(false);
   renderBoard(elements.boardColumns, state.tasks, {
     onEdit: openEditTaskDialog,
     onMove: moveTask,
@@ -3760,7 +3802,7 @@ function renderBoardView() {
     onArchive: archiveTask,
     onDelete: deleteTaskFromCard,
     onSettings: openEditTaskDialog,
-    onMenu: (anchor, items, task) => openRowMenu(anchor, items, `[data-task-id="${CSS.escape(task.id)}"] [data-testid="board-task-menu-button"]`),
+    onMenu: (anchor, items) => openRowMenu(anchor, items),
   });
 }
 
@@ -3852,8 +3894,6 @@ function openNewTaskDialog(status = "backlog") {
   elements.taskReviewModeInput.checked = false;
   populatePhaseModelInputs();
   elements.deleteTaskButton.hidden = true;
-  conversationTabButton().disabled = true;
-  setTaskDialogTab("settings");
   elements.taskDialog.showModal();
 }
 
@@ -3880,17 +3920,13 @@ function detachChatFromTaskDialog() {
   for (const node of taskChatNodes()) elements.chatPanel.append(node);
 }
 
-function conversationTabButton() {
-  return elements.taskTabs.find((button) => button.dataset.taskTab === "conversation");
-}
-
 function setTaskDialogTab(tab) {
   for (const button of elements.taskTabs) {
     const selected = button.dataset.taskTab === tab;
     button.setAttribute("aria-selected", String(selected));
     button.tabIndex = selected ? 0 : -1;
   }
-  elements.taskForm.hidden = tab !== "settings";
+  elements.taskForm.hidden = tab !== "ticket";
   elements.taskChatHost.hidden = tab !== "conversation";
   if (tab === "conversation") stickyScroll(true);
 }
@@ -3907,11 +3943,12 @@ function openEditTaskDialog(task) {
   populatePhaseModelInputs(task);
   elements.deleteTaskButton.hidden = false;
 
-  conversationTabButton().disabled = !task.sessionPath;
+  const conversationTab = elements.taskTabs.find((button) => button.dataset.taskTab === "conversation");
+  conversationTab.disabled = !task.sessionPath;
   attachChatToTaskDialog();
   // Reading the ticket's own conversation is the common reason to open this, so
   // it wins the default tab whenever there is one to read.
-  setTaskDialogTab(task.sessionPath ? "conversation" : "settings");
+  setTaskDialogTab(task.sessionPath ? "conversation" : "ticket");
   elements.taskDialog.showModal();
   if (task.sessionPath && task.sessionPath !== state.activeSessionPath) {
     state.activeTaskId = task.id;
@@ -4056,7 +4093,6 @@ function closeWatchSocket() {
   state.watchPingTimer = null;
   const socket = state.watchSocket;
   state.watchSocket = null;
-  state.watchProjectId = null;
   if (socket) socket.close();
   elements.chatsLiveDot.hidden = true;
 }
@@ -4066,11 +4102,7 @@ function ensureWatchSocket() {
     closeWatchSocket();
     return;
   }
-  // The subscription is bound to one project at connect time. Keeping a socket
-  // that still watches the project we left costs the board every live update -
-  // a ticket that gains a conversation only grows its chat button on a reload.
-  const live = state.watchSocket && (state.watchSocket.readyState === WebSocket.OPEN || state.watchSocket.readyState === WebSocket.CONNECTING);
-  if (live && state.watchProjectId === state.activeProjectId) return;
+  if (state.watchSocket && (state.watchSocket.readyState === WebSocket.OPEN || state.watchSocket.readyState === WebSocket.CONNECTING)) return;
   closeWatchSocket();
 
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -4080,7 +4112,6 @@ function ensureWatchSocket() {
 
   const socket = new WebSocket(url.toString());
   state.watchSocket = socket;
-  state.watchProjectId = state.activeProjectId;
   socket.addEventListener("open", () => {
     elements.chatsLiveDot.hidden = false;
     state.watchPingTimer = setInterval(() => {
@@ -4118,11 +4149,9 @@ elements.backToProjectsButton.addEventListener("click", () => setMobileView("pro
 elements.backToChatsButton.addEventListener("click", () => setMobileView("sessions"));
 elements.backToSessionsButton.addEventListener("click", () => setMobileView("sessions"));
 elements.taskBacklinkButton.addEventListener("click", () => {
-  const task = conversationTask();
-  if (!task) return;
   renderBoardView();
   setMobileView("board");
-  focusTaskCard(task.id);
+  focusTaskCard(state.activeTaskId);
 });
 elements.openBoardButton.addEventListener("click", () => {
   renderBoardView();
@@ -5237,22 +5266,6 @@ let editingSecretAccountId = null;
 let secretScopeTarget = null;
 
 // Brand marks, drawn inline so the offline shell never reaches for a network icon.
-const providerIconPaths = {
-  aws: [
-    "M1.5 16.4c.2-.35.6-.45.95-.25 3.4 1.95 7.4 3.05 11.6 3.05 2.85 0 5.65-.5 8.25-1.45.4-.15.8.05.9.45.1.4-.1.8-.5.95-2.8 1.05-5.8 1.6-8.85 1.6-4.55 0-8.85-1.2-12.5-3.35-.35-.2-.45-.65-.25-1z",
-    "M20.55 14.35c-.25-.75-1.7-.85-3.1-.55-.2.05-.35-.1-.3-.3.05-.25.25-.4.5-.5 1.6-.5 3.7-.4 4.15.35.45.75-.25 2.55-1.2 3.45-.15.15-.35.05-.3-.15.25-.75.5-1.55.25-2.3z",
-    "M7.6 9.55c0 .4.05.72.13.95.1.24.22.5.39.78a.47.47 0 0 1 .08.25c0 .1-.06.21-.2.31l-.65.44a.5.5 0 0 1-.27.1c-.1 0-.2-.05-.3-.15a3.1 3.1 0 0 1-.37-.48 8 8 0 0 1-.31-.6c-.8.95-1.81 1.42-3.02 1.42-.87 0-1.56-.25-2.06-.74-.5-.5-.76-1.16-.76-1.98 0-.88.31-1.6.94-2.13.63-.54 1.47-.81 2.54-.81.35 0 .71.03 1.1.08.38.06.77.14 1.18.23v-.75c0-.79-.16-1.34-.49-1.66-.33-.32-.89-.48-1.69-.48-.36 0-.73.04-1.11.13-.38.09-.75.2-1.11.34a3 3 0 0 1-.36.13.63.63 0 0 1-.16.03c-.15 0-.22-.11-.22-.33v-.52c0-.17.02-.3.07-.37a.8.8 0 0 1 .3-.23c.36-.19.79-.34 1.29-.47a6.2 6.2 0 0 1 1.6-.19c1.22 0 2.11.28 2.68.83.56.55.85 1.39.85 2.51v3.3zm-4.17 1.56c.34 0 .69-.06 1.06-.19.37-.12.7-.35.98-.66.17-.2.29-.42.35-.67.06-.25.1-.55.1-.9v-.44a8.5 8.5 0 0 0-1.9-.2c-.68 0-1.18.14-1.51.41-.34.27-.5.66-.5 1.17 0 .48.12.83.37 1.08.24.26.59.4 1.05.4z",
-  ],
-  google: [
-    "M12.48 10.92v3.28h7.84c-.24 1.84-.85 3.19-1.79 4.13-1.14 1.15-2.93 2.4-6.05 2.4-4.83 0-8.6-3.89-8.6-8.72s3.77-8.72 8.6-8.72c2.6 0 4.51 1.03 5.91 2.35l2.31-2.31C18.75 1.44 16.13 0 12.48 0 5.87 0 .31 5.39.31 12s5.56 12 12.17 12c3.57 0 6.27-1.17 8.37-3.36 2.16-2.16 2.84-5.21 2.84-7.67 0-.76-.05-1.47-.17-2.05H12.48z",
-  ],
-  github: [
-    "M12 .5C5.37.5 0 5.87 0 12.5c0 5.3 3.44 9.8 8.21 11.39.6.11.82-.26.82-.58 0-.29-.01-1.05-.02-2.06-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.74.08-.73.08-.73 1.21.09 1.84 1.24 1.84 1.24 1.07 1.83 2.81 1.3 3.5.99.11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.11-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.29-1.55 3.3-1.23 3.3-1.23.65 1.66.24 2.88.12 3.18.77.84 1.23 1.91 1.23 3.22 0 4.61-2.8 5.63-5.48 5.92.43.37.81 1.1.81 2.22 0 1.6-.01 2.89-.01 3.29 0 .32.21.7.83.58C20.57 22.29 24 17.8 24 12.5 24 5.87 18.63.5 12 .5z",
-  ],
-  custom: [
-    "M14.5 2a7.5 7.5 0 0 0-7.16 9.76L2 17.1V22h4.9v-2.2h2.2v-2.2h2.2l1.94-1.94A7.5 7.5 0 1 0 14.5 2zm2.6 4a1.6 1.6 0 1 1 0 3.2 1.6 1.6 0 0 1 0-3.2z",
-  ],
-};
 const providerLabels = { aws: "AWS", google: "Google", github: "GitHub", custom: "Custom" };
 /** Shown under the provider picker so the choice explains itself before anything is typed. */
 const providerHints = {
@@ -5262,19 +5275,8 @@ const providerHints = {
   custom: "Any environment variables you need. Every agent session in the scopes you assign this account to receives them.",
 };
 
-/** Decorative: the label beside it already names the provider. */
 function providerIcon(provider) {
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("fill", "currentColor");
-  svg.setAttribute("aria-hidden", "true");
-  svg.setAttribute("class", `secret-provider-icon ${provider}`);
-  for (const d of providerIconPaths[provider] ?? providerIconPaths.custom) {
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    path.setAttribute("d", d);
-    svg.append(path);
-  }
-  return svg;
+  return brandIcon(brandIconPaths[provider] ? provider : "custom", `secret-provider-icon ${provider}`);
 }
 
 function providerBadge(provider, testid) {

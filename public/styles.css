@@ -531,6 +531,10 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
 .project-sync-status-paused { color: var(--amber); }
 .project-sync-status-error { color: var(--danger); }
 .project-sync-status-unavailable, .session-agent-label { color: var(--muted); }
+/* The mark carries the agent's own colour; the label beside it stays quiet. */
+.session-agent-icon { width: 11px; height: 11px; margin-right: 3px; vertical-align: -1.5px; }
+.session-agent-icon.pi { color: var(--accent); }
+.session-agent-icon.claude { color: var(--claude); }
 .chat-status-dot { width: 6px; height: 6px; border-radius: 999px; background: currentColor; }
 .chat-badge-active .chat-status-dot { animation: dot-breathe 1.2s ease-in-out infinite; }
 
@@ -702,22 +706,17 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
 
 .task-card-actions {
   display: flex;
-  flex-wrap: nowrap;
   align-items: center;
-  gap: 2px;
-  padding: 5px 6px;
+  gap: 4px;
+  padding: 6px 8px;
   border-top: 1px solid var(--line);
   background: color-mix(in srgb, var(--field) 45%, transparent);
 }
-.task-card-actions-main { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; gap: 2px; }
-.task-action { min-width: 30px; width: 30px; min-height: 30px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
-.task-action:disabled { opacity: 0.32; }
-.task-card-icon { width: 17px; height: 17px; flex: none; }
-/* The arrows only move a ticket, so they stay quiet next to the two controls
-   that open something. */
-.task-move { color: var(--muted); }
-.task-open-chat { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
-.task-open-chat:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.task-card-actions-main { flex: 1; display: flex; align-items: center; justify-content: center; gap: 4px; }
+.task-action { min-width: 32px; width: 32px; min-height: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+.task-action:disabled { opacity: 0.35; }
+.task-card-icon { width: 16px; height: 16px; flex: none; }
+.task-open-chat { color: var(--accent); }
 .task-start { color: var(--live); }
 
 .task-card.dragging { opacity: 0.5; }
@@ -861,6 +860,8 @@ select.chat-toolbar-control {
 .model-option:hover { background: var(--field); }
 .model-option.active { background: var(--btn-bg); border-color: var(--btn-border); color: var(--btn-fg); }
 .model-dialog-list.claude .model-option.active { background: var(--btn-bg); }
+/* Same 24-unit box as every other brand mark, so the heading text sits level with it. */
+.model-group-icon { width: 12px; height: 12px; margin-right: 6px; vertical-align: -1.5px; color: var(--text); }
 /* Traffic light: red idle, amber connecting, green live. The text stays as the
    element's accessible name and is clipped out of the 12px dot. */
 .status-pill {
@@ -1696,6 +1697,19 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   color: var(--amber);
   background: color-mix(in srgb, var(--amber) 15%, transparent);
 }
+/* A collapsed group hides its project rows, so the summary carries the count instead. */
+.project-group-review-badge {
+  margin-left: auto;
+  border-radius: 5px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 650;
+  color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 15%, transparent);
+}
+/* An open group already shows each project's own badge, so the summary must not double up. */
+.project-group[open] > .project-group-summary .project-group-review-badge { display: none; }
 .project-card .project-lock-badge { display: block; margin: 3px 0 0; font-size: 10px; font-style: normal; color: var(--accent); }
 .project-card .project-lock-badge.foreign { color: var(--danger); }
 

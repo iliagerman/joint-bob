@@ -58,6 +58,8 @@ export interface SessionSummary {
   id: string;
   path: string;
   harnessId: HarnessId;
+  /** The agent that last drove the conversation: its own harness, or a task engine that overrode it. */
+  agentId: HarnessId;
   agentLabel: string;
   agentModel?: string;
   title: string;

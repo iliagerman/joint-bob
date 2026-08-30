@@ -248,6 +248,7 @@ export async function listClaudeSessions(project: SessionProjectPaths): Promise<
       id: path.basename(filePath, ".jsonl"),
       path: `claude:${filePath}`,
       harnessId: "claude",
+      agentId: "claude",
       agentLabel: "Claude",
       title: `[Claude] ${facts.title}`,
       createdAt: fileStat.birthtime.toISOString(),

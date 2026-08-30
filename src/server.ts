@@ -2203,12 +2203,14 @@ async function listProjectSessionsWithReviewState(project: ProjectRecord, userId
     const shared = sharedSessions.get(sessionKey(task ? taskCwd(project, task) : project.path, session.path));
     const config = task?.executionState === "running" ? taskConfig(task, taskPhase(task)) : undefined;
     const agentLabel = config ? (config.engine === "pi" ? "Pi" : "Claude") : session.agentLabel;
+    const agentId = config ? config.engine : session.harnessId;
     const livePiModel = (!config || config.engine === "pi") && shared
       ? getSessionStatus(shared.handle.session, shared.handle.safeguardsEnabled).model?.label
       : undefined;
     const agentModel = config?.modelId || livePiModel;
     return {
       ...session,
+      agentId,
       agentLabel,
       ...(agentModel ? { agentModel } : {}),
       taskStatus: task?.status,
@@ -2602,6 +2604,7 @@ app.get("/api/reviews/pending", async (_request, response, next) => {
             id: session.id,
             path: session.path,
             title: session.title,
+            agentId: session.agentId,
             agentLabel: session.agentLabel,
             updatedAt: session.updatedAt,
           })),
