@@ -150,7 +150,6 @@ const elements = {
   messageInput: document.querySelector("#messageInput"),
   commandAutocomplete: document.querySelector("#commandAutocomplete"),
   sendButton: document.querySelector("#sendButton"),
-  miniStatus: document.querySelector("#miniStatus"),
   turnTimer: document.querySelector("#turnTimer"),
   reconnectBanner: document.querySelector("#reconnectBanner"),
   reconnectBannerText: document.querySelector("#reconnectBannerText"),
@@ -2759,6 +2758,8 @@ function resetFileEditor() {
   elements.fileEditorView.hidden = true;
   fileEditor.setValue("");
   fileEditor.setOption("mode", null);
+  fileEditor.setOption("lineWrapping", false);
+  fileEditor.getWrapperElement().classList.remove("file-editor-markdown");
   elements.fileActionStatus.textContent = "";
   elements.fileEditorStatus.textContent = "";
   for (const link of [elements.fileActionViewLink, elements.fileActionDownloadLink]) {
@@ -2804,9 +2805,14 @@ async function editProjectFile() {
     Object.assign(state.fileEditor, { path: body.path, version: body.version, original: body.content });
     fileEditor.setValue(body.content);
     const filename = body.path.split(/[\\/]/).pop();
-    const mode = window.CodeMirror.findModeByFileName(filename);
-    if (mode) window.CodeMirror.autoLoadMode(fileEditor, mode.mode);
-    else fileEditor.setOption("mode", null);
+    const spec = window.CodeMirror.findModeByFileName(filename);
+    // Markdown reads as prose: wrap long lines and let the stylesheet render
+    // headings, emphasis, and links while the buffer stays plain text.
+    const markdown = spec?.mode === "markdown" || spec?.mode === "gfm";
+    fileEditor.setOption("mode", markdown ? { name: spec.mode, highlightFormatting: true } : spec?.mime ?? spec?.mode ?? null);
+    fileEditor.setOption("lineWrapping", markdown);
+    fileEditor.getWrapperElement().classList.toggle("file-editor-markdown", markdown);
+    if (spec) window.CodeMirror.autoLoadMode(fileEditor, spec.mode);
     elements.fileActionView.hidden = true;
     elements.fileEditorView.hidden = false;
     elements.fileEditorStatus.textContent = "";
@@ -3633,10 +3639,6 @@ function updateStatus(status) {
   if (!status.isStreaming) clearThinkingBubble();
   state.sessionBusy = Boolean(status.isStreaming || status.isBashRunning || status.isCompacting || status.isRetrying);
   if (typeof status.safeguardsEnabled === "boolean") state.safeguardsEnabled = status.safeguardsEnabled;
-  const busy = status.isStreaming ? "working" : "ready";
-  const queue = status.pendingMessageCount ? ` • ${status.pendingMessageCount} queued` : "";
-  const node = state.sessionNodes.find((candidate) => candidate.id === state.activeNodeId);
-  elements.miniStatus.textContent = `${node?.name || "Node"} • thinking ${status.thinkingLevel} • ${status.messageCount} msgs • ${status.activeTools.length} tools • ${busy}${queue}`;
   elements.abortButton.disabled = !status.isStreaming && !status.isBashRunning && !status.isCompacting && !status.isRetrying;
   if (status.sessionName) elements.sessionTitle.textContent = status.sessionName;
   state.activeModelKey = status.model ? `${status.model.provider}/${status.model.id}` : "";
@@ -3862,7 +3864,6 @@ function resumeConnection(force = false) {
     }
   }
   setStatus("Connecting…", false, true);
-  elements.miniStatus.textContent = "Connecting…";
   setConnecting(true, "Connecting…");
   setComposerEnabled(false);
   scheduleReconnect(state.activeSessionPath, 250);
@@ -3922,12 +3923,10 @@ function openSession(sessionPath, title = "New Pi conversation", preserveChat = 
     loadModels().catch((error) => toast(error.message));
     sendSocket({ type: "models" });
   });
-  socket.addEventListener("close", (event) => {
+  socket.addEventListener("close", () => {
     if (state.socket !== socket) return;
     stopHeartbeat();
-    const reason = event.reason || "Execution node disconnected";
     setStatus("Connecting…", false, true);
-    elements.miniStatus.textContent = reason;
     setConnecting(true, "Connecting…");
     setComposerEnabled(false);
     scheduleReconnect(state.activeSessionPath);
@@ -3942,7 +3941,6 @@ function handleSocketPayload(payload) {
   if (payload.type === "updatePreparing") {
     const message = payload.message || "Updating... Work will resume automatically.";
     setConnecting(true, message);
-    elements.miniStatus.textContent = message;
     setComposerEnabled(false);
     return;
   }
@@ -4113,9 +4111,7 @@ function handleSocketPayload(payload) {
       state.lastTurnStartedAt = 0;
     }
   }
-  if (payload.type === "queueUpdate") elements.miniStatus.textContent = `${payload.pending || 0} queued messages`;
   if (payload.type === "sessionInfoChanged" && payload.name) elements.sessionTitle.textContent = payload.name;
-  if (payload.type === "thinkingLevelChanged") elements.miniStatus.textContent = `Thinking ${payload.level}`;
   if (payload.type === "sessionsChanged") refreshSessionsQuietly();
   if (payload.type === "tasksChanged") {
     loadTasks().catch((error) => console.warn(error));

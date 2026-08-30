@@ -24,6 +24,10 @@ test("both side panels collapse to a rail that can always be re-expanded", async
   assert.match(styles, /body\.projects-collapsed/);
   assert.match(styles, /body\.chats-collapsed/);
   assert.match(styles, /\.panel-rail \{/);
+  // The base rule must not hide the control: it sits after the desktop media
+  // query with the same specificity, so a `display: none` there wins everywhere.
+  assert.match(styles, /\n\.collapse-button \{ font-size: 15px; \}/);
+  assert.match(styles, /@media \(max-width: 1023px\) \{\n  \.collapse-button \{ display: none; \}/);
 
   assert.match(app, /function setPanelCollapsed\(panel, collapsed\)/);
   assert.match(app, /projectsPanelCollapsed/);

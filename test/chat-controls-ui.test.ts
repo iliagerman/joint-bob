@@ -66,7 +66,7 @@ test("model buttons are name-only and mobile controls use fixed toolbar rows", a
   assert.match(styles, /\.chat-recents-button\s*\{[^}]*grid-column:\s*3;[^}]*grid-row:\s*2;/);
   assert.doesNotMatch(styles, /\.model-button-mode/);
   assert.doesNotMatch(styles, /\.chat-toolbar[^\{]*\{[^}]*overflow-x:\s*auto/);
-  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v65";/);
+  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v66";/);
 });
 
 test("the status light and Stop sit on the chat header's meta row", async () => {
@@ -84,5 +84,7 @@ test("the status light and Stop sit on the chat header's meta row", async () => 
 
   assert.match(styles, /\.chat-title-meta \{[^}]*align-items: center;/);
   assert.match(styles, /\.chat-actions \{[^}]*margin-left: auto;/);
-  assert.doesNotMatch(styles, /\.(mini-status|turn-timer|task-backlink) \{[^}]*margin-top: 3px;/);
+  // The node/thinking/message-count line is gone; the status pill carries state.
+  assert.doesNotMatch(html, /miniStatus/);
+  assert.doesNotMatch(styles, /\.mini-status/);
 });

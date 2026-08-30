@@ -83,12 +83,9 @@ test("the chat header shows a traffic light, an icon Stop, and the project name"
   const updateStart = app.indexOf("function updateStatus(status)");
   const updateBody = app.slice(updateStart, app.indexOf("\n}", updateStart));
   assert.ok(updateStart >= 0, "Missing updateStatus");
-  // The provider/model text is gone from the header line, but state.activeModelLabel
-  // still needs status.model.label, so scope the check to the mini-status template.
-  const miniStatus = /elements\.miniStatus\.textContent = `[^`]*`/.exec(updateBody)?.[0] ?? "";
+  // state.activeModelLabel still needs status.model.label, but no header line
+  // renders the provider/model text any more.
   assert.doesNotMatch(updateBody, /const model = status\.model/);
-  assert.doesNotMatch(miniStatus, /\$\{model\}/);
-  assert.doesNotMatch(miniStatus, /provider/);
 });
 
 test("the copy button sits outside the message bubble", async () => {
