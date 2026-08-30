@@ -66,6 +66,8 @@ export interface SessionSummary {
   createdAt?: string;
   updatedAt?: string;
   firstMessage?: string;
+  /** Parent Pi transcript path when another conversation created this one. */
+  parentSessionPath?: string;
   taskStatus?: TaskStatus;
   taskId?: string;
   running?: boolean;

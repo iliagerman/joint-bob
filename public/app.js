@@ -1506,6 +1506,46 @@ function sortPinnedFirst(items, isPinned) {
   return [...items.filter(isPinned), ...items.filter((item) => !isPinned(item))];
 }
 
+function sessionTranscriptName(sessionPath) {
+  return sessionPath.replace(/\\/g, "/").split("/").at(-1);
+}
+
+function nestedSessionRows(sessions) {
+  const ranked = sortPinnedFirst(sessions, (session) => isSessionPinned(session.path));
+  const byPath = new Map(ranked.map((session) => [session.path, session]));
+  const byName = new Map(ranked.map((session) => [sessionTranscriptName(session.path), session]));
+  const parentOf = (session) => {
+    if (!session.parentSessionPath) return null;
+    const parent = byPath.get(session.parentSessionPath) || byName.get(sessionTranscriptName(session.parentSessionPath));
+    return parent?.path === session.path ? null : parent;
+  };
+  const children = new Map();
+  for (const session of ranked) {
+    const parent = parentOf(session);
+    if (parent) children.set(parent.path, [...(children.get(parent.path) || []), session]);
+  }
+  const roots = [];
+  for (const session of ranked) {
+    let root = session;
+    const ancestry = new Set([session.path]);
+    let parent = parentOf(root);
+    while (parent && !ancestry.has(parent.path)) {
+      root = parent;
+      ancestry.add(root.path);
+      parent = parentOf(root);
+    }
+    if (!roots.includes(root)) roots.push(root);
+  }
+  const rows = [];
+  const append = (session, depth) => {
+    if (rows.some((row) => row.session === session)) return;
+    rows.push({ session, depth });
+    for (const child of children.get(session.path) || []) append(child, depth + 1);
+  };
+  for (const root of roots) append(root, 0);
+  return rows;
+}
+
 function togglePinnedProject(projectId) {
   state.pinnedProjectIds = isProjectPinned(projectId)
     ? state.pinnedProjectIds.filter((id) => id !== projectId)
@@ -2267,11 +2307,12 @@ function renderSessions() {
     return;
   }
 
-  for (const session of sortPinnedFirst(sessions, (candidate) => isSessionPinned(candidate.path))) {
+  for (const { session, depth } of nestedSessionRows(sessions)) {
     const sessionPinned = isSessionPinned(session.path);
     const row = document.createElement("div");
     const sessionActive = state.activeSessionId ? session.id === state.activeSessionId : session.path === state.activeSessionPath;
     row.className = `list-row${sessionActive ? " active" : ""}`;
+    row.dataset.sessionDepth = String(depth);
 
     const button = document.createElement("button");
     button.type = "button";

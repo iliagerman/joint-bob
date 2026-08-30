@@ -14,8 +14,9 @@ test("Pi discovery includes flat Joint Bob sessions and standard cwd session dir
   try {
     for (const [index, directory] of [sessionRoot, path.join(sessionRoot, safeCwd)].entries()) {
       await mkdir(directory, { recursive: true });
+      const parentSession = index === 1 ? path.join(sessionRoot, "session-0.jsonl") : undefined;
       const records = [
-        { type: "session", version: 3, id: `session-${index}`, timestamp: "2026-01-01T00:00:00.000Z", cwd: projectPath },
+        { type: "session", version: 3, id: `session-${index}`, timestamp: "2026-01-01T00:00:00.000Z", cwd: projectPath, ...(parentSession ? { parentSession } : {}) },
         { type: "message", id: `user-${index}`, parentId: null, timestamp: "2026-01-01T00:00:01.000Z", message: { role: "user", content: [{ type: "text", text: "Test conversation" }], timestamp: 1 } },
         { type: "message", id: `assistant-${index}`, parentId: `user-${index}`, timestamp: "2026-01-01T00:00:02.000Z", message: { role: "assistant", content: [{ type: "text", text: "Done" }], timestamp: 2 } },
       ];
@@ -35,6 +36,7 @@ test("Pi discovery includes flat Joint Bob sessions and standard cwd session dir
     assert.equal(sessions.length, 2);
     assert.equal(new Set(sessions.map((session) => session.path)).size, 2);
     assert.ok(sessions.every((session) => session.agentLabel === "Pi"));
+    assert.equal(sessions.find((session) => session.id === "session-1")?.parentSessionPath, path.join(sessionRoot, "session-0.jsonl"));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

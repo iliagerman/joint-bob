@@ -540,6 +540,19 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
 
 /* ---- Lists ---- */
 .list-row { position: relative; min-width: 0; }
+.list-row[data-session-depth="1"] { margin-left: 18px; }
+.list-row[data-session-depth="1"]::before {
+  content: "";
+  position: absolute;
+  left: -10px;
+  top: 0;
+  width: 10px;
+  height: 28px;
+  border-left: 1px solid var(--line-strong);
+  border-bottom: 1px solid var(--line-strong);
+  border-radius: 0 0 0 6px;
+}
+.list-row[data-session-depth="1"] .session-card { min-height: 50px; }
 .project-card, .session-card {
   width: 100%;
   min-width: 0;

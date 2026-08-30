@@ -219,6 +219,7 @@ async function summarizeSession(sessionInfo: unknown): Promise<SessionSummary> {
     createdAt: typeof record.created === "string" ? record.created : fileStat?.birthtime.toISOString(),
     updatedAt: typeof record.modified === "string" ? record.modified : fileStat?.mtime.toISOString(),
     firstMessage: typeof record.firstMessage === "string" ? record.firstMessage : undefined,
+    parentSessionPath: typeof record.parentSessionPath === "string" ? record.parentSessionPath : undefined,
   };
 }
 
