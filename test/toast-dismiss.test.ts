@@ -18,7 +18,7 @@ test("toasts are dismissible and busy-session errors linger for six seconds", as
   assert.match(toastBody, /data-testid[\s\S]*toast-close-button|setAttribute\("data-testid", "toast-close-button"\)/);
   assert.match(toastBody, /addEventListener\("click", \(\) => \{[\s\S]*node\.remove\(\)/);
 
-  assert.match(app, /if \(payload\.type === "error"\) toast\(payload\.error, 6000\);/);
+  assert.match(app, /if \(payload\.type === "error"\) \{[\s\S]*toast\(payload\.error, 6000\);[\s\S]*\}/);
 
   const toastRule = /\n\.toast \{([^}]*)\}/.exec(styles)?.[1] ?? "";
   assert.match(toastRule, /display: flex;/);

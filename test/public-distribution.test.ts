@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { access, readFile } from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
 
 const text = (path: string) => readFile(path, "utf8");
@@ -14,10 +15,28 @@ test("Joint Bob package is public, executable, and pinned", async () => {
   assert.deepEqual(packageJson.bin, { "joint-bob": "bin/joint-bob.mjs" });
   assert.equal(dependencies["@earendil-works/pi-coding-agent"], "0.84.2");
   assert.equal(dependencies["@anthropic-ai/claude-code"], "2.1.239");
+  assert.equal(dependencies.codemirror, "5.65.16");
   assert.deepEqual(packageJson.publishConfig, { access: "public", provenance: true, registry: "https://registry.npmjs.org" });
   assert.ok((packageJson.files as string[]).includes(".joint-bob-release"));
   await access("bin/joint-bob.mjs");
   await access("npm-shrinkwrap.json");
+});
+
+test("every PWA shell asset exists", async () => {
+  const serviceWorker = await text("public/sw.js");
+  const match = /const APP_SHELL = (\[[^\n]+\]);/.exec(serviceWorker);
+  assert.ok(match, "Could not parse APP_SHELL from public/sw.js");
+  let shell: string[];
+  try { shell = JSON.parse(match[1]); }
+  catch { throw new Error("Could not parse APP_SHELL from public/sw.js"); }
+  for (const asset of shell) {
+    const assetPath = asset === "/"
+      ? "public/index.html"
+      : asset.startsWith("/vendor/codemirror/")
+        ? path.join("node_modules/codemirror", asset.slice("/vendor/codemirror/".length))
+        : path.join("public", asset.slice(1));
+    await access(assetPath);
+  }
 });
 
 test("one manifest pins every managed prerequisite", async () => {

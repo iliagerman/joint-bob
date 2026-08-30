@@ -1,47 +1,40 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn as spawnPty, type IPty } from "node-pty";
 import WebSocket from "ws";
 import { z } from "zod";
 
-const terminalMessageSchema = z.object({
-  type: z.literal("terminalInput"),
-  data: z.string().max(16_000),
-});
+const terminalMessageSchema = z.union([
+  z.object({
+    type: z.literal("terminalInput"),
+    data: z.string().max(16_000),
+  }),
+  z.object({
+    type: z.literal("terminalResize"),
+    cols: z.number().int().min(2).max(500),
+    rows: z.number().int().min(2).max(500),
+  }),
+]);
 
 function send(socket: WebSocket, payload: unknown): void {
   if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(payload));
 }
 
-function stopShell(child: ChildProcessWithoutNullStreams): void {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  if (child.pid && process.platform !== "win32") {
-    try {
-      process.kill(-child.pid, "SIGTERM");
-      return;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
-    }
-  }
-  child.kill("SIGTERM");
-}
-
+// A real pseudo-terminal, so interactive programs, colours, job control, and
+// xterm resize all behave exactly like a local terminal in the project folder.
 export function attachTerminalSession(socket: WebSocket, cwd: string, nodeId: string): void {
   const shell = process.env.SHELL || (process.platform === "win32" ? "cmd.exe" : "/bin/sh");
-  const child = spawn(shell, [], {
+  const terminal: IPty = spawnPty(shell, [], {
+    name: "xterm-256color",
     cwd,
-    detached: process.platform !== "win32",
-    env: { ...process.env, TERM: "dumb", NO_COLOR: "1", PAGER: "cat" },
-    stdio: ["pipe", "pipe", "pipe"],
+    cols: 80,
+    rows: 24,
+    env: { ...process.env, TERM: "xterm-256color" } as Record<string, string>,
   });
+  let exited = false;
 
-  child.once("spawn", () => send(socket, { type: "terminalReady", cwd, nodeId }));
-  child.stdout.on("data", (chunk: Buffer) => send(socket, { type: "terminalOutput", data: chunk.toString() }));
-  child.stderr.on("data", (chunk: Buffer) => send(socket, { type: "terminalOutput", data: chunk.toString() }));
-  child.once("error", (error) => {
-    send(socket, { type: "terminalError", error: `Could not start shell: ${error.message}` });
-    socket.close(1011, "Could not start shell");
-  });
-  child.once("close", (code, signal) => {
-    send(socket, { type: "terminalExit", code, signal });
+  terminal.onData((data) => send(socket, { type: "terminalOutput", data }));
+  terminal.onExit(({ exitCode, signal }) => {
+    exited = true;
+    send(socket, { type: "terminalExit", code: exitCode, signal });
     socket.close(1000, "Shell exited");
   });
   socket.on("message", (raw) => {
@@ -57,7 +50,17 @@ export function attachTerminalSession(socket: WebSocket, cwd: string, nodeId: st
       send(socket, { type: "terminalError", error: "Invalid terminal input" });
       return;
     }
-    child.stdin.write(parsed.data.data);
+    if (exited) return;
+    if (parsed.data.type === "terminalInput") terminal.write(parsed.data.data);
+    else terminal.resize(parsed.data.cols, parsed.data.rows);
   });
-  socket.once("close", () => stopShell(child));
+  socket.once("close", () => {
+    exited = true;
+    try {
+      terminal.kill();
+    } catch {
+      // The shell already exited between the close event and the kill.
+    }
+  });
+  send(socket, { type: "terminalReady", cwd, nodeId });
 }

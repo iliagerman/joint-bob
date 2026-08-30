@@ -25,7 +25,8 @@ export interface CommandDiscoveryOptions extends Partial<SkillRoots> {
 }
 
 const BUILTIN_COMMANDS = [
-  { name: "skill", description: "Browse installed skills" },
+  { name: "help", description: "Show available commands" },
+  { name: "skills", description: "Browse installed skills" },
   { name: "model", description: "Choose the session model" },
   { name: "tools", description: "Configure available tools" },
   { name: "compact", description: "Compact conversation context" },

@@ -50,14 +50,16 @@
     "prepack": "npm run build",
     "start": "npm run build && node dist/server.js",
     "serve:https": "bash scripts/serve-https.sh",
-    "test": "node --import tsx --test test/*.test.ts",
+    "test": "node --import tsx --test --test-concurrency=4 test/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@anthropic-ai/claude-code": "2.1.239",
     "@earendil-works/pi-coding-agent": "0.84.2",
+    "codemirror": "5.65.16",
     "express": "^4.19.2",
     "nanoid": "^5.0.7",
+    "node-pty": "^1.2.0-beta.15",
     "web-push": "^3.6.7",
     "ws": "^8.18.0",
     "zod": "^3.23.8"

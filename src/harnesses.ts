@@ -1,4 +1,4 @@
-import { sessionTitleOverrides } from "./names.js";
+import { sessionColorOverrides, sessionTitleOverrides } from "./names.js";
 import { createPiSession, listPiSessions, simplifyMessages } from "./pi-service.js";
 import { listClaudeSessions, loadClaudeMessages } from "./claude-service.js";
 import type { ChatMessage, HarnessId, ProjectRecord, SessionSummary } from "./types.js";
@@ -94,8 +94,12 @@ export function orderSessionFamilies(sessions: SessionSummary[]): SessionSummary
  * above it first so a deliberately kept conversation can never fall off the end.
  */
 export async function listHarnessSessions(project: HarnessProject, pinnedSessionPaths: string[] = []): Promise<SessionSummary[]> {
-  const overrides = await sessionTitleOverrides();
-  const sessions = (await Promise.all(adapters.map((adapter) => adapter.listSessions(project)))).flat();
+  const [overrides, colors, sessionGroups] = await Promise.all([
+    sessionTitleOverrides(),
+    sessionColorOverrides(),
+    Promise.all(adapters.map((adapter) => adapter.listSessions(project))),
+  ]);
+  const sessions = sessionGroups.flat();
   const seen = new Set<string>();
   const pinned = new Set(pinnedSessionPaths);
   const ordered = sessions
@@ -104,7 +108,11 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
       seen.add(session.path);
       return true;
     })
-    .map((session) => ({ ...session, title: overrides[session.id] ?? session.title }))
+    .map((session) => ({
+      ...session,
+      title: overrides[session.id] ?? session.title,
+      ...(colors[session.id] ? { color: colors[session.id] } : {}),
+    }))
     .sort((left, right) => (right.updatedAt ?? right.createdAt ?? "").localeCompare(left.updatedAt ?? left.createdAt ?? ""));
 
   return orderSessionFamilies([

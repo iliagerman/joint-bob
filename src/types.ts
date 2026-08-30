@@ -57,6 +57,7 @@ export type HarnessId = "pi" | "claude";
 export interface SessionSummary {
   id: string;
   path: string;
+  color?: ProjectColor;
   harnessId: HarnessId;
   /** The agent that last drove the conversation: its own harness, or a task engine that overrode it. */
   agentId: HarnessId;

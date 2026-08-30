@@ -36,10 +36,13 @@ test("chat exposes an embedded terminal on the selected project and node", async
 
   assert.match(html, /id="openTerminalButton"[^>]*data-testid="chat-open-terminal-button"/);
   assert.match(html, /id="terminalDialog"[^>]*data-testid="terminal-dialog"/);
-  assert.match(html, /id="terminalOutput"[^>]*data-testid="terminal-output"/);
-  assert.match(html, /id="terminalInput"[^>]*data-testid="terminal-input"/);
+  assert.match(html, /id="terminalHost"[^>]*data-testid="terminal-output"/);
+  assert.match(html, /src="\/vendor\/xterm\/xterm\.js"/);
+  assert.match(html, /href="\/vendor\/xterm\/xterm\.css"/);
   assert.match(app, /url\.searchParams\.set\("mode", "terminal"\)/);
-  assert.match(app, /type: "terminalInput", data:/);
+  assert.match(app, /type: "terminalInput", data/);
+  assert.match(app, /type: "terminalResize", cols/);
+  assert.match(app, /new window\.Terminal\(/);
   assert.match(server, /url\.searchParams\.get\("mode"\) === "terminal"/);
   assert.doesNotMatch(server, /app\.post\("\/api\/projects\/:projectId\/terminal"/);
   assert.doesNotMatch(server, /app\.post\("\/api\/cluster\/projects\/terminal"/);

@@ -85,6 +85,7 @@ export class SessionWatcher {
       if (project.dirWatchers.has(dir)) continue;
       try {
         const watcher = watch(dir, (_eventType, fileName) => this.handleEvent(projectId, dir, fileName));
+        watcher.unref();
         watcher.on("error", () => {
           watcher.close();
           project.dirWatchers.delete(dir);

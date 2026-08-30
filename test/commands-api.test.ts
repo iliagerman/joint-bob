@@ -24,6 +24,9 @@ test("Pi commands come from the same resource loader used by Pi sessions", async
     assert.ok(commands.some((command) => command.kind === "skill" && command.invocation === "/skill:debugging "));
     assert.ok(commands.some((command) => command.kind === "prompt" && command.invocation === "/review "));
     assert.ok(commands.some((command) => command.kind === "builtin" && command.invocation === "/model "));
+    assert.ok(commands.some((command) => command.kind === "builtin" && command.invocation === "/skills "));
+    assert.ok(commands.some((command) => command.kind === "builtin" && command.invocation === "/help "));
+    assert.ok(commands.every((command) => command.invocation !== "/skill "));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

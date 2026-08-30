@@ -1,5 +1,6 @@
 import { renderMarkdown } from "./markdown.js";
 import { renderBoard } from "./board.js";
+import { dispatchComposerInput, executeComposerCommand, LOCAL_COMMANDS } from "./composer-commands.js";
 
 const state = {
   projects: [],
@@ -7,6 +8,9 @@ const state = {
   skills: [],
   skillsLoading: false,
   skillsProjectId: null,
+  tools: [],
+  toolsSupported: true,
+  toolsLoading: false,
   commands: [],
   commandsLoading: false,
   commandsKey: null,
@@ -21,6 +25,9 @@ const state = {
   renameSessionEngine: "pi",
   newSessionDraft: null,
   pendingSessionTitle: null,
+  pendingSessionColor: null,
+  colorSessionId: null,
+  colorSessionEngine: "pi",
   projectsLoading: true,
   projectsRefreshing: false,
   sessionsLoading: false,
@@ -51,6 +58,9 @@ const state = {
   activeSessionId: null,
   chatFilter: "all",
   watchSocket: null,
+  watchProjectId: null,
+  rowMenuAnchor: null,
+  rowMenuAnchorSelector: null,
   watchReconnectTimer: null,
   watchPingTimer: null,
   activeProjectId: null,
@@ -77,8 +87,9 @@ const state = {
   historyDraft: "",
   durationTicker: 0,
   terminalSocket: null,
-  terminalHistory: [],
-  terminalHistoryIndex: 0,
+  terminalEmulator: null,
+  terminalFit: null,
+  terminalObserver: null,
   installPromptEvent: null,
   installDismissed: false,
   notificationsEnabled: false,
@@ -93,7 +104,7 @@ const state = {
   preferencesLoaded: false,
   initialProjectId: new URLSearchParams(location.search).get("projectId"),
   initialSessionPath: new URLSearchParams(location.search).get("sessionPath"),
-  fileEditor: { path: null, version: null, original: "", loading: false, saving: false },
+  fileEditor: { requestedPath: null, path: null, viewUrl: null, downloadUrl: null, contentUrl: null, version: null, original: "", loading: false, saving: false },
 };
 
 const TAKE_OWNERSHIP_WAIT_SECONDS = 5;
@@ -150,10 +161,7 @@ const elements = {
   openTerminalButton: document.querySelector("#openTerminalButton"),
   terminalDialog: document.querySelector("#terminalDialog"),
   terminalStatus: document.querySelector("#terminalStatus"),
-  terminalOutput: document.querySelector("#terminalOutput"),
-  terminalForm: document.querySelector("#terminalForm"),
-  terminalInput: document.querySelector("#terminalInput"),
-  terminalRunButton: document.querySelector("#terminalRunButton"),
+  terminalHost: document.querySelector("#terminalHost"),
   clearTerminalButton: document.querySelector("#clearTerminalButton"),
   closeTerminalButton: document.querySelector("#closeTerminalButton"),
   sessionTransferDialog: document.querySelector("#sessionTransferDialog"),
@@ -175,6 +183,9 @@ const elements = {
   skillsDialogList: document.querySelector("#skillsDialogList"),
   skillsDialogSearchInput: document.querySelector("#skillsDialogSearchInput"),
   closeSkillsDialogButton: document.querySelector("#closeSkillsDialogButton"),
+  toolsDialog: document.querySelector("#toolsDialog"),
+  toolsDialogList: document.querySelector("#toolsDialogList"),
+  closeToolsDialogButton: document.querySelector("#closeToolsDialogButton"),
   projectColorSwatches: document.querySelector("#projectColorSwatches"),
   modelDialog: document.querySelector("#modelDialog"),
   modelDialogTitle: document.querySelector("#modelDialogTitle"),
@@ -302,7 +313,12 @@ const elements = {
   newSessionNameDialog: document.querySelector("#newSessionNameDialog"),
   newSessionNameForm: document.querySelector("#newSessionNameForm"),
   newSessionNameInput: document.querySelector("#newSessionNameInput"),
+  newSessionColorSwatches: document.querySelector("#newSessionColorSwatches"),
   cancelNewSessionNameButton: document.querySelector("#cancelNewSessionNameButton"),
+  conversationColorDialog: document.querySelector("#conversationColorDialog"),
+  conversationColorForm: document.querySelector("#conversationColorForm"),
+  conversationColorSwatches: document.querySelector("#conversationColorSwatches"),
+  cancelConversationColorButton: document.querySelector("#cancelConversationColorButton"),
   installBanner: document.querySelector("#installBanner"),
   installBannerButton: document.querySelector("#installBannerButton"),
   dismissInstallButton: document.querySelector("#dismissInstallButton"),
@@ -385,6 +401,8 @@ const elements = {
   fileActionDialog: document.querySelector("#fileActionDialog"),
   fileActionPath: document.querySelector("#fileActionPath"),
   fileActionView: document.querySelector("#fileActionView"),
+  fileActionViewLink: document.querySelector("#fileActionViewLink"),
+  fileActionStatus: document.querySelector("#fileActionStatus"),
   fileActionDownloadLink: document.querySelector("#fileActionDownloadLink"),
   fileActionCancelButton: document.querySelector("#fileActionCancelButton"),
   fileActionEditButton: document.querySelector("#fileActionEditButton"),
@@ -393,7 +411,15 @@ const elements = {
   fileEditorCancelButton: document.querySelector("#fileEditorCancelButton"),
   fileEditorSaveButton: document.querySelector("#fileEditorSaveButton"),
   fileEditorStatus: document.querySelector("#fileEditorStatus"),
+  fileEditorMode: document.querySelector("#fileEditorMode"),
 };
+
+window.CodeMirror.modeURL = "/vendor/codemirror/mode/%N/%N.js";
+const fileEditor = window.CodeMirror.fromTextArea(elements.fileEditorTextarea, { keyMap: "vim", lineNumbers: true, lineWrapping: false });
+fileEditor.getInputField().dataset.testid = "file-editor-input";
+fileEditor.on("vim-mode-change", (_editor, mode) => {
+  elements.fileEditorMode.textContent = ({ normal: "Normal", insert: "Insert", replace: "Replace", visual: "Visual" })[mode.mode] || "";
+});
 
 function headers() {
   return state.csrfToken ? { "X-CSRF-Token": state.csrfToken, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
@@ -1420,28 +1446,44 @@ async function openProjectGithubSettings(project) {
 
 let projectPendingRename = null;
 
-/** Both the create dialog and the editor draw the same palette into their own container. */
-function renderProjectColorSwatches(selected, container) {
+/** Project and conversation pickers use one fixed palette. */
+function renderColorSwatches(selected, container, testid) {
   container.replaceChildren();
   for (const color of [null, ...PROJECT_COLORS]) {
     const swatch = document.createElement("button");
     swatch.type = "button";
     swatch.className = `color-swatch${color ? "" : " color-swatch-none"}${selected === color ? " selected" : ""}`;
-    swatch.dataset.testid = "project-color-swatch";
+    swatch.dataset.testid = testid;
     swatch.dataset.colorValue = color || "";
     swatch.setAttribute("role", "radio");
     swatch.setAttribute("aria-checked", String(selected === color));
     swatch.setAttribute("aria-label", color || "No colour");
     swatch.title = color || "No colour";
     if (color) swatch.dataset.color = color;
-    swatch.addEventListener("click", () => renderProjectColorSwatches(color, container));
+    swatch.addEventListener("click", () => renderColorSwatches(color, container, testid));
     container.append(swatch);
   }
 }
 
-function selectedProjectColor(container) {
+function renderProjectColorSwatches(selected, container) {
+  renderColorSwatches(selected, container, "project-color-swatch");
+}
+
+function renderSessionColorSwatches(selected, container) {
+  renderColorSwatches(selected, container, "conversation-color-swatch");
+}
+
+function selectedColor(container) {
   const selected = container.querySelector(".color-swatch.selected");
   return selected?.dataset.colorValue || null;
+}
+
+function selectedProjectColor(container) {
+  return selectedColor(container);
+}
+
+function selectedSessionColor(container) {
+  return selectedColor(container);
 }
 
 function openProjectRename(project) {
@@ -1472,6 +1514,15 @@ async function saveSessionTitle(sessionId, engine, title) {
   });
 }
 
+async function saveSessionColor(sessionId, engine, color) {
+  if (!state.activeProjectId || !sessionId) return;
+  await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/color`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sessionId, engine, color }),
+  });
+}
+
 async function renameSession(sessionId, engine, title) {
   await saveSessionTitle(sessionId, engine, title);
   // Pi keeps its own live session name, so mirror it while the socket is open. Only the
@@ -1488,6 +1539,13 @@ function openRenameDialog(sessionId, engine, currentTitle) {
   state.renameSessionEngine = engine;
   elements.sessionNameInput.value = currentTitle || "";
   elements.renameDialog.showModal();
+}
+
+function openConversationColorDialog(session) {
+  state.colorSessionId = session.id;
+  state.colorSessionEngine = session.path.startsWith("claude:") ? "claude" : "pi";
+  renderSessionColorSwatches(session.color || null, elements.conversationColorSwatches);
+  elements.conversationColorDialog.showModal();
 }
 
 /** The fixed palette mirrors PROJECT_COLORS in src/types.ts. */
@@ -1694,8 +1752,10 @@ function agentIcon(agentId) {
  * list's own scroll box. `popover` puts it in the top layer and handles Escape and
  * click-outside for us, so this only has to place it.
  */
-function openRowMenu(anchor, items) {
+function openRowMenu(anchor, items, anchorSelector = null) {
   const menu = elements.rowMenu;
+  state.rowMenuAnchor = anchor;
+  state.rowMenuAnchorSelector = anchorSelector;
   menu.replaceChildren(...items.map((item) => {
     const entry = document.createElement("button");
     entry.type = "button";
@@ -1712,9 +1772,32 @@ function openRowMenu(anchor, items) {
     });
     return entry;
   }));
-  menu.showPopover();
+  // togglePopover, not showPopover: a menu can now survive a background refresh,
+  // so the same button may be clicked again while it is still open.
+  menu.togglePopover(true);
   placeRowMenu(anchor);
   menu.querySelector("button:not(:disabled)")?.focus();
+}
+
+/**
+ * Background refreshes replace whole rows while a menu is open. Closing the menu
+ * on every refresh made it unusable on a running ticket, whose transcript writes
+ * trigger a sessions refresh about once a second. The menu is re-pointed at the
+ * fresh row instead, and only closes when that row is really gone.
+ */
+function refreshRowMenuAnchor() {
+  if (!elements.rowMenu.matches(":popover-open")) return;
+  if (state.rowMenuAnchor.isConnected) {
+    placeRowMenu(state.rowMenuAnchor);
+    return;
+  }
+  const replacement = state.rowMenuAnchorSelector ? document.querySelector(state.rowMenuAnchorSelector) : null;
+  if (!replacement) {
+    elements.rowMenu.togglePopover(false);
+    return;
+  }
+  state.rowMenuAnchor = replacement;
+  placeRowMenu(replacement);
 }
 
 /** Anchor positioning is not in every browser yet, so the coordinates are measured here. */
@@ -1747,7 +1830,7 @@ function pinButton({ pinned, label, testid, onToggle }) {
 
 function renderProjects() {
   // A background refresh must not leave a menu floating over rows that just moved.
-  elements.rowMenu.togglePopover(false);
+  queueMicrotask(refreshRowMenuAnchor);
   const projects = filteredProjects();
   elements.projectList.replaceChildren();
   if (state.projectsLoading) return;
@@ -2066,6 +2149,7 @@ function renderPendingReviewsDialog() {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "session-card";
+      if (entry.color) button.dataset.color = entry.color;
       button.dataset.testid = "pending-review-option";
       // Rows are single-line, so the full title lives in the tooltip.
       button.title = entry.title;
@@ -2236,6 +2320,7 @@ function renderRecentSessionsDialog() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `session-card${pinned ? " pinned" : ""}`;
+    if (entry.color) button.dataset.color = entry.color;
     button.dataset.testid = "recent-session-option";
     // Rows are single-line, so the full title lives in the tooltip.
     button.title = entry.title;
@@ -2273,7 +2358,7 @@ function renderRecentSessionsDialog() {
 function renderSessions() {
   syncRecentSessionActivity();
   // A background refresh must not leave a menu floating over rows that just moved.
-  elements.rowMenu.togglePopover(false);
+  queueMicrotask(refreshRowMenuAnchor);
   elements.sessionList.replaceChildren();
   renderChatSessionControls();
   // A conversation entering or leaving review changes its project's badge, so redraw that too.
@@ -2317,6 +2402,7 @@ function renderSessions() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `session-card${sessionActive ? " active" : ""}${sessionPinned ? " pinned" : ""}`;
+    if (session.color) button.dataset.color = session.color;
     const sessionName = document.createElement("strong");
     sessionName.textContent = shortSessionTitle(session);
     const meta = document.createElement("span");
@@ -2371,6 +2457,12 @@ function sessionMenuItems(session, sessionActive) {
       icon: "pin",
       testid: "session-pin-button",
       onSelect: () => togglePinnedSession(session.path),
+    },
+    {
+      label: "Colour",
+      icon: "sliders",
+      testid: "session-color-button",
+      onSelect: () => openConversationColorDialog(session),
     },
     {
       label: "Rename",
@@ -2572,69 +2664,102 @@ function projectFileApiUrl(route, filePath) {
   return url;
 }
 
-function projectFileContentUrl(filePath) {
-  const url = projectFileApiUrl("file-content", filePath);
+function projectFileResolutionUrl(filePath) {
+  const url = projectFileApiUrl("file-resolution", filePath);
   return `${url.pathname}${url.search}`;
 }
 
 function resetFileEditor() {
-  state.fileEditor = { path: null, version: null, original: "", loading: false, saving: false };
+  state.fileEditor = { requestedPath: null, path: null, viewUrl: null, downloadUrl: null, contentUrl: null, version: null, original: "", loading: false, saving: false };
   elements.fileActionView.hidden = false;
   elements.fileEditorView.hidden = true;
-  elements.fileEditorTextarea.value = "";
+  fileEditor.setValue("");
+  fileEditor.setOption("mode", null);
+  elements.fileActionStatus.textContent = "";
   elements.fileEditorStatus.textContent = "";
+  for (const link of [elements.fileActionViewLink, elements.fileActionDownloadLink]) {
+    link.removeAttribute("href");
+    link.setAttribute("aria-disabled", "true");
+  }
+  elements.fileActionEditButton.disabled = true;
 }
 
-function openFileAction(path) {
+async function openFileAction(path) {
   if (!state.activeProjectId || !path) return;
   resetFileEditor();
-  state.fileEditor.path = path;
+  state.fileEditor.requestedPath = path;
   elements.fileActionPath.textContent = path;
-  elements.fileActionDownloadLink.href = projectFileUrl(path, true);
   elements.fileActionDialog.showModal();
+  elements.fileActionStatus.textContent = "Finding file...";
+  try {
+    const body = await api(projectFileResolutionUrl(path));
+    if (!elements.fileActionDialog.open || state.fileEditor.requestedPath !== path) return;
+    Object.assign(state.fileEditor, { path: body.path, viewUrl: body.viewUrl, downloadUrl: body.downloadUrl, contentUrl: body.contentUrl });
+    elements.fileActionPath.textContent = body.path;
+    elements.fileActionViewLink.href = body.viewUrl;
+    elements.fileActionDownloadLink.href = body.downloadUrl;
+    elements.fileActionViewLink.removeAttribute("aria-disabled");
+    elements.fileActionDownloadLink.removeAttribute("aria-disabled");
+    elements.fileActionEditButton.disabled = false;
+    elements.fileActionStatus.textContent = "";
+  } catch (error) {
+    if (!elements.fileActionDialog.open || state.fileEditor.requestedPath !== path) return;
+    toast(error.message, 8000);
+    elements.fileActionStatus.textContent = error.message;
+  }
 }
 
 async function editProjectFile() {
-  const path = state.fileEditor.path;
-  if (!path) return;
+  const { contentUrl } = state.fileEditor;
+  if (!contentUrl) return;
   state.fileEditor.loading = true;
   elements.fileActionEditButton.disabled = true;
   elements.fileEditorStatus.textContent = "Loading…";
   try {
-    const body = await api(projectFileContentUrl(path));
-    state.fileEditor.version = body.version;
-    state.fileEditor.original = body.content;
-    elements.fileEditorTextarea.value = body.content;
+    const body = await api(contentUrl);
+    Object.assign(state.fileEditor, { path: body.path, version: body.version, original: body.content });
+    fileEditor.setValue(body.content);
+    const filename = body.path.split(/[\\/]/).pop();
+    const mode = window.CodeMirror.findModeByFileName(filename);
+    if (mode) window.CodeMirror.autoLoadMode(fileEditor, mode.mode);
+    else fileEditor.setOption("mode", null);
     elements.fileActionView.hidden = true;
     elements.fileEditorView.hidden = false;
     elements.fileEditorStatus.textContent = "";
-    elements.fileEditorTextarea.focus();
+    requestAnimationFrame(() => { fileEditor.refresh(); fileEditor.focus(); });
   } catch (error) { toast(error.message, 8000); elements.fileEditorStatus.textContent = error.message; }
   finally { state.fileEditor.loading = false; elements.fileActionEditButton.disabled = false; }
 }
 
 function attemptCloseFileEditor() {
   if (state.fileEditor.saving) return;
-  if (!elements.fileEditorView.hidden && elements.fileEditorTextarea.value !== state.fileEditor.original && !confirm("Discard unsaved changes?")) return;
+  if (!elements.fileEditorView.hidden && fileEditor.getValue() !== state.fileEditor.original && !confirm("Discard unsaved changes?")) return;
   elements.fileActionDialog.close();
   resetFileEditor();
 }
 
-async function saveProjectFile() {
-  const { path, version } = state.fileEditor;
-  if (!path || !version) return;
+async function saveProjectFile(closeAfterSave = true) {
+  if (state.fileEditor.saving) return;
+  const { contentUrl, version } = state.fileEditor;
+  if (!contentUrl || !version) return;
   const session = activeChatSession();
   if (!session?.id) { toast("Open a persisted conversation before editing files"); return; }
+  const content = fileEditor.getValue();
   state.fileEditor.saving = true;
   elements.fileEditorSaveButton.disabled = true;
   try {
-    await api(projectFileContentUrl(path), { method: "PUT", body: JSON.stringify({ content: elements.fileEditorTextarea.value, version, sessionId: session.id }) });
-    elements.fileActionDialog.close();
-    resetFileEditor();
-    toast("File saved");
+    const body = await api(contentUrl, { method: "PUT", body: JSON.stringify({ content, version, sessionId: session.id }) });
+    Object.assign(state.fileEditor, { path: body.path, version: body.version, original: content });
+    if (closeAfterSave) {
+      elements.fileActionDialog.close();
+      resetFileEditor();
+      toast("File saved");
+    } else elements.fileEditorStatus.textContent = "Saved";
   } catch (error) { toast(error.message, 8000); }
   finally { state.fileEditor.saving = false; elements.fileEditorSaveButton.disabled = false; }
 }
+
+window.CodeMirror.commands.save = () => { void saveProjectFile(false); };
 
 const FILE_PATH_RE = /(^|[\s()\[\]{}'"])((?:\.\/?|\.\.\/|(?:\/|[A-Z]:\\)?(?:[\w.-]+\/)+)[\w.-]+\.[A-Za-z0-9]{1,8})/g;
 const TOOL_OUTPUT_DISPLAY_LIMIT = 20000;
@@ -2667,6 +2792,7 @@ function renderToolContent(container, text) {
       anchor.target = "_blank";
       anchor.rel = "noopener noreferrer";
       anchor.textContent = candidate;
+      anchor.dataset.filePath = candidate;
       nodes.push(anchor);
       nodes.push(document.createTextNode(" "));
       const open = document.createElement("a");
@@ -2675,6 +2801,7 @@ function renderToolContent(container, text) {
       open.title = `Download ${candidate}`;
       open.href = href;
       open.download = "";
+      open.dataset.filePath = candidate;
       nodes.push(open);
     } else {
       nodes.push(document.createTextNode(candidate));
@@ -2976,12 +3103,114 @@ async function openSkillsDialog() {
   if (elements.skillsDialog.open) elements.skillsDialogSearchInput.focus();
 }
 
-const LOCAL_COMMANDS = [
-  { name: "skill", description: "Browse installed skills", invocation: "/skill ", kind: "builtin" },
-  { name: "model", description: "Choose the session model", invocation: "/model ", kind: "builtin" },
-  { name: "tools", description: "Configure available tools", invocation: "/tools ", kind: "builtin" },
-  { name: "compact", description: "Compact conversation context", invocation: "/compact ", kind: "builtin" },
-];
+function toolOption(tool) {
+  const label = document.createElement("label");
+  label.className = "tool-option";
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = tool.active;
+  checkbox.disabled = state.sessionBusy;
+  checkbox.dataset.testid = "tools-dialog-tool-toggle";
+  checkbox.addEventListener("change", () => {
+    const toolNames = state.tools
+      .filter((candidate) => candidate.name === tool.name ? checkbox.checked : candidate.active)
+      .map((candidate) => candidate.name);
+    if (!sendSocket({ type: "setTools", toolNames })) {
+      checkbox.checked = !checkbox.checked;
+      toast("Conversation is not connected yet");
+      return;
+    }
+    state.toolsLoading = true;
+    renderToolsDialog();
+  });
+  const copy = document.createElement("span");
+  const name = document.createElement("strong");
+  name.textContent = tool.name;
+  const description = document.createElement("span");
+  description.className = "tool-option-description";
+  description.textContent = tool.description;
+  copy.append(name, description);
+  label.append(checkbox, copy);
+  return label;
+}
+
+function renderToolsDialog() {
+  elements.toolsDialogList.replaceChildren();
+  if (state.toolsLoading) {
+    const loading = document.createElement("span");
+    loading.className = "model-shortcuts-empty";
+    loading.textContent = "Loading tools…";
+    elements.toolsDialogList.append(loading);
+    return;
+  }
+  if (!state.toolsSupported) {
+    const unsupported = document.createElement("span");
+    unsupported.className = "model-shortcuts-empty";
+    unsupported.textContent = "Tool configuration is only available for Pi.";
+    elements.toolsDialogList.append(unsupported);
+    return;
+  }
+  if (!state.tools.length) {
+    const empty = document.createElement("span");
+    empty.className = "model-shortcuts-empty";
+    empty.textContent = "No tools are available for this session.";
+    elements.toolsDialogList.append(empty);
+    return;
+  }
+  for (const tool of state.tools) elements.toolsDialogList.append(toolOption(tool));
+}
+
+function openToolsDialog() {
+  state.tools = [];
+  state.toolsLoading = true;
+  state.toolsSupported = true;
+  elements.toolsDialog.showModal();
+  renderToolsDialog();
+  if (!sendSocket({ type: "tools" })) {
+    state.toolsLoading = false;
+    renderToolsDialog();
+    toast("Conversation is not connected yet");
+  }
+}
+
+function openModelDialog() {
+  renderModelDialog();
+  elements.modelDialog.showModal();
+}
+
+function composerCommandHandlers() {
+  return {
+    help: () => {
+      setInputValue("/");
+      elements.messageInput.focus();
+      renderCommandAutocomplete();
+    },
+    skills: () => {
+      setInputValue("");
+      void openSkillsDialog();
+    },
+    model: () => {
+      setInputValue("");
+      openModelDialog();
+    },
+    tools: () => {
+      setInputValue("");
+      openToolsDialog();
+    },
+    compact: (instructions) => {
+      setInputValue("");
+      if (state.engine !== "pi") {
+        toast("Compaction is only available for Pi.");
+        return;
+      }
+      if (!sendSocket({ type: "compact", message: instructions })) {
+        toast("Conversation is not connected yet");
+        return;
+      }
+      toast("Compacting conversation…");
+    },
+  };
+}
 
 function commandSourceKey() {
   return `${state.activeProjectId}:${state.engine}`;
@@ -3038,9 +3267,11 @@ function commandAutocompleteOpen() {
 function selectCommandSuggestion(index = state.commandAutocompleteIndex) {
   const suggestion = state.commandSuggestions[index];
   if (!suggestion) return;
-  setInputValue(suggestion.invocation);
   hideCommandAutocomplete();
-  elements.messageInput.focus();
+  if (!executeComposerCommand(suggestion.invocation, composerCommandHandlers())) {
+    setInputValue(suggestion.invocation);
+    elements.messageInput.focus();
+  }
 }
 
 function renderCommandAutocomplete() {
@@ -3215,8 +3446,19 @@ function sendSocket(payload) {
   return true;
 }
 
+/**
+ * The ticket a conversation belongs to. A ticket owns its session file, so the
+ * link holds however the conversation was reached - from the board card, or
+ * straight from the Chats list, which never sets an active ticket.
+ */
+function conversationTask() {
+  const opened = state.tasks.find((candidate) => candidate.id === state.activeTaskId);
+  if (opened) return opened;
+  return state.tasks.find((candidate) => candidate.sessionPath && candidate.sessionPath === state.activeSessionPath);
+}
+
 function renderTaskBacklink() {
-  const task = state.activeTaskId ? state.tasks.find((candidate) => candidate.id === state.activeTaskId) : null;
+  const task = conversationTask();
   elements.taskBacklinkButton.hidden = !task;
   if (!task) return;
   elements.taskBacklinkButton.textContent = `◂ ${task.title}`;
@@ -3308,6 +3550,7 @@ function updateStatus(status) {
   syncReasoningControls(status);
   syncModelButton();
   syncSafeguardsButton();
+  if (elements.toolsDialog.open) renderToolsDialog();
 }
 
 function piUiModels(models) {
@@ -3555,6 +3798,7 @@ function openSession(sessionPath, title = "New Pi conversation", preserveChat = 
   closeSocket();
   if (!preserveChat) {
     state.pendingSessionTitle = null;
+    state.pendingSessionColor = null;
     clearChat();
     clearAttachments();
     const node = state.sessionNodes.find((candidate) => candidate.id === state.activeNodeId);
@@ -3633,6 +3877,13 @@ function handleSocketPayload(payload) {
         .then(() => refreshSessionsQuietly())
         .catch((error) => toast(error.message, 8000));
     }
+    const pendingColor = state.pendingSessionColor;
+    if (pendingColor && payload.sessionId) {
+      state.pendingSessionColor = null;
+      saveSessionColor(payload.sessionId, state.engine, pendingColor)
+        .then(() => refreshSessionsQuietly())
+        .catch((error) => toast(error.message, 8000));
+    }
     const matchingSession = state.sessions.find((session) => session.path === payload.sessionFile);
     elements.sessionTitle.textContent = pendingTitle
       ? pendingTitle
@@ -3677,6 +3928,13 @@ function handleSocketPayload(payload) {
   }
   if (payload.type === "models") {
     setModels(payload.models || []);
+    return;
+  }
+  if (payload.type === "tools") {
+    state.tools = payload.tools || [];
+    state.toolsSupported = payload.supported !== false;
+    state.toolsLoading = false;
+    renderToolsDialog();
     return;
   }
   if (payload.type === "status") {
@@ -3781,7 +4039,13 @@ function handleSocketPayload(payload) {
     openSession(state.activeSessionPath, elements.sessionTitle.textContent || "Pi session", true, Boolean(state.activeTaskId));
     return;
   }
-  if (payload.type === "error") toast(payload.error, 6000);
+  if (payload.type === "error") {
+    if (elements.toolsDialog.open && state.toolsLoading) {
+      state.toolsLoading = false;
+      renderToolsDialog();
+    }
+    toast(payload.error, 6000);
+  }
 }
 
 async function refreshSessionsQuietly() {
@@ -3829,7 +4093,7 @@ function renderBoardView() {
     elements.boardColumns.replaceChildren();
     return;
   }
-  elements.rowMenu.togglePopover(false);
+  queueMicrotask(refreshRowMenuAnchor);
   renderBoard(elements.boardColumns, state.tasks, {
     onEdit: openEditTaskDialog,
     onMove: moveTask,
@@ -3843,7 +4107,7 @@ function renderBoardView() {
     onArchive: archiveTask,
     onDelete: deleteTaskFromCard,
     onSettings: openEditTaskDialog,
-    onMenu: (anchor, items) => openRowMenu(anchor, items),
+    onMenu: (anchor, items, task) => openRowMenu(anchor, items, `[data-task-id="${CSS.escape(task.id)}"] [data-testid="board-task-menu-button"]`),
   });
 }
 
@@ -3935,6 +4199,8 @@ function openNewTaskDialog(status = "backlog") {
   elements.taskReviewModeInput.checked = false;
   populatePhaseModelInputs();
   elements.deleteTaskButton.hidden = true;
+  conversationTabButton().disabled = true;
+  setTaskDialogTab("settings");
   elements.taskDialog.showModal();
 }
 
@@ -3961,13 +4227,17 @@ function detachChatFromTaskDialog() {
   for (const node of taskChatNodes()) elements.chatPanel.append(node);
 }
 
+function conversationTabButton() {
+  return elements.taskTabs.find((button) => button.dataset.taskTab === "conversation");
+}
+
 function setTaskDialogTab(tab) {
   for (const button of elements.taskTabs) {
     const selected = button.dataset.taskTab === tab;
     button.setAttribute("aria-selected", String(selected));
     button.tabIndex = selected ? 0 : -1;
   }
-  elements.taskForm.hidden = tab !== "ticket";
+  elements.taskForm.hidden = tab !== "settings";
   elements.taskChatHost.hidden = tab !== "conversation";
   if (tab === "conversation") stickyScroll(true);
 }
@@ -3984,12 +4254,11 @@ function openEditTaskDialog(task) {
   populatePhaseModelInputs(task);
   elements.deleteTaskButton.hidden = false;
 
-  const conversationTab = elements.taskTabs.find((button) => button.dataset.taskTab === "conversation");
-  conversationTab.disabled = !task.sessionPath;
+  conversationTabButton().disabled = !task.sessionPath;
   attachChatToTaskDialog();
   // Reading the ticket's own conversation is the common reason to open this, so
   // it wins the default tab whenever there is one to read.
-  setTaskDialogTab(task.sessionPath ? "conversation" : "ticket");
+  setTaskDialogTab(task.sessionPath ? "conversation" : "settings");
   elements.taskDialog.showModal();
   if (task.sessionPath && task.sessionPath !== state.activeSessionPath) {
     state.activeTaskId = task.id;
@@ -4134,6 +4403,7 @@ function closeWatchSocket() {
   state.watchPingTimer = null;
   const socket = state.watchSocket;
   state.watchSocket = null;
+  state.watchProjectId = null;
   if (socket) socket.close();
   elements.chatsLiveDot.hidden = true;
 }
@@ -4143,7 +4413,11 @@ function ensureWatchSocket() {
     closeWatchSocket();
     return;
   }
-  if (state.watchSocket && (state.watchSocket.readyState === WebSocket.OPEN || state.watchSocket.readyState === WebSocket.CONNECTING)) return;
+  // The subscription is bound to one project at connect time. Keeping a socket
+  // that still watches the project we left costs the board every live update -
+  // a ticket that gains a conversation only grows its chat button on a reload.
+  const live = state.watchSocket && (state.watchSocket.readyState === WebSocket.OPEN || state.watchSocket.readyState === WebSocket.CONNECTING);
+  if (live && state.watchProjectId === state.activeProjectId) return;
   closeWatchSocket();
 
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -4153,6 +4427,7 @@ function ensureWatchSocket() {
 
   const socket = new WebSocket(url.toString());
   state.watchSocket = socket;
+  state.watchProjectId = state.activeProjectId;
   socket.addEventListener("open", () => {
     elements.chatsLiveDot.hidden = false;
     state.watchPingTimer = setInterval(() => {
@@ -4190,9 +4465,11 @@ elements.backToProjectsButton.addEventListener("click", () => setMobileView("pro
 elements.backToChatsButton.addEventListener("click", () => setMobileView("sessions"));
 elements.backToSessionsButton.addEventListener("click", () => setMobileView("sessions"));
 elements.taskBacklinkButton.addEventListener("click", () => {
+  const task = conversationTask();
+  if (!task) return;
   renderBoardView();
   setMobileView("board");
-  focusTaskCard(state.activeTaskId);
+  focusTaskCard(task.id);
 });
 elements.openBoardButton.addEventListener("click", () => {
   renderBoardView();
@@ -4526,20 +4803,61 @@ function activeChatSession() {
   return state.sessions.find((session) => state.activeSessionId ? session.id === state.activeSessionId : session.path === state.activeSessionPath);
 }
 
-const TERMINAL_OUTPUT_LIMIT = 200_000;
+// A real xterm terminal bound to the selected node's PTY. The emulator is created once and reused;
+// every open starts a fresh shell in the selected project folder on the selected node.
+function terminalCssColor(name, fallback) {
+  return getComputedStyle(elements.terminalHost).getPropertyValue(name).trim() || fallback;
+}
 
-function appendTerminalOutput(text) {
-  const output = `${elements.terminalOutput.textContent || ""}${text}`;
-  elements.terminalOutput.textContent = output.slice(-TERMINAL_OUTPUT_LIMIT);
-  elements.terminalOutput.scrollTop = elements.terminalOutput.scrollHeight;
+function ensureTerminalEmulator() {
+  if (state.terminalEmulator) return state.terminalEmulator;
+  const emulator = new window.Terminal({
+    cursorBlink: true,
+    fontFamily: "var(--mono)",
+    fontSize: 12.5,
+    scrollback: 5000,
+    theme: {
+      background: terminalCssColor("--code-bg", "#08090b"),
+      foreground: terminalCssColor("--code-text", "#ebeced"),
+      cursor: terminalCssColor("--accent", "#37cfab"),
+      cursorAccent: terminalCssColor("--code-bg", "#08090b"),
+      selectionBackground: "#37cfab55",
+    },
+  });
+  const fit = new window.FitAddon();
+  emulator.loadAddon(fit);
+  emulator.open(elements.terminalHost);
+  state.terminalFit = fit;
+  emulator.onData((data) => {
+    if (state.terminalSocket?.readyState === WebSocket.OPEN) {
+      state.terminalSocket.send(JSON.stringify({ type: "terminalInput", data }));
+    }
+  });
+  state.terminalObserver = new ResizeObserver(() => {
+    if (!state.terminalSocket || state.terminalSocket.readyState !== WebSocket.OPEN) return;
+    fit.fit();
+    state.terminalSocket.send(JSON.stringify({ type: "terminalResize", cols: emulator.cols, rows: emulator.rows }));
+  });
+  state.terminalObserver.observe(elements.terminalHost);
+  state.terminalEmulator = emulator;
+  return emulator;
+}
+
+function fitTerminalOnceVisible() {
+  // The dialog was hidden when the emulator attached, so measure now that it is in the top layer.
+  const emulator = state.terminalEmulator;
+  if (!emulator || !elements.terminalDialog.open) return;
+  state.terminalFit.fit();
+  if (state.terminalSocket?.readyState === WebSocket.OPEN) {
+    state.terminalSocket.send(JSON.stringify({ type: "terminalResize", cols: emulator.cols, rows: emulator.rows }));
+  }
 }
 
 function closeTerminalSocket() {
   const socket = state.terminalSocket;
   state.terminalSocket = null;
   if (socket) socket.close();
-  elements.terminalInput.disabled = true;
-  elements.terminalRunButton.disabled = true;
+  state.terminalEmulator?.blur();
 }
 
 function terminalWebsocketUrl() {
@@ -4555,10 +4873,11 @@ function openProjectTerminal() {
   if (!state.activeProjectId || !state.activeNodeId) throw new Error("Select a project and execution node first");
   const node = state.sessionNodes.find((candidate) => candidate.id === state.activeNodeId);
   closeTerminalSocket();
-  elements.terminalOutput.textContent = "";
-  elements.terminalInput.value = "";
-  elements.terminalStatus.textContent = `Connecting to ${node?.name || "node"}…`;
+  elements.terminalStatus.textContent = `Connecting to ${node?.name || "node"}...`;
   elements.terminalDialog.showModal();
+  const emulator = ensureTerminalEmulator();
+  emulator.reset();
+  requestAnimationFrame(() => { fitTerminalOnceVisible(); emulator.focus(); });
 
   const socket = new WebSocket(terminalWebsocketUrl());
   state.terminalSocket = socket;
@@ -4566,27 +4885,22 @@ function openProjectTerminal() {
     if (state.terminalSocket !== socket) return;
     const payload = JSON.parse(event.data);
     if (payload.type === "terminalReady") {
-      elements.terminalStatus.textContent = `${node?.name || "Node"} · ${payload.cwd}`;
-      elements.terminalInput.disabled = false;
-      elements.terminalRunButton.disabled = false;
-      elements.terminalInput.focus();
+      elements.terminalStatus.textContent = `${node?.name || "Node"} \u00b7 ${payload.cwd}`;
+      emulator.focus();
     }
-    if (payload.type === "terminalOutput") appendTerminalOutput(payload.data || "");
-    if (payload.type === "terminalError") appendTerminalOutput(`\nError: ${payload.error}\n`);
-    if (payload.type === "terminalExit") appendTerminalOutput(`\n[Shell exited${payload.code === null ? "" : ` with code ${payload.code}`}]\n`);
+    if (payload.type === "terminalOutput") emulator.write(payload.data || "");
+    if (payload.type === "terminalError") emulator.write(`\r\nError: ${payload.error}\r\n`);
+    if (payload.type === "terminalExit") emulator.write(`\r\n[Shell exited${payload.code === null ? "" : ` with code ${payload.code}`}]\r\n`);
   });
   socket.addEventListener("close", () => {
     if (state.terminalSocket !== socket) return;
     state.terminalSocket = null;
     elements.terminalStatus.textContent = "Disconnected";
-    elements.terminalInput.disabled = true;
-    elements.terminalRunButton.disabled = true;
   });
   socket.addEventListener("error", () => {
-    if (state.terminalSocket === socket) appendTerminalOutput("\nCould not connect to terminal.\n");
+    if (state.terminalSocket === socket) emulator.write("\r\nCould not connect to terminal.\r\n");
   });
 }
-
 async function openSessionTransferDialog() {
   const task = state.activeTaskId ? state.tasks.find((candidate) => candidate.id === state.activeTaskId) : null;
   if (state.activeTaskId && !task) throw new Error("Active ticket was not found");
@@ -4694,6 +5008,7 @@ elements.loginForm.addEventListener("submit", submitLogin);
 function openNewSessionNameDialog(sessionPath, defaultTitle) {
   state.newSessionDraft = { sessionPath, defaultTitle };
   elements.newSessionNameInput.value = "";
+  renderSessionColorSwatches(null, elements.newSessionColorSwatches);
   elements.newSessionNameDialog.showModal();
 }
 elements.newSessionButton.addEventListener("click", () => openNewSessionNameDialog(null, "New Pi conversation"));
@@ -4703,11 +5018,13 @@ elements.newSessionNameForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const draft = state.newSessionDraft;
   const title = elements.newSessionNameInput.value.trim();
+  const color = selectedSessionColor(elements.newSessionColorSwatches);
   elements.newSessionNameDialog.close();
   state.newSessionDraft = null;
   state.activeSessionId = null;
   openSession(draft.sessionPath, title || draft.defaultTitle);
   state.pendingSessionTitle = title || null;
+  state.pendingSessionColor = color;
 });
 elements.chatNodeSelect.addEventListener("change", async () => {
   const destination = state.sessionNodes.find((node) => node.id === elements.chatNodeSelect.value);
@@ -4807,10 +5124,8 @@ elements.collapseChatsButton.addEventListener("click", () => setPanelCollapsed("
 elements.expandChatsButton.addEventListener("click", () => setPanelCollapsed("chats", false));
 elements.skillsDialogSearchInput.addEventListener("input", () => renderSkillsDialog());
 elements.closeSkillsDialogButton.addEventListener("click", () => elements.skillsDialog.close());
-elements.modelButton.addEventListener("click", () => {
-  renderModelDialog();
-  elements.modelDialog.showModal();
-});
+elements.closeToolsDialogButton.addEventListener("click", () => elements.toolsDialog.close());
+elements.modelButton.addEventListener("click", openModelDialog);
 elements.safeguardsButton.addEventListener("click", () => {
   if (!socketOpen()) {
     toast("Conversation is not connected yet");
@@ -4830,24 +5145,7 @@ elements.openTerminalButton.addEventListener("click", () => {
   try { openProjectTerminal(); }
   catch (error) { toast(error.message, 8000); }
 });
-elements.terminalForm.addEventListener("submit", (event) => {
-  event.preventDefault();
-  const command = elements.terminalInput.value;
-  if (!command.trim() || state.terminalSocket?.readyState !== WebSocket.OPEN) return;
-  appendTerminalOutput(`$ ${command}\n`);
-  state.terminalHistory = [...state.terminalHistory, command].slice(-100);
-  state.terminalHistoryIndex = state.terminalHistory.length;
-  state.terminalSocket.send(JSON.stringify({ type: "terminalInput", data: `${command}\n` }));
-  elements.terminalInput.value = "";
-});
-elements.terminalInput.addEventListener("keydown", (event) => {
-  if (!state.terminalHistory.length || !["ArrowUp", "ArrowDown"].includes(event.key)) return;
-  event.preventDefault();
-  const offset = event.key === "ArrowUp" ? -1 : 1;
-  state.terminalHistoryIndex = Math.max(0, Math.min(state.terminalHistory.length, state.terminalHistoryIndex + offset));
-  elements.terminalInput.value = state.terminalHistory[state.terminalHistoryIndex] || "";
-});
-elements.clearTerminalButton.addEventListener("click", () => { elements.terminalOutput.textContent = ""; });
+elements.clearTerminalButton.addEventListener("click", () => { state.terminalEmulator?.clear(); });
 elements.closeTerminalButton.addEventListener("click", () => elements.terminalDialog.close());
 elements.terminalDialog.addEventListener("close", closeTerminalSocket);
 function setOwnershipTransferControls(disabled) {
@@ -4984,7 +5282,12 @@ elements.composer.addEventListener("submit", (event) => {
     images: state.attachments.filter((attachment) => attachment.kind === "image").map(({ name, mimeType, data }) => ({ name, mimeType, data })),
     files: state.attachments.filter((attachment) => attachment.kind === "file").map(({ name, mimeType, data }) => ({ name, mimeType, data })),
   };
-  if (!sendSocket(payload)) {
+  let sent = false;
+  const route = dispatchComposerInput(message, state.attachments.length > 0, composerCommandHandlers(), () => {
+    sent = sendSocket(payload);
+  });
+  if (route === "command") return;
+  if (!sent) {
     toast("Conversation is not connected yet");
     return;
   }
@@ -5004,6 +5307,19 @@ elements.renameSessionButton.addEventListener("click", () => {
   openRenameDialog(state.activeSessionId, state.engine, elements.sessionTitle.textContent);
 });
 elements.cancelRenameButton.addEventListener("click", () => elements.renameDialog.close());
+elements.cancelConversationColorButton.addEventListener("click", () => elements.conversationColorDialog.close());
+elements.conversationColorForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const color = selectedSessionColor(elements.conversationColorSwatches);
+  elements.conversationColorDialog.close();
+  try {
+    await saveSessionColor(state.colorSessionId, state.colorSessionEngine, color);
+    await refreshSessionsQuietly();
+    toast(color ? "Conversation colour saved" : "Conversation colour cleared");
+  } catch (error) {
+    toast(error.message, 8000);
+  }
+});
 elements.renameForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const title = elements.sessionNameInput.value.trim();
@@ -5068,14 +5384,7 @@ elements.attachmentInput.addEventListener("change", async (event) => {
 });
 document.querySelectorAll(".command-strip button[data-command]").forEach((button) => {
   button.addEventListener("click", () => {
-    const command = button.dataset.command || "";
-    if (command === "/skill") {
-      void openSkillsDialog();
-      return;
-    }
-    elements.messageInput.value = command;
-    elements.messageInput.focus();
-    elements.messageInput.setSelectionRange(command.length, command.length);
+    executeComposerCommand(button.dataset.command || "", composerCommandHandlers());
   });
 });
 

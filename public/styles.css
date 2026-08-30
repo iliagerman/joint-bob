@@ -719,17 +719,22 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
 
 .task-card-actions {
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 4px;
-  padding: 6px 8px;
+  gap: 2px;
+  padding: 5px 6px;
   border-top: 1px solid var(--line);
   background: color-mix(in srgb, var(--field) 45%, transparent);
 }
-.task-card-actions-main { flex: 1; display: flex; align-items: center; justify-content: center; gap: 4px; }
-.task-action { min-width: 32px; width: 32px; min-height: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
-.task-action:disabled { opacity: 0.35; }
-.task-card-icon { width: 16px; height: 16px; flex: none; }
-.task-open-chat { color: var(--accent); }
+.task-card-actions-main { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; gap: 2px; }
+.task-action { min-width: 30px; width: 30px; min-height: 30px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+.task-action:disabled { opacity: 0.32; }
+.task-card-icon { width: 17px; height: 17px; flex: none; }
+/* The arrows only move a ticket, so they stay quiet next to the two controls
+   that open something. */
+.task-move { color: var(--muted); }
+.task-open-chat { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.task-open-chat:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
 .task-start { color: var(--live); }
 
 .task-card.dragging { opacity: 0.5; }
@@ -756,7 +761,7 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
 }
 .chat-title-block { min-width: 0; flex: 1; }
 .chat-topbar h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 19px; line-height: 1.25; }
-.chat-title-meta { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.chat-title-meta { display: flex; align-items: center; gap: 8px; min-width: 0; margin-top: 3px; }
 .chat-project-name {
   display: block;
   flex: 0 1 38%;
@@ -769,11 +774,10 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
   text-transform: uppercase;
   white-space: nowrap;
 }
-.mini-status { min-width: 0; margin-top: 3px; color: var(--muted); font-size: 10.5px; font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.turn-timer { flex: 0 0 auto; margin-top: 3px; color: var(--muted); font-family: var(--mono); font-size: 10.5px; white-space: nowrap; }
+.mini-status { min-width: 0; color: var(--muted); font-size: 10.5px; font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.turn-timer { flex: 0 0 auto; color: var(--muted); font-family: var(--mono); font-size: 10.5px; white-space: nowrap; }
 .task-backlink {
   flex: 0 0 auto;
-  margin-top: 3px;
   border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line));
   border-radius: 6px;
   background: color-mix(in srgb, var(--accent) 8%, transparent);
@@ -788,8 +792,11 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
   transition: background-color 130ms ease, border-color 130ms ease;
 }
 .task-backlink:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
-.chat-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
-.chat-actions .icon-button svg { width: 18px; height: 18px; }
+/* The traffic light and Stop ride the meta row, so they line up with the ticket
+   chip instead of floating between the title and the meta line. */
+.chat-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; margin-left: auto; padding-left: 8px; }
+.chat-actions .icon-button { min-width: 24px; width: 24px; min-height: 24px; }
+.chat-actions .icon-button svg { width: 15px; height: 15px; }
 .panel-toolbar, .chat-toolbar {
   display: flex;
   align-items: center;
@@ -1190,27 +1197,14 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 .terminal-output {
   height: min(54dvh, 520px);
   min-height: 260px;
-  margin: 0;
-  overflow: auto;
-  overscroll-behavior: contain;
   border: 1px solid var(--code-line);
   border-radius: var(--radius-ctl);
   background: var(--code-bg);
   color: var(--code-text);
-  padding: 16px;
-  font: 12.5px/1.55 var(--mono);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  tab-size: 2;
+  padding: 12px;
 }
-.terminal-form {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-}
-.terminal-prompt { color: var(--accent); font: 700 14px var(--mono); }
-.terminal-form input { min-width: 0; font-family: var(--mono); }
+.terminal-output .xterm { height: 100%; }
+.terminal-output .xterm-viewport { background: transparent !important; }
 .checkbox-row { display: flex; flex-direction: row; align-items: center; gap: 10px; color: var(--text); font-weight: 500; }
 .checkbox-row input { width: 16px; height: 16px; min-width: auto; accent-color: var(--ink); }
 .phase-settings { display: grid; gap: 10px; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); }
@@ -1478,6 +1472,8 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   /* The menu is the only way to reach a row's actions, so it needs a real touch target,
      and a wider lane to sit in so the title still clears it. */
   .row-menu-button { min-height: 34px; min-width: 34px; }
+  /* Stop stays a real touch target on phones without leaving the meta row. */
+  .chat-actions .icon-button { min-width: 32px; width: 32px; min-height: 32px; }
   .project-card, .session-card { padding-right: 52px; }
 
 }
@@ -1564,6 +1560,23 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   font-size: 11px;
   line-height: 1.4;
 }
+
+/* ---- Tool picker ---- */
+.tools-dialog-list { display: grid; gap: 4px; min-width: 0; max-height: 52dvh; overflow-y: auto; }
+.tool-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-ctl);
+  background: transparent;
+  color: var(--text);
+}
+.tool-option input { margin-top: 2px; }
+.tool-option strong { display: block; font: 600 12.5px/1.3 var(--mono); }
+.tool-option-description { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; line-height: 1.4; }
 
 /* ---- Row overflow menu ---- */
 .row-menu-button { font-size: 15px; line-height: 1; }
@@ -1667,7 +1680,7 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 .recent-sessions-list .session-card.pinned { border-color: color-mix(in srgb, var(--accent) 34%, var(--line)); }
 .recent-sessions-list .pin-button:not(.pinned) { opacity: 0.55; }
 
-/* ---- Project colours ---- */
+/* ---- Row colours ---- */
 .field-group { display: grid; gap: 6px; }
 .field-label { color: var(--muted); font-size: 11px; }
 .color-swatches { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -1693,10 +1706,13 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 [data-color="green"] { --project-hue: #46b35e; }
 [data-color="red"] { --project-hue: #e05c4b; }
 
-/* The accent bar makes a project findable by colour before the name is read. */
+/* The accent bar makes a row findable by colour before the name is read. */
 .project-card[data-color] { box-shadow: inset 3px 0 0 var(--project-hue); border-radius: 3px var(--radius-ctl) var(--radius-ctl) 3px; background: color-mix(in srgb, var(--project-hue) 12%, transparent); }
 .project-card[data-color]:hover { background: color-mix(in srgb, var(--project-hue) 22%, var(--field)); }
 .project-card[data-color].active { box-shadow: inset 3px 0 0 var(--project-hue), var(--raise); background: color-mix(in srgb, var(--project-hue) 18%, var(--surface)); }
+.session-card[data-color] { box-shadow: inset 3px 0 0 var(--project-hue); border-radius: 3px var(--radius-ctl) var(--radius-ctl) 3px; background: color-mix(in srgb, var(--project-hue) 12%, transparent); }
+.session-card[data-color]:hover { background: color-mix(in srgb, var(--project-hue) 22%, var(--field)); }
+.session-card[data-color].active { box-shadow: inset 3px 0 0 var(--project-hue), var(--raise); background: color-mix(in srgb, var(--project-hue) 18%, var(--surface)); }
 
 /* ---- Project node lock ---- */
 .project-review-badge {
@@ -1742,13 +1758,29 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.file-editor-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.file-editor-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .file-editor-actions > * { display: inline-flex; align-items: center; justify-content: center; min-width: 0; min-height: 44px; text-decoration: none; }
-#fileActionDownloadLink { border-color: var(--line-strong); text-decoration: none; background: var(--field); }
-#fileActionDownloadLink:hover { background: color-mix(in srgb, var(--field) 72%, var(--text)); }
+#fileActionViewLink, #fileActionDownloadLink { border-color: var(--line-strong); text-decoration: none; background: var(--field); }
+#fileActionViewLink:hover, #fileActionDownloadLink:hover { background: color-mix(in srgb, var(--field) 72%, var(--text)); }
+#fileActionViewLink[aria-disabled="true"], #fileActionDownloadLink[aria-disabled="true"] { pointer-events: none; opacity: 0.45; }
+#fileActionStatus { min-height: 1.4em; margin: -8px 0; color: var(--muted); font-size: 12px; }
 #fileActionEditButton { color: var(--on-ink); border-color: transparent; background: var(--accent); }
 #fileActionEditButton:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 84%, var(--ink)); }
 #fileEditorView { display: grid; gap: 12px; }
 #fileEditorView[hidden] { display: none; }
-.file-editor-textarea { width: 100%; min-height: 220px; height: 55dvh; resize: vertical; font-family: var(--mono); line-height: 1.5; }
-@media (max-width: 600px) { .file-editor-card, .file-editor-card:has(#fileEditorView:not([hidden])) { width: calc(100vw - 16px); } .file-editor-textarea { min-height: 180px; } }
+.file-editor-label { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+#fileEditorMode { padding: 3px 6px; border-radius: 4px; color: var(--muted); background: var(--field); font: 700 10px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+.file-editor-textarea { width: 100%; font-family: var(--mono); }
+.file-editor-card .CodeMirror { min-height: 300px; max-height: min(62dvh, 620px); border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--code-bg); color: var(--code-text); font-family: var(--mono); }
+.file-editor-card .CodeMirror-scroll { height: inherit; min-height: inherit; max-height: inherit; }
+.file-editor-card .CodeMirror-gutters { border-right-color: var(--line); background: var(--panel); }
+.file-editor-card .CodeMirror-linenumber { color: var(--muted); }
+.file-editor-card .CodeMirror-cursor { border-left-color: var(--accent); }
+.file-editor-card .CodeMirror-selected { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+.file-editor-card .CodeMirror-activeline-background { background: color-mix(in srgb, var(--field) 60%, transparent); }
+.file-editor-card .CodeMirror-fat-cursor { background: var(--accent); color: var(--code-bg); }
+.file-editor-card .cm-comment, .file-editor-card .cm-meta { color: var(--muted); }
+.file-editor-card .cm-keyword, .file-editor-card .cm-atom, .file-editor-card .cm-tag { color: var(--accent); }
+.file-editor-card .cm-string, .file-editor-card .cm-number, .file-editor-card .cm-attribute { color: var(--amber); }
+.file-editor-card .cm-def, .file-editor-card .cm-variable-2, .file-editor-card .cm-property { color: var(--code-text); }
+@media (max-width: 600px) { .file-editor-card, .file-editor-card:has(#fileEditorView:not([hidden])) { width: calc(100vw - 16px); } .file-editor-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); } .file-editor-card .CodeMirror { min-height: 180px; } }

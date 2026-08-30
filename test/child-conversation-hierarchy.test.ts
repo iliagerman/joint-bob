@@ -9,6 +9,7 @@ function session(id: string, parentSessionPath?: string): SessionSummary {
     id,
     path: `/sessions/2026-01-01_${id}.jsonl`,
     harnessId: "pi",
+    agentId: "pi",
     agentLabel: "Pi",
     title: id,
     updatedAt: `2026-01-01T00:00:0${id.length}.000Z`,
@@ -47,5 +48,5 @@ test("the conversation list renders child lineage", async () => {
   assert.match(app, /for \(const \{ session, depth \} of nestedSessionRows\(sessions\)\)/);
   assert.match(styles, /\.list-row\[data-session-depth="1"\]/);
   assert.match(styles, /\.list-row\[data-session-depth="1"\] \.session-card/);
-  assert.match(serviceWorker, /joint-bob-v63/);
+  assert.match(serviceWorker, /joint-bob-v64/);
 });

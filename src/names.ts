@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { getClusterNode } from "./cluster.js";
 import { enqueueReplicationEvent, ensureReplicationSchema } from "./replication.js";
 import { canonicalProjectId } from "./store.js";
+import type { ProjectColor } from "./types.js";
 
 interface NameEntry {
   name: string;
@@ -16,6 +17,8 @@ interface NameStore {
   projects: Record<string, NameEntry>;
   sessions: Record<string, NameEntry>;
 }
+
+type OverrideScope = "projects" | "sessions" | "session_colors";
 
 const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
 const databasePath = path.join(dataDir, "node.db");
@@ -111,7 +114,7 @@ async function namesDatabase(): Promise<DatabaseSync> {
   return db;
 }
 
-async function setEntry(scope: "projects" | "sessions", key: string, name: string): Promise<void> {
+async function setEntry(scope: OverrideScope, key: string, name: string): Promise<void> {
   const [node, db] = await Promise.all([getClusterNode(), namesDatabase()]);
   const trimmed = name.trim();
   const updatedAt = new Date().toISOString();
@@ -144,7 +147,7 @@ async function setEntry(scope: "projects" | "sessions", key: string, name: strin
   }
 }
 
-async function entries(scope: "projects" | "sessions"): Promise<Record<string, string>> {
+async function entries(scope: OverrideScope): Promise<Record<string, string>> {
   const db = await namesDatabase();
   if (scope === "projects" && !projectsTableExists(db)) return {};
   const query = scope === "projects"
@@ -162,6 +165,10 @@ export async function sessionTitleOverrides(): Promise<Record<string, string>> {
   return entries("sessions");
 }
 
+export async function sessionColorOverrides(): Promise<Record<string, ProjectColor>> {
+  return await entries("session_colors") as Record<string, ProjectColor>;
+}
+
 export async function setProjectName(projectId: string, name: string): Promise<void> {
   const canonicalId = await canonicalProjectId(projectId);
   if (!canonicalId) throw new Error("Project not found");
@@ -175,6 +182,10 @@ export async function setProjectName(projectId: string, name: string): Promise<v
  */
 export async function setSessionTitle(conversationId: string, title: string): Promise<void> {
   await setEntry("sessions", conversationId, title);
+}
+
+export async function setSessionColor(conversationId: string, color: ProjectColor | null): Promise<void> {
+  await setEntry("session_colors", conversationId, color ?? "");
 }
 
 /** Names a conversation the first time something owns it, without overwriting a rename. */

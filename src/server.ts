@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import WebSocket, { WebSocketServer } from "ws";
 import { z } from "zod";
-import { ensureSessionTitle, projectNameOverrides, setProjectName, setSessionTitle } from "./names.js";
+import { ensureSessionTitle, projectNameOverrides, setProjectName, setSessionColor, setSessionTitle } from "./names.js";
 import { getProjectLock, projectLocks, setProjectLock } from "./project-locks.js";
 import { addProject, deleteProjectType, getProject, importProject, listProjects, listProjectTypes, projectAliasIds, ProjectTypeError, registerProjectAliases, removeProject, renameProject, saveProjectType, touchProject, updateProjectColor, updateProjectMacPath, updateProjectSyncFolderId, updateProjectTypeAndPath } from "./store.js";
 import { createClusterPeer, dueMembershipDeliveries, getClusterMachineToken, getClusterMembership, getClusterNode, getClusterPeer, listClusterPeers, markClusterPeerSeen, mergeClusterMembership, recordMembershipDelivered, recordMembershipFailure, removeClusterPeer, saveClusterPeer, updateClusterNode, type ClusterPeer } from "./cluster.js";
@@ -124,6 +124,7 @@ const machineRoutes = new Set([
   "POST /cluster/projects/map",
   "GET /cluster/filesystem/directories",
   "GET /cluster/project-file",
+  "GET /cluster/project-file-resolution",
   "GET /cluster/project-file-content",
   "PUT /cluster/project-file-content",
   "POST /cluster/sync/share",
@@ -158,7 +159,11 @@ export const server = createServer(app);
 const webSocketServer = new WebSocketServer({ server, path: "/ws" });
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(dirname, "../public");
+const codemirrorDir = path.resolve(dirname, "../node_modules/codemirror");
 const sharedSessions = new Map<string, SharedPiSession>();
+server.on("close", () => {
+  for (const session of new Set(sharedSessions.values())) disposeSharedSession(session);
+});
 const execFileAsync = promisify(execFile);
 const idleSessionTimeoutMs = 30 * 60 * 1000;
 // A session file change within this window of local agent activity is our own
@@ -341,6 +346,11 @@ const sessionTitleSchema = z.object({
   engine: z.enum(["pi", "claude"]),
   title: z.string().trim().max(200),
 });
+const sessionColorSchema = z.object({
+  sessionId: z.string().min(1),
+  engine: z.enum(["pi", "claude"]),
+  color: z.enum(PROJECT_COLORS).nullable(),
+});
 const taskCreateSchema = z.object({
   title: z.string().trim().min(1).max(200),
   description: z.string().trim().max(4000),
@@ -464,6 +474,7 @@ const socketMessageSchema = z.object({
   images: z.array(imageAttachmentSchema).max(4).optional(),
   files: z.array(fileAttachmentSchema).max(6).optional(),
   safeguardsEnabled: z.boolean().optional(),
+  toolNames: z.array(z.string().trim().min(1).max(120)).max(100).optional(),
 });
 
 function sendError(response: Response, statusCode: number, message: string): void {
@@ -774,6 +785,7 @@ app.set("trust proxy", 1);
 app.get("/favicon.ico", (_request, response) => {
   response.type("image/png").sendFile(path.join(publicDir, "icon-192.png"));
 });
+app.use("/vendor/codemirror", express.static(codemirrorDir, { index: false }));
 app.use(express.static(publicDir));
 app.use(express.json({ limit: "12mb" }));
 
@@ -2117,6 +2129,23 @@ app.put("/api/projects/:projectId/sessions/title", async (request, response, nex
   }
 });
 
+app.put("/api/projects/:projectId/sessions/color", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project) {
+      sendError(response, 404, "Project not found");
+      return;
+    }
+    const payload = sessionColorSchema.parse(request.body);
+    await requireLocalConversationOwner(payload.engine, payload.sessionId);
+    await setSessionColor(payload.sessionId, payload.color);
+    broadcastToProject(project.id, { type: "sessionsChanged" });
+    response.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.delete("/api/projects/:projectId", async (request, response, next) => {
   try {
     const project = await getProject(request.params.projectId);
@@ -2985,22 +3014,95 @@ class ProjectFileError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
 }
 
-async function resolveProjectFile(projectId: string, requestedPath: string): Promise<{ project: ProjectRecord; resolved: string; info: Awaited<ReturnType<typeof stat>> }> {
+interface ProjectFileResolution {
+  path: string;
+  viewUrl: string;
+  downloadUrl: string;
+  contentUrl: string;
+}
+
+function projectPathInside(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
+}
+
+function portablePathParts(value: string): string[] {
+  return value.replace(/\\/g, "/").split("/").filter((part) => part && part !== ".");
+}
+
+function matchingPathSuffix(candidateParts: string[], requestedParts: string[]): number {
+  let matched = 0;
+  while (matched < candidateParts.length && matched < requestedParts.length && candidateParts[candidateParts.length - matched - 1] === requestedParts[requestedParts.length - matched - 1]) matched += 1;
+  return matched;
+}
+
+async function verifiedProjectFile(projectRoot: string, candidate: string): Promise<{ resolved: string; info: Awaited<ReturnType<typeof stat>> } | null> {
+  let resolved: string;
+  try { resolved = await realpath(candidate); }
+  catch (error) {
+    if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) return null;
+    throw error;
+  }
+  if (!projectPathInside(projectRoot, resolved)) throw new ProjectFileError(403, "File is outside the project directory");
+  const info = await stat(resolved);
+  if (!info.isFile()) throw new ProjectFileError(400, "Path is not a file");
+  return { resolved, info };
+}
+
+async function searchProjectFile(projectRoot: string, requestedPath: string): Promise<{ resolved: string; relativePath: string; info: Awaited<ReturnType<typeof stat>> }> {
+  const requestedParts = portablePathParts(requestedPath);
+  const basename = requestedParts.at(-1);
+  const entries = await readdir(projectRoot, { recursive: true, withFileTypes: true });
+  const matches: Array<{ resolved: string; relativePath: string; info: Awaited<ReturnType<typeof stat>>; score: number }> = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || entry.name !== basename) continue;
+    const candidate = path.join(entry.parentPath, entry.name);
+    const verified = await verifiedProjectFile(projectRoot, candidate);
+    if (!verified) continue;
+    const relativePath = path.relative(projectRoot, verified.resolved).split(path.sep).join("/");
+    matches.push({ ...verified, relativePath, score: matchingPathSuffix(portablePathParts(relativePath), requestedParts) });
+  }
+  if (!matches.length) throw new ProjectFileError(404, "File not found");
+  const score = Math.max(...matches.map((match) => match.score));
+  const best = matches.filter((match) => match.score === score).sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+  if (best.length > 1) throw new ProjectFileError(409, `File reference is ambiguous: ${best.slice(0, 5).map((match) => match.relativePath).join(", ")}`);
+  return best[0];
+}
+
+async function resolveProjectFile(projectId: string, requestedPath: string): Promise<{ project: ProjectRecord; resolved: string; relativePath: string; info: Awaited<ReturnType<typeof stat>> }> {
   const project = await getProject(projectId);
   if (!project) throw new ProjectFileError(404, "Project not found");
-  if (!requestedPath.trim()) throw new ProjectFileError(400, "File path is required");
+  const pathValue = requestedPath.trim();
+  if (!pathValue) throw new ProjectFileError(400, "File path is required");
+  if (pathValue.length > 2000) throw new ProjectFileError(400, "File path is too long");
+  if (portablePathParts(pathValue).includes("..")) throw new ProjectFileError(403, "File is outside the project directory");
   const projectRoot = await realpath(project.path);
-  const prefix = `${projectRoot}${path.sep}`;
-  const projectPath = path.isAbsolute(requestedPath) && requestedPath !== projectRoot && !requestedPath.startsWith(prefix) ? requestedPath.replace(/^[/\\]+/, "") : requestedPath;
-  const requestedFile = path.resolve(projectRoot, projectPath);
-  if (path.relative(projectRoot, requestedFile).startsWith("..") || path.isAbsolute(path.relative(projectRoot, requestedFile))) throw new ProjectFileError(403, "File is outside the project directory");
-  let resolved: string;
-  let info: Awaited<ReturnType<typeof stat>>;
-  try { resolved = await realpath(requestedFile); info = await stat(resolved); }
-  catch { throw new ProjectFileError(404, "File not found"); }
-  if (path.relative(projectRoot, resolved).startsWith("..") || path.isAbsolute(path.relative(projectRoot, resolved))) throw new ProjectFileError(403, "File is outside the project directory");
-  if (!info.isFile()) throw new ProjectFileError(400, "Path is not a file");
-  return { project, resolved, info };
+  const directPath = pathValue.replace(/\\/g, path.sep);
+  const candidate = path.isAbsolute(directPath) ? path.resolve(directPath) : path.resolve(projectRoot, directPath);
+  const direct = path.isAbsolute(directPath) && !projectPathInside(projectRoot, candidate)
+    ? null
+    : await verifiedProjectFile(projectRoot, candidate);
+  if (direct) {
+    const relativePath = path.relative(projectRoot, direct.resolved).split(path.sep).join("/");
+    return { project, resolved: direct.resolved, relativePath, info: direct.info };
+  }
+  const match = await searchProjectFile(projectRoot, pathValue);
+  return { project, resolved: match.resolved, relativePath: match.relativePath, info: match.info };
+}
+
+async function projectFileResolution(projectId: string, requestedPath: string): Promise<{ path: string }> {
+  return { path: (await resolveProjectFile(projectId, requestedPath)).relativePath };
+}
+
+function projectFileLinks(projectId: string, relativePath: string, nodeId?: string): ProjectFileResolution {
+  const makeUrl = (route: string, download = false): string => {
+    const url = new URL(`/api/projects/${encodeURIComponent(projectId)}/${route}`, "http://joint-bob.local");
+    url.searchParams.set("path", relativePath);
+    if (nodeId) url.searchParams.set("nodeId", nodeId);
+    if (download) url.searchParams.set("download", "1");
+    return `${url.pathname}${url.search}`;
+  };
+  return { path: relativePath, viewUrl: makeUrl("file"), downloadUrl: makeUrl("file", true), contentUrl: makeUrl("file-content") };
 }
 
 function fileVersion(bytes: Buffer): string { return createHash("sha256").update(bytes).digest("hex"); }
@@ -3026,10 +3128,10 @@ async function sendProjectFile(response: Response, projectId: string, requestedP
 }
 
 async function projectFileContent(projectId: string, requestedPath: string): Promise<{ path: string; content: string; version: string }> {
-  const { resolved, info } = await resolveProjectFile(projectId, requestedPath);
+  const { resolved, relativePath, info } = await resolveProjectFile(projectId, requestedPath);
   if (info.size > TEXT_FILE_LIMIT) throw new ProjectFileError(413, "File is too large to edit");
   const bytes = await readFile(resolved);
-  return { path: requestedPath, content: textFile(bytes), version: fileVersion(bytes) };
+  return { path: relativePath, content: textFile(bytes), version: fileVersion(bytes) };
 }
 
 async function assertProjectFileConversationOwner(project: ProjectRecord, sessionId: string): Promise<void> {
@@ -3044,7 +3146,7 @@ async function assertProjectFileConversationOwner(project: ProjectRecord, sessio
 }
 
 async function updateProjectFileContent(projectId: string, requestedPath: string, payload: z.infer<typeof projectFileUpdateSchema>): Promise<{ path: string; version: string }> {
-  const { project, resolved, info } = await resolveProjectFile(projectId, requestedPath);
+  const { project, resolved, relativePath, info } = await resolveProjectFile(projectId, requestedPath);
   await assertProjectEditable(project);
   await assertProjectFileConversationOwner(project, payload.sessionId);
   const nextBytes = Buffer.from(payload.content, "utf8");
@@ -3061,7 +3163,21 @@ async function updateProjectFileContent(projectId: string, requestedPath: string
     }
     throw error;
   }
-  return { path: requestedPath, version: fileVersion(nextBytes) };
+  return { path: relativePath, version: fileVersion(nextBytes) };
+}
+
+async function proxyProjectFileResolution(peer: ClusterPeer, projectId: string, requestedPath: string): Promise<{ path: string }> {
+  const url = new URL("/api/cluster/project-file-resolution", peer.url);
+  url.searchParams.set("projectId", projectId);
+  url.searchParams.set("path", requestedPath);
+  const routed = await fetch(url, { headers: { Authorization: `Bearer ${peer.token}` }, signal: AbortSignal.timeout(30_000) });
+  const body = await routed.json().catch(() => null) as { path?: unknown; error?: unknown } | null;
+  if (!routed.ok) {
+    if (typeof body?.error === "string") throw new ProjectFileError(routed.status, body.error);
+    throw new ProjectFileError(502, "File node returned an invalid response");
+  }
+  if (!body || typeof body.path !== "string") throw new ProjectFileError(502, "File node returned an invalid response");
+  return { path: body.path };
 }
 
 async function proxyProjectFile(response: Response, peer: ClusterPeer, projectId: string, requestedPath: string, download: boolean): Promise<void> {
@@ -3079,6 +3195,18 @@ async function proxyProjectFile(response: Response, peer: ClusterPeer, projectId
   Readable.fromWeb(routed.body as unknown as import("node:stream/web").ReadableStream).pipe(response);
 }
 
+app.get("/api/cluster/project-file-resolution", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const projectId = typeof request.query.projectId === "string" ? request.query.projectId : "";
+    const requestedPath = typeof request.query.path === "string" ? request.query.path : "";
+    response.json(await projectFileResolution(projectId, requestedPath));
+  } catch (error) {
+    if (error instanceof ProjectFileError) { sendError(response, error.status, error.message); return; }
+    next(error);
+  }
+});
+
 app.get("/api/cluster/project-file", async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
@@ -3086,6 +3214,26 @@ app.get("/api/cluster/project-file", async (request, response, next) => {
     const requestedPath = typeof request.query.path === "string" ? request.query.path : "";
     await sendProjectFile(response, projectId, requestedPath, request.query.download === "1");
   } catch (error) { next(error); }
+});
+
+app.get("/api/projects/:projectId/file-resolution", async (request, response, next) => {
+  try {
+    const requestedPath = typeof request.query.path === "string" ? request.query.path : "";
+    const requestedNodeId = typeof request.query.nodeId === "string" ? request.query.nodeId : "";
+    const local = await getClusterNode();
+    if (requestedNodeId && requestedNodeId !== local.id) {
+      const peer = await getClusterPeer(requestedNodeId);
+      if (!peer) { sendError(response, 404, "File node not found"); return; }
+      const resolution = await proxyProjectFileResolution(peer, request.params.projectId, requestedPath);
+      response.json(projectFileLinks(request.params.projectId, resolution.path, requestedNodeId));
+      return;
+    }
+    const resolution = await projectFileResolution(request.params.projectId, requestedPath);
+    response.json(projectFileLinks(request.params.projectId, resolution.path));
+  } catch (error) {
+    if (error instanceof ProjectFileError) { sendError(response, error.status, error.message); return; }
+    next(error);
+  }
 });
 
 app.get("/api/projects/:projectId/file", async (request, response, next) => {
@@ -3208,6 +3356,17 @@ function broadcastStatus(session: SharedPiSession): void {
   broadcast(session, { type: "status", status: getSessionStatus(session.handle.session, session.handle.safeguardsEnabled) });
 }
 
+function piTools(handle: PiSessionHandle): Array<{ name: string; description: string; active: boolean }> {
+  const active = new Set(handle.session.getActiveToolNames());
+  return handle.session.getAllTools()
+    .map((tool) => ({ name: tool.name, description: tool.description, active: active.has(tool.name) }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function broadcastTools(session: SharedPiSession): void {
+  broadcast(session, { type: "tools", supported: true, tools: piTools(session.handle) });
+}
+
 function sessionIsBusy(handle: PiSessionHandle): boolean {
   return handle.session.isStreaming || handle.session.isBashRunning || handle.session.isCompacting || handle.session.isRetrying;
 }
@@ -3273,6 +3432,7 @@ function scheduleIdleDispose(session: SharedPiSession): void {
     }
     disposeSharedSession(session);
   }, idleSessionTimeoutMs);
+  session.idleTimer.unref();
 }
 
 function broadcastToProject(projectId: string, payload: unknown): void {
@@ -3967,7 +4127,10 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
   // absolute path still carries that node's encoded transcript directory, and
   // `claude --resume` only looks under the directory this node's cwd encodes
   // to. Put the transcript there first, or the resume silently starts over.
-  if (connection.claude.filePath) connection.claude.filePath = await ensureLocalClaudeTranscript(connection.cwd, connection.claude.sessionId);
+  const localTranscript = claudeSessionFilePath(connection.cwd, connection.claude.sessionId);
+  if (connection.claude.filePath && path.resolve(connection.claude.filePath) !== path.resolve(localTranscript)) {
+    connection.claude.filePath = await ensureLocalClaudeTranscript(connection.cwd, connection.claude.sessionId);
+  }
   if (showUserMessage) send(connection.socket, { type: "userMessage", text: displayText });
   pushTranscript(connection, "user", promptText);
   // Buffer every turn event so a browser that reconnects mid-turn can replay it.
@@ -4098,7 +4261,14 @@ async function handleClaudeCommand(connection: ChatConnection, payload: SocketPa
   }
   if (payload.type === "models") {
     send(connection.socket, { type: "models", models: await listAvailableModels() });
+    return;
   }
+  if (payload.type === "tools") {
+    send(connection.socket, { type: "tools", supported: false, tools: [] });
+    return;
+  }
+  if (payload.type === "setTools") throw new Error("Tool configuration is only available for Pi");
+  if (payload.type === "compact") throw new Error("Compaction is only available for Pi");
   // Thinking/rename commands only apply to the Pi engine.
 }
 
@@ -4221,6 +4391,35 @@ async function handlePiCommand(connection: ChatConnection, shared: SharedPiSessi
     if (!await runStubbedPiPrompt(shared, promptText)) await handle.session.prompt(promptText, options);
     send(socket, { type: "sessionsChanged" });
     sendStatus(socket, handle);
+    return;
+  }
+
+  if (payload.type === "tools") {
+    send(socket, { type: "tools", supported: true, tools: piTools(handle) });
+    return;
+  }
+
+  if (payload.type === "setTools") {
+    if (!payload.toolNames) throw new Error("Missing tool selection");
+    if (sessionIsBusy(handle)) throw new Error("Wait for the Pi session to finish before changing tools");
+    const available = new Set(handle.session.getAllTools().map((tool) => tool.name));
+    const unknown = payload.toolNames.find((name) => !available.has(name));
+    if (unknown) throw new Error(`Unknown tool: ${unknown}`);
+    shared.lastLocalEventAt = Date.now();
+    handle.session.sessionManager.appendCustomEntry("joint-bob:tools", { enabledTools: payload.toolNames });
+    handle.session.setActiveToolsByName(payload.toolNames);
+    broadcastTools(shared);
+    broadcastStatus(shared);
+    return;
+  }
+
+  if (payload.type === "compact") {
+    if (sessionIsBusy(handle)) throw new Error("Wait for the Pi session to finish before compacting");
+    const compaction = handle.session.compact(payload.message?.trim() || undefined);
+    broadcastStatus(shared);
+    await compaction;
+    send(socket, { type: "sessionsChanged" });
+    broadcastStatus(shared);
     return;
   }
 

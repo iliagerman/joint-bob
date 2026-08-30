@@ -66,5 +66,23 @@ test("model buttons are name-only and mobile controls use fixed toolbar rows", a
   assert.match(styles, /\.chat-recents-button\s*\{[^}]*grid-column:\s*3;[^}]*grid-row:\s*2;/);
   assert.doesNotMatch(styles, /\.model-button-mode/);
   assert.doesNotMatch(styles, /\.chat-toolbar[^\{]*\{[^}]*overflow-x:\s*auto/);
-  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v63";/);
+  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v64";/);
+});
+
+test("the status light and Stop sit on the chat header's meta row", async () => {
+  const [html, styles] = await Promise.all([
+    readFile("public/index.html", "utf8"),
+    readFile("public/styles.css", "utf8"),
+  ]);
+  const metaStart = html.indexOf('<div class="chat-title-meta">');
+  const metaEnd = html.indexOf("</div>\n            </div>", metaStart);
+  assert.ok(metaStart >= 0 && metaEnd >= 0, "Missing chat title meta row");
+  const meta = html.slice(metaStart, metaEnd);
+
+  assert.match(meta, /<div class="chat-actions">[\s\S]*id="connectionStatus"[\s\S]*id="abortButton"/);
+  assert.ok(meta.indexOf('id="taskBacklinkButton"') < meta.indexOf('class="chat-actions"'));
+
+  assert.match(styles, /\.chat-title-meta \{[^}]*align-items: center;/);
+  assert.match(styles, /\.chat-actions \{[^}]*margin-left: auto;/);
+  assert.doesNotMatch(styles, /\.(mini-status|turn-timer|task-backlink) \{[^}]*margin-top: 3px;/);
 });

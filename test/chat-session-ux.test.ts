@@ -6,7 +6,8 @@ test("an empty connected conversation stays usable until its first message is sa
   const app = await readFile("public/app.js", "utf8");
 
   assert.match(app, /activeNode\?\.local[\s\S]*!socketOpen\(\)[\s\S]*activeSessionExists/);
-  assert.match(app, /if \(!sendSocket\(payload\)\) \{\s*toast\("Conversation is not connected yet"\);\s*return;\s*\}/);
+  assert.match(app, /dispatchComposerInput\(message, state\.attachments\.length > 0/);
+  assert.match(app, /if \(route === "command"\) return;\s*if \(!sent\) \{\s*toast\("Conversation is not connected yet"\);\s*return;\s*\}/);
 });
 
 test("ticket chat controls hand off ownership instead of reconnecting", async () => {

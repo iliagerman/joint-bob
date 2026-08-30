@@ -1,5 +1,5 @@
-const CACHE_NAME = "joint-bob-v63";
-const APP_SHELL = ["/", "/index.html", "/styles.css", "/boot.js", "/app.js", "/board.js", "/markdown.js", "/manifest.webmanifest", "/icon.svg", "/icon-192.png", "/icon-512.png"];
+const CACHE_NAME = "joint-bob-v64";
+const APP_SHELL = ["/", "/index.html", "/styles.css", "/boot.js", "/app.js", "/board.js", "/composer-commands.js", "/markdown.js", "/vendor/codemirror/lib/codemirror.css", "/vendor/codemirror/addon/dialog/dialog.css", "/vendor/codemirror/lib/codemirror.js", "/vendor/codemirror/addon/dialog/dialog.js", "/vendor/codemirror/addon/search/searchcursor.js", "/vendor/codemirror/keymap/vim.js", "/vendor/codemirror/addon/mode/loadmode.js", "/vendor/codemirror/mode/meta.js", "/vendor/xterm/xterm.js", "/vendor/xterm/xterm.css", "/vendor/xterm/addon-fit.js", "/manifest.webmanifest", "/icon.svg", "/icon-192.png", "/icon-512.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)));

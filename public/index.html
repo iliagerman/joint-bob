@@ -15,6 +15,9 @@
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <script src="/boot.js"></script>
     <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/vendor/codemirror/lib/codemirror.css" />
+    <link rel="stylesheet" href="/vendor/codemirror/addon/dialog/dialog.css" />
+    <link rel="stylesheet" href="/vendor/xterm/xterm.css" />
   </head>
   <body class="view-projects booting">
     <div class="app-boot" id="appBoot" role="status" aria-label="Loading Joint Bob">
@@ -132,11 +135,11 @@
               <div class="mini-status" id="miniStatus">Not connected</div>
               <span class="turn-timer" id="turnTimer" hidden data-testid="chat-turn-timer"></span>
               <button class="task-backlink" id="taskBacklinkButton" type="button" hidden data-testid="chat-task-backlink-button">Ticket</button>
+              <div class="chat-actions">
+                <div class="status-pill" id="connectionStatus" role="status" title="Idle">Idle</div>
+                <button class="ghost icon-button danger" id="abortButton" type="button" disabled aria-label="Stop" title="Stop" data-testid="chat-abort-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"/></svg></button>
+              </div>
             </div>
-          </div>
-          <div class="chat-actions">
-            <div class="status-pill" id="connectionStatus" role="status" title="Idle">Idle</div>
-            <button class="ghost icon-button danger" id="abortButton" type="button" disabled aria-label="Stop" title="Stop" data-testid="chat-abort-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"/></svg></button>
           </div>
         </header>
         <div class="chat-toolbar panel-toolbar" id="chatToolbar">
@@ -187,11 +190,11 @@
         </div>
 
         <div class="command-strip" id="commandStrip" aria-label="Quick slash commands">
-          <button type="button" data-command="/help">/help</button>
-          <button type="button" data-command="/skill" data-testid="chat-skills-button">/skill</button>
-          <button type="button" data-command="/model">/model</button>
-          <button type="button" data-command="/tools">/tools</button>
-          <button type="button" data-command="/compact">/compact</button>
+          <button type="button" data-command="/help" data-testid="chat-help-button">/help</button>
+          <button type="button" data-command="/skills" data-testid="chat-skills-button">/skills</button>
+          <button type="button" data-command="/model" data-testid="chat-model-command-button">/model</button>
+          <button type="button" data-command="/tools" data-testid="chat-tools-button">/tools</button>
+          <button type="button" data-command="/compact" data-testid="chat-compact-button">/compact</button>
         </div>
         <div class="conversation-lock" id="conversationLock" role="status" data-testid="conversation-lock-notice" hidden>
           <div class="conversation-lock-copy">
@@ -532,13 +535,7 @@
           </div>
           <span class="terminal-status" id="terminalStatus" role="status">Disconnected</span>
         </div>
-        <pre class="terminal-output" id="terminalOutput" role="log" aria-label="Terminal output" tabindex="0" data-testid="terminal-output"></pre>
-        <form class="terminal-form" id="terminalForm">
-          <span class="terminal-prompt" aria-hidden="true">$</span>
-          <label class="sr-only" for="terminalInput">Terminal command</label>
-          <input id="terminalInput" name="command" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="16000" disabled data-testid="terminal-input" />
-          <button class="primary compact" id="terminalRunButton" type="submit" disabled data-testid="terminal-run-button">Run</button>
-        </form>
+        <div class="terminal-output" id="terminalHost" data-testid="terminal-output"></div>
         <div class="dialog-actions">
           <button class="ghost compact" id="clearTerminalButton" type="button" data-testid="terminal-clear-button">Clear</button>
           <button class="ghost compact" id="closeTerminalButton" type="button" data-testid="terminal-close-button">Close terminal</button>
@@ -596,6 +593,20 @@
       </div>
     </dialog>
 
+    <dialog id="toolsDialog" data-testid="tools-dialog">
+      <div class="dialog-card">
+        <div>
+          <span class="eyebrow">Pi session</span>
+          <h2>Tools</h2>
+          <p>Choose which tools Pi can use on its next turn.</p>
+        </div>
+        <div class="tools-dialog-list" id="toolsDialogList"></div>
+        <div class="dialog-actions">
+          <button class="ghost" type="button" id="closeToolsDialogButton" data-testid="tools-dialog-close-button">Close</button>
+        </div>
+      </div>
+    </dialog>
+
     <dialog id="modelDialog" data-testid="model-dialog">
       <div class="dialog-card">
         <div>
@@ -616,13 +627,15 @@
           <h2>Open file</h2>
           <p class="file-editor-path" id="fileActionPath"></p>
         </div>
+        <p id="fileActionStatus" role="status" aria-live="polite"></p>
         <div id="fileActionView" class="file-editor-actions">
           <button class="ghost" id="fileActionCancelButton" type="button" data-testid="file-action-cancel-button">Cancel</button>
+          <a class="ghost" id="fileActionViewLink" target="_blank" rel="noopener" data-testid="file-action-view-link">View</a>
           <a class="ghost" id="fileActionDownloadLink" data-testid="file-action-download-link" download>Download</a>
           <button class="primary" id="fileActionEditButton" type="button" data-testid="file-action-edit-button" autofocus>Edit</button>
         </div>
         <div id="fileEditorView" hidden>
-          <label for="fileEditorTextarea">File contents</label>
+          <div class="file-editor-label"><label for="fileEditorTextarea">File contents</label><span id="fileEditorMode" data-testid="file-editor-mode">Normal</span></div>
           <textarea id="fileEditorTextarea" class="file-editor-textarea" spellcheck="false" data-testid="file-editor-textarea"></textarea>
           <p id="fileEditorStatus" role="status" aria-live="polite"></p>
           <div class="dialog-actions">
@@ -662,9 +675,31 @@
           Name
           <input id="newSessionNameInput" name="name" autocomplete="off" placeholder="Feature review" data-testid="new-session-name-input" />
         </label>
+        <div class="field-group">
+          <span class="field-label">Colour</span>
+          <div class="color-swatches" id="newSessionColorSwatches" role="radiogroup" aria-label="Conversation colour" data-testid="new-session-color-swatches"></div>
+        </div>
         <div class="dialog-actions">
           <button class="ghost" value="cancel" type="button" id="cancelNewSessionNameButton" data-testid="new-session-name-cancel-button">Cancel</button>
           <button class="primary" value="default" type="submit" data-testid="new-session-name-start-button">Start conversation</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="conversationColorDialog" data-testid="conversation-color-dialog">
+      <form method="dialog" class="dialog-card" id="conversationColorForm">
+        <div>
+          <span class="eyebrow">Conversation settings</span>
+          <h2>Set conversation colour</h2>
+          <p>The colour syncs to your other nodes.</p>
+        </div>
+        <div class="field-group">
+          <span class="field-label">Colour</span>
+          <div class="color-swatches" id="conversationColorSwatches" role="radiogroup" aria-label="Conversation colour" data-testid="conversation-color-swatches"></div>
+        </div>
+        <div class="dialog-actions">
+          <button class="ghost" value="cancel" type="button" id="cancelConversationColorButton" data-testid="conversation-color-cancel-button">Cancel</button>
+          <button class="primary" value="default" type="submit" data-testid="conversation-color-save-button">Save colour</button>
         </div>
       </form>
     </dialog>
@@ -876,6 +911,14 @@
     <!-- One shared row menu. It lives in the top layer, so the scrolling lists cannot clip it. -->
     <div class="row-menu" id="rowMenu" popover="auto" aria-label="Conversation actions" data-testid="session-row-menu"></div>
 
+    <script src="/vendor/codemirror/lib/codemirror.js"></script>
+    <script src="/vendor/codemirror/addon/dialog/dialog.js"></script>
+    <script src="/vendor/codemirror/addon/search/searchcursor.js"></script>
+    <script src="/vendor/codemirror/keymap/vim.js"></script>
+    <script src="/vendor/codemirror/addon/mode/loadmode.js"></script>
+    <script src="/vendor/codemirror/mode/meta.js"></script>
+    <script src="/vendor/xterm/xterm.js"></script>
+    <script src="/vendor/xterm/addon-fit.js"></script>
     <script src="/app.js" type="module"></script>
   </body>
 </html>

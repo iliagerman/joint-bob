@@ -306,6 +306,20 @@ export function sessionSafeguardsEnabled(sessionManager: SessionManager): boolea
   return enabled;
 }
 
+export function sessionToolSelection(sessionManager: SessionManager): string[] | undefined {
+  let enabledTools: string[] | undefined;
+  for (const entry of sessionManager.getBranch()) {
+    if (entry.type !== "custom" || entry.customType !== "joint-bob:tools") continue;
+    const data = entry.data;
+    const selection = typeof data === "object" && data !== null ? (data as UnknownRecord).enabledTools : undefined;
+    if (!Array.isArray(selection) || selection.some((name) => typeof name !== "string")) {
+      throw new Error("Invalid session tool selection");
+    }
+    enabledTools = selection as string[];
+  }
+  return enabledTools;
+}
+
 export async function createPiSession(options: PiSessionOptions): Promise<PiSessionHandle> {
   await reloadPiAuth();
   const sessionManager = options.sessionPath
@@ -346,6 +360,11 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
 
   if ("bindExtensions" in session && typeof session.bindExtensions === "function") {
     await session.bindExtensions({});
+  }
+  const savedTools = sessionToolSelection(sessionManager);
+  if (savedTools) {
+    const available = new Set(session.getAllTools().map((tool) => tool.name));
+    session.setActiveToolsByName(savedTools.filter((name) => available.has(name)));
   }
 
   return {

@@ -18,12 +18,13 @@ test("conversation rows put every action behind one overflow menu", async () => 
   // The row carries exactly one action button.
   assert.match(app, /menuButton\.dataset\.testid = "session-menu-button"/);
   assert.match(app, /row\.append\(button, menuButton\);/);
-  assert.match(app, /function openRowMenu\(anchor, items\)/);
+  assert.match(app, /function openRowMenu\(anchor, items, anchorSelector = null\)/);
 
-  // Pin, rename, transfer and remove all live inside the menu now.
+  // Pin, colour, rename, transfer and remove all live inside the menu now.
   assert.match(app, /function sessionMenuItems\(session, sessionActive\)/);
   for (const testid of [
     "session-pin-button",
+    "session-color-button",
     "session-rename-button",
     "session-transfer-button",
     "session-remove-button",

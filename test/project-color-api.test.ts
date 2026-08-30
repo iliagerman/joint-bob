@@ -52,7 +52,7 @@ test("the project editor offers the fixed colour palette", async () => {
 
   assert.match(html, /data-testid="project-color-swatches"/);
   assert.match(app, /const PROJECT_COLORS = \["slate", "teal", "blue", "violet", "magenta", "amber", "green", "red"\];/);
-  assert.match(app, /swatch\.dataset\.testid = "project-color-swatch";/);
+  assert.match(app, /renderColorSwatches\(selected, container, "project-color-swatch"\);/);
   assert.match(app, /row\.dataset\.color/);
   assert.match(styles, /\[data-color="teal"\] \{ --project-hue/);
   assert.match(styles, /\.project-card\[data-color\] \{ box-shadow: inset 3px 0 0 var\(--project-hue\)/);

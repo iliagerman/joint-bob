@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { applyConversationOwnershipEvent, ensureConversationOwnershipSchema } from "./conversation-ownership.js";
-import type { TaskRecord } from "./types.js";
+import { PROJECT_COLORS, type TaskRecord } from "./types.js";
 
 export interface ReplicationEvent {
   id: string;
@@ -17,10 +17,11 @@ export interface ReplicationEvent {
 }
 export interface ReplicationBatch { events: ReplicationEvent[]; }
 interface OutboxRow { event_id: string; origin_node_id: string; entity_type: string; entity_key: string; operation: string; payload: string; created_at: string; }
-interface NamePayload { scope: "projects" | "sessions"; key: string; name: string | null; updatedAt: string; originNodeId: string; }
+interface NamePayload { scope: "projects" | "sessions" | "session_colors"; key: string; name: string | null; updatedAt: string; originNodeId: string; }
 interface ProjectLockPayload { projectId: string; lock: { nodeId: string; nodeName: string; lockedAt: string } | null; updatedAt: string; originNodeId: string; }
 interface TaskPayload { projectId: string; task: TaskRecord | null; originNodeId: string; updatedAt?: string; }
 
+const projectColors = new Set<string>(PROJECT_COLORS);
 const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
 const databasePath = path.join(dataDir, "node.db");
 let databasePromise: Promise<DatabaseSync> | undefined;
@@ -88,7 +89,8 @@ function resolveProjectAlias(db: DatabaseSync, projectId: string): string {
 function namePayload(event: ReplicationEvent): NamePayload {
   if (event.entityType !== "name.override" || !["upsert", "delete"].includes(event.operation)) throw new Error("Unsupported replication event");
   const value = event.payload as Partial<NamePayload>;
-  if (!value || typeof value !== "object" || Array.isArray(value) || !["projects", "sessions"].includes(value.scope ?? "") || typeof value.key !== "string" || typeof value.updatedAt !== "string" || typeof value.originNodeId !== "string" || !(typeof value.name === "string" || value.name === null) || (event.operation === "upsert") !== (typeof value.name === "string") || event.entityKey !== `${value.scope}:${value.key}`) throw new Error("Malformed name replication payload");
+  if (!value || typeof value !== "object" || Array.isArray(value) || !["projects", "sessions", "session_colors"].includes(value.scope ?? "") || typeof value.key !== "string" || typeof value.updatedAt !== "string" || typeof value.originNodeId !== "string" || !(typeof value.name === "string" || value.name === null) || (event.operation === "upsert") !== (typeof value.name === "string") || event.entityKey !== `${value.scope}:${value.key}`) throw new Error("Malformed name replication payload");
+  if (value.scope === "session_colors" && typeof value.name === "string" && !projectColors.has(value.name)) throw new Error("Malformed name replication payload");
   return value as NamePayload;
 }
 function applyNameEvent(db: DatabaseSync, event: ReplicationEvent): void {
