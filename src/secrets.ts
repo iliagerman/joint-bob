@@ -226,6 +226,9 @@ export function genericSecretEnvironment(project: string): NodeJS.ProcessEnv {
       values[variable.name] = filePath;
     }
   }
+  // The gh CLI reads GH_TOKEN while most other GitHub tooling reads GITHUB_TOKEN, so one pasted token fills both.
+  if (values.GH_TOKEN && !values.GITHUB_TOKEN) values.GITHUB_TOKEN = values.GH_TOKEN;
+  if (values.GITHUB_TOKEN && !values.GH_TOKEN) values.GH_TOKEN = values.GITHUB_TOKEN;
   return values;
 }
 
@@ -237,7 +240,7 @@ export function agentEnvironment(projectId: string): NodeJS.ProcessEnv {
 const providerHints: Record<SecretProvider, string> = {
   aws: "the AWS CLI and AWS SDKs read these automatically",
   google: "gcloud and the Google SDKs read GOOGLE_APPLICATION_CREDENTIALS automatically",
-  github: "the gh CLI, git, and the GitHub API read these automatically",
+  github: "the gh CLI and the GitHub API read these automatically; git pushes use the GitHub group set for the project",
   custom: "plain environment variables for this project",
 };
 

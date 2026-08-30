@@ -1267,11 +1267,34 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 .project-type-add button { flex: 0 0 auto; }
 
 .secret-account-list, .secret-scope-list { display: grid; gap: 8px; }
-.secret-account-row { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
-.secret-account-meta { flex: 1; min-width: 0; color: var(--text); font-size: 12px; overflow-wrap: anywhere; }
-.secret-variable-row { display: grid; grid-template-columns: minmax(0, 1fr) 120px minmax(0, 1.5fr) auto; gap: 8px; align-items: start; }
-.secret-variable-row textarea { min-height: 74px; resize: vertical; }
+.secret-account-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
+.secret-account-meta { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.secret-account-meta strong { color: var(--text); font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.secret-account-vars { color: var(--muted); font-family: var(--mono); font-size: 10.5px; overflow-wrap: anywhere; }
+
+/* Brand marks are filled glyphs, so they carry their own colour rather than the row's. */
+.secret-provider-badge { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 34px; height: 34px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--field); }
+.secret-provider-icon { width: 18px; height: 18px; }
+.secret-provider-icon.aws { color: #ff9900; }
+.secret-provider-icon.google { color: #4285f4; }
+.secret-provider-icon.github { color: var(--text); }
+.secret-provider-icon.custom { color: var(--accent); }
+
+.secret-dialog-heading { display: flex; align-items: flex-start; gap: 12px; }
+.secret-dialog-icon { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 44px; height: 44px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--field); }
+.secret-dialog-icon .secret-provider-icon { width: 24px; height: 24px; }
+.secret-provider-hint { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.dialog-card .secret-provider-hint { margin-top: -6px; }
+
+/* Each variable is its own card: the name needs the full width to stay readable, and the
+   value is a paste target, so squeezing all four controls onto one line truncated both. */
+#secretVariableRows { display: grid; gap: 10px; }
+.secret-variable-row { display: grid; grid-template-columns: minmax(0, 1fr) 132px auto; gap: 8px; align-items: center; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
+.secret-variable-row input { font-family: var(--mono); font-size: 11.5px; }
+.secret-variable-row textarea { grid-column: 1 / -1; min-height: 78px; resize: vertical; }
 .secret-scope-list { max-height: 280px; overflow-y: auto; padding: 2px; }
+.secret-scope-row { display: flex; align-items: center; gap: 8px; }
+.secret-scope-row .secret-provider-badge { width: 28px; height: 28px; }
 
 /* The wide tabs earn a second column instead of one very tall stack. */
 @media (min-width: 940px) {
@@ -1279,8 +1302,10 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 }
 @media (max-width: 640px) {
   .secret-account-row { align-items: stretch; flex-wrap: wrap; }
-  .secret-account-meta { flex-basis: 100%; }
-  .secret-variable-row { grid-template-columns: 1fr; }
+  .secret-account-meta { flex-basis: calc(100% - 44px); }
+  /* Name on its own row, then kind and Remove share the next one. */
+  .secret-variable-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .secret-variable-row input { grid-column: 1 / -1; }
 }
 @media (prefers-reduced-motion: reduce) {
   .settings-tab { transition: none; }

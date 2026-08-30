@@ -371,6 +371,8 @@ const elements = {
   secretAccountTitle: document.querySelector("#secretAccountTitle"),
   secretAccountLabelInput: document.querySelector("#secretAccountLabelInput"),
   secretAccountProviderInput: document.querySelector("#secretAccountProviderInput"),
+  secretAccountProviderIcon: document.querySelector("#secretAccountProviderIcon"),
+  secretAccountProviderHint: document.querySelector("#secretAccountProviderHint"),
   secretVariableRows: document.querySelector("#secretVariableRows"),
   secretVariableAddButton: document.querySelector("#secretVariableAddButton"),
   secretAccountCancelButton: document.querySelector("#secretAccountCancelButton"),
@@ -5174,12 +5176,77 @@ const secretAccounts = [];
 let editingSecretAccountId = null;
 let secretScopeTarget = null;
 
+// Brand marks, drawn inline so the offline shell never reaches for a network icon.
+const providerIconPaths = {
+  aws: [
+    "M1.5 16.4c.2-.35.6-.45.95-.25 3.4 1.95 7.4 3.05 11.6 3.05 2.85 0 5.65-.5 8.25-1.45.4-.15.8.05.9.45.1.4-.1.8-.5.95-2.8 1.05-5.8 1.6-8.85 1.6-4.55 0-8.85-1.2-12.5-3.35-.35-.2-.45-.65-.25-1z",
+    "M20.55 14.35c-.25-.75-1.7-.85-3.1-.55-.2.05-.35-.1-.3-.3.05-.25.25-.4.5-.5 1.6-.5 3.7-.4 4.15.35.45.75-.25 2.55-1.2 3.45-.15.15-.35.05-.3-.15.25-.75.5-1.55.25-2.3z",
+    "M7.6 9.55c0 .4.05.72.13.95.1.24.22.5.39.78a.47.47 0 0 1 .08.25c0 .1-.06.21-.2.31l-.65.44a.5.5 0 0 1-.27.1c-.1 0-.2-.05-.3-.15a3.1 3.1 0 0 1-.37-.48 8 8 0 0 1-.31-.6c-.8.95-1.81 1.42-3.02 1.42-.87 0-1.56-.25-2.06-.74-.5-.5-.76-1.16-.76-1.98 0-.88.31-1.6.94-2.13.63-.54 1.47-.81 2.54-.81.35 0 .71.03 1.1.08.38.06.77.14 1.18.23v-.75c0-.79-.16-1.34-.49-1.66-.33-.32-.89-.48-1.69-.48-.36 0-.73.04-1.11.13-.38.09-.75.2-1.11.34a3 3 0 0 1-.36.13.63.63 0 0 1-.16.03c-.15 0-.22-.11-.22-.33v-.52c0-.17.02-.3.07-.37a.8.8 0 0 1 .3-.23c.36-.19.79-.34 1.29-.47a6.2 6.2 0 0 1 1.6-.19c1.22 0 2.11.28 2.68.83.56.55.85 1.39.85 2.51v3.3zm-4.17 1.56c.34 0 .69-.06 1.06-.19.37-.12.7-.35.98-.66.17-.2.29-.42.35-.67.06-.25.1-.55.1-.9v-.44a8.5 8.5 0 0 0-1.9-.2c-.68 0-1.18.14-1.51.41-.34.27-.5.66-.5 1.17 0 .48.12.83.37 1.08.24.26.59.4 1.05.4z",
+  ],
+  google: [
+    "M12.48 10.92v3.28h7.84c-.24 1.84-.85 3.19-1.79 4.13-1.14 1.15-2.93 2.4-6.05 2.4-4.83 0-8.6-3.89-8.6-8.72s3.77-8.72 8.6-8.72c2.6 0 4.51 1.03 5.91 2.35l2.31-2.31C18.75 1.44 16.13 0 12.48 0 5.87 0 .31 5.39.31 12s5.56 12 12.17 12c3.57 0 6.27-1.17 8.37-3.36 2.16-2.16 2.84-5.21 2.84-7.67 0-.76-.05-1.47-.17-2.05H12.48z",
+  ],
+  github: [
+    "M12 .5C5.37.5 0 5.87 0 12.5c0 5.3 3.44 9.8 8.21 11.39.6.11.82-.26.82-.58 0-.29-.01-1.05-.02-2.06-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.74.08-.73.08-.73 1.21.09 1.84 1.24 1.84 1.24 1.07 1.83 2.81 1.3 3.5.99.11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.11-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.29-1.55 3.3-1.23 3.3-1.23.65 1.66.24 2.88.12 3.18.77.84 1.23 1.91 1.23 3.22 0 4.61-2.8 5.63-5.48 5.92.43.37.81 1.1.81 2.22 0 1.6-.01 2.89-.01 3.29 0 .32.21.7.83.58C20.57 22.29 24 17.8 24 12.5 24 5.87 18.63.5 12 .5z",
+  ],
+  custom: [
+    "M14.5 2a7.5 7.5 0 0 0-7.16 9.76L2 17.1V22h4.9v-2.2h2.2v-2.2h2.2l1.94-1.94A7.5 7.5 0 1 0 14.5 2zm2.6 4a1.6 1.6 0 1 1 0 3.2 1.6 1.6 0 0 1 0-3.2z",
+  ],
+};
+const providerLabels = { aws: "AWS", google: "Google", github: "GitHub", custom: "Custom" };
+/** Shown under the provider picker so the choice explains itself before anything is typed. */
+const providerHints = {
+  aws: "An access key pair. The AWS CLI and the AWS SDKs pick these up with no extra setup.",
+  google: "Paste the Google service account JSON. It is stored privately and GOOGLE_APPLICATION_CREDENTIALS points gcloud and the Google SDKs at it.",
+  github: "A personal access token. The gh CLI and the GitHub API read it, and GITHUB_TOKEN is filled in from GH_TOKEN. Git pushes keep using the GitHub group set under Projects.",
+  custom: "Any environment variables you need. Every agent session in the scopes you assign this account to receives them.",
+};
+
+/** Decorative: the label beside it already names the provider. */
+function providerIcon(provider) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "currentColor");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("class", `secret-provider-icon ${provider}`);
+  for (const d of providerIconPaths[provider] ?? providerIconPaths.custom) {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d);
+    svg.append(path);
+  }
+  return svg;
+}
+
+function providerBadge(provider, testid) {
+  const badge = document.createElement("span");
+  badge.className = "secret-provider-badge";
+  badge.dataset.testid = testid;
+  badge.title = providerLabels[provider] ?? provider;
+  badge.append(providerIcon(provider));
+  return badge;
+}
+
+function secretProviderPresets(provider) {
+  if (provider === "aws") return [{ name: "AWS_ACCESS_KEY_ID", kind: "value" }, { name: "AWS_SECRET_ACCESS_KEY", kind: "value" }];
+  if (provider === "google") return [{ name: "GOOGLE_APPLICATION_CREDENTIALS", kind: "file" }];
+  if (provider === "github") return [{ name: "GH_TOKEN", kind: "value" }];
+  return [{ name: "", kind: "value" }];
+}
+
+function secretValuePlaceholder(kind, configured) {
+  if (configured) return "Leave blank to keep the saved value";
+  if (kind !== "file") return "Secret value";
+  return elements.secretAccountProviderInput.value === "google" ? "Paste the Google service account JSON" : "Paste the file contents";
+}
+
 function secretRow(variable = { name: "", kind: "value", configured: false }) {
   const row = document.createElement("div");
   row.className = "secret-variable-row";
   const name = document.createElement("input");
   name.placeholder = "ENV_NAME";
   name.value = variable.name;
+  name.autocomplete = "off";
+  name.spellcheck = false;
   name.setAttribute("aria-label", "Environment variable name");
   name.dataset.secretName = "";
   name.dataset.testid = "secret-variable-name-input";
@@ -5191,16 +5258,17 @@ function secretRow(variable = { name: "", kind: "value", configured: false }) {
   kind.value = variable.kind;
   const value = document.createElement("textarea");
   value.setAttribute("aria-label", "Secret value");
-  value.placeholder = variable.configured ? "Leave blank to keep saved value" : "Secret value";
+  value.placeholder = secretValuePlaceholder(variable.kind, variable.configured);
   value.dataset.secretValue = "";
   value.dataset.testid = "secret-variable-value-input";
+  kind.addEventListener("change", () => { value.placeholder = secretValuePlaceholder(kind.value, variable.configured); });
   const remove = document.createElement("button");
   remove.type = "button";
   remove.className = "ghost compact";
   remove.textContent = "Remove";
   remove.dataset.testid = "secret-variable-remove-button";
   remove.addEventListener("click", () => row.remove());
-  row.append(name, kind, value, remove);
+  row.append(name, kind, remove, value);
   elements.secretVariableRows.append(row);
 }
 
@@ -5210,12 +5278,15 @@ function renderSecretAccounts() {
   for (const account of secretAccounts) {
     const row = document.createElement("div"); row.className = "secret-account-row";
     const meta = document.createElement("span"); meta.className = "secret-account-meta";
-    meta.textContent = `${account.label} (${account.provider}): ${account.variables.map((item) => `${item.name}${item.kind === "file" ? " (file)" : ""}`).join(", ")}`;
+    const name = document.createElement("strong"); name.textContent = `${account.label} · ${providerLabels[account.provider] ?? account.provider}`;
+    const variables = document.createElement("span"); variables.className = "secret-account-vars";
+    variables.textContent = account.variables.map((item) => `${item.name}${item.kind === "file" ? " (file)" : ""}`).join(", ");
+    meta.append(name, variables);
     const edit = document.createElement("button"); edit.type = "button"; edit.className = "ghost compact"; edit.textContent = "Edit"; edit.dataset.testid = "secret-account-edit-button";
     edit.addEventListener("click", () => openSecretAccount(account));
     const remove = document.createElement("button"); remove.type = "button"; remove.className = "ghost compact danger"; remove.textContent = "Delete"; remove.dataset.testid = "secret-account-delete-button";
     remove.addEventListener("click", () => deleteSecretAccount(account));
-    row.append(meta, edit, remove); elements.secretAccountList.append(row);
+    row.append(providerBadge(account.provider, "secret-account-provider-badge"), meta, edit, remove); elements.secretAccountList.append(row);
   }
 }
 
@@ -5232,13 +5303,29 @@ async function deleteSecretAccount(account) {
   toast("Secret account deleted");
 }
 
+/**
+ * Switching provider swaps in that provider's variables. It never discards a secret the
+ * user already typed, and never touches the rows of an account that is being edited.
+ */
+function applySecretProviderPreset() {
+  const provider = elements.secretAccountProviderInput.value;
+  elements.secretAccountProviderIcon.replaceChildren(providerIcon(provider));
+  elements.secretAccountProviderHint.textContent = providerHints[provider];
+  const typed = [...elements.secretVariableRows.children].some((row) => row.querySelector("[data-secret-value]").value.trim());
+  if (editingSecretAccountId || typed) return;
+  elements.secretVariableRows.replaceChildren();
+  secretProviderPresets(provider).forEach((item) => secretRow(item));
+}
+
 function openSecretAccount(account = null) {
   editingSecretAccountId = account?.id ?? null;
   elements.secretAccountTitle.textContent = account ? "Edit secret account" : "Add secret account";
   elements.secretAccountLabelInput.value = account?.label ?? "";
-  elements.secretAccountProviderInput.value = account?.provider ?? "custom";
+  elements.secretAccountProviderInput.value = account?.provider ?? "aws";
   elements.secretVariableRows.replaceChildren();
-  (account?.variables ?? [{ name: "", kind: "value" }]).forEach((item) => secretRow(item));
+  // A new account has no rows yet, so the preset below fills them; an edited one keeps its own.
+  account?.variables.forEach((item) => secretRow(item));
+  applySecretProviderPreset();
   elements.secretAccountDialog.showModal();
 }
 
@@ -5250,9 +5337,9 @@ async function openSecretScope(scopeType, scopeId, label) {
   elements.secretScopeList.replaceChildren();
   if (!secretAccounts.length) elements.secretScopeList.textContent = "No node-local secret accounts. Add one in Settings.";
   for (const account of secretAccounts) {
-    const item = document.createElement("label"); item.className = "checkbox-row";
+    const item = document.createElement("label"); item.className = "checkbox-row secret-scope-row";
     const input = document.createElement("input"); input.type = "checkbox"; input.value = account.id; input.checked = accountIds.includes(account.id); input.dataset.testid = "secret-scope-account-checkbox";
-    item.append(input, document.createTextNode(` ${account.label} (${account.provider})`)); elements.secretScopeList.append(item);
+    item.append(input, providerBadge(account.provider, "secret-scope-provider-badge"), document.createTextNode(` ${account.label}`)); elements.secretScopeList.append(item);
   }
   elements.secretScopeDialog.showModal();
 }
@@ -5269,15 +5356,11 @@ elements.secretAccountAddButton.addEventListener("click", () => openSecretAccoun
 elements.secretVariableAddButton.addEventListener("click", () => secretRow());
 elements.secretAccountCancelButton.addEventListener("click", () => elements.secretAccountDialog.close());
 elements.secretAccountProviderInput.addEventListener("change", () => {
-  if (editingSecretAccountId || elements.secretVariableRows.children.length > 1 || elements.secretVariableRows.querySelector("[data-secret-name]").value) return;
-  elements.secretVariableRows.replaceChildren();
-  const presets = elements.secretAccountProviderInput.value === "aws" ? [{ name: "AWS_ACCESS_KEY_ID", kind: "value" }, { name: "AWS_SECRET_ACCESS_KEY", kind: "value" }]
-    : elements.secretAccountProviderInput.value === "google" ? [{ name: "GOOGLE_APPLICATION_CREDENTIALS", kind: "file" }]
-      : [{ name: "", kind: "value" }];
-  presets.forEach((item) => secretRow(item));
+  applySecretProviderPreset();
 });
 elements.secretAccountForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  const provider = elements.secretAccountProviderInput.value;
   const variables = [...elements.secretVariableRows.children].map((row) => {
     const name = row.querySelector("[data-secret-name]").value.trim();
     const kind = row.querySelector("[data-secret-kind]").value;
@@ -5285,7 +5368,11 @@ elements.secretAccountForm.addEventListener("submit", async (event) => {
     return { name, kind, ...(value === "" ? {} : { value }) };
   });
   if (!variables.every((item) => item.name) || new Set(variables.map((item) => item.name)).size !== variables.length || (!editingSecretAccountId && variables.some((item) => item.value === undefined))) throw new Error("Enter unique variable names and values");
-  const payload = { label: elements.secretAccountLabelInput.value.trim(), provider: elements.secretAccountProviderInput.value, variables };
+  if (provider === "google") for (const item of variables) {
+    if (item.kind !== "file" || item.value === undefined) continue;
+    try { JSON.parse(item.value); } catch { throw new Error("Google credentials must be valid JSON. Paste the whole service account file."); }
+  }
+  const payload = { label: elements.secretAccountLabelInput.value.trim(), provider, variables };
   await api(editingSecretAccountId ? `/api/secrets/accounts/${encodeURIComponent(editingSecretAccountId)}` : "/api/secrets/accounts", { method: editingSecretAccountId ? "PUT" : "POST", body: JSON.stringify(payload) });
   elements.secretAccountDialog.close(); await loadSecretAccounts(); toast("Secret account saved");
 });
