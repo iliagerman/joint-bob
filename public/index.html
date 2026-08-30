@@ -314,8 +314,8 @@
         </section>
 
         <section class="settings-panel" id="settingsPanel-github" role="tabpanel" aria-labelledby="settingsTab-github" tabindex="0" hidden>
-          <p>Named AWS, Google, and custom accounts are encrypted and stay on this node. GitHub groups live under Projects.</p>
-          <fieldset class="phase-settings"><legend>Secret accounts</legend><p>Named AWS, Google, and custom accounts stay on this node.</p><div id="secretAccountList" class="secret-account-list" data-testid="secret-account-list"></div><button class="ghost" type="button" id="secretAccountAddButton" data-testid="secret-account-add-button">Add account</button></fieldset>
+          <p>Named AWS, Google, GitHub, and custom accounts are encrypted and stay on this node. GitHub groups that push with git live under Projects.</p>
+          <fieldset class="phase-settings"><legend>Secret accounts</legend><p>Assigned accounts are exported into every agent session for that project, so the AWS CLI, gcloud, and the gh CLI work without being asked for keys.</p><div id="secretAccountList" class="secret-account-list" data-testid="secret-account-list"></div><button class="ghost" type="button" id="secretAccountAddButton" data-testid="secret-account-add-button">Add account</button></fieldset>
         </section>
 
         <section class="settings-panel" id="settingsPanel-cluster" role="tabpanel" aria-labelledby="settingsTab-cluster" tabindex="0" hidden>
@@ -671,9 +671,13 @@
 
     <dialog id="secretAccountDialog" data-testid="secret-account-dialog">
       <form method="dialog" class="dialog-card" id="secretAccountForm">
-        <div><span class="eyebrow">Node-local credentials</span><h2 id="secretAccountTitle">Secret account</h2><p>File entries store their content privately; the environment receives the private file path.</p></div>
-        <label>Label<input id="secretAccountLabelInput" required data-testid="secret-account-label-input" /></label>
-        <label>Provider<select id="secretAccountProviderInput" data-testid="secret-account-provider-input"><option value="aws">AWS</option><option value="google">Google</option><option value="custom">Custom</option></select></label>
+        <div class="secret-dialog-heading">
+          <span class="secret-dialog-icon" id="secretAccountProviderIcon" data-testid="secret-account-provider-icon"></span>
+          <div><span class="eyebrow">Node-local credentials</span><h2 id="secretAccountTitle">Secret account</h2><p>File entries store their content privately; the environment receives the private file path.</p></div>
+        </div>
+        <label>Label<input id="secretAccountLabelInput" required autocomplete="off" placeholder="Work AWS" data-testid="secret-account-label-input" /></label>
+        <label>Provider<select id="secretAccountProviderInput" data-testid="secret-account-provider-input"><option value="aws">AWS</option><option value="google">Google</option><option value="github">GitHub</option><option value="custom">Custom</option></select></label>
+        <p class="secret-provider-hint" id="secretAccountProviderHint" data-testid="secret-account-provider-hint"></p>
         <div id="secretVariableRows" data-testid="secret-variable-rows"></div>
         <button type="button" class="ghost" id="secretVariableAddButton" data-testid="secret-variable-add-button">Add environment variable</button>
         <div class="dialog-actions"><button type="button" class="ghost" id="secretAccountCancelButton" data-testid="secret-account-cancel-button">Cancel</button><button type="submit" class="primary" data-testid="secret-account-save-button">Save account</button></div>
