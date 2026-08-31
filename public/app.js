@@ -4726,7 +4726,9 @@ function ensureTerminalEmulator() {
       selectionBackground: "#37cfab55",
     },
   });
-  const fit = new window.FitAddon();
+  // The addon's UMD bundle assigns its whole module namespace to window.FitAddon,
+  // so the constructor itself lives one level down at window.FitAddon.FitAddon.
+  const fit = new window.FitAddon.FitAddon();
   emulator.loadAddon(fit);
   emulator.open(elements.terminalHost);
   state.terminalFit = fit;

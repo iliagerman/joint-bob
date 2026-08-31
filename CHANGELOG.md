@@ -3,6 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 0.3.2 — 2026-08-31
+
+- Fixed the terminal dialog failing to open because the fit addon constructor lives under the addon's namespace
+- Fixed viewing or editing a file on a paired node returning Unauthorized after that node rotated its cluster credential
+- Fixed choppy chat scrolling while assistant replies stream in
+
 ## 0.3.1 — 2026-08-31
 
 - Fixed node installation failing due to attempt to load a removed internal module.

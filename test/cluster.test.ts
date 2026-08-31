@@ -124,6 +124,23 @@ test("cluster membership refreshes peer tokens and ignores its local entry", asy
   });
 });
 
+test("authenticated sender token overrides a newer stale local copy", async () => {
+  await withClusterStore(async () => {
+    const cluster = await import(new URL(`../src/cluster.ts?membership-origin=${Date.now()}`, import.meta.url).href);
+    // A locally stored copy of the sender with a NEWER version than the sender's own row pins
+    // an outdated token under plain version comparison; the sender's authenticated declaration wins.
+    await cluster.mergeClusterMembership({ members: [member(1, "stale-token", "2026-03-01T00:00:00.000Z")] });
+    await cluster.mergeClusterMembership({ members: [member(1, "current-token", "2026-01-01T00:00:00.000Z")] }, member(1).id);
+    assert.equal((await cluster.getClusterPeer(member(1).id))?.token, "current-token");
+    // The heal keeps the local row's version, so an older stale snapshot cannot regress the token,
+    // with or without an authenticated origin.
+    await cluster.mergeClusterMembership({ members: [member(1, "stale-token", "2026-02-01T00:00:00.000Z")] });
+    assert.equal((await cluster.getClusterPeer(member(1).id))?.token, "current-token");
+    await cluster.mergeClusterMembership({ members: [member(1, "current-token")] }, member(1).id);
+    assert.equal((await cluster.getClusterPeer(member(1).id))?.token, "current-token");
+  });
+});
+
 test("cluster peer last seen persists", async () => {
   await withClusterStore(async () => {
     const cluster = await import(new URL(`../src/cluster.ts?last-seen=${Date.now()}`, import.meta.url).href);

@@ -406,7 +406,7 @@ export async function getClusterMembership(): Promise<ClusterMembershipSnapshot>
   return { members, removed: tombstones.map(tombstoneFromRow) };
 }
 
-export async function mergeClusterMembership(snapshot: ClusterMembershipSnapshot): Promise<void> {
+export async function mergeClusterMembership(snapshot: ClusterMembershipSnapshot, originNodeId?: string): Promise<void> {
   const db = await clusterDatabase();
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -433,20 +433,25 @@ export async function mergeClusterMembership(snapshot: ClusterMembershipSnapshot
     for (const id of candidateIds) {
       const local = existingById.get(id);
       const incoming = incomingMembers.get(id);
+      // The authenticated sender describes itself with the very credential it just proved, so its
+      // self-declared token is authoritative even when a stale local copy carries a newer version;
+      // otherwise that copy pins an outdated token forever and every machine-routed call to the
+      // peer stays 401. Only the token is taken: version state still decides which row wins.
       const live = !local ? incoming : !incoming || compareVersion(local.updatedAt, local.id, incoming.updatedAt, incoming.id) > 0 ? local : incoming;
+      const authoritative = id === originNodeId && incoming && live ? { ...live, token: incoming.token } : live;
       const tombstone = tombstones.get(id);
       if (tombstone && (!live || compareVersion(live.updatedAt, live.id, tombstone.removedAt, tombstone.originNodeId) <= 0)) {
         desiredTombstones.set(id, tombstone);
         continue;
       }
-      if (!live) continue;
-      if (!live.token.trim()) throw new Error("Cluster membership token is required");
-      if (local && live === local) {
+      if (!authoritative) continue;
+      if (!authoritative.token.trim()) throw new Error("Cluster membership token is required");
+      if (local && authoritative === local) {
         desiredPeers.set(id, local);
       } else {
         desiredPeers.set(id, {
-          ...live,
-          url: live.url.replace(/\/$/, ""),
+          ...authoritative,
+          url: authoritative.url.replace(/\/$/, ""),
           pairedAt: local?.pairedAt ?? now,
           lastSeenAt: local?.lastSeenAt ?? null,
         });

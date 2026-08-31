@@ -1060,7 +1060,7 @@ app.post("/api/cluster/peers", async (request, response, next) => {
     });
     if (!acceptResponse.ok) throw new Error(`Peer pairing failed: ${peerUrl} returned ${acceptResponse.status}`);
     const remoteSnapshot = clusterMembershipSnapshotSchema.parse(await acceptResponse.json());
-    await mergeClusterMembership(remoteSnapshot);
+    await mergeClusterMembership(remoteSnapshot, peerNode.id);
     const peer = await getClusterPeer(peerNode.id);
     if (!peer) throw new Error("Paired peer was not added to cluster membership");
     const confirmation = await fetch(`${peerUrl}/api/cluster/membership/sync`, {
@@ -1091,7 +1091,7 @@ app.post("/api/cluster/peers/accept", async (request, response, next) => {
       return;
     }
     const snapshot = clusterMembershipSnapshotSchema.parse(request.body);
-    await mergeClusterMembership(snapshot);
+    await mergeClusterMembership(snapshot, response.locals.machineNodeId as string | undefined);
     response.status(201).json(await getClusterMembership());
   } catch (error) {
     next(error);
@@ -1101,7 +1101,7 @@ app.post("/api/cluster/peers/accept", async (request, response, next) => {
 app.post("/api/cluster/membership/sync", async (request, response, next) => {
   try {
     const snapshot = clusterMembershipSnapshotSchema.parse(request.body);
-    await mergeClusterMembership(snapshot);
+    await mergeClusterMembership(snapshot, response.locals.machineNodeId as string | undefined);
     response.json({ ok: true });
   } catch (error) {
     next(error);
