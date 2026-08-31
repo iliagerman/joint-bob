@@ -169,11 +169,11 @@ test("Syncthing readiness fences handoff ownership until both nodes are synchron
     assert.ok(sourceSyncthing.ignoreRequests() > 0);
     assert.ok(destinationSyncthing.ignoreRequests() > 0);
     for (const syncthing of [sourceSyncthing, destinationSyncthing]) {
-      assert.ok(syncthing.folders.some((folder) => folder.id === "dot-pi"));
-      assert.ok(syncthing.folders.some((folder) => folder.id === "dot-claude"));
+      assert.ok(!syncthing.folders.some((folder) => folder.id === "dot-pi"));
+      assert.ok(!syncthing.folders.some((folder) => folder.id === "dot-claude"));
     }
-    assert.ok(sourceSyncthing.folders.find((folder) => folder.id === "dot-pi")?.devices.some((device) => device.deviceID === "DESTINATION"));
-    assert.ok(destinationSyncthing.folders.find((folder) => folder.id === "dot-pi")?.devices.some((device) => device.deviceID === "SOURCE"));
+    assert.ok(sourceSyncthing.folders.find((folder) => folder.id === "joint-bob-ticket-workspaces")?.devices.some((device) => device.deviceID === "DESTINATION"));
+    assert.ok(destinationSyncthing.folders.find((folder) => folder.id === "joint-bob-ticket-workspaces")?.devices.some((device) => device.deviceID === "SOURCE"));
   } finally {
     await Promise.all(nodes.map(stopNode));
     await Promise.all([sourceSyncthing.stop(), destinationSyncthing.stop()]);

@@ -357,42 +357,35 @@ test("ticket workspace folder uses one stable path and gains paired devices", as
   await rm(root, { recursive: true, force: true });
 });
 
-test("engine config and session folders are created and shared without credentials", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-engine-sync-"));
-  const folders: Array<{ id: string; label: string; path: string; type: string; devices: Array<{ deviceID: string }> }> = [];
-  const devices: Array<{ deviceID: string; name: string; addresses: string[] }> = [];
-  const ignores = new Map<string, string[]>();
+test("existing engine folders are paused without creating or sharing them", async () => {
+  const folders = [
+    { id: "dot-pi", label: "Pi", path: "/home/test/.pi", type: "sendreceive", devices: [{ deviceID: "LOCAL" }, { deviceID: "NODE-A" }], markerName: ".stfolder" },
+    { id: "dot-claude", label: "Claude", path: "/home/test/.claude", type: "sendreceive", devices: [{ deviceID: "LOCAL" }], paused: true },
+    { id: "unrelated", label: "Unrelated", path: "/tmp/unrelated", type: "sendreceive", devices: [{ deviceID: "LOCAL" }] },
+  ];
+  const requests: Array<{ method: string; url: string; body: unknown }> = [];
   await withSyncthingApi((request, response) => {
     let body = "";
     request.on("data", (chunk) => { body += chunk; });
     request.on("end", () => {
+      requests.push({ method: request.method ?? "", url: request.url ?? "", body: body ? JSON.parse(body) : null });
       response.setHeader("Content-Type", "application/json");
       if (request.method === "GET" && request.url === "/rest/config/folders") { response.end(JSON.stringify(folders)); return; }
-      if (request.method === "GET" && request.url === "/rest/config/devices") { response.end(JSON.stringify(devices)); return; }
-      if (request.method === "POST" && request.url === "/rest/config/devices") { devices.push(JSON.parse(body)); response.end("{}"); return; }
-      if (request.method === "GET" && request.url === "/rest/system/status") { response.end(JSON.stringify({ myID: "LOCAL" })); return; }
-      if (request.method === "POST" && request.url === "/rest/config/folders") { folders.push(JSON.parse(body)); response.end("{}"); return; }
-      const ignoreFolder = new URL(request.url ?? "", "http://localhost").searchParams.get("folder");
-      if (request.method === "GET" && request.url?.startsWith("/rest/db/ignores?") && ignoreFolder) { response.end(JSON.stringify({ ignore: ignores.get(ignoreFolder) ?? [] })); return; }
-      if (request.method === "POST" && request.url?.startsWith("/rest/db/ignores?") && ignoreFolder) { ignores.set(ignoreFolder, (JSON.parse(body) as { ignore: string[] }).ignore); response.end("{}"); return; }
+      if (request.method === "PUT" && request.url === "/rest/config/folders/dot-pi") { folders[0] = JSON.parse(body); response.end("{}"); return; }
       response.statusCode = 404;
       response.end();
     });
   }, async (syncthing) => {
-    await syncthing.ensureEngineSyncFolders(root, "NODE-A", "Node A");
+    await syncthing.pauseEngineSyncFolders();
   });
-  assert.deepEqual(folders.map((folder) => ({ id: folder.id, path: folder.path, devices: folder.devices })), [
-    { id: "dot-pi", path: path.join(root, ".pi"), devices: [{ deviceID: "LOCAL" }, { deviceID: "NODE-A" }] },
-    { id: "dot-claude", path: path.join(root, ".claude"), devices: [{ deviceID: "LOCAL" }, { deviceID: "NODE-A" }] },
-  ]);
-  assert.ok(ignores.get("dot-pi")?.includes("/agent/auth.json"));
-  assert.ok(ignores.get("dot-pi")?.includes("/agent/models.json"));
-  assert.ok(ignores.get("dot-claude")?.includes("/.credentials.json"));
-  assert.ok(ignores.get("dot-claude")?.includes("/daemon/"));
-  assert.ok(ignores.get("dot-claude")?.includes("/settings.json"));
-  assert.ok(ignores.get("dot-claude")?.includes("/.mcp.json"));
-  assert.deepEqual(devices, [{ deviceID: "NODE-A", name: "Node A", addresses: ["dynamic"] }]);
-  await rm(root, { recursive: true, force: true });
+  const updates = requests.filter((request) => request.method === "PUT");
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].url, "/rest/config/folders/dot-pi");
+  assert.deepEqual(updates[0].body, { ...folders[0], paused: true });
+  assert.equal(folders.find((folder) => folder.id === "dot-pi")?.paused, true);
+  assert.equal(requests.filter((request) => request.method === "POST" && request.url === "/rest/config/folders").length, 0);
+  assert.equal(requests.filter((request) => request.url === "/rest/config/devices").length, 0);
+  assert.equal(requests.filter((request) => request.method === "PUT" && request.url !== "/rest/config/folders/dot-pi").length, 0);
 });
 
 test("reconciliation updates ignores for existing synced folders without recreating them", async () => {

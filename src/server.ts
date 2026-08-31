@@ -30,7 +30,7 @@ import {
 import { deletePushSubscription, getVapidPublicKey, listPushSubscriberUserIds, notifyConversationReview, savePushSubscription } from "./push.js";
 import { abortOutgoingTaskHandoff, abortPreparedTaskHandoff, acknowledgeIncomingTaskHandoff, acknowledgeOutgoingTaskHandoff, assertTaskCanBeDeleted, beginOutgoingTaskHandoff, claimTaskLease, commitPreparedTaskHandoff, completeTaskHandoff, completeTaskLease, createTask, deleteTask, getTaskHandoff, isTaskHandoffRejected, listTasks, listUnfinishedOutgoingTaskHandoffs, markOutgoingTaskHandoff, prepareTaskHandoff, rejectTaskHandoff, releaseTaskLease, reserveTaskHandoff, taskHandoffDeletion, updateTask, updateTaskSessionPath, type TaskHandoffRecord } from "./tasks.js";
 import { assertTaskWorktreeTransferable, exportTaskBranchBundle, mergeTaskWorktree, prepareTaskWorktreeFromBundle, removePreparedTaskWorktree, TaskWorktreeError, validateTaskRepository, type PreparedTaskWorktree } from "./worktrees.js";
-import { assertSyncthingFolderReady, CLAUDE_ENGINE_SYNC_FOLDER_ID, engineSyncFolders, ensureEngineSyncFolders, ensureSyncthingDevice, ensureSyncthingFolder, ensureTicketWorkspaceFolder, PI_ENGINE_SYNC_FOLDER_ID, reconcileSyncthingProjectFolders, rescanSyncthingFolder, syncthingDeviceId, syncthingFolderIdForPath, syncthingFolderStatuses, syncthingPathForFolderId } from "./syncthing.js";
+import { assertSyncthingFolderReady, CLAUDE_ENGINE_SYNC_FOLDER_ID, ensureSyncthingDevice, ensureSyncthingFolder, ensureTicketWorkspaceFolder, pauseEngineSyncFolders, PI_ENGINE_SYNC_FOLDER_ID, reconcileSyncthingProjectFolders, rescanSyncthingFolder, syncthingDeviceId, syncthingFolderIdForPath, syncthingFolderStatuses, syncthingPathForFolderId } from "./syncthing.js";
 import { assertTaskWorkspaceReady, removeTaskWorkspace, taskWorkspaceKey, TaskWorkspaceError, TICKET_WORKSPACE_FOLDER_ID, ticketWorkspaceRoot } from "./task-workspaces.js";
 import { SessionWatcher } from "./watcher.js";
 import { appendLiveEvent, buildHandoffContext, claudeRunIdFromSessionPath, claudeSessionFilePath, ensureLocalClaudeTranscript, loadClaudeMessages, runClaudePrompt, type ClaudeRunHandle, type ClaudeRunResult } from "./claude-service.js";
@@ -1631,8 +1631,8 @@ app.post("/api/cluster/sync/share", async (request, response, next) => {
       response.json({ ok: true });
       return;
     }
-    if (engineSyncFolders().some((folder) => folder.id === payload.folderId)) {
-      await ensureEngineSyncFolders(undefined, payload.deviceId, payload.deviceName);
+    if (payload.folderId === PI_ENGINE_SYNC_FOLDER_ID || payload.folderId === CLAUDE_ENGINE_SYNC_FOLDER_ID) {
+      await pauseEngineSyncFolders();
       response.json({ ok: true });
       return;
     }
@@ -4782,8 +4782,7 @@ async function configureTicketWorkspacePeer(peer: ClusterPeer, localDeviceId: st
   const inventory = await fetchPeerInventory(peer);
   if (!inventory.syncDeviceId) throw new Error("Peer Syncthing device ID is unavailable");
   await ensureTicketWorkspaceFolder(ticketWorkspaceRoot(), inventory.syncDeviceId, inventory.node.name);
-  await ensureEngineSyncFolders(undefined, inventory.syncDeviceId, inventory.node.name);
-  for (const folderId of [TICKET_WORKSPACE_FOLDER_ID, PI_ENGINE_SYNC_FOLDER_ID]) {
+  for (const folderId of [TICKET_WORKSPACE_FOLDER_ID]) {
     const response = await fetch(`${peer.url}/api/cluster/sync/share`, {
       method: "POST",
       headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
@@ -4802,8 +4801,8 @@ async function reconcileTicketWorkspaceSync(): Promise<void> {
     const peers = await listClusterPeers();
     const localDeviceId = await syncthingDeviceId();
     if (!localDeviceId) return;
+    await pauseEngineSyncFolders();
     await ensureTicketWorkspaceFolder();
-    await ensureEngineSyncFolders();
     if (!peers.length) return;
     const localNode = await getClusterNode();
     for (const peer of peers) {
