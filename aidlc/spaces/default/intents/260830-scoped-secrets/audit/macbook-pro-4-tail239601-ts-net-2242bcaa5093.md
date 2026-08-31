@@ -2020,3 +2020,459 @@
 **Reason**: other
 
 ---
+
+## Artifact Created
+**Timestamp**: 2026-08-31T06:33:18Z
+**Event**: ARTIFACT_CREATED
+**Tool**: Write
+**File**: <project-dir>/aidlc/spaces/default/intents/260830-scoped-secrets/operation/deployment-execution/deployment-log.md
+**Context**: operation > deployment-execution > deployment-log.md
+
+---
+
+## Sensor Fired
+**Timestamp**: 2026-08-31T06:33:18Z
+**Event**: SENSOR_FIRED
+**Fire id**: c27e3797
+**Sensor ID**: required-sections
+**Stage slug**: deployment-execution
+**Output path**: aidlc/spaces/default/intents/260830-scoped-secrets/operation/deployment-execution/deployment-log.md
+
+---
+
+## Sensor Passed
+**Timestamp**: 2026-08-31T06:33:18Z
+**Event**: SENSOR_PASSED
+**Fire id**: c27e3797
+**Sensor ID**: required-sections
+**Stage slug**: deployment-execution
+**Output path**: aidlc/spaces/default/intents/260830-scoped-secrets/operation/deployment-execution/deployment-log.md
+**Duration ms**: 27
+
+---
+
+## Sensor Fired
+**Timestamp**: 2026-08-31T06:33:18Z
+**Event**: SENSOR_FIRED
+**Fire id**: 39989f0d
+**Sensor ID**: upstream-coverage
+**Stage slug**: deployment-execution
+**Output path**: aidlc/spaces/default/intents/260830-scoped-secrets/operation/deployment-execution/deployment-log.md
+
+---
+
+## Sensor Passed
+**Timestamp**: 2026-08-31T06:33:18Z
+**Event**: SENSOR_PASSED
+**Fire id**: 39989f0d
+**Sensor ID**: upstream-coverage
+**Stage slug**: deployment-execution
+**Output path**: aidlc/spaces/default/intents/260830-scoped-secrets/operation/deployment-execution/deployment-log.md
+**Duration ms**: 28
+
+---
+
+## Artifact Created
+**Timestamp**: 2026-08-31T06:33:41Z
+**Event**: ARTIFACT_CREATED
+**Tool**: Write
+**File**: <project-dir>/aidlc/spaces/default/intents/260830-scoped-secrets/operation/deployment-execution/health-check-report.md
+**Context**: operation > deployment-execution > health-check-report.md
+
+---
+
+## Sensor Fired
+**Timestamp**: 2026-08-31T06:33:41Z
+**Event**: SENSOR_FIRED
+**Fire id**: 90ef312c
+**Sensor ID**: required-sections
+**Stage slug**: deployment-execution
+**Output path**: aidlc/spaces/default/intents/260830-scoped-secrets/operation/deployment-execution/health-check-report.md
+
+---
+
+## Sensor Passed
+**Timestamp**: 2026-08-31T06:33:41Z
+**Event**: SENSOR_PASSED
+**Fire id**: 90ef312c
+**Sensor ID**: required-sections
+**Stage slug**: deployment-execution
+**Output path**: aidlc/spaces/default/intents/260830-scoped-secrets/operation/deployment-execution/health-check-report.md
+**Duration ms**: 27
+
+---
+
+## Sensor Fired
+**Timestamp**: 2026-08-31T06:33:41Z
+**Event**: SENSOR_FIRED
+**Fire id**: 3ddb93cc
+**Sensor ID**: upstream-coverage
+**Stage slug**: deployment-execution
+**Output path**: aidlc/spaces/default/intents/260830-scoped-secrets/operation/deployment-execution/health-check-report.md
+
+---
+
+## Sensor Passed
+**Timestamp**: 2026-08-31T06:33:41Z
+**Event**: SENSOR_PASSED
+**Fire id**: 3ddb93cc
+**Sensor ID**: upstream-coverage
+**Stage slug**: deployment-execution
+**Output path**: aidlc/spaces/default/intents/260830-scoped-secrets/operation/deployment-execution/health-check-report.md
+**Duration ms**: 28
+
+---
+
+## Artifact Created
+**Timestamp**: 2026-08-31T06:34:00Z
+**Event**: ARTIFACT_CREATED
+**Tool**: Write
+**File**: <project-dir>/aidlc/spaces/default/intents/260830-scoped-secrets/operation/deployment-execution/smoke-test-results.md
+**Context**: operation > deployment-execution > smoke-test-results.md
+
+---
+
+## Sensor Fired
+**Timestamp**: 2026-08-31T06:34:00Z
+**Event**: SENSOR_FIRED
+**Fire id**: c0b5f42e
+**Sensor ID**: required-sections
+**Stage slug**: deployment-execution
+**Output path**: aidlc/spaces/default/intents/260830-scoped-secrets/operation/deployment-execution/smoke-test-results.md
+
+---
+
+## Sensor Passed
+**Timestamp**: 2026-08-31T06:34:00Z
+**Event**: SENSOR_PASSED
+**Fire id**: c0b5f42e
+**Sensor ID**: required-sections
+**Stage slug**: deployment-execution
+**Output path**: aidlc/spaces/default/intents/260830-scoped-secrets/operation/deployment-execution/smoke-test-results.md
+**Duration ms**: 27
+
+---
+
+## Sensor Fired
+**Timestamp**: 2026-08-31T06:34:00Z
+**Event**: SENSOR_FIRED
+**Fire id**: fc6ec6f6
+**Sensor ID**: upstream-coverage
+**Stage slug**: deployment-execution
+**Output path**: aidlc/spaces/default/intents/260830-scoped-secrets/operation/deployment-execution/smoke-test-results.md
+
+---
+
+## Sensor Passed
+**Timestamp**: 2026-08-31T06:34:00Z
+**Event**: SENSOR_PASSED
+**Fire id**: fc6ec6f6
+**Sensor ID**: upstream-coverage
+**Stage slug**: deployment-execution
+**Output path**: aidlc/spaces/default/intents/260830-scoped-secrets/operation/deployment-execution/smoke-test-results.md
+**Duration ms**: 29
+
+---
+
+## Decision Recorded
+**Timestamp**: 2026-08-31T06:34:21Z
+**Event**: DECISION_RECORDED
+**Stage**: deployment-execution
+**Decision**: Learnings capture for deployment-execution: which observations to keep as durable practices, plus anything to add
+**Options**: establish blast radius before fixing a failed deploy,record a superseded decision rather than silently following the newer one,drop dead cleanup rather than porting it,Keep none of these,Nothing to add,Add a note
+
+---
+
+## Human Turn
+**Timestamp**: 2026-08-31T12:21:10Z
+**Event**: HUMAN_TURN
+
+---
+
+## Question Answered
+**Timestamp**: 2026-08-31T12:21:24Z
+**Event**: QUESTION_ANSWERED
+**Stage**: deployment-execution
+**Details**: Keep none of these; Nothing to add
+
+---
+
+## Stage Awaiting Approval
+**Timestamp**: 2026-08-31T12:21:24Z
+**Event**: STAGE_AWAITING_APPROVAL
+**Stage**: deployment-execution
+
+---
+
+## Human Turn
+**Timestamp**: 2026-08-31T12:49:49Z
+**Event**: HUMAN_TURN
+
+---
+
+## Gate Approved
+**Timestamp**: 2026-08-31T12:50:01Z
+**Event**: GATE_APPROVED
+**Stage**: deployment-execution
+**User Input**: Approve
+
+---
+
+## Stage Completion
+**Timestamp**: 2026-08-31T12:50:01Z
+**Event**: STAGE_COMPLETED
+**Stage**: deployment-execution
+**Validation Basis**: {"graphContract":"sha256:9324fac9ed5362e892b6f0c448c7cd3701eec134e2e24178d842efc36efe955a","inputs":[{"artifact":"build-test-results","contentHash":"sha256:5f5c62c60103d6bbc3a972bc81b217ca07407b56290dc03d33914a3c84ea6396","instanceCount":1,"presentCount":1,"producer":"build-and-test","required":true,"structureHash":"sha256:dd3cde25294a7d004a97633665397cc3f4764c4fe905cf50fef78340106e3076"},{"artifact":"cd-config","contentHash":"sha256:d2ca4bf0e9c729e5507586abd696426be1e0d60d5de93328b4a76c79b88884cd","instanceCount":1,"presentCount":1,"producer":"deployment-pipeline","required":true,"structureHash":"sha256:06864f942685b8462ad4d4c3498aa3363be07e24fcb63faa29a403d99a10d720"},{"artifact":"deployment-strategy","contentHash":"sha256:5b1802137c5ccc12f5833c24fedbf783c39b5effd5bc8a2cda11d1c8b387169b","instanceCount":1,"presentCount":1,"producer":"deployment-pipeline","required":true,"structureHash":"sha256:46f049afe58b8999ec95bcd23235b2b086f4c036bf391253d17074c8f894b18d"},{"artifact":"environment-inventory","contentHash":"sha256:9c7858d07702009ccb4cf24e475f6804ea82211c0424bf3d4dcc20e5e1d36745","instanceCount":1,"presentCount":0,"producer":"environment-provisioning","required":true,"structureHash":"sha256:cba7b6c4cb08ca7a4fac7977b876d93c08eb0fc5e1889db89b0b786e02615be1"}],"outputs":[{"artifact":"deployment-execution-questions","contentHash":"sha256:1433597ccc0151057e08cc620f62490a17c51c7ab688f7b13a05b5bf8748ea58","instanceCount":1,"presentCount":1,"producer":"deployment-execution","required":true,"structureHash":"sha256:7b9aafde6a8456edfa1fa742c96492d01e0d124be7ef8e0fdfc9935645684c72"},{"artifact":"deployment-log","contentHash":"sha256:fb97bcd02917bea535cc486164852f1db4c37f1755e2ee8410d15a8b9bd6b4cf","instanceCount":1,"presentCount":1,"producer":"deployment-execution","required":true,"structureHash":"sha256:544c2a2ca22a5e450f3e6633fc5ca235b7a1a357511a86bc32faf14c02078a82"},{"artifact":"health-check-report","contentHash":"sha256:a69ce49676e9f40f14334423409a3502c35ca8624ea82261d2f69739e8f9c294","instanceCount":1,"presentCount":1,"producer":"deployment-execution","required":true,"structureHash":"sha256:6b0c89437198df621c4472c5d482553a3cd9eaaabd6665586ac4d07e31fc54e3"},{"artifact":"smoke-test-results","contentHash":"sha256:12e1689cf21069ee900e35f6c5f99b2be40fc7cf1eaa73b8f85c8b3c936a4913","instanceCount":1,"presentCount":1,"producer":"deployment-execution","required":true,"structureHash":"sha256:90f5bbb5c890cf42fa1407be6ba4cd5e1afd6c821423c5eff3f2982f7171a338"}],"projectType":"brownfield","schema":2}
+**Details**: Stage Deployment Execution approved by gate
+**Tokens In**: 154
+**Tokens Out**: 35694
+**Cache Read**: 28165099
+**Cache Write**: 689170
+**Cost USD**: 21.37
+**By Model**: opus-5=21.24; haiku-4-5=0.12
+**By Agent**: main=21.37
+**Tokens By Model**: opus-5=136/34.3k/28.1M/633k; haiku-4-5=18/1.4k/53.4k/56.2k
+**Tokens By Agent**: main=154/35.7k/28.2M/689.2k
+
+---
+
+## Stage Start
+**Timestamp**: 2026-08-31T12:50:01Z
+**Event**: STAGE_STARTED
+**Stage**: observability-setup
+**Agent**: aidlc-operations-agent
+
+---
+
+## Artifact Created
+**Timestamp**: 2026-08-31T12:51:01Z
+**Event**: ARTIFACT_CREATED
+**Tool**: Write
+**File**: <project-dir>/aidlc/spaces/default/intents/260830-scoped-secrets/operation/observability-setup/observability-setup-questions.md
+**Context**: operation > observability-setup > observability-setup-questions.md
+
+---
+
+## Sensor Fired
+**Timestamp**: 2026-08-31T12:51:01Z
+**Event**: SENSOR_FIRED
+**Fire id**: c4688055
+**Sensor ID**: required-sections
+**Stage slug**: observability-setup
+**Output path**: aidlc/spaces/default/intents/260830-scoped-secrets/operation/observability-setup/observability-setup-questions.md
+
+---
+
+## Sensor Passed
+**Timestamp**: 2026-08-31T12:51:01Z
+**Event**: SENSOR_PASSED
+**Fire id**: c4688055
+**Sensor ID**: required-sections
+**Stage slug**: observability-setup
+**Output path**: aidlc/spaces/default/intents/260830-scoped-secrets/operation/observability-setup/observability-setup-questions.md
+**Duration ms**: 29
+
+---
+
+## Sensor Fired
+**Timestamp**: 2026-08-31T12:51:01Z
+**Event**: SENSOR_FIRED
+**Fire id**: a82a3878
+**Sensor ID**: upstream-coverage
+**Stage slug**: observability-setup
+**Output path**: aidlc/spaces/default/intents/260830-scoped-secrets/operation/observability-setup/observability-setup-questions.md
+
+---
+
+## Sensor Passed
+**Timestamp**: 2026-08-31T12:51:01Z
+**Event**: SENSOR_PASSED
+**Fire id**: a82a3878
+**Sensor ID**: upstream-coverage
+**Stage slug**: observability-setup
+**Output path**: aidlc/spaces/default/intents/260830-scoped-secrets/operation/observability-setup/observability-setup-questions.md
+**Duration ms**: 28
+
+---
+
+## Decision Recorded
+**Timestamp**: 2026-08-31T12:51:06Z
+**Event**: DECISION_RECORDED
+**Stage**: observability-setup
+**Decision**: Observability scope: documentation vs instrumentation, alerting approach, and which signals matter after the credential change
+**Options**: Q1 A/B/C; Q2 A/B/C; Q3 A/B/C/D
+
+---
+
+## Workflow Parked
+**Timestamp**: 2026-08-31T13:03:54Z
+**Event**: WORKFLOW_PARKED
+**Stage**: observability-setup
+
+---
+
+## Session End
+**Timestamp**: 2026-08-31T18:28:06Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Workflow Parked
+**Timestamp**: 2026-08-31T18:29:06Z
+**Event**: WORKFLOW_PARKED
+**Stage**: observability-setup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-08-31T18:39:32Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-08-31T18:39:33Z
+**Event**: SESSION_ENDED
+**Reason**: prompt_input_exit
+
+---
+
+## Session Start
+**Timestamp**: 2026-08-31T18:39:38Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-08-31T18:40:21Z
+**Event**: HUMAN_TURN
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-08-31T18:48:13Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**:
+**Agent ID**: a4ef7d1e22ced3dd1
+**Message**: push it
+
+---
+
+## Human Turn
+**Timestamp**: 2026-08-31T18:53:37Z
+**Event**: HUMAN_TURN
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-08-31T18:54:04Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**:
+**Agent ID**: a714b952d5b9626ec
+**Message**: leave it alone, just push my fix
+
+---
+
+## Session End
+**Timestamp**: 2026-08-31T19:24:12Z
+**Event**: SESSION_ENDED
+**Reason**: clear
+
+---
+
+## Session Start
+**Timestamp**: 2026-08-31T19:24:12Z
+**Event**: SESSION_STARTED
+**Source**: clear
+
+---
+
+## Human Turn
+**Timestamp**: 2026-08-31T19:24:38Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session Start
+**Timestamp**: 2026-08-31T19:32:22Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-08-31T19:32:41Z
+**Event**: HUMAN_TURN
+
+---
+
+## Workflow Parked
+**Timestamp**: 2026-08-31T19:33:56Z
+**Event**: WORKFLOW_PARKED
+**Stage**: observability-setup
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-08-31T19:37:23Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**:
+**Agent ID**: af2681600d1e8d39a
+**Message**: resume the aidlc workflow
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-08-31T19:47:46Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**:
+**Agent ID**: a696503e7fdc5a8b8
+**Message**: commit and push it
+
+---
+
+## Human Turn
+**Timestamp**: 2026-08-31T20:02:00Z
+**Event**: HUMAN_TURN
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-08-31T20:04:39Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**:
+**Agent ID**: a037292f68b2b99d3
+**Message**: bump the version and changelog, then push
+
+---
+
+## Human Turn
+**Timestamp**: 2026-08-31T20:06:40Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-08-31T20:07:17Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-08-31T20:09:05Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**:
+**Agent ID**: a666c4d50576c0cc6
+**Message**: push it
+
+---
+
+## Session End
+**Timestamp**: 2026-08-31T20:09:25Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
