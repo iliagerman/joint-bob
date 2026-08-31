@@ -5547,6 +5547,29 @@ elements.messages.addEventListener("touchmove", (event) => {
   touchScrollY = event.touches[0].clientY;
 }, { passive: true });
 elements.jumpLatestButton.addEventListener("click", () => stickyScroll(true));
+
+// Selecting transcript text copies it straight to the clipboard. The write runs
+// on the gesture that ends the selection, because Safari and Firefox reject a
+// clipboard write that is not tied to a user gesture.
+let lastCopiedSelection = "";
+function copySelectionFromTranscript() {
+  const selection = window.getSelection();
+  if (selection.isCollapsed || selection.rangeCount === 0) return;
+  if (!elements.messages.contains(selection.getRangeAt(0).commonAncestorContainer)) return;
+  const text = selection.toString().trim();
+  if (!text || text === lastCopiedSelection) return;
+  lastCopiedSelection = text;
+  navigator.clipboard.writeText(text).then(
+    () => {
+      // One toast at a time: a keyboard selection fires this on every keystroke.
+      if (!document.querySelector(".toast")) toast("Copied selection", 1200);
+    },
+    (error) => toast(error.message || "Could not copy selection"),
+  );
+}
+document.addEventListener("mouseup", copySelectionFromTranscript);
+document.addEventListener("touchend", copySelectionFromTranscript);
+document.addEventListener("keyup", copySelectionFromTranscript);
 async function promptInstall() {
   if (!state.installPromptEvent) return;
   const promptEvent = state.installPromptEvent;
