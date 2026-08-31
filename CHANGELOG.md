@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 0.3.1 — 2026-08-31
+
+- Fixed node installation failing due to attempt to load a removed internal module.
+
 ## 0.3.0 — 2026-08-31
 
 - Replaced GitHub credential groups with ordinary secret accounts; the push token is now a normal GH_TOKEN variable

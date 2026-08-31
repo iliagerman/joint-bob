@@ -124,7 +124,7 @@ test("service installation prepares bundled tools before service mutation", asyn
   }
 });
 
-test("installer sources persisted state before choosing its health port and cleans legacy credentials last", async () => {
+test("installer sources persisted state before choosing its health port and relaxes errors last", async () => {
   const [installer, runner] = await Promise.all([
     readFile("scripts/install-service.sh", "utf8"),
     readFile("scripts/run-node.sh", "utf8"),
@@ -132,8 +132,7 @@ test("installer sources persisted state before choosing its health port and clea
   const sourceIndex = installer.indexOf('source "${STATE_DIR}/env"');
   const portIndex = installer.indexOf('PORT_VALUE="${PORT:-8787}"');
   const healthIndex = installer.indexOf('curl -fsS "http://127.0.0.1:${PORT_VALUE}/api/health"');
-  const cleanupIndex = installer.indexOf('auth.cleanupLegacyGitHubCredentialFiles()');
-  const setNoErrorIndex = installer.indexOf("set +e", cleanupIndex);
+  const setNoErrorIndex = installer.indexOf("set +e", healthIndex);
   const exitIndex = installer.indexOf("exit 0", setNoErrorIndex);
   const runnerSourceIndex = runner.indexOf('source "${STATE_DIR}/env"');
   const runnerPortIndex = runner.indexOf('export PORT="${PORT:-8787}"');
@@ -141,8 +140,7 @@ test("installer sources persisted state before choosing its health port and clea
   assert.ok(sourceIndex >= 0);
   assert.ok(portIndex > sourceIndex);
   assert.ok(healthIndex > portIndex);
-  assert.ok(cleanupIndex > installer.indexOf('if [ "${service_healthy}" != true ]; then'));
-  assert.ok(setNoErrorIndex > cleanupIndex);
+  assert.ok(setNoErrorIndex > installer.indexOf('if [ "${service_healthy}" != true ]; then'));
   assert.ok(exitIndex > setNoErrorIndex);
   assert.ok(runnerPortIndex > runnerSourceIndex);
   assert.match(runner, /export PORT="\$\{PORT:-8787\}"/);

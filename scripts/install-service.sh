@@ -159,7 +159,6 @@ else
   rm -f "${HOME}/Library/LaunchAgents/com.master-bob.node.plist"
 fi
 
-JOINT_BOB_DATA_DIR="${STATE_DIR}" PI_WEB_DATA_DIR="${STATE_DIR}" "${NODE_BIN}" --input-type=module -e 'const auth = await import("./dist/github-auth.js"); auth.cleanupLegacyGitHubCredentialFiles();'
 set +e
 echo
 echo "Joint Bob node installed."
