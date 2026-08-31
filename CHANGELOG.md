@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 0.3.4 — 2026-08-31
+
+- Fixed upward scrolling during a streamed response being pulled back toward the newest message
+
 ## 0.3.3 — 2026-08-31
 
 - Fixed startup remaining on the splash screen after the workspace migration left UI controls unbound

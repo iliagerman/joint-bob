@@ -2564,9 +2564,17 @@ function prettyText(text) {
   return `${header}\n${prettyJson(body) || body}`;
 }
 
-function isNearBottom() {
+function distanceFromBottom() {
   const node = elements.messages;
-  return node.scrollHeight - node.scrollTop - node.clientHeight < 120;
+  return node.scrollHeight - node.scrollTop - node.clientHeight;
+}
+
+function isNearBottom() {
+  return distanceFromBottom() < 120;
+}
+
+function isAtBottom() {
+  return distanceFromBottom() < 2;
 }
 
 function syncJumpButton() {
@@ -2580,6 +2588,11 @@ function stickyScroll(force = false) {
   syncJumpButton();
   if (!state.stickToBottom) return;
   elements.messages.scrollTop = elements.messages.scrollHeight;
+}
+
+function releaseStickyScroll() {
+  state.stickToBottom = false;
+  syncJumpButton();
 }
 
 function projectFileUrl(filePath, download = false) {
@@ -5279,11 +5292,22 @@ elements.abortButton.addEventListener("click", () => sendSocket({ type: "abort" 
 elements.messages.addEventListener(
   "scroll",
   () => {
-    state.stickToBottom = isNearBottom();
+    state.stickToBottom = state.stickToBottom ? isNearBottom() : isAtBottom();
     syncJumpButton();
   },
   { passive: true },
 );
+elements.messages.addEventListener("wheel", (event) => {
+  if (event.deltaY < 0) releaseStickyScroll();
+}, { passive: true });
+let touchScrollY = null;
+elements.messages.addEventListener("touchstart", (event) => {
+  touchScrollY = event.touches[0].clientY;
+}, { passive: true });
+elements.messages.addEventListener("touchmove", (event) => {
+  if (event.touches[0].clientY > touchScrollY) releaseStickyScroll();
+  touchScrollY = event.touches[0].clientY;
+}, { passive: true });
 elements.jumpLatestButton.addEventListener("click", () => stickyScroll(true));
 async function promptInstall() {
   if (!state.installPromptEvent) return;
