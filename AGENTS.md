@@ -40,6 +40,12 @@ Every deployment is a version. `package.json` holds the semantic version; `CHANG
 
 `scripts/hooks/pre-push` blocks a push to `main` that changes `src/`, `public/`, or `bin/` unless the pushed commits bump `package.json` and add a matching `CHANGELOG.md` section. When they do not, the gate has Claude (Haiku) write both files in the working tree and refuses the push; commit what it wrote and push again. Run `./scripts/install-git-hooks.sh` once per clone to install the hook, and `node scripts/changelog-gate.mjs <base-sha> <head-sha> --check` to check without calling Claude.
 
+## Credentials
+
+One model: a secret account holds named environment variables, encrypted at rest with the node's key. Attach an account to a **workspace**, a **project**, or a **conversation**; resolution merges those three in that order and the most specific scope wins per variable name. A `github`-provider account holds exactly one `GH_TOKEN`, from which `GITHUB_TOKEN`, `PI_GITHUB_TOKEN`, `GIT_ASKPASS` and `GIT_TERMINAL_PROMPT` are derived. There is no separate GitHub credential system, and nothing in the resolution path is special-cased by provider.
+
+An agent's environment is composed once, at spawn. Changing an attachment on a running conversation is saved but takes effect the next time it runs.
+
 ## PWA cache
 
 When changing the frontend shell or icons, bump `CACHE_NAME` in `public/sw.js` and verify every asset in `APP_SHELL` exists.

@@ -85,21 +85,6 @@ async function waitForHealth(port: number, status: number): Promise<Response> {
   throw new Error(`Health did not return ${status}`);
 }
 
-async function waitForLegacyDigest(dataDir: string, legacyPath: string): Promise<{ digest: string; applied_digest: string | null }> {
-  for (let attempt = 0; attempt < 500; attempt += 1) {
-    let database: DatabaseSync | undefined;
-    try {
-      database = new DatabaseSync(path.join(dataDir, "node.db"));
-      const digest = database.prepare("SELECT digest, applied_digest FROM github_legacy_file_migrations WHERE path = ?").get(legacyPath) as { digest: string; applied_digest: string | null } | undefined;
-      database.close();
-      if (digest) return digest;
-    } catch {
-      if (database) database.close();
-    }
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  throw new Error("Legacy GitHub credential digest was not migrated");
-}
 
 async function waitForOutput(output: () => string, text: string): Promise<void> {
   for (let attempt = 0; attempt < 500; attempt += 1) {
@@ -147,38 +132,6 @@ test("health stays starting until initial Syncthing ignore reconciliation succee
     syncthing.release();
     const ready = await waitForHealth(port, 200);
     assert.deepEqual(await ready.json(), { status: "ok", version: appVersion(), release: "development" });
-  } finally {
-    if (child) await stopServer(child);
-    await syncthing.close();
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("startup migrates legacy GitHub credentials without peers", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "pi-mobile-web-startup-github-migration-"));
-  const syncthing = await createSyncthingFixture();
-  let child: ChildProcess | undefined;
-  try {
-    const legacyStore = JSON.stringify({ accounts: { personal: "legacy-token" }, projects: {} });
-    const legacyPath = path.join(root, "github-auth.json");
-    await writeFile(legacyPath, legacyStore);
-    const port = await unusedPort();
-    child = startServer(root, port, syncthing.port).child;
-
-    const digest = await waitForLegacyDigest(root, legacyPath);
-    assert.match(digest.digest, /^[0-9a-f]{64}$/);
-    assert.equal(digest.applied_digest, digest.digest);
-    const ready = await waitForHealth(port, 200);
-    assert.deepEqual(await ready.json(), { status: "ok", version: appVersion(), release: "development" });
-
-    const database = new DatabaseSync(path.join(root, "node.db"));
-    const migration = database.prepare("SELECT source FROM github_auth_migrations WHERE source = 'json'").get();
-    const account = database.prepare("SELECT token FROM github_accounts WHERE account = 'personal'").get() as { token: string } | undefined;
-    assert.ok(migration);
-    assert.ok(account);
-    assert.notEqual(account.token, "legacy-token");
-    assert.match(account.token, /^[^.]+\.[^.]+\.[^.]+$/);
-    assert.equal(await readFile(path.join(root, "github-auth.json"), "utf8"), legacyStore);
   } finally {
     if (child) await stopServer(child);
     await syncthing.close();

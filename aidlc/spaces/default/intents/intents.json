@@ -26,5 +26,12 @@
     "dirName": "260830-claude-session-transfer",
     "scope": "bugfix",
     "status": "in-flight"
+  },
+  {
+    "uuid": "01a05456-eb23-748d-ae24-9fb8efe83232",
+    "slug": "scoped-secrets",
+    "dirName": "260830-scoped-secrets",
+    "scope": "express",
+    "status": "in-flight"
   }
 ]

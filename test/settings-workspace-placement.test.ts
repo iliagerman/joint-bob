@@ -11,22 +11,20 @@ function settingsPanel(html: string, name: string): string {
   return html.slice(start, end);
 }
 
-test("GitHub groups live in the Projects tab, not the Secrets tab", async () => {
+test("workspaces live in the Projects tab and every credential lives in the Secrets tab", async () => {
   const html = await readFile("public/index.html", "utf8");
 
   const projects = settingsPanel(html, "projects");
-  assert.match(projects, /id="githubGroupList"/);
-  assert.match(projects, /id="githubGroupAddButton"/);
-  assert.match(projects, /id="githubSyncButton"/);
-  assert.match(projects, /<legend>GitHub groups<\/legend>/);
+  assert.match(projects, /id="workspaceList"/);
+  assert.match(projects, /id="workspaceAddButton"/);
+  assert.match(projects, /<legend>Workspaces<\/legend>/);
+  // The GitHub credential group concept is gone, not moved.
+  assert.doesNotMatch(projects, /githubGroup/);
 
   const github = settingsPanel(html, "github");
-  assert.doesNotMatch(github, /id="githubGroupList"/);
-  assert.doesNotMatch(github, /id="githubGroupAddButton"/);
-  assert.doesNotMatch(github, /id="githubSyncButton"/);
-  // The Secrets tab keeps only node-local secret accounts.
   assert.match(github, /id="secretAccountList"/);
   assert.match(github, /id="secretAccountAddButton"/);
+  assert.match(github, /id="secretSyncButton"/);
 });
 
 test("focused controls in a settings panel are not clipped by its scroll box", async () => {

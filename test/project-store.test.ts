@@ -7,7 +7,7 @@ import test from "node:test";
 test("project store persists and updates the paired Mac path", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "pi-mobile-web-project-store-"));
   process.env.PI_WEB_DATA_DIR = path.join(root, "data");
-  const { addProject, importProject, listProjects, updateProjectMacPath, updateProjectTypeAndPath } = await import("../src/store.js");
+  const { addProject, importProject, listProjects, updateProjectMacPath, updateProjectWorkspaceAndPath } = await import("../src/store.js");
 
   try {
     const project = await addProject("demo", path.join(root, "server", "demo"), {
@@ -48,7 +48,7 @@ test("project store persists and updates the paired Mac path", async () => {
 
     await importProject({ ...project, path: project.path }, undefined, "node-a");
     const relocatedPath = path.join(root, "server", "personal", "demo");
-    const relocated = await updateProjectTypeAndPath(project.id, "personal", relocatedPath);
+    const relocated = await updateProjectWorkspaceAndPath(project.id, "personal", relocatedPath);
     assert.equal(relocated.id, project.id);
     assert.equal(relocated.type, "personal");
     assert.equal(relocated.path, path.resolve(relocatedPath));

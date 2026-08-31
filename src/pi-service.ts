@@ -12,7 +12,7 @@ import {
   type AgentSession,
   type AgentSessionEvent,
 } from "@earendil-works/pi-coding-agent";
-import { agentCredentialContext, agentEnvironment } from "./secrets.js";
+import { agentCredentialContext, agentEnvironment, type SecretConversation } from "./secrets.js";
 import { discoverPiSessionDirectory, sessionCwds, type SessionProjectPaths } from "./session-paths.js";
 import { getSettings } from "./settings.js";
 import type { ChatMessage, ModelSummary, SessionStatus, SessionSummary } from "./types.js";
@@ -29,6 +29,8 @@ interface PiSessionOptions {
   sessionPath?: string;
   sessionId?: string;
   safeguardsEnabled?: boolean;
+  /** Conversation-scoped secret accounts, resolved once at spawn like every other tier. */
+  conversation?: SecretConversation;
 }
 
 type UnknownRecord = Record<string, unknown>;
@@ -327,11 +329,11 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
     : SessionManager.create(options.cwd, piSessionPath(), options.sessionId ? { id: options.sessionId } : undefined);
   const safeguardsEnabled = options.safeguardsEnabled ?? sessionSafeguardsEnabled(sessionManager);
   const bashTool = createBashTool(options.cwd, {
-    spawnHook: (context) => ({ ...context, env: { ...context.env, ...agentEnvironment(options.projectId) } }),
+    spawnHook: (context) => ({ ...context, env: { ...context.env, ...agentEnvironment(options.projectId, options.conversation) } }),
   });
   const agentDir = getAgentDir();
   const settingsManager = SettingsManager.create(options.cwd, agentDir);
-  const credentialContext = agentCredentialContext(options.projectId);
+  const credentialContext = agentCredentialContext(options.projectId, options.conversation);
   const resourceLoader = new DefaultResourceLoader({
     cwd: options.cwd,
     agentDir,

@@ -33,8 +33,8 @@ function sessionCookie(response: Response): string {
   return cookie.split(";", 1)[0];
 }
 
-test("project types are listed, created with a GitHub group, and drive managed project paths", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-project-type-api-"));
+test("workspaces are listed, created, and drive managed project paths", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-workspace-api-"));
   const previousDataDir = process.env.PI_WEB_DATA_DIR;
   const previousUsername = process.env.MASTER_BOB_ADMIN_USERNAME;
   const previousPassword = process.env.MASTER_BOB_INITIAL_PASSWORD;
@@ -43,7 +43,7 @@ test("project types are listed, created with a GitHub group, and drive managed p
     process.env.PI_WEB_DATA_DIR = root;
     process.env.MASTER_BOB_ADMIN_USERNAME = "admin";
     process.env.MASTER_BOB_INITIAL_PASSWORD = "initial-password";
-    const app = await import(`../src/app.js?project-types=${Date.now()}-${Math.random()}`);
+    const app = await import(`../src/app.js?workspaces=${Date.now()}-${Math.random()}`);
     node = await listen(app.createApp());
 
     const login = await fetch(`${node.baseUrl}/api/auth/login`, {
@@ -61,22 +61,22 @@ test("project types are listed, created with a GitHub group, and drive managed p
     assert.equal(changePassword.status, 204);
     const requestHeaders = { Cookie: cookie, "X-CSRF-Token": loginBody.csrfToken, "Content-Type": "application/json" };
 
-    const seeded = await fetch(`${node.baseUrl}/api/project-types`, { headers: { Cookie: cookie } });
+    const seeded = await fetch(`${node.baseUrl}/api/workspaces`, { headers: { Cookie: cookie } });
     assert.equal(seeded.status, 200);
-    const seededBody = await seeded.json() as { types: Array<{ id: string; label: string; githubGroup: string | null }> };
-    assert.deepEqual(seededBody.types.map((type) => type.id), ["personal", "work"]);
+    const seededBody = await seeded.json() as { workspaces: Array<{ id: string; label: string }> };
+    assert.deepEqual(seededBody.workspaces.map((workspace) => workspace.id), ["personal", "work"]);
 
-    const created = await fetch(`${node.baseUrl}/api/project-types`, {
+    const created = await fetch(`${node.baseUrl}/api/workspaces`, {
       method: "PUT",
       headers: requestHeaders,
-      body: JSON.stringify({ label: "Client Work", githubGroup: "clients" }),
+      body: JSON.stringify({ label: "Client Work" }),
     });
     assert.equal(created.status, 200);
-    const createdBody = await created.json() as { type: { id: string; githubGroup: string | null } };
-    assert.equal(createdBody.type.id, "client-work");
-    assert.equal(createdBody.type.githubGroup, "clients");
+    const createdBody = await created.json() as { workspace: { id: string; label: string } };
+    assert.equal(createdBody.workspace.id, "client-work");
+    assert.equal(createdBody.workspace.label, "Client Work");
 
-    const reserved = await fetch(`${node.baseUrl}/api/project-types`, {
+    const reserved = await fetch(`${node.baseUrl}/api/workspaces`, {
       method: "PUT",
       headers: requestHeaders,
       body: JSON.stringify({ label: "tickets" }),
@@ -93,7 +93,7 @@ test("project types are listed, created with a GitHub group, and drive managed p
     });
     assert.equal(saved.status, 200);
 
-    // The managed path drops the old "projects" segment and uses the type folder directly.
+    // The managed path drops the old "projects" segment and uses the workspace folder directly.
     const project = await fetch(`${node.baseUrl}/api/projects`, {
       method: "POST",
       headers: requestHeaders,
@@ -104,7 +104,7 @@ test("project types are listed, created with a GitHub group, and drive managed p
     assert.equal(projectBody.project.type, "client-work");
     assert.equal(projectBody.project.path, path.join(homePath, "client-work", "client_site"));
 
-    const inUse = await fetch(`${node.baseUrl}/api/project-types/client-work`, { method: "DELETE", headers: requestHeaders });
+    const inUse = await fetch(`${node.baseUrl}/api/workspaces/client-work`, { method: "DELETE", headers: requestHeaders });
     assert.equal(inUse.status, 400);
 
     await writeFile(path.join(projectBody.project.path, "content.txt"), "preserved\n");
@@ -139,7 +139,7 @@ test("project types are listed, created with a GitHub group, and drive managed p
     });
     assert.equal(unknown.status, 400);
 
-    const removed = await fetch(`${node.baseUrl}/api/project-types/work`, { method: "DELETE", headers: requestHeaders });
+    const removed = await fetch(`${node.baseUrl}/api/workspaces/work`, { method: "DELETE", headers: requestHeaders });
     assert.equal(removed.status, 204);
   } finally {
     await node?.close();

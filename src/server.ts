@@ -13,11 +13,11 @@ import WebSocket, { WebSocketServer } from "ws";
 import { z } from "zod";
 import { ensureSessionTitle, projectNameOverrides, setProjectName, setSessionColor, setSessionTitle } from "./names.js";
 import { getProjectLock, projectLocks, setProjectLock } from "./project-locks.js";
-import { addProject, deleteProjectType, getProject, importProject, listProjects, listProjectTypes, projectAliasIds, ProjectTypeError, registerProjectAliases, removeProject, renameProject, saveProjectType, touchProject, updateProjectColor, updateProjectMacPath, updateProjectSyncFolderId, updateProjectTypeAndPath } from "./store.js";
+import { addProject, deleteWorkspace, getProject, importProject, listProjects, listWorkspaces, projectAliasIds, registerProjectAliases, removeProject, renameProject, saveWorkspace, touchProject, updateProjectColor, updateProjectMacPath, updateProjectSyncFolderId, updateProjectWorkspaceAndPath, WorkspaceError } from "./store.js";
 import { createClusterPeer, dueMembershipDeliveries, getClusterMachineToken, getClusterMembership, getClusterNode, getClusterPeer, listClusterPeers, markClusterPeerSeen, mergeClusterMembership, recordMembershipDelivered, recordMembershipFailure, removeClusterPeer, saveClusterPeer, updateClusterNode, type ClusterPeer } from "./cluster.js";
 import { eventsForPeer, receiveReplicationBatch, recordPeerFailure, recordPeerReceipt, type ReplicationBatch } from "./replication.js";
-import { deleteGitHubGroup, enqueueGitHubCredentialSync, ensureGitHubCredentialMigration, getGitHubAuthStatus, githubCredentialEventsForPeer, receiveGitHubCredentialEvents, recordGitHubCredentialFailure, recordGitHubCredentialReceipt, removeProjectGitHubAuth, saveGitHubGroup, updateProjectGitHubAuth, type GitHubCredentialEvent } from "./github-auth.js";
-import { agentCredentialContext, agentEnvironment, deleteSecretAccount, getScopeSecretAccounts, listSecretAccounts, saveSecretAccount, setScopeSecretAccounts } from "./secrets.js";
+import { enqueueSecretCredentialSync, receiveSecretCredentialEvents, recordSecretCredentialFailure, recordSecretCredentialReceipt, secretCredentialEventsForPeer, type SecretCredentialEvent } from "./secret-replication.js";
+import { agentCredentialContext, agentEnvironment, deleteSecretAccount, getScopeSecretAccounts, listSecretAccounts, persistConversationSecretAccounts, saveSecretAccount, setScopeSecretAccounts } from "./secrets.js";
 import {
   createPiSession,
   eventPayload,
@@ -113,6 +113,8 @@ interface ChatConnection {
   claude: ClaudeChatState;
   // Transcript summary prepended to the next prompt after an engine switch.
   handoffContext: string | null;
+  // Accounts picked in the new-conversation dialog, before the engine reported a session id.
+  secretAccountIds: string[];
 }
 
 const port = Number(process.env.PORT ?? 8790);
@@ -139,6 +141,7 @@ const machineRoutes = new Set([
   "POST /cluster/sessions/ownership/apply",
   "POST /cluster/events",
   "POST /cluster/github/events",
+  "POST /cluster/secrets/events",
   "POST /cluster/tasks/eligibility",
   "POST /cluster/tasks/status",
   "POST /cluster/tasks/prepare",
@@ -186,7 +189,7 @@ let updatePreparing = false;
 let updatePreparation: Promise<number> | null = null;
 const updateContinuationPrompt = "A service update interrupted this turn. Inspect the transcript and working tree, continue unfinished work, and do not repeat completed side effects.";
 let replicationFlushInProgress = false;
-let githubCredentialFlushInProgress = false;
+let secretCredentialFlushInProgress = false;
 let membershipFlushInProgress = false;
 let taskHandoffReconciliationInProgress = false;
 let ticketWorkspaceSyncInProgress = false;
@@ -262,16 +265,6 @@ const replicationEventSchema = z.object({
 });
 const replicationBatchSchema = z.object({ events: z.array(replicationEventSchema).max(100) });
 const replicationReceiptSchema = z.object({ received: z.array(z.string().uuid()).max(100) });
-const githubGroupIdSchema = z.string().trim().min(1).max(64).regex(/^\S+$/, "GitHub group ID cannot contain spaces");
-const githubGroupLabelSchema = z.string().trim().min(1).max(64);
-const githubCredentialEventSchema = z.union([
-  // `value` accepts the bare token string sent by peers still on the pre-groups build.
-  z.object({ id: z.string().uuid(), entityType: z.literal("account"), key: githubGroupIdSchema, operation: z.literal("upsert"), value: z.union([z.string().min(1).max(5000), z.object({ label: githubGroupLabelSchema, token: z.string().min(1).max(5000), isDefault: z.boolean().optional() }).strict()]), updatedAt: z.string().datetime(), originNodeId: z.string().uuid(), createdAt: z.string().datetime() }).strict(),
-  z.object({ id: z.string().uuid(), entityType: z.literal("project"), key: z.string().trim().min(1).max(300), operation: z.literal("upsert"), value: z.object({ account: z.string().max(64), token: z.string().min(1).max(5000).nullable() }).strict(), updatedAt: z.string().datetime(), originNodeId: z.string().uuid(), createdAt: z.string().datetime() }).strict(),
-  z.object({ id: z.string().uuid(), entityType: z.enum(["account", "project"]), key: z.string().trim().min(1).max(300), operation: z.literal("delete"), updatedAt: z.string().datetime(), originNodeId: z.string().uuid(), createdAt: z.string().datetime() }).strict(),
-]);
-const githubCredentialBatchSchema = z.object({ events: z.array(githubCredentialEventSchema).max(100) });
-const githubCredentialSyncSchema = z.object({ peerIds: z.array(z.string().uuid()).min(1).max(50) });
 const directoryBrowseSchema = z.object({
   path: absolutePathSchema.optional(),
 });
@@ -307,18 +300,25 @@ const nullableOwnershipSchema = ownershipSchema.nullable();
 const ownershipClaimSchema = z.object({ engine: z.enum(["pi", "claude"]), sessionId: z.string().min(1).max(240), ownerNodeId: z.string().uuid() });
 const ownershipCasSchema = z.object({ expected: nullableOwnershipSchema, proposed: ownershipSchema, originNodeId: z.string().uuid() });
 const sessionRecoverySchema = z.object({ engine: z.literal("pi"), sessionId: z.string().min(1).max(240), sessionPath: z.string().min(1).max(2000) });
-const githubGroupSaveSchema = z.object({
-  label: githubGroupLabelSchema,
-  token: z.string().trim().min(1).max(5000).optional(),
-  isDefault: z.boolean().optional(),
-});
-const projectGitHubAuthSchema = z.object({
-  group: githubGroupIdSchema.nullable(),
-  token: z.string().trim().min(1).max(500).nullable().optional(),
-});
+const secretCredentialEventSchema = z.object({
+  id: z.string().uuid(),
+  entityKey: z.string().uuid(),
+  operation: z.literal("upsert"),
+  value: z.object({
+    label: z.string().trim().min(1).max(64),
+    provider: z.enum(["aws", "google", "github", "custom"]),
+    variables: z.array(z.object({ name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), kind: z.enum(["value", "file"]), value: z.string().max(100000) }).strict()).min(1).max(20),
+  }).strict(),
+  updatedAt: z.string().datetime(),
+  originNodeId: z.string().uuid(),
+  createdAt: z.string().datetime(),
+}).strict();
+const secretCredentialBatchSchema = z.object({ events: z.array(secretCredentialEventSchema).max(100) });
+const secretCredentialSyncSchema = z.object({ peerIds: z.array(z.string().uuid()).min(1).max(50) });
+const socketSecretAccountIdsSchema = z.array(z.string().uuid()).max(100);
 const secretVariableSchema = z.object({ name: z.string().trim().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), kind: z.enum(["value", "file"]), value: z.string().max(100000).optional() }).strict();
-const secretAccountSchema = z.object({ id: z.string().uuid().optional(), label: z.string().trim().min(1).max(64).refine((value) => !/[\x00-\x1f\x7f]/.test(value), "Secret account label cannot contain control characters"), provider: z.enum(["aws", "google", "github", "custom"]), variables: z.array(secretVariableSchema).min(1).max(20) }).strict();
-const secretScopeParamsSchema = z.object({ scopeType: z.enum(["project", "project_type"]), scopeId: z.string().trim().min(1).max(300) });
+const secretAccountSchema = z.object({ id: z.string().uuid().optional(), label: z.string().trim().min(1).max(64).refine((value) => !/[\x00-\x1f\x7f]/.test(value), "Secret account label cannot contain control characters"), provider: z.enum(["aws", "google", "github", "custom"]), replicate: z.boolean().optional(), variables: z.array(secretVariableSchema).min(1).max(20) }).strict();
+const secretScopeParamsSchema = z.object({ scopeType: z.enum(["workspace", "project", "conversation"]), scopeId: z.string().trim().min(1).max(300) });
 const secretScopeSchema = z.object({ accountIds: z.array(z.string().uuid()).max(100) }).strict();
 const taskStatusSchema = z.enum(["backlog", "planning", "in_progress", "review", "done"]);
 const taskEngineSchema = z.enum(["pi", "claude"]);
@@ -660,15 +660,15 @@ async function importProjectsFromPeer(peer: ClusterPeer, missingOnly = false): P
   const pending: ProjectImportResult["pending"] = [];
   for (const entry of inventory.projects) {
     const remoteProject = entry.project;
-    const localType = await localProjectTypeId(remoteProject.type);
+    const localWorkspace = await localWorkspaceId(remoteProject.type);
     const existing = await getProject(remoteProject.id) ?? localProjects.find((project) => remoteProject.syncFolderId !== undefined && project.syncFolderId === remoteProject.syncFolderId);
     if (existing && missingOnly) {
       skipped.push(remoteProject.name);
       continue;
     }
     let localPath = existing?.path;
-    if (existing && existing.type !== localType) {
-      localPath = (await relocateProjectType(existing, localType)).path;
+    if (existing && existing.type !== localWorkspace) {
+      localPath = (await relocateProjectWorkspace(existing, localWorkspace)).path;
     }
     if (!localPath && remoteProject.syncFolderId) {
       try {
@@ -678,7 +678,7 @@ async function importProjectsFromPeer(peer: ClusterPeer, missingOnly = false): P
       }
     }
     if (!existing && !localPath) {
-      localPath = managedProjectPath(getSettings().projects.homePath, localType, remoteProject.name);
+      localPath = managedProjectPath(getSettings().projects.homePath, localWorkspace, remoteProject.name);
     }
     if (!existing && !localPath) {
       pending.push({
@@ -687,13 +687,13 @@ async function importProjectsFromPeer(peer: ClusterPeer, missingOnly = false): P
         name: remoteProject.name,
         remotePath: remoteProject.path,
         ...(remoteProject.syncFolderId ? { syncFolderId: remoteProject.syncFolderId } : {}),
-        suggestedPath: managedProjectPath(getSettings().projects.homePath, localType, remoteProject.name),
+        suggestedPath: managedProjectPath(getSettings().projects.homePath, localWorkspace, remoteProject.name),
       });
       continue;
     }
     const importedProject = !existing && localPath
       ? await mapProjectFromPeer(peer, inventory, entry, localPath)
-      : await importProject({ ...remoteProject, type: localType }, localPath, inventory.node.id);
+      : await importProject({ ...remoteProject, type: localWorkspace }, localPath, inventory.node.id);
     await registerProjectAliases(importedProject.id, [remoteProject.id, ...(entry.aliases ?? [])]);
     imported.push(remoteProject.name);
   }
@@ -721,11 +721,11 @@ function requirePathInsideHome(candidate: string, homeDirectory: string): void {
   if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("Folder must be inside this node's home directory");
 }
 
-/** A peer can carry a type this node never defined; fall back to a local one rather than inventing a folder. */
-async function localProjectTypeId(candidate: string | undefined): Promise<string> {
-  const types = await listProjectTypes();
-  if (candidate && types.some((type) => type.id === candidate)) return candidate;
-  return types[0]?.id ?? "personal";
+/** A peer can carry a workspace this node never defined; fall back to a local one rather than inventing a folder. */
+async function localWorkspaceId(candidate: string | undefined): Promise<string> {
+  const workspaces = await listWorkspaces();
+  if (candidate && workspaces.some((workspace) => workspace.id === candidate)) return candidate;
+  return workspaces[0]?.id ?? "personal";
 }
 
 async function assertManagedHomeChangeAllowed(nextHomePath: string): Promise<void> {
@@ -774,7 +774,7 @@ async function mapProjectFromPeer(peer: ClusterPeer, inventory: PeerInventory, e
       if (!shareResponse.ok) throw new Error(`Peer Syncthing share failed: ${shareResponse.status}`);
     }
   }
-  const project = await importProject({ ...remoteProject, type: await localProjectTypeId(remoteProject.type) }, localPath, inventory.node.id);
+  const project = await importProject({ ...remoteProject, type: await localWorkspaceId(remoteProject.type) }, localPath, inventory.node.id);
   await registerProjectAliases(project.id, [remoteProject.id, ...(entry.aliases ?? [])]);
   sessionWatcher.ensureProject(project);
   return project;
@@ -933,7 +933,7 @@ app.put("/api/settings", async (request, response, next) => {
     const homePath = payload.projects?.homePath ?? getSettings().projects.homePath;
     if (!homePath.trim() || !path.isAbsolute(homePath)) throw new Error("Joint Bob home folder must be absolute");
     await assertManagedHomeChangeAllowed(homePath);
-    await ensureManagedHome(homePath, (await listProjectTypes()).map((type) => type.id));
+    await ensureManagedHome(homePath, (await listWorkspaces()).map((workspace) => workspace.id));
     const settings = updateSettings(payload, session.userId);
     resetSyncthingConnection();
     response.json(settings);
@@ -1121,11 +1121,18 @@ app.post("/api/cluster/events", async (request, response, next) => {
   }
 });
 
-app.post("/api/cluster/github/events", async (request, response, next) => {
+// Kept for one release as a clean refusal: a peer on an older build gets 410 rather than a
+// half-applied write into tables this build no longer has.
+app.post("/api/cluster/github/events", (request, response) => {
+  if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+  sendError(response, 410, "GitHub credential groups were replaced by secret accounts; upgrade this peer");
+});
+
+app.post("/api/cluster/secrets/events", async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
-    const payload = githubCredentialBatchSchema.parse(request.body);
-    response.json({ received: await receiveGitHubCredentialEvents(payload.events as GitHubCredentialEvent[]) });
+    const payload = secretCredentialBatchSchema.parse(request.body);
+    response.json({ received: await receiveSecretCredentialEvents(payload.events as SecretCredentialEvent[]) });
   } catch (error) { next(error); }
 });
 
@@ -1726,67 +1733,6 @@ app.get("/api/models", async (_request, response, next) => {
   }
 });
 
-app.get("/api/github-auth", async (_request, response, next) => {
-  try {
-    response.json(await getGitHubAuthStatus());
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.post("/api/github-auth/groups", async (request, response, next) => {
-  try {
-    const session = response.locals.authSession as AuthSession;
-    await saveGitHubGroup(githubGroupSaveSchema.parse(request.body), session.userId);
-    response.status(201).json(await getGitHubAuthStatus());
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.put("/api/github-auth/groups/:groupId", async (request, response, next) => {
-  try {
-    const session = response.locals.authSession as AuthSession;
-    const payload = githubGroupSaveSchema.parse(request.body);
-    await saveGitHubGroup({ id: githubGroupIdSchema.parse(request.params.groupId), ...payload }, session.userId);
-    response.json(await getGitHubAuthStatus());
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.delete("/api/github-auth/groups/:groupId", async (request, response, next) => {
-  try {
-    const session = response.locals.authSession as AuthSession;
-    await deleteGitHubGroup(githubGroupIdSchema.parse(request.params.groupId), session.userId);
-    response.json(await getGitHubAuthStatus());
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.post("/api/github-auth/sync", async (request, response, next) => {
-  try {
-    const session = response.locals.authSession as AuthSession;
-    const { peerIds } = githubCredentialSyncSchema.parse(request.body);
-    const peers = await listClusterPeers();
-    const selected = peerIds.map((peerId) => peers.find((peer) => peer.id === peerId));
-    const missing = peerIds.filter((_, index) => !selected[index]);
-    if (missing.length) {
-      sendError(response, 404, `Unknown node: ${missing.join(", ")}`);
-      return;
-    }
-    await enqueueGitHubCredentialSync(peerIds, session.userId);
-    const results = await Promise.all((selected as ClusterPeer[]).map(async (peer) => {
-      const outcome = await pushGitHubCredentialsToPeer(peer);
-      return { peerId: peer.id, name: peer.name, delivered: outcome.delivered, ...(outcome.error ? { error: outcome.error } : {}) };
-    }));
-    response.json({ results });
-  } catch (error) {
-    next(error);
-  }
-});
-
 function unavailableProjectStatus(message = "No Syncthing folder is configured"): ProjectSyncStatus {
   return { state: "unavailable", remainingFiles: 0, remainingBytes: 0, message };
 }
@@ -1839,13 +1785,13 @@ async function assertProjectRelocationIdle(project: ProjectRecord): Promise<void
     throw new ProjectDirectoryImportError("Close this project's Claude conversations before changing its type");
   }
   if ([...piTaskRuns.values()].some((run) => run.projectId === project.id) || [...claudeTaskRuns.values()].some((run) => run.projectId === project.id)) {
-    throw new ProjectDirectoryImportError("Wait for this project's task run to finish before changing its type");
+    throw new ProjectDirectoryImportError("Wait for this project's task run to finish before changing its workspace");
   }
 }
 
-async function relocateProjectType(project: ProjectRecord, nextType: string): Promise<ProjectRecord> {
-  const destination = managedProjectRelocationPath(getSettings().projects.homePath, project.type ?? "personal", project.path, nextType);
-  if (!destination || path.resolve(destination) === path.resolve(project.path)) return updateProjectTypeAndPath(project.id, nextType, project.path);
+async function relocateProjectWorkspace(project: ProjectRecord, nextWorkspaceId: string): Promise<ProjectRecord> {
+  const destination = managedProjectRelocationPath(getSettings().projects.homePath, project.type ?? "personal", project.path, nextWorkspaceId);
+  if (!destination || path.resolve(destination) === path.resolve(project.path)) return updateProjectWorkspaceAndPath(project.id, nextWorkspaceId, project.path);
   await assertProjectRelocationIdle(project);
   let moved = false;
   let syncthingAttempted = false;
@@ -1856,7 +1802,7 @@ async function relocateProjectType(project: ProjectRecord, nextType: string): Pr
       syncthingAttempted = true;
       await ensureSyncthingFolder(project.syncFolderId, project.name, destination);
     }
-    const updated = await updateProjectTypeAndPath(project.id, nextType, destination);
+    const updated = await updateProjectWorkspaceAndPath(project.id, nextWorkspaceId, destination);
     sessionWatcher.ensureProject(updated);
     return updated;
   } catch (error) {
@@ -1890,11 +1836,10 @@ async function notifyPeersOfProjectInventory(): Promise<void> {
   }));
 }
 
-const projectTypeSchema = z.object({
+const workspaceSchema = z.object({
   id: z.string().trim().max(40).optional(),
   label: z.string().trim().min(1).max(40),
-  githubGroup: z.string().trim().max(64).nullable().optional(),
-});
+}).strict();
 
 app.get("/api/secrets", async (_request, response, next) => {
   try { response.json({ accounts: await listSecretAccounts() }); } catch (error) { next(error); }
@@ -1915,29 +1860,53 @@ app.put("/api/secrets/scopes/:scopeType/:scopeId", async (request, response, nex
   try { const scope = secretScopeParamsSchema.parse(request.params); const payload = secretScopeSchema.parse(request.body); await setScopeSecretAccounts(scope.scopeType, scope.scopeId, payload.accountIds); response.json(await getScopeSecretAccounts(scope.scopeType, scope.scopeId)); } catch (error) { next(error); }
 });
 
-app.get("/api/project-types", async (_request, response, next) => {
+app.get("/api/workspaces", async (_request, response, next) => {
   try {
-    response.json({ types: await listProjectTypes() });
+    response.json({ workspaces: await listWorkspaces() });
   } catch (error) {
     next(error);
   }
 });
 
-app.put("/api/project-types", async (request, response, next) => {
+app.put("/api/workspaces", async (request, response, next) => {
   try {
-    const payload = projectTypeSchema.parse(request.body);
-    const type = await saveProjectType(payload);
-    await ensureManagedHome(getSettings().projects.homePath, (await listProjectTypes()).map((entry) => entry.id));
-    response.json({ type });
+    const payload = workspaceSchema.parse(request.body);
+    const workspace = await saveWorkspace(payload);
+    await ensureManagedHome(getSettings().projects.homePath, (await listWorkspaces()).map((entry) => entry.id));
+    response.json({ workspace });
   } catch (error) {
     next(error);
   }
 });
 
-app.delete("/api/project-types/:typeId", async (request, response, next) => {
+app.delete("/api/workspaces/:workspaceId", async (request, response, next) => {
   try {
-    await deleteProjectType(request.params.typeId);
+    await deleteWorkspace(request.params.workspaceId);
     response.status(204).end();
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Replaces POST /api/github-auth/sync: replication is now a per-account opt-in, so a sync
+// pushes exactly the accounts the user marked to replicate.
+app.post("/api/secrets/sync", async (request, response, next) => {
+  try {
+    const session = response.locals.authSession as AuthSession;
+    const { peerIds } = secretCredentialSyncSchema.parse(request.body);
+    const peers = await listClusterPeers();
+    const selected = peerIds.map((peerId) => peers.find((peer) => peer.id === peerId));
+    const missing = peerIds.filter((_, index) => !selected[index]);
+    if (missing.length) {
+      sendError(response, 404, `Unknown node: ${missing.join(", ")}`);
+      return;
+    }
+    await enqueueSecretCredentialSync(peerIds, session.userId);
+    const results = await Promise.all((selected as ClusterPeer[]).map(async (peer) => {
+      const outcome = await pushSecretCredentialsToPeer(peer);
+      return { peerId: peer.id, name: peer.name, delivered: outcome.delivered, ...(outcome.error ? { error: outcome.error } : {}) };
+    }));
+    response.json({ results });
   } catch (error) {
     next(error);
   }
@@ -1987,12 +1956,12 @@ app.post("/api/projects", async (request, response, next) => {
   try {
     const payload = projectSchema.parse(request.body);
     const homePath = getSettings().projects.homePath;
-    const projectTypes = await listProjectTypes();
-    if (!projectTypes.some((type) => type.id === payload.type)) {
-      throw new ProjectTypeError(`Unknown project type "${payload.type}"`);
+    const workspaces = await listWorkspaces();
+    if (!workspaces.some((workspace) => workspace.id === payload.type)) {
+      throw new WorkspaceError(`Unknown workspace "${payload.type}"`);
     }
     const projectPath = payload.path ?? managedProjectPath(homePath, payload.type, payload.name);
-    if (!payload.path) await ensureManagedHome(homePath, projectTypes.map((type) => type.id));
+    if (!payload.path) await ensureManagedHome(homePath, workspaces.map((workspace) => workspace.id));
     if (payload.sourcePath) {
       if (!payload.importMode) throw new ProjectDirectoryImportError("Choose how to import the project");
       const projects = await listProjects();
@@ -2040,35 +2009,6 @@ app.put("/api/projects/:projectId/path-mapping", async (request, response, next)
   }
 });
 
-app.get("/api/projects/:projectId/github-auth", async (request, response, next) => {
-  try {
-    const project = await getProject(request.params.projectId);
-    if (!project) {
-      sendError(response, 404, "Project not found");
-      return;
-    }
-    response.json(await getGitHubAuthStatus(project.id));
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.put("/api/projects/:projectId/github-auth", async (request, response, next) => {
-  try {
-    const project = await getProject(request.params.projectId);
-    if (!project) {
-      sendError(response, 404, "Project not found");
-      return;
-    }
-    const payload = projectGitHubAuthSchema.parse(request.body);
-    const session = response.locals.authSession as AuthSession;
-    await updateProjectGitHubAuth(project.id, payload.group, payload.token, session.userId);
-    response.json(await getGitHubAuthStatus(project.id));
-  } catch (error) {
-    next(error);
-  }
-});
-
 app.patch("/api/projects/:projectId", async (request, response, next) => {
   try {
     const existing = await getProject(request.params.projectId);
@@ -2078,12 +2018,12 @@ app.patch("/api/projects/:projectId", async (request, response, next) => {
     }
     await assertProjectEditable(existing);
     const payload = projectUpdateSchema.parse(request.body);
-    if (payload.type && !(await listProjectTypes()).some((type) => type.id === payload.type)) {
-      throw new ProjectTypeError(`Unknown project type "${payload.type}"`);
+    if (payload.type && !(await listWorkspaces()).some((workspace) => workspace.id === payload.type)) {
+      throw new WorkspaceError(`Unknown workspace "${payload.type}"`);
     }
     let project = existing;
     const typeChanged = Boolean(payload.type && payload.type !== existing.type);
-    if (typeChanged && payload.type) project = await relocateProjectType(project, payload.type);
+    if (typeChanged && payload.type) project = await relocateProjectWorkspace(project, payload.type);
     if (payload.name !== undefined) {
       project = await renameProject(project.id, payload.name);
       await setProjectName(project.id, payload.name);
@@ -2159,8 +2099,6 @@ app.delete("/api/projects/:projectId", async (request, response, next) => {
     }
     await assertProjectEditable(project);
     await removeProject(project.id);
-    const session = response.locals.authSession as AuthSession;
-    await removeProjectGitHubAuth(project.id, session.userId);
     sessionWatcher.removeProject(project.id);
     response.status(204).send();
   } catch (error) {
@@ -3327,7 +3265,7 @@ app.use((error: unknown, _request: Request, response: Response, _next: NextFunct
     return;
   }
   const message = error instanceof Error ? error.message : "Unexpected server error";
-  if (error instanceof ProjectTypeError) {
+  if (error instanceof WorkspaceError) {
     sendError(response, 400, message);
     return;
   }
@@ -3759,11 +3697,11 @@ async function startTaskRun(project: ProjectRecord, task: TaskRecord, requestedP
       const resumeSessionId = task.sessionPath?.startsWith("claude:") ? path.basename(task.sessionPath.replace(/^claude:/, ""), ".jsonl") : undefined;
       const sessionId = resumeSessionId ?? randomUUID();
       await claimConversationAcrossCluster("claude", sessionId, local.id);
-      const claudePrompt = resumeSessionId ? prompt : [agentCredentialContext(project.id), prompt].filter(Boolean).join("\n\n");
+      const claudePrompt = resumeSessionId ? prompt : [agentCredentialContext(project.id, { engine: "claude", sessionId }), prompt].filter(Boolean).join("\n\n");
       const run = runClaudePrompt({
         cwd,
         prompt: claudePrompt,
-        env: agentEnvironment(project.id),
+        env: agentEnvironment(project.id, { engine: "claude", sessionId }),
         resumeSessionId,
         sessionId: resumeSessionId ? undefined : sessionId,
         model: config.modelId || undefined,
@@ -3848,7 +3786,7 @@ async function runRecoveredClaudePrompt(record: UpdateRecoveryRecord, entry: Rec
   const run = runClaudePrompt({
     cwd: record.cwd, prompt, resumeSessionId: record.sessionId,
     model: state.model ?? undefined, effort: state.effort ?? undefined,
-    env: agentEnvironment(record.projectId), onEvent,
+    env: agentEnvironment(record.projectId, { engine: "claude", sessionId: record.sessionId }), onEvent,
   });
   state.child = run.child;
   if (entry.connection) sendClaudeStatus(entry.connection);
@@ -3949,7 +3887,7 @@ function subscribeSharedSession(session: SharedPiSession): () => void {
   });
 }
 
-async function getSharedSession(projectId: string, cwd: string, sessionPath: string | undefined, sessionId?: string): Promise<SharedPiSession> {
+async function getSharedSession(projectId: string, cwd: string, sessionPath: string | undefined, sessionId?: string, secretAccountIds: string[] = []): Promise<SharedPiSession> {
   if (sessionPath) {
     const existing = sharedSessions.get(sessionKey(cwd, sessionPath));
     if (existing) {
@@ -3958,7 +3896,9 @@ async function getSharedSession(projectId: string, cwd: string, sessionPath: str
     }
   }
 
-  const handle = await createPiSession({ cwd, projectId, sessionPath, sessionId });
+  const handle = await createPiSession({ cwd, projectId, sessionPath, sessionId, conversation: { engine: "pi", ...(sessionId ? { sessionId } : {}), accountIds: secretAccountIds } });
+  // The id the engine settled on is the one the attachments belong to (FR9.4).
+  await persistConversationSecretAccounts("pi", handle.session.sessionId, secretAccountIds);
   const key = sessionKey(cwd, sessionPath ?? handle.session.sessionFile ?? `new:${Date.now()}:${Math.random()}`);
   const session: SharedPiSession = {
     handle,
@@ -4149,7 +4089,8 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
   };
   onEvent({ type: "agent_start" });
   const basePrompt = connection.handoffContext ? `${connection.handoffContext}${promptText}` : promptText;
-  const fullPrompt = connection.claude.filePath ? basePrompt : [agentCredentialContext(connection.project.id), basePrompt].filter(Boolean).join("\n\n");
+  const conversationScope = { engine: "claude" as const, ...(connection.claude.sessionId ? { sessionId: connection.claude.sessionId } : {}), accountIds: connection.secretAccountIds };
+  const fullPrompt = connection.claude.filePath ? basePrompt : [agentCredentialContext(connection.project.id, conversationScope), basePrompt].filter(Boolean).join("\n\n");
   connection.handoffContext = null;
 
   const runningKeys = new Set<string>();
@@ -4179,6 +4120,9 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
   const onSessionId = (sessionId: string): void => {
     markClaudeRunning(claudeSessionFilePath(connection.cwd, sessionId));
     adoptSessionId(sessionId);
+    // The attachments belong to the id the engine settled on, not the one guessed at connect.
+    persistConversationSecretAccounts("claude", sessionId, connection.secretAccountIds)
+      .catch((error) => console.warn("Could not save conversation secret accounts", error));
   };
   if (connection.claude.filePath) markClaudeRunning(connection.claude.filePath);
 
@@ -4192,7 +4136,7 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
       const run = runClaudePrompt({
         cwd: connection.cwd,
         prompt: fullPrompt,
-        env: agentEnvironment(connection.project.id),
+        env: agentEnvironment(connection.project.id, conversationScope),
         resumeSessionId: connection.claude.filePath ? connection.claude.sessionId ?? undefined : undefined,
         sessionId: connection.claude.filePath ? undefined : connection.claude.sessionId ?? undefined,
         ...runOptions,
@@ -4310,7 +4254,7 @@ async function switchEngine(connection: ChatConnection, engine: ChatEngine): Pro
   const local = await getClusterNode();
   const sessionId = randomUUID();
   await claimConversationAcrossCluster("pi", sessionId, local.id);
-  const sharedSession = await getSharedSession(connection.project.id, connection.cwd, undefined, sessionId);
+  const sharedSession = await getSharedSession(connection.project.id, connection.cwd, undefined, sessionId, connection.secretAccountIds);
   sharedSession.clients.add(connection.socket);
   connection.shared = sharedSession;
   connection.engine = "pi";
@@ -4617,6 +4561,9 @@ webSocketServer.on("connection", async (socket, request) => {
   }
 
   let rawSessionPath = rawSessionPathFromUrl;
+  // Chosen in the new-conversation dialog; a conversation has no id yet at this point, so the
+  // accounts travel with the connection until the engine reports one (FR9.4).
+  const secretAccountIds = socketSecretAccountIdsSchema.parse((url.searchParams.get("secretAccountIds") ?? "").split(",").filter(Boolean));
   const requestedSessionId = url.searchParams.get("sessionId");
   if (requestedSessionId && rawSessionPath !== "watch") {
     const sessions = await listHarnessSessions(project);
@@ -4674,7 +4621,7 @@ webSocketServer.on("connection", async (socket, request) => {
   }
   let connection: ChatConnection = {
     socket, project, taskId: task?.id ?? null, cwd, engine: "pi", shared: null,
-    claude: emptyClaudeState(ownershipSessionId), handoffContext: null,
+    claude: emptyClaudeState(ownershipSessionId), handoffContext: null, secretAccountIds,
   };
 
   if (requestedEngine === "claude") {
@@ -4685,7 +4632,7 @@ webSocketServer.on("connection", async (socket, request) => {
     if (recovered) {
       connection = {
         socket, project, taskId: task?.id ?? null, cwd, engine: "claude", shared: null,
-        claude: recovered.claude, handoffContext: null,
+        claude: recovered.claude, handoffContext: null, secretAccountIds,
       };
       connection.claude.sessionName = listedSession?.title ?? null;
       recovered.connection = connection;
@@ -4723,7 +4670,7 @@ webSocketServer.on("connection", async (socket, request) => {
   } else {
     let sharedSession: SharedPiSession;
     try {
-      sharedSession = await getSharedSession(project.id, cwd, requestedSessionPath, ownershipSessionId);
+      sharedSession = await getSharedSession(project.id, cwd, requestedSessionPath, ownershipSessionId, secretAccountIds);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not start Pi session";
       send(socket, { type: "error", error: message });
@@ -4775,7 +4722,6 @@ async function initializeStartupReadiness(): Promise<void> {
   try {
     const projects = await listProjects();
     await reconcileSyncthingProjectFolders(projects);
-    ensureGitHubCredentialMigration();
     startupReady = true;
     startupError = undefined;
   } catch (error) {
@@ -4878,13 +4824,13 @@ async function reconcileTaskHandoffs(): Promise<void> {
 
 /** Pushes everything currently enrolled for this peer, one 100-event batch at a time,
     until the peer has acknowledged all of it or a batch fails. */
-async function pushGitHubCredentialsToPeer(peer: ClusterPeer): Promise<{ delivered: number; error?: string }> {
+async function pushSecretCredentialsToPeer(peer: ClusterPeer): Promise<{ delivered: number; error?: string }> {
   let delivered = 0;
   for (;;) {
-    const events = await githubCredentialEventsForPeer(peer.id);
+    const events = await secretCredentialEventsForPeer(peer.id);
     if (!events.length) return { delivered };
     try {
-      const response = await fetch(`${peer.url}/api/cluster/github/events`, {
+      const response = await fetch(`${peer.url}/api/cluster/secrets/events`, {
         method: "POST",
         headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ events }),
@@ -4894,12 +4840,12 @@ async function pushGitHubCredentialsToPeer(peer: ClusterPeer): Promise<{ deliver
       const receipt = replicationReceiptSchema.parse(await response.json());
       // A peer that acknowledges nothing would loop forever on the same batch.
       if (!receipt.received.length) throw new Error("Peer acknowledged no events");
-      await recordGitHubCredentialReceipt(peer.id, receipt.received);
+      await recordSecretCredentialReceipt(peer.id, receipt.received);
       delivered += receipt.received.length;
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Peer GitHub credential replication failed";
-      await recordGitHubCredentialFailure(peer.id, events.map((event) => event.id), message);
-      console.warn(`GitHub credential replication to ${peer.id} failed: ${message}`);
+      const message = error instanceof Error ? error.message : "Peer secret credential replication failed";
+      await recordSecretCredentialFailure(peer.id, events.map((event) => event.id), message);
+      console.warn(`Secret credential replication to ${peer.id} failed: ${message}`);
       return { delivered, error: message };
     }
   }
@@ -4907,13 +4853,13 @@ async function pushGitHubCredentialsToPeer(peer: ClusterPeer): Promise<{ deliver
 
 /** Retries deliveries a manual sync enrolled but could not complete. It never enrolls
     anything itself, so credential changes are not replicated until the user asks. */
-async function flushGitHubCredentialOutbox(): Promise<void> {
-  if (githubCredentialFlushInProgress) return;
-  githubCredentialFlushInProgress = true;
+async function flushSecretCredentialOutbox(): Promise<void> {
+  if (secretCredentialFlushInProgress) return;
+  secretCredentialFlushInProgress = true;
   try {
-    for (const peer of await listClusterPeers()) await pushGitHubCredentialsToPeer(peer);
+    for (const peer of await listClusterPeers()) await pushSecretCredentialsToPeer(peer);
   } finally {
-    githubCredentialFlushInProgress = false;
+    secretCredentialFlushInProgress = false;
   }
 }
 
@@ -4957,7 +4903,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       .catch((error) => console.warn("Ticket workspace sync failed", error));
     flushMembershipOutbox().catch((error) => console.warn("Membership flush failed", error));
     flushReplicationOutbox().catch((error) => console.warn("Replication flush failed", error));
-    flushGitHubCredentialOutbox().catch((error) => console.warn("GitHub credential flush failed", error));
+    flushSecretCredentialOutbox().catch((error) => console.warn("Secret credential flush failed", error));
     reconcileTaskHandoffs().catch((error) => console.warn("Task handoff reconciliation failed", error));
     discoverMissingPeerProjects().catch((error) => console.warn("Project discovery failed", error));
     setInterval(() => discoverMissingPeerProjects().catch((error) => console.warn("Project discovery failed", error)), 10_000).unref();
@@ -4965,7 +4911,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       reconcileTicketWorkspaceSync().catch((error) => console.warn("Ticket workspace sync failed", error));
       flushMembershipOutbox().catch((error) => console.warn("Membership flush failed", error));
       flushReplicationOutbox().catch((error) => console.warn("Replication flush failed", error));
-      flushGitHubCredentialOutbox().catch((error) => console.warn("GitHub credential flush failed", error));
+      flushSecretCredentialOutbox().catch((error) => console.warn("Secret credential flush failed", error));
       reconcileTaskHandoffs().catch((error) => console.warn("Task handoff reconciliation failed", error));
     }, 2_000).unref();
   });

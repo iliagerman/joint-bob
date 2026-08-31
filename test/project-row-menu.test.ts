@@ -8,13 +8,13 @@ test("project rows put every action behind one overflow menu", async () => {
   assert.match(app, /menuButton\.dataset\.testid = "project-menu-button"/);
   assert.match(app, /function projectMenuItems\(project\)/);
 
-  // All seven of the old inline buttons now live in the menu.
+  // Every remaining inline button now lives in the menu.
   for (const testid of [
     "project-pin-button",
     "project-rename-button",
     "project-lock-button",
     "project-path-mapping-button",
-    "project-github-button",
+    "project-secrets-button",
     "project-rescan-button",
     "project-remove-button",
   ]) {

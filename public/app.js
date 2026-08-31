@@ -24,6 +24,8 @@ const state = {
   renameSessionId: null,
   renameSessionEngine: "pi",
   newSessionDraft: null,
+  // Accounts picked in the new-conversation dialog; the server persists them once the engine reports an id.
+  newSessionSecretAccountIds: [],
   pendingSessionTitle: null,
   pendingSessionColor: null,
   colorSessionId: null,
@@ -35,7 +37,6 @@ const state = {
   projectSyncTimer: null,
   tasks: [],
   editingTaskId: null,
-  githubProjectId: null,
   mappingProjectId: null,
   pendingProjectImports: [],
   activeProjectImport: null,
@@ -262,34 +263,12 @@ const elements = {
   projectImportUseFolderButton: document.querySelector("#projectImportUseFolderButton"),
   cancelProjectImportButton: document.querySelector("#cancelProjectImportButton"),
   skipProjectImportButton: document.querySelector("#skipProjectImportButton"),
-  githubGroupList: document.querySelector("#githubGroupList"),
-  githubGroupAddButton: document.querySelector("#githubGroupAddButton"),
-  githubSyncButton: document.querySelector("#githubSyncButton"),
-  githubSyncDialog: document.querySelector("#githubSyncDialog"),
-  githubSyncForm: document.querySelector("#githubSyncForm"),
-  githubSyncAllInput: document.querySelector("#githubSyncAllInput"),
-  githubSyncNodeList: document.querySelector("#githubSyncNodeList"),
-  cancelGithubSyncButton: document.querySelector("#cancelGithubSyncButton"),
-  githubGroupDialog: document.querySelector("#githubGroupDialog"),
-  githubGroupForm: document.querySelector("#githubGroupForm"),
-  githubGroupTitle: document.querySelector("#githubGroupTitle"),
-  githubGroupLabelInput: document.querySelector("#githubGroupLabelInput"),
-  githubGroupTokenInput: document.querySelector("#githubGroupTokenInput"),
-  githubGroupTokenState: document.querySelector("#githubGroupTokenState"),
-  githubGroupDefaultInput: document.querySelector("#githubGroupDefaultInput"),
-  cancelGithubGroupButton: document.querySelector("#cancelGithubGroupButton"),
-  projectGithubDialog: document.querySelector("#projectGithubDialog"),
-  projectGithubForm: document.querySelector("#projectGithubForm"),
-  projectGithubTitle: document.querySelector("#projectGithubTitle"),
-  projectGithubGroupInput: document.querySelector("#projectGithubGroupInput"),
-  projectTypeList: document.querySelector("#projectTypeList"),
-  projectTypeNameInput: document.querySelector("#projectTypeNameInput"),
-  projectTypeAddButton: document.querySelector("#projectTypeAddButton"),
-  projectGithubTokenInput: document.querySelector("#projectGithubTokenInput"),
-  projectTokenState: document.querySelector("#projectTokenState"),
-  clearProjectGithubTokenInput: document.querySelector("#clearProjectGithubTokenInput"),
-  projectGithubSummary: document.querySelector("#projectGithubSummary"),
-  cancelProjectGithubButton: document.querySelector("#cancelProjectGithubButton"),
+  secretSyncButton: document.querySelector("#secretSyncButton"),
+  secretSyncDialog: document.querySelector("#secretSyncDialog"),
+  secretSyncForm: document.querySelector("#secretSyncForm"),
+  secretSyncAllInput: document.querySelector("#secretSyncAllInput"),
+  secretSyncNodeList: document.querySelector("#secretSyncNodeList"),
+  cancelSecretSyncButton: document.querySelector("#cancelSecretSyncButton"),
   projectPathDialog: document.querySelector("#projectPathDialog"),
   projectPathForm: document.querySelector("#projectPathForm"),
   projectPathTitle: document.querySelector("#projectPathTitle"),
@@ -301,7 +280,7 @@ const elements = {
   newProjectColorSwatches: document.querySelector("#newProjectColorSwatches"),
   projectForm: document.querySelector("#projectForm"),
   cancelProjectButton: document.querySelector("#cancelProjectButton"),
-  projectTypeInput: document.querySelector("#projectTypeInput"),
+  projectWorkspaceInput: document.querySelector("#projectWorkspaceInput"),
   projectNameInput: document.querySelector("#projectNameInput"),
   projectSourcePathInput: document.querySelector("#projectSourcePathInput"),
   projectSourceBrowseButton: document.querySelector("#projectSourceBrowseButton"),
@@ -318,6 +297,7 @@ const elements = {
   newSessionNameForm: document.querySelector("#newSessionNameForm"),
   newSessionNameInput: document.querySelector("#newSessionNameInput"),
   newSessionColorSwatches: document.querySelector("#newSessionColorSwatches"),
+  newSessionSecretList: document.querySelector("#newSessionSecretList"),
   cancelNewSessionNameButton: document.querySelector("#cancelNewSessionNameButton"),
   conversationColorDialog: document.querySelector("#conversationColorDialog"),
   conversationColorForm: document.querySelector("#conversationColorForm"),
@@ -396,6 +376,7 @@ const elements = {
   secretAccountProviderHint: document.querySelector("#secretAccountProviderHint"),
   secretVariableRows: document.querySelector("#secretVariableRows"),
   secretVariableAddButton: document.querySelector("#secretVariableAddButton"),
+  secretAccountReplicateInput: document.querySelector("#secretAccountReplicateInput"),
   secretAccountCancelButton: document.querySelector("#secretAccountCancelButton"),
   secretScopeDialog: document.querySelector("#secretScopeDialog"),
   secretScopeForm: document.querySelector("#secretScopeForm"),
@@ -572,11 +553,11 @@ async function initializeApplication() {
   updateInstallButton();
   setMobileView(preferences.mobileView);
   revealApplication();
-  await loadProjectTypes();
+  await loadWorkspaces();
   await loadProjects();
   void api("/api/cluster/projects/discover", { method: "POST" })
     .then(async (discovery) => {
-      await loadProjectTypes();
+      await loadWorkspaces();
       await refreshProjectsQuietly();
       if (discovery.pending.length) openProjectImportMapping(discovery.pending);
     })
@@ -739,7 +720,7 @@ async function openSettings(tab = "account") {
   elements.settingsUsername.textContent = state.username;
   selectSettingsTab(tab);
   await Promise.all([loadGithubGroups(), loadClusterPanel()]);
-  await loadProjectTypes();
+  await loadWorkspaces();
   renderLoginSessions(authSessions);
   elements.settingsRestartMessage.hidden = true;
   elements.settingsRestartMessage.textContent = "";
@@ -1246,77 +1227,16 @@ async function saveClusterNode() {
   toast(peerUrl ? "Node saved and peer paired" : "Node saved");
 }
 
-let githubGroups = [];
-
-async function loadGithubGroups() {
-  githubGroups = (await api("/api/github-auth")).groups;
-  renderGithubGroups();
-}
-
-function renderGithubGroups() {
-  elements.githubGroupList.replaceChildren();
-  if (!githubGroups.length) {
-    const empty = document.createElement("p");
-    empty.className = "github-group-empty";
-    empty.textContent = "No groups yet. Add one to give projects a GitHub token.";
-    elements.githubGroupList.append(empty);
-    return;
-  }
-  for (const group of githubGroups) {
-    const row = document.createElement("div");
-    row.className = "github-group-row";
-    row.dataset.testid = "github-group-row";
-
-    const name = document.createElement("strong");
-    name.textContent = group.label;
-    row.append(name);
-
-    if (group.isDefault) {
-      const badge = document.createElement("span");
-      badge.className = "github-group-default";
-      badge.textContent = "Default";
-      row.append(badge);
-    }
-
-    const edit = document.createElement("button");
-    edit.type = "button";
-    edit.className = "ghost compact";
-    edit.textContent = "Edit";
-    edit.dataset.testid = "github-group-edit-button";
-    edit.addEventListener("click", () => openGithubGroupDialog(group));
-    row.append(edit);
-
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "ghost compact danger";
-    remove.textContent = "Delete";
-    remove.dataset.testid = "github-group-delete-button";
-    remove.addEventListener("click", async () => {
-      if (!confirm(`Delete "${group.label}"? Projects using it lose GitHub access until you reassign them.`)) return;
-      try {
-        await api(`/api/github-auth/groups/${encodeURIComponent(group.id)}`, { method: "DELETE" });
-        await loadGithubGroups();
-        toast(`Deleted ${group.label}`);
-      } catch (error) {
-        toast(error.message);
-      }
-    });
-    row.append(remove);
-
-    elements.githubGroupList.append(row);
-  }
-}
-
-/** Lists paired nodes with a checkbox each so the user can push credentials to some or all of them. */
-async function openGithubSyncDialog() {
+/** Lists paired nodes with a checkbox each so the user can push replicating accounts to some or all of them. */
+async function openSecretSyncDialog() {
   const { peers } = await api("/api/cluster/peers");
-  elements.githubSyncNodeList.replaceChildren();
-  elements.githubSyncAllInput.checked = false;
+  elements.secretSyncNodeList.replaceChildren();
+  elements.secretSyncAllInput.checked = false;
   if (!peers.length) {
     const empty = document.createElement("p");
     empty.className = "github-group-empty";
     empty.textContent = "No paired nodes yet. Add one in the Cluster tab first.";
-    elements.githubSyncNodeList.append(empty);
+    elements.secretSyncNodeList.append(empty);
   }
   for (const peer of peers) {
     const row = document.createElement("label");
@@ -1324,156 +1244,111 @@ async function openGithubSyncDialog() {
     const input = document.createElement("input");
     input.type = "checkbox";
     input.value = peer.id;
-    input.dataset.testid = "github-sync-node-input";
+    input.dataset.testid = "secret-sync-node-input";
     input.addEventListener("change", () => {
-      elements.githubSyncAllInput.checked = githubSyncSelectedIds().length === peers.length;
+      elements.secretSyncAllInput.checked = secretSyncSelectedIds().length === peers.length;
     });
     row.append(input, document.createTextNode(` ${peer.name}${peer.online ? "" : " (offline)"}`));
-    elements.githubSyncNodeList.append(row);
+    elements.secretSyncNodeList.append(row);
   }
-  elements.githubSyncDialog.showModal();
+  elements.secretSyncDialog.showModal();
 }
 
-function githubSyncSelectedIds() {
-  return [...elements.githubSyncNodeList.querySelectorAll("input[type=checkbox]")].filter((input) => input.checked).map((input) => input.value);
+function secretSyncSelectedIds() {
+  return [...elements.secretSyncNodeList.querySelectorAll("input[type=checkbox]")].filter((input) => input.checked).map((input) => input.value);
 }
 
-async function submitGithubSync() {
-  const peerIds = githubSyncSelectedIds();
+async function submitSecretSync() {
+  const peerIds = secretSyncSelectedIds();
   if (!peerIds.length) {
     toast("Pick at least one node");
     return;
   }
-  const { results } = await api("/api/github-auth/sync", { method: "POST", body: JSON.stringify({ peerIds }) });
+  const { results } = await api("/api/secrets/sync", { method: "POST", body: JSON.stringify({ peerIds }) });
   const failed = results.filter((result) => result.error);
-  elements.githubSyncDialog.close();
-  toast(failed.length ? `Synced ${results.length - failed.length} of ${results.length} nodes; ${failed[0].name}: ${failed[0].error}` : `Synced credentials to ${results.length} ${results.length === 1 ? "node" : "nodes"}`);
+  elements.secretSyncDialog.close();
+  toast(failed.length ? `Synced ${results.length - failed.length} of ${results.length} nodes; ${failed[0].name}: ${failed[0].error}` : `Synced accounts to ${results.length} ${results.length === 1 ? "node" : "nodes"}`);
 }
 
-let projectTypes = [];
+let workspaces = [];
 
-async function loadProjectTypes() {
-  projectTypes = (await api("/api/project-types")).types;
-  renderProjectTypes();
-  fillProjectTypeSelect();
+async function loadWorkspaces() {
+  workspaces = (await api("/api/workspaces")).workspaces;
+  renderWorkspaces();
+  fillWorkspaceSelect();
 }
 
-/** Keeps the create-project picker in step with the types configured in Settings. */
-function fillProjectTypeSelect() {
-  const previous = elements.projectTypeInput.value;
-  elements.projectTypeInput.replaceChildren();
-  for (const type of projectTypes) {
+/** Keeps the create-project picker in step with the workspaces configured in Settings. */
+function fillWorkspaceSelect() {
+  const previous = elements.projectWorkspaceInput.value;
+  elements.projectWorkspaceInput.replaceChildren();
+  for (const workspace of workspaces) {
     const option = document.createElement("option");
-    option.value = type.id;
-    option.textContent = type.label;
-    elements.projectTypeInput.append(option);
+    option.value = workspace.id;
+    option.textContent = workspace.label;
+    elements.projectWorkspaceInput.append(option);
   }
-  elements.projectTypeInput.value = projectTypes.some((type) => type.id === previous) ? previous : projectTypes[0]?.id ?? "";
+  elements.projectWorkspaceInput.value = workspaces.some((workspace) => workspace.id === previous) ? previous : workspaces[0]?.id ?? "";
 }
 
-function projectTypeGroupPicker(type) {
-  const picker = document.createElement("select");
-  picker.dataset.testid = "project-type-group-select";
-  picker.setAttribute("aria-label", `GitHub group for ${type.label}`);
-  const fallback = document.createElement("option");
-  fallback.value = "";
-  fallback.textContent = "Default group";
-  picker.append(fallback);
-  for (const group of githubGroups) {
-    const option = document.createElement("option");
-    option.value = group.id;
-    option.textContent = group.label;
-    picker.append(option);
-  }
-  picker.value = type.githubGroup || "";
-  picker.addEventListener("change", async () => {
-    try {
-      await api("/api/project-types", {
-        method: "PUT",
-        body: JSON.stringify({ id: type.id, label: type.label, githubGroup: picker.value || null }),
-      });
-      await loadProjectTypes();
-    } catch (error) {
-      toast(error.message);
-    }
-  });
-  return picker;
-}
-
-function renderProjectTypes() {
-  elements.projectTypeList.replaceChildren();
-  if (!projectTypes.length) {
+function renderWorkspaces() {
+  elements.workspaceList.replaceChildren();
+  if (!workspaces.length) {
     const empty = document.createElement("p");
     empty.className = "project-type-empty";
-    empty.textContent = "No project types yet. Add one to choose where new projects land.";
-    elements.projectTypeList.append(empty);
+    empty.textContent = "No workspaces yet. Add one to choose where new projects land.";
+    elements.workspaceList.append(empty);
     return;
   }
-  for (const type of projectTypes) {
+  for (const workspace of workspaces) {
     const row = document.createElement("div");
     row.className = "project-type-row";
-    row.dataset.testid = "project-type-row";
+    row.dataset.testid = "workspace-row";
 
     const name = document.createElement("strong");
-    name.textContent = type.label;
+    name.textContent = workspace.label;
     row.append(name);
 
     const folder = document.createElement("code");
-    folder.textContent = `/${type.id}`;
+    folder.textContent = `/${workspace.id}`;
     row.append(folder);
-
-    row.append(projectTypeGroupPicker(type));
 
     const secrets = document.createElement("button");
     secrets.type = "button";
     secrets.className = "ghost compact";
     secrets.textContent = "Secrets";
-    secrets.dataset.testid = "project-type-secrets-button";
-    secrets.addEventListener("click", () => openSecretScope("project_type", type.id, type.label).catch((error) => toast(error.message)));
+    secrets.dataset.testid = "workspace-secrets-button";
+    secrets.addEventListener("click", () => openSecretScope("workspace", workspace.id, workspace.label).catch((error) => toast(error.message)));
     row.append(secrets);
 
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "ghost compact danger";
     remove.textContent = "Delete";
-    remove.dataset.testid = "project-type-delete-button";
+    remove.dataset.testid = "workspace-delete-button";
     remove.addEventListener("click", async () => {
-      if (!confirm(`Delete the "${type.label}" project type? Its folder stays on disk.`)) return;
+      if (!confirm(`Delete the "${workspace.label}" workspace? Its folder stays on disk.`)) return;
       try {
-        await api(`/api/project-types/${encodeURIComponent(type.id)}`, { method: "DELETE" });
-        await loadProjectTypes();
-        toast(`Deleted ${type.label}`);
+        await api(`/api/workspaces/${encodeURIComponent(workspace.id)}`, { method: "DELETE" });
+        await loadWorkspaces();
+        toast(`Deleted ${workspace.label}`);
       } catch (error) {
         toast(error.message);
       }
     });
     row.append(remove);
 
-    elements.projectTypeList.append(row);
+    elements.workspaceList.append(row);
   }
 }
 
-async function addProjectType() {
-  const label = elements.projectTypeNameInput.value.trim();
+async function addWorkspace() {
+  const label = elements.workspaceNameInput.value.trim();
   if (!label) return;
-  await api("/api/project-types", { method: "PUT", body: JSON.stringify({ label }) });
-  elements.projectTypeNameInput.value = "";
-  await loadProjectTypes();
+  await api("/api/workspaces", { method: "PUT", body: JSON.stringify({ label }) });
+  elements.workspaceNameInput.value = "";
+  await loadWorkspaces();
   toast(`Added ${label}`);
-}
-
-let editingGithubGroup = null;
-
-function openGithubGroupDialog(group = null) {
-  editingGithubGroup = group;
-  elements.githubGroupTitle.textContent = group ? `Edit ${group.label}` : "Add GitHub group";
-  elements.githubGroupLabelInput.value = group?.label || "";
-  elements.githubGroupTokenInput.value = "";
-  elements.githubGroupTokenInput.placeholder = group ? "Leave blank to keep current token" : "Paste a GitHub token";
-  elements.githubGroupTokenState.textContent = group ? "Token saved" : "";
-  elements.githubGroupDefaultInput.checked = group ? Boolean(group.isDefault) : !githubGroups.length;
-  elements.githubGroupDialog.showModal();
-  elements.githubGroupLabelInput.focus();
 }
 
 function openProjectPathMapping(project) {
@@ -1482,29 +1357,6 @@ function openProjectPathMapping(project) {
   elements.projectHomeserverPathInput.value = project.path;
   elements.projectMacPathInput.value = project.macPath || "";
   elements.projectPathDialog.showModal();
-}
-
-async function openProjectGithubSettings(project) {
-  const [status] = await Promise.all([api(`/api/projects/${encodeURIComponent(project.id)}/github-auth`), loadGithubGroups()]);
-  state.githubProjectId = project.id;
-  elements.projectGithubTitle.textContent = `${project.name} GitHub access`;
-  elements.projectGithubGroupInput.replaceChildren();
-  const none = document.createElement("option");
-  none.value = "";
-  none.textContent = "Inherit from the project type";
-  elements.projectGithubGroupInput.append(none);
-  for (const group of githubGroups) {
-    const option = document.createElement("option");
-    option.value = group.id;
-    option.textContent = group.isDefault ? `${group.label} (default)` : group.label;
-    elements.projectGithubGroupInput.append(option);
-  }
-  elements.projectGithubGroupInput.value = status.project.group || "";
-  elements.projectGithubTokenInput.value = "";
-  elements.clearProjectGithubTokenInput.checked = false;
-  elements.projectTokenState.textContent = status.project.hasOverride ? "Override saved" : "Inherited token";
-  elements.projectGithubSummary.textContent = status.project.configured ? "GitHub access configured." : "No token resolves for this project yet.";
-  elements.projectGithubDialog.showModal();
 }
 
 let projectPendingRename = null;
@@ -1554,10 +1406,10 @@ function openProjectRename(project) {
   elements.projectRenameInput.value = project.name;
   renderProjectColorSwatches(project.color || null, elements.projectColorSwatches);
   elements.projectGroupInput.replaceChildren();
-  for (const type of projectTypes) {
+  for (const workspace of workspaces) {
     const option = document.createElement("option");
-    option.value = type.id;
-    option.textContent = type.label;
+    option.value = workspace.id;
+    option.textContent = workspace.label;
     elements.projectGroupInput.append(option);
   }
   elements.projectGroupInput.value = project.type;
@@ -1943,11 +1795,11 @@ function groupedProjects(projects) {
     if (!byType.has(typeId)) byType.set(typeId, []);
     byType.get(typeId).push(project);
   }
-  const configured = projectTypes.map((type) => type.id).filter((typeId) => byType.has(typeId));
+  const configured = workspaces.map((workspace) => workspace.id).filter((typeId) => byType.has(typeId));
   const unknown = [...byType.keys()].filter((typeId) => !configured.includes(typeId)).sort();
   return [...configured, ...unknown].map((typeId) => ({
     id: typeId,
-    label: projectTypes.find((type) => type.id === typeId)?.label || typeId,
+    label: workspaces.find((workspace) => workspace.id === typeId)?.label || typeId,
     projects: sortPinnedFirst(byType.get(typeId), (project) => isProjectPinned(project.id)),
   }));
 }
@@ -2078,12 +1930,6 @@ function projectMenuItems(project) {
       icon: "folder",
       testid: "project-path-mapping-button",
       onSelect: () => openProjectPathMapping(project),
-    },
-    {
-      label: "GitHub access",
-      icon: "github",
-      testid: "project-github-button",
-      onSelect: () => openProjectGithubSettings(project).catch((error) => toast(error.message)),
     },
     {
       label: "Secret accounts",
@@ -3877,11 +3723,14 @@ function websocketUrl(sessionPath) {
   if (state.activeSessionId) url.searchParams.set("sessionId", state.activeSessionId);
   if (state.activeNodeId && !state.activeTaskId) url.searchParams.set("nodeId", state.activeNodeId);
   if (state.activeTaskId) url.searchParams.set("taskId", state.activeTaskId);
+  if (state.newSessionSecretAccountIds.length) url.searchParams.set("secretAccountIds", state.newSessionSecretAccountIds.join(","));
   return url.toString();
 }
 
 function openSession(sessionPath, title = "New Pi conversation", preserveChat = false, preserveTask = false) {
   rememberDraft();
+  // Opening a conversation that already exists drops the picks made for a new one.
+  if (sessionPath && sessionPath !== "claude:new") state.newSessionSecretAccountIds = [];
   // A turn left running on the conversation being left must not keep counting
   // up in the header of the one being opened.
   state.lastTurnStartedAt = 0;
@@ -4658,7 +4507,7 @@ function joinProjectPath(basePath, projectName) {
 
 async function fillProjectBases() {
   const settings = await api("/api/settings");
-  state.projectDefaultBase = `${settings.projects.homePath.replace(/\/+$/, "")}/${elements.projectTypeInput.value}`;
+  state.projectDefaultBase = `${settings.projects.homePath.replace(/\/+$/, "")}/${elements.projectWorkspaceInput.value}`;
   state.projectAutofilledPath = elements.projectNameInput.value.trim()
     ? joinProjectPath(state.projectDefaultBase, elements.projectNameInput.value)
     : state.projectDefaultBase;
@@ -4696,35 +4545,14 @@ elements.settingsLogoutButton.addEventListener("click", async () => {
 });
 elements.settingsForm.addEventListener("submit", (event) => saveSettings(event).catch((error) => toast(error.message)));
 elements.clusterSaveButton.addEventListener("click", () => saveClusterNode().catch((error) => toast(error.message)));
-elements.githubGroupAddButton.addEventListener("click", () => openGithubGroupDialog());
-elements.githubSyncButton.addEventListener("click", () => openGithubSyncDialog().catch((error) => toast(error.message)));
-elements.cancelGithubSyncButton.addEventListener("click", () => elements.githubSyncDialog.close());
-elements.githubSyncAllInput.addEventListener("change", () => {
-  for (const input of elements.githubSyncNodeList.querySelectorAll("input[type=checkbox]")) input.checked = elements.githubSyncAllInput.checked;
+elements.secretSyncButton.addEventListener("click", () => openSecretSyncDialog().catch((error) => toast(error.message)));
+elements.cancelSecretSyncButton.addEventListener("click", () => elements.secretSyncDialog.close());
+elements.secretSyncAllInput.addEventListener("change", () => {
+  for (const input of elements.secretSyncNodeList.querySelectorAll("input[type=checkbox]")) input.checked = elements.secretSyncAllInput.checked;
 });
-elements.githubSyncForm.addEventListener("submit", (event) => {
+elements.secretSyncForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  submitGithubSync().catch((error) => toast(error.message));
-});
-elements.cancelGithubGroupButton.addEventListener("click", () => elements.githubGroupDialog.close());
-elements.githubGroupForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const label = elements.githubGroupLabelInput.value.trim();
-  const token = elements.githubGroupTokenInput.value.trim();
-  if (!editingGithubGroup && !token) {
-    toast("A new group needs a token");
-    return;
-  }
-  const body = JSON.stringify({ label, isDefault: elements.githubGroupDefaultInput.checked, ...(token ? { token } : {}) });
-  try {
-    if (editingGithubGroup) await api(`/api/github-auth/groups/${encodeURIComponent(editingGithubGroup.id)}`, { method: "PUT", body });
-    else await api("/api/github-auth/groups", { method: "POST", body });
-    elements.githubGroupDialog.close();
-    await loadGithubGroups();
-    toast(`Saved ${label}`);
-  } catch (error) {
-    toast(error.message);
-  }
+  submitSecretSync().catch((error) => toast(error.message));
 });
 elements.copyClusterLocalTokenButton.addEventListener("click", async () => {
   try {
@@ -4802,7 +4630,6 @@ elements.projectImportForm.addEventListener("submit", async (event) => {
     toast(error.message, 8000);
   }
 });
-elements.cancelProjectGithubButton.addEventListener("click", () => elements.projectGithubDialog.close());
 elements.cancelProjectPathButton.addEventListener("click", () => elements.projectPathDialog.close());
 elements.projectPathForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -4820,21 +4647,6 @@ elements.projectPathForm.addEventListener("submit", async (event) => {
     toast(error.message);
   }
 });
-elements.projectGithubForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const token = elements.clearProjectGithubTokenInput.checked ? null : elements.projectGithubTokenInput.value.trim() || undefined;
-  try {
-    await api(`/api/projects/${encodeURIComponent(state.githubProjectId)}/github-auth`, {
-      method: "PUT",
-      body: JSON.stringify({ group: elements.projectGithubGroupInput.value || null, token }),
-    });
-    elements.projectGithubDialog.close();
-    toast("Project GitHub access saved. New agent sessions use it.");
-  } catch (error) {
-    toast(error.message);
-  }
-});
-
 elements.newProjectButton.addEventListener("click", () => {
   elements.projectForm.reset();
   elements.projectImportModeInput.value = "move-link";
@@ -4842,14 +4654,14 @@ elements.newProjectButton.addEventListener("click", () => {
   renderProjectColorSwatches(null, elements.newProjectColorSwatches);
   updateProjectImportControls();
   elements.projectDialog.showModal();
-  loadProjectTypes().then(() => fillProjectBases()).catch((error) => toast(error.message));
+  loadWorkspaces().then(() => fillProjectBases()).catch((error) => toast(error.message));
 });
-elements.projectTypeInput.addEventListener("change", () => fillProjectBases().catch((error) => toast(error.message)));
-elements.projectTypeAddButton.addEventListener("click", () => addProjectType().catch((error) => toast(error.message)));
-elements.projectTypeNameInput.addEventListener("keydown", (event) => {
+elements.projectWorkspaceInput.addEventListener("change", () => fillProjectBases().catch((error) => toast(error.message)));
+elements.workspaceAddButton.addEventListener("click", () => addWorkspace().catch((error) => toast(error.message)));
+elements.workspaceNameInput.addEventListener("keydown", (event) => {
   if (event.key !== "Enter") return;
   event.preventDefault();
-  addProjectType().catch((error) => toast(error.message));
+  addWorkspace().catch((error) => toast(error.message));
 });
 elements.projectSourcePathInput.addEventListener("input", updateProjectImportControls);
 elements.projectSourceBrowseButton.addEventListener("click", () => openFolderPicker(elements.projectSourcePathInput, "Choose project folder to import").catch((error) => toast(error.message, 8000)));
@@ -4871,7 +4683,7 @@ elements.projectForm.addEventListener("submit", async (event) => {
       method: "POST",
       body: JSON.stringify({
         name,
-        type: elements.projectTypeInput.value,
+        type: elements.projectWorkspaceInput.value,
         synced: true,
         ...(color ? { color } : {}),
         ...(sourcePath ? { sourcePath, importMode: elements.projectImportModeInput.value } : {}),
@@ -5094,11 +4906,33 @@ elements.fileActionDownloadLink.addEventListener("click", () => setTimeout(() =>
   resetFileEditor();
 }));
 elements.loginForm.addEventListener("submit", submitLogin);
+/** The environment is composed once, at spawn, so the accounts have to be chosen before the
+    conversation starts rather than attached to it afterwards. */
+function renderNewSessionSecrets() {
+  elements.newSessionSecretList.replaceChildren();
+  if (!secretAccounts.length) {
+    elements.newSessionSecretList.textContent = "No node-local secret accounts. Add one in Settings.";
+    return;
+  }
+  for (const account of secretAccounts) {
+    const item = document.createElement("label");
+    item.className = "checkbox-row secret-scope-row";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.value = account.id;
+    input.dataset.testid = "conversation-secrets-checkbox";
+    item.append(input, providerBadge(account.provider, "secret-scope-provider-badge"), document.createTextNode(` ${account.label}`));
+    elements.newSessionSecretList.append(item);
+  }
+}
+
 /** A conversation is named up front so the list shows the user's own label from the first turn. */
 function openNewSessionNameDialog(sessionPath, defaultTitle) {
   state.newSessionDraft = { sessionPath, defaultTitle };
   elements.newSessionNameInput.value = "";
   renderSessionColorSwatches(null, elements.newSessionColorSwatches);
+  elements.newSessionSecretList.replaceChildren();
+  loadSecretAccounts().then(renderNewSessionSecrets).catch((error) => toast(error.message));
   elements.newSessionNameDialog.showModal();
 }
 elements.newSessionButton.addEventListener("click", () => openNewSessionNameDialog(null, "New Pi conversation"));
@@ -5109,6 +4943,7 @@ elements.newSessionNameForm.addEventListener("submit", (event) => {
   const draft = state.newSessionDraft;
   const title = elements.newSessionNameInput.value.trim();
   const color = selectedSessionColor(elements.newSessionColorSwatches);
+  state.newSessionSecretAccountIds = [...elements.newSessionSecretList.querySelectorAll("input:checked")].map((input) => input.value);
   elements.newSessionNameDialog.close();
   state.newSessionDraft = null;
   state.activeSessionId = null;
@@ -5824,6 +5659,8 @@ function openSecretAccount(account = null) {
   elements.secretAccountTitle.textContent = account ? "Edit secret account" : "Add secret account";
   elements.secretAccountLabelInput.value = account?.label ?? "";
   elements.secretAccountProviderInput.value = account?.provider ?? "aws";
+  // Node-local is the default, so a new account never leaves this node by accident.
+  elements.secretAccountReplicateInput.checked = Boolean(account?.replicate);
   elements.secretVariableRows.replaceChildren();
   // A new account has no rows yet, so the preset below fills them; an edited one keeps its own.
   account?.variables.forEach((item) => secretRow(item));
@@ -5874,7 +5711,7 @@ elements.secretAccountForm.addEventListener("submit", async (event) => {
     if (item.kind !== "file" || item.value === undefined) continue;
     try { JSON.parse(item.value); } catch { throw new Error("Google credentials must be valid JSON. Paste the whole service account file."); }
   }
-  const payload = { label: elements.secretAccountLabelInput.value.trim(), provider, variables };
+  const payload = { label: elements.secretAccountLabelInput.value.trim(), provider, replicate: elements.secretAccountReplicateInput.checked, variables };
   await api(editingSecretAccountId ? `/api/secrets/accounts/${encodeURIComponent(editingSecretAccountId)}` : "/api/secrets/accounts", { method: editingSecretAccountId ? "PUT" : "POST", body: JSON.stringify(payload) });
   elements.secretAccountDialog.close(); await loadSecretAccounts(); toast("Secret account saved");
 });

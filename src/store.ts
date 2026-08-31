@@ -3,13 +3,14 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { nanoid } from "nanoid";
-import type { ProjectRecord, ProjectType, ProjectTypeRecord } from "./types.js";
+import { ensureWorkspaceSecretsMigration, rekeySecretAssignments } from "./secrets-migration.js";
+import type { ProjectRecord, WorkspaceId, WorkspaceRecord } from "./types.js";
 
 interface AddProjectOptions {
   synced?: boolean;
   macPath?: string;
   syncFolderId?: string;
-  type?: ProjectType;
+  type?: WorkspaceId;
   color?: string;
   writeInstructions?: boolean;
 }
@@ -17,7 +18,7 @@ interface AddProjectOptions {
 interface ProjectRow {
   id: string;
   name: string;
-  project_type: ProjectType;
+  workspace_id: WorkspaceId;
   color: string | null;
   path: string;
   mac_path: string | null;
@@ -35,10 +36,10 @@ interface LegacyStore {
   projects?: ProjectRecord[];
 }
 
-export class ProjectTypeError extends Error {}
+export class WorkspaceError extends Error {}
 
-/** These names are taken by the managed home's own folders, so a type cannot use them. */
-const reservedProjectTypeIds = new Set(["projects", "tickets"]);
+/** These names are taken by the managed home's own folders, so a workspace cannot use them. */
+const reservedWorkspaceIds = new Set(["projects", "tickets"]);
 
 const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
 const legacyStorePath = path.join(dataDir, "projects.json");
@@ -65,7 +66,7 @@ function rowToProject(db: DatabaseSync, row: ProjectRow): ProjectRecord {
   return {
     id: row.id,
     name: row.name,
-    type: row.project_type,
+    type: row.workspace_id,
     ...(row.color ? { color: row.color } : {}),
     path: row.path,
     ...(row.mac_path ? { macPath: row.mac_path } : {}),
@@ -103,11 +104,11 @@ function projectValues(project: ProjectRecord): SQLInputValue[] {
 
 function saveProject(db: DatabaseSync, project: ProjectRecord): void {
   db.prepare(`
-    INSERT INTO projects (id, name, project_type, color, path, mac_path, sync_folder_id, created_at, updated_at)
+    INSERT INTO projects (id, name, workspace_id, color, path, mac_path, sync_folder_id, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
-      project_type = excluded.project_type,
+      workspace_id = excluded.workspace_id,
       color = excluded.color,
       path = excluded.path,
       mac_path = excluded.mac_path,
@@ -229,28 +230,11 @@ function rekeyProjectNames(db: DatabaseSync, aliasId: string, projectId: string)
   else db.prepare("INSERT INTO name_override_tombstones (scope, key, updated_at, origin_node_id) VALUES ('projects', ?, ?, ?)").run(projectId, winner.updated_at, winner.origin_node_id);
 }
 
-function rekeyProjectGitHubAuth(db: DatabaseSync, aliasId: string, projectId: string): void {
-  const hasActive = tableExists(db, "github_project_auth");
-  const hasTombstones = tableExists(db, "github_project_auth_tombstones");
-  if (!hasActive && !hasTombstones) return;
-  if (hasActive && !tableHasColumn(db, "github_project_auth", "origin_node_id")) db.exec("ALTER TABLE github_project_auth ADD COLUMN origin_node_id TEXT NOT NULL DEFAULT ''");
-  type State = VersionRow & { kind: "active" | "tombstone"; account?: string; token?: string | null };
-  const states: State[] = [];
-  if (hasActive) states.push(...(db.prepare("SELECT account, token, updated_at, origin_node_id FROM github_project_auth WHERE project_id IN (?, ?)").all(aliasId, projectId) as unknown as Array<VersionRow & { account: string; token: string | null }>).map((state) => ({ ...state, kind: "active" as const })));
-  if (hasTombstones) states.push(...(db.prepare("SELECT updated_at, origin_node_id FROM github_project_auth_tombstones WHERE project_id IN (?, ?)").all(aliasId, projectId) as unknown as VersionRow[]).map((state) => ({ ...state, kind: "tombstone" as const })));
-  if (!states.length) return;
-  const winner = states.reduce((current, state) => compareVersion(state, current) > 0 ? state : current);
-  if (hasActive) db.prepare("DELETE FROM github_project_auth WHERE project_id IN (?, ?)").run(aliasId, projectId);
-  if (hasTombstones) db.prepare("DELETE FROM github_project_auth_tombstones WHERE project_id IN (?, ?)").run(aliasId, projectId);
-  if (winner.kind === "active") db.prepare("INSERT INTO github_project_auth (project_id, account, token, updated_at, origin_node_id) VALUES (?, ?, ?, ?, ?)").run(projectId, winner.account!, winner.token ?? null, winner.updated_at, winner.origin_node_id);
-  else db.prepare("INSERT INTO github_project_auth_tombstones (project_id, updated_at, origin_node_id) VALUES (?, ?, ?)").run(projectId, winner.updated_at, winner.origin_node_id);
-}
-
 function rekeyProjectState(db: DatabaseSync, aliasId: string, projectId: string): void {
   rekeyTasks(db, aliasId, projectId);
   rekeyTaskHandoffs(db, aliasId, projectId);
   rekeyProjectNames(db, aliasId, projectId);
-  rekeyProjectGitHubAuth(db, aliasId, projectId);
+  rekeySecretAssignments(db, aliasId, projectId);
 }
 
 function saveProjectAlias(db: DatabaseSync, aliasId: string, projectId: string): void {
@@ -285,10 +269,20 @@ async function migrateLegacyProjects(db: DatabaseSync): Promise<void> {
   }
 }
 
-/** Homes created before user-defined types still carry a two-value CHECK; rebuild the table to drop it. */
-function dropProjectTypeCheckConstraint(db: DatabaseSync): void {
+/** Renames the pre-workspace schema in place. The ids, labels and project memberships are
+    untouched, and no directory is moved: only the table and column names change. */
+function migrateWorkspaceSchema(db: DatabaseSync): void {
+  if (tableExists(db, "project_types") && !tableExists(db, "workspaces")) db.exec("ALTER TABLE project_types RENAME TO workspaces");
+  if (tableExists(db, "projects") && tableHasColumn(db, "projects", "project_type") && !tableHasColumn(db, "projects", "workspace_id")) {
+    // SQLite rewrites the column name inside the legacy CHECK too, which dropWorkspaceCheckConstraint then removes.
+    db.exec("ALTER TABLE projects RENAME COLUMN project_type TO workspace_id");
+  }
+}
+
+/** Homes created before user-defined workspaces still carry a two-value CHECK; rebuild the table to drop it. */
+function dropWorkspaceCheckConstraint(db: DatabaseSync): void {
   const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'projects'").get() as { sql: string } | undefined;
-  if (!row || !/CHECK\s*\(\s*project_type/i.test(row.sql)) return;
+  if (!row || !/CHECK\s*\(\s*workspace_id/i.test(row.sql)) return;
   // Foreign keys stay off across the swap so dropping the old table does not cascade into
   // project_locations and project_aliases. PRAGMA foreign_keys is a no-op inside a transaction.
   db.exec("PRAGMA foreign_keys = OFF");
@@ -299,15 +293,15 @@ function dropProjectTypeCheckConstraint(db: DatabaseSync): void {
         CREATE TABLE projects_rebuilt (
           id TEXT PRIMARY KEY,
           name TEXT NOT NULL,
-          project_type TEXT NOT NULL DEFAULT 'personal',
+          workspace_id TEXT NOT NULL DEFAULT 'personal',
           path TEXT NOT NULL UNIQUE,
           mac_path TEXT,
           sync_folder_id TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );
-        INSERT INTO projects_rebuilt (id, name, project_type, path, mac_path, sync_folder_id, created_at, updated_at)
-          SELECT id, name, project_type, path, mac_path, sync_folder_id, created_at, updated_at FROM projects;
+        INSERT INTO projects_rebuilt (id, name, workspace_id, path, mac_path, sync_folder_id, created_at, updated_at)
+          SELECT id, name, workspace_id, path, mac_path, sync_folder_id, created_at, updated_at FROM projects;
         DROP TABLE projects;
         ALTER TABLE projects_rebuilt RENAME TO projects;
         CREATE UNIQUE INDEX IF NOT EXISTS projects_sync_folder_id
@@ -323,12 +317,24 @@ function dropProjectTypeCheckConstraint(db: DatabaseSync): void {
   }
 }
 
-/** Seeded once, on a brand-new node only, so a deleted type stays deleted across restarts. */
-function seedProjectTypes(db: DatabaseSync): void {
-  const existing = db.prepare("SELECT COUNT(*) AS total FROM project_types").get() as { total: number };
+/** The GitHub credential group model is gone; its tables are dropped once the migration has read them. */
+const legacyGitHubTables = [
+  "github_accounts", "github_project_auth", "github_auth_migrations", "github_legacy_file_migrations",
+  "github_account_tombstones", "github_project_auth_tombstones", "github_credential_events",
+  "github_credential_deliveries", "github_credential_inbox",
+];
+
+function dropLegacyGitHubSchema(db: DatabaseSync): void {
+  if (tableHasColumn(db, "workspaces", "github_group")) db.exec("ALTER TABLE workspaces DROP COLUMN github_group");
+  for (const table of legacyGitHubTables) db.exec(`DROP TABLE IF EXISTS ${table}`);
+}
+
+/** Seeded once, on a brand-new node only, so a deleted workspace stays deleted across restarts. */
+function seedWorkspaces(db: DatabaseSync): void {
+  const existing = db.prepare("SELECT COUNT(*) AS total FROM workspaces").get() as { total: number };
   if (existing.total > 0) return;
   const now = new Date().toISOString();
-  const seed = db.prepare("INSERT INTO project_types (id, label, github_group, created_at, updated_at) VALUES (?, ?, NULL, ?, ?)");
+  const seed = db.prepare("INSERT INTO workspaces (id, label, created_at, updated_at) VALUES (?, ?, ?, ?)");
   seed.run("personal", "Personal", now, now);
   seed.run("work", "Work", now, now);
 }
@@ -348,11 +354,14 @@ async function initializeProjectDatabase(): Promise<DatabaseSync> {
   const db = new DatabaseSync(databasePath);
   try {
     db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
+    // The rename runs before the CREATE TABLE block: otherwise an empty `workspaces`
+    // would already exist and the legacy `project_types` could not be renamed onto it.
+    migrateWorkspaceSchema(db);
     db.exec(`
       CREATE TABLE IF NOT EXISTS projects (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
-        project_type TEXT NOT NULL DEFAULT 'personal',
+        workspace_id TEXT NOT NULL DEFAULT 'personal',
         color TEXT,
         path TEXT NOT NULL UNIQUE,
         mac_path TEXT,
@@ -374,22 +383,24 @@ async function initializeProjectDatabase(): Promise<DatabaseSync> {
         created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS project_aliases_project_id ON project_aliases(project_id);
-      CREATE TABLE IF NOT EXISTS project_types (
+      CREATE TABLE IF NOT EXISTS workspaces (
         id TEXT PRIMARY KEY,
         label TEXT NOT NULL,
-        github_group TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
     `);
-    if (!tableHasColumn(db, "projects", "project_type")) {
-      db.exec("ALTER TABLE projects ADD COLUMN project_type TEXT NOT NULL DEFAULT 'personal'");
+    if (!tableHasColumn(db, "projects", "workspace_id")) {
+      db.exec("ALTER TABLE projects ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'personal'");
     }
-    dropProjectTypeCheckConstraint(db);
+    dropWorkspaceCheckConstraint(db);
     if (!tableHasColumn(db, "projects", "color")) {
       db.exec("ALTER TABLE projects ADD COLUMN color TEXT");
     }
-    seedProjectTypes(db);
+    seedWorkspaces(db);
+    // Reads the github_* tables and workspaces.github_group, so it must precede the drop below.
+    ensureWorkspaceSecretsMigration(db);
+    dropLegacyGitHubSchema(db);
     await migrateLegacyProjects(db);
   } catch (error) {
     db.close();
@@ -583,7 +594,7 @@ export async function updateProjectColor(projectId: string, color: string | null
   return project;
 }
 
-export async function updateProjectTypeAndPath(projectId: string, type: ProjectType, folderPath: string): Promise<ProjectRecord> {
+export async function updateProjectWorkspaceAndPath(projectId: string, workspaceId: WorkspaceId, folderPath: string): Promise<ProjectRecord> {
   const db = await projectDatabase();
   const canonicalId = resolveProjectId(db, projectId);
   if (!canonicalId) throw new Error("Project not found");
@@ -593,7 +604,7 @@ export async function updateProjectTypeAndPath(projectId: string, type: ProjectT
   const updatedAt = new Date().toISOString();
   db.exec("BEGIN IMMEDIATE");
   try {
-    db.prepare("UPDATE projects SET project_type = ?, path = ?, updated_at = ? WHERE id = ?").run(type, nextPath, updatedAt, canonicalId);
+    db.prepare("UPDATE projects SET workspace_id = ?, path = ?, updated_at = ? WHERE id = ?").run(workspaceId, nextPath, updatedAt, canonicalId);
     db.prepare("UPDATE project_locations SET path = ? WHERE project_id = ? AND path = ?").run(nextPath, canonicalId, project.path);
     db.exec("COMMIT");
   } catch (error) {
@@ -644,6 +655,7 @@ export async function removeProject(projectId: string): Promise<void> {
     if (tableExists(db, "task_handoffs")) db.prepare(`DELETE FROM task_handoffs WHERE project_id IN (${placeholders}) AND (status = 'aborted' OR (direction = 'outgoing' AND status = 'committed'))`).run(...projectIds);
     if (tableExists(db, "name_overrides")) db.prepare(`DELETE FROM name_overrides WHERE scope = 'projects' AND key IN (${placeholders})`).run(...projectIds);
     if (tableExists(db, "name_override_tombstones")) db.prepare(`DELETE FROM name_override_tombstones WHERE scope = 'projects' AND key IN (${placeholders})`).run(...projectIds);
+    db.prepare(`DELETE FROM secret_assignments WHERE scope_type = 'project' AND scope_id IN (${placeholders})`).run(...projectIds);
     db.prepare("DELETE FROM projects WHERE id = ?").run(canonicalId);
     db.exec("COMMIT");
   } catch (error) {
@@ -658,43 +670,48 @@ export async function touchProject(projectId: string): Promise<void> {
   if (canonicalId) db.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").run(new Date().toISOString(), canonicalId);
 }
 
-export function projectTypeIdFromLabel(label: string): string {
+export function workspaceIdFromLabel(label: string): string {
   return label.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[-._]+|[-._]+$/g, "");
 }
 
-export async function listProjectTypes(): Promise<ProjectTypeRecord[]> {
+export async function listWorkspaces(): Promise<WorkspaceRecord[]> {
   const db = await projectDatabase();
-  const rows = db.prepare("SELECT id, label, github_group FROM project_types ORDER BY created_at, id")
-    .all() as unknown as Array<{ id: string; label: string; github_group: string | null }>;
-  return rows.map((row) => ({ id: row.id, label: row.label, githubGroup: row.github_group }));
+  const rows = db.prepare("SELECT id, label FROM workspaces ORDER BY created_at, id").all() as unknown as Array<{ id: string; label: string }>;
+  return rows.map((row) => ({ id: row.id, label: row.label }));
 }
 
-export async function saveProjectType(input: { id?: string; label: string; githubGroup?: string | null }): Promise<ProjectTypeRecord> {
+export async function saveWorkspace(input: { id?: string; label: string }): Promise<WorkspaceRecord> {
   const db = await projectDatabase();
   const label = input.label.trim();
-  if (!label || label.length > 40) throw new ProjectTypeError("Project type name must be 1 to 40 characters");
+  if (!label || label.length > 40) throw new WorkspaceError("Workspace name must be 1 to 40 characters");
   // Canonicalise first: an explicit id like "../tickets" must be reduced before the reserved check.
-  const id = projectTypeIdFromLabel(input.id?.trim() || label);
-  if (!id) throw new ProjectTypeError("Project type name must contain a letter or a number");
-  if (reservedProjectTypeIds.has(id)) throw new ProjectTypeError(`"${id}" is reserved by the managed workspace`);
-  const githubGroup = input.githubGroup?.trim() || null;
+  const id = workspaceIdFromLabel(input.id?.trim() || label);
+  if (!id) throw new WorkspaceError("Workspace name must contain a letter or a number");
+  if (reservedWorkspaceIds.has(id)) throw new WorkspaceError(`"${id}" is reserved by the managed workspace`);
   const now = new Date().toISOString();
   db.prepare(`
-    INSERT INTO project_types (id, label, github_group, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO workspaces (id, label, created_at, updated_at)
+    VALUES (?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       label = excluded.label,
-      github_group = excluded.github_group,
       updated_at = excluded.updated_at
-  `).run(id, label, githubGroup, now, now);
-  return { id, label, githubGroup };
+  `).run(id, label, now, now);
+  return { id, label };
 }
 
-export async function deleteProjectType(typeId: string): Promise<void> {
+export async function deleteWorkspace(workspaceId: string): Promise<void> {
   const db = await projectDatabase();
-  const used = db.prepare("SELECT COUNT(*) AS total FROM projects WHERE project_type = ?").get(typeId) as { total: number };
-  if (used.total > 0) throw new ProjectTypeError("Move or delete this type's projects before deleting it");
-  const remaining = db.prepare("SELECT COUNT(*) AS total FROM project_types").get() as { total: number };
-  if (remaining.total <= 1) throw new ProjectTypeError("Keep at least one project type");
-  db.prepare("DELETE FROM project_types WHERE id = ?").run(typeId);
+  const used = db.prepare("SELECT COUNT(*) AS total FROM projects WHERE workspace_id = ?").get(workspaceId) as { total: number };
+  if (used.total > 0) throw new WorkspaceError("Move or delete this workspace's projects before deleting it");
+  const remaining = db.prepare("SELECT COUNT(*) AS total FROM workspaces").get() as { total: number };
+  if (remaining.total <= 1) throw new WorkspaceError("Keep at least one workspace");
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare("DELETE FROM secret_assignments WHERE scope_type = 'workspace' AND scope_id = ?").run(workspaceId);
+    db.prepare("DELETE FROM workspaces WHERE id = ?").run(workspaceId);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }

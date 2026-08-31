@@ -20,11 +20,11 @@ test("secret accounts have an accessible node-local UI using authenticated api c
   assert.match(app, /AWS_ACCESS_KEY_ID/);
   assert.match(app, /AWS_SECRET_ACCESS_KEY/);
   assert.match(app, /GOOGLE_APPLICATION_CREDENTIALS/);
-  assert.match(app, /project-type-secrets-button/);
+  assert.match(app, /workspace-secrets-button/);
   assert.match(app, /project-secrets-button/);
   for (const testid of ["secret-variable-name-input", "secret-variable-kind-select", "secret-variable-value-input", "secret-variable-remove-button", "secret-account-edit-button", "secret-account-delete-button", "secret-scope-account-checkbox"]) assert.ok(app.includes(testid));
   for (const selector of [".secret-account-list", ".secret-account-row", ".secret-account-meta", ".secret-variable-row", ".secret-scope-list"]) assert.ok(styles.includes(selector));
-  assert.match(worker, /const CACHE_NAME = "joint-bob-v66";/);
+  assert.match(worker, /const CACHE_NAME = "joint-bob-v67";/);
 });
 
 test("every secret provider carries a brand icon in the list, the picker, and the scope dialog", async () => {
@@ -51,6 +51,45 @@ test("GitHub is a built-in provider whose preset is an API token", async () => {
   assert.match(app, /GITHUB_TOKEN/);
   assert.match(server, /z\.enum\(\["aws", "google", "github", "custom"\]\)/);
   assert.match(secrets, /"aws" \| "google" \| "github" \| "custom"/);
+});
+
+test("the GitHub credential group surfaces are gone, replaced by workspace-scoped accounts", async () => {
+  const [html, app] = await Promise.all([
+    readFile("public/index.html", "utf8"),
+    readFile("public/app.js", "utf8"),
+  ]);
+  for (const removed of ["githubGroupDialog", "githubSyncDialog", "githubGroupList", "projectGithubDialog", "project-github-button"]) {
+    assert.doesNotMatch(html, new RegExp(removed), removed);
+    assert.doesNotMatch(app, new RegExp(removed), removed);
+  }
+  assert.doesNotMatch(app, /\/api\/github-auth/);
+  assert.match(html, /<legend>Workspaces<\/legend>/);
+  assert.match(app, /api\("\/api\/workspaces"\)/);
+});
+
+test("accounts attach at all three scopes and carry a replication toggle", async () => {
+  const [html, app] = await Promise.all([
+    readFile("public/index.html", "utf8"),
+    readFile("public/app.js", "utf8"),
+  ]);
+  for (const testid of ["workspace-secrets-button", "project-secrets-button", "conversation-secrets-checkbox"]) {
+    assert.ok(app.includes(testid), testid);
+  }
+  assert.match(html, /data-testid="secret-account-replicate-toggle"/);
+  assert.match(app, /secretAccountReplicateInput\.checked/);
+  assert.match(app, /api\("\/api\/secrets\/sync"/);
+  assert.match(html, /data-testid="secret-sync-dialog"/);
+});
+
+test("the new-conversation dialog picks the accounts the conversation starts with", async () => {
+  const [html, app] = await Promise.all([
+    readFile("public/index.html", "utf8"),
+    readFile("public/app.js", "utf8"),
+  ]);
+  assert.match(html, /data-testid="conversation-secrets-list"/);
+  // The environment is composed once at spawn, so the picks travel with the socket.
+  assert.match(app, /newSessionSecretAccountIds/);
+  assert.match(app, /searchParams\.set\("secretAccountIds"/);
 });
 
 test("switching provider replaces the previous provider preset instead of keeping it", async () => {

@@ -317,8 +317,8 @@
         </section>
 
         <section class="settings-panel" id="settingsPanel-github" role="tabpanel" aria-labelledby="settingsTab-github" tabindex="0" hidden>
-          <p>Named AWS, Google, GitHub, and custom accounts are encrypted and stay on this node. GitHub groups that push with git live under Projects.</p>
-          <fieldset class="phase-settings"><legend>Secret accounts</legend><p>Assigned accounts are exported into every agent session for that project, so the AWS CLI, gcloud, and the gh CLI work without being asked for keys.</p><div id="secretAccountList" class="secret-account-list" data-testid="secret-account-list"></div><button class="ghost" type="button" id="secretAccountAddButton" data-testid="secret-account-add-button">Add account</button></fieldset>
+          <p>Named AWS, Google, GitHub, and custom accounts are encrypted and stay on this node unless you mark one to replicate. Attach them to a workspace, a project, or a single conversation.</p>
+          <fieldset class="phase-settings"><legend>Secret accounts</legend><p>Attached accounts are exported into every new agent session in that scope, so the AWS CLI, gcloud, the gh CLI and git push work without being asked for keys. The most specific scope wins per variable name.</p><div id="secretAccountList" class="secret-account-list" data-testid="secret-account-list"></div><div class="github-group-actions"><button class="ghost" type="button" id="secretAccountAddButton" data-testid="secret-account-add-button">Add account</button><button class="ghost" type="button" id="secretSyncButton" data-testid="secret-sync-open-button">Sync to nodes</button></div></fieldset>
         </section>
 
         <section class="settings-panel" id="settingsPanel-cluster" role="tabpanel" aria-labelledby="settingsTab-cluster" tabindex="0" hidden>
@@ -360,26 +360,16 @@
                 <button class="ghost" type="button" id="settingsProjectHomeBrowseButton" data-testid="settings-project-home-browse-button">Browse</button>
               </div>
             </label>
-            <p>New projects use &lt;home&gt;/&lt;type&gt;/...; board cards use &lt;home&gt;/tickets/... Existing projects are not moved.</p>
+            <p>New projects use &lt;home&gt;/&lt;workspace&gt;/...; board cards use &lt;home&gt;/tickets/... Existing projects are not moved.</p>
           </fieldset>
           <fieldset class="phase-settings">
-            <legend>GitHub groups</legend>
-            <p>A group is a named GitHub identity. Projects and project types pick the group they push with.</p>
-            <div class="github-group-list" id="githubGroupList" data-testid="github-group-list"></div>
-            <div class="github-group-actions">
-              <button class="ghost" type="button" id="githubGroupAddButton" data-testid="github-group-add-button">Add group</button>
-              <button class="ghost" type="button" id="githubSyncButton" data-testid="github-sync-open-button">Sync to nodes</button>
-            </div>
-            <p>Tokens stay on this node. Sync to copy them to other nodes.</p>
-          </fieldset>
-          <fieldset class="phase-settings">
-            <legend>Project types</legend>
-            <p>Each type is a folder directly under the Joint Bob home folder. Projects of a type use its GitHub group unless the project sets its own.</p>
-            <div class="project-type-list" id="projectTypeList" data-testid="project-type-list"></div>
+            <legend>Workspaces</legend>
+            <p>A workspace groups related projects and is a folder directly under the Joint Bob home folder. Secret accounts attached to a workspace reach every project in it.</p>
+            <div class="project-type-list" id="workspaceList" data-testid="workspace-list"></div>
             <div class="project-type-add">
-              <label class="sr-only" for="projectTypeNameInput">New project type name</label>
-              <input id="projectTypeNameInput" autocomplete="off" placeholder="New type name" data-testid="project-type-name-input" />
-              <button class="ghost" type="button" id="projectTypeAddButton" data-testid="project-type-add-button">Add type</button>
+              <label class="sr-only" for="workspaceNameInput">New workspace name</label>
+              <input id="workspaceNameInput" autocomplete="off" placeholder="New workspace name" data-testid="workspace-name-input" />
+              <button class="ghost" type="button" id="workspaceAddButton" data-testid="workspace-add-button">Add workspace</button>
             </div>
           </fieldset>
           <fieldset class="phase-settings">
@@ -427,45 +417,6 @@
         <div class="changelog-list" id="whatsNewList" data-testid="whats-new-list"></div>
         <div class="dialog-actions">
           <button class="primary" type="submit" data-testid="whats-new-dismiss-button">Got it</button>
-        </div>
-      </form>
-    </dialog>
-
-    <dialog id="githubGroupDialog" data-testid="github-group-dialog">
-      <form method="dialog" class="dialog-card" id="githubGroupForm">
-        <div>
-          <span class="eyebrow">Node credentials</span>
-          <h2 id="githubGroupTitle">Add GitHub group</h2>
-          <p>Tokens replicate through authenticated cluster links and are injected only into agent sessions for projects in this group.</p>
-        </div>
-        <label>
-          Group name
-          <input id="githubGroupLabelInput" name="label" autocomplete="off" required maxlength="64" placeholder="Personal" data-testid="github-group-label-input" />
-        </label>
-        <label>
-          Token <span class="credential-state" id="githubGroupTokenState"></span>
-          <input id="githubGroupTokenInput" name="token" type="password" autocomplete="off" placeholder="Leave blank to keep current token" data-testid="github-group-token-input" />
-        </label>
-        <label class="checkbox-row"><input id="githubGroupDefaultInput" type="checkbox" data-testid="github-group-default-input" /> Use as the default group</label>
-        <div class="dialog-actions">
-          <button class="ghost" type="button" id="cancelGithubGroupButton" data-testid="github-group-cancel-button">Cancel</button>
-          <button class="primary" type="submit" data-testid="github-group-save-button">Save group</button>
-        </div>
-      </form>
-    </dialog>
-
-    <dialog id="githubSyncDialog" data-testid="github-sync-dialog">
-      <form method="dialog" class="dialog-card" id="githubSyncForm">
-        <div>
-          <span class="eyebrow">Node credentials</span>
-          <h2>Sync GitHub credentials</h2>
-          <p>Copies every group and project token stored on this node to the nodes you pick, over the authenticated cluster link.</p>
-        </div>
-        <label class="checkbox-row"><input id="githubSyncAllInput" type="checkbox" data-testid="github-sync-all-input" /> All nodes</label>
-        <div class="github-sync-node-list" id="githubSyncNodeList" data-testid="github-sync-node-list"></div>
-        <div class="dialog-actions">
-          <button class="ghost" type="button" id="cancelGithubSyncButton" data-testid="github-sync-cancel-button">Cancel</button>
-          <button class="primary" type="submit" data-testid="github-sync-submit-button">Sync</button>
         </div>
       </form>
     </dialog>
@@ -698,6 +649,11 @@
           <span class="field-label">Colour</span>
           <div class="color-swatches" id="newSessionColorSwatches" role="radiogroup" aria-label="Conversation colour" data-testid="new-session-color-swatches"></div>
         </div>
+        <div class="field-group">
+          <span class="field-label">Secret accounts</span>
+          <p class="muted compact-copy">These override the project's and the workspace's accounts for this conversation only. They apply from its first turn.</p>
+          <div class="secret-scope-list" id="newSessionSecretList" data-testid="conversation-secrets-list"></div>
+        </div>
         <div class="dialog-actions">
           <button class="ghost" value="cancel" type="button" id="cancelNewSessionNameButton" data-testid="new-session-name-cancel-button">Cancel</button>
           <button class="primary" value="default" type="submit" data-testid="new-session-name-start-button">Start conversation</button>
@@ -734,6 +690,7 @@
         <p class="secret-provider-hint" id="secretAccountProviderHint" data-testid="secret-account-provider-hint"></p>
         <div id="secretVariableRows" data-testid="secret-variable-rows"></div>
         <button type="button" class="ghost" id="secretVariableAddButton" data-testid="secret-variable-add-button">Add environment variable</button>
+        <label class="checkbox-row"><input id="secretAccountReplicateInput" type="checkbox" data-testid="secret-account-replicate-toggle" /> Replicate this account to paired nodes</label>
         <div class="dialog-actions"><button type="button" class="ghost" id="secretAccountCancelButton" data-testid="secret-account-cancel-button">Cancel</button><button type="submit" class="primary" data-testid="secret-account-save-button">Save account</button></div>
       </form>
     </dialog>
@@ -745,26 +702,18 @@
       </form>
     </dialog>
 
-    <dialog id="projectGithubDialog">
-      <form method="dialog" class="dialog-card" id="projectGithubForm">
+    <dialog id="secretSyncDialog" data-testid="secret-sync-dialog">
+      <form method="dialog" class="dialog-card" id="secretSyncForm">
         <div>
-          <span class="eyebrow">Project credential</span>
-          <h2 id="projectGithubTitle">GitHub access</h2>
-          <p>Pick the group whose token this project should use, or provide a token used only by this project.</p>
+          <span class="eyebrow">Node credentials</span>
+          <h2>Sync secret accounts</h2>
+          <p>Copies the accounts you marked to replicate to the nodes you pick, over the authenticated cluster link. Node-local accounts never leave this node.</p>
         </div>
-        <label>
-          Credential group
-          <select id="projectGithubGroupInput" name="group" data-testid="project-github-group-input"></select>
-        </label>
-        <label>
-          Project token override <span class="credential-state" id="projectTokenState"></span>
-          <input id="projectGithubTokenInput" name="token" type="password" autocomplete="off" placeholder="Leave blank to keep current override" />
-        </label>
-        <label class="checkbox-row"><input id="clearProjectGithubTokenInput" type="checkbox" /> Remove project override</label>
-        <p class="muted compact-copy" id="projectGithubSummary"></p>
+        <label class="checkbox-row"><input id="secretSyncAllInput" type="checkbox" data-testid="secret-sync-all-input" /> All nodes</label>
+        <div class="github-sync-node-list" id="secretSyncNodeList" data-testid="secret-sync-node-list"></div>
         <div class="dialog-actions">
-          <button class="ghost" type="button" id="cancelProjectGithubButton">Cancel</button>
-          <button class="primary" type="submit">Save project access</button>
+          <button class="ghost" type="button" id="cancelSecretSyncButton" data-testid="secret-sync-cancel-button">Cancel</button>
+          <button class="primary" type="submit" data-testid="secret-sync-submit-button">Sync</button>
         </div>
       </form>
     </dialog>
@@ -777,8 +726,8 @@
           <p>Create an empty managed folder or import an existing local project.</p>
         </div>
         <label>
-          Project type
-          <select id="projectTypeInput" name="type" data-testid="project-form-type-select"></select>
+          Workspace
+          <select id="projectWorkspaceInput" name="type" data-testid="project-form-workspace-select"></select>
         </label>
         <label>
           Project name

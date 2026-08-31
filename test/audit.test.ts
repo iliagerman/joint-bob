@@ -28,7 +28,8 @@ test("runtime audit events are redacted, local, and session-admin readable", asy
     const replication = await import(`../src/replication.js?audit=${Date.now()}`);
     const tasks = await import(`../src/tasks.js?audit=${Date.now()}`);
     const store = await import(`../src/store.js?audit=${Date.now()}`);
-    const github = await import(`../src/github-auth.js?audit=${Date.now()}`);
+    const secrets = await import(`../src/secrets.js?audit=${Date.now()}`);
+    const secretReplication = await import(`../src/secret-replication.js?audit=${Date.now()}`);
     const { appendAuditEvent, ensureAuditSchema, listAuditEvents } = await import(`../src/audit.js?audit=${Date.now()}`);
     server = createServer(createApp());
     await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
@@ -62,7 +63,7 @@ test("runtime audit events are redacted, local, and session-admin readable", asy
         syncthing: { endpoint: "http://127.0.0.1:8384", apiKey: "fake-syncthing-api-key" },
       }),
     })).status, 200);
-    await github.saveGitHubGroup({ label: "Personal", token: "fake-github-token" });
+    await secrets.saveSecretAccount({ label: "Personal", provider: "github", replicate: true, variables: [{ name: "GH_TOKEN", kind: "value", value: "fake-github-token" }] });
 
     const local = await cluster.getClusterNode();
     const peerId = randomUUID();
@@ -70,6 +71,7 @@ test("runtime audit events are redacted, local, and session-admin readable", asy
       id: peerId, name: "Peer", url: "https://peer.example", token: "fake-machine-token",
       createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z",
     }] });
+    await secretReplication.enqueueSecretCredentialSync([peerId]);
     const project = await store.addProject("Audit project", path.join(dataDir, "audit-project"));
     const taskId = "audit-task";
     const task = { id: taskId, title: "Audit", description: "synthetic task", status: "backlog" as const, engine: "pi" as const, planMode: false, reviewMode: false, phaseConfig: {}, sessionPath: null, worktreePath: null, worktreeBranch: null, mergedAt: null, currentNodeId: local.id, leaseOwnerNodeId: null, leaseExpiresAt: null, executionState: "idle" as const, handoffContext: null, originNodeId: local.id, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" };
@@ -87,7 +89,7 @@ test("runtime audit events are redacted, local, and session-admin readable", asy
     assert.equal(audit.status, 200);
     const events = (await audit.json() as { events: Array<{ eventType: string }> }).events;
     const eventTypes = new Set(events.map((event) => event.eventType));
-    for (const eventType of ["auth.login.failed", "auth.login.rate_limited", "auth.login.succeeded", "auth.password.changed", "settings.updated", "github.group.saved", "cluster.membership.merged", "task.lease.claimed", "task.lease.released", "task.handoff.prepared", "task.handoff.committed"]) assert.ok(eventTypes.has(eventType), eventType);
+    for (const eventType of ["auth.login.failed", "auth.login.rate_limited", "auth.login.succeeded", "auth.password.changed", "settings.updated", "secrets.credentials.sync", "cluster.membership.merged", "task.lease.claimed", "task.lease.released", "task.handoff.prepared", "task.handoff.committed"]) assert.ok(eventTypes.has(eventType), eventType);
     assert.equal((await fetch(`${baseUrl}/api/audit`, { headers: { Authorization: `Bearer ${await cluster.getClusterMachineToken()}` } })).status, 401);
     assert.equal((await fetch(`${baseUrl}/api/auth/logout`, { method: "POST", headers: { Cookie: cookie, "X-CSRF-Token": loginBody.csrfToken } })).status, 204);
 
@@ -96,7 +98,7 @@ test("runtime audit events are redacted, local, and session-admin readable", asy
     ensureAuditSchema(db);
     assert.throws(() => appendAuditEvent(db, { eventType: "bad", actorType: "system", entityType: "test", details: { password: "forbidden" } }), /forbidden key/);
     const rawRows = JSON.stringify(db.prepare("SELECT * FROM audit_events").all());
-    const credentialPayloads = JSON.stringify(db.prepare("SELECT payload_encrypted FROM github_credential_events").all());
+    const credentialPayloads = JSON.stringify(db.prepare("SELECT payload_encrypted FROM secret_credential_events").all());
     for (const secret of ["initial-password", password, "fake-syncthing-api-key", "fake-github-token", "fake-machine-token", "fake-transcript-content", loginBody.csrfToken]) {
       assert.doesNotMatch(rawAudit, new RegExp(secret));
       assert.doesNotMatch(rawRows, new RegExp(secret));

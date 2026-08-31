@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("settings tabs absorb notification, GitHub, and cluster configuration", async () => {
+test("settings tabs absorb notification, secret, and cluster configuration", async () => {
   const [html, app, styles, serviceWorker] = await Promise.all([
     readFile("public/index.html", "utf8"),
     readFile("public/app.js", "utf8"),
@@ -22,15 +22,16 @@ test("settings tabs absorb notification, GitHub, and cluster configuration", asy
   assert.doesNotMatch(html, /<dialog id="githubSettingsDialog"/);
   assert.doesNotMatch(html, /<dialog id="clusterDialog"/);
   assert.match(html, /id="settingsPanel-cluster"[\s\S]*id="clusterNodeNameInput"/);
-  // GitHub groups moved to the Projects tab; the Secrets tab keeps node-local accounts only.
-  assert.match(html, /id="settingsPanel-projects"[\s\S]*id="githubGroupList"/);
-  assert.match(html, /id="githubGroupAddButton"/);
+  // Workspaces live in the Projects tab; the Secrets tab carries every secret account.
+  assert.match(html, /id="settingsPanel-projects"[\s\S]*id="workspaceList"/);
+  assert.match(html, /id="workspaceAddButton"/);
   assert.match(html, /id="settingsPanel-github"[\s\S]*id="secretAccountList"/);
 
   // Personal/Sela are no longer hardcoded anywhere in the UI.
   assert.doesNotMatch(html, /personalTokenInput|selaTokenInput/);
   assert.doesNotMatch(app, /personalTokenInput|selaTokenInput/);
-  assert.match(html, /id="projectGithubGroupInput"/);
+  // The per-project GitHub override is gone; a project attaches secret accounts instead.
+  assert.doesNotMatch(html, /id="projectGithubGroupInput"/);
 
   // One gear button opens Settings; the old toolbar strip and its shortcuts are gone.
   assert.match(html, /id="settingsButton"[^>]*aria-label="Settings"/);
@@ -45,12 +46,12 @@ test("settings tabs absorb notification, GitHub, and cluster configuration", asy
   assert.match(styles, /\.settings-tab\[aria-selected="true"\]/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.settings-tab/);
 
-  // Project types are data now, not two hardcoded options.
-  assert.match(html, /id="projectTypeList"/);
-  assert.match(html, /id="projectTypeAddButton"/);
+  // Workspaces are data now, not two hardcoded options.
+  assert.match(html, /id="workspaceList"/);
+  assert.match(html, /id="workspaceAddButton"/);
   assert.doesNotMatch(html, /<option value="personal">Personal<\/option>/);
-  assert.match(app, /api\("\/api\/project-types"\)/);
-  assert.match(app, /function fillProjectTypeSelect/);
+  assert.match(app, /api\("\/api\/workspaces"\)/);
+  assert.match(app, /function fillWorkspaceSelect/);
 
   // The dialog widens on the dense tabs, and its opening focus draws no ring.
   assert.match(app, /elements\.settingsForm\.dataset\.tab = name/);
@@ -67,7 +68,7 @@ test("settings tabs absorb notification, GitHub, and cluster configuration", asy
   assert.doesNotMatch(app, /settingsSyncthingEndpoint|settingsSyncthingApiKey/);
 
   // Managed project folders sit directly under the home folder.
-  assert.doesNotMatch(app, /\/projects\/\$\{elements\.projectTypeInput\.value\}/);
+  assert.doesNotMatch(app, /\/projects\/\$\{elements\.projectWorkspaceInput\.value\}/);
 
   // Installed PWA clients must not keep the old shell.
   assert.match(serviceWorker, /joint-bob-v(?:[2-9]|\d{2,})/);

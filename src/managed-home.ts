@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { ProjectType } from "./types.js";
+import type { WorkspaceId } from "./types.js";
 
 export interface ManagedHomePaths {
   tickets: string;
@@ -18,7 +18,7 @@ export function managedHomePaths(homePath: string): ManagedHomePaths {
   return { tickets: path.join(path.resolve(homePath), "tickets") };
 }
 
-/** Type ids and project names both become single path segments, so neither can escape the home. */
+/** Workspace ids and project names both become single path segments, so neither can escape the home. */
 function managedFolderName(value: string, fallback: string): string {
   return value.trim()
     .toLowerCase()
@@ -26,28 +26,28 @@ function managedFolderName(value: string, fallback: string): string {
     .replace(/^[._-]+|[._-]+$/g, "") || fallback;
 }
 
-export function managedTypeFolderName(type: ProjectType): string {
-  return managedFolderName(type, "personal");
+export function managedWorkspaceFolderName(workspaceId: WorkspaceId): string {
+  return managedFolderName(workspaceId, "personal");
 }
 
-export function managedTypeRoot(homePath: string, type: ProjectType): string {
-  return path.join(path.resolve(homePath), managedTypeFolderName(type));
+export function managedWorkspaceRoot(homePath: string, workspaceId: WorkspaceId): string {
+  return path.join(path.resolve(homePath), managedWorkspaceFolderName(workspaceId));
 }
 
-export function managedProjectPath(homePath: string, type: ProjectType, name: string): string {
-  return path.join(managedTypeRoot(homePath, type), managedFolderName(name, "project"));
+export function managedProjectPath(homePath: string, workspaceId: WorkspaceId, name: string): string {
+  return path.join(managedWorkspaceRoot(homePath, workspaceId), managedFolderName(name, "project"));
 }
 
-export function managedProjectRelocationPath(homePath: string, currentType: ProjectType, projectPath: string, nextType: ProjectType): string | undefined {
+export function managedProjectRelocationPath(homePath: string, currentWorkspaceId: WorkspaceId, projectPath: string, nextWorkspaceId: WorkspaceId): string | undefined {
   const resolvedPath = path.resolve(projectPath);
-  if (path.dirname(resolvedPath) !== managedTypeRoot(homePath, currentType)) return undefined;
-  return path.join(managedTypeRoot(homePath, nextType), path.basename(resolvedPath));
+  if (path.dirname(resolvedPath) !== managedWorkspaceRoot(homePath, currentWorkspaceId)) return undefined;
+  return path.join(managedWorkspaceRoot(homePath, nextWorkspaceId), path.basename(resolvedPath));
 }
 
-export async function ensureManagedHome(homePath: string, typeFolders: ProjectType[] = []): Promise<void> {
+export async function ensureManagedHome(homePath: string, workspaceFolders: WorkspaceId[] = []): Promise<void> {
   const home = path.resolve(homePath);
   await mkdir(home, { recursive: true });
-  const rules = [...baseIgnoreRules, ...typeFolders.map((type) => `/${managedTypeFolderName(type)}/`)];
+  const rules = [...baseIgnoreRules, ...workspaceFolders.map((id) => `/${managedWorkspaceFolderName(id)}/`)];
   const ignorePath = path.join(home, ".gitignore");
   let existing: string;
   try {

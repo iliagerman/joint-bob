@@ -9,9 +9,9 @@ test("the projects list is grouped by type and each group collapses", async () =
     readFile("public/sw.js", "utf8"),
   ]);
 
-  // Grouping is driven by the configured types, which must load before the projects render.
+  // Grouping is driven by the configured workspaces, which must load before the projects render.
   assert.match(app, /function groupedProjects\(projects\)/);
-  assert.match(app, /await loadProjectTypes\(\);\s*\n\s*await loadProjects\(\);/);
+  assert.match(app, /await loadWorkspaces\(\);\s*\n\s*await loadProjects\(\);/);
 
   // A native <details> carries the collapsing, so there is no hand-rolled toggle state.
   assert.match(app, /document\.createElement\("details"\)/);
@@ -29,7 +29,7 @@ test("the projects list is grouped by type and each group collapses", async () =
     assert.ok(styles.includes(selector));
   }
 
-  assert.match(serviceWorker, /joint-bob-v66/);
+  assert.match(serviceWorker, /joint-bob-v67/);
 });
 
 test("the branded boot screen releases before project discovery", async () => {

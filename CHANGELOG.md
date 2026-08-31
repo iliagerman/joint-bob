@@ -3,6 +3,17 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 0.3.0 — 2026-08-31
+
+- Replaced GitHub credential groups with ordinary secret accounts; the push token is now a normal GH_TOKEN variable
+- Scoped secret accounts to workspace, project, and conversation, resolving most-specific-first per variable name
+- Renamed project types to workspaces across the UI, the API, and the database
+- Migrated existing GitHub credential groups and per-project overrides into secret accounts on first start, one way and once per node
+- Made gh and git push always authenticate as the same identity
+- Added a per-account switch for replicating a secret account to paired nodes
+- Chose a conversation's secret accounts in the new-conversation dialog
+- Fixed secret assignments surviving a project merge, a project delete, and a workspace delete
+
 ## 0.2.0 — 2026-08-30
 
 - Added a Changelog tab in Settings listing the last ten released versions

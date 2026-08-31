@@ -66,7 +66,7 @@ test("model buttons are name-only and mobile controls use fixed toolbar rows", a
   assert.match(styles, /\.chat-recents-button\s*\{[^}]*grid-column:\s*3;[^}]*grid-row:\s*2;/);
   assert.doesNotMatch(styles, /\.model-button-mode/);
   assert.doesNotMatch(styles, /\.chat-toolbar[^\{]*\{[^}]*overflow-x:\s*auto/);
-  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v66";/);
+  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v67";/);
 });
 
 test("the status light and Stop sit on the chat header's meta row", async () => {

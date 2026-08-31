@@ -19,7 +19,7 @@ test("managed home project creation and imported mappings use node folder picker
   assert.doesNotMatch(html, /data-testid="settings-work-project-root-browse-button"/);
   assert.match(app, /settings\.projects\.homePath/);
   assert.match(app, /\/projects\//);
-  assert.match(app, /projectTypeInput\.value/);
+  assert.match(app, /projectWorkspaceInput\.value/);
   assert.match(app, /synced:\s*true/);
   assert.match(html, /data-testid="project-form-source-path-input"/);
   assert.match(html, /data-testid="project-form-source-browse-button"/);

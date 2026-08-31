@@ -27,7 +27,7 @@ Joint Bob runs as `joint-bob.service` on Linux or `com.joint-bob.node` on macOS.
 
 ## Install
 
-The curl command downloads the latest GitHub release, verifies its SHA-256 checksum, and installs a native user service. It pins Node.js, Pi, Claude Code, and Syncthing, starts Syncthing, and discovers its local API configuration automatically. Existing projects, credentials, settings, tasks, and cluster identity are preserved during upgrades and prior-installation migration.
+The curl command downloads the latest GitHub release, verifies its SHA-256 checksum, and installs a native user service. It pins Node.js, Pi, Claude Code, and Syncthing, starts Syncthing, and discovers its local API configuration automatically. Existing projects, credentials, settings, tasks, and cluster identity are preserved during upgrades and prior-installation migration. Upgrading from a build with GitHub credential groups converts each group into a secret account holding its `GH_TOKEN`, so every project keeps pushing with the identity it used before.
 
 ## Add another node
 
@@ -50,13 +50,15 @@ A cluster supports five active nodes. Remove an old node before adding a sixth.
 On every node, choose **Settings → Projects → Joint Bob home folder**. New projects and board-card workspaces use that node's selected home:
 
 ```text
-<home>/projects/<personal|work>/<project-name>
+<home>/<workspace>/<project-name>
 <home>/tickets/<project-id>/<ticket-id>
 ```
 
+A workspace groups related projects and is a folder directly under the home folder. `personal` and `work` are seeded; add your own in **Settings → Projects → Workspaces**.
+
 Projects created through the UI synchronize automatically using per-project Syncthing folders. To import an existing project, select its source folder and choose **Move into Joint Bob and leave a symlink**, **Move into Joint Bob**, or **Copy into Joint Bob**. The first option preserves the original path as a directory symlink to the managed folder, so both paths access the same files.
 
-Joint Bob copies or moves the complete local folder, including `.git`, `node_modules`, and hidden files. `.git` and `node_modules` remain available on that node but are excluded at every depth from Syncthing. Build output, environment files, credentials, and logs are also excluded. Joint Bob configures `<home>/tickets` as the Syncthing folder `joint-bob-ticket-workspaces` and shares it with paired cluster nodes. GitHub credentials never sync automatically. Push them from Settings > GitHub > Sync to nodes, which uses encrypted cluster replication, never filesystem sync.
+Joint Bob copies or moves the complete local folder, including `.git`, `node_modules`, and hidden files. `.git` and `node_modules` remain available on that node but are excluded at every depth from Syncthing. Build output, environment files, credentials, and logs are also excluded. Joint Bob configures `<home>/tickets` as the Syncthing folder `joint-bob-ticket-workspaces` and shares it with paired cluster nodes. Secret accounts never sync automatically. Mark an account to replicate, then push it from Settings > Secrets > Sync to nodes, which uses encrypted cluster replication, never filesystem sync. An account left node-local never leaves its node.
 
 Ticket agents work inside this synchronized workspace. Handoff waits until the destination reports the folder synchronized, then transfers task ownership without a Git bundle. Archiving moves the ticket to Done and removes its workspace. Deleting a ticket removes both its workspace and task record. Syncthing propagates workspace deletion to the other nodes.
 
@@ -138,7 +140,7 @@ Public-IP access is for temporary smoke testing only. Do not send pairing tokens
 - Run Joint Bob as a non-root user.
 - Prefer private networking such as Tailscale.
 - Authentication uses secure, SQLite-backed sessions.
-- Machine, GitHub, Syncthing, and push secrets are encrypted.
+- Machine, secret-account, Syncthing, and push secrets are encrypted.
 - Joint Bob-owned state stays in node-local SQLite.
 - Git repositories, Pi and Claude transcripts, worktrees, and Syncthing data remain filesystem-owned.
 

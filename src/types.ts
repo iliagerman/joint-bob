@@ -3,13 +3,12 @@ export interface ProjectLocation {
   path: string;
 }
 
-/** Project types are user-defined; the id doubles as the folder name under the managed home. */
-export type ProjectType = string;
+/** Workspaces are user-defined; the id doubles as the folder name under the managed home. */
+export type WorkspaceId = string;
 
-export interface ProjectTypeRecord {
+export interface WorkspaceRecord {
   id: string;
   label: string;
-  githubGroup: string | null;
 }
 
 /** A fixed palette keeps project accents legible in both themes. */
@@ -35,7 +34,7 @@ export interface ProjectLock {
 export interface ProjectRecord {
   id: string;
   name: string;
-  type?: ProjectType;
+  type?: WorkspaceId;
   color?: string;
   path: string;
   macPath?: string;
