@@ -18,11 +18,14 @@ test("main pushes deploy exact commits to durable node installations", async () 
   assert.match(cli, /\.local.*share.*joint-bob.*app/);
   assert.match(deploy, /JOINT_BOB_DEPLOY_SSH_TARGET/);
   assert.doesNotMatch(deploy, /ssh homeserver/);
-  assert.match(deploy, /api\/health/);
+  assert.match(deploy, /post-deploy-smoke\.sh/);
+  assert.match(deploy, /127\.0\.0\.1:8787/);
+  assert.match(deploy, /127\.0\.0\.1:8790/);
   assert.match(deploy, /local \| homeserver \| all/);
   assert.match(installer, /hooks\/pre-push/);
   assert.match(justfile, /^update-local:/m);
   assert.match(justfile, /^update-homeserver:/m);
   assert.match(justfile, /^update:/m);
   await access("scripts/wait-for-main-and-deploy.sh");
+  await access("scripts/post-deploy-smoke.sh");
 });

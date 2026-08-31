@@ -68,16 +68,14 @@ rm -rf "$extract"
 mkdir "$extract"
 tar -xzf "$HOME/$PACKAGE" -C "$extract"
 JOINT_BOB_RELEASE_COMMIT="$COMMIT" "$node_bin" "$extract/package/bin/joint-bob.mjs" install
-health="$(curl -fsS http://127.0.0.1:8787/api/health)"
-HEALTH="$health" COMMIT="$COMMIT" "$node_bin" -e 'const h=JSON.parse(process.env.HEALTH);if(h.status!=="ok"||h.release!==process.env.COMMIT)process.exit(1)'
+bash "$extract/package/scripts/post-deploy-smoke.sh" http://127.0.0.1:8787 "$COMMIT"
 REMOTE
 fi
 
 if [ "${DESTINATION}" != "homeserver" ]; then
   backup_local_state
   JOINT_BOB_RELEASE_COMMIT="${COMMIT}" node "${work}/package/package/bin/joint-bob.mjs" install
-  health="$(curl -fsS http://127.0.0.1:8790/api/health)"
-  HEALTH="${health}" COMMIT="${COMMIT}" node -e 'const h=JSON.parse(process.env.HEALTH);if(h.status!=="ok"||h.release!==process.env.COMMIT)process.exit(1)'
+  bash "${work}/package/package/scripts/post-deploy-smoke.sh" http://127.0.0.1:8790 "${COMMIT}"
 fi
 
 printf 'Deployed %s to %s installed copies.\n' "${COMMIT}" "${DESTINATION}"

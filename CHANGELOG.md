@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 0.3.3 — 2026-08-31
+
+- Fixed startup remaining on the splash screen after the workspace migration left UI controls unbound
+- Added a post-deployment smoke check for the release, application shell, JavaScript syntax, and UI element bindings
+
 ## 0.3.2 — 2026-08-31
 
 - Fixed the terminal dialog failing to open because the fit addon constructor lives under the addon's namespace

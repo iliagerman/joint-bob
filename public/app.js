@@ -236,6 +236,9 @@ const elements = {
   whatsNewVersion: document.querySelector("#whatsNewVersion"),
   settingsProjectHome: document.querySelector("#settingsProjectHome"),
   settingsProjectHomeBrowseButton: document.querySelector("#settingsProjectHomeBrowseButton"),
+  workspaceList: document.querySelector("#workspaceList"),
+  workspaceNameInput: document.querySelector("#workspaceNameInput"),
+  workspaceAddButton: document.querySelector("#workspaceAddButton"),
   settingsPiExecutable: document.querySelector("#settingsPiExecutable"),
   settingsPiConfigPath: document.querySelector("#settingsPiConfigPath"),
   settingsPiSessionPath: document.querySelector("#settingsPiSessionPath"),
@@ -719,7 +722,7 @@ async function openSettings(tab = "account") {
   const [settings, authSessions] = await Promise.all([api("/api/settings"), api("/api/auth/sessions"), loadSecretAccounts(), loadChangelogPanel()]);
   elements.settingsUsername.textContent = state.username;
   selectSettingsTab(tab);
-  await Promise.all([loadGithubGroups(), loadClusterPanel()]);
+  await loadClusterPanel();
   await loadWorkspaces();
   renderLoginSessions(authSessions);
   elements.settingsRestartMessage.hidden = true;
