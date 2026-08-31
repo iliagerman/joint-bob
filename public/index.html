@@ -876,6 +876,37 @@
       </div>
     </dialog>
 
+    <!-- The app's own confirm box. Replaces window.confirm so every prompt is themed and testable. -->
+    <dialog id="confirmDialog" data-testid="confirm-dialog">
+      <form method="dialog" class="dialog-card confirm-card">
+        <div class="dialog-heading" tabindex="-1">
+          <span class="eyebrow" id="confirmEyebrow">Confirm</span>
+          <h2 id="confirmTitle">Are you sure?</h2>
+          <p id="confirmMessage"></p>
+        </div>
+        <div class="dialog-actions">
+          <button class="ghost" type="button" id="confirmCancelButton" data-testid="confirm-cancel-button">Cancel</button>
+          <button class="primary" type="submit" value="confirm" id="confirmAcceptButton" data-testid="confirm-accept-button">Confirm</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- The app's own pick-one box. Replaces window.prompt for destination pickers. -->
+    <dialog id="choiceDialog" data-testid="choice-dialog">
+      <form method="dialog" class="dialog-card">
+        <div class="dialog-heading" tabindex="-1">
+          <span class="eyebrow" id="choiceEyebrow">Choose</span>
+          <h2 id="choiceTitle">Pick one</h2>
+          <p id="choiceMessage"></p>
+        </div>
+        <div class="choice-list" id="choiceList" role="radiogroup" aria-labelledby="choiceTitle"></div>
+        <div class="dialog-actions">
+          <button class="ghost" type="button" id="choiceCancelButton" data-testid="choice-cancel-button">Cancel</button>
+          <button class="primary" type="submit" value="confirm" id="choiceAcceptButton" data-testid="choice-accept-button">Continue</button>
+        </div>
+      </form>
+    </dialog>
+
     <!-- One shared row menu. It lives in the top layer, so the scrolling lists cannot clip it. -->
     <div class="row-menu" id="rowMenu" popover="auto" aria-label="Conversation actions" data-testid="session-row-menu"></div>
 

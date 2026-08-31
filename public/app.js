@@ -401,6 +401,19 @@ const elements = {
   fileEditorSaveButton: document.querySelector("#fileEditorSaveButton"),
   fileEditorStatus: document.querySelector("#fileEditorStatus"),
   fileEditorMode: document.querySelector("#fileEditorMode"),
+  confirmDialog: document.querySelector("#confirmDialog"),
+  confirmEyebrow: document.querySelector("#confirmEyebrow"),
+  confirmTitle: document.querySelector("#confirmTitle"),
+  confirmMessage: document.querySelector("#confirmMessage"),
+  confirmCancelButton: document.querySelector("#confirmCancelButton"),
+  confirmAcceptButton: document.querySelector("#confirmAcceptButton"),
+  choiceDialog: document.querySelector("#choiceDialog"),
+  choiceEyebrow: document.querySelector("#choiceEyebrow"),
+  choiceTitle: document.querySelector("#choiceTitle"),
+  choiceMessage: document.querySelector("#choiceMessage"),
+  choiceList: document.querySelector("#choiceList"),
+  choiceCancelButton: document.querySelector("#choiceCancelButton"),
+  choiceAcceptButton: document.querySelector("#choiceAcceptButton"),
 };
 
 window.CodeMirror.modeURL = "/vendor/codemirror/mode/%N/%N.js";
@@ -760,6 +773,79 @@ async function saveSettings(event) {
   elements.settingsRestartMessage.textContent = restartRequired.length ? `Restart required for ${restartRequired.join(" and ")} changes.` : "";
   if (!restartRequired.length) elements.settingsDialog.close();
   toast("Settings saved");
+}
+
+// The app's own replacements for window.confirm / window.prompt. Both resolve
+// once the dialog closes: Escape, the backdrop and Cancel all mean "no".
+elements.confirmCancelButton.addEventListener("click", () => elements.confirmDialog.close("cancel"));
+elements.choiceCancelButton.addEventListener("click", () => elements.choiceDialog.close("cancel"));
+
+function confirmAction({ title, message = "", eyebrow = "Confirm", confirmLabel = "Confirm", cancelLabel = "Cancel", destructive = false }) {
+  const dialog = elements.confirmDialog;
+  elements.confirmEyebrow.textContent = eyebrow;
+  elements.confirmTitle.textContent = title;
+  elements.confirmMessage.textContent = message;
+  elements.confirmMessage.hidden = !message;
+  elements.confirmAcceptButton.textContent = confirmLabel;
+  elements.confirmAcceptButton.classList.toggle("destructive", destructive);
+  elements.confirmCancelButton.textContent = cancelLabel;
+  // A second ask while one is open cancels the first, so showModal never throws.
+  if (dialog.open) dialog.close("cancel");
+  dialog.returnValue = "";
+  dialog.showModal();
+  elements.confirmAcceptButton.focus();
+  return new Promise((resolve) => {
+    dialog.addEventListener("close", () => resolve(dialog.returnValue === "confirm"), { once: true });
+  });
+}
+
+// options: [{ value, label, hint, disabled }]. Resolves to the chosen value, or null.
+function chooseOption({ title, message = "", eyebrow = "Choose", confirmLabel = "Continue", options }) {
+  const dialog = elements.choiceDialog;
+  elements.choiceEyebrow.textContent = eyebrow;
+  elements.choiceTitle.textContent = title;
+  elements.choiceMessage.textContent = message;
+  elements.choiceMessage.hidden = !message;
+  elements.choiceAcceptButton.textContent = confirmLabel;
+  elements.choiceList.replaceChildren();
+
+  const firstEnabled = options.find((option) => !option.disabled);
+  for (const option of options) {
+    const row = document.createElement("label");
+    row.className = "choice-option";
+    row.dataset.testid = "choice-option";
+    const input = document.createElement("input");
+    input.type = "radio";
+    input.name = "choiceOption";
+    input.value = option.value;
+    input.disabled = Boolean(option.disabled);
+    input.checked = option === firstEnabled;
+    const copy = document.createElement("div");
+    copy.className = "choice-option-copy";
+    const label = document.createElement("span");
+    label.className = "choice-option-label";
+    label.textContent = option.label;
+    copy.append(label);
+    if (option.hint) {
+      const hint = document.createElement("span");
+      hint.className = "choice-option-hint";
+      hint.textContent = option.hint;
+      copy.append(hint);
+    }
+    row.append(input, copy);
+    elements.choiceList.append(row);
+  }
+  elements.choiceAcceptButton.disabled = !firstEnabled;
+  if (dialog.open) dialog.close("cancel");
+  dialog.returnValue = "";
+  dialog.showModal();
+  (elements.choiceList.querySelector("input:checked") || elements.choiceCancelButton).focus();
+  return new Promise((resolve) => {
+    dialog.addEventListener("close", () => {
+      if (dialog.returnValue !== "confirm") return resolve(null);
+      resolve(elements.choiceList.querySelector("input:checked")?.value ?? null);
+    }, { once: true });
+  });
 }
 
 function toast(message, duration = 3200) {
@@ -1331,7 +1417,14 @@ function renderWorkspaces() {
     remove.textContent = "Delete";
     remove.dataset.testid = "workspace-delete-button";
     remove.addEventListener("click", async () => {
-      if (!confirm(`Delete the "${workspace.label}" workspace? Its folder stays on disk.`)) return;
+      const confirmed = await confirmAction({
+        eyebrow: "Delete workspace",
+        title: `Delete the "${workspace.label}" workspace?`,
+        message: "Its folder stays on disk.",
+        confirmLabel: "Delete workspace",
+        destructive: true,
+      });
+      if (!confirmed) return;
       try {
         await api(`/api/workspaces/${encodeURIComponent(workspace.id)}`, { method: "DELETE" });
         await loadWorkspaces();
@@ -1976,7 +2069,14 @@ async function rescanProject(project) {
 }
 
 async function removeProject(project) {
-  if (!confirm(`Remove ${project.name} from Joint Bob? Files are not deleted.`)) return;
+  const confirmed = await confirmAction({
+    eyebrow: "Remove project",
+    title: `Remove ${project.name} from Joint Bob?`,
+    message: "Files are not deleted.",
+    confirmLabel: "Remove project",
+    destructive: true,
+  });
+  if (!confirmed) return;
   await api(`/api/projects/${encodeURIComponent(project.id)}`, { method: "DELETE" });
   if (state.activeProjectId === project.id) {
     state.activeProjectId = null;
@@ -2444,11 +2544,24 @@ function sessionMenuItems(session, sessionActive) {
 async function transferSessionFromRow(session) {
   const peers = (await api("/api/cluster/peers")).peers;
   if (!peers.length) throw new Error("Pair a destination node first");
-  const peer = peers.length === 1
-    ? peers[0]
-    : peers.find((candidate) => candidate.id === prompt(`Destination node ID:\n${peers.map((candidate) => `${candidate.name}: ${candidate.id}`).join("\n")}`));
+  let peer = peers[0];
+  if (peers.length > 1) {
+    const peerId = await chooseOption({
+      eyebrow: "Transfer session",
+      title: "Transfer this idle Pi session",
+      message: "Pick the destination node.",
+      confirmLabel: "Transfer session",
+      options: peers.map((candidate) => ({ value: candidate.id, label: candidate.name, hint: candidate.id })),
+    });
+    peer = peers.find((candidate) => candidate.id === peerId);
+  } else if (!await confirmAction({
+    eyebrow: "Transfer session",
+    title: `Transfer this idle Pi session to ${peer.name}?`,
+    confirmLabel: "Transfer session",
+  })) {
+    return;
+  }
   if (!peer) return;
-  if (!confirm(`Transfer this idle Pi session to ${peer.name}?`)) return;
   const result = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/transfer`, {
     method: "POST",
     body: JSON.stringify({ peerId: peer.id, sessionPath: session.path, sessionName: shortSessionTitle(session) }),
@@ -2457,8 +2570,15 @@ async function transferSessionFromRow(session) {
 }
 
 async function removeSessionFromRow(session, sessionActive) {
-  if (!confirm(`Remove session "${shortSessionTitle(session)}"?`)) return;
   await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions?sessionPath=${encodeURIComponent(session.path)}`, { method: "DELETE" });
+  const confirmed = await confirmAction({
+    eyebrow: "Remove conversation",
+    title: `Remove session "${shortSessionTitle(session)}"?`,
+    message: "The transcript is deleted from this node.",
+    confirmLabel: "Remove session",
+    destructive: true,
+  });
+  if (!confirmed) return;
   if (sessionActive) {
     state.activeTaskId = null;
     closeSocket();
@@ -2704,9 +2824,18 @@ async function editProjectFile() {
   finally { state.fileEditor.loading = false; elements.fileActionEditButton.disabled = false; }
 }
 
-function attemptCloseFileEditor() {
+async function attemptCloseFileEditor() {
   if (state.fileEditor.saving) return;
-  if (!elements.fileEditorView.hidden && fileEditor.getValue() !== state.fileEditor.original && !confirm("Discard unsaved changes?")) return;
+  if (!elements.fileEditorView.hidden && fileEditor.getValue() !== state.fileEditor.original) {
+    const discard = await confirmAction({
+      eyebrow: "Unsaved changes",
+      title: "Discard unsaved changes?",
+      message: "The edits you made to this file are lost.",
+      confirmLabel: "Discard changes",
+      destructive: true,
+    });
+    if (!discard) return;
+  }
   elements.fileActionDialog.close();
   resetFileEditor();
 }
@@ -4293,8 +4422,18 @@ async function handoffTask(task) {
     const eligibility = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/tasks/${encodeURIComponent(task.id)}/eligibility`);
     const candidates = eligibility.nodes.filter((entry) => entry.node.online);
     if (!candidates.length) throw new Error("No online destination nodes are available");
-    const choices = candidates.map((entry, index) => `${index + 1}. ${entry.node.name}${entry.eligible ? "" : ` — ${entry.reasons.join(", ")}`}`).join("\n");
-    const selected = candidates[Number(prompt(`Handoff "${task.title}" to:\n${choices}`, "1")) - 1];
+    const nodeId = await chooseOption({
+      eyebrow: "Handoff task",
+      title: `Handoff "${task.title}"`,
+      message: "Pick the node that takes this task over.",
+      confirmLabel: "Handoff task",
+      options: candidates.map((entry) => ({
+        value: entry.node.id,
+        label: entry.node.name,
+        hint: entry.eligible ? "Ready" : entry.reasons.join(", "),
+      })),
+    });
+    const selected = candidates.find((entry) => entry.node.id === nodeId);
     if (!selected) return;
     if (selected.reasons.includes("Project is not mapped on this node")) {
       const project = selectedProject();
@@ -4302,7 +4441,6 @@ async function handoffTask(task) {
       return;
     }
     if (!selected.eligible) throw new Error(selected.reasons.join("; "));
-    if (!confirm(`Handoff "${task.title}" to ${selected.node.name}?`)) return;
     await handoffTaskToPeer(task, selected.node);
   } catch (error) {
     toast(error.message);
@@ -4310,7 +4448,14 @@ async function handoffTask(task) {
 }
 
 async function archiveTask(task) {
-  if (!confirm(`Archive "${task.title}" and remove its synchronized workspace?`)) return;
+  const confirmed = await confirmAction({
+    eyebrow: "Archive task",
+    title: `Archive "${task.title}"?`,
+    message: "Its synchronized workspace is removed.",
+    confirmLabel: "Archive task",
+    destructive: true,
+  });
+  if (!confirmed) return;
   try {
     const body = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/tasks/${encodeURIComponent(task.id)}/archive`, { method: "POST" });
     state.tasks = state.tasks.map((item) => item.id === task.id ? body.task : item);
@@ -4322,7 +4467,12 @@ async function archiveTask(task) {
 }
 
 async function mergeTask(task) {
-  if (!confirm(`Merge committed changes from "${task.title}" into main?`)) return;
+  const confirmed = await confirmAction({
+    eyebrow: "Merge task",
+    title: `Merge committed changes from "${task.title}" into main?`,
+    confirmLabel: "Merge into main",
+  });
+  if (!confirmed) return;
   try {
     const body = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/tasks/${encodeURIComponent(task.id)}/merge`, {
       method: "POST",
@@ -4372,7 +4522,14 @@ async function deleteEditingTask() {
 }
 
 async function deleteTaskFromCard(task) {
-  if (!confirm(`Delete "${task.title}"?`)) return;
+  const confirmed = await confirmAction({
+    eyebrow: "Delete task",
+    title: `Delete "${task.title}"?`,
+    message: "This cannot be undone.",
+    confirmLabel: "Delete task",
+    destructive: true,
+  });
+  if (!confirmed) return;
   try {
     await deleteTask(task.id);
   } catch (error) {
@@ -4535,7 +4692,14 @@ elements.taskForm.addEventListener("submit", async (event) => {
   }
 });
 elements.deleteTaskButton.addEventListener("click", async () => {
-  if (!confirm("Delete this task?")) return;
+  const confirmed = await confirmAction({
+    eyebrow: "Delete task",
+    title: "Delete this task?",
+    message: "This cannot be undone.",
+    confirmLabel: "Delete task",
+    destructive: true,
+  });
+  if (!confirmed) return;
   try {
     await deleteEditingTask();
     closeTaskDialog();
@@ -4668,7 +4832,11 @@ elements.projectImportForm.addEventListener("submit", async (event) => {
     if (pending.handoffTaskId) {
       const task = state.tasks.find((candidate) => candidate.id === pending.handoffTaskId);
       const node = state.sessionNodes.find((candidate) => candidate.id === pending.peerId);
-      if (task && node && confirm(`Project mapped. Handoff "${task.title}" to ${node.name}?`)) await handoffTaskToPeer(task, node);
+      if (task && node && await confirmAction({
+        eyebrow: "Project mapped",
+        title: `Handoff "${task.title}" to ${node.name}?`,
+        confirmLabel: "Handoff task",
+      })) await handoffTaskToPeer(task, node);
     }
     if (pending.transferSessionPath) {
       await loadSessionNodes(pending.projectId);
@@ -5103,13 +5271,22 @@ elements.skillsDialogSearchInput.addEventListener("input", () => renderSkillsDia
 elements.closeSkillsDialogButton.addEventListener("click", () => elements.skillsDialog.close());
 elements.closeToolsDialogButton.addEventListener("click", () => elements.toolsDialog.close());
 elements.modelButton.addEventListener("click", openModelDialog);
-elements.safeguardsButton.addEventListener("click", () => {
+elements.safeguardsButton.addEventListener("click", async () => {
   if (!socketOpen()) {
     toast("Conversation is not connected yet");
     return;
   }
   const safeguardsEnabled = !state.safeguardsEnabled;
-  if (state.safeguardsEnabled && !confirm("Disable Safe Guard checks? Dangerous shell commands and protected-path writes can run without Safe Guard checks. Application security and Git branch restrictions remain active.")) return;
+  if (state.safeguardsEnabled) {
+    const confirmed = await confirmAction({
+      eyebrow: "Safe Guard",
+      title: "Disable Safe Guard checks?",
+      message: "Dangerous shell commands and protected-path writes can run without Safe Guard checks. Application security and Git branch restrictions remain active.",
+      confirmLabel: "Disable Safe Guard",
+      destructive: true,
+    });
+    if (!confirmed) return;
+  }
   if (!sendSocket({ type: "setSafeguards", safeguardsEnabled })) {
     toast("Conversation is not connected yet");
     return;
@@ -5697,7 +5874,14 @@ async function loadSecretAccounts() {
 }
 
 async function deleteSecretAccount(account) {
-  if (!confirm(`Delete ${account.label}?`)) return;
+  const confirmed = await confirmAction({
+    eyebrow: "Delete secret account",
+    title: `Delete ${account.label}?`,
+    message: "Every workspace, project and conversation using it loses those variables.",
+    confirmLabel: "Delete account",
+    destructive: true,
+  });
+  if (!confirmed) return;
   await api(`/api/secrets/accounts/${encodeURIComponent(account.id)}`, { method: "DELETE" });
   await loadSecretAccounts();
   toast("Secret account deleted");
