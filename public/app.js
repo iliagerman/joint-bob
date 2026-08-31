@@ -101,7 +101,6 @@ const state = {
   setupRequired: false,
   mustChangePassword: false,
   lastTurnStartedAt: 0,
-  stickToBottom: true,
   csrfToken: "",
   preferencesLoaded: false,
   initialProjectId: new URLSearchParams(location.search).get("projectId"),
@@ -139,7 +138,6 @@ const elements = {
   sessionTitle: document.querySelector("#sessionTitle"),
   connectionStatus: document.querySelector("#connectionStatus"),
   messages: document.querySelector("#messages"),
-  jumpLatestButton: document.querySelector("#jumpLatestButton"),
   composer: document.querySelector("#composer"),
   commandStrip: document.querySelector("#commandStrip"),
   conversationLock: document.querySelector("#conversationLock"),
@@ -2615,7 +2613,7 @@ function showChatEmptyState(title, copy) {
   const description = document.createElement("p");
   description.textContent = copy;
   empty.append(heading, description);
-  elements.messages.insertBefore(empty, elements.jumpLatestButton);
+  elements.messages.append(empty);
 }
 
 // Durations read as "3.4s" under ten seconds, whole seconds up to a minute,
@@ -2675,14 +2673,12 @@ function finishTurnTimer() {
 }
 
 function clearChat() {
-  elements.messages.replaceChildren(elements.jumpLatestButton);
+  elements.messages.replaceChildren();
   elements.turnTimer.hidden = true;
   elements.turnTimer.textContent = "";
   state.assistantBubble = null;
   state.thinkingBubble = null;
   state.toolBubbles.clear();
-  state.stickToBottom = true;
-  syncJumpButton();
 }
 
 function prettyText(text) {
@@ -2710,35 +2706,8 @@ function prettyText(text) {
   return `${header}\n${prettyJson(body) || body}`;
 }
 
-function distanceFromBottom() {
-  const node = elements.messages;
-  return node.scrollHeight - node.scrollTop - node.clientHeight;
-}
-
-function isNearBottom() {
-  return distanceFromBottom() < 120;
-}
-
-function isAtBottom() {
-  return distanceFromBottom() < 2;
-}
-
-function syncJumpButton() {
-  elements.jumpLatestButton.hidden = state.stickToBottom;
-}
-
-// Follow the stream only while the user is at (or near) the bottom, so
-// scrolling up to read is never hijacked by incoming deltas.
-function stickyScroll(force = false) {
-  if (force) state.stickToBottom = true;
-  syncJumpButton();
-  if (!state.stickToBottom) return;
+function scrollConversationToBottom() {
   elements.messages.scrollTop = elements.messages.scrollHeight;
-}
-
-function releaseStickyScroll() {
-  state.stickToBottom = false;
-  syncJumpButton();
 }
 
 function projectFileUrl(filePath, download = false) {
@@ -2930,7 +2899,6 @@ function renderBubbleContent(bubble, text, flush = false) {
     bubble._renderFinal = false;
     bubble._hasRenderedText = true;
     content.textContent = text;
-    stickyScroll();
     return;
   }
   bubble._renderFinal = bubble._renderFinal || flush;
@@ -2945,7 +2913,6 @@ function renderBubbleContent(bubble, text, flush = false) {
     else if (role === "tool-output") renderToolContent(content, bubble._raw);
     else content.textContent = prettyText(bubble._raw);
     bubble._renderFinal = false;
-    stickyScroll();
   });
 }
 
@@ -3006,9 +2973,8 @@ function appendMessage(role, text, timestamped = true) {
   bubble.append(content);
   if (timestamped && (role === "user" || role === "assistant")) bubble.append(messageTimestamp());
   renderBubbleContent(bubble, text, true);
-  elements.messages.insertBefore(bubble, elements.jumpLatestButton);
+  elements.messages.append(bubble);
   if (isMarkdown) appendCopyButton(bubble);
-  stickyScroll();
   return bubble;
 }
 
@@ -3040,8 +3006,7 @@ function appendToolMessage(toolName, toolCallId, startedAt = Date.now()) {
   const content = document.createElement("pre");
   content.className = "message-content";
   bubble.append(summary, content);
-  elements.messages.insertBefore(bubble, elements.jumpLatestButton);
-  stickyScroll();
+  elements.messages.append(bubble);
   return bubble;
 }
 
@@ -3065,11 +3030,6 @@ function appendTranscript(messages) {
     }
     appendMessage(message.role === "user" ? "user" : "assistant", message.text, false);
   }
-  // Bubbles render their markdown on the next animation frame, so the height
-  // during the loop above is not final and the scroll events it fires can clear
-  // stickToBottom. Pin to the bottom after that frame so an opened conversation
-  // starts on the newest message.
-  requestAnimationFrame(() => stickyScroll(true));
 }
 
 // Opus is pinned to the explicit Opus 5 id so the CLI's "opus" alias cannot
@@ -3955,10 +3915,10 @@ function openSession(sessionPath, title = "New Pi conversation", preserveChat = 
   // The connecting banner already shows this state, and reconnect attempts
   // repeat, so a toast per attempt is pure noise.
   socket.addEventListener("error", () => console.warn("WebSocket connection failed"));
-  socket.addEventListener("message", (event) => handleSocketPayload(JSON.parse(event.data)));
+  socket.addEventListener("message", (event) => handleSocketPayload(JSON.parse(event.data), !preserveChat));
 }
 
-function handleSocketPayload(payload) {
+function handleSocketPayload(payload, scrollOnReady = false) {
   if (payload.type === "updatePreparing") {
     const message = payload.message || "Updating... Work will resume automatically.";
     setConnecting(true, message);
@@ -4011,6 +3971,7 @@ function handleSocketPayload(payload) {
           : state.engine === "claude" ? "Claude conversation" : "Pi conversation";
     clearChat();
     appendTranscript(payload.messages);
+    if (scrollOnReady) requestAnimationFrame(scrollConversationToBottom);
     if (!payload.messages?.length) {
       const node = state.sessionNodes.find((candidate) => candidate.id === state.activeNodeId);
       showChatEmptyState("Ready for your first message", `${state.engine === "claude" ? "Claude" : "Pi"} will run on ${node?.name || "the selected node"}. The conversation is created when you send.`);
@@ -4367,7 +4328,6 @@ function setTaskDialogTab(tab) {
   }
   elements.taskForm.hidden = tab !== "settings";
   elements.taskChatHost.hidden = tab !== "conversation";
-  if (tab === "conversation") stickyScroll(true);
 }
 
 function openEditTaskDialog(task) {
@@ -5481,7 +5441,6 @@ elements.composer.addEventListener("submit", (event) => {
   elements.messageInput.value = "";
   elements.messageInput.style.height = "auto";
   clearAttachments();
-  stickyScroll(true);
 });
 
 elements.renameSessionButton.addEventListener("click", () => {
@@ -5527,26 +5486,6 @@ elements.previewSoundButton.addEventListener("click", () => {
   playCompletionSound(elements.completionSoundSelect.value).catch((error) => toast(error.message));
 });
 elements.abortButton.addEventListener("click", () => sendSocket({ type: "abort" }));
-elements.messages.addEventListener(
-  "scroll",
-  () => {
-    state.stickToBottom = state.stickToBottom ? isNearBottom() : isAtBottom();
-    syncJumpButton();
-  },
-  { passive: true },
-);
-elements.messages.addEventListener("wheel", (event) => {
-  if (event.deltaY < 0) releaseStickyScroll();
-}, { passive: true });
-let touchScrollY = null;
-elements.messages.addEventListener("touchstart", (event) => {
-  touchScrollY = event.touches[0].clientY;
-}, { passive: true });
-elements.messages.addEventListener("touchmove", (event) => {
-  if (event.touches[0].clientY > touchScrollY) releaseStickyScroll();
-  touchScrollY = event.touches[0].clientY;
-}, { passive: true });
-elements.jumpLatestButton.addEventListener("click", () => stickyScroll(true));
 
 // Selecting transcript text copies it straight to the clipboard. The write runs
 // on the gesture that ends the selection, because Safari and Firefox reject a
