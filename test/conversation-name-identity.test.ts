@@ -62,7 +62,8 @@ test("renaming a conversation does not require it to be in the conversation list
   // through listHarnessSessions would 404 exactly when the name is first set.
   assert.doesNotMatch(handler, /listHarnessSessions/);
   assert.match(handler, /setSessionTitle\(payload\.sessionId, payload\.title\)/);
-  assert.match(handler, /requireLocalConversationOwner\(payload\.engine, payload\.sessionId\)/);
+  // Replicated metadata may be written at the gateway; ownership only fences execution.
+  assert.doesNotMatch(handler, /requireLocalConversationOwner\(payload\.engine, payload\.sessionId\)/);
 });
 
 test("a name typed for a new conversation is saved as soon as the conversation has an id", async () => {

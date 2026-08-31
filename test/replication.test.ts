@@ -22,6 +22,10 @@ test("SQLite name replication is atomic, idempotent, ordered, and retryable", as
     for (const id of projectIds) {
       await store.importProject({ id, name: id, path: `/remote/${id}`, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" }, path.join(dataDir, id));
     }
+    const canonicalProjectId = "project-conversation-canonical";
+    const aliasProjectId = "project-conversation-alias";
+    await store.importProject({ id: canonicalProjectId, name: canonicalProjectId, path: `/remote/${canonicalProjectId}`, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" }, path.join(dataDir, canonicalProjectId));
+    await store.registerProjectAliases(canonicalProjectId, [aliasProjectId]);
 
     await names.setProjectName("project-atomic", "Atomic name");
     const db = new DatabaseSync(path.join(dataDir, "node.db"));
@@ -55,6 +59,30 @@ test("SQLite name replication is atomic, idempotent, ordered, and retryable", as
     assert.equal((await names.projectNameOverrides())["project-conflict"], undefined);
     await replication.receiveReplicationBatch({ events: [event(randomUUID(), "Newer", "2026-02-03T00:00:00.000Z")] });
     assert.equal((await names.projectNameOverrides())["project-conflict"], "Newer");
+
+    const conversationOrigin = randomUUID();
+    const conversationId = randomUUID();
+    const conversationEvent = (operation: "upsert" | "delete", updatedAt: string) => ({
+      id: randomUUID(), originNodeId: conversationOrigin, entityType: "conversation.record", entityKey: `${aliasProjectId}:pi:${conversationId}`, operation,
+      payload: { projectId: aliasProjectId, engine: "pi", sessionId: conversationId, record: operation === "upsert" ? { projectId: aliasProjectId, engine: "pi", sessionId: conversationId, createdAt: "2026-02-01T00:00:00.000Z", updatedAt, originNodeId: conversationOrigin } : null, updatedAt, originNodeId: conversationOrigin }, createdAt: updatedAt,
+    });
+    const upsert = conversationEvent("upsert", "2026-02-02T00:00:00.000Z");
+    await replication.receiveReplicationBatch({ events: [upsert] });
+    await replication.receiveReplicationBatch({ events: [upsert] });
+    const replicatedConversation = db.prepare("SELECT project_id, engine, session_id, origin_node_id FROM conversation_records WHERE session_id = ?").get(conversationId) as { project_id: string; engine: string; session_id: string; origin_node_id: string };
+    assert.equal(replicatedConversation.project_id, canonicalProjectId);
+    assert.equal(replicatedConversation.engine, "pi");
+    assert.equal(replicatedConversation.session_id, conversationId);
+    assert.equal(replicatedConversation.origin_node_id, conversationOrigin);
+    await replication.receiveReplicationBatch({ events: [conversationEvent("delete", "2026-02-01T00:00:00.000Z")] });
+    assert.ok(db.prepare("SELECT 1 FROM conversation_records WHERE session_id = ?").get(conversationId));
+    await replication.receiveReplicationBatch({ events: [conversationEvent("delete", "2026-02-03T00:00:00.000Z")] });
+    assert.equal(db.prepare("SELECT 1 FROM conversation_records WHERE session_id = ?").get(conversationId), undefined);
+    const conversationTombstone = db.prepare("SELECT project_id, origin_node_id FROM conversation_record_tombstones WHERE session_id = ?").get(conversationId) as { project_id: string; origin_node_id: string };
+    assert.equal(conversationTombstone.project_id, canonicalProjectId);
+    assert.equal(conversationTombstone.origin_node_id, conversationOrigin);
+    await replication.receiveReplicationBatch({ events: [conversationEvent("upsert", "2026-02-02T00:00:00.000Z")] });
+    assert.equal(db.prepare("SELECT 1 FROM conversation_records WHERE session_id = ?").get(conversationId), undefined);
 
     const peerId = randomUUID();
     const due = await replication.eventsForPeer(peerId, new Date("2026-03-01T00:00:00.000Z"));

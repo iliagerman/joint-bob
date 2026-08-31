@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { applyConversationOwnershipEvent, ensureConversationOwnershipSchema } from "./conversation-ownership.js";
+import { applyConversationRecordEvent, ensureConversationRecordSchema } from "./conversation-records.js";
 import { PROJECT_COLORS, type TaskRecord } from "./types.js";
 
 export interface ReplicationEvent {
@@ -158,7 +159,7 @@ function applyTaskEvent(db: DatabaseSync, event: ReplicationEvent): boolean {
 }
 
 export async function receiveReplicationBatch(batch: ReplicationBatch): Promise<string[]> {
-  const db = await replicationDatabase(); ensureNameSchema(db); ensureTaskSchema(db); ensureProjectLockSchema(db); ensureConversationOwnershipSchema(db); db.exec("BEGIN IMMEDIATE");
+  const db = await replicationDatabase(); ensureNameSchema(db); ensureTaskSchema(db); ensureProjectLockSchema(db); ensureConversationOwnershipSchema(db); ensureConversationRecordSchema(db); db.exec("BEGIN IMMEDIATE");
   try {
     const insert = db.prepare("INSERT OR IGNORE INTO replication_inbox (event_id, origin_node_id, received_at) VALUES (?, ?, ?)");
     const remove = db.prepare("DELETE FROM replication_inbox WHERE event_id = ?");
@@ -169,7 +170,7 @@ export async function receiveReplicationBatch(batch: ReplicationBatch): Promise<
         received.push(event.id);
         continue;
       }
-      const applied = event.entityType === "name.override" ? (applyNameEvent(db, event), true) : event.entityType === "project.lock" ? (applyProjectLockEvent(db, event), true) : event.entityType === "task" ? applyTaskEvent(db, event) : event.entityType === "conversation.ownership" ? (applyConversationOwnershipEvent(db, event), true) : (() => { throw new Error("Unsupported replication event"); })();
+      const applied = event.entityType === "name.override" ? (applyNameEvent(db, event), true) : event.entityType === "project.lock" ? (applyProjectLockEvent(db, event), true) : event.entityType === "task" ? applyTaskEvent(db, event) : event.entityType === "conversation.ownership" ? (applyConversationOwnershipEvent(db, event), true) : event.entityType === "conversation.record" ? (applyConversationRecordEvent(db, event), true) : (() => { throw new Error("Unsupported replication event"); })();
       if (!applied) {
         remove.run(event.id);
         continue;

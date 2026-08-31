@@ -13,7 +13,7 @@ test("an empty connected conversation stays usable until its first message is sa
 test("ticket chat controls hand off ownership instead of reconnecting", async () => {
   const app = await readFile("public/app.js", "utf8");
 
-  assert.match(app, /chatNodeSelect\.disabled = !state\.activeProjectId/);
+  assert.match(app, /chatNodeSelect\.disabled = !state\.activeProjectId \|\| !state\.sessionNodes\.length \|\| Boolean\(selectedSession && !activeTicket\)/);
   assert.doesNotMatch(app, /chatNodeSelect\.disabled = Boolean\(state\.activeTaskId\)/);
   assert.match(app, /eligibility\.nodes\.map\(\(entry\)/);
   assert.match(app, /entry\.reasons\.join\("; "\)/);
@@ -70,6 +70,21 @@ test("chat names its controls and exposes conversation transfer", async () => {
   assert.match(server, /POST \/cluster\/sessions\/transfer/);
   assert.match(server, /\(!config \|\| config\.engine === "pi"\) && shared/);
   assert.match(server, /sourceNodeId/);
+});
+
+test("ordinary node selection does not open a new conversation", async () => {
+  const app = await readFile("public/app.js", "utf8");
+  const start = app.indexOf('elements.chatNodeSelect.addEventListener("change"');
+  const handler = app.slice(start, app.indexOf('elements.chatHarnessSelect.addEventListener', start));
+  assert.match(handler, /if \(!activeChatSession\(\)\) \{\s*state\.activeSessionId = null;\s*return;/);
+});
+
+test("removing a conversation uses its identity", async () => {
+  const app = await readFile("public/app.js", "utf8");
+  const start = app.indexOf("async function removeSessionFromRow");
+  const handler = app.slice(start, app.indexOf("function clearThinkingBubble", start));
+  assert.match(handler, /sessionId=\$\{encodeURIComponent\(session\.id\)\}&engine=\$\{sessionEngine\(session\)\}/);
+  assert.doesNotMatch(handler, /sessionPath=\$\{encodeURIComponent\(session\.path\)\}/);
 });
 
 test("switching projects discards in-flight responses from the previous project", async () => {

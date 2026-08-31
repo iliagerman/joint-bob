@@ -135,6 +135,7 @@ const machineRoutes = new Set([
   "PUT /cluster/project-file-content",
   "POST /cluster/sync/share",
   "POST /cluster/sessions/receive",
+  "DELETE /cluster/sessions/delete",
   "POST /cluster/sessions/transfer",
   "POST /cluster/sessions/take-ownership",
   "GET /cluster/sessions/ownership",
@@ -355,6 +356,7 @@ const sessionColorSchema = z.object({
   engine: z.enum(["pi", "claude"]),
   color: z.enum(PROJECT_COLORS).nullable(),
 });
+const sessionDeleteSchema = z.object({ projectId: z.string().min(1), engine: z.enum(["pi", "claude"]), sessionId: z.string().uuid() });
 const taskCreateSchema = z.object({
   title: z.string().trim().min(1).max(200),
   description: z.string().trim().max(4000),
@@ -2067,7 +2069,6 @@ app.put("/api/projects/:projectId/sessions/title", async (request, response, nex
     const payload = sessionTitleSchema.parse(request.body);
     // No conversation-list lookup: a conversation named at creation has no
     // transcript on disk yet, and the list is where that name matters most.
-    await requireLocalConversationOwner(payload.engine, payload.sessionId);
     await setSessionTitle(payload.sessionId, payload.title);
     broadcastToProject(project.id, { type: "sessionsChanged" });
     response.json({ ok: true });
@@ -2084,7 +2085,6 @@ app.put("/api/projects/:projectId/sessions/color", async (request, response, nex
       return;
     }
     const payload = sessionColorSchema.parse(request.body);
-    await requireLocalConversationOwner(payload.engine, payload.sessionId);
     await setSessionColor(payload.sessionId, payload.color);
     broadcastToProject(project.id, { type: "sessionsChanged" });
     response.json({ ok: true });
@@ -2208,7 +2208,8 @@ async function listProjectSessionsWithReviewState(project: ProjectRecord, userId
     };
   });
   const reviewStates = syncConversationReviewStates(userId, project.id, listedSessions);
-  return listedSessions.map((session) => ({ ...session, reviewState: reviewStates.get(session.path) }));
+  const ownership = await Promise.all(listedSessions.map((session) => getConversationOwnership(session.path.startsWith("claude:") || session.path.startsWith("draft:claude:") ? "claude" : "pi", session.id)));
+  return listedSessions.map((session, index) => ({ ...session, reviewState: reviewStates.get(session.path), executionNodeId: ownership[index]?.ownerNodeId }));
 }
 
 app.get("/api/projects/:projectId/sessions", async (request, response, next) => {
@@ -2727,62 +2728,73 @@ app.post("/api/projects/:projectId/sessions/recover", async (request, response, 
   } catch (error) { next(error); }
 });
 
-app.delete("/api/projects/:projectId/sessions", async (request, response, next) => {
-  try {
-    const project = await getProject(request.params.projectId);
-    if (!project) {
-      sendError(response, 404, "Project not found");
-      return;
-    }
-    await assertProjectEditable(project);
-    const sessionPath = typeof request.query.sessionPath === "string" ? request.query.sessionPath : "";
-    if (!sessionPath || sessionPath === "new" || sessionPath === "claude:new") {
-      sendError(response, 400, "Session path is required");
-      return;
-    }
-    const draft = parseConversationDraftPath(sessionPath);
-    if (draft) {
-      const record = await getConversationRecord(project.id, draft.engine, draft.sessionId);
-      if (!record) {
-        sendError(response, 404, "Session not found");
-        return;
-      }
-      await requireLocalConversationOwner(draft.engine, draft.sessionId);
-      await deleteConversationRecord(project.id, draft.engine, draft.sessionId);
-      broadcastToProject(project.id, { type: "sessionsChanged" });
-      response.status(204).send();
-      return;
-    }
-    const tasks = await listTasks(project.id);
-    const sessions = await listHarnessSessions({
-      ...project,
-      additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []),
-    });
-    const session = sessions.find((candidate) => candidate.path === sessionPath);
-    if (!session) {
-      sendError(response, 404, "Session not found");
-      return;
-    }
-    const engine: ConversationEngine = session.path.startsWith("claude:") ? "claude" : "pi";
+class ConversationDeleteError extends Error {
+  constructor(readonly status: number, message: string) { super(message); }
+}
+
+async function deleteLocalConversation(project: ProjectRecord, engine: ConversationEngine, sessionId: string): Promise<void> {
+  await assertProjectEditable(project);
+  const tasks = await listTasks(project.id);
+  const sessions = await listHarnessSessions({ ...project, additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []) });
+  const session = sessions.find((candidate) => candidate.id === sessionId && (candidate.path.startsWith("draft:claude:") || candidate.path.startsWith("claude:") ? "claude" : "pi") === engine);
+  if (!session) throw new ConversationDeleteError(404, "Session not found");
+  await requireLocalConversationOwner(engine, sessionId);
+  const local = await getClusterNode();
+  if (session.draft) {
+    await deleteConversationRecord(project.id, engine, sessionId, local.id);
+  } else {
     const filePath = session.path.startsWith("claude:") ? session.path.slice("claude:".length) : session.path;
     try {
       const fileStats = await lstat(filePath);
-      if (!fileStats.isFile() || fileStats.isSymbolicLink()) {
-        sendError(response, 400, "Session path is not a regular file");
-        return;
-      }
-      await requireLocalConversationOwner(engine, session.id);
+      if (!fileStats.isFile() || fileStats.isSymbolicLink()) throw new ConversationDeleteError(400, "Session path is not a regular file");
       await unlink(filePath);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        sendError(response, 404, "Session not found");
-        return;
-      }
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new ConversationDeleteError(404, "Session not found");
       throw error;
     }
-    broadcastToProject(project.id, { type: "sessionsChanged" });
+    await deleteConversationRecord(project.id, engine, sessionId, local.id);
+  }
+  broadcastToProject(project.id, { type: "sessionsChanged" });
+}
+
+app.delete("/api/projects/:projectId/sessions", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    const payload = sessionDeleteSchema.parse({ projectId: project.id, engine: request.query.engine, sessionId: request.query.sessionId });
+    const local = await getClusterNode();
+    const ownership = await getConversationOwnership(payload.engine, payload.sessionId);
+    if (ownership && ownership.ownerNodeId !== local.id) {
+      const peer = await getClusterPeer(ownership.ownerNodeId);
+      if (!peer) throw new ConversationDeleteError(409, "Conversation owner is unavailable");
+      const routed = await fetch(`${peer.url}/api/cluster/sessions/delete`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
+        body: JSON.stringify(payload), signal: AbortSignal.timeout(30_000),
+      });
+      if (routed.status === 204) { response.status(204).send(); return; }
+      const body = await routed.json().catch(() => null) as { error?: unknown } | null;
+      sendError(response, routed.status, typeof body?.error === "string" ? body.error : "Conversation owner delete failed");
+      return;
+    }
+    await deleteLocalConversation(project, payload.engine, payload.sessionId);
     response.status(204).send();
   } catch (error) {
+    if (error instanceof ConversationDeleteError) { sendError(response, error.status, error.message); return; }
+    next(error);
+  }
+});
+
+app.delete("/api/cluster/sessions/delete", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const payload = sessionDeleteSchema.parse(request.body);
+    const project = await getProject(payload.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    await deleteLocalConversation(project, payload.engine, payload.sessionId);
+    response.status(204).send();
+  } catch (error) {
+    if (error instanceof ConversationDeleteError) { sendError(response, error.status, error.message); return; }
     next(error);
   }
 });
@@ -4276,7 +4288,7 @@ async function switchEngine(connection: ChatConnection, engine: ChatEngine): Pro
     const local = await getClusterNode();
     const sessionId = randomUUID();
     await claimConversationAcrossCluster("claude", sessionId, local.id);
-    await ensureConversationRecord(connection.project.id, "claude", sessionId);
+    await ensureConversationRecord(connection.project.id, "claude", sessionId, local.id);
     connection.engine = "claude";
     connection.claude = { ...emptyClaudeState(sessionId), transcript };
     connection.handoffContext = transcript.length ? buildHandoffContext(transcript) : null;
@@ -4294,7 +4306,7 @@ async function switchEngine(connection: ChatConnection, engine: ChatEngine): Pro
   const local = await getClusterNode();
   const sessionId = randomUUID();
   await claimConversationAcrossCluster("pi", sessionId, local.id);
-  await ensureConversationRecord(connection.project.id, "pi", sessionId);
+  await ensureConversationRecord(connection.project.id, "pi", sessionId, local.id);
   const sharedSession = await getSharedSession(connection.project.id, connection.cwd, undefined, sessionId, connection.secretAccountIds);
   sharedSession.clients.add(connection.socket);
   connection.shared = sharedSession;
@@ -4569,16 +4581,28 @@ webSocketServer.on("connection", async (socket, request) => {
     return;
   }
   const requestedNodeId = url.searchParams.get("nodeId");
-  if (browserAuthenticated && !task && requestedNodeId && requestedNodeId !== local.id) {
-    const peer = await getClusterPeer(requestedNodeId);
-    if (!peer) { socket.close(1008, "Execution node not found"); return; }
-    const ownerUrl = new URL("/ws", peer.url);
-    ownerUrl.protocol = ownerUrl.protocol === "https:" ? "wss:" : "ws:";
-    for (const [key, value] of url.searchParams) ownerUrl.searchParams.set(key, value);
-    ownerUrl.searchParams.delete("nodeId");
-    ownerUrl.searchParams.set("nodeSession", "1");
-    proxySocket(socket, new WebSocket(ownerUrl, { headers: { Authorization: `Bearer ${peer.token}` } }));
-    return;
+  const requestedSessionId = url.searchParams.get("sessionId");
+  const routingDraft = parseConversationDraftPath(rawSessionPathFromUrl);
+  const routingEngine: ConversationEngine = routingDraft?.engine ?? (rawSessionPathFromUrl?.startsWith("claude:") ? "claude" : "pi");
+  if (browserAuthenticated && !task) {
+    const ownership = requestedSessionId ? await getConversationOwnership(routingEngine, requestedSessionId) : undefined;
+    const targetNodeId = ownership?.ownerNodeId ?? requestedNodeId;
+    if (targetNodeId && targetNodeId !== local.id) {
+      const peer = await getClusterPeer(targetNodeId);
+      if (!peer) { socket.close(1011, "Execution node is unavailable"); return; }
+      const ownerUrl = new URL("/ws", peer.url);
+      ownerUrl.protocol = ownerUrl.protocol === "https:" ? "wss:" : "ws:";
+      for (const [key, value] of url.searchParams) ownerUrl.searchParams.set(key, value);
+      if (!requestedSessionId && ["new", "claude:new"].includes(rawSessionPathFromUrl ?? "")) {
+        const sessionId = randomUUID();
+        await ensureConversationRecord(project.id, routingEngine, sessionId, local.id);
+        ownerUrl.searchParams.set("sessionId", sessionId);
+      }
+      ownerUrl.searchParams.delete("nodeId");
+      ownerUrl.searchParams.set("nodeSession", "1");
+      proxySocket(socket, new WebSocket(ownerUrl, { headers: { Authorization: `Bearer ${peer.token}` } }));
+      return;
+    }
   }
   if (machineAuthenticated) {
     const routedSession = url.searchParams.get("nodeSession") === "1";
@@ -4605,7 +4629,6 @@ webSocketServer.on("connection", async (socket, request) => {
   // Chosen in the new-conversation dialog; a conversation has no id yet at this point, so the
   // accounts travel with the connection until the engine reports one (FR9.4).
   const secretAccountIds = socketSecretAccountIdsSchema.parse((url.searchParams.get("secretAccountIds") ?? "").split(",").filter(Boolean));
-  const requestedSessionId = url.searchParams.get("sessionId");
   if (requestedSessionId && rawSessionPath !== "watch") {
     const sessions = await listHarnessSessions(project);
     const matching = sessions.find((candidate) => candidate.id === requestedSessionId);
@@ -4666,7 +4689,7 @@ webSocketServer.on("connection", async (socket, request) => {
     }
     console.warn("Conversation ownership claim failed on open", error);
   }
-  if (!listedSession || listedSession.draft) await ensureConversationRecord(project.id, requestedEngine, ownershipSessionId);
+  if (!listedSession || listedSession.draft) await ensureConversationRecord(project.id, requestedEngine, ownershipSessionId, local.id);
   let connection: ChatConnection = {
     socket, project, taskId: task?.id ?? null, cwd, engine: "pi", shared: null,
     claude: emptyClaudeState(ownershipSessionId), handoffContext: null, secretAccountIds,
@@ -4711,6 +4734,7 @@ webSocketServer.on("connection", async (socket, request) => {
       status: claudeStatus(connection),
       models: await listAvailableModels(),
       ownership: foreignOwner,
+      executionNodeId: local.id,
     });
     // Replay the in-flight turn so a reconnecting client sees the text and tool
     // calls that streamed while its socket was down.
@@ -4738,6 +4762,7 @@ webSocketServer.on("connection", async (socket, request) => {
       status: getSessionStatus(sharedSession.handle.session, sharedSession.handle.safeguardsEnabled),
       models: await listAvailableModels(),
       ownership: foreignOwner,
+      executionNodeId: local.id,
     });
   }
 

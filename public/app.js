@@ -300,6 +300,7 @@ const elements = {
   newSessionNameDialog: document.querySelector("#newSessionNameDialog"),
   newSessionNameForm: document.querySelector("#newSessionNameForm"),
   newSessionNameInput: document.querySelector("#newSessionNameInput"),
+  newSessionNodeSelect: document.querySelector("#newSessionNodeSelect"),
   newSessionColorSwatches: document.querySelector("#newSessionColorSwatches"),
   newSessionSecretList: document.querySelector("#newSessionSecretList"),
   cancelNewSessionNameButton: document.querySelector("#cancelNewSessionNameButton"),
@@ -2248,6 +2249,10 @@ function openListedSession(session) {
   rememberRecentSession(session);
   state.activeSessionId = session.id;
   state.activeTaskId = session.taskId || null;
+  if (session.executionNodeId) {
+    state.activeNodeId = session.executionNodeId;
+    if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: session.executionNodeId });
+  }
   openSession(session.path, shortSessionTitle(session), false, Boolean(state.activeTaskId));
 }
 
@@ -2570,7 +2575,6 @@ async function transferSessionFromRow(session) {
 }
 
 async function removeSessionFromRow(session, sessionActive) {
-  await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions?sessionPath=${encodeURIComponent(session.path)}`, { method: "DELETE" });
   const confirmed = await confirmAction({
     eyebrow: "Remove conversation",
     title: `Remove session "${shortSessionTitle(session)}"?`,
@@ -2579,6 +2583,7 @@ async function removeSessionFromRow(session, sessionActive) {
     destructive: true,
   });
   if (!confirmed) return;
+  await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions?sessionId=${encodeURIComponent(session.id)}&engine=${sessionEngine(session)}`, { method: "DELETE" });
   if (sessionActive) {
     state.activeTaskId = null;
     closeSocket();
@@ -3594,14 +3599,15 @@ function renderChatSessionControls() {
     disabled: !node.online || !node.mapped,
   })));
   elements.chatNodeSelect.value = state.activeNodeId || "";
-  elements.chatNodeSelect.disabled = !state.activeProjectId || !state.sessionNodes.length;
+  const selectedSession = state.sessions.find((session) => session.id === state.activeSessionId);
+  const activeTicket = state.activeTaskId ? state.tasks.find((task) => task.id === state.activeTaskId) : null;
+  elements.chatNodeSelect.disabled = !state.activeProjectId || !state.sessionNodes.length || Boolean(selectedSession && !activeTicket);
 
   syncSelectOptions(elements.chatHarnessSelect, state.harnesses.map((harness) => ({ value: harness.id, label: harness.label })));
   elements.chatHarnessSelect.value = state.engine;
   elements.chatHarnessSelect.disabled = !state.activeProjectId || !state.harnesses.length;
 
   // Conversations are picked in the conversations panel; the toolbar no longer duplicates it.
-  const selectedSession = state.sessions.find((session) => session.id === state.activeSessionId);
 
   const activeTask = state.activeTaskId ? state.tasks.find((task) => task.id === state.activeTaskId) : null;
   const ticketDestinations = activeTask && state.sessionNodes.filter((node) => node.id !== activeTask.currentNodeId);
@@ -3967,6 +3973,10 @@ function handleSocketPayload(payload) {
     const openingDraft = ["new", "claude:new"].includes(state.activeSessionPath);
     state.conversationLock = payload.ownership ?? null;
     state.engine = payload.engine || "pi";
+    if (payload.executionNodeId) {
+      state.activeNodeId = payload.executionNodeId;
+      if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: payload.executionNodeId });
+    }
     setComposerEnabled(true);
     renderConversationLock();
     state.activeSessionId = payload.sessionId || state.activeSessionId;
@@ -5128,20 +5138,26 @@ elements.fileActionDownloadLink.addEventListener("click", () => setTimeout(() =>
 elements.loginForm.addEventListener("submit", submitLogin);
 /** The environment is composed once, at spawn, so the accounts have to be chosen before the
     conversation starts rather than attached to it afterwards. */
+function localSessionNode() {
+  return state.sessionNodes.find((node) => node.local);
+}
+
 function renderNewSessionSecrets() {
   elements.newSessionSecretList.replaceChildren();
   if (!secretAccounts.length) {
     elements.newSessionSecretList.textContent = "No node-local secret accounts. Add one in Settings.";
     return;
   }
+  const remote = elements.newSessionNodeSelect.value !== localSessionNode()?.id;
   for (const account of secretAccounts) {
     const item = document.createElement("label");
     item.className = "checkbox-row secret-scope-row";
     const input = document.createElement("input");
     input.type = "checkbox";
     input.value = account.id;
+    input.disabled = remote && account.replicate !== true;
     input.dataset.testid = "conversation-secrets-checkbox";
-    item.append(input, providerBadge(account.provider, "secret-scope-provider-badge"), document.createTextNode(` ${account.label}`));
+    item.append(input, providerBadge(account.provider, "secret-scope-provider-badge"), document.createTextNode(` ${account.label}${input.disabled ? " · local only" : ""}`));
     elements.newSessionSecretList.append(item);
   }
 }
@@ -5150,6 +5166,14 @@ function renderNewSessionSecrets() {
 function openNewSessionNameDialog(sessionPath, defaultTitle) {
   state.newSessionDraft = { sessionPath, defaultTitle };
   elements.newSessionNameInput.value = "";
+  elements.newSessionNodeSelect.replaceChildren(...state.sessionNodes.map((node) => {
+    const option = document.createElement("option");
+    option.value = node.id;
+    option.textContent = node.name;
+    option.disabled = !node.online || !node.mapped;
+    return option;
+  }));
+  elements.newSessionNodeSelect.value = localSessionNode()?.id ?? "";
   renderSessionColorSwatches(null, elements.newSessionColorSwatches);
   elements.newSessionSecretList.replaceChildren();
   loadSecretAccounts().then(renderNewSessionSecrets).catch((error) => toast(error.message));
@@ -5163,14 +5187,19 @@ elements.newSessionNameForm.addEventListener("submit", (event) => {
   const draft = state.newSessionDraft;
   const title = elements.newSessionNameInput.value.trim();
   const color = selectedSessionColor(elements.newSessionColorSwatches);
+  const node = state.sessionNodes.find((candidate) => candidate.id === elements.newSessionNodeSelect.value);
+  if (!node || !node.online || !node.mapped) { toast("Choose an online node with this project mapped"); return; }
   state.newSessionSecretAccountIds = [...elements.newSessionSecretList.querySelectorAll("input:checked")].map((input) => input.value);
+  state.activeNodeId = node.id;
+  if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: node.id });
   elements.newSessionNameDialog.close();
   state.newSessionDraft = null;
-  state.activeSessionId = null;
+  state.activeSessionId = crypto.randomUUID();
   openSession(draft.sessionPath, title || draft.defaultTitle);
   state.pendingSessionTitle = title || null;
   state.pendingSessionColor = color;
 });
+elements.newSessionNodeSelect.addEventListener("change", renderNewSessionSecrets);
 elements.chatNodeSelect.addEventListener("change", async () => {
   const destination = state.sessionNodes.find((node) => node.id === elements.chatNodeSelect.value);
   const task = state.activeTaskId ? state.tasks.find((candidate) => candidate.id === state.activeTaskId) : null;
@@ -5195,8 +5224,6 @@ elements.chatNodeSelect.addEventListener("change", async () => {
   if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: state.activeNodeId });
   if (!activeChatSession()) {
     state.activeSessionId = null;
-    const harness = state.harnesses.find((candidate) => candidate.id === state.engine);
-    openSession(harness?.newSessionPath, `New ${harness?.label || "Pi"} conversation`);
     return;
   }
   openSession(state.activeSessionPath, elements.sessionTitle.textContent || "Conversation", false);

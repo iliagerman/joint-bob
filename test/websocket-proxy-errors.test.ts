@@ -21,14 +21,28 @@ test("execution-node WebSockets close on rejection and route task sessions to th
   process.env.PI_WEB_DATA_DIR = dataDir;
   process.env.MASTER_BOB_ADMIN_USERNAME = "admin";
   process.env.MASTER_BOB_INITIAL_PASSWORD = "initial-password";
-  const rejectingServer = createServer();
+  let deletePayload: unknown;
+  const rejectingServer = createServer(async (request, response) => {
+    if (request.method === "DELETE" && request.url === "/api/cluster/sessions/delete") {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(chunk as Buffer);
+      deletePayload = JSON.parse(Buffer.concat(chunks).toString());
+      response.statusCode = 204;
+      response.end();
+      return;
+    }
+    response.statusCode = 404;
+    response.end();
+  });
   const upstreamSockets = new WebSocketServer({ noServer: true });
+  const upstreamUrls: string[] = [];
   let rejectUpstream = true;
   rejectingServer.on("upgrade", (request, socket, head) => {
     if (rejectUpstream) {
       socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
       return;
     }
+    upstreamUrls.push(request.url ?? "");
     upstreamSockets.handleUpgrade(request, socket, head, (upstream) => {
       upstreamSockets.emit("connection", upstream, request);
     });
@@ -97,7 +111,7 @@ test("execution-node WebSockets close on rejection and route task sessions to th
     assert.deepEqual(closed, { code: 1011, reason: "Execution node rejected connection (401)" });
 
     rejectUpstream = false;
-    socket = new WebSocket(`ws://127.0.0.1:${address.port}/ws?projectId=${project.project.id}&sessionPath=watch&nodeId=${peer.id}`, {
+    socket = new WebSocket(`ws://127.0.0.1:${address.port}/ws?projectId=${project.project.id}&sessionPath=claude:new&nodeId=${peer.id}`, {
       origin: baseUrl,
       headers: { Cookie: cookie },
     });
@@ -106,6 +120,10 @@ test("execution-node WebSockets close on rejection and route task sessions to th
       socket?.once("error", reject);
     });
     assert.deepEqual(forwarded, { payload: { type: "watchReady" }, isBinary: false });
+    const freshRemoteUrl = new URL(upstreamUrls.at(-1)!, "http://upstream.test");
+    assert.equal(freshRemoteUrl.searchParams.get("nodeSession"), "1");
+    assert.equal(freshRemoteUrl.searchParams.get("nodeId"), null);
+    assert.match(freshRemoteUrl.searchParams.get("sessionId") ?? "", /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
     assert.notEqual(local.id, peer.id);
 
     const ownerWorktreePath = path.join(dataDir, "owner-worktree");
@@ -153,6 +171,26 @@ test("execution-node WebSockets close on rejection and route task sessions to th
       socket?.once("error", reject);
     });
     assert.deepEqual(routedTask, { payload: { type: "watchReady" }, isBinary: false });
+
+    const { takeConversationOwnership } = await import("../src/conversation-ownership.js");
+    const ownedId = randomUUID();
+    await takeConversationOwnership("pi", ownedId, peer.id);
+    socket.terminate();
+    socket = new WebSocket(`ws://127.0.0.1:${address.port}/ws?projectId=${project.project.id}&sessionPath=draft:pi:${ownedId}&sessionId=${ownedId}`, { origin: baseUrl, headers: { Cookie: cookie } });
+    await new Promise<void>((resolve, reject) => {
+      socket?.once("message", () => resolve());
+      socket?.once("error", reject);
+    });
+    const existingOwnerUrl = new URL(upstreamUrls.at(-1)!, "http://upstream.test");
+    assert.equal(existingOwnerUrl.searchParams.get("sessionId"), ownedId);
+    assert.equal(existingOwnerUrl.searchParams.get("nodeId"), null);
+
+    socket.terminate();
+    const deletion = await fetch(`${baseUrl}/api/projects/${project.project.id}/sessions?engine=pi&sessionId=${ownedId}`, {
+      method: "DELETE", headers: { Cookie: cookie, "X-CSRF-Token": auth.csrfToken },
+    });
+    assert.equal(deletion.status, 204);
+    assert.deepEqual(deletePayload, { projectId: project.project.id, engine: "pi", sessionId: ownedId });
   } finally {
     socket?.terminate();
     upstreamSockets.close();

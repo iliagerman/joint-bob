@@ -88,6 +88,8 @@ export interface SessionSummary {
   running?: boolean;
   reviewState?: "running" | "needs_review" | "reviewed";
   draft?: boolean;
+  /** Node owning conversation execution. */
+  executionNodeId?: string;
   agentRuns?: AgentRunSummary[];
 }
 

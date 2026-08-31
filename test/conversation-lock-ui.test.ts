@@ -93,7 +93,7 @@ test("takeover derives the engine from the session path instead of refusing Clau
 });
 
 test("the execution node reports foreign conversation ownership to the browser", async () => {
-  const server = await readFile("src/server.ts", "utf8");
+  const [server, app] = await Promise.all([readFile("src/server.ts", "utf8"), readFile("public/app.js", "utf8")]);
   const describe = server.slice(server.indexOf("async function describeConversationOwner("));
   assert.ok(describe.startsWith("async function describeConversationOwner("), "Missing describeConversationOwner");
   const body = describe.slice(0, describe.indexOf("\n}"));
@@ -102,6 +102,8 @@ test("the execution node reports foreign conversation ownership to the browser",
   assert.match(server, /async function foreignConversationOwner\([\s\S]*ownership \? describeConversationOwner\(ownership, localId\) : null/);
 
   assert.equal([...server.matchAll(/ownership: foreignOwner,/g)].length, 2, "Both engines must publish ownership in the ready payload");
+  assert.equal([...server.matchAll(/executionNodeId: local\.id,/g)].length, 2, "Both ready payloads identify their execution node");
+  assert.match(app, /if \(payload\.executionNodeId\) \{\s*state\.activeNodeId = payload\.executionNodeId;/);
   assert.match(server, /if \(error instanceof ConversationOwnershipError\)[\s\S]*send\(socket, \{ type: "ownership", ownership: await describeConversationOwner\(error\.ownership, local\.id\)/);
 });
 
