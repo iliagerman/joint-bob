@@ -36,6 +36,8 @@ import { SessionWatcher } from "./watcher.js";
 import { appendLiveEvent, buildHandoffContext, claudeRunIdFromSessionPath, claudeSessionFilePath, ensureLocalClaudeTranscript, loadClaudeMessages, runClaudePrompt, type ClaudeRunHandle, type ClaudeRunResult } from "./claude-service.js";
 import { isClaudeSessionRunning } from "./claude-runtime.js";
 import { listHarnesses, listHarnessSessions } from "./harnesses.js";
+import { deleteConversationRecord, ensureConversationRecord, getConversationRecord, parseConversationDraftPath } from "./conversation-records.js";
+import { agentRunDescriptor, refreshAgentRun, type AgentRunDescriptor } from "./agent-run-monitor.js";
 import { listHarnessCommands } from "./commands.js";
 import { listSkills } from "./skills.js";
 import { authenticate, authenticationStatus, changePassword, clearSessionCookieValue, createAdministrator, listLoginSessions, revokeSession, revokeUserSession, sessionCookieValue, sessionForId, type AuthSession } from "./auth.js";
@@ -48,7 +50,7 @@ import { appVersion, readChangelog } from "./changelog.js";
 import { claimReviewNotifications, markConversationReviewed, markConversationsReviewed, syncConversationReviewStates } from "./conversation-reviews.js";
 import { resetSyncthingConnection } from "./syncthing.js";
 import { PROJECT_COLORS } from "./types.js";
-import type { ChatMessage, ProjectRecord, ProjectSyncStatus, ProjectView, SessionStatus, SessionSummary, TaskPhase, TaskPhaseConfig, TaskRecord } from "./types.js";
+import type { AgentRunSummary, ChatMessage, ProjectRecord, ProjectSyncStatus, ProjectView, SessionStatus, SessionSummary, TaskPhase, TaskPhaseConfig, TaskRecord } from "./types.js";
 import { webSocketCloseReason } from "./websocket.js";
 import { capturePiRecoverySnapshot, recoverPiSessionDirectory, resolveLocalSessionPath } from "./session-paths.js";
 import { beginConversationRecovery, beginConversationTransfer, commitConversationTransfer, compareAndSetConversationOwnership, ConversationOwnershipError, finalizeConversationClaim, finishConversationRecovery, getConversationOwnership, sameConversationOwnership, takeConversationOwnership, type ConversationEngine, type ConversationOwnership, type ConversationOwnershipStatus, type OwnershipApplyResult } from "./conversation-ownership.js";
@@ -66,6 +68,7 @@ interface SharedPiSession {
   cwd: string;
   idleTimer: NodeJS.Timeout | null;
   lastLocalEventAt: number;
+  agentRuns: Map<string, { descriptor: AgentRunDescriptor; summary: AgentRunSummary }>;
 }
 
 type ChatEngine = "pi" | "claude";
@@ -2169,9 +2172,17 @@ async function listProjectSessionsWithReviewState(project: ProjectRecord, userId
     additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []),
   }, pinnedSessionPaths);
   const tasksBySessionPath = new Map(tasks.filter((task) => task.sessionPath).map((task) => [task.sessionPath, task]));
+  const projectSharedSessions = [...new Set(sharedSessions.values())].filter((shared) => shared.projectId === project.id);
+  await Promise.all(projectSharedSessions.map(async (shared) => {
+    for (const run of shared.agentRuns.values()) {
+      try { run.summary = await refreshAgentRun(run.descriptor); }
+      catch (error) { console.warn(`Could not refresh agent run ${run.descriptor.runId}`, error); }
+    }
+  }));
   const listedSessions = sessions.map((session) => {
     const task = tasksBySessionPath.get(session.path);
-    const shared = sharedSessions.get(sessionKey(task ? taskCwd(project, task) : project.path, session.path));
+    const shared = sharedSessions.get(sessionKey(task ? taskCwd(project, task) : project.path, session.path))
+      ?? projectSharedSessions.find((candidate) => candidate.handle.session.sessionId === session.id);
     const config = task?.executionState === "running" ? taskConfig(task, taskPhase(task)) : undefined;
     const agentLabel = config ? (config.engine === "pi" ? "Pi" : "Claude") : session.agentLabel;
     const agentId = config ? config.engine : session.harnessId;
@@ -2186,8 +2197,10 @@ async function listProjectSessionsWithReviewState(project: ProjectRecord, userId
       ...(agentModel ? { agentModel } : {}),
       taskStatus: task?.status,
       taskId: task?.id,
+      agentRuns: shared ? [...shared.agentRuns.values()].map((run) => run.summary).sort((left, right) => left.runId.localeCompare(right.runId)) : undefined,
       running: Boolean(
         shared?.handle.session.isStreaming
+        || [...(shared?.agentRuns.values() ?? [])].some((run) => run.summary.status === "running")
         || task?.executionState === "running"
         || runningClaudeSessionPaths.has(claudeRunKey(project.id, session.path))
         || (session.harnessId === "claude" && isClaudeSessionRunning(session.path)),
@@ -2725,6 +2738,19 @@ app.delete("/api/projects/:projectId/sessions", async (request, response, next) 
     const sessionPath = typeof request.query.sessionPath === "string" ? request.query.sessionPath : "";
     if (!sessionPath || sessionPath === "new" || sessionPath === "claude:new") {
       sendError(response, 400, "Session path is required");
+      return;
+    }
+    const draft = parseConversationDraftPath(sessionPath);
+    if (draft) {
+      const record = await getConversationRecord(project.id, draft.engine, draft.sessionId);
+      if (!record) {
+        sendError(response, 404, "Session not found");
+        return;
+      }
+      await requireLocalConversationOwner(draft.engine, draft.sessionId);
+      await deleteConversationRecord(project.id, draft.engine, draft.sessionId);
+      broadcastToProject(project.id, { type: "sessionsChanged" });
+      response.status(204).send();
       return;
     }
     const tasks = await listTasks(project.id);
@@ -3866,6 +3892,11 @@ function subscribeSharedSession(session: SharedPiSession): () => void {
   const handle = session.handle;
   return handle.session.subscribe((event) => {
     session.lastLocalEventAt = Date.now();
+    const run = agentRunDescriptor(event);
+    if (run && !session.agentRuns.has(run.runId)) {
+      session.agentRuns.set(run.runId, { descriptor: run, summary: run.summary });
+      broadcastToProject(session.projectId, { type: "sessionsChanged" });
+    }
     // New sessions get their file lazily; register the file-keyed entry as soon
     // as it exists so later connects attach to this live session.
     if (handle.session.sessionFile && !sharedSessions.has(sessionKey(session.cwd, handle.session.sessionFile))) {
@@ -3911,6 +3942,7 @@ async function getSharedSession(projectId: string, cwd: string, sessionPath: str
     // Loading an existing session is not a local write. Start at zero so an
     // immediate Syncthing update can invalidate and reload this transcript.
     lastLocalEventAt: 0,
+    agentRuns: new Map(),
   };
   session.unsubscribe = subscribeSharedSession(session);
   sharedSessions.set(key, session);
@@ -4109,7 +4141,14 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
   // the live run right away, otherwise tapping the conversation as it appears in
   // the list opens a fresh connection and orphans this run.
   const adoptSessionId = (sessionId: string): void => {
-    if (connection.claude.sessionId === sessionId) return;
+    if (connection.claude.sessionId === sessionId) {
+      if (!connection.claude.filePath) {
+        connection.claude.filePath = claudeSessionFilePath(connection.cwd, sessionId);
+        activeClaudeConnections.set(activeKey, connection);
+        send(connection.socket, { type: "sessionFile", sessionId, sessionFile: `claude:${connection.claude.filePath}` });
+      }
+      return;
+    }
     if (activeClaudeConnections.get(activeKey) === connection) activeClaudeConnections.delete(activeKey);
     connection.claude.sessionId = sessionId;
     connection.claude.filePath = claudeSessionFilePath(connection.cwd, sessionId);
@@ -4237,6 +4276,7 @@ async function switchEngine(connection: ChatConnection, engine: ChatEngine): Pro
     const local = await getClusterNode();
     const sessionId = randomUUID();
     await claimConversationAcrossCluster("claude", sessionId, local.id);
+    await ensureConversationRecord(connection.project.id, "claude", sessionId);
     connection.engine = "claude";
     connection.claude = { ...emptyClaudeState(sessionId), transcript };
     connection.handoffContext = transcript.length ? buildHandoffContext(transcript) : null;
@@ -4254,6 +4294,7 @@ async function switchEngine(connection: ChatConnection, engine: ChatEngine): Pro
   const local = await getClusterNode();
   const sessionId = randomUUID();
   await claimConversationAcrossCluster("pi", sessionId, local.id);
+  await ensureConversationRecord(connection.project.id, "pi", sessionId);
   const sharedSession = await getSharedSession(connection.project.id, connection.cwd, undefined, sessionId, connection.secretAccountIds);
   sharedSession.clients.add(connection.socket);
   connection.shared = sharedSession;
@@ -4590,22 +4631,28 @@ webSocketServer.on("connection", async (socket, request) => {
     return;
   }
 
-  const requestedEngine: ConversationEngine = rawSessionPath?.startsWith("claude:") ? "claude" : "pi";
-  const requestedSessionPath = parseSessionPath(rawSessionPath);
+  const draft = parseConversationDraftPath(rawSessionPath);
+  const requestedEngine: ConversationEngine = draft?.engine ?? (rawSessionPath?.startsWith("claude:") ? "claude" : "pi");
+  const requestedSessionPath = draft ? undefined : parseSessionPath(rawSessionPath);
   const recovered = requestedSessionPath ? recoveredClaudeChats.get(claudeRunKey(project.id, requestedSessionPath)) : undefined;
   const requestedTask = requestedSessionPath ? tasks.find((candidate) => candidate.sessionPath === requestedSessionPath) : undefined;
   const cwd = requestedTask ? taskCwd(project, requestedTask) : project.path;
   // Ticket conversations live in the ticket workspace, not the project directory,
   // so this must search the same paths the conversation list searches.
-  const listed = requestedSessionPath
+  const listed = (requestedSessionPath || draft)
     ? await listHarnessSessions({ ...project, additionalPaths: tasks.flatMap((candidate) => candidate.worktreePath ? [candidate.worktreePath] : []) })
     : [];
-  const listedSession = listed.find((candidate) => candidate.path === requestedSessionPath);
-  if (requestedSessionPath && !listedSession) {
+  const listedSession = listed.find((candidate) => candidate.path === (draft ? rawSessionPath : requestedSessionPath));
+  if ((requestedSessionPath || draft) && !listedSession) {
     socket.close(1008, "Conversation not found");
     return;
   }
-  const ownershipSessionId = listedSession ? listedSession.id : randomUUID();
+  if (draft && (!listedSession?.draft || listedSession.id !== draft.sessionId || !await getConversationRecord(project.id, draft.engine, draft.sessionId))) {
+    socket.close(1008, "Conversation not found");
+    return;
+  }
+  const validRequestedSessionId = requestedSessionId && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestedSessionId) ? requestedSessionId : undefined;
+  const ownershipSessionId = listedSession && !listedSession.draft ? listedSession.id : draft?.sessionId ?? validRequestedSessionId ?? randomUUID();
   let foreignOwner: ForeignConversationOwner | null = null;
   try {
     foreignOwner = await openConversationOwnership(requestedEngine, ownershipSessionId, local.id);
@@ -4619,6 +4666,7 @@ webSocketServer.on("connection", async (socket, request) => {
     }
     console.warn("Conversation ownership claim failed on open", error);
   }
+  if (!listedSession || listedSession.draft) await ensureConversationRecord(project.id, requestedEngine, ownershipSessionId);
   let connection: ChatConnection = {
     socket, project, taskId: task?.id ?? null, cwd, engine: "pi", shared: null,
     claude: emptyClaudeState(ownershipSessionId), handoffContext: null, secretAccountIds,

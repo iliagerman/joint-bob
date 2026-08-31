@@ -53,6 +53,21 @@ export interface ProjectView extends ProjectRecord {
 
 export type HarnessId = "pi" | "claude";
 
+export type AgentRunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+export type AgentTaskStatus = AgentRunStatus;
+
+export interface AgentRunTaskSummary {
+  name: string;
+  role: string;
+  status: AgentTaskStatus;
+}
+
+export interface AgentRunSummary {
+  runId: string;
+  status: AgentRunStatus;
+  tasks: AgentRunTaskSummary[];
+}
+
 export interface SessionSummary {
   id: string;
   path: string;
@@ -72,6 +87,8 @@ export interface SessionSummary {
   taskId?: string;
   running?: boolean;
   reviewState?: "running" | "needs_review" | "reviewed";
+  draft?: boolean;
+  agentRuns?: AgentRunSummary[];
 }
 
 export type TaskStatus = "backlog" | "planning" | "in_progress" | "review" | "done";

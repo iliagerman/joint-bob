@@ -1,4 +1,5 @@
 import { sessionColorOverrides, sessionTitleOverrides } from "./names.js";
+import { conversationDraftPath, listConversationRecords } from "./conversation-records.js";
 import { createPiSession, listPiSessions, simplifyMessages } from "./pi-service.js";
 import { listClaudeSessions, loadClaudeMessages } from "./claude-service.js";
 import type { ChatMessage, HarnessId, ProjectRecord, SessionSummary } from "./types.js";
@@ -21,7 +22,7 @@ const adapters: HarnessAdapter[] = [
     id: "pi",
     label: "Pi",
     newSessionPath: "new",
-    ownsSessionPath: (sessionPath) => !sessionPath.startsWith("claude:"),
+    ownsSessionPath: (sessionPath) => !sessionPath.startsWith("claude:") && !sessionPath.startsWith("draft:claude:"),
     listSessions: listPiSessions,
     loadMessages: async (project, sessionPath) => {
       const handle = await createPiSession({ cwd: project.path, projectId: project.id, sessionPath });
@@ -34,7 +35,7 @@ const adapters: HarnessAdapter[] = [
     id: "claude",
     label: "Claude",
     newSessionPath: "claude:new",
-    ownsSessionPath: (sessionPath) => sessionPath.startsWith("claude:"),
+    ownsSessionPath: (sessionPath) => sessionPath.startsWith("claude:") || sessionPath.startsWith("draft:claude:"),
     listSessions: listClaudeSessions,
     loadMessages: async (_project, sessionPath) => loadClaudeMessages(sessionPath),
   },
@@ -94,12 +95,28 @@ export function orderSessionFamilies(sessions: SessionSummary[]): SessionSummary
  * above it first so a deliberately kept conversation can never fall off the end.
  */
 export async function listHarnessSessions(project: HarnessProject, pinnedSessionPaths: string[] = []): Promise<SessionSummary[]> {
-  const [overrides, colors, sessionGroups] = await Promise.all([
+  const [overrides, colors, sessionGroups, records] = await Promise.all([
     sessionTitleOverrides(),
     sessionColorOverrides(),
     Promise.all(adapters.map((adapter) => adapter.listSessions(project))),
+    listConversationRecords(project.id),
   ]);
   const sessions = sessionGroups.flat();
+  const transcriptKeys = new Set(sessions.map((session) => `${session.harnessId}:${session.id}`));
+  for (const record of records) {
+    if (transcriptKeys.has(`${record.engine}:${record.sessionId}`)) continue;
+    sessions.push({
+      id: record.sessionId,
+      path: conversationDraftPath(record.engine, record.sessionId),
+      harnessId: record.engine,
+      agentId: record.engine,
+      agentLabel: record.engine === "pi" ? "Pi" : "Claude",
+      title: overrides[record.sessionId] ?? (record.engine === "pi" ? "New Pi conversation" : "New Claude conversation"),
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+      draft: true,
+    });
+  }
   const seen = new Set<string>();
   const pinned = new Set(pinnedSessionPaths);
   const ordered = sessions

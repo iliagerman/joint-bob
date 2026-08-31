@@ -3,6 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 0.3.6 — 2026-08-31
+
+- Kept new Pi and Claude conversations attached to their original session across reconnects before the first transcript is written
+- Listed transcript-free conversations immediately and replaced them with the real transcript without duplication
+- Added live worker, reviewer, and watcher status beneath conversations that launch child agents
+
 ## 0.3.5 — 2026-08-31
 
 - Fixed the collapsed projects and conversations panels staying full width instead of shrinking to their rail

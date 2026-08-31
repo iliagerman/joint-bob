@@ -34,6 +34,7 @@ const state = {
   projectsRefreshing: false,
   sessionsLoading: false,
   sessionsRefreshing: false,
+  agentRunPollTimer: null,
   projectSyncTimer: null,
   tasks: [],
   editingTaskId: null,
@@ -1459,9 +1460,13 @@ function openRenameDialog(sessionId, engine, currentTitle) {
   elements.renameDialog.showModal();
 }
 
+function sessionEngine(session) {
+  return session.harnessId || (session.path.startsWith("claude:") || session.path.startsWith("draft:claude:") ? "claude" : "pi");
+}
+
 function openConversationColorDialog(session) {
   state.colorSessionId = session.id;
-  state.colorSessionEngine = session.path.startsWith("claude:") ? "claude" : "pi";
+  state.colorSessionEngine = sessionEngine(session);
   renderSessionColorSwatches(session.color || null, elements.conversationColorSwatches);
   elements.conversationColorDialog.showModal();
 }
@@ -1658,7 +1663,7 @@ function brandIcon(name, className) {
 
 /** A conversation listed by an older node names no agent, so its path is the fallback. */
 function sessionAgentId(session) {
-  return session.agentId || (session.path.startsWith("claude:") ? "claude" : "pi");
+  return session.agentId || sessionEngine(session);
 }
 
 function agentIcon(agentId) {
@@ -2355,7 +2360,7 @@ function renderSessions() {
     dot.className = "chat-status-dot";
     dot.setAttribute("aria-hidden", "true");
     const statusLabel = document.createElement("b");
-    statusLabel.textContent = chatState === "active" ? "Running" : chatState === "review" ? "Needs review" : "Reviewed";
+    statusLabel.textContent = chatState === "active" ? "Running" : chatState === "review" ? "Needs review" : session.draft ? "Ready" : "Reviewed";
     badge.append(dot, statusLabel);
     meta.append(" ", badge);
     button.addEventListener("click", () => openListedSession(session));
@@ -2374,6 +2379,22 @@ function renderSessions() {
     });
 
     row.append(button, menuButton);
+    if (session.agentRuns?.length) {
+      const runs = document.createElement("div");
+      runs.className = "agent-run-list";
+      for (const run of session.agentRuns) {
+        for (const task of run.tasks) {
+          const taskElement = document.createElement("div");
+          taskElement.className = `agent-run-task agent-run-task-${task.status}`;
+          taskElement.dataset.testid = "agent-run-task";
+          taskElement.dataset.role = task.role;
+          taskElement.dataset.status = task.status;
+          taskElement.textContent = `${task.name} · ${task.role} · ${task.status}`;
+          runs.append(taskElement);
+        }
+      }
+      row.append(runs);
+    }
     elements.sessionList.append(row);
   }
 }
@@ -2382,7 +2403,7 @@ function renderSessions() {
 function sessionMenuItems(session, sessionActive) {
   const name = shortSessionTitle(session);
   const pinned = isSessionPinned(session.path);
-  const isClaude = session.path.startsWith("claude:");
+  const isClaude = sessionEngine(session) === "claude";
   return [
     {
       label: pinned ? "Unpin from top" : "Pin to top",
@@ -3769,7 +3790,7 @@ function openSession(sessionPath, title = "New Pi conversation", preserveChat = 
   state.conversationLock = null;
   renderConversationLock();
   if (state.preferencesLoaded) savePreferencesInBackground({ activeSessionPath: state.activeSessionPath, activeSessionId: state.activeSessionId });
-  state.engine = state.activeSessionPath.startsWith("claude:") ? "claude" : "pi";
+  state.engine = state.activeSessionPath.startsWith("claude:") || state.activeSessionPath.startsWith("draft:claude:") ? "claude" : "pi";
   elements.sessionTitle.textContent = title;
   renderSessions();
   // A reconnect reuses this function. Switching panels there would yank the user
@@ -4003,6 +4024,18 @@ function handleSocketPayload(payload) {
   }
 }
 
+function scheduleAgentRunPoll() {
+  if (state.agentRunPollTimer) clearTimeout(state.agentRunPollTimer);
+  state.agentRunPollTimer = null;
+  const hasActiveRun = state.sessions.some((session) =>
+    session.agentRuns?.some((run) => ["queued", "running"].includes(run.status)));
+  if (!state.activeProjectId || !hasActiveRun) return;
+  state.agentRunPollTimer = setTimeout(() => {
+    state.agentRunPollTimer = null;
+    refreshSessionsQuietly();
+  }, 2000);
+}
+
 async function refreshSessionsQuietly() {
   const projectId = state.activeProjectId;
   if (!projectId || state.sessionsRefreshing) return;
@@ -4035,6 +4068,7 @@ async function refreshSessionsQuietly() {
     console.warn(error);
   } finally {
     state.sessionsRefreshing = false;
+    scheduleAgentRunPoll();
   }
 }
 

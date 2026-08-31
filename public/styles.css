@@ -592,7 +592,7 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
 
 .agent-run-list { grid-column: 1 / -1; display: grid; gap: 2px; margin: 0 8px 5px 18px; padding-left: 9px; border-left: 1px solid var(--line); }
 .agent-run-task { color: var(--muted); font-family: var(--mono); font-size: 10px; line-height: 1.35; }
-.agent-run-task-running, .agent-run-task-succeeded { color: var(--live); }
+.agent-run-task-running, .agent-run-task-succeeded { color: var(--accent); }
 .agent-run-task-failed { color: var(--danger); }
 
 /* Projects are grouped by type; the header is a <summary> so the browser handles collapsing. */
