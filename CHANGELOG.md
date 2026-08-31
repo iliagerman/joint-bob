@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 0.3.8 — 2026-09-01
+
+- Fixed conversation scrolling resisting upward movement when off-screen messages changed from estimated to real heights
+
 ## 0.3.7 — 2026-09-01
 
 - Added a shared indexed conversation catalog with targeted Pi and Claude transcript refreshes

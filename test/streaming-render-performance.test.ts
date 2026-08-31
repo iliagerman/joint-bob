@@ -19,11 +19,11 @@ test("streamed assistant text paints cheaply before the final markdown render", 
   assert.doesNotMatch(app, /LARGE_MESSAGE_RENDER_MS|bubble\._renderTimer/);
 });
 
-test("off-screen chat bubbles are skipped during layout", async () => {
+test("off-screen chat bubbles keep their real height while scrolling", async () => {
   const styles = await readFile("public/styles.css", "utf8");
 
-  assert.match(styles, /^\.message \{[^\n}]*content-visibility: auto;/m);
-  assert.match(styles, /^\.message \{[^\n}]*contain-intrinsic-size: auto 220px;/m);
+  assert.doesNotMatch(styles, /^\.message \{[^\n}]*content-visibility:/m);
+  assert.doesNotMatch(styles, /^\.message \{[^\n}]*contain-intrinsic-size:/m);
 });
 
 test("Claude session listing reads a bounded number of transcripts at a time", async () => {
