@@ -231,40 +231,57 @@ async function claudeSessionFacts(filePath: string, fileStat: Stats): Promise<Cl
   return facts;
 }
 
+async function summarizeClaudeTranscript(project: SessionProjectPaths, filePath: string): Promise<SessionSummary | null> {
+  let fileStat: Stats;
+  try { fileStat = await stat(filePath); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  const facts = await claudeSessionFacts(filePath, fileStat);
+  const projectCwds = new Set(sessionCwds(project));
+  if (![...facts.cwds].some((cwd) => projectCwds.has(cwd))) return null;
+  return {
+    id: path.basename(filePath, ".jsonl"),
+    path: `claude:${filePath}`,
+    harnessId: "claude",
+    agentId: "claude",
+    agentLabel: "Claude",
+    title: `[Claude] ${facts.title}`,
+    createdAt: fileStat.birthtime.toISOString(),
+    // Syncthing rewrites mtime when a peer advertises new metadata, so transcript events own recency.
+    updatedAt: facts.lastEventAt || fileStat.mtime.toISOString(),
+    firstMessage: facts.title,
+  };
+}
+
+export async function claudeSessionFiles(project: SessionProjectPaths): Promise<string[]> {
+  const groups = await Promise.all(claudeProjectDirs(project, claudeProjectsRoot()).map(async (dir) => {
+    try { return (await readdir(dir)).filter((file) => file.endsWith(".jsonl") && !isSyncConflictPath(file)).map((file) => path.join(dir, file)); }
+    catch { return []; }
+  }));
+  return [...new Set(groups.flat().map((filePath) => path.resolve(filePath)))];
+}
+
 export async function listClaudeSessions(project: SessionProjectPaths): Promise<SessionSummary[]> {
-  const cwds = new Set(sessionCwds(project));
-  const files = (await Promise.all(claudeProjectDirs(project, claudeProjectsRoot()).map(async (dir) => {
-    try {
-      return (await readdir(dir)).filter((file) => file.endsWith(".jsonl") && !isSyncConflictPath(file)).map((file) => path.join(dir, file));
-    } catch {
-      return [];
-    }
-  }))).flat();
-  const summaries = await mapWithConcurrency(files, CLAUDE_LIST_CONCURRENCY, async (filePath): Promise<SessionSummary | null> => {
-    const fileStat = await stat(filePath);
-    const facts = await claudeSessionFacts(filePath, fileStat);
-    if (![...facts.cwds].some((cwd) => cwds.has(cwd))) return null;
-    return {
-      id: path.basename(filePath, ".jsonl"),
-      path: `claude:${filePath}`,
-      harnessId: "claude",
-      agentId: "claude",
-      agentLabel: "Claude",
-      title: `[Claude] ${facts.title}`,
-      createdAt: fileStat.birthtime.toISOString(),
-      // Syncthing rewrites mtime when a peer advertises new metadata, so a synchronized
-      // transcript looks freshly active with no new message. The transcript itself is the
-      // only honest record of when this conversation last moved.
-      updatedAt: facts.lastEventAt || fileStat.mtime.toISOString(),
-      firstMessage: facts.title,
-    };
-  });
+  const files = await claudeSessionFiles(project);
+  const summaries = await mapWithConcurrency(files, CLAUDE_LIST_CONCURRENCY, (filePath) => summarizeClaudeTranscript(project, filePath));
   // A conversation claimed from another node exists under that node's encoded
   // directory as well as this node's, so the same transcript is read twice.
   // `claudeProjectDirs` lists this node's own project path first, so keeping the
   // first summary per id shows the copy a turn here actually resumes.
   const byId = new Map<string, SessionSummary>();
   for (const summary of summaries) if (summary && !byId.has(summary.id)) byId.set(summary.id, summary);
+  return [...byId.values()];
+}
+
+export async function refreshClaudeSessions(project: SessionProjectPaths, previous: SessionSummary[], changedFiles: string[]): Promise<SessionSummary[]> {
+  if (!changedFiles.length) return listClaudeSessions(project);
+  const changed = new Set(changedFiles.map((filePath) => path.resolve(filePath)));
+  const retained = previous.filter((session) => !changed.has(path.resolve(session.path.replace(/^claude:/, ""))));
+  const refreshed = await Promise.all([...changed].map((filePath) => summarizeClaudeTranscript(project, filePath)));
+  const byId = new Map(retained.map((session) => [session.id, session]));
+  for (const session of refreshed) if (session) byId.set(session.id, session);
   return [...byId.values()];
 }
 

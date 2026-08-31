@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readdir, stat } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import path, { basename } from "node:path";
 import {
   createAgentSession,
@@ -273,6 +273,15 @@ async function listSessionsForDirectory(cwd: string, sessionDirectory: string | 
   return sessions;
 }
 
+export async function piSessionFiles(project: SessionProjectPaths): Promise<string[]> {
+  const directories = sessionCwds(project).flatMap((cwd) => piSessionDirectories(cwd).map((directory) => directory ?? path.join(getAgentDir(), "sessions", `--${path.resolve(cwd).replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`)));
+  const groups = await Promise.all([...new Set(directories)].map(async (directory) => {
+    try { return (await readdir(directory)).filter((name) => name.endsWith(".jsonl")).map((name) => path.join(directory, name)); }
+    catch { return []; }
+  }));
+  return [...new Set(groups.flat().map((filePath) => path.resolve(filePath)))];
+}
+
 async function sessionsForCwd(cwd: string): Promise<unknown[]> {
   const results = await Promise.all(piSessionDirectories(cwd).map(async (sessionDirectory) => {
     try {
@@ -289,6 +298,57 @@ export async function listPiSessions(project: SessionProjectPaths): Promise<Sess
   const sessions = (await Promise.all(sessionCwds(project).map(sessionsForCwd))).flat();
   const unique = [...new Map(sessions.map((session) => [String(asRecord(session).path), session])).values()];
   return Promise.all(unique.map(summarizeSession));
+}
+
+function piMessageActivity(record: UnknownRecord): string | undefined {
+  if (record.type !== "message") return undefined;
+  const message = asRecord(record.message);
+  if (!["user", "assistant"].includes(String(message.role))) return undefined;
+  if (typeof message.timestamp === "number") return new Date(message.timestamp).toISOString();
+  return typeof record.timestamp === "string" ? record.timestamp : undefined;
+}
+
+async function summarizePiTranscript(filePath: string, project: SessionProjectPaths): Promise<SessionSummary | null> {
+  let records: UnknownRecord[];
+  try {
+    records = (await readFile(filePath, "utf8")).split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line) as UnknownRecord);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  const header = records[0];
+  const cwd = typeof header?.cwd === "string" ? path.resolve(header.cwd) : "";
+  if (header?.type !== "session" || typeof header.id !== "string" || !sessionCwds(project).includes(cwd)) return null;
+  let name = "";
+  let firstMessage = "";
+  let updatedAt = typeof header.timestamp === "string" ? header.timestamp : "";
+  for (const record of records.slice(1)) {
+    if (record.type === "session_info") name = typeof record.name === "string" ? record.name.trim() : "";
+    if (!firstMessage && record.type === "message" && asRecord(record.message).role === "user") firstMessage = textFromMessage(record.message).trim();
+    const activity = piMessageActivity(record);
+    if (activity && activity > updatedAt) updatedAt = activity;
+  }
+  const fileStat = await stat(filePath);
+  return {
+    id: header.id,
+    path: filePath,
+    harnessId: "pi",
+    agentId: "pi",
+    agentLabel: "Pi",
+    title: name || firstMessage.slice(0, 80) || "Untitled Pi session",
+    createdAt: typeof header.timestamp === "string" ? header.timestamp : fileStat.birthtime.toISOString(),
+    updatedAt: updatedAt || fileStat.mtime.toISOString(),
+    firstMessage: firstMessage || undefined,
+    parentSessionPath: typeof header.parentSession === "string" ? header.parentSession : undefined,
+  };
+}
+
+export async function refreshPiSessions(project: SessionProjectPaths, previous: SessionSummary[], changedFiles: string[]): Promise<SessionSummary[]> {
+  if (!changedFiles.length) return listPiSessions(project);
+  const changed = new Set(changedFiles.map((filePath) => path.resolve(filePath)));
+  const retained = previous.filter((session) => !changed.has(path.resolve(session.path)));
+  const refreshed = await Promise.all([...changed].map((filePath) => summarizePiTranscript(filePath, project)));
+  return [...retained, ...refreshed.filter((session): session is SessionSummary => Boolean(session))];
 }
 
 export function isPermissionSafeguardExtension(extensionPath: string): boolean {

@@ -47,6 +47,7 @@ test("the picked name is displayed right away and saved once the transcript exis
   assert.match(submit, /if \(!node \|\| !node\.online \|\| !node\.mapped\)/);
   assert.match(submit, /state\.activeNodeId = node\.id;/);
   assert.match(submit, /state\.activeSessionId = crypto\.randomUUID\(\);/);
+  assert.match(submit, /addOptimisticSession\(state\.activeSessionId, draft\.sessionPath, title \|\| draft\.defaultTitle, color\);/);
   assert.ok(submit.indexOf("state.activeSessionId = crypto.randomUUID();") < submit.indexOf("openSession(draft.sessionPath"));
   assert.match(submit, /openSession\(draft\.sessionPath, title \|\| draft\.defaultTitle\);/);
   assert.match(submit, /state\.pendingSessionTitle = title \|\| null;/);

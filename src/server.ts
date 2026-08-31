@@ -35,7 +35,7 @@ import { assertTaskWorkspaceReady, removeTaskWorkspace, taskWorkspaceKey, TaskWo
 import { SessionWatcher } from "./watcher.js";
 import { appendLiveEvent, buildHandoffContext, claudeRunIdFromSessionPath, claudeSessionFilePath, ensureLocalClaudeTranscript, loadClaudeMessages, runClaudePrompt, type ClaudeRunHandle, type ClaudeRunResult } from "./claude-service.js";
 import { isClaudeSessionRunning } from "./claude-runtime.js";
-import { listHarnesses, listHarnessSessions } from "./harnesses.js";
+import { listHarnesses, listHarnessSessions, refreshHarnessSessions } from "./harnesses.js";
 import { deleteConversationRecord, ensureConversationRecord, getConversationRecord, parseConversationDraftPath } from "./conversation-records.js";
 import { agentRunDescriptor, refreshAgentRun, type AgentRunDescriptor } from "./agent-run-monitor.js";
 import { listHarnessCommands } from "./commands.js";
@@ -1727,7 +1727,7 @@ app.post("/api/push/unsubscribe", async (request, response, next) => {
 });
 
 app.get("/api/harnesses", (_request, response) => {
-  response.json({ harnesses: listHarnesses().map(({ id, label, newSessionPath }) => ({ id, label, newSessionPath })) });
+  response.json({ harnesses: listHarnesses().map(({ id, label, paths }) => ({ id, label, newSessionPath: paths.newSession })) });
 });
 
 app.get("/api/models", async (_request, response, next) => {
@@ -3505,7 +3505,9 @@ function scheduleReviewNotifications(projectId: string): void {
 }
 
 function handleSessionChange(projectId: string, changedFiles: string[]): void {
-  broadcastToProject(projectId, { type: "sessionsChanged" });
+  refreshHarnessSessions(projectId, changedFiles)
+    .then(() => broadcastToProject(projectId, { type: "sessionsChanged" }))
+    .catch((error) => console.warn("Conversation catalog refresh failed", error));
   scheduleReviewNotifications(projectId);
   invalidateExternallyChangedSessions(projectId, changedFiles);
   reloadClaudeClients(projectId, changedFiles).catch((error) => console.warn("Claude reload failed", error));
@@ -4626,12 +4628,14 @@ webSocketServer.on("connection", async (socket, request) => {
   }
 
   let rawSessionPath = rawSessionPathFromUrl;
+  const sessionSearchProject = { ...project, additionalPaths: tasks.flatMap((candidate) => candidate.worktreePath ? [candidate.worktreePath] : []) };
+  let listedSessions: SessionSummary[] | undefined;
   // Chosen in the new-conversation dialog; a conversation has no id yet at this point, so the
   // accounts travel with the connection until the engine reports one (FR9.4).
   const secretAccountIds = socketSecretAccountIdsSchema.parse((url.searchParams.get("secretAccountIds") ?? "").split(",").filter(Boolean));
   if (requestedSessionId && rawSessionPath !== "watch") {
-    const sessions = await listHarnessSessions(project);
-    const matching = sessions.find((candidate) => candidate.id === requestedSessionId);
+    listedSessions = await listHarnessSessions(sessionSearchProject);
+    const matching = listedSessions.find((candidate) => candidate.id === requestedSessionId);
     if (matching) rawSessionPath = matching.path;
   }
   if (rawSessionPath === "watch") {
@@ -4662,10 +4666,8 @@ webSocketServer.on("connection", async (socket, request) => {
   const cwd = requestedTask ? taskCwd(project, requestedTask) : project.path;
   // Ticket conversations live in the ticket workspace, not the project directory,
   // so this must search the same paths the conversation list searches.
-  const listed = (requestedSessionPath || draft)
-    ? await listHarnessSessions({ ...project, additionalPaths: tasks.flatMap((candidate) => candidate.worktreePath ? [candidate.worktreePath] : []) })
-    : [];
-  const listedSession = listed.find((candidate) => candidate.path === (draft ? rawSessionPath : requestedSessionPath));
+  if ((requestedSessionPath || draft) && !listedSessions) listedSessions = await listHarnessSessions(sessionSearchProject);
+  const listedSession = listedSessions?.find((candidate) => candidate.path === (draft ? rawSessionPath : requestedSessionPath));
   if ((requestedSessionPath || draft) && !listedSession) {
     socket.close(1008, "Conversation not found");
     return;
@@ -4732,7 +4734,6 @@ webSocketServer.on("connection", async (socket, request) => {
       sessionFile: connection.claude.filePath ? `claude:${connection.claude.filePath}` : null,
       messages: connection.claude.transcript,
       status: claudeStatus(connection),
-      models: await listAvailableModels(),
       ownership: foreignOwner,
       executionNodeId: local.id,
     });
@@ -4760,7 +4761,6 @@ webSocketServer.on("connection", async (socket, request) => {
       sessionFile: sharedSession.handle.session.sessionFile,
       messages: simplifyMessages(sharedSession.handle.session.messages as unknown[]),
       status: getSessionStatus(sharedSession.handle.session, sharedSession.handle.safeguardsEnabled),
-      models: await listAvailableModels(),
       ownership: foreignOwner,
       executionNodeId: local.id,
     });

@@ -119,9 +119,9 @@ test("opening a ticket conversation searches the ticket workspaces too", async (
   // The websocket open path must list the same conversations the sidebar lists,
   // or a ticket-workspace conversation is rejected as "Conversation not found".
   const open = server.slice(server.indexOf('if (rawSessionPath === "watch")'));
-  const listed = open.indexOf("const listed = (requestedSessionPath || draft)");
+  const listed = open.indexOf("listHarnessSessions(sessionSearchProject)");
   assert.notEqual(listed, -1, "the websocket open path no longer lists sessions");
-  assert.match(open.slice(listed, listed + 400), /additionalPaths/);
+  assert.match(server.slice(server.indexOf("const sessionSearchProject"), server.indexOf("const sessionSearchProject") + 300), /additionalPaths/);
 });
 
 test("a reconnect never pulls the user off the board", async () => {

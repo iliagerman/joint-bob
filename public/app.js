@@ -3640,11 +3640,6 @@ function setModels(models) {
   syncModelButton();
 }
 
-async function loadModels() {
-  const body = await api("/api/models");
-  setModels(body.models || []);
-}
-
 async function loadHarnesses() {
   const body = await api("/api/harnesses");
   state.harnesses = body.harnesses || [];
@@ -3901,8 +3896,6 @@ function openSession(sessionPath, title = "New Pi conversation", preserveChat = 
     setStatus("Connected", true);
     setConnecting(false);
     startHeartbeat();
-    loadModels().catch((error) => toast(error.message));
-    sendSocket({ type: "models" });
   });
   socket.addEventListener("close", () => {
     if (state.socket !== socket) return;
@@ -3977,8 +3970,8 @@ function handleSocketPayload(payload, scrollOnReady = false) {
       showChatEmptyState("Ready for your first message", `${state.engine === "claude" ? "Claude" : "Pi"} will run on ${node?.name || "the selected node"}. The conversation is created when you send.`);
     }
     renderChatSessionControls();
-    if (payload.models) setModels(payload.models);
     updateStatus(payload.status);
+    sendSocket({ type: "models" });
     subscribeToPush().catch((error) => console.warn("Push subscription failed", error));
     refreshSessionsQuietly();
     return;
@@ -5122,6 +5115,25 @@ function renderNewSessionSecrets() {
   }
 }
 
+function addOptimisticSession(sessionId, sessionPath, title, color) {
+  const newSessionPath = sessionPath || "new";
+  const harness = state.harnesses.find((candidate) => candidate.newSessionPath === newSessionPath);
+  if (!harness) throw new Error(`No harness owns new-session path: ${newSessionPath}`);
+  const now = new Date().toISOString();
+  state.sessions = [{
+    id: sessionId,
+    path: `draft:${harness.id}:${sessionId}`,
+    harnessId: harness.id,
+    agentId: harness.id,
+    agentLabel: harness.label,
+    title,
+    color,
+    createdAt: now,
+    updatedAt: now,
+    draft: true,
+  }, ...state.sessions.filter((session) => session.id !== sessionId)];
+}
+
 /** A conversation is named up front so the list shows the user's own label from the first turn. */
 function openNewSessionNameDialog(sessionPath, defaultTitle) {
   state.newSessionDraft = { sessionPath, defaultTitle };
@@ -5155,6 +5167,7 @@ elements.newSessionNameForm.addEventListener("submit", (event) => {
   elements.newSessionNameDialog.close();
   state.newSessionDraft = null;
   state.activeSessionId = crypto.randomUUID();
+  addOptimisticSession(state.activeSessionId, draft.sessionPath, title || draft.defaultTitle, color);
   openSession(draft.sessionPath, title || draft.defaultTitle);
   state.pendingSessionTitle = title || null;
   state.pendingSessionColor = color;

@@ -3,6 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 0.3.7 — 2026-09-01
+
+- Added a shared indexed conversation catalog with targeted Pi and Claude transcript refreshes
+- Made conversation connection reuse catalog lookups and defer model loading until the socket is ready
+- Showed newly created conversations immediately while their transcript is being created
+
 ## 0.3.6 — 2026-08-31
 
 - Kept new Pi and Claude conversations attached to their original session across reconnects before the first transcript is written
