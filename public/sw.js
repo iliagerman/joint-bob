@@ -1,4 +1,4 @@
-const CACHE_NAME = "joint-bob-v70";
+const CACHE_NAME = "joint-bob-v71";
 const APP_SHELL = ["/", "/index.html", "/styles.css", "/boot.js", "/app.js", "/board.js", "/composer-commands.js", "/markdown.js", "/vendor/codemirror/lib/codemirror.css", "/vendor/codemirror/addon/dialog/dialog.css", "/vendor/codemirror/lib/codemirror.js", "/vendor/codemirror/addon/dialog/dialog.js", "/vendor/codemirror/addon/search/searchcursor.js", "/vendor/codemirror/keymap/vim.js", "/vendor/codemirror/addon/mode/loadmode.js", "/vendor/codemirror/mode/meta.js", "/vendor/codemirror/mode/markdown/markdown.js", "/vendor/xterm/xterm.js", "/vendor/xterm/xterm.css", "/vendor/xterm/addon-fit.js", "/manifest.webmanifest", "/icon.svg", "/icon-192.png", "/icon-512.png"];
 
 self.addEventListener("install", (event) => {

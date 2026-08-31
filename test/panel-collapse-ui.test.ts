@@ -21,12 +21,20 @@ test("both side panels collapse to a rail that can always be re-expanded", async
   assert.match(styles, /--col-projects/);
   assert.match(styles, /--col-chats/);
   assert.match(styles, /grid-template-columns: var\(--col-projects\) var\(--col-chats\) minmax\(0, 1fr\);/);
-  assert.match(styles, /body\.projects-collapsed/);
-  assert.match(styles, /body\.chats-collapsed/);
+  // The width override must land on `.shell` itself: `.shell` declares the
+  // custom properties, so a body-level override is shadowed by that own
+  // declaration and the panel never actually narrows.
+  assert.match(styles, /body\.projects-collapsed \.shell \{ --col-projects: 46px; \}/);
+  assert.match(styles, /body\.chats-collapsed \.shell \{ --col-chats: 46px; \}/);
   assert.match(styles, /\.panel-rail \{/);
   // The base rule must not hide the control: it sits after the desktop media
   // query with the same specificity, so a `display: none` there wins everywhere.
-  assert.match(styles, /\n\.collapse-button \{ font-size: 15px; \}/);
+  assert.match(styles, /\n\.collapse-button \{/);
+  // Chevrons are drawn as SVG so they sit centred in the button box, and the
+  // control carries a visible outline instead of a bare low-contrast glyph.
+  assert.match(styles, /\.collapse-button \{[^}]*border-color: var\(--line\)/);
+  assert.doesNotMatch(html, /collapse-button[^>]*>\u2039</);
+  assert.doesNotMatch(html, /panel-expand-button"[^>]*>\u203a</);
   assert.match(styles, /@media \(max-width: 1023px\) \{\n  \.collapse-button \{ display: none; \}/);
 
   assert.match(app, /function setPanelCollapsed\(panel, collapsed\)/);

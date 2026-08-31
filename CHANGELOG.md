@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 0.3.5 — 2026-08-31
+
+- Fixed the collapsed projects and conversations panels staying full width instead of shrinking to their rail
+- Made the panel collapse buttons visible with an outlined, centred chevron icon
+
 ## 0.3.4 — 2026-08-31
 
 - Fixed upward scrolling during a streamed response being pulled back toward the newest message
