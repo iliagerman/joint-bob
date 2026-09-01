@@ -12,7 +12,9 @@ test("canvas is a desktop view over the exact existing conversations", async () 
   ]);
 
   // Surfaces and controls, with no dedicated exit action.
-  assert.match(html, /id="openCanvasButton"[^>]*data-testid="chats-open-canvas-button"/);
+  assert.match(html, /id="openCanvasButton"[\s\S]*?data-testid="projects-open-canvas-button"/);
+  // The launch button is a global control below the project search, with an icon.
+  assert.match(html, /project-search-row[\s\S]{0,900}canvas-launch-row[\s\S]*?id="openCanvasButton"[\s\S]*?<svg[\s\S]*?<rect x="3\.5" y="3\.5"/);
   assert.match(html, /id="canvasPanel"/);
   assert.match(html, /id="canvasRoot"[^>]*data-testid="canvas-root"/);
   assert.match(html, /id="canvasConversationDialog"/);
@@ -25,6 +27,10 @@ test("canvas is a desktop view over the exact existing conversations", async () 
   assert.match(styles, /@media \(min-width: 1024px\)[\s\S]*body\.view-canvas #canvasPanel \{ display: flex; \}/);
   assert.match(styles, /@media \(max-width: 1023px\) \{\n  \.collapse-button \{ display: none; \}/);
   assert.match(styles, /#settingsButton, #openBoardButton, #openCanvasButton, #canvasPanel \{ display: none; \}/);
+  // The launch row sits under the search and carries the accent treatment.
+  assert.match(styles, /\.canvas-launch \{[\s\S]*?color-mix\(in srgb, var\(--accent\) 12%, var\(--panel\)\)/);
+  // A lone pane or split fills the whole canvas, not half of it.
+  assert.match(styles, /\.canvas-root > \.canvas-pane,\n\.canvas-root > \.canvas-split,\n\.canvas-root > \.canvas-empty \{ flex: 1; min-width: 0; min-height: 0; \}/);
   assert.match(styles, /body\.canvas-pane-mode #chatPanel \{ display: flex !important;/);
 
   // The pane frame reuses the normal chat lifecycle and never writes preferences.
@@ -44,6 +50,16 @@ test("canvas is a desktop view over the exact existing conversations", async () 
   assert.match(canvas, /url\.searchParams\.set\("sessionId", session\.id\)/);
   assert.match(canvas, /if \(session\.executionNodeId\) url\.searchParams\.set\("nodeId", session\.executionNodeId\)/);
   assert.doesNotMatch(canvas, /localStorage|sessionStorage|transferSession|cloneSession|new-session/);
+
+  // The picker can also open a pane on a conversation that does not exist yet: the
+  // canvas mints the identity, the pane document creates it on its own node.
+  assert.match(canvas, /`canvas-start-conversation-\$\{harness\.id\}`/);
+  assert.match(canvas, /sessionPath: `draft:\$\{harness\.id\}:\$\{sessionId\}`/);
+  assert.match(app, /if \(state\.canvasPaneMode && state\.activeSessionPath\?\.startsWith\("draft:"\)\)/);
+  assert.match(app, /addOptimisticSession\(state\.activeSessionId, harness\.newSessionPath, title, null\)/);
+
+  // Long conversation titles are trimmed in the picker instead of overflowing it.
+  assert.match(styles, /\.canvas-session-option strong, \.canvas-session-option span \{[^}]*text-overflow: ellipsis;/);
 
   // Resizing is accessible and drag commits only the clamped ratio.
   assert.match(canvas, /setPointerCapture\(event\.pointerId\)/);
@@ -76,7 +92,7 @@ test("canvas is a desktop view over the exact existing conversations", async () 
 
 test("the canvas shell ships in the service worker cache", async () => {
   const worker = await readFile("public/sw.js", "utf8");
-  assert.match(worker, /const CACHE_NAME = "joint-bob-v80"/);
+  assert.match(worker, /const CACHE_NAME = "joint-bob-v81"/);
   assert.match(worker, /"\/canvas\.js"/);
   assert.match(worker, /"\/canvas-layout\.js"/);
 });

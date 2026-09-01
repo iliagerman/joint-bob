@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 0.4.2 — 2026-09-01
+
+- Moved the Canvas launcher below the project search with an accent colour and a grid icon
+- Fixed a lone canvas pane filling only half the canvas area
+
 ## 0.4.1 — 2026-09-01
 
 - Added a desktop Canvas view showing up to eight existing conversations side by side in resizable, swappable panes

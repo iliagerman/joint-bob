@@ -1854,13 +1854,44 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 /* ---- Canvas: several existing conversations at once ---- */
 /* Panels are display:none until their body view class shows them; the canvas is a
    desktop surface, so its show rule lives inside the desktop media block only. */
+.canvas-launch-row {
+  display: flex;
+  padding: 0 0 8px;
+}
+.canvas-launch {
+  flex: 1;
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--line));
+  border-radius: var(--radius-ctl);
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+  color: var(--heading-soft);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+.canvas-launch svg { width: 15px; height: 15px; }
+.canvas-launch:hover, .canvas-launch:focus-visible {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 20%, var(--panel));
+}
 .canvas-root {
   flex: 1;
   min-width: 0;
   min-height: 0;
   display: flex;
+  flex-direction: column;
   padding: 10px;
 }
+/* Every direct child fills the root: a lone pane, a split grid, or the empty state. */
+.canvas-root > .canvas-pane,
+.canvas-root > .canvas-split,
+.canvas-root > .canvas-empty { flex: 1; min-width: 0; min-height: 0; }
 .canvas-split {
   display: grid;
   min-width: 0;
@@ -1963,13 +1994,13 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   color: var(--text);
   text-align: left;
 }
-.canvas-session-option span {
+.canvas-session-option strong, .canvas-session-option span {
+  min-width: 0;
   overflow: hidden;
-  color: var(--muted);
-  font-size: 11.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.canvas-session-option span { color: var(--muted); font-size: 11.5px; }
 .canvas-session-option:hover, .canvas-session-option:focus-visible { background: var(--field); }
 .canvas-picker-empty { margin: 0; color: var(--muted); font-size: 12.5px; }
 
