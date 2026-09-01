@@ -3,9 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.0.0 — 2026-09-02
 
-- Simplified the canvas to a uniform, non-resizable grid and added syntax highlighting for all viewed text files
+- Canvas panes now fill their row width equally and rows fill the canvas height equally, eliminating empty space
+- Text files and source code now display with syntax highlighting when viewed, not just markdown
+- Fixed text selection colors in the editor to be readable
+- Fixed vim mode indicator in the toolbar
+- Older canvas layouts are automatically normalized to the new grid format
 
 ## 0.8.0 — 2026-09-01
 
