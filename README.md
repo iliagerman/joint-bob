@@ -1,90 +1,199 @@
 # Joint Bob
 
-## TL;DR
+Joint Bob is a private web workspace for running Pi and Claude coding agents from a computer or phone. It can manage projects on one machine or synchronize projects and ticket workspaces across a small cluster with Syncthing.
 
-Install on macOS or Linux:
+Joint Bob runs as your OS user. Application files live in `~/.local/share/joint-bob/app`, and node-local state lives in `~/.joint-bob`.
+
+Want an AI coding agent to perform the installation? Give it [agents_readme.md](agents_readme.md).
+
+## Requirements
+
+- macOS or Linux with `launchd` or user `systemd`
+- An Intel/AMD 64-bit or ARM64 machine
+- `curl`, `tar`, and internet access during installation
+- A non-root user account
+- Pi and Claude accounts if you want to use both agents
+- Tailscale or another private HTTPS network for multi-node operation
+
+The installer provides pinned versions of Node.js, Pi, Claude Code, and Syncthing. You do not need to install them first. Tailscale is optional.
+
+## Choose a setup
+
+Pick the smallest setup that fits your use case:
+
+| Setup | Tailscale | Access method | Cluster support |
+| --- | --- | --- | --- |
+| One local computer | No | `http://127.0.0.1:8787` | No |
+| One remote computer or EC2 instance | No | SSH tunnel | No |
+| One remote computer or EC2 instance | Yes | Tailscale Serve HTTPS | Optional later |
+| Multiple computers, including EC2 | Yes | Tailscale Serve HTTPS on every node | Yes, recommended |
+| Multiple computers without Tailscale | No | Your private network and trusted HTTPS reverse proxy on every node | Yes |
+| Temporary EC2 smoke test | No | Operator-restricted self-signed HTTPS | Test only |
+
+For one local node, install and use the local URL. For a remote node without Tailscale, keep port `8787` closed to the network and use an SSH tunnel. A cluster needs a stable HTTPS origin for every node and two-way network reachability between all nodes.
+
+## Install a node
+
+Run this as the user who will run Joint Bob. Do not use `sudo`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/iliagerman/joint-bob/main/scripts/install.sh | bash
 ```
 
-Open the URL printed by the installer and create the administrator. To use both agents, authenticate them as the same OS user:
+The installer downloads the latest GitHub release, verifies its SHA-256 checksum, installs dependencies, starts Syncthing, and creates a native user service.
+
+When installation finishes:
+
+1. Open the local URL printed by the installer, normally `http://127.0.0.1:8787/`.
+2. Create the administrator account in the browser.
+3. Authenticate Pi and Claude as the same OS user that installed Joint Bob:
+
+   ```bash
+   ~/.local/share/joint-bob/app/node_modules/.bin/pi
+   ~/.local/share/joint-bob/app/node_modules/.bin/claude
+   ```
+
+4. In Joint Bob, open **Settings > Projects** and choose a **Joint Bob home folder** before creating or importing projects.
+
+If Joint Bob is installed on a remote machine, use Tailscale Serve as described below or open an SSH tunnel before creating the administrator:
 
 ```bash
-~/.local/share/joint-bob/app/node_modules/.bin/pi
-~/.local/share/joint-bob/app/node_modules/.bin/claude
+ssh -L 8787:127.0.0.1:8787 <ssh-host>
 ```
 
-For private phone access, install Tailscale and run:
+Then open `http://127.0.0.1:8787/` on your computer.
+
+### Linux startup before login
+
+The installer warns if user lingering is disabled. Enable it if Joint Bob must start before you log in:
+
+```bash
+sudo loginctl enable-linger "$USER"
+```
+
+This is the only installation step that may need `sudo`.
+
+## Upgrade or repair an installation
+
+Run the same installation command again:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/iliagerman/joint-bob/main/scripts/install.sh | bash
+```
+
+The installer preserves projects, credentials, settings, tasks, cluster identity, and other state. It restores the previous installed copy if the replacement fails. Existing `~/.pi-mobile-web` state migrates automatically.
+
+## Install on EC2 or another remote Linux host
+
+For a persistent remote node, create a supported Linux host, connect over SSH as a non-root user, and run the normal installer there. On Ubuntu, the default `ubuntu` user is suitable.
+
+```bash
+ssh <user>@<host>
+curl -fsSL https://raw.githubusercontent.com/iliagerman/joint-bob/main/scripts/install.sh | bash
+sudo loginctl enable-linger "$USER"
+```
+
+Choose one access method:
+
+- With Tailscale, install Tailscale on the remote host and use Tailscale Serve.
+- Without Tailscale, use an SSH tunnel for a single node.
+- For a cluster without Tailscale, put every node behind a trusted HTTPS reverse proxy on a private network.
+
+Do not expose Joint Bob's plain HTTP port `8787` to the internet. The repository's `deploy/aws-ec2-test` Terraform is an ephemeral smoke-test environment, not a persistent EC2 deployment. See **EC2 smoke test** below.
+
+## Private access with Tailscale
+
+Install Tailscale, sign the machine into your tailnet, then run:
 
 ```bash
 ~/.local/share/joint-bob/app/scripts/serve-https.sh
 ```
 
-Add another node from **Settings → Cluster** using that node's private Tailscale URL and pairing token. Do not pair over public HTTP.
+If Joint Bob uses a custom local port or Tailscale should use another supported HTTPS port, pass both values:
 
-Joint Bob runs as `joint-bob.service` on Linux or `com.joint-bob.node` on macOS. Code lives in `~/.local/share/joint-bob/app`; state lives in `~/.joint-bob`.
+```bash
+PORT='<joint-bob-port>' HTTPS_PORT='<443|8443|10000>' ~/.local/share/joint-bob/app/scripts/serve-https.sh
+```
 
-## Install
+Open the HTTPS URL shown by `tailscale serve status`. The default HTTPS port is `8443`. Tailscale Serve keeps Joint Bob inside your tailnet. The script does not enable Tailscale Funnel.
 
-The curl command downloads the latest GitHub release, verifies its SHA-256 checksum, and installs a native user service. It pins Node.js, Pi, Claude Code, and Syncthing, starts Syncthing, and discovers its local API configuration automatically. Existing projects, credentials, settings, tasks, and cluster identity are preserved during upgrades and prior-installation migration. Upgrading from a build with GitHub credential groups converts each group into a secret account holding its `GH_TOKEN`, so every project keeps pushing with the identity it used before.
+Useful commands:
+
+```bash
+tailscale serve status
+tailscale serve --https=8443 off
+tailscale serve reset
+```
+
+Use the private HTTPS URL for phone access and cluster pairing. Do not pair nodes over public HTTP.
+
+## Private access without Tailscale
+
+A single remote node can stay bound to its local service port and be reached through SSH:
+
+```bash
+ssh -L 8787:127.0.0.1:8787 <ssh-host>
+```
+
+For multiple nodes without Tailscale, provide each node with a stable HTTPS origin such as `https://bob-node-1.internal.example`. Every node must be able to reach every other node at its configured origin. Certificates must be trusted by the browsers and Node.js runtimes that connect to them. Each reverse proxy must forward HTTP, WebSocket upgrades, the original `Host`, and HTTPS origin information to `http://127.0.0.1:8787`.
+
+Cluster URLs must be HTTPS origins with no path, query, username, or password. Loopback HTTP is accepted for local use only. Do not use self-signed certificates for a persistent cluster unless every connecting browser and Node.js runtime explicitly trusts your private certificate authority.
 
 ## Add another node
 
-Install Joint Bob on the new machine, then:
+Install Joint Bob and configure private HTTPS on the new machine first. Tailscale Serve is the easiest option, but any mutually reachable trusted HTTPS origin works. Then:
 
-1. On any existing cluster node, open **Settings → Cluster**.
-2. Choose **Generate one-time link**, then copy it.
+1. On an existing node, open **Settings > Cluster**.
+2. Select **Generate one-time link** and copy the link.
 3. Open the new node and create its administrator.
-4. Open **Settings → Cluster** on the new node.
-5. Set its name and private HTTPS URL, normally its Tailscale Serve URL.
-6. Paste the link under **Join an existing cluster**, then choose **Join cluster**.
-7. Select **Settings → Projects → Joint Bob home folder** on each node. New peer projects map automatically beneath that node's selected home; existing projects are not moved automatically.
+4. On the new node, open **Settings > Cluster**.
+5. Set the node name and its private HTTPS origin, either its Tailscale Serve URL or its trusted private reverse-proxy URL.
+6. Paste the link under **Join an existing cluster**, then select **Join cluster**.
+7. On every node, open **Settings > Projects** and select a **Joint Bob home folder**.
 
-The link works once. Generate another link for each additional node. Creating a new link invalidates the previous unused link from that machine.
+A join link works once. Creating another link invalidates the previous unused link from that node. Generate one link per new node and keep it inside the private cluster network.
 
-Pairing is two-sided automatically. One successful pairing exchanges membership and project inventory. Joint Bob also creates and shares `dot-pi` and `dot-claude` Syncthing folders for shareable engine configuration and sessions. Pi authentication/model credential files and Claude credentials, credential-bearing settings, MCP authentication, OAuth locks, and daemon control keys remain node-local. Do not share join links outside the private cluster network.
+Pairing exchanges cluster membership and project inventory. Joint Bob also creates shared `dot-pi` and `dot-claude` Syncthing folders for shareable engine configuration and sessions. Authentication files, credential-bearing settings, MCP authentication, OAuth locks, and daemon control keys remain node-local.
 
-A cluster supports five active nodes. Remove an old node before adding a sixth.
+A cluster supports up to five active nodes. Remove an old node before adding a sixth.
 
-## Managed projects and ticket workspaces
+## Projects and ticket workspaces
 
-On every node, choose **Settings → Projects → Joint Bob home folder**. New projects and board-card workspaces use that node's selected home:
+The **Joint Bob home folder** controls where new projects and board-card workspaces are stored on each node:
 
 ```text
 <home>/<workspace>/<project-name>
 <home>/tickets/<project-id>/<ticket-id>
 ```
 
-A workspace groups related projects and is a folder directly under the home folder. `personal` and `work` are seeded; add your own in **Settings → Projects → Workspaces**.
+A workspace is a folder directly under the home folder. Joint Bob creates `personal` and `work` workspaces by default. Add more under **Settings > Projects > Workspaces**.
 
-Projects created through the UI synchronize automatically using per-project Syncthing folders. To import an existing project, select its source folder and choose **Move into Joint Bob and leave a symlink**, **Move into Joint Bob**, or **Copy into Joint Bob**. The first option preserves the original path as a directory symlink to the managed folder, so both paths access the same files.
+Projects created through the UI synchronize through per-project Syncthing folders. To import an existing project, choose its source folder and one of these modes:
 
-Joint Bob copies or moves the complete local folder, including `.git`, `node_modules`, and hidden files. `.git` and `node_modules` remain available on that node but are excluded at every depth from Syncthing. Build output, environment files, credentials, and logs are also excluded. Joint Bob configures `<home>/tickets` as the Syncthing folder `joint-bob-ticket-workspaces` and shares it with paired cluster nodes. Secret accounts never sync automatically. Mark an account to replicate, then push it from Settings > Secrets > Sync to nodes, which uses encrypted cluster replication, never filesystem sync. An account left node-local never leaves its node.
+- **Move into Joint Bob and leave a symlink** keeps the old path working.
+- **Move into Joint Bob** removes the old path.
+- **Copy into Joint Bob** leaves the original folder unchanged.
 
-Ticket agents work inside this synchronized workspace. Handoff waits until the destination reports the folder synchronized, then transfers task ownership without a Git bundle. Archiving moves the ticket to Done and removes its workspace. Deleting a ticket removes both its workspace and task record. Syncthing propagates workspace deletion to the other nodes.
+Joint Bob copies or moves the complete local folder, including `.git`, `node_modules`, and hidden files. `.git`, `node_modules`, build output, environment files, credentials, and logs are excluded from Syncthing at every depth.
 
-Existing Git-backed tickets keep their worktree and merge behavior. New tickets have no branch and do not show **Merge to main**.
+Ticket agents work in the synchronized `<home>/tickets` folder. Handoff waits for the destination node to report that the workspace is synchronized. Archiving a ticket moves it to Done and removes its workspace. Deleting a ticket removes its workspace and task record.
 
-## Private HTTPS
+Existing Git-backed tickets keep their worktree and merge behavior. New tickets do not create a branch and do not show **Merge to main**.
 
-Tailscale Serve keeps the app inside the tailnet:
+## Secret accounts
 
-```bash
-npm run serve:https
-```
+Secret accounts hold named environment variables encrypted with the node key. Attach an account to a workspace, project, or conversation. More specific scopes override less specific scopes one variable at a time.
 
-Open the URL printed by Tailscale. Joint Bob does not enable Funnel.
+Secret accounts stay node-local unless you explicitly replicate one. Use **Settings > Secrets > Sync to nodes** to send an account through encrypted cluster replication. Secrets never use filesystem synchronization.
 
 ## Service management
 
 Linux:
 
 ```bash
-sudo loginctl enable-linger "$USER"
-systemctl --user status joint-bob
-systemctl --user restart joint-bob
-journalctl --user -u joint-bob -f
+systemctl --user status joint-bob.service
+systemctl --user restart joint-bob.service
+journalctl --user -u joint-bob.service -f
 ```
 
 macOS:
@@ -94,9 +203,11 @@ launchctl print gui/$(id -u)/com.joint-bob.node
 launchctl kickstart -k gui/$(id -u)/com.joint-bob.node
 ```
 
-Runtime state is stored in `~/.joint-bob`. Existing `~/.pi-mobile-web` state migrates automatically. Node-local overrides belong in `~/.joint-bob/env`.
+Node-specific ports, model aliases, credentials, proxy URLs, and executable overrides belong in `~/.joint-bob/env`. Restart the service after changing that file.
 
-## Development and deployment
+## Development
+
+From a source checkout:
 
 ```bash
 npm ci
@@ -106,16 +217,20 @@ npm run build
 npm start
 ```
 
-Development defaults to `http://localhost:8790`. Production services run from installed copies, not this checkout.
+Development uses `http://localhost:8790` unless `PORT` is set. Production services always run from `~/.local/share/joint-bob/app`, not from a source checkout.
 
-Set the SSH target for the second installed node, then install the versioned deployment hook in the main checkout:
+See [CONTRIBUTING.md](CONTRIBUTING.md) before submitting changes.
+
+## Maintainer deployment
+
+Set the SSH target for the second installed node and install the repository hooks:
 
 ```bash
 printf 'JOINT_BOB_DEPLOY_SSH_TARGET=%q\n' '<your-ssh-host>' >> ~/.joint-bob/env
 scripts/install-git-hooks.sh
 ```
 
-Deploy the checked-out commit manually (`brew install just` on macOS if needed):
+Install `just` if needed, then deploy the checked-out commit:
 
 ```bash
 just update-local       # this Mac only
@@ -123,27 +238,27 @@ just update-homeserver  # configured SSH node only
 just update             # both nodes
 ```
 
-Every command creates a mode-`0600` SQLite backup before replacing an installed copy and verifies the reported release. For staged application changes, the `pre-commit` hook has Claude Haiku add one bullet under `## Unreleased`. On a push to `main`, the `pre-push` hook reviews all commit entries in the push, rewrites them as coherent release notes, bumps the version, and refuses the first push so those files can be committed. The next push waits for the remote to confirm the exact commit, then runs the equivalent of `just update`. Pushes without application changes do not deploy. Deployment logs are written to `~/.joint-bob/logs/push-deploy.log`.
+Each deployment creates a mode-`0600` SQLite backup before replacing an installed copy and verifies the reported release. Deployment logs are written to `~/.joint-bob/logs/push-deploy.log`.
+
+For staged application changes, the `pre-commit` hook asks Claude Haiku to add an entry under `## Unreleased`. On a push to `main`, the `pre-push` hook reviews the pushed commit range, writes release notes, bumps the version, and stops the first push so the release files can be committed. The next push waits for the remote to confirm the exact commit, then deploys it. Pushes without application changes do not deploy.
 
 ## EC2 smoke test
 
-`deploy/aws-ec2-test` provisions an isolated Ubuntu EC2 instance with a public IPv4 address. Inbound SSH and application access are restricted to one operator `/32`; storage is encrypted and IMDSv2 is required.
-
-The test runner uploads the unpublished working tree through EC2 Instance Connect, installs Joint Bob, verifies first-run setup and persistence, and prints the destroy command:
+`deploy/aws-ec2-test` provisions an isolated Ubuntu EC2 instance with encrypted storage and IMDSv2. It restricts inbound SSH and application access to one operator `/32`.
 
 ```bash
 AWS_PROFILE=sela AWS_REGION=us-west-2 KEEP_INSTANCE=1 scripts/ec2-smoke-test.sh
 ```
 
-Public-IP access is for temporary smoke testing only. Do not send pairing tokens over it. Destroy the environment after testing using the command printed by the runner.
+The runner uploads the unpublished working tree through EC2 Instance Connect, installs Joint Bob, verifies first-run setup and persistence, and prints the destroy command. Public-IP access is only for temporary smoke testing. Never send pairing tokens over it. Destroy the environment after testing.
 
 ## Security and data
 
 - Run Joint Bob as a non-root user.
-- Prefer private networking such as Tailscale.
-- Authentication uses secure, SQLite-backed sessions.
+- Use private networking such as Tailscale for remote access.
+- Authentication uses SQLite-backed sessions.
 - Machine, secret-account, Syncthing, and push secrets are encrypted.
-- Joint Bob-owned state stays in node-local SQLite.
+- Joint Bob-owned state stays in node-local SQLite under `~/.joint-bob`.
 - Git repositories, Pi and Claude transcripts, worktrees, and Syncthing data remain filesystem-owned.
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting.

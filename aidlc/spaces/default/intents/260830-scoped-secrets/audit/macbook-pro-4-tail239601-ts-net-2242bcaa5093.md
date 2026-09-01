@@ -2610,3 +2610,668 @@
 **Message**: Goal was polishing the chat UI: the slash-command strip is now centered and visible, the transcript is centered on wide screens, and bare URLs are clickable, all committed. Next, hard-refresh the page
 
 ---
+
+## Session End
+**Timestamp**: 2026-09-01T11:52:36Z
+**Event**: SESSION_ENDED
+**Reason**: clear
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-01T11:52:36Z
+**Event**: SESSION_STARTED
+**Source**: clear
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T11:53:25Z
+**Event**: HUMAN_TURN
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T11:55:23Z
+**Event**: HUMAN_TURN
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T11:55:59Z
+**Event**: HUMAN_TURN
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T11:56:16Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-01T12:00:35Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T12:00:38Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-01T12:01:27Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T12:01:30Z
+**Event**: HUMAN_TURN
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-09-01T12:01:48Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**: 
+**Agent ID**: a2e160d122d99f80e
+**Message**: commit this
+
+---
+
+## Session End
+**Timestamp**: 2026-09-01T12:02:10Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-01T12:50:31Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T12:50:34Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-09-01T12:51:08Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-01T12:52:05Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T12:52:08Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-09-01T12:52:25Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Session End
+**Timestamp**: 2026-09-01T13:02:51Z
+**Event**: SESSION_ENDED
+**Reason**: clear
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-01T13:02:51Z
+**Event**: SESSION_STARTED
+**Source**: clear
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T13:03:11Z
+**Event**: HUMAN_TURN
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-09-01T13:06:20Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**: 
+**Agent ID**: ae5a86b135abc43aa
+**Message**: just update-local
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T13:12:06Z
+**Event**: HUMAN_TURN
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-09-01T13:16:11Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**: 
+**Agent ID**: a23222a2fc82e7d6d
+**Message**: skip AI-DLC, always-on for md files
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-09-01T13:19:11Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**: 
+**Agent ID**: a87836edf5a7ae7c4
+**Message**: You're making the file editor show markdown rendered instead of raw, but AI-DLC is parked on other work so I stopped. Next: tell me to skip AI-DLC and I'll build it, or resume the parked workflow firs
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T13:28:19Z
+**Event**: HUMAN_TURN
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T13:28:34Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-01T13:32:07Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T13:32:30Z
+**Event**: HUMAN_TURN
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T13:32:55Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-01T13:36:29Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T13:36:52Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-01T13:38:32Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T13:38:35Z
+**Event**: HUMAN_TURN
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-09-01T13:38:44Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**: 
+**Agent ID**: af6d528cae5b28e8c
+**Message**: commit this
+
+---
+
+## Session End
+**Timestamp**: 2026-09-01T13:38:49Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-01T13:39:16Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T13:39:19Z
+**Event**: HUMAN_TURN
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T13:39:25Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-09-01T13:39:38Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-09-01T13:40:17Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**: 
+**Agent ID**: a73769e09cb724d6d
+**Message**: just update-local
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T13:40:54Z
+**Event**: HUMAN_TURN
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T13:41:21Z
+**Event**: HUMAN_TURN
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T13:41:55Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-01T13:44:50Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T13:44:54Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-09-01T13:45:08Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-09-01T13:45:30Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**: 
+**Agent ID**: aafe543e586d421fa
+**Message**: push it
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-09-01T13:46:20Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**: 
+**Agent ID**: ab40c53f880b43f25
+**Message**: Fixed the blank-page file View and made markdown files edit as rendered prose with a Raw toggle, both committed in two commits. Next: run just update-local to deploy and check it in the browser.
+
+---
+
+## Session End
+**Timestamp**: 2026-09-01T13:46:53Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-09-01T13:50:23Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**: 
+**Agent ID**: afbf03d19fe157d5d
+**Message**: add it to the canvas panes too
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-01T13:51:05Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T13:51:08Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-09-01T13:51:32Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-01T13:51:55Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T13:51:58Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-09-01T13:52:31Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T14:04:25Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-01T14:04:57Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T14:05:00Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-09-01T14:05:17Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-09-01T14:08:30Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**: 
+**Agent ID**: afa3c3fecf44ae6f4
+**Message**: Goal was showing context-window usage in the chat header for both Pi and Claude conversations; that's built, tested, and committed as 0673e69 on main. Nothing is pushed yet, so the next step is pushin
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-01T14:12:01Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T14:12:04Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-09-01T14:12:22Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Session End
+**Timestamp**: 2026-09-01T14:12:48Z
+**Event**: SESSION_ENDED
+**Reason**: clear
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-01T14:12:48Z
+**Event**: SESSION_STARTED
+**Source**: clear
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T14:13:04Z
+**Event**: HUMAN_TURN
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-09-01T14:13:36Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**: 
+**Agent ID**: afc691e83ab4915cd
+**Message**: commit the version bump and push
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-01T14:52:45Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T14:52:48Z
+**Event**: HUMAN_TURN
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T14:53:02Z
+**Event**: HUMAN_TURN
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T14:53:11Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-09-01T14:54:03Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-09-01T14:56:59Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**: 
+**Agent ID**: a226b53bd88b361c8
+**Message**: just push
+
+---
+
+## Session End
+**Timestamp**: 2026-09-01T15:19:03Z
+**Event**: SESSION_ENDED
+**Reason**: clear
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-01T15:19:03Z
+**Event**: SESSION_STARTED
+**Source**: clear
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T15:19:35Z
+**Event**: HUMAN_TURN
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-09-01T15:21:31Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**: 
+**Agent ID**: a5075b8dd06583e2f
+**Message**: just update-local
+
+---
+
+## Session End
+**Timestamp**: 2026-09-01T15:25:33Z
+**Event**: SESSION_ENDED
+**Reason**: clear
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-01T15:25:33Z
+**Event**: SESSION_STARTED
+**Source**: clear
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T15:26:18Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-09-01T15:27:04Z
+**Event**: SESSION_ENDED
+**Reason**: prompt_input_exit
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-01T15:27:07Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T15:27:28Z
+**Event**: HUMAN_TURN
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-09-01T15:32:56Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**: 
+**Agent ID**: a1d1ef43c9a9bdca1
+**Message**: just update-local
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-09-01T15:34:26Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**: 
+**Agent ID**: a165135dbc17d40fe
+**Message**: push it
+
+---
+
+## Session End
+**Timestamp**: 2026-09-01T16:51:18Z
+**Event**: SESSION_ENDED
+**Reason**: clear
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-01T16:51:18Z
+**Event**: SESSION_STARTED
+**Source**: clear
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T16:51:24Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-01T16:58:31Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T16:58:34Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-09-01T16:58:49Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-01T16:59:02Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-01T16:59:05Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-09-01T16:59:20Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
