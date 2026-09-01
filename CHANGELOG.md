@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Markdown files in the editor now render with formatting syntax hidden for readability, with a toggle to show raw markdown
 - Canvas panes can now start new conversations with any agent, not just open existing ones
 - Fixed project files displaying correctly in the browser by serving the proper content type for images, PDFs, and text files
 

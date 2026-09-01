@@ -17,8 +17,7 @@ test("markdown files open in a pretty, still-editable editor", async () => {
 
   // A fresh dialog must not inherit the previous file's markdown presentation.
   const reset = app.slice(app.indexOf("function resetFileEditor()"), app.indexOf("async function openFileAction("));
-  assert.match(reset, /fileEditor\.setOption\("lineWrapping", false\)/);
-  assert.match(reset, /classList\.remove\("file-editor-markdown"\)/);
+  assert.match(reset, /applyFileEditorView\(false, false\)/);
 
   assert.ok(serviceWorker.includes('"/vendor/codemirror/mode/markdown/markdown.js"'), "markdown mode must be cached for offline editing");
 });
@@ -55,4 +54,40 @@ test("mode helper addons ship with the shell so an auto-loaded mode cannot blank
   for (const mode of ["gfm/gfm", "markdown/markdown", "xml/xml"]) {
     assert.ok(serviceWorker.includes(`"/vendor/codemirror/mode/${mode}.js"`), `${mode} must be cached for offline editing`);
   }
+});
+
+test("markdown opens rendered, with a raw toggle and an editable cursor line", async () => {
+  const [app, html, styles, serviceWorker] = await Promise.all([
+    readFile("public/app.js", "utf8"),
+    readFile("public/index.html", "utf8"),
+    readFile("public/styles.css", "utf8"),
+    readFile("public/sw.js", "utf8"),
+  ]);
+
+  // One helper owns the presentation so opening a file, resetting the dialog, and
+  // hitting the toggle can never disagree about which options are set.
+  assert.match(app, /function applyFileEditorView\(markdown, raw\)/);
+  assert.match(app, /const rendered = markdown && !raw;/);
+  assert.match(app, /fileEditor\.setOption\("lineNumbers", !rendered\)/);
+  assert.match(app, /fileEditor\.setOption\("styleActiveLine", rendered \? \{ nonEmpty: true \} : false\)/);
+  assert.match(app, /classList\.toggle\("file-editor-rendered", rendered\)/);
+  // Markdown files open rendered, never raw.
+  assert.match(app, /applyFileEditorView\(markdown, false\)/);
+  // The toggle flips only the raw half and keeps the markdown half on.
+  assert.match(app, /elements\.fileEditorRawButton\.addEventListener\("click", \(\) => \{/);
+  assert.match(app, /applyFileEditorView\(true, !state\.fileEditor\.raw\)/);
+
+  // The addon that marks the cursor's line has to be on the page before app.js runs,
+  // otherwise styleActiveLine is an unknown option and nothing ever reveals the source.
+  assert.ok(html.includes('/vendor/codemirror/addon/selection/active-line.js'), "index.html must load the active-line addon");
+  assert.ok(html.indexOf("addon/selection/active-line.js") < html.indexOf('"/app.js"'), "the addon must load before app.js creates the editor");
+  assert.ok(serviceWorker.includes('"/vendor/codemirror/addon/selection/active-line.js"'), "active-line addon must be cached for offline editing");
+  assert.match(html, /id="fileEditorRawButton"[^>]*data-testid="file-editor-raw-button"/);
+
+  // Rendered markdown hides its own syntax, except the markers that carry meaning,
+  // and the line under the cursor shows the raw source again so it stays editable.
+  assert.match(styles, /\.file-editor-rendered \.cm-formatting \{ display: none; \}/);
+  assert.match(styles, /\.file-editor-rendered :is\(\.cm-formatting-list, \.cm-formatting-task, \.cm-formatting-code-block\) \{ display: inline; \}/);
+  assert.match(styles, /\.file-editor-rendered \.cm-string\.cm-url \{ display: none; \}/);
+  assert.match(styles, /\.file-editor-rendered \.CodeMirror-activeline :is\(\.cm-formatting, \.cm-string\.cm-url\) \{ display: inline; \}/);
 });

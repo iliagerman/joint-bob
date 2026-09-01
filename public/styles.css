@@ -1817,6 +1817,9 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 #fileEditorView { display: grid; gap: 12px; }
 #fileEditorView[hidden] { display: none; }
 .file-editor-label { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.file-editor-label-tools { display: flex; align-items: center; gap: 8px; }
+#fileEditorRawButton { min-height: 0; padding: 4px 8px; border-radius: 4px; font: 700 10px/1.4 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+#fileEditorRawButton[hidden] { display: none; }
 #fileEditorMode { padding: 3px 6px; border-radius: 4px; color: var(--muted); background: var(--field); font: 700 10px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
 .file-editor-textarea { width: 100%; font-family: var(--mono); }
 .file-editor-card .CodeMirror { min-height: 420px; max-height: min(80dvh, 880px); border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--code-bg); color: var(--code-text); font-family: var(--mono); }
@@ -1825,7 +1828,7 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 .file-editor-card .CodeMirror-linenumber { color: var(--muted); }
 .file-editor-card .CodeMirror-cursor { border-left-color: var(--accent); }
 .file-editor-card .CodeMirror-selected { background: color-mix(in srgb, var(--accent) 30%, transparent); }
-.file-editor-card .CodeMirror-activeline-background { background: color-mix(in srgb, var(--field) 60%, transparent); }
+.file-editor-card .CodeMirror-activeline-background { background: color-mix(in srgb, var(--code-text) 7%, transparent); }
 .file-editor-card .CodeMirror-fat-cursor { background: var(--accent); color: var(--code-bg); }
 .file-editor-card .cm-comment, .file-editor-card .cm-meta { color: var(--muted); }
 .file-editor-card .cm-keyword, .file-editor-card .cm-atom, .file-editor-card .cm-tag { color: var(--accent); }
@@ -1846,9 +1849,18 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 .file-editor-markdown .cm-comment { color: var(--amber); font-family: var(--mono); }
 .file-editor-markdown .cm-variable-2, .file-editor-markdown .cm-variable-3, .file-editor-markdown .cm-keyword { color: var(--accent); }
 .file-editor-markdown .cm-hr { color: var(--muted); font-weight: 700; }
-/* The literal #, *, ` and [] stay in the buffer so vim edits still work;
+/* Raw view: the literal #, *, ` and [] stay in the buffer so vim edits still work;
    they just recede so the prose reads first. */
 .file-editor-markdown .cm-formatting { color: var(--muted); font-weight: 400; font-size: 1em; opacity: 0.62; }
+/* Rendered view: the syntax disappears and the document reads like the chat preview.
+   List bullets, task boxes and code fences stay - hiding those loses real meaning.
+   The line under the cursor shows its raw source again, so every character is still
+   editable; the Raw button drops the whole file back to source. */
+.file-editor-rendered .cm-formatting { display: none; }
+.file-editor-rendered :is(.cm-formatting-list, .cm-formatting-task, .cm-formatting-code-block) { display: inline; }
+.file-editor-rendered .cm-string.cm-url { display: none; }
+.file-editor-rendered .cm-link { text-decoration: underline; }
+.file-editor-rendered .CodeMirror-activeline :is(.cm-formatting, .cm-string.cm-url) { display: inline; }
 @media (max-width: 600px) { .file-editor-card, .file-editor-card:has(#fileEditorView:not([hidden])) { width: calc(100vw - 16px); } .file-editor-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); } .file-editor-card .CodeMirror { min-height: 180px; max-height: 70dvh; } }
 
 /* ---- Canvas: several existing conversations at once ---- */

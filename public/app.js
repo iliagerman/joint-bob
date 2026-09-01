@@ -415,6 +415,7 @@ const elements = {
   fileEditorSaveButton: document.querySelector("#fileEditorSaveButton"),
   fileEditorStatus: document.querySelector("#fileEditorStatus"),
   fileEditorMode: document.querySelector("#fileEditorMode"),
+  fileEditorRawButton: document.querySelector("#fileEditorRawButton"),
   confirmDialog: document.querySelector("#confirmDialog"),
   confirmEyebrow: document.querySelector("#confirmEyebrow"),
   confirmTitle: document.querySelector("#confirmTitle"),
@@ -2789,13 +2790,12 @@ function projectFileResolutionUrl(filePath) {
 }
 
 function resetFileEditor() {
-  state.fileEditor = { requestedPath: null, path: null, viewUrl: null, downloadUrl: null, contentUrl: null, version: null, original: "", loading: false, saving: false };
+  state.fileEditor = { requestedPath: null, path: null, viewUrl: null, downloadUrl: null, contentUrl: null, version: null, original: "", loading: false, saving: false, markdown: false, raw: false };
   elements.fileActionView.hidden = false;
   elements.fileEditorView.hidden = true;
   fileEditor.setValue("");
   fileEditor.setOption("mode", null);
-  fileEditor.setOption("lineWrapping", false);
-  fileEditor.getWrapperElement().classList.remove("file-editor-markdown");
+  applyFileEditorView(false, false);
   elements.fileActionStatus.textContent = "";
   elements.fileEditorStatus.textContent = "";
   for (const link of [elements.fileActionViewLink, elements.fileActionDownloadLink]) {
@@ -2830,6 +2830,23 @@ async function openFileAction(path) {
   }
 }
 
+// Markdown is shown the way the chat preview shows it: the syntax markers hide so the
+// document reads as prose. The line holding the cursor shows its raw source again, so
+// every character is still reachable, and the Raw button turns the markers back on
+// everywhere for a heavy edit. The buffer itself is always plain markdown.
+function applyFileEditorView(markdown, raw) {
+  const rendered = markdown && !raw;
+  Object.assign(state.fileEditor, { markdown, raw });
+  fileEditor.setOption("lineWrapping", markdown);
+  fileEditor.setOption("lineNumbers", !rendered);
+  fileEditor.setOption("styleActiveLine", rendered ? { nonEmpty: true } : false);
+  fileEditor.getWrapperElement().classList.toggle("file-editor-markdown", markdown);
+  fileEditor.getWrapperElement().classList.toggle("file-editor-rendered", rendered);
+  elements.fileEditorRawButton.hidden = !markdown;
+  elements.fileEditorRawButton.textContent = raw ? "Rendered" : "Raw";
+  elements.fileEditorRawButton.setAttribute("aria-pressed", String(raw));
+}
+
 async function editProjectFile() {
   const { contentUrl } = state.fileEditor;
   if (!contentUrl) return;
@@ -2846,8 +2863,7 @@ async function editProjectFile() {
     // headings, emphasis, and links while the buffer stays plain text.
     const markdown = spec?.mode === "markdown" || spec?.mode === "gfm";
     fileEditor.setOption("mode", markdown ? { name: spec.mode, highlightFormatting: true } : spec?.mime ?? spec?.mode ?? null);
-    fileEditor.setOption("lineWrapping", markdown);
-    fileEditor.getWrapperElement().classList.toggle("file-editor-markdown", markdown);
+    applyFileEditorView(markdown, false);
     if (spec) window.CodeMirror.autoLoadMode(fileEditor, spec.mode);
     elements.fileActionView.hidden = true;
     elements.fileEditorView.hidden = false;
@@ -2893,6 +2909,12 @@ async function saveProjectFile(closeAfterSave = true) {
   } catch (error) { toast(error.message, 8000); }
   finally { state.fileEditor.saving = false; elements.fileEditorSaveButton.disabled = false; }
 }
+
+elements.fileEditorRawButton.addEventListener("click", () => {
+  applyFileEditorView(true, !state.fileEditor.raw);
+  fileEditor.refresh();
+  fileEditor.focus();
+});
 
 window.CodeMirror.commands.save = () => { void saveProjectFile(false); };
 
