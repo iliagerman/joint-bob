@@ -3,13 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 0.5.0 — 2026-09-01
 
-- Canvas now arranges conversations in a flexible row-based grid (up to ten rows, eight per row) instead of hierarchical splits
-- Styled assistant messages as cards with borders and backgrounds to visually distinguish them from the conversation flow
-- Markdown files in the editor now render with formatting syntax hidden for readability, with a toggle to show raw markdown
-- Canvas panes can now start new conversations with any agent, not just open existing ones
-- Fixed project files displaying correctly in the browser by serving the proper content type for images, PDFs, and text files
+- Arranged conversations in persistent rows on the canvas instead of hierarchical splits
+- Styled assistant responses as cards matching user message bubbles
+- Markdown files now show rendered text with a toggle to view raw source
+- Enabled starting new conversations from canvas panes
+- Fixed project files displaying in the viewer by serving the correct content type
 
 ## 0.4.2 — 2026-09-01
 
