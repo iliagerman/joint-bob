@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Canvas panes can now start new conversations with any agent, not just open existing ones
+
 ## 0.4.2 — 2026-09-01
 
 - Moved the Canvas launcher below the project search with an accent colour and a grid icon

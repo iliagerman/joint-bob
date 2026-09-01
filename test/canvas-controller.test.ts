@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { addCanvasPane, emptyCanvasLayout } from "../public/canvas-layout.js";
+import { addCanvasPane, emptyCanvasLayout, listCanvasPanes } from "../public/canvas-layout.js";
 
 // Minimal DOM stub: enough surface for the canvas controller's render and picker
 // paths to actually execute, so runtime errors (not just source shapes) fail.
@@ -98,9 +98,14 @@ const sessions = [
   { id: "s-two", path: "/tmp/two.jsonl", title: "Two", firstMessage: "first two", harnessId: "claude", reviewState: "needs_review", running: false, executionNodeId: null },
   { id: "s-three", path: "/tmp/three.jsonl", title: "Three", firstMessage: "first three", harnessId: "pi", reviewState: "reviewed", running: false, executionNodeId: null },
 ];
+const harnesses = [{ id: "pi", label: "Pi", newSessionPath: "new" }, { id: "claude", label: "Claude", newSessionPath: "claude:new" }];
 const saved = [];
 const controller = createConversationCanvas({
-  api: async (path) => (path.includes("/sessions") ? { sessions } : {}),
+  api: async (path) => {
+    if (path.includes("/sessions")) return { sessions };
+    if (path.includes("/harnesses")) return { harnesses };
+    return {};
+  },
   getProjects: () => [{ id: "p-one", name: "Project One" }],
   saveLayout: (next) => saved.push(next),
   showMessage: () => {},
@@ -158,4 +163,26 @@ test("the picker adds an existing conversation through its button handlers", asy
   const frames = [];
   walk2(root, frames);
   assert.equal(frames.length, 3);
+});
+
+test("the picker opens a pane on a brand-new conversation", async () => {
+  registry.get("#canvasProjectSelect").value = "p-one";
+  controller.openPicker();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const options = registry.get("#canvasSessionOptions");
+  const start = options.children.find((child) => child.dataset.testid === "canvas-start-conversation-pi");
+  assert.ok(start, "the picker offers a brand-new conversation per agent");
+  assert.ok(options.children.some((child) => child.dataset.testid === "canvas-start-conversation-claude"));
+
+  start.dispatch("click");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(registry.get("#canvasConversationDialog").open, false);
+  const draft = listCanvasPanes(saved.at(-1)).find((pane) => pane.sessionPath.startsWith("draft:pi:"));
+  assert.ok(draft, "the new pane owns a draft path no other pane can collide with");
+  assert.equal(draft.sessionPath, `draft:pi:${draft.sessionId}`);
+
+  const frames = [];
+  walk2(registry.get("#canvasRoot"), frames);
+  assert.ok(frames.some((frame) => frame.src.includes(encodeURIComponent(draft.sessionPath))),
+    "the pane frame opens on the draft identity, so no listed conversation is required");
 });

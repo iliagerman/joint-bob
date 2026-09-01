@@ -1,6 +1,8 @@
 // Canvas controller: renders a persisted split layout of panes, each embedding the
-// normal chat surface pointed at one exact existing conversation. No pane ever
-// clones, copies, or creates a conversation; it only reopens an existing session.
+// normal chat surface pointed at one exact conversation. A pane never clones or
+// copies a conversation; it reopens an existing session, or - only when the user
+// picks it in the dialog - opens one brand-new conversation the pane document
+// creates on its own node.
 //
 // Pane elements are keyed and reused across renders so a resize, focus, or swap
 // never reloads an iframe: drafts, scroll, and transient UI state survive. Only a
@@ -28,6 +30,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
   let pickerSessions = [];
   let pickerGeneration = 0;
   let swapSourcePaneId = null;
+  let harnesses = [];
   // conversation identity -> { element, body, paneId }: keyed by the conversation,
   // not the layout slot, so a swap moves live frames between slots instead of
   // destroying and rebuilding them.
@@ -45,6 +48,28 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     return element;
   };
   const paneIdentity = (pane) => `${pane.projectId}\0${pane.sessionId}\0${canonicalSessionPath(pane.sessionPath)}`;
+  // A pane the user opened on a brand-new conversation carries the draft path the
+  // pane document will create the conversation under, so two of them never collide.
+  const draftHarnessId = (sessionPath) => (sessionPath.startsWith("draft:") ? sessionPath.split(":")[1] : null);
+  const harnessLabel = (harnessId) => harnesses.find((candidate) => candidate.id === harnessId)?.label || "conversation";
+  const draftSession = (pane) => {
+    const harnessId = draftHarnessId(pane.sessionPath);
+    return {
+      id: pane.sessionId, path: pane.sessionPath, harnessId,
+      title: `New ${harnessLabel(harnessId)} conversation`,
+      firstMessage: "", running: false, reviewState: "reviewed", executionNodeId: null,
+    };
+  };
+
+  async function ensureHarnesses() {
+    if (harnesses.length) return;
+    try {
+      const body = await api("/api/harnesses");
+      harnesses = body.harnesses || [];
+    } catch (error) {
+      showMessage(error instanceof Error ? error.message : "Could not load agents");
+    }
+  }
 
   function commit(next) {
     layout = next;
@@ -260,8 +285,11 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     if (!active || current !== generation) return;
     for (const pane of panes) {
       const entry = metadata.get(pane.projectId) || {};
-      const session = (entry.sessions || []).find((candidate) => candidate.id === pane.sessionId
+      const listed = (entry.sessions || []).find((candidate) => candidate.id === pane.sessionId
         || canonicalSessionPath(candidate.path) === canonicalSessionPath(pane.sessionPath)) || null;
+      // Until the agent writes its first transcript line the new conversation is not
+      // listed yet; the pane still opens on the draft identity it was created with.
+      const session = listed || (draftHarnessId(pane.sessionPath) ? draftSession(pane) : null);
       const identity = paneIdentity(pane);
       const cached = paneNodes.get(identity);
       const keepBody = cached && cached.body.dataset.live === "1" && session;
@@ -299,20 +327,32 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     });
   }
 
+  function pickerOption(title, subtitle, testId, onChoose) {
+    const option = document.createElement("button");
+    option.type = "button";
+    option.className = "canvas-session-option";
+    if (testId) option.dataset.testid = testId;
+    option.append(text("strong", title));
+    if (subtitle) option.append(text("span", subtitle));
+    option.addEventListener("click", onChoose);
+    optionsList.append(option);
+  }
+
   function renderPickerOptions() {
     const query = searchInput.value.trim().toLowerCase();
     optionsList.replaceChildren();
     const projectId = projectSelect.value;
+    if (projectId) {
+      for (const harness of harnesses) {
+        const title = `Start a new ${harness.label} conversation`;
+        if (!title.toLowerCase().includes(query)) continue;
+        pickerOption(title, "Opens an empty conversation in the new pane", `canvas-start-conversation-${harness.id}`, () => chooseDraft(harness));
+      }
+    }
     const sessions = pickerSessions.filter((session) => !sessionTaken(session, projectId));
     const matches = sessions.filter((session) => `${session.title || ""}\n${session.firstMessage || ""}\n${session.path || ""}`.toLowerCase().includes(query));
     for (const session of matches) {
-      const option = document.createElement("button");
-      option.type = "button";
-      option.className = "canvas-session-option";
-      option.append(text("strong", session.title || session.path));
-      if (session.firstMessage) option.append(text("span", session.firstMessage));
-      option.addEventListener("click", () => chooseSession(session));
-      optionsList.append(option);
+      pickerOption(session.title || session.path, session.firstMessage || "", null, () => chooseSession(session));
     }
     if (!optionsList.childElementCount) optionsList.append(text("p", matches.length || sessions.length ? "No conversation matches that search." : "Every conversation in this project is already on the canvas.", "canvas-picker-empty"));
   }
@@ -337,11 +377,25 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
   }
 
   function chooseSession(session) {
-    const pane = {
+    addChosenPane({
       kind: "pane", id: crypto.randomUUID(),
       projectId: projectSelect.value, sessionPath: session.path,
       sessionId: session.id, executionNodeId: session.executionNodeId ?? null,
-    };
+    });
+  }
+
+  // The canvas mints the conversation id here; the pane document creates the
+  // conversation under it, so the pane resolves to the real session once it lists.
+  function chooseDraft(harness) {
+    const sessionId = crypto.randomUUID();
+    addChosenPane({
+      kind: "pane", id: crypto.randomUUID(),
+      projectId: projectSelect.value, sessionPath: `draft:${harness.id}:${sessionId}`,
+      sessionId, executionNodeId: null,
+    });
+  }
+
+  function addChosenPane(pane) {
     try {
       const axis = positionSelect.value === "below" ? "column" : "row";
       if (replacePaneId) {
@@ -375,6 +429,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
       optionsList.replaceChildren();
       pickerStatus.textContent = "No projects are available on this node.";
     } else {
+      void ensureHarnesses().then(renderPickerOptions);
       void loadPickerSessions();
     }
     dialog.showModal();
@@ -391,6 +446,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     },
     activate() {
       active = true;
+      void ensureHarnesses();
       return render();
     },
     deactivate() {
