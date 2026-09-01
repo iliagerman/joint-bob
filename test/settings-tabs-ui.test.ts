@@ -22,6 +22,13 @@ test("settings tabs absorb notification, secret, and cluster configuration", asy
   assert.doesNotMatch(html, /<dialog id="githubSettingsDialog"/);
   assert.doesNotMatch(html, /<dialog id="clusterDialog"/);
   assert.match(html, /id="settingsPanel-cluster"[\s\S]*id="clusterNodeNameInput"/);
+  assert.match(html, /id="clusterGenerateInviteButton"[^>]*data-testid="cluster-invite-generate-button"/);
+  assert.match(html, /id="clusterInviteLink"[^>]*readonly/);
+  assert.match(html, /id="clusterJoinLinkInput"[^>]*data-testid="cluster-join-link-input"/);
+  assert.match(html, /id="clusterJoinButton"[^>]*data-testid="cluster-join-button"/);
+  assert.doesNotMatch(html, /clusterLocalToken|clusterPeerUrlInput|clusterPeerTokenInput/);
+  assert.match(app, /api\("\/api\/cluster\/invitations", \{ method: "POST" \}\)/);
+  assert.match(app, /api\("\/api\/cluster\/join", \{[\s\S]*method: "POST"/);
   // Workspaces live in the Projects tab; the Secrets tab carries every secret account.
   assert.match(html, /id="settingsPanel-projects"[\s\S]*id="workspaceList"/);
   assert.match(html, /id="workspaceAddButton"/);

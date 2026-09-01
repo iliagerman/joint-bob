@@ -14,7 +14,7 @@ import { z } from "zod";
 import { ensureSessionTitle, projectNameOverrides, setProjectName, setSessionColor, setSessionTitle } from "./names.js";
 import { getProjectLock, projectLocks, setProjectLock } from "./project-locks.js";
 import { addProject, deleteWorkspace, getProject, importProject, listProjects, listWorkspaces, projectAliasIds, registerProjectAliases, removeProject, renameProject, saveWorkspace, touchProject, updateProjectColor, updateProjectMacPath, updateProjectSyncFolderId, updateProjectWorkspaceAndPath, WorkspaceError } from "./store.js";
-import { createClusterPeer, dueMembershipDeliveries, getClusterMachineToken, getClusterMembership, getClusterNode, getClusterPeer, listClusterPeers, markClusterPeerSeen, mergeClusterMembership, recordMembershipDelivered, recordMembershipFailure, removeClusterPeer, saveClusterPeer, updateClusterNode, type ClusterPeer } from "./cluster.js";
+import { clusterInvitationStatus, consumeClusterInvitation, createClusterInvitation, createClusterPeer, dueMembershipDeliveries, getClusterMachineToken, getClusterMembership, getClusterNode, getClusterPeer, listClusterPeers, markClusterPeerSeen, mergeClusterMembership, recordMembershipDelivered, recordMembershipFailure, removeClusterPeer, saveClusterPeer, updateClusterNode, type ClusterPeer } from "./cluster.js";
 import { eventsForPeer, receiveReplicationBatch, recordPeerFailure, recordPeerReceipt, type ReplicationBatch } from "./replication.js";
 import { enqueueSecretCredentialSync, receiveSecretCredentialEvents, recordSecretCredentialFailure, recordSecretCredentialReceipt, secretCredentialEventsForPeer, type SecretCredentialEvent } from "./secret-replication.js";
 import { agentCredentialContext, agentEnvironment, deleteSecretAccount, getScopeSecretAccounts, listSecretAccounts, persistConversationSecretAccounts, saveSecretAccount, setScopeSecretAccounts } from "./secrets.js";
@@ -223,12 +223,15 @@ const projectPathMappingSchema = z.object({
 const projectListQuerySchema = z.object({
   syncStatus: z.enum(["true", "false"]).optional().default("true"),
 });
+const clusterUrlSchema = z.string().url().max(500)
+  .refine(isClusterOriginUrl, "Cluster URLs must be an HTTPS origin, except loopback HTTP")
+  .transform(canonicalClusterUrl);
 const clusterNodeSchema = z.object({
   name: z.string().trim().min(1).max(80),
-  url: z.string().url().max(500),
+  url: clusterUrlSchema,
 });
 const clusterPeerSchema = z.object({
-  url: z.string().url().max(500),
+  url: clusterUrlSchema,
   token: z.string().trim().min(1).max(500),
 });
 const clusterMembershipMemberSchema = clusterNodeSchema.extend({
@@ -245,6 +248,18 @@ const clusterMemberTombstoneSchema = z.object({
 const clusterMembershipSnapshotSchema = z.object({
   members: z.array(clusterMembershipMemberSchema).min(1),
   removed: z.array(clusterMemberTombstoneSchema).max(100).optional().default([]),
+});
+const clusterInvitationRedeemSchema = z.object({
+  invitationId: z.string().uuid(),
+  secret: z.string().trim().min(1).max(500),
+  member: clusterMembershipMemberSchema,
+});
+const clusterJoinSchema = clusterNodeSchema.extend({
+  link: z.string().trim().url().max(1200),
+});
+const clusterInvitationRedemptionSchema = z.object({
+  inviterNodeId: z.string().uuid(),
+  membership: clusterMembershipSnapshotSchema,
 });
 const clusterProjectImportSchema = z.object({
   peerId: z.string().uuid(),
@@ -488,6 +503,51 @@ function sendError(response: Response, statusCode: number, message: string): voi
   response.status(statusCode).json({ error: message });
 }
 
+function isSecureClusterUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname));
+  } catch {
+    return false;
+  }
+}
+
+function canonicalClusterUrl(value: string): string {
+  return new URL(value).origin;
+}
+
+function isClusterOriginUrl(value: string): boolean {
+  const url = new URL(value);
+  return isSecureClusterUrl(value) && !url.username && !url.password && url.pathname === "/" && !url.search && !url.hash;
+}
+
+function parseClusterInvitationLink(link: string): { inviterUrl: string; invitationId: string; secret: string } {
+  const invitationUrl = new URL(link);
+  if (!isSecureClusterUrl(invitationUrl.href) || invitationUrl.username || invitationUrl.password) throw new Error("Cluster invitation link is invalid");
+  const [invitationId, secret, extra] = invitationUrl.hash.slice(1).split(".");
+  if (invitationUrl.pathname !== "/join" || invitationUrl.search || extra || !secret) throw new Error("Cluster invitation link is invalid");
+  return {
+    inviterUrl: invitationUrl.origin,
+    invitationId: z.string().uuid().parse(invitationId),
+    secret: z.string().regex(/^[A-Za-z0-9_-]{43}$/).parse(secret),
+  };
+}
+
+function clusterInvitationConflict(member: z.infer<typeof clusterMembershipMemberSchema>, localNode: Awaited<ReturnType<typeof getClusterNode>>, peers: ClusterPeer[], retry: boolean): string | undefined {
+  const normalizedUrl = canonicalClusterUrl(member.url);
+  if (member.id === localNode.id || (localNode.url && normalizedUrl === canonicalClusterUrl(localNode.url))) return "A node cannot join itself";
+  const idPeer = peers.find((peer) => peer.id === member.id);
+  const urlPeer = peers.find((peer) => canonicalClusterUrl(peer.url) === normalizedUrl);
+  const samePeer = idPeer && canonicalClusterUrl(idPeer.url) === normalizedUrl && idPeer.token === member.token && (!urlPeer || urlPeer.id === member.id);
+  if (retry && samePeer) return undefined;
+  if (idPeer || urlPeer) return "A cluster member already uses this identity or URL";
+  return undefined;
+}
+
+function prospectiveClusterNode(node: Awaited<ReturnType<typeof getClusterNode>>, name: string, url: string): Awaited<ReturnType<typeof getClusterNode>> {
+  return node.name === name && node.url === url ? node : { ...node, name, url, updatedAt: new Date().toISOString() };
+}
+
 function securityHeaders(_request: Request, response: Response, next: NextFunction): void {
   response.setHeader("Content-Security-Policy", "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; style-src 'self'; script-src 'self'");
   response.setHeader("X-Content-Type-Options", "nosniff");
@@ -705,6 +765,18 @@ async function importProjectsFromPeer(peer: ClusterPeer, missingOnly = false): P
   return { imported, skipped, pending };
 }
 
+async function syncPairedProjects(peer: ClusterPeer, localNodeId: string): Promise<ProjectImportResult> {
+  const localImport = await importProjectsFromPeer(peer);
+  const response = await fetch(`${peer.url}/api/cluster/projects/import`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ peerId: localNodeId }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) throw new Error(`Peer project import failed: ${peer.url} returned ${response.status}`);
+  return localImport;
+}
+
 async function discoverMissingPeerProjects(): Promise<void> {
   if (!startupReady || projectDiscoveryInProgress) return;
   projectDiscoveryInProgress = true;
@@ -850,6 +922,32 @@ app.post("/api/auth/login", (request, response, next) => {
   }
 });
 
+app.post("/api/cluster/invitations/redeem", async (request, response, next) => {
+  try {
+    const payload = clusterInvitationRedeemSchema.parse(request.body);
+    const invitationResult = await clusterInvitationStatus(payload.invitationId, payload.secret, payload.member.id);
+    if (invitationResult === "invalid") { sendError(response, 401, "Invalid cluster invitation"); return; }
+    if (invitationResult === "expired") { sendError(response, 410, "Cluster invitation has expired"); return; }
+    if (invitationResult === "used") { sendError(response, 410, "Cluster invitation has already been used"); return; }
+    const [localNode, peers] = await Promise.all([getClusterNode(), listClusterPeers()]);
+    const conflict = clusterInvitationConflict(payload.member, localNode, peers, invitationResult === "retry");
+    if (conflict) { sendError(response, 409, conflict); return; }
+    const existing = peers.find((peer) => peer.id === payload.member.id);
+    if (!existing && peers.length >= 4) { sendError(response, 409, "A cluster supports at most five nodes"); return; }
+    const claimed = await consumeClusterInvitation(payload.invitationId, payload.secret, payload.member.id);
+    if (claimed === "invalid") { sendError(response, 401, "Invalid cluster invitation"); return; }
+    if (claimed === "expired") { sendError(response, 410, "Cluster invitation has expired"); return; }
+    if (claimed === "used") { sendError(response, 410, "Cluster invitation has already been used"); return; }
+    if (!existing) {
+      const { token, ...node } = payload.member;
+      await saveClusterPeer(createClusterPeer(node, token));
+    }
+    response.status(201).json({ inviterNodeId: localNode.id, membership: await getClusterMembership() });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.use("/api", requireHttpAuth, requireCsrf);
 app.use("/api", (request, response, next) => {
   if (updatePreparing && !["GET", "HEAD", "OPTIONS"].includes(request.method) && request.path !== "/update/prepare") {
@@ -956,6 +1054,66 @@ app.put("/api/settings", async (request, response, next) => {
       sendError(response, 400, error.message);
       return;
     }
+    next(error);
+  }
+});
+
+app.post("/api/cluster/invitations", async (_request, response, next) => {
+  try {
+    const node = await getClusterNode();
+    if (!node.url) { sendError(response, 409, "Configure this node's public Tailscale URL before generating an invitation"); return; }
+    if ((await listClusterPeers()).length >= 4) { sendError(response, 409, "A cluster supports at most five nodes"); return; }
+    const invitation = await createClusterInvitation();
+    const link = new URL("/join", `${node.url}/`);
+    link.hash = `${invitation.id}.${invitation.secret}`;
+    response.status(201).json({ link: link.href });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/cluster/join", async (request, response, next) => {
+  try {
+    const payload = clusterJoinSchema.parse(request.body);
+    let invitation: ReturnType<typeof parseClusterInvitationLink>;
+    try {
+      invitation = parseClusterInvitationLink(payload.link);
+    } catch {
+      sendError(response, 400, "Cluster invitation link is invalid");
+      return;
+    }
+    const [currentNode, peers, machineToken] = await Promise.all([getClusterNode(), listClusterPeers(), getClusterMachineToken()]);
+    if (peers.length && !peers.some((peer) => canonicalClusterUrl(peer.url) === invitation.inviterUrl)) {
+      sendError(response, 409, "This node already belongs to a different cluster");
+      return;
+    }
+    const member = { ...prospectiveClusterNode(currentNode, payload.name, payload.url), token: machineToken };
+    const redeemResponse = await fetch(`${invitation.inviterUrl}/api/cluster/invitations/redeem`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ invitationId: invitation.invitationId, secret: invitation.secret, member }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!redeemResponse.ok) {
+      const body = await redeemResponse.json().catch(() => ({})) as { error?: string };
+      sendError(response, redeemResponse.status, body.error ?? `Inviting node returned ${redeemResponse.status}`);
+      return;
+    }
+    const redemption = clusterInvitationRedemptionSchema.parse(await redeemResponse.json());
+    const localNode = await updateClusterNode(payload.name, payload.url);
+    await mergeClusterMembership(redemption.membership, redemption.inviterNodeId);
+    const inviter = await getClusterPeer(redemption.inviterNodeId);
+    if (!inviter) throw new Error("Inviting node was not added to cluster membership");
+    const confirmation = await fetch(`${inviter.url}/api/cluster/membership/sync`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${inviter.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(await getClusterMembership()),
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!confirmation.ok) throw new Error(`Cluster membership confirmation failed: inviting node returned ${confirmation.status}`);
+    const localImport = await syncPairedProjects(inviter, localNode.id);
+    response.status(201).json({ peers: (await listClusterPeers()).map(publicClusterPeer), pending: localImport.pending });
+  } catch (error) {
     next(error);
   }
 });
@@ -1075,14 +1233,7 @@ app.post("/api/cluster/peers", async (request, response, next) => {
       signal: AbortSignal.timeout(5_000),
     });
     if (!confirmation.ok) throw new Error(`Peer membership confirmation failed: ${peerUrl} returned ${confirmation.status}`);
-    const localImport = await importProjectsFromPeer(peer);
-    const importResponse = await fetch(`${peerUrl}/api/cluster/projects/import`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ peerId: localNode.id }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!importResponse.ok) throw new Error(`Peer project import failed: ${peerUrl} returned ${importResponse.status}`);
+    const localImport = await syncPairedProjects(peer, localNode.id);
     response.status(201).json({ peer: publicClusterPeer(peer), pending: localImport.pending });
   } catch (error) {
     next(error);

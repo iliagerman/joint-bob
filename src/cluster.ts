@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { promises as fs, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -40,6 +40,13 @@ export interface MembershipDelivery {
   attempts: number;
 }
 
+export interface ClusterInvitation {
+  id: string;
+  secret: string;
+}
+
+export type ClusterInvitationResult = "accepted" | "expired" | "invalid" | "retry" | "used";
+
 interface ClusterStore {
   node: ClusterNode;
   peers: ClusterPeer[];
@@ -69,6 +76,7 @@ const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ??
 const databasePath = path.join(dataDir, "node.db");
 const legacyStorePath = path.join(dataDir, "cluster.json");
 const keyPath = path.join(dataDir, "secret.key");
+const clusterInvitationLifetimeMs = 15 * 60 * 1000;
 let databasePromise: Promise<DatabaseSync> | undefined;
 
 function encryptionKey(): Buffer {
@@ -205,6 +213,13 @@ async function clusterDatabase(): Promise<DatabaseSync> {
         removed_at TEXT NOT NULL,
         origin_node_id TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS cluster_invitations (
+        id TEXT PRIMARY KEY,
+        secret_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        consumed_at TEXT,
+        consumed_by_node_id TEXT
+      );
     `);
     ensureAuditSchema(db);
     db.prepare("INSERT OR IGNORE INTO cluster_membership_state (singleton, generation) VALUES (1, 1)").run();
@@ -214,6 +229,8 @@ async function clusterDatabase(): Promise<DatabaseSync> {
     `).run(new Date().toISOString());
     const peerColumns = db.prepare("PRAGMA table_info(cluster_peers)").all() as unknown as Array<{ name: string }>;
     if (!peerColumns.some((column) => column.name === "last_seen_at")) db.exec("ALTER TABLE cluster_peers ADD COLUMN last_seen_at TEXT");
+    const invitationColumns = db.prepare("PRAGMA table_info(cluster_invitations)").all() as unknown as Array<{ name: string }>;
+    if (!invitationColumns.some((column) => column.name === "consumed_by_node_id")) db.exec("ALTER TABLE cluster_invitations ADD COLUMN consumed_by_node_id TEXT");
     const current = db.prepare("SELECT COUNT(*) AS count FROM cluster_node").get() as { count: number };
     if (current.count !== 0) {
       if (!db.prepare("SELECT version FROM cluster_secret_migrations WHERE version = 1").get()) {
@@ -262,6 +279,52 @@ async function clusterDatabase(): Promise<DatabaseSync> {
 export async function getClusterMachineToken(): Promise<string> {
   const row = (await clusterDatabase()).prepare("SELECT token FROM cluster_machine_credentials WHERE singleton = 1").get() as { token: string };
   return decryptToken(row.token);
+}
+
+function invitationHash(secret: string): string {
+  return createHash("sha256").update(secret).digest("hex");
+}
+
+function invitationHashMatches(secret: string, expectedHash: string): boolean {
+  return timingSafeEqual(Buffer.from(invitationHash(secret), "hex"), Buffer.from(expectedHash, "hex"));
+}
+
+export async function createClusterInvitation(): Promise<ClusterInvitation> {
+  const db = await clusterDatabase();
+  const invitation = { id: randomUUID(), secret: randomBytes(32).toString("base64url") };
+  const now = new Date().toISOString();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare("DELETE FROM cluster_invitations").run();
+    db.prepare("INSERT INTO cluster_invitations (id, secret_hash, created_at, consumed_at, consumed_by_node_id) VALUES (?, ?, ?, NULL, NULL)")
+      .run(invitation.id, invitationHash(invitation.secret), now);
+    db.exec("COMMIT");
+    return invitation;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+export async function clusterInvitationStatus(id: string, secret: string, nodeId: string): Promise<ClusterInvitationResult | "active"> {
+  const db = await clusterDatabase();
+  const row = db.prepare("SELECT secret_hash, created_at, consumed_at, consumed_by_node_id FROM cluster_invitations WHERE id = ?").get(id) as { secret_hash: string; created_at: string; consumed_at: string | null; consumed_by_node_id: string | null } | undefined;
+  if (!row || !invitationHashMatches(secret, row.secret_hash)) return "invalid";
+  if (row.consumed_at) return row.consumed_by_node_id === nodeId ? "retry" : "used";
+  const createdAt = Date.parse(row.created_at);
+  if (Number.isNaN(createdAt)) throw new Error("Stored cluster invitation timestamp is invalid");
+  return Date.now() - createdAt > clusterInvitationLifetimeMs ? "expired" : "active";
+}
+
+export async function consumeClusterInvitation(id: string, secret: string, nodeId: string): Promise<ClusterInvitationResult> {
+  const status = await clusterInvitationStatus(id, secret, nodeId);
+  if (status !== "active") return status;
+  const result = (await clusterDatabase()).prepare("UPDATE cluster_invitations SET consumed_at = ?, consumed_by_node_id = ? WHERE id = ? AND consumed_at IS NULL")
+    .run(new Date().toISOString(), nodeId, id);
+  if (result.changes === 1) return "accepted";
+  const retryStatus = await clusterInvitationStatus(id, secret, nodeId);
+  if (retryStatus === "active") throw new Error("Cluster invitation consumption did not persist");
+  return retryStatus;
 }
 
 export async function getClusterNode(): Promise<ClusterNode> {

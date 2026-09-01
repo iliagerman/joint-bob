@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import type { TaskRecord } from "../src/types.js";
 import os from "node:os";
@@ -19,6 +19,32 @@ async function withClusterStore(run: (dataDir: string) => Promise<void>): Promis
     await rm(dataDir, { recursive: true, force: true });
   }
 }
+
+test("cluster invitations are hashed, replace earlier links, and can be consumed once", async () => {
+  await withClusterStore(async (dataDir) => {
+    const cluster = await import(new URL(`../src/cluster.ts?invitation=${Date.now()}`, import.meta.url).href);
+    const first = await cluster.createClusterInvitation();
+    const second = await cluster.createClusterInvitation();
+    const databaseBytes = (await readFile(path.join(dataDir, "node.db"))).toString("utf8");
+
+    assert.match(first.secret, /^[A-Za-z0-9_-]{43}$/);
+    assert.doesNotMatch(databaseBytes, new RegExp(first.secret));
+    assert.doesNotMatch(databaseBytes, new RegExp(second.secret));
+    const database = new DatabaseSync(path.join(dataDir, "node.db"));
+    const stored = database.prepare("SELECT secret_hash FROM cluster_invitations WHERE id = ?").get(second.id) as { secret_hash: string };
+    assert.equal(stored.secret_hash, createHash("sha256").update(second.secret).digest("hex"));
+    assert.equal(await cluster.consumeClusterInvitation(first.id, first.secret, "node-a"), "invalid");
+    assert.equal(await cluster.consumeClusterInvitation(second.id, "wrong-secret", "node-a"), "invalid");
+    database.prepare("UPDATE cluster_invitations SET created_at = ? WHERE id = ?").run("2000-01-01T00:00:00.000Z", second.id);
+    database.close();
+    assert.equal(await cluster.consumeClusterInvitation(second.id, second.secret, "node-a"), "expired");
+
+    const third = await cluster.createClusterInvitation();
+    assert.equal(await cluster.consumeClusterInvitation(third.id, third.secret, "node-a"), "accepted");
+    assert.equal(await cluster.consumeClusterInvitation(third.id, third.secret, "node-a"), "retry");
+    assert.equal(await cluster.consumeClusterInvitation(third.id, third.secret, "node-b"), "used");
+  });
+});
 
 test("cluster machine token is stable, high entropy, and encrypted", async () => {
   await withClusterStore(async (dataDir) => {

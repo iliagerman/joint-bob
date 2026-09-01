@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 0.4.0 — 2026-09-01
+
+- Added one-time cluster join links that any existing member can generate
+- Replaced manual node URLs and permanent pairing tokens in Settings with a paste-and-join flow
+
 ## 0.3.8 — 2026-09-01
 
 - Fixed conversation scrolling resisting upward movement when off-screen messages changed from estimated to real heights

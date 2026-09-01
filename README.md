@@ -33,15 +33,17 @@ The curl command downloads the latest GitHub release, verifies its SHA-256 check
 
 Install Joint Bob on the new machine, then:
 
-1. Open the new node and create its administrator.
-2. Open **Settings → Cluster** on the new node.
-3. Set its name and private HTTPS URL, normally its Tailscale Serve URL.
-4. Copy the new node's pairing token.
-5. On an existing node, open **Settings → Cluster**.
-6. Enter the new node URL and token, then choose **Save and add node**.
+1. On any existing cluster node, open **Settings → Cluster**.
+2. Choose **Generate one-time link**, then copy it.
+3. Open the new node and create its administrator.
+4. Open **Settings → Cluster** on the new node.
+5. Set its name and private HTTPS URL, normally its Tailscale Serve URL.
+6. Paste the link under **Join an existing cluster**, then choose **Join cluster**.
 7. Select **Settings → Projects → Joint Bob home folder** on each node. New peer projects map automatically beneath that node's selected home; existing projects are not moved automatically.
 
-Pairing is two-sided automatically. One successful pairing exchanges membership and project inventory. Joint Bob also creates and shares `dot-pi` and `dot-claude` Syncthing folders for shareable engine configuration and sessions. Pi authentication/model credential files and Claude credentials, credential-bearing settings, MCP authentication, OAuth locks, and daemon control keys remain node-local. Do not pair nodes over plain public HTTP because pairing tokens are machine credentials.
+The link works once. Generate another link for each additional node. Creating a new link invalidates the previous unused link from that machine.
+
+Pairing is two-sided automatically. One successful pairing exchanges membership and project inventory. Joint Bob also creates and shares `dot-pi` and `dot-claude` Syncthing folders for shareable engine configuration and sessions. Pi authentication/model credential files and Claude credentials, credential-bearing settings, MCP authentication, OAuth locks, and daemon control keys remain node-local. Do not share join links outside the private cluster network.
 
 A cluster supports five active nodes. Remove an old node before adding a sixth.
 

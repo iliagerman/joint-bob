@@ -321,32 +321,40 @@
         </section>
 
         <section class="settings-panel" id="settingsPanel-cluster" role="tabpanel" aria-labelledby="settingsTab-cluster" tabindex="0" hidden>
-          <p>To add a node: install and open Joint Bob there, set its private Tailscale URL below, copy its pairing token, then paste that URL and token into an existing node.</p>
+          <p>Every cluster member can create a one-time link. Paste it into the new node to join.</p>
           <div class="cluster-inventory" id="clusterInventory"></div>
-          <label>
-            This machine name
-            <input id="clusterNodeNameInput" autocomplete="off" data-testid="cluster-node-name-input" />
-          </label>
-          <label>
-            This machine Tailscale URL
-            <input id="clusterNodeUrlInput" type="url" autocomplete="off" placeholder="https://machine.tailnet.ts.net" data-testid="cluster-node-url-input" />
-          </label>
-          <label>
-            This node's pairing token
-            <div class="cluster-token-row">
-              <input id="clusterLocalToken" readonly aria-readonly="true" autocomplete="off" />
-              <button class="ghost compact" id="copyClusterLocalTokenButton" type="button">Copy token</button>
-            </div>
-          </label>
-          <label>
-            New node URL
-            <input id="clusterPeerUrlInput" type="url" autocomplete="off" placeholder="https://peer.tailnet.ts.net" data-testid="cluster-peer-url-input" />
-          </label>
-          <label>
-            New node pairing token
-            <input id="clusterPeerTokenInput" type="password" autocomplete="off" placeholder="Paste the remote node token" data-testid="cluster-peer-token-input" />
-          </label>
-          <button class="ghost" type="button" id="clusterSaveButton" data-testid="cluster-save-button">Save and add node</button>
+          <fieldset class="phase-settings">
+            <legend>This machine</legend>
+            <label>
+              Name
+              <input id="clusterNodeNameInput" autocomplete="off" data-testid="cluster-node-name-input" />
+            </label>
+            <label>
+              Private Tailscale URL
+              <input id="clusterNodeUrlInput" type="url" autocomplete="off" placeholder="https://machine.tailnet.ts.net" data-testid="cluster-node-url-input" />
+            </label>
+            <button class="ghost" type="button" id="clusterSaveButton" data-testid="cluster-save-button">Save this machine</button>
+          </fieldset>
+          <fieldset class="phase-settings">
+            <legend>Invite a node</legend>
+            <p>Generating a link invalidates any unused link from this machine.</p>
+            <button class="ghost" type="button" id="clusterGenerateInviteButton" data-testid="cluster-invite-generate-button">Generate one-time link</button>
+            <label>
+              Join link
+              <div class="cluster-token-row">
+                <input id="clusterInviteLink" readonly aria-readonly="true" autocomplete="off" data-testid="cluster-invite-link-input" />
+                <button class="ghost compact" id="copyClusterInviteButton" type="button" data-testid="cluster-invite-copy-button" disabled>Copy link</button>
+              </div>
+            </label>
+          </fieldset>
+          <fieldset class="phase-settings">
+            <legend>Join an existing cluster</legend>
+            <label>
+              One-time join link
+              <input id="clusterJoinLinkInput" type="url" autocomplete="off" placeholder="Paste a join link" data-testid="cluster-join-link-input" />
+            </label>
+            <button class="primary" type="button" id="clusterJoinButton" data-testid="cluster-join-button">Join cluster</button>
+          </fieldset>
         </section>
 
         <section class="settings-panel" id="settingsPanel-projects" role="tabpanel" aria-labelledby="settingsTab-projects" tabindex="0" hidden>

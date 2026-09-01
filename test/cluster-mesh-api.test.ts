@@ -94,6 +94,21 @@ async function invite(node: NodeProcess, auth: Session): Promise<string> {
   return (await response.json() as { token: string }).token;
 }
 
+async function createJoinLink(node: NodeProcess, auth: Session): Promise<string> {
+  const response = await fetch(`${node.baseUrl}/api/cluster/invitations`, { method: "POST", headers: auth.headers });
+  assert.equal(response.status, 201, node.output());
+  return (await response.json() as { link: string }).link;
+}
+
+async function joinCluster(node: NodeProcess, auth: Session, name: string, link: string): Promise<Response> {
+  return fetch(`${node.baseUrl}/api/cluster/join`, {
+    method: "POST",
+    headers: auth.headers,
+    body: JSON.stringify({ name, url: node.baseUrl, link }),
+    signal: AbortSignal.timeout(30_000),
+  });
+}
+
 async function pair(source: NodeProcess, auth: Session, target: NodeProcess, token: string): Promise<Response> {
   const response = await fetch(`${source.baseUrl}/api/cluster/peers`, {
     method: "POST",
@@ -214,6 +229,59 @@ test("DELETE peer returns conflict while it owns a replicated task", { timeout: 
     assert.equal(removed.status, 409, a.output());
     assert.equal(body.error, `Transfer owned tasks and settle handoffs before removing cluster member ${bId}`);
     assert((await peers(a, aAuth)).some((peer) => peer.id === bId));
+  } finally {
+    await Promise.all(nodes.map(stopNode));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a one-time link from any member adds one node and rejects reuse", { timeout: 120_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "pi-mobile-web-cluster-invitation-"));
+  const nodes: NodeProcess[] = [];
+  try {
+    const [a, b, c, d] = await Promise.all([startNode(root, "a"), startNode(root, "b"), startNode(root, "c"), startNode(root, "d")]);
+    nodes.push(a, b, c, d);
+    const [aAuth, bAuth, cAuth, dAuth] = await Promise.all([session(a), session(b), session(c), session(d)]);
+    await Promise.all([configure(a, aAuth, "A"), configure(b, bAuth, "B"), configure(c, cAuth, "C"), configure(d, dAuth, "D")]);
+    const insecureUrl = await fetch(`${a.baseUrl}/api/cluster/node`, {
+      method: "PUT",
+      headers: aAuth.headers,
+      body: JSON.stringify({ name: "A", url: "http://example.com" }),
+    });
+    assert.equal(insecureUrl.status, 400);
+    const pathUrl = await fetch(`${a.baseUrl}/api/cluster/node`, {
+      method: "PUT",
+      headers: aAuth.headers,
+      body: JSON.stringify({ name: "A", url: "https://example.com/path" }),
+    });
+    assert.equal(pathUrl.status, 400);
+    const canonical = await fetch(`${a.baseUrl}/api/cluster/node`, {
+      method: "PUT",
+      headers: aAuth.headers,
+      body: JSON.stringify({ name: "A", url: `http://LOCALHOST:${new URL(a.baseUrl).port}/` }),
+    });
+    assert.equal((await canonical.json() as { node: { url: string } }).node.url, `http://localhost:${new URL(a.baseUrl).port}`);
+    await configure(a, aAuth, "A");
+    assert.equal((await fetch(`${a.baseUrl}/api/cluster/invitations`, { method: "POST" })).status, 401);
+
+    await pair(a, aAuth, b, await invite(b, bAuth));
+    const link = await createJoinLink(b, bAuth);
+    const dBeforeFailedJoins = await (await fetch(`${d.baseUrl}/api/cluster/node`, { headers: dAuth.headers })).json();
+    const collision = await fetch(`${d.baseUrl}/api/cluster/join`, {
+      method: "POST",
+      headers: dAuth.headers,
+      body: JSON.stringify({ name: "D", url: b.baseUrl, link }),
+    });
+    assert.equal(collision.status, 409);
+    assert.equal((await joinCluster(d, dAuth, "D", `${b.baseUrl}/join#bad`)).status, 400);
+    assert.deepEqual(await (await fetch(`${d.baseUrl}/api/cluster/node`, { headers: dAuth.headers })).json(), dBeforeFailedJoins);
+    assert.equal((await joinCluster(c, cAuth, "C", link)).status, 201, `${a.output()}\n${b.output()}\n${c.output()}`);
+    await waitForMesh([{ node: a, auth: aAuth }, { node: b, auth: bAuth }, { node: c, auth: cAuth }]);
+    assert.equal((await joinCluster(c, cAuth, "C", link)).status, 201, `${b.output()}\n${c.output()}`);
+
+    const reused = await joinCluster(d, dAuth, "D", link);
+    assert.equal(reused.status, 410, `${b.output()}\n${d.output()}`);
+    assert.equal((await peers(d, dAuth)).length, 0);
   } finally {
     await Promise.all(nodes.map(stopNode));
     await rm(root, { recursive: true, force: true });

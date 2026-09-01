@@ -248,10 +248,11 @@ const elements = {
   clusterInventory: document.querySelector("#clusterInventory"),
   clusterNodeNameInput: document.querySelector("#clusterNodeNameInput"),
   clusterNodeUrlInput: document.querySelector("#clusterNodeUrlInput"),
-  clusterLocalToken: document.querySelector("#clusterLocalToken"),
-  copyClusterLocalTokenButton: document.querySelector("#copyClusterLocalTokenButton"),
-  clusterPeerUrlInput: document.querySelector("#clusterPeerUrlInput"),
-  clusterPeerTokenInput: document.querySelector("#clusterPeerTokenInput"),
+  clusterGenerateInviteButton: document.querySelector("#clusterGenerateInviteButton"),
+  clusterInviteLink: document.querySelector("#clusterInviteLink"),
+  copyClusterInviteButton: document.querySelector("#copyClusterInviteButton"),
+  clusterJoinLinkInput: document.querySelector("#clusterJoinLinkInput"),
+  clusterJoinButton: document.querySelector("#clusterJoinButton"),
   projectImportDialog: document.querySelector("#projectImportDialog"),
   projectImportForm: document.querySelector("#projectImportForm"),
   projectImportTitle: document.querySelector("#projectImportTitle"),
@@ -1292,28 +1293,42 @@ function renderClusterInventory(inventory) {
 }
 
 async function loadClusterPanel() {
-  const [inventory, invite] = await Promise.all([api("/api/cluster/inventory"), api("/api/cluster/invite")]);
+  const inventory = await api("/api/cluster/inventory");
   elements.clusterNodeNameInput.value = inventory.local.name;
   elements.clusterNodeUrlInput.value = inventory.local.url;
-  elements.clusterLocalToken.value = invite.token;
-  elements.clusterPeerUrlInput.value = "";
-  elements.clusterPeerTokenInput.value = "";
+  elements.clusterInviteLink.value = "";
+  elements.copyClusterInviteButton.disabled = true;
+  elements.clusterJoinLinkInput.value = "";
   renderClusterInventory(inventory);
 }
 
+function clusterNodePayload() {
+  return { name: elements.clusterNodeNameInput.value.trim(), url: elements.clusterNodeUrlInput.value.trim() };
+}
+
 async function saveClusterNode() {
-  await api("/api/cluster/node", {
-    method: "PUT",
-    body: JSON.stringify({ name: elements.clusterNodeNameInput.value.trim(), url: elements.clusterNodeUrlInput.value.trim() }),
+  await api("/api/cluster/node", { method: "PUT", body: JSON.stringify(clusterNodePayload()) });
+  renderClusterInventory(await api("/api/cluster/inventory"));
+  toast("Node saved");
+}
+
+async function generateClusterInvitation() {
+  await api("/api/cluster/node", { method: "PUT", body: JSON.stringify(clusterNodePayload()) });
+  const invitation = await api("/api/cluster/invitations", { method: "POST" });
+  elements.clusterInviteLink.value = invitation.link;
+  elements.copyClusterInviteButton.disabled = false;
+  toast("One-time join link generated");
+}
+
+async function joinCluster() {
+  const link = elements.clusterJoinLinkInput.value.trim();
+  if (!link) throw new Error("Join link is required");
+  await api("/api/cluster/join", {
+    method: "POST",
+    body: JSON.stringify({ ...clusterNodePayload(), link }),
   });
-  const peerUrl = elements.clusterPeerUrlInput.value.trim();
-  const peerToken = elements.clusterPeerTokenInput.value.trim();
-  if (peerUrl || peerToken) {
-    if (!peerUrl) throw new Error("Peer URL is required");
-    await api("/api/cluster/peers", { method: "POST", body: JSON.stringify({ name: peerUrl, url: peerUrl, token: peerToken }) });
-  }
   await loadClusterPanel();
-  toast(peerUrl ? "Node saved and peer paired" : "Node saved");
+  toast("Joined cluster");
 }
 
 /** Lists paired nodes with a checkbox each so the user can push replicating accounts to some or all of them. */
@@ -4722,6 +4737,8 @@ elements.settingsLogoutButton.addEventListener("click", async () => {
 });
 elements.settingsForm.addEventListener("submit", (event) => saveSettings(event).catch((error) => toast(error.message)));
 elements.clusterSaveButton.addEventListener("click", () => saveClusterNode().catch((error) => toast(error.message)));
+elements.clusterGenerateInviteButton.addEventListener("click", () => generateClusterInvitation().catch((error) => toast(error.message)));
+elements.clusterJoinButton.addEventListener("click", () => joinCluster().catch((error) => toast(error.message)));
 elements.secretSyncButton.addEventListener("click", () => openSecretSyncDialog().catch((error) => toast(error.message)));
 elements.cancelSecretSyncButton.addEventListener("click", () => elements.secretSyncDialog.close());
 elements.secretSyncAllInput.addEventListener("change", () => {
@@ -4731,12 +4748,12 @@ elements.secretSyncForm.addEventListener("submit", (event) => {
   event.preventDefault();
   submitSecretSync().catch((error) => toast(error.message));
 });
-elements.copyClusterLocalTokenButton.addEventListener("click", async () => {
+elements.copyClusterInviteButton.addEventListener("click", async () => {
   try {
-    await navigator.clipboard.writeText(elements.clusterLocalToken.value);
-    toast("Pairing token copied");
+    await navigator.clipboard.writeText(elements.clusterInviteLink.value);
+    toast("One-time join link copied");
   } catch (error) {
-    toast(error.message || "Could not copy pairing token");
+    toast(error.message || "Could not copy join link");
   }
 });
 elements.folderPickerParentButton.addEventListener("click", () => {
