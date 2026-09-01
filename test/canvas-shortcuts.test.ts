@@ -99,6 +99,31 @@ test("replicated shortcut events resolve by recency and respect releases", async
     shortcuts.applyCanvasShortcutEvent(db, event("upsert", { ...base, sessionId: "reassigned", updatedAt: "2026-09-01T13:00:00.000Z" }));
     assert.deepEqual(listing(shortcuts.listCanvasShortcuts("ada")), ["4:reassigned"]);
 
+    // One conversation still holds one binding when two nodes bind it at once.
+    const other = { ...base, binding: "7" };
+    shortcuts.applyCanvasShortcutEvent(db, event("upsert", { ...other, sessionId: "reassigned", updatedAt: "2026-09-01T14:00:00.000Z" }));
+    assert.deepEqual(listing(shortcuts.listCanvasShortcuts("ada")), ["7:reassigned"], "the newer binding displaces the older one");
+    // The displaced key stays displaced even when its assignment is delivered late.
+    shortcuts.applyCanvasShortcutEvent(db, event("upsert", { ...base, sessionId: "reassigned", updatedAt: "2026-09-01T13:00:00.000Z" }));
+    assert.deepEqual(listing(shortcuts.listCanvasShortcuts("ada")), ["7:reassigned"]);
+    // An older assignment of the same conversation to a third key loses outright.
+    shortcuts.applyCanvasShortcutEvent(db, event("upsert", { ...base, binding: "8", sessionId: "reassigned", updatedAt: "2026-09-01T13:30:00.000Z" }));
+    assert.deepEqual(listing(shortcuts.listCanvasShortcuts("ada")), ["7:reassigned"]);
+
+    // Same-instant writes from two nodes must settle the same way everywhere.
+    const tie = "2026-09-01T15:00:00.000Z";
+    const lowNode = "00000000-0000-4000-8000-000000000001";
+    const highNode = "ffffffff-0000-4000-8000-000000000001";
+    const tieEvent = (nodeId: string, sessionId: string) => ({
+      id: randomUUID(), originNodeId: nodeId, entityType: "canvas.shortcut", entityKey: "ada:2",
+      operation: "upsert", createdAt: tie,
+      payload: { username: "ada", binding: "2", projectId: "project", engine: "pi", sessionId, updatedAt: tie, originNodeId: nodeId },
+    });
+    shortcuts.applyCanvasShortcutEvent(db, tieEvent(highNode, "from-high"));
+    shortcuts.applyCanvasShortcutEvent(db, tieEvent(lowNode, "from-low"));
+    const settled = shortcuts.listCanvasShortcuts("ada").find((row: { binding: string }) => row.binding === "2");
+    assert.equal(settled.sessionId, "from-high", "an identical timestamp is broken by node identity, not arrival order");
+
     assert.throws(() => shortcuts.applyCanvasShortcutEvent(db, event("upsert", { ...base, sessionId: "", updatedAt: "2026-09-01T14:00:00.000Z" })), /malformed/i);
     assert.throws(() => shortcuts.applyCanvasShortcutEvent(db, { ...event("upsert", { ...base, sessionId: "x", updatedAt: "2026-09-01T14:00:00.000Z" }), entityKey: "wrong" }), /malformed/i);
     db.close();

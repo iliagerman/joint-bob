@@ -6004,7 +6004,8 @@ if (state.canvasPaneMode) {
     parent.postMessage({ type: "canvasShortcut", code: event.code, metaKey: true, shiftKey: true, ctrlKey: false, altKey: false }, location.origin);
   });
   window.addEventListener("message", (event) => {
-    if (event.origin !== location.origin) return;
+    // Only the canvas that framed this pane may set its bindings or move its cursor.
+    if (event.origin !== location.origin || event.source !== parent) return;
     if (event.data?.type === "canvasShortcutBindings") {
       canvasBindings.clear();
       for (const binding of event.data.bindings || []) canvasBindings.add(binding);

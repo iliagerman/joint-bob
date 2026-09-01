@@ -117,12 +117,16 @@ const controller = createConversationCanvas({
   api: async (path, options = {}) => {
     apiCalls.push(`${options.method || "GET"} ${path}`);
     if (path.startsWith("/api/canvas/shortcuts")) {
-      const binding = decodeURIComponent(path.split("/").pop());
+      const last = decodeURIComponent(path.split("/").pop());
       if (options.method === "PUT") {
         const body = JSON.parse(options.body);
-        storedShortcuts = [...storedShortcuts.filter((entry) => entry.binding !== binding && entry.sessionId !== body.sessionId), { binding, ...body }];
+        storedShortcuts = [...storedShortcuts.filter((entry) => entry.binding !== last && entry.sessionId !== body.sessionId), { binding: last, ...body }];
       }
-      if (options.method === "DELETE") storedShortcuts = storedShortcuts.filter((entry) => entry.binding !== binding);
+      if (options.method === "POST" && last === "release") {
+        const body = JSON.parse(options.body);
+        storedShortcuts = storedShortcuts.filter((entry) => entry.sessionId !== body.sessionId);
+      }
+      if (options.method === "DELETE") storedShortcuts = storedShortcuts.filter((entry) => entry.binding !== last);
       return { shortcuts: storedShortcuts };
     }
     if (path.includes("/sessions")) {
@@ -423,7 +427,51 @@ test("a shortcut is assigned from the title, listed in the bar, and released whe
   const remove = findElement(root, (element) => String(element["attr:aria-label"] || "").includes("Remove Project One · Two from the canvas"));
   remove.dispatch("click");
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.ok(apiCalls.includes("DELETE /api/canvas/shortcuts/4"), "a closed conversation gives its key back");
+  assert.ok(apiCalls.includes("POST /api/canvas/shortcuts/release"),
+    "a closed conversation is released by conversation, not by the key the page last saw");
   assert.deepEqual(storedShortcuts, []);
   assert.equal(registry.get("#canvasShortcutBar").hidden, true);
+});
+
+test("a shortcut reaches a pane that focus mode is hiding", async () => {
+  const root = registry.get("#canvasRoot");
+  let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
+  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "row");
+  storedShortcuts = [{ binding: "5", projectId: "p-one", engine: "pi", sessionId: "s-two" }];
+  controller.setLayout({ ...layout, focusedPaneId: "pane-s-one" });
+  await controller.activate();
+
+  const pane = root.children.find((element) => element.dataset.paneId === "pane-s-two");
+  const frame = [];
+  walk2(pane, frame);
+  const posted = [];
+  frame[0].contentWindow = { postMessage: (message) => posted.push(message) };
+
+  windowListeners.get("keydown")({ code: "Digit5", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false, preventDefault() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(saved.at(-1).focusedPaneId, "pane-s-two", "focus moves to the pane the key names, instead of revealing a hidden one");
+  assert.ok(posted.some((message) => message.type === "canvasFocusComposer"));
+});
+
+test("only the real pane frames may drive the canvas over postMessage", async () => {
+  const root = registry.get("#canvasRoot");
+  let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
+  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "row");
+  storedShortcuts = [{ binding: "6", projectId: "p-one", engine: "pi", sessionId: "s-two" }];
+  controller.setLayout({ ...layout, focusedPaneId: null });
+  await controller.activate();
+
+  const pane = root.children.find((element) => element.dataset.paneId === "pane-s-two");
+  const frames = [];
+  walk2(root, frames);
+  for (const frame of frames) frame.contentWindow = { postMessage() {} };
+  pane.scrolledIntoView = false;
+
+  const combination = { type: "canvasShortcut", code: "Digit6", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false };
+  windowListeners.get("message")({ origin: "http://canvas.test", source: { postMessage() {} }, data: combination });
+  assert.equal(pane.scrolledIntoView, false, "a same-origin window that is not a pane cannot press a shortcut");
+  windowListeners.get("message")({ origin: "https://elsewhere.test", source: frames[0].contentWindow, data: combination });
+  assert.equal(pane.scrolledIntoView, false, "another origin cannot press a shortcut either");
+  windowListeners.get("message")({ origin: "http://canvas.test", source: frames[0].contentWindow, data: combination });
+  assert.equal(pane.scrolledIntoView, true, "a real pane frame still works");
 });

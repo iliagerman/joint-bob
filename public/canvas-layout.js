@@ -263,7 +263,8 @@ export function organizeCanvasLayout(layout) {
     // A short last row keeps the grid's column width instead of stretching.
     rows.push(rowOf(chunk, chunk.map(() => 1 / columns)));
   }
-  return withRows(layout, rows);
+  // Focus hides every other pane, which would make the new grid look like nothing happened.
+  return withRows(layout, rows, null);
 }
 
 /** Which agent runs a pane's conversation. Draft paths carry it; plain paths are Pi. */

@@ -198,35 +198,69 @@ function shortcutPayload(event: ReplicationEvent): ShortcutPayload {
   return value as ShortcutPayload;
 }
 
-function tombstoneAt(db: DatabaseSync, username: string, binding: string): string | undefined {
-  const row = db.prepare("SELECT updated_at FROM canvas_shortcut_tombstones WHERE username = ? AND binding = ?")
-    .get(username, binding) as { updated_at: string } | undefined;
-  return row?.updated_at;
+/** A total order over writes. Clocks collide, so the origin node breaks the tie and
+ * every node settles on the same winner whatever order the events arrive in. */
+interface WriteStamp {
+  updatedAt: string;
+  originNodeId: string;
+}
+
+function wins(candidate: WriteStamp, held: WriteStamp | undefined): boolean {
+  if (!held) return true;
+  if (candidate.updatedAt !== held.updatedAt) return candidate.updatedAt > held.updatedAt;
+  return candidate.originNodeId > held.originNodeId;
+}
+
+function stampOf(row: { updated_at: string; origin_node_id: string } | undefined): WriteStamp | undefined {
+  return row ? { updatedAt: row.updated_at, originNodeId: row.origin_node_id } : undefined;
+}
+
+function tombstoneStamp(db: DatabaseSync, username: string, binding: string): WriteStamp | undefined {
+  return stampOf(db.prepare("SELECT updated_at, origin_node_id FROM canvas_shortcut_tombstones WHERE username = ? AND binding = ?")
+    .get(username, binding) as { updated_at: string; origin_node_id: string } | undefined);
+}
+
+function bindingStamp(db: DatabaseSync, username: string, binding: string): WriteStamp | undefined {
+  return stampOf(db.prepare("SELECT updated_at, origin_node_id FROM canvas_shortcuts WHERE username = ? AND binding = ?")
+    .get(username, binding) as { updated_at: string; origin_node_id: string } | undefined);
+}
+
+function raiseTombstone(db: DatabaseSync, username: string, binding: string, stamp: WriteStamp): void {
+  if (!wins(stamp, tombstoneStamp(db, username, binding))) return;
+  db.prepare(`INSERT INTO canvas_shortcut_tombstones (username, binding, updated_at, origin_node_id) VALUES (?, ?, ?, ?)
+    ON CONFLICT(username, binding) DO UPDATE SET updated_at = excluded.updated_at, origin_node_id = excluded.origin_node_id`)
+    .run(username, binding, stamp.updatedAt, stamp.originNodeId);
 }
 
 export function applyCanvasShortcutEvent(db: DatabaseSync, event: ReplicationEvent): void {
   const payload = shortcutPayload(event);
   ensureCanvasShortcutSchema(db);
-  const updatedAt = new Date(payload.updatedAt).toISOString();
+  const stamp: WriteStamp = { updatedAt: new Date(payload.updatedAt).toISOString(), originNodeId: payload.originNodeId };
   if (event.operation === "delete") {
-    db.prepare(`INSERT INTO canvas_shortcut_tombstones (username, binding, updated_at, origin_node_id) VALUES (?, ?, ?, ?)
-      ON CONFLICT(username, binding) DO UPDATE SET
-        updated_at = MAX(canvas_shortcut_tombstones.updated_at, excluded.updated_at),
-        origin_node_id = excluded.origin_node_id`).run(payload.username, payload.binding, updatedAt, payload.originNodeId);
-    db.prepare("DELETE FROM canvas_shortcuts WHERE username = ? AND binding = ? AND updated_at <= ?")
-      .run(payload.username, payload.binding, updatedAt);
+    raiseTombstone(db, payload.username, payload.binding, stamp);
+    if (!wins(bindingStamp(db, payload.username, payload.binding) ?? stamp, stamp)) {
+      db.prepare("DELETE FROM canvas_shortcuts WHERE username = ? AND binding = ?").run(payload.username, payload.binding);
+    }
     return;
   }
-  const released = tombstoneAt(db, payload.username, payload.binding);
-  if (released && released >= updatedAt) return;
+  if (!wins(stamp, tombstoneStamp(db, payload.username, payload.binding))) return;
+  if (!wins(stamp, bindingStamp(db, payload.username, payload.binding))) return;
   const projectId = resolveProjectAlias(db, payload.projectId!);
+  // One conversation holds one binding. Two nodes can bind it at once, so the newest
+  // assignment wins and the keys it displaces are tombstoned rather than merely deleted,
+  // or the assignment they replaced would reappear when it arrives late.
+  const held = db.prepare("SELECT binding, updated_at, origin_node_id FROM canvas_shortcuts WHERE username = ? AND project_id = ? AND engine = ? AND session_id = ? AND binding <> ?")
+    .all(payload.username, projectId, payload.engine!, payload.sessionId!, payload.binding) as unknown as Array<{ binding: string; updated_at: string; origin_node_id: string }>;
+  if (held.some((row) => !wins(stamp, stampOf(row)))) return;
+  for (const row of held) {
+    db.prepare("DELETE FROM canvas_shortcuts WHERE username = ? AND binding = ?").run(payload.username, row.binding);
+    raiseTombstone(db, payload.username, row.binding, stamp);
+  }
   db.prepare(`INSERT INTO canvas_shortcuts (username, binding, project_id, engine, session_id, updated_at, origin_node_id)
     VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(username, binding) DO UPDATE SET
       project_id = excluded.project_id, engine = excluded.engine, session_id = excluded.session_id,
-      updated_at = excluded.updated_at, origin_node_id = excluded.origin_node_id
-    WHERE excluded.updated_at > canvas_shortcuts.updated_at`)
-    .run(payload.username, payload.binding, projectId, payload.engine!, payload.sessionId!, updatedAt, payload.originNodeId);
-  db.prepare("DELETE FROM canvas_shortcut_tombstones WHERE username = ? AND binding = ? AND updated_at < ?")
-    .run(payload.username, payload.binding, updatedAt);
+      updated_at = excluded.updated_at, origin_node_id = excluded.origin_node_id`)
+    .run(payload.username, payload.binding, projectId, payload.engine!, payload.sessionId!, stamp.updatedAt, stamp.originNodeId);
+  db.prepare("DELETE FROM canvas_shortcut_tombstones WHERE username = ? AND binding = ?").run(payload.username, payload.binding);
 }

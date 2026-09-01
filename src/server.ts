@@ -45,7 +45,7 @@ import { getSettings, updateSettings } from "./settings.js";
 import { ensureManagedHome, managedProjectPath, managedProjectRelocationPath } from "./managed-home.js";
 import { importProjectDirectory, ProjectDirectoryImportError, relocateProjectDirectory } from "./project-directory-import.js";
 import { listAuditEvents } from "./audit.js";
-import { clearCanvasShortcut, listCanvasShortcuts, setCanvasShortcut } from "./canvas-shortcuts.js";
+import { clearCanvasShortcut, listCanvasShortcuts, releaseCanvasShortcuts, setCanvasShortcut } from "./canvas-shortcuts.js";
 import {
   canvasRowGeometryIsLegal, CANVAS_MAX_ROW_HEIGHT, CANVAS_MIN_ROW_HEIGHT, getUserPreferences,
   migrateLegacyCanvasLayout, updateUserPreferences, type UserPreferences,
@@ -1140,6 +1140,19 @@ app.put("/api/canvas/shortcuts/:binding", async (request, response, next) => {
       sendError(response, 400, error.message);
       return;
     }
+    next(error);
+  }
+});
+
+/* Closing a conversation releases the key it holds right now. Deleting the binding the
+   page last saw would take a key another node has since moved to a different pane. */
+app.post("/api/canvas/shortcuts/release", async (request, response, next) => {
+  try {
+    const session = response.locals.authSession as AuthSession;
+    const target = canvasShortcutTargetSchema.parse(request.body);
+    const local = await getClusterNode();
+    response.json({ shortcuts: releaseCanvasShortcuts(session.username, [target], local.id) });
+  } catch (error) {
     next(error);
   }
 });

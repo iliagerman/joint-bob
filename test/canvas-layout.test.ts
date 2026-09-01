@@ -207,7 +207,8 @@ test("organize reflows every pane into an even grid", () => {
   layout = setCanvasRowHeight(layout, layout.rows[0].id, 900);
   layout = setCanvasPaneWidth(layout, layout.rows[1].id, 0, 0.3);
 
-  const organized = organizeCanvasLayout(layout);
+  const organized = organizeCanvasLayout(toggleCanvasFocus(layout, "pane-3"));
+  assert.equal(organized.focusedPaneId, null, "organizing shows the whole grid it just built");
   assert.deepEqual(organized.rows.map((row) => row.panes.map((item) => item.id)),
     [["pane-1", "pane-2", "pane-3"], ["pane-4", "pane-5", "pane-6"]]);
   assert.ok(organized.rows.every((row) => row.height === null), "organizing unpins every row");

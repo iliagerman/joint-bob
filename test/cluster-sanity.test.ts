@@ -116,3 +116,55 @@ test("a conversation hands over to the other node", async () => {
   assert.ok(moved, "node B lists the conversation after the handover");
   assert.equal(moved.executionNodeId, nodeB.nodeId, "node B is now the execution node");
 });
+
+interface ShortcutView { binding: string; projectId: string; engine: string; sessionId: string }
+
+/** The outbox flushes on a timer, so cluster state is polled rather than awaited. */
+async function untilShortcuts(
+  node: SeededNode,
+  session: SignedIn,
+  matches: (shortcuts: ShortcutView[]) => boolean,
+  what: string,
+): Promise<ShortcutView[]> {
+  const deadline = Date.now() + 30_000;
+  let latest: ShortcutView[] = [];
+  while (Date.now() < deadline) {
+    const response = await api<{ shortcuts: ShortcutView[] }>(node, session, "GET", "/canvas/shortcuts");
+    latest = response.body.shortcuts;
+    if (matches(latest)) return latest;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`${what}; last saw ${JSON.stringify(latest)}`);
+}
+
+test("a canvas shortcut assigned on one node reaches the same account on the other", async () => {
+  const project = nodeA.projects.find((candidate) => candidate.name === "Internal Assistant")!;
+  const sessions = await api<{ sessions: SessionView[] }>(nodeA, sessionA, "GET", `/projects/${project.id}/sessions`);
+  const conversation = sessions.body.sessions.find((candidate) => candidate.harnessId === "pi")!;
+  // Each node knows the project under its own id, so each speaks its own alias.
+  const twinProject = nodeB.projects.find((candidate) => candidate.name === "Internal Assistant")!;
+  const target = { projectId: project.id, engine: "pi", sessionId: conversation.id };
+  const targetOnB = { projectId: twinProject.id, engine: "pi", sessionId: conversation.id };
+
+  const assigned = await api<{ shortcuts: ShortcutView[] }>(nodeA, sessionA, "PUT", "/canvas/shortcuts/3", target);
+  assert.equal(assigned.status, 200);
+  assert.deepEqual(assigned.body.shortcuts.map((row) => row.binding), ["3"]);
+
+  const onB = await untilShortcuts(nodeB, sessionB, (rows) => rows.some((row) => row.binding === "3"),
+    "node B never received the binding");
+  assert.equal(onB.find((row) => row.binding === "3")!.sessionId, conversation.id);
+
+  // Moving the binding on the other node leaves exactly one key for the conversation.
+  const moved = await api<{ shortcuts: ShortcutView[] }>(nodeB, sessionB, "PUT", "/canvas/shortcuts/K", targetOnB);
+  assert.equal(moved.status, 200);
+  assert.deepEqual(moved.body.shortcuts.map((row) => row.binding), ["K"]);
+  const backOnA = await untilShortcuts(nodeA, sessionA, (rows) => rows.length === 1 && rows[0].binding === "K",
+    "node A still shows the displaced binding");
+  assert.deepEqual(backOnA.map((row) => row.binding), ["K"]);
+
+  // Closing the conversation on either node gives the key back everywhere.
+  const released = await api<{ shortcuts: ShortcutView[] }>(nodeA, sessionA, "POST", "/canvas/shortcuts/release", target);
+  assert.equal(released.status, 200);
+  assert.deepEqual(released.body.shortcuts, []);
+  await untilShortcuts(nodeB, sessionB, (rows) => rows.length === 0, "node B still holds the released binding");
+});

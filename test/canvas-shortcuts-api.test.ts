@@ -74,6 +74,24 @@ test("canvas shortcuts are read, assigned, and released over HTTP for the signed
     assert.equal(released.status, 200);
     assert.deepEqual((await released.json() as ShortcutBody).shortcuts, []);
 
+    // Closing a conversation releases whatever key it holds now, not the key the page
+    // last saw: another node may have moved that key to a different conversation.
+    await fetch(`${node.baseUrl}/api/canvas/shortcuts/7`, {
+      method: "PUT", headers,
+      body: JSON.stringify({ projectId: "project-a", engine: "pi", sessionId: "session-two" }),
+    });
+    const releasedByIdentity = await fetch(`${node.baseUrl}/api/canvas/shortcuts/release`, {
+      method: "POST", headers,
+      body: JSON.stringify({ projectId: "project-a", engine: "pi", sessionId: "session-two" }),
+    });
+    assert.equal(releasedByIdentity.status, 200);
+    assert.deepEqual((await releasedByIdentity.json() as ShortcutBody).shortcuts, []);
+    const releasingUnbound = await fetch(`${node.baseUrl}/api/canvas/shortcuts/release`, {
+      method: "POST", headers,
+      body: JSON.stringify({ projectId: "project-a", engine: "pi", sessionId: "never-bound" }),
+    });
+    assert.equal(releasingUnbound.status, 200, "releasing a conversation that holds no key is not an error");
+
     const badBinding = await fetch(`${node.baseUrl}/api/canvas/shortcuts/ctrl`, {
       method: "PUT", headers,
       body: JSON.stringify({ projectId: "project-a", engine: "pi", sessionId: "session-one" }),

@@ -455,6 +455,13 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     const pane = listCanvasPanes(layout).find((candidate) => candidate.id === paneId);
     const node = pane ? paneNodes.get(paneIdentity(pane)) : null;
     if (!node) return;
+    // Focus mode hides every other pane, so a shortcut into one moves focus instead of
+    // scrolling to something the canvas is not showing.
+    if (layout.focusedPaneId && layout.focusedPaneId !== paneId) {
+      commit(toggleCanvasFocus(layout, paneId));
+      applyFocus();
+      render();
+    }
     node.element.scrollIntoView({ block: "nearest", behavior: "smooth" });
     node.element.classList.add("canvas-revealed");
     setTimeout(() => node.element.classList.remove("canvas-revealed"), 1200);
@@ -527,8 +534,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
   }
 
   async function removeShortcut() {
-    const current = shortcutFor(shortcutPane);
-    if (!current) { shortcutDialog.close(); return; }
+    if (!shortcutFor(shortcutPane)) { shortcutDialog.close(); return; }
     try {
       await releaseShortcuts([shortcutPane]);
       shortcutDialog.close();
@@ -538,21 +544,28 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     }
   }
 
-  /** A conversation leaving the canvas gives its key back to the account. */
+  /** A conversation leaving the canvas gives its key back to the account. The node
+   * releases by conversation, never by the key this page last saw: another node may
+   * have moved that key to a different conversation since. */
   async function releaseShortcuts(panes) {
     for (const pane of panes) {
-      const held = shortcutFor(pane);
-      if (!held) continue;
-      await shortcutRequest(`/api/canvas/shortcuts/${encodeURIComponent(held.binding)}`, { method: "DELETE" });
+      await shortcutRequest("/api/canvas/shortcuts/release", {
+        method: "POST",
+        body: JSON.stringify(paneShortcutTarget(pane)),
+      });
     }
   }
 
+  function reportShortcutFailure(error) {
+    showMessage(error instanceof Error ? error.message : "Could not release that shortcut");
+  }
+
   function removePane(pane) {
+    const held = shortcutFor(pane);
     commit(removeCanvasPane(layout, pane.id));
-    void releaseShortcuts([pane])
-      .catch((error) => showMessage(error instanceof Error ? error.message : "Could not release that shortcut"))
-      .finally(() => render());
     render();
+    if (!held) return;
+    void releaseShortcuts([pane]).then(render, reportShortcutFailure);
   }
 
   async function loadCanvasMetadata(panes) {
@@ -729,7 +742,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
       if (replacePaneId) {
         const replaced = listCanvasPanes(layout).find((candidate) => candidate.id === replacePaneId);
         commit(replaceCanvasPane(layout, replacePaneId, pane));
-        if (replaced) void releaseShortcuts([replaced]).catch(() => {});
+        if (replaced && shortcutFor(replaced)) void releaseShortcuts([replaced]).then(render, reportShortcutFailure);
       } else {
         const panes = listCanvasPanes(layout);
         const target = pickerTargetPaneId || layout.focusedPaneId || panes[panes.length - 1]?.id;
@@ -775,8 +788,12 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
   window.addEventListener("keydown", (event) => {
     if (handleShortcutCombination(event)) event.preventDefault();
   });
+  // Same origin is not enough: any window on this origin could post these. Only the
+  // frames this canvas created may press a shortcut or ask for the binding table.
+  const isPaneFrame = (source) => [...paneNodes.values()]
+    .some((node) => node.body.firstElementChild?.contentWindow === source);
   window.addEventListener("message", (event) => {
-    if (event.origin !== location.origin) return;
+    if (event.origin !== location.origin || !isPaneFrame(event.source)) return;
     if (event.data?.type === "canvasShortcut") handleShortcutCombination(event.data);
     // A pane that just finished loading has no bindings yet.
     if (event.data?.type === "canvasPaneReady") publishBindings();
