@@ -11,6 +11,7 @@ Every deployment is a version. The newest section must always match the
 - Canvas shortcuts now work correctly when focus mode is active, and release more reliably when closing conversations
 - Canvas shortcuts now correctly sync across concurrent nodes when multiple Claude sessions share the same canvas
 - Canvas shortcut bindings now stabilize correctly across node restarts and concurrent updates from multiple sessions
+- Canvas shortcut state now repairs and recovers correctly when upgrading from older database versions
 
 ## 0.7.0 — 2026-09-01
 

@@ -86,17 +86,60 @@ export function ensureCanvasShortcutSchema(db: DatabaseSync): void {
       singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
       last_issued_at INTEGER NOT NULL
     );`);
-  // Bindings that predate the registers would look unopposed, so a stale event could
-  // overwrite one or revive a released key. Seed both registers from what is there.
-  db.exec(`INSERT OR IGNORE INTO canvas_shortcut_binding_marks (username, binding, updated_at, origin_node_id)
-      SELECT username, binding, updated_at, origin_node_id FROM canvas_shortcuts;
-    INSERT OR IGNORE INTO canvas_shortcut_conversation_marks (username, project_id, engine, session_id, updated_at, origin_node_id)
-      SELECT username, project_id, engine, session_id, updated_at, origin_node_id FROM canvas_shortcuts;`);
+  carryOldStateIntoRegisters(db);
+}
+
+/** The stamp comparison of `wins()`, written as a SQL upsert guard. */
+const KEEPS_THE_NEWER = (table: string) => `updated_at = excluded.updated_at, origin_node_id = excluded.origin_node_id
+  WHERE excluded.updated_at > ${table}.updated_at
+    OR (excluded.updated_at = ${table}.updated_at AND excluded.origin_node_id > ${table}.origin_node_id)`;
+
+/**
+ * Makes any older database describe itself in the registers' terms. Bindings written
+ * before the registers existed would otherwise look unopposed, and a build that let a
+ * register move past a row it should have cleared could leave that row behind forever.
+ * Every step is idempotent, so this runs on each open.
+ */
+function carryOldStateIntoRegisters(db: DatabaseSync): void {
+  db.exec(`INSERT INTO canvas_shortcut_binding_marks (username, binding, updated_at, origin_node_id)
+      SELECT username, binding, updated_at, origin_node_id FROM canvas_shortcuts WHERE true
+      ON CONFLICT(username, binding) DO UPDATE SET ${KEEPS_THE_NEWER("canvas_shortcut_binding_marks")};
+    INSERT INTO canvas_shortcut_conversation_marks (username, project_id, engine, session_id, updated_at, origin_node_id)
+      SELECT username, project_id, engine, session_id, updated_at, origin_node_id FROM canvas_shortcuts WHERE true
+      ON CONFLICT(username, project_id, engine, session_id) DO UPDATE SET ${KEEPS_THE_NEWER("canvas_shortcut_conversation_marks")};`);
   const retired = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'canvas_shortcut_tombstones'").get();
-  if (!retired) return;
-  db.exec(`INSERT OR IGNORE INTO canvas_shortcut_binding_marks (username, binding, updated_at, origin_node_id)
-      SELECT username, binding, updated_at, origin_node_id FROM canvas_shortcut_tombstones;
-    DROP TABLE canvas_shortcut_tombstones;`);
+  if (retired) {
+    db.exec(`INSERT INTO canvas_shortcut_binding_marks (username, binding, updated_at, origin_node_id)
+        SELECT username, binding, updated_at, origin_node_id FROM canvas_shortcut_tombstones WHERE true
+        ON CONFLICT(username, binding) DO UPDATE SET ${KEEPS_THE_NEWER("canvas_shortcut_binding_marks")};
+      DROP TABLE canvas_shortcut_tombstones;`);
+  }
+  // A binding is real only while its stamp is what both registers still hold.
+  db.exec(`DELETE FROM canvas_shortcuts WHERE NOT EXISTS (
+      SELECT 1 FROM canvas_shortcut_binding_marks mark
+      WHERE mark.username = canvas_shortcuts.username AND mark.binding = canvas_shortcuts.binding
+        AND mark.updated_at = canvas_shortcuts.updated_at AND mark.origin_node_id = canvas_shortcuts.origin_node_id
+    ) OR NOT EXISTS (
+      SELECT 1 FROM canvas_shortcut_conversation_marks mark
+      WHERE mark.username = canvas_shortcuts.username AND mark.project_id = canvas_shortcuts.project_id
+        AND mark.engine = canvas_shortcuts.engine AND mark.session_id = canvas_shortcuts.session_id
+        AND mark.updated_at = canvas_shortcuts.updated_at AND mark.origin_node_id = canvas_shortcuts.origin_node_id
+    );`);
+  seedClock(db);
+}
+
+/** A clock starting at zero could reissue a stamp the registers already carry, so a
+ * database that has never had one starts from the newest write it knows about. */
+function seedClock(db: DatabaseSync): void {
+  if (db.prepare("SELECT 1 FROM canvas_shortcut_clock WHERE singleton = 1").get()) return;
+  const rows = db.prepare(`SELECT MAX(updated_at) AS newest FROM (
+      SELECT updated_at FROM canvas_shortcut_binding_marks
+      UNION ALL SELECT updated_at FROM canvas_shortcut_conversation_marks
+      UNION ALL SELECT updated_at FROM canvas_shortcuts
+    )`).get() as { newest: string | null } | undefined;
+  const newest = rows?.newest ? Date.parse(rows.newest) : 0;
+  db.prepare("INSERT INTO canvas_shortcut_clock (singleton, last_issued_at) VALUES (1, ?)")
+    .run(Number.isFinite(newest) ? newest : 0);
 }
 
 function shortcutDatabase(): DatabaseSync {

@@ -335,3 +335,37 @@ test("an existing shortcut table is carried into the mark registers on upgrade",
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("opening a database repairs rows and a clock left behind by an older build", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-canvas-shortcuts-repair-"));
+  const previous = process.env.JOINT_BOB_DATA_DIR;
+  process.env.JOINT_BOB_DATA_DIR = path.join(root, "data");
+  const peer = "77777777-0000-4000-8000-000000000007";
+  const future = new Date(Date.now() + 3_600_000).toISOString();
+  try {
+    await mkdir(process.env.JOINT_BOB_DATA_DIR, { recursive: true });
+    const databaseFile = path.join(root, "data", "node.db");
+    const older = new DatabaseSync(databaseFile);
+    older.exec(`CREATE TABLE canvas_shortcuts (username TEXT NOT NULL, binding TEXT NOT NULL, project_id TEXT NOT NULL, engine TEXT NOT NULL, session_id TEXT NOT NULL, updated_at TEXT NOT NULL, origin_node_id TEXT NOT NULL, PRIMARY KEY (username, binding));
+      CREATE TABLE canvas_shortcut_binding_marks (username TEXT NOT NULL, binding TEXT NOT NULL, updated_at TEXT NOT NULL, origin_node_id TEXT NOT NULL, PRIMARY KEY (username, binding));
+      CREATE TABLE canvas_shortcut_conversation_marks (username TEXT NOT NULL, project_id TEXT NOT NULL, engine TEXT NOT NULL, session_id TEXT NOT NULL, updated_at TEXT NOT NULL, origin_node_id TEXT NOT NULL, PRIMARY KEY (username, project_id, engine, session_id));`);
+    // A row the earlier build left behind: its key register has already moved past it.
+    older.prepare("INSERT INTO canvas_shortcuts VALUES ('ada', 'K', 'project', 'pi', 'stale', '2026-09-01T10:00:00.000Z', ?)").run(peer);
+    older.prepare("INSERT INTO canvas_shortcut_binding_marks VALUES ('ada', 'K', ?, ?)").run(future, peer);
+    older.prepare("INSERT INTO canvas_shortcut_conversation_marks VALUES ('ada', 'project', 'pi', 'stale', '2026-09-01T10:00:00.000Z', ?)").run(peer);
+    older.close();
+
+    const shortcuts = await import(`../src/canvas-shortcuts.ts?repair=${Date.now()}`);
+    assert.deepEqual(shortcuts.listCanvasShortcuts("ada"), [],
+      "a binding whose register has moved on does not survive the upgrade");
+
+    // The clock starts from what the registers already show, not from the wall clock.
+    shortcuts.setCanvasShortcut("ada", "3", { projectId: "project", engine: "pi", sessionId: "fresh" }, peer);
+    const issued = shortcuts.listCanvasShortcuts("ada")[0].updatedAt;
+    assert.ok(issued > future, `a first write after the upgrade outranks the newest mark (${issued} vs ${future})`);
+  } finally {
+    if (previous === undefined) delete process.env.JOINT_BOB_DATA_DIR;
+    else process.env.JOINT_BOB_DATA_DIR = previous;
+    await rm(root, { recursive: true, force: true });
+  }
+});
