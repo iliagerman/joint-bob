@@ -1887,14 +1887,10 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 /* ---- Canvas: several existing conversations at once ---- */
 /* Panels are display:none until their body view class shows them; the canvas is a
    desktop surface, so its show rule lives inside the desktop media block only. */
-.canvas-launch-row {
-  display: flex;
-  padding: 4px 0 12px;
-}
 .canvas-launch {
-  flex: 1;
+  flex: none;
   min-height: 40px;
-  padding: 10px 14px;
+  padding: 0 12px;
   display: inline-flex;
   align-items: center;
   justify-content: center;

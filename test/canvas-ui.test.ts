@@ -11,10 +11,10 @@ test("canvas is a desktop row view over exact existing conversations", async () 
     readFile("src/server.ts", "utf8"),
   ]);
 
-  // Global launcher below project search, with icon and enough breathing room.
-  assert.match(html, /project-search-row[\s\S]{0,900}canvas-launch-row[\s\S]*?id="openCanvasButton"[\s\S]*?<svg[\s\S]*?<rect x="3\.5" y="3\.5"/);
-  assert.match(styles, /\.canvas-launch-row \{[\s\S]*?padding: 4px 0 12px;/);
-  assert.match(styles, /\.canvas-launch \{[\s\S]*?padding: 10px 14px;/);
+  // Global launcher rides the project search row, beside the add-project button.
+  assert.match(html, /project-search-row[\s\S]{0,900}project-create-button[\s\S]{0,200}id="openCanvasButton"[\s\S]*?<svg[\s\S]*?<rect x="3\.5" y="3\.5"/);
+  assert.doesNotMatch(html, /canvas-launch-row/);
+  assert.match(styles, /\.canvas-launch \{[\s\S]*?flex: none;[\s\S]*?min-height: 40px;[\s\S]*?padding: 0 12px;/);
   assert.match(html, /id="canvasPanel"/);
   assert.match(html, /id="canvasRoot"[^>]*data-testid="canvas-root"/);
   assert.match(html, /id="canvasConversationDialog"/);
@@ -86,7 +86,7 @@ test("canvas is a desktop row view over exact existing conversations", async () 
 
 test("the canvas shell ships in the service worker cache", async () => {
   const worker = await readFile("public/sw.js", "utf8");
-  assert.match(worker, /const CACHE_NAME = "joint-bob-v85"/);
+  assert.match(worker, /const CACHE_NAME = "joint-bob-v86"/);
   assert.match(worker, /"\/canvas\.js"/);
   assert.match(worker, /"\/canvas-layout\.js"/);
 });

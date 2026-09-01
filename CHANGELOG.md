@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Moved the canvas button to the project toolbar row for a more compact layout
 - Refreshed conversation activity times when opening the recent sessions dialog so they stay sorted by actual activity across all projects
 
 ## 0.6.0 — 2026-09-01
