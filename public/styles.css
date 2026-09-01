@@ -1037,10 +1037,9 @@ select.chat-toolbar-control {
 .message.tool-output .tool-download:hover { color: var(--text); }
 .message.tool-output .tool-download-open { display: inline-block; margin-left: 2px; padding: 0 5px; border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 5px; color: var(--accent); font-weight: 600; text-decoration: none; }
 
-.command-strip { display: flex; gap: 2px; overflow-x: auto; padding: 8px 14px 0; border-top: 1px solid var(--line); background: var(--header); scrollbar-width: none; }
-.command-strip::-webkit-scrollbar { display: none; }
-.command-strip button { flex: 0 0 auto; min-height: 26px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; padding: 0 9px; font-family: var(--mono); font-size: 11px; font-weight: 500; }
-.command-strip button:hover { color: var(--text); background: var(--field); }
+.command-strip { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; padding: 10px 14px 0; border-top: 1px solid var(--line); background: var(--header); }
+.command-strip button { flex: 0 0 auto; min-height: 30px; border: 1px solid var(--line); border-radius: 999px; color: var(--text); background: var(--field); padding: 0 13px; font-family: var(--mono); font-size: 12px; font-weight: 600; transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease; }
+.command-strip button:hover { color: var(--accent); border-color: var(--accent); background: var(--field); }
 .conversation-lock { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--amber) 8%, var(--header)); }
 .conversation-lock[hidden] { display: none; }
 .conversation-lock-copy { display: grid; gap: 2px; min-width: 0; }
