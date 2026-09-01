@@ -81,6 +81,36 @@ function pathNodes(text, resolveFileUrl) {
   return nodes;
 }
 
+const URL_RE = /\bhttps?:\/\/[^\s<>"'`]+/g;
+// URLs at the end of a sentence swallow the punctuation; trim it back off.
+const URL_TRAILING_RE = /[),.;:!?\]}'"]+$/;
+
+// Plain prose can hold a bare URL. Link those first, then hand what is left to
+// the file-path linker so a URL is never mistaken for a path.
+function urlNodes(text, resolveFileUrl) {
+  const nodes = [];
+  const source = String(text ?? "");
+  URL_RE.lastIndex = 0;
+  let last = 0;
+  let match;
+  while ((match = URL_RE.exec(source))) {
+    const raw = match[0].replace(URL_TRAILING_RE, "");
+    const href = safeUrl(raw);
+    if (!href) continue;
+    if (match.index > last) nodes.push(...pathNodes(source.slice(last, match.index), resolveFileUrl));
+    const anchor = document.createElement("a");
+    anchor.href = href;
+    anchor.target = "_blank";
+    anchor.rel = "noopener noreferrer";
+    anchor.dataset.testid = "chat-auto-link";
+    anchor.textContent = raw;
+    nodes.push(anchor);
+    last = match.index + raw.length;
+  }
+  if (last < source.length) nodes.push(...pathNodes(source.slice(last), resolveFileUrl));
+  return nodes;
+}
+
 function inlineNodes(text, resolveFileUrl) {
   const nodes = [];
   const source = String(text ?? "");
@@ -95,7 +125,7 @@ function inlineNodes(text, resolveFileUrl) {
   }
   let last = 0;
   for (match of matches) {
-    if (match.index > last) nodes.push(...pathNodes(source.slice(last, match.index), resolveFileUrl));
+    if (match.index > last) nodes.push(...urlNodes(source.slice(last, match.index), resolveFileUrl));
     const groups = match.groups;
     if (groups.code !== undefined) {
       const code = document.createElement("code");
@@ -136,7 +166,7 @@ function inlineNodes(text, resolveFileUrl) {
     }
     last = match.index + match[0].length;
   }
-  if (last < source.length) nodes.push(...pathNodes(source.slice(last), resolveFileUrl));
+  if (last < source.length) nodes.push(...urlNodes(source.slice(last), resolveFileUrl));
   return nodes;
 }
 

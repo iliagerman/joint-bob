@@ -907,7 +907,9 @@ select.chat-toolbar-control {
 .status-pill.connecting { border-color: color-mix(in srgb, var(--amber) 45%, transparent); background: var(--amber); animation: dot-breathe 1.1s ease-in-out infinite; }
 #notifyButton.active, #notificationToggleButton.active { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 
-.messages { flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; background: transparent; padding: 18px clamp(12px, 2.5vw, 40px); display: flex; flex-direction: column; gap: 10px; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+/* The scroll box stays full width so the scrollbar hugs the edge; the inline
+   padding grows on a wide screen to hold the transcript in a centred column. */
+.messages { flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; background: transparent; padding-block: 18px; padding-inline: max(clamp(12px, 2.5vw, 40px), calc((100% - 1100px) / 2)); display: flex; flex-direction: column; gap: 10px; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
 .empty-state { margin: auto; max-width: 480px; text-align: center; display: grid; gap: 14px; place-items: center; padding: 12px; }
 .empty-state h2 { font-size: 24px; line-height: 1.25; letter-spacing: -0.01em; }
 .empty-state p { color: var(--muted); font-size: 14.5px; line-height: 1.65; max-width: 44ch; }
