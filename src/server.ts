@@ -45,7 +45,7 @@ import { getSettings, updateSettings } from "./settings.js";
 import { ensureManagedHome, managedProjectPath, managedProjectRelocationPath } from "./managed-home.js";
 import { importProjectDirectory, ProjectDirectoryImportError, relocateProjectDirectory } from "./project-directory-import.js";
 import { listAuditEvents } from "./audit.js";
-import { getUserPreferences, updateUserPreferences } from "./preferences.js";
+import { getUserPreferences, migrateLegacyCanvasLayout, updateUserPreferences, type UserPreferences } from "./preferences.js";
 import { appVersion, readChangelog } from "./changelog.js";
 import { claimReviewNotifications, markConversationReviewed, markConversationsReviewed, syncConversationReviewStates } from "./conversation-reviews.js";
 import { resetSyncthingConnection } from "./syncthing.js";
@@ -469,6 +469,13 @@ const canvasPanePreferenceSchema = z.object({
   sessionId: z.string().trim().min(1).max(200),
   executionNodeId: z.string().uuid().nullable(),
 }).strict();
+const canvasRowPreferenceSchema = z.object({
+  id: z.string().min(1).max(200),
+  weights: z.array(z.number().finite().positive()).min(1).max(8),
+  panes: z.array(canvasPanePreferenceSchema).min(1).max(8),
+}).strict()
+  .refine((row) => row.weights.length === row.panes.length, "Canvas row weights must match its panes")
+  .refine((row) => Number.isFinite(row.weights.reduce((sum, weight) => sum + weight, 0)), "Canvas row weight total must be finite");
 interface CanvasSplitInput {
   kind: "split";
   id: string;
@@ -488,37 +495,51 @@ const canvasNodePreferenceSchema: z.ZodType<z.infer<typeof canvasPanePreferenceS
     second: canvasNodePreferenceSchema,
   }).strict(),
 ]));
-const canvasLayoutPreferenceSchema = z.object({
+const canvasLayoutV1Schema = z.object({
   version: z.literal(1),
   root: canvasNodePreferenceSchema.nullable(),
   focusedPaneId: z.string().min(1).max(200).nullable(),
-}).strict().superRefine((layout, context) => {
+}).strict();
+const canvasLayoutPreferenceSchema = z.union([
+  canvasLayoutV1Schema,
+  z.object({
+    version: z.literal(2),
+    rows: z.array(canvasRowPreferenceSchema).max(10),
+    focusedPaneId: z.string().min(1).max(200).nullable(),
+  }).strict(),
+]).superRefine((layout, context) => {
   const ids = new Set<string>();
-  const identities = new Set<string>();
+  const sessionIdentities = new Set<string>();
+  const pathIdentities = new Set<string>();
   const paneIds = new Set<string>();
-  let paneCount = 0;
-  const walk = (node: z.infer<typeof canvasPanePreferenceSchema> | CanvasSplitInput, depth: number): void => {
-    if (ids.has(node.id)) context.addIssue({ code: z.ZodIssueCode.custom, message: "Canvas node ids must be unique" });
+  const pane = (node: { id: string; kind: string; projectId?: string; sessionId?: string; sessionPath?: string }) => {
+    if (ids.has(node.id)) context.addIssue({ code: z.ZodIssueCode.custom, message: "Canvas ids must be unique" });
     ids.add(node.id);
-    if (node.kind === "pane") {
-      paneCount += 1;
-      paneIds.add(node.id);
-      const identity = `${node.projectId}\0${node.sessionId}`;
-      const pathIdentity = `${node.projectId}\0${node.sessionPath.replace(/\.sync-conflict-[^/\\]+(?=\.jsonl$)/, "")}`;
-      if (identities.has(identity) || identities.has(pathIdentity)) context.addIssue({ code: z.ZodIssueCode.custom, message: "A conversation can appear on the canvas only once" });
-      identities.add(identity);
-      identities.add(pathIdentity);
-      return;
-    }
-    if (depth >= 8) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: "Canvas splits cannot nest deeper than eight levels" });
-      return;
-    }
-    walk(node.first, depth + 1);
-    walk(node.second, depth + 1);
+    if (node.kind !== "pane") return;
+    paneIds.add(node.id);
+    const identity = `${node.projectId}\0${node.sessionId}`;
+    const pathIdentity = `${node.projectId}\0${node.sessionPath!.replace(/\.sync-conflict-[^/\\]+(?=\.jsonl$)/, "")}`;
+    if (sessionIdentities.has(identity) || pathIdentities.has(pathIdentity)) context.addIssue({ code: z.ZodIssueCode.custom, message: "A conversation can appear on the canvas only once" });
+    sessionIdentities.add(identity);
+    pathIdentities.add(pathIdentity);
   };
-  if (layout.root) walk(layout.root, 1);
-  if (paneCount > 8) context.addIssue({ code: z.ZodIssueCode.custom, message: "The canvas holds at most eight conversations" });
+  const walk = (node: z.infer<typeof canvasPanePreferenceSchema> | CanvasSplitInput, depth: number): void => {
+    pane(node);
+    if (node.kind === "split") {
+      if (depth >= 8) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: "Canvas splits cannot nest deeper than eight levels" });
+        return;
+      }
+      walk(node.first, depth + 1);
+      walk(node.second, depth + 1);
+    }
+  };
+  if (layout.version === 1 && layout.root) walk(layout.root, 1);
+  if (layout.version === 2) for (const row of layout.rows) {
+    if (ids.has(row.id)) context.addIssue({ code: z.ZodIssueCode.custom, message: "Canvas ids must be unique" });
+    ids.add(row.id);
+    for (const item of row.panes) pane(item);
+  }
   if (layout.focusedPaneId && !paneIds.has(layout.focusedPaneId)) context.addIssue({ code: z.ZodIssueCode.custom, message: "Focused canvas pane is unknown" });
 });
 const userPreferencesSchema = z.object({
@@ -1070,15 +1091,25 @@ app.get("/api/preferences", (_request, response) => {
  * nested layout is rejected as a 400 instead of exhausting the parse stack. */
 function canvasLayoutExceedsLimits(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
-  const root = (value as { root?: unknown }).root;
+  const layout = value as { root?: unknown; rows?: unknown };
+  if (Array.isArray(layout.rows)) {
+    if (layout.rows.length > 10) return true;
+    // 10 rows x 8 panes bounds the v2 payload; anything beyond is malformed.
+    const oversizedRow = layout.rows.some((row) => !row || typeof row !== "object"
+      || !Array.isArray((row as { panes?: unknown }).panes) || (row as { panes: unknown[] }).panes.length > 8
+      || !Array.isArray((row as { weights?: unknown }).weights) || (row as { weights: unknown[] }).weights.length > 8);
+    if (oversizedRow) return true;
+  }
+  // Inspect a root even when a malicious payload also supplies rows; otherwise
+  // the extra property could bypass this iterative guard before Zod sees it.
+  const root = layout.root;
   if (!root || typeof root !== "object") return false;
-  // 8 panes need at most 7 splits; anything beyond is malformed by construction.
   const stack: Array<[unknown, number]> = [[root, 0]];
   let nodes = 0;
   while (stack.length) {
     const [node, depth] = stack.pop()!;
     if (!node || typeof node !== "object") continue;
-    if (++nodes > 15 || depth > 8) return true;
+    if (++nodes > 80 || depth > 8) return true;
     // Descend regardless of kind: a malformed kind must not reach the recursive
     // schema parser and blow the stack before validation can reject it.
     const item = node as { first?: unknown; second?: unknown };
@@ -1094,7 +1125,13 @@ app.put("/api/preferences", (request, response, next) => {
       sendError(response, 400, "Canvas layout is too large or too deep");
       return;
     }
-    response.json(updateUserPreferences(session.userId, userPreferencesSchema.parse(request.body)));
+    const parsed = userPreferencesSchema.parse(request.body);
+    const { canvasLayout, ...preferences } = parsed;
+    const update: Partial<UserPreferences> = preferences;
+    if (canvasLayout) update.canvasLayout = canvasLayout.version === 1
+      ? migrateLegacyCanvasLayout(canvasLayout)
+      : canvasLayout;
+    response.json(updateUserPreferences(session.userId, update));
   } catch (error) {
     next(error);
   }

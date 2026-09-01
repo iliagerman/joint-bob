@@ -68,8 +68,11 @@ class FakeElement {
     if (index >= 0) this.children.splice(index, 1);
     node.parentNode = null;
   }
+  remove() { this.parentNode?.removeChild(this); }
   setAttribute(name, value) { this[`attr:${name}`] = value; }
-  getBoundingClientRect() { return { width: 400, height: 300 }; }
+  getBoundingClientRect() { return { left: 0, right: 400, width: 400, height: 300 }; }
+  setPointerCapture() {}
+  releasePointerCapture() {}
   addEventListener(type, handler) { this.handlers.set(type, handler); }
   dispatch(type, event = {}) { return this.handlers.get(type)?.({ pointerId: 1, ...event }); }
   showModal() { this.open = true; }
@@ -100,9 +103,13 @@ const sessions = [
 ];
 const harnesses = [{ id: "pi", label: "Pi", newSessionPath: "new" }, { id: "claude", label: "Claude", newSessionPath: "claude:new" }];
 const saved = [];
+let failSessions = false;
 const controller = createConversationCanvas({
   api: async (path) => {
-    if (path.includes("/sessions")) return { sessions };
+    if (path.includes("/sessions")) {
+      if (failSessions) throw new Error("Temporary metadata failure");
+      return { sessions };
+    }
     if (path.includes("/harnesses")) return { harnesses };
     return {};
   },
@@ -114,7 +121,9 @@ const controller = createConversationCanvas({
 const paneFor = (sessionId, sessionPath) => ({ kind: "pane", id: `pane-${sessionId}`, projectId: "p-one", sessionPath, sessionId, executionNodeId: null });
 const textOf = (element) => element.children.map((child) => child.text || textOf(child)).join(" ");
 
-test("the canvas renders panes, refreshes headers, and resizes without rebuilding frames", async () => {
+let originalFrames = [];
+
+test("the canvas renders and moves direct-child panes without rebuilding frames", async () => {
   const root = registry.get("#canvasRoot");
   let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
   layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "row");
@@ -127,11 +136,62 @@ test("the canvas renders panes, refreshes headers, and resizes without rebuildin
   assert.equal(frames[0].src, "http://canvas.test/?canvasPane=1&projectId=p-one&sessionPath=%2Ftmp%2Fone.jsonl&sessionId=s-one");
   assert.equal(frames[1].src, "http://canvas.test/?canvasPane=1&projectId=p-one&sessionPath=%2Ftmp%2Ftwo.jsonl&sessionId=s-two");
 
+  assert.ok(frames.every((frame) => frame.parentNode.parentNode.parentNode === root), "pane sections stay direct children of the root grid");
+
   // A metadata re-render reuses the exact same frame elements.
   await controller.activate();
   const framesAfter = [];
   walk2(root, framesAfter);
   assert.deepEqual(framesAfter, frames);
+
+  failSessions = true;
+  await controller.activate();
+  failSessions = false;
+  const framesAfterFailure = [];
+  walk2(root, framesAfterFailure);
+  assert.deepEqual(framesAfterFailure, frames, "metadata failure retains the existing frames");
+  assert.equal(root.children.filter((element) => element.tagName === "section").length, 2, "metadata failure does not duplicate panes");
+  await controller.activate();
+
+  const assertFramesUnchanged = (message) => {
+    const currentFrames = [];
+    walk2(root, currentFrames);
+    assert.deepEqual(currentFrames, frames, message);
+  };
+
+  const focus = findElement(root, (element) => element["attr:aria-label"] === "Focus on Project One · One");
+  focus.dispatch("click");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assertFramesUnchanged("focus keeps browsing contexts attached");
+  const showAll = findElement(root, (element) => element["attr:aria-label"] === "Show all canvas panes");
+  assert.ok(showAll, "the focused action names what it will do");
+  showAll.dispatch("click");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assertFramesUnchanged("unfocus keeps browsing contexts attached");
+
+  const secondPane = root.children.find((element) => element.dataset.paneId === "pane-s-two");
+  secondPane.children[0].dispatch("keydown", { key: "ArrowRight", preventDefault() {} });
+  assertFramesUnchanged("resize keeps browsing contexts attached");
+
+  const moveDown = findElement(root, (element) => String(element["attr:aria-label"] || "").includes("Move Project One · Two one row down"));
+  moveDown.dispatch("click");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assertFramesUnchanged("cross-row movement keeps browsing contexts attached");
+  const moveUp = findElement(root, (element) => String(element["attr:aria-label"] || "").includes("Move Project One · Two one row up"));
+  moveUp.dispatch("click");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assertFramesUnchanged("returning across rows keeps browsing contexts attached");
+
+  // Horizontal movement also changes only grid placement.
+  const moveLeft = findElement(root, (element) => String(element["attr:aria-label"] || "").includes("Move Project One · Two left"));
+  assert.ok(moveLeft);
+  moveLeft.dispatch("click");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const framesAfterMove = [];
+  walk2(root, framesAfterMove);
+  assert.deepEqual(framesAfterMove, frames);
+  assert.deepEqual(saved.at(-1).rows[0].panes.map((item) => item.sessionId), ["s-two", "s-one"]);
+  originalFrames = frames;
 });
 
 function walk2(node, sink) {
@@ -139,6 +199,16 @@ function walk2(node, sink) {
     if (node.tagName === "iframe") sink.push(node);
     node.children.forEach((child) => walk2(child, sink));
   }
+}
+
+function findElement(node, predicate) {
+  if (!(node instanceof FakeElement)) return null;
+  if (predicate(node)) return node;
+  for (const child of node.children) {
+    const match = findElement(child, predicate);
+    if (match) return match;
+  }
+  return null;
 }
 
 test("the picker adds an existing conversation through its button handlers", async () => {
@@ -153,16 +223,28 @@ test("the picker adds an existing conversation through its button handlers", asy
   option.dispatch("click");
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(registry.get("#canvasConversationDialog").open, false);
-  assert.equal(saved.length, 1);
-  assert.equal(saved[0].root.kind, "split");
-  // The add split the first pane: root.first is the new split, second pane is new.
-  assert.equal(saved[0].root.first.kind, "split");
-  assert.equal(saved[0].root.first.second.sessionId, "s-three");
+  const added = saved.at(-1);
+  assert.equal(added.version, 2);
+  assert.deepEqual(listCanvasPanes(added).map((pane) => pane.sessionId).sort(), ["s-one", "s-three", "s-two"]);
 
   const root = registry.get("#canvasRoot");
   const frames = [];
   walk2(root, frames);
   assert.equal(frames.length, 3);
+  assert.ok(originalFrames.every((frame) => frames.includes(frame)), "adding a pane keeps every existing iframe alive");
+  const thirdPane = root.children.find((element) => textOf(element).includes("Project One · Three"));
+  const thirdIndex = added.rows[0].panes.findIndex((pane) => pane.id === thirdPane.dataset.paneId);
+  const pair = added.rows[0].weights[thirdIndex - 1] + added.rows[0].weights[thirdIndex];
+  const announced = Math.round((added.rows[0].weights[thirdIndex - 1] / pair) * 100);
+  assert.equal(thirdPane.children[0]["attr:aria-valuenow"], String(announced), "a separator announces its adjacent pair ratio");
+
+  const removeThree = findElement(root, (element) => String(element["attr:aria-label"] || "").includes("Remove Project One · Three from the canvas"));
+  assert.ok(removeThree);
+  removeThree.dispatch("click");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const framesAfterRemove = [];
+  walk2(root, framesAfterRemove);
+  assert.deepEqual(framesAfterRemove, originalFrames, "removing one pane leaves both unaffected browsing contexts attached");
 });
 
 test("the picker opens a pane on a brand-new conversation", async () => {
@@ -185,4 +267,28 @@ test("the picker opens a pane on a brand-new conversation", async () => {
   walk2(registry.get("#canvasRoot"), frames);
   assert.ok(frames.some((frame) => frame.src.includes(encodeURIComponent(draft.sessionPath))),
     "the pane frame opens on the draft identity, so no listed conversation is required");
+});
+
+test("extreme legal weights reserve grid width for every pane", async () => {
+  const layout = {
+    version: 2,
+    rows: [{
+      id: "extreme-row",
+      weights: [1e9, 1, 1],
+      panes: [
+        paneFor("s-one", "/tmp/one.jsonl"),
+        paneFor("s-two", "/tmp/two.jsonl"),
+        paneFor("s-three", "/tmp/three.jsonl"),
+      ],
+    }],
+    focusedPaneId: null,
+  };
+  controller.setLayout(layout);
+  await controller.activate();
+  const root = registry.get("#canvasRoot");
+  for (const pane of layout.rows[0].panes) {
+    const element = root.children.find((candidate) => candidate.dataset.paneId === pane.id);
+    const [start, end] = element.style.gridColumn.split(" / ").map(Number);
+    assert.ok(end > start, `${pane.id} keeps at least one grid track`);
+  }
 });

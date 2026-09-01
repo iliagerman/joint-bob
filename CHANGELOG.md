@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Canvas now arranges conversations in a flexible row-based grid (up to ten rows, eight per row) instead of hierarchical splits
 - Styled assistant messages as cards with borders and backgrounds to visually distinguish them from the conversation flow
 - Markdown files in the editor now render with formatting syntax hidden for readability, with a toggle to show raw markdown
 - Canvas panes can now start new conversations with any agent, not just open existing ones

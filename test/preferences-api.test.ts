@@ -71,7 +71,7 @@ test("preferences are authenticated, validated, and persist across listener rest
       chatsPanelCollapsed: false,
       recentSessions: [],
       lastSeenVersion: null,
-      canvasLayout: { version: 1, root: null, focusedPaneId: null },
+      canvasLayout: { version: 2, rows: [], focusedPaneId: null },
     });
 
     const values = {
@@ -92,12 +92,15 @@ test("preferences are authenticated, validated, and persist across listener rest
       recentSessions: [{ projectId: "project-123", sessionPath: "/tmp/session.jsonl", title: "Session 123", openedAt: "2026-08-27T10:00:00.000Z" }],
       lastSeenVersion: "1.4.2",
       canvasLayout: {
-        version: 1,
-        root: {
-          kind: "split", id: "split-a", axis: "row", ratio: 0.5,
-          first: { kind: "pane", id: "pane-a", projectId: "project-123", sessionPath: "/tmp/session.jsonl", sessionId: "session-123", executionNodeId: null },
-          second: { kind: "pane", id: "pane-b", projectId: "project-123", sessionPath: "/tmp/other.jsonl", sessionId: "session-456", executionNodeId: "72cfed24-549b-4c90-ab61-42d2899ab9bb" },
-        },
+        version: 2,
+        rows: [{
+          id: "row-a",
+          weights: [1, 1],
+          panes: [
+            { kind: "pane", id: "pane-a", projectId: "project-123", sessionPath: "/tmp/session.jsonl", sessionId: "session-123", executionNodeId: null },
+            { kind: "pane", id: "pane-b", projectId: "project-123", sessionPath: "/tmp/other.jsonl", sessionId: "session-456", executionNodeId: "72cfed24-549b-4c90-ab61-42d2899ab9bb" },
+          ],
+        }],
         focusedPaneId: "pane-b",
       },
     };
@@ -141,14 +144,36 @@ test("preferences are authenticated, validated, and persist across listener rest
     assert.equal(invalidSound.status, 400);
     const invalidPath = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ activeSessionPath: "x".repeat(2001) }) });
     assert.equal(invalidPath.status, 400);
-    const canvasBase = { version: 1, root: { kind: "split", id: "split-a", axis: "row", ratio: 0.5, first: { kind: "pane", id: "pane-a", projectId: "p", sessionPath: "/tmp/a.jsonl", sessionId: "s-a", executionNodeId: null }, second: { kind: "pane", id: "pane-b", projectId: "p", sessionPath: "/tmp/b.jsonl", sessionId: "s-b", executionNodeId: null } } };
-    const invalidRatio = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: { ...canvasBase, root: { ...canvasBase.root, ratio: 0.95 } } }) });
-    assert.equal(invalidRatio.status, 400);
-    const duplicateConversation = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: { ...canvasBase, root: { ...canvasBase.root, second: { ...canvasBase.root.second, sessionId: "s-a" } } } }) });
+    const pane = (id: string, sessionId: string) => ({ kind: "pane" as const, id, projectId: "p", sessionPath: `/tmp/${sessionId}.jsonl`, sessionId, executionNodeId: null });
+    const canvasBase = { version: 2 as const, rows: [{ id: "row-a", weights: [1, 1], panes: [pane("pane-a", "s-a"), pane("pane-b", "s-b")] }], focusedPaneId: null };
+    const crossNamespaceIdentities = { version: 2, rows: [{ id: "cross-row", weights: [1, 1], panes: [
+      { ...pane("cross-a", "/tmp/cross-b.jsonl"), sessionPath: "/tmp/cross-a.jsonl" },
+      pane("cross-b", "cross-b"),
+    ] }], focusedPaneId: null };
+    const acceptedCrossNamespace = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: crossNamespaceIdentities }) });
+    assert.equal(acceptedCrossNamespace.status, 200);
+    const invalidWeights = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: { ...canvasBase, rows: [{ ...canvasBase.rows[0], weights: [1] }] } }) });
+    assert.equal(invalidWeights.status, 400);
+    const duplicateConversation = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: { ...canvasBase, rows: [{ ...canvasBase.rows[0], panes: [pane("pane-a", "s-a"), pane("pane-b", "s-a")] }] } }) });
     assert.equal(duplicateConversation.status, 400);
     const unknownFocus = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: { ...canvasBase, focusedPaneId: "pane-z" } }) });
     assert.equal(unknownFocus.status, 400);
-    const pane = (id: string, sessionId: string) => ({ kind: "pane" as const, id, projectId: "p", sessionPath: `/tmp/${sessionId}.jsonl`, sessionId, executionNodeId: null });
+    const tooManyRows = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: { version: 2, rows: Array.from({ length: 11 }, (_, index) => ({ id: `row-${index}`, weights: [1], panes: [pane(`pane-${index}`, `session-${index}`)] })), focusedPaneId: null } }) });
+    assert.equal(tooManyRows.status, 400);
+
+    // A valid legacy split tree is accepted once and stored as version 2 rows.
+    const legacyCanvas = { version: 1 as const, root: { kind: "split", id: "legacy-split", axis: "row", ratio: 0.8, first: pane("legacy-a", "legacy-a"), second: pane("legacy-b", "legacy-b") }, focusedPaneId: "legacy-b" };
+    const migratedLegacy = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: legacyCanvas }) });
+    assert.equal(migratedLegacy.status, 200);
+    const migratedLayout = (await migratedLegacy.json() as { canvasLayout: { version: number; rows: Array<{ weights: number[]; panes: Array<{ id: string }> }>; focusedPaneId: string | null } }).canvasLayout;
+    assert.equal(migratedLayout.version, 2);
+    assert.deepEqual(migratedLayout.rows.map((row) => row.panes.map((item) => item.id)), [["legacy-a", "legacy-b"]]);
+    assert.equal(migratedLayout.rows[0].weights[0] / migratedLayout.rows[0].weights.reduce((sum, weight) => sum + weight, 0), 0.8);
+    assert.equal(migratedLayout.focusedPaneId, "legacy-b");
+
+    // Restore the version 2 value used by the restart assertion below.
+    const restoredCanvas = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: values.canvasLayout }) });
+    assert.equal(restoredCanvas.status, 200);
     const splitOf = (inner: unknown, depthRemaining: number): unknown => (depthRemaining <= 0 ? pane(`deep-${depthRemaining}`, `deep-${depthRemaining}`) : { kind: "split", id: `split-${depthRemaining}`, axis: "row", ratio: 0.5, first: inner, second: splitOf(inner, depthRemaining - 1) });
     const excessiveDepth = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: { version: 1, root: splitOf(pane("deep-a", "deep-a"), 20), focusedPaneId: null } }) });
     assert.equal(excessiveDepth.status, 400);
@@ -156,6 +181,8 @@ test("preferences are authenticated, validated, and persist across listener rest
     const malformedKind = (depthRemaining: number): unknown => depthRemaining <= 0 ? pane("deep-b", "deep-b") : { kind: "weird", id: `w-${depthRemaining}`, first: malformedKind(depthRemaining - 1), second: pane("deep-c", "deep-c") };
     const excessiveMalformedDepth = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: { version: 1, root: malformedKind(20), focusedPaneId: null } }) });
     assert.equal(excessiveMalformedDepth.status, 400);
+    const hybridDeepLayout = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: { version: 1, rows: [], root: malformedKind(20), focusedPaneId: null } }) });
+    assert.equal(hybridDeepLayout.status, 400);
     const unauthorized = await fetch(`${node.baseUrl}/api/preferences`);
     assert.equal(unauthorized.status, 401);
     const secondAdministrator = await fetch(`${node.baseUrl}/api/auth/setup`, {

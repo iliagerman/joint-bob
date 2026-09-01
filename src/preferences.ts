@@ -20,24 +20,19 @@ export interface CanvasPanePreference {
   executionNodeId: string | null;
 }
 
-export interface CanvasSplitPreference {
-  kind: "split";
+export interface CanvasRowPreference {
   id: string;
-  axis: "row" | "column";
-  ratio: number;
-  first: CanvasNodePreference;
-  second: CanvasNodePreference;
+  weights: number[];
+  panes: CanvasPanePreference[];
 }
 
-export type CanvasNodePreference = CanvasPanePreference | CanvasSplitPreference;
-
 export interface CanvasLayoutPreference {
-  version: 1;
-  root: CanvasNodePreference | null;
+  version: 2;
+  rows: CanvasRowPreference[];
   focusedPaneId: string | null;
 }
 
-const emptyCanvasLayout = (): CanvasLayoutPreference => ({ version: 1, root: null, focusedPaneId: null });
+const emptyCanvasLayout = (): CanvasLayoutPreference => ({ version: 2, rows: [], focusedPaneId: null });
 
 export interface UserPreferences {
   theme: "light" | "dark" | null;
@@ -174,46 +169,124 @@ function parseRecentSessions(value: string): RecentSession[] {
   }
 }
 
-/** A hand-edited canvas row must degrade to an empty canvas, never take the node down. */
+/** A hand-edited canvas row must degrade to an empty canvas, never take the node down.
+ * Version 1 split trees are accepted and flattened into rows, matching the client. */
 function parseCanvasLayout(value: string): CanvasLayoutPreference {
   try {
-    const parsed = JSON.parse(value) as CanvasLayoutPreference;
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== "object") return emptyCanvasLayout();
+    if ((parsed as { version?: unknown }).version === 1) return migrateLegacyCanvasLayout(parsed);
+    const layout = parsed as CanvasLayoutPreference;
     const ids = new Set<string>();
-    const identities = new Set<string>();
+    const sessionIdentities = new Set<string>();
+    const pathIdentities = new Set<string>();
     const paneIds = new Set<string>();
-    let paneCount = 0;
-    const walk = (node: unknown, depth: number): CanvasNodePreference | null => {
-      if (!node || typeof node !== "object" || depth > 8) return null;
-      const item = node as Record<string, unknown>;
-      if (typeof item.id !== "string" || !item.id || item.id.length > 200 || ids.has(item.id)) return null;
-      ids.add(item.id);
-      if (item.kind === "pane") {
-        if (typeof item.projectId !== "string" || !item.projectId || item.projectId.length > 120
+    if (!Array.isArray(layout.rows) || layout.rows.length > 10) return emptyCanvasLayout();
+    const rows: CanvasRowPreference[] = [];
+    for (const row of layout.rows) {
+      if (!row || typeof row !== "object" || typeof row.id !== "string" || !row.id || row.id.length > 200 || ids.has(row.id)) return emptyCanvasLayout();
+      ids.add(row.id);
+      if (!Array.isArray(row.panes) || row.panes.length < 1 || row.panes.length > 8) return emptyCanvasLayout();
+      if (!Array.isArray(row.weights) || row.weights.length !== row.panes.length
+        || !row.weights.every((weight) => typeof weight === "number" && Number.isFinite(weight) && weight > 0)
+        || !Number.isFinite(row.weights.reduce((sum, weight) => sum + weight, 0))) return emptyCanvasLayout();
+      const panes: CanvasPanePreference[] = [];
+      for (const item of row.panes) {
+        if (!item || typeof item !== "object") return emptyCanvasLayout();
+        if (typeof item.id !== "string" || !item.id || item.id.length > 200 || ids.has(item.id)) return emptyCanvasLayout();
+        ids.add(item.id);
+        if (item.kind !== "pane"
+          || typeof item.projectId !== "string" || !item.projectId || item.projectId.length > 120
           || typeof item.sessionPath !== "string" || !item.sessionPath || item.sessionPath.length > 2000
           || typeof item.sessionId !== "string" || !item.sessionId || item.sessionId.length > 200
- || !(item.executionNodeId === null || (typeof item.executionNodeId === "string" && item.executionNodeId.length <= 100))) return null;
+          || !(item.executionNodeId === null || (typeof item.executionNodeId === "string" && item.executionNodeId.length <= 100))) return emptyCanvasLayout();
         const identity = `${item.projectId}\0${item.sessionId}`;
         const pathIdentity = `${item.projectId}\0${canonicalSessionPath(item.sessionPath)}`;
-        if (identities.has(identity) || identities.has(pathIdentity)) return null;
-        identities.add(identity);
-        identities.add(pathIdentity);
+        if (sessionIdentities.has(identity) || pathIdentities.has(pathIdentity)) return emptyCanvasLayout();
+        sessionIdentities.add(identity);
+        pathIdentities.add(pathIdentity);
         paneIds.add(item.id);
-        paneCount += 1;
-        return { kind: "pane", id: item.id, projectId: item.projectId, sessionPath: canonicalSessionPath(item.sessionPath), sessionId: item.sessionId, executionNodeId: item.executionNodeId };
+        panes.push({ kind: "pane", id: item.id, projectId: item.projectId, sessionPath: canonicalSessionPath(item.sessionPath), sessionId: item.sessionId, executionNodeId: item.executionNodeId });
       }
-      if (item.kind !== "split" || (item.axis !== "row" && item.axis !== "column")
-        || typeof item.ratio !== "number" || !Number.isFinite(item.ratio) || item.ratio < 0.15 || item.ratio > 0.85) return null;
-      const first = walk(item.first, depth + 1);
-      const second = walk(item.second, depth + 1);
-      return first && second ? { kind: "split", id: item.id, axis: item.axis, ratio: item.ratio, first, second } : null;
-    };
-    const root = parsed.root === null ? null : walk(parsed.root, 1);
-    if (parsed.version !== 1 || paneCount > 8 || (parsed.root !== null && !root)
-      || !(parsed.focusedPaneId === null || (typeof parsed.focusedPaneId === "string" && paneIds.has(parsed.focusedPaneId)))) return emptyCanvasLayout();
-    return { version: 1, root, focusedPaneId: parsed.focusedPaneId ?? null };
+      rows.push({ id: row.id, weights: row.weights, panes });
+    }
+    if (layout.version !== 2
+      || !(layout.focusedPaneId === null || (typeof layout.focusedPaneId === "string" && paneIds.has(layout.focusedPaneId)))) return emptyCanvasLayout();
+    return { version: 2, rows, focusedPaneId: layout.focusedPaneId ?? null };
   } catch {
     return emptyCanvasLayout();
   }
+}
+
+/** Version 1 split tree -> rows: a column stacks rows, a row split flattens to one row. */
+export function migrateLegacyCanvasLayout(parsed: unknown): CanvasLayoutPreference {
+  const legacy = parsed as { root?: unknown; focusedPaneId?: unknown };
+  const ids = new Set<string>();
+  const sessionIdentities = new Set<string>();
+  const pathIdentities = new Set<string>();
+  const paneIds = new Set<string>();
+  const pane = (item: unknown): CanvasPanePreference | null => {
+    if (!item || typeof item !== "object") return null;
+    const candidate = item as Record<string, unknown>;
+    if (candidate.kind !== "pane" || typeof candidate.id !== "string" || !candidate.id || ids.has(candidate.id)) return null;
+    if (typeof candidate.projectId !== "string" || !candidate.projectId || candidate.projectId.length > 120
+      || typeof candidate.sessionPath !== "string" || !candidate.sessionPath || candidate.sessionPath.length > 2000
+      || typeof candidate.sessionId !== "string" || !candidate.sessionId || candidate.sessionId.length > 200
+      || !(candidate.executionNodeId === null || (typeof candidate.executionNodeId === "string" && candidate.executionNodeId.length <= 100))) return null;
+    const identity = `${candidate.projectId}\0${candidate.sessionId}`;
+    const pathIdentity = `${candidate.projectId}\0${canonicalSessionPath(candidate.sessionPath)}`;
+    if (sessionIdentities.has(identity) || pathIdentities.has(pathIdentity)) return null;
+    ids.add(candidate.id);
+    sessionIdentities.add(identity);
+    pathIdentities.add(pathIdentity);
+    paneIds.add(candidate.id);
+    return { kind: "pane", id: candidate.id, projectId: candidate.projectId, sessionPath: canonicalSessionPath(candidate.sessionPath), sessionId: candidate.sessionId, executionNodeId: candidate.executionNodeId };
+  };
+  interface WeightedPane { pane: CanvasPanePreference; weight: number }
+  const rows: CanvasRowPreference[] = [];
+  let valid = true;
+  const chunk = (entries: WeightedPane[]) => {
+    for (let start = 0; start < entries.length && rows.length < 10; start += 8) {
+      const row = entries.slice(start, start + 8);
+      rows.push({ id: crypto.randomUUID(), weights: row.map((entry) => entry.weight), panes: row.map((entry) => entry.pane) });
+    }
+  };
+  const collect = (candidate: unknown, level: number, weight: number, entries: WeightedPane[]): void => {
+    if (!candidate || typeof candidate !== "object" || level > 8) { valid = false; return; }
+    const entry = candidate as Record<string, unknown>;
+    if (entry.kind === "pane") {
+      const flat = pane(entry);
+      if (flat) entries.push({ pane: flat, weight });
+      else valid = false;
+      return;
+    }
+    if (entry.kind !== "split" || (entry.axis !== "row" && entry.axis !== "column")) { valid = false; return; }
+    if (entry.axis === "row") {
+      if (typeof entry.ratio !== "number" || !Number.isFinite(entry.ratio) || entry.ratio < 0.15 || entry.ratio > 0.85) { valid = false; return; }
+      collect(entry.first, level + 1, weight * entry.ratio, entries);
+      collect(entry.second, level + 1, weight * (1 - entry.ratio), entries);
+      return;
+    }
+    collect(entry.first, level + 1, weight / 2, entries);
+    collect(entry.second, level + 1, weight / 2, entries);
+  };
+  const visit = (node: unknown, depth: number): void => {
+    if (!node) return;
+    if (typeof node !== "object" || depth > 8) { valid = false; return; }
+    const item = node as Record<string, unknown>;
+    if (item.kind === "split" && item.axis === "column") {
+      if (typeof item.ratio !== "number" || !Number.isFinite(item.ratio) || item.ratio < 0.15 || item.ratio > 0.85) { valid = false; return; }
+      visit(item.first, depth + 1);
+      visit(item.second, depth + 1);
+      return;
+    }
+    const entries: WeightedPane[] = [];
+    collect(item, depth, 1, entries);
+    chunk(entries);
+  };
+  visit(legacy.root, 0);
+  if (!valid || (typeof legacy.focusedPaneId === "string" && !paneIds.has(legacy.focusedPaneId))) return emptyCanvasLayout();
+  return { version: 2, rows, focusedPaneId: typeof legacy.focusedPaneId === "string" ? legacy.focusedPaneId : null };
 }
 
 function preferencesFromRow(row: PreferenceRow): UserPreferences {

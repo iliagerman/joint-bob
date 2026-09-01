@@ -1,17 +1,23 @@
-// Canvas controller: renders a persisted split layout of panes, each embedding the
-// normal chat surface pointed at one exact conversation. A pane never clones or
+// Canvas controller: renders a persisted row-based layout of panes, each embedding
+// the normal chat surface pointed at one exact conversation. A pane never clones or
 // copies a conversation; it reopens an existing session, or - only when the user
 // picks it in the dialog - opens one brand-new conversation the pane document
 // creates on its own node.
 //
-// Pane elements are keyed and reused across renders so a resize, focus, or swap
-// never reloads an iframe: drafts, scroll, and transient UI state survive. Only a
-// conversation identity change (replace) or a pane removal destroys a frame.
+// Panes are direct children of the canvas root, placed on a fine-grained CSS grid
+// through inline grid-area styles. Adding, removing, moving, resizing, or focusing
+// a pane only changes styles: pane elements are never reparented, so no iframe
+// ever reloads and no draft or scroll position is lost. Only a conversation
+// identity change (replace) or a pane removal destroys a frame.
 
 import {
-  addCanvasPane, canonicalSessionPath, emptyCanvasLayout, listCanvasPanes,
-  removeCanvasPane, replaceCanvasPane, setCanvasSplitRatio, swapCanvasPanes, toggleCanvasFocus,
+  addCanvasPane, canvasPaneMoves, canonicalSessionPath, emptyCanvasLayout,
+  listCanvasPanes, moveCanvasPane, normalizeCanvasLayout, removeCanvasPane,
+  replaceCanvasPane, setCanvasRowBoundary, toggleCanvasFocus,
 } from "./canvas-layout.js";
+
+// The canvas grid has this many fractional columns; pane widths quantize to them.
+const CANVAS_GRID_UNITS = 1000;
 
 export function createConversationCanvas({ api, getProjects, saveLayout, showMessage }) {
   const root = document.querySelector("#canvasRoot");
@@ -29,11 +35,9 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
   let replacePaneId = null;
   let pickerSessions = [];
   let pickerGeneration = 0;
-  let swapSourcePaneId = null;
   let harnesses = [];
-  // conversation identity -> { element, body, paneId }: keyed by the conversation,
-  // not the layout slot, so a swap moves live frames between slots instead of
-  // destroying and rebuilding them.
+  // conversation identity -> { element, body, strip, paneId }: keyed by the
+  // conversation, not the layout slot, so a move only restyles the same element.
   const paneNodes = new Map();
 
   const text = (tag, value, className) => {
@@ -106,20 +110,32 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     bar.append(text("strong", title, "canvas-pane-title"));
     const context = `${String(session.firstMessage || "").slice(0, 90)} · ${session.harnessId === "claude" ? "Claude" : "Pi"} · ${statusLine(session)}`;
     bar.append(text("span", context, "canvas-pane-meta"));
-    const actions = [
-      ["Add beside", `Add a conversation beside ${title}`, () => onPicker(pane.id, null)],
-      [layout.focusedPaneId === pane.id ? "Show all" : "Focus", `Focus on ${title}`, () => focusPane(pane.id)],
-    ];
-    if (swapSourcePaneId === pane.id) actions.push(["Cancel swap", "Cancel swapping this pane", () => { swapSourcePaneId = null; render(); }]);
-    else if (swapSourcePaneId) actions.push(["Swap here", `Swap with the armed pane in place of ${title}`, () => { const source = swapSourcePaneId; swapSourcePaneId = null; commit(swapCanvasPanes(layout, source, pane.id)); render(); }]);
-    else actions.push(["Swap", `Arm ${title} for swapping`, () => { swapSourcePaneId = pane.id; render(); }]);
-    actions.push(["Remove", `Remove ${title} from the canvas`, () => { commit(removeCanvasPane(layout, pane.id)); render(); }]);
-    for (const [label, ariaLabel, action] of actions) {
+    const action = (label, ariaLabel, run) => {
       const element = button(label);
       element.setAttribute("aria-label", ariaLabel);
-      element.addEventListener("click", action);
+      element.addEventListener("click", run);
       bar.append(element);
+    };
+    action("Add beside", `Add a conversation beside ${title}`, () => onPicker(pane.id, null));
+    const focusLabel = layout.focusedPaneId === pane.id ? "Show all canvas panes" : `Focus on ${title}`;
+    action(layout.focusedPaneId === pane.id ? "Show all" : "Focus", focusLabel, () => focusPane(pane.id));
+    const moves = canvasPaneMoves(layout, pane.id);
+    const moveSymbols = { left: "◀", right: "▶", up: "▲", down: "▼" };
+    for (const direction of ["left", "right", "up", "down"]) {
+      const move = button(moveSymbols[direction]);
+      move.className = "canvas-move";
+      move.disabled = !moves[direction];
+      const words = direction === "up" || direction === "down" ? `one row ${direction}` : direction;
+      move.setAttribute("aria-label", `Move ${title} ${words}`);
+      move.title = `Move ${words}`;
+      move.addEventListener("click", () => {
+        commit(moveCanvasPane(layout, pane.id, direction));
+        placeAll();
+        render();
+      });
+      bar.append(move);
     }
+    action("Remove", `Remove ${title} from the canvas`, () => { commit(removeCanvasPane(layout, pane.id)); render(); });
     return bar;
   }
 
@@ -131,7 +147,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     url.searchParams.set("canvasPane", "1");
     url.searchParams.set("projectId", pane.projectId);
     url.searchParams.set("sessionPath", session.path);
-    url.searchParams.set("sessionId", session.id);
+    url.searchParams.set("sessionId", pane.sessionId);
     if (session.executionNodeId) url.searchParams.set("nodeId", session.executionNodeId);
     const frame = document.createElement("iframe");
     frame.src = url.href;
@@ -155,122 +171,160 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     return body;
   }
 
-  // Focus is pure CSS over the always-present tree, so no frame is ever unmounted.
+  /** Grid line (1-based) for a cumulative weight boundary, kept strictly growing. */
+  function boundaryLines(weights) {
+    const total = weights.reduce((sum, weight) => sum + weight, 0);
+    const lines = [1];
+    let consumed = 0;
+    for (let index = 0; index < weights.length; index += 1) {
+      consumed += weights[index];
+      const remainingPanes = weights.length - index - 1;
+      const lastAvailableLine = CANVAS_GRID_UNITS + 1 - remainingPanes;
+      const line = Math.min(lastAvailableLine, Math.max(lines[index] + 1,
+        1 + Math.round((consumed / total) * CANVAS_GRID_UNITS)));
+      lines.push(line);
+    }
+    return lines;
+  }
+
+  /** Styles only: positions every pane on the root grid. No DOM structure changes. */
+  function placeAll() {
+    root.style.gridTemplateColumns = `repeat(${CANVAS_GRID_UNITS}, minmax(0, 1fr))`;
+    root.style.gridTemplateRows = `repeat(${Math.max(1, layout.rows.length)}, minmax(280px, 1fr))`;
+    for (const [rowIndex, row] of layout.rows.entries()) {
+      const lines = boundaryLines(row.weights);
+      for (const [index, pane] of row.panes.entries()) {
+        const node = paneNodes.get(paneIdentity(pane));
+        if (!node) continue;
+        node.element.style.gridRow = `${rowIndex + 1} / ${rowIndex + 2}`;
+        node.element.style.gridColumn = `${lines[index]} / ${lines[index + 1]}`;
+        // The left-edge resize strip exists for every pane except a row's first.
+        node.strip.hidden = index === 0;
+        const pairTotal = index === 0 ? 2 : row.weights[index - 1] + row.weights[index];
+        const leftShare = index === 0 ? 1 : row.weights[index - 1];
+        node.strip.setAttribute("aria-valuenow", String(Math.round((leftShare / pairTotal) * 100)));
+      }
+    }
+  }
+
+  // Focus is styles only: the focused pane spans the whole grid, others hide.
   function applyFocus() {
-    root.classList.toggle("canvas-focused", Boolean(layout.focusedPaneId));
-    for (const node of paneNodes.values()) node.element.classList.toggle("focused", node.paneId === layout.focusedPaneId);
+    const focused = layout.focusedPaneId;
+    root.classList.toggle("canvas-focused", Boolean(focused));
+    for (const node of paneNodes.values()) node.element.classList.toggle("focused", node.paneId === focused);
+    if (focused) root.style.gridTemplateRows = "minmax(280px, 1fr)";
+    else root.style.gridTemplateRows = `repeat(${Math.max(1, layout.rows.length)}, minmax(280px, 1fr))`;
+    for (const node of paneNodes.values()) {
+      if (node.paneId === focused) node.element.style.gridArea = "1 / 1 / -1 / -1";
+    }
   }
 
   function focusPane(paneId) {
     commit(toggleCanvasFocus(layout, paneId));
-    // Header-only refresh: the label flips between Focus and Show all.
-    render({ reuseOnly: true });
+    if (layout.focusedPaneId) applyFocus();
+    else { applyFocus(); placeAll(); }
+    // Refresh controls in place; cached frame bodies stay attached.
+    render();
   }
 
-  function applySplitStyle(grid, split, ratio) {
-    const fraction = `${ratio}fr 8px ${1 - ratio}fr`;
-    if (split.axis === "row") grid.style.gridTemplateColumns = fraction;
-    else grid.style.gridTemplateRows = fraction;
+  function locatePane(paneId) {
+    for (const [rowIndex, row] of layout.rows.entries()) {
+      const index = row.panes.findIndex((candidate) => candidate.id === paneId);
+      if (index >= 0) return { row, rowIndex, index };
+    }
+    return null;
   }
 
-  function resizeHandle(split, grid) {
-    const handle = text("div", "", "canvas-resize");
-    const rowAxis = split.axis === "row";
-    handle.tabIndex = 0;
-    handle.setAttribute("role", "separator");
-    handle.setAttribute("aria-orientation", rowAxis ? "vertical" : "horizontal");
-    handle.setAttribute("aria-valuemin", "15");
-    handle.setAttribute("aria-valuemax", "85");
-    handle.setAttribute("aria-valuenow", String(Math.round(split.ratio * 100)));
-    handle.setAttribute("aria-label", rowAxis ? "Resize side-by-side panes" : "Resize stacked panes");
-    let pointerId = null;
-    let startPoint = 0;
-    let startRatio = split.ratio;
-    let gridSize = 1;
-    let dragRatio = split.ratio;
-    handle.addEventListener("pointerdown", (event) => {
-      pointerId = event.pointerId;
-      startPoint = rowAxis ? event.clientX : event.clientY;
-      startRatio = split.ratio;
-      dragRatio = split.ratio;
-      const rect = grid.getBoundingClientRect();
-      gridSize = Math.max(1, rowAxis ? rect.width : rect.height);
-      handle.setPointerCapture(event.pointerId);
+  function clampedBoundaryPair(weights, fraction) {
+    const total = weights[0] + weights[1];
+    const left = Math.min(total * 0.85, Math.max(total * 0.15, fraction * total));
+    return [left, total - left];
+  }
+
+  function restyleBoundary(pane, strip, at, pair) {
+    const next = [...at.row.weights];
+    next[at.index - 1] = pair[0];
+    next[at.index] = pair[1];
+    const lines = boundaryLines(next);
+    const node = paneNodes.get(paneIdentity(pane));
+    const neighbour = paneNodes.get(paneIdentity(at.row.panes[at.index - 1]));
+    if (node && neighbour) {
+      neighbour.element.style.gridColumn = `${lines[at.index - 1]} / ${lines[at.index]}`;
+      node.element.style.gridColumn = `${lines[at.index]} / ${lines[at.index + 1]}`;
+    }
+    strip.setAttribute("aria-valuenow", String(Math.round((pair[0] / (pair[0] + pair[1])) * 100)));
+  }
+
+  function wireBoundaryPointer(strip, pane) {
+    let drag = null;
+    strip.addEventListener("pointerdown", (event) => {
+      const at = locatePane(pane.id);
+      if (!at || at.index === 0) return;
+      const node = paneNodes.get(paneIdentity(pane));
+      const neighbour = paneNodes.get(paneIdentity(at.row.panes[at.index - 1]));
+      const own = node?.element.getBoundingClientRect();
+      const left = neighbour?.element.getBoundingClientRect();
+      const startLeft = own && left ? own.left - left.left : 0;
+      drag = {
+        pointerId: event.pointerId, startX: event.clientX, startLeft,
+        pairSpan: Math.max(1, startLeft + (own ? own.width : 1)),
+        weights: [at.row.weights[at.index - 1], at.row.weights[at.index]],
+      };
+      strip.setPointerCapture(event.pointerId);
     });
-    handle.addEventListener("pointermove", (event) => {
-      if (pointerId === null || event.pointerId !== pointerId) return;
-      const position = rowAxis ? event.clientX : event.clientY;
-      dragRatio = Math.min(0.85, Math.max(0.15, startRatio + (position - startPoint) / gridSize));
-      applySplitStyle(grid, split, dragRatio);
-      handle.setAttribute("aria-valuenow", String(Math.round(dragRatio * 100)));
+    strip.addEventListener("pointermove", (event) => {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      const at = locatePane(pane.id);
+      if (!at || at.index === 0) return;
+      const fraction = (drag.startLeft + event.clientX - drag.startX) / drag.pairSpan;
+      restyleBoundary(pane, strip, at, clampedBoundaryPair(drag.weights, fraction));
     });
-    const finish = (event, commitRatio) => {
-      if (pointerId === null || event.pointerId !== pointerId) return;
-      pointerId = null;
-      handle.releasePointerCapture(event.pointerId);
-      if (!commitRatio) {
-        dragRatio = split.ratio;
-        applySplitStyle(grid, split, split.ratio);
-        handle.setAttribute("aria-valuenow", String(Math.round(split.ratio * 100)));
-        return;
-      }
-      // Geometry updates in place: no rerender, so no frame ever reloads.
-      commit(setCanvasSplitRatio(layout, split.id, dragRatio));
-      applySplitStyle(grid, split, dragRatio);
-      handle.setAttribute("aria-valuenow", String(Math.round(dragRatio * 100)));
+    const finish = (event, complete) => {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      const ending = drag;
+      drag = null;
+      strip.releasePointerCapture(event.pointerId);
+      const at = locatePane(pane.id);
+      if (!complete || !at || at.index === 0) { placeAll(); return; }
+      const fraction = (ending.startLeft + event.clientX - ending.startX) / ending.pairSpan;
+      const pair = clampedBoundaryPair(ending.weights, fraction);
+      commit(setCanvasRowBoundary(layout, at.row.id, at.index - 1, pair[0], pair[1]));
+      placeAll();
     };
-    handle.addEventListener("pointerup", (event) => finish(event, true));
-    handle.addEventListener("pointercancel", (event) => finish(event, false));
-    handle.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") {
-        if (swapSourcePaneId) { swapSourcePaneId = null; render(); }
-        return;
-      }
-      const forward = rowAxis ? event.key === "ArrowRight" : event.key === "ArrowDown";
-      const backward = rowAxis ? event.key === "ArrowLeft" : event.key === "ArrowUp";
-      if (!forward && !backward) return;
+    strip.addEventListener("pointerup", (event) => finish(event, true));
+    strip.addEventListener("pointercancel", (event) => finish(event, false));
+  }
+
+  function wireBoundaryKeyboard(strip, pane) {
+    strip.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
       event.preventDefault();
-      const requested = Math.min(0.85, Math.max(0.15, split.ratio + (forward ? 0.05 : -0.05)));
-      commit(setCanvasSplitRatio(layout, split.id, requested));
-      dragRatio = requested;
-      applySplitStyle(grid, split, requested);
-      handle.setAttribute("aria-valuenow", String(Math.round(requested * 100)));
+      const at = locatePane(pane.id);
+      if (!at || at.index === 0) return;
+      const weights = [at.row.weights[at.index - 1], at.row.weights[at.index]];
+      const total = weights[0] + weights[1];
+      const fraction = weights[0] / total + (event.key === "ArrowRight" ? 0.05 : -0.05);
+      const pair = clampedBoundaryPair(weights, fraction);
+      commit(setCanvasRowBoundary(layout, at.row.id, at.index - 1, pair[0], pair[1]));
+      placeAll();
     });
-    return handle;
   }
 
-  function nodeElement(node) {
-    if (node.kind === "pane") return paneNodes.get(paneIdentity(node))?.element || text("div", "", "canvas-pane");
-    const grid = document.createElement("div");
-    grid.className = `canvas-split canvas-split-${node.axis}`;
-    applySplitStyle(grid, node, node.ratio);
-    grid.append(nodeElement(node.first), resizeHandle(node, grid), nodeElement(node.second));
-    return grid;
+  /** The strip on a pane's left edge drags the boundary with its left neighbour. */
+  function boundaryStrip(pane) {
+    const strip = text("div", "", "canvas-resize");
+    strip.tabIndex = 0;
+    strip.setAttribute("role", "separator");
+    strip.setAttribute("aria-orientation", "vertical");
+    strip.setAttribute("aria-valuemin", "15");
+    strip.setAttribute("aria-valuemax", "85");
+    strip.setAttribute("aria-label", "Resize side-by-side panes");
+    wireBoundaryPointer(strip, pane);
+    wireBoundaryKeyboard(strip, pane);
+    return strip;
   }
 
-  async function render({ reuseOnly = false } = {}) {
-    if (!active) return;
-    const current = ++generation;
-    const onPicker = (targetPaneId, replaceId) => openPicker(targetPaneId, replaceId);
-    const panes = listCanvasPanes(layout);
-    const liveIdentities = new Set(panes.map((pane) => paneIdentity(pane)));
-    for (const identity of [...paneNodes.keys()]) {
-      if (!liveIdentities.has(identity)) paneNodes.delete(identity);
-    }
-    if (!panes.length) {
-      paneNodes.clear();
-      root.replaceChildren();
-      root.classList.remove("canvas-focused");
-      const empty = text("div", "", "canvas-empty");
-      empty.append(text("h2", "The canvas is empty"));
-      empty.append(text("p", "Add an existing conversation to begin."));
-      const add = button("Add conversation");
-      add.className = "primary";
-      add.addEventListener("click", () => openPicker(null, null));
-      empty.append(add);
-      root.append(empty);
-      return;
-    }
+  async function loadCanvasMetadata(panes) {
     const metadata = new Map();
     await Promise.all([...new Set(panes.map((pane) => pane.projectId))].map(async (projectId) => {
       const project = getProjects().find((candidate) => candidate.id === projectId) || null;
@@ -282,40 +336,75 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
         metadata.set(projectId, { project, sessions: [], error: message });
       }
     }));
-    if (!active || current !== generation) return;
-    for (const pane of panes) {
-      const entry = metadata.get(pane.projectId) || {};
-      const listed = (entry.sessions || []).find((candidate) => candidate.id === pane.sessionId
-        || canonicalSessionPath(candidate.path) === canonicalSessionPath(pane.sessionPath)) || null;
-      // Until the agent writes its first transcript line the new conversation is not
-      // listed yet; the pane still opens on the draft identity it was created with.
-      const session = listed || (draftHarnessId(pane.sessionPath) ? draftSession(pane) : null);
-      const identity = paneIdentity(pane);
-      const cached = paneNodes.get(identity);
-      const keepBody = cached && cached.body.dataset.live === "1" && session;
-      const body = keepBody ? cached.body
-        : session ? paneBody(pane, entry.project, session)
-          : paneUnavailable((entry && entry.error) || "This conversation is no longer listed on this node.", pane, onPicker);
-      const header = paneHeader(pane, entry.project || null, session, onPicker);
-      let element = cached && cached.body === body ? cached.element : null;
-      if (!element) {
-        element = document.createElement("section");
-        element.className = "canvas-pane";
+    return metadata;
+  }
+
+  function syncPaneElement(pane, entry, onPicker) {
+    const listed = (entry.sessions || []).find((candidate) => candidate.id === pane.sessionId
+      || canonicalSessionPath(candidate.path) === canonicalSessionPath(pane.sessionPath)) || null;
+    // The draft stays renderable before its first transcript line reaches the list.
+    const session = listed || (draftHarnessId(pane.sessionPath) ? draftSession(pane) : null);
+    const identity = paneIdentity(pane);
+    const cached = paneNodes.get(identity);
+    // Once a frame is live, metadata outages or eventual-consistency gaps must
+    // never destroy its browsing context. The unavailable header still permits
+    // explicit replace/remove when the session is no longer listed.
+    const body = cached?.body.dataset.live === "1" ? cached.body
+      : session ? paneBody(pane, entry.project, session)
+        : paneUnavailable(entry.error || "This conversation is no longer listed on this node.", pane, onPicker);
+    const header = paneHeader(pane, entry.project || null, session, onPicker);
+    let element = cached?.element || null;
+    let strip = cached?.strip || null;
+    if (!element) {
+      element = document.createElement("section");
+      element.className = "canvas-pane";
+      strip = boundaryStrip(pane);
+      element.append(strip);
+      root.append(element);
+    }
+    element.dataset.paneId = pane.id;
+    // Replace only the header. The body and iframe stay attached.
+    const headerSlot = element.children.length > 1 ? element.children[1] : null;
+    if (headerSlot) headerSlot.replaceWith(header);
+    else element.append(header);
+    if (cached && cached.body !== body && cached.body.parentElement === element) cached.body.replaceWith(body);
+    else if (!body.isConnected || body.parentElement !== element) element.append(body);
+    paneNodes.set(identity, { element, body, strip, paneId: pane.id });
+  }
+
+  function renderEmptyCanvas() {
+    paneNodes.clear();
+    root.replaceChildren();
+    root.classList.remove("canvas-focused");
+    root.style.gridTemplateColumns = "";
+    root.style.gridTemplateRows = "";
+    const empty = text("div", "", "canvas-empty");
+    empty.append(text("h2", "The canvas is empty"));
+    empty.append(text("p", "Add an existing conversation to begin."));
+    const add = button("Add conversation");
+    add.className = "primary";
+    add.addEventListener("click", () => openPicker(null, null));
+    empty.append(add);
+    root.append(empty);
+  }
+
+  async function render() {
+    if (!active) return;
+    const current = ++generation;
+    const panes = listCanvasPanes(layout);
+    const liveIdentities = new Set(panes.map((pane) => paneIdentity(pane)));
+    for (const [identity, node] of [...paneNodes.entries()]) {
+      if (!liveIdentities.has(identity)) {
+        node.element.remove();
+        paneNodes.delete(identity);
       }
-      element.dataset.paneId = pane.id;
-      // Replace only the header child in place: the body (and its iframe) stays
-      // attached, so status or label refreshes never reload a conversation.
-      if (element.firstElementChild) element.firstElementChild.replaceWith(header);
-      else element.append(header);
-      if (!body.isConnected || body.parentElement !== element) element.append(body);
-      paneNodes.set(identity, { element, body, paneId: pane.id });
     }
-    if (reuseOnly) {
-      applyFocus();
-      return;
-    }
-    const tree = layout.root ? nodeElement(layout.root) : null;
-    if (tree) root.replaceChildren(tree);
+    if (!panes.length) { renderEmptyCanvas(); return; }
+    const metadata = await loadCanvasMetadata(panes);
+    if (!active || current !== generation) return;
+    const onPicker = (targetPaneId, replaceId) => openPicker(targetPaneId, replaceId);
+    for (const pane of panes) syncPaneElement(pane, metadata.get(pane.projectId) || {}, onPicker);
+    placeAll();
     applyFocus();
   }
 
@@ -401,11 +490,10 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
       if (replacePaneId) {
         commit(replaceCanvasPane(layout, replacePaneId, pane));
       } else {
-        const target = pickerTargetPaneId || layout.focusedPaneId || listCanvasPanes(layout)[0]?.id;
-        let next = addCanvasPane(layout, pane, target, axis);
+        const panes = listCanvasPanes(layout);
+        const target = pickerTargetPaneId || layout.focusedPaneId || panes[panes.length - 1]?.id;
         // Adding while a pane is focused would hide the new pane; show the whole canvas.
-        if (next.focusedPaneId) next = { ...next, focusedPaneId: null };
-        commit(next);
+        commit({ ...addCanvasPane(layout, pane, target, axis), focusedPaneId: null });
       }
       dialog.close();
       render();
@@ -417,7 +505,6 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
   function openPicker(targetPaneId = null, replaceId = null) {
     pickerTargetPaneId = targetPaneId;
     replacePaneId = replaceId;
-    swapSourcePaneId = null;
     searchInput.value = "";
     pickerStatus.textContent = "";
     const projects = getProjects();
@@ -440,8 +527,9 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
 
   return {
     setLayout(next) {
-      layout = next || emptyCanvasLayout();
+      layout = normalizeCanvasLayout(next);
       paneNodes.clear();
+      root.replaceChildren();
       if (active) render();
     },
     activate() {
