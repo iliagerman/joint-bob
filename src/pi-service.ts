@@ -15,7 +15,7 @@ import {
 import { agentCredentialContext, agentEnvironment, type SecretConversation } from "./secrets.js";
 import { discoverPiSessionDirectory, sessionCwds, type SessionProjectPaths } from "./session-paths.js";
 import { getSettings } from "./settings.js";
-import type { ChatMessage, ModelSummary, SessionStatus, SessionSummary } from "./types.js";
+import type { ChatMessage, ContextUsage, ModelSummary, SessionStatus, SessionSummary } from "./types.js";
 
 interface PiSessionHandle {
   session: AgentSession;
@@ -117,6 +117,14 @@ export function summarizeModel(model: AvailableModel | undefined): ModelSummary 
   };
 }
 
+// Pi reports null tokens until the next model reply lands (right after a compaction,
+// for example), which is "not measurable yet" rather than "empty".
+function piContextUsage(session: AgentSession): ContextUsage | undefined {
+  const usage = session.getContextUsage();
+  if (!usage || usage.tokens === null || !usage.contextWindow) return undefined;
+  return { usedTokens: usage.tokens, contextWindow: usage.contextWindow, percent: Math.round((usage.tokens / usage.contextWindow) * 100) };
+}
+
 export function getSessionStatus(session: AgentSession, safeguardsEnabled: boolean): SessionStatus {
   return {
     sessionFile: session.sessionFile,
@@ -134,6 +142,7 @@ export function getSessionStatus(session: AgentSession, safeguardsEnabled: boole
     activeTools: session.getActiveToolNames(),
     promptTemplates: session.promptTemplates.map((template) => template.name),
     safeguardsEnabled,
+    contextUsage: piContextUsage(session),
   };
 }
 

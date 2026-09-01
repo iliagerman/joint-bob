@@ -33,7 +33,7 @@ import { assertTaskWorktreeTransferable, exportTaskBranchBundle, mergeTaskWorktr
 import { assertSyncthingFolderReady, CLAUDE_ENGINE_SYNC_FOLDER_ID, ensureSyncthingDevice, ensureSyncthingFolder, ensureTicketWorkspaceFolder, pauseEngineSyncFolders, PI_ENGINE_SYNC_FOLDER_ID, reconcileSyncthingProjectFolders, rescanSyncthingFolder, syncthingDeviceId, syncthingFolderIdForPath, syncthingFolderStatuses, syncthingPathForFolderId } from "./syncthing.js";
 import { assertTaskWorkspaceReady, removeTaskWorkspace, taskWorkspaceKey, TaskWorkspaceError, TICKET_WORKSPACE_FOLDER_ID, ticketWorkspaceRoot } from "./task-workspaces.js";
 import { SessionWatcher } from "./watcher.js";
-import { appendLiveEvent, buildHandoffContext, claudeRunIdFromSessionPath, claudeSessionFilePath, ensureLocalClaudeTranscript, loadClaudeMessages, runClaudePrompt, type ClaudeRunHandle, type ClaudeRunResult } from "./claude-service.js";
+import { appendLiveEvent, buildHandoffContext, claudeRunIdFromSessionPath, claudeSessionContextUsage, claudeSessionFilePath, ensureLocalClaudeTranscript, loadClaudeMessages, runClaudePrompt, type ClaudeRunHandle, type ClaudeRunResult } from "./claude-service.js";
 import { isClaudeSessionRunning } from "./claude-runtime.js";
 import { listHarnesses, listHarnessSessions, refreshHarnessSessions } from "./harnesses.js";
 import { deleteConversationRecord, ensureConversationRecord, getConversationRecord, parseConversationDraftPath } from "./conversation-records.js";
@@ -50,7 +50,7 @@ import { appVersion, readChangelog } from "./changelog.js";
 import { claimReviewNotifications, markConversationReviewed, markConversationsReviewed, syncConversationReviewStates } from "./conversation-reviews.js";
 import { resetSyncthingConnection } from "./syncthing.js";
 import { PROJECT_COLORS } from "./types.js";
-import type { AgentRunSummary, ChatMessage, ProjectRecord, ProjectSyncStatus, ProjectView, SessionStatus, SessionSummary, TaskPhase, TaskPhaseConfig, TaskRecord } from "./types.js";
+import type { AgentRunSummary, ChatMessage, ContextUsage, ProjectRecord, ProjectSyncStatus, ProjectView, SessionStatus, SessionSummary, TaskPhase, TaskPhaseConfig, TaskRecord } from "./types.js";
 import { webSocketCloseReason } from "./websocket.js";
 import { capturePiRecoverySnapshot, recoverPiSessionDirectory, resolveLocalSessionPath } from "./session-paths.js";
 import { beginConversationRecovery, beginConversationTransfer, commitConversationTransfer, compareAndSetConversationOwnership, ConversationOwnershipError, finalizeConversationClaim, finishConversationRecovery, getConversationOwnership, sameConversationOwnership, takeConversationOwnership, type ConversationEngine, type ConversationOwnership, type ConversationOwnershipStatus, type OwnershipApplyResult } from "./conversation-ownership.js";
@@ -92,6 +92,7 @@ interface ClaudeChatState {
   // Turn events already streamed to the client, replayed verbatim when a socket
   // drops mid-turn and the browser reconnects.
   liveEvents: Record<string, unknown>[];
+  contextUsage: ContextUsage | null;
 }
 
 // "opus" is pinned to the explicit Opus 5 id so the CLI alias cannot drift.
@@ -3738,6 +3739,7 @@ async function reloadClaudeClients(projectId: string, changedFiles: string[]): P
     try {
       const messages = await loadClaudeMessages(`claude:${connection.claude.filePath}`);
       connection.claude.transcript = messages;
+      connection.claude.contextUsage = await claudeSessionContextUsage(`claude:${connection.claude.filePath}`) ?? null;
       const listed = (await listHarnessSessions(connection.project)).find((session) => session.path === `claude:${connection.claude.filePath}`);
       if (listed) connection.claude.sessionName = listed.title;
       send(connection.socket, { type: "messages", messages });
@@ -4351,6 +4353,7 @@ function claudeStatus(connection: ChatConnection): SessionStatus {
     messageCount: connection.claude.transcript.length,
     activeTools: [],
     promptTemplates: [],
+    contextUsage: connection.claude.contextUsage ?? undefined,
   };
 }
 
@@ -4359,7 +4362,7 @@ function sendClaudeStatus(connection: ChatConnection): void {
 }
 
 function emptyClaudeState(sessionId: string | null = null): ClaudeChatState {
-  return { sessionId, sessionName: null, filePath: null, child: null, promptQueue: [], transcript: [], lastRunEndedAt: 0, model: CLAUDE_DEFAULT_MODEL, effort: null, liveEvents: [] };
+  return { sessionId, sessionName: null, filePath: null, child: null, promptQueue: [], transcript: [], lastRunEndedAt: 0, model: CLAUDE_DEFAULT_MODEL, effort: null, liveEvents: [], contextUsage: null };
 }
 
 function pushTranscript(connection: ChatConnection, role: string, text: string): void {
@@ -4427,6 +4430,11 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
   // Buffer every turn event so a browser that reconnects mid-turn can replay it.
   connection.claude.liveEvents = [];
   const onEvent = (payload: Record<string, unknown>): void => {
+    if (payload.type === "contextUsage") {
+      connection.claude.contextUsage = payload.usage as ContextUsage;
+      sendClaudeStatus(connection);
+      return;
+    }
     appendLiveEvent(connection.claude.liveEvents, payload);
     send(connection.socket, payload);
   };
@@ -5014,6 +5022,7 @@ webSocketServer.on("connection", async (socket, request) => {
       if (requestedSessionPath) {
         try {
           connection.claude.transcript = await loadClaudeMessages(requestedSessionPath);
+          connection.claude.contextUsage = await claudeSessionContextUsage(requestedSessionPath) ?? null;
           connection.claude.filePath = path.resolve(requestedSessionPath.replace(/^claude:/, ""));
           connection.claude.sessionId = path.basename(connection.claude.filePath, ".jsonl");
           connection.claude.sessionName = listedSession?.title ?? null;

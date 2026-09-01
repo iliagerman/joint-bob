@@ -146,6 +146,14 @@ export interface ModelSummary {
   label: string;
 }
 
+/** How much of the model's context window the conversation currently occupies. */
+export interface ContextUsage {
+  usedTokens: number;
+  contextWindow: number;
+  /** Whole percent of the window in use, so every harness reports one comparable number. */
+  percent: number;
+}
+
 export interface SessionStatus {
   sessionFile?: string;
   sessionId: string;
@@ -162,6 +170,8 @@ export interface SessionStatus {
   activeTools: string[];
   promptTemplates: string[];
   safeguardsEnabled?: boolean;
+  /** Absent while the harness has not reported a measurable context reading yet. */
+  contextUsage?: ContextUsage;
 }
 
 export interface ApiErrorBody {

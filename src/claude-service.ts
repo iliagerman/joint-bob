@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { claudeProjectDir, claudeProjectDirs, isSyncConflictPath, sessionCwds, type SessionProjectPaths } from "./session-paths.js";
 import { getSettings } from "./settings.js";
-import type { ChatMessage, SessionSummary } from "./types.js";
+import type { ChatMessage, ContextUsage, SessionSummary } from "./types.js";
 
 // Runs one Claude Code turn in print mode and maps its stream-json output to
 // the same WebSocket payloads the Pi engine emits, so the client renders both
@@ -152,6 +152,32 @@ function claudeMessageText(record: UnknownRecord): string {
   return blockText(asRecord(record.message).content);
 }
 
+// Claude Code runs every model in a 200k window, except the explicit 1M-context
+// variants the model id marks with a `[1m]` suffix.
+const CLAUDE_CONTEXT_WINDOW = 200_000;
+const CLAUDE_LONG_CONTEXT_WINDOW = 1_000_000;
+
+// A turn's whole context is what the request carried plus what it produced: fresh
+// input, the cache it wrote, the cache it read back, and the reply itself.
+const CLAUDE_USAGE_FIELDS = ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"];
+
+/**
+ * Reads how full the context window is from the newest turn that reported usage.
+ * Accepts transcript records or a single live `assistant` stream record.
+ */
+export function claudeContextUsage(records: UnknownRecord[]): ContextUsage | undefined {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const message = asRecord(records[index].message);
+    const usage = asRecord(message.usage);
+    const counted = CLAUDE_USAGE_FIELDS.filter((field) => typeof usage[field] === "number");
+    if (!counted.length) continue;
+    const usedTokens = counted.reduce((total, field) => total + (usage[field] as number), 0);
+    const contextWindow = String(message.model ?? "").endsWith("[1m]") ? CLAUDE_LONG_CONTEXT_WINDOW : CLAUDE_CONTEXT_WINDOW;
+    return { usedTokens, contextWindow, percent: Math.round((usedTokens / contextWindow) * 100) };
+  }
+  return undefined;
+}
+
 // Parsing a transcript costs a full read plus a JSON.parse per line, and the
 // session watcher re-lists on every transcript write. Cache the two parsed
 // facts per file so only a transcript whose size or mtime changed is read again.
@@ -161,6 +187,7 @@ interface ClaudeSessionFacts {
   cwds: Set<string>;
   title: string;
   lastEventAt: string;
+  contextUsage?: ContextUsage;
 }
 
 const claudeSessionFactsCache = new Map<string, ClaudeSessionFacts>();
@@ -226,6 +253,7 @@ async function claudeSessionFacts(filePath: string, fileStat: Stats): Promise<Cl
     cwds: new Set(records.map((record) => String(record.cwd ?? ""))),
     title: customTitle || aiTitle || prompt || "Claude conversation",
     lastEventAt: newestEventTime(records),
+    contextUsage: claudeContextUsage(records),
   };
   claudeSessionFactsCache.set(filePath, facts);
   return facts;
@@ -296,6 +324,11 @@ function resolveClaudeSessionPath(sessionPath: string): string {
 export async function claudeSessionTitle(sessionPath: string): Promise<string> {
   const filePath = resolveClaudeSessionPath(sessionPath);
   return (await claudeSessionFacts(filePath, await stat(filePath))).title;
+}
+
+export async function claudeSessionContextUsage(sessionPath: string): Promise<ContextUsage | undefined> {
+  const filePath = resolveClaudeSessionPath(sessionPath);
+  return (await claudeSessionFacts(filePath, await stat(filePath))).contextUsage;
 }
 
 export async function loadClaudeMessages(sessionPath: string): Promise<ChatMessage[]> {
@@ -400,6 +433,8 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
       }
     }
     state.streamedForCurrentMessage = false;
+    const usage = claudeContextUsage([record]);
+    if (usage) options.onEvent({ type: "contextUsage", usage });
     if (state.assistantText) state.assistantText += "\n";
   };
 

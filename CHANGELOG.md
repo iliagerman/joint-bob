@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a context usage gauge in the chat toolbar showing how full the model's context window is, with amber and red warnings as it fills
+
 ## 0.5.0 — 2026-09-01
 
 - Arranged conversations in persistent rows on the canvas instead of hierarchical splits

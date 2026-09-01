@@ -164,6 +164,9 @@ const elements = {
   turnTimer: document.querySelector("#turnTimer"),
   reconnectBanner: document.querySelector("#reconnectBanner"),
   reconnectBannerText: document.querySelector("#reconnectBannerText"),
+  contextUsage: document.querySelector("#contextUsage"),
+  contextUsageFill: document.querySelector("#contextUsageFill"),
+  contextUsageText: document.querySelector("#contextUsageText"),
   modelButton: document.querySelector("#modelButton"),
   modelButtonName: document.querySelector("#modelButtonName"),
   safeguardsButton: document.querySelector("#safeguardsButton"),
@@ -3693,6 +3696,22 @@ function syncReasoningControls(status) {
   renderReasoningOptions();
 }
 
+// Both harnesses report the same {usedTokens, contextWindow, percent} reading, so
+// the gauge does not care which engine is driving the conversation.
+function syncContextUsage(usage) {
+  if (!usage) {
+    elements.contextUsage.hidden = true;
+    return;
+  }
+  const percent = Math.max(0, Math.min(100, Math.round(usage.percent)));
+  elements.contextUsage.hidden = false;
+  elements.contextUsage.classList.toggle("warn", percent >= 75 && percent < 90);
+  elements.contextUsage.classList.toggle("danger", percent >= 90);
+  elements.contextUsageFill.style.width = `${percent}%`;
+  elements.contextUsageText.textContent = `${percent}%`;
+  elements.contextUsage.title = `Context: ${usage.usedTokens.toLocaleString()} of ${usage.contextWindow.toLocaleString()} tokens (${percent}%)`;
+}
+
 function updateStatus(status) {
   if (!status) return;
   if (!status.isStreaming) clearThinkingBubble();
@@ -3703,6 +3722,7 @@ function updateStatus(status) {
   state.activeModelKey = status.model ? `${status.model.provider}/${status.model.id}` : "";
   state.activeModelLabel = status.model ? status.model.label : "";
   syncReasoningControls(status);
+  syncContextUsage(status.contextUsage);
   syncModelButton();
   syncSafeguardsButton();
   if (elements.toolsDialog.open) renderToolsDialog();
