@@ -9,6 +9,8 @@ export interface RecentSession {
   sessionPath: string;
   title: string;
   openedAt: string;
+  /** When the conversation itself last moved; null for entries stored before this was tracked. */
+  updatedAt: string | null;
 }
 
 export interface CanvasPanePreference {
@@ -143,7 +145,7 @@ function canonicalSessionPath(sessionPath: string): string {
 function canonicalRecentSessions(sessions: RecentSession[]): RecentSession[] {
   const identities = new Set<string>();
   return sessions.flatMap((entry) => {
-    const canonicalEntry = { ...entry, sessionPath: canonicalSessionPath(entry.sessionPath) };
+    const canonicalEntry = { ...entry, sessionPath: canonicalSessionPath(entry.sessionPath), updatedAt: entry.updatedAt ?? null };
     const identity = `${entry.projectId}\0${canonicalEntry.sessionPath}`;
     if (identities.has(identity)) return [];
     identities.add(identity);

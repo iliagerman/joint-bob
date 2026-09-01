@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Refreshed conversation activity times when opening the recent sessions dialog so they stay sorted by actual activity across all projects
+
 ## 0.6.0 — 2026-09-01
 
 - Added a context usage gauge in the chat header showing how full the model's context window is for both harnesses

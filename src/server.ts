@@ -564,6 +564,7 @@ const userPreferencesSchema = z.object({
     sessionPath: z.string().trim().min(1).max(2000),
     title: z.string().max(300),
     openedAt: z.string().max(40),
+    updatedAt: z.string().max(40).nullable().default(null),
   })).max(50).optional(),
   canvasLayout: canvasLayoutPreferenceSchema.optional(),
 }).strict();

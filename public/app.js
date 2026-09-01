@@ -2343,22 +2343,48 @@ function recentSessionActivityAt(entry) {
   return entry.updatedAt || entry.openedAt;
 }
 
-/**
- * Conversations keep moving while the recents dialog is closed — a ticket run, or
- * another node writing through Syncthing — so every session-list render refreshes
- * the stored activity time for the project it just listed.
- */
-function syncRecentSessionActivity() {
+/** Stamps each entry with the activity time from its project's freshly listed conversations. */
+function applyRecentSessionActivity(sessionsByProject) {
   let changed = false;
   state.recentSessions = state.recentSessions.map((entry) => {
-    if (entry.projectId !== state.activeProjectId) return entry;
-    const session = state.sessions.find((candidate) => canonicalSessionPath(candidate.path) === entry.sessionPath);
+    const sessions = sessionsByProject.get(entry.projectId);
+    if (!sessions) return entry;
+    const session = sessions.find((candidate) => canonicalSessionPath(candidate.path) === entry.sessionPath);
     const updatedAt = session?.updatedAt ?? session?.createdAt ?? null;
     if (!updatedAt || updatedAt === entry.updatedAt) return entry;
     changed = true;
     return { ...entry, updatedAt };
   });
   if (changed && state.preferencesLoaded) savePreferencesInBackground({ recentSessions: state.recentSessions });
+}
+
+/**
+ * Conversations keep moving while the recents dialog is closed — a ticket run, or
+ * another node writing through Syncthing — so every session-list render refreshes
+ * the stored activity time for the project it just listed.
+ */
+function syncRecentSessionActivity() {
+  applyRecentSessionActivity(new Map([[state.activeProjectId, state.sessions]]));
+}
+
+/**
+ * The dialog lists every project, but only the active one's conversations are in memory,
+ * so opening it asks each other project for its own list. A recents entry can outlive its
+ * project, and that failed request just leaves the entry's stored time alone.
+ */
+async function refreshRecentSessionActivity() {
+  const projectIds = [...new Set(state.recentSessions.map((entry) => entry.projectId))];
+  const listed = await Promise.all(projectIds.map(async (projectId) => {
+    if (projectId === state.activeProjectId) return [projectId, state.sessions];
+    try {
+      const body = await api(`/api/projects/${encodeURIComponent(projectId)}/sessions`);
+      return [projectId, body.sessions];
+    } catch {
+      return [projectId, null];
+    }
+  }));
+  applyRecentSessionActivity(new Map(listed.filter(([, sessions]) => sessions)));
+  renderRecentSessionsDialog();
 }
 
 /** Searching covers the project name too, since the same title repeats across projects. */
@@ -5375,6 +5401,8 @@ function openRecentSessionsDialog() {
   elements.recentSessionsDialog.showModal();
   // Digits are shortcuts, so focus must start on the list rather than in the search field.
   elements.recentSessionsList.focus();
+  // Stored times go stale while the dialog is closed; the rows reorder once the fresh ones land.
+  refreshRecentSessionActivity().catch((error) => console.warn(error));
 }
 for (const trigger of document.querySelectorAll("[data-recent-sessions-open]")) {
   trigger.addEventListener("click", openRecentSessionsDialog);

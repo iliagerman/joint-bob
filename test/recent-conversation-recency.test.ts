@@ -31,8 +31,31 @@ test("an opened conversation records its latest activity, and the list keeps it 
   // Conversations move on while the recents dialog is closed, so the stored time
   // is refreshed from every session-list render.
   assert.match(app, /function syncRecentSessionActivity\(\)/);
-  const sync = functionBody(app, "function syncRecentSessionActivity() {");
-  assert.match(sync, /state\.sessions\.find/);
+  const apply = functionBody(app, "function applyRecentSessionActivity(sessionsByProject) {");
+  assert.match(apply, /sessions\.find/);
   const renderSessions = functionBody(app, "function renderSessions() {");
   assert.match(renderSessions, /syncRecentSessionActivity\(\);/);
+});
+
+test("opening the recents dialog refreshes activity for every project it lists", async () => {
+  const app = await readFile("public/app.js", "utf8");
+
+  // Only the active project's conversations are in memory, so the other projects are asked directly.
+  const refresh = functionBody(app, "async function refreshRecentSessionActivity() {");
+  assert.match(refresh, /state\.recentSessions\.map\(\(entry\) => entry\.projectId\)/);
+  assert.match(refresh, /\/api\/projects\/\$\{encodeURIComponent\(projectId\)\}\/sessions/);
+  assert.match(refresh, /applyRecentSessionActivity/);
+  assert.match(refresh, /renderRecentSessionsDialog\(\)/);
+
+  const open = functionBody(app, "function openRecentSessionsDialog() {");
+  assert.match(open, /refreshRecentSessionActivity\(\)/);
+});
+
+test("the recents preference carries the conversation's activity time", async () => {
+  const preferences = await readFile("src/preferences.ts", "utf8");
+  const server = await readFile("src/server.ts", "utf8");
+
+  assert.match(preferences, /interface RecentSession \{[\s\S]*?updatedAt: string \| null;/);
+  // Without a schema field the activity time is stripped on save and the list falls back to the open time.
+  assert.match(server, /recentSessions: z\.array\(z\.object\(\{[\s\S]*?updatedAt: z\.string\(\)\.max\(40\)\.nullable\(\)\.default\(null\)/);
 });
