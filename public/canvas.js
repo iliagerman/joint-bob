@@ -534,7 +534,6 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
   }
 
   async function removeShortcut() {
-    if (!shortcutFor(shortcutPane)) { shortcutDialog.close(); return; }
     try {
       await releaseShortcuts([shortcutPane]);
       shortcutDialog.close();
@@ -561,10 +560,11 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
   }
 
   function removePane(pane) {
-    const held = shortcutFor(pane);
     commit(removeCanvasPane(layout, pane.id));
     render();
-    if (!held) return;
+    // Always ask, never check first: this page's copy of the bindings may predate
+    // another node assigning one to this conversation. Releasing an unbound
+    // conversation is a no-op on the node.
     void releaseShortcuts([pane]).then(render, reportShortcutFailure);
   }
 
@@ -742,7 +742,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
       if (replacePaneId) {
         const replaced = listCanvasPanes(layout).find((candidate) => candidate.id === replacePaneId);
         commit(replaceCanvasPane(layout, replacePaneId, pane));
-        if (replaced && shortcutFor(replaced)) void releaseShortcuts([replaced]).then(render, reportShortcutFailure);
+        if (replaced) void releaseShortcuts([replaced]).then(render, reportShortcutFailure);
       } else {
         const panes = listCanvasPanes(layout);
         const target = pickerTargetPaneId || layout.focusedPaneId || panes[panes.length - 1]?.id;

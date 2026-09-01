@@ -8,6 +8,7 @@ Every deployment is a version. The newest section must always match the
 - Canvas rows can now be dragged taller to pin their height, allowing the entire canvas to scroll once rows outgrow the panel
 - Added keyboard shortcuts on the canvas to jump to any conversation with Command+Shift and a single digit or letter
 - Canvas shortcuts now work correctly when focus mode is active, and release more reliably when closing conversations
+- Canvas shortcuts now correctly sync across concurrent nodes when multiple Claude sessions share the same canvas
 
 ## 0.7.0 — 2026-09-01
 
