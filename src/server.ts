@@ -45,7 +45,10 @@ import { getSettings, updateSettings } from "./settings.js";
 import { ensureManagedHome, managedProjectPath, managedProjectRelocationPath } from "./managed-home.js";
 import { importProjectDirectory, ProjectDirectoryImportError, relocateProjectDirectory } from "./project-directory-import.js";
 import { listAuditEvents } from "./audit.js";
-import { getUserPreferences, migrateLegacyCanvasLayout, updateUserPreferences, type UserPreferences } from "./preferences.js";
+import {
+  canvasRowGeometryIsLegal, CANVAS_MAX_ROW_HEIGHT, CANVAS_MIN_ROW_HEIGHT, getUserPreferences,
+  migrateLegacyCanvasLayout, updateUserPreferences, type UserPreferences,
+} from "./preferences.js";
 import { appVersion, readChangelog } from "./changelog.js";
 import { claimReviewNotifications, markConversationReviewed, markConversationsReviewed, syncConversationReviewStates } from "./conversation-reviews.js";
 import { resetSyncthingConnection } from "./syncthing.js";
@@ -472,6 +475,8 @@ const canvasPanePreferenceSchema = z.object({
 }).strict();
 const canvasRowPreferenceSchema = z.object({
   id: z.string().min(1).max(200),
+  // Version 3 rows pin a pixel height; null means the row still shares the canvas.
+  height: z.number().finite().min(CANVAS_MIN_ROW_HEIGHT).max(CANVAS_MAX_ROW_HEIGHT).nullable().optional(),
   weights: z.array(z.number().finite().positive()).min(1).max(8),
   panes: z.array(canvasPanePreferenceSchema).min(1).max(8),
 }).strict()
@@ -504,7 +509,7 @@ const canvasLayoutV1Schema = z.object({
 const canvasLayoutPreferenceSchema = z.union([
   canvasLayoutV1Schema,
   z.object({
-    version: z.literal(2),
+    version: z.union([z.literal(2), z.literal(3)]),
     rows: z.array(canvasRowPreferenceSchema).max(10),
     focusedPaneId: z.string().min(1).max(200).nullable(),
   }).strict(),
@@ -536,9 +541,12 @@ const canvasLayoutPreferenceSchema = z.union([
     }
   };
   if (layout.version === 1 && layout.root) walk(layout.root, 1);
-  if (layout.version === 2) for (const row of layout.rows) {
+  if (layout.version !== 1) for (const row of layout.rows) {
     if (ids.has(row.id)) context.addIssue({ code: z.ZodIssueCode.custom, message: "Canvas ids must be unique" });
     ids.add(row.id);
+    if (layout.version === 3 && !canvasRowGeometryIsLegal(row)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "Canvas row geometry is out of range" });
+    }
     for (const item of row.panes) pane(item);
   }
   if (layout.focusedPaneId && !paneIds.has(layout.focusedPaneId)) context.addIssue({ code: z.ZodIssueCode.custom, message: "Focused canvas pane is unknown" });

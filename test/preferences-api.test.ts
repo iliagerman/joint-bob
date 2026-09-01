@@ -95,6 +95,8 @@ test("preferences are authenticated, validated, and persist across listener rest
         version: 2,
         rows: [{
           id: "row-a",
+          // Rows round-trip with an explicit height; null means "share the canvas".
+          height: null,
           weights: [1, 1],
           panes: [
             { kind: "pane", id: "pane-a", projectId: "project-123", sessionPath: "/tmp/session.jsonl", sessionId: "session-123", executionNodeId: null },
@@ -153,6 +155,26 @@ test("preferences are authenticated, validated, and persist across listener rest
     ] }], focusedPaneId: null };
     const acceptedCrossNamespace = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: crossNamespaceIdentities }) });
     assert.equal(acceptedCrossNamespace.status, 200);
+    // Version 3 rows carry a pinned pixel height, or null while they share the canvas.
+    const heightedCanvas = { version: 3 as const, rows: [{ id: "row-h", height: 640, weights: [0.5, 0.3], panes: [pane("pane-h1", "s-h1"), pane("pane-h2", "s-h2")] }], focusedPaneId: null };
+    const acceptedHeights = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: heightedCanvas }) });
+    assert.equal(acceptedHeights.status, 200);
+    assert.deepEqual((await acceptedHeights.json() as { canvasLayout: unknown }).canvasLayout, heightedCanvas);
+    const unpinnedHeight = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: { ...heightedCanvas, rows: [{ ...heightedCanvas.rows[0], height: null }] } }) });
+    assert.equal(unpinnedHeight.status, 200);
+    const invalidHeight = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: { ...heightedCanvas, rows: [{ ...heightedCanvas.rows[0], height: 999999 }] } }) });
+    assert.equal(invalidHeight.status, 400);
+    const shortHeight = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: { ...heightedCanvas, rows: [{ ...heightedCanvas.rows[0], height: 100 }] } }) });
+    assert.equal(shortHeight.status, 400);
+    // Version 3 widths are fractions of the row: they may leave a gap, never overflow.
+    const overflowingWidths = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: { ...heightedCanvas, rows: [{ ...heightedCanvas.rows[0], weights: [0.8, 0.5] }] } }) });
+    assert.equal(overflowingWidths.status, 400);
+    const collapsedWidth = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: { ...heightedCanvas, rows: [{ ...heightedCanvas.rows[0], weights: [0.5, 0.01] }] } }) });
+    assert.equal(collapsedWidth.status, 400);
+    // Version 2 weights are relative shares of the row, so they keep their old freedom.
+    const legacyShares = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: { ...canvasBase, rows: [{ ...canvasBase.rows[0], weights: [3, 1] }] } }) });
+    assert.equal(legacyShares.status, 200);
+
     const invalidWeights = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: { ...canvasBase, rows: [{ ...canvasBase.rows[0], weights: [1] }] } }) });
     assert.equal(invalidWeights.status, 400);
     const duplicateConversation = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: { ...canvasBase, rows: [{ ...canvasBase.rows[0], panes: [pane("pane-a", "s-a"), pane("pane-b", "s-a")] }] } }) });
@@ -201,6 +223,17 @@ test("preferences are authenticated, validated, and persist across listener rest
       ...values,
       recentSessions: [{ ...duplicateSessions[2], updatedAt: null }, { ...duplicateSessions[3], updatedAt: null }],
     });
+
+    // A hand-edited or corrupt row must degrade to an empty canvas, never a broken one.
+    await node.close();
+    const store = new DatabaseSync(path.join(root, "node.db"));
+    const corrupt = { ...heightedCanvas, rows: [{ ...heightedCanvas.rows[0], height: 9000, weights: [0.9, 0.9] }] };
+    store.prepare("UPDATE user_preferences SET canvas_layout = ?").run(JSON.stringify(corrupt));
+    store.close();
+    node = await listen(app.createApp());
+    const degraded = await fetch(`${node.baseUrl}/api/preferences`, { headers: { Cookie: cookie } });
+    assert.equal(degraded.status, 200);
+    assert.deepEqual((await degraded.json() as { canvasLayout: unknown }).canvasLayout, { version: 2, rows: [], focusedPaneId: null });
   } finally {
     if (node) await node.close();
     if (previousDataDir === undefined) delete process.env.PI_WEB_DATA_DIR;

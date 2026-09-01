@@ -1,17 +1,26 @@
 // Pure Canvas layout operations. The canvas is a stack of up to ten rows; each
 // row holds up to eight panes side by side. Panes reference conversations by
 // identity and are never cloned or copied - moving a pane only changes where it
-// appears. Version 1 split trees migrate into rows on read.
+// appears.
+//
+// A pane owns its own width as a fraction of the row, so a row's widths may sum
+// to less than one and leave the rest of the row empty: narrowing one pane never
+// widens its neighbour. A row owns its height in pixels, or null while it still
+// shares whatever height the canvas has; pinned heights are what make the canvas
+// scroll. Version 1 split trees and version 2 shared-weight rows migrate on read.
 
 export const CANVAS_MAX_ROWS = 10;
 export const CANVAS_MAX_ROW_PANES = 8;
+export const CANVAS_MIN_PANE_WIDTH = 0.08;
+export const CANVAS_MIN_ROW_HEIGHT = 200;
+export const CANVAS_MAX_ROW_HEIGHT = 2400;
 
 export function canonicalSessionPath(sessionPath) {
   return sessionPath.replace(/\.sync-conflict-[^/\\]+(?=\.jsonl$)/, "");
 }
 
 export function emptyCanvasLayout() {
-  return { version: 2, rows: [], focusedPaneId: null };
+  return { version: 3, rows: [], focusedPaneId: null };
 }
 
 export function listCanvasPanes(layout) {
@@ -26,8 +35,35 @@ function paneOf(layout, paneId) {
   throw new Error("Unknown canvas pane");
 }
 
-function rowOf(panes, weights = panes.map(() => 1)) {
-  return { id: crypto.randomUUID(), weights: [...weights], panes: panes.map((pane) => ({ ...pane })) };
+function rowOf(panes, weights = panes.map(() => 1 / panes.length), height = null) {
+  return { id: crypto.randomUUID(), height, weights: [...weights], panes: panes.map((pane) => ({ ...pane })) };
+}
+
+/** Rescales widths to fill exactly `budget`, keeping every pane above the floor.
+ * Panes above the floor absorb the whole adjustment; nothing collapses to nothing. */
+function fitWidths(weights, budget) {
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  const scaled = weights.map((weight) => (weight / total) * budget);
+  if (scaled.every((weight) => weight >= CANVAS_MIN_PANE_WIDTH)) return scaled;
+  const spare = budget - weights.length * CANVAS_MIN_PANE_WIDTH;
+  return weights.map((weight) => CANVAS_MIN_PANE_WIDTH + (weight / total) * spare);
+}
+
+/** Places a new width in a row: it fills the spare room, or shrinks the rest to fit. */
+function insertWidth(weights, index, desired) {
+  const used = weights.reduce((sum, weight) => sum + weight, 0);
+  const room = 1 - used;
+  if (room >= CANVAS_MIN_PANE_WIDTH) {
+    const next = [...weights];
+    next.splice(index, 0, Math.min(desired, room));
+    return next;
+  }
+  // Every pane already in the row still needs its floor, so the newcomer is capped.
+  const headroom = 1 - weights.length * CANVAS_MIN_PANE_WIDTH;
+  const width = Math.min(headroom, Math.max(CANVAS_MIN_PANE_WIDTH, desired));
+  const shrunk = fitWidths(weights, 1 - width);
+  shrunk.splice(index, 0, width);
+  return shrunk;
 }
 
 function assertIdentityFree(layout, pane, ignoredPaneId = null) {
@@ -41,7 +77,7 @@ function assertIdentityFree(layout, pane, ignoredPaneId = null) {
 }
 
 function withRows(layout, rows, focusedPaneId = layout.focusedPaneId) {
-  return { version: 2, rows, focusedPaneId };
+  return { version: 3, rows, focusedPaneId };
 }
 
 /** Split a weighted pane list into legal rows without losing legacy widths. */
@@ -49,7 +85,7 @@ function chunkIntoRows(entries) {
   const rows = [];
   for (let start = 0; start < entries.length && rows.length < CANVAS_MAX_ROWS; start += CANVAS_MAX_ROW_PANES) {
     const chunk = entries.slice(start, start + CANVAS_MAX_ROW_PANES);
-    rows.push(rowOf(chunk.map((entry) => entry.pane), chunk.map((entry) => entry.weight)));
+    rows.push(rowOf(chunk.map((entry) => entry.pane), fitWidths(chunk.map((entry) => entry.weight), 1)));
   }
   return rows;
 }
@@ -84,13 +120,15 @@ export function migrateCanvasLayout(legacy) {
     rows.push(...chunkIntoRows(weightedLegacyPanes(node)));
   };
   visit(legacy.root);
-  return { version: 2, rows: rows.slice(0, CANVAS_MAX_ROWS), focusedPaneId: legacy.focusedPaneId ?? null };
+  return { version: 3, rows: rows.slice(0, CANVAS_MAX_ROWS), focusedPaneId: legacy.focusedPaneId ?? null };
 }
 
-/** Accepts stored version 1 or 2 layouts and always returns a version 2 layout. */
+/** Accepts stored version 1, 2, or 3 layouts and always returns a version 3 layout. */
 export function normalizeCanvasLayout(layout) {
   if (!layout || layout.version === 1) return migrateCanvasLayout(layout || { root: null, focusedPaneId: null });
-  return layout;
+  if (layout.version === 3) return layout;
+  const rows = layout.rows.map((row) => ({ ...row, height: null, weights: fitWidths(row.weights, 1) }));
+  return { version: 3, rows, focusedPaneId: layout.focusedPaneId ?? null };
 }
 
 export function addCanvasPane(layout, pane, targetPaneId, axis) {
@@ -113,7 +151,7 @@ export function addCanvasPane(layout, pane, targetPaneId, axis) {
   const row = rows[rowIndex];
   if (row.panes.length >= CANVAS_MAX_ROW_PANES) throw new Error("A row holds at most eight conversations");
   row.panes.splice(index, 0, { ...pane });
-  row.weights.splice(index, 0, 1);
+  row.weights = insertWidth(row.weights, index, 1 / (row.panes.length));
   return withRows(layout, rows, pane.id);
 }
 
@@ -128,6 +166,7 @@ export function replaceCanvasPane(layout, paneId, pane) {
 
 export function removeCanvasPane(layout, paneId) {
   const at = paneOf(layout, paneId);
+  // Surviving panes keep their own widths; the removed pane's share becomes empty row.
   const rows = layout.rows
     .map((row, rowNumber) => rowNumber === at.rowIndex
       ? { ...row, panes: row.panes.filter((_, index) => index !== at.index), weights: row.weights.filter((_, index) => index !== at.index) }
@@ -164,29 +203,51 @@ export function moveCanvasPane(layout, paneId, direction) {
     row.panes.splice(target, 0, pane);
     row.weights.splice(target, 0, weight);
   } else if (direction === "up") {
-    rows[at.rowIndex - 1].panes.push(pane);
-    rows[at.rowIndex - 1].weights.push(1);
+    const above = rows[at.rowIndex - 1];
+    above.panes.push(pane);
+    above.weights = insertWidth(above.weights, above.panes.length - 1, weight);
   } else {
     const below = rows[at.rowIndex + 1];
-    if (below) { below.panes.unshift(pane); below.weights.unshift(1); }
-    else rows.splice(at.rowIndex + 1, 0, rowOf([pane]));
+    if (below) {
+      below.panes.unshift(pane);
+      below.weights = insertWidth(below.weights, 0, weight);
+    // A brand-new row starts unpinned: inheriting a tall source row's height would
+    // silently double the canvas and jump the scroll position.
+    } else rows.splice(at.rowIndex + 1, 0, rowOf([pane], [weight]));
   }
   return withRows(layout, rows.filter((candidate) => candidate.panes.length));
 }
 
-/** Adjusts the shared boundary between two neighbouring panes in a row. */
-export function setCanvasRowBoundary(layout, rowId, paneIndex, left, right) {
+/** The legal width for one pane: never under the floor, never past the row's end. */
+export function clampCanvasPaneWidth(row, paneIndex, width) {
+  const others = row.weights.reduce((sum, weight, index) => index === paneIndex ? sum : sum + weight, 0);
+  const available = Math.max(CANVAS_MIN_PANE_WIDTH, 1 - others);
+  return Math.min(available, Math.max(CANVAS_MIN_PANE_WIDTH, width));
+}
+
+export function clampCanvasRowHeight(height) {
+  return Math.round(Math.min(CANVAS_MAX_ROW_HEIGHT, Math.max(CANVAS_MIN_ROW_HEIGHT, height)));
+}
+
+/** Sets one pane's own width, leaving every other pane in the row untouched. */
+export function setCanvasPaneWidth(layout, rowId, paneIndex, width) {
   const row = layout.rows.find((candidate) => candidate.id === rowId);
-  if (!row || paneIndex < 0 || paneIndex + 1 >= row.panes.length) throw new Error("Unknown canvas boundary");
-  if (![left, right].every((value) => Number.isFinite(value) && value > 0)) throw new Error("Invalid canvas weights");
-  const rows = layout.rows.map((candidate) => candidate.id === rowId ? { ...candidate, weights: [...candidate.weights] } : candidate);
-  const target = rows.find((candidate) => candidate.id === rowId);
-  // Keep the pair's total so other panes in the row keep their share.
-  const total = left + right;
-  if (!Number.isFinite(total)) throw new Error("Invalid canvas weights");
-  const share = 0.15 * total;
-  target.weights[paneIndex] = Math.min(total - share, Math.max(share, left));
-  target.weights[paneIndex + 1] = total - target.weights[paneIndex];
+  if (!row || paneIndex < 0 || paneIndex >= row.panes.length) throw new Error("Unknown canvas pane width");
+  if (!Number.isFinite(width)) throw new Error("Invalid canvas width");
+  const clamped = clampCanvasPaneWidth(row, paneIndex, width);
+  const rows = layout.rows.map((candidate) => candidate.id === rowId
+    ? { ...candidate, weights: candidate.weights.map((weight, index) => index === paneIndex ? clamped : weight) }
+    : candidate);
+  return withRows(layout, rows);
+}
+
+/** Pins one row's height in pixels. Rows the user never dragged stay at null. */
+export function setCanvasRowHeight(layout, rowId, height) {
+  const row = layout.rows.find((candidate) => candidate.id === rowId);
+  if (!row) throw new Error("Unknown canvas row");
+  if (!Number.isFinite(height)) throw new Error("Invalid canvas row height");
+  const clamped = clampCanvasRowHeight(height);
+  const rows = layout.rows.map((candidate) => candidate.id === rowId ? { ...candidate, height: clamped } : candidate);
   return withRows(layout, rows);
 }
 

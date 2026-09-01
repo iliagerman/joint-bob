@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Canvas rows can now be dragged taller to pin their height, allowing the entire canvas to scroll once rows outgrow the panel
+
 ## 0.7.0 — 2026-09-01
 
 - Restructured README with setup options table and added automated agent installation guide to npm package

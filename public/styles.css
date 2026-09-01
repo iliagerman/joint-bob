@@ -448,6 +448,9 @@ body.view-chat #chatPanel :is(.panel-scroll, .board-columns, .messages) {
 .project-search-row { display: flex; align-items: center; gap: 6px; margin: 12px 12px 2px; }
 .project-search-row .search-shell { flex: 1; min-width: 0; margin: 0; }
 .project-search-row .icon-button { min-width: 40px; width: 40px; min-height: 40px; flex: none; }
+/* The canvas launcher sits on its own row under the search and add-project row. */
+.project-canvas-row { margin: 6px 12px 2px; }
+.project-canvas-row .canvas-launch { width: 100%; }
 input, textarea, select {
   width: 100%;
   min-width: 0;
@@ -1528,7 +1531,7 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   .panel-bar, .chat-topbar { min-height: 58px; padding: 10px 52px 10px 12px; padding-top: calc(10px + env(safe-area-inset-top, 0px)); }
   .app-menu { display: block; position: fixed; top: calc(18px + env(safe-area-inset-top, 0px)); right: 16px; z-index: 50; }
   /* The bottom bar already reaches the board and settings, so the header drops both. */
-  #settingsButton, #openBoardButton, #openCanvasButton, #canvasPanel { display: none; }
+  #settingsButton, #openBoardButton, #openCanvasButton, .project-canvas-row, #canvasPanel { display: none; }
   .messages { padding: 12px; }
   .composer { padding: 6px 8px 10px; }
   .dialog-card { padding: 20px; }
@@ -1917,7 +1920,9 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   display: grid;
   gap: 10px 0;
   padding: 10px;
-  /* Rows keep a readable floor height; past ten rows the canvas scrolls. */
+  /* Unresized rows share the height; a row dragged taller keeps its pixel height,
+     so the whole canvas scrolls once the rows outgrow the panel. */
+  align-content: start;
   overflow-y: auto;
 }
 .canvas-root > .canvas-empty { min-width: 0; min-height: 0; grid-column: 1 / -1; }
@@ -1969,6 +1974,7 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 .canvas-pane-body > iframe { flex: 1; width: 100%; min-height: 0; border: 0; background: var(--bg); }
 /* Focus changes only grid placement and visibility. Every frame stays attached. */
 .canvas-root.canvas-focused .canvas-resize,
+.canvas-root.canvas-focused .canvas-row-resize,
 .canvas-root.canvas-focused .canvas-pane:not(.focused) { display: none; }
 .canvas-root.canvas-focused .canvas-pane.focused { min-height: 0; }
 .canvas-unavailable {
@@ -1991,12 +1997,14 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   color: var(--muted);
 }
 .canvas-empty h2 { color: var(--text); }
+/* A pane owns its right edge: dragging it sets that pane's own width, and the
+   rest of the row simply stays empty. */
 .canvas-resize {
   position: absolute;
   z-index: 4;
   top: 0;
   bottom: 0;
-  left: -5px;
+  right: -5px;
   width: 10px;
   border: 0;
   background: transparent;
@@ -2014,18 +2022,48 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 }
 .canvas-resize:hover::after, .canvas-resize:focus-visible::after { background: var(--accent); }
 .canvas-resize:focus-visible { outline: none; }
+/* The row separator sits in the 10px gap below its row and drags its height. */
+.canvas-row-resize {
+  position: relative;
+  z-index: 5;
+  align-self: end;
+  height: 10px;
+  margin-bottom: -10px;
+  border: 0;
+  background: transparent;
+  cursor: row-resize;
+}
+.canvas-row-resize::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: 12px;
+  right: 12px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--line-strong);
+}
+.canvas-row-resize:hover::after, .canvas-row-resize:focus-visible::after { background: var(--accent); }
+.canvas-row-resize:focus-visible { outline: none; }
 .canvas-picker-status { min-height: 1.4em; margin: 0; color: var(--muted); font-size: 12px; }
 #canvasConversationDialog .dialog-card { width: min(720px, calc(100vw - 24px)); }
+/* Flex column, not grid: grid tracks shrink to min-content once the list hits
+   its max-height, which squashed every row down to its 44px floor and clipped
+   the preview text. Flex items with flex:none keep their full height and the
+   list scrolls instead. */
 .canvas-session-options {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 6px;
   max-height: min(420px, 52dvh);
   overflow-y: auto;
   padding: 3px;
 }
+/* Block layout, not grid: a grid item is blockified, which would turn the
+   subtitle's -webkit-box into a plain block and kill its line clamp. */
 .canvas-session-option {
-  display: grid;
-  gap: 3px;
+  display: block;
+  flex: none;
   width: 100%;
   min-height: 44px;
   padding: 9px 12px;
@@ -2037,6 +2075,8 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 }
 /* Titles wrap instead of truncating, and the first message keeps two full lines. */
 .canvas-session-option strong {
+  display: block;
+  margin-bottom: 3px;
   min-width: 0;
   font-size: 13px;
   line-height: 1.35;

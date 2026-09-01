@@ -11,8 +11,9 @@ test("canvas is a desktop row view over exact existing conversations", async () 
     readFile("src/server.ts", "utf8"),
   ]);
 
-  // Global launcher rides the project search row, beside the add-project button.
-  assert.match(html, /project-search-row[\s\S]{0,900}project-create-button[\s\S]{0,200}id="openCanvasButton"[\s\S]*?<svg[\s\S]*?<rect x="3\.5" y="3\.5"/);
+  // Global launcher sits on its own full-width row under the search + add-project row.
+  assert.match(html, /project-search-row[\s\S]{0,900}project-create-button[\s\S]{0,40}<\/div>\s*<div class="project-canvas-row">\s*<button class="canvas-launch" id="openCanvasButton"[\s\S]*?<svg[\s\S]*?<rect x="3\.5" y="3\.5"/);
+  assert.match(styles, /\.project-canvas-row \.canvas-launch \{ width: 100%; \}/);
   assert.doesNotMatch(html, /canvas-launch-row/);
   assert.match(styles, /\.canvas-launch \{[\s\S]*?flex: none;[\s\S]*?min-height: 40px;[\s\S]*?padding: 0 12px;/);
   assert.match(html, /id="canvasPanel"/);
@@ -26,7 +27,7 @@ test("canvas is a desktop row view over exact existing conversations", async () 
   // Desktop-only: shown in the wide layout, absent from narrow navigation.
   assert.match(styles, /@media \(min-width: 1024px\)[\s\S]*body\.view-canvas #canvasPanel \{ display: flex; \}/);
   assert.match(styles, /@media \(max-width: 1023px\) \{\n  \.collapse-button \{ display: none; \}/);
-  assert.match(styles, /#settingsButton, #openBoardButton, #openCanvasButton, #canvasPanel \{ display: none; \}/);
+  assert.match(styles, /#settingsButton, #openBoardButton, #openCanvasButton, \.project-canvas-row, #canvasPanel \{ display: none; \}/);
   assert.match(styles, /body\.canvas-pane-mode #chatPanel \{ display: flex !important;/);
 
   // The pane frame reuses normal chat lifecycle and skips shell background work.
@@ -45,12 +46,14 @@ test("canvas is a desktop row view over exact existing conversations", async () 
   assert.match(canvas, /if \(session\.executionNodeId\) url\.searchParams\.set\("nodeId", session\.executionNodeId\)/);
   assert.doesNotMatch(canvas, /localStorage|sessionStorage|transferSession|cloneSession|new-session/);
 
-  // Rows scroll, preserve readable height, and directional controls replace splits.
+  // Rows scroll: an unresized row shares the height, a dragged one pins pixels.
   assert.match(styles, /\.canvas-root \{[\s\S]*?display: grid;[\s\S]*?overflow-y: auto;/);
-  assert.match(canvas, /repeat\(\$\{Math\.max\(1, layout\.rows\.length\)\}, minmax\(280px, 1fr\)\)/);
+  assert.match(canvas, /row\.height \? `\$\{row\.height\}px` : `minmax\(\$\{CANVAS_MIN_ROW_HEIGHT\}px, 1fr\)`/);
+  assert.match(styles, /\.canvas-row-resize \{[\s\S]*?cursor: row-resize;/);
+  assert.match(styles, /\.canvas-root\.canvas-focused \.canvas-row-resize/);
   assert.match(canvas, /for \(const direction of \["left", "right", "up", "down"\]\)/);
   assert.match(canvas, /moveCanvasPane\(layout, pane\.id, direction\)/);
-  assert.doesNotMatch(canvas, /canvas-split|setCanvasSplitRatio|swapCanvasPanes/);
+  assert.doesNotMatch(canvas, /canvas-split|setCanvasSplitRatio|swapCanvasPanes|setCanvasRowBoundary/);
 
   // Panes are permanent direct root children. Layout changes are style-only.
   assert.match(canvas, /root\.append\(element\)/);
@@ -58,13 +61,18 @@ test("canvas is a desktop row view over exact existing conversations", async () 
   assert.match(canvas, /element\.style\.gridColumn/);
   assert.match(canvas, /const headerSlot = element\.children\.length > 1 \? element\.children\[1\] : null;/);
   assert.match(canvas, /if \(!body\.isConnected \|\| body\.parentElement !== element\) element\.append\(body\)/);
-  assert.match(canvas, /commit\(setCanvasRowBoundary\([\s\S]*?placeAll\(\);/);
+  assert.match(canvas, /commit\(setCanvasPaneWidth\([\s\S]*?placeAll\(\);/);
+  assert.match(canvas, /commit\(setCanvasRowHeight\(/);
   assert.doesNotMatch(canvas, /function deactivate[\s\S]{0,200}replaceChildren/);
   assert.match(styles, /\.canvas-root\.canvas-focused \.canvas-pane:not\(\.focused\) \{ display: none; \}/);
 
   // Picker remains readable and can start a brand-new pane conversation.
   assert.match(styles, /#canvasConversationDialog \.dialog-card \{ width: min\(720px/);
-  assert.match(styles, /\.canvas-session-option strong \{[\s\S]*?overflow-wrap: anywhere;/);
+  // Rows keep their full height: a flex column with flex:none options, and block
+  // option layout so the subtitle's -webkit-box line clamp survives.
+  assert.match(styles, /\.canvas-session-options \{[\s\S]*?display: flex;[\s\S]*?flex-direction: column;/);
+  assert.match(styles, /\.canvas-session-option \{[\s\S]*?display: block;[\s\S]*?flex: none;/);
+  assert.match(styles, /\.canvas-session-option strong \{[\s\S]*?display: block;[\s\S]*?overflow-wrap: anywhere;/);
   assert.match(styles, /\.canvas-session-option span \{[\s\S]*?-webkit-line-clamp: 2;/);
   assert.match(canvas, /`canvas-start-conversation-\$\{harness\.id\}`/);
   assert.match(canvas, /sessionPath: `draft:\$\{harness\.id\}:\$\{sessionId\}`/);
@@ -73,6 +81,8 @@ test("canvas is a desktop row view over exact existing conversations", async () 
   assert.match(canvas, /setPointerCapture\(event\.pointerId\)/);
   assert.match(canvas, /releasePointerCapture\(event\.pointerId\)/);
   assert.match(canvas, /setAttribute\("role", "separator"\)/);
+  // A pane owns its right edge, so narrowing it leaves the rest of the row empty.
+  assert.match(styles, /\.canvas-resize \{[\s\S]*?right: -5px;[\s\S]*?cursor: col-resize;/);
   assert.match(canvas, /aria-valuenow/);
   assert.match(app, /state\.canvasLayoutSave = \(state\.canvasLayoutSave \?\? Promise\.resolve\(\)\)/);
 
@@ -86,7 +96,7 @@ test("canvas is a desktop row view over exact existing conversations", async () 
 
 test("the canvas shell ships in the service worker cache", async () => {
   const worker = await readFile("public/sw.js", "utf8");
-  assert.match(worker, /const CACHE_NAME = "joint-bob-v86"/);
+  assert.match(worker, /const CACHE_NAME = "joint-bob-v88"/);
   assert.match(worker, /"\/canvas\.js"/);
   assert.match(worker, /"\/canvas-layout\.js"/);
 });

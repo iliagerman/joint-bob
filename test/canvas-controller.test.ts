@@ -224,7 +224,7 @@ test("the picker adds an existing conversation through its button handlers", asy
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(registry.get("#canvasConversationDialog").open, false);
   const added = saved.at(-1);
-  assert.equal(added.version, 2);
+  assert.equal(added.version, 3);
   assert.deepEqual(listCanvasPanes(added).map((pane) => pane.sessionId).sort(), ["s-one", "s-three", "s-two"]);
 
   const root = registry.get("#canvasRoot");
@@ -234,9 +234,11 @@ test("the picker adds an existing conversation through its button handlers", asy
   assert.ok(originalFrames.every((frame) => frames.includes(frame)), "adding a pane keeps every existing iframe alive");
   const thirdPane = root.children.find((element) => textOf(element).includes("Project One · Three"));
   const thirdIndex = added.rows[0].panes.findIndex((pane) => pane.id === thirdPane.dataset.paneId);
-  const pair = added.rows[0].weights[thirdIndex - 1] + added.rows[0].weights[thirdIndex];
-  const announced = Math.round((added.rows[0].weights[thirdIndex - 1] / pair) * 100);
-  assert.equal(thirdPane.children[0]["attr:aria-valuenow"], String(announced), "a separator announces its adjacent pair ratio");
+  const announced = Math.round(added.rows[0].weights[thirdIndex] * 100);
+  assert.equal(thirdPane.children[0]["attr:aria-valuenow"], String(announced), "a separator announces its own pane's share of the row");
+  const others = added.rows[0].weights.reduce((sum, weight, index) => index === thirdIndex ? sum : sum + weight, 0);
+  assert.equal(thirdPane.children[0]["attr:aria-valuemax"], String(Math.round(Math.max(0.08, 1 - others) * 100)),
+    "the separator's maximum is the width this pane could actually reach");
 
   const removeThree = findElement(root, (element) => String(element["attr:aria-label"] || "").includes("Remove Project One · Three from the canvas"));
   assert.ok(removeThree);
@@ -291,4 +293,42 @@ test("extreme legal weights reserve grid width for every pane", async () => {
     const [start, end] = element.style.gridColumn.split(" / ").map(Number);
     assert.ok(end > start, `${pane.id} keeps at least one grid track`);
   }
+});
+
+test("each row carries a height separator that pins pixel heights for scrolling", async () => {
+  const root = registry.get("#canvasRoot");
+  let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
+  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "column");
+  controller.setLayout({ ...layout, focusedPaneId: null });
+  await controller.activate();
+
+  const separators = root.children.filter((element) => element.classNames === "canvas-row-resize");
+  assert.equal(separators.length, 2, "every row can be dragged taller");
+  assert.equal(separators[0]["attr:aria-orientation"], "horizontal");
+  assert.equal(root.style.gridTemplateRows, "minmax(200px, 1fr) minmax(200px, 1fr)",
+    "unpinned rows share the canvas height");
+
+  separators[0].dispatch("keydown", { key: "ArrowDown", preventDefault() {} });
+  assert.match(root.style.gridTemplateRows, /^340px minmax\(200px, 1fr\)$/,
+    "a resized row keeps a pixel height, so the canvas scrolls once the rows outgrow it");
+  assert.equal(saved.at(-1).rows[0].height, 340);
+  assert.equal(saved.at(-1).rows[1].height, null);
+});
+
+test("the empty-canvas message never lingers under real panes", async () => {
+  const root = registry.get("#canvasRoot");
+  controller.setLayout(emptyCanvasLayout());
+  await controller.activate();
+  assert.ok(root.children.some((element) => element.classNames === "canvas-empty"), "an empty canvas explains itself");
+
+  registry.get("#canvasProjectSelect").value = "p-one";
+  controller.openPicker();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const option = registry.get("#canvasSessionOptions").children.find((child) => textOf(child).includes("One"));
+  option.dispatch("click");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(root.children.filter((element) => element.tagName === "section").length, 1);
+  assert.ok(!root.children.some((element) => element.classNames === "canvas-empty"),
+    "the placeholder is removed as soon as the first pane arrives");
 });

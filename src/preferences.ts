@@ -24,17 +24,37 @@ export interface CanvasPanePreference {
 
 export interface CanvasRowPreference {
   id: string;
+  /** Pinned pixel height, or null while the row shares the canvas height. */
+  height?: number | null;
   weights: number[];
   panes: CanvasPanePreference[];
 }
 
 export interface CanvasLayoutPreference {
-  version: 2;
+  version: 2 | 3;
   rows: CanvasRowPreference[];
   focusedPaneId: string | null;
 }
 
 const emptyCanvasLayout = (): CanvasLayoutPreference => ({ version: 2, rows: [], focusedPaneId: null });
+
+/** Version 3 geometry bounds. These mirror the client constants of the same names
+ * in public/canvas-layout.js; the tolerance absorbs the float drift of widths the
+ * client computes by division. */
+export const CANVAS_MIN_PANE_WIDTH = 0.08;
+export const CANVAS_WIDTH_TOLERANCE = 1e-6;
+export const CANVAS_MIN_ROW_HEIGHT = 200;
+export const CANVAS_MAX_ROW_HEIGHT = 2400;
+
+/** Version 2 weights are relative shares of any scale; version 3 weights are each
+ * pane's own fraction of the row, so they may leave a gap but never overflow it. */
+export function canvasRowGeometryIsLegal(row: { height?: number | null; weights: number[] }): boolean {
+  const total = row.weights.reduce((sum, weight) => sum + weight, 0);
+  if (total > 1 + CANVAS_WIDTH_TOLERANCE) return false;
+  if (row.weights.some((weight) => weight < CANVAS_MIN_PANE_WIDTH - CANVAS_WIDTH_TOLERANCE)) return false;
+  return row.height === null || row.height === undefined
+    || (row.height >= CANVAS_MIN_ROW_HEIGHT && row.height <= CANVAS_MAX_ROW_HEIGHT);
+}
 
 export interface UserPreferences {
   theme: "light" | "dark" | null;
@@ -189,6 +209,7 @@ function parseCanvasLayout(value: string): CanvasLayoutPreference {
       if (!row || typeof row !== "object" || typeof row.id !== "string" || !row.id || row.id.length > 200 || ids.has(row.id)) return emptyCanvasLayout();
       ids.add(row.id);
       if (!Array.isArray(row.panes) || row.panes.length < 1 || row.panes.length > 8) return emptyCanvasLayout();
+      if (!(row.height === undefined || row.height === null || (typeof row.height === "number" && Number.isFinite(row.height)))) return emptyCanvasLayout();
       if (!Array.isArray(row.weights) || row.weights.length !== row.panes.length
         || !row.weights.every((weight) => typeof weight === "number" && Number.isFinite(weight) && weight > 0)
         || !Number.isFinite(row.weights.reduce((sum, weight) => sum + weight, 0))) return emptyCanvasLayout();
@@ -210,11 +231,12 @@ function parseCanvasLayout(value: string): CanvasLayoutPreference {
         paneIds.add(item.id);
         panes.push({ kind: "pane", id: item.id, projectId: item.projectId, sessionPath: canonicalSessionPath(item.sessionPath), sessionId: item.sessionId, executionNodeId: item.executionNodeId });
       }
-      rows.push({ id: row.id, weights: row.weights, panes });
+      if (layout.version === 3 && !canvasRowGeometryIsLegal(row)) return emptyCanvasLayout();
+      rows.push({ id: row.id, height: row.height ?? null, weights: row.weights, panes });
     }
-    if (layout.version !== 2
+    if (!(layout.version === 2 || layout.version === 3)
       || !(layout.focusedPaneId === null || (typeof layout.focusedPaneId === "string" && paneIds.has(layout.focusedPaneId)))) return emptyCanvasLayout();
-    return { version: 2, rows, focusedPaneId: layout.focusedPaneId ?? null };
+    return { version: layout.version, rows, focusedPaneId: layout.focusedPaneId ?? null };
   } catch {
     return emptyCanvasLayout();
   }
