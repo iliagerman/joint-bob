@@ -32,6 +32,7 @@ const state = {
   recentSessions: [],
   pendingReviews: [],
   pendingReviewsTimer: null,
+  pendingReviewsRefreshTimer: null,
   renameSessionId: null,
   renameSessionEngine: "pi",
   newSessionDraft: null,
@@ -418,7 +419,8 @@ const elements = {
   fileEditorSaveButton: document.querySelector("#fileEditorSaveButton"),
   fileEditorStatus: document.querySelector("#fileEditorStatus"),
   fileEditorMode: document.querySelector("#fileEditorMode"),
-  fileEditorRawButton: document.querySelector("#fileEditorRawButton"),
+  fileEditorPreviewButton: document.querySelector("#fileEditorPreviewButton"),
+  fileEditorPreview: document.querySelector("#fileEditorPreview"),
   confirmDialog: document.querySelector("#confirmDialog"),
   confirmEyebrow: document.querySelector("#confirmEyebrow"),
   confirmTitle: document.querySelector("#confirmTitle"),
@@ -2201,6 +2203,17 @@ async function refreshPendingReviews() {
   renderProjects();
 }
 
+// Replicated review and running-state updates now broadcast, but the cross-project
+// inbox is too heavy to fetch per event; trail behind the burst instead of polling on
+// the minute alone.
+function schedulePendingReviewsRefresh() {
+  if (state.pendingReviewsRefreshTimer) return;
+  state.pendingReviewsRefreshTimer = setTimeout(() => {
+    state.pendingReviewsRefreshTimer = null;
+    refreshPendingReviews().catch((error) => console.warn("Could not refresh pending reviews", error));
+  }, 5000);
+}
+
 /**
  * Reviews pile up in projects you are not looking at, so the row carries the count.
  * The open project's own conversations are live, so they beat the once-a-minute snapshot;
@@ -2583,12 +2596,28 @@ function renderSessions() {
           taskElement.dataset.status = task.status;
           taskElement.textContent = `${task.name} · ${task.role} · ${task.status}`;
           runs.append(taskElement);
+          const reason = agentRunTaskReason(task);
+          if (reason) {
+            const reasonElement = document.createElement("p");
+            reasonElement.className = "agent-run-task-reason";
+            reasonElement.dataset.testid = "agent-run-task-reason";
+            reasonElement.textContent = reason;
+            reasonElement.title = reason;
+            runs.append(reasonElement);
+          }
         }
       }
       row.append(runs);
     }
     elements.sessionList.append(row);
   }
+}
+
+/** A failed task with no explanation is the worst outcome, so say the dashboard stayed silent
+    rather than showing a bare "failed" the reader cannot act on. */
+function agentRunTaskReason(task) {
+  if (task.status !== "failed") return "";
+  return task.error || "No reason reported by the agent dashboard";
 }
 
 /** Every row action lives in the overflow menu, so the row itself stays one tap target. */
@@ -2819,7 +2848,7 @@ function projectFileResolutionUrl(filePath) {
 }
 
 function resetFileEditor() {
-  state.fileEditor = { requestedPath: null, path: null, viewUrl: null, downloadUrl: null, contentUrl: null, version: null, original: "", loading: false, saving: false, markdown: false, raw: false };
+  state.fileEditor = { requestedPath: null, path: null, viewUrl: null, downloadUrl: null, contentUrl: null, version: null, original: "", loading: false, saving: false, markdown: false, preview: false };
   elements.fileActionView.hidden = false;
   elements.fileEditorView.hidden = true;
   fileEditor.setValue("");
@@ -2859,21 +2888,21 @@ async function openFileAction(path) {
   }
 }
 
-// Markdown is shown the way the chat preview shows it: the syntax markers hide so the
-// document reads as prose. The line holding the cursor shows its raw source again, so
-// every character is still reachable, and the Raw button turns the markers back on
-// everywhere for a heavy edit. The buffer itself is always plain markdown.
-function applyFileEditorView(markdown, raw) {
-  const rendered = markdown && !raw;
-  Object.assign(state.fileEditor, { markdown, raw });
+// Editing always happens on the raw source: every `#`, `*` and backtick stays visible and
+// every line has its own number, because an editor that hides the syntax it is editing
+// makes the cursor land somewhere other than where it looks. Reading is the other half of
+// the job, so Preview puts the rendered document beside the source instead of replacing it.
+function applyFileEditorView(markdown, preview) {
+  const showPreview = markdown && preview;
+  Object.assign(state.fileEditor, { markdown, preview: showPreview });
   fileEditor.setOption("lineWrapping", markdown);
-  fileEditor.setOption("lineNumbers", !rendered);
-  fileEditor.setOption("styleActiveLine", rendered ? { nonEmpty: true } : false);
+  fileEditor.setOption("lineNumbers", true);
   fileEditor.getWrapperElement().classList.toggle("file-editor-markdown", markdown);
-  fileEditor.getWrapperElement().classList.toggle("file-editor-rendered", rendered);
-  elements.fileEditorRawButton.hidden = !markdown;
-  elements.fileEditorRawButton.textContent = raw ? "Rendered" : "Raw";
-  elements.fileEditorRawButton.setAttribute("aria-pressed", String(raw));
+  elements.fileEditorPreviewButton.hidden = !markdown;
+  elements.fileEditorPreviewButton.textContent = showPreview ? "Hide preview" : "Preview";
+  elements.fileEditorPreviewButton.setAttribute("aria-pressed", String(showPreview));
+  elements.fileEditorPreview.hidden = !showPreview;
+  if (showPreview) renderMarkdown(elements.fileEditorPreview, fileEditor.getValue());
 }
 
 async function editProjectFile() {
@@ -2888,8 +2917,8 @@ async function editProjectFile() {
     fileEditor.setValue(body.content);
     const filename = body.path.split(/[\\/]/).pop();
     const spec = window.CodeMirror.findModeByFileName(filename);
-    // Markdown reads as prose: wrap long lines and let the stylesheet render
-    // headings, emphasis, and links while the buffer stays plain text.
+    // Markdown wraps long lines and highlights its own syntax; the buffer stays plain text
+    // and the Preview toggle is what shows the rendered document.
     const markdown = spec?.mode === "markdown" || spec?.mode === "gfm";
     fileEditor.setOption("mode", markdown ? { name: spec.mode, highlightFormatting: true } : spec?.mime ?? spec?.mode ?? null);
     applyFileEditorView(markdown, false);
@@ -2939,10 +2968,19 @@ async function saveProjectFile(closeAfterSave = true) {
   finally { state.fileEditor.saving = false; elements.fileEditorSaveButton.disabled = false; }
 }
 
-elements.fileEditorRawButton.addEventListener("click", () => {
-  applyFileEditorView(true, !state.fileEditor.raw);
+elements.fileEditorPreviewButton.addEventListener("click", () => {
+  applyFileEditorView(true, !state.fileEditor.preview);
   fileEditor.refresh();
   fileEditor.focus();
+});
+
+// Re-rendering on every keystroke rebuilds the whole document, so the preview lags a beat
+// behind the buffer rather than fighting it.
+let previewTimer;
+fileEditor.on("changes", () => {
+  if (!state.fileEditor.preview) return;
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => renderMarkdown(elements.fileEditorPreview, fileEditor.getValue()), 120);
 });
 
 window.CodeMirror.commands.save = () => { void saveProjectFile(false); };
@@ -4253,7 +4291,10 @@ function handleSocketPayload(payload, scrollOnReady = false) {
     }
   }
   if (payload.type === "sessionInfoChanged" && payload.name) elements.sessionTitle.textContent = payload.name;
-  if (payload.type === "sessionsChanged") refreshSessionsQuietly();
+  if (payload.type === "sessionsChanged") {
+    refreshSessionsQuietly();
+    schedulePendingReviewsRefresh();
+  }
   if (payload.type === "tasksChanged") {
     loadTasks().catch((error) => console.warn(error));
     return;
@@ -4713,7 +4754,10 @@ function ensureWatchSocket() {
   });
   socket.addEventListener("message", (event) => {
     const payload = JSON.parse(event.data);
-    if (payload.type === "sessionsChanged") refreshSessionsQuietly();
+    if (payload.type === "sessionsChanged") {
+      refreshSessionsQuietly();
+      schedulePendingReviewsRefresh();
+    }
     if (payload.type === "tasksChanged") loadTasks().catch((error) => console.warn(error));
   });
   socket.addEventListener("close", () => {
@@ -5945,7 +5989,30 @@ if ("serviceWorker" in navigator) {
   });
 }
 
-if (state.canvasPaneMode) document.body.classList.add("canvas-pane-mode");
+if (state.canvasPaneMode) {
+  document.body.classList.add("canvas-pane-mode");
+  // A pane is an iframe, so a canvas shortcut typed in here never reaches the canvas
+  // document. The canvas owns the binding table and tells this pane which keys it
+  // claims; every other Command+Shift key still belongs to the conversation.
+  const canvasBindings = new Set();
+  window.addEventListener("keydown", (event) => {
+    if (!event.metaKey || !event.shiftKey || event.ctrlKey || event.altKey) return;
+    const match = /^(?:Digit([0-9])|Key([A-Z]))$/.exec(event.code || "");
+    const binding = match ? match[1] || match[2] : null;
+    if (!binding || !canvasBindings.has(binding)) return;
+    event.preventDefault();
+    parent.postMessage({ type: "canvasShortcut", code: event.code, metaKey: true, shiftKey: true, ctrlKey: false, altKey: false }, location.origin);
+  });
+  window.addEventListener("message", (event) => {
+    if (event.origin !== location.origin) return;
+    if (event.data?.type === "canvasShortcutBindings") {
+      canvasBindings.clear();
+      for (const binding of event.data.bindings || []) canvasBindings.add(binding);
+    }
+    if (event.data?.type === "canvasFocusComposer") document.querySelector("#messageInput")?.focus();
+  });
+  parent.postMessage({ type: "canvasPaneReady" }, location.origin);
+}
 if (!state.canvasPaneMode) {
   state.canvasController = createConversationCanvas({
     api,

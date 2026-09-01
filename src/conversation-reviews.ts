@@ -2,11 +2,15 @@ import { mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
+import type { ConversationEngine } from "./conversation-ownership.js";
+import { enqueueReplicationEvent, ensureReplicationSchema, resolveProjectAlias, type ReplicationEvent } from "./replication.js";
 
 export type ConversationReviewState = "running" | "needs_review" | "reviewed";
 
 interface ConversationStateInput {
   path: string;
+  engine: ConversationEngine;
+  sessionId: string;
   updatedAt?: string;
   running: boolean;
 }
@@ -21,12 +25,27 @@ interface ColumnRow {
   name: string;
 }
 
+interface RemoteWatermarkRow {
+  engine: ConversationEngine;
+  session_id: string;
+  reviewed_at: string;
+}
+
 interface ReviewStatements {
   selectTracking: StatementSync;
   insertTracking: StatementSync;
   select: StatementSync;
   insert: StatementSync;
   update: StatementSync;
+}
+
+interface ReviewPayload {
+  username: string;
+  projectId: string;
+  engine: ConversationEngine;
+  sessionId: string;
+  reviewedAt: string;
+  originNodeId: string;
 }
 
 const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
@@ -63,10 +82,41 @@ function reviewDatabase(): DatabaseSync {
   return database;
 }
 
+/** Watermarks reviewed on another node, keyed by identities stable across the cluster. */
+export function ensureConversationReviewReplicaSchema(db: DatabaseSync): void {
+  db.exec(`CREATE TABLE IF NOT EXISTS replicated_review_watermarks (
+    username TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    engine TEXT NOT NULL CHECK(engine IN ('pi', 'claude')),
+    session_id TEXT NOT NULL,
+    reviewed_at TEXT NOT NULL,
+    origin_node_id TEXT NOT NULL,
+    PRIMARY KEY (username, project_id, engine, session_id)
+  );`);
+}
+
+function remoteWatermarks(db: DatabaseSync, username: string, projectId: string): Map<string, string> {
+  ensureConversationReviewReplicaSchema(db);
+  const rows = db.prepare("SELECT engine, session_id, reviewed_at FROM replicated_review_watermarks WHERE username = ? AND project_id = ?").all(username, projectId) as unknown as RemoteWatermarkRow[];
+  return new Map(rows.map((row) => [`${row.engine}\n${row.session_id}`, row.reviewed_at]));
+}
+
 function activityTime(value: string | undefined, fallback: string): string {
   if (!value) return fallback;
   const time = new Date(value);
   return Number.isNaN(time.getTime()) ? fallback : time.toISOString();
+}
+
+// Two nodes read the same transcript's recency a few milliseconds apart (record
+// timestamp on one, file mtime on the other). A watermark replicated from the node
+// where the review happened must still cover that activity, so a small skew between
+// the observed activity and a remote watermark counts as reviewed. The window is
+// deliberately tiny: activity landing inside it after a review mark stays reviewed.
+const REMOTE_WATERMARK_TOLERANCE_MS = 250;
+
+function activityCovered(observedAt: string, reviewedAt: string, remoteReviewedAt: string | undefined): boolean {
+  if (observedAt <= reviewedAt) return true;
+  return Boolean(remoteReviewedAt && Date.parse(observedAt) - Date.parse(remoteReviewedAt) <= REMOTE_WATERMARK_TOLERANCE_MS);
 }
 
 function reviewStatements(db: DatabaseSync): ReviewStatements {
@@ -91,15 +141,23 @@ function reviewStatements(db: DatabaseSync): ReviewStatements {
     `),
     update: db.prepare(`
       UPDATE conversation_review_states
-      SET last_activity_at = ?, was_running = ?, notified = CASE WHEN ? = 1 THEN 0 ELSE notified END
+      SET last_activity_at = ?, reviewed_at = ?, was_running = ?,
+        notified = CASE WHEN ? = 1 OR ? = 1 THEN 0 ELSE notified END
       WHERE user_id = ? AND project_id = ? AND session_path = ?
     `),
   };
 }
 
-export function syncConversationReviewStates(userId: string, projectId: string, sessions: ConversationStateInput[]): Map<string, ConversationReviewState> {
+/**
+ * Reconciles the account's review rows against the sessions a project lists. The
+ * reviewed watermark is the higher of the local row and any watermark another node
+ * replicated for the same (username, project, engine, session id), so marking a
+ * conversation reviewed anywhere marks it everywhere.
+ */
+export function syncConversationReviewStates(userId: string, username: string, projectId: string, sessions: ConversationStateInput[]): Map<string, ConversationReviewState> {
   const db = reviewDatabase();
   const statements = reviewStatements(db);
+  const remote = remoteWatermarks(db, username, projectId);
   const now = new Date().toISOString();
   const states = new Map<string, ConversationReviewState>();
   db.exec("BEGIN");
@@ -109,18 +167,23 @@ export function syncConversationReviewStates(userId: string, projectId: string, 
     if (!tracking) statements.insertTracking.run(userId, projectId, initializedAt);
     for (const session of sessions) {
       const observedAt = activityTime(session.updatedAt, now);
+      const remoteReviewedAt = remote.get(`${session.engine}\n${session.sessionId}`);
       const row = statements.select.get(userId, projectId, session.path) as unknown as ConversationStateRow | undefined;
       if (!row) {
-        const reviewedAt = tracking ? initializedAt : observedAt;
+        const baseline = tracking ? initializedAt : observedAt;
+        const reviewedAt = remoteReviewedAt && remoteReviewedAt > baseline ? remoteReviewedAt : baseline;
         statements.insert.run(userId, projectId, session.path, observedAt, reviewedAt, session.running ? 1 : 0);
-        states.set(session.path, session.running ? "running" : observedAt > reviewedAt ? "needs_review" : "reviewed");
+        states.set(session.path, session.running ? "running" : activityCovered(observedAt, reviewedAt, remoteReviewedAt) ? "reviewed" : "needs_review");
         continue;
       }
       // The reported time is authoritative in both directions. Clamping it to the highest value
       // ever seen made a single bad reading permanent, and a conversation whose recency was
       // inflated once could never return to reviewed.
-      statements.update.run(observedAt, session.running ? 1 : 0, session.running ? 1 : 0, userId, projectId, session.path);
-      states.set(session.path, session.running ? "running" : observedAt > row.reviewed_at ? "needs_review" : "reviewed");
+      const reviewedAt = remoteReviewedAt && remoteReviewedAt > row.reviewed_at ? remoteReviewedAt : row.reviewed_at;
+      // A remote review starts this account's next notification cycle, exactly like a local one.
+      const remoteAdvanced = Boolean(remoteReviewedAt && remoteReviewedAt > row.reviewed_at);
+      statements.update.run(observedAt, reviewedAt, session.running ? 1 : 0, session.running ? 1 : 0, remoteAdvanced ? 1 : 0, userId, projectId, session.path);
+      states.set(session.path, session.running ? "running" : activityCovered(observedAt, reviewedAt, remoteReviewedAt) ? "reviewed" : "needs_review");
     }
     db.exec("COMMIT");
     return states;
@@ -130,10 +193,23 @@ export function syncConversationReviewStates(userId: string, projectId: string, 
   }
 }
 
+function publishReview(db: DatabaseSync, username: string, projectId: string, session: { engine: ConversationEngine; sessionId: string }, reviewedAt: string, originNodeId: string): void {
+  ensureReplicationSchema(db);
+  enqueueReplicationEvent(db, {
+    originNodeId,
+    entityType: "conversation.review",
+    entityKey: `${username}:${projectId}:${session.engine}:${session.sessionId}`,
+    operation: "upsert",
+    payload: { username, projectId, engine: session.engine, sessionId: session.sessionId, reviewedAt, originNodeId },
+  });
+}
+
 export function markConversationsReviewed(
   userId: string,
+  username: string,
   projectId: string,
-  sessions: Array<Pick<ConversationStateInput, "path" | "updatedAt">>,
+  sessions: Array<Pick<ConversationStateInput, "path" | "engine" | "sessionId" | "updatedAt">>,
+  originNodeId: string,
 ): void {
   if (!sessions.length) return;
   const db = reviewDatabase();
@@ -152,6 +228,7 @@ export function markConversationsReviewed(
       if (!session.updatedAt || !validReviewWatermark(session.updatedAt)) throw new Error("Conversation review watermark is invalid");
       const reviewedAt = new Date(session.updatedAt).toISOString();
       statement.run(userId, projectId, session.path, reviewedAt, reviewedAt);
+      publishReview(db, username, projectId, session, reviewedAt, originNodeId);
     }
     db.exec("COMMIT");
   } catch (error) {
@@ -166,10 +243,45 @@ function validReviewWatermark(value: string): boolean {
 
 export function markConversationReviewed(
   userId: string,
+  username: string,
   projectId: string,
-  session: Pick<ConversationStateInput, "path" | "updatedAt">,
+  session: Pick<ConversationStateInput, "path" | "engine" | "sessionId" | "updatedAt">,
+  originNodeId: string,
 ): void {
-  markConversationsReviewed(userId, projectId, [session]);
+  markConversationsReviewed(userId, username, projectId, [session], originNodeId);
+}
+
+// A review watermark legitimately tracks transcript activity, which cannot be far
+// ahead of the receiver's clock; anything further out would suppress reviews forever.
+const MAX_REVIEW_WATERMARK_SKEW_MS = 5 * 60_000;
+
+function reviewPayload(event: ReplicationEvent): ReviewPayload {
+  const value = event.payload as Partial<ReviewPayload>;
+  const valid = event.entityType === "conversation.review" && event.operation === "upsert"
+    && value && typeof value === "object" && !Array.isArray(value)
+    && typeof value.username === "string" && value.username.length > 0
+    && typeof value.projectId === "string" && value.projectId.length > 0
+    && ["pi", "claude"].includes(value.engine ?? "")
+    && typeof value.sessionId === "string" && value.sessionId.length > 0
+    && typeof value.reviewedAt === "string" && Number.isFinite(Date.parse(value.reviewedAt))
+    && typeof value.originNodeId === "string" && value.originNodeId === event.originNodeId
+    && event.entityKey === `${value.username}:${value.projectId}:${value.engine}:${value.sessionId}`;
+  if (!valid) throw new Error("Malformed conversation review replication payload");
+  if (Date.parse(value.reviewedAt!) > Date.now() + MAX_REVIEW_WATERMARK_SKEW_MS) throw new Error("Conversation review watermark is too far in the future");
+  return value as ReviewPayload;
+}
+
+export function applyConversationReviewEvent(db: DatabaseSync, event: ReplicationEvent): void {
+  const payload = reviewPayload(event);
+  ensureConversationReviewReplicaSchema(db);
+  const projectId = resolveProjectAlias(db, payload.projectId);
+  db.prepare(`
+    INSERT INTO replicated_review_watermarks (username, project_id, engine, session_id, reviewed_at, origin_node_id)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(username, project_id, engine, session_id) DO UPDATE SET
+      reviewed_at = MAX(replicated_review_watermarks.reviewed_at, excluded.reviewed_at),
+      origin_node_id = excluded.origin_node_id
+  `).run(payload.username, projectId, payload.engine, payload.sessionId, new Date(payload.reviewedAt).toISOString(), payload.originNodeId);
 }
 
 /**

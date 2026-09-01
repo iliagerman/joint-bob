@@ -60,6 +60,8 @@ export interface AgentRunTaskSummary {
   name: string;
   role: string;
   status: AgentTaskStatus;
+  /** Why a failed task failed, as the dashboard reported it. Absent unless the task failed. */
+  error?: string;
 }
 
 export interface AgentRunSummary {

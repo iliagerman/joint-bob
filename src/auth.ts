@@ -210,6 +210,11 @@ export function sessionForId(sessionId: string | undefined): AuthSession | undef
   return { id: row.id, userId: row.user_id, username: row.username, csrfToken: row.csrf_token, mustChangePassword: row.must_change_password === 1 };
 }
 
+/** The cluster-stable reviewer identity: usernames match across nodes even though user ids do not. */
+export function usernameForUser(userId: string): string | undefined {
+  return (authDatabase().prepare("SELECT username FROM users WHERE id = ?").get(userId) as { username: string } | undefined)?.username;
+}
+
 export function changePassword(session: AuthSession, currentPassword: string, newPassword: string): void {
   if (!validPassword(newPassword)) throw new Error("New password must be 16-200 characters");
   const row = authDatabase().prepare("SELECT * FROM users WHERE id = ?").get(session.userId) as UserRow | undefined;
@@ -268,10 +273,19 @@ export function revokeSession(sessionId: string): void {
   }
 }
 
+// Cookies ignore the port, so every node reachable at the same hostname shares one
+// cookie jar: a second local node signing in would overwrite the first node's
+// session. Each development node sets its own name; production keeps the default.
+export const sessionCookieName = process.env.JOINT_BOB_SESSION_COOKIE ?? "mb_session";
+
+// Safari drops a Secure cookie sent over plain HTTP, so a local HTTP node is
+// impossible to sign into there. Development sets this; production never does.
+const secureAttribute = process.env.JOINT_BOB_INSECURE_COOKIE === "1" ? "" : " Secure;";
+
 export function sessionCookieValue(session: AuthSession): string {
-  return `mb_session=${session.id}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${Math.floor(sessionLifetimeMs / 1000)}`;
+  return `${sessionCookieName}=${session.id}; Path=/; HttpOnly;${secureAttribute} SameSite=Strict; Max-Age=${Math.floor(sessionLifetimeMs / 1000)}`;
 }
 
 export function clearSessionCookieValue(): string {
-  return "mb_session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0";
+  return `${sessionCookieName}=; Path=/; HttpOnly;${secureAttribute} SameSite=Strict; Max-Age=0`;
 }

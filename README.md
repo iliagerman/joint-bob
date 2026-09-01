@@ -219,6 +219,45 @@ npm start
 
 Development uses `http://localhost:8790` unless `PORT` is set. Production services always run from `~/.local/share/joint-bob/app`, not from a source checkout.
 
+### Disposable nodes with dummy data
+
+For UI and cluster work, run throwaway nodes instead of your real one:
+
+```bash
+npm run dev:local            # one node on http://127.0.0.1:8791
+npm run dev:cluster          # two paired nodes on :8791 and :8792
+just dev                     # same as dev:local
+just dev-cluster             # same as dev:cluster
+npm run dev:seed -- --force  # rebuild the dummy data from scratch
+just dev-reset               # same thing, two nodes
+```
+
+Everything lives under `.dev-env/` in the checkout: one SQLite database per node, a shared `HOME`, three dummy projects, and dummy Pi and Claude transcripts. It never reads or writes `~/.joint-bob`, `~/.pi`, or `~/.claude`, so an installed node on this machine keeps running untouched — which is why the dev nodes default to ports 8791 and 8792 rather than 8790.
+
+In cluster mode the two nodes are paired before they start, and every project is aliased to its twin, so pairing, project inventory, and conversation handover work without any manual setup.
+
+Sign in with `dev` / `joint-bob-dev-password` (override with `JOINT_BOB_DEV_USERNAME` and `JOINT_BOB_DEV_PASSWORD`; the password must be at least 16 characters). Put the environment somewhere else with `JOINT_BOB_DEV_ROOT`. Reset it by deleting `.dev-env/`.
+
+Two things the dev script configures that production does not:
+
+- `JOINT_BOB_SESSION_COOKIE` gives each node its own session cookie name. Cookies ignore the port, so two nodes on `127.0.0.1` would otherwise sign each other out — including your installed node on 8790.
+- `JOINT_BOB_INSECURE_COOKIE=1` drops the `Secure` flag, which browsers reject over plain HTTP. Never set it on a real node.
+
+Dummy projects report their sync state as `Unavailable`: the dev nodes configure no Syncthing endpoint, which is correct for an isolated environment.
+
+### Sanity suites
+
+```bash
+npm test          # the full suite, no browser needed
+npm run test:ui   # browser journey against a seeded node (needs Chrome)
+npm run test:all  # both
+just test-ui      # same as npm run test:ui
+```
+
+`test/cluster-sanity.test.ts` runs inside `npm test`: it starts both paired nodes and checks pairing, shared project inventory, project aliasing, live node-to-node traffic, and conversation handover.
+
+`test/ui/ui-smoke.test.ts` drives a real Chrome through sign-in, the project list, a conversation transcript, and the canvas picker, and fails on any console error or failed request. It uses `playwright-core` against your installed Chrome, so there is no browser download. It sits outside the `test/*.test.ts` glob on purpose: a browser suite that silently skips itself would report success while testing nothing.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) before submitting changes.
 
 ## Maintainer deployment

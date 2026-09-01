@@ -8,6 +8,25 @@
 - Run `npm run typecheck`, `npm test`, and `npm run build` before delivery.
 - Run Terraform format, validate, and tests when `deploy/aws-ec2-test` changes.
 
+## Testing
+
+Read `TESTING.md` before writing or changing tests. It documents the shared
+harness (`test/dev-nodes.ts`), the seeded fixtures, the browser suite, and the
+two-node cluster suite.
+
+- Every feature ships with tests at the layer where it can actually break, and
+  every new test must be watched failing against the broken code before it is
+  kept. A test that passes against the broken version is worse than none.
+- Run the tests that cover what you changed, and add cases when the existing
+  ones would not have caught the change breaking. Source-text assertions do not
+  count as coverage for behaviour or layout.
+- `npm test` is the full suite. `npm run test:ui` drives a real Chrome and is
+  required for frontend shell changes. `test/cluster-sanity.test.ts` covers
+  anything that spans two nodes.
+- Check UI changes in a browser against `npm run dev:local` (one node) or
+  `npm run dev:cluster` (two paired nodes), disposable and seeded under
+  `.dev-env/`. Never point them at `~/.joint-bob`.
+
 ## AI-DLC bypass
 
 - Bypass AI-DLC for one request only when the user explicitly says `bypass AI-DLC` or `skip AI-DLC`.

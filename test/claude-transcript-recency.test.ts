@@ -80,17 +80,17 @@ test("conversation review state follows reported activity downwards", async () =
   process.env.PI_WEB_DATA_DIR = dataDir;
   try {
     const reviews = await import(`../src/conversation-reviews.ts?test=${Date.now()}-${Math.random()}`);
-    const session = { path: "synchronized", running: false };
+    const session = { path: "synchronized", engine: "claude" as const, sessionId: "synchronized", running: false };
 
-    reviews.syncConversationReviewStates("user-a", "project", [{ ...session, updatedAt: "2026-08-29T11:00:00.000Z" }]);
-    reviews.markConversationReviewed("user-a", "project", { path: session.path, updatedAt: "2026-08-29T11:00:00.000Z" });
+    reviews.syncConversationReviewStates("user-a", "user-a-name", "project", [{ ...session, updatedAt: "2026-08-29T11:00:00.000Z" }]);
+    reviews.markConversationReviewed("user-a", "user-a-name", "project", { ...session, updatedAt: "2026-08-29T11:00:00.000Z" }, "node-a");
 
     // A phantom mtime bump inflates the stored activity time.
-    const inflated = reviews.syncConversationReviewStates("user-a", "project", [{ ...session, updatedAt: "2026-08-29T17:03:06.949Z" }]);
+    const inflated = reviews.syncConversationReviewStates("user-a", "user-a-name", "project", [{ ...session, updatedAt: "2026-08-29T17:03:06.949Z" }]);
     assert.equal(inflated.get(session.path), "needs_review");
 
     // Reading recency from the transcript reports the real time again, which clears the alert.
-    const healed = reviews.syncConversationReviewStates("user-a", "project", [{ ...session, updatedAt: "2026-08-29T11:00:00.000Z" }]);
+    const healed = reviews.syncConversationReviewStates("user-a", "user-a-name", "project", [{ ...session, updatedAt: "2026-08-29T11:00:00.000Z" }]);
     assert.equal(healed.get(session.path), "reviewed");
   } finally {
     if (previous === undefined) delete process.env.PI_WEB_DATA_DIR;

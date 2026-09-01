@@ -72,3 +72,12 @@ export function isClaudeSessionRunning(sessionPath: string): boolean {
   const row = runtimeDatabase().prepare("SELECT updated_at, running FROM claude_runtime_sessions WHERE transcript_path = ?").get(transcriptPath) as { updated_at: string; running: number } | undefined;
   return Boolean(row?.running && Date.now() - Date.parse(row.updated_at) <= staleAfterMs);
 }
+
+/** Claude Code turns driven outside Joint Bob (hooks only) that are running right now. */
+export function listRunningClaudeSessions(): Array<{ sessionId: string; transcriptPath: string }> {
+  const rows = runtimeDatabase().prepare("SELECT session_id, transcript_path, updated_at, running FROM claude_runtime_sessions WHERE running = 1").all() as Array<{ session_id: string; transcript_path: string; updated_at: string; running: number }>;
+  const now = Date.now();
+  return rows
+    .filter((row) => now - Date.parse(row.updated_at) <= staleAfterMs)
+    .map((row) => ({ sessionId: row.session_id, transcriptPath: row.transcript_path }));
+}

@@ -11,10 +11,10 @@
 // identity change (replace) or a pane removal destroys a frame.
 
 import {
-  addCanvasPane, canvasPaneMoves, canonicalSessionPath, CANVAS_MAX_ROW_HEIGHT, CANVAS_MIN_PANE_WIDTH, CANVAS_MIN_ROW_HEIGHT,
-  clampCanvasPaneWidth, clampCanvasRowHeight, emptyCanvasLayout, listCanvasPanes, moveCanvasPane,
-  normalizeCanvasLayout, removeCanvasPane, replaceCanvasPane, setCanvasPaneWidth, setCanvasRowHeight,
-  toggleCanvasFocus,
+  addCanvasPane, canvasPaneEngine, canvasPaneMoves, canonicalSessionPath, CANVAS_MAX_ROW_HEIGHT,
+  CANVAS_MIN_PANE_WIDTH, CANVAS_MIN_ROW_HEIGHT, clampCanvasPaneWidth, clampCanvasRowHeight,
+  emptyCanvasLayout, listCanvasPanes, moveCanvasPane, normalizeCanvasLayout, organizeCanvasLayout,
+  removeCanvasPane, replaceCanvasPane, setCanvasPaneWidth, setCanvasRowHeight, toggleCanvasFocus,
 } from "./canvas-layout.js";
 
 // The canvas grid has this many fractional columns; pane widths quantize to them.
@@ -31,6 +31,14 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
   const positionSelect = document.querySelector("#canvasSplitPosition");
   const optionsList = document.querySelector("#canvasSessionOptions");
   const pickerStatus = document.querySelector("#canvasPickerStatus");
+  const organizeButton = document.querySelector("#canvasOrganizeButton");
+  const shortcutBar = document.querySelector("#canvasShortcutBar");
+  const shortcutDialog = document.querySelector("#canvasShortcutDialog");
+  const shortcutSubject = document.querySelector("#canvasShortcutSubject");
+  const shortcutKeyInput = document.querySelector("#canvasShortcutKey");
+  const shortcutStatus = document.querySelector("#canvasShortcutStatus");
+  const shortcutRemoveButton = document.querySelector("#canvasShortcutRemoveButton");
+  const shortcutSaveButton = document.querySelector("#canvasShortcutSaveButton");
 
   let layout = emptyCanvasLayout();
   let active = false;
@@ -46,6 +54,13 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
   // row id -> the separator that drags that row's height.
   const rowNodes = new Map();
   let emptyNode = null;
+  // Keyboard bindings for this account, as the node last reported them. They belong to
+  // the account rather than the canvas, so a pane may hold one that no row shows yet.
+  let shortcuts = [];
+  let shortcutPane = null;
+  // conversation identity -> the title last rendered for it, so the shortcut bar can
+  // name a conversation without waiting for another metadata round trip.
+  const paneTitles = new Map();
 
   const text = (tag, value, className) => {
     const element = document.createElement(tag);
@@ -71,6 +86,14 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
       firstMessage: "", running: false, reviewState: "reviewed", executionNodeId: null,
     };
   };
+
+  async function loadShortcuts() {
+    try {
+      shortcuts = (await api("/api/canvas/shortcuts")).shortcuts || [];
+    } catch (error) {
+      showMessage(error instanceof Error ? error.message : "Could not load canvas shortcuts");
+    }
+  }
 
   async function ensureHarnesses() {
     if (harnesses.length) return;
@@ -109,12 +132,22 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
       replace.addEventListener("click", () => onPicker(pane.id, pane.id));
       const remove = button("Remove");
       remove.setAttribute("aria-label", "Remove unavailable conversation");
-      remove.addEventListener("click", () => { commit(removeCanvasPane(layout, pane.id)); render(); });
+      remove.addEventListener("click", () => removePane(pane));
       bar.append(replace, remove);
       return bar;
     }
     const title = `${project.name} · ${session.title || session.path}`;
+    paneTitles.set(paneIdentity(pane), title);
     bar.append(text("strong", title, "canvas-pane-title"));
+    const held = shortcutFor(pane);
+    const badge = button(held ? `⌘⇧${held.binding}` : "⌘⇧");
+    badge.className = "canvas-shortcut-badge";
+    badge.dataset.testid = "canvas-pane-shortcut-button";
+    badge.setAttribute("aria-label", held
+      ? `Change the keyboard shortcut for ${title}, currently Command Shift ${held.binding}`
+      : `Assign a keyboard shortcut to ${title}`);
+    badge.addEventListener("click", () => openShortcutDialog(pane, title));
+    bar.append(badge);
     const context = `${String(session.firstMessage || "").slice(0, 90)} · ${session.harnessId === "claude" ? "Claude" : "Pi"} · ${statusLine(session)}`;
     bar.append(text("span", context, "canvas-pane-meta"));
     const action = (label, ariaLabel, run) => {
@@ -142,7 +175,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
       });
       bar.append(move);
     }
-    action("Remove", `Remove ${title} from the canvas`, () => { commit(removeCanvasPane(layout, pane.id)); render(); });
+    action("Remove", `Remove ${title} from the canvas`, () => removePane(pane));
     return bar;
   }
 
@@ -397,6 +430,131 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     }
   }
 
+  const shortcutIdentity = (target) => `${target.projectId}\0${target.engine}\0${target.sessionId}`;
+  const paneShortcutTarget = (pane) => ({ projectId: pane.projectId, engine: canvasPaneEngine(pane), sessionId: pane.sessionId });
+  const shortcutFor = (pane) => shortcuts.find((candidate) => shortcutIdentity(candidate) === shortcutIdentity(paneShortcutTarget(pane))) || null;
+  const paneTitle = (pane) => paneTitles.get(paneIdentity(pane)) || pane.sessionPath;
+
+  async function shortcutRequest(path, options) {
+    const body = await api(path, options);
+    shortcuts = body.shortcuts || [];
+    publishBindings();
+  }
+
+  /** Panes are iframes and swallow the keystroke, so each one learns the bound keys
+   * and forwards only those; everything else stays with the conversation. */
+  function publishBindings() {
+    const bindings = shortcuts.map((shortcut) => shortcut.binding);
+    for (const node of paneNodes.values()) {
+      const frame = node.body.firstElementChild;
+      frame?.contentWindow?.postMessage({ type: "canvasShortcutBindings", bindings }, location.origin);
+    }
+  }
+
+  function revealPane(paneId) {
+    const pane = listCanvasPanes(layout).find((candidate) => candidate.id === paneId);
+    const node = pane ? paneNodes.get(paneIdentity(pane)) : null;
+    if (!node) return;
+    node.element.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    node.element.classList.add("canvas-revealed");
+    setTimeout(() => node.element.classList.remove("canvas-revealed"), 1200);
+    node.body.firstElementChild?.contentWindow?.postMessage({ type: "canvasFocusComposer" }, location.origin);
+  }
+
+  /** Command and Shift with one digit or letter. Reading `code` keeps the binding on
+   * the physical key, so Shift's punctuation and other layouts do not change it. */
+  function bindingFromCombination(combination) {
+    if (!combination.metaKey || !combination.shiftKey || combination.ctrlKey || combination.altKey) return null;
+    const match = /^(?:Digit([0-9])|Key([A-Z]))$/.exec(combination.code || "");
+    return match ? match[1] || match[2] : null;
+  }
+
+  function handleShortcutCombination(combination) {
+    if (!active) return false;
+    const binding = bindingFromCombination(combination);
+    if (!binding) return false;
+    const shortcut = shortcuts.find((candidate) => candidate.binding === binding);
+    if (!shortcut) return false;
+    const pane = listCanvasPanes(layout).find((candidate) => shortcutIdentity(paneShortcutTarget(candidate)) === shortcutIdentity(shortcut));
+    if (!pane) return false;
+    revealPane(pane.id);
+    return true;
+  }
+
+  function renderShortcutBar() {
+    shortcutBar.replaceChildren();
+    const bound = listCanvasPanes(layout)
+      .map((pane) => ({ pane, shortcut: shortcutFor(pane) }))
+      .filter((entry) => entry.shortcut);
+    shortcutBar.hidden = !bound.length;
+    for (const entry of bound) {
+      const chip = button("");
+      chip.className = "canvas-shortcut-chip";
+      chip.setAttribute("aria-label", `Go to ${paneTitle(entry.pane)}`);
+      chip.append(text("kbd", `⌘⇧${entry.shortcut.binding}`));
+      chip.append(text("span", paneTitle(entry.pane)));
+      chip.addEventListener("click", () => revealPane(entry.pane.id));
+      shortcutBar.append(chip);
+    }
+  }
+
+  function openShortcutDialog(pane, title) {
+    shortcutPane = pane;
+    shortcutSubject.textContent = title;
+    const current = shortcutFor(pane);
+    shortcutKeyInput.value = current ? current.binding : "";
+    shortcutStatus.textContent = "";
+    shortcutRemoveButton.hidden = !current;
+    shortcutDialog.showModal();
+  }
+
+  async function saveShortcut() {
+    const binding = String(shortcutKeyInput.value || "").trim().toUpperCase();
+    if (!/^[0-9A-Z]$/.test(binding)) {
+      shortcutStatus.textContent = "Pick one digit or letter.";
+      return;
+    }
+    try {
+      await shortcutRequest(`/api/canvas/shortcuts/${encodeURIComponent(binding)}`, {
+        method: "PUT",
+        body: JSON.stringify(paneShortcutTarget(shortcutPane)),
+      });
+      shortcutDialog.close();
+      render();
+    } catch (error) {
+      shortcutStatus.textContent = error instanceof Error ? error.message : "Could not save that shortcut";
+    }
+  }
+
+  async function removeShortcut() {
+    const current = shortcutFor(shortcutPane);
+    if (!current) { shortcutDialog.close(); return; }
+    try {
+      await releaseShortcuts([shortcutPane]);
+      shortcutDialog.close();
+      render();
+    } catch (error) {
+      shortcutStatus.textContent = error instanceof Error ? error.message : "Could not remove that shortcut";
+    }
+  }
+
+  /** A conversation leaving the canvas gives its key back to the account. */
+  async function releaseShortcuts(panes) {
+    for (const pane of panes) {
+      const held = shortcutFor(pane);
+      if (!held) continue;
+      await shortcutRequest(`/api/canvas/shortcuts/${encodeURIComponent(held.binding)}`, { method: "DELETE" });
+    }
+  }
+
+  function removePane(pane) {
+    commit(removeCanvasPane(layout, pane.id));
+    void releaseShortcuts([pane])
+      .catch((error) => showMessage(error instanceof Error ? error.message : "Could not release that shortcut"))
+      .finally(() => render());
+    render();
+  }
+
   async function loadCanvasMetadata(panes) {
     const metadata = new Map();
     await Promise.all([...new Set(panes.map((pane) => pane.projectId))].map(async (projectId) => {
@@ -448,6 +606,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
   function renderEmptyCanvas() {
     paneNodes.clear();
     rowNodes.clear();
+    renderShortcutBar();
     root.replaceChildren();
     root.classList.remove("canvas-focused");
     root.style.gridTemplateColumns = "";
@@ -484,6 +643,8 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     syncRowSeparators();
     placeAll();
     applyFocus();
+    renderShortcutBar();
+    publishBindings();
   }
 
   function sessionTaken(session, projectId) {
@@ -566,7 +727,9 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     try {
       const axis = positionSelect.value === "below" ? "column" : "row";
       if (replacePaneId) {
+        const replaced = listCanvasPanes(layout).find((candidate) => candidate.id === replacePaneId);
         commit(replaceCanvasPane(layout, replacePaneId, pane));
+        if (replaced) void releaseShortcuts([replaced]).catch(() => {});
       } else {
         const panes = listCanvasPanes(layout);
         const target = pickerTargetPaneId || layout.focusedPaneId || panes[panes.length - 1]?.id;
@@ -602,6 +765,22 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
 
   projectSelect.addEventListener("change", () => void loadPickerSessions());
   searchInput.addEventListener("input", renderPickerOptions);
+  organizeButton.addEventListener("click", () => {
+    commit(organizeCanvasLayout(layout));
+    placeAll();
+    render();
+  });
+  shortcutSaveButton.addEventListener("click", () => void saveShortcut());
+  shortcutRemoveButton.addEventListener("click", () => void removeShortcut());
+  window.addEventListener("keydown", (event) => {
+    if (handleShortcutCombination(event)) event.preventDefault();
+  });
+  window.addEventListener("message", (event) => {
+    if (event.origin !== location.origin) return;
+    if (event.data?.type === "canvasShortcut") handleShortcutCombination(event.data);
+    // A pane that just finished loading has no bindings yet.
+    if (event.data?.type === "canvasPaneReady") publishBindings();
+  });
 
   return {
     setLayout(next) {
@@ -615,7 +794,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     activate() {
       active = true;
       void ensureHarnesses();
-      return render();
+      return loadShortcuts().then(render);
     },
     deactivate() {
       // Frames stay alive (hidden with the panel) so returning to the canvas

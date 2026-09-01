@@ -138,8 +138,10 @@
             <h1>Canvas</h1>
             <p>Existing conversations, side by side</p>
           </div>
+          <button class="ghost compact" id="canvasOrganizeButton" type="button" title="Lay every conversation out as an even grid" data-testid="canvas-organize-button">Organize</button>
           <button class="primary compact" id="canvasAddButton" type="button" data-testid="canvas-add-button">+ Add conversation</button>
         </header>
+        <div class="canvas-shortcut-bar" id="canvasShortcutBar" aria-label="Canvas keyboard shortcuts" data-testid="canvas-shortcut-bar" hidden></div>
         <div class="canvas-root" id="canvasRoot" data-testid="canvas-root"></div>
       </section>
 
@@ -264,6 +266,25 @@
         <button class="primary compact" id="installBannerButton" type="button">Install</button>
       </div>
     </div>
+
+    <dialog id="canvasShortcutDialog" data-testid="canvas-shortcut-dialog">
+      <form class="dialog-card" method="dialog">
+        <div>
+          <span class="eyebrow">Canvas</span>
+          <h2>Keyboard shortcut</h2>
+        </div>
+        <p class="canvas-shortcut-subject" id="canvasShortcutSubject" data-testid="canvas-shortcut-subject"></p>
+        <label for="canvasShortcutKey">Press Command and Shift with this key
+          <input id="canvasShortcutKey" type="text" maxlength="1" autocomplete="off" spellcheck="false" placeholder="1-9 or A-Z" data-testid="canvas-shortcut-key-input" />
+        </label>
+        <p class="canvas-picker-status" id="canvasShortcutStatus" role="status" data-testid="canvas-shortcut-status"></p>
+        <div class="dialog-actions">
+          <button class="ghost" type="submit" data-testid="canvas-shortcut-cancel-button">Cancel</button>
+          <button class="ghost danger" id="canvasShortcutRemoveButton" type="button" data-testid="canvas-shortcut-remove-button">Remove</button>
+          <button class="primary" id="canvasShortcutSaveButton" type="button" data-testid="canvas-shortcut-save-button">Save</button>
+        </div>
+      </form>
+    </dialog>
 
     <dialog id="canvasConversationDialog" data-testid="canvas-conversation-dialog">
       <form class="dialog-card" method="dialog">
@@ -657,8 +678,11 @@
           <button class="primary" id="fileActionEditButton" type="button" data-testid="file-action-edit-button" autofocus>Edit</button>
         </div>
         <div id="fileEditorView" hidden>
-          <div class="file-editor-label"><label for="fileEditorTextarea">File contents</label><span class="file-editor-label-tools"><button class="ghost" id="fileEditorRawButton" type="button" hidden aria-pressed="false" data-testid="file-editor-raw-button">Raw</button><span id="fileEditorMode" data-testid="file-editor-mode">Normal</span></span></div>
-          <textarea id="fileEditorTextarea" class="file-editor-textarea" spellcheck="false" data-testid="file-editor-textarea"></textarea>
+          <div class="file-editor-label"><label for="fileEditorTextarea">File contents</label><span class="file-editor-label-tools"><button class="ghost" id="fileEditorPreviewButton" type="button" hidden aria-pressed="false" data-testid="file-editor-preview-button">Preview</button><span id="fileEditorMode" data-testid="file-editor-mode">Normal</span></span></div>
+          <div class="file-editor-split" id="fileEditorSplit">
+            <textarea id="fileEditorTextarea" class="file-editor-textarea" spellcheck="false" data-testid="file-editor-textarea"></textarea>
+            <div id="fileEditorPreview" class="file-editor-preview message-content md" data-testid="file-editor-preview" hidden></div>
+          </div>
           <p id="fileEditorStatus" role="status" aria-live="polite"></p>
           <div class="dialog-actions">
             <button class="ghost" id="fileEditorCancelButton" type="button" data-testid="file-editor-cancel-button">Cancel</button>

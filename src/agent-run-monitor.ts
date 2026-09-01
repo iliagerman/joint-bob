@@ -18,12 +18,26 @@ function stateUrl(value: string): string | undefined {
     return undefined;
   }
 }
+/** The dashboard reports a failure as the worker's raw `stderr`, never as an error field. Node
+    prints a warning banner before the real throw, so the trace is trimmed to the first Error
+    line, and capped: a full stack would otherwise ride in every session list payload. */
+function reason(task: RecordValue | undefined, taskStatus: AgentRunTaskSummary["status"]): string | undefined {
+  if (taskStatus !== "failed") return undefined;
+  const lines = (text(task?.stderr) ?? "").trim().split("\n");
+  const start = lines.findIndex((line) => /^[\w.]*Error\b/.test(line.trim()));
+  const trace = (start === -1 ? lines : lines.slice(start)).join("\n").trim();
+  const code = task?.exitCode;
+  const message = trace || (typeof code === "number" && code !== 0 ? `Worker exited with code ${code}` : "");
+  return message ? message.slice(0, 500) : undefined;
+}
 function tasks(value: unknown, initial = false): AgentRunTaskSummary[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const mapped = value.map((item) => {
     const task = record(item); const name = text(task?.agent); const role = text(task?.role);
     const taskStatus = status(task?.status) ?? (initial && task?.status === undefined ? "queued" : undefined);
-    return name && role && taskStatus ? { name, role, status: taskStatus } : undefined;
+    if (!name || !role || !taskStatus) return undefined;
+    const error = reason(task, taskStatus);
+    return { name, role, status: taskStatus, ...(error ? { error } : {}) };
   });
   return mapped.every(Boolean) ? mapped as AgentRunTaskSummary[] : undefined;
 }

@@ -12,6 +12,7 @@ node_modules/
 # Runtime state and local data
 .pi-mobile-web/
 .joint-bob/
+/.dev-env/
 .pi-mobile-web-attachments/
 .joint-bob-release
 .master-bob-release

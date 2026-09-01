@@ -1,0 +1,110 @@
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+
+const target = (sessionId: string, engine: "pi" | "claude" = "pi") => ({ projectId: "project", engine, sessionId });
+const listing = (rows: Array<{ binding: string; sessionId: string }>) => rows.map((row) => `${row.binding}:${row.sessionId}`);
+
+test("canvas shortcuts are per account, exclusive, and replicated through the outbox", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-canvas-shortcuts-"));
+  const previous = process.env.JOINT_BOB_DATA_DIR;
+  process.env.JOINT_BOB_DATA_DIR = path.join(root, "data");
+  const originNodeId = randomUUID();
+  try {
+    await mkdir(process.env.JOINT_BOB_DATA_DIR, { recursive: true });
+    const shortcuts = await import(`../src/canvas-shortcuts.ts?test=${Date.now()}`);
+
+    shortcuts.setCanvasShortcut("ada", "1", target("s-one"), originNodeId);
+    assert.deepEqual(listing(shortcuts.listCanvasShortcuts("ada")), ["1:s-one"]);
+
+    // Two accounts on one node keep entirely separate bindings.
+    assert.deepEqual(shortcuts.listCanvasShortcuts("grace"), []);
+    shortcuts.setCanvasShortcut("grace", "1", target("s-two"), originNodeId);
+    assert.deepEqual(listing(shortcuts.listCanvasShortcuts("ada")), ["1:s-one"]);
+    assert.deepEqual(listing(shortcuts.listCanvasShortcuts("grace")), ["1:s-two"]);
+
+    // A conversation holds at most one binding: assigning a second one moves it.
+    shortcuts.setCanvasShortcut("ada", "B", target("s-one"), originNodeId);
+    assert.deepEqual(listing(shortcuts.listCanvasShortcuts("ada")), ["B:s-one"]);
+
+    // A binding is a slot: pointing it at another conversation takes it over.
+    shortcuts.setCanvasShortcut("ada", "B", target("s-three"), originNodeId);
+    assert.deepEqual(listing(shortcuts.listCanvasShortcuts("ada")), ["B:s-three"]);
+
+    // Closing the conversation releases whatever binding it held.
+    shortcuts.releaseCanvasShortcuts("ada", [target("s-three")], originNodeId);
+    assert.deepEqual(shortcuts.listCanvasShortcuts("ada"), []);
+
+    shortcuts.setCanvasShortcut("ada", "9", target("s-four", "claude"), originNodeId);
+    shortcuts.clearCanvasShortcut("ada", "9", originNodeId);
+    assert.deepEqual(shortcuts.listCanvasShortcuts("ada"), []);
+
+    for (const binding of ["", "AB", "!", "cmd"]) {
+      assert.throws(() => shortcuts.setCanvasShortcut("ada", binding, target("s-five"), originNodeId), /binding/i, binding);
+    }
+    // Lower case is the same key as upper case.
+    shortcuts.setCanvasShortcut("ada", "c", target("s-five"), originNodeId);
+    assert.deepEqual(listing(shortcuts.listCanvasShortcuts("ada")), ["C:s-five"]);
+
+    const outbox = new DatabaseSync(path.join(root, "data", "node.db"));
+    const events = outbox.prepare("SELECT operation, entity_key FROM replication_outbox WHERE entity_type = 'canvas.shortcut' ORDER BY created_at, event_id").all() as unknown as Array<{ operation: string; entity_key: string }>;
+    assert.ok(events.some((event) => event.operation === "upsert" && event.entity_key === "ada:1"));
+    assert.ok(events.some((event) => event.operation === "delete" && event.entity_key === "ada:1"), "moving a binding publishes the release too");
+    assert.ok(events.some((event) => event.entity_key === "grace:1"), "each account replicates under its own name");
+    outbox.close();
+  } finally {
+    if (previous === undefined) delete process.env.JOINT_BOB_DATA_DIR;
+    else process.env.JOINT_BOB_DATA_DIR = previous;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("replicated shortcut events resolve by recency and respect releases", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-canvas-shortcuts-replica-"));
+  const previous = process.env.JOINT_BOB_DATA_DIR;
+  process.env.JOINT_BOB_DATA_DIR = path.join(root, "data");
+  const peerNodeId = randomUUID();
+  try {
+    await mkdir(process.env.JOINT_BOB_DATA_DIR, { recursive: true });
+    const shortcuts = await import(`../src/canvas-shortcuts.ts?test=${Date.now()}`);
+    const db = new DatabaseSync(path.join(root, "data", "node.db"));
+    shortcuts.ensureCanvasShortcutSchema(db);
+    const event = (operation: string, payload: Record<string, unknown>) => ({
+      id: randomUUID(), originNodeId: peerNodeId, entityType: "canvas.shortcut",
+      entityKey: `${payload.username}:${payload.binding}`, operation, payload,
+      createdAt: "2026-09-01T00:00:00.000Z",
+    });
+    const base = { username: "ada", binding: "4", projectId: "project", engine: "pi", originNodeId: peerNodeId };
+
+    shortcuts.applyCanvasShortcutEvent(db, event("upsert", { ...base, sessionId: "remote-one", updatedAt: "2026-09-01T10:00:00.000Z" }));
+    assert.deepEqual(listing(shortcuts.listCanvasShortcuts("ada")), ["4:remote-one"]);
+
+    // An older event that arrives late never overwrites the newer value.
+    shortcuts.applyCanvasShortcutEvent(db, event("upsert", { ...base, sessionId: "stale", updatedAt: "2026-09-01T09:00:00.000Z" }));
+    assert.deepEqual(listing(shortcuts.listCanvasShortcuts("ada")), ["4:remote-one"]);
+
+    shortcuts.applyCanvasShortcutEvent(db, event("upsert", { ...base, sessionId: "remote-two", updatedAt: "2026-09-01T11:00:00.000Z" }));
+    assert.deepEqual(listing(shortcuts.listCanvasShortcuts("ada")), ["4:remote-two"]);
+
+    // A release wins over anything older, and survives a stale upsert delivered after it.
+    shortcuts.applyCanvasShortcutEvent(db, event("delete", { ...base, updatedAt: "2026-09-01T12:00:00.000Z" }));
+    assert.deepEqual(shortcuts.listCanvasShortcuts("ada"), []);
+    shortcuts.applyCanvasShortcutEvent(db, event("upsert", { ...base, sessionId: "resurrected", updatedAt: "2026-09-01T11:30:00.000Z" }));
+    assert.deepEqual(shortcuts.listCanvasShortcuts("ada"), [], "a released binding is not resurrected by an older assignment");
+
+    shortcuts.applyCanvasShortcutEvent(db, event("upsert", { ...base, sessionId: "reassigned", updatedAt: "2026-09-01T13:00:00.000Z" }));
+    assert.deepEqual(listing(shortcuts.listCanvasShortcuts("ada")), ["4:reassigned"]);
+
+    assert.throws(() => shortcuts.applyCanvasShortcutEvent(db, event("upsert", { ...base, sessionId: "", updatedAt: "2026-09-01T14:00:00.000Z" })), /malformed/i);
+    assert.throws(() => shortcuts.applyCanvasShortcutEvent(db, { ...event("upsert", { ...base, sessionId: "x", updatedAt: "2026-09-01T14:00:00.000Z" }), entityKey: "wrong" }), /malformed/i);
+    db.close();
+  } finally {
+    if (previous === undefined) delete process.env.JOINT_BOB_DATA_DIR;
+    else process.env.JOINT_BOB_DATA_DIR = previous;
+    await rm(root, { recursive: true, force: true });
+  }
+});

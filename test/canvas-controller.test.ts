@@ -73,6 +73,8 @@ class FakeElement {
   getBoundingClientRect() { return { left: 0, right: 400, width: 400, height: 300 }; }
   setPointerCapture() {}
   releasePointerCapture() {}
+  scrollIntoView() { this.scrolledIntoView = true; }
+  focus() { this.focused = true; }
   addEventListener(type, handler) { this.handlers.set(type, handler); }
   dispatch(type, event = {}) { return this.handlers.get(type)?.({ pointerId: 1, ...event }); }
   showModal() { this.open = true; }
@@ -84,12 +86,17 @@ const document = {
   createElement: (tag) => new FakeElement(tag),
   querySelector: (selector) => registry.get(selector) || null,
 };
-for (const selector of ["#canvasRoot", "#canvasConversationDialog", "#canvasProjectSelect", "#canvasSessionSearch", "#canvasSplitPosition", "#canvasSessionOptions", "#canvasPickerStatus", "#canvasPickerCancelButton", "#canvasAddButton"]) {
+for (const selector of ["#canvasRoot", "#canvasConversationDialog", "#canvasProjectSelect", "#canvasSessionSearch", "#canvasSplitPosition", "#canvasSessionOptions", "#canvasPickerStatus", "#canvasPickerCancelButton", "#canvasAddButton", "#canvasOrganizeButton", "#canvasShortcutBar", "#canvasShortcutDialog", "#canvasShortcutSubject", "#canvasShortcutKey", "#canvasShortcutStatus", "#canvasShortcutRemoveButton", "#canvasShortcutSaveButton"]) {
   registry.set(selector, new FakeElement(selector.slice(1)));
 }
+const windowListeners = new Map<string, (event: unknown) => void>();
 registry.get("#canvasSplitPosition").value = "right";
 globalThis.document = document;
 globalThis.location = { origin: "http://canvas.test" };
+globalThis.window = {
+  addEventListener: (type: string, handler: (event: unknown) => void) => windowListeners.set(type, handler),
+  location: { origin: "http://canvas.test" },
+};
 globalThis.Option = class {
   constructor(text, value) { this.text = text; this.value = value; }
 };
@@ -104,8 +111,20 @@ const sessions = [
 const harnesses = [{ id: "pi", label: "Pi", newSessionPath: "new" }, { id: "claude", label: "Claude", newSessionPath: "claude:new" }];
 const saved = [];
 let failSessions = false;
+let storedShortcuts = [];
+const apiCalls = [];
 const controller = createConversationCanvas({
-  api: async (path) => {
+  api: async (path, options = {}) => {
+    apiCalls.push(`${options.method || "GET"} ${path}`);
+    if (path.startsWith("/api/canvas/shortcuts")) {
+      const binding = decodeURIComponent(path.split("/").pop());
+      if (options.method === "PUT") {
+        const body = JSON.parse(options.body);
+        storedShortcuts = [...storedShortcuts.filter((entry) => entry.binding !== binding && entry.sessionId !== body.sessionId), { binding, ...body }];
+      }
+      if (options.method === "DELETE") storedShortcuts = storedShortcuts.filter((entry) => entry.binding !== binding);
+      return { shortcuts: storedShortcuts };
+    }
     if (path.includes("/sessions")) {
       if (failSessions) throw new Error("Temporary metadata failure");
       return { sessions };
@@ -331,4 +350,80 @@ test("the empty-canvas message never lingers under real panes", async () => {
   assert.equal(root.children.filter((element) => element.tagName === "section").length, 1);
   assert.ok(!root.children.some((element) => element.classNames === "canvas-empty"),
     "the placeholder is removed as soon as the first pane arrives");
+});
+
+test("organize lays every pane out as an even grid", async () => {
+  const root = registry.get("#canvasRoot");
+  let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
+  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "column");
+  layout = addCanvasPane(layout, paneFor("s-three", "/tmp/three.jsonl"), "pane-s-two", "column");
+  controller.setLayout({ ...layout, focusedPaneId: null });
+  await controller.activate();
+
+  const before = [];
+  walk2(root, before);
+  registry.get("#canvasOrganizeButton").dispatch("click");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(saved.at(-1).rows.map((row) => row.panes.length), [2, 1], "three panes become a two-column grid");
+  const after = [];
+  walk2(root, after);
+  assert.deepEqual(after, before, "organizing keeps every browsing context attached");
+});
+
+test("a shortcut is assigned from the title, listed in the bar, and released when the pane closes", async () => {
+  const root = registry.get("#canvasRoot");
+  let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
+  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "row");
+  controller.setLayout({ ...layout, focusedPaneId: null });
+  await controller.activate();
+
+  // The badge sits with the conversation's title and opens the assignment dialog.
+  const badge = findElement(root, (element) => element["attr:aria-label"] === "Assign a keyboard shortcut to Project One · Two");
+  assert.ok(badge, "an unbound conversation offers a shortcut");
+  badge.dispatch("click");
+  assert.equal(registry.get("#canvasShortcutDialog").open, true);
+  assert.equal(registry.get("#canvasShortcutSubject").text, "Project One · Two");
+
+  registry.get("#canvasShortcutKey").value = "4";
+  registry.get("#canvasShortcutSaveButton").dispatch("click");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(registry.get("#canvasShortcutDialog").open, false);
+  assert.ok(apiCalls.includes("PUT /api/canvas/shortcuts/4"));
+  assert.deepEqual(storedShortcuts.map((entry) => [entry.binding, entry.sessionId]), [["4", "s-two"]]);
+
+  const bar = registry.get("#canvasShortcutBar");
+  assert.equal(bar.hidden, false);
+  assert.equal(bar.children.length, 1, "the bar lists one binding per bound conversation");
+  assert.ok(textOf(bar).includes("Two"), "the bar names the conversation the key reaches");
+
+  // Cmd+Shift+4 reveals that pane and puts the cursor in its composer.
+  const pane = root.children.find((element) => element.dataset.paneId === "pane-s-two");
+  const frame = [];
+  walk2(pane, frame);
+  const posted = [];
+  frame[0].contentWindow = { postMessage: (message) => posted.push(message) };
+  let defaultPrevented = false;
+  windowListeners.get("keydown")({ code: "Digit4", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false, preventDefault: () => { defaultPrevented = true; } });
+  assert.equal(defaultPrevented, true, "a bound combination never reaches the browser");
+  assert.equal(pane.scrolledIntoView, true);
+  assert.deepEqual(posted, [{ type: "canvasFocusComposer" }]);
+
+  // An unbound combination is left alone.
+  let untouched = true;
+  windowListeners.get("keydown")({ code: "Digit7", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false, preventDefault: () => { untouched = false; } });
+  assert.equal(untouched, true);
+
+  // A keystroke typed inside a pane arrives as a message and still reveals.
+  pane.scrolledIntoView = false;
+  windowListeners.get("message")({ origin: "http://canvas.test", data: { type: "canvasShortcut", code: "Digit4", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false } });
+  assert.equal(pane.scrolledIntoView, true, "the iframe forwards the combination it swallowed");
+
+  // Closing the conversation releases its binding.
+  const remove = findElement(root, (element) => String(element["attr:aria-label"] || "").includes("Remove Project One · Two from the canvas"));
+  remove.dispatch("click");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.ok(apiCalls.includes("DELETE /api/canvas/shortcuts/4"), "a closed conversation gives its key back");
+  assert.deepEqual(storedShortcuts, []);
+  assert.equal(registry.get("#canvasShortcutBar").hidden, true);
 });

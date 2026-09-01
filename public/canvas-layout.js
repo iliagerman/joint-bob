@@ -251,6 +251,26 @@ export function setCanvasRowHeight(layout, rowId, height) {
   return withRows(layout, rows);
 }
 
+/** Reflows every pane into as square a grid as fits, resetting widths and heights.
+ * Panes keep their reading order, so nothing appears to jump to another canvas. */
+export function organizeCanvasLayout(layout) {
+  const panes = listCanvasPanes(layout);
+  if (!panes.length) return layout;
+  const columns = Math.min(CANVAS_MAX_ROW_PANES, Math.ceil(Math.sqrt(panes.length)));
+  const rows = [];
+  for (let start = 0; start < panes.length; start += columns) {
+    const chunk = panes.slice(start, start + columns);
+    // A short last row keeps the grid's column width instead of stretching.
+    rows.push(rowOf(chunk, chunk.map(() => 1 / columns)));
+  }
+  return withRows(layout, rows);
+}
+
+/** Which agent runs a pane's conversation. Draft paths carry it; plain paths are Pi. */
+export function canvasPaneEngine(pane) {
+  return pane.sessionPath.startsWith("claude:") || pane.sessionPath.startsWith("draft:claude:") ? "claude" : "pi";
+}
+
 export function toggleCanvasFocus(layout, paneId) {
   paneOf(layout, paneId);
   return withRows(layout, layout.rows, layout.focusedPaneId === paneId ? null : paneId);

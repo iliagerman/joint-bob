@@ -22,8 +22,8 @@ test("a conversation entering review is claimed for notification exactly once", 
   await withDataDir(async () => {
     const reviews = await import(new URL(`../src/conversation-reviews.ts?claim=${Date.now()}`, import.meta.url).href);
 
-    reviews.syncConversationReviewStates("user-a", "project", [{ path: "session", updatedAt: "2026-01-01T00:00:00.000Z", running: false }]);
-    const pending = reviews.syncConversationReviewStates("user-a", "project", [{ path: "session", updatedAt: "2026-01-01T00:01:00.000Z", running: false }]);
+    reviews.syncConversationReviewStates("user-a", "user-a-name", "project", [{ path: "session", engine: "pi" as const, sessionId: "session", updatedAt: "2026-01-01T00:00:00.000Z", running: false }]);
+    const pending = reviews.syncConversationReviewStates("user-a", "user-a-name", "project", [{ path: "session", engine: "pi" as const, sessionId: "session", updatedAt: "2026-01-01T00:01:00.000Z", running: false }]);
     assert.equal(pending.get("session"), "needs_review");
 
     assert.deepEqual(reviews.claimReviewNotifications("user-a", "project", ["session"]), ["session"]);
@@ -35,12 +35,12 @@ test("reviewing a conversation re-arms its next notification", async () => {
   await withDataDir(async () => {
     const reviews = await import(new URL(`../src/conversation-reviews.ts?rearm=${Date.now()}`, import.meta.url).href);
 
-    reviews.syncConversationReviewStates("user-a", "project", [{ path: "session", updatedAt: "2026-01-01T00:00:00.000Z", running: false }]);
-    reviews.syncConversationReviewStates("user-a", "project", [{ path: "session", updatedAt: "2026-01-01T00:01:00.000Z", running: false }]);
+    reviews.syncConversationReviewStates("user-a", "user-a-name", "project", [{ path: "session", engine: "pi" as const, sessionId: "session", updatedAt: "2026-01-01T00:00:00.000Z", running: false }]);
+    reviews.syncConversationReviewStates("user-a", "user-a-name", "project", [{ path: "session", engine: "pi" as const, sessionId: "session", updatedAt: "2026-01-01T00:01:00.000Z", running: false }]);
     reviews.claimReviewNotifications("user-a", "project", ["session"]);
 
-    reviews.markConversationReviewed("user-a", "project", { path: "session", updatedAt: "2026-01-01T00:01:00.000Z" });
-    reviews.syncConversationReviewStates("user-a", "project", [{ path: "session", updatedAt: "2026-01-01T00:02:00.000Z", running: false }]);
+    reviews.markConversationReviewed("user-a", "user-a-name", "project", { path: "session", engine: "pi", sessionId: "session", updatedAt: "2026-01-01T00:01:00.000Z" }, "node-a");
+    reviews.syncConversationReviewStates("user-a", "user-a-name", "project", [{ path: "session", engine: "pi" as const, sessionId: "session", updatedAt: "2026-01-01T00:02:00.000Z", running: false }]);
 
     assert.deepEqual(reviews.claimReviewNotifications("user-a", "project", ["session"]), ["session"]);
   });
@@ -50,12 +50,12 @@ test("a conversation that starts running again re-arms its next notification", a
   await withDataDir(async () => {
     const reviews = await import(new URL(`../src/conversation-reviews.ts?running=${Date.now()}`, import.meta.url).href);
 
-    reviews.syncConversationReviewStates("user-a", "project", [{ path: "session", updatedAt: "2026-01-01T00:00:00.000Z", running: false }]);
-    reviews.syncConversationReviewStates("user-a", "project", [{ path: "session", updatedAt: "2026-01-01T00:01:00.000Z", running: false }]);
+    reviews.syncConversationReviewStates("user-a", "user-a-name", "project", [{ path: "session", engine: "pi" as const, sessionId: "session", updatedAt: "2026-01-01T00:00:00.000Z", running: false }]);
+    reviews.syncConversationReviewStates("user-a", "user-a-name", "project", [{ path: "session", engine: "pi" as const, sessionId: "session", updatedAt: "2026-01-01T00:01:00.000Z", running: false }]);
     reviews.claimReviewNotifications("user-a", "project", ["session"]);
 
-    reviews.syncConversationReviewStates("user-a", "project", [{ path: "session", updatedAt: "2026-01-01T00:02:00.000Z", running: true }]);
-    reviews.syncConversationReviewStates("user-a", "project", [{ path: "session", updatedAt: "2026-01-01T00:03:00.000Z", running: false }]);
+    reviews.syncConversationReviewStates("user-a", "user-a-name", "project", [{ path: "session", engine: "pi" as const, sessionId: "session", updatedAt: "2026-01-01T00:02:00.000Z", running: true }]);
+    reviews.syncConversationReviewStates("user-a", "user-a-name", "project", [{ path: "session", engine: "pi" as const, sessionId: "session", updatedAt: "2026-01-01T00:03:00.000Z", running: false }]);
 
     assert.deepEqual(reviews.claimReviewNotifications("user-a", "project", ["session"]), ["session"]);
   });
@@ -66,8 +66,8 @@ test("notification claims are per account", async () => {
     const reviews = await import(new URL(`../src/conversation-reviews.ts?accounts=${Date.now()}`, import.meta.url).href);
 
     for (const userId of ["user-a", "user-b"]) {
-      reviews.syncConversationReviewStates(userId, "project", [{ path: "session", updatedAt: "2026-01-01T00:00:00.000Z", running: false }]);
-      reviews.syncConversationReviewStates(userId, "project", [{ path: "session", updatedAt: "2026-01-01T00:01:00.000Z", running: false }]);
+      reviews.syncConversationReviewStates(userId, userId + "-name", "project", [{ path: "session", engine: "pi" as const, sessionId: "session", updatedAt: "2026-01-01T00:00:00.000Z", running: false }]);
+      reviews.syncConversationReviewStates(userId, userId + "-name", "project", [{ path: "session", engine: "pi" as const, sessionId: "session", updatedAt: "2026-01-01T00:01:00.000Z", running: false }]);
     }
     reviews.claimReviewNotifications("user-a", "project", ["session"]);
 
@@ -97,7 +97,7 @@ test("the service worker notification vibrates so a phone announces a review", a
   const worker = await readFile(new URL("../public/sw.js", import.meta.url), "utf8");
 
   assert.match(worker, /vibrate:/);
-  assert.match(worker, /const CACHE_NAME = "joint-bob-v88";/);
+  assert.match(worker, /const CACHE_NAME = "joint-bob-v89";/);
 });
 
 test("the client subscribes for reviews across every project", async () => {

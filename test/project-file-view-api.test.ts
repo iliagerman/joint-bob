@@ -34,7 +34,7 @@ test("viewing a project file serves a content type the browser renders", async (
     const project = (await created.json() as { project: { id: string } }).project;
     await mkdir(path.join(projectPath, "src"), { recursive: true });
     await writeFile(path.join(projectPath, "src", "config.ts"), "export const config = true;\n");
-    await writeFile(path.join(projectPath, "README.md"), "# Title\n");
+    await writeFile(path.join(projectPath, "README.md"), "# Title\n\n<script>alert(1)</script>\n");
     await writeFile(path.join(projectPath, "script.py"), "print('hi')\n");
     const png = Buffer.from("89504e470d0a1a0a", "hex");
     await writeFile(path.join(projectPath, "logo.png"), png);
@@ -42,13 +42,31 @@ test("viewing a project file serves a content type the browser renders", async (
     const view = async (file: string): Promise<Response> =>
       fetch(`${baseUrl}/api/projects/${project.id}/file?path=${encodeURIComponent(file)}`, { headers });
 
-    for (const file of ["src/config.ts", "README.md", "script.py"]) {
+    for (const file of ["src/config.ts", "script.py"]) {
       const response = await view(file);
       assert.equal(response.status, 200, `${file} should be viewable`);
       assert.equal(response.headers.get("content-type"), "text/plain; charset=utf-8", `${file} content type`);
       assert.equal(response.headers.get("content-disposition"), `inline; filename="${path.basename(file)}"`);
       assert.ok((await response.text()).length > 0);
     }
+
+    // Markdown is the one text format a browser can present as a document, so the View
+    // link serves a page that renders it instead of a wall of raw syntax.
+    const markdown = await view("README.md");
+    assert.equal(markdown.status, 200);
+    assert.equal(markdown.headers.get("content-type"), "text/html; charset=utf-8");
+    const page = await markdown.text();
+    assert.ok(page.includes('src="/file-view.js"'), "the page must load the renderer");
+    assert.ok(page.includes('id="fileViewBody" class="message-content md"'), "the page must carry the rendered container");
+    assert.ok(page.includes("# Title"), "the page must carry the markdown source");
+    // The source is embedded, so a document containing markup must never become markup.
+    assert.ok(page.includes("&lt;script&gt;alert(1)&lt;/script&gt;"), "embedded markup must be escaped");
+    assert.ok(!page.includes("<script>alert(1)</script>"), "embedded markup must not be live");
+
+    // Downloading a markdown file still hands over the file itself, not the viewer.
+    const markdownDownload = await fetch(`${baseUrl}/api/projects/${project.id}/file?path=README.md&download=1`, { headers });
+    assert.equal(markdownDownload.headers.get("content-type"), "text/plain; charset=utf-8");
+    assert.equal(markdownDownload.headers.get("content-disposition"), 'attachment; filename="README.md"');
 
     const image = await view("logo.png");
     assert.equal(image.status, 200);

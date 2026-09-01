@@ -49,10 +49,15 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx watch src/server.ts",
+    "dev:seed": "node --import tsx scripts/dev-seed.ts",
+    "dev:local": "bash scripts/dev-local.sh",
+    "dev:cluster": "bash scripts/dev-local.sh cluster",
     "prepack": "npm run build",
     "start": "npm run build && node dist/server.js",
     "serve:https": "bash scripts/serve-https.sh",
     "test": "node --import tsx --test --test-concurrency=4 test/*.test.ts",
+    "test:ui": "node --import tsx --test test/ui/*.test.ts",
+    "test:all": "npm test && npm run test:ui",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -71,6 +76,7 @@
     "@types/node": "^22.10.2",
     "@types/web-push": "^3.6.4",
     "@types/ws": "^8.5.13",
+    "playwright-core": "^1.62.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }

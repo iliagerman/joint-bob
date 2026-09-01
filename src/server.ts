@@ -34,22 +34,24 @@ import { assertSyncthingFolderReady, CLAUDE_ENGINE_SYNC_FOLDER_ID, ensureSyncthi
 import { assertTaskWorkspaceReady, removeTaskWorkspace, taskWorkspaceKey, TaskWorkspaceError, TICKET_WORKSPACE_FOLDER_ID, ticketWorkspaceRoot } from "./task-workspaces.js";
 import { SessionWatcher } from "./watcher.js";
 import { appendLiveEvent, buildHandoffContext, claudeRunIdFromSessionPath, claudeSessionContextUsage, claudeSessionFilePath, ensureLocalClaudeTranscript, loadClaudeMessages, runClaudePrompt, type ClaudeRunHandle, type ClaudeRunResult } from "./claude-service.js";
-import { isClaudeSessionRunning } from "./claude-runtime.js";
+import { isClaudeSessionRunning, listRunningClaudeSessions } from "./claude-runtime.js";
 import { listHarnesses, listHarnessSessions, refreshHarnessSessions } from "./harnesses.js";
 import { deleteConversationRecord, ensureConversationRecord, getConversationRecord, parseConversationDraftPath } from "./conversation-records.js";
 import { agentRunDescriptor, refreshAgentRun, type AgentRunDescriptor } from "./agent-run-monitor.js";
 import { listHarnessCommands } from "./commands.js";
 import { listSkills } from "./skills.js";
-import { authenticate, authenticationStatus, changePassword, clearSessionCookieValue, createAdministrator, listLoginSessions, revokeSession, revokeUserSession, sessionCookieValue, sessionForId, type AuthSession } from "./auth.js";
+import { authenticate, authenticationStatus, changePassword, clearSessionCookieValue, createAdministrator, listLoginSessions, revokeSession, revokeUserSession, sessionCookieName, sessionCookieValue, sessionForId, usernameForUser, type AuthSession } from "./auth.js";
 import { getSettings, updateSettings } from "./settings.js";
 import { ensureManagedHome, managedProjectPath, managedProjectRelocationPath } from "./managed-home.js";
 import { importProjectDirectory, ProjectDirectoryImportError, relocateProjectDirectory } from "./project-directory-import.js";
 import { listAuditEvents } from "./audit.js";
+import { clearCanvasShortcut, listCanvasShortcuts, setCanvasShortcut } from "./canvas-shortcuts.js";
 import {
   canvasRowGeometryIsLegal, CANVAS_MAX_ROW_HEIGHT, CANVAS_MIN_ROW_HEIGHT, getUserPreferences,
   migrateLegacyCanvasLayout, updateUserPreferences, type UserPreferences,
 } from "./preferences.js";
 import { appVersion, readChangelog } from "./changelog.js";
+import { applyRuntimeLeaseSnapshot, conversationLeaseRunning, conversationRuntimeDatabase, sweepExpiredRuntimeLeases, type RuntimeLeaseInput } from "./conversation-runtime.js";
 import { claimReviewNotifications, markConversationReviewed, markConversationsReviewed, syncConversationReviewStates } from "./conversation-reviews.js";
 import { resetSyncthingConnection } from "./syncthing.js";
 import { PROJECT_COLORS } from "./types.js";
@@ -72,6 +74,9 @@ interface SharedPiSession {
   idleTimer: NodeJS.Timeout | null;
   lastLocalEventAt: number;
   agentRuns: Map<string, { descriptor: AgentRunDescriptor; summary: AgentRunSummary }>;
+  // Turns routed through this node that have started and not finished, including
+  // stubbed test turns the engine itself never reports as streaming.
+  turnInFlight: number;
 }
 
 type ChatEngine = "pi" | "claude";
@@ -147,6 +152,7 @@ const machineRoutes = new Set([
   "POST /cluster/sessions/ownership/claim/cas",
   "POST /cluster/sessions/ownership/claim/commit",
   "POST /cluster/sessions/ownership/apply",
+  "POST /cluster/sessions/runtime-snapshot",
   "POST /cluster/events",
   "POST /cluster/github/events",
   "POST /cluster/secrets/events",
@@ -288,6 +294,19 @@ const replicationEventSchema = z.object({
 });
 const replicationBatchSchema = z.object({ events: z.array(replicationEventSchema).max(100) });
 const replicationReceiptSchema = z.object({ received: z.array(z.string().uuid()).max(100) });
+const runtimeLeaseSchema = z.object({
+  engine: z.enum(["pi", "claude"]),
+  sessionId: z.string().min(1).max(200),
+  ownershipEpoch: z.number().int().positive(),
+  runId: z.string().min(1).max(200),
+  updatedAt: z.string().datetime(),
+  expiresAt: z.string().datetime(),
+});
+const runtimeSnapshotSchema = z.object({
+  nodeId: z.string().uuid(),
+  generatedAt: z.string().datetime(),
+  leases: z.array(runtimeLeaseSchema).max(500),
+});
 const directoryBrowseSchema = z.object({
   path: absolutePathSchema.optional(),
 });
@@ -684,7 +703,7 @@ async function requireHttpAuth(request: Request, response: Response, next: NextF
     next();
     return;
   }
-  const session = sessionForId(requestCookie(request, "mb_session"));
+  const session = sessionForId(requestCookie(request, sessionCookieName));
   if (!session) {
     sendError(response, 401, "Unauthorized");
     return;
@@ -963,7 +982,7 @@ app.use(express.static(publicDir));
 app.use(express.json({ limit: "12mb" }));
 
 app.get("/api/auth/status", (request, response) => {
-  response.json(authenticationStatus(sessionForId(requestCookie(request, "mb_session"))));
+  response.json(authenticationStatus(sessionForId(requestCookie(request, sessionCookieName))));
 });
 
 app.get("/api/health", (_request, response) => {
@@ -1095,6 +1114,48 @@ app.delete("/api/auth/sessions/:sessionId", (request, response) => {
 app.get("/api/preferences", (_request, response) => {
   const session = response.locals.authSession as AuthSession;
   response.json(getUserPreferences(session.userId));
+});
+
+/* Canvas keyboard bindings belong to the account, not the node, so every route keys
+   on the signed-in username and the store replicates the change to the cluster. */
+const canvasShortcutTargetSchema = z.object({
+  projectId: z.string().trim().min(1).max(120),
+  engine: z.enum(["pi", "claude"]),
+  sessionId: z.string().trim().min(1).max(200),
+}).strict();
+
+app.get("/api/canvas/shortcuts", (_request, response) => {
+  const session = response.locals.authSession as AuthSession;
+  response.json({ shortcuts: listCanvasShortcuts(session.username) });
+});
+
+app.put("/api/canvas/shortcuts/:binding", async (request, response, next) => {
+  try {
+    const session = response.locals.authSession as AuthSession;
+    const target = canvasShortcutTargetSchema.parse(request.body);
+    const local = await getClusterNode();
+    response.json({ shortcuts: setCanvasShortcut(session.username, request.params.binding, target, local.id) });
+  } catch (error) {
+    if (error instanceof Error && /canvas binding/i.test(error.message)) {
+      sendError(response, 400, error.message);
+      return;
+    }
+    next(error);
+  }
+});
+
+app.delete("/api/canvas/shortcuts/:binding", async (request, response, next) => {
+  try {
+    const session = response.locals.authSession as AuthSession;
+    const local = await getClusterNode();
+    response.json({ shortcuts: clearCanvasShortcut(session.username, request.params.binding, local.id) });
+  } catch (error) {
+    if (error instanceof Error && /canvas binding/i.test(error.message)) {
+      sendError(response, 400, error.message);
+      return;
+    }
+    next(error);
+  }
 });
 
 /** Iterative bound checked before the recursive Zod schema, so a pathologically
@@ -1406,7 +1467,43 @@ app.post("/api/cluster/events", async (request, response, next) => {
       return;
     }
     const batch = replicationBatchSchema.parse(request.body) as ReplicationBatch;
-    response.json({ received: await receiveReplicationBatch(batch) });
+    const received = await receiveReplicationBatch(batch);
+    // A replicated review watermark changes what every project list shows, so every
+    // watcher hears about it rather than waiting for the next poll.
+    if (batch.events.some((event) => event.entityType === "conversation.review")) broadcastSessionsChangedToAllProjects();
+    response.json({ received });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/** A peer's current conversation running set; see conversation-runtime.ts for the lease rules. */
+app.post("/api/cluster/sessions/runtime-snapshot", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) {
+      sendError(response, 401, "Unauthorized");
+      return;
+    }
+    const snapshot = runtimeSnapshotSchema.parse(request.body);
+    // The authenticated machine identity, not the payload, says whose leases these are.
+    if (snapshot.nodeId !== response.locals.machineNodeId) {
+      sendError(response, 403, "Runtime snapshot nodeId does not match the authenticated peer");
+      return;
+    }
+    const ownerships = new Map(await Promise.all([...new Set(snapshot.leases.map((lease) => `${lease.engine}\n${lease.sessionId}`))]
+      .map(async (key) => [key, await getConversationOwnership(key.slice(0, key.indexOf("\n")) as "pi" | "claude", key.slice(key.indexOf("\n") + 1))] as const)));
+    // Authoritative ownership beats stale heartbeats: keep a lease only when the
+    // ownership table is absent, older than the lease's epoch, or agrees with it.
+    const leases: RuntimeLeaseInput[] = snapshot.leases.flatMap((lease) => {
+      const ownership = ownerships.get(`${lease.engine}\n${lease.sessionId}`);
+      const allowed = !ownership
+        || ownership.epoch < lease.ownershipEpoch
+        || (ownership.epoch === lease.ownershipEpoch && ownership.ownerNodeId === snapshot.nodeId);
+      return allowed ? [{ ...lease, ownerNodeId: snapshot.nodeId }] : [];
+    });
+    const changed = applyRuntimeLeaseSnapshot(conversationRuntimeDatabase(), snapshot.nodeId, snapshot.generatedAt, leases);
+    if (changed.length) broadcastSessionsChangedToAllProjects();
+    response.json({ ok: true });
   } catch (error) {
     next(error);
   }
@@ -2448,9 +2545,10 @@ app.get("/api/projects/:projectId/commands", async (request, response, next) => 
 
 /**
  * Shared by the per-project conversation list and the cross-project review inbox, so both
- * see the same running detection and the same persisted review watermarks.
+ * see the same running detection and the same persisted review watermarks. Running is
+ * local runtime state or a live lease replicated from the node executing the turn.
  */
-async function listProjectSessionsWithReviewState(project: ProjectRecord, userId: string): Promise<SessionSummary[]> {
+async function listProjectSessionsWithReviewState(project: ProjectRecord, userId: string, username: string): Promise<SessionSummary[]> {
   const tasks = await listTasks(project.id);
   const pinnedSessionPaths = getUserPreferences(userId).pinnedSessionPaths;
   const sessions = await listHarnessSessions({
@@ -2486,16 +2584,23 @@ async function listProjectSessionsWithReviewState(project: ProjectRecord, userId
       agentRuns: shared ? [...shared.agentRuns.values()].map((run) => run.summary).sort((left, right) => left.runId.localeCompare(right.runId)) : undefined,
       running: Boolean(
         shared?.handle.session.isStreaming
+        || (shared?.turnInFlight ?? 0) > 0
         || [...(shared?.agentRuns.values() ?? [])].some((run) => run.summary.status === "running")
         || task?.executionState === "running"
         || runningClaudeSessionPaths.has(claudeRunKey(project.id, session.path))
-        || (session.harnessId === "claude" && isClaudeSessionRunning(session.path)),
+        || (session.harnessId === "claude" && isClaudeSessionRunning(session.path))
+        || conversationLeaseRunning(session.harnessId, session.id)
       ),
+      engine: session.harnessId,
+      sessionId: session.id,
     };
   });
-  const reviewStates = syncConversationReviewStates(userId, project.id, listedSessions);
+  const reviewStates = syncConversationReviewStates(userId, username, project.id, listedSessions);
   const ownership = await Promise.all(listedSessions.map((session) => getConversationOwnership(session.path.startsWith("claude:") || session.path.startsWith("draft:claude:") ? "claude" : "pi", session.id)));
-  return listedSessions.map((session, index) => ({ ...session, reviewState: reviewStates.get(session.path), executionNodeId: ownership[index]?.ownerNodeId }));
+  return listedSessions.map((session, index) => {
+    const { engine: _engine, sessionId: _sessionId, ...summary } = session;
+    return { ...summary, reviewState: reviewStates.get(session.path), executionNodeId: ownership[index]?.ownerNodeId };
+  });
 }
 
 app.get("/api/projects/:projectId/sessions", async (request, response, next) => {
@@ -2507,7 +2612,7 @@ app.get("/api/projects/:projectId/sessions", async (request, response, next) => 
     }
     await touchProject(project.id);
     const authSession = response.locals.authSession as AuthSession;
-    response.json({ sessions: await listProjectSessionsWithReviewState(project, authSession.userId) });
+    response.json({ sessions: await listProjectSessionsWithReviewState(project, authSession.userId, authSession.username) });
   } catch (error) {
     next(error);
   }
@@ -2822,7 +2927,8 @@ app.put("/api/projects/:projectId/sessions/reviewed", async (request, response, 
     if (!session) { sendError(response, 404, "Conversation not found"); return; }
     if (!session.updatedAt || submitted.updatedAt > session.updatedAt) { sendError(response, 409, "Conversation review watermark is newer than current activity"); return; }
     const authSession = response.locals.authSession as AuthSession;
-    markConversationReviewed(authSession.userId, project.id, { path: submitted.sessionPath, updatedAt: submitted.updatedAt });
+    const local = await getClusterNode();
+    markConversationReviewed(authSession.userId, authSession.username, project.id, { path: session.path, engine: session.harnessId, sessionId: session.id, updatedAt: submitted.updatedAt }, local.id);
     response.status(204).send();
   } catch (error) {
     next(error);
@@ -2849,7 +2955,11 @@ app.put("/api/projects/:projectId/sessions/reviewed-all", async (request, respon
     });
     if (invalid) { sendError(response, 409, `Conversation review watermark is stale or missing: ${invalid.sessionPath}`); return; }
     const authSession = response.locals.authSession as AuthSession;
-    markConversationsReviewed(authSession.userId, project.id, submitted.map((watermark) => ({ path: watermark.sessionPath, updatedAt: watermark.updatedAt })));
+    const local = await getClusterNode();
+    markConversationsReviewed(authSession.userId, authSession.username, project.id, submitted.flatMap((watermark) => {
+      const current = currentByPath.get(watermark.sessionPath)!;
+      return [{ path: watermark.sessionPath, engine: current.harnessId, sessionId: current.id, updatedAt: watermark.updatedAt }];
+    }), local.id);
     response.status(204).send();
   } catch (error) {
     next(error);
@@ -2865,7 +2975,7 @@ app.get("/api/reviews/pending", async (_request, response, next) => {
     const authSession = response.locals.authSession as AuthSession;
     const projects = await projectsWithSharedNames(false);
     const groups = await Promise.all(projects.map(async (project) => {
-      const sessions = await listProjectSessionsWithReviewState(project, authSession.userId);
+      const sessions = await listProjectSessionsWithReviewState(project, authSession.userId, authSession.username);
       return {
         projectId: project.id,
         projectName: project.name,
@@ -3400,10 +3510,52 @@ function projectFileContentType(resolved: string): string {
   return INLINE_PROJECT_FILE_TYPES[path.extname(resolved).toLowerCase()] ?? "text/plain; charset=utf-8";
 }
 
+// Markdown served as text/plain is a wall of syntax in a column the width of however the
+// author happened to hard-wrap the source. The View link instead serves a page that renders
+// the document with the same renderer the chat uses. `script-src 'self'` forbids an inline
+// script, so the source travels inside a hidden <pre> and /file-view.js renders it.
+const MARKDOWN_FILE_EXTENSIONS = new Set([".md", ".markdown", ".mdown", ".mkd", ".mkdn"]);
+
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function markdownViewPage(fileName: string, source: string): string {
+  const title = escapeHtml(fileName);
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>${title}</title>
+    <meta name="theme-color" content="#f2f2f0" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <script src="/boot.js"></script>
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="module" src="/file-view.js"></script>
+  </head>
+  <body class="file-view">
+    <main class="file-view-page">
+      <p class="file-view-path" data-testid="file-view-path">${title}</p>
+      <pre id="fileViewSource" hidden>${escapeHtml(source)}</pre>
+      <div id="fileViewBody" class="message-content md" data-testid="file-view-markdown"></div>
+    </main>
+  </body>
+</html>
+`;
+}
+
 async function sendProjectFile(response: Response, projectId: string, requestedPath: string, download: boolean): Promise<void> {
   try {
     const { resolved, info } = await resolveProjectFile(projectId, requestedPath);
     const fileName = path.basename(resolved).replace(/["\r\n]/g, "");
+    if (!download && MARKDOWN_FILE_EXTENSIONS.has(path.extname(resolved).toLowerCase()) && info.size <= TEXT_FILE_LIMIT) {
+      const page = markdownViewPage(fileName, textFile(await readFile(resolved)));
+      response.setHeader("Content-Type", "text/html; charset=utf-8");
+      response.setHeader("Content-Length", String(Buffer.byteLength(page)));
+      response.end(page);
+      return;
+    }
     response.setHeader("Content-Type", projectFileContentType(resolved));
     response.setHeader("Content-Disposition", `${download ? "attachment" : "inline"}; filename="${fileName}"`);
     response.setHeader("Content-Length", String(info.size));
@@ -3736,6 +3888,11 @@ function broadcastToProject(projectId: string, payload: unknown): void {
   }
 }
 
+/** Lease and review-watermark updates arrive without a project context, so every watcher re-lists. */
+function broadcastSessionsChangedToAllProjects(): void {
+  for (const projectId of watchClients.keys()) broadcastToProject(projectId, { type: "sessionsChanged" });
+}
+
 async function reloadClaudeClients(projectId: string, changedFiles: string[]): Promise<void> {
   for (const connection of claudeClients.values()) {
     if (connection.project.id !== projectId) continue;
@@ -3789,7 +3946,9 @@ async function notifyPendingReviews(projectId: string): Promise<void> {
   const project = await getProject(projectId);
   if (!project) return;
   for (const userId of userIds) {
-    const sessions = await listProjectSessionsWithReviewState(project, userId);
+    const username = usernameForUser(userId);
+    if (!username) continue;
+    const sessions = await listProjectSessionsWithReviewState(project, userId, username);
     const pending = new Map(sessions
       .filter((session) => session.reviewState === "needs_review" && !session.running)
       .map((session) => [session.path, session]));
@@ -4265,6 +4424,7 @@ async function getSharedSession(projectId: string, cwd: string, sessionPath: str
     // immediate Syncthing update can invalidate and reload this transcript.
     lastLocalEventAt: 0,
     agentRuns: new Map(),
+    turnInFlight: 0,
   };
   session.unsubscribe = subscribeSharedSession(session);
   sharedSessions.set(key, session);
@@ -4709,7 +4869,16 @@ async function handlePiCommand(connection: ChatConnection, shared: SharedPiSessi
         : {}),
     };
     if (handle.session.isStreaming) send(socket, { type: "queueUpdate", pending: handle.session.pendingMessageCount + 1 });
-    if (!await runStubbedPiPrompt(shared, promptText)) await handle.session.prompt(promptText, options);
+    // The engine only reports streaming for real turns; the wrapper also covers stubbed
+    // test turns, and gives the runtime lease loop an honest in-flight marker.
+    shared.turnInFlight += 1;
+    broadcastToProject(connection.project.id, { type: "sessionsChanged" });
+    try {
+      if (!await runStubbedPiPrompt(shared, promptText)) await handle.session.prompt(promptText, options);
+    } finally {
+      shared.turnInFlight -= 1;
+      broadcastToProject(connection.project.id, { type: "sessionsChanged" });
+    }
     send(socket, { type: "sessionsChanged" });
     sendStatus(socket, handle);
     return;
@@ -4842,7 +5011,8 @@ webSocketServer.on("connection", async (socket, request) => {
   const machineBearer = /^Bearer\s+(.+)$/i.exec(authorization)?.[1];
   const machineAuthenticated = Boolean(machineBearer && machineTokenMatches(machineBearer, await getClusterMachineToken()));
   const origin = request.headers.origin;
-  const session = sessionForId(request.headers.cookie?.split(";").map((entry) => entry.trim()).find((entry) => entry.startsWith("mb_session="))?.slice("mb_session=".length));
+  const cookiePrefix = `${sessionCookieName}=`;
+  const session = sessionForId(request.headers.cookie?.split(";").map((entry) => entry.trim()).find((entry) => entry.startsWith(cookiePrefix))?.slice(cookiePrefix.length));
   let browserAuthenticated = false;
   try {
     browserAuthenticated = Boolean(host && typeof origin === "string" && new URL(origin).host === host && session && !session.mustChangePassword);
@@ -5250,6 +5420,116 @@ async function flushSecretCredentialOutbox(): Promise<void> {
   }
 }
 
+/** A peer's current conversation running set. See conversation-runtime.ts for the lease rules. */
+const RUNTIME_LEASE_TTL_MS = 15_000;
+
+async function buildRuntimeLeaseSnapshot(localNodeId: string): Promise<RuntimeLeaseInput[]> {
+  const now = new Date();
+  const updatedAt = now.toISOString();
+  const expiresAt = new Date(now.getTime() + RUNTIME_LEASE_TTL_MS).toISOString();
+  const entries = new Map<string, RuntimeLeaseInput>();
+  // Advertise only conversations this node is allowed to run: a stale in-flight
+  // turn must not borrow the new owner's epoch after a transfer.
+  const epochFor = async (engine: "pi" | "claude", sessionId: string): Promise<number | null> => {
+    const ownership = await getConversationOwnership(engine, sessionId);
+    if (ownership && ownership.ownerNodeId !== localNodeId) return null;
+    return ownership?.epoch ?? 1;
+  };
+  for (const shared of new Set(sharedSessions.values())) {
+    const runningAgentRun = [...shared.agentRuns.values()].find((run) => run.summary.status === "running");
+    if (!shared.handle.session.isStreaming && shared.turnInFlight === 0 && !runningAgentRun) continue;
+    const sessionId = shared.handle.session.sessionId;
+    const key = `pi\n${sessionId}`;
+    if (entries.has(key)) continue;
+    const ownershipEpoch = await epochFor("pi", sessionId);
+    if (ownershipEpoch === null) continue;
+    entries.set(key, {
+      engine: "pi", sessionId, ownerNodeId: localNodeId,
+      ownershipEpoch,
+      runId: runningAgentRun?.descriptor.runId ?? sessionId, updatedAt, expiresAt,
+    });
+  }
+  for (const connection of claudeClients.values()) {
+    const claude = connection.claude;
+    if (!claude.sessionId) continue;
+    const runningKey = claudeRunKey(connection.project.id, `claude:${claude.filePath ?? ""}`);
+    if (!claude.child && !(claude.filePath && runningClaudeSessionPaths.has(runningKey))) continue;
+    const key = `claude\n${claude.sessionId}`;
+    if (entries.has(key)) continue;
+    const ownershipEpoch = await epochFor("claude", claude.sessionId);
+    if (ownershipEpoch === null) continue;
+    entries.set(key, {
+      engine: "claude", sessionId: claude.sessionId, ownerNodeId: localNodeId,
+      ownershipEpoch,
+      runId: claude.sessionId, updatedAt, expiresAt,
+    });
+  }
+  for (const recovered of recoveredClaudeChats.values()) {
+    if (!recovered.claude.sessionId) continue;
+    const key = `claude\n${recovered.claude.sessionId}`;
+    if (entries.has(key)) continue;
+    const ownershipEpoch = await epochFor("claude", recovered.claude.sessionId);
+    if (ownershipEpoch === null) continue;
+    entries.set(key, {
+      engine: "claude", sessionId: recovered.claude.sessionId, ownerNodeId: localNodeId,
+      ownershipEpoch,
+      runId: recovered.claude.sessionId, updatedAt, expiresAt,
+    });
+  }
+  for (const hook of listRunningClaudeSessions()) {
+    const key = `claude\n${hook.sessionId}`;
+    if (entries.has(key)) continue;
+    const ownershipEpoch = await epochFor("claude", hook.sessionId);
+    if (ownershipEpoch === null) continue;
+    entries.set(key, {
+      engine: "claude", sessionId: hook.sessionId, ownerNodeId: localNodeId,
+      ownershipEpoch,
+      runId: hook.sessionId, updatedAt, expiresAt,
+    });
+  }
+  return [...entries.values()];
+}
+
+let runtimeLeasePushInProgress = false;
+
+async function pushRuntimeLeaseSnapshots(): Promise<void> {
+  // Snapshots must be applied in generation order; a push still in flight when the
+  // interval fires again is skipped rather than overlapped.
+  if (runtimeLeasePushInProgress) return;
+  runtimeLeasePushInProgress = true;
+  try {
+    const peers = await listClusterPeers();
+    if (!peers.length) return;
+    const local = await getClusterNode();
+    const leases = await buildRuntimeLeaseSnapshot(local.id);
+    const generatedAt = leases.length ? leases[0].updatedAt : new Date().toISOString();
+    // One slow peer must not delay the others past the lease TTL.
+    await Promise.all(peers.map(async (peer) => {
+      try {
+        const response = await fetch(`${peer.url}/api/cluster/sessions/runtime-snapshot`, {
+          method: "POST",
+          // Our own machine token, so the receiving peer can bind the snapshot to
+          // this node's identity instead of trusting the declared nodeId.
+          headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ nodeId: local.id, generatedAt, leases }),
+          signal: AbortSignal.timeout(5_000),
+        });
+        if (!response.ok) throw new Error(`Peer returned ${response.status}`);
+      } catch (error) {
+        console.warn(`Runtime lease push to ${peer.id} failed: ${error instanceof Error ? error.message : "lease replication failed"}`);
+      }
+    }));
+  } finally {
+    runtimeLeasePushInProgress = false;
+  }
+}
+
+/** A crashed peer's leases die silently unless something sweeps them. */
+function sweepRuntimeLeases(): void {
+  const expired = sweepExpiredRuntimeLeases(conversationRuntimeDatabase());
+  if (expired.length) broadcastSessionsChangedToAllProjects();
+}
+
 async function flushReplicationOutbox(): Promise<void> {
   if (replicationFlushInProgress) return;
   replicationFlushInProgress = true;
@@ -5290,6 +5570,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       .catch((error) => console.warn("Ticket workspace sync failed", error));
     flushMembershipOutbox().catch((error) => console.warn("Membership flush failed", error));
     flushReplicationOutbox().catch((error) => console.warn("Replication flush failed", error));
+    pushRuntimeLeaseSnapshots().catch((error) => console.warn("Runtime lease push failed", error));
     flushSecretCredentialOutbox().catch((error) => console.warn("Secret credential flush failed", error));
     reconcileTaskHandoffs().catch((error) => console.warn("Task handoff reconciliation failed", error));
     discoverMissingPeerProjects().catch((error) => console.warn("Project discovery failed", error));
@@ -5298,6 +5579,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       reconcileTicketWorkspaceSync().catch((error) => console.warn("Ticket workspace sync failed", error));
       flushMembershipOutbox().catch((error) => console.warn("Membership flush failed", error));
       flushReplicationOutbox().catch((error) => console.warn("Replication flush failed", error));
+      pushRuntimeLeaseSnapshots().catch((error) => console.warn("Runtime lease push failed", error));
+      sweepRuntimeLeases();
       flushSecretCredentialOutbox().catch((error) => console.warn("Secret credential flush failed", error));
       reconcileTaskHandoffs().catch((error) => console.warn("Task handoff reconciliation failed", error));
     }, 2_000).unref();

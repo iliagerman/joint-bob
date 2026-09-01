@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("markdown files open in a pretty, still-editable editor", async () => {
+test("markdown files open in a syntax-highlighted, wrapped editor", async () => {
   const [app, serviceWorker] = await Promise.all([
     readFile("public/app.js", "utf8"),
     readFile("public/sw.js", "utf8"),
@@ -56,38 +56,56 @@ test("mode helper addons ship with the shell so an auto-loaded mode cannot blank
   }
 });
 
-test("markdown opens rendered, with a raw toggle and an editable cursor line", async () => {
-  const [app, html, styles, serviceWorker] = await Promise.all([
+test("markdown always opens as raw source, with the rendered document beside it on request", async () => {
+  const [app, html, styles] = await Promise.all([
     readFile("public/app.js", "utf8"),
     readFile("public/index.html", "utf8"),
     readFile("public/styles.css", "utf8"),
-    readFile("public/sw.js", "utf8"),
   ]);
 
   // One helper owns the presentation so opening a file, resetting the dialog, and
   // hitting the toggle can never disagree about which options are set.
-  assert.match(app, /function applyFileEditorView\(markdown, raw\)/);
-  assert.match(app, /const rendered = markdown && !raw;/);
-  assert.match(app, /fileEditor\.setOption\("lineNumbers", !rendered\)/);
-  assert.match(app, /fileEditor\.setOption\("styleActiveLine", rendered \? \{ nonEmpty: true \} : false\)/);
-  assert.match(app, /classList\.toggle\("file-editor-rendered", rendered\)/);
-  // Markdown files open rendered, never raw.
+  assert.match(app, /function applyFileEditorView\(markdown, preview\)/);
+  // Editing is always on the raw buffer: nothing hides the syntax under the cursor,
+  // and the gutter stays put so a line number always means the line it edits.
+  assert.match(app, /fileEditor\.setOption\("lineNumbers", true\)/);
+  assert.ok(!app.includes("styleActiveLine"), "the editor must not hide markdown syntax while editing");
+  assert.ok(!app.includes("file-editor-rendered"), "the in-editor rendered mode is gone");
+  // Markdown files open raw, never previewed.
   assert.match(app, /applyFileEditorView\(markdown, false\)/);
-  // The toggle flips only the raw half and keeps the markdown half on.
-  assert.match(app, /elements\.fileEditorRawButton\.addEventListener\("click", \(\) => \{/);
-  assert.match(app, /applyFileEditorView\(true, !state\.fileEditor\.raw\)/);
+  // The toggle flips only the preview half and keeps the markdown half on.
+  assert.match(app, /elements\.fileEditorPreviewButton\.addEventListener\("click", \(\) => \{/);
+  assert.match(app, /applyFileEditorView\(true, !state\.fileEditor\.preview\)/);
+  // The preview is the same renderer the chat uses, and it follows the buffer as it is typed.
+  assert.match(app, /renderMarkdown\(elements\.fileEditorPreview, fileEditor\.getValue\(\)\)/);
+  assert.match(app, /fileEditor\.on\("changes", /);
 
-  // The addon that marks the cursor's line has to be on the page before app.js runs,
-  // otherwise styleActiveLine is an unknown option and nothing ever reveals the source.
-  assert.ok(html.includes('/vendor/codemirror/addon/selection/active-line.js'), "index.html must load the active-line addon");
-  assert.ok(html.indexOf("addon/selection/active-line.js") < html.indexOf('"/app.js"'), "the addon must load before app.js creates the editor");
-  assert.ok(serviceWorker.includes('"/vendor/codemirror/addon/selection/active-line.js"'), "active-line addon must be cached for offline editing");
-  assert.match(html, /id="fileEditorRawButton"[^>]*data-testid="file-editor-raw-button"/);
+  assert.match(html, /id="fileEditorPreviewButton"[^>]*data-testid="file-editor-preview-button"/);
+  assert.match(html, /id="fileEditorPreview"[^>]*class="[^"]*message-content md[^"]*"/);
+  assert.ok(!html.includes("fileEditorRawButton"), "the raw/rendered toggle is replaced by the preview toggle");
 
-  // Rendered markdown hides its own syntax, except the markers that carry meaning,
-  // and the line under the cursor shows the raw source again so it stays editable.
-  assert.match(styles, /\.file-editor-rendered \.cm-formatting \{ display: none; \}/);
-  assert.match(styles, /\.file-editor-rendered :is\(\.cm-formatting-list, \.cm-formatting-task, \.cm-formatting-code-block\) \{ display: inline; \}/);
-  assert.match(styles, /\.file-editor-rendered \.cm-string\.cm-url \{ display: none; \}/);
-  assert.match(styles, /\.file-editor-rendered \.CodeMirror-activeline :is\(\.cm-formatting, \.cm-string\.cm-url\) \{ display: inline; \}/);
+  // Preview sits beside the editor rather than replacing it, so a person reads and edits at once.
+  assert.match(styles, /\.file-editor-split:has\(#fileEditorPreview:not\(\[hidden\]\)\) \{ grid-template-columns: minmax\(0, 1fr\) minmax\(0, 1fr\); \}/);
+  assert.ok(!styles.includes(".file-editor-rendered"), "the in-editor rendered styling is gone");
+});
+
+test("the View link renders markdown as a document instead of raw text", async () => {
+  const [server, fileView, styles, serviceWorker] = await Promise.all([
+    readFile("src/server.ts", "utf8"),
+    readFile("public/file-view.js", "utf8"),
+    readFile("public/styles.css", "utf8"),
+    readFile("public/sw.js", "utf8"),
+  ]);
+
+  // Every response carries `script-src 'self'`, so the page cannot render itself with
+  // an inline script: the renderer has to be a real file the shell also caches.
+  assert.match(fileView, /import \{ renderMarkdown \} from "\.\/markdown\.js"/);
+  assert.match(fileView, /renderMarkdown\(/);
+  assert.ok(serviceWorker.includes('"/file-view.js"'), "the viewer must be cached with the shell");
+  assert.match(server, /MARKDOWN_FILE_EXTENSIONS/);
+  assert.match(server, /text\/html; charset=utf-8/);
+
+  // The page has to scroll and stay inside a readable column; the app shell body does neither.
+  assert.match(styles, /body\.file-view \{[^}]*overflow: auto/);
+  assert.match(styles, /\.file-view-page \{[^}]*max-width/);
 });

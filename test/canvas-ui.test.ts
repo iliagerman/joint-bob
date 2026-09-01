@@ -66,6 +66,23 @@ test("canvas is a desktop row view over exact existing conversations", async () 
   assert.doesNotMatch(canvas, /function deactivate[\s\S]{0,200}replaceChildren/);
   assert.match(styles, /\.canvas-root\.canvas-focused \.canvas-pane:not\(\.focused\) \{ display: none; \}/);
 
+  // Organize rebuilds the grid; keyboard bindings live with the account, not the node.
+  assert.match(html, /id="canvasOrganizeButton"[^>]*data-testid="canvas-organize-button"/);
+  assert.match(html, /id="canvasShortcutBar"[^>]*data-testid="canvas-shortcut-bar"/);
+  assert.match(html, /id="canvasShortcutDialog"[^>]*data-testid="canvas-shortcut-dialog"/);
+  assert.match(canvas, /commit\(organizeCanvasLayout\(layout\)\)/);
+  assert.match(canvas, /`\/api\/canvas\/shortcuts\/\$\{encodeURIComponent\(binding\)\}`/);
+  assert.match(canvas, /class="canvas-shortcut-badge"|canvas-shortcut-badge/);
+  assert.match(styles, /\.canvas-shortcut-bar \{/);
+  assert.match(styles, /\.canvas-pane\.canvas-revealed \{/);
+  // A pane swallows the keystroke, so it forwards only the keys the canvas claims.
+  assert.match(app, /type: "canvasShortcut", code: event\.code/);
+  assert.match(app, /event\.data\?\.type === "canvasShortcutBindings"/);
+  assert.match(app, /event\.data\?\.type === "canvasFocusComposer"/);
+  assert.match(canvas, /publishBindings\(\)/);
+  assert.match(server, /app\.put\("\/api\/canvas\/shortcuts\/:binding"/);
+  assert.match(server, /app\.delete\("\/api\/canvas\/shortcuts\/:binding"/);
+
   // Picker remains readable and can start a brand-new pane conversation.
   assert.match(styles, /#canvasConversationDialog \.dialog-card \{ width: min\(720px/);
   // Rows keep their full height: a flex column with flex:none options, and block
@@ -96,7 +113,7 @@ test("canvas is a desktop row view over exact existing conversations", async () 
 
 test("the canvas shell ships in the service worker cache", async () => {
   const worker = await readFile("public/sw.js", "utf8");
-  assert.match(worker, /const CACHE_NAME = "joint-bob-v88"/);
+  assert.match(worker, /const CACHE_NAME = "joint-bob-v89"/);
   assert.match(worker, /"\/canvas\.js"/);
   assert.match(worker, /"\/canvas-layout\.js"/);
 });

@@ -3,8 +3,8 @@ import test from "node:test";
 import {
   addCanvasPane, canonicalSessionPath, canvasPaneMoves, CANVAS_MAX_ROW_HEIGHT, CANVAS_MIN_PANE_WIDTH,
   CANVAS_MIN_ROW_HEIGHT, emptyCanvasLayout, listCanvasPanes, migrateCanvasLayout, moveCanvasPane,
-  normalizeCanvasLayout, removeCanvasPane, replaceCanvasPane, setCanvasPaneWidth, setCanvasRowHeight,
-  toggleCanvasFocus,
+  normalizeCanvasLayout, organizeCanvasLayout, removeCanvasPane, replaceCanvasPane, setCanvasPaneWidth,
+  setCanvasRowHeight, toggleCanvasFocus,
 } from "../public/canvas-layout.js";
 
 const pane = (id, sessionId = id, sessionPath = `/tmp/${id}.jsonl`) => ({
@@ -196,4 +196,28 @@ test("version 2 rows migrate their shared weights into per-pane widths", () => {
   });
   assert.ok(lopsided.rows[0].weights.every((weight) => weight >= CANVAS_MIN_PANE_WIDTH));
   assert.equal(Math.round(rowTotal(lopsided.rows[0]) * 1000) / 1000, 1);
+});
+
+test("organize reflows every pane into an even grid", () => {
+  let layout = emptyCanvasLayout();
+  for (let index = 1; index <= 6; index += 1) {
+    const id = `pane-${index}`;
+    layout = index === 1 ? addCanvasPane(layout, pane(id)) : addCanvasPane(layout, pane(id), `pane-${index - 1}`, "column");
+  }
+  layout = setCanvasRowHeight(layout, layout.rows[0].id, 900);
+  layout = setCanvasPaneWidth(layout, layout.rows[1].id, 0, 0.3);
+
+  const organized = organizeCanvasLayout(layout);
+  assert.deepEqual(organized.rows.map((row) => row.panes.map((item) => item.id)),
+    [["pane-1", "pane-2", "pane-3"], ["pane-4", "pane-5", "pane-6"]]);
+  assert.ok(organized.rows.every((row) => row.height === null), "organizing unpins every row");
+  assert.ok(organized.rows.every((row) => row.weights.every((weight) => Math.abs(weight - 1 / 3) < 1e-9)),
+    "every pane gets the same share of its row");
+
+  // Reading order is preserved and the last row keeps the same column widths.
+  const seven = addCanvasPane(organized, pane("pane-7"), "pane-6", "column");
+  const regridded = organizeCanvasLayout(seven);
+  assert.deepEqual(regridded.rows.map((row) => row.panes.length), [3, 3, 1]);
+  assert.equal(regridded.rows[2].weights[0], 1 / 3, "a short last row keeps the grid's column width");
+  assert.equal(organizeCanvasLayout(emptyCanvasLayout()).rows.length, 0);
 });
