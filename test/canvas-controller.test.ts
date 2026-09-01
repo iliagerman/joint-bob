@@ -192,10 +192,6 @@ test("the canvas renders and moves direct-child panes without rebuilding frames"
   await new Promise((resolve) => setTimeout(resolve, 0));
   assertFramesUnchanged("unfocus keeps browsing contexts attached");
 
-  const secondPane = root.children.find((element) => element.dataset.paneId === "pane-s-two");
-  secondPane.children[0].dispatch("keydown", { key: "ArrowRight", preventDefault() {} });
-  assertFramesUnchanged("resize keeps browsing contexts attached");
-
   const moveDown = findElement(root, (element) => String(element["attr:aria-label"] || "").includes("Move Project One · Two one row down"));
   moveDown.dispatch("click");
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -247,7 +243,7 @@ test("the picker adds an existing conversation through its button handlers", asy
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(registry.get("#canvasConversationDialog").open, false);
   const added = saved.at(-1);
-  assert.equal(added.version, 3);
+  assert.equal(added.version, 4);
   assert.deepEqual(listCanvasPanes(added).map((pane) => pane.sessionId).sort(), ["s-one", "s-three", "s-two"]);
 
   const root = registry.get("#canvasRoot");
@@ -255,13 +251,10 @@ test("the picker adds an existing conversation through its button handlers", asy
   walk2(root, frames);
   assert.equal(frames.length, 3);
   assert.ok(originalFrames.every((frame) => frames.includes(frame)), "adding a pane keeps every existing iframe alive");
-  const thirdPane = root.children.find((element) => textOf(element).includes("Project One · Three"));
-  const thirdIndex = added.rows[0].panes.findIndex((pane) => pane.id === thirdPane.dataset.paneId);
-  const announced = Math.round(added.rows[0].weights[thirdIndex] * 100);
-  assert.equal(thirdPane.children[0]["attr:aria-valuenow"], String(announced), "a separator announces its own pane's share of the row");
-  const others = added.rows[0].weights.reduce((sum, weight, index) => index === thirdIndex ? sum : sum + weight, 0);
-  assert.equal(thirdPane.children[0]["attr:aria-valuemax"], String(Math.round(Math.max(0.08, 1 - others) * 100)),
-    "the separator's maximum is the width this pane could actually reach");
+  // Three panes in one row split it into three equal, gapless thirds.
+  const spans = added.rows[0].panes.map((pane) => root.children
+    .find((candidate) => candidate.dataset.paneId === pane.id).style.gridColumn.split(" / ").map(Number));
+  assert.deepEqual(spans, [[1, 281], [281, 561], [561, 841]], "every pane owns an equal share and the row ends filled");
 
   const removeThree = findElement(root, (element) => String(element["attr:aria-label"] || "").includes("Remove Project One · Three from the canvas"));
   assert.ok(removeThree);
@@ -294,12 +287,13 @@ test("the picker opens a pane on a brand-new conversation", async () => {
     "the pane frame opens on the draft identity, so no listed conversation is required");
 });
 
-test("extreme legal weights reserve grid width for every pane", async () => {
+test("stored widths and pinned heights never survive into the rendered grid", async () => {
   const layout = {
-    version: 2,
+    version: 3,
     rows: [{
-      id: "extreme-row",
-      weights: [1e9, 1, 1],
+      id: "legacy-row",
+      height: 900,
+      weights: [0.8, 0.08, 0.08],
       panes: [
         paneFor("s-one", "/tmp/one.jsonl"),
         paneFor("s-two", "/tmp/two.jsonl"),
@@ -311,31 +305,31 @@ test("extreme legal weights reserve grid width for every pane", async () => {
   controller.setLayout(layout);
   await controller.activate();
   const root = registry.get("#canvasRoot");
-  for (const pane of layout.rows[0].panes) {
-    const element = root.children.find((candidate) => candidate.dataset.paneId === pane.id);
-    const [start, end] = element.style.gridColumn.split(" / ").map(Number);
-    assert.ok(end > start, `${pane.id} keeps at least one grid track`);
-  }
+  const spans = layout.rows[0].panes.map((pane) => root.children
+    .find((candidate) => candidate.dataset.paneId === pane.id).style.gridColumn.split(" / ").map(Number));
+  assert.deepEqual(spans, [[1, 281], [281, 561], [561, 841]],
+    "a lopsided stored row is redrawn as equal thirds");
+  assert.equal(root.style.gridTemplateRows, "repeat(1, minmax(200px, 1fr))",
+    "a pinned pixel height is discarded with the widths");
 });
 
-test("each row carries a height separator that pins pixel heights for scrolling", async () => {
+test("rows always share the canvas height and no separator exists to change that", async () => {
   const root = registry.get("#canvasRoot");
   let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
   layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "column");
   controller.setLayout({ ...layout, focusedPaneId: null });
   await controller.activate();
 
-  const separators = root.children.filter((element) => element.classNames === "canvas-row-resize");
-  assert.equal(separators.length, 2, "every row can be dragged taller");
-  assert.equal(separators[0]["attr:aria-orientation"], "horizontal");
-  assert.equal(root.style.gridTemplateRows, "minmax(200px, 1fr) minmax(200px, 1fr)",
-    "unpinned rows share the canvas height");
-
-  separators[0].dispatch("keydown", { key: "ArrowDown", preventDefault() {} });
-  assert.match(root.style.gridTemplateRows, /^340px minmax\(200px, 1fr\)$/,
-    "a resized row keeps a pixel height, so the canvas scrolls once the rows outgrow it");
-  assert.equal(saved.at(-1).rows[0].height, 340);
-  assert.equal(saved.at(-1).rows[1].height, null);
+  assert.equal(root.style.gridTemplateRows, "repeat(2, minmax(200px, 1fr))", "every row gets the same height");
+  assert.equal(root.children.filter((element) => element.classNames === "canvas-row-resize").length, 0);
+  assert.ok(root.children.filter((element) => element.tagName === "section")
+    .every((pane) => pane.children.every((child) => child.classNames !== "canvas-resize")),
+    "no pane carries a width handle");
+  // A single pane per row still spans the whole width, leaving nothing empty.
+  for (const pane of listCanvasPanes(layout)) {
+    const element = root.children.find((candidate) => candidate.dataset.paneId === pane.id);
+    assert.equal(element.style.gridColumn, "1 / 841");
+  }
 });
 
 test("the empty-canvas message never lingers under real panes", async () => {

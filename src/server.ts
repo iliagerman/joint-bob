@@ -47,7 +47,7 @@ import { importProjectDirectory, ProjectDirectoryImportError, relocateProjectDir
 import { listAuditEvents } from "./audit.js";
 import { clearCanvasShortcut, listCanvasShortcuts, releaseCanvasShortcuts, setCanvasShortcut } from "./canvas-shortcuts.js";
 import {
-  canvasRowGeometryIsLegal, CANVAS_MAX_ROW_HEIGHT, CANVAS_MIN_ROW_HEIGHT, getUserPreferences,
+  getUserPreferences,
   migrateLegacyCanvasLayout, updateUserPreferences, type UserPreferences,
 } from "./preferences.js";
 import { appVersion, readChangelog } from "./changelog.js";
@@ -494,15 +494,15 @@ const canvasPanePreferenceSchema = z.object({
   sessionId: z.string().trim().min(1).max(200),
   executionNodeId: z.string().uuid().nullable(),
 }).strict();
+// A grid row carries only its panes. `height` and `weights` are the geometry older
+// clients still send; they are accepted so a stale tab is not rejected, then dropped
+// on read - the grid spaces every row and every pane evenly.
 const canvasRowPreferenceSchema = z.object({
   id: z.string().min(1).max(200),
-  // Version 3 rows pin a pixel height; null means the row still shares the canvas.
-  height: z.number().finite().min(CANVAS_MIN_ROW_HEIGHT).max(CANVAS_MAX_ROW_HEIGHT).nullable().optional(),
-  weights: z.array(z.number().finite().positive()).min(1).max(8),
+  height: z.number().finite().nullable().optional(),
+  weights: z.array(z.number().finite().positive()).min(1).max(8).optional(),
   panes: z.array(canvasPanePreferenceSchema).min(1).max(8),
-}).strict()
-  .refine((row) => row.weights.length === row.panes.length, "Canvas row weights must match its panes")
-  .refine((row) => Number.isFinite(row.weights.reduce((sum, weight) => sum + weight, 0)), "Canvas row weight total must be finite");
+}).strict();
 interface CanvasSplitInput {
   kind: "split";
   id: string;
@@ -530,7 +530,7 @@ const canvasLayoutV1Schema = z.object({
 const canvasLayoutPreferenceSchema = z.union([
   canvasLayoutV1Schema,
   z.object({
-    version: z.union([z.literal(2), z.literal(3)]),
+    version: z.union([z.literal(2), z.literal(3), z.literal(4)]),
     rows: z.array(canvasRowPreferenceSchema).max(10),
     focusedPaneId: z.string().min(1).max(200).nullable(),
   }).strict(),
@@ -565,9 +565,6 @@ const canvasLayoutPreferenceSchema = z.union([
   if (layout.version !== 1) for (const row of layout.rows) {
     if (ids.has(row.id)) context.addIssue({ code: z.ZodIssueCode.custom, message: "Canvas ids must be unique" });
     ids.add(row.id);
-    if (layout.version === 3 && !canvasRowGeometryIsLegal(row)) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: "Canvas row geometry is out of range" });
-    }
     for (const item of row.panes) pane(item);
   }
   if (layout.focusedPaneId && !paneIds.has(layout.focusedPaneId)) context.addIssue({ code: z.ZodIssueCode.custom, message: "Focused canvas pane is unknown" });
@@ -1180,10 +1177,9 @@ function canvasLayoutExceedsLimits(value: unknown): boolean {
   const layout = value as { root?: unknown; rows?: unknown };
   if (Array.isArray(layout.rows)) {
     if (layout.rows.length > 10) return true;
-    // 10 rows x 8 panes bounds the v2 payload; anything beyond is malformed.
+    // 10 rows x 8 panes bounds a row payload; anything beyond is malformed.
     const oversizedRow = layout.rows.some((row) => !row || typeof row !== "object"
-      || !Array.isArray((row as { panes?: unknown }).panes) || (row as { panes: unknown[] }).panes.length > 8
-      || !Array.isArray((row as { weights?: unknown }).weights) || (row as { weights: unknown[] }).weights.length > 8);
+      || !Array.isArray((row as { panes?: unknown }).panes) || (row as { panes: unknown[] }).panes.length > 8);
     if (oversizedRow) return true;
   }
   // Inspect a root even when a malicious payload also supplies rows; otherwise
@@ -1214,9 +1210,11 @@ app.put("/api/preferences", (request, response, next) => {
     const parsed = userPreferencesSchema.parse(request.body);
     const { canvasLayout, ...preferences } = parsed;
     const update: Partial<UserPreferences> = preferences;
+    // Older clients still send per-pane widths and pinned row heights. The grid has
+    // no room for either, so they are dropped on the way in.
     if (canvasLayout) update.canvasLayout = canvasLayout.version === 1
       ? migrateLegacyCanvasLayout(canvasLayout)
-      : canvasLayout;
+      : { version: 4, rows: canvasLayout.rows.map((row) => ({ id: row.id, panes: row.panes })), focusedPaneId: canvasLayout.focusedPaneId };
     response.json(updateUserPreferences(session.userId, update));
   } catch (error) {
     next(error);
@@ -3498,6 +3496,11 @@ function projectFileLinks(projectId: string, relativePath: string, nodeId?: stri
 
 function fileVersion(bytes: Buffer): string { return createHash("sha256").update(bytes).digest("hex"); }
 
+/** The file's text, or null when it is not UTF-8 text and can only be handed over raw. */
+function readableText(bytes: Buffer): string | null {
+  try { return textFile(bytes); } catch { return null; }
+}
+
 function textFile(bytes: Buffer): string {
   if (bytes.includes(0)) throw new ProjectFileError(415, "File is not valid UTF-8 text");
   try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
@@ -3525,17 +3528,40 @@ function projectFileContentType(resolved: string): string {
   return INLINE_PROJECT_FILE_TYPES[path.extname(resolved).toLowerCase()] ?? "text/plain; charset=utf-8";
 }
 
-// Markdown served as text/plain is a wall of syntax in a column the width of however the
-// author happened to hard-wrap the source. The View link instead serves a page that renders
-// the document with the same renderer the chat uses. `script-src 'self'` forbids an inline
-// script, so the source travels inside a hidden <pre> and /file-view.js renders it.
+// A text file served as text/plain is browser-default black-on-white with none of the
+// app's typography or theme, and markdown is additionally a wall of raw syntax. The View
+// link instead serves a page that renders the file with the same renderer the chat uses:
+// markdown as prose, anything else as a highlighted code block. `script-src 'self'`
+// forbids an inline script, so the source travels inside a hidden <pre> and
+// /file-view.js renders it.
 const MARKDOWN_FILE_EXTENSIONS = new Set([".md", ".markdown", ".mdown", ".mkd", ".mkdn"]);
 
+// The language label a rendered code block carries. An extension that is not listed
+// still renders as a code block, just without a language name.
+const VIEW_LANGUAGES: Record<string, string> = {
+  ".ts": "typescript", ".tsx": "tsx", ".js": "javascript", ".jsx": "jsx", ".mjs": "javascript",
+  ".cjs": "javascript", ".json": "json", ".py": "python", ".rb": "ruby", ".go": "go",
+  ".rs": "rust", ".java": "java", ".kt": "kotlin", ".swift": "swift", ".c": "c", ".h": "c",
+  ".cpp": "cpp", ".hpp": "cpp", ".cs": "csharp", ".php": "php", ".sh": "bash", ".bash": "bash",
+  ".zsh": "bash", ".fish": "fish", ".sql": "sql", ".html": "html", ".css": "css",
+  ".scss": "scss", ".yml": "yaml", ".yaml": "yaml", ".toml": "toml", ".ini": "ini",
+  ".xml": "xml", ".tf": "terraform", ".lua": "lua", ".pl": "perl", ".r": "r",
+  ".dockerfile": "dockerfile", ".gradle": "gradle", ".makefile": "makefile",
+};
+
 function escapeHtml(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
-function markdownViewPage(fileName: string, source: string): string {
+/** The page renders "markdown" as prose and every other language as a code block. An
+ * unrecognised extension is still a code block, just without a language name. */
+function fileViewLanguage(resolved: string): string {
+  const extension = path.extname(resolved).toLowerCase();
+  if (MARKDOWN_FILE_EXTENSIONS.has(extension)) return "markdown";
+  return VIEW_LANGUAGES[extension] ?? VIEW_LANGUAGES[`.${path.basename(resolved).toLowerCase()}`] ?? "";
+}
+
+function fileViewPage(fileName: string, language: string, source: string): string {
   const title = escapeHtml(fileName);
   return `<!doctype html>
 <html lang="en">
@@ -3552,7 +3578,7 @@ function markdownViewPage(fileName: string, source: string): string {
   <body class="file-view">
     <main class="file-view-page">
       <p class="file-view-path" data-testid="file-view-path">${title}</p>
-      <pre id="fileViewSource" hidden>${escapeHtml(source)}</pre>
+      <pre id="fileViewSource" data-language="${escapeHtml(language)}" hidden>${escapeHtml(source)}</pre>
       <div id="fileViewBody" class="message-content md" data-testid="file-view-markdown"></div>
     </main>
   </body>
@@ -3564,8 +3590,12 @@ async function sendProjectFile(response: Response, projectId: string, requestedP
   try {
     const { resolved, info } = await resolveProjectFile(projectId, requestedPath);
     const fileName = path.basename(resolved).replace(/["\r\n]/g, "");
-    if (!download && MARKDOWN_FILE_EXTENSIONS.has(path.extname(resolved).toLowerCase()) && info.size <= TEXT_FILE_LIMIT) {
-      const page = markdownViewPage(fileName, textFile(await readFile(resolved)));
+    // Only text renders on the page. A binary or oversized file falls through to the
+    // byte stream below, which is what an image or a PDF needs anyway.
+    const viewable = !download && !INLINE_PROJECT_FILE_TYPES[path.extname(resolved).toLowerCase()] && info.size <= TEXT_FILE_LIMIT;
+    const source = viewable ? readableText(await readFile(resolved)) : null;
+    if (source !== null) {
+      const page = fileViewPage(fileName, fileViewLanguage(resolved), source);
       response.setHeader("Content-Type", "text/html; charset=utf-8");
       response.setHeader("Content-Length", String(Buffer.byteLength(page)));
       response.end(page);

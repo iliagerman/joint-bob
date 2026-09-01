@@ -213,7 +213,7 @@ function renderParagraph(text, resolveFileUrl) {
   return paragraph;
 }
 
-function buildCodeBlock(language, code) {
+export function buildCodeBlock(language, code) {
   const wrapper = document.createElement("div");
   wrapper.className = "code-block";
 

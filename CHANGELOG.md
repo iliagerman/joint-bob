@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Simplified the canvas to a uniform, non-resizable grid and added syntax highlighting for all viewed text files
+
 ## 0.8.0 — 2026-09-01
 
 - Prompts typed while Claude is running now persist across reloads and reconnects

@@ -439,7 +439,8 @@ const elements = {
 window.CodeMirror.modeURL = "/vendor/codemirror/mode/%N/%N.js";
 const fileEditor = window.CodeMirror.fromTextArea(elements.fileEditorTextarea, { keyMap: "vim", lineNumbers: true, lineWrapping: false });
 fileEditor.getInputField().dataset.testid = "file-editor-input";
-fileEditor.on("vim-mode-change", (_editor, mode) => {
+// vim.js signals this with the mode object alone - there is no editor argument.
+fileEditor.on("vim-mode-change", (mode) => {
   elements.fileEditorMode.textContent = ({ normal: "Normal", insert: "Insert", replace: "Replace", visual: "Visual" })[mode.mode] || "";
 });
 

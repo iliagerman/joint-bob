@@ -3,12 +3,13 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 test("canvas is a desktop row view over exact existing conversations", async () => {
-  const [html, app, canvas, styles, server] = await Promise.all([
+  const [html, app, canvas, styles, server, preferences] = await Promise.all([
     readFile("public/index.html", "utf8"),
     readFile("public/app.js", "utf8"),
     readFile("public/canvas.js", "utf8"),
     readFile("public/styles.css", "utf8"),
     readFile("src/server.ts", "utf8"),
+    readFile("src/preferences.ts", "utf8"),
   ]);
 
   // Global launcher sits on its own full-width row under the search + add-project row.
@@ -46,11 +47,9 @@ test("canvas is a desktop row view over exact existing conversations", async () 
   assert.match(canvas, /if \(session\.executionNodeId\) url\.searchParams\.set\("nodeId", session\.executionNodeId\)/);
   assert.doesNotMatch(canvas, /localStorage|sessionStorage|transferSession|cloneSession|new-session/);
 
-  // Rows scroll: an unresized row shares the height, a dragged one pins pixels.
+  // Every row is the same height; a tall canvas scrolls rather than squashing rows.
   assert.match(styles, /\.canvas-root \{[\s\S]*?display: grid;[\s\S]*?overflow-y: auto;/);
-  assert.match(canvas, /row\.height \? `\$\{row\.height\}px` : `minmax\(\$\{CANVAS_MIN_ROW_HEIGHT\}px, 1fr\)`/);
-  assert.match(styles, /\.canvas-row-resize \{[\s\S]*?cursor: row-resize;/);
-  assert.match(styles, /\.canvas-root\.canvas-focused \.canvas-row-resize/);
+  assert.match(canvas, /repeat\(\$\{Math\.max\(1, layout\.rows\.length\)\}, minmax\(\$\{CANVAS_MIN_ROW_HEIGHT\}px, 1fr\)\)/);
   assert.match(canvas, /for \(const direction of \["left", "right", "up", "down"\]\)/);
   assert.match(canvas, /moveCanvasPane\(layout, pane\.id, direction\)/);
   assert.doesNotMatch(canvas, /canvas-split|setCanvasSplitRatio|swapCanvasPanes|setCanvasRowBoundary/);
@@ -59,10 +58,8 @@ test("canvas is a desktop row view over exact existing conversations", async () 
   assert.match(canvas, /root\.append\(element\)/);
   assert.match(canvas, /element\.style\.gridRow/);
   assert.match(canvas, /element\.style\.gridColumn/);
-  assert.match(canvas, /const headerSlot = element\.children\.length > 1 \? element\.children\[1\] : null;/);
+  assert.match(canvas, /const headerSlot = element\.children\.length \? element\.children\[0\] : null;/);
   assert.match(canvas, /if \(!body\.isConnected \|\| body\.parentElement !== element\) element\.append\(body\)/);
-  assert.match(canvas, /commit\(setCanvasPaneWidth\([\s\S]*?placeAll\(\);/);
-  assert.match(canvas, /commit\(setCanvasRowHeight\(/);
   assert.doesNotMatch(canvas, /function deactivate[\s\S]{0,200}replaceChildren/);
   assert.match(styles, /\.canvas-root\.canvas-focused \.canvas-pane:not\(\.focused\) \{ display: none; \}/);
 
@@ -94,13 +91,11 @@ test("canvas is a desktop row view over exact existing conversations", async () 
   assert.match(canvas, /`canvas-start-conversation-\$\{harness\.id\}`/);
   assert.match(canvas, /sessionPath: `draft:\$\{harness\.id\}:\$\{sessionId\}`/);
 
-  // Resize is keyboard/pointer accessible; preference writes remain serialized.
-  assert.match(canvas, /setPointerCapture\(event\.pointerId\)/);
-  assert.match(canvas, /releasePointerCapture\(event\.pointerId\)/);
-  assert.match(canvas, /setAttribute\("role", "separator"\)/);
-  // A pane owns its right edge, so narrowing it leaves the rest of the row empty.
-  assert.match(styles, /\.canvas-resize \{[\s\S]*?right: -5px;[\s\S]*?cursor: col-resize;/);
-  assert.match(canvas, /aria-valuenow/);
+  // The grid is uniform: nothing resizes, so no separator, width, or pinned height
+  // survives anywhere in the canvas, its styles, or the stored preference schema.
+  assert.doesNotMatch(canvas, /canvas-resize|canvas-row-resize|setCanvasPaneWidth|setCanvasRowHeight|weights|aria-valuenow|role", "separator"|col-resize|row-resize|PointerCapture/);
+  assert.doesNotMatch(styles, /canvas-resize|canvas-row-resize|col-resize|row-resize/);
+  assert.doesNotMatch(preferences, /weights|canvasRowGeometryIsLegal|CANVAS_MIN_PANE_WIDTH|CANVAS_MAX_ROW_HEIGHT/);
   assert.match(app, /state\.canvasLayoutSave = \(state\.canvasLayoutSave \?\? Promise\.resolve\(\)\)/);
 
   // Narrow assistant turns still give fenced code the conversation width.

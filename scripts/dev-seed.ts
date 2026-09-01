@@ -215,6 +215,8 @@ for (const demo of demoProjects) {
   await mkdir(projectPath, { recursive: true });
   await mkdir(claudeDirectory, { recursive: true });
   await writeFile(path.join(projectPath, "README.md"), `# ${demo.name}\n\nDummy project for the Joint Bob dev environment.\n`);
+  // A source file too, so the file viewer can be exercised on something that is not prose.
+  await writeFile(path.join(projectPath, "config.ts"), `export const name = ${JSON.stringify(demo.name)};\nexport const enabled = true;\n`);
   for (const conversation of demo.conversations) {
     const [filePath, contents] = conversation.harness === "pi"
       ? [path.join(piSessionRoot, `${conversation.id}.jsonl`), piTranscript(conversation, projectPath)]

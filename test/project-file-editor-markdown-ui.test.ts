@@ -89,7 +89,7 @@ test("markdown always opens as raw source, with the rendered document beside it 
   assert.ok(!styles.includes(".file-editor-rendered"), "the in-editor rendered styling is gone");
 });
 
-test("the View link renders markdown as a document instead of raw text", async () => {
+test("the View link renders a file as a document instead of raw text", async () => {
   const [server, fileView, styles, serviceWorker] = await Promise.all([
     readFile("src/server.ts", "utf8"),
     readFile("public/file-view.js", "utf8"),
@@ -99,8 +99,10 @@ test("the View link renders markdown as a document instead of raw text", async (
 
   // Every response carries `script-src 'self'`, so the page cannot render itself with
   // an inline script: the renderer has to be a real file the shell also caches.
-  assert.match(fileView, /import \{ renderMarkdown \} from "\.\/markdown\.js"/);
+  assert.match(fileView, /import \{ buildCodeBlock, renderMarkdown \} from "\.\/markdown\.js"/);
   assert.match(fileView, /renderMarkdown\(/);
+  // Markdown reads as prose; every other text file reads as one highlighted block.
+  assert.match(fileView, /buildCodeBlock\(language, source\.textContent\)/);
   assert.ok(serviceWorker.includes('"/file-view.js"'), "the viewer must be cached with the shell");
   assert.match(server, /MARKDOWN_FILE_EXTENSIONS/);
   assert.match(server, /text\/html; charset=utf-8/);

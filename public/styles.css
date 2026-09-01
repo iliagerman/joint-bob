@@ -1885,7 +1885,18 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 .file-editor-card .CodeMirror-gutters { border-right-color: var(--line); background: var(--panel); }
 .file-editor-card .CodeMirror-linenumber { color: var(--muted); }
 .file-editor-card .CodeMirror-cursor { border-left-color: var(--accent); }
-.file-editor-card .CodeMirror-selected { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+/* CodeMirror ships a pale lavender selection, and this editor's surface is always dark,
+   so selected text was near-white on near-white. Its own rules are `.CodeMirror-focused
+   .CodeMirror-selected` and `.CodeMirror-line::selection`, and its stylesheet loads after
+   this one, so these have to out-specify them rather than merely follow them. The colour
+   is opaque so it never depends on what happens to be painted behind it. */
+.file-editor-card .CodeMirror .CodeMirror-selected,
+.file-editor-card .CodeMirror-focused .CodeMirror-selected { background: color-mix(in srgb, var(--accent) 42%, var(--code-bg)); }
+.file-editor-card .CodeMirror-line::selection,
+.file-editor-card .CodeMirror-line > span::selection,
+.file-editor-card .CodeMirror-line > span > span::selection { background: color-mix(in srgb, var(--accent) 42%, var(--code-bg)); }
+/* Vim's `/` search marks matches the same way, and its default yellow has the same fault. */
+.file-editor-card .cm-searching { background-color: color-mix(in srgb, var(--amber) 46%, var(--code-bg)); }
 .file-editor-card .CodeMirror-fat-cursor { background: var(--accent); color: var(--code-bg); }
 .file-editor-card .cm-comment, .file-editor-card .cm-meta { color: var(--muted); }
 .file-editor-card .cm-keyword, .file-editor-card .cm-atom, .file-editor-card .cm-tag { color: var(--accent); }
@@ -2004,16 +2015,17 @@ body.file-view { overflow: auto; }
   min-width: 0;
   min-height: 0;
   display: grid;
+  /* No column gap: the grid has 840 fine tracks, so a column gap would repeat 839
+     times. Panes space themselves with margin-inline instead. */
   gap: 10px 0;
   padding: 10px;
-  /* Unresized rows share the height; a row dragged taller keeps its pixel height,
-     so the whole canvas scrolls once the rows outgrow the panel. */
+  /* Every row is the same height. Rows never draw below their floor, so the whole
+     canvas scrolls once they outgrow the panel. */
   align-content: start;
   overflow-y: auto;
 }
 .canvas-root > .canvas-empty { min-width: 0; min-height: 0; grid-column: 1 / -1; }
 .canvas-pane {
-  position: relative;
   margin-inline: 4px;
   display: flex;
   flex-direction: column;
@@ -2064,8 +2076,6 @@ body.file-view { overflow: auto; }
   .canvas-pane { transition: border-color 200ms ease, box-shadow 200ms ease; }
 }
 /* Focus changes only grid placement and visibility. Every frame stays attached. */
-.canvas-root.canvas-focused .canvas-resize,
-.canvas-root.canvas-focused .canvas-row-resize,
 .canvas-root.canvas-focused .canvas-pane:not(.focused) { display: none; }
 .canvas-root.canvas-focused .canvas-pane.focused { min-height: 0; }
 .canvas-unavailable {
@@ -2088,54 +2098,6 @@ body.file-view { overflow: auto; }
   color: var(--muted);
 }
 .canvas-empty h2 { color: var(--text); }
-/* A pane owns its right edge: dragging it sets that pane's own width, and the
-   rest of the row simply stays empty. */
-.canvas-resize {
-  position: absolute;
-  z-index: 4;
-  top: 0;
-  bottom: 0;
-  right: -5px;
-  width: 10px;
-  border: 0;
-  background: transparent;
-  cursor: col-resize;
-}
-.canvas-resize::after {
-  content: "";
-  position: absolute;
-  top: 8px;
-  bottom: 8px;
-  left: 4px;
-  width: 2px;
-  border-radius: 2px;
-  background: var(--line-strong);
-}
-.canvas-resize:hover::after, .canvas-resize:focus-visible::after { background: var(--accent); }
-.canvas-resize:focus-visible { outline: none; }
-/* The row separator sits in the 10px gap below its row and drags its height. */
-.canvas-row-resize {
-  position: relative;
-  z-index: 5;
-  align-self: end;
-  height: 10px;
-  margin-bottom: -10px;
-  border: 0;
-  background: transparent;
-  cursor: row-resize;
-}
-.canvas-row-resize::after {
-  content: "";
-  position: absolute;
-  top: 4px;
-  left: 12px;
-  right: 12px;
-  height: 2px;
-  border-radius: 2px;
-  background: var(--line-strong);
-}
-.canvas-row-resize:hover::after, .canvas-row-resize:focus-visible::after { background: var(--accent); }
-.canvas-row-resize:focus-visible { outline: none; }
 .canvas-picker-status { min-height: 1.4em; margin: 0; color: var(--muted); font-size: 12px; }
 #canvasConversationDialog .dialog-card { width: min(720px, calc(100vw - 24px)); }
 /* Flex column, not grid: grid tracks shrink to min-content once the list hits

@@ -42,13 +42,40 @@ test("viewing a project file serves a content type the browser renders", async (
     const view = async (file: string): Promise<Response> =>
       fetch(`${baseUrl}/api/projects/${project.id}/file?path=${encodeURIComponent(file)}`, { headers });
 
-    for (const file of ["src/config.ts", "script.py"]) {
+    // Every text file - not only markdown - is viewed through the themed page, so
+    // source reads as highlighted code on the app's own surfaces instead of as an
+    // unstyled wall of browser-default plain text.
+    for (const [file, language] of [["src/config.ts", "typescript"], ["script.py", "python"]] as const) {
       const response = await view(file);
       assert.equal(response.status, 200, `${file} should be viewable`);
-      assert.equal(response.headers.get("content-type"), "text/plain; charset=utf-8", `${file} content type`);
-      assert.equal(response.headers.get("content-disposition"), `inline; filename="${path.basename(file)}"`);
-      assert.ok((await response.text()).length > 0);
+      assert.equal(response.headers.get("content-type"), "text/html; charset=utf-8", `${file} content type`);
+      const rendered = await response.text();
+      assert.ok(rendered.includes('src="/file-view.js"'), `${file} must load the renderer`);
+      assert.ok(rendered.includes('<script src="/boot.js">'), `${file} must pick up the theme before first paint`);
+      assert.ok(rendered.includes(`id="fileViewSource" data-language="${language}"`), `${file} must name its language`);
     }
+
+    // A source file whose text contains a code fence must not be able to break out of
+    // the block it is rendered in.
+    await writeFile(path.join(projectPath, "fence.js"), "const a = '```';\n");
+    const fenced = await view("fence.js");
+    assert.ok((await fenced.text()).includes("const a = &#39;```&#39;;"), "a fence in the source is escaped, never live");
+
+    // A text file with no recognised language is still a code block, never guessed prose.
+    await writeFile(path.join(projectPath, "notes.txt"), "plain notes\n");
+    assert.ok((await (await view("notes.txt")).text()).includes('data-language=""'),
+      "an unknown extension carries no language");
+
+    // A file the page cannot render as text is still handed over as bytes.
+    await writeFile(path.join(projectPath, "blob.bin"), Buffer.from([0, 1, 2, 3]));
+    const binary = await view("blob.bin");
+    assert.equal(binary.headers.get("content-type"), "text/plain; charset=utf-8");
+    assert.equal(binary.headers.get("content-disposition"), 'inline; filename="blob.bin"');
+
+    // Downloading any text file still hands over the file itself, not the viewer.
+    const sourceDownload = await fetch(`${baseUrl}/api/projects/${project.id}/file?path=${encodeURIComponent("script.py")}&download=1`, { headers });
+    assert.equal(sourceDownload.headers.get("content-type"), "text/plain; charset=utf-8");
+    assert.equal(sourceDownload.headers.get("content-disposition"), 'attachment; filename="script.py"');
 
     // Markdown is the one text format a browser can present as a document, so the View
     // link serves a page that renders it instead of a wall of raw syntax.
@@ -58,6 +85,7 @@ test("viewing a project file serves a content type the browser renders", async (
     const page = await markdown.text();
     assert.ok(page.includes('src="/file-view.js"'), "the page must load the renderer");
     assert.ok(page.includes('id="fileViewBody" class="message-content md"'), "the page must carry the rendered container");
+    assert.ok(page.includes('id="fileViewSource" data-language="markdown"'), "markdown is named, so the page renders it as prose");
     assert.ok(page.includes("# Title"), "the page must carry the markdown source");
     // The source is embedded, so a document containing markup must never become markup.
     assert.ok(page.includes("&lt;script&gt;alert(1)&lt;/script&gt;"), "embedded markup must be escaped");

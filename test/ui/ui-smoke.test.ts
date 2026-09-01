@@ -198,6 +198,89 @@ test("the View link renders a markdown file as a document", async () => {
   assert.ok(layout.left > 100, `the document is centred, not pinned to the left edge (starts at ${layout.left})`);
 });
 
+
+/** WCAG contrast of `text` over `selection` over `surface`, from CSS colour strings.
+ * Each layer is composited onto the one below so partial transparency is honoured. */
+function contrastRatio(text: string, selection: string, surface: string): number {
+  const parse = (value: string): number[] => {
+    const parts = value.match(/[\d.]+/g)!.map(Number);
+    return [parts[0], parts[1], parts[2], parts[3] ?? 1];
+  };
+  const over = (top: number[], bottom: number[]): number[] =>
+    [0, 1, 2].map((index) => top[index] * top[3] + bottom[index] * (1 - top[3])).concat(1);
+  const luminance = (colour: number[]): number => {
+    const channels = colour.slice(0, 3).map((value) => value / 255)
+      .map((value) => (value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+  };
+  const background = over(parse(selection), parse(surface));
+  const [bright, dark] = [luminance(over(parse(text), background)), luminance(background)].sort((a, b) => b - a);
+  return (bright + 0.05) / (dark + 0.05);
+}
+
+// The bug this covers: CodeMirror ships a pale lavender selection colour, and the
+// editor's surface is always dark. Selected text was near-white on near-white.
+test("selected text in the editor stays readable", async () => {
+  await page.goto(node.url, { waitUntil: "domcontentloaded" });
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().waitFor({ timeout: 20_000 });
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+  await page.locator(".session-card", { hasText: "Thread-Based Agent Builder" }).first().click();
+  await page.getByTestId("chat-file-link").first().click();
+  await page.locator("#fileActionDialog[open]").waitFor({ timeout: 20_000 });
+  await page.getByTestId("file-action-edit-button").click();
+  await page.locator("#fileEditorView:not([hidden])").waitFor({ timeout: 20_000 });
+
+  // Select the first line with the editor focused, so it draws its focused selection
+  // colour rather than the idle one. Driven through the editor's own API because the
+  // colour is what is under test, not vim's key handling.
+  await page.locator("#fileEditorView .CodeMirror-scroll").click();
+  await page.evaluate(() => {
+    const editor = (document.querySelector("#fileEditorView .CodeMirror") as HTMLElement & { CodeMirror: { focus(): void; setSelection(a: unknown, b: unknown): void } }).CodeMirror;
+    editor.focus();
+    editor.setSelection({ line: 0, ch: 0 }, { line: 0, ch: 8 });
+  });
+  await page.locator("#fileEditorView .CodeMirror-selected").first().waitFor({ timeout: 10_000 });
+
+  // The colours are read in the page and the contrast is worked out here: a helper
+  // declared inside page.evaluate does not survive the test runner's transform.
+  const painted = await page.evaluate(() => ({
+    surface: getComputedStyle(document.querySelector("#fileEditorView .CodeMirror")!).backgroundColor,
+    selection: getComputedStyle(document.querySelector("#fileEditorView .CodeMirror-selected")!).backgroundColor,
+    text: getComputedStyle(document.querySelector("#fileEditorView .CodeMirror-line")!).color,
+  }));
+  const ratio = contrastRatio(painted.text, painted.selection, painted.surface);
+  assert.ok(ratio >= 4.5,
+    `selected text must stay legible (contrast ${ratio.toFixed(2)}:1 for ${painted.text} on ${painted.selection})`);
+
+  await page.keyboard.press("Escape");
+  await page.getByTestId("file-editor-cancel-button").click();
+});
+
+test("the View link renders a source file as themed, highlighted code", async () => {
+  const project = node.projects.find((candidate) => candidate.name === "Internal Assistant");
+  assert.ok(project, "the seeded project is present");
+  await page.goto(`${node.url}/api/projects/${project.id}/file?path=config.ts`, { waitUntil: "domcontentloaded" });
+
+  const block = page.locator('[data-testid="file-view-markdown"] .code-block');
+  await block.waitFor({ timeout: 20_000 });
+  assert.match(await block.innerText(), /export const name/, "the page shows the file's source");
+  assert.equal((await page.locator('[data-testid="file-view-markdown"] .code-lang').innerText()).trim().toLowerCase(), "typescript",
+    "the block names the language it is showing");
+
+  // The bug this covers: a source file arrived as browser-default plain text, ignoring
+  // the app's theme entirely.
+  const painted = await page.evaluate(() => ({
+    theme: document.documentElement.dataset.theme,
+    page: getComputedStyle(document.body).backgroundColor,
+    code: getComputedStyle(document.querySelector(".code-block pre")!).backgroundColor,
+    width: Math.round(document.querySelector('[data-testid="file-view-markdown"]')!.getBoundingClientRect().width),
+  }));
+  assert.ok(["dark", "light"].includes(painted.theme!), `the page adopts a theme (got ${painted.theme})`);
+  assert.notEqual(painted.page, "rgba(0, 0, 0, 0)", "the page paints the app's own background");
+  assert.notEqual(painted.code, painted.page, "the code block is a distinct surface, not bare text");
+  assert.ok(painted.width > 500, `the source uses the page width (got ${painted.width})`);
+});
+
 test("the journey produced no console errors and no failed requests", () => {
   assert.deepEqual(consoleErrors, [], "no console errors");
   assert.deepEqual(failedResponses, [], "no 4xx or 5xx responses");
