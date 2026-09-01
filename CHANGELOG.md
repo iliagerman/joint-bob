@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Canvas panes can now start new conversations with any agent, not just open existing ones
+- Fixed project files displaying correctly in the browser by serving the proper content type for images, PDFs, and text files
 
 ## 0.4.2 — 2026-09-01
 

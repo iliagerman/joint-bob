@@ -3332,11 +3332,32 @@ function textFile(bytes: Buffer): string {
   catch { throw new ProjectFileError(415, "File is not valid UTF-8 text"); }
 }
 
+// Browsers refuse to render a response whose Content-Type is wrong because every response
+// carries `X-Content-Type-Options: nosniff`, so a bad guess shows an empty page. Extension
+// lookup is no help for source code: `.ts` maps to video/mp2t and `.py` maps to nothing at
+// all. Only the types a browser genuinely displays keep their own type; everything else is
+// served as plain text so the View link shows the file.
+const INLINE_PROJECT_FILE_TYPES: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".avif": "image/avif",
+  ".bmp": "image/bmp",
+  ".ico": "image/x-icon",
+  ".pdf": "application/pdf",
+};
+
+function projectFileContentType(resolved: string): string {
+  return INLINE_PROJECT_FILE_TYPES[path.extname(resolved).toLowerCase()] ?? "text/plain; charset=utf-8";
+}
+
 async function sendProjectFile(response: Response, projectId: string, requestedPath: string, download: boolean): Promise<void> {
   try {
     const { resolved, info } = await resolveProjectFile(projectId, requestedPath);
     const fileName = path.basename(resolved).replace(/["\r\n]/g, "");
-    response.type(resolved);
+    response.setHeader("Content-Type", projectFileContentType(resolved));
     response.setHeader("Content-Disposition", `${download ? "attachment" : "inline"}; filename="${fileName}"`);
     response.setHeader("Content-Length", String(info.size));
     createReadStream(resolved).pipe(response);
