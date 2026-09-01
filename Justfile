@@ -9,3 +9,7 @@ update-homeserver:
 # Deploy the checked-out commit to both nodes.
 update:
     ./scripts/deploy-installed-nodes.sh "$(git rev-parse HEAD)" all
+
+# Run the release gate, commit the notes it writes, and push main in one go.
+push:
+    ./scripts/push-main.sh
