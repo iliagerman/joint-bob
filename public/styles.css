@@ -995,13 +995,13 @@ select.chat-toolbar-control {
   border-color: color-mix(in srgb, var(--accent) 24%, transparent);
 }
 .message.user .message-content.md code { background: color-mix(in srgb, var(--text) 8%, transparent); }
-.message.assistant { align-self: flex-start; padding: 9px 2px; border-color: transparent; background: transparent; }
+.message.assistant { align-self: flex-start; width: 100%; max-width: 100%; padding: 12px 15px; border-color: var(--line); background: var(--panel); }
 /* A sibling of the bubble, not a child, so the control sits outside the card.
    The .messages column already supplies 10px of gap, hence the negative margin. */
 .message-time { display: block; margin-top: 6px; color: var(--muted); font-family: var(--mono); font-size: 10.5px; opacity: 0.75; }
 .message.user .message-time { text-align: right; }
 .message-actions { display: flex; align-self: flex-end; justify-content: flex-end; margin-top: -4px; }
-.message.assistant + .message-actions { align-self: flex-start; justify-content: flex-start; margin-left: -6px; }
+.message.assistant + .message-actions { align-self: flex-start; justify-content: flex-start; margin-left: 9px; }
 .message-copy { display: inline-grid; place-items: center; min-width: 28px; min-height: 28px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); opacity: 0.6; transition: background-color 140ms ease, color 140ms ease, opacity 140ms ease; }
 .message-copy:hover, .message-copy:focus-visible { opacity: 1; color: var(--text); background: var(--field); }
 .message-copy.copied { opacity: 1; color: var(--accent); }
