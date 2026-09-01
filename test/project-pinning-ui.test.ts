@@ -57,3 +57,24 @@ test("pinned ids and panel collapse round-trip through the preferences API", asy
   assert.match(preferences, /ALTER TABLE user_preferences ADD COLUMN projects_panel_collapsed INTEGER NOT NULL DEFAULT 0/);
   assert.match(preferences, /ALTER TABLE user_preferences ADD COLUMN chats_panel_collapsed INTEGER NOT NULL DEFAULT 0/);
 });
+
+test("a pinned conversation carries its own unpin button on the row", async () => {
+  const [app, styles] = await Promise.all([
+    readFile("public/app.js", "utf8"),
+    readFile("public/styles.css", "utf8"),
+  ]);
+
+  // Unpinning is the one action a pinned row needs often enough to deserve a
+  // button; everything else stays in the overflow menu.
+  assert.match(app, /testid: "session-unpin-button"/);
+  assert.match(app, /if \(sessionPinned\) row\.append\(sessionUnpinButton\(session\)\);/);
+
+  // Two buttons need two lanes, and the button makes the inline marker redundant.
+  assert.match(styles, /\.session-list \.pin-button \{ right: 42px; \}/);
+  assert.match(styles, /\.session-list \.list-row\.pinned \.session-card \{ padding-right: 78px; \}/);
+  assert.match(styles, /\.session-list \.session-card\.pinned strong::after \{ content: none; \}/);
+
+  // On phones both buttons grow to a real touch target, so the lanes widen with them.
+  assert.match(styles, /\.session-list \.pin-button \{ min-height: 34px; min-width: 34px; width: 34px; right: 48px; \}/);
+  assert.match(styles, /\.session-list \.list-row\.pinned \.session-card \{ padding-right: 90px; \}/);
+});

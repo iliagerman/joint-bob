@@ -43,7 +43,10 @@ test("server prepares and recovers active sessions around service updates", asyn
   assert.match(server, /getFollowUpMessages\(\)/);
   assert.match(server, /clearQueue\(\)/);
   assert.match(server, /await .*\.abort\(\)/);
-  assert.match(server, /promptQueue\.map\(\(\{ promptText \}\) => promptText\)/);
+  // Claude's queued prompts stay in the durable queue rather than being copied
+  // into the recovery record: two copies would run the prompt twice.
+  assert.doesNotMatch(server, /promptQueue\.map\(\(\{ promptText \}\) => promptText\)/);
+  assert.match(server, /listQueuedPrompts\(claudeQueueKey\(connection\)\)/);
   assert.match(server, /SIGTERM/);
   assert.match(server, /recoverPendingUpdateRuns\(\)/);
   assert.match(server, /interface RecoveredClaudeChat\s*\{[\s\S]*claude: ClaudeChatState;[\s\S]*connection: ChatConnection \| null;/);
@@ -76,5 +79,5 @@ test("browser warns during update and refreshes cached shell", async () => {
   const [app, worker] = await Promise.all([readFile("public/app.js", "utf8"), readFile("public/sw.js", "utf8")]);
   assert.match(app, /payload\.type === "updatePreparing"/);
   assert.match(app, /Updating\.\.\. Work will resume automatically\./);
-  assert.match(worker, /joint-bob-v89/);
+  assert.match(worker, /joint-bob-v91/);
 });

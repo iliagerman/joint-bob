@@ -1033,6 +1033,11 @@ select.chat-toolbar-control {
   border-color: color-mix(in srgb, var(--accent) 24%, transparent);
 }
 .message.user .message-content.md code { background: color-mix(in srgb, var(--text) 8%, transparent); }
+/* Sent, but not yet handed to the agent. It stays on the conversation across a
+   reload, so it must read as pending rather than as an ordinary sent message. */
+.message.user.queued { background: var(--field); border-style: dashed; border-color: var(--line-strong); }
+.message.user.queued .message-content { opacity: 0.72; }
+.queued-badge { display: block; margin-top: 6px; text-align: right; color: var(--muted); font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; }
 .message.assistant { align-self: flex-start; width: 100%; max-width: 100%; padding: 12px 15px; border-color: var(--line); background: var(--panel); }
 /* A sibling of the bubble, not a child, so the control sits outside the card.
    The .messages column already supplies 10px of gap, hence the negative margin. */
@@ -1553,6 +1558,9 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   /* The menu is the only way to reach a row's actions, so it needs a real touch target,
      and a wider lane to sit in so the title still clears it. */
   .row-menu-button { min-height: 34px; min-width: 34px; }
+  /* The unpin button gets the same touch target, one lane to the left of the menu. */
+  .session-list .pin-button { min-height: 34px; min-width: 34px; width: 34px; right: 48px; }
+  .session-list .list-row.pinned .session-card { padding-right: 90px; }
   /* Stop stays a real touch target on phones without leaving the meta row. */
   .chat-actions .icon-button { min-width: 32px; width: 32px; min-height: 32px; }
   .project-card, .session-card { padding-right: 52px; }
@@ -1612,6 +1620,12 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   font-size: 9px;
   vertical-align: 1px;
 }
+
+/* A pinned conversation shows a real unpin button, so it needs a second button lane
+   and the inline marker would only duplicate the button. */
+.session-list .pin-button { right: 42px; }
+.session-list .list-row.pinned .session-card { padding-right: 78px; }
+.session-list .session-card.pinned strong::after { content: none; }
 
 /* ---- Skills browser ---- */
 .skills-dialog-list { display: grid; gap: 4px; min-width: 0; max-height: 52dvh; overflow-y: auto; }
@@ -1856,17 +1870,22 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 #fileEditorView[hidden] { display: none; }
 .file-editor-label { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .file-editor-label-tools { display: flex; align-items: center; gap: 8px; }
-#fileEditorRawButton { min-height: 0; padding: 4px 8px; border-radius: 4px; font: 700 10px/1.4 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
-#fileEditorRawButton[hidden] { display: none; }
+#fileEditorPreviewButton { min-height: 0; padding: 4px 8px; border-radius: 4px; font: 700 10px/1.4 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+#fileEditorPreviewButton[hidden] { display: none; }
 #fileEditorMode { padding: 3px 6px; border-radius: 4px; color: var(--muted); background: var(--field); font: 700 10px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
 .file-editor-textarea { width: 100%; font-family: var(--mono); }
+/* Preview sits beside the source rather than replacing it, so the document can be read
+   and edited in the same glance. One column until it is asked for. */
+.file-editor-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
+.file-editor-split:has(#fileEditorPreview:not([hidden])) { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.file-editor-preview { min-height: 420px; max-height: min(80dvh, 880px); padding: 16px 18px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); overflow: auto; }
+.file-editor-preview[hidden] { display: none; }
 .file-editor-card .CodeMirror { min-height: 420px; max-height: min(80dvh, 880px); border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--code-bg); color: var(--code-text); font-family: var(--mono); }
 .file-editor-card .CodeMirror-scroll { height: inherit; min-height: inherit; max-height: inherit; }
 .file-editor-card .CodeMirror-gutters { border-right-color: var(--line); background: var(--panel); }
 .file-editor-card .CodeMirror-linenumber { color: var(--muted); }
 .file-editor-card .CodeMirror-cursor { border-left-color: var(--accent); }
 .file-editor-card .CodeMirror-selected { background: color-mix(in srgb, var(--accent) 30%, transparent); }
-.file-editor-card .CodeMirror-activeline-background { background: color-mix(in srgb, var(--code-text) 7%, transparent); }
 .file-editor-card .CodeMirror-fat-cursor { background: var(--accent); color: var(--code-bg); }
 .file-editor-card .cm-comment, .file-editor-card .cm-meta { color: var(--muted); }
 .file-editor-card .cm-keyword, .file-editor-card .cm-atom, .file-editor-card .cm-tag { color: var(--accent); }
@@ -1887,19 +1906,20 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 .file-editor-markdown .cm-comment { color: var(--amber); font-family: var(--mono); }
 .file-editor-markdown .cm-variable-2, .file-editor-markdown .cm-variable-3, .file-editor-markdown .cm-keyword { color: var(--accent); }
 .file-editor-markdown .cm-hr { color: var(--muted); font-weight: 700; }
-/* Raw view: the literal #, *, ` and [] stay in the buffer so vim edits still work;
-   they just recede so the prose reads first. */
+/* The literal #, *, ` and [] always stay in the buffer so the cursor lands where it looks;
+   they just recede so the prose still reads first. */
 .file-editor-markdown .cm-formatting { color: var(--muted); font-weight: 400; font-size: 1em; opacity: 0.62; }
-/* Rendered view: the syntax disappears and the document reads like the chat preview.
-   List bullets, task boxes and code fences stay - hiding those loses real meaning.
-   The line under the cursor shows its raw source again, so every character is still
-   editable; the Raw button drops the whole file back to source. */
-.file-editor-rendered .cm-formatting { display: none; }
-.file-editor-rendered :is(.cm-formatting-list, .cm-formatting-task, .cm-formatting-code-block) { display: inline; }
-.file-editor-rendered .cm-string.cm-url { display: none; }
-.file-editor-rendered .cm-link { text-decoration: underline; }
-.file-editor-rendered .CodeMirror-activeline :is(.cm-formatting, .cm-string.cm-url) { display: inline; }
+/* Two panes need room. Below that the preview stacks under the source instead. */
+@media (max-width: 900px) { .file-editor-split:has(#fileEditorPreview:not([hidden])) { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 600px) { .file-editor-card, .file-editor-card:has(#fileEditorView:not([hidden])) { width: calc(100vw - 16px); } .file-editor-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); } .file-editor-card .CodeMirror { min-height: 180px; max-height: 70dvh; } }
+
+/* ---- Standalone markdown page behind the file dialog's View link ---- */
+/* The app shell body never scrolls, because its panels scroll instead. This page is one
+   long document, so it takes its scrolling back and keeps a readable column. */
+body.file-view { overflow: auto; }
+.file-view-page { max-width: 900px; margin: 0 auto; padding: 32px 24px 72px; }
+.file-view-path { margin: 0 0 22px; padding-bottom: 12px; border-bottom: 1px solid var(--line); font: 600 11px/1.4 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); word-break: break-all; }
+@media (max-width: 600px) { .file-view-page { padding: 20px 16px 56px; } }
 
 /* ---- Canvas: several existing conversations at once ---- */
 /* Panels are display:none until their body view class shows them; the canvas is a

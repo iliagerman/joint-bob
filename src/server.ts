@@ -60,6 +60,7 @@ import { webSocketCloseReason } from "./websocket.js";
 import { capturePiRecoverySnapshot, recoverPiSessionDirectory, resolveLocalSessionPath } from "./session-paths.js";
 import { beginConversationRecovery, beginConversationTransfer, commitConversationTransfer, compareAndSetConversationOwnership, ConversationOwnershipError, finalizeConversationClaim, finishConversationRecovery, getConversationOwnership, sameConversationOwnership, takeConversationOwnership, type ConversationEngine, type ConversationOwnership, type ConversationOwnershipStatus, type OwnershipApplyResult } from "./conversation-ownership.js";
 import { attachTerminalSession } from "./terminal-session.js";
+import { claimQueuedPrompt, enqueuePrompt, listQueuedPrompts, rekeyQueuedPrompts } from "./prompt-queue.js";
 import { completeUpdateRecovery, failUpdateRecovery, listPendingUpdateRecoveries, saveUpdateRecoveries, type UpdateRecoveryRecord } from "./update-recovery.js";
 
 type PiSessionHandle = Awaited<ReturnType<typeof createPiSession>>;
@@ -82,6 +83,7 @@ interface SharedPiSession {
 type ChatEngine = "pi" | "claude";
 
 interface ClaudeQueuedPrompt {
+  id: number;
   promptText: string;
   displayText: string;
   acknowledged: boolean;
@@ -4031,7 +4033,9 @@ function activeUpdateRecoveries(): UpdateRecoveryRecord[] {
   }
   for (const connection of new Set(activeClaudeConnections.values())) {
     if (!connection.claude.child) continue;
-    records.push(updateRecoveryRecord({ kind: "chat", engine: "claude", projectId: connection.project.id, cwd: connection.cwd, sessionId: connection.claude.sessionId ?? "", sessionPath: connection.claude.filePath ? `claude:${connection.claude.filePath}` : "", taskId: null, phase: null, queuedPrompts: connection.claude.promptQueue.map(({ promptText }) => promptText), model: connection.claude.model, effort: connection.claude.effort }));
+    // Queued prompts stay in the durable queue and drain after the update. Copying
+    // them here too would run them twice if the node died between the two writes.
+    records.push(updateRecoveryRecord({ kind: "chat", engine: "claude", projectId: connection.project.id, cwd: connection.cwd, sessionId: connection.claude.sessionId ?? "", sessionPath: connection.claude.filePath ? `claude:${connection.claude.filePath}` : "", taskId: null, phase: null, queuedPrompts: [], model: connection.claude.model, effort: connection.claude.effort }));
   }
   for (const [shared, run] of piTaskRuns) {
     const session = shared.handle.session;
@@ -4057,6 +4061,8 @@ async function performUpdatePreparation(): Promise<number> {
   const records = activeUpdateRecoveries();
   await saveUpdateRecoveries(records);
   for (const shared of new Set(sharedSessions.values())) shared.handle.session.clearQueue();
+  // Only the in-memory copy is dropped: the rows outlive the restart and drain
+  // when a client comes back to the conversation.
   for (const connection of new Set(activeClaudeConnections.values())) connection.claude.promptQueue.splice(0);
   const pi = [...new Set(sharedSessions.values())].filter((shared) => sessionIsBusy(shared.handle)).map(abortPiForUpdate);
   const children = [...activeClaudeConnections.values()].map((connection) => connection.claude.child).filter((child): child is ClaudeRunHandle["child"] => Boolean(child));
@@ -4555,6 +4561,11 @@ function claudeConnectionKey(projectId: string, sessionId: string | null): strin
   return `${projectId}:${sessionId ?? "claude:new"}`;
 }
 
+/** Where this conversation's pending prompts are stored. */
+function claudeQueueKey(connection: ChatConnection): string {
+  return claudeConnectionKey(connection.project.id, connection.claude.sessionId);
+}
+
 function claudeRunKey(projectId: string, sessionPath: string): string {
   return `${projectId}\n${sessionPath}`;
 }
@@ -4651,9 +4662,11 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
       return;
     }
     if (activeClaudeConnections.get(activeKey) === connection) activeClaudeConnections.delete(activeKey);
+    const previousQueueKey = claudeQueueKey(connection);
     connection.claude.sessionId = sessionId;
     connection.claude.filePath = claudeSessionFilePath(connection.cwd, sessionId);
     activeKey = claudeConnectionKey(connection.project.id, sessionId);
+    rekeyQueuedPrompts(previousQueueKey, claudeQueueKey(connection));
     activeClaudeConnections.set(activeKey, connection);
     send(connection.socket, { type: "sessionFile", sessionId, sessionFile: `claude:${connection.claude.filePath}` });
   };
@@ -4710,11 +4723,30 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
   scheduleReviewNotifications(connection.project.id);
 }
 
+const drainingClaudeQueues = new Set<string>();
+
 async function drainClaudePromptQueue(connection: ChatConnection): Promise<void> {
   if (updatePreparing) return;
+  // Two clients watching one conversation each hold their own connection, so the
+  // drain, not the connection, is what has to be single.
+  const queueKey = claudeQueueKey(connection);
+  if (drainingClaudeQueues.has(queueKey)) return;
+  drainingClaudeQueues.add(queueKey);
+  try {
+    await drainClaudePrompts(connection);
+  } finally {
+    drainingClaudeQueues.delete(queueKey);
+  }
+}
+
+async function drainClaudePrompts(connection: ChatConnection): Promise<void> {
   while (!connection.claude.child && connection.claude.promptQueue.length) {
     const queued = connection.claude.promptQueue.shift()!;
+    // Handing it to the agent ends its pending life: the transcript records it
+    // from here, so a replay must not offer it a second time.
+    if (!claimQueuedPrompt(queued.id)) continue;
     send(connection.socket, { type: "queueUpdate", pending: connection.claude.promptQueue.length });
+    send(connection.socket, { type: "promptStarted", queueId: queued.id });
     await runClaudeTurn(connection, queued.promptText, queued.displayText, !queued.acknowledged);
   }
 }
@@ -4732,8 +4764,9 @@ async function handleClaudeCommand(connection: ChatConnection, payload: SocketPa
     await resumeReviewedTask(connection);
     const displayText = promptDisplayText(payload.message ?? "", imageAttachments.map((image) => image.name), fileAttachments.map((file) => file.name));
     const acknowledged = Boolean(connection.claude.child || connection.claude.promptQueue.length);
-    if (acknowledged) send(connection.socket, { type: "userMessage", text: displayText, queued: true });
-    connection.claude.promptQueue.push({ promptText, displayText, acknowledged });
+    const stored = enqueuePrompt(claudeQueueKey(connection), promptText, displayText);
+    if (acknowledged) send(connection.socket, { type: "userMessage", text: displayText, queued: true, queueId: stored.id });
+    connection.claude.promptQueue.push({ ...stored, acknowledged });
     send(connection.socket, { type: "queueUpdate", pending: connection.claude.promptQueue.length });
     await drainClaudePromptQueue(connection);
     return;
@@ -5238,6 +5271,14 @@ webSocketServer.on("connection", async (socket, request) => {
     // Replay the in-flight turn so a reconnecting client sees the text and tool
     // calls that streamed while its socket was down.
     for (const event of connection.claude.liveEvents) send(socket, event);
+    // The queue belongs to the conversation, not to the socket that typed into
+    // it, so a reconnect sees what is still pending and a node that restarted
+    // with prompts on disk picks them up here.
+    if (!connection.claude.promptQueue.length) {
+      connection.claude.promptQueue = listQueuedPrompts(claudeQueueKey(connection)).map((prompt) => ({ ...prompt, acknowledged: true }));
+    }
+    send(socket, { type: "queuedPrompts", prompts: connection.claude.promptQueue.map(({ id, displayText }) => ({ id, text: displayText })) });
+    if (!foreignOwner) void drainClaudePromptQueue(connection).catch((error) => send(socket, { type: "error", error: chatErrorMessage(error) }));
   } else {
     let sharedSession: SharedPiSession;
     try {

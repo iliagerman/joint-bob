@@ -138,6 +138,66 @@ test("the canvas picker lists conversations at a readable height", async () => {
   );
 });
 
+test("a markdown file opens as raw source and previews beside it", async () => {
+  // A fresh load, because the previous test left the canvas picker open. The dialog is
+  // then reached the way a person reaches it: a file mentioned in a conversation.
+  await page.goto(node.url, { waitUntil: "domcontentloaded" });
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().waitFor({ timeout: 20_000 });
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+  await page.locator(".session-card", { hasText: "Thread-Based Agent Builder" }).first().click();
+  await page.getByTestId("chat-file-link").first().click();
+
+  await page.locator("#fileActionDialog[open]").waitFor({ timeout: 20_000 });
+  await page.getByTestId("file-action-edit-button").click();
+  await page.locator("#fileEditorView:not([hidden])").waitFor({ timeout: 20_000 });
+
+  // Raw is the default: the heading marker is in the buffer and the gutter numbers lines.
+  const source = await page.locator("#fileEditorView .CodeMirror").first().innerText();
+  assert.match(source, /#\s*Internal Assistant/, `the editor shows the raw heading marker (got ${JSON.stringify(source.slice(0, 80))})`);
+  const gutter = await page.evaluate(() => {
+    const gutters = document.querySelector("#fileEditorView .CodeMirror-gutters");
+    return gutters ? Math.round(gutters.getBoundingClientRect().width) : 0;
+  });
+  assert.ok(gutter > 0, `the line-number gutter is visible while editing (got ${gutter}px)`);
+  assert.equal(await page.getByTestId("file-editor-preview").isVisible(), false, "preview stays closed until it is asked for");
+
+  await page.getByTestId("file-editor-preview-button").click();
+  const heading = page.locator('[data-testid="file-editor-preview"] h1');
+  await heading.waitFor({ timeout: 10_000 });
+  assert.equal((await heading.innerText()).trim(), "Internal Assistant", "the preview renders the heading as a heading");
+
+  // Side by side, not stacked: the preview starts to the right of the editor.
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const boxes = await page.evaluate(() => {
+    const editor = document.querySelector("#fileEditorView .CodeMirror").getBoundingClientRect();
+    const preview = document.querySelector("#fileEditorPreview").getBoundingClientRect();
+    return { editorRight: Math.round(editor.right), previewLeft: Math.round(preview.left), previewWidth: Math.round(preview.width) };
+  });
+  assert.ok(boxes.previewLeft >= boxes.editorRight, `preview sits beside the editor (editor ends at ${boxes.editorRight}, preview starts at ${boxes.previewLeft})`);
+  assert.ok(boxes.previewWidth > 300, `preview is wide enough to read (got ${boxes.previewWidth})`);
+
+  await page.getByTestId("file-editor-cancel-button").click();
+});
+
+test("the View link renders a markdown file as a document", async () => {
+  const project = node.projects.find((candidate) => candidate.name === "Internal Assistant");
+  assert.ok(project, "the seeded project is present");
+  await page.goto(`${node.url}/api/projects/${project.id}/file?path=README.md`, { waitUntil: "domcontentloaded" });
+
+  const heading = page.locator('[data-testid="file-view-markdown"] h1');
+  await heading.waitFor({ timeout: 20_000 });
+  assert.equal((await heading.innerText()).trim(), "Internal Assistant", "the page renders the heading as a heading, not as '# Internal Assistant'");
+
+  // The bug this covers: the document rendered in a column as narrow as the author's
+  // hard wrap, marooned on the left of a wide window.
+  const layout = await page.evaluate(() => {
+    const body = document.querySelector('[data-testid="file-view-markdown"]').getBoundingClientRect();
+    return { left: Math.round(body.left), width: Math.round(body.width), viewport: window.innerWidth };
+  });
+  assert.ok(layout.width > 500, `the document uses the page width (got ${layout.width} of ${layout.viewport})`);
+  assert.ok(layout.left > 100, `the document is centred, not pinned to the left edge (starts at ${layout.left})`);
+});
+
 test("the journey produced no console errors and no failed requests", () => {
   assert.deepEqual(consoleErrors, [], "no console errors");
   assert.deepEqual(failedResponses, [], "no 4xx or 5xx responses");

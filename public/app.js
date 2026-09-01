@@ -2536,7 +2536,7 @@ function renderSessions() {
     const sessionPinned = isSessionPinned(session.path);
     const row = document.createElement("div");
     const sessionActive = state.activeSessionId ? session.id === state.activeSessionId : session.path === state.activeSessionPath;
-    row.className = `list-row${sessionActive ? " active" : ""}`;
+    row.className = `list-row${sessionActive ? " active" : ""}${sessionPinned ? " pinned" : ""}`;
     row.dataset.sessionDepth = String(depth);
     // The row menu is re-pointed at this row after a refresh replaces it.
     row.dataset.sessionPath = session.path;
@@ -2584,6 +2584,7 @@ function renderSessions() {
     });
 
     row.append(button, menuButton);
+    if (sessionPinned) row.append(sessionUnpinButton(session));
     if (session.agentRuns?.length) {
       const runs = document.createElement("div");
       runs.className = "agent-run-list";
@@ -2620,7 +2621,18 @@ function agentRunTaskReason(task) {
   return task.error || "No reason reported by the agent dashboard";
 }
 
-/** Every row action lives in the overflow menu, so the row itself stays one tap target. */
+/** Unpinning is the one action a pinned row needs often enough to earn its own button;
+    everything else stays in the overflow menu. */
+function sessionUnpinButton(session) {
+  return pinButton({
+    pinned: true,
+    label: `Unpin ${shortSessionTitle(session)}`,
+    testid: "session-unpin-button",
+    onToggle: () => togglePinnedSession(session.path),
+  });
+}
+
+/** Every other row action lives in the overflow menu, so the row itself stays one tap target. */
 function sessionMenuItems(session, sessionActive) {
   const name = shortSessionTitle(session);
   const pinned = isSessionPinned(session.path);
@@ -3124,6 +3136,25 @@ function appendMessage(role, text, timestamped = true) {
   elements.messages.append(bubble);
   if (isMarkdown) appendCopyButton(bubble);
   return bubble;
+}
+
+function markMessageQueued(bubble, queueId) {
+  bubble.classList.add("queued");
+  bubble.dataset.queueId = String(queueId);
+  bubble.dataset.testid = `queued-message-${queueId}`;
+  const badge = document.createElement("span");
+  badge.className = "queued-badge";
+  badge.textContent = "Queued";
+  bubble.append(badge);
+  return bubble;
+}
+
+function clearQueuedMark(queueId) {
+  const bubble = elements.messages.querySelector(`[data-queue-id="${queueId}"]`);
+  if (!bubble) return;
+  bubble.classList.remove("queued");
+  delete bubble.dataset.queueId;
+  bubble.querySelector(".queued-badge")?.remove();
 }
 
 // startedAt is 0 for a replayed transcript entry: it already finished, at a
@@ -4214,8 +4245,22 @@ function handleSocketPayload(payload, scrollOnReady = false) {
   }
   if (payload.type === "userMessage") {
     finalizeAssistantBubble();
-    appendMessage("user", payload.text);
+    const bubble = appendMessage("user", payload.text);
+    if (payload.queued) markMessageQueued(bubble, payload.queueId);
     state.thinkingBubble = null;
+    return;
+  }
+  // Prompts typed while the agent was busy live on the conversation, not on this
+  // socket, so a reload or a reconnect gets them back instead of losing them.
+  if (payload.type === "queuedPrompts") {
+    for (const prompt of payload.prompts || []) {
+      if (elements.messages.querySelector(`[data-queue-id="${prompt.id}"]`)) continue;
+      markMessageQueued(appendMessage("user", prompt.text), prompt.id);
+    }
+    return;
+  }
+  if (payload.type === "promptStarted") {
+    clearQueuedMark(payload.queueId);
     return;
   }
   if (payload.type === "textDelta") {

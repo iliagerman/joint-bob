@@ -112,7 +112,7 @@ const demoProjects: DemoProject[] = [
         harness: "pi", id: "thread-based-agent-builder", title: "Thread-Based Agent Builder",
         turns: [
           { role: "user", text: "We keep re-threading the same builder prompt by hand. Can we make the thread itself the unit of work, so a follow-up starts from the tail of the thread instead of a cold context every time?" },
-          { role: "assistant", text: "Yes. The thread already stores every turn, so the builder can resume from the last assistant message and only the delta needs to be sent." },
+          { role: "assistant", text: "Yes. The thread already stores every turn, so the builder can resume from the last assistant message and only the delta needs to be sent. The shape is written up in `./README.md`." },
         ],
       },
       {
