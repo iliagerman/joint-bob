@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+
+resolve_node() {
+  command -v node && return
+  local candidate
+  for candidate in \
+    "${HOME}/.local/share/joint-bob/runtime"/node-v*/bin/node \
+    "${HOME}/.local/share/fnm/aliases/default/bin/node" \
+    /opt/homebrew/bin/node \
+    /usr/local/bin/node; do
+    [ -x "${candidate}" ] && { printf '%s\n' "${candidate}"; return; }
+  done
+  echo "pre-commit: node was not found, so the changelog entry cannot be written." >&2
+  return 1
+}
+
+"$(resolve_node)" "${ROOT}/scripts/changelog-entry.mjs"

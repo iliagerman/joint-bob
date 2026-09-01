@@ -10,6 +10,7 @@ const [baseSha, localSha] = process.argv.slice(2).filter((argument) => argument 
 const checkOnly = process.argv.includes("--check");
 const base = /^0+$/.test(baseSha) ? null : baseSha;
 const headingPattern = /^##[ \t]+(\d+\.\d+\.\d+)/m;
+const unreleasedPattern = /^##[ \t]+Unreleased[ \t]*$/m;
 
 function git(...args) {
   return execFileSync("git", args, { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
@@ -63,7 +64,7 @@ function blockThePush(reason) {
     "",
     "Do exactly two things:",
     "1. Pick the next semantic version from those commits: a breaking change bumps major, any new feature bumps minor, otherwise bump patch. Write it into the `version` field of package.json.",
-    "2. Insert a new section into CHANGELOG.md directly above the newest existing `## ` section, shaped exactly like the sections already there:",
+    "2. Review every bullet under `## Unreleased` against the pushed commits and changed files. Replace that section with one coherent version section directly above the newest existing version section:",
     "",
     `## <the version you chose> — ${new Date().toISOString().slice(0, 10)}`,
     "",
@@ -71,7 +72,8 @@ function blockThePush(reason) {
     "",
     "Rules:",
     "- Write for someone using the app, not for a developer reading commits. No commit prefixes like `feat(ui):`, no file names, no commit hashes.",
-    "- One bullet per user-visible change; merge related commits into a single bullet.",
+    "- One bullet per user-visible change; merge related commit entries into a single bullet.",
+    "- Preserve user-visible changes represented by the full push range, not only the last commit.",
     "- Leave out pure refactors, test-only changes, and dependency bumps.",
     "- At most 12 bullets.",
     "- Change nothing else in either file, and do not commit anything.",
@@ -101,7 +103,9 @@ const pushedVersion = JSON.parse(fileAt(localSha, "package.json")).version;
 const baseVersion = base ? JSON.parse(fileAt(base, "package.json")).version : null;
 if (baseVersion && !isNewerVersion(pushedVersion, baseVersion)) blockThePush(`package.json is still ${pushedVersion}; every deployment needs its own version.`);
 
-const release = latestRelease(fileAt(localSha, "CHANGELOG.md"));
+const changelog = fileAt(localSha, "CHANGELOG.md");
+if (unreleasedPattern.test(changelog)) blockThePush("CHANGELOG.md still has Unreleased commit entries that need review.");
+const release = latestRelease(changelog);
 if (!release) blockThePush("CHANGELOG.md has no version sections.");
 if (release.version !== pushedVersion) blockThePush(`CHANGELOG.md documents ${release.version} but package.json says ${pushedVersion}.`);
 if (!release.described) blockThePush(`CHANGELOG.md lists no changes under ${pushedVersion}.`);

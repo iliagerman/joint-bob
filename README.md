@@ -123,7 +123,7 @@ just update-homeserver  # configured SSH node only
 just update             # both nodes
 ```
 
-Every command creates a mode-`0600` SQLite backup before replacing an installed copy and verifies the reported release. Git has no native post-push hook, so Joint Bob's `pre-push` hook records a push to `main`, waits until the remote confirms the exact commit, then runs the equivalent of `just update`. Deployment logs are written to `~/.joint-bob/logs/push-deploy.log`.
+Every command creates a mode-`0600` SQLite backup before replacing an installed copy and verifies the reported release. For staged application changes, the `pre-commit` hook has Claude Haiku add one bullet under `## Unreleased`. On a push to `main`, the `pre-push` hook reviews all commit entries in the push, rewrites them as coherent release notes, bumps the version, and refuses the first push so those files can be committed. The next push waits for the remote to confirm the exact commit, then runs the equivalent of `just update`. Pushes without application changes do not deploy. Deployment logs are written to `~/.joint-bob/logs/push-deploy.log`.
 
 ## EC2 smoke test
 

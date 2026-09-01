@@ -26,6 +26,11 @@ while read -r _local_ref local_sha remote_ref remote_sha; do
   [ "${local_sha}" != "0000000000000000000000000000000000000000" ] || continue
   # Blocking: a deployment does not leave without its version and release notes.
   "$(resolve_node)" "${ROOT}/scripts/changelog-gate.mjs" "${remote_sha}" "${local_sha}" </dev/null >&2
+  if [[ "${remote_sha}" =~ ^0+$ ]]; then
+    [ -n "$(git show --pretty= --name-only "${local_sha}" -- src public bin)" ] || continue
+  elif git diff --quiet "${remote_sha}" "${local_sha}" -- src public bin; then
+    continue
+  fi
   log_dir="${HOME}/.joint-bob/logs"
   mkdir -p "${log_dir}"
   chmod 700 "${HOME}/.joint-bob" "${log_dir}"

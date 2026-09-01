@@ -38,7 +38,7 @@ See `README.md` for installation, node pairing, private HTTPS, EC2 smoke testing
 
 Every deployment is a version. `package.json` holds the semantic version; `CHANGELOG.md` holds one `## <version> — <date>` section per release, newest first. The app shows the newest ten in Settings and opens a "What's new" dialog once after an upgrade.
 
-`scripts/hooks/pre-push` blocks a push to `main` that changes `src/`, `public/`, or `bin/` unless the pushed commits bump `package.json` and add a matching `CHANGELOG.md` section. When they do not, the gate has Claude (Haiku) write both files in the working tree and refuses the push; commit what it wrote and push again. Run `./scripts/install-git-hooks.sh` once per clone to install the hook, and `node scripts/changelog-gate.mjs <base-sha> <head-sha> --check` to check without calling Claude.
+`scripts/hooks/pre-commit` has Claude Haiku add one `## Unreleased` bullet for each staged change under `src/`, `public/`, or `bin/`. On a push to `main`, `scripts/hooks/pre-push` has Haiku review the full pushed commit range, replace those entries with coherent release notes, bump `package.json`, and refuse the push. Commit the generated release files and push again. Only pushes containing application changes deploy. Run `./scripts/install-git-hooks.sh` once per clone to install both hooks, and `node scripts/changelog-gate.mjs <base-sha> <head-sha> --check` to check without calling Claude.
 
 ## Credentials
 

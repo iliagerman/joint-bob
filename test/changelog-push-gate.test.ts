@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 
 const gate = path.resolve("scripts/changelog-gate.mjs");
+const entryWriter = path.resolve("scripts/changelog-entry.mjs");
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" });
@@ -80,6 +81,23 @@ test("the gate blocks a documented version that lists no changes", async () => {
   }
 });
 
+test("the gate blocks a bumped deployment with unreviewed commit entries", async () => {
+  const root = await changelogRepository("0.1.0");
+  try {
+    const base = await commit(root, "first");
+    await writeFile(path.join(root, "src", "server.ts"), "export const port = 9000;\n");
+    await writeFile(path.join(root, "package.json"), `${JSON.stringify({ name: "joint-bob", version: "0.2.0" }, null, 2)}\n`);
+    await writeFile(path.join(root, "CHANGELOG.md"), "# Changelog\n\n## Unreleased\n\n- Changed the server port\n\n## 0.2.0 — 2026-08-31\n\n- Moved the server to port 9000\n\n## 0.1.0 — 2026-08-30\n\n- First release\n");
+    const local = await commit(root, "change the port");
+
+    const { status, output } = runGate(root, base, local);
+    assert.equal(status, 1);
+    assert.match(output, /still has Unreleased commit entries/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("the gate lets a bumped and documented deployment through", async () => {
   const root = await changelogRepository("0.1.0");
   try {
@@ -108,9 +126,54 @@ test("the gate ignores a push that ships no application code", async () => {
   }
 });
 
+test("a staged application commit gets an Unreleased changelog entry", async () => {
+  const root = await changelogRepository("0.1.0");
+  const bin = path.join(root, "bin");
+  try {
+    await commit(root, "first");
+    await writeFile(path.join(root, "src", "server.ts"), "export const port = 9000;\n");
+    git(root, "add", "src/server.ts");
+    await mkdir(bin);
+    await writeFile(path.join(bin, "claude"), [
+      "#!/bin/sh",
+      "awk 'BEGIN { added=0 } /^## / && !added { print \"## Unreleased\\n\\n- Changed the server port\\n\"; added=1 } { print }' CHANGELOG.md > CHANGELOG.tmp",
+      "mv CHANGELOG.tmp CHANGELOG.md",
+    ].join("\n"), { mode: 0o755 });
+
+    const result = spawnSync(process.execPath, [entryWriter], {
+      cwd: root,
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(await readFile(path.join(root, "CHANGELOG.md"), "utf8"), /^## Unreleased$/m);
+    assert.match(git(root, "diff", "--cached", "--name-only"), /^CHANGELOG\.md$/m);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a non-application commit does not create an Unreleased entry", async () => {
+  const root = await changelogRepository("0.1.0");
+  try {
+    await commit(root, "first");
+    await writeFile(path.join(root, "README.md"), "Notes.\n");
+    git(root, "add", "README.md");
+
+    const result = spawnSync(process.execPath, [entryWriter], { cwd: root, encoding: "utf8" });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(await readFile(path.join(root, "CHANGELOG.md"), "utf8"), /^## Unreleased$/m);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("the pre-push hook blocks on the gate before triggering a deploy", async () => {
-  const [hook, script] = await Promise.all([
+  const [hook, commitHook, script] = await Promise.all([
     readFile("scripts/hooks/pre-push", "utf8"),
+    readFile("scripts/hooks/pre-commit", "utf8"),
     readFile("scripts/changelog-gate.mjs", "utf8"),
   ]);
 
@@ -122,11 +185,14 @@ test("the pre-push hook blocks on the gate before triggering a deploy", async ()
   assert.match(hook, /"\$\(resolve_node\)" "\$\{ROOT\}\/scripts\/changelog-gate\.mjs" "\$\{remote_sha\}" "\$\{local_sha\}"/);
   assert.doesNotMatch(hook, /changelog-gate\.mjs[^\n]*&\s*$/m);
   assert.match(hook, /while read -r _local_ref local_sha remote_ref remote_sha; do/);
+  assert.match(hook, /git diff --quiet "\$\{remote_sha\}" "\$\{local_sha\}" -- src public bin/);
+  assert.match(commitHook, /scripts\/changelog-entry\.mjs/);
 
-  // Release notes are written by the cheap model, and the gate always fails the push.
+  // Per-commit entries and final release notes are written by the cheap model.
   assert.match(script, /"--model", "haiku"/);
   assert.match(script, /"--permission-mode", "acceptEdits"/);
   assert.match(script, /spawnSync\("claude"/);
+  assert.match(script, /## Unreleased/);
   assert.match(script, /process\.exit\(1\);/);
 });
 
