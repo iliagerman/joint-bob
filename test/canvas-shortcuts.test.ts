@@ -190,3 +190,148 @@ test("two nodes settle on the same bindings whatever order the events arrive in"
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("every delivery order of the same writes leaves the same bindings", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-canvas-shortcuts-permute-"));
+  const previous = process.env.JOINT_BOB_DATA_DIR;
+  process.env.JOINT_BOB_DATA_DIR = path.join(root, "data");
+  const peer = "33333333-0000-4000-8000-000000000003";
+  try {
+    await mkdir(process.env.JOINT_BOB_DATA_DIR, { recursive: true });
+    const shortcuts = await import(`../src/canvas-shortcuts.ts?test=${Date.now()}`);
+    const assign = (binding: string, sessionId: string, at: string) => ({
+      id: randomUUID(), originNodeId: peer, entityType: "canvas.shortcut", entityKey: `ada:${binding}`,
+      operation: "upsert", createdAt: at,
+      payload: { username: "ada", binding, projectId: "project", engine: "pi", sessionId, updatedAt: at, originNodeId: peer },
+    });
+    const writes = [
+      assign("K", "chat-x", "2026-09-01T10:00:00.000Z"),
+      assign("K", "chat-y", "2026-09-01T10:00:01.000Z"),
+      assign("J", "chat-y", "2026-09-01T10:00:02.000Z"),
+    ];
+    const permutations = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+    for (const order of permutations) {
+      const db = new DatabaseSync(path.join(root, `order-${order.join("")}.db`));
+      shortcuts.ensureCanvasShortcutSchema(db);
+      for (const index of order) shortcuts.applyCanvasShortcutEvent(db, writes[index]);
+      const rows = db.prepare("SELECT binding, session_id FROM canvas_shortcuts WHERE username = 'ada' ORDER BY binding").all() as unknown as Array<{ binding: string; session_id: string }>;
+      db.close();
+      assert.deepEqual(rows.map((row) => `${row.binding}:${row.session_id}`), ["J:chat-y"], `order ${order.join(",")}`);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.JOINT_BOB_DATA_DIR;
+    else process.env.JOINT_BOB_DATA_DIR = previous;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("closing a conversation the node has not heard about yet still frees it", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-canvas-shortcuts-early-"));
+  const previous = process.env.JOINT_BOB_DATA_DIR;
+  process.env.JOINT_BOB_DATA_DIR = path.join(root, "data");
+  const localNode = "44444444-0000-4000-8000-000000000004";
+  const peer = "00000000-0000-4000-8000-000000000000";
+  try {
+    await mkdir(process.env.JOINT_BOB_DATA_DIR, { recursive: true });
+    const shortcuts = await import(`../src/canvas-shortcuts.ts?test=${Date.now()}`);
+    const conversation = { projectId: "project", engine: "pi" as const, sessionId: "chat-late" };
+
+    // This node holds no binding for the conversation: the peer's assignment is still
+    // in flight. Closing the pane must still be published, or that assignment lands.
+    shortcuts.releaseCanvasShortcuts("ada", [conversation], localNode);
+    const db = new DatabaseSync(path.join(root, "data", "node.db"));
+    const published = db.prepare("SELECT operation, payload FROM replication_outbox WHERE entity_type = 'canvas.shortcut'").all() as unknown as Array<{ operation: string; payload: string }>;
+    assert.equal(published.length, 1, "the release is replicated even with nothing to delete locally");
+    assert.equal(published[0].operation, "delete");
+    assert.equal(JSON.parse(published[0].payload).sessionId, "chat-late");
+
+    shortcuts.applyCanvasShortcutEvent(db, {
+      id: randomUUID(), originNodeId: peer, entityType: "canvas.shortcut", entityKey: "ada:5",
+      operation: "upsert", createdAt: "2026-09-01T09:00:00.000Z",
+      payload: { username: "ada", binding: "5", ...conversation, updatedAt: "2026-09-01T09:00:00.000Z", originNodeId: peer },
+    });
+    assert.deepEqual(shortcuts.listCanvasShortcuts("ada"), [], "the in-flight assignment loses to the close that overtook it");
+    db.close();
+  } finally {
+    if (previous === undefined) delete process.env.JOINT_BOB_DATA_DIR;
+    else process.env.JOINT_BOB_DATA_DIR = previous;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a node never reuses a write stamp, even across a restart", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-canvas-shortcuts-clock-"));
+  const previous = process.env.JOINT_BOB_DATA_DIR;
+  process.env.JOINT_BOB_DATA_DIR = path.join(root, "data");
+  const localNode = "55555555-0000-4000-8000-000000000005";
+  try {
+    await mkdir(process.env.JOINT_BOB_DATA_DIR, { recursive: true });
+    const stamps = async (marker: string, sessions: string[]) => {
+      const shortcuts = await import(`../src/canvas-shortcuts.ts?clock=${marker}`);
+      for (const [index, sessionId] of sessions.entries()) {
+        shortcuts.setCanvasShortcut("ada", String(index + 1), { projectId: "project", engine: "pi", sessionId }, localNode);
+      }
+    };
+    // Two runs of the process, each writing faster than the clock ticks.
+    await stamps("first", ["a", "b", "c"]);
+    await stamps("second", ["d", "e", "f"]);
+    const databaseFile = path.join(root, "data", "node.db");
+    const db = new DatabaseSync(databaseFile);
+    const rows = db.prepare("SELECT payload FROM replication_outbox WHERE entity_type = 'canvas.shortcut' ORDER BY created_at, event_id").all() as unknown as Array<{ payload: string }>;
+    db.close();
+    const issued = rows.map((row) => JSON.parse(row.payload).updatedAt as string);
+    assert.ok(issued.length >= 6, `every write was published (${issued.length})`);
+    assert.equal(new Set(issued).size, issued.length, `no stamp is reused: ${issued.join(", ")}`);
+
+    // The proof is the persisted clock, not the wall clock: wind it far ahead, and a
+    // fresh process must still issue something past it rather than repeating the past.
+    const ahead = new DatabaseSync(databaseFile);
+    const future = Date.now() + 3_600_000;
+    ahead.prepare("UPDATE canvas_shortcut_clock SET last_issued_at = ?").run(future);
+    ahead.close();
+    await stamps("third", ["g"]);
+    const after = new DatabaseSync(databaseFile);
+    const latest = (after.prepare("SELECT last_issued_at FROM canvas_shortcut_clock WHERE singleton = 1").get() as { last_issued_at: number }).last_issued_at;
+    after.close();
+    assert.ok(latest > future, `a restart issues past the persisted clock (${latest} vs ${future})`);
+  } finally {
+    if (previous === undefined) delete process.env.JOINT_BOB_DATA_DIR;
+    else process.env.JOINT_BOB_DATA_DIR = previous;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("an existing shortcut table is carried into the mark registers on upgrade", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-canvas-shortcuts-upgrade-"));
+  const previous = process.env.JOINT_BOB_DATA_DIR;
+  process.env.JOINT_BOB_DATA_DIR = path.join(root, "data");
+  const peer = "66666666-0000-4000-8000-000000000006";
+  try {
+    await mkdir(process.env.JOINT_BOB_DATA_DIR, { recursive: true });
+    const databaseFile = path.join(root, "data", "node.db");
+    const legacy = new DatabaseSync(databaseFile);
+    legacy.exec(`CREATE TABLE canvas_shortcuts (username TEXT NOT NULL, binding TEXT NOT NULL, project_id TEXT NOT NULL, engine TEXT NOT NULL, session_id TEXT NOT NULL, updated_at TEXT NOT NULL, origin_node_id TEXT NOT NULL, PRIMARY KEY (username, binding));
+      CREATE TABLE canvas_shortcut_tombstones (username TEXT NOT NULL, binding TEXT NOT NULL, updated_at TEXT NOT NULL, origin_node_id TEXT NOT NULL, PRIMARY KEY (username, binding));`);
+    legacy.prepare("INSERT INTO canvas_shortcuts VALUES ('ada', '1', 'project', 'pi', 'kept', '2026-09-01T12:00:00.000Z', ?)").run(peer);
+    legacy.prepare("INSERT INTO canvas_shortcut_tombstones VALUES ('ada', '2', '2026-09-01T12:00:00.000Z', ?)").run(peer);
+    legacy.close();
+
+    const shortcuts = await import(`../src/canvas-shortcuts.ts?upgrade=${Date.now()}`);
+    const db = new DatabaseSync(databaseFile);
+    shortcuts.ensureCanvasShortcutSchema(db);
+    const stale = (binding: string, sessionId: string) => ({
+      id: randomUUID(), originNodeId: peer, entityType: "canvas.shortcut", entityKey: `ada:${binding}`,
+      operation: "upsert", createdAt: "2026-09-01T11:00:00.000Z",
+      payload: { username: "ada", binding, projectId: "project", engine: "pi", sessionId, updatedAt: "2026-09-01T11:00:00.000Z", originNodeId: peer },
+    });
+    shortcuts.applyCanvasShortcutEvent(db, stale("1", "overwritten"));
+    shortcuts.applyCanvasShortcutEvent(db, stale("2", "resurrected"));
+    db.close();
+    assert.deepEqual(listing(shortcuts.listCanvasShortcuts("ada")), ["1:kept"],
+      "an older event cannot overwrite a carried-over binding or revive a released key");
+  } finally {
+    if (previous === undefined) delete process.env.JOINT_BOB_DATA_DIR;
+    else process.env.JOINT_BOB_DATA_DIR = previous;
+    await rm(root, { recursive: true, force: true });
+  }
+});

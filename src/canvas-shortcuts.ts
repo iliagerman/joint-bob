@@ -36,7 +36,7 @@ interface ShortcutRow {
 
 interface ShortcutPayload {
   username: string;
-  binding: string;
+  binding?: string;
   projectId?: string;
   engine?: ConversationEngine;
   sessionId?: string;
@@ -81,7 +81,22 @@ export function ensureCanvasShortcutSchema(db: DatabaseSync): void {
       updated_at TEXT NOT NULL,
       origin_node_id TEXT NOT NULL,
       PRIMARY KEY (username, project_id, engine, session_id)
+    );
+    CREATE TABLE IF NOT EXISTS canvas_shortcut_clock (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      last_issued_at INTEGER NOT NULL
     );`);
+  // Bindings that predate the registers would look unopposed, so a stale event could
+  // overwrite one or revive a released key. Seed both registers from what is there.
+  db.exec(`INSERT OR IGNORE INTO canvas_shortcut_binding_marks (username, binding, updated_at, origin_node_id)
+      SELECT username, binding, updated_at, origin_node_id FROM canvas_shortcuts;
+    INSERT OR IGNORE INTO canvas_shortcut_conversation_marks (username, project_id, engine, session_id, updated_at, origin_node_id)
+      SELECT username, project_id, engine, session_id, updated_at, origin_node_id FROM canvas_shortcuts;`);
+  const retired = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'canvas_shortcut_tombstones'").get();
+  if (!retired) return;
+  db.exec(`INSERT OR IGNORE INTO canvas_shortcut_binding_marks (username, binding, updated_at, origin_node_id)
+      SELECT username, binding, updated_at, origin_node_id FROM canvas_shortcut_tombstones;
+    DROP TABLE canvas_shortcut_tombstones;`);
 }
 
 function shortcutDatabase(): DatabaseSync {
@@ -119,11 +134,14 @@ interface WriteStamp {
   originNodeId: string;
 }
 
-let lastIssuedAt = 0;
-
-function nextStamp(originNodeId: string): WriteStamp {
-  lastIssuedAt = Math.max(Date.now(), lastIssuedAt + 1);
-  return { updatedAt: new Date(lastIssuedAt).toISOString(), originNodeId };
+/** The clock is persisted, not just remembered: a restart inside the same millisecond,
+ * or a clock that steps back, must never let this node issue a stamp twice. */
+function nextStamp(db: DatabaseSync, originNodeId: string): WriteStamp {
+  const previous = (db.prepare("SELECT last_issued_at FROM canvas_shortcut_clock WHERE singleton = 1").get() as { last_issued_at: number } | undefined)?.last_issued_at ?? 0;
+  const issued = Math.max(Date.now(), previous + 1);
+  db.prepare(`INSERT INTO canvas_shortcut_clock (singleton, last_issued_at) VALUES (1, ?)
+    ON CONFLICT(singleton) DO UPDATE SET last_issued_at = excluded.last_issued_at`).run(issued);
+  return { updatedAt: new Date(issued).toISOString(), originNodeId };
 }
 
 function wins(candidate: WriteStamp, held: WriteStamp | undefined): boolean {
@@ -160,48 +178,49 @@ function markConversation(db: DatabaseSync, username: string, target: CanvasShor
 }
 
 /** Binds one key to one conversation, displacing whatever either of them held. */
+function claimBinding(db: DatabaseSync, username: string, binding: string, stamp: WriteStamp): boolean {
+  if (!wins(stamp, bindingMark(db, username, binding))) return false;
+  markBinding(db, username, binding, stamp);
+  // Advancing a register always clears what it made stale, even when the write goes on
+  // to lose its other register. Leaving the row behind is what made the result depend
+  // on the order the events arrived in.
+  db.prepare("DELETE FROM canvas_shortcuts WHERE username = ? AND binding = ?").run(username, binding);
+  return true;
+}
+
+function claimConversation(db: DatabaseSync, username: string, target: CanvasShortcutTarget, stamp: WriteStamp): boolean {
+  if (!wins(stamp, conversationMark(db, username, target))) return false;
+  markConversation(db, username, target, stamp);
+  db.prepare("DELETE FROM canvas_shortcuts WHERE username = ? AND project_id = ? AND engine = ? AND session_id = ?")
+    .run(username, target.projectId, target.engine, target.sessionId);
+  return true;
+}
+
 function applyAssignment(db: DatabaseSync, username: string, binding: string, target: CanvasShortcutTarget, stamp: WriteStamp): void {
-  const keyIsFree = wins(stamp, bindingMark(db, username, binding));
-  const conversationIsFree = wins(stamp, conversationMark(db, username, target));
-  // The registers move even when the write loses one of them, or an event delivered
-  // out of order would look unopposed to a node that had already discarded it.
-  if (keyIsFree) markBinding(db, username, binding, stamp);
-  if (conversationIsFree) markConversation(db, username, target, stamp);
-  if (!keyIsFree || !conversationIsFree) return;
-  db.prepare("DELETE FROM canvas_shortcuts WHERE username = ? AND (binding = ? OR (project_id = ? AND engine = ? AND session_id = ?))")
-    .run(username, binding, target.projectId, target.engine, target.sessionId);
+  const claimedKey = claimBinding(db, username, binding, stamp);
+  const claimedConversation = claimConversation(db, username, target, stamp);
+  if (!claimedKey || !claimedConversation) return;
   db.prepare(`INSERT INTO canvas_shortcuts (username, binding, project_id, engine, session_id, updated_at, origin_node_id)
     VALUES (?, ?, ?, ?, ?, ?, ?)`)
     .run(username, binding, target.projectId, target.engine, target.sessionId, stamp.updatedAt, stamp.originNodeId);
 }
 
-/** Frees a key, and the conversation it held when the caller knows which one. */
-function applyRelease(db: DatabaseSync, username: string, binding: string, target: CanvasShortcutTarget | null, stamp: WriteStamp): void {
-  if (wins(stamp, bindingMark(db, username, binding))) {
-    markBinding(db, username, binding, stamp);
-    db.prepare("DELETE FROM canvas_shortcuts WHERE username = ? AND binding = ?").run(username, binding);
-  }
-  if (!target || !wins(stamp, conversationMark(db, username, target))) return;
-  markConversation(db, username, target, stamp);
-  db.prepare("DELETE FROM canvas_shortcuts WHERE username = ? AND project_id = ? AND engine = ? AND session_id = ?")
-    .run(username, target.projectId, target.engine, target.sessionId);
+/** Frees a key, a conversation, or both - whichever the release names. */
+function applyRelease(db: DatabaseSync, username: string, binding: string | null, target: CanvasShortcutTarget | null, stamp: WriteStamp): void {
+  if (binding) claimBinding(db, username, binding, stamp);
+  if (target) claimConversation(db, username, target, stamp);
 }
 
-function publish(db: DatabaseSync, operation: "upsert" | "delete", username: string, binding: string, target: CanvasShortcutTarget | null, stamp: WriteStamp): void {
+/** A release may name only the conversation, so the key is not always the identity. */
+function publish(db: DatabaseSync, operation: "upsert" | "delete", username: string, binding: string | null, target: CanvasShortcutTarget | null, stamp: WriteStamp): void {
+  const subject = binding ?? `${target!.projectId}/${target!.engine}/${target!.sessionId}`;
   enqueueReplicationEvent(db, {
     originNodeId: stamp.originNodeId,
     entityType: "canvas.shortcut",
-    entityKey: `${username}:${binding}`,
+    entityKey: `${username}:${subject}`,
     operation,
-    payload: { username, binding, ...(target ?? {}), updatedAt: stamp.updatedAt, originNodeId: stamp.originNodeId },
+    payload: { username, ...(binding ? { binding } : {}), ...(target ?? {}), updatedAt: stamp.updatedAt, originNodeId: stamp.originNodeId },
   });
-}
-
-function heldBindings(db: DatabaseSync, username: string, target: CanvasShortcutTarget): string[] {
-  const rows = db
-    .prepare("SELECT binding FROM canvas_shortcuts WHERE username = ? AND project_id = ? AND engine = ? AND session_id = ?")
-    .all(username, target.projectId, target.engine, target.sessionId) as unknown as Array<{ binding: string }>;
-  return rows.map((row) => row.binding);
 }
 
 export function setCanvasShortcut(username: string, binding: string, target: CanvasShortcutTarget, originNodeId: string): CanvasShortcut[] {
@@ -210,7 +229,7 @@ export function setCanvasShortcut(username: string, binding: string, target: Can
   const db = shortcutDatabase();
   db.exec("BEGIN IMMEDIATE");
   try {
-    const stamp = nextStamp(originNodeId);
+    const stamp = nextStamp(db, originNodeId);
     applyAssignment(db, username, key, target, stamp);
     publish(db, "upsert", username, key, target, stamp);
     db.exec("COMMIT");
@@ -229,7 +248,7 @@ export function clearCanvasShortcut(username: string, binding: string, originNod
     const held = db.prepare("SELECT project_id, engine, session_id FROM canvas_shortcuts WHERE username = ? AND binding = ?")
       .get(username, key) as { project_id: string; engine: ConversationEngine; session_id: string } | undefined;
     const target = held ? { projectId: held.project_id, engine: held.engine, sessionId: held.session_id } : null;
-    const stamp = nextStamp(originNodeId);
+    const stamp = nextStamp(db, originNodeId);
     applyRelease(db, username, key, target, stamp);
     publish(db, "delete", username, key, target, stamp);
     db.exec("COMMIT");
@@ -246,12 +265,12 @@ export function releaseCanvasShortcuts(username: string, targets: CanvasShortcut
   const db = shortcutDatabase();
   db.exec("BEGIN IMMEDIATE");
   try {
+    // Named by conversation, never by key: this node may not have heard yet that
+    // another one bound it, and the release still has to overtake that assignment.
     for (const target of targets) {
-      for (const binding of heldBindings(db, username, target)) {
-        const stamp = nextStamp(originNodeId);
-        applyRelease(db, username, binding, target, stamp);
-        publish(db, "delete", username, binding, target, stamp);
-      }
+      const stamp = nextStamp(db, originNodeId);
+      applyRelease(db, username, null, target, stamp);
+      publish(db, "delete", username, null, target, stamp);
     }
     db.exec("COMMIT");
   } catch (error) {
@@ -270,13 +289,15 @@ function shortcutPayload(event: ReplicationEvent): ShortcutPayload {
   const valid = event.entityType === "canvas.shortcut" && ["upsert", "delete"].includes(event.operation)
     && value && typeof value === "object" && !Array.isArray(value)
     && typeof value.username === "string" && value.username.length > 0
-    && typeof value.binding === "string" && /^[0-9A-Z]$/.test(value.binding)
+    && (value.binding === undefined || (typeof value.binding === "string" && /^[0-9A-Z]$/.test(value.binding)))
     && typeof value.updatedAt === "string" && Number.isFinite(Date.parse(value.updatedAt))
     && typeof value.originNodeId === "string" && value.originNodeId === event.originNodeId
-    && event.entityKey === `${value.username}:${value.binding}`
-    // A release names its conversation when the releasing node knew it, and cannot
-    // name a partial one: an assignment always must.
-    && (named || (!assignment && value.projectId === undefined && value.engine === undefined && value.sessionId === undefined));
+    && event.entityKey === `${value.username}:${value.binding ?? `${value.projectId}/${value.engine}/${value.sessionId}`}`
+    // A release names a key, a conversation, or both, and never a partial conversation.
+    // An assignment must always name both.
+    && (assignment
+      ? named && typeof value.binding === "string"
+      : (named || (value.projectId === undefined && value.engine === undefined && value.sessionId === undefined && typeof value.binding === "string")));
   if (!valid) throw new Error("Malformed canvas shortcut replication payload");
   return value as ShortcutPayload;
 }
@@ -288,6 +309,6 @@ export function applyCanvasShortcutEvent(db: DatabaseSync, event: ReplicationEve
   const target = payload.projectId
     ? { projectId: resolveProjectAlias(db, payload.projectId), engine: payload.engine!, sessionId: payload.sessionId! }
     : null;
-  if (event.operation === "delete") applyRelease(db, payload.username, payload.binding, target, stamp);
-  else applyAssignment(db, payload.username, payload.binding, target!, stamp);
+  if (event.operation === "delete") applyRelease(db, payload.username, payload.binding ?? null, target, stamp);
+  else applyAssignment(db, payload.username, payload.binding!, target!, stamp);
 }
