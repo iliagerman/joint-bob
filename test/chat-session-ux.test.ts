@@ -97,8 +97,8 @@ test("switching projects discards in-flight responses from the previous project"
 
   // refreshSessionsQuietly and loadTasks capture the project id instead of
   // re-reading it after the await.
-  assert.match(app, /async function refreshSessionsQuietly\(\) \{\s*const projectId = state\.activeProjectId;/);
-  assert.match(app, /async function loadTasks\(\) \{\s*const projectId = state\.activeProjectId;/);
+  assert.match(app, /async function refreshSessionsQuietly\(\) \{\s*\/\/ The pane frame hosts one conversation[\s\S]*?if \(state\.canvasPaneMode\) return;\s*const projectId = state\.activeProjectId;/);
+  assert.match(app, /async function loadTasks\(\) \{\s*if \(state\.canvasPaneMode\) return;\s*const projectId = state\.activeProjectId;/);
   assert.doesNotMatch(app, /encodeURIComponent\(state\.activeProjectId\)\}\/sessions`\)/);
   assert.doesNotMatch(app, /encodeURIComponent\(state\.activeProjectId\)\}\/tasks`\)/);
 });

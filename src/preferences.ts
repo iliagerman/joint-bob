@@ -11,12 +11,40 @@ export interface RecentSession {
   openedAt: string;
 }
 
+export interface CanvasPanePreference {
+  kind: "pane";
+  id: string;
+  projectId: string;
+  sessionPath: string;
+  sessionId: string;
+  executionNodeId: string | null;
+}
+
+export interface CanvasSplitPreference {
+  kind: "split";
+  id: string;
+  axis: "row" | "column";
+  ratio: number;
+  first: CanvasNodePreference;
+  second: CanvasNodePreference;
+}
+
+export type CanvasNodePreference = CanvasPanePreference | CanvasSplitPreference;
+
+export interface CanvasLayoutPreference {
+  version: 1;
+  root: CanvasNodePreference | null;
+  focusedPaneId: string | null;
+}
+
+const emptyCanvasLayout = (): CanvasLayoutPreference => ({ version: 1, root: null, focusedPaneId: null });
+
 export interface UserPreferences {
   theme: "light" | "dark" | null;
   notificationsEnabled: boolean;
   completionSound: "off" | "chime" | "bell";
   installDismissed: boolean;
-  mobileView: "projects" | "sessions" | "board" | "chat";
+  mobileView: "projects" | "sessions" | "board" | "chat" | "canvas";
   activeProjectId: string | null;
   activeSessionPath: string | null;
   activeSessionId: string | null;
@@ -28,6 +56,7 @@ export interface UserPreferences {
   chatsPanelCollapsed: boolean;
   recentSessions: RecentSession[];
   lastSeenVersion: string | null;
+  canvasLayout: CanvasLayoutPreference;
 }
 
 interface PreferenceRow {
@@ -47,6 +76,7 @@ interface PreferenceRow {
   chats_panel_collapsed: number;
   recent_sessions: string;
   last_seen_version: string | null;
+  canvas_layout: string;
 }
 
 const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
@@ -75,6 +105,7 @@ function preferencesDatabase(): DatabaseSync {
       pinned_session_paths TEXT NOT NULL DEFAULT '[]',
       projects_panel_collapsed INTEGER NOT NULL DEFAULT 0,
       chats_panel_collapsed INTEGER NOT NULL DEFAULT 0,
+      canvas_layout TEXT NOT NULL DEFAULT '{"version":1,"root":null,"focusedPaneId":null}',
       updated_at TEXT NOT NULL
     );
   `);
@@ -88,6 +119,7 @@ function preferencesDatabase(): DatabaseSync {
   if (!columns.some((column) => column.name === "chats_panel_collapsed")) database.exec("ALTER TABLE user_preferences ADD COLUMN chats_panel_collapsed INTEGER NOT NULL DEFAULT 0");
   if (!columns.some((column) => column.name === "recent_sessions")) database.exec("ALTER TABLE user_preferences ADD COLUMN recent_sessions TEXT NOT NULL DEFAULT '[]'");
   if (!columns.some((column) => column.name === "last_seen_version")) database.exec("ALTER TABLE user_preferences ADD COLUMN last_seen_version TEXT");
+  if (!columns.some((column) => column.name === "canvas_layout")) database.exec("ALTER TABLE user_preferences ADD COLUMN canvas_layout TEXT NOT NULL DEFAULT '{\"version\":1,\"root\":null,\"focusedPaneId\":null}'");
   return database;
 }
 
@@ -142,6 +174,48 @@ function parseRecentSessions(value: string): RecentSession[] {
   }
 }
 
+/** A hand-edited canvas row must degrade to an empty canvas, never take the node down. */
+function parseCanvasLayout(value: string): CanvasLayoutPreference {
+  try {
+    const parsed = JSON.parse(value) as CanvasLayoutPreference;
+    const ids = new Set<string>();
+    const identities = new Set<string>();
+    const paneIds = new Set<string>();
+    let paneCount = 0;
+    const walk = (node: unknown, depth: number): CanvasNodePreference | null => {
+      if (!node || typeof node !== "object" || depth > 8) return null;
+      const item = node as Record<string, unknown>;
+      if (typeof item.id !== "string" || !item.id || item.id.length > 200 || ids.has(item.id)) return null;
+      ids.add(item.id);
+      if (item.kind === "pane") {
+        if (typeof item.projectId !== "string" || !item.projectId || item.projectId.length > 120
+          || typeof item.sessionPath !== "string" || !item.sessionPath || item.sessionPath.length > 2000
+          || typeof item.sessionId !== "string" || !item.sessionId || item.sessionId.length > 200
+ || !(item.executionNodeId === null || (typeof item.executionNodeId === "string" && item.executionNodeId.length <= 100))) return null;
+        const identity = `${item.projectId}\0${item.sessionId}`;
+        const pathIdentity = `${item.projectId}\0${canonicalSessionPath(item.sessionPath)}`;
+        if (identities.has(identity) || identities.has(pathIdentity)) return null;
+        identities.add(identity);
+        identities.add(pathIdentity);
+        paneIds.add(item.id);
+        paneCount += 1;
+        return { kind: "pane", id: item.id, projectId: item.projectId, sessionPath: canonicalSessionPath(item.sessionPath), sessionId: item.sessionId, executionNodeId: item.executionNodeId };
+      }
+      if (item.kind !== "split" || (item.axis !== "row" && item.axis !== "column")
+        || typeof item.ratio !== "number" || !Number.isFinite(item.ratio) || item.ratio < 0.15 || item.ratio > 0.85) return null;
+      const first = walk(item.first, depth + 1);
+      const second = walk(item.second, depth + 1);
+      return first && second ? { kind: "split", id: item.id, axis: item.axis, ratio: item.ratio, first, second } : null;
+    };
+    const root = parsed.root === null ? null : walk(parsed.root, 1);
+    if (parsed.version !== 1 || paneCount > 8 || (parsed.root !== null && !root)
+      || !(parsed.focusedPaneId === null || (typeof parsed.focusedPaneId === "string" && paneIds.has(parsed.focusedPaneId)))) return emptyCanvasLayout();
+    return { version: 1, root, focusedPaneId: parsed.focusedPaneId ?? null };
+  } catch {
+    return emptyCanvasLayout();
+  }
+}
+
 function preferencesFromRow(row: PreferenceRow): UserPreferences {
   return {
     theme: row.theme,
@@ -160,6 +234,7 @@ function preferencesFromRow(row: PreferenceRow): UserPreferences {
     chatsPanelCollapsed: row.chats_panel_collapsed === 1,
     recentSessions: parseRecentSessions(row.recent_sessions),
     lastSeenVersion: row.last_seen_version,
+    canvasLayout: parseCanvasLayout(row.canvas_layout),
   };
 }
 
@@ -168,7 +243,7 @@ function currentPreferences(userId: string): UserPreferences {
     SELECT theme, notifications_enabled, completion_sound, install_dismissed, mobile_view,
       active_project_id, active_session_path, active_session_id, active_node_id, legacy_migrated,
       pinned_project_ids, pinned_session_paths, projects_panel_collapsed, chats_panel_collapsed,
-      recent_sessions, last_seen_version
+      recent_sessions, last_seen_version, canvas_layout
     FROM user_preferences WHERE user_id = ?
   `).get(userId) as unknown as PreferenceRow;
   return preferencesFromRow(row);
@@ -199,6 +274,7 @@ export function updateUserPreferences(userId: string, partial: Partial<UserPrefe
     ["chatsPanelCollapsed", "chats_panel_collapsed", (value) => value ? 1 : 0],
     ["recentSessions", "recent_sessions", (value) => JSON.stringify(canonicalRecentSessions(value as RecentSession[]))],
     ["lastSeenVersion", "last_seen_version", (value) => value as string | null],
+    ["canvasLayout", "canvas_layout", (value) => JSON.stringify(value as CanvasLayoutPreference)],
   ];
   for (const [property, column, serialize] of fields) {
     if (partial[property] === undefined) continue;

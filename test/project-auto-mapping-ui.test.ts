@@ -48,7 +48,7 @@ test("managed home project creation and imported mappings use node folder picker
   assert.ok(app.includes('status.state === "error" && status.message ? `Error: ${status.message}`'));
   assert.match(app, /refreshProjectsQuietly/);
   assert.match(app, /10_000/);
-  assert.match(app, /if \(state\.authenticated\) startProjectSyncPolling\(\)/);
+  assert.match(app, /if \(state\.authenticated && !state\.canvasPaneMode\) startProjectSyncPolling\(\)/);
   assert.match(server, /app\.post\("\/api\/projects\/:projectId\/sync\/rescan"/);
   assert.match(server, /await rescanSyncthingFolder\(project\.syncFolderId\)/);
   assert.match(app, /project-rescan-button/);

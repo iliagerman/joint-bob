@@ -1,8 +1,19 @@
 import { renderMarkdown } from "./markdown.js";
 import { renderBoard } from "./board.js";
+import { createConversationCanvas } from "./canvas.js";
+import { emptyCanvasLayout } from "./canvas-layout.js";
 import { dispatchComposerInput, executeComposerCommand, LOCAL_COMMANDS } from "./composer-commands.js";
 
+const bootParams = new URLSearchParams(location.search);
 const state = {
+  // A canvas pane runs inside the canvas parent's iframe: one conversation, no
+  // navigation, and no preference writes that would fight the parent app.
+  canvasPaneMode: bootParams.get("canvasPane") === "1",
+  initialSessionId: bootParams.get("sessionId"),
+  initialNodeId: bootParams.get("nodeId"),
+  canvasLayout: emptyCanvasLayout(),
+  canvasController: null,
+  canvasLayoutSave: null,
   projects: [],
   sessions: [],
   skills: [],
@@ -103,8 +114,8 @@ const state = {
   lastTurnStartedAt: 0,
   csrfToken: "",
   preferencesLoaded: false,
-  initialProjectId: new URLSearchParams(location.search).get("projectId"),
-  initialSessionPath: new URLSearchParams(location.search).get("sessionPath"),
+  initialProjectId: bootParams.get("projectId"),
+  initialSessionPath: bootParams.get("sessionPath"),
   fileEditor: { requestedPath: null, path: null, viewUrl: null, downloadUrl: null, contentUrl: null, version: null, original: "", loading: false, saving: false },
 };
 
@@ -323,6 +334,9 @@ const elements = {
   backToSessionsButton: document.querySelector("#backToSessionsButton"),
   taskBacklinkButton: document.querySelector("#taskBacklinkButton"),
   openBoardButton: document.querySelector("#openBoardButton"),
+  openCanvasButton: document.querySelector("#openCanvasButton"),
+  canvasAddButton: document.querySelector("#canvasAddButton"),
+  canvasBackButton: document.querySelector("#canvasBackButton"),
   chatToolbar: document.querySelector("#chatToolbar"),
   chatMoreMenu: document.querySelector("#chatMoreMenu"),
   chatNodeSelect: document.querySelector("#chatNodeSelect"),
@@ -443,6 +457,7 @@ async function savePreferences(partial) {
 }
 
 function savePreferencesInBackground(partial) {
+  if (state.canvasPaneMode) return;
   void savePreferences(partial).catch((error) => console.warn("Could not save preferences", error));
 }
 
@@ -568,24 +583,39 @@ async function initializeApplication() {
   setPanelCollapsed("chats", Boolean(preferences.chatsPanelCollapsed));
   syncNotifyButton();
   updateInstallButton();
-  setMobileView(preferences.mobileView);
+  state.canvasLayout = preferences.canvasLayout || emptyCanvasLayout();
+  if (!state.canvasPaneMode) {
+    state.canvasController?.setLayout(state.canvasLayout);
+    setMobileView(preferences.mobileView);
+  }
+  if (state.canvasPaneMode) {
+    if (state.initialProjectId) state.activeProjectId = state.initialProjectId;
+    if (state.initialSessionPath) state.activeSessionPath = state.initialSessionPath;
+    if (state.initialSessionId) state.activeSessionId = state.initialSessionId;
+    if (state.initialNodeId) state.activeNodeId = state.initialNodeId;
+    setMobileView("chat", false);
+  }
   revealApplication();
   await loadWorkspaces();
   await loadProjects();
-  void api("/api/cluster/projects/discover", { method: "POST" })
-    .then(async (discovery) => {
-      await loadWorkspaces();
-      await refreshProjectsQuietly();
-      if (discovery.pending.length) openProjectImportMapping(discovery.pending);
-    })
-    .catch((error) => console.warn("Could not discover peer projects", error));
-  setMobileView(preferences.mobileView);
+  if (!state.canvasPaneMode) {
+    void api("/api/cluster/projects/discover", { method: "POST" })
+      .then(async (discovery) => {
+        await loadWorkspaces();
+        await refreshProjectsQuietly();
+        if (discovery.pending.length) openProjectImportMapping(discovery.pending);
+      })
+      .catch((error) => console.warn("Could not discover peer projects", error));
+  }
+  if (!state.canvasPaneMode) setMobileView(preferences.mobileView);
   state.preferencesLoaded = true;
-  void showWhatsNew(preferences.lastSeenVersion).catch((error) => console.warn("Could not load the changelog", error));
+  if (!state.canvasPaneMode) {
+    void showWhatsNew(preferences.lastSeenVersion).catch((error) => console.warn("Could not load the changelog", error));
+  }
   if (state.initialProjectId || state.initialSessionPath) {
     savePreferencesInBackground({ activeProjectId: state.activeProjectId, activeSessionPath: state.activeSessionPath, activeSessionId: state.activeSessionId });
   }
-  if (state.authenticated) startProjectSyncPolling();
+  if (state.authenticated && !state.canvasPaneMode) startProjectSyncPolling();
 }
 
 async function submitLogin(event) {
@@ -933,6 +963,7 @@ async function enableNotifications() {
 // Conversations enter review in every project, not only the open one, so a device subscribes once
 // for all of them and stays subscribed before any project is selected.
 async function subscribeToPush() {
+  if (state.canvasPaneMode) return;
   if (!state.notificationsEnabled || !notificationPermissionGranted()) return;
   const registration = await navigator.serviceWorker.ready;
   const existing = await registration.pushManager.getSubscription();
@@ -1057,19 +1088,32 @@ function setPanelCollapsed(panel, collapsed) {
 }
 
 function setMobileView(view, updateHistory = true) {
+  // A pane frame hosts exactly one conversation; it never navigates elsewhere.
+  if (state.canvasPaneMode) {
+    document.body.classList.remove("view-projects", "view-sessions", "view-board", "view-chat", "view-canvas");
+    document.body.classList.add("view-chat");
+    return;
+  }
+  // Canvas is a desktop surface; a narrow viewport (or a stale persisted view)
+  // falls back to the conversation list, or the project list without one.
+  if (view === "canvas" && matchMedia("(max-width: 1023px)").matches) {
+    view = state.activeProjectId ? "sessions" : "projects";
+  }
   const currentView = history.state?.mobileView;
   if (state.preferencesLoaded) savePreferencesInBackground({ mobileView: view });
 
-  document.body.classList.remove("view-projects", "view-sessions", "view-board", "view-chat");
+  document.body.classList.remove("view-projects", "view-sessions", "view-board", "view-chat", "view-canvas");
   document.body.classList.add(`view-${view}`);
-  for (const [name, button] of [
+  for (const [name, navButton] of [
     ["projects", elements.navProjectsButton],
     ["sessions", elements.navSessionsButton],
     ["board", elements.navBoardButton],
     ["chat", elements.navChatButton],
   ]) {
-    button.classList.toggle("active", name === view);
+    navButton.classList.toggle("active", name === view);
   }
+  if (view === "canvas") state.canvasController?.activate().catch((error) => toast(error.message, 8000));
+  else state.canvasController?.deactivate();
   if (updateHistory && currentView !== view) history.pushState({ ...history.state, mobileView: view }, "");
 }
 
@@ -3710,6 +3754,8 @@ async function loadProjects() {
 
   if (state.initialProjectId) state.activeProjectId = state.initialProjectId;
   if (state.initialSessionPath) state.activeSessionPath = state.initialSessionPath;
+  if (state.initialSessionId) state.activeSessionId = state.initialSessionId;
+  if (state.initialNodeId) state.activeNodeId = state.initialNodeId;
 
   if (state.activeProjectId && !state.projects.some((project) => project.id === state.activeProjectId)) {
     state.activeProjectId = null;
@@ -3778,9 +3824,11 @@ async function selectProject(projectId, shouldRender = true, preserveSession = f
   state.sessions = body.sessions;
   if (shouldRender) renderProjects();
   renderSessions();
-  ensureWatchSocket();
-  subscribeToPush().catch((error) => console.warn("Push subscription failed", error));
-  loadTasks().catch((error) => console.warn(error));
+  if (!state.canvasPaneMode) {
+    ensureWatchSocket();
+    subscribeToPush().catch((error) => console.warn("Push subscription failed", error));
+    loadTasks().catch((error) => console.warn(error));
+  }
 }
 
 function socketOpen() {
@@ -4145,6 +4193,8 @@ function scheduleAgentRunPoll() {
 }
 
 async function refreshSessionsQuietly() {
+  // The pane frame hosts one conversation; parent-shell list polling stays off.
+  if (state.canvasPaneMode) return;
   const projectId = state.activeProjectId;
   if (!projectId || state.sessionsRefreshing) return;
   state.sessionsRefreshing = true;
@@ -4219,6 +4269,7 @@ function focusTaskCard(taskId) {
 }
 
 async function loadTasks() {
+  if (state.canvasPaneMode) return;
   const projectId = state.activeProjectId;
   if (!projectId) {
     state.tasks = [];
@@ -4533,6 +4584,9 @@ function closeWatchSocket() {
 }
 
 function ensureWatchSocket() {
+  // One watch socket per tab; a pane frame's tab is the canvas parent's document,
+  // and panes never render the lists the watch socket feeds.
+  if (state.canvasPaneMode) return;
   if (!state.activeProjectId) {
     closeWatchSocket();
     return;
@@ -4599,6 +4653,9 @@ elements.openBoardButton.addEventListener("click", () => {
   renderBoardView();
   setMobileView("board");
 });
+elements.openCanvasButton.addEventListener("click", () => setMobileView("canvas"));
+elements.canvasAddButton.addEventListener("click", () => state.canvasController?.openPicker());
+elements.canvasBackButton.addEventListener("click", () => setMobileView("sessions"));
 elements.cancelProjectRenameButton.addEventListener("click", () => elements.projectRenameDialog.close());
 elements.projectRenameForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -5786,6 +5843,29 @@ if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("/sw.js").catch((error) => console.warn("Service worker registration failed", error));
   });
 }
+
+if (state.canvasPaneMode) document.body.classList.add("canvas-pane-mode");
+if (!state.canvasPaneMode) {
+  state.canvasController = createConversationCanvas({
+    api,
+    getProjects: () => state.projects,
+    saveLayout: (next) => {
+      state.canvasLayout = next;
+      // Serialize saves: rapid resizes must persist in order, newest last.
+      state.canvasLayoutSave = (state.canvasLayoutSave ?? Promise.resolve())
+        .catch(() => {})
+        .then(() => savePreferences({ canvasLayout: next }))
+        .catch((error) => toast(`Could not save the canvas layout: ${error.message}`, 8000));
+    },
+    showMessage: (message) => toast(message, 8000),
+  });
+}
+const desktopViewportQuery = matchMedia("(min-width: 1024px)");
+desktopViewportQuery.addEventListener("change", (event) => {
+  if (!event.matches && document.body.classList.contains("view-canvas")) {
+    setMobileView(state.activeProjectId ? "sessions" : "projects");
+  }
+});
 
 setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
 syncNotifyButton();

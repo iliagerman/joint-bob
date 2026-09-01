@@ -461,12 +461,72 @@ const settingsSchema = z.object({
 const auditQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional().default(100),
 });
+const canvasPanePreferenceSchema = z.object({
+  kind: z.literal("pane"),
+  id: z.string().min(1).max(200),
+  projectId: z.string().trim().min(1).max(120),
+  sessionPath: z.string().trim().min(1).max(2000),
+  sessionId: z.string().trim().min(1).max(200),
+  executionNodeId: z.string().uuid().nullable(),
+}).strict();
+interface CanvasSplitInput {
+  kind: "split";
+  id: string;
+  axis: "row" | "column";
+  ratio: number;
+  first: z.infer<typeof canvasPanePreferenceSchema> | CanvasSplitInput;
+  second: z.infer<typeof canvasPanePreferenceSchema> | CanvasSplitInput;
+}
+const canvasNodePreferenceSchema: z.ZodType<z.infer<typeof canvasPanePreferenceSchema> | CanvasSplitInput> = z.lazy(() => z.union([
+  canvasPanePreferenceSchema,
+  z.object({
+    kind: z.literal("split"),
+    id: z.string().min(1).max(200),
+    axis: z.enum(["row", "column"]),
+    ratio: z.number().finite().min(0.15).max(0.85),
+    first: canvasNodePreferenceSchema,
+    second: canvasNodePreferenceSchema,
+  }).strict(),
+]));
+const canvasLayoutPreferenceSchema = z.object({
+  version: z.literal(1),
+  root: canvasNodePreferenceSchema.nullable(),
+  focusedPaneId: z.string().min(1).max(200).nullable(),
+}).strict().superRefine((layout, context) => {
+  const ids = new Set<string>();
+  const identities = new Set<string>();
+  const paneIds = new Set<string>();
+  let paneCount = 0;
+  const walk = (node: z.infer<typeof canvasPanePreferenceSchema> | CanvasSplitInput, depth: number): void => {
+    if (ids.has(node.id)) context.addIssue({ code: z.ZodIssueCode.custom, message: "Canvas node ids must be unique" });
+    ids.add(node.id);
+    if (node.kind === "pane") {
+      paneCount += 1;
+      paneIds.add(node.id);
+      const identity = `${node.projectId}\0${node.sessionId}`;
+      const pathIdentity = `${node.projectId}\0${node.sessionPath.replace(/\.sync-conflict-[^/\\]+(?=\.jsonl$)/, "")}`;
+      if (identities.has(identity) || identities.has(pathIdentity)) context.addIssue({ code: z.ZodIssueCode.custom, message: "A conversation can appear on the canvas only once" });
+      identities.add(identity);
+      identities.add(pathIdentity);
+      return;
+    }
+    if (depth >= 8) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "Canvas splits cannot nest deeper than eight levels" });
+      return;
+    }
+    walk(node.first, depth + 1);
+    walk(node.second, depth + 1);
+  };
+  if (layout.root) walk(layout.root, 1);
+  if (paneCount > 8) context.addIssue({ code: z.ZodIssueCode.custom, message: "The canvas holds at most eight conversations" });
+  if (layout.focusedPaneId && !paneIds.has(layout.focusedPaneId)) context.addIssue({ code: z.ZodIssueCode.custom, message: "Focused canvas pane is unknown" });
+});
 const userPreferencesSchema = z.object({
   theme: z.enum(["light", "dark"]).nullable().optional(),
   notificationsEnabled: z.boolean().optional(),
   completionSound: z.enum(["off", "chime", "bell"]).optional(),
   installDismissed: z.boolean().optional(),
-  mobileView: z.enum(["projects", "sessions", "board", "chat"]).optional(),
+  mobileView: z.enum(["projects", "sessions", "board", "chat", "canvas"]).optional(),
   activeProjectId: z.string().trim().min(1).max(120).nullable().optional(),
   activeSessionPath: z.string().trim().min(1).max(2000).nullable().optional(),
   activeSessionId: z.string().trim().min(1).max(200).nullable().optional(),
@@ -483,6 +543,7 @@ const userPreferencesSchema = z.object({
     title: z.string().max(300),
     openedAt: z.string().max(40),
   })).max(50).optional(),
+  canvasLayout: canvasLayoutPreferenceSchema.optional(),
 }).strict();
 const socketMessageSchema = z.object({
   type: z.string().max(40),
@@ -548,10 +609,12 @@ function prospectiveClusterNode(node: Awaited<ReturnType<typeof getClusterNode>>
   return node.name === name && node.url === url ? node : { ...node, name, url, updatedAt: new Date().toISOString() };
 }
 
-function securityHeaders(_request: Request, response: Response, next: NextFunction): void {
+function securityHeaders(request: Request, response: Response, next: NextFunction): void {
   response.setHeader("Content-Security-Policy", "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; style-src 'self'; script-src 'self'");
   response.setHeader("X-Content-Type-Options", "nosniff");
-  response.setHeader("X-Frame-Options", "DENY");
+  // The canvas embeds the normal chat surface in a same-origin iframe; every other
+  // document stays unframeable.
+  response.setHeader("X-Frame-Options", request.path === "/" && request.query.canvasPane === "1" ? "SAMEORIGIN" : "DENY");
   response.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   response.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   next();
@@ -1003,9 +1066,34 @@ app.get("/api/preferences", (_request, response) => {
   response.json(getUserPreferences(session.userId));
 });
 
+/** Iterative bound checked before the recursive Zod schema, so a pathologically
+ * nested layout is rejected as a 400 instead of exhausting the parse stack. */
+function canvasLayoutExceedsLimits(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const root = (value as { root?: unknown }).root;
+  if (!root || typeof root !== "object") return false;
+  // 8 panes need at most 7 splits; anything beyond is malformed by construction.
+  const stack: Array<[unknown, number]> = [[root, 0]];
+  let nodes = 0;
+  while (stack.length) {
+    const [node, depth] = stack.pop()!;
+    if (!node || typeof node !== "object") continue;
+    if (++nodes > 15 || depth > 8) return true;
+    // Descend regardless of kind: a malformed kind must not reach the recursive
+    // schema parser and blow the stack before validation can reject it.
+    const item = node as { first?: unknown; second?: unknown };
+    stack.push([item.first, depth + 1], [item.second, depth + 1]);
+  }
+  return false;
+}
+
 app.put("/api/preferences", (request, response, next) => {
   try {
     const session = response.locals.authSession as AuthSession;
+    if (canvasLayoutExceedsLimits((request.body as { canvasLayout?: unknown }).canvasLayout)) {
+      sendError(response, 400, "Canvas layout is too large or too deep");
+      return;
+    }
     response.json(updateUserPreferences(session.userId, userPreferencesSchema.parse(request.body)));
   } catch (error) {
     next(error);

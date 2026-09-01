@@ -24,7 +24,7 @@ test("secret accounts have an accessible node-local UI using authenticated api c
   assert.match(app, /project-secrets-button/);
   for (const testid of ["secret-variable-name-input", "secret-variable-kind-select", "secret-variable-value-input", "secret-variable-remove-button", "secret-account-edit-button", "secret-account-delete-button", "secret-scope-account-checkbox"]) assert.ok(app.includes(testid));
   for (const selector of [".secret-account-list", ".secret-account-row", ".secret-account-meta", ".secret-variable-row", ".secret-scope-list"]) assert.ok(styles.includes(selector));
-  assert.match(worker, /const CACHE_NAME = "joint-bob-v79";/);
+  assert.match(worker, /const CACHE_NAME = "joint-bob-v80";/);
 });
 
 test("every secret provider carries a brand icon in the list, the picker, and the scope dialog", async () => {

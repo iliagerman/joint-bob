@@ -81,6 +81,7 @@
             <p id="projectPath">Create or select a local folder.</p>
           </div>
           <button class="ghost compact" id="openBoardButton" type="button" data-testid="chats-open-board-button">Board</button>
+          <button class="ghost compact" id="openCanvasButton" type="button" aria-label="Open the canvas" title="Canvas" data-testid="chats-open-canvas-button">Canvas</button>
           <button class="ghost icon-button" id="chatsRecentSessionsButton" type="button" data-recent-sessions-open aria-label="Recent conversations" title="Recent conversations" data-testid="chats-recent-sessions-open-button">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" /><path d="M3 4v4h4" /><path d="M12 7.5V12l3.2 1.9" /></svg>
           </button>
@@ -123,6 +124,18 @@
           <button class="primary compact" id="newTaskButton" type="button" disabled data-testid="task-create-button">+ Task</button>
         </header>
         <div class="board-columns" id="boardColumns"></div>
+      </section>
+
+      <section class="panel view-panel canvas" id="canvasPanel" aria-label="Canvas">
+        <header class="panel-bar">
+          <button class="ghost icon-button back-button" id="canvasBackButton" type="button" aria-label="Back to conversations" data-testid="canvas-back-button">‹</button>
+          <div class="panel-title">
+            <h1>Canvas</h1>
+            <p>Existing conversations, side by side</p>
+          </div>
+          <button class="primary compact" id="canvasAddButton" type="button" data-testid="canvas-add-button">+ Add conversation</button>
+        </header>
+        <div class="canvas-root" id="canvasRoot" data-testid="canvas-root"></div>
       </section>
 
       <main class="panel view-panel chat" id="chatPanel" aria-label="Chat with Pi">
@@ -245,6 +258,32 @@
         <button class="primary compact" id="installBannerButton" type="button">Install</button>
       </div>
     </div>
+
+    <dialog id="canvasConversationDialog" data-testid="canvas-conversation-dialog">
+      <form class="dialog-card" method="dialog">
+        <div>
+          <span class="eyebrow">Canvas</span>
+          <h2>Add conversation</h2>
+        </div>
+        <label for="canvasProjectSelect">Project
+          <select id="canvasProjectSelect" data-testid="canvas-project-select"></select>
+        </label>
+        <label for="canvasSessionSearch">Search conversations
+          <input id="canvasSessionSearch" type="search" autocomplete="off" data-testid="canvas-session-search" />
+        </label>
+        <label for="canvasSplitPosition">Place the new pane
+          <select id="canvasSplitPosition" data-testid="canvas-split-position">
+            <option value="right" selected>Right of target</option>
+            <option value="below">Below target</option>
+          </select>
+        </label>
+        <p class="canvas-picker-status" id="canvasPickerStatus" role="status" data-testid="canvas-picker-status"></p>
+        <div class="canvas-session-options" id="canvasSessionOptions" data-testid="canvas-session-options"></div>
+        <div class="dialog-actions">
+          <button class="ghost" type="submit" data-testid="canvas-picker-cancel-button">Cancel</button>
+        </div>
+      </form>
+    </dialog>
 
     <dialog id="loginDialog" data-testid="login-dialog">
       <form class="dialog-card" id="loginForm">

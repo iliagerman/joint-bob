@@ -1449,6 +1449,8 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   #boardPanel { display: none; }
   body.view-board #boardPanel { display: flex; }
   body.view-board #chatPanel { display: none; }
+  body.view-canvas #canvasPanel { display: flex; }
+  body.view-canvas #chatPanel, body.view-canvas #boardPanel { display: none; }
   .panel-bar, .chat-topbar { padding-top: 12px; }
   .board-column { flex: 1 1 0; min-width: 220px; }
   .message.assistant, .message.thinking, .message.tool-output { width: 100%; max-width: 100%; }
@@ -1505,7 +1507,7 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   .panel-bar, .chat-topbar { min-height: 58px; padding: 10px 52px 10px 12px; padding-top: calc(10px + env(safe-area-inset-top, 0px)); }
   .app-menu { display: block; position: fixed; top: calc(18px + env(safe-area-inset-top, 0px)); right: 16px; z-index: 50; }
   /* The bottom bar already reaches the board and settings, so the header drops both. */
-  #settingsButton, #openBoardButton { display: none; }
+  #settingsButton, #openBoardButton, #openCanvasButton, #canvasPanel { display: none; }
   .messages { padding: 12px; }
   .composer { padding: 6px 8px 10px; }
   .dialog-card { padding: 20px; }
@@ -1848,3 +1850,135 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
    they just recede so the prose reads first. */
 .file-editor-markdown .cm-formatting { color: var(--muted); font-weight: 400; font-size: 1em; opacity: 0.62; }
 @media (max-width: 600px) { .file-editor-card, .file-editor-card:has(#fileEditorView:not([hidden])) { width: calc(100vw - 16px); } .file-editor-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); } .file-editor-card .CodeMirror { min-height: 180px; max-height: 70dvh; } }
+
+/* ---- Canvas: several existing conversations at once ---- */
+/* Panels are display:none until their body view class shows them; the canvas is a
+   desktop surface, so its show rule lives inside the desktop media block only. */
+.canvas-root {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  padding: 10px;
+}
+.canvas-split {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+}
+.canvas-split-row { grid-template-columns: minmax(0, 1fr) 8px minmax(0, 1fr); }
+.canvas-split-column { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 8px minmax(0, 1fr); }
+.canvas-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-ctl);
+  background: var(--panel);
+  overflow: hidden;
+}
+.canvas-pane-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--header);
+}
+.canvas-pane-title {
+  flex: 0 1 auto;
+  max-width: 45%;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.canvas-pane-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.canvas-pane-header button { flex: 0 0 auto; padding: 4px 8px; font-size: 11px; }
+.canvas-pane-body { flex: 1; min-width: 0; min-height: 0; display: flex; }
+.canvas-pane-body > iframe { flex: 1; width: 100%; min-height: 0; border: 0; background: var(--bg); }
+/* Focus keeps the whole tree attached (frames stay alive) and flattens it with
+   display:contents so the focused pane alone fills the canvas. */
+.canvas-root.canvas-focused .canvas-split { display: contents; }
+.canvas-root.canvas-focused .canvas-resize,
+.canvas-root.canvas-focused .canvas-pane:not(.focused) { display: none; }
+.canvas-root.canvas-focused .canvas-pane.focused { flex: 1; }
+.canvas-unavailable {
+  flex: 1;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  padding: 18px;
+  color: var(--muted);
+  text-align: center;
+}
+.canvas-empty {
+  flex: 1;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  text-align: center;
+  color: var(--muted);
+}
+.canvas-empty h2 { color: var(--text); }
+.canvas-resize {
+  min-width: 8px;
+  min-height: 8px;
+  border-radius: 4px;
+  background: var(--line);
+  cursor: col-resize;
+}
+.canvas-split-column > .canvas-resize { cursor: row-resize; }
+.canvas-resize:hover, .canvas-resize:focus-visible { background: var(--accent); outline: none; }
+.canvas-picker-status { min-height: 1.4em; margin: 0; color: var(--muted); font-size: 12px; }
+.canvas-session-options {
+  display: grid;
+  gap: 6px;
+  max-height: min(340px, 44dvh);
+  overflow-y: auto;
+  padding: 3px;
+}
+.canvas-session-option {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-ctl);
+  background: var(--panel);
+  color: var(--text);
+  text-align: left;
+}
+.canvas-session-option span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.canvas-session-option:hover, .canvas-session-option:focus-visible { background: var(--field); }
+.canvas-picker-empty { margin: 0; color: var(--muted); font-size: 12.5px; }
+
+/* A pane frame is the whole page: the shell collapses to the chat panel alone. */
+body.canvas-pane-mode .shell { display: block; height: 100dvh; padding: 0; }
+body.canvas-pane-mode #projectsPanel,
+body.canvas-pane-mode #chatsPanel,
+body.canvas-pane-mode #boardPanel,
+body.canvas-pane-mode #canvasPanel,
+body.canvas-pane-mode .app-menu,
+body.canvas-pane-mode .mobile-nav { display: none !important; }
+body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; border: 0; border-radius: 0; }

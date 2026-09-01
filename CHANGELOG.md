@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 0.4.1 — 2026-09-01
+
+- Added a desktop Canvas view showing up to eight existing conversations side by side in resizable, swappable panes
+- Reused each conversation's exact session in every pane and persisted the layout per node through preferences
+
 ## 0.4.0 — 2026-09-01
 
 - Added one-time cluster join links that any existing member can generate
