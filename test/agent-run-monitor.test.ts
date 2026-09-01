@@ -72,6 +72,7 @@ test("a failed task carries its reason to the session list", async () => {
     { id: "worker", role: "worker", agent: "default", status: "failed", stderr, exitCode: 1 },
     { id: "quiet", role: "worker", agent: "default", status: "failed", stderr: "", exitCode: 137 },
     { id: "silent", role: "worker", agent: "default", status: "failed", stderr: "" },
+    { id: "unstarted", role: "worker", agent: "default", status: "failed", error: "spawn pi ENOENT", stderr: "" },
     { id: "watcher", role: "watcher", agent: "default", status: "succeeded", stderr: "noise on a task that passed" },
   ] }] };
   const server = createServer((_request, reply) => { reply.setHeader("Content-Type", "application/json"); reply.end(JSON.stringify(response)); });
@@ -88,8 +89,10 @@ test("a failed task carries its reason to the session list", async () => {
     // A worker killed without output still says something actionable.
     assert.equal(summary.tasks[1].error, "Worker exited with code 137");
     assert.equal(summary.tasks[2].error, undefined);
+    // A worker that never started has no stderr at all; the dashboard puts that in `error`.
+    assert.equal(summary.tasks[3].error, "spawn pi ENOENT");
     // A task that finished has nothing to explain.
-    assert.equal(summary.tasks[3].error, undefined);
+    assert.equal(summary.tasks[4].error, undefined);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

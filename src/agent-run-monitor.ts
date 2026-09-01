@@ -18,8 +18,9 @@ function stateUrl(value: string): string | undefined {
     return undefined;
   }
 }
-/** The dashboard reports a failure as the worker's raw `stderr`, never as an error field. Node
-    prints a warning banner before the real throw, so the trace is trimmed to the first Error
+/** The dashboard sets `error` only when the worker never started (a failed spawn, an unknown
+    agent). A worker that started and then crashed leaves its reason in raw `stderr`, where Node
+    prints a warning banner before the real throw — so the trace is trimmed to the first Error
     line, and capped: a full stack would otherwise ride in every session list payload. */
 function reason(task: RecordValue | undefined, taskStatus: AgentRunTaskSummary["status"]): string | undefined {
   if (taskStatus !== "failed") return undefined;
@@ -27,7 +28,9 @@ function reason(task: RecordValue | undefined, taskStatus: AgentRunTaskSummary["
   const start = lines.findIndex((line) => /^[\w.]*Error\b/.test(line.trim()));
   const trace = (start === -1 ? lines : lines.slice(start)).join("\n").trim();
   const code = task?.exitCode;
-  const message = trace || (typeof code === "number" && code !== 0 ? `Worker exited with code ${code}` : "");
+  const message = (text(task?.error) ?? "").trim()
+    || trace
+    || (typeof code === "number" && code !== 0 ? `Worker exited with code ${code}` : "");
   return message ? message.slice(0, 500) : undefined;
 }
 function tasks(value: unknown, initial = false): AgentRunTaskSummary[] | undefined {
