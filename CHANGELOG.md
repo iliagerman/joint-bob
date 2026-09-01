@@ -3,16 +3,16 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 0.8.0 — 2026-09-01
 
-- Agent run monitor now correctly reports initialization failures separately from runtime crashes
-- Canvas rows can now be dragged taller to pin their height, allowing the entire canvas to scroll once rows outgrow the panel
-- Added keyboard shortcuts on the canvas to jump to any conversation with Command+Shift and a single digit or letter
-- Canvas shortcuts now work correctly when focus mode is active, and release more reliably when closing conversations
-- Canvas shortcuts now correctly sync across concurrent nodes when multiple Claude sessions share the same canvas
-- Canvas shortcut bindings now stabilize correctly across node restarts and concurrent updates from multiple sessions
-- Canvas shortcut state now repairs and recovers correctly when upgrading from older database versions
-- Messages typed while Claude is responding now survive a page reload or reconnection and continue running when you return
+- Prompts typed while Claude is running now persist across reloads and reconnects
+- Markdown files now preview in a sidebar instead of rendering in-place
+- The View page is now centered with improved readability
+- Pinned conversations now display their own unpin button
+- Canvas rows are now resizable with draggable height separators
+- Canvas panes are individually resizable by width within their row
+- Failed multi-agent task runs now display why the worker failed
+- Canvas keyboard shortcuts now work correctly across concurrent nodes and focus mode changes
 
 ## 0.7.0 — 2026-09-01
 
