@@ -3,10 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 0.7.0 — 2026-09-01
 
-- Moved the canvas button to the project toolbar row for a more compact layout
-- Refreshed conversation activity times when opening the recent sessions dialog so they stay sorted by actual activity across all projects
+- Restructured README with setup options table and added automated agent installation guide to npm package
+- Positioned Canvas button on project search bar for more compact layout
+- Recents dialog now refreshes activity times across all projects when opened
 
 ## 0.6.0 — 2026-09-01
 
