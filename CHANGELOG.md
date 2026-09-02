@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.1.0 — 2026-09-02
 
 - Terminal now opens in a ticket's working folder when a ticket is active
+- Terminal maintains its mode during socket routing to remote nodes
 
 ## 1.0.0 — 2026-09-02
 
