@@ -214,6 +214,7 @@ let ticketWorkspaceSyncRetryAt = 0;
 const configuredTicketWorkspacePeers = new Set<string>();
 let startupReady = true;
 let startupError: Error | undefined;
+let startupReadinessInProgress = false;
 let droppedTestTransferAck = false;
 
 const absolutePathSchema = z.string().trim().min(1).max(1000).refine(path.isAbsolute, "Path must be absolute");
@@ -5362,15 +5363,26 @@ webSocketServer.on("connection", async (socket, request) => {
   });
 });
 
+/* Syncthing is often still binding its API port when the node boots beside it. A
+   single failed attempt used to leave the node "starting" for its whole lifetime,
+   which silently disables peer project discovery, so the attempt repeats from the
+   maintenance interval until it succeeds. Repeats of the same failure stay quiet;
+   the completion line is what says the node recovered. */
 async function initializeStartupReadiness(): Promise<void> {
+  if (startupReady || startupReadinessInProgress) return;
+  startupReadinessInProgress = true;
   try {
     const projects = await listProjects();
     await reconcileSyncthingProjectFolders(projects);
     startupReady = true;
     startupError = undefined;
+    console.log("Startup reconciliation completed.");
   } catch (error) {
-    startupError = error instanceof Error ? error : new Error("Startup reconciliation failed");
-    console.warn("Startup reconciliation failed", startupError);
+    const failure = error instanceof Error ? error : new Error("Startup reconciliation failed");
+    if (startupError?.message !== failure.message) console.warn("Startup reconciliation failed, retrying", failure);
+    startupError = failure;
+  } finally {
+    startupReadinessInProgress = false;
   }
 }
 
@@ -5662,6 +5674,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     discoverMissingPeerProjects().catch((error) => console.warn("Project discovery failed", error));
     setInterval(() => discoverMissingPeerProjects().catch((error) => console.warn("Project discovery failed", error)), 10_000).unref();
     setInterval(() => {
+      void initializeStartupReadiness();
       reconcileTicketWorkspaceSync().catch((error) => console.warn("Ticket workspace sync failed", error));
       flushMembershipOutbox().catch((error) => console.warn("Membership flush failed", error));
       flushReplicationOutbox().catch((error) => console.warn("Replication flush failed", error));

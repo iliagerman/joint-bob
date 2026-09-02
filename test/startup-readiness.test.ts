@@ -12,11 +12,13 @@ import { appVersion } from "../src/changelog.js";
 interface SyncthingFixture {
   port: number;
   release: () => void;
+  recover: () => void;
   requested: Promise<void>;
   close: () => Promise<void>;
 }
 
 async function createSyncthingFixture(fail = false): Promise<SyncthingFixture> {
+  let failing = fail;
   let release = () => {};
   const released = new Promise<void>((resolve) => { release = resolve; });
   let requested = () => {};
@@ -24,7 +26,7 @@ async function createSyncthingFixture(fail = false): Promise<SyncthingFixture> {
   const fake = createServer(async (request, response) => {
     if (request.url?.startsWith("/rest/db/ignores?folder=folder-1") && request.method === "GET") {
       requested();
-      if (fail) { response.statusCode = 500; response.end("failed"); return; }
+      if (failing) { response.statusCode = 500; response.end("failed"); return; }
       await released;
       response.setHeader("Content-Type", "application/json");
       response.end(JSON.stringify({ ignore: [] }));
@@ -44,6 +46,7 @@ async function createSyncthingFixture(fail = false): Promise<SyncthingFixture> {
   return {
     port: address.port,
     release,
+    recover: () => { failing = false; },
     requested: requestReceived,
     close: () => new Promise<void>((resolve, reject) => fake.close((error) => error ? reject(error) : resolve())),
   };
@@ -153,6 +156,33 @@ test("failed initial Syncthing ignore reconciliation keeps health starting", asy
 
     const starting = await waitForHealth(port, 503);
     assert.deepEqual(await starting.json(), { status: "starting", version: appVersion(), release: "development" });
+  } finally {
+    if (child) await stopServer(child);
+    await syncthing.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("startup reconciliation retries until Syncthing answers", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "pi-mobile-web-startup-retry-"));
+  const syncthing = await createSyncthingFixture(true);
+  let child: ChildProcess | undefined;
+  try {
+    await writeSyncedProject(root);
+    const port = await unusedPort();
+    const started = startServer(root, port, syncthing.port);
+    child = started.child;
+    await syncthing.requested;
+    await waitForOutput(started.output, "Startup reconciliation failed");
+    const starting = await waitForHealth(port, 503);
+    assert.deepEqual(await starting.json(), { status: "starting", version: appVersion(), release: "development" });
+
+    // Syncthing finishes starting after the node gave up on its first attempt.
+    syncthing.release();
+    syncthing.recover();
+
+    const ready = await waitForHealth(port, 200);
+    assert.deepEqual(await ready.json(), { status: "ok", version: appVersion(), release: "development" });
   } finally {
     if (child) await stopServer(child);
     await syncthing.close();
