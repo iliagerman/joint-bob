@@ -830,7 +830,8 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
 }
 .panel-toolbar { overflow-x: auto; scrollbar-width: none; }
 .panel-toolbar::-webkit-scrollbar { display: none; }
-.chat-toolbar { overflow: visible; }
+/* The actions wrap to a second row rather than being clipped by the panel edge. */
+.chat-toolbar { overflow: visible; flex-wrap: wrap; row-gap: 8px; }
 .panel-toolbar[hidden], .chat-toolbar[hidden] { display: none; }
 .chat-session-controls { display: flex; align-items: end; gap: 8px; flex: 0 0 auto; }
 .chat-control { display: grid; gap: 4px; flex: 0 0 auto; }
@@ -880,6 +881,9 @@ select.chat-toolbar-control {
 #modelButtonName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-button.claude { color: var(--claude); border-color: color-mix(in srgb, var(--claude) 30%, transparent); background: transparent; }
 .chat-more, .chat-more-actions { display: contents; }
+/* A closed <details> hides its content in current browsers, so flattening it
+   into the toolbar needs the content box flattened too. */
+.chat-more::details-content { display: contents; content-visibility: visible; }
 .chat-more > summary { display: none; }
 /* No inner scroll area — the dialog card is the single scroll region. */
 .model-dialog-list { display: grid; gap: 4px; min-width: 0; }

@@ -91,6 +91,32 @@ test("opening a conversation renders its transcript", async () => {
   assert.match(await message.innerText(), /re-threading the same builder prompt/);
 });
 
+// The toolbar's overflow actions live in a <details> that desktop flattens into
+// the row with `display: contents`. Current browsers hide a closed <details>'s
+// content through `::details-content`, which made Terminal, Continue on…,
+// Notify, Rename and Safeguards vanish on wide screens while still occupying
+// layout. Only a real browser sees that.
+test("the chat toolbar actions are visible on a wide screen and fold into the menu on a phone", async () => {
+  const ids = ["chat-open-terminal-button", "chat-notify-button", "chat-rename-button", "chat-safeguards-button"];
+  for (const id of ids) {
+    assert.equal(await page.getByTestId(id).isVisible(), true, `${id} is visible in the desktop toolbar`);
+  }
+  assert.equal(await page.getByTestId("chat-more-button").isVisible(), false, "the overflow summary stays hidden on desktop");
+
+  await page.setViewportSize({ width: 430, height: 900 });
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await page.getByTestId("chat-open-terminal-button").isVisible(), false, "the actions fold away on a phone");
+  assert.equal(await page.getByTestId("chat-more-button").isVisible(), true, "the overflow summary appears on a phone");
+
+  await page.getByTestId("chat-more-button").click();
+  for (const id of ids) {
+    assert.equal(await page.getByTestId(id).isVisible(), true, `${id} is visible once the menu is open`);
+  }
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+});
+
 test("the canvas picker lists conversations at a readable height", async () => {
   await page.getByTestId("projects-open-canvas-button").click();
   await page.getByTestId("canvas-add-button").click();

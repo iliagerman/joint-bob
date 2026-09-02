@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Chat toolbar actions now wrap and fold into an overflow menu on smaller screens instead of being clipped
+
 ## 1.1.0 — 2026-09-02
 
 - Terminal now opens in a ticket's working folder when a ticket is active
