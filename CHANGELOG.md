@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.1.1 — 2026-09-02
 
-- Chat toolbar actions now wrap and fold into an overflow menu on smaller screens instead of being clipped
+- Chat toolbar actions now display correctly on desktop instead of being clipped from the panel edge
 
 ## 1.1.0 — 2026-09-02
 
