@@ -5254,7 +5254,19 @@ webSocketServer.on("connection", async (socket, request) => {
     }
     console.warn("Conversation ownership claim failed on open", error);
   }
-  if (!listedSession || listedSession.draft) await ensureConversationRecord(project.id, requestedEngine, ownershipSessionId, local.id);
+  if (!listedSession || listedSession.draft) {
+    try {
+      await ensureConversationRecord(project.id, requestedEngine, ownershipSessionId, local.id);
+    } catch (error) {
+      // A browser still naming a conversation that was deleted (here or on a peer)
+      // must get a close, not an unhandled rejection that kills the node.
+      if (error instanceof Error && error.message === "Conversation record was deleted") {
+        socket.close(1008, webSocketCloseReason("Conversation not found"));
+        return;
+      }
+      throw error;
+    }
+  }
   let connection: ChatConnection = {
     socket, project, taskId: task?.id ?? null, cwd, engine: "pi", shared: null,
     claude: emptyClaudeState(ownershipSessionId), handoffContext: null, secretAccountIds,

@@ -8,6 +8,7 @@ Every deployment is a version. The newest section must always match the
 - Authenticated requests no longer crash when another process holds the database write lock
 - Recent conversations now appear once in the recents dialog, even when resumed on different nodes
 - Fixed node startup getting stuck in starting state when Syncthing's API port binding is delayed
+- The server no longer crashes when a browser reconnects to a deleted conversation
 
 ## 1.1.1 — 2026-09-02
 
