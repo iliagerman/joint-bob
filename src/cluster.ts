@@ -168,7 +168,7 @@ async function clusterDatabase(): Promise<DatabaseSync> {
   databasePromise = (async () => {
     await fs.mkdir(dataDir, { recursive: true, mode: 0o700 });
     const db = new DatabaseSync(databasePath);
-    db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
+    db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
     db.exec(`
       CREATE TABLE IF NOT EXISTS cluster_node (
         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),

@@ -353,7 +353,7 @@ async function initializeProjectDatabase(): Promise<DatabaseSync> {
   await fs.mkdir(dataDir, { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(databasePath);
   try {
-    db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
+    db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
     // The rename runs before the CREATE TABLE block: otherwise an empty `workspaces`
     // would already exist and the legacy `project_types` could not be renamed onto it.
     migrateWorkspaceSchema(db);

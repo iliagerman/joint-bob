@@ -86,7 +86,7 @@ function preferencesDatabase(): DatabaseSync {
   if (database) return database;
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   database = new DatabaseSync(databasePath);
-  database.exec("PRAGMA foreign_keys = ON;");
+  database.exec("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
   database.exec(`
     CREATE TABLE IF NOT EXISTS user_preferences (
       user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,

@@ -31,7 +31,7 @@ async function recoveryDatabase(): Promise<DatabaseSync> {
   databasePromise = (async () => {
     await fs.mkdir(dataDir, { recursive: true, mode: 0o700 });
     const db = new DatabaseSync(databasePath);
-    db.exec("PRAGMA journal_mode = WAL;");
+    db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
     db.exec(`CREATE TABLE IF NOT EXISTS update_recoveries (
       id TEXT PRIMARY KEY, kind TEXT NOT NULL, engine TEXT NOT NULL, project_id TEXT NOT NULL,
       cwd TEXT NOT NULL, session_id TEXT NOT NULL, session_path TEXT NOT NULL, task_id TEXT,

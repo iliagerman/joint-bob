@@ -42,7 +42,7 @@ function db(): DatabaseSync {
   if (database) return database;
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   database = new DatabaseSync(databasePath);
-  database.exec("PRAGMA journal_mode = WAL;");
+  database.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
   ensureSecretSchema(database);
   return database;
 }

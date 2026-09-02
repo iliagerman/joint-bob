@@ -65,7 +65,7 @@ function ensureProjectLockSchema(db: DatabaseSync): void {
 
 async function replicationDatabase(): Promise<DatabaseSync> {
   if (databasePromise) return databasePromise;
-  databasePromise = (async () => { await fs.mkdir(dataDir, { recursive: true, mode: 0o700 }); const db = new DatabaseSync(databasePath); db.exec("PRAGMA journal_mode = WAL;"); ensureReplicationSchema(db); return db; })();
+  databasePromise = (async () => { await fs.mkdir(dataDir, { recursive: true, mode: 0o700 }); const db = new DatabaseSync(databasePath); db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;"); ensureReplicationSchema(db); return db; })();
   return databasePromise;
 }
 

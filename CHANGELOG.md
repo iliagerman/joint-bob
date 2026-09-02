@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Authenticated requests no longer crash when another process holds the database write lock
 - Recent conversations now appear once in the recents dialog, even when resumed on different nodes
 - Fixed node startup getting stuck in starting state when Syncthing's API port binding is delayed
 

@@ -36,7 +36,7 @@ async function lockDatabase(): Promise<DatabaseSync> {
   databasePromise ??= (async () => {
     await fs.mkdir(dataDir, { recursive: true, mode: 0o700 });
     const db = new DatabaseSync(databasePath);
-    db.exec("PRAGMA journal_mode = WAL;");
+    db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
     ensureProjectLockSchema(db);
     ensureReplicationSchema(db);
     return db;
