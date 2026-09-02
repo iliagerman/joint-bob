@@ -68,6 +68,16 @@ function at(minutes: number): string {
   return new Date(Date.parse("2026-08-30T09:00:00.000Z") + minutes * 60_000).toISOString();
 }
 
+// One long transcript for the scroll-follow browser suite: tall enough to
+// overflow every viewport the tests use, with first and last turns addressable
+// by their turn markers.
+function scrollFollowTurns(count: number): Turn[] {
+  return Array.from({ length: count }, (_, index) => ({
+    role: index % 2 === 0 ? "user" : "assistant",
+    text: `Scroll reference turn ${index + 1} of ${count}. ${"The reading pane keeps its position while the transcript grows underneath it. ".repeat(9)}`,
+  }));
+}
+
 function piTranscript(conversation: Conversation, cwd: string): string {
   const records: unknown[] = [
     { type: "session", version: 3, id: conversation.id, timestamp: at(0), cwd },
@@ -108,6 +118,10 @@ const demoProjects: DemoProject[] = [
     name: "Internal Assistant",
     directory: "internal-assistant",
     conversations: [
+      {
+        harness: "claude", id: "5f8c3a71-9b2e-4d67-a3c1-72e5d8f04b19", title: "Scroll follow reference",
+        turns: scrollFollowTurns(18),
+      },
       {
         harness: "pi", id: "thread-based-agent-builder", title: "Thread-Based Agent Builder",
         turns: [

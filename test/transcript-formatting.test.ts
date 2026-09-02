@@ -24,8 +24,10 @@ test("history rendering routes each transcript role to its own bubble", async ()
   assert.match(app, /appendTranscript[\s\S]*toolResult[\s\S]*appendToolMessage/);
   // The old "loop every message straight into a chat bubble" mapping is gone.
   assert.doesNotMatch(app, /for \(const message of payload\.messages/);
-  // Both transcript entry points use the shared renderer.
-  assert.equal(app.match(/appendTranscript\(payload\.messages\)/g)?.length, 2);
+  // Both transcript entry points use the scroll-preserving renderer, which
+  // delegates to the shared transcript renderer once.
+  assert.equal(app.match(/rerenderChatTranscript\(payload\.messages\)/g)?.length, 2);
+  assert.match(app, /function rerenderChatTranscript\(messages\)[\s\S]*appendTranscript\(messages\)/);
 });
 
 test("assistant filesystem paths open through the authenticated project file route", async () => {
@@ -79,7 +81,7 @@ test("assistant filesystem paths open through the authenticated project file rou
   assert.match(server, /File is outside the project directory/);
   assert.match(server, /project-file-content/);
   assert.match(server, /await rename\(temporary, resolved\)/);
-  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v92"/);
+  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v93"/);
   assert.match(serviceWorker, /\/vendor\/codemirror\/lib\/codemirror\.js/);
   assert.match(serviceWorker, /\/vendor\/codemirror\/keymap\/vim\.js/);
   assert.match(serviceWorker, /self\.addEventListener\("fetch"/);

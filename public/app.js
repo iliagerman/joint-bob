@@ -9,6 +9,12 @@ const state = {
   // A canvas pane runs inside the canvas parent's iframe: one conversation, no
   // navigation, and no preference writes that would fight the parent app.
   canvasPaneMode: bootParams.get("canvasPane") === "1",
+  // Follow mode: the pane tracks the newest message while the reader sits at
+  // the bottom, and releases the moment they scroll away. It resumes when they
+  // return. Scroll events are the only input. They see every user-driven
+  // scroll, and programmatic pins land at the bottom, so the listener simply
+  // follows the scroll position.
+  followChat: true,
   initialSessionId: bootParams.get("sessionId"),
   initialNodeId: bootParams.get("nodeId"),
   canvasLayout: emptyCanvasLayout(),
@@ -2899,8 +2905,58 @@ function prettyText(text) {
   return `${header}\n${prettyJson(body) || body}`;
 }
 
-function scrollConversationToBottom() {
-  elements.messages.scrollTop = elements.messages.scrollHeight;
+// How close to the bottom still counts as "at the bottom": rounding and
+// sub-pixel layout must not release follow mode mid-stream.
+const FOLLOW_BOTTOM_THRESHOLD_PX = 32;
+
+function chatAtBottom() {
+  const box = elements.messages;
+  return box.scrollHeight - box.scrollTop - box.clientHeight < FOLLOW_BOTTOM_THRESHOLD_PX;
+}
+
+function pinChatToBottom() {
+  const box = elements.messages;
+  // Remember where this pin lands (the browser clamps to this value) so the
+  // scroll event it triggers can be told apart from a reader scrolling away.
+  lastPinScrollTop = Math.max(0, box.scrollHeight - box.clientHeight);
+  box.scrollTop = box.scrollHeight;
+}
+
+// Pins are coalesced to one per frame and re-check follow state when they run,
+// so a scroll-away that lands between a pin request and its frame releases
+// follow mode instead of yanking the reader back down.
+let pinChatFrame = 0;
+let lastPinScrollTop = -1;
+function requestPinChat() {
+  if (pinChatFrame) return;
+  pinChatFrame = requestAnimationFrame(() => {
+    pinChatFrame = 0;
+    if (state.followChat) pinChatToBottom();
+  });
+}
+
+// Restores the reading position after a re-render replaced the whole
+// transcript. It runs one frame later, once the re-rendered bubbles' markdown
+// pass has set their real heights, and clamps in case the transcript shrank.
+function restoreChatScrollTop(top) {
+  requestAnimationFrame(() => {
+    const box = elements.messages;
+    box.scrollTop = Math.max(0, Math.min(top, box.scrollHeight - box.clientHeight));
+  });
+}
+
+// Re-rendering the transcript resets the pane's scrollTop, and that reset
+// fires scroll events that must not be read as the reader scrolling away.
+// Bracket the re-render so the follow listener ignores the churn; the flag
+// clears in the next frame, before any pin or restore settles.
+let rerenderingChat = false;
+function rerenderChatTranscript(messages) {
+  rerenderingChat = true;
+  const resumeFromTop = elements.messages.scrollTop;
+  clearChat();
+  appendTranscript(messages);
+  requestAnimationFrame(() => { rerenderingChat = false; });
+  return resumeFromTop;
 }
 
 function projectFileUrl(filePath, download = false) {
@@ -3122,6 +3178,7 @@ function renderBubbleContent(bubble, text, flush = false) {
     bubble._renderFinal = false;
     bubble._hasRenderedText = true;
     content.textContent = text;
+    requestPinChat();
     return;
   }
   bubble._renderFinal = bubble._renderFinal || flush;
@@ -3136,6 +3193,8 @@ function renderBubbleContent(bubble, text, flush = false) {
     else if (role === "tool-output") renderToolContent(content, bubble._raw);
     else content.textContent = prettyText(bubble._raw);
     bubble._renderFinal = false;
+    // Streaming grows the bubble inside this frame, so the pin must run after it.
+    requestPinChat();
   });
 }
 
@@ -3198,6 +3257,7 @@ function appendMessage(role, text, timestamped = true) {
   renderBubbleContent(bubble, text, true);
   elements.messages.append(bubble);
   if (isMarkdown) appendCopyButton(bubble);
+  requestPinChat();
   return bubble;
 }
 
@@ -3249,6 +3309,7 @@ function appendToolMessage(toolName, toolCallId, startedAt = Date.now()) {
   content.className = "message-content";
   bubble.append(summary, content);
   elements.messages.append(bubble);
+  requestPinChat();
   return bubble;
 }
 
@@ -4166,6 +4227,8 @@ function openSession(sessionPath, title = "New Pi conversation", preserveChat = 
   if (!preserveChat) {
     state.pendingSessionTitle = null;
     state.pendingSessionColor = null;
+    // A conversation being opened fresh starts out following the newest message.
+    state.followChat = true;
     clearChat();
     clearAttachments();
     const node = state.sessionNodes.find((candidate) => candidate.id === state.activeNodeId);
@@ -4258,9 +4321,15 @@ function handleSocketPayload(payload, scrollOnReady = false) {
         : openingDraft
           ? `New ${state.engine === "claude" ? "Claude" : "Pi"} conversation`
           : state.engine === "claude" ? "Claude conversation" : "Pi conversation";
-    clearChat();
-    appendTranscript(payload.messages);
-    if (scrollOnReady) requestAnimationFrame(scrollConversationToBottom);
+    const resumeFromTop = rerenderChatTranscript(payload.messages);
+    // A fresh open starts on the newest message; a reconnect re-render follows
+    // if the reader was following and otherwise puts them back where they were.
+    if (scrollOnReady || state.followChat) {
+      state.followChat = true;
+      requestPinChat();
+    } else {
+      restoreChatScrollTop(resumeFromTop);
+    }
     if (!payload.messages?.length) {
       const node = state.sessionNodes.find((candidate) => candidate.id === state.activeNodeId);
       showChatEmptyState("Ready for your first message", `${state.engine === "claude" ? "Claude" : "Pi"} will run on ${node?.name || "the selected node"}. The conversation is created when you send.`);
@@ -4410,9 +4479,11 @@ function handleSocketPayload(payload, scrollOnReady = false) {
     return;
   }
   if (payload.type === "messages") {
-    // Read-only Claude transcript synchronized from another node: re-render in place.
-    clearChat();
-    appendTranscript(payload.messages);
+    // Read-only Claude transcript synchronized from another node: re-render in
+    // place, following if the reader was at the bottom, anchoring if not.
+    const resumeFromTop = rerenderChatTranscript(payload.messages);
+    if (state.followChat) requestPinChat();
+    else restoreChatScrollTop(resumeFromTop);
     return;
   }
   if (payload.type === "sessionFileChanged") {
@@ -4640,6 +4711,9 @@ function setTaskDialogTab(tab) {
   }
   elements.taskForm.hidden = tab !== "settings";
   elements.taskChatHost.hidden = tab !== "conversation";
+  // While the chat sat on a hidden tab its pins were no-ops, so a reader who
+  // follows could land mid-transcript. Showing the tab re-requests the pin.
+  if (tab === "conversation") requestPinChat();
 }
 
 function openEditTaskDialog(task) {
@@ -5405,6 +5479,15 @@ async function transferActiveSession(event) {
   }
 }
 
+elements.messages.addEventListener("scroll", () => {
+  // A pin's own scroll event can arrive after newer content already grew the
+  // pane, so its position no longer reads as "at the bottom". Scrolling to the
+  // exact spot a pin landed is that settle event, not a reader scrolling away;
+  // growth sites keep requesting pins, so follow simply continues.
+  if (rerenderingChat) return;
+  if (Math.abs(elements.messages.scrollTop - lastPinScrollTop) < 1) return;
+  state.followChat = chatAtBottom();
+}, { passive: true });
 elements.messages.addEventListener("click", (event) => {
   const link = event.target.closest("a[data-file-path]");
   if (!link) return;
