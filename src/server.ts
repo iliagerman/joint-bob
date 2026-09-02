@@ -5139,6 +5139,8 @@ webSocketServer.on("connection", async (socket, request) => {
     ownerUrl.searchParams.set("projectId", project.id);
     ownerUrl.searchParams.set("sessionPath", rawSessionPathFromUrl ?? "new");
     ownerUrl.searchParams.set("taskId", task.id);
+    // A terminal socket must stay a terminal socket on the owner, not become a session.
+    if (url.searchParams.get("mode") === "terminal") ownerUrl.searchParams.set("mode", "terminal");
     proxySocket(socket, new WebSocket(ownerUrl, { headers: { Authorization: `Bearer ${peer.token}` } }));
     return;
   }
@@ -5183,7 +5185,7 @@ webSocketServer.on("connection", async (socket, request) => {
       socket.close(1008, `Project is locked by ${lockedByPeer.nodeName}`);
       return;
     }
-    attachTerminalSession(socket, project.path, local.id);
+    attachTerminalSession(socket, task ? taskCwd(project, task) : project.path, local.id);
     return;
   }
 

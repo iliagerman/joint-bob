@@ -3759,7 +3759,9 @@ function renderChatSessionControls() {
   const terminalNode = state.sessionNodes.find((node) => node.id === state.activeNodeId);
   elements.openTerminalButton.disabled = !state.activeProjectId || !terminalNode?.online || !terminalNode.mapped;
   elements.openTerminalButton.title = terminalNode
-    ? `Open the project folder in Terminal on ${terminalNode.name}`
+    ? activeTicket
+      ? `Open this ticket's folder in Terminal on ${terminalNode.name}`
+      : `Open the project folder in Terminal on ${terminalNode.name}`
     : "Select an execution node first";
   elements.transferSessionButton.title = activeTask
     ? !activeTask.sessionPath
@@ -5214,6 +5216,8 @@ function terminalWebsocketUrl() {
   url.searchParams.set("mode", "terminal");
   url.searchParams.set("projectId", state.activeProjectId);
   url.searchParams.set("nodeId", state.activeNodeId);
+  // A board ticket keeps its own copy of the project, so its terminal opens there.
+  if (state.activeTaskId) url.searchParams.set("taskId", state.activeTaskId);
   return url;
 }
 

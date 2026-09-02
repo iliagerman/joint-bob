@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Terminal now opens in a ticket's working folder when a ticket is active
+
 ## 1.0.0 — 2026-09-02
 
 - Canvas panes now fill their row width equally and rows fill the canvas height equally, eliminating empty space
