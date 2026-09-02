@@ -24,7 +24,7 @@ test("secret accounts have an accessible node-local UI using authenticated api c
   assert.match(app, /project-secrets-button/);
   for (const testid of ["secret-variable-name-input", "secret-variable-kind-select", "secret-variable-value-input", "secret-variable-remove-button", "secret-account-edit-button", "secret-account-delete-button", "secret-scope-account-checkbox"]) assert.ok(app.includes(testid));
   for (const selector of [".secret-account-list", ".secret-account-row", ".secret-account-meta", ".secret-variable-row", ".secret-scope-list"]) assert.ok(styles.includes(selector));
-  assert.match(worker, /const CACHE_NAME = "joint-bob-v93";/);
+  assert.match(worker, /const CACHE_NAME = "joint-bob-v95";/);
 });
 
 test("every secret provider carries a brand icon in the list, the picker, and the scope dialog", async () => {
@@ -112,4 +112,15 @@ test("Google accounts paste service account JSON into a private file entry", asy
   assert.match(app, /JSON\.parse/);
   assert.match(app, /Google credentials must be valid JSON/);
   assert.match(html, /data-testid="secret-account-provider-hint"/);
+});
+
+test("saving a replicating account pushes it instead of stranding it", async () => {
+  const app = await readFile("public/app.js", "utf8");
+  const handler = /secretAccountForm\.addEventListener\("submit",[\s\S]*?\n\}\);/.exec(app)?.[0] ?? "";
+  assert.ok(handler, "secret account submit handler is missing");
+  // The server pushes a replicating save to every paired node; the picker stays
+  // in Settings for retries and newly paired nodes.
+  assert.match(handler, /const saved = await api\(/);
+  assert.match(handler, /saved\.syncResults/);
+  assert.doesNotMatch(handler, /openSecretSyncDialog\(\)/);
 });

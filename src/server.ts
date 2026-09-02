@@ -17,7 +17,7 @@ import { addProject, deleteWorkspace, getProject, importProject, listProjects, l
 import { clusterInvitationStatus, consumeClusterInvitation, createClusterInvitation, createClusterPeer, dueMembershipDeliveries, getClusterMachineToken, getClusterMembership, getClusterNode, getClusterPeer, listClusterPeers, markClusterPeerSeen, mergeClusterMembership, recordMembershipDelivered, recordMembershipFailure, removeClusterPeer, saveClusterPeer, updateClusterNode, type ClusterPeer } from "./cluster.js";
 import { eventsForPeer, receiveReplicationBatch, recordPeerFailure, recordPeerReceipt, type ReplicationBatch } from "./replication.js";
 import { enqueueSecretCredentialSync, receiveSecretCredentialEvents, recordSecretCredentialFailure, recordSecretCredentialReceipt, secretCredentialEventsForPeer, type SecretCredentialEvent } from "./secret-replication.js";
-import { agentCredentialContext, agentEnvironment, deleteSecretAccount, getScopeSecretAccounts, listSecretAccounts, persistConversationSecretAccounts, saveSecretAccount, setScopeSecretAccounts } from "./secrets.js";
+import { agentCredentialContext, agentEnvironment, deleteSecretAccount, getScopeSecretAccounts, listSecretAccounts, persistConversationSecretAccounts, saveSecretAccount, setScopeSecretAccounts, type SecretAccount } from "./secrets.js";
 import {
   createPiSession,
   eventPayload,
@@ -2249,10 +2249,20 @@ app.get("/api/secrets", async (_request, response, next) => {
   try { response.json({ accounts: await listSecretAccounts() }); } catch (error) { next(error); }
 });
 app.post("/api/secrets/accounts", async (request, response, next) => {
-  try { const account = await saveSecretAccount(secretAccountSchema.omit({ id: true }).parse(request.body)); response.status(201).json({ accounts: await listSecretAccounts(), account }); } catch (error) { next(error); }
+  try {
+    const session = response.locals.authSession as AuthSession;
+    const account = await saveSecretAccount(secretAccountSchema.omit({ id: true }).parse(request.body));
+    const syncResults = await replicateSecretAccount(account, session.userId);
+    response.status(201).json({ accounts: await listSecretAccounts(), account, ...(syncResults ? { syncResults } : {}) });
+  } catch (error) { next(error); }
 });
 app.put("/api/secrets/accounts/:accountId", async (request, response, next) => {
-  try { const account = await saveSecretAccount({ ...secretAccountSchema.omit({ id: true }).parse(request.body), id: z.string().uuid().parse(request.params.accountId) }); response.json({ accounts: await listSecretAccounts(), account }); } catch (error) { next(error); }
+  try {
+    const session = response.locals.authSession as AuthSession;
+    const account = await saveSecretAccount({ ...secretAccountSchema.omit({ id: true }).parse(request.body), id: z.string().uuid().parse(request.params.accountId) });
+    const syncResults = await replicateSecretAccount(account, session.userId);
+    response.json({ accounts: await listSecretAccounts(), account, ...(syncResults ? { syncResults } : {}) });
+  } catch (error) { next(error); }
 });
 app.delete("/api/secrets/accounts/:accountId", async (request, response, next) => {
   try { await deleteSecretAccount(z.string().uuid().parse(request.params.accountId)); response.json({ accounts: await listSecretAccounts() }); } catch (error) { next(error); }
@@ -5516,8 +5526,8 @@ async function pushSecretCredentialsToPeer(peer: ClusterPeer): Promise<{ deliver
   }
 }
 
-/** Retries deliveries a manual sync enrolled but could not complete. It never enrolls
-    anything itself, so credential changes are not replicated until the user asks. */
+/** Retries deliveries an enrolled event still owes a peer, whether a save or a manual sync
+    enrolled it. */
 async function flushSecretCredentialOutbox(): Promise<void> {
   if (secretCredentialFlushInProgress) return;
   secretCredentialFlushInProgress = true;
@@ -5526,6 +5536,22 @@ async function flushSecretCredentialOutbox(): Promise<void> {
   } finally {
     secretCredentialFlushInProgress = false;
   }
+}
+
+/** A saved account marked to replicate leaves for every paired node right away, so the
+    checkbox means what it says. The manual "Sync to nodes" action remains for retries and
+    for nodes paired after the save. */
+async function replicateSecretAccount(account: SecretAccount, actorId: string): Promise<Array<{ peerId: string; name: string; delivered: number; error?: string }> | undefined> {
+  if (!account.replicate) return undefined;
+  const peers = await listClusterPeers();
+  if (!peers.length) return [];
+  await enqueueSecretCredentialSync(peers.map((peer) => peer.id), actorId);
+  const results: Array<{ peerId: string; name: string; delivered: number; error?: string }> = [];
+  for (const peer of peers) {
+    const outcome = await pushSecretCredentialsToPeer(peer);
+    results.push({ peerId: peer.id, name: peer.name, delivered: outcome.delivered, ...(outcome.error ? { error: outcome.error } : {}) });
+  }
+  return results;
 }
 
 /** A peer's current conversation running set. See conversation-runtime.ts for the lease rules. */
