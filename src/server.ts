@@ -402,7 +402,7 @@ const sessionColorSchema = z.object({
 const sessionDeleteSchema = z.object({ projectId: z.string().min(1), engine: z.enum(["pi", "claude"]), sessionId: z.string().uuid() });
 const taskCreateSchema = z.object({
   title: z.string().trim().min(1).max(200),
-  description: z.string().trim().max(4000),
+  description: z.string().trim().max(20_000),
   status: taskStatusSchema.optional(),
   engine: taskEngineSchema.optional(),
   planMode: z.boolean().optional(),
@@ -422,7 +422,7 @@ const routedTaskHandoffSchema = routedTaskSchema.extend({ peerId: z.string().uui
 const socketTaskIdSchema = z.string().trim().min(1).max(120);
 const taskUpdateSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
-  description: z.string().trim().max(4000).optional(),
+  description: z.string().trim().max(20_000).optional(),
   status: taskStatusSchema.optional(),
   engine: taskEngineSchema.optional(),
   planMode: z.boolean().optional(),

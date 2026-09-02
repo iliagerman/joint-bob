@@ -11,6 +11,7 @@ Every deployment is a version. The newest section must always match the
 - Recent conversations now appear once in the recents dialog, even when resumed on different nodes
 - Fixed node startup getting stuck in starting state when Syncthing's API port binding is delayed
 - The server no longer crashes when a browser reconnects to a deleted conversation
+- Task descriptions can now be up to 20,000 characters instead of 4,000
 
 ## 1.1.1 — 2026-09-02
 

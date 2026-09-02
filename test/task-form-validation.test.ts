@@ -11,6 +11,7 @@ test("board tasks save without a description and report blank titles", async () 
 
   assert.match(page, /Task description \(optional\)/);
   assert.doesNotMatch(page, /id="taskDescriptionInput"[^>]*\brequired\b/);
-  assert.match(server, /const taskCreateSchema = z\.object\(\{\s*title:[^\n]+\n\s*description: z\.string\(\)\.trim\(\)\.max\(4000\)/);
+  assert.match(server, /const taskCreateSchema = z\.object\(\{\s*title:[^\n]+\n\s*description: z\.string\(\)\.trim\(\)\.max\(20_000\)/);
+  assert.match(server, /const taskUpdateSchema = z\.object\(\{[\s\S]*?description: z\.string\(\)\.trim\(\)\.max\(20_000\)\.optional\(\)/);
   assert.match(app, /if \(!payload\.title\) throw new Error\("Task title is required"\)/);
 });
