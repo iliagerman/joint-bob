@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Conversations linked to board tickets now appear marked in the conversations list with a button to jump into the ticket
 - Task phases now wait for the session to finish its current turn before sending their next prompt
 - Authenticated requests no longer crash when another process holds the database write lock
 - Recent conversations now appear once in the recents dialog, even when resumed on different nodes

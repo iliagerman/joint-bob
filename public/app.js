@@ -1,5 +1,5 @@
 import { renderMarkdown } from "./markdown.js";
-import { renderBoard } from "./board.js";
+import { renderBoard, ticketGlyph } from "./board.js";
 import { createConversationCanvas } from "./canvas.js";
 import { emptyCanvasLayout } from "./canvas-layout.js";
 import { dispatchComposerInput, executeComposerCommand, LOCAL_COMMANDS } from "./composer-commands.js";
@@ -1649,6 +1649,37 @@ function sessionTranscriptName(sessionPath) {
   return sessionPath.replace(/\\/g, "/").split("/").at(-1);
 }
 
+/** A conversation listed with a taskId belongs to a board ticket; resolve it for the mark and the jump. */
+function sessionTicketTask(session) {
+  return session.taskId ? state.tasks.find((task) => task.id === session.taskId) : undefined;
+}
+
+/** The mark itself: quiet, accent-coloured, and titled with the ticket it belongs to. */
+function ticketBadge(task) {
+  const badge = document.createElement("em");
+  badge.className = "session-ticket-badge";
+  badge.setAttribute("data-testid", "session-ticket-badge");
+  badge.title = `Belongs to ticket: ${task.title}`;
+  badge.append(ticketGlyph("session-ticket-icon"), document.createTextNode("Ticket"));
+  return badge;
+}
+
+/** The quick jump: one tap from the conversations list into the ticket itself. */
+function ticketRowButton(task) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "ghost icon-button row-action-button ticket-link-button";
+  button.setAttribute("data-testid", "session-ticket-button");
+  button.setAttribute("aria-label", `Open ticket ${task.title}`);
+  button.title = `Open ticket: ${task.title}`;
+  button.append(ticketGlyph("session-ticket-icon"));
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    openEditTaskDialog(task);
+  });
+  return button;
+}
+
 function nestedSessionRows(sessions) {
   const ranked = sortPinnedFirst(sessions, (session) => isSessionPinned(session.path));
   const byPath = new Map(ranked.map((session) => [session.path, session]));
@@ -2563,9 +2594,10 @@ function renderSessions() {
 
   for (const { session, depth } of nestedSessionRows(sessions)) {
     const sessionPinned = isSessionPinned(session.path);
+    const ticketTask = sessionTicketTask(session);
     const row = document.createElement("div");
     const sessionActive = state.activeSessionId ? session.id === state.activeSessionId : session.path === state.activeSessionPath;
-    row.className = `list-row${sessionActive ? " active" : ""}${sessionPinned ? " pinned" : ""}`;
+    row.className = `list-row${sessionActive ? " active" : ""}${sessionPinned ? " pinned" : ""}${ticketTask ? " has-ticket" : ""}`;
     row.dataset.sessionDepth = String(depth);
     // The row menu is re-pointed at this row after a refresh replaces it.
     row.dataset.sessionPath = session.path;
@@ -2597,6 +2629,7 @@ function renderSessions() {
     statusLabel.textContent = chatState === "active" ? "Running" : chatState === "review" ? "Needs review" : session.draft ? "Ready" : "Reviewed";
     badge.append(dot, statusLabel);
     meta.append(" ", badge);
+    if (ticketTask) meta.append(" ", ticketBadge(ticketTask));
     button.addEventListener("click", () => openListedSession(session));
 
     const menuButton = document.createElement("button");
@@ -2614,6 +2647,7 @@ function renderSessions() {
 
     row.append(button, menuButton);
     if (sessionPinned) row.append(sessionUnpinButton(session));
+    if (ticketTask) row.append(ticketRowButton(ticketTask));
     if (session.agentRuns?.length) {
       const runs = document.createElement("div");
       runs.className = "agent-run-list";
@@ -4502,6 +4536,9 @@ async function loadTasks() {
     if (activeTask) state.activeNodeId = activeTask.currentNodeId;
     renderBoardView();
     renderChatSessionControls();
+    // Sessions can paint before the task list lands; the ticket marks come from
+    // the tasks, so a late task list repaints the conversation rows.
+    renderSessions();
   } catch (error) {
     console.warn(error);
   }

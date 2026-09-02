@@ -45,6 +45,13 @@ function cardIcon(name) {
   return svg;
 }
 
+/** The ticket glyph outside the board too, so a conversation row and its card read as one object. */
+export function ticketGlyph(className) {
+  const svg = cardIcon("ticket");
+  svg.setAttribute("class", className);
+  return svg;
+}
+
 function statusIndex(status) {
   return TASK_STATUSES.findIndex((candidate) => candidate.id === status);
 }

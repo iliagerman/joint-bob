@@ -510,6 +510,16 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
 .chat-badge-active { color: var(--live); background: color-mix(in srgb, var(--live) 12%, transparent); }
 .chat-badge-review { color: var(--amber); background: color-mix(in srgb, var(--amber) 13%, transparent); }
 .chat-badge-done { color: var(--muted); background: var(--field); }
+/* The ticket mark shares the badge anatomy but carries the accent, like the board cards' engine chips. */
+.session-ticket-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-style: normal;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.session-ticket-badge svg { width: 10px; height: 10px; }
 .project-card .project-sync-status {
   display: flex;
   align-items: center;
@@ -1565,6 +1575,12 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   /* The unpin button gets the same touch target, one lane to the left of the menu. */
   .session-list .pin-button { min-height: 34px; min-width: 34px; width: 34px; right: 48px; }
   .session-list .list-row.pinned .session-card { padding-right: 90px; }
+  /* The ticket jump button gets the same touch target in that lane, and pushes
+     the unpin button one lane further when a ticket row is also pinned. */
+  .session-list .ticket-link-button { min-height: 34px; min-width: 34px; width: 34px; right: 48px; }
+  .session-list .list-row.has-ticket .session-card { padding-right: 90px; }
+  .session-list .list-row.pinned.has-ticket .pin-button { right: 86px; }
+  .session-list .list-row.pinned.has-ticket .session-card { padding-right: 128px; }
   /* Stop stays a real touch target on phones without leaving the meta row. */
   .chat-actions .icon-button { min-width: 32px; width: 32px; min-height: 32px; }
   .project-card, .session-card { padding-right: 52px; }
@@ -1630,6 +1646,16 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 .session-list .pin-button { right: 42px; }
 .session-list .list-row.pinned .session-card { padding-right: 78px; }
 .session-list .session-card.pinned strong::after { content: none; }
+
+/* ---- Ticket conversations in the list ---- */
+/* The jump button owns a lane left of the menu button, and the row pays for the
+   lane with padding so the title never runs under it. */
+.session-list .ticket-link-button { right: 42px; color: var(--accent); }
+.session-list .ticket-link-button svg { width: 15px; height: 15px; }
+.session-list .list-row.has-ticket .session-card { padding-right: 78px; }
+/* A pinned ticket conversation needs three lanes: menu, ticket, unpin. */
+.session-list .list-row.pinned.has-ticket .pin-button { right: 74px; }
+.session-list .list-row.pinned.has-ticket .session-card { padding-right: 110px; }
 
 /* ---- Skills browser ---- */
 .skills-dialog-list { display: grid; gap: 4px; min-width: 0; max-height: 52dvh; overflow-y: auto; }
