@@ -23,7 +23,9 @@ import {
   eventPayload,
   getSessionStatus,
   listAvailableModels,
+  promptIdlePiSession,
   reloadPiAuth,
+  sessionIsBusy,
   setSessionModel,
   simplifyMessages,
 } from "./pi-service.js";
@@ -3856,10 +3858,6 @@ function broadcastTools(session: SharedPiSession): void {
   broadcast(session, { type: "tools", supported: true, tools: piTools(session.handle) });
 }
 
-function sessionIsBusy(handle: PiSessionHandle): boolean {
-  return handle.session.isStreaming || handle.session.isBashRunning || handle.session.isCompacting || handle.session.isRetrying;
-}
-
 async function setSharedSessionSafeguards(session: SharedPiSession, enabled: boolean): Promise<void> {
   const previous = session.handle;
   if (previous.safeguardsEnabled === enabled) {
@@ -4305,7 +4303,7 @@ async function startTaskRun(project: ProjectRecord, task: TaskRecord, requestedP
     if (config.provider && config.modelId) await setSessionModel(shared.handle.session, config.provider, config.modelId);
     piTaskRuns.set(shared, { projectId: project.id, taskId: claimed.id, title: claimed.title, conversationId: conversationId!, leaseToken, phase, sessionPath: null });
     await persistPiTaskSession(shared);
-    shared.handle.session.prompt(prompt)
+    promptIdlePiSession(shared.handle, prompt)
       .then(async () => {
         if (piTaskRuns.get(shared!)?.leaseToken !== leaseToken) {
           console.warn("Ignoring stale Pi task callback", claimed.id);

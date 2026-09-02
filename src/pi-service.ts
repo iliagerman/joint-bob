@@ -17,7 +17,7 @@ import { discoverPiSessionDirectory, sessionCwds, type SessionProjectPaths } fro
 import { getSettings } from "./settings.js";
 import type { ChatMessage, ContextUsage, ModelSummary, SessionStatus, SessionSummary } from "./types.js";
 
-interface PiSessionHandle {
+export interface PiSessionHandle {
   session: AgentSession;
   safeguardsEnabled: boolean;
   dispose: () => void;
@@ -123,6 +123,38 @@ function piContextUsage(session: AgentSession): ContextUsage | undefined {
   const usage = session.getContextUsage();
   if (!usage || usage.tokens === null || !usage.contextWindow) return undefined;
   return { usedTokens: usage.tokens, contextWindow: usage.contextWindow, percent: Math.round((usage.tokens / usage.contextWindow) * 100) };
+}
+
+/** Any turn, queued-message drain, compaction, or retry in flight on this Pi session. */
+export function sessionIsBusy(handle: PiSessionHandle): boolean {
+  return handle.session.isStreaming || handle.session.isBashRunning || handle.session.isCompacting || handle.session.isRetrying;
+}
+
+/** Sends a prompt as its own turn once the session is idle. A task phase must run
+    to completion before the phase is marked done, so unlike chat follow-ups the
+    prompt is never queued behind user traffic: it waits for the turn in flight,
+    and re-waits if a racing prompt steals the session in between. */
+export async function promptIdlePiSession(handle: PiSessionHandle, promptText: string): Promise<void> {
+  for (;;) {
+    if (sessionIsBusy(handle)) await onceSessionIdle(handle);
+    try {
+      await handle.session.prompt(promptText);
+      return;
+    } catch (error) {
+      if (!(error instanceof Error) || !/already processing/i.test(error.message)) throw error;
+    }
+  }
+}
+
+function onceSessionIdle(handle: PiSessionHandle): Promise<void> {
+  return new Promise((resolve) => {
+    const unsubscribe = handle.session.subscribe(() => {
+      if (!sessionIsBusy(handle)) {
+        unsubscribe();
+        resolve();
+      }
+    });
+  });
 }
 
 export function getSessionStatus(session: AgentSession, safeguardsEnabled: boolean): SessionStatus {
