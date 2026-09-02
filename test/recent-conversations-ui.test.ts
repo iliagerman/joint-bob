@@ -82,7 +82,7 @@ test("recent conversations are recorded, pinnable, and reopenable", async () => 
   assert.match(app, /sessionPath\.replace\(\/\\\.sync-conflict-/);
   assert.match(app, /function rememberRecentSession\(session\)/);
   assert.match(app, /sessionPath: canonicalSessionPath\(session\.path\)/);
-  assert.match(app, /canonicalSessionPath\(candidate\.sessionPath\) !== entry\.sessionPath/);
+  assert.match(app, /recentSessionKey\(candidate\) !== recentSessionKey\(entry\)/);
   assert.match(app, /async function openRecentSession\(entry\)/);
   assert.match(app, /savePreferencesInBackground\(\{ recentSessions: state\.recentSessions \}\)/);
 
@@ -199,4 +199,32 @@ test("every recent conversations button draws the same clock icon", async () => 
   for (const id of ["recentSessionsButton", "chatsRecentSessionsButton"]) {
     assert.deepEqual(iconPaths(id), reference, `${id} draws a different recents icon`);
   }
+});
+
+test("the recents dialog shows one row per conversation, dated by its latest message", async () => {
+  const app = await readFile("public/app.js", "utf8");
+
+  // Resuming on another node copies the transcript under a different project dir, so the
+  // file name is the conversation's identity — the full path is not.
+  assert.match(app, /function recentSessionKey\(entry\)/);
+  assert.match(app, /function mergeRecentSessions\(entries\)/);
+
+  // Writing a recent replaces every stored copy of the same conversation.
+  const remember = app.slice(app.indexOf("function rememberRecentSession(session)"));
+  assert.match(remember.slice(0, remember.indexOf("\n}")), /recentSessionKey\(candidate\) !== recentSessionKey\(entry\)/);
+
+  // Forgetting drops the whole group, so a stale copy cannot resurface.
+  const forget = app.slice(app.indexOf("function forgetRecentSession(entry)"));
+  assert.match(forget.slice(0, forget.indexOf("\n}")), /recentSessionKey\(candidate\) !== recentSessionKey\(entry\)/);
+
+  // The row is sorted and dated by the newest activity across the merged copies.
+  const render = app.slice(app.indexOf("function renderRecentSessionsDialog()"));
+  assert.match(render.slice(0, render.indexOf("\n}\n")), /mergeRecentSessions\(state\.recentSessions\)/);
+  assert.match(app, /const byActivity = \[\.\.\.mergeRecentSessions\(state\.recentSessions\)\]\.sort\(/);
+
+  // Listing and opening match copies too, so a merged row still resolves to a live session.
+  const apply = app.slice(app.indexOf("function applyRecentSessionActivity(sessionsByProject)"));
+  assert.match(apply.slice(0, apply.indexOf("\n}")), /transcriptKey\(candidate\.path\) === recentSessionKey\(entry\)/);
+  const open = app.slice(app.indexOf("async function openRecentSession(entry)"));
+  assert.match(open.slice(0, open.indexOf("\n}")), /transcriptKey\(candidate\.path\) === recentSessionKey\(entry\)/);
 });

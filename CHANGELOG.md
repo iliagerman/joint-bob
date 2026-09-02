@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Recent conversations now appear once in the recents dialog, even when resumed on different nodes
+
 ## 1.1.1 — 2026-09-02
 
 - Chat toolbar actions now display correctly on desktop instead of being clipped from the panel edge

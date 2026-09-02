@@ -2338,6 +2338,36 @@ function canonicalSessionPath(sessionPath) {
   return sessionPath.replace(/\.sync-conflict-[^/\\]+(?=\.jsonl$)/, "");
 }
 
+/**
+ * Resuming a conversation on another node copies its transcript under that node's project
+ * directory, so the same conversation reaches the recents list under several paths. The
+ * transcript file name is the conversation's identity; the directory around it is not.
+ */
+function transcriptKey(sessionPath) {
+  return sessionTranscriptName(canonicalSessionPath(sessionPath));
+}
+
+function recentSessionKey(entry) {
+  return transcriptKey(entry.sessionPath);
+}
+
+/**
+ * One row per conversation: the copy the user opened most recently, carrying the newest
+ * activity time of the whole group so the row is dated by its latest message.
+ */
+function mergeRecentSessions(entries) {
+  const merged = new Map();
+  for (const entry of entries) {
+    const key = recentSessionKey(entry);
+    const kept = merged.get(key);
+    if (!kept) merged.set(key, entry);
+    else if (recentSessionActivityAt(entry) > recentSessionActivityAt(kept)) {
+      merged.set(key, { ...kept, updatedAt: recentSessionActivityAt(entry) });
+    }
+  }
+  return [...merged.values()];
+}
+
 function rememberRecentSession(session) {
   const entry = {
     projectId: state.activeProjectId,
@@ -2346,8 +2376,7 @@ function rememberRecentSession(session) {
     openedAt: new Date().toISOString(),
     updatedAt: session.updatedAt ?? session.createdAt ?? null,
   };
-  const others = state.recentSessions.filter((candidate) =>
-    candidate.projectId !== entry.projectId || canonicalSessionPath(candidate.sessionPath) !== entry.sessionPath);
+  const others = state.recentSessions.filter((candidate) => recentSessionKey(candidate) !== recentSessionKey(entry));
   state.recentSessions = [entry, ...others].slice(0, RECENT_SESSIONS_LIMIT);
   if (state.preferencesLoaded) savePreferencesInBackground({ recentSessions: state.recentSessions });
 }
@@ -2363,7 +2392,7 @@ function applyRecentSessionActivity(sessionsByProject) {
   state.recentSessions = state.recentSessions.map((entry) => {
     const sessions = sessionsByProject.get(entry.projectId);
     if (!sessions) return entry;
-    const session = sessions.find((candidate) => canonicalSessionPath(candidate.path) === entry.sessionPath);
+    const session = sessions.find((candidate) => transcriptKey(candidate.path) === recentSessionKey(entry));
     const updatedAt = session?.updatedAt ?? session?.createdAt ?? null;
     if (!updatedAt || updatedAt === entry.updatedAt) return entry;
     changed = true;
@@ -2408,8 +2437,7 @@ function recentSessionSearchText(entry) {
 }
 
 function forgetRecentSession(entry) {
-  state.recentSessions = state.recentSessions.filter((candidate) =>
-    candidate.projectId !== entry.projectId || candidate.sessionPath !== entry.sessionPath);
+  state.recentSessions = state.recentSessions.filter((candidate) => recentSessionKey(candidate) !== recentSessionKey(entry));
   if (state.preferencesLoaded) savePreferencesInBackground({ recentSessions: state.recentSessions });
   renderRecentSessionsDialog();
 }
@@ -2421,7 +2449,7 @@ function forgetRecentSession(entry) {
 async function openRecentSession(entry) {
   elements.recentSessionsDialog.close();
   if (state.activeProjectId !== entry.projectId) await selectProject(entry.projectId);
-  const session = state.sessions.find((candidate) => candidate.path === entry.sessionPath);
+  const session = state.sessions.find((candidate) => transcriptKey(candidate.path) === recentSessionKey(entry));
   if (!session) {
     forgetRecentSession(entry);
     toast("That conversation is no longer available");
@@ -2439,7 +2467,7 @@ function renderRecentSessionsDialog() {
   recentSessionShortcuts = [];
 
   const query = normalizedQuery(elements.recentSessionsSearchInput.value || "");
-  const byActivity = [...state.recentSessions].sort((left, right) =>
+  const byActivity = [...mergeRecentSessions(state.recentSessions)].sort((left, right) =>
     recentSessionActivityAt(right).localeCompare(recentSessionActivityAt(left)));
   const ordered = sortPinnedFirst(byActivity, (entry) => isSessionPinned(entry.sessionPath));
   const matches = ordered.filter((entry) => !query || recentSessionSearchText(entry).includes(query));
