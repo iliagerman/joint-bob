@@ -8,9 +8,9 @@ test("project rows put every action behind one overflow menu", async () => {
   assert.match(app, /menuButton\.dataset\.testid = "project-menu-button"/);
   assert.match(app, /function projectMenuItems\(project\)/);
 
-  // Every remaining inline button now lives in the menu.
+  // Every remaining inline button now lives in the menu; pinning is the one
+  // quick action that stayed on the row.
   for (const testid of [
-    "project-pin-button",
     "project-rename-button",
     "project-lock-button",
     "project-path-mapping-button",
@@ -36,8 +36,8 @@ test("both lists show their row menu button at all times", async () => {
     readFile("public/styles.css", "utf8"),
   ]);
 
-  // Conversations and projects build the identical row: card plus one menu button.
-  assert.equal(app.match(/row\.append\(button, menuButton\);/g)?.length, 2);
+  // Conversations and projects build the identical row: card, pin, menu button.
+  assert.equal(app.match(/row\.append\(button, pinToggle, menuButton\);/g)?.length, 2);
 
   // Nothing is revealed on hover or on selection any more, so that machinery is gone...
   assert.doesNotMatch(styles, /:is\(:hover, :focus-within\) \.row-action-button/);

@@ -24,12 +24,9 @@ test("projects and conversations can be pinned to the top of their list", async 
 
   assert.match(styles, /\.pin-button\.pinned/);
 
-  // Pinning moved into the row overflow menu on both lists, so no row carries a pin
-  // button any more and the inline marker is the only indicator — it always shows.
-  assert.match(styles, /\.project-card\.pinned strong::after,\n\.session-card\.pinned strong::after \{[^}]*content: "\u{1F4CC}"/u);
-  // The recents dialog still suppresses it — that list keeps a real pin button — but
-  // no row in either main list does.
-  assert.doesNotMatch(styles, /\.list-row[^\n]*\.pinned strong::after \{ content: none; \}/);
+  // Pinning is a quick action on the row itself in both lists, so the inline text
+  // marker is gone everywhere — the button is the indicator.
+  assert.doesNotMatch(styles, /strong::after \{[^}]*content: "\u{1F4CC}"/u);
 });
 
 test("a pinned conversation survives the recency cap on the session list", async () => {
@@ -58,23 +55,24 @@ test("pinned ids and panel collapse round-trip through the preferences API", asy
   assert.match(preferences, /ALTER TABLE user_preferences ADD COLUMN chats_panel_collapsed INTEGER NOT NULL DEFAULT 0/);
 });
 
-test("a pinned conversation carries its own unpin button on the row", async () => {
+test("every conversation and project row carries the same pin quick action", async () => {
   const [app, styles] = await Promise.all([
     readFile("public/app.js", "utf8"),
     readFile("public/styles.css", "utf8"),
   ]);
 
-  // Unpinning is the one action a pinned row needs often enough to deserve a
-  // button; everything else stays in the overflow menu.
-  assert.match(app, /testid: "session-unpin-button"/);
-  assert.match(app, /if \(sessionPinned\) row\.append\(sessionUnpinButton\(session\)\);/);
+  // Pinning is one tap on the row in both lists, and both build the identical button.
+  assert.match(app, /function sessionPinToggle\(session\)/);
+  assert.match(app, /function projectPinToggle\(project\)/);
+  assert.equal(app.match(/row\.append\(button, pinToggle, menuButton\);/g)?.length, 2);
+  // ...so neither overflow menu offers pinning any more.
+  assert.doesNotMatch(app, /testid: "session-unpin-button"/);
 
-  // Two buttons need two lanes, and the button makes the inline marker redundant.
-  assert.match(styles, /\.session-list \.pin-button \{ right: 42px; \}/);
-  assert.match(styles, /\.session-list \.list-row\.pinned \.session-card \{ padding-right: 78px; \}/);
-  assert.match(styles, /\.session-list \.session-card\.pinned strong::after \{ content: none; \}/);
+  // Two permanent buttons need two permanent lanes in both lists.
+  assert.match(styles, /\.session-list \.pin-button, \.project-list \.pin-button \{ right: 42px; \}/);
+  assert.match(styles, /\.session-list \.session-card, \.project-list \.project-card \{ padding-right: 78px; \}/);
 
   // On phones both buttons grow to a real touch target, so the lanes widen with them.
-  assert.match(styles, /\.session-list \.pin-button \{ min-height: 34px; min-width: 34px; width: 34px; right: 48px; \}/);
-  assert.match(styles, /\.session-list \.list-row\.pinned \.session-card \{ padding-right: 90px; \}/);
+  assert.match(styles, /\.session-list \.pin-button, \.project-list \.pin-button \{ min-height: 34px; min-width: 34px; width: 34px; right: 48px; \}/);
+  assert.match(styles, /\.session-list \.session-card, \.project-list \.project-card \{ padding-right: 90px; \}/);
 });

@@ -1572,15 +1572,14 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   /* The menu is the only way to reach a row's actions, so it needs a real touch target,
      and a wider lane to sit in so the title still clears it. */
   .row-menu-button { min-height: 34px; min-width: 34px; }
-  /* The unpin button gets the same touch target, one lane to the left of the menu. */
-  .session-list .pin-button { min-height: 34px; min-width: 34px; width: 34px; right: 48px; }
-  .session-list .list-row.pinned .session-card { padding-right: 90px; }
+  /* The pin button gets the same touch target, one lane to the left of the menu. */
+  .session-list .pin-button, .project-list .pin-button { min-height: 34px; min-width: 34px; width: 34px; right: 48px; }
+  .session-list .session-card, .project-list .project-card { padding-right: 90px; }
   /* The ticket jump button gets the same touch target in that lane, and pushes
-     the unpin button one lane further when a ticket row is also pinned. */
+     the pin button one lane further on a ticket row. */
   .session-list .ticket-link-button { min-height: 34px; min-width: 34px; width: 34px; right: 48px; }
-  .session-list .list-row.has-ticket .session-card { padding-right: 90px; }
-  .session-list .list-row.pinned.has-ticket .pin-button { right: 86px; }
-  .session-list .list-row.pinned.has-ticket .session-card { padding-right: 128px; }
+  .session-list .list-row.has-ticket .pin-button { right: 86px; }
+  .session-list .list-row.has-ticket .session-card { padding-right: 128px; }
   /* Stop stays a real touch target on phones without leaving the meta row. */
   .chat-actions .icon-button { min-width: 32px; width: 32px; min-height: 32px; }
   .project-card, .session-card { padding-right: 52px; }
@@ -1633,29 +1632,20 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 /* ---- Pinned projects and conversations ---- */
 .pin-button { font-size: 12px; opacity: 0.55; }
 .pin-button.pinned { opacity: 1; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
-.project-card.pinned strong::after,
-.session-card.pinned strong::after {
-  content: "📌";
-  margin-left: 6px;
-  font-size: 9px;
-  vertical-align: 1px;
-}
 
-/* A pinned conversation shows a real unpin button, so it needs a second button lane
-   and the inline marker would only duplicate the button. */
-.session-list .pin-button { right: 42px; }
-.session-list .list-row.pinned .session-card { padding-right: 78px; }
-.session-list .session-card.pinned strong::after { content: none; }
+/* Both lists carry a real pin button on every row, so each needs a second button
+   lane and pays for it with padding — the button is the pinned indicator. */
+.session-list .pin-button, .project-list .pin-button { right: 42px; }
+.session-list .session-card, .project-list .project-card { padding-right: 78px; }
 
 /* ---- Ticket conversations in the list ---- */
 /* The jump button owns a lane left of the menu button, and the row pays for the
    lane with padding so the title never runs under it. */
 .session-list .ticket-link-button { right: 42px; color: var(--accent); }
 .session-list .ticket-link-button svg { width: 15px; height: 15px; }
-.session-list .list-row.has-ticket .session-card { padding-right: 78px; }
-/* A pinned ticket conversation needs three lanes: menu, ticket, unpin. */
-.session-list .list-row.pinned.has-ticket .pin-button { right: 74px; }
-.session-list .list-row.pinned.has-ticket .session-card { padding-right: 110px; }
+/* A ticket conversation needs three lanes: menu, ticket, pin. */
+.session-list .list-row.has-ticket .pin-button { right: 74px; }
+.session-list .list-row.has-ticket .session-card { padding-right: 110px; }
 
 /* ---- Skills browser ---- */
 .skills-dialog-list { display: grid; gap: 4px; min-width: 0; max-height: 52dvh; overflow-y: auto; }
@@ -1805,8 +1795,6 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   text-overflow: ellipsis;
 }
 .recent-sessions-list .session-card span { -webkit-line-clamp: 1; }
-/* The pin button never hides here, so the inline marker would only duplicate it. */
-.recent-sessions-list .session-card.pinned strong::after { content: none; }
 .recent-sessions-list .session-card.pinned { border-color: color-mix(in srgb, var(--accent) 34%, var(--line)); }
 .recent-sessions-list .pin-button:not(.pinned) { opacity: 0.55; }
 

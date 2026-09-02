@@ -69,13 +69,12 @@ test("the ticket mark and its button lane are styled with design tokens", async 
   // The jump button owns a lane left of the menu button, and the row pays for
   // the lane with padding so the title never runs under it.
   assert.match(styles, /\.session-list \.ticket-link-button \{[^}]*right: 42px/);
-  assert.match(styles, /\.session-list \.list-row\.has-ticket \.session-card \{[^}]*padding-right: 78px/);
-  // A pinned ticket conversation needs three lanes: menu, ticket, unpin.
-  assert.match(styles, /\.session-list \.list-row\.pinned\.has-ticket \.pin-button \{[^}]*right: 74px/);
-  assert.match(styles, /\.session-list \.list-row\.pinned\.has-ticket \.session-card \{[^}]*padding-right: 110px/);
+  // A ticket conversation needs three lanes: menu, ticket, pin.
+  assert.match(styles, /\.session-list \.list-row\.has-ticket \.pin-button \{[^}]*right: 74px/);
+  assert.match(styles, /\.session-list \.list-row\.has-ticket \.session-card \{[^}]*padding-right: 110px/);
 
   // Phones get the same real touch targets the other lane buttons get.
   const mobile = styles.slice(styles.indexOf("@media (max-width: 1023px)"));
   assert.match(mobile, /\.session-list \.ticket-link-button \{[^}]*min-height: 34px/);
-  assert.match(mobile, /\.session-list \.list-row\.pinned\.has-ticket \.session-card \{[^}]*padding-right: 128px/);
+  assert.match(mobile, /\.session-list \.list-row\.has-ticket \.session-card \{[^}]*padding-right: 128px/);
 });

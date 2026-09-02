@@ -92,8 +92,11 @@ async function openJointBobProject(): Promise<void> {
   await page.getByTestId("login-username-input").fill(environment.username);
   await page.getByTestId("login-password-input").fill(environment.password);
   await page.getByTestId("login-submit-button").click();
-  await page.getByText("Joint Bob", { exact: true }).first().waitFor({ timeout: 20_000 });
-  await page.locator(".project-card", { hasText: "Joint Bob" }).first().click();
+  // Wait for the project row itself: the boot splash carries the same wordmark and
+  // stays hidden, so a bare text match waits on an element that never appears.
+  const projectCard = page.locator(".project-card", { hasText: "Joint Bob" }).first();
+  await projectCard.waitFor({ timeout: 20_000 });
+  await projectCard.click();
   await page.locator(".session-card").first().waitFor({ timeout: 20_000 });
 }
 
@@ -128,10 +131,9 @@ test("a ticket conversation is listed, marked, and jumps into its ticket", async
 });
 
 test("the ticket jump button keeps its lane when the row is also pinned", async () => {
-  // Pin through the row menu, the way a person pins a conversation.
+  // Pin with the row's own quick action, the way a person pins a conversation.
   const row = page.locator(".list-row", { hasText: CONVERSATION_NAME }).first();
-  await row.getByTestId("session-menu-button").click();
-  await page.getByTestId("session-pin-button").click();
+  await row.getByTestId("session-pin-button").click();
   await page.locator(".list-row.pinned.has-ticket").first().waitFor({ timeout: 10_000 });
 
   const lanes = await page.evaluate(() => {

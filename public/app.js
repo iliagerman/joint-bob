@@ -2101,20 +2101,27 @@ function projectRow(project) {
       openRowMenu(menuButton, projectMenuItems(project), `[data-project-id="${CSS.escape(project.id)}"] [data-testid="project-menu-button"]`);
     });
 
-    row.append(button, menuButton);
+    const pinToggle = projectPinToggle(project);
+
+    row.append(button, pinToggle, menuButton);
     return row;
+}
+
+/** Pinning is the one action worth a tap of its own, on projects exactly as on
+    conversations; everything else stays in the overflow menu. */
+function projectPinToggle(project) {
+  const pinned = isProjectPinned(project.id);
+  return pinButton({
+    pinned,
+    label: pinned ? `Unpin ${project.name}` : `Pin ${project.name}`,
+    testid: "project-pin-button",
+    onToggle: () => togglePinnedProject(project.id),
+  });
 }
 
 /** Seven inline buttons crowded the row off the screen; they all live in the menu now. */
 function projectMenuItems(project) {
-  const pinned = isProjectPinned(project.id);
   return [
-    {
-      label: pinned ? "Unpin from top" : "Pin to top",
-      icon: "pin",
-      testid: "project-pin-button",
-      onSelect: () => togglePinnedProject(project.id),
-    },
     {
       label: "Edit project",
       icon: "pencil",
@@ -2651,8 +2658,9 @@ function renderSessions() {
       openRowMenu(menuButton, sessionMenuItems(session, sessionActive), `[data-session-path="${CSS.escape(session.path)}"] [data-testid="session-menu-button"]`);
     });
 
-    row.append(button, menuButton);
-    if (sessionPinned) row.append(sessionUnpinButton(session));
+    const pinToggle = sessionPinToggle(session);
+
+    row.append(button, pinToggle, menuButton);
     if (ticketTask) row.append(ticketRowButton(ticketTask));
     if (session.agentRuns?.length) {
       const runs = document.createElement("div");
@@ -2690,13 +2698,15 @@ function agentRunTaskReason(task) {
   return task.error || "No reason reported by the agent dashboard";
 }
 
-/** Unpinning is the one action a pinned row needs often enough to earn its own button;
+/** Pinning is the one action a row needs often enough to earn its own button;
     everything else stays in the overflow menu. */
-function sessionUnpinButton(session) {
+function sessionPinToggle(session) {
+  const name = shortSessionTitle(session);
+  const pinned = isSessionPinned(session.path);
   return pinButton({
-    pinned: true,
-    label: `Unpin ${shortSessionTitle(session)}`,
-    testid: "session-unpin-button",
+    pinned,
+    label: pinned ? `Unpin ${name}` : `Pin ${name}`,
+    testid: "session-pin-button",
     onToggle: () => togglePinnedSession(session.path),
   });
 }
@@ -2704,15 +2714,8 @@ function sessionUnpinButton(session) {
 /** Every other row action lives in the overflow menu, so the row itself stays one tap target. */
 function sessionMenuItems(session, sessionActive) {
   const name = shortSessionTitle(session);
-  const pinned = isSessionPinned(session.path);
   const isClaude = sessionEngine(session) === "claude";
   return [
-    {
-      label: pinned ? "Unpin from top" : "Pin to top",
-      icon: "pin",
-      testid: "session-pin-button",
-      onSelect: () => togglePinnedSession(session.path),
-    },
     {
       label: "Colour",
       icon: "sliders",
