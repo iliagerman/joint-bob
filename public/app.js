@@ -1088,6 +1088,16 @@ function shortSessionTitle(session) {
 }
 
 /**
+ * The chat header must agree with the conversations list. Status updates and
+ * sessionInfoChanged carry the engine's own live session name (for example a
+ * generated one), which must not clobber a Joint Bob rename the list still shows.
+ */
+function syncChatTitleFromSessions(engineName) {
+  const session = state.sessions.find((item) => item.path === state.activeSessionPath);
+  elements.sessionTitle.textContent = session ? shortSessionTitle(session) : engineName;
+}
+
+/**
  * Desktop-only: the mobile layout already shows a single panel at a time, so the
  * body class simply narrows one grid column down to the rail width.
  */
@@ -3942,7 +3952,7 @@ function updateStatus(status) {
   state.sessionBusy = Boolean(status.isStreaming || status.isBashRunning || status.isCompacting || status.isRetrying);
   if (typeof status.safeguardsEnabled === "boolean") state.safeguardsEnabled = status.safeguardsEnabled;
   elements.abortButton.disabled = !status.isStreaming && !status.isBashRunning && !status.isCompacting && !status.isRetrying;
-  if (status.sessionName) elements.sessionTitle.textContent = status.sessionName;
+  if (status.sessionName) syncChatTitleFromSessions(status.sessionName);
   state.activeModelKey = status.model ? `${status.model.provider}/${status.model.id}` : "";
   state.activeModelLabel = status.model ? status.model.label : "";
   syncReasoningControls(status);
@@ -4472,7 +4482,7 @@ function handleSocketPayload(payload, scrollOnReady = false) {
       state.lastTurnStartedAt = 0;
     }
   }
-  if (payload.type === "sessionInfoChanged" && payload.name) elements.sessionTitle.textContent = payload.name;
+  if (payload.type === "sessionInfoChanged" && payload.name) syncChatTitleFromSessions(payload.name);
   if (payload.type === "sessionsChanged") {
     refreshSessionsQuietly();
     schedulePendingReviewsRefresh();

@@ -102,3 +102,16 @@ test("switching projects discards in-flight responses from the previous project"
   assert.doesNotMatch(app, /encodeURIComponent\(state\.activeProjectId\)\}\/sessions`\)/);
   assert.doesNotMatch(app, /encodeURIComponent\(state\.activeProjectId\)\}\/tasks`\)/);
 });
+
+test("the chat header keeps a Joint Bob rename over the engine's own session name", async () => {
+  const app = await readFile("public/app.js", "utf8");
+
+  // Status updates and sessionInfoChanged carry the engine's live session name
+  // (for example a generated one), which must not clobber the title the
+  // conversations list shows for a renamed conversation.
+  assert.match(app, /function syncChatTitleFromSessions\(engineName\) \{\s*const session = state\.sessions\.find\(\(item\) => item\.path === state\.activeSessionPath\);\s*elements\.sessionTitle\.textContent = session \? shortSessionTitle\(session\) : engineName;\s*\}/);
+  assert.match(app, /if \(status\.sessionName\) syncChatTitleFromSessions\(status\.sessionName\);/);
+  assert.match(app, /sessionInfoChanged" && payload\.name\) syncChatTitleFromSessions\(payload\.name\);/);
+  assert.doesNotMatch(app, /elements\.sessionTitle\.textContent = status\.sessionName/);
+  assert.doesNotMatch(app, /sessionInfoChanged[\s\S]{0,80}elements\.sessionTitle\.textContent = payload\.name/);
+});
