@@ -984,6 +984,16 @@ app.set("trust proxy", 1);
 app.get("/favicon.ico", (_request, response) => {
   response.type("image/png").sendFile(path.join(publicDir, "icon-192.png"));
 });
+app.get("/sw.js", async (_request, response, next) => {
+  try {
+    const source = await readFile(path.join(publicDir, "sw.js"), "utf8");
+    const worker = source.replace(/^const CACHE_NAME = "[^"]+";/, `const CACHE_NAME = "joint-bob-${appVersion()}";`);
+    if (worker === source) throw new Error("Service worker cache name is missing");
+    response.type("application/javascript").set("Cache-Control", "no-cache").send(worker);
+  } catch (error) {
+    next(error);
+  }
+});
 app.use("/vendor/codemirror", express.static(codemirrorDir, { index: false }));
 app.use(express.static(publicDir));
 app.use(express.json({ limit: "12mb" }));

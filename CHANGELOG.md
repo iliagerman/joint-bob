@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Pinned conversations now synchronize across cluster nodes instead of being local to each machine
+- The app now automatically refreshes to the latest version when deployed while the browser window is open
 
 ## 1.2.1 — 2026-09-03
 

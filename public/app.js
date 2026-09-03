@@ -6189,9 +6189,21 @@ window.addEventListener("online", () => {
 });
 window.addEventListener("focus", () => resumeConnection());
 
+const SERVICE_WORKER_UPDATE_MS = 60_000;
+
+function updateServiceWorker(registration) {
+  registration.update().catch((error) => console.warn("Service worker update check failed", error));
+}
+
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").catch((error) => console.warn("Service worker registration failed", error));
+  window.addEventListener("load", async () => {
+    try {
+      const registration = await navigator.serviceWorker.register("/sw.js");
+      await registration.update();
+      setInterval(() => updateServiceWorker(registration), SERVICE_WORKER_UPDATE_MS);
+    } catch (error) {
+      console.warn("Service worker registration failed", error);
+    }
   });
 }
 
