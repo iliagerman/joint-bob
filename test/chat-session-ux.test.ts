@@ -13,7 +13,8 @@ test("an empty connected conversation stays usable until its first message is sa
 test("ticket chat controls hand off ownership instead of reconnecting", async () => {
   const app = await readFile("public/app.js", "utf8");
 
-  assert.match(app, /chatNodeSelect\.disabled = !state\.activeProjectId \|\| !state\.sessionNodes\.length \|\| Boolean\(selectedSession && !activeTicket\)/);
+  assert.match(app, /chatNodeSelect\.disabled = !state\.activeProjectId \|\| !state\.sessionNodes\.length/);
+  assert.doesNotMatch(app, /chatNodeSelect\.disabled = [^;]*selectedSession/);
   assert.doesNotMatch(app, /chatNodeSelect\.disabled = Boolean\(state\.activeTaskId\)/);
   assert.match(app, /Send a message first, then continue this ticket on another node/);
   assert.match(app, /if \(state\.activeTaskId\) \{[\s\S]*await continueTaskOnNode\(task, destination\)/);

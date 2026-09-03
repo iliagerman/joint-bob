@@ -3827,9 +3827,8 @@ function renderChatSessionControls() {
     disabled: !node.online || !node.mapped,
   })));
   elements.chatNodeSelect.value = state.activeNodeId || "";
-  const selectedSession = state.sessions.find((session) => session.id === state.activeSessionId);
   const activeTicket = state.activeTaskId ? state.tasks.find((task) => task.id === state.activeTaskId) : null;
-  elements.chatNodeSelect.disabled = !state.activeProjectId || !state.sessionNodes.length || Boolean(selectedSession && !activeTicket);
+  elements.chatNodeSelect.disabled = !state.activeProjectId || !state.sessionNodes.length;
 
   syncSelectOptions(elements.chatHarnessSelect, state.harnesses.map((harness) => ({ value: harness.id, label: harness.label })));
   elements.chatHarnessSelect.value = state.engine;

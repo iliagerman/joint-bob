@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Remote conversations can now be switched to a local node and taken over reliably with proper ownership settlement across the cluster
 - Selected projects and conversations are now more visually prominent with borders and updated highlighting in their sidebars
 
 ## 1.2.0 — 2026-09-03

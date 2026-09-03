@@ -5602,7 +5602,7 @@ webSocketServer.on("connection", async (socket, request) => {
   const routingEngine: ConversationEngine = routingDraft?.engine ?? (rawSessionPathFromUrl?.startsWith("claude:") ? "claude" : "pi");
   if (browserAuthenticated && !task) {
     const ownership = requestedSessionId ? await getConversationOwnership(routingEngine, requestedSessionId) : undefined;
-    const targetNodeId = ownership?.ownerNodeId ?? requestedNodeId;
+    const targetNodeId = requestedNodeId || ownership?.ownerNodeId;
     if (targetNodeId && targetNodeId !== local.id) {
       const peer = await getClusterPeer(targetNodeId);
       if (!peer) { socket.close(1011, "Execution node is unavailable"); return; }

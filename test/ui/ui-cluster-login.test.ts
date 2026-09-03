@@ -9,6 +9,7 @@
 import assert from "node:assert/strict";
 import { type ChildProcess } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import os from "node:os";
 import path from "node:path";
 import test, { after, before } from "node:test";
@@ -20,6 +21,7 @@ let environment: DevEnvironment;
 let servers: ChildProcess[] = [];
 let browser: Browser;
 let context: BrowserContext;
+let pages: Page[] = [];
 
 before(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-ui-cluster-"));
@@ -47,8 +49,22 @@ async function signInThroughForm(page: Page, url: string): Promise<void> {
   await page.getByText("Internal Assistant", { exact: true }).waitFor({ timeout: 30_000 });
 }
 
+async function waitForOwner(sessionId: string, ownerNodeId: string): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const settled = environment.nodes.every((node) => {
+      const database = new DatabaseSync(path.join(node.dataDir, "node.db"), { readOnly: true });
+      const owner = database.prepare("SELECT owner_node_id FROM conversation_ownership WHERE session_id = ?").get(sessionId) as { owner_node_id: string } | undefined;
+      database.close();
+      return owner?.owner_node_id === ownerNodeId;
+    });
+    if (settled) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("Conversation ownership did not settle across both nodes");
+}
+
 test("signing into both nodes through the form leaves both tabs signed in", async () => {
-  const pages: Page[] = [];
   for (const node of environment.nodes) {
     const page = await context.newPage();
     pages.push(page);
@@ -72,4 +88,34 @@ test("signing into both nodes through the form leaves both tabs signed in", asyn
     const status = await page.evaluate(() => fetch("/api/auth/status").then((response) => response.json() as Promise<{ authenticated: boolean }>));
     assert.equal(status.authenticated, true, `node ${node.key} reports an authenticated session`);
   }
+});
+
+test("an open remote conversation can switch locally and take ownership", async () => {
+  const [mac, homeserver] = environment.nodes;
+  const [macPage, homeserverPage] = pages;
+
+  await macPage.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+  await macPage.locator(".session-card", { hasText: "Thread-Based Agent Builder" }).first().click();
+  await macPage.locator("#messages .message", { hasText: "We keep re-threading" }).waitFor({ timeout: 30_000 });
+  await waitForOwner("thread-based-agent-builder", mac.nodeId);
+
+  await homeserverPage.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+  await homeserverPage.getByTestId("chat-node-select").selectOption(mac.nodeId);
+  await homeserverPage.locator(".session-card", { hasText: "Thread-Based Agent Builder" }).first().click();
+  await homeserverPage.locator("#messages .message", { hasText: "We keep re-threading" }).waitFor({ timeout: 30_000 });
+
+  const nodeSelect = homeserverPage.getByTestId("chat-node-select");
+  assert.equal(await nodeSelect.isEnabled(), true, "the node selector remains usable for an open conversation");
+  await nodeSelect.selectOption(homeserver.nodeId);
+  const takeButton = homeserverPage.getByTestId("conversation-lock-take-button");
+  await homeserverPage.locator("#messages .message", { hasText: "We keep re-threading" }).waitFor({ timeout: 30_000 });
+  const takeoverState = await homeserverPage.evaluate(() => ({
+    selectedNodeId: (document.querySelector("#chatNodeSelect") as HTMLSelectElement).value,
+    lockHidden: (document.querySelector("#conversationLock") as HTMLElement).hidden,
+    lockDetail: document.querySelector("#conversationLockDetail")?.textContent,
+  }));
+  assert.equal(await takeButton.isVisible(), true, `local view offers takeover: ${JSON.stringify(takeoverState)}`);
+  await takeButton.click();
+  await homeserverPage.locator("#conversationLock").waitFor({ state: "hidden", timeout: 30_000 });
+  assert.equal(await homeserverPage.getByTestId("chat-message-input").isEnabled(), true, "the destination can continue the conversation after takeover");
 });
