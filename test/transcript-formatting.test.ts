@@ -3,17 +3,14 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 test("loaded transcripts keep the tool role and tool name instead of flattening them into chat text", async () => {
-  const [piService, types, server] = await Promise.all([
+  const [piService, types] = await Promise.all([
     readFile("src/pi-service.ts", "utf8"),
     readFile("src/types.ts", "utf8"),
-    readFile("src/server.ts", "utf8"),
   ]);
 
   // ChatMessage carries the tool label so the client can render a tool bubble.
   assert.match(types, /export interface ChatMessage \{[\s\S]*toolName\?: string;[\s\S]*\}/);
   assert.match(piService, /simplifyMessages[\s\S]*toolName/);
-  // The cluster transfer payload must not reject the new field.
-  assert.match(server, /messages: z\.array\(z\.object\(\{[\s\S]*toolName: z\.string\(\)[\s\S]*\)\)/);
 });
 
 test("history rendering routes each transcript role to its own bubble", async () => {

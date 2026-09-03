@@ -44,7 +44,7 @@ test("a conversation owned by another node replaces the composer with a take-own
 
   assert.match(styles, /\.conversation-lock \{/);
   assert.match(styles, /\.conversation-lock\[hidden\] \{ display: none; \}/);
-  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v95";/);
+  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v101";/);
 });
 
 test("the take-ownership controls are engine-neutral, so a Claude conversation can be claimed", async () => {
@@ -60,23 +60,28 @@ test("the take-ownership controls are engine-neutral, so a Claude conversation c
   assert.match(renderBody, /Anything you send from here is rejected until you take ownership/);
   assert.doesNotMatch(app, /only Pi conversations can be taken over/);
 
-  // The session panel button and the request it fires are gated on the ticket
-  // check alone; neither consults the engine any more.
-  assert.match(app, /elements\.sessionTakeOwnershipButton\.hidden = Boolean\(state\.activeTaskId\);/);
-  const take = app.slice(app.indexOf("async function takeSessionOwnership("));
+  // The lock banner is the only takeover control; the transfer dialog that
+  // carried a second one is gone.
+  const take = app.slice(app.indexOf("async function takeLockedConversationOwnership("));
   assert.match(take.slice(0, take.indexOf("\n}")), /if \(ownershipWait \|\| ownershipTaking \|\| state\.activeTaskId \|\| !state\.activeProjectId \|\| !session\) return;/);
-  assert.match(html, /id="sessionTakeOwnershipButton" data-testid="session-take-ownership-button"/);
+  assert.match(html, /id="conversationLockTakeButton"[^>]*data-testid="conversation-lock-take-button"/);
+  assert.doesNotMatch(html, /sessionTakeOwnershipButton/);
+  assert.doesNotMatch(app, /sessionTakeOwnershipButton/);
 });
 
-test("push transfer stays blocked for Claude while takeover is opened up", async () => {
-  const app = await readFile("public/app.js", "utf8");
+test("copy-based transfer is gone and takeover is the only continuation path", async () => {
+  const [app, html, server] = await Promise.all([
+    readFile("public/app.js", "utf8"),
+    readFile("public/index.html", "utf8"),
+    readFile("src/server.ts", "utf8"),
+  ]);
 
-  // Conversation row menu: the transfer entry is still disabled for Claude.
-  assert.match(app, /testid: "session-transfer-button",\s*disabled: isClaude,/);
-  assert.match(app, /title: isClaude \? "Claude transfer is not available yet"/);
-  // Chat toolbar: the transfer button still requires the Pi engine.
-  assert.match(app, /Boolean\(selectedSession && state\.engine === "pi" && socketOpen\(\) && destinations\.length\)/);
-  assert.match(app, /state\.engine === "claude"\s*\? "Claude conversation transfer is not available yet"/);
+  // No push-transfer entry points remain in any engine's UI.
+  assert.doesNotMatch(app, /session-transfer-button/);
+  assert.doesNotMatch(app, /transferSessionButton/);
+  assert.doesNotMatch(html, /Continue on/);
+  assert.doesNotMatch(server, /POST \/cluster\/sessions\/transfer/);
+  assert.doesNotMatch(server, /POST \/cluster\/sessions\/receive/);
 });
 
 test("takeover derives the engine from the session path instead of refusing Claude", async () => {

@@ -26,7 +26,7 @@ function runNode(dataDir: string, code: string): Promise<string> {
   });
 }
 
-test("conversation ownership is epoch-monotonic, persistent, and transfer-idempotent", async () => {
+test("conversation ownership is epoch-monotonic, persistent, and takeover-idempotent", async () => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "joint-bob-ownership-"));
   const previous = process.env.JOINT_BOB_DATA_DIR;
   process.env.JOINT_BOB_DATA_DIR = dataDir;
@@ -35,17 +35,10 @@ test("conversation ownership is epoch-monotonic, persistent, and transfer-idempo
     assert.deepEqual(await ownership.claimConversationOwnership(engine, sessionId, sourceNodeId), {
       engine, sessionId, ownerNodeId: sourceNodeId, epoch: 1, status: "owned", transferToNodeId: null,
     });
-    const transferring = await ownership.beginConversationTransfer(engine, sessionId, sourceNodeId, destinationNodeId);
-    assert.equal(transferring.status, "transferring");
-    assert.deepEqual(await ownership.beginConversationTransfer(engine, sessionId, sourceNodeId, destinationNodeId), transferring);
-    const committed = await ownership.commitConversationTransfer(engine, sessionId, destinationNodeId, 1);
-    assert.equal(committed.epoch, 2);
-    assert.equal(committed.ownerNodeId, destinationNodeId);
-    assert.deepEqual(await ownership.commitConversationTransfer(engine, sessionId, destinationNodeId, 1), committed);
-    const taken = await ownership.takeConversationOwnership(engine, sessionId, sourceNodeId);
-    assert.equal(taken.epoch, committed.epoch + 1);
-    assert.equal(taken.ownerNodeId, sourceNodeId);
-    assert.deepEqual(await ownership.takeConversationOwnership(engine, sessionId, sourceNodeId), taken);
+    const taken = await ownership.takeConversationOwnership(engine, sessionId, destinationNodeId);
+    assert.equal(taken.epoch, 2);
+    assert.equal(taken.ownerNodeId, destinationNodeId);
+    assert.deepEqual(await ownership.takeConversationOwnership(engine, sessionId, destinationNodeId), taken);
 
     const output = await runNode(dataDir, `
       const ownership = await import('./src/conversation-ownership.ts');

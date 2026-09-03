@@ -176,22 +176,12 @@ const elements = {
   modelButton: document.querySelector("#modelButton"),
   modelButtonName: document.querySelector("#modelButtonName"),
   safeguardsButton: document.querySelector("#safeguardsButton"),
-  transferSessionButton: document.querySelector("#transferSessionButton"),
   openTerminalButton: document.querySelector("#openTerminalButton"),
   terminalDialog: document.querySelector("#terminalDialog"),
   terminalStatus: document.querySelector("#terminalStatus"),
   terminalHost: document.querySelector("#terminalHost"),
   clearTerminalButton: document.querySelector("#clearTerminalButton"),
   closeTerminalButton: document.querySelector("#closeTerminalButton"),
-  sessionTransferDialog: document.querySelector("#sessionTransferDialog"),
-  sessionTransferForm: document.querySelector("#sessionTransferForm"),
-  sessionTransferNodeSelect: document.querySelector("#sessionTransferNodeSelect"),
-  cancelSessionTransferButton: document.querySelector("#cancelSessionTransferButton"),
-  sessionTakeOwnershipButton: document.querySelector("#sessionTakeOwnershipButton"),
-  sessionTransferProgress: document.querySelector("#sessionTransferProgress"),
-  sessionTransferStatus: document.querySelector("#sessionTransferStatus"),
-  sessionTransferWaitProgress: document.querySelector("#sessionTransferWaitProgress"),
-  skipSessionTransferWaitButton: document.querySelector("#skipSessionTransferWaitButton"),
   projectsPanel: document.querySelector("#projectsPanel"),
   chatsPanel: document.querySelector("#chatsPanel"),
   collapseProjectsButton: document.querySelector("#collapseProjectsButton"),
@@ -2738,14 +2728,6 @@ function sessionMenuItems(session, sessionActive) {
       onSelect: () => openRenameDialog(session.id, isClaude ? "claude" : "pi", name),
     },
     {
-      label: "Continue on another node",
-      icon: "transfer",
-      testid: "session-transfer-button",
-      disabled: isClaude,
-      title: isClaude ? "Claude transfer is not available yet" : "Transfer this idle Pi session",
-      onSelect: () => transferSessionFromRow(session).catch((error) => toast(error.message)),
-    },
-    {
       label: "Remove",
       icon: "trash",
       testid: "session-remove-button",
@@ -2753,34 +2735,6 @@ function sessionMenuItems(session, sessionActive) {
       onSelect: () => removeSessionFromRow(session, sessionActive).catch((error) => toast(error.message)),
     },
   ];
-}
-
-async function transferSessionFromRow(session) {
-  const peers = (await api("/api/cluster/peers")).peers;
-  if (!peers.length) throw new Error("Pair a destination node first");
-  let peer = peers[0];
-  if (peers.length > 1) {
-    const peerId = await chooseOption({
-      eyebrow: "Transfer session",
-      title: "Transfer this idle Pi session",
-      message: "Pick the destination node.",
-      confirmLabel: "Transfer session",
-      options: peers.map((candidate) => ({ value: candidate.id, label: candidate.name, hint: candidate.id })),
-    });
-    peer = peers.find((candidate) => candidate.id === peerId);
-  } else if (!await confirmAction({
-    eyebrow: "Transfer session",
-    title: `Transfer this idle Pi session to ${peer.name}?`,
-    confirmLabel: "Transfer session",
-  })) {
-    return;
-  }
-  if (!peer) return;
-  const result = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/transfer`, {
-    method: "POST",
-    body: JSON.stringify({ peerId: peer.id, sessionPath: session.path, sessionName: shortSessionTitle(session) }),
-  });
-  toast(`Transferred to ${peer.name}: ${result.sessionPath || "ready"}`);
 }
 
 async function removeSessionFromRow(session, sessionActive) {
@@ -3874,13 +3828,6 @@ function renderChatSessionControls() {
 
   // Conversations are picked in the conversations panel; the toolbar no longer duplicates it.
 
-  const activeTask = state.activeTaskId ? state.tasks.find((task) => task.id === state.activeTaskId) : null;
-  const ticketDestinations = activeTask && state.sessionNodes.filter((node) => node.id !== activeTask.currentNodeId);
-  const destinations = state.sessionNodes.filter((node) => node.id !== state.activeNodeId && node.online);
-  const transferable = activeTask
-    ? Boolean(activeTask.sessionPath && activeTask.executionState === "idle" && ticketDestinations?.length)
-    : Boolean(selectedSession && state.engine === "pi" && socketOpen() && destinations.length);
-  elements.transferSessionButton.disabled = !transferable;
   const terminalNode = state.sessionNodes.find((node) => node.id === state.activeNodeId);
   elements.openTerminalButton.disabled = !state.activeProjectId || !terminalNode?.online || !terminalNode.mapped;
   elements.openTerminalButton.title = terminalNode
@@ -3888,19 +3835,6 @@ function renderChatSessionControls() {
       ? `Open this ticket's folder in Terminal on ${terminalNode.name}`
       : `Open the project folder in Terminal on ${terminalNode.name}`
     : "Select an execution node first";
-  elements.transferSessionButton.title = activeTask
-    ? !activeTask.sessionPath
-      ? "Send a message first, then continue this ticket on another node"
-      : activeTask.executionState !== "idle"
-        ? "Wait for the ticket agent to finish before continuing on another node"
-        : transferable ? "Move this ticket conversation to another node" : "No other node is available for this ticket"
-    : transferable
-      ? destinations.some((node) => node.mapped)
-        ? "Copy this conversation and continue it on another node"
-        : "Map this project, then continue the conversation on another node"
-      : state.engine === "claude"
-        ? "Claude conversation transfer is not available yet"
-        : selectedSession ? "No other online node is available" : "Send a message first, then continue this conversation on another node";
   renderTaskBacklink();
 }
 
@@ -5206,11 +5140,6 @@ elements.projectImportForm.addEventListener("submit", async (event) => {
         confirmLabel: "Handoff task",
       })) await handoffTaskToPeer(task, node);
     }
-    if (pending.transferSessionPath) {
-      await loadSessionNodes(pending.projectId);
-      const node = state.sessionNodes.find((candidate) => candidate.id === pending.peerId);
-      if (node) await continueSessionOnNode({ id: pending.transferSessionId, path: pending.transferSessionPath, title: pending.transferSessionName }, node, pending.sourceNodeId);
-    }
     showNextProjectImport();
   } catch (error) {
     toast(error.message, 8000);
@@ -5393,49 +5322,6 @@ function openProjectTerminal() {
     if (state.terminalSocket === socket) emulator.write("\r\nCould not connect to terminal.\r\n");
   });
 }
-async function openSessionTransferDialog() {
-  const task = state.activeTaskId ? state.tasks.find((candidate) => candidate.id === state.activeTaskId) : null;
-  if (state.activeTaskId && !task) throw new Error("Active ticket was not found");
-  if (task) {
-    if (!task.sessionPath) throw new Error("Send a message first, then continue this ticket on another node");
-    if (task.executionState !== "idle") throw new Error("Wait for the ticket agent to finish before continuing on another node");
-    const eligibility = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/tasks/${encodeURIComponent(task.id)}/eligibility`);
-    elements.sessionTransferNodeSelect.replaceChildren(...eligibility.nodes.map((entry) => {
-      const option = document.createElement("option");
-      option.value = entry.node.id;
-      option.disabled = !entry.eligible;
-      option.textContent = `${entry.node.name}${entry.eligible ? "" : ` — ${entry.reasons.join("; ")}`}`;
-      return option;
-    }));
-    if (!eligibility.nodes.length) throw new Error("No destination nodes are available");
-    elements.sessionTransferDialog.showModal();
-    return;
-  }
-  const session = activeChatSession();
-  const destinations = state.sessionNodes.filter((node) => node.id !== state.activeNodeId && node.online);
-  if (!session) { toast("Send the first message before continuing on another node"); return; }
-  if (state.engine === "claude") { toast("Claude conversation transfer is not available yet"); return; }
-  elements.sessionTransferNodeSelect.replaceChildren(...destinations.map((node) => {
-    const option = document.createElement("option");
-    option.value = node.id;
-    option.textContent = `${node.name}${node.mapped ? "" : " · map project first"}`;
-    return option;
-  }));
-  elements.sessionTransferDialog.showModal();
-}
-
-async function continueSessionOnNode(session, destination, sourceNodeId = state.activeNodeId) {
-  const result = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/transfer`, {
-    method: "POST",
-    body: JSON.stringify({ peerId: destination.id, sourceNodeId, sessionId: session.id, sessionPath: session.path, sessionName: shortSessionTitle(session) }),
-  });
-  state.activeNodeId = destination.id;
-  state.activeSessionId = null;
-  if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: destination.id, activeSessionId: null });
-  openSession(result.sessionPath, shortSessionTitle(session));
-  toast(`Continuing on ${destination.name}`);
-}
-
 async function continueTaskOnNode(task, destination) {
   if (!task) throw new Error("Active ticket was not found");
   if (!task.sessionPath) throw new Error("Send a message first, then continue this ticket on another node");
@@ -5448,36 +5334,6 @@ async function continueTaskOnNode(task, destination) {
   state.activeSessionId = null;
   if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: destination.id, activeSessionId: null });
   openSession(body.task.sessionPath, task.title, false, true);
-}
-
-async function transferActiveSession(event) {
-  event.preventDefault();
-  const task = state.activeTaskId ? state.tasks.find((candidate) => candidate.id === state.activeTaskId) : null;
-  const session = activeChatSession();
-  const destination = state.sessionNodes.find((node) => node.id === elements.sessionTransferNodeSelect.value);
-  const submit = elements.sessionTransferForm.querySelector('[type="submit"]');
-  submit.disabled = true;
-  try {
-    if (!destination) throw new Error("Destination node was not found");
-    if (state.activeTaskId) {
-      if (!task) throw new Error("Active ticket was not found");
-      await continueTaskOnNode(task, destination);
-    } else {
-      if (!session) throw new Error("Send the first message before continuing on another node");
-      if (!destination.mapped) {
-        elements.sessionTransferDialog.close();
-        const project = selectedProject();
-        openProjectImportMapping([{ peerId: destination.id, projectId: project.id, name: project.name, remotePath: project.path, suggestedPath: "", mapOnPeer: true, transferSessionId: session.id, transferSessionPath: session.path, transferSessionName: shortSessionTitle(session), sourceNodeId: state.activeNodeId }]);
-        return;
-      }
-      await continueSessionOnNode(session, destination);
-    }
-    elements.sessionTransferDialog.close();
-  } catch (error) {
-    toast(error.message, 8000);
-  } finally {
-    submit.disabled = false;
-  }
 }
 
 elements.messages.addEventListener("scroll", () => {
@@ -5712,7 +5568,6 @@ elements.safeguardsButton.addEventListener("click", async () => {
   state.sessionBusy = true;
   syncSafeguardsButton();
 });
-elements.transferSessionButton.addEventListener("click", () => openSessionTransferDialog().catch((error) => toast(error.message, 8000)));
 elements.openTerminalButton.addEventListener("click", () => {
   try { openProjectTerminal(); }
   catch (error) { toast(error.message, 8000); }
@@ -5720,31 +5575,20 @@ elements.openTerminalButton.addEventListener("click", () => {
 elements.clearTerminalButton.addEventListener("click", () => { state.terminalEmulator?.clear(); });
 elements.closeTerminalButton.addEventListener("click", () => elements.terminalDialog.close());
 elements.terminalDialog.addEventListener("close", closeTerminalSocket);
-function setOwnershipTransferControls(disabled) {
-  elements.sessionTransferNodeSelect.disabled = disabled;
-  elements.sessionTransferForm.querySelector('[type="submit"]').disabled = disabled;
-  elements.sessionTakeOwnershipButton.disabled = disabled;
-}
-
 function resetOwnershipWait() {
   if (ownershipWait) ownershipWait.resolve(false);
   ownershipWait = null;
   ownershipTaking = false;
-  elements.sessionTransferProgress.hidden = true;
-  elements.sessionTransferWaitProgress.value = TAKE_OWNERSHIP_WAIT_SECONDS;
-  elements.sessionTransferStatus.textContent = "Waiting for Syncthing…";
-  elements.skipSessionTransferWaitButton.disabled = false;
-  setOwnershipTransferControls(false);
   elements.conversationLockStatus.textContent = "";
   renderConversationLock();
 }
 
-// Syncthing may still be copying the owner node's transcript, so both takeover
-// entry points count the same grace period down before fencing the owner.
+// Syncthing may still be copying the owner node's transcript, so the takeover
+// counts a grace period down before fencing the owner.
 function countdownOwnershipWait(report) {
   if (ownershipWait) return ownershipWait.promise;
   let seconds = TAKE_OWNERSHIP_WAIT_SECONDS;
-  report(`Waiting ${seconds}s for Syncthing to finish…`, seconds);
+  report(`Waiting ${seconds}s for Syncthing to finish…`);
   const wait = { promise: null, resolve: null, settled: false };
   const promise = new Promise((resolve) => {
     const finish = (value) => {
@@ -5755,7 +5599,7 @@ function countdownOwnershipWait(report) {
     };
     const interval = setInterval(() => {
       seconds -= 1;
-      report(seconds ? `Waiting ${seconds}s for Syncthing to finish…` : "Syncthing wait finished.", seconds);
+      report(seconds ? `Waiting ${seconds}s for Syncthing to finish…` : "Syncthing wait finished.");
       if (!seconds) finish(true);
     }, 1000);
     wait.resolve = finish;
@@ -5765,32 +5609,23 @@ function countdownOwnershipWait(report) {
   return promise;
 }
 
-function waitForOwnershipSync() {
-  elements.sessionTransferProgress.hidden = false;
-  setOwnershipTransferControls(true);
-  return countdownOwnershipWait((text, seconds) => {
-    elements.sessionTransferStatus.textContent = text;
-    elements.sessionTransferWaitProgress.value = seconds;
-  });
-}
-
 function waitForLockOwnershipSync() {
   elements.conversationLockTakeButton.disabled = true;
   return countdownOwnershipWait((text) => { elements.conversationLockStatus.textContent = text; });
 }
 
-function skipOwnershipWait() {
-  ownershipWait?.resolve(true);
-}
-
-async function takeSessionOwnership(destination, wait, report) {
+// Takeover continues the conversation on this node's own filesystem: the
+// transcript is assumed already replicated by Syncthing, and only the write
+// lock moves.
+async function takeLockedConversationOwnership() {
   const session = activeChatSession();
   if (ownershipWait || ownershipTaking || state.activeTaskId || !state.activeProjectId || !session) return;
-  if (!destination?.mapped) throw new Error("Map project first on the destination node");
-  const proceed = await wait();
+  const destination = state.sessionNodes.find((node) => node.id === state.activeNodeId);
+  if (!destination?.mapped) throw new Error("Map project first on this node");
+  const proceed = await waitForLockOwnershipSync();
   if (!proceed) return;
   ownershipTaking = true;
-  report("Taking ownership…");
+  elements.conversationLockStatus.textContent = "Taking ownership…";
   try {
     const result = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/take-ownership`, {
       method: "POST", body: JSON.stringify({ peerId: destination.id, sessionId: session.id, sessionPath: session.path, sessionName: shortSessionTitle(session) }),
@@ -5798,34 +5633,12 @@ async function takeSessionOwnership(destination, wait, report) {
     state.activeNodeId = destination.id;
     state.activeSessionId = null;
     if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: destination.id, activeSessionId: null });
-    elements.sessionTransferDialog.close();
     openSession(result.sessionPath, shortSessionTitle(session));
     toast(result.pendingPeerIds?.length ? "Ownership taken; offline nodes will update when they return" : "Ownership taken");
   } catch (error) { resetOwnershipWait(); throw error; }
 }
 
-function takeActiveSessionOwnership() {
-  const destination = state.sessionNodes.find((node) => node.id === elements.sessionTransferNodeSelect.value);
-  return takeSessionOwnership(destination, waitForOwnershipSync, (text) => { elements.sessionTransferStatus.textContent = text; });
-}
-
-// The locked-conversation notice always takes ownership onto the node the user
-// is already looking at, so there is no destination to pick.
-function takeLockedConversationOwnership() {
-  const destination = state.sessionNodes.find((node) => node.id === state.activeNodeId);
-  return takeSessionOwnership(destination, waitForLockOwnershipSync, (text) => { elements.conversationLockStatus.textContent = text; });
-}
-
-elements.transferSessionButton.addEventListener("click", () => {
-  elements.sessionTakeOwnershipButton.hidden = Boolean(state.activeTaskId);
-  resetOwnershipWait();
-});
-elements.cancelSessionTransferButton.addEventListener("click", () => { resetOwnershipWait(); elements.sessionTransferDialog.close(); });
-elements.sessionTransferDialog.addEventListener("close", resetOwnershipWait);
-elements.sessionTakeOwnershipButton.addEventListener("click", () => takeActiveSessionOwnership().catch((error) => toast(error.message, 8000)));
 elements.conversationLockTakeButton.addEventListener("click", () => takeLockedConversationOwnership().catch((error) => { resetOwnershipWait(); toast(error.message, 8000); }));
-elements.skipSessionTransferWaitButton.addEventListener("click", skipOwnershipWait);
-elements.sessionTransferForm.addEventListener("submit", transferActiveSession);
 elements.closeModelDialogButton.addEventListener("click", () => elements.modelDialog.close());
 elements.chatMoreMenu.addEventListener("click", (event) => {
   if (event.target instanceof Element && event.target.closest("button")) elements.chatMoreMenu.removeAttribute("open");

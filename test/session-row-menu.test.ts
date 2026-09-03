@@ -20,16 +20,17 @@ test("conversation rows put every action behind one overflow menu", async () => 
   assert.match(app, /row\.append\(button, pinToggle, menuButton\);/);
   assert.match(app, /function openRowMenu\(anchor, items, anchorSelector = null\)/);
 
-  // Colour, rename, transfer and remove all live inside the menu; pinning does not.
+  // Colour, rename and remove all live inside the menu; pinning and
+  // node-to-node continuation do not.
   assert.match(app, /function sessionMenuItems\(session, sessionActive\)/);
   for (const testid of [
     "session-color-button",
     "session-rename-button",
-    "session-transfer-button",
     "session-remove-button",
   ]) {
     assert.ok(app.includes(`testid: "${testid}"`), `the row menu is missing ${testid}`);
   }
+  assert.doesNotMatch(app, /session-transfer-button/, "the copy-based transfer entry is gone");
 
   // The menu button never hides and the title stops before it — both rules are shared
   // with the project list, so they are asserted in project-row-menu.test.ts.

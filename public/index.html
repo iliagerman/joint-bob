@@ -186,7 +186,6 @@
             <summary class="ghost icon-button" aria-label="More chat actions" title="More chat actions" data-testid="chat-more-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7" fill="currentColor" /><circle cx="12" cy="12" r="1.7" fill="currentColor" /><circle cx="19" cy="12" r="1.7" fill="currentColor" /></svg></summary>
             <div class="chat-more-actions">
               <button class="ghost compact safeguards-button" id="safeguardsButton" type="button" aria-pressed="true" title="Safe Guard checks are active for this Pi session" disabled data-testid="chat-safeguards-button">Safeguards on</button>
-              <button class="ghost compact transfer-session-button" id="transferSessionButton" type="button" disabled data-testid="chat-transfer-button">Continue on…</button>
               <button class="ghost compact" id="openTerminalButton" type="button" disabled data-testid="chat-open-terminal-button">Terminal</button>
               <button class="ghost compact" id="notifyButton" type="button" aria-pressed="false" title="Notify when a conversation needs review" data-testid="chat-notify-button">Notify</button>
               <button class="ghost compact" id="renameSessionButton" type="button" disabled data-testid="chat-rename-button">Rename</button>
@@ -543,30 +542,6 @@
           <button class="primary" type="button" id="folderPickerUseButton" data-testid="folder-picker-use-button">Use this folder</button>
         </div>
       </div>
-    </dialog>
-
-    <dialog id="sessionTransferDialog" data-testid="session-transfer-dialog">
-      <form method="dialog" class="dialog-card" id="sessionTransferForm">
-        <div>
-          <span class="eyebrow">Continue elsewhere</span>
-          <h2>Continue on another node</h2>
-          <p>Copies this Pi conversation to the destination and opens the new copy there. The source conversation remains available.</p>
-        </div>
-        <label>
-          Destination node
-          <select id="sessionTransferNodeSelect" required data-testid="session-transfer-node-select"></select>
-        </label>
-        <section class="session-transfer-progress" id="sessionTransferProgress" role="status" hidden>
-          <span id="sessionTransferStatus">Waiting for Syncthing…</span>
-          <progress id="sessionTransferWaitProgress" max="5" value="5"></progress>
-          <button class="ghost compact" type="button" id="skipSessionTransferWaitButton">Skip wait</button>
-        </section>
-        <div class="dialog-actions">
-          <button class="ghost" type="button" id="cancelSessionTransferButton" data-testid="session-transfer-cancel-button">Cancel</button>
-          <button class="ghost" type="button" id="sessionTakeOwnershipButton" data-testid="session-take-ownership-button">Take ownership</button>
-          <button class="primary" type="submit" data-testid="session-transfer-submit-button">Continue there</button>
-        </div>
-      </form>
     </dialog>
 
     <dialog id="terminalDialog" data-testid="terminal-dialog">

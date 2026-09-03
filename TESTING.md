@@ -101,9 +101,10 @@ cookie or signing into the second silently signs you out of the first.
 ### Cluster suite — `test/cluster-sanity.test.ts`
 
 Runs inside `npm test`. It starts both paired nodes and checks pairing, shared
-project inventory, project aliasing, live node-to-node traffic, and handing a
-conversation to the other node. Extend it when you touch replication, ownership,
-transfer, or anything else that only means something with two nodes.
+project inventory, project aliasing, live node-to-node traffic, and continuing
+a conversation on the other node through ownership takeover. Extend it when you
+touch replication, ownership, or anything else that only means something with
+two nodes.
 
 ## Writing a test that is worth having
 

@@ -420,7 +420,7 @@ This project is managed by Joint Bob.
 - Local path on this node: \`${project.path}\`
 - Syncthing folder ID: \`${project.syncFolderId}\`
 - Install Joint Bob on each additional node and map this project to that node's local folder.
-- Verify synchronization is idle before transferring an active session.
+- Verify synchronization is idle before taking over an active session.
 
 Do not synchronize .git or machine-specific credentials.
 `;

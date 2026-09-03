@@ -60,7 +60,7 @@ import { PROJECT_COLORS } from "./types.js";
 import type { AgentRunSummary, ChatMessage, ContextUsage, ProjectRecord, ProjectSyncStatus, ProjectView, SessionStatus, SessionSummary, TaskPhase, TaskPhaseConfig, TaskRecord } from "./types.js";
 import { webSocketCloseReason } from "./websocket.js";
 import { capturePiRecoverySnapshot, recoverPiSessionDirectory, resolveLocalSessionPath } from "./session-paths.js";
-import { beginConversationRecovery, beginConversationTransfer, commitConversationTransfer, compareAndSetConversationOwnership, ConversationOwnershipError, finalizeConversationClaim, finishConversationRecovery, getConversationOwnership, sameConversationOwnership, takeConversationOwnership, type ConversationEngine, type ConversationOwnership, type ConversationOwnershipStatus, type OwnershipApplyResult } from "./conversation-ownership.js";
+import { beginConversationRecovery, compareAndSetConversationOwnership, ConversationOwnershipError, finalizeConversationClaim, finishConversationRecovery, getConversationOwnership, sameConversationOwnership, takeConversationOwnership, type ConversationEngine, type ConversationOwnership, type ConversationOwnershipStatus, type OwnershipApplyResult } from "./conversation-ownership.js";
 import { attachTerminalSession } from "./terminal-session.js";
 import { claimQueuedPrompt, enqueuePrompt, listQueuedPrompts, rekeyQueuedPrompts } from "./prompt-queue.js";
 import { completeUpdateRecovery, failUpdateRecovery, listPendingUpdateRecoveries, saveUpdateRecoveries, type UpdateRecoveryRecord } from "./update-recovery.js";
@@ -152,9 +152,7 @@ const machineRoutes = new Set([
   "GET /cluster/project-file-content",
   "PUT /cluster/project-file-content",
   "POST /cluster/sync/share",
-  "POST /cluster/sessions/receive",
   "DELETE /cluster/sessions/delete",
-  "POST /cluster/sessions/transfer",
   "POST /cluster/sessions/take-ownership",
   "GET /cluster/sessions/ownership",
   "POST /cluster/sessions/ownership/claim",
@@ -222,7 +220,6 @@ const configuredTicketWorkspacePeers = new Set<string>();
 let startupReady = true;
 let startupError: Error | undefined;
 let startupReadinessInProgress = false;
-let droppedTestTransferAck = false;
 
 const absolutePathSchema = z.string().trim().min(1).max(1000).refine(path.isAbsolute, "Path must be absolute");
 const projectSchema = z.object({
@@ -326,24 +323,13 @@ const projectFileUpdateSchema = z.object({
   version: z.string().regex(/^[0-9a-f]{64}$/),
   sessionId: z.string().min(1).max(240),
 }).strict();
-const sessionTransferSchema = z.object({
+const sessionTakeOwnershipSchema = z.object({
   peerId: z.string().uuid(),
-  sourceNodeId: z.string().uuid().optional(),
   sessionId: z.string().min(1).max(240).optional(),
   sessionPath: z.string().min(1),
   sessionName: z.string().trim().max(120).optional(),
 });
-const routedSessionTransferSchema = sessionTransferSchema.omit({ sourceNodeId: true }).extend({ projectId: z.string().min(1) });
-const routedSessionTakeOwnershipSchema = sessionTransferSchema.pick({ peerId: true, sessionId: true, sessionPath: true, sessionName: true }).extend({ projectId: z.string().min(1) });
-const receivedSessionTransferSchema = z.object({
-  projectId: z.string().min(1),
-  engine: z.enum(["pi", "claude"]),
-  sessionId: z.string().min(1).max(240),
-  sessionPath: z.string().min(1).max(2000),
-  sourceNodeId: z.string().uuid(),
-  sourceEpoch: z.number().int().positive(),
-  messages: z.array(z.object({ id: z.string(), role: z.string(), text: z.string(), toolName: z.string().max(120).optional() })).max(200).optional(),
-});
+const routedSessionTakeOwnershipSchema = sessionTakeOwnershipSchema.extend({ projectId: z.string().min(1) });
 const ownershipSchema = z.object({
   engine: z.enum(["pi", "claude"]), sessionId: z.string().min(1).max(240), ownerNodeId: z.string().uuid(),
   epoch: z.number().int().positive(), status: z.enum(["claiming", "owned", "recovering", "transferring", "conflict"]), transferToNodeId: z.string().uuid().nullable(),
@@ -2871,30 +2857,6 @@ async function replicateExactOwnership(peers: ClusterPeer[], record: Conversatio
   if (rejected) throw new Error(`Peer rejected ownership state: ${JSON.stringify(rejected.current)}`);
 }
 
-async function transferLocalSession(project: ProjectRecord, payload: z.infer<typeof sessionTransferSchema>): Promise<unknown> {
-  const sessions = await listHarnessSessions(project);
-  const matching = payload.sessionId ? sessions.find((session) => session.id === payload.sessionId) : sessions.find((session) => session.path === payload.sessionPath);
-  if (!matching) throw new TaskWorktreeError("Conversation was not found on the source node");
-  const engine: ConversationEngine = matching.path.startsWith("claude:") ? "claude" : "pi";
-  const sessionId = matching.id;
-  if (conversationIsActive(project.id, engine, sessionId, matching.path)) throw new TaskWorktreeError("Wait for the current turn to finish before transferring");
-  const [local, peer, peers] = await Promise.all([getClusterNode(), getClusterPeer(payload.peerId), listClusterPeers()]);
-  if (!peer) throw new Error("Peer not found");
-  await requireLocalConversationOwner(engine, sessionId);
-  const transferring = await beginConversationTransfer(engine, sessionId, local.id, peer.id);
-  const priorCommit = await destinationOwnership(peer, engine, sessionId);
-  if (priorCommit?.ownerNodeId === peer.id && priorCommit.status === "owned" && priorCommit.epoch === transferring.epoch + 1) {
-    return { sessionPath: matching.path, ownership: priorCommit };
-  }
-  await replicateExactOwnership(peers, transferring, local.id);
-  try { return await requestDestinationTransfer(peer, project.id, matching.path, transferring, local.id); }
-  catch (error) {
-    const committed = await destinationOwnership(peer, engine, sessionId);
-    if (committed?.ownerNodeId === peer.id && committed.status === "owned" && committed.epoch === transferring.epoch + 1) return { sessionPath: matching.path, ownership: committed };
-    throw error;
-  }
-}
-
 async function takeLocalSessionOwnership(project: ProjectRecord, payload: z.infer<typeof routedSessionTakeOwnershipSchema>): Promise<{ sessionPath: string; ownership: ConversationOwnership; pendingPeerIds: string[] }> {
   const [local, sessions, peers] = await Promise.all([getClusterNode(), listHarnessSessions(project), listClusterPeers()]);
   if (payload.peerId !== local.id) throw new Error("Takeover destination is not this node");
@@ -2918,28 +2880,6 @@ async function takeLocalSessionOwnership(project: ProjectRecord, payload: z.infe
     }
   }
   return { sessionPath: matching.path, ownership, pendingPeerIds };
-}
-
-async function requestDestinationTransfer(peer: ClusterPeer, projectId: string, sessionPath: string, ownership: ConversationOwnership, sourceNodeId: string): Promise<unknown> {
-  const token = await getClusterMachineToken();
-  const response = await fetch(`${peer.url}/api/cluster/sessions/receive`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ projectId, engine: ownership.engine, sessionId: ownership.sessionId, sessionPath, sourceNodeId, sourceEpoch: ownership.epoch }),
-    signal: AbortSignal.timeout(30_000),
-  });
-  const result = await response.json() as { error?: string };
-  if (!response.ok) throw new TaskWorktreeError(result.error || `Peer transfer failed: ${response.status}`);
-  return result;
-}
-
-async function destinationOwnership(peer: ClusterPeer, engine: ConversationEngine, sessionId: string): Promise<ConversationOwnership | null> {
-  const url = new URL("/api/cluster/sessions/ownership", peer.url);
-  url.searchParams.set("engine", engine);
-  url.searchParams.set("sessionId", sessionId);
-  const response = await fetch(url, { headers: { Authorization: `Bearer ${peer.token}` }, signal: AbortSignal.timeout(3_000) });
-  if (!response.ok) return null;
-  return (await response.json() as { ownership: ConversationOwnership | null }).ownership;
 }
 
 app.put("/api/projects/:projectId/sessions/reviewed", async (request, response, next) => {
@@ -3029,48 +2969,6 @@ app.get("/api/reviews/pending", async (_request, response, next) => {
   }
 });
 
-app.post("/api/projects/:projectId/sessions/transfer", async (request, response, next) => {
-  try {
-    const project = await getProject(request.params.projectId);
-    if (!project) { sendError(response, 404, "Project not found"); return; }
-    const payload = sessionTransferSchema.parse(request.body);
-    const local = await getClusterNode();
-    if (payload.sourceNodeId && payload.sourceNodeId !== local.id) {
-      const source = await getClusterPeer(payload.sourceNodeId);
-      if (!source) { sendError(response, 404, "Source node not found"); return; }
-      const peerResponse = await fetch(`${source.url}/api/cluster/sessions/transfer`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: project.id, peerId: payload.peerId, sessionId: payload.sessionId, sessionPath: payload.sessionPath, sessionName: payload.sessionName }),
-        signal: AbortSignal.timeout(35_000),
-      });
-      const result = await peerResponse.json() as { error?: string };
-      if (!peerResponse.ok) { sendError(response, peerResponse.status, result.error || "Source node transfer failed"); return; }
-      response.json(result);
-      return;
-    }
-    response.json(await transferLocalSession(project, payload));
-  } catch (error) {
-    if (error instanceof TaskWorktreeError) { sendError(response, 409, error.message); return; }
-    if (error instanceof Error && error.message === "Peer not found") { sendError(response, 404, error.message); return; }
-    next(error);
-  }
-});
-
-app.post("/api/cluster/sessions/transfer", async (request, response, next) => {
-  try {
-    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
-    const payload = routedSessionTransferSchema.parse(request.body);
-    const project = await getProject(payload.projectId);
-    if (!project) { sendError(response, 404, "Project not found"); return; }
-    response.json(await transferLocalSession(project, payload));
-  } catch (error) {
-    if (error instanceof TaskWorktreeError) { sendError(response, 409, error.message); return; }
-    if (error instanceof Error && error.message === "Peer not found") { sendError(response, 404, error.message); return; }
-    next(error);
-  }
-});
-
 app.post("/api/cluster/sessions/take-ownership", async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
@@ -3088,7 +2986,7 @@ app.post("/api/projects/:projectId/sessions/take-ownership", async (request, res
   try {
     const project = await getProject(request.params.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
-    const payload = sessionTransferSchema.pick({ peerId: true, sessionId: true, sessionPath: true, sessionName: true }).parse(request.body);
+    const payload = sessionTakeOwnershipSchema.parse(request.body);
     const local = await getClusterNode();
     if (payload.peerId === local.id) { response.json(await takeLocalSessionOwnership(project, { ...payload, projectId: project.id })); return; }
     const peer = await getClusterPeer(payload.peerId);
@@ -3098,38 +2996,6 @@ app.post("/api/projects/:projectId/sessions/take-ownership", async (request, res
       body: JSON.stringify({ ...payload, projectId: project.id }), signal: AbortSignal.timeout(35_000),
     });
     response.status(routed.status).json(await routed.json());
-  } catch (error) { next(error); }
-});
-
-app.post("/api/cluster/sessions/receive", async (request, response, next) => {
-  try {
-    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
-    const payload = receivedSessionTransferSchema.parse(request.body);
-    const project = await getProject(payload.projectId);
-    if (!project) { sendError(response, 404, "Project is not imported on this node"); return; }
-    const local = await getClusterNode();
-    const sourceNodeId = response.locals.machineNodeId as string;
-    if (payload.sourceNodeId !== sourceNodeId) throw new Error("Transfer source does not match authenticated peer");
-    if (!await getClusterPeer(sourceNodeId)) throw new Error("Transfer source is not a paired node");
-    const mapped = resolveLocalSessionPath(payload.sessionPath);
-    if (mapped.engine !== payload.engine) throw new Error("Transferred conversation engine does not match its path");
-    const transferring = await getConversationOwnership(payload.engine, payload.sessionId);
-    const validTransfer = transferring?.ownerNodeId === sourceNodeId && transferring.epoch === payload.sourceEpoch
-      && transferring.status === "transferring" && transferring.transferToNodeId === local.id;
-    if (!validTransfer) throw new Error("Replicated source transfer fence is missing or stale");
-    const localPath = mapped.path.replace(/^claude:/, "");
-    await access(localPath, fsConstants.R_OK);
-    if (payload.engine === "pi") {
-      const target = await createPiSession({ cwd: project.path, projectId: project.id, sessionPath: localPath });
-      target.dispose();
-    } else await loadClaudeMessages(`claude:${localPath}`);
-    const ownership = await commitConversationTransfer(payload.engine, payload.sessionId, local.id, payload.sourceEpoch);
-    if (process.env.NODE_ENV === "test" && process.env.JOINT_BOB_TEST_DROP_TRANSFER_ACK_ONCE === "1" && !droppedTestTransferAck) {
-      droppedTestTransferAck = true;
-      request.socket.destroy();
-      return;
-    }
-    response.status(201).json({ sessionPath: mapped.path, ownership });
   } catch (error) { next(error); }
 });
 

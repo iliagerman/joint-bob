@@ -4,13 +4,6 @@
 
 [hidden] { display: none !important; }
 
-.session-transfer-progress {
-  display: grid;
-  gap: 8px;
-  color: var(--muted);
-}
-.session-transfer-progress progress { width: 100%; }
-
 :root {
   color-scheme: light;
   --bg: #e8e8e6;
@@ -882,7 +875,6 @@ select.chat-toolbar-control {
 }
 .chat-recents-button:hover:not(:disabled), .chat-more > summary:hover { color: var(--text); }
 .chat-more[open] > summary { color: var(--text); border-color: var(--line-strong); }
-.transfer-session-button { align-self: end; min-height: 32px; white-space: nowrap; color: var(--accent); }
 .safeguards-button { align-self: end; min-height: 32px; white-space: nowrap; }
 .safeguards-button.unsafe { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); background: color-mix(in srgb, var(--danger) 10%, transparent); }
 .safeguards-button.unsafe:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 16%, transparent); }

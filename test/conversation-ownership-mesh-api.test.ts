@@ -66,11 +66,11 @@ async function pairNode(local: NodeFixture, remote: NodeFixture, home: string): 
   `, [remote.id, remote.url, remote.token, local.projectId, remote.projectId]);
 }
 
-function startNode(node: NodeFixture, home: string, invocationLog: string, holdDir: string, dropAck = false): Promise<ChildProcess> {
+function startNode(node: NodeFixture, home: string, invocationLog: string, holdDir: string): Promise<ChildProcess> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["--import", "tsx", "src/server.ts"], {
       cwd: process.cwd(),
-      env: { ...process.env, PORT: String(node.port), NODE_ENV: "test", HOME: home, JOINT_BOB_DATA_DIR: node.dataDir, JOINT_BOB_TEST_ENGINE_LOG: invocationLog, JOINT_BOB_TEST_ENGINE_HOLD_DIR: holdDir, ...(dropAck ? { JOINT_BOB_TEST_DROP_TRANSFER_ACK_ONCE: "1" } : {}) },
+      env: { ...process.env, PORT: String(node.port), NODE_ENV: "test", HOME: home, JOINT_BOB_DATA_DIR: node.dataDir, JOINT_BOB_TEST_ENGINE_LOG: invocationLog, JOINT_BOB_TEST_ENGINE_HOLD_DIR: holdDir },
       stdio: ["ignore", "pipe", "pipe"],
     });
     const timeout = setTimeout(() => reject(new Error("Server startup timed out")), 10_000);
@@ -170,11 +170,6 @@ async function assertSpoofRejected(source: NodeFixture, destination: NodeFixture
   const apply = await machinePostAs(source, destination, "/api/cluster/sessions/ownership/apply", { record, originNodeId: destination.id });
   assert.equal(apply.status, 403);
   assert.match(String(apply.body.error), /authenticated peer/);
-  const receive = await machinePostAs(source, destination, "/api/cluster/sessions/receive", {
-    projectId: source.projectId, engine, sessionId, sessionPath, sourceNodeId: destination.id, sourceEpoch: 99,
-  });
-  assert.notEqual(receive.status, 201);
-  assert.match(String(receive.body.error), /authenticated peer/);
 }
 
 async function exerciseConcurrentBoundary(
@@ -206,11 +201,11 @@ async function exerciseClaudeOwnership(coordinator: NodeFixture, source: NodeFix
   assert.equal(claim.status, 200, JSON.stringify(claim.body));
   await assertSpoofRejected(source, destination, "claude", sessionId, `claude:${sessionPath}`);
   await exerciseConcurrentBoundary("claude", source, destination, sessionPath, invocationLog, holdDir, sockets);
-  const beforeTransfer = await readFile(sessionPath, "utf8");
-  const transfer = await machinePost(source, "/api/cluster/sessions/transfer", { projectId: source.projectId, peerId: destination.id, sessionPath: `claude:${sessionPath}` });
-  assert.equal(transfer.status, 200, JSON.stringify(transfer.body));
-  assert.equal((transfer.body.ownership as Record<string, unknown>).ownerNodeId, destination.id);
-  assert.equal(await readFile(sessionPath, "utf8"), beforeTransfer);
+  const beforeTakeover = await readFile(sessionPath, "utf8");
+  const takeover = await machinePost(destination, "/api/cluster/sessions/take-ownership", { projectId: destination.projectId, peerId: destination.id, sessionPath: `claude:${sessionPath}` });
+  assert.equal(takeover.status, 200, JSON.stringify(takeover.body));
+  assert.equal((takeover.body.ownership as Record<string, unknown>).ownerNodeId, destination.id);
+  assert.equal(await readFile(sessionPath, "utf8"), beforeTakeover);
 }
 
 async function exercisePiOwnership(
@@ -224,12 +219,12 @@ async function exercisePiOwnership(
   await exerciseConcurrentBoundary("pi", source, destination, transcriptPath, invocationLog, holdDir, sockets);
   const sourceSocket = sockets[sockets.length - 2];
   const destinationSocket = sockets[sockets.length - 1];
-  const transfer = await machinePost(source, "/api/cluster/sessions/transfer", {
-    projectId: source.projectId, peerId: destination.id, sessionId, sessionPath: transcriptPath,
+  const takeover = await machinePost(destination, "/api/cluster/sessions/take-ownership", {
+    projectId: destination.projectId, peerId: destination.id, sessionId, sessionPath: transcriptPath,
   });
-  assert.equal(transfer.status, 200, JSON.stringify(transfer.body));
-  assert.equal(((transfer.body.ownership as Record<string, unknown>).ownerNodeId), destination.id);
-  assert.equal((await prompt(sourceSocket, "source after transfer")).type, "error");
+  assert.equal(takeover.status, 200, JSON.stringify(takeover.body));
+  assert.equal(((takeover.body.ownership as Record<string, unknown>).ownerNodeId), destination.id);
+  assert.equal((await prompt(sourceSocket, "source after takeover")).type, "error");
   assert.equal((await prompt(destinationSocket, "destination write")).type, "textDelta");
   for (const socket of sockets.splice(0)) socket.terminate();
   await stopNode(children.pop()!);
@@ -242,14 +237,14 @@ async function exercisePiOwnership(
   ]);
   for (const socket of sockets.splice(0)) socket.terminate();
   await stopNode(children.pop()!);
-  const takeover = await machinePost(source, "/api/cluster/sessions/take-ownership", {
+  const reclaim = await machinePost(source, "/api/cluster/sessions/take-ownership", {
     projectId: source.projectId, peerId: source.id, sessionId, sessionPath: transcriptPath,
   });
-  assert.equal(takeover.status, 200, JSON.stringify(takeover.body));
-  const ownership = takeover.body.ownership as Record<string, unknown>;
+  assert.equal(reclaim.status, 200, JSON.stringify(reclaim.body));
+  const ownership = reclaim.body.ownership as Record<string, unknown>;
   assert.equal(ownership.ownerNodeId, source.id);
   assert.equal(ownership.epoch, 3);
-  assert.deepEqual(takeover.body.pendingPeerIds, [destination.id]);
+  assert.deepEqual(reclaim.body.pendingPeerIds, [destination.id]);
   const sourceTakeoverSocket = await openConversation(source, source.projectId, transcriptPath);
   sockets.push(sourceTakeoverSocket);
   assert.equal((await prompt(sourceTakeoverSocket, "source takeover write")).type, "textDelta");
@@ -267,7 +262,7 @@ async function exercisePiOwnership(
   assert.equal((await readdir(sessionRoot)).some((name) => name.includes(".sync-conflict-")), false);
 }
 
-test("two real servers fence a second writer and preserve transfer across lost acknowledgement and restart", async () => {
+test("two real servers fence a second writer and preserve takeover across an offline peer and restart", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-real-mesh-"));
   const home = path.join(root, "home");
   const projectPath = path.join(root, "project");
@@ -288,7 +283,7 @@ test("two real servers fence a second writer and preserve transfer across lost a
       initializeNode(path.join(root, "destination-data"), home, projectPath, sessionRoot, await freePort()),
     ]);
     await Promise.all([pairNode(source, destination, home), pairNode(destination, source, home)]);
-    children.push(await startNode(source, home, invocationLog, holdDir), await startNode(destination, home, invocationLog, holdDir, true));
+    children.push(await startNode(source, home, invocationLog, holdDir), await startNode(destination, home, invocationLog, holdDir));
     const coordinator = source.id.localeCompare(destination.id) < 0 ? source : destination;
     await exerciseClaudeOwnership(coordinator, source, destination, claudePath, invocationLog, holdDir, sockets);
     await exercisePiOwnership(source, destination, coordinator, "mesh-session", transcriptPath, invocationLog, home, sessionRoot, holdDir, children, sockets);

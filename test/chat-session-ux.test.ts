@@ -15,9 +15,6 @@ test("ticket chat controls hand off ownership instead of reconnecting", async ()
 
   assert.match(app, /chatNodeSelect\.disabled = !state\.activeProjectId \|\| !state\.sessionNodes\.length \|\| Boolean\(selectedSession && !activeTicket\)/);
   assert.doesNotMatch(app, /chatNodeSelect\.disabled = Boolean\(state\.activeTaskId\)/);
-  assert.match(app, /eligibility\.nodes\.map\(\(entry\)/);
-  assert.match(app, /entry\.reasons\.join\("; "\)/);
-  assert.match(app, /Boolean\(activeTask\.sessionPath && activeTask\.executionState === "idle" && ticketDestinations\?\.length\)/);
   assert.match(app, /Send a message first, then continue this ticket on another node/);
   assert.match(app, /if \(state\.activeTaskId\) \{[\s\S]*await continueTaskOnNode\(task, destination\)/);
   assert.match(app, /await continueTaskOnNode\(task, destination\)/);
@@ -26,7 +23,7 @@ test("ticket chat controls hand off ownership instead of reconnecting", async ()
   assert.match(app, /openSession\(body\.task\.sessionPath, task\.title, false, true\)/);
 });
 
-test("chat names its controls and exposes conversation transfer", async () => {
+test("chat names its controls and continues conversations through takeover", async () => {
   const [html, app, server] = await Promise.all([
     readFile("public/index.html", "utf8"),
     readFile("public/app.js", "utf8"),
@@ -38,38 +35,28 @@ test("chat names its controls and exposes conversation transfer", async () => {
   // The chat toolbar no longer carries a conversation picker: the conversations panel owns that.
   assert.doesNotMatch(html, /id="chatSessionSelect"/);
   assert.match(html, /<span>Model<\/span>[\s\S]*id="modelButton"/);
-  assert.match(html, /id="transferSessionButton"[^>]*data-testid="chat-transfer-button"/);
-  assert.match(html, /id="sessionTransferDialog"[^>]*data-testid="session-transfer-dialog"/);
-  assert.match(html, /id="sessionTakeOwnershipButton"/);
-  assert.match(html, /id="sessionTransferProgress"[^>]*role="status"/);
-  assert.match(html, /id="sessionTransferStatus"/);
-  assert.match(html, /<progress[^>]*max="5"/);
-  assert.match(html, /id="skipSessionTransferWaitButton"/);
+  // Copy-based continuation is gone; the lock banner's takeover is the only path.
+  assert.doesNotMatch(html, /id="transferSessionButton"/);
+  assert.doesNotMatch(html, /id="sessionTransferDialog"/);
+  assert.doesNotMatch(html, /id="sessionTakeOwnershipButton"/);
+  assert.doesNotMatch(html, /Continue on/);
+  assert.doesNotMatch(app, /openSessionTransferDialog|continueSessionOnNode|transferActiveSession|transferSessionFromRow/);
+  assert.doesNotMatch(app, /sessions\/transfer/);
+  assert.doesNotMatch(app, /transferSessionPath/);
+  assert.doesNotMatch(server, /cluster\/sessions\/transfer/);
+  assert.doesNotMatch(server, /cluster\/sessions\/receive/);
   assert.match(app, /const TAKE_OWNERSHIP_WAIT_SECONDS = 5/);
-  assert.match(app, /function waitForOwnershipSync/);
-  assert.doesNotMatch(app, /ownershipWait\.promise = promise;\s*}\);/);
-  assert.match(app, /function setOwnershipTransferControls\(disabled\)[\s\S]*sessionTransferNodeSelect\.disabled = disabled;[\s\S]*querySelector\('\[type="submit"\]'\)\.disabled = disabled;[\s\S]*sessionTakeOwnershipButton\.disabled = disabled;/);
-  assert.match(app, /report\("Taking ownership…"\);[\s\S]*await api\(/);
-  assert.match(app, /function takeActiveSessionOwnership\(\)[\s\S]*sessionTransferNodeSelect\.value[\s\S]*sessionTransferStatus\.textContent = text/);
-  assert.match(app, /const session = activeChatSession\(\);[\s\S]*state\.activeTaskId \|\| !state\.activeProjectId[\s\S]*!session/);
-  assert.match(app, /function skipOwnershipWait/);
-  assert.match(app, /skipSessionTransferWaitButton\.addEventListener\("click", skipOwnershipWait\)/);
-  assert.match(app, /sessionTakeOwnershipButton\.addEventListener\("click"/);
+  assert.match(app, /function countdownOwnershipWait/);
+  assert.match(app, /function takeLockedConversationOwnership\(\)[\s\S]*state\.sessionNodes\.find\(\(node\) => node\.id === state\.activeNodeId\)/);
+  assert.match(app, /conversationLockStatus\.textContent = "Taking ownership…";[\s\S]*await api\(/);
   assert.match(app, /sessions\/take-ownership/);
-  assert.match(app, /sessionTakeOwnershipButton\.hidden = Boolean\(state\.activeTaskId\)/);
   assert.match(app, /New \$\{harness\.label\} conversation/);
-  assert.match(html, /Continue on another node/);
-  assert.match(app, /sourceNodeId:\s*state\.activeNodeId/);
-  assert.match(app, /map project first/);
-  assert.match(app, /transferSessionPath/);
-  assert.match(app, /state\.activeTaskId = session\.taskId \|\| null/);
+  assert.match(app, /state\.activeTaskId = session\.taskId \|| null/);
   assert.match(app, /openSession\(session\.path, shortSessionTitle\(session\), false, Boolean\(state\.activeTaskId\)\)/);
   assert.match(app, /dataset\.testid = "session-agent-label"/);
   assert.match(app, /session\.agentLabel/);
   assert.match(app, /session\.agentModel/);
-  assert.match(server, /POST \/cluster\/sessions\/transfer/);
   assert.match(server, /\(!config \|\| config\.engine === "pi"\) && shared/);
-  assert.match(server, /sourceNodeId/);
 });
 
 test("ordinary node selection does not open a new conversation", async () => {

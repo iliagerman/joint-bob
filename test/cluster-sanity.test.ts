@@ -1,7 +1,8 @@
 // Two-node sanity suite: seeds the paired dev cluster `npm run dev:cluster`
 // starts, runs both nodes for real, and checks the cluster features a single
 // node cannot exercise — pairing, shared project inventory, project aliasing,
-// live node-to-node traffic, and handing a conversation to the other node.
+// live node-to-node traffic, and continuing a conversation on the other
+// node through ownership takeover.
 import assert from "node:assert/strict";
 import { type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -97,26 +98,38 @@ test("the two nodes reach each other over the network with their machine tokens"
   assert.ok(latest > before, `node B checked in with node A (last seen moved from ${before} to ${latest})`);
 });
 
-test("a conversation hands over to the other node", async () => {
+test("a conversation continues on the other node through takeover", async () => {
   const project = nodeA.projects.find((candidate) => candidate.name === "Internal Assistant")!;
   const sessions = await api<{ sessions: SessionView[] }>(nodeA, sessionA, "GET", `/projects/${project.id}/sessions`);
   const conversation = sessions.body.sessions.find((candidate) => candidate.harnessId === "pi");
-  assert.ok(conversation, "node A lists a Pi conversation to hand over");
+  assert.ok(conversation, "node A lists a Pi conversation to take over");
 
-  const transfer = await api<{ error?: string }>(nodeA, sessionA, "POST", `/projects/${project.id}/sessions/transfer`, {
+  // Takeover assumes Syncthing already replicated the transcript, so the
+  // destination continues from its own filesystem instead of receiving a copy.
+  const twin = nodeB.projects.find((candidate) => candidate.name === "Internal Assistant")!;
+  const takeover = await api<{ ownership?: { ownerNodeId?: string } }>(nodeB, sessionB, "POST", `/projects/${twin.id}/sessions/take-ownership`, {
     peerId: nodeB.nodeId,
     sessionId: conversation.id,
     sessionPath: conversation.path,
   });
-  assert.equal(transfer.status, 200, `transfer succeeded (${JSON.stringify(transfer.body)})`);
+  assert.equal(takeover.status, 200, `takeover succeeded (${JSON.stringify(takeover.body)})`);
+  assert.equal(takeover.body.ownership?.ownerNodeId, nodeB.nodeId, "node B now owns the conversation");
 
-  // The receiving node now owns the run, which is what the UI shows as the
-  // conversation's execution node.
-  const twin = nodeB.projects.find((candidate) => candidate.name === "Internal Assistant")!;
-  const afterTransfer = await api<{ sessions: SessionView[] }>(nodeB, sessionB, "GET", `/projects/${twin.id}/sessions`);
-  const moved = afterTransfer.body.sessions.find((candidate) => candidate.id === conversation.id);
-  assert.ok(moved, "node B lists the conversation after the handover");
-  assert.equal(moved.executionNodeId, nodeB.nodeId, "node B is now the execution node");
+  // The new owner lists itself as the execution node, and the replication
+  // push fences the previous owner's copy without deleting it.
+  const untilOwnedBy = async (node: SeededNode, session: SignedIn): Promise<void> => {
+    const deadline = Date.now() + 15_000;
+    while (Date.now() < deadline) {
+      const listing = await api<{ sessions: SessionView[] }>(node, session, "GET", `/projects/${node === nodeB ? twin.id : project.id}/sessions`);
+      const entry = listing.body.sessions.find((candidate) => candidate.id === conversation.id);
+      assert.ok(entry, `the conversation is still listed on ${node.key}`);
+      if (entry.executionNodeId === nodeB.nodeId) return;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    throw new Error("timed out waiting for both nodes to agree node B owns the conversation");
+  };
+  await untilOwnedBy(nodeB, sessionB);
+  await untilOwnedBy(nodeA, sessionA);
 });
 
 test("taking over a conversation whose transcript never synchronized fails instead of owning an empty card", async () => {

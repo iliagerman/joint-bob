@@ -49,7 +49,6 @@ test("destination pickers use the app's choice dialog instead of a text prompt",
   assert.match(dialog, /type="submit" value="confirm" id="choiceAcceptButton"[^>]*data-testid="choice-accept-button"/);
 
   assert.match(app, /function chooseOption\(\{[\s\S]*?input\.type = "radio"[\s\S]*?resolve\(elements\.choiceList\.querySelector\("input:checked"\)\?\.value \?\? null\)/);
-  assert.match(app, /async function transferSessionFromRow\(session\)[\s\S]*?await chooseOption\(\{/);
   assert.match(app, /async function handoffTask\(task\)[\s\S]*?await chooseOption\(\{/);
 });
 

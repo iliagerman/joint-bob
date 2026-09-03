@@ -93,8 +93,8 @@ test("opening a conversation renders its transcript", async () => {
 
 // The toolbar's overflow actions live in a <details> that desktop flattens into
 // the row with `display: contents`. Current browsers hide a closed <details>'s
-// content through `::details-content`, which made Terminal, Continue on…,
-// Notify, Rename and Safeguards vanish on wide screens while still occupying
+// content through `::details-content`, which made Terminal, Notify, Rename
+// and Safeguards vanish on wide screens while still occupying
 // layout. Only a real browser sees that.
 test("the chat toolbar actions are visible on a wide screen and fold into the menu on a phone", async () => {
   const ids = ["chat-open-terminal-button", "chat-notify-button", "chat-rename-button", "chat-safeguards-button"];

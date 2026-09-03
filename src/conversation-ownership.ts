@@ -193,29 +193,6 @@ export async function finishConversationRecovery(engine: ConversationEngine, ses
   }, nodeId);
 }
 
-export async function beginConversationTransfer(engine: ConversationEngine, sessionId: string, sourceNodeId: string, destinationNodeId: string): Promise<ConversationOwnership> {
-  const db = await ownershipDatabase();
-  return ownershipTransaction(db, () => {
-    const current = selectOwnership(db, engine, sessionId);
-    if (!current || current.ownerNodeId !== sourceNodeId) throw new Error("Only the conversation owner can transfer it");
-    if (current.status === "transferring" && current.transferToNodeId === destinationNodeId) return current;
-    if (current.status !== "owned") throw new Error("Conversation is fenced and cannot be transferred");
-    return { ...current, status: "transferring", transferToNodeId: destinationNodeId };
-  }, sourceNodeId);
-}
-
-export async function commitConversationTransfer(engine: ConversationEngine, sessionId: string, destinationNodeId: string, sourceEpoch: number): Promise<ConversationOwnership> {
-  const db = await ownershipDatabase();
-  return ownershipTransaction(db, () => {
-    const current = selectOwnership(db, engine, sessionId);
-    if (current?.ownerNodeId === destinationNodeId && current.status === "owned" && current.epoch === sourceEpoch + 1) return current;
-    if (!current || current.status !== "transferring" || current.epoch !== sourceEpoch || current.transferToNodeId !== destinationNodeId) {
-      throw new Error("Conversation transfer state does not match destination commit");
-    }
-    return { ...current, ownerNodeId: destinationNodeId, epoch: sourceEpoch + 1, status: "owned", transferToNodeId: null };
-  }, destinationNodeId);
-}
-
 function conflictOwnership(current: ConversationOwnership, incoming: OwnershipPayload): ConversationOwnership {
   const owners = [current.ownerNodeId, incoming.ownerNodeId].sort();
   return { ...current, ownerNodeId: owners[0], status: "conflict", transferToNodeId: owners[1] };
