@@ -29,12 +29,35 @@ function parseFrontmatter(contents: string): { name?: string; description?: stri
   const closing = lines.indexOf("---", 1);
   if (closing === -1) return {};
   const fields: { name?: string; description?: string } = {};
-  for (const line of lines.slice(1, closing)) {
+  for (let index = 1; index < closing; index += 1) {
+    const line = lines[index];
     const separator = line.indexOf(":");
     if (separator === -1) continue;
     const key = line.slice(0, separator).trim();
     if (key !== "name" && key !== "description") continue;
-    fields[key] = line.slice(separator + 1).trim().replace(/^["']|["']$/g, "");
+    let value = line.slice(separator + 1).trim();
+    // Long descriptions use YAML block scalars (`>`, `|`, with optional chomping).
+    // Reading only the marker line would leak the bare `>` into the UI, so the
+    // indented block below the marker is folded back into one value here.
+    const block = /^([>|])([+-]?)$/.exec(value);
+    if (block) {
+      const collected: string[] = [];
+      while (index + 1 < closing) {
+        const next = lines[index + 1];
+        if (next.trim() === "") {
+          collected.push("");
+          index += 1;
+          continue;
+        }
+        if (!/^[ \t]/.test(next)) break;
+        collected.push(next.replace(/^[ \t]+/, ""));
+        index += 1;
+      }
+      value = block[1] === ">"
+        ? collected.join(" ").replace(/\s+/g, " ").trim()
+        : collected.join("\n").trimEnd();
+    }
+    fields[key] = value.replace(/^["']|["']$/g, "");
   }
   return fields;
 }

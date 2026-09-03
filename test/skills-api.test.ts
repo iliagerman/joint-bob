@@ -56,6 +56,28 @@ test("a missing skills directory yields no skills instead of throwing", async ()
   }
 });
 
+test("block-scalar frontmatter descriptions parse instead of leaking YAML markers", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-skills-block-"));
+  const { listSkills } = await import("../src/skills.js");
+
+  try {
+    const claudeUser = path.join(root, "claude-user");
+    await writeSkill(claudeUser, "folded", "---\nname: folded\ndescription: >\n  Runs the AI-DLC workflow.\n  Use it for lifecycle stages.\n---\n");
+    await writeSkill(claudeUser, "chomped", "---\nname: chomped\ndescription: >-\n  One folded line.\n---\n");
+    await writeSkill(claudeUser, "literal", "---\nname: literal\ndescription: |\n  Line one.\n  Line two.\n---\n");
+
+    const skills = await listSkills(path.join(root, "project"), { piUser: path.join(root, "absent"), claudeUser });
+    const byName = new Map(skills.map((skill) => [skill.name, skill.description]));
+
+    assert.equal(byName.get("folded"), "Runs the AI-DLC workflow. Use it for lifecycle stages.");
+    assert.equal(byName.get("chomped"), "One folded line.");
+    assert.equal(byName.get("literal"), "Line one.\nLine two.");
+    assert.ok([...byName.values()].every((description) => !/^[>|]$/.test(description)), `Raw YAML markers leaked: ${JSON.stringify([...byName.values()])}`);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a skill without frontmatter still lists under its directory name", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-skills-bare-"));
   const { listSkills } = await import("../src/skills.js");
