@@ -210,6 +210,12 @@ export function setCanvasRowHeight(layout, rowId, height) {
   return withRows(layout, layout.rows.map((row) => row.id === rowId ? { ...row, height: clamped } : row));
 }
 
+/** Gives a row its share of the canvas back, so a double-click undoes a drag. */
+export function clearCanvasRowHeight(layout, rowId) {
+  if (!layout.rows.some((row) => row.id === rowId)) throw new Error("Unknown canvas row");
+  return withRows(layout, layout.rows.map((row) => row.id === rowId ? { ...row, height: null } : row));
+}
+
 export function organizeCanvasLayout(layout) {
   const panes = listCanvasPanes(layout);
   if (!panes.length) return layout;
@@ -226,4 +232,96 @@ export function canvasPaneEngine(pane) {
 export function toggleCanvasFocus(layout, paneId) {
   paneOf(layout, paneId);
   return withRows(layout, layout.rows, layout.focusedPaneId === paneId ? null : paneId);
+}
+
+/**
+ * Canvas keyboard shortcuts. One modifier chord serves every canvas key, so the user
+ * configures it once instead of per binding. Order here is the order the chord is
+ * drawn in, so ⌘ comes first and the labels match what the panes already showed.
+ */
+export const CANVAS_MODIFIERS = ["meta", "ctrl", "alt", "shift"];
+export const CANVAS_KEYMAP_COMMANDS = ["recentPane", "focusPane", "paneSearch"];
+export const DEFAULT_CANVAS_KEYMAP = {
+  modifiers: ["meta", "shift"],
+  recentPane: "E",
+  focusPane: "G",
+  paneSearch: "F",
+};
+
+/** Shift alone is not a chord: it would swallow every capital letter a conversation
+ * is typing. Every canvas chord needs Command, Control, or Option. */
+export function canvasChordIsUsable(modifiers) {
+  return modifiers.some((name) => name !== "shift");
+}
+
+const MODIFIER_SYMBOLS = { meta: "⌘", ctrl: "⌃", alt: "⌥", shift: "⇧" };
+
+/** One digit or letter, upper case, or null when nothing is bound. */
+export function canonicalCanvasKey(key) {
+  const canonical = String(key ?? "").toUpperCase();
+  return /^[0-9A-Z]$/.test(canonical) ? canonical : null;
+}
+
+/**
+ * Accepts anything the node or an older client stored. A chord with no modifier would
+ * swallow ordinary typing, so an empty set falls back to the default; two commands
+ * sharing one key would make the second unreachable, so the later one is dropped.
+ */
+export function normalizeCanvasKeymap(keymap) {
+  const source = keymap && typeof keymap === "object" ? keymap : {};
+  const chosen = Array.isArray(source.modifiers) ? source.modifiers : [];
+  const modifiers = CANVAS_MODIFIERS.filter((name) => chosen.includes(name));
+  const normalized = { modifiers: canvasChordIsUsable(modifiers) ? modifiers : [...DEFAULT_CANVAS_KEYMAP.modifiers] };
+  const taken = new Set();
+  for (const command of CANVAS_KEYMAP_COMMANDS) {
+    const key = canonicalCanvasKey(source[command]);
+    normalized[command] = key && !taken.has(key) ? key : null;
+    if (normalized[command]) taken.add(key);
+  }
+  return normalized;
+}
+
+/** Exactly the configured modifiers, so a chord never fires with an extra one held. */
+export function canvasChordMatches(keymap, combination) {
+  const held = {
+    meta: Boolean(combination.metaKey),
+    ctrl: Boolean(combination.ctrlKey),
+    alt: Boolean(combination.altKey),
+    shift: Boolean(combination.shiftKey),
+  };
+  return CANVAS_MODIFIERS.every((name) => held[name] === keymap.modifiers.includes(name));
+}
+
+/** Reading `code` keeps a binding on the physical key, so Shift's punctuation and
+ * other keyboard layouts never change it. */
+export function canvasKeyFromCode(code) {
+  const match = /^(?:Digit([0-9])|Key([A-Z]))$/.exec(code || "");
+  return match ? match[1] || match[2] : null;
+}
+
+export function canvasChordLabel(keymap, key = "") {
+  return CANVAS_MODIFIERS.filter((name) => keymap.modifiers.includes(name))
+    .map((name) => MODIFIER_SYMBOLS[name]).join("") + key;
+}
+
+/**
+ * Subsequence match with a score, so typing initials finds the conversation people
+ * mean. Adjacent characters and matches that start a word rank highest; a shorter
+ * title wins a tie. Returns null when the query is not a subsequence at all.
+ */
+export function fuzzyMatchScore(text, query) {
+  if (!query) return 0;
+  const haystack = String(text).toLowerCase();
+  const needle = String(query).toLowerCase();
+  let score = 0;
+  let index = -1;
+  let previous = -2;
+  for (const character of needle) {
+    index = haystack.indexOf(character, index + 1);
+    if (index < 0) return null;
+    score += index === previous + 1 ? 10 : 1;
+    if (index === 0 || /[\s·\-_/]/.test(haystack[index - 1])) score += 5;
+    previous = index;
+  }
+  return score - haystack.length / 100;
 }

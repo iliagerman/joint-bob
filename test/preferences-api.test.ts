@@ -72,6 +72,7 @@ test("preferences are authenticated, validated, and persist across listener rest
       recentSessions: [],
       lastSeenVersion: null,
       canvasLayout: { version: 5, rows: [], focusedPaneId: null },
+      canvasKeymap: { modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F" },
     });
 
     const values = {
@@ -104,6 +105,7 @@ test("preferences are authenticated, validated, and persist across listener rest
         }],
         focusedPaneId: "pane-b",
       },
+      canvasKeymap: { modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F" },
     };
     const updated = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify(values) });
     assert.equal(updated.status, 200);
@@ -146,6 +148,8 @@ test("preferences are authenticated, validated, and persist across listener rest
     assert.equal(invalidSound.status, 400);
     const invalidPath = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ activeSessionPath: "x".repeat(2001) }) });
     assert.equal(invalidPath.status, 400);
+    const shiftOnlyChord = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasKeymap: { modifiers: ["shift"], recentPane: "E", focusPane: "G", paneSearch: "F" } }) });
+    assert.equal(shiftOnlyChord.status, 400);
     const pane = (id: string, sessionId: string) => ({ kind: "pane" as const, id, projectId: "p", sessionPath: `/tmp/${sessionId}.jsonl`, sessionId, executionNodeId: null });
     const canvasBase = { version: 5 as const, rows: [{ id: "row-a", height: null, weights: [0.5, 0.5], panes: [pane("pane-a", "s-a"), pane("pane-b", "s-b")] }], focusedPaneId: null };
     const crossNamespaceIdentities = { version: 5, rows: [{ id: "cross-row", height: null, weights: [0.5, 0.5], panes: [

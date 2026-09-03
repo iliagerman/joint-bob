@@ -1,7 +1,7 @@
 import { renderMarkdown } from "./markdown.js";
 import { renderBoard, ticketGlyph } from "./board.js";
 import { createConversationCanvas } from "./canvas.js";
-import { emptyCanvasLayout } from "./canvas-layout.js";
+import { canvasChordMatches, canvasKeyFromCode, DEFAULT_CANVAS_KEYMAP, emptyCanvasLayout } from "./canvas-layout.js";
 import { dispatchComposerInput, executeComposerCommand, LOCAL_COMMANDS } from "./composer-commands.js";
 
 const bootParams = new URLSearchParams(location.search);
@@ -18,6 +18,7 @@ const state = {
   initialSessionId: bootParams.get("sessionId"),
   initialNodeId: bootParams.get("nodeId"),
   canvasLayout: emptyCanvasLayout(),
+  canvasKeymap: DEFAULT_CANVAS_KEYMAP,
   canvasController: null,
   canvasLayoutSave: null,
   projects: [],
@@ -340,6 +341,7 @@ const elements = {
   canvasBackButton: document.querySelector("#canvasBackButton"),
   chatToolbar: document.querySelector("#chatToolbar"),
   chatMoreMenu: document.querySelector("#chatMoreMenu"),
+  addToCanvasButton: document.querySelector("#addToCanvasButton"),
   chatNodeSelect: document.querySelector("#chatNodeSelect"),
   chatHarnessSelect: document.querySelector("#chatHarnessSelect"),
   newClaudeSessionButton: document.querySelector("#newClaudeSessionButton"),
@@ -608,7 +610,9 @@ async function initializeApplication() {
   syncNotifyButton();
   updateInstallButton();
   state.canvasLayout = preferences.canvasLayout || emptyCanvasLayout();
+  state.canvasKeymap = preferences.canvasKeymap || DEFAULT_CANVAS_KEYMAP;
   if (!state.canvasPaneMode) {
+    state.canvasController?.setKeymap(state.canvasKeymap);
     state.canvasController?.setLayout(state.canvasLayout);
     setMobileView(preferences.mobileView);
   }
@@ -1829,6 +1833,12 @@ const rowMenuIconPaths = {
     "M10 11v6",
     "M14 11v6",
   ],
+  canvas: [
+    "M4 4.5h6v6H4z",
+    "M14 4.5h6v6h-6z",
+    "M4 13.5h6v6H4z",
+    "M14 13.5h6v6h-6z",
+  ],
 };
 
 /** Decorative: the button's own text already names the action. */
@@ -2764,6 +2774,12 @@ function sessionMenuItems(session, sessionActive) {
   const isClaude = sessionEngine(session) === "claude";
   return [
     {
+      label: "Add to canvas",
+      icon: "canvas",
+      testid: "session-add-to-canvas-button",
+      onSelect: () => addSessionToCanvas(session),
+    },
+    {
       label: "Colour",
       icon: "sliders",
       testid: "session-color-button",
@@ -2783,6 +2799,20 @@ function sessionMenuItems(session, sessionActive) {
       onSelect: () => removeSessionFromRow(session, sessionActive).catch((error) => toast(error.message)),
     },
   ];
+}
+
+/**
+ * Puts an already-open conversation on the canvas from the conversation list or the
+ * chat menu, then shows the canvas so the user lands on what they just added.
+ */
+function addSessionToCanvas(session) {
+  try {
+    state.canvasController.addSessionPane(state.activeProjectId, session);
+  } catch (error) {
+    toast(error.message);
+    return;
+  }
+  setMobileView("canvas");
 }
 
 async function removeSessionFromRow(session, sessionActive) {
@@ -3779,6 +3809,8 @@ function setComposerEnabled(enabled) {
   elements.renameSessionButton.disabled = !allowed;
   elements.modelButton.disabled = !allowed;
   elements.reasoningLevelSelect.disabled = !allowed;
+  // Putting a conversation on the canvas reads it; a lock must not hide the action.
+  elements.addToCanvasButton.disabled = !enabled;
   if (!allowed) hideCommandAutocomplete();
   syncSafeguardsButton();
 }
@@ -5115,6 +5147,14 @@ elements.openBoardButton.addEventListener("click", () => {
 elements.openCanvasButton.addEventListener("click", () => setMobileView("canvas"));
 elements.canvasAddButton.addEventListener("click", () => state.canvasController?.openPicker());
 elements.canvasBackButton.addEventListener("click", () => setMobileView("sessions"));
+elements.addToCanvasButton.addEventListener("click", () => {
+  const session = state.sessions.find((candidate) => state.activeSessionId
+    ? candidate.id === state.activeSessionId
+    : candidate.path === state.activeSessionPath);
+  if (!session) return;
+  elements.chatMoreMenu.removeAttribute("open");
+  addSessionToCanvas(session);
+});
 elements.cancelProjectRenameButton.addEventListener("click", () => elements.projectRenameDialog.close());
 elements.projectRenameForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -6209,17 +6249,22 @@ if ("serviceWorker" in navigator) {
 
 if (state.canvasPaneMode) {
   document.body.classList.add("canvas-pane-mode");
+  // A pane has no canvas of its own, so this action belongs to the top-level app only.
+  elements.addToCanvasButton.hidden = true;
   // A pane is an iframe, so a canvas shortcut typed in here never reaches the canvas
-  // document. The canvas owns the binding table and tells this pane which keys it
-  // claims; every other Command+Shift key still belongs to the conversation.
+  // document. The canvas owns the chord and the binding table and tells this pane
+  // which keys it claims; every other combination still belongs to the conversation.
   const canvasBindings = new Set();
+  let canvasModifiers = DEFAULT_CANVAS_KEYMAP.modifiers;
   window.addEventListener("keydown", (event) => {
-    if (!event.metaKey || !event.shiftKey || event.ctrlKey || event.altKey) return;
-    const match = /^(?:Digit([0-9])|Key([A-Z]))$/.exec(event.code || "");
-    const binding = match ? match[1] || match[2] : null;
+    if (!canvasChordMatches({ modifiers: canvasModifiers }, event)) return;
+    const binding = canvasKeyFromCode(event.code);
     if (!binding || !canvasBindings.has(binding)) return;
     event.preventDefault();
-    parent.postMessage({ type: "canvasShortcut", code: event.code, metaKey: true, shiftKey: true, ctrlKey: false, altKey: false }, location.origin);
+    parent.postMessage({
+      type: "canvasShortcut", code: event.code,
+      metaKey: event.metaKey, shiftKey: event.shiftKey, ctrlKey: event.ctrlKey, altKey: event.altKey,
+    }, location.origin);
   });
   window.addEventListener("message", (event) => {
     // Only the canvas that framed this pane may set its bindings or move its cursor.
@@ -6227,9 +6272,15 @@ if (state.canvasPaneMode) {
     if (event.data?.type === "canvasShortcutBindings") {
       canvasBindings.clear();
       for (const binding of event.data.bindings || []) canvasBindings.add(binding);
+      if (event.data.modifiers?.length) canvasModifiers = event.data.modifiers;
     }
     if (event.data?.type === "canvasFocusComposer") document.querySelector("#messageInput")?.focus();
   });
+  // The canvas needs to know which pane the user last touched, so "jump back" and
+  // "bring forward" act on the conversation they are actually working in.
+  const reportActive = () => parent.postMessage({ type: "canvasPaneActive" }, location.origin);
+  window.addEventListener("focus", reportActive);
+  window.addEventListener("pointerdown", reportActive, true);
   parent.postMessage({ type: "canvasPaneReady" }, location.origin);
 }
 if (!state.canvasPaneMode) {
@@ -6244,6 +6295,7 @@ if (!state.canvasPaneMode) {
         .then(() => savePreferences({ canvasLayout: next }))
         .catch((error) => toast(`Could not save the canvas layout: ${error.message}`, 8000));
     },
+    saveKeymap: (next) => savePreferences({ canvasKeymap: next }),
     showMessage: (message) => toast(message, 8000),
   });
 }

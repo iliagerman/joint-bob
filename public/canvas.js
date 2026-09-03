@@ -10,9 +10,11 @@
 // and no draft or scroll position is lost.
 
 import {
-  addCanvasPane, canvasPaneEngine, canvasPaneMoves, canonicalSessionPath,
-  CANVAS_MAX_ROW_HEIGHT, CANVAS_MIN_PANE_WIDTH, CANVAS_MIN_ROW_HEIGHT, emptyCanvasLayout, listCanvasPanes,
-  moveCanvasPane, normalizeCanvasLayout, organizeCanvasLayout, removeCanvasPane,
+  addCanvasPane, CANVAS_KEYMAP_COMMANDS, CANVAS_MODIFIERS, canonicalCanvasKey, canvasChordLabel,
+  canvasChordIsUsable, canvasChordMatches, canvasKeyFromCode, canvasPaneEngine, canvasPaneMoves, canonicalSessionPath,
+  CANVAS_MAX_ROW_HEIGHT, CANVAS_MIN_PANE_WIDTH, CANVAS_MIN_ROW_HEIGHT, clearCanvasRowHeight,
+  DEFAULT_CANVAS_KEYMAP, emptyCanvasLayout, fuzzyMatchScore, listCanvasPanes,
+  moveCanvasPane, normalizeCanvasKeymap, normalizeCanvasLayout, organizeCanvasLayout, removeCanvasPane,
   replaceCanvasPane, setCanvasRowBoundary, setCanvasRowHeight, toggleCanvasFocus,
 } from "./canvas-layout.js";
 
@@ -20,7 +22,7 @@ const CANVAS_GRID_UNITS = 1000;
 const CANVAS_WIDTH_STEP = 0.05;
 const CANVAS_ROW_HEIGHT_STEP = 40;
 
-export function createConversationCanvas({ api, getProjects, saveLayout, showMessage }) {
+export function createConversationCanvas({ api, getProjects, saveLayout, saveKeymap, showMessage }) {
   const root = document.querySelector("#canvasRoot");
   const dialog = document.querySelector("#canvasConversationDialog");
   const projectSelect = document.querySelector("#canvasProjectSelect");
@@ -36,6 +38,21 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
   const shortcutStatus = document.querySelector("#canvasShortcutStatus");
   const shortcutRemoveButton = document.querySelector("#canvasShortcutRemoveButton");
   const shortcutSaveButton = document.querySelector("#canvasShortcutSaveButton");
+  const shortcutChordLabel = document.querySelector("#canvasShortcutChordLabel");
+  const finderButton = document.querySelector("#canvasFinderButton");
+  const finderDialog = document.querySelector("#canvasFinderDialog");
+  const finderInput = document.querySelector("#canvasFinderInput");
+  const finderResults = document.querySelector("#canvasFinderResults");
+  const finderStatus = document.querySelector("#canvasFinderStatus");
+  const keymapButton = document.querySelector("#canvasKeymapButton");
+  const keymapDialog = document.querySelector("#canvasKeymapDialog");
+  const keymapStatus = document.querySelector("#canvasKeymapStatus");
+  const keymapSaveButton = document.querySelector("#canvasKeymapSaveButton");
+  const keymapResetButton = document.querySelector("#canvasKeymapResetButton");
+  const keymapModifierInputs = new Map(CANVAS_MODIFIERS
+    .map((name) => [name, document.querySelector(`#canvasKeymapModifier-${name}`)]));
+  const keymapCommandInputs = new Map(CANVAS_KEYMAP_COMMANDS
+    .map((command) => [command, document.querySelector(`#canvasKeymapCommand-${command}`)]));
 
   let layout = emptyCanvasLayout();
   let active = false;
@@ -58,6 +75,12 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
   // conversation identity -> the title last rendered for it, so the shortcut bar can
   // name a conversation without waiting for another metadata round trip.
   const paneTitles = new Map();
+  // The account's canvas chord and command keys, as the node last reported them.
+  let keymap = normalizeCanvasKeymap(DEFAULT_CANVAS_KEYMAP);
+  // Pane ids, most recently reached first, so one key toggles between the last two.
+  const visitOrder = [];
+  let finderMatches = [];
+  let finderIndex = 0;
 
   const text = (tag, value, className) => {
     const element = document.createElement(tag);
@@ -137,11 +160,11 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     paneTitles.set(paneIdentity(pane), title);
     bar.append(text("strong", title, "canvas-pane-title"));
     const held = shortcutFor(pane);
-    const badge = button(held ? `⌘⇧${held.binding}` : "⌘⇧");
+    const badge = button(canvasChordLabel(keymap, held ? held.binding : ""));
     badge.className = "canvas-shortcut-badge";
     badge.dataset.testid = "canvas-pane-shortcut-button";
     badge.setAttribute("aria-label", held
-      ? `Change the keyboard shortcut for ${title}, currently Command Shift ${held.binding}`
+      ? `Change the keyboard shortcut for ${title}, currently ${canvasChordLabel(keymap, held.binding)}`
       : `Assign a keyboard shortcut to ${title}`);
     badge.addEventListener("click", () => openShortcutDialog(pane, title));
     bar.append(badge);
@@ -322,6 +345,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
         weights: [at.row.weights[at.index - 1], at.row.weights[at.index]],
       };
       strip.setPointerCapture(event.pointerId);
+      root.classList.add("canvas-resizing");
     });
     const pairAt = (event, from) => boundaryPair(from.weights,
       (from.startLeft + event.clientX - from.startX) / Math.max(1, from.pairWidth));
@@ -335,6 +359,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
       const ending = drag;
       drag = null;
       strip.releasePointerCapture(event.pointerId);
+      root.classList.remove("canvas-resizing");
       const at = locatePane(pane.id);
       if (!complete || !at || at.index === 0) { placeAll(); return; }
       const pair = pairAt(event, ending);
@@ -375,6 +400,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
       if (!row) return;
       drag = { pointerId: event.pointerId, startY: event.clientY, height: rowHeightOf(row) };
       strip.setPointerCapture(event.pointerId);
+      root.classList.add("canvas-resizing");
     });
     strip.addEventListener("pointermove", (event) => {
       if (!drag || event.pointerId !== drag.pointerId) return;
@@ -386,6 +412,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
       const ending = drag;
       drag = null;
       strip.releasePointerCapture(event.pointerId);
+      root.classList.remove("canvas-resizing");
       if (complete) commit(setCanvasRowHeight(layout, rowId, ending.height + event.clientY - ending.startY));
       placeAll();
     };
@@ -402,6 +429,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     strip.setAttribute("aria-valuemin", String(CANVAS_MIN_ROW_HEIGHT));
     strip.setAttribute("aria-valuemax", String(CANVAS_MAX_ROW_HEIGHT));
     strip.setAttribute("aria-label", "Resize this canvas row's height");
+    strip.title = "Drag to resize this row · double-click to fit";
     wireRowPointer(strip, rowId);
     strip.addEventListener("keydown", (event) => {
       if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
@@ -410,6 +438,10 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
       if (!row) return;
       const delta = event.key === "ArrowDown" ? CANVAS_ROW_HEIGHT_STEP : -CANVAS_ROW_HEIGHT_STEP;
       commit(setCanvasRowHeight(layout, rowId, rowHeightOf(row) + delta));
+      placeAll();
+    });
+    strip.addEventListener("dblclick", () => {
+      commit(clearCanvasRowHeight(layout, rowId));
       placeAll();
     });
     return strip;
@@ -441,20 +473,47 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     publishBindings();
   }
 
-  /** Panes are iframes and swallow the keystroke, so each one learns the bound keys
-   * and forwards only those; everything else stays with the conversation. */
+  /** Panes are iframes and swallow the keystroke, so each one learns the chord and the
+   * keys the canvas claims, and forwards only those; everything else stays with the
+   * conversation. */
   function publishBindings() {
-    const bindings = shortcuts.map((shortcut) => shortcut.binding);
+    const commands = CANVAS_KEYMAP_COMMANDS.map((command) => keymap[command]).filter(Boolean);
+    const bindings = [...shortcuts.map((shortcut) => shortcut.binding), ...commands];
     for (const node of paneNodes.values()) {
       const frame = node.body.firstElementChild;
-      frame?.contentWindow?.postMessage({ type: "canvasShortcutBindings", bindings }, location.origin);
+      frame?.contentWindow?.postMessage({ type: "canvasShortcutBindings", bindings, modifiers: keymap.modifiers }, location.origin);
     }
+  }
+
+  /** Most recently reached panes first, so the jump key toggles between the last two. */
+  function noteVisit(paneId) {
+    const index = visitOrder.indexOf(paneId);
+    if (index >= 0) visitOrder.splice(index, 1);
+    visitOrder.unshift(paneId);
+    visitOrder.length = Math.min(visitOrder.length, 20);
+  }
+
+  const livePaneIds = () => new Set(listCanvasPanes(layout).map((pane) => pane.id));
+
+  /** The pane the user last worked in; before they have, the layout's own order decides. */
+  function currentPaneId() {
+    const live = livePaneIds();
+    return visitOrder.find((id) => live.has(id)) || layout.focusedPaneId || listCanvasPanes(layout)[0]?.id || null;
+  }
+
+  /** The pane before the current one, so one key jumps back and forth between two. */
+  function previousPaneId() {
+    const live = livePaneIds();
+    const visited = visitOrder.filter((id) => live.has(id));
+    if (visited[1]) return visited[1];
+    return listCanvasPanes(layout).find((pane) => pane.id !== visited[0])?.id || null;
   }
 
   function revealPane(paneId) {
     const pane = listCanvasPanes(layout).find((candidate) => candidate.id === paneId);
     const node = pane ? paneNodes.get(paneIdentity(pane)) : null;
-    if (!node) return;
+    if (!node) return false;
+    noteVisit(paneId);
     // Focus mode hides every other pane, so a shortcut into one moves focus instead of
     // scrolling to something the canvas is not showing.
     if (layout.focusedPaneId && layout.focusedPaneId !== paneId) {
@@ -466,26 +525,36 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     node.element.classList.add("canvas-revealed");
     setTimeout(() => node.element.classList.remove("canvas-revealed"), 1200);
     node.body.firstElementChild?.contentWindow?.postMessage({ type: "canvasFocusComposer" }, location.origin);
-  }
-
-  /** Command and Shift with one digit or letter. Reading `code` keeps the binding on
-   * the physical key, so Shift's punctuation and other layouts do not change it. */
-  function bindingFromCombination(combination) {
-    if (!combination.metaKey || !combination.shiftKey || combination.ctrlKey || combination.altKey) return null;
-    const match = /^(?:Digit([0-9])|Key([A-Z]))$/.exec(combination.code || "");
-    return match ? match[1] || match[2] : null;
-  }
-
-  function handleShortcutCombination(combination) {
-    if (!active) return false;
-    const binding = bindingFromCombination(combination);
-    if (!binding) return false;
-    const shortcut = shortcuts.find((candidate) => candidate.binding === binding);
-    if (!shortcut) return false;
-    const pane = listCanvasPanes(layout).find((candidate) => shortcutIdentity(paneShortcutTarget(candidate)) === shortcutIdentity(shortcut));
-    if (!pane) return false;
-    revealPane(pane.id);
     return true;
+  }
+
+  /** Brings the conversation the user last worked in forward, alone on the canvas. */
+  function focusCurrentPane() {
+    const paneId = currentPaneId();
+    if (!paneId) return false;
+    if (layout.focusedPaneId !== paneId) {
+      commit(toggleCanvasFocus(layout, paneId));
+      applyFocus();
+      render();
+    }
+    return revealPane(paneId);
+  }
+
+  /** A conversation's own key is checked first: adding a command must never silently
+   * take a binding the user already had. */
+  function handleShortcutCombination(combination) {
+    if (!active || !canvasChordMatches(keymap, combination)) return false;
+    const key = canvasKeyFromCode(combination.code);
+    if (!key) return false;
+    const shortcut = shortcuts.find((candidate) => candidate.binding === key);
+    if (shortcut) {
+      const pane = listCanvasPanes(layout).find((candidate) => shortcutIdentity(paneShortcutTarget(candidate)) === shortcutIdentity(shortcut));
+      return pane ? revealPane(pane.id) : false;
+    }
+    if (key === keymap.paneSearch) { openFinder(); return true; }
+    if (key === keymap.recentPane) return revealPane(previousPaneId());
+    if (key === keymap.focusPane) return focusCurrentPane();
+    return false;
   }
 
   function renderShortcutBar() {
@@ -498,7 +567,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
       const chip = button("");
       chip.className = "canvas-shortcut-chip";
       chip.setAttribute("aria-label", `Go to ${paneTitle(entry.pane)}`);
-      chip.append(text("kbd", `⌘⇧${entry.shortcut.binding}`));
+      chip.append(text("kbd", canvasChordLabel(keymap, entry.shortcut.binding)));
       chip.append(text("span", paneTitle(entry.pane)));
       chip.addEventListener("click", () => revealPane(entry.pane.id));
       shortcutBar.append(chip);
@@ -510,6 +579,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     shortcutSubject.textContent = title;
     const current = shortcutFor(pane);
     shortcutKeyInput.value = current ? current.binding : "";
+    shortcutChordLabel.textContent = `Press ${canvasChordLabel(keymap)} with this key`;
     shortcutStatus.textContent = "";
     shortcutRemoveButton.hidden = !current;
     shortcutDialog.showModal();
@@ -519,6 +589,10 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     const binding = String(shortcutKeyInput.value || "").trim().toUpperCase();
     if (!/^[0-9A-Z]$/.test(binding)) {
       shortcutStatus.textContent = "Pick one digit or letter.";
+      return;
+    }
+    if (CANVAS_KEYMAP_COMMANDS.some((command) => keymap[command] === binding)) {
+      shortcutStatus.textContent = "That key already runs a canvas command.";
       return;
     }
     try {
@@ -557,6 +631,121 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
 
   function reportShortcutFailure(error) {
     showMessage(error instanceof Error ? error.message : "Could not release that shortcut");
+  }
+
+  /**
+   * Fuzzy finder over the conversations already on the canvas, so a wide canvas stays
+   * navigable by title instead of by hunting for the right pane.
+   */
+  function renderFinder() {
+    const query = finderInput.value.trim();
+    finderMatches = listCanvasPanes(layout)
+      .map((pane) => ({ pane, title: paneTitle(pane) }))
+      .map((entry) => ({ ...entry, score: fuzzyMatchScore(entry.title, query) }))
+      .filter((entry) => entry.score !== null)
+      .sort((left, right) => right.score - left.score);
+    finderIndex = Math.min(finderIndex, Math.max(0, finderMatches.length - 1));
+    finderResults.replaceChildren();
+    for (const [index, entry] of finderMatches.entries()) {
+      const option = button("");
+      option.className = `canvas-finder-option${index === finderIndex ? " active" : ""}`;
+      option.dataset.testid = "canvas-finder-option";
+      option.setAttribute("aria-label", `Go to ${entry.title}`);
+      option.append(text("strong", entry.title));
+      const held = shortcutFor(entry.pane);
+      if (held) option.append(text("kbd", canvasChordLabel(keymap, held.binding)));
+      option.addEventListener("click", () => chooseFinderMatch(index));
+      finderResults.append(option);
+    }
+    finderStatus.textContent = finderMatches.length ? "" : "No conversation on the canvas matches that.";
+  }
+
+  function chooseFinderMatch(index) {
+    const entry = finderMatches[index];
+    if (!entry) return;
+    finderDialog.close();
+    revealPane(entry.pane.id);
+  }
+
+  function openFinder() {
+    if (!listCanvasPanes(layout).length) {
+      showMessage("The canvas has no conversations to search yet.");
+      return;
+    }
+    finderInput.value = "";
+    finderIndex = 0;
+    renderFinder();
+    finderDialog.showModal();
+    finderInput.focus();
+  }
+
+  function openKeymapDialog() {
+    for (const [name, input] of keymapModifierInputs) input.checked = keymap.modifiers.includes(name);
+    for (const [command, input] of keymapCommandInputs) input.value = keymap[command] || "";
+    keymapStatus.textContent = "";
+    keymapDialog.showModal();
+  }
+
+  /** Reads the dialog into one keymap, refusing a chord or a key that cannot work. */
+  function keymapFromDialog() {
+    const modifiers = CANVAS_MODIFIERS.filter((name) => keymapModifierInputs.get(name).checked);
+    if (!canvasChordIsUsable(modifiers)) throw new Error("Pick Command, Control, or Option. Shift on its own would swallow ordinary typing.");
+    const draft = { modifiers };
+    const taken = new Set();
+    for (const [command, input] of keymapCommandInputs) {
+      const typed = String(input.value || "").trim();
+      const key = typed ? canonicalCanvasKey(typed) : null;
+      if (typed && !key) throw new Error("Each command key is one digit or letter.");
+      if (key && taken.has(key)) throw new Error("Two commands cannot share one key.");
+      if (key && shortcuts.some((candidate) => candidate.binding === key)) {
+        throw new Error(`${key} already belongs to a conversation on the canvas.`);
+      }
+      if (key) taken.add(key);
+      draft[command] = key;
+    }
+    return normalizeCanvasKeymap(draft);
+  }
+
+  async function saveKeymapFromDialog() {
+    let next;
+    try {
+      next = keymapFromDialog();
+    } catch (error) {
+      keymapStatus.textContent = error.message;
+      return;
+    }
+    try {
+      await saveKeymap(next);
+    } catch (error) {
+      keymapStatus.textContent = error instanceof Error ? error.message : "Could not save these shortcuts";
+      return;
+    }
+    keymap = next;
+    keymapDialog.close();
+    render();
+  }
+
+  /**
+   * Puts one already-open conversation on the canvas, from the conversation list or the
+   * chat menu. A full row spills into a new one rather than refusing.
+   */
+  function addSessionPane(projectId, session) {
+    const pane = {
+      kind: "pane", id: crypto.randomUUID(), projectId,
+      sessionPath: session.path, sessionId: session.id,
+      executionNodeId: session.executionNodeId ?? null,
+    };
+    const panes = listCanvasPanes(layout);
+    const target = layout.focusedPaneId || panes[panes.length - 1]?.id || null;
+    let next;
+    try {
+      next = addCanvasPane(layout, pane, target, "row");
+    } catch (error) {
+      if (!/at most eight/.test(error.message)) throw error;
+      next = addCanvasPane(layout, pane, target, "column");
+    }
+    commit({ ...next, focusedPaneId: null });
+    if (active) render();
   }
 
   function removePane(pane) {
@@ -785,18 +974,44 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
   });
   shortcutSaveButton.addEventListener("click", () => void saveShortcut());
   shortcutRemoveButton.addEventListener("click", () => void removeShortcut());
+  finderButton.addEventListener("click", openFinder);
+  finderInput.addEventListener("input", () => { finderIndex = 0; renderFinder(); });
+  finderInput.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      finderIndex = Math.min(finderMatches.length - 1, Math.max(0, finderIndex + step));
+      renderFinder();
+      return;
+    }
+    if (event.key !== "Enter") return;
+    // The dialog's form would submit and close before the pane is revealed.
+    event.preventDefault();
+    chooseFinderMatch(finderIndex);
+  });
+  keymapButton.addEventListener("click", openKeymapDialog);
+  keymapSaveButton.addEventListener("click", () => void saveKeymapFromDialog());
+  keymapResetButton.addEventListener("click", () => {
+    for (const [name, input] of keymapModifierInputs) input.checked = DEFAULT_CANVAS_KEYMAP.modifiers.includes(name);
+    for (const [command, input] of keymapCommandInputs) input.value = DEFAULT_CANVAS_KEYMAP[command];
+    keymapStatus.textContent = "";
+  });
   window.addEventListener("keydown", (event) => {
     if (handleShortcutCombination(event)) event.preventDefault();
   });
   // Same origin is not enough: any window on this origin could post these. Only the
   // frames this canvas created may press a shortcut or ask for the binding table.
-  const isPaneFrame = (source) => [...paneNodes.values()]
-    .some((node) => node.body.firstElementChild?.contentWindow === source);
+  const paneIdForSource = (source) => [...paneNodes.values()]
+    .find((node) => node.body.firstElementChild?.contentWindow === source)?.paneId ?? null;
   window.addEventListener("message", (event) => {
-    if (event.origin !== location.origin || !isPaneFrame(event.source)) return;
+    if (event.origin !== location.origin) return;
+    const paneId = paneIdForSource(event.source);
+    if (paneId === null) return;
     if (event.data?.type === "canvasShortcut") handleShortcutCombination(event.data);
     // A pane that just finished loading has no bindings yet.
     if (event.data?.type === "canvasPaneReady") publishBindings();
+    // Knowing which pane the user last touched is what makes "the current one" real.
+    if (event.data?.type === "canvasPaneActive") noteVisit(paneId);
   });
 
   return {
@@ -822,6 +1037,13 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     reloadShortcuts() {
       return loadShortcuts().then(render);
     },
+    setKeymap(next) {
+      keymap = normalizeCanvasKeymap(next);
+      if (active) render();
+    },
+    openKeymapDialog,
+    openFinder,
+    addSessionPane,
     openPicker,
   };
 }

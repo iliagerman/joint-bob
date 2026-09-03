@@ -138,6 +138,8 @@
             <h1>Canvas</h1>
             <p>Existing conversations, side by side</p>
           </div>
+          <button class="ghost compact" id="canvasFinderButton" type="button" title="Search the conversations on the canvas" data-testid="canvas-finder-button">Find</button>
+          <button class="ghost compact" id="canvasKeymapButton" type="button" title="Configure canvas keyboard shortcuts" data-testid="canvas-keymap-button">Shortcuts</button>
           <button class="ghost compact" id="canvasOrganizeButton" type="button" title="Lay every conversation out as an even grid" data-testid="canvas-organize-button">Organize</button>
           <button class="primary compact" id="canvasAddButton" type="button" data-testid="canvas-add-button">+ Add conversation</button>
         </header>
@@ -188,6 +190,7 @@
               <button class="ghost compact safeguards-button" id="safeguardsButton" type="button" aria-pressed="true" title="Safe Guard checks are active for this Pi session" disabled data-testid="chat-safeguards-button">Safeguards on</button>
               <button class="ghost compact" id="openTerminalButton" type="button" disabled data-testid="chat-open-terminal-button">Terminal</button>
               <button class="ghost compact" id="notifyButton" type="button" aria-pressed="false" title="Notify when a conversation needs review" data-testid="chat-notify-button">Notify</button>
+              <button class="ghost compact" id="addToCanvasButton" type="button" disabled data-testid="chat-add-to-canvas-button">Add to canvas</button>
               <button class="ghost compact" id="renameSessionButton" type="button" disabled data-testid="chat-rename-button">Rename</button>
               <button class="ghost compact" id="installAppButton" type="button" hidden data-testid="chat-install-button">Install</button>
             </div>
@@ -273,7 +276,7 @@
           <h2>Keyboard shortcut</h2>
         </div>
         <p class="canvas-shortcut-subject" id="canvasShortcutSubject" data-testid="canvas-shortcut-subject"></p>
-        <label for="canvasShortcutKey">Press Command and Shift with this key
+        <label for="canvasShortcutKey"><span id="canvasShortcutChordLabel">Press ⌘⇧ with this key</span>
           <input id="canvasShortcutKey" type="text" maxlength="1" autocomplete="off" spellcheck="false" placeholder="1-9 or A-Z" data-testid="canvas-shortcut-key-input" />
         </label>
         <p class="canvas-picker-status" id="canvasShortcutStatus" role="status" data-testid="canvas-shortcut-status"></p>
@@ -307,6 +310,59 @@
         <div class="canvas-session-options" id="canvasSessionOptions" data-testid="canvas-session-options"></div>
         <div class="dialog-actions">
           <button class="ghost" type="submit" data-testid="canvas-picker-cancel-button">Cancel</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="canvasFinderDialog" data-testid="canvas-finder-dialog">
+      <form class="dialog-card" method="dialog">
+        <div>
+          <span class="eyebrow">Canvas</span>
+          <h2>Go to conversation</h2>
+          <p>Type any part of a title. Enter opens the highlighted conversation; the arrow keys move the highlight.</p>
+        </div>
+        <label class="search-shell" for="canvasFinderInput">
+          <span class="sr-only">Search conversations on the canvas</span>
+          <input id="canvasFinderInput" type="search" autocomplete="off" spellcheck="false" placeholder="Search conversations on the canvas" data-testid="canvas-finder-input" />
+        </label>
+        <p class="canvas-picker-status" id="canvasFinderStatus" role="status" data-testid="canvas-finder-status"></p>
+        <div class="canvas-finder-results" id="canvasFinderResults" data-testid="canvas-finder-results"></div>
+        <div class="dialog-actions">
+          <button class="ghost" type="submit" data-testid="canvas-finder-cancel-button">Close</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="canvasKeymapDialog" data-testid="canvas-keymap-dialog">
+      <form class="dialog-card" method="dialog">
+        <div>
+          <span class="eyebrow">Canvas</span>
+          <h2>Canvas shortcuts</h2>
+          <p>One modifier combination runs every canvas key, including the per-conversation keys. It must include Command, Control, or Option — Shift on its own would swallow ordinary typing. Each command takes one digit or letter; leave a field empty to unbind it. A key a conversation already uses stays with that conversation.</p>
+        </div>
+        <fieldset class="canvas-keymap-modifiers">
+          <legend>Modifier combination</legend>
+          <label for="canvasKeymapModifier-meta"><input id="canvasKeymapModifier-meta" type="checkbox" data-testid="canvas-keymap-modifier-meta" /> Command ⌘</label>
+          <label for="canvasKeymapModifier-ctrl"><input id="canvasKeymapModifier-ctrl" type="checkbox" data-testid="canvas-keymap-modifier-ctrl" /> Control ⌃</label>
+          <label for="canvasKeymapModifier-alt"><input id="canvasKeymapModifier-alt" type="checkbox" data-testid="canvas-keymap-modifier-alt" /> Option ⌥</label>
+          <label for="canvasKeymapModifier-shift"><input id="canvasKeymapModifier-shift" type="checkbox" data-testid="canvas-keymap-modifier-shift" /> Shift ⇧</label>
+        </fieldset>
+        <div class="canvas-keymap-grid">
+          <label class="canvas-keymap-command" for="canvasKeymapCommand-recentPane">Jump to the conversation you were in before
+            <input id="canvasKeymapCommand-recentPane" type="text" maxlength="1" autocomplete="off" spellcheck="false" placeholder="E" data-testid="canvas-keymap-recent-pane-input" />
+          </label>
+          <label class="canvas-keymap-command" for="canvasKeymapCommand-focusPane">Bring the current conversation forward
+            <input id="canvasKeymapCommand-focusPane" type="text" maxlength="1" autocomplete="off" spellcheck="false" placeholder="G" data-testid="canvas-keymap-focus-pane-input" />
+          </label>
+          <label class="canvas-keymap-command" for="canvasKeymapCommand-paneSearch">Search conversations on the canvas
+            <input id="canvasKeymapCommand-paneSearch" type="text" maxlength="1" autocomplete="off" spellcheck="false" placeholder="F" data-testid="canvas-keymap-pane-search-input" />
+          </label>
+        </div>
+        <p class="canvas-picker-status" id="canvasKeymapStatus" role="status" data-testid="canvas-keymap-status"></p>
+        <div class="dialog-actions">
+          <button class="ghost" type="submit" data-testid="canvas-keymap-cancel-button">Cancel</button>
+          <button class="ghost" id="canvasKeymapResetButton" type="button" data-testid="canvas-keymap-reset-button">Reset</button>
+          <button class="primary" id="canvasKeymapSaveButton" type="button" data-testid="canvas-keymap-save-button">Save</button>
         </div>
       </form>
     </dialog>

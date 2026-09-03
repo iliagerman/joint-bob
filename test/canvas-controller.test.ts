@@ -86,7 +86,7 @@ const document = {
   createElement: (tag) => new FakeElement(tag),
   querySelector: (selector) => registry.get(selector) || null,
 };
-for (const selector of ["#canvasRoot", "#canvasConversationDialog", "#canvasProjectSelect", "#canvasSessionSearch", "#canvasSplitPosition", "#canvasSessionOptions", "#canvasPickerStatus", "#canvasPickerCancelButton", "#canvasAddButton", "#canvasOrganizeButton", "#canvasShortcutBar", "#canvasShortcutDialog", "#canvasShortcutSubject", "#canvasShortcutKey", "#canvasShortcutStatus", "#canvasShortcutRemoveButton", "#canvasShortcutSaveButton"]) {
+for (const selector of ["#canvasRoot", "#canvasConversationDialog", "#canvasProjectSelect", "#canvasSessionSearch", "#canvasSplitPosition", "#canvasSessionOptions", "#canvasPickerStatus", "#canvasPickerCancelButton", "#canvasAddButton", "#canvasOrganizeButton", "#canvasShortcutBar", "#canvasShortcutDialog", "#canvasShortcutSubject", "#canvasShortcutKey", "#canvasShortcutStatus", "#canvasShortcutRemoveButton", "#canvasShortcutSaveButton", "#canvasShortcutChordLabel", "#canvasFinderButton", "#canvasFinderDialog", "#canvasFinderInput", "#canvasFinderResults", "#canvasFinderStatus", "#canvasKeymapButton", "#canvasKeymapDialog", "#canvasKeymapStatus", "#canvasKeymapSaveButton", "#canvasKeymapResetButton", "#canvasKeymapModifier-meta", "#canvasKeymapModifier-ctrl", "#canvasKeymapModifier-alt", "#canvasKeymapModifier-shift", "#canvasKeymapCommand-recentPane", "#canvasKeymapCommand-focusPane", "#canvasKeymapCommand-paneSearch"]) {
   registry.set(selector, new FakeElement(selector.slice(1)));
 }
 const windowListeners = new Map<string, (event: unknown) => void>();
@@ -110,6 +110,7 @@ const sessions = [
 ];
 const harnesses = [{ id: "pi", label: "Pi", newSessionPath: "new" }, { id: "claude", label: "Claude", newSessionPath: "claude:new" }];
 const saved = [];
+const savedKeymaps = [];
 let failSessions = false;
 let storedShortcuts = [];
 const apiCalls = [];
@@ -138,6 +139,7 @@ const controller = createConversationCanvas({
   },
   getProjects: () => [{ id: "p-one", name: "Project One" }],
   saveLayout: (next) => saved.push(next),
+  saveKeymap: async (next) => { savedKeymaps.push(next); },
   showMessage: () => {},
 });
 
@@ -472,4 +474,270 @@ test("only the real pane frames may drive the canvas over postMessage", async ()
   assert.equal(pane.scrolledIntoView, false, "another origin cannot press a shortcut either");
   windowListeners.get("message")({ origin: "http://canvas.test", source: frames[0].contentWindow, data: combination });
   assert.equal(pane.scrolledIntoView, true, "a real pane frame still works");
+});
+
+test("the jump key toggles between the two conversations most recently reached", async () => {
+  const root = registry.get("#canvasRoot");
+  let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
+  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "row");
+  controller.setLayout({ ...layout, focusedPaneId: null });
+  await controller.activate();
+
+  const frames = [];
+  walk2(root, frames);
+  for (const frame of frames) frame.contentWindow = { postMessage() {} };
+  const first = root.children.find((element) => element.dataset.paneId === "pane-s-one");
+  const second = root.children.find((element) => element.dataset.paneId === "pane-s-two");
+
+  // Establish a known history: the user worked in One, then in Two.
+  const visit = (frame) => windowListeners.get("message")({
+    origin: "http://canvas.test", source: frame.contentWindow, data: { type: "canvasPaneActive" },
+  });
+  visit(frames[0]);
+  visit(frames[1]);
+
+  const press = () => {
+    first.scrolledIntoView = false;
+    second.scrolledIntoView = false;
+    windowListeners.get("keydown")({ code: "KeyE", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false, preventDefault() {} });
+  };
+
+  press();
+  assert.equal(first.scrolledIntoView, true, "the jump key goes back to the conversation before this one");
+  assert.equal(second.scrolledIntoView, false);
+
+  press();
+  assert.equal(second.scrolledIntoView, true, "pressing it again returns, instead of cycling onwards");
+  assert.equal(first.scrolledIntoView, false);
+
+  press();
+  assert.equal(first.scrolledIntoView, true, "the pair keeps alternating");
+});
+
+test("the focus key brings the pane the user last touched forward", async () => {
+  // Earlier tests in this file leave a custom keymap behind; start from the defaults.
+  controller.setKeymap({ modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F" });
+  const root = registry.get("#canvasRoot");
+  let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
+  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "row");
+  controller.setLayout({ ...layout, focusedPaneId: null });
+  await controller.activate();
+
+  const frames = [];
+  walk2(root, frames);
+  const posted = [];
+  for (const frame of frames) frame.contentWindow = { postMessage: (message) => posted.push(message) };
+  const second = root.children.find((element) => element.dataset.paneId === "pane-s-two");
+
+  // The user works in the second conversation, so that is "the current one".
+  windowListeners.get("message")({ origin: "http://canvas.test", source: frames[1].contentWindow, data: { type: "canvasPaneActive" } });
+
+  const priorSaves = saved.length;
+  windowListeners.get("keydown")({ code: "KeyG", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false, preventDefault() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  // `saved` is shared by every test in this file, so the length check is what proves a
+  // layout was actually committed rather than an older one still sitting at the end.
+  assert.ok(saved.length > priorSaves, "focusing commits a layout");
+  assert.equal(saved.at(-1).focusedPaneId, "pane-s-two", "the conversation the user was in becomes the focused one");
+  assert.equal(second.classList.contains("focused"), true, "and the canvas actually shows it alone");
+  assert.equal(root.classList.contains("canvas-focused"), true);
+  assert.ok(posted.some((message) => message.type === "canvasFocusComposer"), "the cursor lands in that conversation");
+});
+
+test("the finder ranks canvas conversations by title and opens the chosen one", async () => {
+  const root = registry.get("#canvasRoot");
+  let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
+  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "row");
+  layout = addCanvasPane(layout, paneFor("s-three", "/tmp/three.jsonl"), "pane-s-two", "row");
+  controller.setLayout({ ...layout, focusedPaneId: null });
+  await controller.activate();
+
+  registry.get("#canvasFinderButton").dispatch("click");
+  assert.equal(registry.get("#canvasFinderDialog").open, true);
+
+  registry.get("#canvasFinderInput").value = "three";
+  registry.get("#canvasFinderInput").dispatch("input");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const results = registry.get("#canvasFinderResults");
+  assert.equal(results.children.length, 1, "searching for 'three' finds one match");
+  assert.ok(textOf(results).includes("Three"));
+
+  results.children[0].dispatch("click");
+  assert.equal(registry.get("#canvasFinderDialog").open, false, "clicking an option closes the dialog");
+  const pane = root.children.find((element) => element.dataset.paneId === "pane-s-three");
+  assert.equal(pane.scrolledIntoView, true);
+
+  // A query that matches nothing must empty the list and say so, not show everything.
+  registry.get("#canvasFinderButton").dispatch("click");
+  registry.get("#canvasFinderInput").value = "zzzz";
+  registry.get("#canvasFinderInput").dispatch("input");
+  assert.equal(registry.get("#canvasFinderResults").children.length, 0);
+  assert.ok(registry.get("#canvasFinderStatus").text.length > 0, "an empty result explains itself");
+  registry.get("#canvasFinderDialog").close();
+});
+
+test("a saved keymap changes which combination the canvas answers", async () => {
+  const root = registry.get("#canvasRoot");
+  let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
+  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "row");
+  controller.setLayout({ ...layout, focusedPaneId: null });
+  await controller.activate();
+
+  registry.get("#canvasKeymapButton").dispatch("click");
+  assert.equal(registry.get("#canvasKeymapDialog").open, true);
+
+  registry.get("#canvasKeymapModifier-meta").checked = false;
+  registry.get("#canvasKeymapModifier-shift").checked = false;
+  registry.get("#canvasKeymapModifier-ctrl").checked = true;
+  registry.get("#canvasKeymapModifier-alt").checked = true;
+  registry.get("#canvasKeymapCommand-paneSearch").value = "j";
+  registry.get("#canvasKeymapCommand-recentPane").value = "";
+  registry.get("#canvasKeymapCommand-focusPane").value = "";
+
+  registry.get("#canvasKeymapSaveButton").dispatch("click");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(savedKeymaps.at(-1), { modifiers: ["ctrl", "alt"], recentPane: null, focusPane: null, paneSearch: "J" });
+
+  windowListeners.get("keydown")({ code: "KeyF", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false, preventDefault() {} });
+  assert.equal(registry.get("#canvasFinderDialog").open, false, "old combination does not open finder");
+
+  windowListeners.get("keydown")({ code: "KeyJ", metaKey: false, shiftKey: false, ctrlKey: true, altKey: true, preventDefault() {} });
+  assert.equal(registry.get("#canvasFinderDialog").open, true, "new combination opens finder");
+  registry.get("#canvasFinderDialog").close();
+});
+
+test("the keymap dialog refuses a chord with no modifier and a duplicated key", async () => {
+  storedShortcuts = [];
+  const priorKeymapCount = savedKeymaps.length;
+  const root = registry.get("#canvasRoot");
+  let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
+  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "row");
+  controller.setLayout({ ...layout, focusedPaneId: null });
+  await controller.activate();
+
+  registry.get("#canvasKeymapButton").dispatch("click");
+
+  registry.get("#canvasKeymapModifier-meta").checked = false;
+  registry.get("#canvasKeymapModifier-shift").checked = false;
+  registry.get("#canvasKeymapModifier-ctrl").checked = false;
+  registry.get("#canvasKeymapModifier-alt").checked = false;
+  registry.get("#canvasKeymapSaveButton").dispatch("click");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(savedKeymaps.length, priorKeymapCount, "no new keymap is saved with no modifiers");
+  assert.ok(registry.get("#canvasKeymapStatus").text.length > 0, "status mentions a requirement");
+
+  registry.get("#canvasKeymapModifier-ctrl").checked = true;
+  registry.get("#canvasKeymapCommand-recentPane").value = "a";
+  registry.get("#canvasKeymapCommand-focusPane").value = "a";
+  registry.get("#canvasKeymapSaveButton").dispatch("click");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(savedKeymaps.length, priorKeymapCount, "keymap with duplicate keys is not saved");
+});
+
+test("an open conversation can be added to the canvas from outside it", async () => {
+  controller.setLayout(emptyCanvasLayout());
+  await controller.activate();
+
+  controller.addSessionPane("p-one", { id: "s-two", path: "/tmp/two.jsonl", executionNodeId: null });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const panes = listCanvasPanes(saved.at(-1));
+  assert.equal(panes.length, 1, "one pane is on the canvas");
+  assert.equal(panes[0].sessionId, "s-two");
+
+  const root = registry.get("#canvasRoot");
+  const sections = root.children.filter((element) => element.tagName === "section");
+  assert.equal(sections.length, 1, "root has one section");
+
+  assert.throws(() => controller.addSessionPane("p-one", { id: "s-two", path: "/tmp/two.jsonl", executionNodeId: null }), /already on the canvas/);
+});
+
+test("double-clicking a row handle gives the row its share of the canvas back", async () => {
+  const root = registry.get("#canvasRoot");
+  let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
+  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "row");
+  controller.setLayout({ ...layout, focusedPaneId: null });
+  await controller.activate();
+
+  const handle = findElement(root, (element) => element.classNames?.includes("canvas-row-resize"));
+  assert.ok(handle, "row handle exists");
+
+  handle.dispatch("keydown", { key: "ArrowDown", preventDefault() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.ok(saved.at(-1).rows[0].height !== null, "ArrowDown sets a height");
+
+  handle.dispatch("dblclick");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(saved.at(-1).rows[0].height, null, "double-click resets height to null");
+});
+
+test("a conversation keeps a key a canvas command also wants", async () => {
+  // Earlier tests in this file leave a custom keymap behind; start from the defaults.
+  controller.setKeymap({ modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F" });
+  storedShortcuts = [{ binding: "F", projectId: "p-one", engine: "pi", sessionId: "s-two" }];
+  const root = registry.get("#canvasRoot");
+  let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
+  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "row");
+  controller.setLayout({ ...layout, focusedPaneId: null });
+  await controller.activate();
+
+  const frames = [];
+  walk2(root, frames);
+  for (const frame of frames) frame.contentWindow = { postMessage() {} };
+  const pane = root.children.find((element) => element.dataset.paneId === "pane-s-two");
+  const finder = registry.get("#canvasFinderDialog");
+  finder.close();
+  pane.scrolledIntoView = false;
+
+  // F is also the default search key. The conversation that already holds it wins.
+  windowListeners.get("keydown")({ code: "KeyF", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false, preventDefault() {} });
+  assert.equal(finder.open, false, "a command must not run while a conversation holds its key");
+  assert.equal(pane.scrolledIntoView, true, "the conversation's own binding still works");
+
+  // Free the key and the command becomes reachable again.
+  storedShortcuts = [];
+  await controller.reloadShortcuts();
+  pane.scrolledIntoView = false;
+  windowListeners.get("keydown")({ code: "KeyF", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false, preventDefault() {} });
+  assert.equal(finder.open, true, "the command runs once no conversation holds the key");
+  assert.equal(pane.scrolledIntoView, false, "the command runs instead of the conversation jump");
+  finder.close();
+});
+
+test("the keymap dialog refuses a key a conversation already holds", async () => {
+  storedShortcuts = [{ binding: "F", projectId: "p-one", engine: "pi", sessionId: "s-two" }];
+  const root = registry.get("#canvasRoot");
+  let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
+  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "row");
+  controller.setLayout({ ...layout, focusedPaneId: null });
+  await controller.activate();
+  await controller.reloadShortcuts();
+
+  const priorKeymapCount = savedKeymaps.length;
+  registry.get("#canvasKeymapButton").dispatch("click");
+  registry.get("#canvasKeymapModifier-meta").checked = true;
+  registry.get("#canvasKeymapModifier-shift").checked = false;
+  registry.get("#canvasKeymapModifier-ctrl").checked = false;
+  registry.get("#canvasKeymapModifier-alt").checked = false;
+  registry.get("#canvasKeymapCommand-recentPane").value = "";
+  registry.get("#canvasKeymapCommand-focusPane").value = "";
+  registry.get("#canvasKeymapCommand-paneSearch").value = "f";
+  registry.get("#canvasKeymapSaveButton").dispatch("click");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(savedKeymaps.length, priorKeymapCount, "the keymap was not saved");
+  assert.ok(registry.get("#canvasKeymapStatus").text.includes("F"), "status mentions F");
+
+  registry.get("#canvasKeymapCommand-paneSearch").value = "q";
+  registry.get("#canvasKeymapSaveButton").dispatch("click");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(savedKeymaps.length, priorKeymapCount + 1, "the keymap was saved");
+  assert.equal(savedKeymaps.at(-1).paneSearch, "Q");
+
+  storedShortcuts = [];
+  await controller.reloadShortcuts();
 });

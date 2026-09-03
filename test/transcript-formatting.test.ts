@@ -78,7 +78,7 @@ test("assistant filesystem paths open through the authenticated project file rou
   assert.match(server, /File is outside the project directory/);
   assert.match(server, /project-file-content/);
   assert.match(server, /await rename\(temporary, resolved\)/);
-  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v106"/);
+  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v107"/);
   assert.match(serviceWorker, /\/vendor\/codemirror\/lib\/codemirror\.js/);
   assert.match(serviceWorker, /\/vendor\/codemirror\/keymap\/vim\.js/);
   assert.match(serviceWorker, /self\.addEventListener\("fetch"/);

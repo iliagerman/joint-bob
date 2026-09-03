@@ -86,6 +86,66 @@ export function normalizeCanvasLayoutPreference(layout: StoredCanvasLayout): Can
   };
 }
 
+export type CanvasModifier = "meta" | "ctrl" | "alt" | "shift";
+
+/**
+ * Canvas keyboard shortcuts for one account. One modifier chord serves every canvas
+ * key; each command holds one digit or letter, or null when it is unbound.
+ */
+export interface CanvasKeymapPreference {
+  modifiers: CanvasModifier[];
+  recentPane: string | null;
+  focusPane: string | null;
+  paneSearch: string | null;
+}
+
+const CANVAS_MODIFIERS: CanvasModifier[] = ["meta", "ctrl", "alt", "shift"];
+const CANVAS_KEYMAP_COMMANDS = ["recentPane", "focusPane", "paneSearch"] as const;
+
+export const defaultCanvasKeymap = (): CanvasKeymapPreference => ({
+  modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F",
+});
+
+/** Shift alone is not a chord: it would swallow every capital letter a conversation
+ * is typing. Every canvas chord needs Command, Control, or Option. */
+export function canvasChordIsUsable(modifiers: CanvasModifier[]): boolean {
+  return modifiers.some((name) => name !== "shift");
+}
+
+/**
+ * Accepts any stored or posted shape. A chord with no modifier would swallow ordinary
+ * typing, so an empty set falls back to the default; two commands on one key would
+ * make the second unreachable, so the later one is dropped.
+ */
+export function normalizeCanvasKeymapPreference(value: unknown): CanvasKeymapPreference {
+  if (!value || typeof value !== "object") return defaultCanvasKeymap();
+  const source = value as Record<string, unknown>;
+  const chosen = Array.isArray(source.modifiers) ? source.modifiers : [];
+  const modifiers = CANVAS_MODIFIERS.filter((name) => chosen.includes(name));
+  const keymap: CanvasKeymapPreference = {
+    modifiers: canvasChordIsUsable(modifiers) ? modifiers : defaultCanvasKeymap().modifiers,
+    recentPane: null, focusPane: null, paneSearch: null,
+  };
+  const taken = new Set<string>();
+  for (const command of CANVAS_KEYMAP_COMMANDS) {
+    const raw = source[command];
+    const key = typeof raw === "string" && /^[0-9A-Za-z]$/.test(raw) ? raw.toUpperCase() : null;
+    if (!key || taken.has(key)) continue;
+    keymap[command] = key;
+    taken.add(key);
+  }
+  return keymap;
+}
+
+/** A hand-edited column must degrade to the default chord, never take the node down. */
+function parseCanvasKeymap(value: string): CanvasKeymapPreference {
+  try {
+    return normalizeCanvasKeymapPreference(JSON.parse(value));
+  } catch {
+    return defaultCanvasKeymap();
+  }
+}
+
 export interface UserPreferences {
   theme: "light" | "dark" | null;
   notificationsEnabled: boolean;
@@ -104,6 +164,7 @@ export interface UserPreferences {
   recentSessions: RecentSession[];
   lastSeenVersion: string | null;
   canvasLayout: CanvasLayoutPreference;
+  canvasKeymap: CanvasKeymapPreference;
 }
 
 interface PreferenceRow {
@@ -124,6 +185,7 @@ interface PreferenceRow {
   recent_sessions: string;
   last_seen_version: string | null;
   canvas_layout: string;
+  canvas_keymap: string;
 }
 
 const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
@@ -153,6 +215,7 @@ function preferencesDatabase(): DatabaseSync {
       projects_panel_collapsed INTEGER NOT NULL DEFAULT 0,
       chats_panel_collapsed INTEGER NOT NULL DEFAULT 0,
       canvas_layout TEXT NOT NULL DEFAULT '{"version":1,"root":null,"focusedPaneId":null}',
+      canvas_keymap TEXT NOT NULL DEFAULT '{"modifiers":["meta","shift"],"recentPane":"E","focusPane":"G","paneSearch":"F"}',
       updated_at TEXT NOT NULL
     );
   `);
@@ -167,6 +230,7 @@ function preferencesDatabase(): DatabaseSync {
   if (!columns.some((column) => column.name === "recent_sessions")) database.exec("ALTER TABLE user_preferences ADD COLUMN recent_sessions TEXT NOT NULL DEFAULT '[]'");
   if (!columns.some((column) => column.name === "last_seen_version")) database.exec("ALTER TABLE user_preferences ADD COLUMN last_seen_version TEXT");
   if (!columns.some((column) => column.name === "canvas_layout")) database.exec("ALTER TABLE user_preferences ADD COLUMN canvas_layout TEXT NOT NULL DEFAULT '{\"version\":1,\"root\":null,\"focusedPaneId\":null}'");
+  if (!columns.some((column) => column.name === "canvas_keymap")) database.exec("ALTER TABLE user_preferences ADD COLUMN canvas_keymap TEXT NOT NULL DEFAULT '{\"modifiers\":[\"meta\",\"shift\"],\"recentPane\":\"E\",\"focusPane\":\"G\",\"paneSearch\":\"F\"}'");
   return database;
 }
 
@@ -365,6 +429,7 @@ function preferencesFromRow(row: PreferenceRow): UserPreferences {
     recentSessions: parseRecentSessions(row.recent_sessions),
     lastSeenVersion: row.last_seen_version,
     canvasLayout: parseCanvasLayout(row.canvas_layout),
+    canvasKeymap: parseCanvasKeymap(row.canvas_keymap),
   };
 }
 
@@ -373,7 +438,7 @@ function currentPreferences(userId: string): UserPreferences {
     SELECT theme, notifications_enabled, completion_sound, install_dismissed, mobile_view,
       active_project_id, active_session_path, active_session_id, active_node_id, legacy_migrated,
       pinned_project_ids, pinned_session_paths, projects_panel_collapsed, chats_panel_collapsed,
-      recent_sessions, last_seen_version, canvas_layout
+      recent_sessions, last_seen_version, canvas_layout, canvas_keymap
     FROM user_preferences WHERE user_id = ?
   `).get(userId) as unknown as PreferenceRow;
   return preferencesFromRow(row);
@@ -405,6 +470,7 @@ export function updateUserPreferences(userId: string, partial: Partial<UserPrefe
     ["recentSessions", "recent_sessions", (value) => JSON.stringify(canonicalRecentSessions(value as RecentSession[]))],
     ["lastSeenVersion", "last_seen_version", (value) => value as string | null],
     ["canvasLayout", "canvas_layout", (value) => JSON.stringify(value as CanvasLayoutPreference)],
+    ["canvasKeymap", "canvas_keymap", (value) => JSON.stringify(value as CanvasKeymapPreference)],
   ];
   for (const [property, column, serialize] of fields) {
     if (partial[property] === undefined) continue;

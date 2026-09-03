@@ -54,7 +54,7 @@ import { clearCanvasShortcut, listCanvasShortcuts, releaseCanvasShortcuts, setCa
 import { listUserPins, setUserPin } from "./user-pins.js";
 import {
   CANVAS_MAX_ROW_HEIGHT, CANVAS_MIN_ROW_HEIGHT, canvasRowGeometryIsLegal,
-  getUserPreferences, migrateLegacyCanvasLayout, normalizeCanvasLayoutPreference,
+  getUserPreferences, migrateLegacyCanvasLayout, normalizeCanvasKeymapPreference, normalizeCanvasLayoutPreference,
   updateUserPreferences, type UserPreferences,
 } from "./preferences.js";
 import { appVersion, readChangelog } from "./changelog.js";
@@ -575,6 +575,15 @@ const canvasLayoutPreferenceSchema = z.union([
   }
   if (layout.focusedPaneId && !paneIds.has(layout.focusedPaneId)) context.addIssue({ code: z.ZodIssueCode.custom, message: "Focused canvas pane is unknown" });
 });
+const canvasKeymapKeySchema = z.string().trim().regex(/^[0-9A-Za-z]$/).nullable();
+const canvasKeymapPreferenceSchema = z.object({
+  // Shift alone would swallow every capital letter typed in a canvas conversation.
+  modifiers: z.array(z.enum(["meta", "ctrl", "alt", "shift"])).min(1).max(4)
+    .refine((modifiers) => modifiers.some((name) => name !== "shift"), "A canvas chord needs Command, Control, or Option"),
+  recentPane: canvasKeymapKeySchema,
+  focusPane: canvasKeymapKeySchema,
+  paneSearch: canvasKeymapKeySchema,
+});
 const userPreferencesSchema = z.object({
   theme: z.enum(["light", "dark"]).nullable().optional(),
   notificationsEnabled: z.boolean().optional(),
@@ -601,6 +610,7 @@ const userPreferencesSchema = z.object({
     updatedAt: z.string().max(40).nullable().default(null),
   })).max(50).optional(),
   canvasLayout: canvasLayoutPreferenceSchema.optional(),
+  canvasKeymap: canvasKeymapPreferenceSchema.optional(),
 }).strict();
 const socketMessageSchema = z.object({
   type: z.string().max(40),
@@ -1263,8 +1273,9 @@ app.put("/api/preferences", (request, response, next) => {
       return;
     }
     const parsed = userPreferencesSchema.parse(request.body);
-    const { canvasLayout, ...preferences } = parsed;
+    const { canvasLayout, canvasKeymap, ...preferences } = parsed;
     const update: Partial<UserPreferences> = preferences;
+    if (canvasKeymap) update.canvasKeymap = normalizeCanvasKeymapPreference(canvasKeymap);
     if (canvasLayout) update.canvasLayout = canvasLayout.version === 1
       ? migrateLegacyCanvasLayout(canvasLayout)
       : normalizeCanvasLayoutPreference(canvasLayout);
