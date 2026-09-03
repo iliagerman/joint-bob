@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Selected projects and conversations are now more visually prominent with borders and updated highlighting in their sidebars
+
 ## 1.2.0 — 2026-09-03
 
 - Canvas panes can now be resized horizontally and rows vertically to customize the layout

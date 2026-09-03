@@ -567,7 +567,7 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
   min-width: 0;
   min-height: 56px;
   text-align: left;
-  border: 0;
+  border: 1px solid transparent;
   border-radius: var(--radius-ctl);
   background: transparent;
   color: var(--text);
@@ -580,9 +580,10 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
 
 .project-card:hover, .session-card:hover { background: var(--field); }
 .project-card.active, .session-card.active {
-  background: var(--surface);
+  background: color-mix(in srgb, var(--hue) 14%, var(--surface));
+  border-color: color-mix(in srgb, var(--hue) 55%, var(--line-strong));
   border-radius: 3px var(--radius-ctl) var(--radius-ctl) 3px;
-  box-shadow: inset 3px 0 0 var(--hue), var(--raise);
+  box-shadow: inset 4px 0 0 var(--hue), var(--raise);
 }
 .project-card.active strong, .session-card.active strong { color: var(--heading); }
 .list-row.active .row-action-button { background: var(--surface); }
@@ -1818,10 +1819,10 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 /* The accent bar makes a row findable by colour before the name is read. */
 .project-card[data-color] { box-shadow: inset 3px 0 0 var(--project-hue); border-radius: 3px var(--radius-ctl) var(--radius-ctl) 3px; background: color-mix(in srgb, var(--project-hue) 12%, transparent); }
 .project-card[data-color]:hover { background: color-mix(in srgb, var(--project-hue) 22%, var(--field)); }
-.project-card[data-color].active { box-shadow: inset 3px 0 0 var(--project-hue), var(--raise); background: color-mix(in srgb, var(--project-hue) 18%, var(--surface)); }
+.project-card[data-color].active { border-color: color-mix(in srgb, var(--project-hue) 60%, var(--line-strong)); box-shadow: inset 4px 0 0 var(--project-hue), var(--raise); background: color-mix(in srgb, var(--project-hue) 28%, var(--surface)); }
 .session-card[data-color] { box-shadow: inset 3px 0 0 var(--project-hue); border-radius: 3px var(--radius-ctl) var(--radius-ctl) 3px; background: color-mix(in srgb, var(--project-hue) 12%, transparent); }
 .session-card[data-color]:hover { background: color-mix(in srgb, var(--project-hue) 22%, var(--field)); }
-.session-card[data-color].active { box-shadow: inset 3px 0 0 var(--project-hue), var(--raise); background: color-mix(in srgb, var(--project-hue) 18%, var(--surface)); }
+.session-card[data-color].active { border-color: color-mix(in srgb, var(--project-hue) 60%, var(--line-strong)); box-shadow: inset 4px 0 0 var(--project-hue), var(--raise); background: color-mix(in srgb, var(--project-hue) 28%, var(--surface)); }
 
 /* ---- Project node lock ---- */
 .project-review-badge {

@@ -2060,6 +2060,7 @@ function projectRow(project) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `project-card${project.id === state.activeProjectId ? " active" : ""}${pinned ? " pinned" : ""}`;
+    if (project.id === state.activeProjectId) button.setAttribute("aria-current", "true");
     if (project.color) button.dataset.color = project.color;
     const name = document.createElement("strong");
     name.textContent = project.name;
@@ -2623,6 +2624,7 @@ function renderSessions() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `session-card${sessionActive ? " active" : ""}${sessionPinned ? " pinned" : ""}`;
+    if (sessionActive) button.setAttribute("aria-current", "true");
     if (session.color) button.dataset.color = session.color;
     const sessionName = document.createElement("strong");
     sessionName.textContent = shortSessionTitle(session);

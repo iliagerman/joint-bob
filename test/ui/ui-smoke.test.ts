@@ -91,6 +91,23 @@ test("opening a conversation renders its transcript", async () => {
   assert.match(await message.innerText(), /re-threading the same builder prompt/);
 });
 
+test("the selected project and conversation stay highlighted in their sidebars", async () => {
+  const project = page.locator(".project-card", { hasText: "Internal Assistant" }).first();
+  const conversation = page.locator(".session-card", { hasText: "Thread-Based Agent Builder" }).first();
+
+  assert.equal(await project.getAttribute("aria-current"), "true", "selected project is announced as current");
+  assert.equal(await conversation.getAttribute("aria-current"), "true", "selected conversation is announced as current");
+
+  for (const [label, row] of [["project", project], ["conversation", conversation]] as const) {
+    const border = await row.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return { color: style.borderTopColor, width: style.borderTopWidth };
+    });
+    assert.notEqual(border.width, "0px", `selected ${label} has a border`);
+    assert.notEqual(border.color, "rgba(0, 0, 0, 0)", `selected ${label} border is visible`);
+  }
+});
+
 // The toolbar's overflow actions live in a <details> that desktop flattens into
 // the row with `display: contents`. Current browsers hide a closed <details>'s
 // content through `::details-content`, which made Terminal, Notify, Rename
