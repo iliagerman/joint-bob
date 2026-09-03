@@ -11,6 +11,7 @@ Every deployment is a version. The newest section must always match the
 - Chat header now keeps conversation names renamed in Joint Bob instead of reverting to auto-generated names
 - App shell now refreshes from cache when you next open the browser
 - Chat now follows the newest messages while you're reading at the bottom, and keeps your scroll position when you scroll up
+- Taking over a conversation now fails safely if its transcript hasn't synchronized to this node yet, instead of claiming ownership of an empty conversation
 - Conversations linked to board tickets now appear marked in the conversations list with a button to jump into the ticket
 - Task phases now wait for the session to finish its current turn before sending their next prompt
 - Authenticated requests no longer crash when another process holds the database write lock

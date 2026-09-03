@@ -4,9 +4,11 @@
 // live node-to-node traffic, and handing a conversation to the other node.
 import assert from "node:assert/strict";
 import { type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test, { after, before } from "node:test";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, type SignedIn } from "./dev-nodes.js";
 
@@ -115,6 +117,42 @@ test("a conversation hands over to the other node", async () => {
   const moved = afterTransfer.body.sessions.find((candidate) => candidate.id === conversation.id);
   assert.ok(moved, "node B lists the conversation after the handover");
   assert.equal(moved.executionNodeId, nodeB.nodeId, "node B is now the execution node");
+});
+
+test("taking over a conversation whose transcript never synchronized fails instead of owning an empty card", async () => {
+  const twin = nodeB.projects.find((candidate) => candidate.name === "Internal Assistant")!;
+  // A record replicated from the owner while the transcript file itself never
+  // arrived (stalled synchronization) lists as a draft card with no content.
+  // The takeover must refuse it instead of committing ownership of a
+  // conversation this node cannot actually open.
+  const sessionId = randomUUID();
+  const now = new Date().toISOString();
+  const seed = new DatabaseSync(path.join(nodeB.dataDir, "node.db"));
+  try {
+    seed.exec("PRAGMA busy_timeout = 5000;");
+    seed.prepare("INSERT INTO conversation_records (project_id, engine, session_id, created_at, updated_at, origin_node_id) VALUES (?, 'pi', ?, ?, ?, ?)")
+      .run(twin.id, sessionId, now, now, nodeA.nodeId);
+    seed.prepare("INSERT INTO conversation_ownership (engine, session_id, owner_node_id, epoch, status, transfer_to_node_id) VALUES ('pi', ?, ?, 1, 'owned', NULL)")
+      .run(sessionId, nodeA.nodeId);
+  } finally { seed.close(); }
+
+  const listing = await api<{ sessions: SessionView[] }>(nodeB, sessionB, "GET", `/projects/${twin.id}/sessions`);
+  const card = listing.body.sessions.find((candidate) => candidate.id === sessionId);
+  assert.ok(card, "the replicated record lists a draft card on node B");
+
+  const takeover = await api<{ error?: string }>(nodeB, sessionB, "POST", `/projects/${twin.id}/sessions/take-ownership`, {
+    peerId: nodeB.nodeId,
+    sessionId,
+    sessionPath: card.path,
+  });
+  assert.equal(takeover.status, 409, `takeover of a transcript-less draft must fail, got ${JSON.stringify(takeover.body)}`);
+  assert.match(takeover.body.error ?? "", /synchroniz/i);
+
+  const verify = new DatabaseSync(path.join(nodeB.dataDir, "node.db"));
+  try {
+    const owner = verify.prepare("SELECT owner_node_id FROM conversation_ownership WHERE engine = 'pi' AND session_id = ?").get(sessionId) as { owner_node_id: string } | undefined;
+    assert.equal(owner?.owner_node_id, nodeA.nodeId, "ownership must not move without the transcript");
+  } finally { verify.close(); }
 });
 
 interface ShortcutView { binding: string; projectId: string; engine: string; sessionId: string }

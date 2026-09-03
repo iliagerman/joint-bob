@@ -2900,6 +2900,7 @@ async function takeLocalSessionOwnership(project: ProjectRecord, payload: z.infe
   if (payload.peerId !== local.id) throw new Error("Takeover destination is not this node");
   const matching = payload.sessionId ? sessions.find((session) => session.id === payload.sessionId) : sessions.find((session) => session.path === payload.sessionPath);
   if (!matching) throw new TaskWorktreeError("Conversation was not found on the destination node");
+  if (matching.draft) throw new TaskWorktreeError("Wait for the conversation transcript to synchronize to this node before taking ownership");
   const engine: ConversationEngine = matching.path.startsWith("claude:") ? "claude" : "pi";
   const sessionId = matching.id;
   if (conversationIsActive(project.id, engine, sessionId, matching.path)) throw new TaskWorktreeError("Wait for the current turn to finish before taking ownership");
