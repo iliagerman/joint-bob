@@ -5,26 +5,20 @@
 // creates on its own node.
 //
 // Panes are direct children of the canvas root, placed on a fine-grained CSS grid
-// through inline grid-area styles. Adding, removing, moving, or focusing a pane only
-// changes styles: pane elements are never reparented, so no iframe ever reloads and
-// no draft or scroll position is lost. Only a conversation identity change (replace)
-// or a pane removal destroys a frame.
-//
-// The grid is uniform and always completely filled: every row is the same height and
-// every pane in a row is the same width. Nothing is resizable, so nothing can leave
-// an empty space behind.
+// through inline grid-area styles. Adding, removing, moving, resizing, or focusing a
+// pane only changes styles: pane elements are never reparented, so no iframe reloads
+// and no draft or scroll position is lost.
 
 import {
   addCanvasPane, canvasPaneEngine, canvasPaneMoves, canonicalSessionPath,
-  emptyCanvasLayout, listCanvasPanes, moveCanvasPane, normalizeCanvasLayout, organizeCanvasLayout,
-  removeCanvasPane, replaceCanvasPane, toggleCanvasFocus,
+  CANVAS_MAX_ROW_HEIGHT, CANVAS_MIN_PANE_WIDTH, CANVAS_MIN_ROW_HEIGHT, emptyCanvasLayout, listCanvasPanes,
+  moveCanvasPane, normalizeCanvasLayout, organizeCanvasLayout, removeCanvasPane,
+  replaceCanvasPane, setCanvasRowBoundary, setCanvasRowHeight, toggleCanvasFocus,
 } from "./canvas-layout.js";
 
-// The canvas grid has this many columns. It divides evenly by every legal pane count
-// (1 to 8), so a row's panes span whole tracks and always reach its right edge.
-const CANVAS_GRID_UNITS = 840;
-// A row never draws shorter than this, so a tall canvas scrolls instead of squashing.
-const CANVAS_MIN_ROW_HEIGHT = 200;
+const CANVAS_GRID_UNITS = 1000;
+const CANVAS_WIDTH_STEP = 0.05;
+const CANVAS_ROW_HEIGHT_STEP = 40;
 
 export function createConversationCanvas({ api, getProjects, saveLayout, showMessage }) {
   const root = document.querySelector("#canvasRoot");
@@ -51,9 +45,11 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
   let pickerSessions = [];
   let pickerGeneration = 0;
   let harnesses = [];
-  // conversation identity -> { element, body, paneId }: keyed by the
+  // conversation identity -> { element, body, strip, paneId }: keyed by the
   // conversation, not the layout slot, so a move only restyles the same element.
   const paneNodes = new Map();
+  // row id -> separator that changes that row's height.
+  const rowNodes = new Map();
   let emptyNode = null;
   // Keyboard bindings for this account, as the node last reported them. They belong to
   // the account rather than the canvas, so a pane may hold one that no row shows yet.
@@ -212,28 +208,57 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     return body;
   }
 
-  /** Column span (1-based grid lines) for each pane in a row of `count` panes.
-   * Every pane gets the same whole number of tracks and the last one ends on the
-   * row's final line, so the row is filled edge to edge with no gap. */
-  function paneColumns(count) {
-    const span = CANVAS_GRID_UNITS / count;
-    return Array.from({ length: count }, (_, index) => [1 + index * span, 1 + (index + 1) * span]);
+  /** Grid lines for proportional pane widths, kept strictly increasing. */
+  function boundaryLines(weights) {
+    const lines = [1];
+    let consumed = 0;
+    for (let index = 0; index < weights.length; index += 1) {
+      consumed += weights[index];
+      const remaining = weights.length - index - 1;
+      const lastLine = CANVAS_GRID_UNITS + 1 - remaining;
+      lines.push(Math.min(lastLine, Math.max(lines[index] + 1, 1 + Math.round(consumed * CANVAS_GRID_UNITS))));
+    }
+    lines[lines.length - 1] = CANVAS_GRID_UNITS + 1;
+    return lines;
   }
 
-  const rowTemplate = () => `repeat(${Math.max(1, layout.rows.length)}, minmax(${CANVAS_MIN_ROW_HEIGHT}px, 1fr))`;
+  const rowTrack = (row) => (row.height ? `${row.height}px` : `minmax(${CANVAS_MIN_ROW_HEIGHT}px, 1fr)`);
+  function rowTemplate(resizedRowId = null, resizedHeight = null) {
+    if (!layout.rows.length) return "minmax(0, 1fr)";
+    return layout.rows.map((row) => rowTrack(row.id === resizedRowId ? { ...row, height: resizedHeight } : row)).join(" ");
+  }
+
+  function rowHeightOf(row) {
+    if (row.height) return row.height;
+    const node = paneNodes.get(paneIdentity(row.panes[0]));
+    return node?.element.getBoundingClientRect().height || CANVAS_MIN_ROW_HEIGHT;
+  }
 
   /** Styles only: positions every pane on the root grid. No DOM structure changes. */
   function placeAll() {
     root.style.gridTemplateColumns = `repeat(${CANVAS_GRID_UNITS}, minmax(0, 1fr))`;
     root.style.gridTemplateRows = rowTemplate();
     for (const [rowIndex, row] of layout.rows.entries()) {
-      const spans = paneColumns(row.panes.length);
+      const lines = boundaryLines(row.weights);
       for (const [index, pane] of row.panes.entries()) {
         const node = paneNodes.get(paneIdentity(pane));
         if (!node) continue;
         node.element.style.gridRow = `${rowIndex + 1} / ${rowIndex + 2}`;
-        node.element.style.gridColumn = `${spans[index][0]} / ${spans[index][1]}`;
+        node.element.style.gridColumn = `${lines[index]} / ${lines[index + 1]}`;
+        node.strip.hidden = index === 0;
+        if (index > 0) {
+          const pair = row.weights[index - 1] + row.weights[index];
+          const minimum = Math.round((CANVAS_MIN_PANE_WIDTH / pair) * 100);
+          node.strip.setAttribute("aria-valuemin", String(minimum));
+          node.strip.setAttribute("aria-valuemax", String(100 - minimum));
+          node.strip.setAttribute("aria-valuenow", String(Math.round((row.weights[index - 1] / pair) * 100)));
+        }
       }
+      const separator = rowNodes.get(row.id);
+      if (!separator) continue;
+      separator.style.gridRow = `${rowIndex + 1} / ${rowIndex + 2}`;
+      separator.style.gridColumn = "1 / -1";
+      separator.setAttribute("aria-valuenow", String(Math.round(rowHeightOf(row))));
     }
   }
 
@@ -254,6 +279,155 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     else { applyFocus(); placeAll(); }
     // Refresh controls in place; cached frame bodies stay attached.
     render();
+  }
+
+  function locatePane(paneId) {
+    for (const [rowIndex, row] of layout.rows.entries()) {
+      const index = row.panes.findIndex((pane) => pane.id === paneId);
+      if (index >= 0) return { row, rowIndex, index };
+    }
+    return null;
+  }
+
+  function boundaryPair(weights, fraction) {
+    const total = weights[0] + weights[1];
+    const left = Math.min(total - CANVAS_MIN_PANE_WIDTH, Math.max(CANVAS_MIN_PANE_WIDTH, fraction * total));
+    return [left, total - left];
+  }
+
+  function previewBoundary(at, pair) {
+    const weights = [...at.row.weights];
+    weights[at.index - 1] = pair[0];
+    weights[at.index] = pair[1];
+    const lines = boundaryLines(weights);
+    for (const index of [at.index - 1, at.index]) {
+      const node = paneNodes.get(paneIdentity(at.row.panes[index]));
+      if (node) node.element.style.gridColumn = `${lines[index]} / ${lines[index + 1]}`;
+    }
+  }
+
+  function wireBoundaryPointer(strip, pane) {
+    let drag = null;
+    strip.addEventListener("pointerdown", (event) => {
+      const at = locatePane(pane.id);
+      if (!at || at.index === 0) return;
+      const own = paneNodes.get(paneIdentity(pane))?.element.getBoundingClientRect();
+      const left = paneNodes.get(paneIdentity(at.row.panes[at.index - 1]))?.element.getBoundingClientRect();
+      if (!own || !left) return;
+      drag = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startLeft: own.left - left.left,
+        pairWidth: own.right - left.left,
+        weights: [at.row.weights[at.index - 1], at.row.weights[at.index]],
+      };
+      strip.setPointerCapture(event.pointerId);
+    });
+    const pairAt = (event, from) => boundaryPair(from.weights,
+      (from.startLeft + event.clientX - from.startX) / Math.max(1, from.pairWidth));
+    strip.addEventListener("pointermove", (event) => {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      const at = locatePane(pane.id);
+      if (at?.index > 0) previewBoundary(at, pairAt(event, drag));
+    });
+    const finish = (event, complete) => {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      const ending = drag;
+      drag = null;
+      strip.releasePointerCapture(event.pointerId);
+      const at = locatePane(pane.id);
+      if (!complete || !at || at.index === 0) { placeAll(); return; }
+      const pair = pairAt(event, ending);
+      commit(setCanvasRowBoundary(layout, at.row.id, at.index - 1, pair[0], pair[1]));
+      placeAll();
+    };
+    strip.addEventListener("pointerup", (event) => finish(event, true));
+    strip.addEventListener("pointercancel", (event) => finish(event, false));
+  }
+
+  function boundaryStrip(pane) {
+    const strip = text("div", "", "canvas-resize");
+    strip.tabIndex = 0;
+    strip.dataset.testid = "canvas-pane-width-handle";
+    strip.setAttribute("role", "separator");
+    strip.setAttribute("aria-orientation", "vertical");
+    strip.setAttribute("aria-label", "Resize adjacent conversation widths");
+    wireBoundaryPointer(strip, pane);
+    strip.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      const at = locatePane(pane.id);
+      if (!at || at.index === 0) return;
+      const left = at.row.weights[at.index - 1];
+      const right = at.row.weights[at.index];
+      const delta = event.key === "ArrowRight" ? CANVAS_WIDTH_STEP : -CANVAS_WIDTH_STEP;
+      const pair = boundaryPair([left, right], (left + delta) / (left + right));
+      commit(setCanvasRowBoundary(layout, at.row.id, at.index - 1, pair[0], pair[1]));
+      placeAll();
+    });
+    return strip;
+  }
+
+  function wireRowPointer(strip, rowId) {
+    let drag = null;
+    strip.addEventListener("pointerdown", (event) => {
+      const row = layout.rows.find((candidate) => candidate.id === rowId);
+      if (!row) return;
+      drag = { pointerId: event.pointerId, startY: event.clientY, height: rowHeightOf(row) };
+      strip.setPointerCapture(event.pointerId);
+    });
+    strip.addEventListener("pointermove", (event) => {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      const height = Math.min(CANVAS_MAX_ROW_HEIGHT, Math.max(CANVAS_MIN_ROW_HEIGHT, drag.height + event.clientY - drag.startY));
+      root.style.gridTemplateRows = rowTemplate(rowId, Math.round(height));
+    });
+    const finish = (event, complete) => {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      const ending = drag;
+      drag = null;
+      strip.releasePointerCapture(event.pointerId);
+      if (complete) commit(setCanvasRowHeight(layout, rowId, ending.height + event.clientY - ending.startY));
+      placeAll();
+    };
+    strip.addEventListener("pointerup", (event) => finish(event, true));
+    strip.addEventListener("pointercancel", (event) => finish(event, false));
+  }
+
+  function rowSeparator(rowId) {
+    const strip = text("div", "", "canvas-row-resize");
+    strip.tabIndex = 0;
+    strip.dataset.testid = "canvas-row-height-handle";
+    strip.setAttribute("role", "separator");
+    strip.setAttribute("aria-orientation", "horizontal");
+    strip.setAttribute("aria-valuemin", String(CANVAS_MIN_ROW_HEIGHT));
+    strip.setAttribute("aria-valuemax", String(CANVAS_MAX_ROW_HEIGHT));
+    strip.setAttribute("aria-label", "Resize this canvas row's height");
+    wireRowPointer(strip, rowId);
+    strip.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+      event.preventDefault();
+      const row = layout.rows.find((candidate) => candidate.id === rowId);
+      if (!row) return;
+      const delta = event.key === "ArrowDown" ? CANVAS_ROW_HEIGHT_STEP : -CANVAS_ROW_HEIGHT_STEP;
+      commit(setCanvasRowHeight(layout, rowId, rowHeightOf(row) + delta));
+      placeAll();
+    });
+    return strip;
+  }
+
+  function syncRowSeparators() {
+    const liveRows = new Set(layout.rows.map((row) => row.id));
+    for (const [rowId, element] of [...rowNodes.entries()]) {
+      if (liveRows.has(rowId)) continue;
+      element.remove();
+      rowNodes.delete(rowId);
+    }
+    for (const row of layout.rows) {
+      if (rowNodes.has(row.id)) continue;
+      const separator = rowSeparator(row.id);
+      rowNodes.set(row.id, separator);
+      root.append(separator);
+    }
   }
 
   const shortcutIdentity = (target) => `${target.projectId}\0${target.engine}\0${target.sessionId}`;
@@ -424,23 +598,27 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
         : paneUnavailable(entry.error || "This conversation is no longer listed on this node.", pane, onPicker);
     const header = paneHeader(pane, entry.project || null, session, onPicker);
     let element = cached?.element || null;
+    let strip = cached?.strip || null;
     if (!element) {
       element = document.createElement("section");
       element.className = "canvas-pane";
+      strip = boundaryStrip(pane);
+      element.append(strip);
       root.append(element);
     }
     element.dataset.paneId = pane.id;
     // Replace only the header. The body and iframe stay attached.
-    const headerSlot = element.children.length ? element.children[0] : null;
+    const headerSlot = element.children.length > 1 ? element.children[1] : null;
     if (headerSlot) headerSlot.replaceWith(header);
     else element.append(header);
     if (cached && cached.body !== body && cached.body.parentElement === element) cached.body.replaceWith(body);
     else if (!body.isConnected || body.parentElement !== element) element.append(body);
-    paneNodes.set(identity, { element, body, paneId: pane.id });
+    paneNodes.set(identity, { element, body, strip, paneId: pane.id });
   }
 
   function renderEmptyCanvas() {
     paneNodes.clear();
+    rowNodes.clear();
     renderShortcutBar();
     root.replaceChildren();
     root.classList.remove("canvas-focused");
@@ -475,6 +653,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     if (!active || current !== generation) return;
     const onPicker = (targetPaneId, replaceId) => openPicker(targetPaneId, replaceId);
     for (const pane of panes) syncPaneElement(pane, metadata.get(pane.projectId) || {}, onPicker);
+    syncRowSeparators();
     placeAll();
     applyFocus();
     renderShortcutBar();
@@ -624,6 +803,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     setLayout(next) {
       layout = normalizeCanvasLayout(next);
       paneNodes.clear();
+      rowNodes.clear();
       emptyNode = null;
       root.replaceChildren();
       if (active) render();

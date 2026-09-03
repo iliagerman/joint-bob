@@ -1,22 +1,19 @@
-// Pure Canvas layout operations. The canvas is a uniform grid: a stack of up to ten
-// rows, each holding up to eight panes side by side. Panes reference conversations by
-// identity and are never cloned or copied - moving a pane only changes where it
-// appears.
-//
-// A row stores nothing but its panes. Every row shares the canvas height equally and
-// every pane shares its row's width equally, so the grid is always completely filled
-// and no pane can ever leave a gap. Version 1 split trees and the version 2 and 3
-// weighted rows migrate on read by dropping their widths and pinned heights.
+// Pure Canvas layout operations. The canvas is a stack of up to ten rows, each
+// holding up to eight conversation panes. Rows persist a pixel height after the
+// user resizes them; panes persist proportional widths that always fill the row.
 
 export const CANVAS_MAX_ROWS = 10;
 export const CANVAS_MAX_ROW_PANES = 8;
+export const CANVAS_MIN_PANE_WIDTH = 0.08;
+export const CANVAS_MIN_ROW_HEIGHT = 200;
+export const CANVAS_MAX_ROW_HEIGHT = 2400;
 
 export function canonicalSessionPath(sessionPath) {
   return sessionPath.replace(/\.sync-conflict-[^/\\]+(?=\.jsonl$)/, "");
 }
 
 export function emptyCanvasLayout() {
-  return { version: 4, rows: [], focusedPaneId: null };
+  return { version: 5, rows: [], focusedPaneId: null };
 }
 
 export function listCanvasPanes(layout) {
@@ -31,8 +28,24 @@ function paneOf(layout, paneId) {
   throw new Error("Unknown canvas pane");
 }
 
-function rowOf(panes) {
-  return { id: crypto.randomUUID(), panes: panes.map((pane) => ({ ...pane })) };
+function equalWeights(count) {
+  return Array.from({ length: count }, () => 1 / count);
+}
+
+function normalizedWeights(weights, count) {
+  if (!Array.isArray(weights) || weights.length !== count) return equalWeights(count);
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  const normalized = weights.map((weight) => weight / total);
+  return normalized.every((weight) => weight >= CANVAS_MIN_PANE_WIDTH) ? normalized : equalWeights(count);
+}
+
+function rowOf(panes, weights = equalWeights(panes.length), height = null) {
+  return {
+    id: crypto.randomUUID(),
+    height,
+    weights: normalizedWeights(weights, panes.length),
+    panes: panes.map((pane) => ({ ...pane })),
+  };
 }
 
 function assertIdentityFree(layout, pane, ignoredPaneId = null) {
@@ -46,17 +59,28 @@ function assertIdentityFree(layout, pane, ignoredPaneId = null) {
 }
 
 function withRows(layout, rows, focusedPaneId = layout.focusedPaneId) {
-  return { version: 4, rows, focusedPaneId };
+  return { version: 5, rows, focusedPaneId };
 }
 
-/** Flattens a legacy subtree into panes in reading order; ratios no longer matter. */
+function rebalance(row) {
+  if (!row.panes.length) return row;
+  return { ...row, weights: normalizedWeights(row.weights, row.panes.length) };
+}
+
+function insertPane(row, pane, index) {
+  const panes = [...row.panes];
+  panes.splice(index, 0, { ...pane });
+  return { ...row, panes, weights: equalWeights(panes.length) };
+}
+
+/** Flattens a legacy subtree into panes in reading order; old split ratios are discarded. */
 function legacyPanes(node) {
   if (!node) return [];
   if (node.kind === "pane") return [node];
   return [...legacyPanes(node.first), ...legacyPanes(node.second)];
 }
 
-/** Version 1 columns stack rows; a row split flattens into one row of panes. */
+/** Version 1 columns stack rows; row splits flatten into one row. */
 export function migrateCanvasLayout(legacy) {
   const rows = [];
   const visit = (node) => {
@@ -73,20 +97,25 @@ export function migrateCanvasLayout(legacy) {
     }
   };
   visit(legacy.root);
-  return { version: 4, rows: rows.slice(0, CANVAS_MAX_ROWS), focusedPaneId: legacy.focusedPaneId ?? null };
+  return { version: 5, rows: rows.slice(0, CANVAS_MAX_ROWS), focusedPaneId: legacy.focusedPaneId ?? null };
 }
 
-/** Accepts stored version 1, 2, 3, or 4 layouts and always returns a version 4 layout. */
+/** Accepts every stored layout and returns the current resizable format. */
 export function normalizeCanvasLayout(layout) {
   if (!layout || layout.version === 1) return migrateCanvasLayout(layout || { root: null, focusedPaneId: null });
-  if (layout.version === 4) return layout;
-  const rows = layout.rows.map((row) => ({ id: row.id, panes: row.panes }));
-  return { version: 4, rows, focusedPaneId: layout.focusedPaneId ?? null };
+  if (layout.version === 5) return layout;
+  const rows = layout.rows.map((row) => ({
+    id: row.id,
+    height: row.height ?? null,
+    weights: normalizedWeights(row.weights, row.panes.length),
+    panes: row.panes,
+  }));
+  return { version: 5, rows, focusedPaneId: layout.focusedPaneId ?? null };
 }
 
 export function addCanvasPane(layout, pane, targetPaneId, axis) {
   assertIdentityFree(layout, pane);
-  const rows = layout.rows.map((row) => ({ ...row, panes: [...row.panes] }));
+  const rows = layout.rows.map((row) => ({ ...row, panes: [...row.panes], weights: [...row.weights] }));
   if (!rows.length) return withRows(layout, [rowOf([pane])], pane.id);
   let rowIndex = rows.length - 1;
   let index = rows[rowIndex].panes.length;
@@ -101,9 +130,8 @@ export function addCanvasPane(layout, pane, targetPaneId, axis) {
     return withRows(layout, rows, pane.id);
   }
   if (axis !== "row") throw new Error("Unknown placement");
-  const row = rows[rowIndex];
-  if (row.panes.length >= CANVAS_MAX_ROW_PANES) throw new Error("A row holds at most eight conversations");
-  row.panes.splice(index, 0, { ...pane });
+  if (rows[rowIndex].panes.length >= CANVAS_MAX_ROW_PANES) throw new Error("A row holds at most eight conversations");
+  rows[rowIndex] = insertPane(rows[rowIndex], pane, index);
   return withRows(layout, rows, pane.id);
 }
 
@@ -118,16 +146,14 @@ export function replaceCanvasPane(layout, paneId, pane) {
 
 export function removeCanvasPane(layout, paneId) {
   const at = paneOf(layout, paneId);
-  // The survivors widen to fill the row: the grid never keeps the removed pane's space.
   const rows = layout.rows
     .map((row, rowNumber) => rowNumber === at.rowIndex
-      ? { ...row, panes: row.panes.filter((_, index) => index !== at.index) }
+      ? rebalance({ ...row, panes: row.panes.filter((_, index) => index !== at.index), weights: row.weights.filter((_, index) => index !== at.index) })
       : row)
     .filter((row) => row.panes.length);
   return withRows(layout, rows, layout.focusedPaneId === paneId ? null : layout.focusedPaneId);
 }
 
-/** Which directional moves a pane can make, so the UI can disable the rest. */
 export function canvasPaneMoves(layout, paneId) {
   const at = paneOf(layout, paneId);
   const row = layout.rows[at.rowIndex];
@@ -141,39 +167,58 @@ export function canvasPaneMoves(layout, paneId) {
   };
 }
 
-/** Moves a pane one step: left/right swaps with its neighbour, up/down changes row. */
 export function moveCanvasPane(layout, paneId, direction) {
   const moves = canvasPaneMoves(layout, paneId);
   if (!moves[direction]) throw new Error(`Cannot move that pane ${direction}`);
   const at = paneOf(layout, paneId);
-  const rows = layout.rows.map((row) => ({ ...row, panes: [...row.panes] }));
+  const rows = layout.rows.map((row) => ({ ...row, panes: [...row.panes], weights: [...row.weights] }));
   const row = rows[at.rowIndex];
   const [pane] = row.panes.splice(at.index, 1);
+  const [weight] = row.weights.splice(at.index, 1);
   if (direction === "left" || direction === "right") {
-    row.panes.splice(direction === "left" ? at.index - 1 : at.index + 1, 0, pane);
-  } else if (direction === "up") {
-    rows[at.rowIndex - 1].panes.push(pane);
+    const target = direction === "left" ? at.index - 1 : at.index + 1;
+    row.panes.splice(target, 0, pane);
+    row.weights.splice(target, 0, weight);
   } else {
-    const below = rows[at.rowIndex + 1];
-    if (below) below.panes.unshift(pane);
-    else rows.splice(at.rowIndex + 1, 0, rowOf([pane]));
+    rows[at.rowIndex] = rebalance(row);
+    const targetIndex = direction === "up" ? at.rowIndex - 1 : at.rowIndex + 1;
+    if (rows[targetIndex]) rows[targetIndex] = insertPane(rows[targetIndex], pane, direction === "up" ? rows[targetIndex].panes.length : 0);
+    else rows.splice(targetIndex, 0, rowOf([pane]));
   }
   return withRows(layout, rows.filter((candidate) => candidate.panes.length));
 }
 
-/** Reflows every pane into as square a grid as fits.
- * Panes keep their reading order, so nothing appears to jump to another canvas. */
+export function setCanvasRowBoundary(layout, rowId, paneIndex, left, right) {
+  const row = layout.rows.find((candidate) => candidate.id === rowId);
+  if (!row || paneIndex < 0 || paneIndex + 1 >= row.panes.length) throw new Error("Unknown canvas boundary");
+  if (![left, right].every((value) => Number.isFinite(value) && value > 0)) throw new Error("Invalid canvas weights");
+  const total = left + right;
+  if (!Number.isFinite(total)) throw new Error("Invalid canvas weights");
+  const minimum = Math.min(CANVAS_MIN_PANE_WIDTH, total / 2);
+  const nextLeft = Math.min(total - minimum, Math.max(minimum, left));
+  const rows = layout.rows.map((candidate) => candidate.id === rowId ? {
+    ...candidate,
+    weights: candidate.weights.map((weight, index) => index === paneIndex ? nextLeft : index === paneIndex + 1 ? total - nextLeft : weight),
+  } : candidate);
+  return withRows(layout, rows);
+}
+
+export function setCanvasRowHeight(layout, rowId, height) {
+  if (!Number.isFinite(height)) throw new Error("Invalid canvas row height");
+  if (!layout.rows.some((row) => row.id === rowId)) throw new Error("Unknown canvas row");
+  const clamped = Math.round(Math.min(CANVAS_MAX_ROW_HEIGHT, Math.max(CANVAS_MIN_ROW_HEIGHT, height)));
+  return withRows(layout, layout.rows.map((row) => row.id === rowId ? { ...row, height: clamped } : row));
+}
+
 export function organizeCanvasLayout(layout) {
   const panes = listCanvasPanes(layout);
   if (!panes.length) return layout;
   const columns = Math.min(CANVAS_MAX_ROW_PANES, Math.ceil(Math.sqrt(panes.length)));
   const rows = [];
   for (let start = 0; start < panes.length; start += columns) rows.push(rowOf(panes.slice(start, start + columns)));
-  // Focus hides every other pane, which would make the new grid look like nothing happened.
   return withRows(layout, rows, null);
 }
 
-/** Which agent runs a pane's conversation. Draft paths carry it; plain paths are Pi. */
 export function canvasPaneEngine(pane) {
   return pane.sessionPath.startsWith("claude:") || pane.sessionPath.startsWith("draft:claude:") ? "claude" : "pi";
 }

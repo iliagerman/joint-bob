@@ -22,21 +22,66 @@ export interface CanvasPanePreference {
   executionNodeId: string | null;
 }
 
-/** A row of the uniform canvas grid. It carries nothing but its panes: every row is
- * the same height and every pane in a row is the same width, so the grid is always
- * completely filled and no stored geometry can leave an empty space. */
 export interface CanvasRowPreference {
   id: string;
+  /** Pinned pixel height, or null while the row shares available canvas height. */
+  height: number | null;
+  /** Proportional pane widths. They sum to one, so every row stays filled. */
+  weights: number[];
   panes: CanvasPanePreference[];
 }
 
 export interface CanvasLayoutPreference {
-  version: 4;
+  version: 5;
   rows: CanvasRowPreference[];
   focusedPaneId: string | null;
 }
 
-const emptyCanvasLayout = (): CanvasLayoutPreference => ({ version: 4, rows: [], focusedPaneId: null });
+const emptyCanvasLayout = (): CanvasLayoutPreference => ({ version: 5, rows: [], focusedPaneId: null });
+
+export const CANVAS_MIN_PANE_WIDTH = 0.08;
+export const CANVAS_WIDTH_TOLERANCE = 1e-6;
+export const CANVAS_MIN_ROW_HEIGHT = 200;
+export const CANVAS_MAX_ROW_HEIGHT = 2400;
+
+export function canvasRowGeometryIsLegal(row: { height?: number | null; weights: number[] }): boolean {
+  const total = row.weights.reduce((sum, weight) => sum + weight, 0);
+  return Math.abs(total - 1) <= CANVAS_WIDTH_TOLERANCE
+    && row.weights.every((weight) => weight >= CANVAS_MIN_PANE_WIDTH - CANVAS_WIDTH_TOLERANCE)
+    && (row.height === null || row.height === undefined
+      || (row.height >= CANVAS_MIN_ROW_HEIGHT && row.height <= CANVAS_MAX_ROW_HEIGHT));
+}
+
+function equalCanvasWeights(count: number): number[] {
+  return Array.from({ length: count }, () => 1 / count);
+}
+
+function normalizedCanvasWeights(weights: unknown, count: number): number[] {
+  if (!Array.isArray(weights) || weights.length !== count) return equalCanvasWeights(count);
+  const total = weights.reduce<number>((sum, weight) => sum + Number(weight), 0);
+  const normalized = weights.map((weight) => Number(weight) / total);
+  return normalized.every((weight) => weight >= CANVAS_MIN_PANE_WIDTH) ? normalized : equalCanvasWeights(count);
+}
+
+interface StoredCanvasLayout {
+  version: number;
+  rows: Array<{ id: string; height?: number | null; weights?: number[]; panes: CanvasPanePreference[] }>;
+  focusedPaneId: string | null;
+}
+
+/** Migrates row layouts to persisted resize geometry. */
+export function normalizeCanvasLayoutPreference(layout: StoredCanvasLayout): CanvasLayoutPreference {
+  return {
+    version: 5,
+    rows: layout.rows.map((row) => ({
+      id: row.id,
+      height: layout.version === 3 || layout.version === 5 ? row.height ?? null : null,
+      weights: normalizedCanvasWeights(row.weights, row.panes.length),
+      panes: row.panes,
+    })),
+    focusedPaneId: layout.focusedPaneId,
+  };
+}
 
 export interface UserPreferences {
   theme: "light" | "dark" | null;
@@ -180,7 +225,11 @@ function parseCanvasLayout(value: string): CanvasLayoutPreference {
     const parsed = JSON.parse(value) as unknown;
     if (!parsed || typeof parsed !== "object") return emptyCanvasLayout();
     if ((parsed as { version?: unknown }).version === 1) return migrateLegacyCanvasLayout(parsed);
-    const layout = parsed as CanvasLayoutPreference;
+    const layout = parsed as unknown as {
+      version: number;
+      rows: Array<CanvasRowPreference & { height?: number | null; weights?: number[] }>;
+      focusedPaneId: string | null;
+    };
     const ids = new Set<string>();
     const sessionIdentities = new Set<string>();
     const pathIdentities = new Set<string>();
@@ -191,6 +240,11 @@ function parseCanvasLayout(value: string): CanvasLayoutPreference {
       if (!row || typeof row !== "object" || typeof row.id !== "string" || !row.id || row.id.length > 200 || ids.has(row.id)) return emptyCanvasLayout();
       ids.add(row.id);
       if (!Array.isArray(row.panes) || row.panes.length < 1 || row.panes.length > 8) return emptyCanvasLayout();
+      if (![2, 3, 4, 5].includes(layout.version)) return emptyCanvasLayout();
+      if (layout.version !== 4 && (!Array.isArray(row.weights) || row.weights.length !== row.panes.length
+        || !row.weights.every((weight) => typeof weight === "number" && Number.isFinite(weight) && weight > 0))) return emptyCanvasLayout();
+      if ((layout.version === 3 || layout.version === 5)
+        && !(row.height === undefined || row.height === null || (typeof row.height === "number" && Number.isFinite(row.height)))) return emptyCanvasLayout();
       const panes: CanvasPanePreference[] = [];
       for (const item of row.panes) {
         if (!item || typeof item !== "object") return emptyCanvasLayout();
@@ -209,13 +263,13 @@ function parseCanvasLayout(value: string): CanvasLayoutPreference {
         paneIds.add(item.id);
         panes.push({ kind: "pane", id: item.id, projectId: item.projectId, sessionPath: canonicalSessionPath(item.sessionPath), sessionId: item.sessionId, executionNodeId: item.executionNodeId });
       }
-      // Versions 2 and 3 stored per-pane widths and pinned row heights. The grid has
-      // no room for either, so reading one simply drops them.
-      rows.push({ id: row.id, panes });
+      const weights = normalizedCanvasWeights(row.weights, panes.length);
+      const height = layout.version === 3 || layout.version === 5 ? row.height ?? null : null;
+      if (layout.version === 5 && !canvasRowGeometryIsLegal({ height, weights: row.weights! })) return emptyCanvasLayout();
+      rows.push({ id: row.id, height, weights, panes });
     }
-    if (![2, 3, 4].includes(layout.version)
-      || !(layout.focusedPaneId === null || (typeof layout.focusedPaneId === "string" && paneIds.has(layout.focusedPaneId)))) return emptyCanvasLayout();
-    return { version: 4, rows, focusedPaneId: layout.focusedPaneId ?? null };
+    if (!(layout.focusedPaneId === null || (typeof layout.focusedPaneId === "string" && paneIds.has(layout.focusedPaneId)))) return emptyCanvasLayout();
+    return normalizeCanvasLayoutPreference({ version: layout.version, rows, focusedPaneId: layout.focusedPaneId ?? null });
   } catch {
     return emptyCanvasLayout();
   }
@@ -249,7 +303,8 @@ export function migrateLegacyCanvasLayout(parsed: unknown): CanvasLayoutPreferen
   let valid = true;
   const chunk = (entries: CanvasPanePreference[]) => {
     for (let start = 0; start < entries.length && rows.length < 10; start += 8) {
-      rows.push({ id: crypto.randomUUID(), panes: entries.slice(start, start + 8) });
+      const panes = entries.slice(start, start + 8);
+      rows.push({ id: crypto.randomUUID(), height: null, weights: equalCanvasWeights(panes.length), panes });
     }
   };
   // Split ratios are still validated, then discarded: the grid spaces panes evenly.
@@ -283,7 +338,7 @@ export function migrateLegacyCanvasLayout(parsed: unknown): CanvasLayoutPreferen
   };
   visit(legacy.root, 0);
   if (!valid || (typeof legacy.focusedPaneId === "string" && !paneIds.has(legacy.focusedPaneId))) return emptyCanvasLayout();
-  return { version: 4, rows, focusedPaneId: typeof legacy.focusedPaneId === "string" ? legacy.focusedPaneId : null };
+  return { version: 5, rows, focusedPaneId: typeof legacy.focusedPaneId === "string" ? legacy.focusedPaneId : null };
 }
 
 function preferencesFromRow(row: PreferenceRow): UserPreferences {

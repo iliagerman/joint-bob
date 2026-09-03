@@ -164,6 +164,64 @@ test("the canvas picker lists conversations at a readable height", async () => {
   );
 });
 
+test("canvas panes resize in both directions and the canvas scrolls", async () => {
+  await page.getByTestId("canvas-picker-cancel-button").click();
+
+  const addConversation = async (title: string, position: "right" | "below") => {
+    await page.getByTestId("canvas-add-button").click();
+    await page.selectOption("#canvasProjectSelect", { label: "Internal Assistant" });
+    await page.selectOption("#canvasSplitPosition", position);
+    const option = page.locator(".canvas-session-option", { hasText: title });
+    await option.waitFor({ timeout: 20_000 });
+    await option.click();
+  };
+
+  await addConversation("Thread-Based Agent Builder", "right");
+  await addConversation("Mobile Multi-Agent Threads", "right");
+  await addConversation("Flow Runner Tool Evaluation", "below");
+  await page.locator(".canvas-pane").nth(2).waitFor({ timeout: 20_000 });
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+
+  const widthHandle = page.locator('[data-testid="canvas-pane-width-handle"]:not([hidden])').first();
+  assert.equal(await widthHandle.getAttribute("role"), "separator");
+  assert.equal(await widthHandle.getAttribute("aria-orientation"), "vertical");
+  const before = await page.locator(".canvas-pane").first().boundingBox();
+  const widthBox = await widthHandle.boundingBox();
+  assert.ok(before && widthBox);
+  await page.mouse.move(widthBox.x + widthBox.width / 2, widthBox.y + widthBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(widthBox.x + widthBox.width / 2 + 80, widthBox.y + widthBox.height / 2);
+  await page.mouse.up();
+  const afterWidth = await page.locator(".canvas-pane").first().boundingBox();
+  assert.ok(afterWidth && afterWidth.width > before.width, `the left pane grows (from ${before.width}px to ${afterWidth?.width}px)`);
+
+  const heightHandle = page.getByTestId("canvas-row-height-handle").first();
+  assert.equal(await heightHandle.getAttribute("role"), "separator");
+  assert.equal(await heightHandle.getAttribute("aria-orientation"), "horizontal");
+  const beforeHeight = await page.locator(".canvas-pane").first().boundingBox();
+  const heightBox = await heightHandle.boundingBox();
+  assert.ok(beforeHeight && heightBox);
+  await page.mouse.move(heightBox.x + heightBox.width / 2, heightBox.y + heightBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(heightBox.x + heightBox.width / 2, heightBox.y + heightBox.height / 2 + 80);
+  await page.mouse.up();
+  const afterHeight = await page.locator(".canvas-pane").first().boundingBox();
+  assert.ok(afterHeight && afterHeight.height > beforeHeight.height,
+    `the row grows (from ${beforeHeight.height}px to ${afterHeight?.height}px)`);
+  await heightHandle.focus();
+  for (let press = 0; press < 9; press += 1) await page.keyboard.press("ArrowDown");
+
+  const scrolling = await page.evaluate(() => {
+    const canvas = document.querySelector("#canvasRoot");
+    if (!canvas) return { overflows: false, scrollTop: 0 };
+    const overflows = canvas.scrollHeight > canvas.clientHeight + 1;
+    canvas.scrollTop = canvas.scrollHeight;
+    return { overflows, scrollTop: canvas.scrollTop };
+  });
+  assert.equal(scrolling.overflows, true, "taller rows make the canvas scroll instead of shrinking panes");
+  assert.ok(scrolling.scrollTop > 0, `the canvas can scroll vertically (got ${scrolling.scrollTop})`);
+});
+
 test("a markdown file opens as raw source and previews beside it", async () => {
   // A fresh load, because the previous test left the canvas picker open. The dialog is
   // then reached the way a person reaches it: a file mentioned in a conversation.

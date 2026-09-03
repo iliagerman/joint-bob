@@ -5,8 +5,9 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Conversations now continue on another node through ownership transfer via the lock banner, replacing the removed 'Continue on' button
+- Canvas panes can now be resized horizontally and rows vertically to customize the layout
 - Completed tickets can now merge their workspace changes back into the project with conflict resolution
-
 - Skill descriptions using multi-line text now display correctly without YAML formatting markers
 - Tool selection and transcript compaction are now available for Claude conversations
 - Secret accounts marked for replication now sync immediately when saved instead of waiting for manual sync

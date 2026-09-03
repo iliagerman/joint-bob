@@ -71,7 +71,7 @@ test("preferences are authenticated, validated, and persist across listener rest
       chatsPanelCollapsed: false,
       recentSessions: [],
       lastSeenVersion: null,
-      canvasLayout: { version: 4, rows: [], focusedPaneId: null },
+      canvasLayout: { version: 5, rows: [], focusedPaneId: null },
     });
 
     const values = {
@@ -92,10 +92,11 @@ test("preferences are authenticated, validated, and persist across listener rest
       recentSessions: [{ projectId: "project-123", sessionPath: "/tmp/session.jsonl", title: "Session 123", openedAt: "2026-08-27T10:00:00.000Z", updatedAt: "2026-08-27T18:00:00.000Z" }],
       lastSeenVersion: "1.4.2",
       canvasLayout: {
-        // A grid row round-trips as nothing but its identity and its panes.
-        version: 4,
+        version: 5,
         rows: [{
           id: "row-a",
+          height: null,
+          weights: [0.6, 0.4],
           panes: [
             { kind: "pane", id: "pane-a", projectId: "project-123", sessionPath: "/tmp/session.jsonl", sessionId: "session-123", executionNodeId: null },
             { kind: "pane", id: "pane-b", projectId: "project-123", sessionPath: "/tmp/other.jsonl", sessionId: "session-456", executionNodeId: "72cfed24-549b-4c90-ab61-42d2899ab9bb" },
@@ -146,37 +147,42 @@ test("preferences are authenticated, validated, and persist across listener rest
     const invalidPath = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ activeSessionPath: "x".repeat(2001) }) });
     assert.equal(invalidPath.status, 400);
     const pane = (id: string, sessionId: string) => ({ kind: "pane" as const, id, projectId: "p", sessionPath: `/tmp/${sessionId}.jsonl`, sessionId, executionNodeId: null });
-    const canvasBase = { version: 4 as const, rows: [{ id: "row-a", panes: [pane("pane-a", "s-a"), pane("pane-b", "s-b")] }], focusedPaneId: null };
-    const crossNamespaceIdentities = { version: 4, rows: [{ id: "cross-row", panes: [
+    const canvasBase = { version: 5 as const, rows: [{ id: "row-a", height: null, weights: [0.5, 0.5], panes: [pane("pane-a", "s-a"), pane("pane-b", "s-b")] }], focusedPaneId: null };
+    const crossNamespaceIdentities = { version: 5, rows: [{ id: "cross-row", height: null, weights: [0.5, 0.5], panes: [
       { ...pane("cross-a", "/tmp/cross-b.jsonl"), sessionPath: "/tmp/cross-a.jsonl" },
       pane("cross-b", "cross-b"),
     ] }], focusedPaneId: null };
     const acceptedCrossNamespace = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: crossNamespaceIdentities }) });
     assert.equal(acceptedCrossNamespace.status, 200);
-    // An older client still sends per-pane widths and a pinned row height. The node
-    // accepts the write so a stale tab is not broken, then stores the grid without them.
+    // Older width geometry migrates to a full row while preserving its proportions and height.
     const legacyGeometry = { version: 3 as const, rows: [{ id: "row-h", height: 640, weights: [0.5, 0.3], panes: [pane("pane-h1", "s-h1"), pane("pane-h2", "s-h2")] }], focusedPaneId: null };
     const acceptedGeometry = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: legacyGeometry }) });
     assert.equal(acceptedGeometry.status, 200);
     assert.deepEqual((await acceptedGeometry.json() as { canvasLayout: unknown }).canvasLayout,
-      { version: 4, rows: [{ id: "row-h", panes: legacyGeometry.rows[0].panes }], focusedPaneId: null },
-      "stored widths and heights are dropped, never echoed back");
+      { version: 5, rows: [{ id: "row-h", height: 640, weights: [0.625, 0.37499999999999994], panes: legacyGeometry.rows[0].panes }], focusedPaneId: null });
+
+    const invalidGeometry = { ...canvasBase, rows: [{ ...canvasBase.rows[0], weights: [0.95, 0.05] }] };
+    const rejectedGeometry = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: invalidGeometry }) });
+    assert.equal(rejectedGeometry.status, 400);
+    const invalidHeight = { ...canvasBase, rows: [{ ...canvasBase.rows[0], height: 3000 }] };
+    const rejectedHeight = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: invalidHeight }) });
+    assert.equal(rejectedHeight.status, 400);
 
     const duplicateConversation = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: { ...canvasBase, rows: [{ ...canvasBase.rows[0], panes: [pane("pane-a", "s-a"), pane("pane-b", "s-a")] }] } }) });
     assert.equal(duplicateConversation.status, 400);
     const unknownFocus = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: { ...canvasBase, focusedPaneId: "pane-z" } }) });
     assert.equal(unknownFocus.status, 400);
-    const tooManyRows = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: { version: 4, rows: Array.from({ length: 11 }, (_, index) => ({ id: `row-${index}`, panes: [pane(`pane-${index}`, `session-${index}`)] })), focusedPaneId: null } }) });
+    const tooManyRows = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: { version: 5, rows: Array.from({ length: 11 }, (_, index) => ({ id: `row-${index}`, height: null, weights: [1], panes: [pane(`pane-${index}`, `session-${index}`)] })), focusedPaneId: null } }) });
     assert.equal(tooManyRows.status, 400);
 
-    // A valid legacy split tree is accepted once and stored as version 4 grid rows.
+    // A valid legacy split tree is accepted once and stored as version 5 resizable rows.
     const legacyCanvas = { version: 1 as const, root: { kind: "split", id: "legacy-split", axis: "row", ratio: 0.8, first: pane("legacy-a", "legacy-a"), second: pane("legacy-b", "legacy-b") }, focusedPaneId: "legacy-b" };
     const migratedLegacy = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: legacyCanvas }) });
     assert.equal(migratedLegacy.status, 200);
     const migratedLayout = (await migratedLegacy.json() as { canvasLayout: { version: number; rows: Array<Record<string, unknown>>; focusedPaneId: string | null } }).canvasLayout;
-    assert.equal(migratedLayout.version, 4);
+    assert.equal(migratedLayout.version, 5);
     assert.deepEqual(migratedLayout.rows.map((row) => (row.panes as Array<{ id: string }>).map((item) => item.id)), [["legacy-a", "legacy-b"]]);
-    assert.deepEqual(Object.keys(migratedLayout.rows[0]).sort(), ["id", "panes"], "the split ratio is discarded with the rest of the geometry");
+    assert.deepEqual(Object.keys(migratedLayout.rows[0]).sort(), ["height", "id", "panes", "weights"]);
     assert.equal(migratedLayout.focusedPaneId, "legacy-b");
 
     // Restore the value used by the restart assertion below.
@@ -212,13 +218,13 @@ test("preferences are authenticated, validated, and persist across listener rest
     // A hand-edited or corrupt row must degrade to an empty canvas, never a broken one.
     await node.close();
     const store = new DatabaseSync(path.join(root, "node.db"));
-    const corrupt = { version: 4, rows: [{ id: "row-x", panes: "not a list" }], focusedPaneId: null };
+    const corrupt = { version: 5, rows: [{ id: "row-x", height: null, weights: [1], panes: "not a list" }], focusedPaneId: null };
     store.prepare("UPDATE user_preferences SET canvas_layout = ?").run(JSON.stringify(corrupt));
     store.close();
     node = await listen(app.createApp());
     const degraded = await fetch(`${node.baseUrl}/api/preferences`, { headers: { Cookie: cookie } });
     assert.equal(degraded.status, 200);
-    assert.deepEqual((await degraded.json() as { canvasLayout: unknown }).canvasLayout, { version: 4, rows: [], focusedPaneId: null });
+    assert.deepEqual((await degraded.json() as { canvasLayout: unknown }).canvasLayout, { version: 5, rows: [], focusedPaneId: null });
   } finally {
     if (node) await node.close();
     if (previousDataDir === undefined) delete process.env.PI_WEB_DATA_DIR;

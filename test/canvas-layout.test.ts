@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  addCanvasPane, canonicalSessionPath, canvasPaneMoves, emptyCanvasLayout, listCanvasPanes,
-  migrateCanvasLayout, moveCanvasPane, normalizeCanvasLayout, organizeCanvasLayout,
-  removeCanvasPane, replaceCanvasPane, toggleCanvasFocus,
+  addCanvasPane, canonicalSessionPath, canvasPaneMoves, CANVAS_MIN_PANE_WIDTH,
+  CANVAS_MIN_ROW_HEIGHT, emptyCanvasLayout, listCanvasPanes, migrateCanvasLayout,
+  moveCanvasPane, normalizeCanvasLayout, organizeCanvasLayout, removeCanvasPane,
+  replaceCanvasPane, setCanvasRowBoundary, setCanvasRowHeight, toggleCanvasFocus,
 } from "../public/canvas-layout.js";
 
 const pane = (id, sessionId = id, sessionPath = `/tmp/${id}.jsonl`) => ({
@@ -12,9 +13,11 @@ const pane = (id, sessionId = id, sessionPath = `/tmp/${id}.jsonl`) => ({
 
 test("canvas layout operations build rows and remove empty rows", () => {
   const first = addCanvasPane(emptyCanvasLayout(), pane("one"));
-  assert.equal(first.version, 4);
+  assert.equal(first.version, 5);
   assert.equal(listCanvasPanes(first).length, 1);
   assert.deepEqual(first.rows[0].panes.map((item) => item.id), ["one"]);
+  assert.deepEqual(first.rows[0].weights, [1]);
+  assert.equal(first.rows[0].height, null);
   assert.equal(canvasPaneMoves(first, "one").down, false);
 
   const beside = addCanvasPane(first, pane("two"), "one", "row");
@@ -27,15 +30,28 @@ test("canvas layout operations build rows and remove empty rows", () => {
   assert.deepEqual(removed.rows.map((row) => row.panes.map((item) => item.id)), [["three"]]);
 });
 
-test("a row carries nothing but its panes, so no pane can own a width or a height", () => {
+test("pane widths and row heights can be resized without collapsing the grid", () => {
   let layout = addCanvasPane(emptyCanvasLayout(), pane("one"));
   layout = addCanvasPane(layout, pane("two"), "one", "row");
   layout = addCanvasPane(layout, pane("three"), "two", "column");
 
-  for (const row of layout.rows) {
-    assert.deepEqual(Object.keys(row).sort(), ["id", "panes"],
-      "a grid row stores only its identity and its panes");
-  }
+  const rowId = layout.rows[0].id;
+  const widened = setCanvasRowBoundary(layout, rowId, 0, 0.7, 0.3);
+  assert.deepEqual(widened.rows[0].weights.map((weight) => Math.round(weight * 10) / 10), [0.7, 0.3]);
+  assert.equal(widened.rows[0].weights.reduce((sum, weight) => sum + weight, 0), 1,
+    "resizing keeps the row filled");
+
+  const clamped = setCanvasRowBoundary(layout, rowId, 0, 0.99, 0.01);
+  assert.ok(Math.abs(clamped.rows[0].weights[1] - CANVAS_MIN_PANE_WIDTH) < 1e-9);
+  assert.equal(clamped.rows[0].weights.reduce((sum, weight) => sum + weight, 0), 1);
+  assert.throws(() => setCanvasRowBoundary(layout, "missing", 0, 0.5, 0.5), /unknown canvas boundary/i);
+  assert.throws(() => setCanvasRowBoundary(layout, rowId, 0, Number.NaN, 0.5), /invalid canvas weights/i);
+
+  const taller = setCanvasRowHeight(layout, rowId, 720);
+  assert.equal(taller.rows[0].height, 720);
+  assert.equal(taller.rows[1].height, null, "resizing one row leaves the other row fluid");
+  assert.equal(setCanvasRowHeight(layout, rowId, 1).rows[0].height, CANVAS_MIN_ROW_HEIGHT);
+  assert.throws(() => setCanvasRowHeight(layout, "missing", 720), /unknown canvas row/i);
 });
 
 test("the canvas rejects duplicate identities and enforces row limits", () => {
@@ -96,35 +112,33 @@ test("version 1 split trees migrate into rows that keep reading order", () => {
     focusedPaneId: "two",
   };
   const migrated = migrateCanvasLayout(legacy);
-  assert.equal(migrated.version, 4);
+  assert.equal(migrated.version, 5);
   assert.deepEqual(migrated.rows.map((row) => row.panes.map((item) => item.id)), [["one", "two"], ["three"]]);
+  assert.deepEqual(migrated.rows[0].weights, [0.5, 0.5]);
   assert.equal(migrated.focusedPaneId, "two");
 });
 
-test("stored widths and pinned heights are dropped when a layout is read", () => {
-  const stored = {
+test("stored canvas versions migrate to resizable rows", () => {
+  const v3 = normalizeCanvasLayout({
     version: 3,
-    rows: [
-      { id: "row-a", height: 900, weights: [0.5, 0.2], panes: [pane("one"), pane("two")] },
-      { id: "row-b", height: null, weights: [0.3], panes: [pane("three")] },
-    ],
-    focusedPaneId: null,
-  };
-  const migrated = normalizeCanvasLayout(stored);
-  assert.equal(migrated.version, 4);
-  assert.deepEqual(migrated.rows.map((row) => Object.keys(row).sort()), [["id", "panes"], ["id", "panes"]]);
-  assert.deepEqual(migrated.rows.map((row) => row.panes.map((item) => item.id)), [["one", "two"], ["three"]]);
-
-  const v2 = normalizeCanvasLayout({
-    version: 2,
-    rows: [{ id: "row-c", weights: [3, 1], panes: [pane("one"), pane("two")] }],
+    rows: [{ id: "row-a", height: 900, weights: [0.5, 0.2], panes: [pane("one"), pane("two")] }],
     focusedPaneId: null,
   });
-  assert.equal(v2.version, 4);
-  assert.deepEqual(Object.keys(v2.rows[0]).sort(), ["id", "panes"]);
+  assert.equal(v3.version, 5);
+  assert.equal(v3.rows[0].height, 900);
+  assert.deepEqual(v3.rows[0].weights.map((weight) => Math.round(weight * 10) / 10), [0.7, 0.3]);
 
-  const current = { version: 4, rows: [{ id: "row-d", panes: [pane("one")] }], focusedPaneId: null };
-  assert.equal(normalizeCanvasLayout(current), current, "a version 4 layout is already current");
+  const v4 = normalizeCanvasLayout({
+    version: 4,
+    rows: [{ id: "row-b", panes: [pane("one"), pane("two")] }],
+    focusedPaneId: null,
+  });
+  assert.equal(v4.version, 5);
+  assert.deepEqual(v4.rows[0].weights, [0.5, 0.5]);
+  assert.equal(v4.rows[0].height, null);
+
+  const current = { version: 5, rows: [{ id: "row-c", height: 500, weights: [1], panes: [pane("one")] }], focusedPaneId: null };
+  assert.equal(normalizeCanvasLayout(current), current, "a version 5 layout is already current");
 });
 
 test("organize reflows every pane into an even grid", () => {
@@ -138,6 +152,8 @@ test("organize reflows every pane into an even grid", () => {
   assert.equal(organized.focusedPaneId, null, "organizing shows the whole grid it just built");
   assert.deepEqual(organized.rows.map((row) => row.panes.map((item) => item.id)),
     [["pane-1", "pane-2", "pane-3"], ["pane-4", "pane-5", "pane-6"]]);
+  assert.ok(organized.rows.every((row) => row.height === null));
+  assert.ok(organized.rows.every((row) => row.weights.every((weight) => Math.abs(weight - 1 / 3) < 1e-9)));
 
   const seven = addCanvasPane(organized, pane("pane-7"), "pane-6", "column");
   const regridded = organizeCanvasLayout(seven);

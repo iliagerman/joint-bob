@@ -2024,17 +2024,18 @@ body.file-view { overflow: auto; }
   min-width: 0;
   min-height: 0;
   display: grid;
-  /* No column gap: the grid has 840 fine tracks, so a column gap would repeat 839
-     times. Panes space themselves with margin-inline instead. */
+  /* No column gap: fine tracks would repeat it between every track. */
   gap: 10px 0;
   padding: 10px;
-  /* Every row is the same height. Rows never draw below their floor, so the whole
-     canvas scrolls once they outgrow the panel. */
+  /* Resized rows keep their height. The canvas becomes the page's scroll region
+     once those rows outgrow the panel. */
   align-content: start;
-  overflow-y: auto;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 .canvas-root > .canvas-empty { min-width: 0; min-height: 0; grid-column: 1 / -1; }
 .canvas-pane {
+  position: relative;
   margin-inline: 4px;
   display: flex;
   flex-direction: column;
@@ -2085,6 +2086,8 @@ body.file-view { overflow: auto; }
   .canvas-pane { transition: border-color 200ms ease, box-shadow 200ms ease; }
 }
 /* Focus changes only grid placement and visibility. Every frame stays attached. */
+.canvas-root.canvas-focused .canvas-resize,
+.canvas-root.canvas-focused .canvas-row-resize,
 .canvas-root.canvas-focused .canvas-pane:not(.focused) { display: none; }
 .canvas-root.canvas-focused .canvas-pane.focused { min-height: 0; }
 .canvas-unavailable {
@@ -2107,6 +2110,52 @@ body.file-view { overflow: auto; }
   color: var(--muted);
 }
 .canvas-empty h2 { color: var(--text); }
+/* Pane separators sit on the shared edge. Row separators sit in the gap below. */
+.canvas-resize {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 10px;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+}
+.canvas-resize::after {
+  content: "";
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 0;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--line-strong);
+}
+.canvas-resize:hover::after, .canvas-resize:focus-visible::after { background: var(--accent); }
+.canvas-resize:focus-visible { outline: none; }
+.canvas-row-resize {
+  position: relative;
+  z-index: 5;
+  align-self: end;
+  height: 10px;
+  margin-bottom: -10px;
+  background: transparent;
+  cursor: row-resize;
+  touch-action: none;
+}
+.canvas-row-resize::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: 12px;
+  right: 12px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--line-strong);
+}
+.canvas-row-resize:hover::after, .canvas-row-resize:focus-visible::after { background: var(--accent); }
+.canvas-row-resize:focus-visible { outline: none; }
 .canvas-picker-status { min-height: 1.4em; margin: 0; color: var(--muted); font-size: 12px; }
 #canvasConversationDialog .dialog-card { width: min(720px, calc(100vw - 24px)); }
 /* Flex column, not grid: grid tracks shrink to min-content once the list hits

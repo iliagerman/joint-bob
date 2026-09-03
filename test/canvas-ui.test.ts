@@ -47,18 +47,18 @@ test("canvas is a desktop row view over exact existing conversations", async () 
   assert.match(canvas, /if \(session\.executionNodeId\) url\.searchParams\.set\("nodeId", session\.executionNodeId\)/);
   assert.doesNotMatch(canvas, /localStorage|sessionStorage|transferSession|cloneSession|new-session/);
 
-  // Every row is the same height; a tall canvas scrolls rather than squashing rows.
-  assert.match(styles, /\.canvas-root \{[\s\S]*?display: grid;[\s\S]*?overflow-y: auto;/);
-  assert.match(canvas, /repeat\(\$\{Math\.max\(1, layout\.rows\.length\)\}, minmax\(\$\{CANVAS_MIN_ROW_HEIGHT\}px, 1fr\)\)/);
+  // Dragged row heights are pinned, so the canvas scrolls instead of squashing them.
+  assert.match(styles, /\.canvas-root \{[\s\S]*?display: grid;[\s\S]*?overflow: auto;/);
+  assert.match(canvas, /row\.height \? `\$\{row\.height\}px` : `minmax\(\$\{CANVAS_MIN_ROW_HEIGHT\}px, 1fr\)`/);
   assert.match(canvas, /for \(const direction of \["left", "right", "up", "down"\]\)/);
   assert.match(canvas, /moveCanvasPane\(layout, pane\.id, direction\)/);
-  assert.doesNotMatch(canvas, /canvas-split|setCanvasSplitRatio|swapCanvasPanes|setCanvasRowBoundary/);
+  assert.doesNotMatch(canvas, /canvas-split|setCanvasSplitRatio|swapCanvasPanes/);
 
   // Panes are permanent direct root children. Layout changes are style-only.
   assert.match(canvas, /root\.append\(element\)/);
   assert.match(canvas, /element\.style\.gridRow/);
   assert.match(canvas, /element\.style\.gridColumn/);
-  assert.match(canvas, /const headerSlot = element\.children\.length \? element\.children\[0\] : null;/);
+  assert.match(canvas, /const headerSlot = element\.children\.length > 1 \? element\.children\[1\] : null;/);
   assert.match(canvas, /if \(!body\.isConnected \|\| body\.parentElement !== element\) element\.append\(body\)/);
   assert.doesNotMatch(canvas, /function deactivate[\s\S]{0,200}replaceChildren/);
   assert.match(styles, /\.canvas-root\.canvas-focused \.canvas-pane:not\(\.focused\) \{ display: none; \}/);
@@ -91,11 +91,15 @@ test("canvas is a desktop row view over exact existing conversations", async () 
   assert.match(canvas, /`canvas-start-conversation-\$\{harness\.id\}`/);
   assert.match(canvas, /sessionPath: `draft:\$\{harness\.id\}:\$\{sessionId\}`/);
 
-  // The grid is uniform: nothing resizes, so no separator, width, or pinned height
-  // survives anywhere in the canvas, its styles, or the stored preference schema.
-  assert.doesNotMatch(canvas, /canvas-resize|canvas-row-resize|setCanvasPaneWidth|setCanvasRowHeight|weights|aria-valuenow|role", "separator"|col-resize|row-resize|PointerCapture/);
-  assert.doesNotMatch(styles, /canvas-resize|canvas-row-resize|col-resize|row-resize/);
-  assert.doesNotMatch(preferences, /weights|canvasRowGeometryIsLegal|CANVAS_MIN_PANE_WIDTH|CANVAS_MAX_ROW_HEIGHT/);
+  // Width and height handles work with pointer or keyboard and persist their geometry.
+  assert.match(canvas, /setPointerCapture\(event\.pointerId\)/);
+  assert.match(canvas, /releasePointerCapture\(event\.pointerId\)/);
+  assert.match(canvas, /setCanvasRowBoundary/);
+  assert.match(canvas, /setCanvasRowHeight/);
+  assert.match(styles, /\.canvas-resize \{[\s\S]*?cursor: col-resize;/);
+  assert.match(styles, /\.canvas-row-resize \{[\s\S]*?cursor: row-resize;/);
+  assert.match(preferences, /weights: number\[\]/);
+  assert.match(preferences, /height: number \| null/);
   assert.match(app, /state\.canvasLayoutSave = \(state\.canvasLayoutSave \?\? Promise\.resolve\(\)\)/);
 
   // Narrow assistant turns still give fenced code the conversation width.
@@ -108,7 +112,7 @@ test("canvas is a desktop row view over exact existing conversations", async () 
 
 test("the canvas shell ships in the service worker cache", async () => {
   const worker = await readFile("public/sw.js", "utf8");
-  assert.match(worker, /const CACHE_NAME = "joint-bob-v102"/);
+  assert.match(worker, /const CACHE_NAME = "joint-bob-v103"/);
   assert.match(worker, /"\/canvas\.js"/);
   assert.match(worker, /"\/canvas-layout\.js"/);
 });

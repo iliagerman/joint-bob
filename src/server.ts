@@ -52,8 +52,9 @@ import { importProjectDirectory, ProjectDirectoryImportError, relocateProjectDir
 import { listAuditEvents } from "./audit.js";
 import { clearCanvasShortcut, listCanvasShortcuts, releaseCanvasShortcuts, setCanvasShortcut } from "./canvas-shortcuts.js";
 import {
-  getUserPreferences,
-  migrateLegacyCanvasLayout, updateUserPreferences, type UserPreferences,
+  CANVAS_MAX_ROW_HEIGHT, CANVAS_MIN_ROW_HEIGHT, canvasRowGeometryIsLegal,
+  getUserPreferences, migrateLegacyCanvasLayout, normalizeCanvasLayoutPreference,
+  updateUserPreferences, type UserPreferences,
 } from "./preferences.js";
 import { appVersion, readChangelog } from "./changelog.js";
 import { applyRuntimeLeaseSnapshot, conversationLeaseRunning, conversationRuntimeDatabase, sweepExpiredRuntimeLeases, type RuntimeLeaseInput } from "./conversation-runtime.js";
@@ -493,12 +494,9 @@ const canvasPanePreferenceSchema = z.object({
   sessionId: z.string().trim().min(1).max(200),
   executionNodeId: z.string().uuid().nullable(),
 }).strict();
-// A grid row carries only its panes. `height` and `weights` are the geometry older
-// clients still send; they are accepted so a stale tab is not rejected, then dropped
-// on read - the grid spaces every row and every pane evenly.
 const canvasRowPreferenceSchema = z.object({
   id: z.string().min(1).max(200),
-  height: z.number().finite().nullable().optional(),
+  height: z.number().finite().min(CANVAS_MIN_ROW_HEIGHT).max(CANVAS_MAX_ROW_HEIGHT).nullable().optional(),
   weights: z.array(z.number().finite().positive()).min(1).max(8).optional(),
   panes: z.array(canvasPanePreferenceSchema).min(1).max(8),
 }).strict();
@@ -529,7 +527,7 @@ const canvasLayoutV1Schema = z.object({
 const canvasLayoutPreferenceSchema = z.union([
   canvasLayoutV1Schema,
   z.object({
-    version: z.union([z.literal(2), z.literal(3), z.literal(4)]),
+    version: z.union([z.literal(2), z.literal(3), z.literal(4), z.literal(5)]),
     rows: z.array(canvasRowPreferenceSchema).max(10),
     focusedPaneId: z.string().min(1).max(200).nullable(),
   }).strict(),
@@ -564,6 +562,10 @@ const canvasLayoutPreferenceSchema = z.union([
   if (layout.version !== 1) for (const row of layout.rows) {
     if (ids.has(row.id)) context.addIssue({ code: z.ZodIssueCode.custom, message: "Canvas ids must be unique" });
     ids.add(row.id);
+    if (layout.version === 5 && (!row.weights || row.weights.length !== row.panes.length
+      || !canvasRowGeometryIsLegal({ height: row.height, weights: row.weights }))) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "Canvas row geometry is out of range" });
+    }
     for (const item of row.panes) pane(item);
   }
   if (layout.focusedPaneId && !paneIds.has(layout.focusedPaneId)) context.addIssue({ code: z.ZodIssueCode.custom, message: "Focused canvas pane is unknown" });
@@ -1209,11 +1211,9 @@ app.put("/api/preferences", (request, response, next) => {
     const parsed = userPreferencesSchema.parse(request.body);
     const { canvasLayout, ...preferences } = parsed;
     const update: Partial<UserPreferences> = preferences;
-    // Older clients still send per-pane widths and pinned row heights. The grid has
-    // no room for either, so they are dropped on the way in.
     if (canvasLayout) update.canvasLayout = canvasLayout.version === 1
       ? migrateLegacyCanvasLayout(canvasLayout)
-      : { version: 4, rows: canvasLayout.rows.map((row) => ({ id: row.id, panes: row.panes })), focusedPaneId: canvasLayout.focusedPaneId };
+      : normalizeCanvasLayoutPreference(canvasLayout);
     response.json(updateUserPreferences(session.userId, update));
   } catch (error) {
     next(error);
