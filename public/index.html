@@ -962,6 +962,20 @@
       </form>
     </dialog>
 
+    <dialog id="mergeConflictDialog" data-testid="merge-conflict-dialog">
+      <form method="dialog" class="dialog-card">
+        <div class="dialog-heading" tabindex="-1">
+          <span class="eyebrow" id="mergeConflictEyebrow">Merge conflicts</span>
+          <h2 id="mergeConflictTitle">Resolve conflicts</h2>
+          <p id="mergeConflictMessage"></p>
+        </div>
+        <div class="choice-list" id="mergeConflictList" data-testid="merge-conflict-list"></div>
+        <div class="dialog-actions">
+          <button class="ghost" type="button" id="mergeConflictDoneButton" data-testid="merge-conflict-done-button">Done</button>
+        </div>
+      </form>
+    </dialog>
+
     <!-- One shared row menu. It lives in the top layer, so the scrolling lists cannot clip it. -->
     <div class="row-menu" id="rowMenu" popover="auto" aria-label="Conversation actions" data-testid="session-row-menu"></div>
 

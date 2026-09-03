@@ -103,6 +103,12 @@ export type TaskExecutionState = "idle" | "running" | "handoff_pending" | "faile
 
 export type TaskPhase = "planning" | "in_progress" | "review";
 
+export type TaskMergeState = "none" | "conflicts" | "resolved" | "merged";
+
+export type TaskMergeTx = "open" | "committed" | "rolled_back";
+
+export type TaskRunKind = "phase" | "merge";
+
 export interface TaskPhaseConfig {
   engine: TaskEngine;
   provider: string;
@@ -124,6 +130,14 @@ export interface TaskRecord {
   worktreePath: string | null;
   worktreeBranch: string | null;
   mergedAt: string | null;
+  // Ticket-workspace merge-back state (TICKET-MERGE-PLAN.md §10).
+  mergeState: TaskMergeState;
+  conflictCount: number;
+  mergeWarning: string | null;
+  mergeTx: TaskMergeTx | null;
+  // Trusted digests of the workspace merge artifacts, captured by server code at prepare.
+  mergeDigests: Record<string, string> | null;
+  runKind: TaskRunKind | null;
   currentNodeId: string;
   leaseOwnerNodeId: string | null;
   leaseExpiresAt: string | null;

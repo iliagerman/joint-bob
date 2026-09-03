@@ -2168,3 +2168,18 @@ body.canvas-pane-mode #canvasPanel,
 body.canvas-pane-mode .app-menu,
 body.canvas-pane-mode .mobile-nav { display: none !important; }
 body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; border: 0; border-radius: 0; }
+
+/* Ticket merge conflict picker: one row per conflict, actions on the right. */
+.merge-conflict-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.merge-conflict-row button {
+  flex: none;
+}
+.merge-warning {
+  color: var(--danger, #b3261e);
+  margin: 0;
+}

@@ -106,6 +106,28 @@ test("ticket workspace copy excludes repository metadata, dependencies, builds, 
   }
 });
 
+test("ticket workspace copy captures a baseline content snapshot for merging back", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-ticket-baseline-"));
+  try {
+    const project = path.join(root, "project");
+    const ticketRoot = path.join(root, "tickets");
+    await mkdir(path.join(project, "src"), { recursive: true });
+    await writeFile(path.join(project, "src", "index.ts"), "export const value = 1;\n");
+    await writeFile(path.join(project, ".env"), "SECRET=value\n");
+
+    const workspace = await createTaskWorkspace(project, "project-three", "ticket-three", ticketRoot);
+
+    const baseline = path.join(workspace, ".joint-bob-baseline");
+    assert.equal(await readFile(path.join(baseline, "src", "index.ts"), "utf8"), "export const value = 1;\n");
+    const manifest = JSON.parse(await readFile(path.join(baseline, "manifest.json"), "utf8")) as { files: Record<string, { sha256: string; mode: number }> };
+    assert.deepEqual(Object.keys(manifest.files).sort(), ["src/index.ts"], "manifest lists exactly the copied files, secrets excluded");
+    assert.equal(manifest.files["src/index.ts"].sha256.length, 64);
+    assert.equal(await missing(path.join(baseline, ".env")), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("removes a ticket workspace from the synchronized root", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-ticket-remove-"));
   try {

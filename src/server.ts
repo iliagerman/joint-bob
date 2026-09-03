@@ -2,7 +2,7 @@ import express, { type NextFunction, type Request, type Response } from "express
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { execFile } from "node:child_process";
 import { constants as fsConstants, createReadStream } from "node:fs";
-import { access, appendFile, lstat, mkdir, readdir, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { access, appendFile, lstat, mkdir, readdir, readFile, realpath, rm, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import os from "node:os";
 import { Readable } from "node:stream";
@@ -33,7 +33,10 @@ import { deletePushSubscription, getVapidPublicKey, listPushSubscriberUserIds, n
 import { abortOutgoingTaskHandoff, abortPreparedTaskHandoff, acknowledgeIncomingTaskHandoff, acknowledgeOutgoingTaskHandoff, assertTaskCanBeDeleted, beginOutgoingTaskHandoff, claimTaskLease, commitPreparedTaskHandoff, completeTaskHandoff, completeTaskLease, createTask, deleteTask, getTaskHandoff, isTaskHandoffRejected, listTasks, listUnfinishedOutgoingTaskHandoffs, markOutgoingTaskHandoff, prepareTaskHandoff, rejectTaskHandoff, releaseTaskLease, reserveTaskHandoff, taskHandoffDeletion, updateTask, updateTaskSessionPath, type TaskHandoffRecord } from "./tasks.js";
 import { assertTaskWorktreeTransferable, exportTaskBranchBundle, mergeTaskWorktree, prepareTaskWorktreeFromBundle, removePreparedTaskWorktree, TaskWorktreeError, validateTaskRepository, type PreparedTaskWorktree } from "./worktrees.js";
 import { assertSyncthingFolderReady, CLAUDE_ENGINE_SYNC_FOLDER_ID, ensureSyncthingDevice, ensureSyncthingFolder, ensureTicketWorkspaceFolder, pauseEngineSyncFolders, PI_ENGINE_SYNC_FOLDER_ID, reconcileSyncthingProjectFolders, rescanSyncthingFolder, syncthingDeviceId, syncthingFolderIdForPath, syncthingFolderStatuses, syncthingPathForFolderId } from "./syncthing.js";
-import { assertTaskWorkspaceReady, removeTaskWorkspace, taskWorkspaceKey, TaskWorkspaceError, TICKET_WORKSPACE_FOLDER_ID, ticketWorkspaceRoot } from "./task-workspaces.js";
+import { assertTaskWorkspaceReady, createTaskWorkspace, removeTaskWorkspace, taskWorkspaceKey, TaskWorkspaceError, TICKET_BASELINE_DIR, TICKET_MERGE_DIR, TICKET_WORKSPACE_FOLDER_ID, ticketWorkspaceRoot } from "./task-workspaces.js";
+import { unmergedWorkspaceBlocksClose } from "./tasks.js";
+import { beginTicketMerge, completeTicketMergeRun, discardTicketChanges, finalizeTicketMerge, resolveTicketChoiceConflict, restartTicketMerge, TicketMergeError, ticketMergeConflicts } from "./ticket-merge-service.js";
+import { openMergeTransactionCount, recoverMergeTransactions } from "./merge-journal.js";
 import { SessionWatcher } from "./watcher.js";
 import { appendLiveEvent, buildHandoffContext, claudeRunIdFromSessionPath, claudeSessionContextUsage, claudeSessionFilePath, ensureLocalClaudeTranscript, loadClaudeMessages, runClaudePrompt, type ClaudeRunHandle, type ClaudeRunResult } from "./claude-service.js";
 import { isClaudeSessionRunning, listRunningClaudeSessions } from "./claude-runtime.js";
@@ -173,6 +176,8 @@ const machineRoutes = new Set([
   "DELETE /cluster/tasks/delete",
   "POST /cluster/tasks/archive",
   "POST /cluster/tasks/merge",
+  "POST /cluster/tasks/merge-action",
+  "GET /cluster/tasks/merge-conflicts",
   "POST /cluster/tasks/handoff",
   "POST /update/prepare",
 ]);
@@ -1665,6 +1670,7 @@ function assertTaskWorkspaceCanClose(task: TaskRecord): void {
 
 async function archiveOwnedTask(project: ProjectRecord, task: TaskRecord): Promise<TaskRecord> {
   assertTaskWorkspaceCanClose(task);
+  if (task.worktreePath && !task.worktreeBranch && unmergedWorkspaceBlocksClose(task)) throw new TaskWorkspaceError("Merge the ticket workspace (or discard it) before archiving");
   const synchronizedWorkspace = !task.worktreeBranch;
   const workspaceKey = task.worktreePath ? taskWorkspaceKey(task.worktreePath, task.id) : project.id;
   const archived = await updateTask(project.id, task.id, {
@@ -1678,6 +1684,7 @@ async function archiveOwnedTask(project: ProjectRecord, task: TaskRecord): Promi
 
 async function deleteOwnedTask(project: ProjectRecord, task: TaskRecord): Promise<void> {
   assertTaskWorkspaceCanClose(task);
+  if (task.worktreePath && !task.worktreeBranch && unmergedWorkspaceBlocksClose(task)) throw new TaskWorkspaceError("Merge the ticket workspace (or discard it) before deleting");
   const workspaceKey = task.worktreePath ? taskWorkspaceKey(task.worktreePath, task.id) : project.id;
   await deleteTask(project.id, task.id);
   if (!task.worktreeBranch) await removeTaskWorkspace(workspaceKey, task.id);
@@ -1869,9 +1876,41 @@ app.patch("/api/cluster/tasks/update", async (request, response, next) => {
     if (existing.currentNodeId !== local.id) { sendError(response, 409, "Task is not owned by this node"); return; }
     assertTaskNotHandoffPending(existing);
     if (update.status === "planning" && !(update.planMode ?? existing.planMode)) { sendError(response, 400, "Planning status requires plan mode"); return; }
-    const task = await updateTask(project.id, existing.id, update);
+    let reopenClearsMerge = false;
+    let reopenBaselineAnchor: string | undefined;
+    if (existing.status === "done" && update.status !== undefined && update.status !== "done" && existing.worktreePath && !existing.worktreeBranch) {
+      acquireTaskMergeReservation(existing, project.id);
+      try {
+        let freshBaselineDigest: string | undefined;
+        if (existing.mergeState === "merged") {
+          const workspaceKey = taskWorkspaceKey(existing.worktreePath, existing.id);
+          await removeTaskWorkspace(workspaceKey, existing.id);
+          await createTaskWorkspace(project.path, project.id, existing.id);
+          freshBaselineDigest = await readFile(path.join(existing.worktreePath, ".joint-bob-baseline", "manifest.json"), "utf8")
+            .then((raw) => createHash("sha256").update(Buffer.from(raw, "utf8")).digest("hex"))
+            .catch(() => undefined);
+        } else {
+          await rm(path.join(existing.worktreePath, TICKET_MERGE_DIR), { recursive: true, force: true });
+        }
+        reopenClearsMerge = true;
+        reopenBaselineAnchor = freshBaselineDigest;
+      } finally {
+        releaseTaskMergeReservation(existing.id);
+      }
+    }
+    let task = await updateTask(project.id, existing.id, update);
+    if (reopenClearsMerge) task = await updateTask(project.id, existing.id, { mergedAt: null, mergeState: "none", conflictCount: 0, mergeWarning: null, mergeTx: null, mergeDigests: reopenBaselineAnchor ? { baseline: reopenBaselineAnchor } : null });
     const active = update.status !== undefined && update.status !== existing.status && (update.status === "planning" || update.status === "in_progress" || (update.status === "review" && task.reviewMode));
     if (active && !taskRunActive(task.id)) startTaskRun(project, task).catch((error) => console.warn("Task start failed", error));
+    if (update.status === "done" && existing.status !== "done" && !task.worktreeBranch) {
+      const merged = await beginTaskMergeIfNeeded(project, task).catch((error) => {
+        console.warn("Ticket merge failed to start", error);
+        return updateTask(project.id, task.id, { mergeWarning: error instanceof Error ? error.message : "Merge failed to start" }).catch(() => task);
+      });
+      broadcastToProject(project.id, { type: "tasksChanged" });
+      response.json({ task: merged ?? task });
+      return;
+    }
     broadcastToProject(project.id, { type: "tasksChanged" });
     response.json({ task });
   } catch (error) { next(error); }
@@ -1940,6 +1979,8 @@ app.post("/api/cluster/tasks/handoff", async (request, response, next) => {
     if (!task) { sendError(response, 404, "Task not found"); return; }
     const local = await getClusterNode();
     if (task.currentNodeId !== local.id) { sendError(response, 409, "Task is not owned by this node"); return; }
+    if (task.mergeTx === "open" || mergeReservations.has(task.id)) { sendError(response, 409, "Wait for the ticket merge to finish before handing off"); return; }
+    if ((task.mergeState === "conflicts" || task.mergeState === "resolved") && task.worktreePath && !task.worktreeBranch) { sendError(response, 409, "Resolve the ticket merge before handing off"); return; }
     const result = await handoffOwnedTask(project, task, payload.peerId);
     response.status(result.status).json(result.body);
   } catch (error) {
@@ -2181,6 +2222,15 @@ async function assertProjectRelocationIdle(project: ProjectRecord): Promise<void
   }
   if ([...piTaskRuns.values()].some((run) => run.projectId === project.id) || [...claudeTaskRuns.values()].some((run) => run.projectId === project.id)) {
     throw new ProjectDirectoryImportError("Wait for this project's task run to finish before changing its workspace");
+  }
+  if ((await listTasks(project.id)).some((task) => task.mergeTx === "open")) {
+    throw new ProjectDirectoryImportError("Wait for this project's ticket merge transaction to finish before changing its workspace");
+  }
+  if (projectHasMergeReservation(project.id)) {
+    throw new ProjectDirectoryImportError("A ticket merge reservation is active for this project");
+  }
+  if ((await listTasks(project.id)).some((task) => (task.mergeState === "conflicts" || task.mergeState === "resolved") && task.worktreePath)) {
+    throw new ProjectDirectoryImportError("Resolve this project's ticket merges before changing its workspace");
   }
 }
 
@@ -2501,6 +2551,19 @@ app.delete("/api/projects/:projectId", async (request, response, next) => {
       return;
     }
     await assertProjectEditable(project);
+    const tasks = await listTasks(project.id);
+    if (tasks.some((task) => task.mergeTx === "open")) {
+      sendError(response, 409, "Wait for this project's ticket merge transaction to finish before deleting the project");
+      return;
+    }
+    if (projectHasMergeReservation(project.id)) {
+      sendError(response, 409, "A ticket merge reservation is active for this project");
+      return;
+    }
+    if (tasks.some((task) => task.worktreePath && !task.worktreeBranch && unmergedWorkspaceBlocksClose(task))) {
+      sendError(response, 409, "Resolve this project's ticket merges (or discard them) before deleting the project");
+      return;
+    }
     await removeProject(project.id);
     sessionWatcher.removeProject(project.id);
     response.status(204).send();
@@ -3159,6 +3222,7 @@ app.post("/api/projects/:projectId/tasks", async (request, response, next) => {
     if (task.status === "planning" || task.status === "in_progress" || (task.status === "review" && task.reviewMode)) {
       startTaskRun(project, task).catch((error) => console.warn("Task start failed", error));
     }
+    if (task.status === "done") beginTaskMergeIfNeeded(project, task).catch((error) => console.warn("Ticket merge failed to start", error));
     broadcastToProject(project.id, { type: "tasksChanged" });
     response.status(201).json({ task });
   } catch (error) {
@@ -3184,9 +3248,44 @@ app.patch("/api/projects/:projectId/tasks/:taskId", async (request, response, ne
     if (existing.currentNodeId !== local.id) { sendError(response, 409, "Task owner is unavailable"); return; }
     assertTaskNotHandoffPending(existing);
     if (payload.status === "planning" && !(payload.planMode ?? existing.planMode)) { sendError(response, 400, "Planning status requires plan mode"); return; }
-    const task = await updateTask(project.id, existing.id, payload);
+    // Reopening a done ticket resets its merge state (TICKET-MERGE-PLAN.md §10):
+    // a merged ticket gets a fresh workspace copy, a conflicted one drops its
+    // merge artifacts; the next move to Done runs a fresh prepare.
+    let reopenClearsMerge = false;
+    let reopenBaselineAnchor: string | undefined;
+    if (existing.status === "done" && payload.status !== undefined && payload.status !== "done" && existing.worktreePath && !existing.worktreeBranch) {
+      acquireTaskMergeReservation(existing, project.id);
+      try {
+        let freshBaselineDigest: string | undefined;
+        if (existing.mergeState === "merged") {
+          const workspaceKey = taskWorkspaceKey(existing.worktreePath, existing.id);
+          await removeTaskWorkspace(workspaceKey, existing.id);
+          await createTaskWorkspace(project.path, project.id, existing.id);
+          freshBaselineDigest = await readFile(path.join(existing.worktreePath, ".joint-bob-baseline", "manifest.json"), "utf8")
+            .then((raw) => createHash("sha256").update(Buffer.from(raw, "utf8")).digest("hex"))
+            .catch(() => undefined);
+        } else {
+          await rm(path.join(existing.worktreePath, TICKET_MERGE_DIR), { recursive: true, force: true });
+        }
+        reopenClearsMerge = true;
+        reopenBaselineAnchor = freshBaselineDigest;
+      } finally {
+        releaseTaskMergeReservation(existing.id);
+      }
+    }
+    let task = await updateTask(project.id, existing.id, payload);
+    if (reopenClearsMerge) task = await updateTask(project.id, existing.id, { mergedAt: null, mergeState: "none", conflictCount: 0, mergeWarning: null, mergeTx: null, mergeDigests: reopenBaselineAnchor ? { baseline: reopenBaselineAnchor } : null });
     const active = payload.status !== undefined && payload.status !== existing.status && (payload.status === "planning" || payload.status === "in_progress" || (payload.status === "review" && task.reviewMode));
     if (active && !taskRunActive(task.id)) startTaskRun(project, task).catch((error) => console.warn("Task start failed", error));
+    if (payload.status === "done" && existing.status !== "done" && !task.worktreeBranch) {
+      const merged = await beginTaskMergeIfNeeded(project, task).catch((error) => {
+        console.warn("Ticket merge failed to start", error);
+        return updateTask(project.id, task.id, { mergeWarning: error instanceof Error ? error.message : "Merge failed to start" }).catch(() => task);
+      });
+      broadcastToProject(project.id, { type: "tasksChanged" });
+      response.json({ task: merged ?? task });
+      return;
+    }
     broadcastToProject(project.id, { type: "tasksChanged" });
     response.json({ task });
   } catch (error) { next(error); }
@@ -3208,6 +3307,8 @@ app.post("/api/projects/:projectId/tasks/:taskId/handoff", async (request, respo
       return;
     }
     if (task.currentNodeId !== local.id) { sendError(response, 409, "Task owner is unavailable"); return; }
+    if (task.mergeTx === "open" || mergeReservations.has(task.id)) { sendError(response, 409, "Wait for the ticket merge to finish before handing off"); return; }
+    if ((task.mergeState === "conflicts" || task.mergeState === "resolved") && task.worktreePath && !task.worktreeBranch) { sendError(response, 409, "Resolve the ticket merge before handing off"); return; }
     const result = await handoffOwnedTask(project, task, payload.peerId);
     response.status(result.status).json(result.body);
   } catch (error) {
@@ -3239,6 +3340,8 @@ app.post("/api/projects/:projectId/tasks/:taskId/archive", async (request, respo
   }
 });
 
+const mergeActionSchema = z.object({ path: z.string().min(1).optional(), side: z.enum(["workspace", "project"]).optional() });
+
 app.post("/api/projects/:projectId/tasks/:taskId/merge", async (request, response, next) => {
   try {
     const project = await getProject(request.params.projectId);
@@ -3249,14 +3352,218 @@ app.post("/api/projects/:projectId/tasks/:taskId/merge", async (request, respons
     const local = await getClusterNode();
     const peer = await ownerPeer(task, local.id);
     if (peer) {
-      const routed = await fetch(`${peer.url}/api/cluster/tasks/merge`, { method: "POST", headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ projectId: project.id, taskId: task.id }), signal: AbortSignal.timeout(30_000) });
+      const routed = await fetch(`${peer.url}/api/cluster/tasks/merge-action`, { method: "POST", headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ action: "merge", projectId: project.id, taskId: task.id }), signal: AbortSignal.timeout(120_000) });
       await mirrorTaskResponse(response, routed);
       return;
     }
     if (task.currentNodeId !== local.id) { sendError(response, 409, "Task owner is unavailable"); return; }
-    response.json({ task: await mergeOwnedTask(project, task) });
+    if (task.worktreeBranch) {
+      // Legacy Git-worktree tickets keep their branch-merge behavior.
+      response.json({ task: await mergeOwnedTask(project, task) });
+      return;
+    }
+    acquireTaskMergeReservation(task, project.id);
+    let merged: TaskRecord;
+    try {
+      if (task.mergeState === "conflicts" || task.mergeState === "resolved") {
+        // Human path: resolutions already staged (editor or earlier agent pass);
+        // finalize validates them and applies, or refuses with what remains.
+        merged = await finalizeTicketMerge(project, task);
+      } else {
+        const outcome = await beginTicketMerge(project, task);
+        merged = outcome.task;
+        if (outcome.prepared.conflicts.length) await startMergeRun(project, outcome.task).catch((error) => console.warn("Ticket merge agent run failed to start", error));
+      }
+    } finally { releaseTaskMergeReservation(task.id); }
+    merged = (await listTasks(project.id)).find((candidate) => candidate.id === task.id) ?? merged;
+    broadcastToProject(project.id, { type: "tasksChanged" });
+    response.json({ task: merged });
   } catch (error) {
-    if (error instanceof TaskWorktreeError) { sendError(response, 409, error.message); return; }
+    if (error instanceof TicketMergeError || error instanceof TaskWorkspaceError) { sendError(response, 409, error.message); return; }
+    next(error);
+  }
+});
+
+app.post("/api/projects/:projectId/tasks/:taskId/merge-resume", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    const task = (await listTasks(project.id)).find((candidate) => candidate.id === request.params.taskId);
+    if (!task) { sendError(response, 404, "Task not found"); return; }
+    const local = await getClusterNode();
+    const peer = await ownerPeer(task, local.id);
+    if (peer) {
+      const routed = await fetch(`${peer.url}/api/cluster/tasks/merge-action`, { method: "POST", headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ action: "merge-resume", projectId: project.id, taskId: task.id }), signal: AbortSignal.timeout(30_000) });
+      await mirrorTaskResponse(response, routed);
+      return;
+    }
+    if (task.currentNodeId !== local.id) { sendError(response, 409, "Task owner is unavailable"); return; }
+    if (task.mergeState !== "conflicts" && task.mergeState !== "resolved") { sendError(response, 409, "Ticket has no unresolved merge"); return; }
+    acquireTaskMergeReservation(task, project.id);
+    try { await startMergeRun(project, task); }
+    finally { releaseTaskMergeReservation(task.id); }
+    response.json({ task: (await listTasks(project.id)).find((candidate) => candidate.id === task.id) ?? task });
+  } catch (error) {
+    if (error instanceof TicketMergeError) { sendError(response, error.status, error.message); return; }
+    next(error);
+  }
+});
+
+app.post("/api/projects/:projectId/tasks/:taskId/merge-restart", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    const task = (await listTasks(project.id)).find((candidate) => candidate.id === request.params.taskId);
+    if (!task) { sendError(response, 404, "Task not found"); return; }
+    const local = await getClusterNode();
+    const peer = await ownerPeer(task, local.id);
+    if (peer) {
+      const routed = await fetch(`${peer.url}/api/cluster/tasks/merge-action`, { method: "POST", headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ action: "merge-restart", projectId: project.id, taskId: task.id }), signal: AbortSignal.timeout(120_000) });
+      await mirrorTaskResponse(response, routed);
+      return;
+    }
+    if (task.currentNodeId !== local.id) { sendError(response, 409, "Task owner is unavailable"); return; }
+    acquireTaskMergeReservation(task, project.id);
+    let updated: TaskRecord;
+    try {
+      const outcome = await restartTicketMerge(project, task);
+      updated = outcome.task;
+      if (outcome.prepared.conflicts.length) await startMergeRun(project, outcome.task).catch((error) => console.warn("Ticket merge agent run failed to start", error));
+    } finally { releaseTaskMergeReservation(task.id); }
+    updated = (await listTasks(project.id)).find((candidate) => candidate.id === task.id) ?? updated;
+    broadcastToProject(project.id, { type: "tasksChanged" });
+    response.json({ task: updated });
+  } catch (error) {
+    if (error instanceof TicketMergeError) { sendError(response, error.status, error.message); return; }
+    next(error);
+  }
+});
+
+app.get("/api/projects/:projectId/tasks/:taskId/merge-conflicts", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    const task = (await listTasks(project.id)).find((candidate) => candidate.id === request.params.taskId);
+    if (!task) { sendError(response, 404, "Task not found"); return; }
+    const local = await getClusterNode();
+    const peer = await ownerPeer(task, local.id);
+    if (peer) {
+      const routed = await fetch(`${peer.url}/api/cluster/tasks/merge-conflicts?projectId=${encodeURIComponent(project.id)}&taskId=${encodeURIComponent(task.id)}`, { headers: { Authorization: `Bearer ${peer.token}` }, signal: AbortSignal.timeout(30_000) });
+      await mirrorTaskResponse(response, routed);
+      return;
+    }
+    response.json({ conflicts: await ticketMergeConflicts(task), warning: task.mergeWarning });
+  } catch (error) { next(error); }
+});
+
+app.get("/api/cluster/tasks/merge-conflicts", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const project = await getProject(String(request.query.projectId ?? ""));
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    const task = (await listTasks(project.id)).find((candidate) => candidate.id === String(request.query.taskId ?? ""));
+    if (!task) { sendError(response, 404, "Task not found"); return; }
+    response.json({ conflicts: await ticketMergeConflicts(task), warning: task.mergeWarning });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/projects/:projectId/tasks/:taskId/merge-resolve", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    await assertProjectEditable(project);
+    const payload = mergeActionSchema.parse(request.body);
+    if (!payload.path || !payload.side) { sendError(response, 400, "path and side are required"); return; }
+    const task = (await listTasks(project.id)).find((candidate) => candidate.id === request.params.taskId);
+    if (!task) { sendError(response, 404, "Task not found"); return; }
+    const local = await getClusterNode();
+    const peer = await ownerPeer(task, local.id);
+    if (peer) {
+      const routed = await fetch(`${peer.url}/api/cluster/tasks/merge-action`, { method: "POST", headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ action: "merge-resolve", projectId: project.id, taskId: task.id, payload }), signal: AbortSignal.timeout(30_000) });
+      await mirrorTaskResponse(response, routed);
+      return;
+    }
+    if (task.currentNodeId !== local.id) { sendError(response, 409, "Task owner is unavailable"); return; }
+    acquireTaskMergeReservation(task, project.id);
+    try {
+      const updated = await resolveTicketChoiceConflict(project, task, payload.path, payload.side);
+      broadcastToProject(project.id, { type: "tasksChanged" });
+      response.json({ task: updated });
+    } finally { releaseTaskMergeReservation(task.id); }
+  } catch (error) {
+    if (error instanceof TicketMergeError) { sendError(response, error.status, error.message); return; }
+    next(error);
+  }
+});
+
+app.post("/api/projects/:projectId/tasks/:taskId/discard", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    await assertProjectEditable(project);
+    const task = (await listTasks(project.id)).find((candidate) => candidate.id === request.params.taskId);
+    if (!task) { sendError(response, 404, "Task not found"); return; }
+    const local = await getClusterNode();
+    const peer = await ownerPeer(task, local.id);
+    if (peer) {
+      const routed = await fetch(`${peer.url}/api/cluster/tasks/merge-action`, { method: "POST", headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ action: "discard", projectId: project.id, taskId: task.id }), signal: AbortSignal.timeout(30_000) });
+      await mirrorTaskResponse(response, routed);
+      return;
+    }
+    if (task.currentNodeId !== local.id) { sendError(response, 409, "Task owner is unavailable"); return; }
+    acquireTaskMergeReservation(task, project.id);
+    let discarded: TaskRecord;
+    try {
+      discarded = await discardTicketChanges(project, task);
+      if (task.worktreePath) await removeTaskWorkspace(taskWorkspaceKey(task.worktreePath, task.id), task.id);
+    } finally { releaseTaskMergeReservation(task.id); }
+    broadcastToProject(project.id, { type: "tasksChanged" });
+    response.json({ task: discarded });
+  } catch (error) {
+    if (error instanceof TicketMergeError) { sendError(response, error.status, error.message); return; }
+    next(error);
+  }
+});
+
+// Cluster mirror for ticket merge actions; routed to the task owner by the public routes.
+app.post("/api/cluster/tasks/merge-action", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const body = z.object({ action: z.enum(["merge", "merge-resume", "merge-restart", "merge-resolve", "discard"]), projectId: z.string(), taskId: z.string(), payload: mergeActionSchema.optional() }).parse(request.body);
+    const project = await getProject(body.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    const task = (await listTasks(project.id)).find((candidate) => candidate.id === body.taskId);
+    if (!task) { sendError(response, 404, "Task not found"); return; }
+    acquireTaskMergeReservation(task, project.id);
+    try {
+      if (body.action === "discard") {
+        const discarded = await discardTicketChanges(project, task);
+        if (task.worktreePath) await removeTaskWorkspace(taskWorkspaceKey(task.worktreePath, task.id), task.id);
+        response.json({ task: discarded });
+        return;
+      }
+      if (body.action === "merge-resume") {
+        if (task.mergeState !== "conflicts" && task.mergeState !== "resolved") { sendError(response, 409, "Ticket has no unresolved merge"); return; }
+        await startMergeRun(project, task);
+        response.json({ task: (await listTasks(project.id)).find((candidate) => candidate.id === task.id) ?? task });
+        return;
+      }
+      if (body.action === "merge-resolve") {
+        if (!body.payload?.path || !body.payload.side) { sendError(response, 400, "path and side are required"); return; }
+        response.json({ task: await resolveTicketChoiceConflict(project, task, body.payload.path, body.payload.side) });
+        return;
+      }
+      if (body.action === "merge" && (task.mergeState === "conflicts" || task.mergeState === "resolved")) {
+        const merged = await finalizeTicketMerge(project, task);
+        response.json({ task: merged });
+        return;
+      }
+      const outcome = body.action === "merge-restart" ? await restartTicketMerge(project, task) : await beginTicketMerge(project, task);
+      if (outcome.prepared.conflicts.length) await startMergeRun(project, outcome.task).catch((error) => console.warn("Ticket merge agent run failed to start", error));
+      response.json({ task: (await listTasks(project.id)).find((candidate) => candidate.id === task.id) ?? outcome.task });
+    } finally { releaseTaskMergeReservation(task.id); }
+  } catch (error) {
+    if (error instanceof TicketMergeError) { sendError(response, error.status, error.message); return; }
     next(error);
   }
 });
@@ -3331,6 +3638,10 @@ async function searchProjectFile(projectRoot: string, requestedPath: string): Pr
   for (const entry of entries) {
     if (!entry.isFile() || entry.name !== basename) continue;
     const candidate = path.join(entry.parentPath, entry.name);
+    // The baseline snapshot and merge staging area mirror the whole tree; a
+    // basename match inside them is a copy of the real file, never the answer.
+    const relative = path.relative(projectRoot, candidate).split(path.sep).join("/");
+    if (relative.startsWith(`${TICKET_BASELINE_DIR}/`) || relative.startsWith(`${TICKET_MERGE_DIR}/`)) continue;
     const verified = await verifiedProjectFile(projectRoot, candidate);
     if (!verified) continue;
     const relativePath = path.relative(projectRoot, verified.resolved).split(path.sep).join("/");
@@ -3343,19 +3654,33 @@ async function searchProjectFile(projectRoot: string, requestedPath: string): Pr
   return best[0];
 }
 
-async function resolveProjectFile(projectId: string, requestedPath: string): Promise<{ project: ProjectRecord; resolved: string; relativePath: string; info: Awaited<ReturnType<typeof stat>> }> {
+async function resolveProjectFile(projectId: string, requestedPath: string, taskId?: string): Promise<{ project: ProjectRecord; resolved: string; relativePath: string; info: Awaited<ReturnType<typeof stat>> }> {
   const project = await getProject(projectId);
   if (!project) throw new ProjectFileError(404, "Project not found");
   const pathValue = requestedPath.trim();
   if (!pathValue) throw new ProjectFileError(400, "File path is required");
   if (pathValue.length > 2000) throw new ProjectFileError(400, "File path is too long");
   if (portablePathParts(pathValue).includes("..")) throw new ProjectFileError(403, "File is outside the project directory");
-  const projectRoot = await realpath(project.path);
+  const projectRoot = await resolutionRoot(projectId, project.path, taskId);
   const directPath = pathValue.replace(/\\/g, path.sep);
-  const candidate = path.isAbsolute(directPath) ? path.resolve(directPath) : path.resolve(projectRoot, directPath);
-  const direct = path.isAbsolute(directPath) && !projectPathInside(projectRoot, candidate)
-    ? null
-    : await verifiedProjectFile(projectRoot, candidate);
+  // An absolute path only resolves directly when its REALPATH is inside the
+  // root: comparing the literal string lets a symlinked prefix (/var vs
+  // /private/var on macOS) fake an escape and push an exact workspace path into
+  // the fuzzy search. Absolute paths pointing elsewhere (an agent quoting
+  // another checkout) still fall back to the suffix search; relative paths go
+  // through verifiedProjectFile, which 403s symlink escapes.
+  let direct: Awaited<ReturnType<typeof verifiedProjectFile>> = null;
+  if (path.isAbsolute(directPath)) {
+    const absolute = path.resolve(directPath);
+    let resolvedAbsolute: string | null = null;
+    try { resolvedAbsolute = await realpath(absolute); }
+    catch (error) {
+      if (!["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+    }
+    if (resolvedAbsolute && projectPathInside(projectRoot, resolvedAbsolute)) direct = await verifiedProjectFile(projectRoot, absolute);
+  } else {
+    direct = await verifiedProjectFile(projectRoot, path.resolve(projectRoot, directPath));
+  }
   if (direct) {
     const relativePath = path.relative(projectRoot, direct.resolved).split(path.sep).join("/");
     return { project, resolved: direct.resolved, relativePath, info: direct.info };
@@ -3364,15 +3689,26 @@ async function resolveProjectFile(projectId: string, requestedPath: string): Pro
   return { project, resolved: match.resolved, relativePath: match.relativePath, info: match.info };
 }
 
-async function projectFileResolution(projectId: string, requestedPath: string): Promise<{ path: string }> {
-  return { path: (await resolveProjectFile(projectId, requestedPath)).relativePath };
+// A ticket-scoped resolution roots at the ticket workspace so agent paths resolve to
+// the copy the agent actually edited, never to a same-named project file.
+async function resolutionRoot(projectId: string, projectPath: string, taskId?: string): Promise<string> {
+  if (!taskId) return await realpath(projectPath);
+  const task = (await listTasks(projectId)).find((candidate) => candidate.id === taskId);
+  if (!task) throw new ProjectFileError(404, "Ticket was not found");
+  if (!task.worktreePath) throw new ProjectFileError(404, "Ticket workspace is not available");
+  return await realpath(task.worktreePath);
 }
 
-function projectFileLinks(projectId: string, relativePath: string, nodeId?: string): ProjectFileResolution {
+async function projectFileResolution(projectId: string, requestedPath: string, taskId?: string): Promise<{ path: string }> {
+  return { path: (await resolveProjectFile(projectId, requestedPath, taskId)).relativePath };
+}
+
+function projectFileLinks(projectId: string, relativePath: string, nodeId?: string, taskId?: string): ProjectFileResolution {
   const makeUrl = (route: string, download = false): string => {
     const url = new URL(`/api/projects/${encodeURIComponent(projectId)}/${route}`, "http://joint-bob.local");
     url.searchParams.set("path", relativePath);
     if (nodeId) url.searchParams.set("nodeId", nodeId);
+    if (taskId) url.searchParams.set("taskId", taskId);
     if (download) url.searchParams.set("download", "1");
     return `${url.pathname}${url.search}`;
   };
@@ -3471,9 +3807,9 @@ function fileViewPage(fileName: string, language: string, source: string): strin
 `;
 }
 
-async function sendProjectFile(response: Response, projectId: string, requestedPath: string, download: boolean): Promise<void> {
+async function sendProjectFile(response: Response, projectId: string, requestedPath: string, download: boolean, taskId?: string): Promise<void> {
   try {
-    const { resolved, info } = await resolveProjectFile(projectId, requestedPath);
+    const { resolved, info } = await resolveProjectFile(projectId, requestedPath, taskId);
     const fileName = path.basename(resolved).replace(/["\r\n]/g, "");
     // Only text renders on the page. A binary or oversized file falls through to the
     // byte stream below, which is what an image or a PDF needs anyway.
@@ -3496,8 +3832,8 @@ async function sendProjectFile(response: Response, projectId: string, requestedP
   }
 }
 
-async function projectFileContent(projectId: string, requestedPath: string): Promise<{ path: string; content: string; version: string }> {
-  const { resolved, relativePath, info } = await resolveProjectFile(projectId, requestedPath);
+async function projectFileContent(projectId: string, requestedPath: string, taskId?: string): Promise<{ path: string; content: string; version: string }> {
+  const { resolved, relativePath, info } = await resolveProjectFile(projectId, requestedPath, taskId);
   if (info.size > TEXT_FILE_LIMIT) throw new ProjectFileError(413, "File is too large to edit");
   const bytes = await readFile(resolved);
   return { path: relativePath, content: textFile(bytes), version: fileVersion(bytes) };
@@ -3514,8 +3850,8 @@ async function assertProjectFileConversationOwner(project: ProjectRecord, sessio
   }
 }
 
-async function updateProjectFileContent(projectId: string, requestedPath: string, payload: z.infer<typeof projectFileUpdateSchema>): Promise<{ path: string; version: string }> {
-  const { project, resolved, relativePath, info } = await resolveProjectFile(projectId, requestedPath);
+async function updateProjectFileContent(projectId: string, requestedPath: string, payload: z.infer<typeof projectFileUpdateSchema>, taskId?: string): Promise<{ path: string; version: string }> {
+  const { project, resolved, relativePath, info } = await resolveProjectFile(projectId, requestedPath, taskId);
   await assertProjectEditable(project);
   await assertProjectFileConversationOwner(project, payload.sessionId);
   const nextBytes = Buffer.from(payload.content, "utf8");
@@ -3535,10 +3871,11 @@ async function updateProjectFileContent(projectId: string, requestedPath: string
   return { path: relativePath, version: fileVersion(nextBytes) };
 }
 
-async function proxyProjectFileResolution(peer: ClusterPeer, projectId: string, requestedPath: string): Promise<{ path: string }> {
+async function proxyProjectFileResolution(peer: ClusterPeer, projectId: string, requestedPath: string, taskId?: string): Promise<{ path: string }> {
   const url = new URL("/api/cluster/project-file-resolution", peer.url);
   url.searchParams.set("projectId", projectId);
   url.searchParams.set("path", requestedPath);
+  if (taskId) url.searchParams.set("taskId", taskId);
   const routed = await fetch(url, { headers: { Authorization: `Bearer ${peer.token}` }, signal: AbortSignal.timeout(30_000) });
   const body = await routed.json().catch(() => null) as { path?: unknown; error?: unknown } | null;
   if (!routed.ok) {
@@ -3549,10 +3886,11 @@ async function proxyProjectFileResolution(peer: ClusterPeer, projectId: string, 
   return { path: body.path };
 }
 
-async function proxyProjectFile(response: Response, peer: ClusterPeer, projectId: string, requestedPath: string, download: boolean): Promise<void> {
+async function proxyProjectFile(response: Response, peer: ClusterPeer, projectId: string, requestedPath: string, download: boolean, taskId?: string): Promise<void> {
   const url = new URL("/api/cluster/project-file", peer.url);
   url.searchParams.set("projectId", projectId);
   url.searchParams.set("path", requestedPath);
+  if (taskId) url.searchParams.set("taskId", taskId);
   if (download) url.searchParams.set("download", "1");
   const routed = await fetch(url, { headers: { Authorization: `Bearer ${peer.token}` }, signal: AbortSignal.timeout(30_000) });
   for (const header of ["content-type", "content-disposition", "content-length"] as const) {
@@ -3569,7 +3907,8 @@ app.get("/api/cluster/project-file-resolution", async (request, response, next) 
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const projectId = typeof request.query.projectId === "string" ? request.query.projectId : "";
     const requestedPath = typeof request.query.path === "string" ? request.query.path : "";
-    response.json(await projectFileResolution(projectId, requestedPath));
+    const taskId = typeof request.query.taskId === "string" ? request.query.taskId : undefined;
+    response.json(await projectFileResolution(projectId, requestedPath, taskId));
   } catch (error) {
     if (error instanceof ProjectFileError) { sendError(response, error.status, error.message); return; }
     next(error);
@@ -3581,24 +3920,34 @@ app.get("/api/cluster/project-file", async (request, response, next) => {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const projectId = typeof request.query.projectId === "string" ? request.query.projectId : "";
     const requestedPath = typeof request.query.path === "string" ? request.query.path : "";
-    await sendProjectFile(response, projectId, requestedPath, request.query.download === "1");
+    const taskId = typeof request.query.taskId === "string" ? request.query.taskId : undefined;
+    await sendProjectFile(response, projectId, requestedPath, request.query.download === "1", taskId);
   } catch (error) { next(error); }
 });
+
+// A ticket-scoped file request routes to the task OWNER, not the ambient node:
+// replicas hold no workspace, so the browser's activeNodeId would 404.
+async function taskOwnerNodeId(projectId: string, taskId: string, fallback: string): Promise<string> {
+  const task = (await listTasks(projectId)).find((candidate) => candidate.id === taskId);
+  return task?.currentNodeId ?? fallback;
+}
 
 app.get("/api/projects/:projectId/file-resolution", async (request, response, next) => {
   try {
     const requestedPath = typeof request.query.path === "string" ? request.query.path : "";
     const requestedNodeId = typeof request.query.nodeId === "string" ? request.query.nodeId : "";
+    const taskId = typeof request.query.taskId === "string" ? request.query.taskId : undefined;
     const local = await getClusterNode();
-    if (requestedNodeId && requestedNodeId !== local.id) {
-      const peer = await getClusterPeer(requestedNodeId);
+    const effectiveNodeId = taskId ? await taskOwnerNodeId(request.params.projectId, taskId, requestedNodeId) : requestedNodeId;
+    if (effectiveNodeId && effectiveNodeId !== local.id) {
+      const peer = await getClusterPeer(effectiveNodeId);
       if (!peer) { sendError(response, 404, "File node not found"); return; }
-      const resolution = await proxyProjectFileResolution(peer, request.params.projectId, requestedPath);
-      response.json(projectFileLinks(request.params.projectId, resolution.path, requestedNodeId));
+      const resolution = await proxyProjectFileResolution(peer, request.params.projectId, requestedPath, taskId);
+      response.json(projectFileLinks(request.params.projectId, resolution.path, effectiveNodeId, taskId));
       return;
     }
-    const resolution = await projectFileResolution(request.params.projectId, requestedPath);
-    response.json(projectFileLinks(request.params.projectId, resolution.path));
+    const resolution = await projectFileResolution(request.params.projectId, requestedPath, taskId);
+    response.json(projectFileLinks(request.params.projectId, resolution.path, undefined, taskId));
   } catch (error) {
     if (error instanceof ProjectFileError) { sendError(response, error.status, error.message); return; }
     next(error);
@@ -3608,22 +3957,25 @@ app.get("/api/projects/:projectId/file-resolution", async (request, response, ne
 app.get("/api/projects/:projectId/file", async (request, response, next) => {
   try {
     const requestedPath = typeof request.query.path === "string" ? request.query.path : "";
-    const requestedNodeId = typeof request.query.nodeId === "string" ? request.query.nodeId : "";
+    let requestedNodeId = typeof request.query.nodeId === "string" ? request.query.nodeId : "";
+    const taskId = typeof request.query.taskId === "string" ? request.query.taskId : undefined;
     const local = await getClusterNode();
+    if (taskId) requestedNodeId = await taskOwnerNodeId(request.params.projectId, taskId, requestedNodeId);
     if (requestedNodeId && requestedNodeId !== local.id) {
       const peer = await getClusterPeer(requestedNodeId);
       if (!peer) { sendError(response, 404, "File node not found"); return; }
-      await proxyProjectFile(response, peer, request.params.projectId, requestedPath, request.query.download === "1");
+      await proxyProjectFile(response, peer, request.params.projectId, requestedPath, request.query.download === "1", taskId);
       return;
     }
-    await sendProjectFile(response, request.params.projectId, requestedPath, request.query.download === "1");
+    await sendProjectFile(response, request.params.projectId, requestedPath, request.query.download === "1", taskId);
   } catch (error) { next(error); }
 });
 
-async function proxyProjectFileContent(response: Response, peer: ClusterPeer, projectId: string, requestedPath: string, request?: Request): Promise<void> {
+async function proxyProjectFileContent(response: Response, peer: ClusterPeer, projectId: string, requestedPath: string, request?: Request, taskId?: string): Promise<void> {
   const url = new URL("/api/cluster/project-file-content", peer.url);
   url.searchParams.set("projectId", projectId);
   url.searchParams.set("path", requestedPath);
+  if (taskId) url.searchParams.set("taskId", taskId);
   const routed = await fetch(url, {
     method: request?.method ?? "GET",
     headers: { Authorization: `Bearer ${peer.token}`, ...(request ? { "Content-Type": "application/json" } : {}) },
@@ -3635,8 +3987,8 @@ async function proxyProjectFileContent(response: Response, peer: ClusterPeer, pr
   response.status(routed.status).send(await routed.text());
 }
 
-async function sendProjectFileContent(response: Response, projectId: string, requestedPath: string, payload?: z.infer<typeof projectFileUpdateSchema>): Promise<void> {
-  try { response.json(payload ? await updateProjectFileContent(projectId, requestedPath, payload) : await projectFileContent(projectId, requestedPath)); }
+async function sendProjectFileContent(response: Response, projectId: string, requestedPath: string, payload?: z.infer<typeof projectFileUpdateSchema>, taskId?: string): Promise<void> {
+  try { response.json(payload ? await updateProjectFileContent(projectId, requestedPath, payload, taskId) : await projectFileContent(projectId, requestedPath, taskId)); }
   catch (error) {
     if (error instanceof ProjectFileError) { sendError(response, error.status, error.message); return; }
     throw error;
@@ -3646,14 +3998,16 @@ async function sendProjectFileContent(response: Response, projectId: string, req
 app.get("/api/cluster/project-file-content", async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
-    await sendProjectFileContent(response, String(request.query.projectId ?? ""), String(request.query.path ?? ""));
+    const taskId = typeof request.query.taskId === "string" ? request.query.taskId : undefined;
+    await sendProjectFileContent(response, String(request.query.projectId ?? ""), String(request.query.path ?? ""), undefined, taskId);
   } catch (error) { next(error); }
 });
 
 app.put("/api/cluster/project-file-content", async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
-    await sendProjectFileContent(response, String(request.query.projectId ?? ""), String(request.query.path ?? ""), projectFileUpdateSchema.parse(request.body));
+    const taskId = typeof request.query.taskId === "string" ? request.query.taskId : undefined;
+    await sendProjectFileContent(response, String(request.query.projectId ?? ""), String(request.query.path ?? ""), projectFileUpdateSchema.parse(request.body), taskId);
   } catch (error) { next(error); }
 });
 
@@ -3661,15 +4015,17 @@ for (const method of ["get", "put"] as const) {
   app[method]("/api/projects/:projectId/file-content", async (request, response, next) => {
     try {
       const requestedPath = typeof request.query.path === "string" ? request.query.path : "";
-      const nodeId = typeof request.query.nodeId === "string" ? request.query.nodeId : "";
+      let nodeId = typeof request.query.nodeId === "string" ? request.query.nodeId : "";
+      const taskId = typeof request.query.taskId === "string" ? request.query.taskId : undefined;
       const local = await getClusterNode();
+      if (taskId) nodeId = await taskOwnerNodeId(request.params.projectId, taskId, nodeId);
       if (nodeId && nodeId !== local.id) {
         const peer = await getClusterPeer(nodeId);
         if (!peer) { sendError(response, 404, "File node not found"); return; }
-        await proxyProjectFileContent(response, peer, request.params.projectId, requestedPath, method === "put" ? request : undefined);
+        await proxyProjectFileContent(response, peer, request.params.projectId, requestedPath, method === "put" ? request : undefined, taskId);
         return;
       }
-      await sendProjectFileContent(response, request.params.projectId, requestedPath, method === "put" ? projectFileUpdateSchema.parse(request.body) : undefined);
+      await sendProjectFileContent(response, request.params.projectId, requestedPath, method === "put" ? projectFileUpdateSchema.parse(request.body) : undefined, taskId);
     } catch (error) { next(error); }
   });
 }
@@ -3949,10 +4305,14 @@ function activeUpdateRecoveries(): UpdateRecoveryRecord[] {
     records.push(updateRecoveryRecord({ kind: "chat", engine: "claude", projectId: connection.project.id, cwd: connection.cwd, sessionId: connection.claude.sessionId ?? "", sessionPath: connection.claude.filePath ? `claude:${connection.claude.filePath}` : "", taskId: null, phase: null, queuedPrompts: [], model: connection.claude.model, effort: connection.claude.effort }));
   }
   for (const [shared, run] of piTaskRuns) {
+    if (run.kind === "merge") continue;
     const session = shared.handle.session;
     records.push(updateRecoveryRecord({ kind: "task", engine: "pi", projectId: run.projectId, cwd: shared.cwd, sessionId: session.sessionId, sessionPath: session.sessionFile ?? run.sessionPath ?? "", taskId: run.taskId, phase: run.phase, queuedPrompts: [...session.getSteeringMessages(), ...session.getFollowUpMessages()], model: null, effort: null }));
   }
-  for (const run of claudeTaskRuns.values()) records.push(updateRecoveryRecord({ kind: "task", engine: "claude", projectId: run.projectId, cwd: run.cwd, sessionId: run.sessionId, sessionPath: run.sessionPath, taskId: run.taskId, phase: run.phase, queuedPrompts: [], model: run.model, effort: run.effort }));
+  for (const run of claudeTaskRuns.values()) {
+    if (run.kind === "merge") continue;
+    records.push(updateRecoveryRecord({ kind: "task", engine: "claude", projectId: run.projectId, cwd: run.cwd, sessionId: run.sessionId, sessionPath: run.sessionPath, taskId: run.taskId, phase: run.phase, queuedPrompts: [], model: run.model, effort: run.effort }));
+  }
   return records;
 }
 
@@ -3992,6 +4352,7 @@ interface PiTaskRun {
   leaseToken: string;
   phase: TaskPhase;
   sessionPath: string | null;
+  kind?: "phase" | "merge";
 }
 
 interface ClaudeTaskRun {
@@ -4005,6 +4366,7 @@ interface ClaudeTaskRun {
   sessionPath: string;
   model: string | null;
   effort: string | null;
+  kind?: "phase" | "merge";
 }
 
 const piTaskRuns = new Map<SharedPiSession, PiTaskRun>();
@@ -4040,6 +4402,175 @@ function taskRunActive(taskId: string): boolean {
     if (run.taskId === taskId) return true;
   }
   return false;
+}
+
+// ---- Ticket merge-back (TICKET-MERGE-PLAN.md) ----
+
+const mergeReservations = new Map<string, string>();
+const taskTerminalCounts = new Map<string, number>();
+
+let reservedProjectId: string | undefined;
+
+function acquireTaskMergeReservation(task: TaskRecord, projectId?: string): void {
+  reservedProjectId = projectId;
+  if (mergeReservations.has(task.id)) throw new TicketMergeError(409, "A merge operation is already running for this ticket");
+  if (taskRunActive(task.id)) throw new TicketMergeError(409, "Wait for the ticket agent to finish before merging");
+  if (task.executionState === "handoff_pending") throw new TicketMergeError(409, "Ticket handoff is awaiting destination commit");
+  if ((taskTerminalCounts.get(task.id) ?? 0) > 0) throw new TicketMergeError(409, "Close the ticket terminal before merging");
+  if (task.leaseOwnerNodeId && task.leaseExpiresAt && Date.parse(task.leaseExpiresAt) > Date.now()) throw new TicketMergeError(409, "Ticket lease is active");
+  if (task.mergeTx === "open") throw new TicketMergeError(409, "A merge transaction is in progress; it must finish or recover first");
+  mergeReservations.set(task.id, reservedProjectId ?? "");
+}
+
+function releaseTaskMergeReservation(taskId: string): void {
+  mergeReservations.delete(taskId);
+}
+
+function projectHasMergeReservation(projectId: string): boolean {
+  for (const owner of mergeReservations.values()) if (owner === projectId) return true;
+  return false;
+}
+
+const mergeInstructions = `Merge instructions:
+- The ticket workspace was merged with the project folder and conflict markers were staged under .joint-bob-merge/staged/.
+- For every file in .joint-bob-merge/staged/ containing "<<<<<<< JB-MERGE" markers, resolve the conflict so the result serves the ticket's goal, then remove every marker line.
+- Touch nothing outside .joint-bob-merge/staged/.
+- Binary choices and delete-versus-edit decisions are listed in .joint-bob-merge/conflicts.json; resolve what you can by writing the chosen bytes to the staged path, and report the rest.`;
+
+async function mergeRunPrompt(project: ProjectRecord, task: TaskRecord): Promise<string> {
+  const conflicts = await ticketMergeConflicts(task);
+  const list = conflicts.map((entry) => `- ${entry.path} (${entry.kind}${entry.reason ? `, ${entry.reason}` : ""})`).join("\n");
+  return [mergeInstructions, `Ticket workspace: ${task.worktreePath}`, "Conflicts:", list].filter(Boolean).join("\n\n");
+}
+
+async function startMergeRun(project: ProjectRecord, task: TaskRecord): Promise<void> {
+  // Tests run without a model round-trip; the ticket parks for human resolution instead.
+  if (process.env.JOINT_BOB_MERGE_AGENT === "off") throw new TicketMergeError(409, "Merge agent runs are disabled on this node");
+  const local = await getClusterNode();
+  if (task.currentNodeId !== local.id) return;
+  const { task: claimed, leaseToken } = await claimTaskLease(project.id, task.id, local.id, 600_000, "merge");
+  broadcastToProject(project.id, { type: "tasksChanged" });
+  let shared: SharedPiSession | undefined;
+  try {
+    const cwd = taskCwd(project, claimed);
+    const prompt = await mergeRunPrompt(project, claimed);
+    const finishMerge = async (): Promise<void> => {
+      // Release the run lease first: the reservation check refuses an active lease,
+      // and by now the agent turn is over anyway.
+      let current = (await listTasks(project.id)).find((candidate) => candidate.id === task.id);
+      if (!current) return;
+      try {
+        await completeTaskLease(project.id, task.id, local.id, leaseToken, {});
+        current = (await listTasks(project.id)).find((candidate) => candidate.id === task.id) ?? current;
+      } catch (error) {
+        console.warn("Ticket merge lease release failed", error);
+        await releaseTaskLease(project.id, task.id, local.id, leaseToken, "idle").catch(() => undefined);
+      }
+      acquireTaskMergeReservation(current, project.id);
+      try {
+        const outcome = await completeTicketMergeRun(project, current);
+        if (outcome.problems.length || outcome.remaining > 0) console.warn(`Ticket merge parked with ${outcome.remaining} conflicts`, task.id);
+      } catch (error) {
+        console.warn("Ticket merge completion failed", error);
+        // Fail closed on mergeTx: if a transaction is still open, it stays open for
+        // recovery; only the warning and the conflicts state are recorded here.
+        const after = (await listTasks(project.id)).find((candidate) => candidate.id === task.id) ?? current;
+        await updateTask(project.id, task.id, { mergeState: "conflicts", ...(after.mergeTx === "open" ? {} : { mergeTx: null }), mergeWarning: error instanceof Error ? error.message : "Merge run failed" }).catch(() => undefined);
+      } finally {
+        releaseTaskMergeReservation(task.id);
+      }
+      broadcastToProject(project.id, { type: "tasksChanged" });
+      broadcastToProject(project.id, { type: "sessionsChanged" });
+    };
+    if (claimed.engine === "claude") {
+      const resumeSessionId = claimed.sessionPath?.startsWith("claude:") ? path.basename(claimed.sessionPath.replace(/^claude:/, ""), ".jsonl") : undefined;
+      const sessionId = resumeSessionId ?? randomUUID();
+      await claimConversationAcrossCluster("claude", sessionId, local.id);
+      const run = runClaudePrompt({ cwd, prompt, env: agentEnvironment(project.id, { engine: "claude", sessionId }), resumeSessionId, sessionId: resumeSessionId ? undefined : sessionId, onEvent: () => undefined });
+      claudeTaskRuns.set(task.id, { child: run.child, projectId: project.id, taskId: claimed.id, leaseToken, phase: "review", cwd, sessionId, sessionPath: claimed.sessionPath ?? `claude:${claudeSessionFilePath(cwd, sessionId)}`, model: null, effort: null, kind: "merge" });
+      run.done
+        .then(async () => {
+          if (claudeTaskRuns.get(task.id)?.leaseToken !== leaseToken) return;
+          if (claudeTaskRuns.get(task.id)?.leaseToken === leaseToken) claudeTaskRuns.delete(task.id);
+          await finishMerge();
+        })
+        .catch(async (error) => {
+          if (claudeTaskRuns.get(task.id)?.leaseToken !== leaseToken) return;
+          claudeTaskRuns.delete(task.id);
+          console.warn("Ticket merge agent run failed", error);
+          await releaseTaskLease(project.id, task.id, local.id, leaseToken, "idle");
+          await updateTask(project.id, task.id, { mergeState: "conflicts", mergeTx: null, mergeWarning: error instanceof Error ? error.message : "Merge agent run failed" }).catch(() => undefined);
+          broadcastToProject(project.id, { type: "tasksChanged" });
+        });
+      return;
+    }
+    const samePiSession = claimed.sessionPath && !claimed.sessionPath.startsWith("claude:") ? claimed.sessionPath : undefined;
+    const newSessionId = samePiSession ? undefined : randomUUID();
+    let conversationId: string | undefined = newSessionId;
+    if (samePiSession) {
+      const listed = (await listHarnessSessions({ ...project, additionalPaths: [cwd] })).find((session) => session.path === samePiSession);
+      if (!listed) throw new Error("Task conversation was not found");
+      conversationId = listed.id;
+      await claimConversationAcrossCluster("pi", listed.id, local.id);
+    } else await claimConversationAcrossCluster("pi", newSessionId!, local.id);
+    shared = await getSharedSession(project.id, cwd, samePiSession, newSessionId);
+    piTaskRuns.set(shared, { projectId: project.id, taskId: claimed.id, title: claimed.title, conversationId: conversationId!, leaseToken, phase: "review", sessionPath: null, kind: "merge" });
+    await persistPiTaskSession(shared);
+    promptIdlePiSession(shared.handle, prompt)
+      .then(async () => {
+        if (piTaskRuns.get(shared!)?.leaseToken !== leaseToken) return;
+        if (piTaskRuns.get(shared!)?.leaseToken === leaseToken) piTaskRuns.delete(shared!);
+        await finishMerge();
+      })
+      .catch(async (error) => {
+        if (piTaskRuns.get(shared!)?.leaseToken !== leaseToken) return;
+        piTaskRuns.delete(shared!);
+        console.warn("Ticket merge agent run failed", error);
+        await releaseTaskLease(project.id, task.id, local.id, leaseToken, "idle");
+        await updateTask(project.id, task.id, { mergeState: "conflicts", mergeTx: null, mergeWarning: error instanceof Error ? error.message : "Merge agent run failed" }).catch(() => undefined);
+        broadcastToProject(project.id, { type: "tasksChanged" });
+      });
+  } catch (error) {
+    if (shared && piTaskRuns.get(shared)?.leaseToken === leaseToken) piTaskRuns.delete(shared);
+    if (claudeTaskRuns.get(task.id)?.leaseToken === leaseToken) claudeTaskRuns.delete(task.id);
+    await releaseTaskLease(project.id, task.id, local.id, leaseToken, "idle");
+    await updateTask(project.id, task.id, { mergeState: "conflicts", mergeTx: null, mergeWarning: error instanceof Error ? error.message : "Merge run failed" }).catch(() => undefined);
+    broadcastToProject(project.id, { type: "tasksChanged" });
+    throw error;
+  }
+}
+
+async function recoverProjectMergeTransactions(project: ProjectRecord): Promise<void> {
+  const recovered = await recoverMergeTransactions(async (projectId) => (projectId === project.id ? await realpath(project.path) : null));
+  for (const outcome of recovered) {
+    const task = (await listTasks(outcome.projectId)).find((candidate) => candidate.id === outcome.taskId);
+    if (!task || task.mergeTx !== "open") continue;
+    if (outcome.outcome === "rolled-back") await updateTask(outcome.projectId, task.id, { mergeState: "conflicts", mergeTx: null, mergeWarning: "Merge transaction was interrupted and rolled back" });
+    else await updateTask(outcome.projectId, task.id, { mergedAt: task.mergedAt ?? new Date().toISOString(), mergeState: "merged", mergeTx: null, mergeDigests: null });
+  }
+}
+
+async function beginTaskMergeIfNeeded(project: ProjectRecord, task: TaskRecord): Promise<TaskRecord | null> {
+  const local = await getClusterNode();
+  if (task.currentNodeId !== local.id) return null;
+  if (!task.worktreePath || task.worktreeBranch) return null;
+  if (task.mergeState === "merged") return null;
+  if (taskRunActive(task.id)) return null;
+  if (task.mergeTx === "open") {
+    // Pre-mutation recovery: settle interrupted transactions before touching state.
+    await recoverProjectMergeTransactions(project).catch((error) => console.warn("Merge transaction recovery failed", error));
+    return null;
+  }
+  acquireTaskMergeReservation(task, project.id);
+  try {
+    const { task: updated, prepared } = await beginTicketMerge(project, task);
+    if (prepared.conflicts.length) {
+      await startMergeRun(project, updated).catch((error) => console.warn("Ticket merge agent run failed to start", error));
+    }
+    return (await listTasks(project.id)).find((candidate) => candidate.id === task.id) ?? updated;
+  } finally {
+    releaseTaskMergeReservation(task.id);
+  }
 }
 
 const planInstructions = `Plan mode instructions:
@@ -4159,6 +4690,10 @@ async function startTaskRun(project: ProjectRecord, task: TaskRecord, requestedP
           await finishTaskPhase(project, claimed, phase, sessionPath, leaseToken);
           if (recovery) await completeUpdateRecovery(recovery.recoveryId);
           if (claudeTaskRuns.get(task.id)?.leaseToken === leaseToken) claudeTaskRuns.delete(task.id);
+          // Moving to Done starts the merge back (TICKET-MERGE-PLAN.md §9); only after
+          // the run unregisters, so taskRunActive no longer sees it.
+          const doneTask = (await listTasks(project.id)).find((candidate) => candidate.id === task.id);
+          if (doneTask?.status === "done") await beginTaskMergeIfNeeded(project, doneTask).catch((error) => console.warn("Ticket merge failed to start", error));
         })
         .catch(async (error) => {
           if (claudeTaskRuns.get(task.id)?.leaseToken !== leaseToken) {
@@ -4194,6 +4729,9 @@ async function startTaskRun(project: ProjectRecord, task: TaskRecord, requestedP
         await finishPiTaskRun({ projectId: project.id, taskId: claimed.id, title: claimed.title, conversationId: conversationId!, leaseToken, phase, sessionPath: null }, shared!.handle.session.sessionFile ?? null);
         if (recovery) await completeUpdateRecovery(recovery.recoveryId);
         if (piTaskRuns.get(shared!)?.leaseToken === leaseToken) piTaskRuns.delete(shared!);
+        // Moving to Done starts the merge back; only after the run unregisters.
+        const doneTask = (await listTasks(project.id)).find((candidate) => candidate.id === task.id);
+        if (doneTask?.status === "done") await beginTaskMergeIfNeeded(project, doneTask).catch((error) => console.warn("Ticket merge failed to start", error));
       })
       .catch(async (error) => {
         if (piTaskRuns.get(shared!)?.leaseToken !== leaseToken) {
@@ -5099,6 +5637,20 @@ webSocketServer.on("connection", async (socket, request) => {
       socket.close(1008, `Project is locked by ${lockedByPeer.nodeName}`);
       return;
     }
+    if (task) {
+      const mergeBusy = task.mergeState === "conflicts" || task.mergeState === "resolved" || mergeReservations.has(task.id);
+      if (mergeBusy) {
+        socket.close(4030, "Ticket merge in progress");
+        return;
+      }
+      const count = (taskTerminalCounts.get(task.id) ?? 0) + 1;
+      taskTerminalCounts.set(task.id, count);
+      socket.once("close", () => {
+        const remaining = (taskTerminalCounts.get(task.id) ?? 1) - 1;
+        if (remaining <= 0) taskTerminalCounts.delete(task.id);
+        else taskTerminalCounts.set(task.id, remaining);
+      });
+    }
     attachTerminalSession(socket, task ? taskCwd(project, task) : project.path, local.id);
     return;
   }
@@ -5600,10 +6152,35 @@ async function flushReplicationOutbox(): Promise<void> {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   startupReady = false;
   startupError = undefined;
-  server.listen(port, "0.0.0.0", () => {
+  // Interrupted merge transactions roll back before the node accepts any traffic
+  // (TICKET-MERGE-PLAN.md §8); committed ones reconcile their task records.
+  const recoverMerges = async (): Promise<void> => {
+    const recovered = await recoverMergeTransactions(async (projectId) => {
+      const project = await getProject(projectId);
+      return project ? await realpath(project.path) : null;
+    });
+    for (const outcome of recovered) {
+      const task = (await listTasks(outcome.projectId)).find((candidate) => candidate.id === outcome.taskId);
+      if (!task) continue;
+      // Rolled-back rows keep returning until reconciled; skip settled tasks.
+      if (task.mergeTx !== "open") continue;
+      if (outcome.outcome === "rolled-back") {
+        await updateTask(outcome.projectId, task.id, { mergeState: "conflicts", mergeTx: null, mergeWarning: "Merge transaction was interrupted and rolled back" });
+      } else {
+        await updateTask(outcome.projectId, task.id, { mergedAt: task.mergedAt ?? new Date().toISOString(), mergeState: "merged", mergeTx: null, mergeDigests: null });
+      }
+    }
+  };
+  openMergeTransactionCount().then((count) => {
+    if (count > 0) console.log(`Recovering ${count} interrupted merge transaction(s) before accepting traffic`);
+  }).catch(() => undefined);
+  recoverMerges()
+    .then(() => {
+  const bindHost = process.env.JOINT_BOB_BIND_HOST || "0.0.0.0";
+  server.listen(port, bindHost, () => {
     const address = server.address();
     const listeningPort = typeof address === "object" && address ? address.port : port;
-    console.log(`Joint Bob listening on http://0.0.0.0:${listeningPort}`);
+    console.log(`Joint Bob listening on http://${bindHost}:${listeningPort}`);
     initializeStartupReadiness()
       .then(async () => { await recoverPendingUpdateRuns(); await reconcileTicketWorkspaceSync(); })
       .catch((error) => console.warn("Ticket workspace sync failed", error));
@@ -5625,4 +6202,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       reconcileTaskHandoffs().catch((error) => console.warn("Task handoff reconciliation failed", error));
     }, 2_000).unref();
   });
+  })
+    .catch((error) => {
+      // Fail closed: a node that cannot settle its merge transactions must not
+      // accept mutating traffic (TICKET-MERGE-PLAN.md §8).
+      console.error("Merge transaction recovery failed; refusing to start", error);
+      process.exit(1);
+    });
 }

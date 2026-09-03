@@ -423,6 +423,12 @@ const elements = {
   confirmCancelButton: document.querySelector("#confirmCancelButton"),
   confirmAcceptButton: document.querySelector("#confirmAcceptButton"),
   choiceDialog: document.querySelector("#choiceDialog"),
+  mergeConflictDialog: document.querySelector("#mergeConflictDialog"),
+  mergeConflictEyebrow: document.querySelector("#mergeConflictEyebrow"),
+  mergeConflictTitle: document.querySelector("#mergeConflictTitle"),
+  mergeConflictMessage: document.querySelector("#mergeConflictMessage"),
+  mergeConflictList: document.querySelector("#mergeConflictList"),
+  mergeConflictDoneButton: document.querySelector("#mergeConflictDoneButton"),
   choiceEyebrow: document.querySelector("#choiceEyebrow"),
   choiceTitle: document.querySelector("#choiceTitle"),
   choiceMessage: document.querySelector("#choiceMessage"),
@@ -2932,10 +2938,11 @@ function projectFileUrl(filePath, download = false) {
   return `${url.pathname}${url.search}`;
 }
 
-function projectFileApiUrl(route, filePath) {
+function projectFileApiUrl(route, filePath, taskId = state.activeTaskId) {
   const url = new URL(`/api/projects/${encodeURIComponent(state.activeProjectId)}/${route}`, location.origin);
   url.searchParams.set("path", filePath);
   if (state.activeNodeId) url.searchParams.set("nodeId", state.activeNodeId);
+  if (taskId) url.searchParams.set("taskId", taskId);
   return url;
 }
 
@@ -2960,7 +2967,7 @@ function resetFileEditor() {
   elements.fileActionEditButton.disabled = true;
 }
 
-async function openFileAction(path) {
+async function openFileAction(path, taskId) {
   if (!state.activeProjectId || !path) return;
   resetFileEditor();
   state.fileEditor.requestedPath = path;
@@ -2968,7 +2975,7 @@ async function openFileAction(path) {
   elements.fileActionDialog.showModal();
   elements.fileActionStatus.textContent = "Finding file...";
   try {
-    const body = await api(projectFileResolutionUrl(path));
+    const body = await api(`${projectFileApiUrl("file-resolution", path, taskId).pathname}${projectFileApiUrl("file-resolution", path, taskId).search}`);
     if (!elements.fileActionDialog.open || state.fileEditor.requestedPath !== path) return;
     Object.assign(state.fileEditor, { path: body.path, viewUrl: body.viewUrl, downloadUrl: body.downloadUrl, contentUrl: body.contentUrl });
     elements.fileActionPath.textContent = body.path;
@@ -4506,6 +4513,10 @@ function renderBoardView() {
       openSession(task.sessionPath, task.title, false, true);
     },
     onMerge: mergeTask,
+    onMergeResume: resumeTaskMerge,
+    onMergeConflicts: openMergeConflictDialog,
+    onMergeRestart: restartTaskMerge,
+    onDiscard: discardTaskChanges,
     onHandoff: handoffTask,
     onArchive: archiveTask,
     onDelete: deleteTaskFromCard,
@@ -4758,10 +4769,13 @@ async function archiveTask(task) {
 }
 
 async function mergeTask(task) {
+  const fsCopWorkspace = task.worktreePath && !task.worktreeBranch;
   const confirmed = await confirmAction({
     eyebrow: "Merge task",
-    title: `Merge committed changes from "${task.title}" into main?`,
-    confirmLabel: "Merge into main",
+    title: fsCopWorkspace
+      ? `Merge workspace changes from "${task.title}" back into the project?`
+      : `Merge committed changes from "${task.title}" into main?`,
+    confirmLabel: fsCopWorkspace ? "Merge back" : "Merge into main",
   });
   if (!confirmed) return;
   try {
@@ -4770,7 +4784,140 @@ async function mergeTask(task) {
     });
     state.tasks = state.tasks.map((item) => (item.id === task.id ? body.task : item));
     renderBoardView();
-    toast(`Merged "${task.title}" into main`);
+    toast(fsCopWorkspace ? `Merged "${task.title}" into the project` : `Merged "${task.title}" into main`);
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function openMergeConflictDialog(task) {
+  const dialog = elements.mergeConflictDialog;
+  if (!dialog) return;
+  elements.mergeConflictEyebrow.textContent = "Merge conflicts";
+  elements.mergeConflictTitle.textContent = `Resolve merge — ${task.title}`;
+  const list = elements.mergeConflictList;
+  list.replaceChildren();
+  elements.mergeConflictMessage.textContent = "Text conflicts are edited in the file view; binary and delete choices are picked here.";
+  let conflicts = [];
+  try {
+    const body = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/tasks/${encodeURIComponent(task.id)}/merge-conflicts`);
+    conflicts = body.conflicts ?? [];
+  } catch (error) {
+    toast(error.message);
+    return;
+  }
+  if (task.mergeWarning) {
+    const warning = document.createElement("p");
+    warning.className = "merge-warning";
+    warning.dataset.testid = "merge-warning";
+    warning.textContent = task.mergeWarning;
+    list.append(warning);
+  }
+  for (const conflict of conflicts) {
+    const row = document.createElement("div");
+    row.className = "choice-option merge-conflict-row";
+    row.dataset.testid = "merge-conflict-row";
+    const copy = document.createElement("div");
+    copy.className = "choice-option-copy";
+    const label = document.createElement("span");
+    label.className = "choice-option-label";
+    label.textContent = conflict.path;
+    const hint = document.createElement("span");
+    hint.className = "choice-option-hint";
+    hint.textContent = conflict.kind === "text" ? "Text conflict — edit the staged file, removing every JB-MERGE marker" : `Choice (${conflict.reason ?? "binary"}) — pick a side`;
+    copy.append(label, hint);
+    row.append(copy);
+    if (conflict.kind === "text") {
+      const edit = document.createElement("button");
+      edit.type = "button";
+      edit.className = "ghost";
+      edit.dataset.testid = "merge-conflict-edit-button";
+      edit.textContent = "Edit staged file";
+      edit.addEventListener("click", () => {
+        dialog.close();
+        openFileAction(`.joint-bob-merge/staged/${conflict.path}`, task.id);
+      });
+      row.append(edit);
+      list.append(row);
+      continue;
+    }
+    for (const side of ["workspace", "project"]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = side === "project" ? "ghost" : "primary";
+      button.dataset.testid = `merge-conflict-${side}-button`;
+      button.textContent = side === "workspace" ? "Take ticket" : "Take project";
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        try {
+          const body = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/tasks/${encodeURIComponent(task.id)}/merge-resolve`, { method: "POST", body: JSON.stringify({ path: conflict.path, side }) });
+          state.tasks = state.tasks.map((item) => (item.id === task.id ? body.task : item));
+          row.remove();
+          renderBoardView();
+          toast(body.task.conflictCount === 0 ? "All conflicts resolved — merge when ready" : `${body.task.conflictCount} conflict(s) left`);
+        } catch (error) {
+          toast(error.message);
+          button.disabled = false;
+        }
+      });
+      row.append(button);
+    }
+    list.append(row);
+  }
+  if (!conflicts.length) {
+    const none = document.createElement("p");
+    none.textContent = "No unresolved conflicts. Finish the merge from the ticket menu.";
+    list.append(none);
+  }
+  elements.mergeConflictDoneButton.addEventListener("click", () => dialog.close(), { once: true });
+  if (dialog.open) dialog.close();
+  dialog.showModal();
+}
+
+async function resumeTaskMerge(task) {
+  try {
+    const body = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/tasks/${encodeURIComponent(task.id)}/merge-resume`, { method: "POST" });
+    state.tasks = state.tasks.map((item) => (item.id === task.id ? body.task : item));
+    renderBoardView();
+    toast(`Ticket agent is resolving ${task.conflictCount ?? 0} merge conflict(s)`);
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function restartTaskMerge(task) {
+  const confirmed = await confirmAction({
+    eyebrow: "Restart merge",
+    title: `Recompute the merge for "${task.title}" from scratch?`,
+    message: "Partial conflict resolutions in the staging area are discarded.",
+    confirmLabel: "Restart merge",
+    destructive: true,
+  });
+  if (!confirmed) return;
+  try {
+    const body = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/tasks/${encodeURIComponent(task.id)}/merge-restart`, { method: "POST" });
+    state.tasks = state.tasks.map((item) => (item.id === task.id ? body.task : item));
+    renderBoardView();
+    toast("Merge restarted");
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function discardTaskChanges(task) {
+  const confirmed = await confirmAction({
+    eyebrow: "Discard changes",
+    title: `Discard the workspace changes of "${task.title}"?`,
+    message: "Nothing is merged; the project keeps its current state and the workspace is removed.",
+    confirmLabel: "Discard changes",
+    destructive: true,
+  });
+  if (!confirmed) return;
+  try {
+    const body = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/tasks/${encodeURIComponent(task.id)}/discard`, { method: "POST" });
+    state.tasks = state.tasks.map((item) => (item.id === task.id ? body.task : item));
+    renderBoardView();
+    toast(`Discarded "${task.title}" changes`);
   } catch (error) {
     toast(error.message);
   }

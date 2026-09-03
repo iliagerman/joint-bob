@@ -79,5 +79,5 @@ test("browser warns during update and refreshes cached shell", async () => {
   const [app, worker] = await Promise.all([readFile("public/app.js", "utf8"), readFile("public/sw.js", "utf8")]);
   assert.match(app, /payload\.type === "updatePreparing"/);
   assert.match(app, /Updating\.\.\. Work will resume automatically\./);
-  assert.match(worker, /joint-bob-v101/);
+  assert.match(worker, /joint-bob-v102/);
 });

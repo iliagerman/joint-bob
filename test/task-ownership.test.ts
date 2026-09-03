@@ -574,7 +574,7 @@ test("task deletion preserves active task records and permits stale failed lease
     const projectId = "task-delete-project";
     const taskFor = (id: string, executionState: TaskRecord["executionState"], leaseOwnerNodeId: string | null, leaseExpiresAt: string | null): TaskRecord => ({
       id, title: id, description: "task", status: "backlog", engine: "pi", planMode: false, reviewMode: false, phaseConfig: {},
-      sessionPath: null, worktreePath: "/task-worktree", worktreeBranch: "pi-ticket/task-delete", mergedAt: null, currentNodeId: local.id,
+      sessionPath: null, worktreePath: "/task-worktree", worktreeBranch: "pi-ticket/task-delete", mergedAt: null, mergeState: "none", conflictCount: 0, mergeWarning: null, mergeTx: null, mergeDigests: null, runKind: null, currentNodeId: local.id,
       leaseOwnerNodeId, leaseExpiresAt, executionState, handoffContext: null, originNodeId: local.id,
       createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z",
     });

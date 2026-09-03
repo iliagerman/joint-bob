@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { managedHomePaths } from "./managed-home.js";
@@ -5,6 +6,11 @@ import { getSettings } from "./settings.js";
 
 export const TICKET_WORKSPACE_FOLDER_ID = "joint-bob-ticket-workspaces";
 export const TICKET_WORKSPACE_FOLDER_LABEL = "Joint Bob ticket workspaces";
+
+/** Sync-visible (Syncthing ignores exactly `.joint-bob/`) baseline snapshot inside a ticket workspace. */
+export const TICKET_BASELINE_DIR = ".joint-bob-baseline";
+/** Staged merge tree and conflict state inside a ticket workspace (TICKET-MERGE-PLAN.md §3). */
+export const TICKET_MERGE_DIR = ".joint-bob-merge";
 
 const excludedDirectories = new Set([
   ".git", "node_modules", ".venv", "venv", "dist", "build", "coverage", "__pycache__",
@@ -42,7 +48,7 @@ export function taskWorkspaceKey(workspacePath: string, taskId: string): string 
   return key;
 }
 
-function copyAllowed(projectPath: string, sourcePath: string): boolean {
+export function copyAllowed(projectPath: string, sourcePath: string): boolean {
   const relative = path.relative(projectPath, sourcePath);
   if (!relative) return true;
   const name = path.basename(sourcePath);
@@ -50,6 +56,36 @@ function copyAllowed(projectPath: string, sourcePath: string): boolean {
   if (excludedFiles.has(name) || name === ".env" || name.startsWith(".env.")) return false;
   if (/^service-account.*\.json$/i.test(name) || excludedExtensions.has(path.extname(name).toLowerCase())) return false;
   return !excludedPrefixes.some((prefix) => name.startsWith(prefix));
+}
+
+// The baseline is the trust root for the later three-way merge back into the project
+// (TICKET-MERGE-PLAN.md §4): the full content of every copied file plus a hash
+// manifest, so any node can diff3 without a git history.
+async function captureBaseline(workspace: string): Promise<void> {
+  const baseline = path.join(workspace, TICKET_BASELINE_DIR);
+  await fs.mkdir(baseline, { recursive: true });
+  const files: Record<string, { sha256: string; mode: number } | { symlink: true }> = {};
+  // Walk the just-written copy, not the live source: concurrent edits to the
+  // project during creation can otherwise leave workspace and baseline disagreeing.
+  const entries = await fs.readdir(workspace, { recursive: true, withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isFile() && !entry.isSymbolicLink()) continue;
+    const sourcePath = path.join(entry.parentPath, entry.name);
+    const top = path.relative(workspace, entry.parentPath).split(path.sep)[0];
+    if (top === TICKET_BASELINE_DIR) continue;
+    if (!copyAllowed(workspace, sourcePath)) continue;
+    const relative = path.relative(workspace, sourcePath).split(path.sep).join("/");
+    if (entry.isSymbolicLink()) {
+      files[relative] = { symlink: true };
+      continue;
+    }
+    const [bytes, info] = await Promise.all([fs.readFile(sourcePath), fs.stat(sourcePath)]);
+    const target = path.join(baseline, relative);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, bytes, { mode: info.mode });
+    files[relative] = { sha256: createHash("sha256").update(bytes).digest("hex"), mode: info.mode & 0o7777 };
+  }
+  await fs.writeFile(path.join(baseline, "manifest.json"), `${JSON.stringify({ version: 1, files }, null, 2)}\n`);
 }
 
 export async function createTaskWorkspace(projectPath: string, projectId: string, taskId: string, root = ticketWorkspaceRoot()): Promise<string> {
@@ -60,6 +96,7 @@ export async function createTaskWorkspace(projectPath: string, projectId: string
   await fs.mkdir(path.dirname(workspace), { recursive: true });
   try {
     await fs.cp(source, workspace, { recursive: true, force: false, errorOnExist: true, filter: (entry) => copyAllowed(source, entry) });
+    await captureBaseline(workspace);
     return workspace;
   } catch (error) {
     await fs.rm(workspace, { recursive: true, force: true });

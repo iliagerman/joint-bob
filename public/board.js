@@ -78,6 +78,52 @@ function iconButton({ icon, label, testid, className = "", disabled = false, tit
  */
 function taskMenuItems(task, handlers) {
   const items = [];
+  if (!task.worktreeBranch && (task.worktreePath || task.mergeState !== "none")) {
+    const conflicts = task.conflictCount ?? 0;
+    if (task.mergeState === "conflicts" || task.mergeState === "resolved") {
+      items.push({
+        label: `Resolve conflicts (${conflicts})`,
+        icon: "merge",
+        testid: "board-task-merge-conflicts-button",
+        disabled: task.executionState === "running",
+        title: "Pick sides for binary conflicts and open staged text files",
+        onSelect: () => handlers.onMergeConflicts(task),
+      });
+      items.push({
+        label: "Resume merge agent",
+        icon: "merge",
+        testid: "board-task-merge-resume-button",
+        disabled: task.executionState === "running",
+        title: "Send the ticket agent to resolve the staged merge conflicts",
+        onSelect: () => handlers.onMergeResume(task),
+      });
+      items.push({
+        label: "Restart merge",
+        icon: "merge",
+        testid: "board-task-merge-restart-button",
+        disabled: task.executionState === "running",
+        title: "Recompute the merge from scratch, discarding partial resolutions",
+        onSelect: () => handlers.onMergeRestart(task),
+      });
+      items.push({
+        label: "Discard ticket changes",
+        icon: "trash",
+        testid: "board-task-discard-button",
+        danger: true,
+        title: "Drop the workspace without merging; the project keeps its current state",
+        onSelect: () => handlers.onDiscard(task),
+      });
+    } else if (!task.mergedAt) {
+      items.push({
+        label: "Merge back to project",
+        icon: "merge",
+        testid: "board-task-merge-button",
+        disabled: task.status !== "done" || task.executionState === "running",
+        title: task.status !== "done" ? "Move ticket to Done before merging" : "Merge the ticket workspace back into the project folder",
+        onSelect: () => handlers.onMerge(task),
+      });
+    }
+  }
   if (task.worktreeBranch) {
     items.push({
       label: task.mergedAt ? "Merged into main" : "Merge to main",
@@ -105,12 +151,15 @@ function taskMenuItems(task, handlers) {
     testid: "board-task-models-button",
     onSelect: () => handlers.onSettings(task),
   });
-  if (task.status !== "done") {
+  const fsCopWorkspace = !task.worktreeBranch && Boolean(task.worktreePath || task.mergeState !== "none");
+  const archiveBlockedByMerge = fsCopWorkspace && task.status === "done" && task.mergeState !== "merged";
+  if (task.status !== "done" || fsCopWorkspace) {
     items.push({
       label: "Archive",
       icon: "archive",
       testid: "board-task-archive-button",
-      disabled: task.executionState === "running" || task.executionState === "handoff_pending",
+      disabled: task.executionState === "running" || task.executionState === "handoff_pending" || archiveBlockedByMerge,
+      title: archiveBlockedByMerge ? "Merge the ticket workspace (or discard it) before archiving" : undefined,
       onSelect: () => handlers.onArchive(task),
     });
   }
@@ -238,6 +287,25 @@ function taskCard(task, handlers) {
     label.textContent = task.executionState === "running" ? "Running" : task.executionState.replace(/_/g, " ");
     state.append(dot, label);
     meta.append(state);
+  }
+  if (!task.worktreeBranch && (task.worktreePath || task.mergeState !== "none") && task.status === "done") {
+    const merge = document.createElement("b");
+    const conflicts = task.conflictCount ?? 0;
+    if (task.mergeState === "merged") {
+      merge.className = "task-state task-merge-state task-merge-merged";
+      merge.dataset.testid = "board-task-merge-chip";
+      merge.textContent = "Merged";
+    } else if (task.mergeState === "conflicts" || task.mergeState === "resolved") {
+      merge.className = "task-state task-merge-state task-merge-conflicts";
+      merge.dataset.testid = "board-task-merge-chip";
+      merge.textContent = `Merge: ${conflicts} conflict${conflicts === 1 ? "" : "s"}`;
+    } else {
+      merge.className = "task-state task-merge-state task-merge-pending";
+      merge.dataset.testid = "board-task-merge-chip";
+      merge.textContent = "Merge pending";
+    }
+    if (task.mergeWarning) merge.title = task.mergeWarning;
+    meta.append(merge);
   }
   body.append(meta);
   body.addEventListener("click", () => handlers.onEdit(task));

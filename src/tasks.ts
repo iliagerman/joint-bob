@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -18,8 +18,27 @@ const legacyTasksDir = path.join(dataDir, "tasks");
 let databasePromise: Promise<DatabaseSync> | undefined;
 export const TASK_STATUSES: TaskStatus[] = ["backlog", "planning", "in_progress", "review", "done"];
 export interface TaskDeletionVersion { updatedAt: string; originNodeId: string; }
-interface TaskRow { id: string; project_id: string; title: string; description: string; status: TaskStatus; engine: TaskEngine | null; plan_mode: number | null; review_mode: number | null; phase_config: string | null; session_path: string | null; worktree_path: string | null; worktree_branch: string | null; merged_at: string | null; created_at: string; updated_at: string; current_node_id: string; lease_owner_node_id: string | null; lease_expires_at: string | null; lease_token: string | null; execution_state: TaskExecutionState; handoff_context: string | null; origin_node_id: string; active_handoff_id: string | null; }
-function rowToTask(row: TaskRow): TaskRecord { return { id: row.id, title: row.title, description: row.description, status: row.status, engine: row.engine ?? "pi", planMode: row.plan_mode === 1, reviewMode: row.review_mode === 1, phaseConfig: row.phase_config ? JSON.parse(row.phase_config) as TaskRecord["phaseConfig"] : {}, sessionPath: row.session_path, worktreePath: row.worktree_path, worktreeBranch: row.worktree_branch, mergedAt: row.merged_at, currentNodeId: row.current_node_id, leaseOwnerNodeId: row.lease_owner_node_id, leaseExpiresAt: row.lease_expires_at, executionState: row.execution_state, handoffContext: row.handoff_context, originNodeId: row.origin_node_id, createdAt: row.created_at, updatedAt: row.updated_at }; }
+interface TaskRow { id: string; project_id: string; title: string; description: string; status: TaskStatus; engine: TaskEngine | null; plan_mode: number | null; review_mode: number | null; phase_config: string | null; session_path: string | null; worktree_path: string | null; worktree_branch: string | null; merged_at: string | null; created_at: string; updated_at: string; current_node_id: string; lease_owner_node_id: string | null; lease_expires_at: string | null; lease_token: string | null; execution_state: TaskExecutionState; handoff_context: string | null; origin_node_id: string; active_handoff_id: string | null; merge_state: string; conflict_count: number; merge_warning: string | null; merge_tx: string | null; merge_digests: string | null; run_kind: string | null; }
+function rowToTask(row: TaskRow): TaskRecord { return { id: row.id, title: row.title, description: row.description, status: row.status, engine: row.engine ?? "pi", planMode: row.plan_mode === 1, reviewMode: row.review_mode === 1, phaseConfig: row.phase_config ? JSON.parse(row.phase_config) as TaskRecord["phaseConfig"] : {}, sessionPath: row.session_path, worktreePath: row.worktree_path, worktreeBranch: row.worktree_branch, mergedAt: row.merged_at, currentNodeId: row.current_node_id, leaseOwnerNodeId: row.lease_owner_node_id, leaseExpiresAt: row.lease_expires_at, executionState: row.execution_state, handoffContext: row.handoff_context, originNodeId: row.origin_node_id, ...normalizeMergeFields(row), createdAt: row.created_at, updatedAt: row.updated_at }; }
+// Rows written before the merge columns existed (and legacy JSON fixtures) carry
+// NULLs; every reader gets the defaults instead of leaking null into TaskRecord.
+function normalizeMergeFields(row: Partial<TaskRow>): Pick<TaskRecord, "mergeState" | "conflictCount" | "mergeWarning" | "mergeTx" | "mergeDigests" | "runKind"> {
+  return {
+    mergeState: (row.merge_state as TaskRecord["mergeState"]) ?? "none",
+    conflictCount: row.conflict_count ?? 0,
+    mergeWarning: row.merge_warning ?? null,
+    mergeTx: (row.merge_tx as TaskRecord["mergeTx"]) ?? null,
+    mergeDigests: row.merge_digests ? JSON.parse(row.merge_digests) as Record<string, string> : null,
+    runKind: (row.run_kind as TaskRecord["runKind"]) ?? null,
+  };
+}
+// A workspace must be merged before it disappears — but only once real merge state
+// exists: a ticket still mid-board archives exactly as it always did.
+export function unmergedWorkspaceBlocksClose(task: TaskRecord): boolean {
+  if (task.mergeState === "conflicts" || task.mergeState === "resolved") return true;
+  return task.status === "done" && task.mergeState !== "merged";
+}
+
 export function assertTaskCanBeDeleted(task: TaskRecord, now = new Date()): void {
   if (task.executionState === "running") throw new Error("Wait for task agent to finish before deleting");
   if (!task.leaseOwnerNodeId) return;
@@ -47,8 +66,18 @@ function recoverLocalRunningTasks(db: DatabaseSync, nodeId: string): void {
   const running = db.prepare("SELECT * FROM tasks WHERE current_node_id = ? AND execution_state = 'running'").all(nodeId) as unknown as TaskRow[];
   if (!running.length) return;
   const recover = db.prepare("UPDATE tasks SET lease_owner_node_id = NULL, lease_expires_at = NULL, lease_token = NULL, execution_state = 'failed', updated_at = ?, origin_node_id = ? WHERE project_id = ? AND id = ?");
+  // A merge run parks with its artifacts intact for one-click Resume; marking it
+  // failed would misreport a resolvable state (TICKET-MERGE-PLAN.md §9).
+  const park = db.prepare("UPDATE tasks SET lease_owner_node_id = NULL, lease_expires_at = NULL, lease_token = NULL, execution_state = 'idle', run_kind = NULL, merge_tx = NULL, merge_state = 'conflicts', merge_warning = 'Merge run interrupted; parked for resume', updated_at = ?, origin_node_id = ? WHERE project_id = ? AND id = ?");
   const readTask = db.prepare("SELECT * FROM tasks WHERE project_id = ? AND id = ?");
   for (const row of running) {
+    if (row.run_kind === "merge") {
+      park.run(nextTaskUpdatedAt(row.updated_at), nodeId, row.project_id, row.id);
+      const task = rowToTask(readTask.get(row.project_id, row.id) as unknown as TaskRow);
+      publishTask(db, row.project_id, task);
+      appendAuditEvent(db, { eventType: "task.merge.parked", actorType: "system", actorId: nodeId, entityType: "task", entityId: row.id });
+      continue;
+    }
     recover.run(nextTaskUpdatedAt(row.updated_at), nodeId, row.project_id, row.id);
     const task = rowToTask(readTask.get(row.project_id, row.id) as unknown as TaskRow);
     publishTask(db, row.project_id, task);
@@ -56,7 +85,7 @@ function recoverLocalRunningTasks(db: DatabaseSync, nodeId: string): void {
   }
 }
 
-async function taskDatabase(): Promise<DatabaseSync> {
+export async function taskDatabase(): Promise<DatabaseSync> {
   if (databasePromise) return databasePromise;
   databasePromise = (async () => {
     await fs.mkdir(dataDir, { recursive: true, mode: 0o700 });
@@ -84,19 +113,28 @@ async function taskDatabase(): Promise<DatabaseSync> {
 async function migrateLegacyTasks(projectId: string): Promise<void> {
   const db = await taskDatabase(); if (db.prepare("SELECT project_id FROM task_migrations WHERE project_id = ?").get(projectId)) return;
   let tasks: TaskRecord[] = []; try { tasks = (JSON.parse(await fs.readFile(path.join(legacyTasksDir, `${projectId}.json`), "utf8")) as { tasks?: TaskRecord[] }).tasks ?? []; } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-  const node = await getClusterNode(); db.exec("BEGIN IMMEDIATE"); try { const save = db.prepare(`INSERT OR IGNORE INTO tasks (id, project_id, title, description, status, engine, plan_mode, review_mode, phase_config, session_path, worktree_path, worktree_branch, merged_at, created_at, updated_at, current_node_id, lease_owner_node_id, lease_expires_at, execution_state, handoff_context, origin_node_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'idle', NULL, ?)`); const insertedTask = db.prepare("SELECT * FROM tasks WHERE project_id = ? AND id = ?"); for (const task of tasks) { const result = save.run(task.id, projectId, task.title, task.description, task.status, task.engine ?? "pi", task.planMode ? 1 : 0, task.reviewMode ? 1 : 0, JSON.stringify(task.phaseConfig ?? {}), task.sessionPath ?? null, task.worktreePath ?? null, task.worktreeBranch ?? null, task.mergedAt ?? null, task.createdAt, task.updatedAt, node.id, node.id); if (result.changes === 1) publishTask(db, projectId, rowToTask(insertedTask.get(projectId, task.id) as unknown as TaskRow)); } db.prepare("INSERT INTO task_migrations (project_id, migrated_at) VALUES (?, ?)").run(projectId, new Date().toISOString()); db.exec("COMMIT"); } catch (error) { db.exec("ROLLBACK"); throw error; }
+  const node = await getClusterNode(); db.exec("BEGIN IMMEDIATE"); try { const save = db.prepare(`INSERT OR IGNORE INTO tasks (id, project_id, title, description, status, engine, plan_mode, review_mode, phase_config, session_path, worktree_path, worktree_branch, merged_at, created_at, updated_at, current_node_id, lease_owner_node_id, lease_expires_at, execution_state, handoff_context, origin_node_id, merge_state, conflict_count, merge_warning, merge_tx, merge_digests, run_kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'idle', NULL, ?, ?, ?, ?, ?, ?, ?)`); const insertedTask = db.prepare("SELECT * FROM tasks WHERE project_id = ? AND id = ?"); for (const task of tasks) { const result = save.run(task.id, projectId, task.title, task.description, task.status, task.engine ?? "pi", task.planMode ? 1 : 0, task.reviewMode ? 1 : 0, JSON.stringify(task.phaseConfig ?? {}), task.sessionPath ?? null, task.worktreePath ?? null, task.worktreeBranch ?? null, task.mergedAt ?? null, task.createdAt, task.updatedAt, node.id, node.id, task.mergeState ?? "none", task.conflictCount ?? 0, task.mergeWarning ?? null, task.mergeTx ?? null, task.mergeDigests ? JSON.stringify(task.mergeDigests) : null, task.runKind ?? null); if (result.changes === 1) publishTask(db, projectId, rowToTask(insertedTask.get(projectId, task.id) as unknown as TaskRow)); } db.prepare("INSERT INTO task_migrations (project_id, migrated_at) VALUES (?, ?)").run(projectId, new Date().toISOString()); db.exec("COMMIT"); } catch (error) { db.exec("ROLLBACK"); throw error; }
 }
 async function taskRows(projectId: string): Promise<TaskRow[]> { await migrateLegacyTasks(projectId); return (await taskDatabase()).prepare("SELECT * FROM tasks WHERE project_id = ? ORDER BY updated_at DESC").all(projectId) as unknown as TaskRow[]; }
 export async function listTasks(projectId: string): Promise<TaskRecord[]> { return (await taskRows(projectId)).map(rowToTask); }
 function publishTask(db: DatabaseSync, projectId: string, task: TaskRecord): void { enqueueReplicationEvent(db, { originNodeId: task.originNodeId, entityType: "task", entityKey: `${projectId}:${task.id}`, operation: "upsert", payload: { projectId, task, originNodeId: task.originNodeId } }); }
-function saveTask(db: DatabaseSync, projectId: string, task: TaskRecord): void { db.prepare(`INSERT INTO tasks (id, project_id, title, description, status, engine, plan_mode, review_mode, phase_config, session_path, worktree_path, worktree_branch, merged_at, created_at, updated_at, current_node_id, lease_owner_node_id, lease_expires_at, lease_token, execution_state, handoff_context, origin_node_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET title=excluded.title, description=excluded.description, status=excluded.status, engine=excluded.engine, plan_mode=excluded.plan_mode, review_mode=excluded.review_mode, phase_config=excluded.phase_config, session_path=excluded.session_path, worktree_path=excluded.worktree_path, worktree_branch=excluded.worktree_branch, merged_at=excluded.merged_at, updated_at=excluded.updated_at, current_node_id=excluded.current_node_id, lease_owner_node_id=excluded.lease_owner_node_id, lease_expires_at=excluded.lease_expires_at, lease_token=CASE WHEN excluded.lease_owner_node_id IS NULL THEN NULL ELSE tasks.lease_token END, execution_state=excluded.execution_state, handoff_context=excluded.handoff_context, origin_node_id=excluded.origin_node_id`).run(task.id, projectId, task.title, task.description, task.status, task.engine, task.planMode ? 1 : 0, task.reviewMode ? 1 : 0, JSON.stringify(task.phaseConfig), task.sessionPath, task.worktreePath, task.worktreeBranch, task.mergedAt, task.createdAt, task.updatedAt, task.currentNodeId, task.leaseOwnerNodeId, task.leaseExpiresAt, task.executionState, task.handoffContext, task.originNodeId); }
+function saveTask(db: DatabaseSync, projectId: string, task: TaskRecord): void {
+  // Records that predate the merge fields (replication payloads, legacy fixtures)
+  // are defaulted here, at the persistence boundary.
+  task = { ...task, mergeState: task.mergeState ?? "none", conflictCount: task.conflictCount ?? 0, mergeWarning: task.mergeWarning ?? null, mergeTx: task.mergeTx ?? null, mergeDigests: task.mergeDigests ?? null, runKind: task.runKind ?? null };
+  db.prepare(`INSERT INTO tasks (id, project_id, title, description, status, engine, plan_mode, review_mode, phase_config, session_path, worktree_path, worktree_branch, merged_at, created_at, updated_at, current_node_id, lease_owner_node_id, lease_expires_at, lease_token, execution_state, handoff_context, origin_node_id, merge_state, conflict_count, merge_warning, merge_tx, merge_digests, run_kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET title=excluded.title, description=excluded.description, status=excluded.status, engine=excluded.engine, plan_mode=excluded.plan_mode, review_mode=excluded.review_mode, phase_config=excluded.phase_config, session_path=excluded.session_path, worktree_path=excluded.worktree_path, worktree_branch=excluded.worktree_branch, merged_at=excluded.merged_at, updated_at=excluded.updated_at, current_node_id=excluded.current_node_id, lease_owner_node_id=excluded.lease_owner_node_id, lease_expires_at=excluded.lease_expires_at, lease_token=CASE WHEN excluded.lease_owner_node_id IS NULL THEN NULL ELSE tasks.lease_token END, execution_state=excluded.execution_state, handoff_context=excluded.handoff_context, origin_node_id=excluded.origin_node_id, merge_state=excluded.merge_state, conflict_count=excluded.conflict_count, merge_warning=excluded.merge_warning, merge_tx=excluded.merge_tx, merge_digests=excluded.merge_digests, run_kind=CASE WHEN excluded.lease_owner_node_id IS NULL THEN NULL ELSE excluded.run_kind END`).run(task.id, projectId, task.title, task.description, task.status, task.engine, task.planMode ? 1 : 0, task.reviewMode ? 1 : 0, JSON.stringify(task.phaseConfig), task.sessionPath, task.worktreePath, task.worktreeBranch, task.mergedAt, task.createdAt, task.updatedAt, task.currentNodeId, task.leaseOwnerNodeId, task.leaseExpiresAt, task.executionState, task.handoffContext, task.originNodeId, task.mergeState, task.conflictCount, task.mergeWarning, task.mergeTx, task.mergeDigests ? JSON.stringify(task.mergeDigests) : null, task.runKind); }
 export async function createTask(projectId: string, projectPath: string, title: string, description: string, status: TaskStatus, engine: TaskEngine, planMode: boolean, reviewMode: boolean, phaseConfig: TaskRecord["phaseConfig"]): Promise<TaskRecord> {
   await migrateLegacyTasks(projectId);
   const taskId = nanoid(10);
   const workspacePath = await createTaskWorkspace(projectPath, projectId, taskId);
+  // Anchor the baseline manifest digest at creation (trusted code): later merges
+  // verify the agent-writable manifest against it before trusting any decision.
+  const baselineDigest = await fs.readFile(path.join(workspacePath, ".joint-bob-baseline", "manifest.json"), "utf8")
+    .then((raw) => createHash("sha256").update(Buffer.from(raw, "utf8")).digest("hex"))
+    .catch(() => undefined);
   const node = await getClusterNode();
   const now = new Date().toISOString();
-  const task: TaskRecord = { id: taskId, title, description, status, engine, planMode, reviewMode, phaseConfig, sessionPath: null, worktreePath: workspacePath, worktreeBranch: null, mergedAt: null, currentNodeId: node.id, leaseOwnerNodeId: null, leaseExpiresAt: null, executionState: "idle", handoffContext: null, originNodeId: node.id, createdAt: now, updatedAt: now };
+  const task: TaskRecord = { id: taskId, title, description, status, engine, planMode, reviewMode, phaseConfig, sessionPath: null, worktreePath: workspacePath, worktreeBranch: null, mergedAt: null, mergeState: "none", conflictCount: 0, mergeWarning: null, mergeTx: null, mergeDigests: baselineDigest ? { baseline: baselineDigest } : null, runKind: null, currentNodeId: node.id, leaseOwnerNodeId: null, leaseExpiresAt: null, executionState: "idle", handoffContext: null, originNodeId: node.id, createdAt: now, updatedAt: now };
   const db = await taskDatabase();
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -111,7 +149,7 @@ export async function createTask(projectId: string, projectPath: string, title: 
     throw error;
   }
 }
-export interface TaskUpdate { title?: string; description?: string; status?: TaskStatus; engine?: TaskEngine; planMode?: boolean; reviewMode?: boolean; phaseConfig?: Partial<Record<"planning" | "in_progress" | "review", TaskPhaseConfig>>; sessionPath?: string | null; worktreePath?: string | null; mergedAt?: string | null; }
+export interface TaskUpdate { title?: string; description?: string; status?: TaskStatus; engine?: TaskEngine; planMode?: boolean; reviewMode?: boolean; phaseConfig?: Partial<Record<"planning" | "in_progress" | "review", TaskPhaseConfig>>; sessionPath?: string | null; worktreePath?: string | null; mergedAt?: string | null; mergeState?: TaskRecord["mergeState"]; conflictCount?: number; mergeWarning?: string | null; mergeTx?: TaskRecord["mergeTx"]; mergeDigests?: TaskRecord["mergeDigests"]; runKind?: TaskRecord["runKind"]; }
 export async function updateTaskSessionPath(projectId: string, taskId: string, nodeId: string, leaseToken: string, sessionPath: string): Promise<TaskRecord | undefined> {
   const db = await taskDatabase();
   db.exec("BEGIN IMMEDIATE");
@@ -164,7 +202,7 @@ export async function deleteTask(projectId: string, taskId: string): Promise<voi
 }
 export interface TaskLeaseClaim { task: TaskRecord; leaseToken: string; }
 
-export async function claimTaskLease(projectId: string, taskId: string, nodeId: string, ttlMs = 120_000): Promise<TaskLeaseClaim> {
+export async function claimTaskLease(projectId: string, taskId: string, nodeId: string, ttlMs = 120_000, runKind: "phase" | "merge" = "phase"): Promise<TaskLeaseClaim> {
   const db = await taskDatabase();
   const now = new Date();
   const leaseToken = randomUUID();
@@ -173,7 +211,7 @@ export async function claimTaskLease(projectId: string, taskId: string, nodeId: 
     const current = db.prepare("SELECT * FROM tasks WHERE project_id = ? AND id = ?").get(projectId, taskId) as unknown as TaskRow | undefined;
     if (!current) throw new Error("Task is owned or leased by another node");
     const updatedAt = nextTaskUpdatedAt(current.updated_at, now.getTime());
-    const result = db.prepare("UPDATE tasks SET lease_owner_node_id = ?, lease_expires_at = ?, lease_token = ?, execution_state = 'running', updated_at = ?, origin_node_id = ? WHERE project_id = ? AND id = ? AND current_node_id = ? AND execution_state != 'handoff_pending' AND (lease_owner_node_id IS NULL OR lease_expires_at <= ?)").run(nodeId, new Date(now.getTime() + ttlMs).toISOString(), leaseToken, updatedAt, nodeId, projectId, taskId, nodeId, now.toISOString());
+    const result = db.prepare("UPDATE tasks SET lease_owner_node_id = ?, lease_expires_at = ?, lease_token = ?, execution_state = 'running', run_kind = ?, updated_at = ?, origin_node_id = ? WHERE project_id = ? AND id = ? AND current_node_id = ? AND execution_state != 'handoff_pending' AND (lease_owner_node_id IS NULL OR lease_expires_at <= ?)").run(nodeId, new Date(now.getTime() + ttlMs).toISOString(), leaseToken, runKind, updatedAt, nodeId, projectId, taskId, nodeId, now.toISOString());
     if (!result.changes) throw new Error("Task is owned or leased by another node");
     const task = rowToTask(db.prepare("SELECT * FROM tasks WHERE project_id = ? AND id = ?").get(projectId, taskId) as unknown as TaskRow);
     publishTask(db, projectId, task);
@@ -189,7 +227,7 @@ export async function releaseTaskLease(projectId: string, taskId: string, nodeId
   try {
     const current = db.prepare("SELECT * FROM tasks WHERE project_id = ? AND id = ? AND lease_owner_node_id = ? AND lease_token = ?").get(projectId, taskId, nodeId, leaseToken) as unknown as TaskRow | undefined;
     if (!current) throw new Error("Task is owned or leased by another node");
-    const result = db.prepare("UPDATE tasks SET lease_owner_node_id = NULL, lease_expires_at = NULL, lease_token = NULL, execution_state = ?, updated_at = ?, origin_node_id = ? WHERE project_id = ? AND id = ? AND lease_owner_node_id = ? AND lease_token = ?").run(executionState, nextTaskUpdatedAt(current.updated_at), nodeId, projectId, taskId, nodeId, leaseToken);
+    const result = db.prepare("UPDATE tasks SET lease_owner_node_id = NULL, lease_expires_at = NULL, lease_token = NULL, execution_state = ?, run_kind = NULL, updated_at = ?, origin_node_id = ? WHERE project_id = ? AND id = ? AND lease_owner_node_id = ? AND lease_token = ?").run(executionState, nextTaskUpdatedAt(current.updated_at), nodeId, projectId, taskId, nodeId, leaseToken);
     if (!result.changes) throw new Error("Task is owned or leased by another node");
     const task = rowToTask(db.prepare("SELECT * FROM tasks WHERE project_id = ? AND id = ?").get(projectId, taskId) as unknown as TaskRow);
     publishTask(db, projectId, task);
@@ -206,7 +244,7 @@ export async function completeTaskLease(projectId: string, taskId: string, nodeI
     const row = db.prepare("SELECT * FROM tasks WHERE project_id = ? AND id = ? AND lease_owner_node_id = ? AND lease_token = ?").get(projectId, taskId, nodeId, leaseToken) as unknown as TaskRow | undefined;
     if (!row) throw new Error("Task is owned or leased by another node");
     const current = rowToTask(row);
-    const task: TaskRecord = { ...current, ...update, leaseOwnerNodeId: null, leaseExpiresAt: null, executionState: "idle", updatedAt: nextTaskUpdatedAt(row.updated_at), originNodeId: nodeId };
+    const task: TaskRecord = { ...current, ...update, leaseOwnerNodeId: null, leaseExpiresAt: null, executionState: "idle", runKind: null, updatedAt: nextTaskUpdatedAt(row.updated_at), originNodeId: nodeId };
     const cleared = db.prepare("UPDATE tasks SET lease_token = NULL WHERE project_id = ? AND id = ? AND lease_owner_node_id = ? AND lease_token = ?").run(projectId, taskId, nodeId, leaseToken);
     if (!cleared.changes) throw new Error("Task is owned or leased by another node");
     saveTask(db, projectId, task);
@@ -278,7 +316,18 @@ export async function acknowledgeOutgoingTaskHandoff(handoffId: string): Promise
   } catch (error) { db.exec("ROLLBACK"); throw error; }
 }
 
-export function sameTaskSnapshot(left: TaskRecord, right: TaskRecord): boolean { return JSON.stringify(left) === JSON.stringify(right); }
+export function sameTaskSnapshot(left: TaskRecord, right: TaskRecord): boolean {
+  // Merge-back fields default identically for records that predate them, so the
+  // handoff fence compares canonical forms instead of punishing old shapes or
+  // differing key order.
+  const canonical = (task: TaskRecord): string => JSON.stringify([
+    task.id, task.title, task.description, task.status, task.engine, task.planMode, task.reviewMode, task.phaseConfig,
+    task.sessionPath, task.worktreePath, task.worktreeBranch, task.mergedAt,
+    task.mergeState ?? "none", task.conflictCount ?? 0, task.mergeWarning ?? null, task.mergeTx ?? null, task.mergeDigests ?? null, task.runKind ?? null,
+    task.currentNodeId, task.leaseOwnerNodeId, task.leaseExpiresAt, task.executionState, task.handoffContext, task.originNodeId, task.createdAt, task.updatedAt,
+  ]);
+  return canonical(left) === canonical(right);
+}
 
 export async function beginOutgoingTaskHandoff(projectId: string, task: TaskRecord, sourceNodeId: string, destinationNodeId: string): Promise<TaskHandoffRecord> {
   await migrateLegacyTasks(projectId);
