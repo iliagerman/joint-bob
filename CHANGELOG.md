@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.2.1 — 2026-09-03
 
 - Remote conversations can now be switched to a local node and taken over reliably with proper ownership settlement across the cluster
 - Selected projects and conversations are now more visually prominent with borders and updated highlighting in their sidebars
