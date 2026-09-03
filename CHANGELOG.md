@@ -3,25 +3,20 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.2.0 — 2026-09-03
 
-- Conversations now continue on another node through ownership transfer via the lock banner, replacing the removed 'Continue on' button
 - Canvas panes can now be resized horizontally and rows vertically to customize the layout
 - Completed tickets can now merge their workspace changes back into the project with conflict resolution
-- Skill descriptions using multi-line text now display correctly without YAML formatting markers
-- Tool selection and transcript compaction are now available for Claude conversations
-- Secret accounts marked for replication now sync immediately when saved instead of waiting for manual sync
-- Chat header now keeps conversation names renamed in Joint Bob instead of reverting to auto-generated names
-- App shell now refreshes from cache when you next open the browser
-- Chat now follows the newest messages while you're reading at the bottom, and keeps your scroll position when you scroll up
-- Taking over a conversation now fails safely if its transcript hasn't synchronized to this node yet, instead of claiming ownership of an empty conversation
+- Conversations now continue on another node through ownership transfer via the lock banner, replacing the removed 'Continue on' button; takeover now fails safely if the transcript hasn't synchronized
 - Conversations linked to board tickets now appear marked in the conversations list with a button to jump into the ticket
-- Task phases now wait for the session to finish its current turn before sending their next prompt
-- Authenticated requests no longer crash when another process holds the database write lock
-- Recent conversations now appear once in the recents dialog, even when resumed on different nodes
-- Fixed node startup getting stuck in starting state when Syncthing's API port binding is delayed
-- The server no longer crashes when a browser reconnects to a deleted conversation
-- Task descriptions can now be up to 20,000 characters instead of 4,000
+- Chat now follows newest messages while reading at the bottom and keeps scroll position when scrolling up
+- Pinning is now a quick action on conversations and projects instead of only in the overflow menu
+- Task descriptions can now be up to 20,000 characters
+- Tool selection and transcript compaction are now available for Claude conversations
+- Secret accounts marked for replication now sync immediately when saved
+- Chat header keeps conversation names renamed in Joint Bob instead of reverting to auto-generated names, panel headers are consistently sized, and skill descriptions display correctly
+- Recent conversations now appear once in the recents dialog even when resumed on different nodes
+- Database locks no longer crash the node, node startup no longer gets stuck when Syncthing's API port binding is delayed, and deleted conversations no longer cause crashes when reconnected
 
 ## 1.1.1 — 2026-09-02
 
