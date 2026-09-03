@@ -38,6 +38,7 @@
   --radius-card: 12px;
   --radius-ctl: 10px;
   --nav-height: 68px;
+  --panel-header-height: 66px;
   --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", sans-serif;
   --serif: ui-serif, "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
@@ -256,9 +257,9 @@ body.view-chat #chatPanel :is(.panel-scroll, .board-columns, .messages) {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 64px;
-  padding: 10px 14px;
-  padding-top: calc(12px + env(safe-area-inset-top, 0px));
+  /* Every panel header is exactly one height so the three columns line up. */
+  height: calc(var(--panel-header-height) + env(safe-area-inset-top, 0px));
+  padding: env(safe-area-inset-top, 0px) 14px 0;
   border-bottom: 1px solid var(--line-strong);
   background: var(--header);
 }
@@ -780,9 +781,8 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 64px;
-  padding: 10px 14px;
-  padding-top: calc(10px + env(safe-area-inset-top, 0px));
+  height: calc(var(--panel-header-height) + env(safe-area-inset-top, 0px));
+  padding: env(safe-area-inset-top, 0px) 14px 0;
   border-bottom: 1px solid var(--line-strong);
   background: var(--header);
 }
@@ -1500,7 +1500,6 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   body.view-board #chatPanel { display: none; }
   body.view-canvas #canvasPanel { display: flex; }
   body.view-canvas #chatPanel, body.view-canvas #boardPanel { display: none; }
-  .panel-bar, .chat-topbar { padding-top: 12px; }
   .board-column { flex: 1 1 0; min-width: 220px; }
   .message.assistant, .message.thinking, .message.tool-output { width: 100%; max-width: 100%; }
   .message.user { max-width: min(720px, 78%); }
@@ -1553,7 +1552,7 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   :root { --read: 15px; --read-leading: 1.68; --measure: none; }
   .mobile-nav { bottom: max(8px, env(safe-area-inset-bottom)); }
   /* 52px of reserved lane on the right so no header control lands under the fixed app menu. */
-  .panel-bar, .chat-topbar { min-height: 58px; padding: 10px 52px 10px 12px; padding-top: calc(10px + env(safe-area-inset-top, 0px)); }
+  .panel-bar, .chat-topbar { height: auto; min-height: 58px; padding: 10px 52px 10px 12px; padding-top: calc(10px + env(safe-area-inset-top, 0px)); }
   .app-menu { display: block; position: fixed; top: calc(18px + env(safe-area-inset-top, 0px)); right: 16px; z-index: 50; }
   /* The bottom bar already reaches the board and settings, so the header drops both. */
   #settingsButton, #openBoardButton, #openCanvasButton, .project-canvas-row, #canvasPanel { display: none; }
