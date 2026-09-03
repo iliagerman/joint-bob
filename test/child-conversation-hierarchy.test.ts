@@ -48,5 +48,5 @@ test("the conversation list renders child lineage", async () => {
   assert.match(app, /for \(const \{ session, depth \} of nestedSessionRows\(sessions\)\)/);
   assert.match(styles, /\.list-row\[data-session-depth="1"\]/);
   assert.match(styles, /\.list-row\[data-session-depth="1"\] \.session-card/);
-  assert.match(serviceWorker, /joint-bob-v95/);
+  assert.match(serviceWorker, /joint-bob-v101/);
 });

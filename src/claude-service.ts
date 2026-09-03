@@ -24,6 +24,8 @@ export interface ClaudeRunResult {
   sessionId: string | null;
   sawOutput: boolean;
   assistantText: string;
+  /** Built-in tool names the CLI reported in its init record, when it sent one. */
+  tools: string[] | null;
 }
 
 export interface ClaudeRunOptions {
@@ -33,6 +35,8 @@ export interface ClaudeRunOptions {
   sessionId?: string;
   model?: string;
   effort?: string;
+  /** Built-in tools Claude may use this turn; omitted means the CLI default set. */
+  tools?: string[];
   env?: NodeJS.ProcessEnv;
   onEvent: (payload: UnknownRecord) => void;
   // Fires as soon as Claude reports its session id, so callers can mark the
@@ -372,6 +376,7 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
   else if (options.sessionId) args.push("--session-id", options.sessionId);
   if (options.model) args.push("--model", options.model);
   if (options.effort) args.push("--effort", options.effort);
+  if (options.tools) args.push("--tools", options.tools.join(","));
 
   const settings = getSettings().claude;
   const configPath = claudeConfigPath();
@@ -387,6 +392,7 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
     sessionId: null as string | null,
     sawOutput: false,
     assistantText: "",
+    tools: null as string[] | null,
     // Text already streamed via deltas for the in-flight assistant message, so
     // the completed-message event does not repeat it.
     streamedForCurrentMessage: false,
@@ -464,6 +470,7 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
     }
     if (record.type === "system" && record.subtype === "init") {
       state.sessionId = typeof record.session_id === "string" ? record.session_id : null;
+      if (Array.isArray(record.tools)) state.tools = record.tools.filter((name): name is string => typeof name === "string");
       if (state.sessionId) options.onSessionId?.(state.sessionId);
       return;
     }
@@ -501,14 +508,14 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
   const done = new Promise<ClaudeRunResult>((resolve) => {
     child.on("error", (error) => {
       options.onEvent({ type: "assistantError", error: `Could not start Claude: ${error.message}` });
-      resolve({ ok: false, sessionId: state.sessionId, sawOutput: state.sawOutput, assistantText: state.assistantText });
+      resolve({ ok: false, sessionId: state.sessionId, sawOutput: state.sawOutput, assistantText: state.assistantText, tools: state.tools });
     });
     child.on("close", (code) => {
       if (state.buffer) handleLine(state.buffer);
       if (code !== 0 && !state.sawOutput && state.stderr.trim()) {
         options.onEvent({ type: "assistantError", error: state.stderr.trim().slice(0, 2000) });
       }
-      resolve({ ok: code === 0, sessionId: state.sessionId, sawOutput: state.sawOutput, assistantText: state.assistantText.trim() });
+      resolve({ ok: code === 0, sessionId: state.sessionId, sawOutput: state.sawOutput, assistantText: state.assistantText.trim(), tools: state.tools });
     });
   });
 

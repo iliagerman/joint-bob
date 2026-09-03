@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Tool selection and transcript compaction are now available for Claude conversations
 - Secret accounts marked for replication now sync immediately when saved instead of waiting for manual sync
 - Chat header now keeps conversation names renamed in Joint Bob instead of reverting to auto-generated names
 - App shell now refreshes from cache when you next open the browser

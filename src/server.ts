@@ -101,6 +101,11 @@ interface ClaudeChatState {
   lastRunEndedAt: number;
   model: string | null;
   effort: string | null;
+  // Built-in tools the CLI last reported in its init record; empty until a turn has run.
+  availableTools: string[];
+  // Restricted tool set for upcoming turns; null means the CLI default set.
+  enabledTools: string[] | null;
+  compacting: boolean;
   // Turn events already streamed to the client, replayed verbatim when a socket
   // drops mid-turn and the browser reconnects.
   liveEvents: Record<string, unknown>[];
@@ -4573,12 +4578,12 @@ function claudeStatus(connection: ChatConnection): SessionStatus {
     thinkingLevel: connection.claude.effort ?? "default",
     availableThinkingLevels: ["default", "low", "medium", "high", "xhigh", "max"],
     isStreaming: Boolean(connection.claude.child),
-    isCompacting: false,
+    isCompacting: connection.claude.compacting,
     isRetrying: false,
     isBashRunning: false,
     pendingMessageCount: 0,
     messageCount: connection.claude.transcript.length,
-    activeTools: [],
+    activeTools: connection.claude.enabledTools ?? connection.claude.availableTools,
     promptTemplates: [],
     contextUsage: connection.claude.contextUsage ?? undefined,
   };
@@ -4589,7 +4594,7 @@ function sendClaudeStatus(connection: ChatConnection): void {
 }
 
 function emptyClaudeState(sessionId: string | null = null): ClaudeChatState {
-  return { sessionId, sessionName: null, filePath: null, child: null, promptQueue: [], transcript: [], lastRunEndedAt: 0, model: CLAUDE_DEFAULT_MODEL, effort: null, liveEvents: [], contextUsage: null };
+  return { sessionId, sessionName: null, filePath: null, child: null, promptQueue: [], transcript: [], lastRunEndedAt: 0, model: CLAUDE_DEFAULT_MODEL, effort: null, availableTools: [], enabledTools: null, compacting: false, liveEvents: [], contextUsage: null };
 }
 
 function pushTranscript(connection: ChatConnection, role: string, text: string): void {
@@ -4642,7 +4647,7 @@ async function runStubbedClaudePrompt(connection: ChatConnection, promptText: st
   ];
   await appendFile(connection.claude.filePath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
   onEvent({ type: "textDelta", delta: "stubbed response" });
-  return { ok: true, sessionId: connection.claude.sessionId, sawOutput: true, assistantText: "stubbed response" };
+  return { ok: true, sessionId: connection.claude.sessionId, sawOutput: true, assistantText: "stubbed response", tools: ["Bash", "Read", "Edit"] };
 }
 
 async function runClaudeTurn(connection: ChatConnection, promptText: string, displayText: string, showUserMessage = true): Promise<void> {
@@ -4721,6 +4726,7 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
   const runOptions = {
     model: connection.claude.model ?? undefined,
     effort: connection.claude.effort ?? undefined,
+    tools: connection.claude.enabledTools ?? undefined,
   };
   try {
     let result = await runStubbedClaudePrompt(connection, fullPrompt, onEvent);
@@ -4744,6 +4750,7 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
 
     connection.claude.child = null;
     connection.claude.lastRunEndedAt = Date.now();
+    if (result.tools) connection.claude.availableTools = [...result.tools].sort();
     if (result.sessionId) {
       connection.claude.sessionId = result.sessionId;
       connection.claude.filePath = claudeSessionFilePath(connection.cwd, result.sessionId);
@@ -4828,12 +4835,43 @@ async function handleClaudeCommand(connection: ChatConnection, payload: SocketPa
     return;
   }
   if (payload.type === "tools") {
-    send(connection.socket, { type: "tools", supported: false, tools: [] });
+    send(connection.socket, { type: "tools", supported: true, tools: claudeTools(connection) });
     return;
   }
-  if (payload.type === "setTools") throw new Error("Tool configuration is only available for Pi");
-  if (payload.type === "compact") throw new Error("Compaction is only available for Pi");
+  if (payload.type === "setTools") {
+    if (!payload.toolNames) throw new Error("Missing tool selection");
+    if (!connection.claude.availableTools.length) throw new Error("Claude has not reported its tools yet — send a message first");
+    const available = new Set(connection.claude.availableTools);
+    const unknown = payload.toolNames.find((name) => !available.has(name));
+    if (unknown) throw new Error(`Unknown tool: ${unknown}`);
+    connection.claude.enabledTools = payload.toolNames;
+    send(connection.socket, { type: "tools", supported: true, tools: claudeTools(connection) });
+    return;
+  }
+  if (payload.type === "compact") {
+    // Claude has no out-of-band compaction API in print mode; the CLI's own
+    // /compact command drives it, streamed through the same turn machinery.
+    const message = payload.message?.trim();
+    const display = ["/compact", message].filter(Boolean).join(" ");
+    connection.claude.compacting = true;
+    sendClaudeStatus(connection);
+    try {
+      await runClaudeTurn(connection, display, display);
+    } finally {
+      connection.claude.compacting = false;
+      sendClaudeStatus(connection);
+    }
+    send(connection.socket, { type: "sessionsChanged" });
+    return;
+  }
   // Thinking/rename commands only apply to the Pi engine.
+}
+
+function claudeTools(connection: ChatConnection): Array<{ name: string; description: string; active: boolean }> {
+  const enabled = connection.claude.enabledTools;
+  return connection.claude.availableTools
+    .map((name) => ({ name, description: "", active: enabled ? enabled.includes(name) : true }))
+    .sort((left, right) => left.name.localeCompare(right.name));
 }
 
 async function switchEngine(connection: ChatConnection, engine: ChatEngine): Promise<void> {

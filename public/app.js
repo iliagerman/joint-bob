@@ -26,7 +26,6 @@ const state = {
   skillsLoading: false,
   skillsProjectId: null,
   tools: [],
-  toolsSupported: true,
   toolsLoading: false,
   commands: [],
   commandsLoading: false,
@@ -3526,17 +3525,12 @@ function renderToolsDialog() {
     elements.toolsDialogList.append(loading);
     return;
   }
-  if (!state.toolsSupported) {
-    const unsupported = document.createElement("span");
-    unsupported.className = "model-shortcuts-empty";
-    unsupported.textContent = "Tool configuration is only available for Pi.";
-    elements.toolsDialogList.append(unsupported);
-    return;
-  }
   if (!state.tools.length) {
     const empty = document.createElement("span");
     empty.className = "model-shortcuts-empty";
-    empty.textContent = "No tools are available for this session.";
+    empty.textContent = state.engine === "claude"
+      ? "Claude reports its tools after the first turn of a conversation."
+      : "No tools are available for this session.";
     elements.toolsDialogList.append(empty);
     return;
   }
@@ -3546,7 +3540,6 @@ function renderToolsDialog() {
 function openToolsDialog() {
   state.tools = [];
   state.toolsLoading = true;
-  state.toolsSupported = true;
   elements.toolsDialog.showModal();
   renderToolsDialog();
   if (!sendSocket({ type: "tools" })) {
@@ -3582,10 +3575,6 @@ function composerCommandHandlers() {
     },
     compact: (instructions) => {
       setInputValue("");
-      if (state.engine !== "pi") {
-        toast("Compaction is only available for Pi.");
-        return;
-      }
       if (!sendSocket({ type: "compact", message: instructions })) {
         toast("Conversation is not connected yet");
         return;
@@ -4381,7 +4370,6 @@ function handleSocketPayload(payload, scrollOnReady = false) {
   }
   if (payload.type === "tools") {
     state.tools = payload.tools || [];
-    state.toolsSupported = payload.supported !== false;
     state.toolsLoading = false;
     renderToolsDialog();
     return;
