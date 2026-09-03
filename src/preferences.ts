@@ -9,6 +9,9 @@ export interface RecentSession {
   sessionPath: string;
   title: string;
   openedAt: string;
+  /** Stable cluster identity. Absent on entries saved before pin replication. */
+  engine?: "pi" | "claude";
+  sessionId?: string;
   /** When the conversation itself last moved; null for entries stored before this was tracked. */
   updatedAt: string | null;
 }
@@ -211,7 +214,9 @@ function parseRecentSessions(value: string): RecentSession[] {
       && typeof entry.projectId === "string"
       && typeof entry.sessionPath === "string"
       && typeof entry.title === "string"
-      && typeof entry.openedAt === "string");
+      && typeof entry.openedAt === "string"
+      && (entry.engine === undefined || entry.engine === "pi" || entry.engine === "claude")
+      && (entry.sessionId === undefined || typeof entry.sessionId === "string"));
     return canonicalRecentSessions(sessions);
   } catch {
     return [];

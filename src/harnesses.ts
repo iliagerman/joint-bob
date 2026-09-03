@@ -233,7 +233,7 @@ export function orderSessionFamilies(sessions: SessionSummary[]): SessionSummary
 }
 
 /** Lists every registered harness through the shared catalog, then applies Joint Bob metadata. */
-export async function listHarnessSessions(project: HarnessProject, pinnedSessionPaths: string[] = []): Promise<SessionSummary[]> {
+export async function listHarnessSessions(project: HarnessProject, pinnedSessionPaths: string[] = [], pinnedSessionIds: string[] = []): Promise<SessionSummary[]> {
   const [overrides, colors, sessions, records] = await Promise.all([
     sessionTitleOverrides(),
     sessionColorOverrides(),
@@ -256,7 +256,9 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
     });
   }
   const seen = new Set<string>();
-  const pinned = new Set(pinnedSessionPaths);
+  const pinnedPaths = new Set(pinnedSessionPaths);
+  const pinnedIds = new Set(pinnedSessionIds);
+  const isPinned = (session: SessionSummary): boolean => pinnedPaths.has(session.path) || pinnedIds.has(`${session.harnessId}:${session.id}`);
   const ordered = sessions
     .filter((session) => {
       if (!session.path || seen.has(session.path)) return false;
@@ -271,7 +273,7 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
     .sort((left, right) => (right.updatedAt ?? right.createdAt ?? "").localeCompare(left.updatedAt ?? left.createdAt ?? ""));
 
   return orderSessionFamilies([
-    ...ordered.filter((session) => pinned.has(session.path)),
-    ...ordered.filter((session) => !pinned.has(session.path)),
+    ...ordered.filter(isPinned),
+    ...ordered.filter((session) => !isPinned(session)),
   ]).slice(0, 50);
 }

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Pinned conversations now synchronize across cluster nodes instead of being local to each machine
+
 ## 1.2.1 — 2026-09-03
 
 - Remote conversations can now be switched to a local node and taken over reliably with proper ownership settlement across the cluster

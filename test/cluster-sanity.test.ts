@@ -11,11 +11,13 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test, { after, before } from "node:test";
+import WebSocket from "ws";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, type SignedIn } from "./dev-nodes.js";
 
 interface PeerView { id: string; name: string; url: string; online: boolean; lastSeenAt?: string; tokenConfigured: boolean }
 interface InventoryView { node: { id: string }; projects: Array<{ project: { id: string; name: string }; aliases: string[] }> }
 interface SessionView { id: string; path: string; title: string; harnessId: string; executionNodeId?: string }
+interface PinsView { projectIds: string[]; conversations: Array<{ projectId: string; engine: string; sessionId: string }> }
 
 let root: string;
 let environment: DevEnvironment;
@@ -74,6 +76,63 @@ test("every project on one node is aliased to its twin on the other", async () =
     const twin = nodeB.projects.find((project) => project.name === entry.project.name);
     assert.ok(twin, `node B has a twin of ${entry.project.name}`);
     assert.ok(entry.aliases.includes(twin.id), `${entry.project.name} is aliased to node B's copy`);
+  }
+});
+
+test("pin and unpin events replicate by stable conversation identity and wake remote tabs", async () => {
+  const projectA = nodeA.projects.find((candidate) => candidate.name === "Internal Assistant")!;
+  const projectB = nodeB.projects.find((candidate) => candidate.name === "Internal Assistant")!;
+  const sessions = await api<{ sessions: SessionView[] }>(nodeA, sessionA, "GET", `/projects/${projectA.id}/sessions`);
+  const conversation = sessions.body.sessions.find((candidate) => candidate.harnessId === "pi")!;
+  const watchUrl = new URL("/ws", nodeB.url.replace(/^http/, "ws"));
+  watchUrl.searchParams.set("projectId", projectB.id);
+  watchUrl.searchParams.set("sessionPath", "watch");
+  const socket = new WebSocket(watchUrl, { headers: { Cookie: sessionB.cookie, Origin: nodeB.url } });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("watch socket did not become ready")), 10_000);
+      socket.on("message", (raw) => {
+        if ((JSON.parse(raw.toString()) as { type?: string }).type !== "watchReady") return;
+        clearTimeout(timeout);
+        resolve();
+      });
+      socket.once("error", reject);
+    });
+    const changed = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("remote tab did not receive pinsChanged")), 15_000);
+      socket.on("message", (raw) => {
+        if ((JSON.parse(raw.toString()) as { type?: string }).type !== "pinsChanged") return;
+        clearTimeout(timeout);
+        resolve();
+      });
+    });
+    const pinned = await api<PinsView>(nodeA, sessionA, "PUT", "/pins", {
+      kind: "conversation", projectId: projectA.id, engine: "pi", sessionId: conversation.id, pinned: true,
+    });
+    assert.equal(pinned.status, 200);
+    await changed;
+
+    const deadline = Date.now() + 15_000;
+    let remote: PinsView = { projectIds: [], conversations: [] };
+    while (Date.now() < deadline) {
+      remote = (await api<PinsView>(nodeB, sessionB, "GET", "/pins")).body;
+      if (remote.conversations.some((pin) => pin.projectId === projectB.id && pin.engine === "pi" && pin.sessionId === conversation.id)) break;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    assert.deepEqual(remote.conversations, [{ projectId: projectB.id, engine: "pi", sessionId: conversation.id }]);
+
+    const unpinned = await api<PinsView>(nodeB, sessionB, "PUT", "/pins", {
+      kind: "conversation", projectId: projectB.id, engine: "pi", sessionId: conversation.id, pinned: false,
+    });
+    assert.equal(unpinned.status, 200);
+    while (Date.now() < deadline + 15_000) {
+      const local = (await api<PinsView>(nodeA, sessionA, "GET", "/pins")).body;
+      if (!local.conversations.length) return;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    assert.fail("unpin did not replicate back to node A");
+  } finally {
+    socket.close();
   }
 });
 

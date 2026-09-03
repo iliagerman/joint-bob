@@ -12,9 +12,10 @@ test("projects and conversations can be pinned to the top of their list", async 
   assert.match(app, /testid: "session-pin-button"/);
   assert.match(app, /button\.dataset\.testid = testid;/);
   assert.match(app, /function isProjectPinned\(projectId\)/);
-  assert.match(app, /function isSessionPinned\(sessionPath\)/);
+  assert.match(app, /function isSessionPinned\(session\)/);
   assert.match(app, /function togglePinnedProject\(projectId\)/);
-  assert.match(app, /function togglePinnedSession\(sessionPath\)/);
+  assert.match(app, /function togglePinnedSession\(session\)/);
+  assert.match(app, /onToggle: \(\) => togglePinnedSession\(session\)/);
 
   // Pinned projects float inside their own type group, so the type grouping survives.
   assert.match(app, /function sortPinnedFirst\(/);
@@ -34,7 +35,8 @@ test("a pinned conversation survives the recency cap on the session list", async
 
   // The cap keeps the list fast, but a pinned conversation must never fall off it.
   assert.match(harnesses, /pinnedSessionPaths/);
-  assert.match(harnesses, /export async function listHarnessSessions\(project: HarnessProject, pinnedSessionPaths: string\[\] = \[\]\)/);
+  assert.match(harnesses, /pinnedSessionIds/);
+  assert.match(harnesses, /pinnedIds\.has\(`\$\{session\.harnessId\}:\$\{session\.id\}`\)/);
 });
 
 test("pinned ids and panel collapse round-trip through the preferences API", async () => {

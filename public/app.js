@@ -34,6 +34,8 @@ const state = {
   commandAutocompleteIndex: 0,
   pinnedProjectIds: [],
   pinnedSessionPaths: [],
+  replicatedPinnedProjectIds: [],
+  pinnedConversations: [],
   recentSessions: [],
   pendingReviews: [],
   pendingReviewsTimer: null,
@@ -464,6 +466,15 @@ async function savePreferences(partial) {
   return api("/api/preferences", { method: "PUT", body: JSON.stringify(partial) });
 }
 
+async function loadPins() {
+  const pins = await api("/api/pins");
+  state.replicatedPinnedProjectIds = pins.projectIds || [];
+  state.pinnedConversations = pins.conversations || [];
+  renderProjects();
+  renderSessions();
+  if (elements.recentSessionsDialog.open) renderRecentSessionsDialog();
+}
+
 function savePreferencesInBackground(partial) {
   if (state.canvasPaneMode) return;
   void savePreferences(partial).catch((error) => console.warn("Could not save preferences", error));
@@ -573,7 +584,10 @@ async function initializeApplication() {
     showLogin();
     return;
   }
-  let preferences = await api("/api/preferences", { signal: AbortSignal.timeout(BOOT_REQUEST_TIMEOUT_MS) });
+  let [preferences, pins] = await Promise.all([
+    api("/api/preferences", { signal: AbortSignal.timeout(BOOT_REQUEST_TIMEOUT_MS) }),
+    api("/api/pins", { signal: AbortSignal.timeout(BOOT_REQUEST_TIMEOUT_MS) }),
+  ]);
   preferences = await migrateLegacyPreferences(preferences);
   state.preferencesLoaded = false;
   setTheme(preferences.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
@@ -586,6 +600,8 @@ async function initializeApplication() {
   state.activeNodeId = preferences.activeNodeId;
   state.pinnedProjectIds = preferences.pinnedProjectIds || [];
   state.pinnedSessionPaths = preferences.pinnedSessionPaths || [];
+  state.replicatedPinnedProjectIds = pins.projectIds || [];
+  state.pinnedConversations = pins.conversations || [];
   state.recentSessions = preferences.recentSessions || [];
   setPanelCollapsed("projects", Boolean(preferences.projectsPanelCollapsed));
   setPanelCollapsed("chats", Boolean(preferences.chatsPanelCollapsed));
@@ -1644,10 +1660,20 @@ function openConversationColorDialog(session) {
 const PROJECT_COLORS = ["slate", "teal", "blue", "violet", "magenta", "amber", "green", "red"];
 
 function isProjectPinned(projectId) {
-  return state.pinnedProjectIds.includes(projectId);
+  return state.pinnedProjectIds.includes(projectId) || state.replicatedPinnedProjectIds.includes(projectId);
 }
 
-function isSessionPinned(sessionPath) {
+function sessionPinIdentity(session) {
+  const projectId = session.projectId || state.activeProjectId;
+  const engine = session.engine || session.harnessId || ((session.sessionPath || session.path || "").startsWith("claude:") ? "claude" : "pi");
+  const sessionId = session.sessionId || session.id;
+  return projectId && sessionId ? { projectId, engine, sessionId } : null;
+}
+
+function isSessionPinned(session) {
+  const identity = typeof session === "object" ? sessionPinIdentity(session) : null;
+  if (identity && state.pinnedConversations.some((pin) => pin.projectId === identity.projectId && pin.engine === identity.engine && pin.sessionId === identity.sessionId)) return true;
+  const sessionPath = typeof session === "string" ? session : session.sessionPath || session.path;
   return state.pinnedSessionPaths.includes(sessionPath);
 }
 
@@ -1692,7 +1718,7 @@ function ticketRowButton(task) {
 }
 
 function nestedSessionRows(sessions) {
-  const ranked = sortPinnedFirst(sessions, (session) => isSessionPinned(session.path));
+  const ranked = sortPinnedFirst(sessions, isSessionPinned);
   const byPath = new Map(ranked.map((session) => [session.path, session]));
   const byName = new Map(ranked.map((session) => [sessionTranscriptName(session.path), session]));
   const parentOf = (session) => {
@@ -1728,18 +1754,30 @@ function nestedSessionRows(sessions) {
 }
 
 function togglePinnedProject(projectId) {
-  state.pinnedProjectIds = isProjectPinned(projectId)
-    ? state.pinnedProjectIds.filter((id) => id !== projectId)
-    : [...state.pinnedProjectIds, projectId];
-  if (state.preferencesLoaded) savePreferencesInBackground({ pinnedProjectIds: state.pinnedProjectIds });
+  const pinned = !isProjectPinned(projectId);
+  state.pinnedProjectIds = state.pinnedProjectIds.filter((id) => id !== projectId);
+  state.replicatedPinnedProjectIds = pinned
+    ? [...state.replicatedPinnedProjectIds.filter((id) => id !== projectId), projectId]
+    : state.replicatedPinnedProjectIds.filter((id) => id !== projectId);
+  if (state.preferencesLoaded) {
+    savePreferencesInBackground({ pinnedProjectIds: state.pinnedProjectIds });
+    void api("/api/pins", { method: "PUT", body: JSON.stringify({ kind: "project", projectId, pinned }) }).catch((error) => toast(error.message));
+  }
   renderProjects();
 }
 
-function togglePinnedSession(sessionPath) {
-  state.pinnedSessionPaths = isSessionPinned(sessionPath)
-    ? state.pinnedSessionPaths.filter((path) => path !== sessionPath)
-    : [...state.pinnedSessionPaths, sessionPath];
-  if (state.preferencesLoaded) savePreferencesInBackground({ pinnedSessionPaths: state.pinnedSessionPaths });
+function togglePinnedSession(session) {
+  const identity = sessionPinIdentity(session);
+  if (!identity) throw new Error("Conversation pin needs a stable identity");
+  const pinned = !isSessionPinned(session);
+  const sessionPath = session.sessionPath || session.path;
+  state.pinnedSessionPaths = state.pinnedSessionPaths.filter((path) => path !== sessionPath);
+  state.pinnedConversations = state.pinnedConversations.filter((pin) => !(pin.projectId === identity.projectId && pin.engine === identity.engine && pin.sessionId === identity.sessionId));
+  if (pinned) state.pinnedConversations.push(identity);
+  if (state.preferencesLoaded) {
+    savePreferencesInBackground({ pinnedSessionPaths: state.pinnedSessionPaths });
+    void api("/api/pins", { method: "PUT", body: JSON.stringify({ kind: "conversation", ...identity, pinned }) }).catch((error) => toast(error.message));
+  }
   renderSessions();
 }
 
@@ -2425,6 +2463,8 @@ function rememberRecentSession(session) {
     title: shortSessionTitle(session),
     openedAt: new Date().toISOString(),
     updatedAt: session.updatedAt ?? session.createdAt ?? null,
+    engine: sessionEngine(session),
+    sessionId: session.id,
   };
   const others = state.recentSessions.filter((candidate) => recentSessionKey(candidate) !== recentSessionKey(entry));
   state.recentSessions = [entry, ...others].slice(0, RECENT_SESSIONS_LIMIT);
@@ -2519,7 +2559,7 @@ function renderRecentSessionsDialog() {
   const query = normalizedQuery(elements.recentSessionsSearchInput.value || "");
   const byActivity = [...mergeRecentSessions(state.recentSessions)].sort((left, right) =>
     recentSessionActivityAt(right).localeCompare(recentSessionActivityAt(left)));
-  const ordered = sortPinnedFirst(byActivity, (entry) => isSessionPinned(entry.sessionPath));
+  const ordered = sortPinnedFirst(byActivity, isSessionPinned);
   const matches = ordered.filter((entry) => !query || recentSessionSearchText(entry).includes(query));
 
   if (!matches.length) {
@@ -2531,7 +2571,7 @@ function renderRecentSessionsDialog() {
   }
 
   for (const entry of matches) {
-    const pinned = isSessionPinned(entry.sessionPath);
+    const pinned = isSessionPinned(entry);
     const row = document.createElement("div");
     row.className = "list-row";
 
@@ -2563,7 +2603,7 @@ function renderRecentSessionsDialog() {
       label: pinned ? `Unpin ${entry.title}` : `Pin ${entry.title}`,
       testid: "recent-session-pin-button",
       onToggle: () => {
-        togglePinnedSession(entry.sessionPath);
+        togglePinnedSession(entry);
         renderRecentSessionsDialog();
       },
     });
@@ -2612,7 +2652,7 @@ function renderSessions() {
   }
 
   for (const { session, depth } of nestedSessionRows(sessions)) {
-    const sessionPinned = isSessionPinned(session.path);
+    const sessionPinned = isSessionPinned(session);
     const ticketTask = sessionTicketTask(session);
     const row = document.createElement("div");
     const sessionActive = state.activeSessionId ? session.id === state.activeSessionId : session.path === state.activeSessionPath;
@@ -2709,12 +2749,12 @@ function agentRunTaskReason(task) {
     everything else stays in the overflow menu. */
 function sessionPinToggle(session) {
   const name = shortSessionTitle(session);
-  const pinned = isSessionPinned(session.path);
+  const pinned = isSessionPinned(session);
   return pinButton({
     pinned,
     label: pinned ? `Unpin ${name}` : `Pin ${name}`,
     testid: "session-pin-button",
-    onToggle: () => togglePinnedSession(session.path),
+    onToggle: () => togglePinnedSession(session),
   });
 }
 
@@ -4417,6 +4457,9 @@ function handleSocketPayload(payload, scrollOnReady = false) {
     refreshSessionsQuietly();
     schedulePendingReviewsRefresh();
   }
+  if (payload.type === "projectsChanged") refreshProjectsQuietly();
+  if (payload.type === "pinsChanged") loadPins().catch((error) => console.warn(error));
+  if (payload.type === "shortcutsChanged") state.canvasController?.reloadShortcuts();
   if (payload.type === "tasksChanged") {
     loadTasks().catch((error) => console.warn(error));
     return;
@@ -5028,6 +5071,9 @@ function ensureWatchSocket() {
       refreshSessionsQuietly();
       schedulePendingReviewsRefresh();
     }
+    if (payload.type === "projectsChanged") refreshProjectsQuietly();
+    if (payload.type === "pinsChanged") loadPins().catch((error) => console.warn(error));
+    if (payload.type === "shortcutsChanged") state.canvasController?.reloadShortcuts();
     if (payload.type === "tasksChanged") loadTasks().catch((error) => console.warn(error));
   });
   socket.addEventListener("close", () => {

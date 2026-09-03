@@ -15,7 +15,7 @@ import { ensureSessionTitle, projectNameOverrides, setProjectName, setSessionCol
 import { getProjectLock, projectLocks, setProjectLock } from "./project-locks.js";
 import { addProject, deleteWorkspace, getProject, importProject, listProjects, listWorkspaces, projectAliasIds, registerProjectAliases, removeProject, renameProject, saveWorkspace, touchProject, updateProjectColor, updateProjectMacPath, updateProjectSyncFolderId, updateProjectWorkspaceAndPath, WorkspaceError } from "./store.js";
 import { clusterInvitationStatus, consumeClusterInvitation, createClusterInvitation, createClusterPeer, dueMembershipDeliveries, getClusterMachineToken, getClusterMembership, getClusterNode, getClusterPeer, listClusterPeers, markClusterPeerSeen, mergeClusterMembership, recordMembershipDelivered, recordMembershipFailure, removeClusterPeer, saveClusterPeer, updateClusterNode, type ClusterPeer } from "./cluster.js";
-import { eventsForPeer, receiveReplicationBatch, recordPeerFailure, recordPeerReceipt, type ReplicationBatch } from "./replication.js";
+import { eventsForPeer, receiveReplicationBatch, recordPeerFailure, recordPeerReceipt, replicationInvalidations, type ReplicationBatch } from "./replication.js";
 import { enqueueSecretCredentialSync, receiveSecretCredentialEvents, recordSecretCredentialFailure, recordSecretCredentialReceipt, secretCredentialEventsForPeer, type SecretCredentialEvent } from "./secret-replication.js";
 import { agentCredentialContext, agentEnvironment, deleteSecretAccount, getScopeSecretAccounts, listSecretAccounts, persistConversationSecretAccounts, saveSecretAccount, setScopeSecretAccounts, type SecretAccount } from "./secrets.js";
 import {
@@ -51,6 +51,7 @@ import { ensureManagedHome, managedProjectPath, managedProjectRelocationPath } f
 import { importProjectDirectory, ProjectDirectoryImportError, relocateProjectDirectory } from "./project-directory-import.js";
 import { listAuditEvents } from "./audit.js";
 import { clearCanvasShortcut, listCanvasShortcuts, releaseCanvasShortcuts, setCanvasShortcut } from "./canvas-shortcuts.js";
+import { listUserPins, setUserPin } from "./user-pins.js";
 import {
   CANVAS_MAX_ROW_HEIGHT, CANVAS_MIN_ROW_HEIGHT, canvasRowGeometryIsLegal,
   getUserPreferences, migrateLegacyCanvasLayout, normalizeCanvasLayoutPreference,
@@ -396,6 +397,10 @@ const sessionColorSchema = z.object({
   engine: z.enum(["pi", "claude"]),
   color: z.enum(PROJECT_COLORS).nullable(),
 });
+const userPinSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("project"), projectId: z.string().trim().min(1).max(120), pinned: z.boolean() }).strict(),
+  z.object({ kind: z.literal("conversation"), projectId: z.string().trim().min(1).max(120), engine: z.enum(["pi", "claude"]), sessionId: z.string().trim().min(1).max(240), pinned: z.boolean() }).strict(),
+]);
 const sessionDeleteSchema = z.object({ projectId: z.string().min(1), engine: z.enum(["pi", "claude"]), sessionId: z.string().uuid() });
 const taskCreateSchema = z.object({
   title: z.string().trim().min(1).max(200),
@@ -591,6 +596,8 @@ const userPreferencesSchema = z.object({
     sessionPath: z.string().trim().min(1).max(2000),
     title: z.string().max(300),
     openedAt: z.string().max(40),
+    engine: z.enum(["pi", "claude"]).optional(),
+    sessionId: z.string().trim().min(1).max(240).optional(),
     updatedAt: z.string().max(40).nullable().default(null),
   })).max(50).optional(),
   canvasLayout: canvasLayoutPreferenceSchema.optional(),
@@ -1116,6 +1123,37 @@ app.get("/api/preferences", (_request, response) => {
   response.json(getUserPreferences(session.userId));
 });
 
+app.get("/api/pins", (_request, response) => {
+  const session = response.locals.authSession as AuthSession;
+  response.json(listUserPins(session.username));
+});
+
+app.put("/api/pins", async (request, response, next) => {
+  try {
+    const session = response.locals.authSession as AuthSession;
+    const payload = userPinSchema.parse(request.body);
+    const project = await getProject(payload.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    if (payload.kind === "conversation") {
+      const tasks = await listTasks(project.id);
+      const sessions = await listHarnessSessions({ ...project, additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []) });
+      if (!sessions.some((candidate) => candidate.id === payload.sessionId && candidate.harnessId === payload.engine)) {
+        sendError(response, 404, "Conversation not found");
+        return;
+      }
+    }
+    const local = await getClusterNode();
+    const target = payload.kind === "project"
+      ? { kind: payload.kind, projectId: project.id } as const
+      : { kind: payload.kind, projectId: project.id, engine: payload.engine, sessionId: payload.sessionId } as const;
+    const pins = setUserPin(session.username, target, payload.pinned, local.id);
+    broadcastToAllClients({ type: "pinsChanged" });
+    response.json(pins);
+  } catch (error) {
+    next(error);
+  }
+});
+
 /* Canvas keyboard bindings belong to the account, not the node, so every route keys
    on the signed-in username and the store replicates the change to the cluster. */
 const canvasShortcutTargetSchema = z.object({
@@ -1134,7 +1172,9 @@ app.put("/api/canvas/shortcuts/:binding", async (request, response, next) => {
     const session = response.locals.authSession as AuthSession;
     const target = canvasShortcutTargetSchema.parse(request.body);
     const local = await getClusterNode();
-    response.json({ shortcuts: setCanvasShortcut(session.username, request.params.binding, target, local.id) });
+    const shortcuts = setCanvasShortcut(session.username, request.params.binding, target, local.id);
+    broadcastToAllClients({ type: "shortcutsChanged" });
+    response.json({ shortcuts });
   } catch (error) {
     if (error instanceof Error && /canvas binding/i.test(error.message)) {
       sendError(response, 400, error.message);
@@ -1151,7 +1191,9 @@ app.post("/api/canvas/shortcuts/release", async (request, response, next) => {
     const session = response.locals.authSession as AuthSession;
     const target = canvasShortcutTargetSchema.parse(request.body);
     const local = await getClusterNode();
-    response.json({ shortcuts: releaseCanvasShortcuts(session.username, [target], local.id) });
+    const shortcuts = releaseCanvasShortcuts(session.username, [target], local.id);
+    broadcastToAllClients({ type: "shortcutsChanged" });
+    response.json({ shortcuts });
   } catch (error) {
     next(error);
   }
@@ -1161,7 +1203,9 @@ app.delete("/api/canvas/shortcuts/:binding", async (request, response, next) => 
   try {
     const session = response.locals.authSession as AuthSession;
     const local = await getClusterNode();
-    response.json({ shortcuts: clearCanvasShortcut(session.username, request.params.binding, local.id) });
+    const shortcuts = clearCanvasShortcut(session.username, request.params.binding, local.id);
+    broadcastToAllClients({ type: "shortcutsChanged" });
+    response.json({ shortcuts });
   } catch (error) {
     if (error instanceof Error && /canvas binding/i.test(error.message)) {
       sendError(response, 400, error.message);
@@ -1480,9 +1524,7 @@ app.post("/api/cluster/events", async (request, response, next) => {
     }
     const batch = replicationBatchSchema.parse(request.body) as ReplicationBatch;
     const received = await receiveReplicationBatch(batch);
-    // A replicated review watermark changes what every project list shows, so every
-    // watcher hears about it rather than waiting for the next poll.
-    if (batch.events.some((event) => event.entityType === "conversation.review")) broadcastSessionsChangedToAllProjects();
+    broadcastReplicationInvalidations(batch.events.filter((event) => received.includes(event.id)));
     response.json({ received });
   } catch (error) {
     next(error);
@@ -1998,7 +2040,9 @@ app.post("/api/cluster/projects/import", async (request, response, next) => {
       sendError(response, 404, "Peer not found");
       return;
     }
-    response.json(await importProjectsFromPeer(peer));
+    const result = await importProjectsFromPeer(peer);
+    broadcastToAllClients({ type: "projectsChanged" });
+    response.json(result);
   } catch (error) {
     next(error);
   }
@@ -2438,8 +2482,10 @@ app.post("/api/projects", async (request, response, next) => {
     });
     if (payload.synced && project.syncFolderId) {
       await ensureSyncthingFolder(project.syncFolderId, project.name, project.path);
+      await notifyPeersOfProjectInventory();
     }
     sessionWatcher.ensureProject(project);
+    broadcastToAllClients({ type: "projectsChanged" });
     response.status(201).json({ project: await projectView(project) });
   } catch (error) {
     next(error);
@@ -2486,6 +2532,7 @@ app.patch("/api/projects/:projectId", async (request, response, next) => {
     const colorChanged = payload.color !== undefined && payload.color !== (existing.color ?? null);
     if (payload.color !== undefined) project = await updateProjectColor(project.id, payload.color);
     if (typeChanged || colorChanged) await notifyPeersOfProjectInventory();
+    broadcastToAllClients({ type: "projectsChanged" });
     response.json({ project: await projectView(project) });
   } catch (error) {
     next(error);
@@ -2502,6 +2549,7 @@ app.put("/api/projects/:projectId/lock", async (request, response, next) => {
     }
     const payload = projectLockSchema.parse(request.body);
     await setProjectLock(project.id, payload.locked);
+    broadcastToAllClients({ type: "projectsChanged" });
     response.json({ project: await projectView(project) });
   } catch (error) {
     next(error);
@@ -2566,6 +2614,7 @@ app.delete("/api/projects/:projectId", async (request, response, next) => {
     }
     await removeProject(project.id);
     sessionWatcher.removeProject(project.id);
+    broadcastToAllClients({ type: "projectsChanged" });
     response.status(204).send();
   } catch (error) {
     if (error instanceof Error && ["Settle task handoffs before deleting project", "Wait for task handoff settlement before deleting project", "Wait for task agents to finish before deleting project"].includes(error.message)) {
@@ -2631,10 +2680,13 @@ app.get("/api/projects/:projectId/commands", async (request, response, next) => 
 async function listProjectSessionsWithReviewState(project: ProjectRecord, userId: string, username: string): Promise<SessionSummary[]> {
   const tasks = await listTasks(project.id);
   const pinnedSessionPaths = getUserPreferences(userId).pinnedSessionPaths;
+  const pinnedSessionIds = listUserPins(username).conversations
+    .filter((pin) => pin.projectId === project.id)
+    .map((pin) => `${pin.engine}:${pin.sessionId}`);
   const sessions = await listHarnessSessions({
     ...project,
     additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []),
-  }, pinnedSessionPaths);
+  }, pinnedSessionPaths, pinnedSessionIds);
   const tasksBySessionPath = new Map(tasks.filter((task) => task.sessionPath).map((task) => [task.sessionPath, task]));
   const projectSharedSessions = [...new Set(sharedSessions.values())].filter((shared) => shared.projectId === project.id);
   await Promise.all(projectSharedSessions.map(async (shared) => {
@@ -4170,9 +4222,22 @@ function broadcastToProject(projectId: string, payload: unknown): void {
   }
 }
 
+/** Sends account and cluster state changes to browser chat/watch sockets, never terminals. */
+function broadcastToAllClients(payload: unknown): void {
+  const clients = new Set<WebSocket>();
+  for (const projectClients of watchClients.values()) for (const client of projectClients) clients.add(client);
+  for (const session of new Set(sharedSessions.values())) for (const client of session.clients) clients.add(client);
+  for (const client of claudeClients.keys()) clients.add(client);
+  for (const client of clients) send(client, payload);
+}
+
 /** Lease and review-watermark updates arrive without a project context, so every watcher re-lists. */
 function broadcastSessionsChangedToAllProjects(): void {
-  for (const projectId of watchClients.keys()) broadcastToProject(projectId, { type: "sessionsChanged" });
+  broadcastToAllClients({ type: "sessionsChanged" });
+}
+
+function broadcastReplicationInvalidations(events: ReplicationBatch["events"]): void {
+  for (const type of replicationInvalidations(events)) broadcastToAllClients({ type });
 }
 
 async function reloadClaudeClients(projectId: string, changedFiles: string[]): Promise<void> {
@@ -5293,6 +5358,7 @@ async function switchEngine(connection: ChatConnection, engine: ChatEngine): Pro
     const sessionId = randomUUID();
     await claimConversationAcrossCluster("claude", sessionId, local.id);
     await ensureConversationRecord(connection.project.id, "claude", sessionId, local.id);
+    broadcastToProject(connection.project.id, { type: "sessionsChanged" });
     connection.engine = "claude";
     connection.claude = { ...emptyClaudeState(sessionId), transcript };
     connection.handoffContext = transcript.length ? buildHandoffContext(transcript) : null;
@@ -5311,6 +5377,7 @@ async function switchEngine(connection: ChatConnection, engine: ChatEngine): Pro
   const sessionId = randomUUID();
   await claimConversationAcrossCluster("pi", sessionId, local.id);
   await ensureConversationRecord(connection.project.id, "pi", sessionId, local.id);
+  broadcastToProject(connection.project.id, { type: "sessionsChanged" });
   const sharedSession = await getSharedSession(connection.project.id, connection.cwd, undefined, sessionId, connection.secretAccountIds);
   sharedSession.clients.add(connection.socket);
   connection.shared = sharedSession;
@@ -5612,6 +5679,7 @@ webSocketServer.on("connection", async (socket, request) => {
       if (!requestedSessionId && ["new", "claude:new"].includes(rawSessionPathFromUrl ?? "")) {
         const sessionId = randomUUID();
         await ensureConversationRecord(project.id, routingEngine, sessionId, local.id);
+        broadcastToProject(project.id, { type: "sessionsChanged" });
         ownerUrl.searchParams.set("sessionId", sessionId);
       }
       ownerUrl.searchParams.delete("nodeId");
@@ -5722,6 +5790,7 @@ webSocketServer.on("connection", async (socket, request) => {
   if (!listedSession || listedSession.draft) {
     try {
       await ensureConversationRecord(project.id, requestedEngine, ownershipSessionId, local.id);
+      broadcastToProject(project.id, { type: "sessionsChanged" });
     } catch (error) {
       // A browser still naming a conversation that was deleted (here or on a peer)
       // must get a close, not an unhandled rejection that kills the node.

@@ -140,7 +140,7 @@ test("a remote watermark outranks the local row and another account's watermark 
 
 test("the running and review wiring is present end to end", async () => {
   const { readFile } = await import("node:fs/promises");
-  const [server, app] = await Promise.all([readFile("src/server.ts", "utf8"), readFile("public/app.js", "utf8")]);
+  const [server, app, replication] = await Promise.all([readFile("src/server.ts", "utf8"), readFile("public/app.js", "utf8"), readFile("src/replication.ts", "utf8")]);
 
   // The conversation list consults replicated leases, not just local runtime.
   const listing = server.slice(server.indexOf("async function listProjectSessionsWithReviewState"), server.indexOf("app.get(\"/api/projects/:projectId/sessions\""));
@@ -150,8 +150,9 @@ test("the running and review wiring is present end to end", async () => {
   assert.match(server, /pushRuntimeLeaseSnapshots\(\)\.catch/);
   assert.match(server, /"POST \/cluster\/sessions\/runtime-snapshot"/);
   // Review marks publish durable events, and applying them wakes every watcher.
-  assert.match(server, /entityType === "conversation\.review"/);
-  assert.match(server, /broadcastSessionsChangedToAllProjects\(\)/);
+  assert.match(replication, /"conversation\.review"/);
+  assert.match(replication, /invalidations\.add\("sessionsChanged"\)/);
+  assert.match(server, /broadcastReplicationInvalidations/);
   // The client trails a sessionsChanged burst with a pending-reviews refresh.
   assert.match(app, /function schedulePendingReviewsRefresh\(\)/);
   const watchHandler = app.slice(app.indexOf('socket.addEventListener("message"', app.indexOf("// ---- Project watch socket")), app.indexOf("close", app.indexOf('socket.addEventListener("message"', app.indexOf("// ---- Project watch socket"))));

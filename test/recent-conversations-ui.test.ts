@@ -92,10 +92,11 @@ test("recent conversations are recorded, pinnable, and reopenable", async () => 
   assert.ok(start >= 0, "Missing openListedSession");
   assert.match(app.slice(start, end), /rememberRecentSession\(session\)/);
 
-  // Pinning reuses the existing conversation pin, so a pin set here shows in the chat list too.
+  // Pinning reuses the stable conversation identity, so a pin set here shows in the chat list and on other nodes.
   assert.match(app, /testid: "recent-session-pin-button"/);
-  assert.match(app, /togglePinnedSession\(entry\.sessionPath\)/);
-  assert.match(app, /sortPinnedFirst\(byActivity, \(entry\) => isSessionPinned\(entry\.sessionPath\)\)/);
+  assert.match(app, /togglePinnedSession\(entry\)/);
+  assert.match(app, /sortPinnedFirst\(byActivity, isSessionPinned\)/);
+  assert.match(app, /sessionId: session\.id/);
 
   // Persistence goes through the preferences API, never Web Storage.
   assert.doesNotMatch(app, /\.setItem\(/);

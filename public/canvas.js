@@ -819,6 +819,9 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
       active = false;
       generation++;
     },
+    reloadShortcuts() {
+      return loadShortcuts().then(render);
+    },
     openPicker,
   };
 }
