@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.3.1 — 2026-09-04
 
-- Secret accounts attached to workspaces now prevent duplicate variable names across assigned accounts
+- Secret accounts attached to workspaces now reject duplicate variable names when syncing across nodes
 
 ## 1.3.0 — 2026-09-04
 
