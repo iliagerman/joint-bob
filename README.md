@@ -15,7 +15,7 @@ Want an AI coding agent to perform the installation? Give it [agents_readme.md](
 - Pi and Claude accounts if you want to use both agents
 - Tailscale or another private HTTPS network for multi-node operation
 
-The installer provides pinned versions of Node.js, Pi, Claude Code, and Syncthing. You do not need to install them first. Tailscale is optional.
+The installer provides pinned versions of Node.js, Pi, Claude Code, and Syncthing. You do not need to install them first. Syncthing requires no account. Tailscale is optional and has its own account and installation if you choose to use it.
 
 ## Choose a setup
 
@@ -153,9 +153,23 @@ Install Joint Bob and configure private HTTPS on the new machine first. Tailscal
 
 A join link works once. Creating another link invalidates the previous unused link from that node. Generate one link per new node and keep it inside the private cluster network.
 
-Pairing exchanges cluster membership and project inventory. Joint Bob also creates shared `dot-pi` and `dot-claude` Syncthing folders for shareable engine configuration and sessions. Authentication files, credential-bearing settings, MCP authentication, OAuth locks, and daemon control keys remain node-local.
+Pairing exchanges cluster membership, project inventory, Joint Bob machine credentials, and Syncthing device IDs. Joint Bob then adds each paired device and managed folder to the local Syncthing configuration. A cluster supports up to five active nodes. Remove an old node before adding a sixth.
 
-A cluster supports up to five active nodes. Remove an old node before adding a sixth.
+### How synchronization works
+
+Syncthing is a companion process, not code embedded in the Joint Bob server and not a hosted Joint Bob service. The installer supplies a checksum-verified Syncthing binary. It can adopt a compatible running daemon; otherwise it starts `joint-bob-syncthing.service` on Linux or `com.joint-bob.syncthing` on macOS. Joint Bob discovers the daemon's local API key and controls it through Syncthing's loopback REST API. The API endpoint must stay on a loopback address.
+
+Syncthing has no user accounts. Each node has a cryptographic device ID. Joint Bob exchanges those IDs through the one-time cluster pairing flow, so users do not need to open the Syncthing GUI, create an account, or configure device and folder sharing by hand. File transport uses Syncthing's encrypted device-to-device protocol. Depending on network reachability, Syncthing may connect directly or through its configured discovery and relay services.
+
+Joint Bob and Syncthing have separate jobs:
+
+- Joint Bob's authenticated HTTPS API exchanges cluster membership, project inventory, task state, and other application events.
+- Syncthing transfers managed project files, the shared ticket-workspace tree, and dedicated Pi and Claude conversation-transcript folders.
+- Each node keeps its own `~/.joint-bob/node.db`. Joint Bob never synchronizes the SQLite database as a file.
+- Pi and Claude configuration, authentication files, OAuth state, MCP authentication, and daemon control keys remain node-local. Joint Bob syncs transcript roots instead of the complete engine directories and pauses legacy `dot-pi` and `dot-claude` folders if they exist.
+- Secret accounts remain node-local unless a user selects **Settings > Secrets > Sync to nodes**. That encrypted replication uses the Joint Bob cluster API, not Syncthing.
+
+Users still install Joint Bob on every node, create a local Joint Bob administrator on every node, configure mutually reachable private HTTPS origins, choose a Joint Bob home folder, and pair nodes with a one-time link. Pi and Claude authentication is separate and must be completed on every node that will run that engine. Tailscale authentication is required only when Tailscale provides the private network.
 
 ## Projects and ticket workspaces
 

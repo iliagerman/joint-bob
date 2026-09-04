@@ -4,7 +4,15 @@ Use this file when a human asks an AI agent to install or upgrade Joint Bob. Rea
 
 ## Goal
 
-Choose one deployment route with the human, install Joint Bob as a native user service, verify it, and hand browser-only steps back to the human.
+Choose one deployment route with the human, install Joint Bob as a native user service, ensure its local Syncthing companion is running, verify both, and hand browser-only steps back to the human.
+
+## Syncthing ownership
+
+The installer handles Syncthing. It supplies a pinned, checksum-verified binary, adopts a compatible running daemon or starts one, and lets Joint Bob discover its loopback REST API and API key. Syncthing has no user account. Do not ask the human to create one or to configure the Syncthing GUI.
+
+During cluster pairing, Joint Bob exchanges Syncthing device IDs and configures devices and managed folders through the local REST API. Syncthing transfers project files, ticket-workspace files, and dedicated Pi and Claude conversation-transcript folders. Joint Bob's authenticated HTTPS API transfers cluster metadata and application events. Node SQLite databases, engine configuration and authentication, and secrets remain node-local. A user may explicitly replicate a secret account through Joint Bob's encrypted cluster API.
+
+Treat Joint Bob HTTPS and Syncthing file transport as separate network paths. Every cluster node still needs a stable, mutually reachable private HTTPS origin for Joint Bob. Syncthing uses its encrypted device protocol and may connect directly or through its configured discovery and relay services.
 
 ## Present the deployment options
 
@@ -119,13 +127,25 @@ Linux:
 
 ```bash
 systemctl --user status joint-bob.service --no-pager
+systemctl --user status joint-bob-syncthing.service --no-pager
 ```
 
 macOS:
 
 ```bash
 launchctl print "gui/$(id -u)/com.joint-bob.node"
+launchctl print "gui/$(id -u)/com.joint-bob.syncthing"
 ```
+
+The Syncthing unit may be absent when the installer adopts an already running Syncthing daemon. In that case, verify the daemon with the installed CLI:
+
+```bash
+syncthing_bin="$(command -v syncthing || find "$HOME/.local/share/joint-bob/runtime" -path '*/bin/syncthing' -type f -print -quit)"
+test -n "$syncthing_bin"
+"$syncthing_bin" cli show system
+```
+
+Do not expose Syncthing's REST API or copy its API key into chat. Joint Bob discovers the API locally. Manual configuration under **Settings** is a recovery path, and the endpoint accepts loopback hosts only.
 
 If verification fails, collect the shortest relevant logs before proposing a fix.
 
@@ -133,6 +153,7 @@ Linux:
 
 ```bash
 journalctl --user -u joint-bob.service -n 100 --no-pager
+journalctl --user -u joint-bob-syncthing.service -n 100 --no-pager
 ```
 
 macOS:
@@ -233,6 +254,9 @@ Pairing is a human-controlled browser step:
 4. Have the human paste the link under **Join an existing cluster** and select **Join cluster**.
 5. Repeat with a new one-time link for each additional node.
 6. Confirm every node has a **Joint Bob home folder** under **Settings > Projects**.
+7. Confirm mapped projects and ticket workspaces report a healthy sync state before handing work between nodes.
+
+Pairing configures Syncthing device and folder sharing. Do not send the human to the Syncthing GUI or ask for a Syncthing account. Joint Bob shares dedicated conversation-transcript roots, not complete engine directories. It pauses legacy `dot-pi` and `dot-claude` folders.
 
 Treat each one-time link as a secret. Do not print it in logs, shell history, or your completion report. A cluster supports five active nodes.
 
@@ -285,7 +309,7 @@ Report:
 - New install or upgrade for each node
 - Target OS and architecture for each node
 - Local URL and private HTTPS origin where applicable
-- Service health and service name for each node
+- Joint Bob and Syncthing health and service names for each node
 - Install path: `~/.local/share/joint-bob/app`
 - State path: `~/.joint-bob`
 - Human confirmation status for Pi and Claude authentication
