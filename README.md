@@ -219,6 +219,58 @@ npm start
 
 Development uses `http://localhost:8790` unless `PORT` is set. Production services always run from `~/.local/share/joint-bob/app`, not from a source checkout.
 
+### Add a harness adapter
+
+Joint Bob discovers harness adapters from its own `src/harnesses` directory at startup. Source runs load `*.harness.ts`; compiled builds load `*.harness.js`. The loader sorts adapters by `order`, then filename. It rejects malformed exports and duplicate IDs. The path resolver rejects a session path when no adapter owns it or several adapters claim it. Files outside the application directory are never loaded as adapters.
+
+Create `src/harnesses/<id>.harness.ts` with one default export. Use `src/harnesses/pi.harness.ts` and `src/harnesses/claude.harness.ts` as working examples. The function names in this outline stand for implementations defined earlier in the same file.
+
+```ts
+import { defineHarness } from "./contract.js";
+
+export default defineHarness({
+  id: "kiro",
+  label: "Kiro",
+  order: 30,
+  paths: {
+    newSession: "kiro:new",
+    ownsSession: (sessionPath) => sessionPath.startsWith("kiro:"),
+    ownsTranscript: (filePath) => filePath.endsWith(".jsonl") && isKiroTranscript(filePath),
+  },
+  sessions: {
+    files: listKiroSessionFiles,
+    list: listKiroSessions,
+    refresh: refreshKiroSessions,
+    loadMessages: loadKiroMessages,
+  },
+});
+```
+
+The adapter fields have these jobs:
+
+- `id` is a lowercase identifier matching `[a-z][a-z0-9-]*`.
+- `label` is the name shown in the UI.
+- `order` controls display and discovery order. It is optional.
+- `paths.newSession` is the path used for a new conversation.
+- `paths.ownsSession` must claim only this adapter's session paths. Every path must have exactly one owner.
+- `paths.ownsTranscript` limits refreshes to this adapter's transcript files.
+- `sessions.files` returns transcript files for change detection.
+- `sessions.list` reads the project's sessions.
+- `sessions.refresh` updates a previous list after transcript files change.
+- `sessions.loadMessages` reads one transcript into Joint Bob chat messages.
+
+Keep path checks inside the adapter and restrict transcript ownership to the harness's known data directory. Do not read adapter code or configuration from `~/.joint-bob`.
+
+Add registry and session tests in `test/harness-registry.test.ts`, then run:
+
+```bash
+npm run typecheck
+npm test
+npm run build
+```
+
+This adapter contract currently covers discovery, session listing, refreshes, and transcript loading. Interactive prompts and task execution still use the built-in Pi and Claude runtimes. A new harness needs runtime integration in the server before users can run it.
+
 ### Disposable nodes with dummy data
 
 For UI and cluster work, run throwaway nodes instead of your real one:
