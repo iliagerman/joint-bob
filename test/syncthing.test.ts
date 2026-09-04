@@ -302,10 +302,16 @@ test("Syncthing folder readiness requires an idle folder with no outstanding dat
     ["request error", null, false],
   ];
   for (const [_name, status, ready] of cases) {
+    let ignoreReconciled = false;
     await withSyncthingApi((request, response) => {
       response.setHeader("Content-Type", "application/json");
-      if (request.url === "/rest/db/ignores?folder=demo") {
+      if (request.method === "GET" && request.url === "/rest/db/ignores?folder=demo") {
         response.end(JSON.stringify({ ignore: [] }));
+        return;
+      }
+      if (request.method === "POST" && request.url === "/rest/db/ignores?folder=demo") {
+        ignoreReconciled = true;
+        response.end("{}");
         return;
       }
       if (request.url === "/rest/db/status?folder=demo") {
@@ -319,6 +325,7 @@ test("Syncthing folder readiness requires an idle folder with no outstanding dat
       if (ready) await syncthing.assertSyncthingFolderReady("demo");
       else await assert.rejects(syncthing.assertSyncthingFolderReady("demo"), { message: "Syncthing folder is not synchronized on this node" });
     });
+    assert.equal(ignoreReconciled, true);
   }
 });
 
@@ -354,6 +361,43 @@ test("ticket workspace folder uses one stable path and gains paired devices", as
     { deviceID: "NODE-A", name: "Node A", addresses: ["dynamic"] },
     { deviceID: "NODE-B", name: "Node B", addresses: ["dynamic"] },
   ]);
+  await rm(root, { recursive: true, force: true });
+});
+
+test("conversation folders are narrow, shared, unpaused, and have no project ignores", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-conversation-sync-"));
+  const folders: any[] = [
+    { id: "ordinary", label: "Ordinary", path: "/ordinary", type: "sendreceive", paused: true, devices: [{ deviceID: "LOCAL" }] },
+    { id: "joint-bob-conversations-pi", label: "old", path: "/old", type: "sendreceive", paused: true, devices: [{ deviceID: "LOCAL" }] },
+  ];
+  const requests: string[] = [];
+  await withSyncthingApi((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      requests.push(`${request.method} ${request.url}`);
+      response.setHeader("Content-Type", "application/json");
+      if (request.method === "GET" && request.url === "/rest/config/folders") { response.end(JSON.stringify(folders)); return; }
+      if (request.method === "GET" && request.url === "/rest/config/devices") { response.end(JSON.stringify([])); return; }
+      if (request.method === "POST" && request.url === "/rest/config/devices") { response.end("{}"); return; }
+      if (request.method === "GET" && request.url === "/rest/system/status") { response.end(JSON.stringify({ myID: "LOCAL" })); return; }
+      if (request.method === "POST" && request.url === "/rest/config/folders") { folders.push(JSON.parse(body)); response.end("{}"); return; }
+      if (request.method === "PUT" && request.url?.startsWith("/rest/config/folders/")) { folders[folders.findIndex((folder) => folder.id === JSON.parse(body).id)] = JSON.parse(body); response.end("{}"); return; }
+      if (request.method === "GET" && request.url === "/rest/db/ignores?folder=ordinary") { response.end(JSON.stringify({ ignore: [] })); return; }
+      if (request.method === "POST" && request.url === "/rest/db/ignores?folder=ordinary") { response.end("{}"); return; }
+      response.statusCode = 404; response.end();
+    });
+  }, async (syncthing) => {
+    await syncthing.ensureSyncthingFolder("ordinary", "Ordinary", "/ordinary");
+    await syncthing.ensureConversationSyncFolders([
+      { id: "joint-bob-conversations-pi", label: "Pi conversations", path: path.join(root, "pi") },
+      { id: "joint-bob-conversations-claude", label: "Claude conversations", path: path.join(root, "claude") },
+    ], "PEER", "Peer");
+  });
+  assert.deepEqual(folders.map((folder) => folder.id).sort(), ["joint-bob-conversations-claude", "joint-bob-conversations-pi", "ordinary"]);
+  assert.equal(folders.find((folder) => folder.id === "ordinary")?.paused, true);
+  assert.ok(folders.filter((folder) => folder.id !== "ordinary").every((folder) => !folder.paused && folder.devices.some((device: { deviceID: string }) => device.deviceID === "LOCAL") && folder.devices.some((device: { deviceID: string }) => device.deviceID === "PEER")));
+  assert.ok(!requests.some((request) => request.includes("/rest/db/ignores?folder=joint-bob-conversations")));
   await rm(root, { recursive: true, force: true });
 });
 

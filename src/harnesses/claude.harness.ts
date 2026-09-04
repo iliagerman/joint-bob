@@ -15,7 +15,13 @@ export default defineHarness({
     newSession: "claude:new",
     ownsSession: (sessionPath) => sessionPath.startsWith("claude:") || sessionPath.startsWith("draft:claude:"),
     ownsTranscript: (filePath) => filePath.endsWith(".jsonl") && isWithin(filePath, claudeProjectsRoot()),
+    sessionId: (sessionPath) => {
+      if (!sessionPath.startsWith("claude:") || sessionPath.startsWith("draft:") || !sessionPath.endsWith(".jsonl")) return undefined;
+      const id = path.basename(sessionPath.slice("claude:".length), ".jsonl");
+      return id || undefined;
+    },
   },
+  sync: { transcriptRoot: claudeProjectsRoot },
   sessions: {
     files: claudeSessionFiles,
     list: listClaudeSessions,

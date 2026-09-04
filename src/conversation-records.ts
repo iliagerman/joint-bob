@@ -13,6 +13,7 @@ export interface ConversationRecord {
   createdAt: string;
   updatedAt: string;
   originNodeId: string;
+  taskId: string | null;
 }
 
 interface ConversationRecordPayload {
@@ -30,7 +31,7 @@ let databasePromise: Promise<DatabaseSync> | undefined;
 function createConversationRecordTables(db: DatabaseSync): void {
   db.exec(`CREATE TABLE IF NOT EXISTS conversation_records (
     project_id TEXT NOT NULL, engine TEXT NOT NULL, session_id TEXT NOT NULL,
-    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, origin_node_id TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, origin_node_id TEXT NOT NULL DEFAULT '', task_id TEXT,
     PRIMARY KEY (project_id, engine, session_id)
   ); CREATE TABLE IF NOT EXISTS conversation_record_tombstones (
     project_id TEXT NOT NULL, engine TEXT NOT NULL, session_id TEXT NOT NULL,
@@ -42,6 +43,7 @@ export function ensureConversationRecordSchema(db: DatabaseSync): void {
   createConversationRecordTables(db);
   const records = db.prepare("PRAGMA table_info(conversation_records)").all() as unknown as Array<{ name: string }>;
   if (!records.some((column) => column.name === "origin_node_id")) db.exec("ALTER TABLE conversation_records ADD COLUMN origin_node_id TEXT NOT NULL DEFAULT ''");
+  if (!records.some((column) => column.name === "task_id")) db.exec("ALTER TABLE conversation_records ADD COLUMN task_id TEXT");
   for (const table of ["conversation_records", "conversation_record_tombstones"]) {
     const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) as { sql: string } | undefined;
     if (!row?.sql.includes("engine IN ('pi', 'claude')")) continue;
@@ -51,7 +53,10 @@ export function ensureConversationRecordSchema(db: DatabaseSync): void {
       createConversationRecordTables(db);
       const columns = db.prepare(`PRAGMA table_info(${table}_old)`).all() as unknown as Array<{ name: string }>;
       const origin = columns.some((column) => column.name === "origin_node_id") ? "origin_node_id" : "''";
-      if (table === "conversation_records") db.exec(`INSERT INTO conversation_records (project_id, engine, session_id, created_at, updated_at, origin_node_id) SELECT project_id, engine, session_id, created_at, updated_at, ${origin} FROM conversation_records_old`);
+      if (table === "conversation_records") {
+        const taskId = columns.some((column) => column.name === "task_id") ? "task_id" : "NULL";
+        db.exec(`INSERT INTO conversation_records (project_id, engine, session_id, created_at, updated_at, origin_node_id, task_id) SELECT project_id, engine, session_id, created_at, updated_at, ${origin}, ${taskId} FROM conversation_records_old`);
+      }
       else db.exec(`INSERT INTO conversation_record_tombstones (project_id, engine, session_id, updated_at, origin_node_id) SELECT project_id, engine, session_id, updated_at, ${origin} FROM conversation_record_tombstones_old`);
       db.exec(`DROP TABLE ${table}_old`);
       db.exec("COMMIT");
@@ -92,7 +97,7 @@ async function database(): Promise<DatabaseSync> {
 }
 
 function row(record: Record<string, unknown>): ConversationRecord {
-  return { projectId: String(record.project_id), engine: record.engine as ConversationEngine, sessionId: String(record.session_id), createdAt: String(record.created_at), updatedAt: String(record.updated_at), originNodeId: String(record.origin_node_id) };
+  return { projectId: String(record.project_id), engine: record.engine as ConversationEngine, sessionId: String(record.session_id), createdAt: String(record.created_at), updatedAt: String(record.updated_at), originNodeId: String(record.origin_node_id), taskId: record.task_id === null || record.task_id === undefined ? null : String(record.task_id) };
 }
 
 function selectRecord(db: DatabaseSync, projectId: string, engine: ConversationEngine, sessionId: string): ConversationRecord | undefined {
@@ -104,16 +109,24 @@ function publish(db: DatabaseSync, operation: "upsert" | "delete", projectId: st
   enqueueReplicationEvent(db, { originNodeId, entityType: "conversation.record", entityKey: `${projectId}:${engine}:${sessionId}`, operation, payload: { projectId, engine, sessionId, record, updatedAt, originNodeId } });
 }
 
-export async function ensureConversationRecord(projectId: string, engine: ConversationEngine, sessionId: string, originNodeId: string): Promise<ConversationRecord> {
+export async function ensureConversationRecord(projectId: string, engine: ConversationEngine, sessionId: string, originNodeId: string, taskId?: string): Promise<ConversationRecord> {
   const db = await database();
   db.exec("BEGIN IMMEDIATE");
   try {
     const existing = selectRecord(db, projectId, engine, sessionId);
-    if (existing) { db.exec("COMMIT"); return existing; }
+    if (existing) {
+      if (taskId && existing.taskId && taskId !== existing.taskId) throw new Error("Conversation record has a different task ID");
+      if (!taskId || existing.taskId) { db.exec("COMMIT"); return existing; }
+      const updated = { ...existing, taskId, updatedAt: new Date().toISOString(), originNodeId };
+      db.prepare("UPDATE conversation_records SET task_id = ?, updated_at = ?, origin_node_id = ? WHERE project_id = ? AND engine = ? AND session_id = ?").run(taskId, updated.updatedAt, originNodeId, projectId, engine, sessionId);
+      publish(db, "upsert", projectId, engine, sessionId, updated, updated.updatedAt, originNodeId);
+      db.exec("COMMIT");
+      return updated;
+    }
     if (db.prepare("SELECT 1 FROM conversation_record_tombstones WHERE project_id = ? AND engine = ? AND session_id = ?").get(projectId, engine, sessionId)) throw new Error("Conversation record was deleted");
     const now = new Date().toISOString();
-    const record = { projectId, engine, sessionId, createdAt: now, updatedAt: now, originNodeId };
-    db.prepare("INSERT INTO conversation_records (project_id, engine, session_id, created_at, updated_at, origin_node_id) VALUES (?, ?, ?, ?, ?, ?)").run(projectId, engine, sessionId, now, now, originNodeId);
+    const record = { projectId, engine, sessionId, createdAt: now, updatedAt: now, originNodeId, taskId: taskId ?? null };
+    db.prepare("INSERT INTO conversation_records (project_id, engine, session_id, created_at, updated_at, origin_node_id, task_id) VALUES (?, ?, ?, ?, ?, ?, ?)").run(projectId, engine, sessionId, now, now, originNodeId, record.taskId);
     publish(db, "upsert", projectId, engine, sessionId, record, now, originNodeId);
     db.exec("COMMIT");
     return record;
@@ -153,7 +166,7 @@ function payloadFor(event: ReplicationEvent): ConversationRecordPayload {
   const value = event.payload as Partial<ConversationRecordPayload>;
   if (event.entityType !== "conversation.record" || !["upsert", "delete"].includes(event.operation) || !value || typeof value !== "object" || Array.isArray(value)
     || typeof value.projectId !== "string" || !isHarnessId(value.engine) || typeof value.sessionId !== "string" || typeof value.updatedAt !== "string" || typeof value.originNodeId !== "string" || value.originNodeId !== event.originNodeId || event.entityKey !== `${value.projectId}:${value.engine}:${value.sessionId}` || (event.operation === "upsert") !== Boolean(value.record)) throw new Error("Malformed conversation record replication payload");
-  if (value.record && (value.record.projectId !== value.projectId || value.record.engine !== value.engine || value.record.sessionId !== value.sessionId || value.record.updatedAt !== value.updatedAt || value.record.originNodeId !== value.originNodeId || typeof value.record.createdAt !== "string")) throw new Error("Malformed conversation record replication payload");
+  if (value.record && (value.record.projectId !== value.projectId || value.record.engine !== value.engine || value.record.sessionId !== value.sessionId || value.record.updatedAt !== value.updatedAt || value.record.originNodeId !== value.originNodeId || typeof value.record.createdAt !== "string" || (value.record.taskId !== undefined && value.record.taskId !== null && typeof value.record.taskId !== "string"))) throw new Error("Malformed conversation record replication payload");
   return value as ConversationRecordPayload;
 }
 
@@ -167,13 +180,13 @@ export function applyConversationRecordEvent(db: DatabaseSync, event: Replicatio
     db.prepare("INSERT INTO conversation_record_tombstones (project_id, engine, session_id, updated_at, origin_node_id) VALUES (?, ?, ?, ?, ?) ON CONFLICT(project_id, engine, session_id) DO UPDATE SET updated_at = excluded.updated_at, origin_node_id = excluded.origin_node_id").run(projectId, payload.engine, payload.sessionId, payload.updatedAt, payload.originNodeId);
     return;
   }
-  db.prepare("INSERT INTO conversation_records (project_id, engine, session_id, created_at, updated_at, origin_node_id) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(project_id, engine, session_id) DO UPDATE SET created_at = excluded.created_at, updated_at = excluded.updated_at, origin_node_id = excluded.origin_node_id").run(projectId, payload.engine, payload.sessionId, payload.record.createdAt, payload.updatedAt, payload.originNodeId);
+  db.prepare("INSERT INTO conversation_records (project_id, engine, session_id, created_at, updated_at, origin_node_id, task_id) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id, engine, session_id) DO UPDATE SET created_at = excluded.created_at, updated_at = excluded.updated_at, origin_node_id = excluded.origin_node_id, task_id = excluded.task_id").run(projectId, payload.engine, payload.sessionId, payload.record.createdAt, payload.updatedAt, payload.originNodeId, payload.record.taskId ?? null);
   db.prepare("DELETE FROM conversation_record_tombstones WHERE project_id = ? AND engine = ? AND session_id = ?").run(projectId, payload.engine, payload.sessionId);
 }
 
 export function conversationDraftPath(engine: ConversationEngine, sessionId: string): string { return `draft:${engine}:${sessionId}`; }
 
 export function parseConversationDraftPath(value: string | null): { engine: ConversationEngine; sessionId: string } | undefined {
-  const match = value?.match(/^draft:([a-z][a-z0-9-]*):([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/);
+  const match = value?.match(/^draft:([a-z][a-z0-9-]*):([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/);
   return match ? { engine: match[1] as ConversationEngine, sessionId: match[2] } : undefined;
 }

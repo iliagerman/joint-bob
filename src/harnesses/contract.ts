@@ -12,6 +12,10 @@ export interface HarnessAdapter<TId extends HarnessId = HarnessId> {
     newSession: string;
     ownsSession: (sessionPath: string) => boolean;
     ownsTranscript: (filePath: string) => boolean;
+    sessionId: (sessionPath: string) => string | undefined;
+  };
+  sync: {
+    transcriptRoot: () => string;
   };
   sessions: {
     files: (project: HarnessProject) => Promise<string[]>;

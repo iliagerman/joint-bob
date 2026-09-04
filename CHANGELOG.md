@@ -12,6 +12,7 @@ Every deployment is a version. The newest section must always match the
 - Claude harness now provides a /goal command to set completion conditions
 - Canvas keyboard shortcuts are now customizable with a modifier chord selector and per-command key bindings, and a finder lets you search conversations by title to jump directly to them
 - Pinned conversations now synchronize across cluster nodes instead of being local to each machine
+- Pi, Claude, and future harness conversations now synchronize transcripts and ticket metadata across cluster nodes
 - The app now automatically refreshes to the latest version when deployed while the browser window is open
 - Conversation engines are now extensible, enabling support for future custom harnesses alongside Pi and Claude
 

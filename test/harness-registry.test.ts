@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { HarnessSessionCatalog, defineHarness, harnessForSessionPath, listHarnesses } from "../src/harnesses.js";
+import { HarnessSessionCatalog, conversationSyncFolderId, defineHarness, harnessForSessionPath, listHarnesses, listHarnessSyncFolders } from "../src/harnesses.js";
 import { discoverHarnesses, resolveHarnessForSessionPath } from "../src/harnesses/registry.js";
 import type { HarnessProject } from "../src/harnesses.js";
 import type { SessionSummary } from "../src/types.js";
@@ -16,6 +16,8 @@ test("harness registry exposes adapters instead of UI-specific engine checks", (
     { id: "claude", label: "Claude", newSessionPath: "claude:new" },
   ]);
   for (const harness of harnesses) {
+    assert.equal(typeof harness.paths.sessionId, "function");
+    assert.equal(typeof harness.sync.transcriptRoot, "function");
     assert.equal(typeof harness.paths.ownsSession, "function");
     assert.equal(typeof harness.paths.ownsTranscript, "function");
     assert.equal(typeof harness.sessions.files, "function");
@@ -28,6 +30,11 @@ test("harness registry exposes adapters instead of UI-specific engine checks", (
   assert.equal(harnessForSessionPath("/tmp/session.jsonl").id, "pi");
   assert.equal(harnessForSessionPath("C:\\sessions\\session.jsonl").id, "pi");
   assert.equal(harnessForSessionPath("claude:/tmp/session.jsonl").id, "claude");
+  assert.equal(harnessForSessionPath("/tmp/2026-01-01T00-00-00-000Z_123e4567-e89b-42d3-a456-426614174000.jsonl").paths.sessionId("/tmp/2026-01-01T00-00-00-000Z_123e4567-e89b-42d3-a456-426614174000.jsonl"), "123e4567-e89b-42d3-a456-426614174000");
+  assert.equal(harnessForSessionPath("/tmp/123e4567-e89b-42d3-a456-426614174000.jsonl").paths.sessionId("/tmp/123e4567-e89b-42d3-a456-426614174000.jsonl"), "123e4567-e89b-42d3-a456-426614174000");
+  assert.equal(harnessForSessionPath("claude:/tmp/root/id.jsonl").paths.sessionId("claude:/tmp/root/id.jsonl"), "id");
+  assert.deepEqual(listHarnessSyncFolders().map(({ id }) => id), ["joint-bob-conversations-pi", "joint-bob-conversations-claude"]);
+  assert.equal(conversationSyncFolderId("pi"), "joint-bob-conversations-pi");
 });
 
 function fixtureAdapter(id: string, ownsSession = 'value === "fake:session"'): string {
@@ -38,7 +45,9 @@ function fixtureAdapter(id: string, ownsSession = 'value === "fake:session"'): s
     newSession: "${id}:new",
     ownsSession: (value) => ${ownsSession},
     ownsTranscript: () => false,
+    sessionId: () => undefined,
   },
+  sync: { transcriptRoot: () => "/tmp/${id}" },
   sessions: {
     files: async () => [],
     list: async () => [],

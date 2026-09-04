@@ -172,6 +172,12 @@ test("Syncthing readiness fences handoff ownership until both nodes are synchron
       assert.ok(!syncthing.folders.some((folder) => folder.id === "dot-pi"));
       assert.ok(!syncthing.folders.some((folder) => folder.id === "dot-claude"));
     }
+    for (const [syncthing, node, peerDevice] of [[sourceSyncthing, source, "DESTINATION"], [destinationSyncthing, destination, "SOURCE"]] as const) {
+      assert.equal(syncthing.folders.find((folder) => folder.id === "joint-bob-conversations-pi")?.path, path.join(node.homeDir, ".pi", "agent", "sessions"));
+      assert.equal(syncthing.folders.find((folder) => folder.id === "joint-bob-conversations-claude")?.path, path.join(node.homeDir, ".claude", "projects"));
+      assert.ok(syncthing.folders.find((folder) => folder.id === "joint-bob-conversations-pi")?.devices.some((device) => device.deviceID === peerDevice));
+      assert.ok(syncthing.folders.find((folder) => folder.id === "joint-bob-conversations-claude")?.devices.some((device) => device.deviceID === peerDevice));
+    }
     assert.ok(sourceSyncthing.folders.find((folder) => folder.id === "joint-bob-ticket-workspaces")?.devices.some((device) => device.deviceID === "DESTINATION"));
     assert.ok(destinationSyncthing.folders.find((folder) => folder.id === "joint-bob-ticket-workspaces")?.devices.some((device) => device.deviceID === "SOURCE"));
   } finally {

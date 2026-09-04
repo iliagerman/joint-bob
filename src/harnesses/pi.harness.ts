@@ -2,6 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { createPiSession, listPiSessions, piSessionFiles, refreshPiSessions, simplifyMessages } from "../pi-service.js";
 import { getSettings } from "../settings.js";
+import { canonicalPiTranscriptName } from "../session-paths.js";
 import { defineHarness } from "./contract.js";
 
 function isWithin(filePath: string, root: string): boolean {
@@ -25,7 +26,14 @@ export default defineHarness({
     newSession: "new",
     ownsSession: (sessionPath) => sessionPath === "new" || sessionPath.startsWith("draft:pi:") || !hasHarnessPrefix(sessionPath),
     ownsTranscript: (filePath) => filePath.endsWith(".jsonl") && isWithin(filePath, piSessionsRoot()),
+    sessionId: (sessionPath) => {
+      if (sessionPath === "new" || sessionPath.startsWith("draft:") || !sessionPath.endsWith(".jsonl")) return undefined;
+      const name = canonicalPiTranscriptName(path.basename(sessionPath));
+      const id = name.replace(/\.jsonl$/, "").replace(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z_/, "");
+      return id || undefined;
+    },
   },
+  sync: { transcriptRoot: piSessionsRoot },
   sessions: {
     files: piSessionFiles,
     list: listPiSessions,

@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { getSettings, syncthingApiKey } from "./settings.js";
@@ -38,8 +38,10 @@ export interface SyncthingFolderStatus {
   paused?: boolean;
 }
 
-export const PI_ENGINE_SYNC_FOLDER_ID = "dot-pi";
-export const CLAUDE_ENGINE_SYNC_FOLDER_ID = "dot-claude";
+const PI_ENGINE_SYNC_FOLDER_ID = "dot-pi";
+const CLAUDE_ENGINE_SYNC_FOLDER_ID = "dot-claude";
+
+export interface ConversationSyncFolder { id: string; label: string; path: string; }
 
 export interface SyncthingConnection {
   url: string;
@@ -251,10 +253,10 @@ export async function syncthingFolderStatuses(folderIds: string[]): Promise<Reco
   return Object.fromEntries(entries);
 }
 
-export async function assertSyncthingFolderReady(folderId: string): Promise<void> {
+export async function assertSyncthingFolderReady(folderId: string, projectIgnores = true): Promise<void> {
   if (!await connection()) throw new Error("Syncthing is not configured on this node");
   try {
-    await setProjectIgnores(folderId);
+    if (projectIgnores) await setProjectIgnores(folderId);
     const status = await request<SyncthingFolderStatus>(`/rest/db/status?folder=${encodeURIComponent(folderId)}`);
     const errors = typeof status.errors === "number" ? status.errors : status.errors?.length ?? 0;
     if (status.state !== "idle" || status.needTotalItems !== 0 || status.needBytes !== 0 || errors !== 0) {
@@ -292,7 +294,7 @@ export async function pauseEngineSyncFolders(): Promise<void> {
   }
 }
 
-export async function ensureSyncthingFolder(folderId: string, label: string, folderPath: string, peerDeviceId?: string): Promise<void> {
+async function ensureFolder(folderId: string, label: string, folderPath: string, peerDeviceId: string | undefined, projectIgnores: boolean, unpause: boolean): Promise<void> {
   if (!await connection()) throw new Error("Syncthing is not configured on this node");
   const requestedPath = path.resolve(folderPath);
   const folders = await listSyncthingFolders();
@@ -305,7 +307,7 @@ export async function ensureSyncthingFolder(folderId: string, label: string, fol
   ].filter((deviceId): deviceId is string => Boolean(deviceId)))];
   const pathChanged = Boolean(existing && path.resolve(existing.path) !== requestedPath);
   const folder = existing
-    ? { ...existing, path: requestedPath, devices: deviceIds.map((deviceID) => ({ deviceID })) }
+    ? { ...existing, label, path: requestedPath, ...(unpause ? { paused: false } : {}), devices: deviceIds.map((deviceID) => ({ deviceID })) }
     : {
         id: folderId,
         label,
@@ -316,8 +318,20 @@ export async function ensureSyncthingFolder(folderId: string, label: string, fol
       };
   if (!existing) {
     await request<void>("/rest/config/folders", { method: "POST", body: JSON.stringify(folder) });
-  } else if (pathChanged || deviceIds.length !== existing.devices.length) {
+  } else if (pathChanged || deviceIds.length !== existing.devices.length || existing.label !== label || (unpause && existing.paused)) {
     await request<void>(`/rest/config/folders/${encodeURIComponent(folderId)}`, { method: "PUT", body: JSON.stringify(folder) });
   }
-  await setProjectIgnores(folderId);
+  if (projectIgnores) await setProjectIgnores(folderId);
+}
+
+export async function ensureSyncthingFolder(folderId: string, label: string, folderPath: string, peerDeviceId?: string): Promise<void> {
+  await ensureFolder(folderId, label, folderPath, peerDeviceId, true, false);
+}
+
+export async function ensureConversationSyncFolders(folders: ConversationSyncFolder[], peerDeviceId?: string, peerName = peerDeviceId ?? ""): Promise<void> {
+  if (peerDeviceId) await ensureSyncthingDevice(peerDeviceId, peerName);
+  for (const folder of folders) {
+    await mkdir(path.resolve(folder.path), { recursive: true });
+    await ensureFolder(folder.id, folder.label, folder.path, peerDeviceId, false, true);
+  }
 }

@@ -110,8 +110,30 @@ export function listHarnesses(): HarnessAdapter[] {
   return [...adapters];
 }
 
+export interface HarnessSyncFolder {
+  id: string;
+  label: string;
+  path: string;
+}
+
+export function conversationSyncFolderId(harnessId: HarnessId): string {
+  return `joint-bob-conversations-${harnessId}`;
+}
+
+function syncFolder(adapter: HarnessAdapter): HarnessSyncFolder {
+  return { id: conversationSyncFolderId(adapter.id), label: `${adapter.label} conversations`, path: path.resolve(adapter.sync.transcriptRoot()) };
+}
+
+export function listHarnessSyncFolders(): HarnessSyncFolder[] {
+  return adapters.map(syncFolder);
+}
+
 export function harnessForSessionPath(sessionPath: string): HarnessAdapter {
   return resolveHarnessForSessionPath(adapters, sessionPath);
+}
+
+export function harnessSyncFolderForSessionPath(sessionPath: string): HarnessSyncFolder {
+  return syncFolder(harnessForSessionPath(sessionPath));
 }
 
 export function refreshHarnessSessions(projectId: string, changedFiles: string[]): Promise<void> {
@@ -170,6 +192,11 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
     listConversationRecords(project.id),
   ]);
   const transcriptKeys = new Set(sessions.map((session) => `${session.harnessId}:${session.id}`));
+  const recordsBySession = new Map(records.map((record) => [`${record.engine}:${record.sessionId}`, record]));
+  for (const session of sessions) {
+    const record = recordsBySession.get(`${session.harnessId}:${session.id}`);
+    if (record?.taskId && !session.taskId) session.taskId = record.taskId;
+  }
   for (const record of records) {
     if (transcriptKeys.has(`${record.engine}:${record.sessionId}`)) continue;
     const adapter = adapters.find((candidate) => candidate.id === record.engine);
@@ -184,6 +211,7 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
       draft: true,
+      ...(record.taskId ? { taskId: record.taskId } : {}),
     });
   }
   const seen = new Set<string>();

@@ -32,7 +32,7 @@ import {
 import { deletePushSubscription, getVapidPublicKey, listPushSubscriberUserIds, notifyConversationReview, savePushSubscription } from "./push.js";
 import { abortOutgoingTaskHandoff, abortPreparedTaskHandoff, acknowledgeIncomingTaskHandoff, acknowledgeOutgoingTaskHandoff, assertTaskCanBeDeleted, beginOutgoingTaskHandoff, claimTaskLease, commitPreparedTaskHandoff, completeTaskHandoff, completeTaskLease, createTask, deleteTask, getTaskHandoff, isTaskHandoffRejected, listTasks, listUnfinishedOutgoingTaskHandoffs, markOutgoingTaskHandoff, prepareTaskHandoff, rejectTaskHandoff, releaseTaskLease, reserveTaskHandoff, taskHandoffDeletion, updateTask, updateTaskSessionPath, type TaskHandoffRecord } from "./tasks.js";
 import { assertTaskWorktreeTransferable, exportTaskBranchBundle, mergeTaskWorktree, prepareTaskWorktreeFromBundle, removePreparedTaskWorktree, TaskWorktreeError, validateTaskRepository, type PreparedTaskWorktree } from "./worktrees.js";
-import { assertSyncthingFolderReady, CLAUDE_ENGINE_SYNC_FOLDER_ID, ensureSyncthingDevice, ensureSyncthingFolder, ensureTicketWorkspaceFolder, pauseEngineSyncFolders, PI_ENGINE_SYNC_FOLDER_ID, reconcileSyncthingProjectFolders, rescanSyncthingFolder, syncthingDeviceId, syncthingFolderIdForPath, syncthingFolderStatuses, syncthingPathForFolderId } from "./syncthing.js";
+import { assertSyncthingFolderReady, ensureConversationSyncFolders, ensureSyncthingDevice, ensureSyncthingFolder, ensureTicketWorkspaceFolder, pauseEngineSyncFolders, reconcileSyncthingProjectFolders, rescanSyncthingFolder, syncthingDeviceId, syncthingFolderIdForPath, syncthingFolderStatuses, syncthingPathForFolderId } from "./syncthing.js";
 import { assertTaskWorkspaceReady, createTaskWorkspace, removeTaskWorkspace, taskWorkspaceKey, TaskWorkspaceError, TICKET_BASELINE_DIR, TICKET_MERGE_DIR, TICKET_WORKSPACE_FOLDER_ID, ticketWorkspaceRoot } from "./task-workspaces.js";
 import { unmergedWorkspaceBlocksClose } from "./tasks.js";
 import { beginTicketMerge, completeTicketMergeRun, discardTicketChanges, finalizeTicketMerge, resolveTicketChoiceConflict, restartTicketMerge, TicketMergeError, ticketMergeConflicts } from "./ticket-merge-service.js";
@@ -40,7 +40,7 @@ import { openMergeTransactionCount, recoverMergeTransactions } from "./merge-jou
 import { SessionWatcher } from "./watcher.js";
 import { appendLiveEvent, buildHandoffContext, claudeRunIdFromSessionPath, claudeSessionContextUsage, claudeSessionFilePath, ensureLocalClaudeTranscript, loadClaudeMessages, runClaudePrompt, type ClaudeRunHandle, type ClaudeRunResult } from "./claude-service.js";
 import { isClaudeSessionRunning, listRunningClaudeSessions } from "./claude-runtime.js";
-import { listHarnesses, listHarnessSessions, refreshHarnessSessions } from "./harnesses.js";
+import { harnessForSessionPath, harnessSyncFolderForSessionPath, listHarnesses, listHarnessSessions, listHarnessSyncFolders, refreshHarnessSessions } from "./harnesses.js";
 import { deleteConversationRecord, ensureConversationRecord, getConversationRecord, parseConversationDraftPath } from "./conversation-records.js";
 import { agentRunDescriptor, refreshAgentRun, type AgentRunDescriptor } from "./agent-run-monitor.js";
 import { listHarnessCommands } from "./commands.js";
@@ -797,7 +797,7 @@ async function assertTaskSessionReady(sessionPath: string): Promise<void> {
   const label = session.engine === "claude" ? "Claude" : "Pi";
   const filePath = session.engine === "claude" ? session.path.slice("claude:".length) : session.path;
   try {
-    await assertSyncthingFolderReady(session.engine === "claude" ? CLAUDE_ENGINE_SYNC_FOLDER_ID : PI_ENGINE_SYNC_FOLDER_ID);
+    await assertSyncthingFolderReady(harnessSyncFolderForSessionPath(sessionPath).id, false);
     const info = await lstat(filePath);
     if (!info.isFile() || info.isSymbolicLink()) throw new Error("Conversation is not a regular file");
   } catch {
@@ -2133,8 +2133,14 @@ app.post("/api/cluster/sync/share", async (request, response, next) => {
       response.json({ ok: true });
       return;
     }
-    if (payload.folderId === PI_ENGINE_SYNC_FOLDER_ID || payload.folderId === CLAUDE_ENGINE_SYNC_FOLDER_ID) {
+    if (payload.folderId === "dot-pi" || payload.folderId === "dot-claude") {
       await pauseEngineSyncFolders();
+      response.json({ ok: true });
+      return;
+    }
+    const conversationFolder = listHarnessSyncFolders().find((folder) => folder.id === payload.folderId);
+    if (conversationFolder) {
+      await ensureConversationSyncFolders([conversationFolder], payload.deviceId, payload.deviceName);
       response.json({ ok: true });
       return;
     }
@@ -2722,6 +2728,7 @@ async function listProjectSessionsWithReviewState(project: ProjectRecord, userId
     additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []),
   }, pinnedSessionPaths, pinnedSessionIds);
   const tasksBySessionPath = new Map(tasks.filter((task) => task.sessionPath).map((task) => [task.sessionPath, task]));
+  const tasksById = new Map(tasks.map((task) => [task.id, task]));
   const projectSharedSessions = [...new Set(sharedSessions.values())].filter((shared) => shared.projectId === project.id);
   await Promise.all(projectSharedSessions.map(async (shared) => {
     for (const run of shared.agentRuns.values()) {
@@ -2730,7 +2737,7 @@ async function listProjectSessionsWithReviewState(project: ProjectRecord, userId
     }
   }));
   const listedSessions = sessions.map((session) => {
-    const task = tasksBySessionPath.get(session.path);
+    const task = (session.taskId ? tasksById.get(session.taskId) : undefined) ?? tasksBySessionPath.get(session.path);
     const shared = sharedSessions.get(sessionKey(task ? taskCwd(project, task) : project.path, session.path))
       ?? projectSharedSessions.find((candidate) => candidate.handle.session.sessionId === session.id);
     const config = task?.executionState === "running" ? taskConfig(task, taskPhase(task)) : undefined;
@@ -4514,10 +4521,11 @@ const claudeTaskRuns = new Map<string, ClaudeTaskRun>();
  * The board's "Open chat" control reads that link, so waiting for the run to
  * finish would leave a running ticket with no way back to its conversation.
  */
-async function persistTaskSessionPath(projectId: string, taskId: string, leaseToken: string, sessionPath: string, conversationId: string, title: string): Promise<void> {
+async function persistTaskSessionPath(projectId: string, taskId: string, leaseToken: string, sessionPath: string, engine: HarnessId, conversationId: string, title: string): Promise<void> {
   const local = await getClusterNode();
   const task = await updateTaskSessionPath(projectId, taskId, local.id, leaseToken, sessionPath);
   if (!task) return;
+  await ensureConversationRecord(projectId, engine, conversationId, local.id, taskId);
   // The prompt opens with the workspace preamble, so the harness would otherwise
   // name the conversation after a file path.
   await ensureSessionTitle(conversationId, title);
@@ -4530,7 +4538,7 @@ async function persistPiTaskSession(session: SharedPiSession): Promise<void> {
   const sessionPath = session.handle.session.sessionFile;
   if (!run || !sessionPath || run.sessionPath === sessionPath) return;
   run.sessionPath = sessionPath;
-  await persistTaskSessionPath(run.projectId, run.taskId, run.leaseToken, sessionPath, run.conversationId, run.title);
+  await persistTaskSessionPath(run.projectId, run.taskId, run.leaseToken, sessionPath, "pi", run.conversationId, run.title);
 }
 
 function taskRunActive(taskId: string): boolean {
@@ -4815,7 +4823,7 @@ async function startTaskRun(project: ProjectRecord, task: TaskRecord, requestedP
       });
       const claudeSessionPath = resumeSessionId ? task.sessionPath! : `claude:${claudeSessionFilePath(cwd, sessionId)}`;
       claudeTaskRuns.set(task.id, { child: run.child, projectId: project.id, taskId: claimed.id, leaseToken, phase, cwd, sessionId, sessionPath: claudeSessionPath, model: config.modelId || null, effort: config.effort || null });
-      await persistTaskSessionPath(project.id, claimed.id, leaseToken, claudeSessionPath, resumeSessionId ?? sessionId, claimed.title);
+      await persistTaskSessionPath(project.id, claimed.id, leaseToken, claudeSessionPath, "claude", resumeSessionId ?? sessionId, claimed.title);
       run.done
         .then(async (result) => {
           if (claudeTaskRuns.get(task.id)?.leaseToken !== leaseToken) {
@@ -5986,6 +5994,26 @@ webSocketServer.on("connection", async (socket, request) => {
    which silently disables peer project discovery, so the attempt repeats from the
    maintenance interval until it succeeds. Repeats of the same failure stay quiet;
    the completion line is what says the node recovered. */
+async function reconcileTaskConversationRecords(): Promise<void> {
+  const local = await getClusterNode();
+  for (const project of await listProjects()) {
+    for (const task of await listTasks(project.id)) {
+      if (task.currentNodeId !== local.id || !task.sessionPath) continue;
+      let adapter: ReturnType<typeof harnessForSessionPath>;
+      let sessionId: string | undefined;
+      try {
+        adapter = harnessForSessionPath(task.sessionPath);
+        sessionId = adapter.paths.sessionId(task.sessionPath);
+        if (!sessionId) throw new Error("session path has no transcript identity");
+      } catch (error) {
+        console.warn(`Task conversation record backfill skipped for ${task.id}: ${error instanceof Error ? error.message : "malformed session path"}`);
+        continue;
+      }
+      await ensureConversationRecord(project.id, adapter.id, sessionId, local.id, task.id);
+    }
+  }
+}
+
 async function initializeStartupReadiness(): Promise<void> {
   if (startupReady || startupReadinessInProgress) return;
   startupReadinessInProgress = true;
@@ -6008,7 +6036,9 @@ async function configureTicketWorkspacePeer(peer: ClusterPeer, localDeviceId: st
   const inventory = await fetchPeerInventory(peer);
   if (!inventory.syncDeviceId) throw new Error("Peer Syncthing device ID is unavailable");
   await ensureTicketWorkspaceFolder(ticketWorkspaceRoot(), inventory.syncDeviceId, inventory.node.name);
-  for (const folderId of [TICKET_WORKSPACE_FOLDER_ID]) {
+  const conversationFolders = listHarnessSyncFolders();
+  await ensureConversationSyncFolders(conversationFolders, inventory.syncDeviceId, inventory.node.name);
+  for (const folderId of [TICKET_WORKSPACE_FOLDER_ID, ...conversationFolders.map((folder) => folder.id)]) {
     const response = await fetch(`${peer.url}/api/cluster/sync/share`, {
       method: "POST",
       headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
@@ -6029,6 +6059,7 @@ async function reconcileTicketWorkspaceSync(): Promise<void> {
     if (!localDeviceId) return;
     await pauseEngineSyncFolders();
     await ensureTicketWorkspaceFolder();
+    await ensureConversationSyncFolders(listHarnessSyncFolders());
     if (!peers.length) return;
     const localNode = await getClusterNode();
     for (const peer of peers) {
@@ -6329,7 +6360,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const listeningPort = typeof address === "object" && address ? address.port : port;
     console.log(`Joint Bob listening on http://${bindHost}:${listeningPort}`);
     initializeStartupReadiness()
-      .then(async () => { await recoverPendingUpdateRuns(); await reconcileTicketWorkspaceSync(); })
+      .then(async () => { await recoverPendingUpdateRuns(); await reconcileTicketWorkspaceSync(); await reconcileTaskConversationRecords(); })
       .catch((error) => console.warn("Ticket workspace sync failed", error));
     flushMembershipOutbox().catch((error) => console.warn("Membership flush failed", error));
     flushReplicationOutbox().catch((error) => console.warn("Replication flush failed", error));
