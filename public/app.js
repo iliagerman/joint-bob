@@ -1109,7 +1109,8 @@ function shortSessionTitle(session) {
  * generated one), which must not clobber a Joint Bob rename the list still shows.
  */
 function syncChatTitleFromSessions(engineName) {
-  const session = state.sessions.find((item) => item.path === state.activeSessionPath);
+  const session = state.sessions.find((item) => item.id === state.activeSessionId)
+    || state.sessions.find((item) => item.path === state.activeSessionPath);
   elements.sessionTitle.textContent = session ? shortSessionTitle(session) : engineName;
 }
 

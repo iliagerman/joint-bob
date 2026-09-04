@@ -97,7 +97,7 @@ test("the chat header keeps a Joint Bob rename over the engine's own session nam
   // Status updates and sessionInfoChanged carry the engine's live session name
   // (for example a generated one), which must not clobber the title the
   // conversations list shows for a renamed conversation.
-  assert.match(app, /function syncChatTitleFromSessions\(engineName\) \{\s*const session = state\.sessions\.find\(\(item\) => item\.path === state\.activeSessionPath\);\s*elements\.sessionTitle\.textContent = session \? shortSessionTitle\(session\) : engineName;\s*\}/);
+  assert.match(app, /function syncChatTitleFromSessions\(engineName\) \{\s*const session = state\.sessions\.find\(\(item\) => item\.id === state\.activeSessionId\)\s*\|\| state\.sessions\.find\(\(item\) => item\.path === state\.activeSessionPath\);\s*elements\.sessionTitle\.textContent = session \? shortSessionTitle\(session\) : engineName;\s*\}/);
   assert.match(app, /if \(status\.sessionName\) syncChatTitleFromSessions\(status\.sessionName\);/);
   assert.match(app, /sessionInfoChanged" && payload\.name\) syncChatTitleFromSessions\(payload\.name\);/);
   assert.doesNotMatch(app, /elements\.sessionTitle\.textContent = status\.sessionName/);
