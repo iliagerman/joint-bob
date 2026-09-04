@@ -8,6 +8,7 @@ Every deployment is a version. The newest section must always match the
 - Canvas keyboard shortcuts are now customizable with a modifier chord selector and per-command key bindings, and a finder lets you search conversations by title to jump directly to them
 - Pinned conversations now synchronize across cluster nodes instead of being local to each machine
 - The app now automatically refreshes to the latest version when deployed while the browser window is open
+- Conversation engines are now extensible, enabling support for future custom harnesses alongside Pi and Claude
 
 ## 1.2.1 — 2026-09-03
 

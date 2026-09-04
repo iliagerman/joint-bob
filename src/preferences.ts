@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { isHarnessId, type HarnessId } from "./types.js";
 
 /** One conversation the user opened, newest first, capped by the client. */
 export interface RecentSession {
@@ -10,7 +11,7 @@ export interface RecentSession {
   title: string;
   openedAt: string;
   /** Stable cluster identity. Absent on entries saved before pin replication. */
-  engine?: "pi" | "claude";
+  engine?: HarnessId;
   sessionId?: string;
   /** When the conversation itself last moved; null for entries stored before this was tracked. */
   updatedAt: string | null;
@@ -279,7 +280,7 @@ function parseRecentSessions(value: string): RecentSession[] {
       && typeof entry.sessionPath === "string"
       && typeof entry.title === "string"
       && typeof entry.openedAt === "string"
-      && (entry.engine === undefined || entry.engine === "pi" || entry.engine === "claude")
+      && (entry.engine === undefined || isHarnessId(entry.engine))
       && (entry.sessionId === undefined || typeof entry.sessionId === "string"));
     return canonicalRecentSessions(sessions);
   } catch {

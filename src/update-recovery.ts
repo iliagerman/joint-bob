@@ -2,13 +2,13 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { TaskPhase } from "./types.js";
+import type { HarnessId, TaskPhase } from "./types.js";
 
 const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
 const databasePath = path.join(dataDir, "node.db");
 let databasePromise: Promise<DatabaseSync> | undefined;
 
-export type UpdateRecoveryEngine = "pi" | "claude";
+export type UpdateRecoveryEngine = HarnessId;
 export type UpdateRecoveryKind = "chat" | "task";
 export interface UpdateRecoveryRecord {
   id: string;

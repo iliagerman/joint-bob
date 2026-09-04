@@ -61,8 +61,8 @@ import { appVersion, readChangelog } from "./changelog.js";
 import { applyRuntimeLeaseSnapshot, conversationLeaseRunning, conversationRuntimeDatabase, sweepExpiredRuntimeLeases, type RuntimeLeaseInput } from "./conversation-runtime.js";
 import { claimReviewNotifications, markConversationReviewed, markConversationsReviewed, syncConversationReviewStates } from "./conversation-reviews.js";
 import { resetSyncthingConnection } from "./syncthing.js";
-import { PROJECT_COLORS } from "./types.js";
-import type { AgentRunSummary, ChatMessage, ContextUsage, ProjectRecord, ProjectSyncStatus, ProjectView, SessionStatus, SessionSummary, TaskPhase, TaskPhaseConfig, TaskRecord } from "./types.js";
+import { isHarnessId, PROJECT_COLORS } from "./types.js";
+import type { AgentRunSummary, ChatMessage, ContextUsage, HarnessId, ProjectRecord, ProjectSyncStatus, ProjectView, SessionStatus, SessionSummary, TaskPhase, TaskPhaseConfig, TaskRecord } from "./types.js";
 import { webSocketCloseReason } from "./websocket.js";
 import { capturePiRecoverySnapshot, recoverPiSessionDirectory, resolveLocalSessionPath } from "./session-paths.js";
 import { beginConversationRecovery, compareAndSetConversationOwnership, ConversationOwnershipError, finalizeConversationClaim, finishConversationRecovery, getConversationOwnership, sameConversationOwnership, takeConversationOwnership, type ConversationEngine, type ConversationOwnership, type ConversationOwnershipStatus, type OwnershipApplyResult } from "./conversation-ownership.js";
@@ -87,7 +87,7 @@ interface SharedPiSession {
   turnInFlight: number;
 }
 
-type ChatEngine = "pi" | "claude";
+type ChatEngine = HarnessId;
 
 interface ClaudeQueuedPrompt {
   id: number;
@@ -308,8 +308,10 @@ const replicationEventSchema = z.object({
 });
 const replicationBatchSchema = z.object({ events: z.array(replicationEventSchema).max(100) });
 const replicationReceiptSchema = z.object({ received: z.array(z.string().uuid()).max(100) });
+const registeredHarnessIdSchema = z.string().refine(isHarnessId, "Harness ID is invalid")
+  .refine((value) => listHarnesses().some((harness) => harness.id === value), "Harness is not registered on this node");
 const runtimeLeaseSchema = z.object({
-  engine: z.enum(["pi", "claude"]),
+  engine: registeredHarnessIdSchema,
   sessionId: z.string().min(1).max(200),
   ownershipEpoch: z.number().int().positive(),
   runId: z.string().min(1).max(200),
@@ -338,11 +340,11 @@ const sessionTakeOwnershipSchema = z.object({
 });
 const routedSessionTakeOwnershipSchema = sessionTakeOwnershipSchema.extend({ projectId: z.string().min(1) });
 const ownershipSchema = z.object({
-  engine: z.enum(["pi", "claude"]), sessionId: z.string().min(1).max(240), ownerNodeId: z.string().uuid(),
+  engine: registeredHarnessIdSchema, sessionId: z.string().min(1).max(240), ownerNodeId: z.string().uuid(),
   epoch: z.number().int().positive(), status: z.enum(["claiming", "owned", "recovering", "transferring", "conflict"]), transferToNodeId: z.string().uuid().nullable(),
 });
 const nullableOwnershipSchema = ownershipSchema.nullable();
-const ownershipClaimSchema = z.object({ engine: z.enum(["pi", "claude"]), sessionId: z.string().min(1).max(240), ownerNodeId: z.string().uuid() });
+const ownershipClaimSchema = z.object({ engine: registeredHarnessIdSchema, sessionId: z.string().min(1).max(240), ownerNodeId: z.string().uuid() });
 const ownershipCasSchema = z.object({ expected: nullableOwnershipSchema, proposed: ownershipSchema, originNodeId: z.string().uuid() });
 const sessionRecoverySchema = z.object({ engine: z.literal("pi"), sessionId: z.string().min(1).max(240), sessionPath: z.string().min(1).max(2000) });
 const secretCredentialEventSchema = z.object({
@@ -366,7 +368,7 @@ const secretAccountSchema = z.object({ id: z.string().uuid().optional(), label: 
 const secretScopeParamsSchema = z.object({ scopeType: z.enum(["workspace", "project", "conversation"]), scopeId: z.string().trim().min(1).max(300) });
 const secretScopeSchema = z.object({ accountIds: z.array(z.string().uuid()).max(100) }).strict();
 const taskStatusSchema = z.enum(["backlog", "planning", "in_progress", "review", "done"]);
-const taskEngineSchema = z.enum(["pi", "claude"]);
+const taskEngineSchema = registeredHarnessIdSchema;
 const taskPhaseConfigSchema = z.object({
   engine: taskEngineSchema,
   provider: z.string().max(80).optional().default(""),
@@ -389,19 +391,19 @@ const projectUpdateSchema = z.object({
 const projectLockSchema = z.object({ locked: z.boolean() });
 const sessionTitleSchema = z.object({
   sessionId: z.string().min(1),
-  engine: z.enum(["pi", "claude"]),
+  engine: registeredHarnessIdSchema,
   title: z.string().trim().max(200),
 });
 const sessionColorSchema = z.object({
   sessionId: z.string().min(1),
-  engine: z.enum(["pi", "claude"]),
+  engine: registeredHarnessIdSchema,
   color: z.enum(PROJECT_COLORS).nullable(),
 });
 const userPinSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("project"), projectId: z.string().trim().min(1).max(120), pinned: z.boolean() }).strict(),
-  z.object({ kind: z.literal("conversation"), projectId: z.string().trim().min(1).max(120), engine: z.enum(["pi", "claude"]), sessionId: z.string().trim().min(1).max(240), pinned: z.boolean() }).strict(),
+  z.object({ kind: z.literal("conversation"), projectId: z.string().trim().min(1).max(120), engine: registeredHarnessIdSchema, sessionId: z.string().trim().min(1).max(240), pinned: z.boolean() }).strict(),
 ]);
-const sessionDeleteSchema = z.object({ projectId: z.string().min(1), engine: z.enum(["pi", "claude"]), sessionId: z.string().uuid() });
+const sessionDeleteSchema = z.object({ projectId: z.string().min(1), engine: registeredHarnessIdSchema, sessionId: z.string().uuid() });
 const taskCreateSchema = z.object({
   title: z.string().trim().min(1).max(200),
   description: z.string().trim().max(20_000),
@@ -605,7 +607,7 @@ const userPreferencesSchema = z.object({
     sessionPath: z.string().trim().min(1).max(2000),
     title: z.string().max(300),
     openedAt: z.string().max(40),
-    engine: z.enum(["pi", "claude"]).optional(),
+    engine: registeredHarnessIdSchema.optional(),
     sessionId: z.string().trim().min(1).max(240).optional(),
     updatedAt: z.string().max(40).nullable().default(null),
   })).max(50).optional(),
@@ -619,7 +621,7 @@ const socketMessageSchema = z.object({
   provider: z.string().max(80).optional(),
   modelId: z.string().max(200).optional(),
   level: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).optional(),
-  engine: z.enum(["pi", "claude"]).optional(),
+  engine: registeredHarnessIdSchema.optional(),
   effort: z.enum(["default", "low", "medium", "high", "xhigh", "max"]).optional(),
   images: z.array(imageAttachmentSchema).max(4).optional(),
   files: z.array(fileAttachmentSchema).max(6).optional(),
@@ -1178,7 +1180,7 @@ app.put("/api/pins", async (request, response, next) => {
    on the signed-in username and the store replicates the change to the cluster. */
 const canvasShortcutTargetSchema = z.object({
   projectId: z.string().trim().min(1).max(120),
-  engine: z.enum(["pi", "claude"]),
+  engine: registeredHarnessIdSchema,
   sessionId: z.string().trim().min(1).max(200),
 }).strict();
 
@@ -1566,7 +1568,7 @@ app.post("/api/cluster/sessions/runtime-snapshot", async (request, response, nex
       return;
     }
     const ownerships = new Map(await Promise.all([...new Set(snapshot.leases.map((lease) => `${lease.engine}\n${lease.sessionId}`))]
-      .map(async (key) => [key, await getConversationOwnership(key.slice(0, key.indexOf("\n")) as "pi" | "claude", key.slice(key.indexOf("\n") + 1))] as const)));
+      .map(async (key) => [key, await getConversationOwnership(key.slice(0, key.indexOf("\n")) as HarnessId, key.slice(key.indexOf("\n") + 1))] as const)));
     // Authoritative ownership beats stale heartbeats: keep a lease only when the
     // ownership table is absent, older than the lease's epoch, or agrees with it.
     const leases: RuntimeLeaseInput[] = snapshot.leases.flatMap((lease) => {
@@ -2686,7 +2688,7 @@ app.get("/api/projects/:projectId/commands", async (request, response, next) => 
       sendError(response, 404, "Project not found");
       return;
     }
-    const harness = z.enum(["pi", "claude"]).parse(request.query.harness);
+    const harness = registeredHarnessIdSchema.parse(request.query.harness);
     response.json({ commands: await listHarnessCommands(project.path, harness) });
   } catch (error) {
     next(error);
@@ -2933,7 +2935,7 @@ async function requireLocalConversationOwner(engine: ConversationEngine, session
 app.get("/api/cluster/sessions/ownership", async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
-    const engine = z.enum(["pi", "claude"]).parse(request.query.engine);
+    const engine = registeredHarnessIdSchema.parse(request.query.engine);
     const sessionId = z.string().min(1).max(240).parse(request.query.sessionId);
     response.json({ ownership: await getConversationOwnership(engine, sessionId) ?? null });
   } catch (error) { next(error); }
@@ -6111,7 +6113,7 @@ async function buildRuntimeLeaseSnapshot(localNodeId: string): Promise<RuntimeLe
   const entries = new Map<string, RuntimeLeaseInput>();
   // Advertise only conversations this node is allowed to run: a stale in-flight
   // turn must not borrow the new owner's epoch after a transfer.
-  const epochFor = async (engine: "pi" | "claude", sessionId: string): Promise<number | null> => {
+  const epochFor = async (engine: HarnessId, sessionId: string): Promise<number | null> => {
     const ownership = await getConversationOwnership(engine, sessionId);
     if (ownership && ownership.ownerNodeId !== localNodeId) return null;
     return ownership?.epoch ?? 1;

@@ -4,6 +4,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { ConversationEngine } from "./conversation-ownership.js";
 import { enqueueReplicationEvent, ensureReplicationSchema, resolveProjectAlias, type ReplicationEvent } from "./replication.js";
+import { isHarnessId } from "./types.js";
 
 /**
  * Keyboard bindings that jump to one canvas conversation. A binding belongs to an
@@ -60,7 +61,7 @@ export function ensureCanvasShortcutSchema(db: DatabaseSync): void {
       username TEXT NOT NULL,
       binding TEXT NOT NULL,
       project_id TEXT NOT NULL,
-      engine TEXT NOT NULL CHECK(engine IN ('pi', 'claude')),
+      engine TEXT NOT NULL,
       session_id TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       origin_node_id TEXT NOT NULL,
@@ -86,6 +87,15 @@ export function ensureCanvasShortcutSchema(db: DatabaseSync): void {
       singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
       last_issued_at INTEGER NOT NULL
     );`);
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'canvas_shortcuts'").get() as { sql: string } | undefined;
+  if (row?.sql.includes("engine IN ('pi', 'claude')")) {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.exec("ALTER TABLE canvas_shortcuts RENAME TO canvas_shortcuts_old");
+      db.exec("CREATE TABLE canvas_shortcuts (username TEXT NOT NULL, binding TEXT NOT NULL, project_id TEXT NOT NULL, engine TEXT NOT NULL, session_id TEXT NOT NULL, updated_at TEXT NOT NULL, origin_node_id TEXT NOT NULL, PRIMARY KEY (username, binding)); INSERT INTO canvas_shortcuts SELECT * FROM canvas_shortcuts_old; DROP TABLE canvas_shortcuts_old;");
+      db.exec("COMMIT");
+    } catch (error) { db.exec("ROLLBACK"); throw error; }
+  }
   carryOldStateIntoRegisters(db);
 }
 
@@ -327,7 +337,7 @@ function shortcutPayload(event: ReplicationEvent): ShortcutPayload {
   const value = event.payload as Partial<ShortcutPayload>;
   const assignment = event.operation === "upsert";
   const named = typeof value?.projectId === "string" && value.projectId.length > 0
-    && ["pi", "claude"].includes(value?.engine ?? "")
+    && isHarnessId(value?.engine)
     && typeof value?.sessionId === "string" && value.sessionId.length > 0;
   const valid = event.entityType === "canvas.shortcut" && ["upsert", "delete"].includes(event.operation)
     && value && typeof value === "object" && !Array.isArray(value)

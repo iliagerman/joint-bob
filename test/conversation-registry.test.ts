@@ -37,7 +37,7 @@ test("conversation records provide drafts until a transcript replaces them", asy
     assert.ok(second.updatedAt >= first.updatedAt);
     assert.deepEqual(records.parseConversationDraftPath(`draft:pi:${id}`), { engine: "pi", sessionId: id });
     assert.equal(records.parseConversationDraftPath("draft:pi:not-a-uuid"), undefined);
-    assert.equal(records.parseConversationDraftPath("draft:other:123e4567-e89b-42d3-a456-426614174000"), undefined);
+    assert.deepEqual(records.parseConversationDraftPath("draft:other:123e4567-e89b-42d3-a456-426614174000"), { engine: "other", sessionId: id });
 
     const { updateSettings } = await import("../src/settings.js");
     const sessionPath = path.join(root, "sessions");

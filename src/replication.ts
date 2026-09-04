@@ -8,7 +8,7 @@ import { applyCanvasShortcutEvent, ensureCanvasShortcutSchema } from "./canvas-s
 import { applyConversationReviewEvent, ensureConversationReviewReplicaSchema } from "./conversation-reviews.js";
 import { applyConversationRecordEvent, ensureConversationRecordSchema } from "./conversation-records.js";
 import { applyUserPinEvent, ensureUserPinSchema } from "./user-pins.js";
-import { PROJECT_COLORS, type TaskRecord } from "./types.js";
+import { isHarnessId, PROJECT_COLORS, type TaskRecord } from "./types.js";
 
 export interface ReplicationEvent {
   id: string;
@@ -144,7 +144,7 @@ function taskPayload(event: ReplicationEvent): TaskPayload {
   if (!payload || typeof payload !== "object" || typeof payload.projectId !== "string" || typeof payload.originNodeId !== "string" || payload.originNodeId !== event.originNodeId || event.entityKey !== `${payload.projectId}:${event.operation === "upsert" ? task?.id : event.entityKey.split(":").slice(1).join(":")}`) throw new Error("Malformed task replication payload");
   if (!task || typeof task !== "object" || typeof task.id !== "string" || typeof task.updatedAt !== "string" || typeof task.originNodeId !== "string" || task.originNodeId !== event.originNodeId) throw new Error("Malformed task replication payload");
   if (event.operation === "delete") return payload as TaskPayload;
-  if (typeof task.title !== "string" || typeof task.description !== "string" || !["backlog", "planning", "in_progress", "review", "done"].includes(task.status) || !["pi", "claude"].includes(task.engine) || typeof task.planMode !== "boolean" || typeof task.reviewMode !== "boolean" || !["idle", "running", "handoff_pending", "failed"].includes(task.executionState) || typeof task.currentNodeId !== "string" || typeof task.createdAt !== "string") throw new Error("Malformed task replication payload");
+  if (typeof task.title !== "string" || typeof task.description !== "string" || !["backlog", "planning", "in_progress", "review", "done"].includes(task.status) || !isHarnessId(task.engine) || typeof task.planMode !== "boolean" || typeof task.reviewMode !== "boolean" || !["idle", "running", "handoff_pending", "failed"].includes(task.executionState) || typeof task.currentNodeId !== "string" || typeof task.createdAt !== "string") throw new Error("Malformed task replication payload");
   return payload as TaskPayload;
 }
 function applyTaskEvent(db: DatabaseSync, event: ReplicationEvent): boolean {

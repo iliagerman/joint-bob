@@ -4,6 +4,7 @@ import path from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 import type { ConversationEngine } from "./conversation-ownership.js";
 import { enqueueReplicationEvent, ensureReplicationSchema, resolveProjectAlias, type ReplicationEvent } from "./replication.js";
+import { isHarnessId } from "./types.js";
 
 export type ConversationReviewState = "running" | "needs_review" | "reviewed";
 
@@ -87,12 +88,20 @@ export function ensureConversationReviewReplicaSchema(db: DatabaseSync): void {
   db.exec(`CREATE TABLE IF NOT EXISTS replicated_review_watermarks (
     username TEXT NOT NULL,
     project_id TEXT NOT NULL,
-    engine TEXT NOT NULL CHECK(engine IN ('pi', 'claude')),
+    engine TEXT NOT NULL,
     session_id TEXT NOT NULL,
     reviewed_at TEXT NOT NULL,
     origin_node_id TEXT NOT NULL,
     PRIMARY KEY (username, project_id, engine, session_id)
   );`);
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'replicated_review_watermarks'").get() as { sql: string } | undefined;
+  if (!row?.sql.includes("engine IN ('pi', 'claude')")) return;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec("ALTER TABLE replicated_review_watermarks RENAME TO replicated_review_watermarks_old");
+    db.exec("CREATE TABLE replicated_review_watermarks (username TEXT NOT NULL, project_id TEXT NOT NULL, engine TEXT NOT NULL, session_id TEXT NOT NULL, reviewed_at TEXT NOT NULL, origin_node_id TEXT NOT NULL, PRIMARY KEY (username, project_id, engine, session_id)); INSERT INTO replicated_review_watermarks SELECT * FROM replicated_review_watermarks_old; DROP TABLE replicated_review_watermarks_old;");
+    db.exec("COMMIT");
+  } catch (error) { db.exec("ROLLBACK"); throw error; }
 }
 
 function remoteWatermarks(db: DatabaseSync, username: string, projectId: string): Map<string, string> {
@@ -261,7 +270,7 @@ function reviewPayload(event: ReplicationEvent): ReviewPayload {
     && value && typeof value === "object" && !Array.isArray(value)
     && typeof value.username === "string" && value.username.length > 0
     && typeof value.projectId === "string" && value.projectId.length > 0
-    && ["pi", "claude"].includes(value.engine ?? "")
+    && isHarnessId(value.engine)
     && typeof value.sessionId === "string" && value.sessionId.length > 0
     && typeof value.reviewedAt === "string" && Number.isFinite(Date.parse(value.reviewedAt))
     && typeof value.originNodeId === "string" && value.originNodeId === event.originNodeId

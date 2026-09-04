@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import { HarnessSessionCatalog, defineHarness, harnessForSessionPath, listHarnesses } from "../src/harnesses.js";
+import { discoverHarnesses, resolveHarnessForSessionPath } from "../src/harnesses/registry.js";
 import type { HarnessProject } from "../src/harnesses.js";
 import type { SessionSummary } from "../src/types.js";
 
@@ -20,8 +23,105 @@ test("harness registry exposes adapters instead of UI-specific engine checks", (
     assert.equal(typeof harness.sessions.refresh, "function");
     assert.equal(typeof harness.sessions.loadMessages, "function");
   }
+  assert.equal(harnessForSessionPath("new").id, "pi");
+  assert.equal(harnessForSessionPath("draft:pi:session").id, "pi");
   assert.equal(harnessForSessionPath("/tmp/session.jsonl").id, "pi");
+  assert.equal(harnessForSessionPath("C:\\sessions\\session.jsonl").id, "pi");
   assert.equal(harnessForSessionPath("claude:/tmp/session.jsonl").id, "claude");
+});
+
+function fixtureAdapter(id: string, ownsSession = 'value === "fake:session"'): string {
+  return `export default {
+  id: "${id}",
+  label: "${id}",
+  paths: {
+    newSession: "${id}:new",
+    ownsSession: (value) => ${ownsSession},
+    ownsTranscript: () => false,
+  },
+  sessions: {
+    files: async () => [],
+    list: async () => [],
+    refresh: async (_project, previous) => previous,
+    loadMessages: async () => [],
+  },
+};`;
+}
+
+test("Pi leaves prefixed session paths to their owning harness", () => {
+  const fake = defineHarness({
+    id: "fake", label: "Fake", paths: { newSession: "fake:new", ownsSession: (value) => value.startsWith("fake:"), ownsTranscript: () => false },
+    sessions: { files: async () => [], list: async () => [], refresh: async (_project, previous) => previous, loadMessages: async () => [] },
+  });
+
+  assert.equal(resolveHarnessForSessionPath([...listHarnesses(), fake], "fake:session").id, "fake");
+});
+
+test("discovers adapter modules from a directory without registry edits", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "joint-bob-harnesses-"));
+  try {
+    await writeFile(path.join(directory, "fake.harness.js"), fixtureAdapter("fake"));
+    const adapters = await discoverHarnesses(directory);
+    assert.equal(adapters[0].id, "fake");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("rejects malformed adapter modules", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "joint-bob-harnesses-"));
+  try {
+    const filePath = path.join(directory, "broken.harness.js");
+    await writeFile(filePath, "export default {};\n");
+    await assert.rejects(discoverHarnesses(directory), /Malformed harness module: .*broken\.harness\.js/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("rejects adapter IDs and labels unsafe for routing", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "joint-bob-harnesses-"));
+  try {
+    const malformed = [
+      ["unsafe-id.harness.js", fixtureAdapter("unsafe_id")],
+      ["blank-label.harness.js", fixtureAdapter("fake").replace('label: "fake"', 'label: "   "')],
+      ["blank-new.harness.js", fixtureAdapter("fake").replace('newSession: "fake:new"', 'newSession: "   "')],
+    ];
+    for (const [fileName, adapter] of malformed) {
+      const filePath = path.join(directory, fileName);
+      await writeFile(filePath, adapter);
+      await assert.rejects(discoverHarnesses(directory), /Malformed harness module/);
+      await rm(filePath);
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("rejects duplicate adapter ids", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "joint-bob-harnesses-"));
+  try {
+    await Promise.all([
+      writeFile(path.join(directory, "first.harness.js"), fixtureAdapter("duplicate")),
+      writeFile(path.join(directory, "second.harness.js"), fixtureAdapter("duplicate")),
+    ]);
+    await assert.rejects(discoverHarnesses(directory), /Duplicate harness ID: duplicate/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("rejects ambiguous session path ownership", () => {
+  const first = defineHarness({
+    id: "pi", label: "First", paths: { newSession: "new", ownsSession: (value) => value === "shared", ownsTranscript: () => false },
+    sessions: { files: async () => [], list: async () => [], refresh: async (_project, previous) => previous, loadMessages: async () => [] },
+  });
+  const second = defineHarness({
+    id: "claude", label: "Second", paths: { newSession: "claude:new", ownsSession: (value) => value === "shared", ownsTranscript: () => false },
+    sessions: { files: async () => [], list: async () => [], refresh: async (_project, previous) => previous, loadMessages: async () => [] },
+  });
+
+  assert.throws(() => resolveHarnessForSessionPath([first, second], "shared"), /Multiple harnesses own session path/);
 });
 
 test("generic harness catalog caches listings and refreshes only the owning adapter", async () => {

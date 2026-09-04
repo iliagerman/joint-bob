@@ -4,6 +4,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { ConversationEngine } from "./conversation-ownership.js";
 import { enqueueReplicationEvent, ensureReplicationSchema, type ReplicationEvent } from "./replication.js";
+import { isHarnessId } from "./types.js";
 
 export interface ConversationRecord {
   projectId: string;
@@ -26,17 +27,36 @@ interface ConversationRecordPayload {
 const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
 let databasePromise: Promise<DatabaseSync> | undefined;
 
-export function ensureConversationRecordSchema(db: DatabaseSync): void {
+function createConversationRecordTables(db: DatabaseSync): void {
   db.exec(`CREATE TABLE IF NOT EXISTS conversation_records (
-    project_id TEXT NOT NULL, engine TEXT NOT NULL CHECK (engine IN ('pi', 'claude')), session_id TEXT NOT NULL,
+    project_id TEXT NOT NULL, engine TEXT NOT NULL, session_id TEXT NOT NULL,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, origin_node_id TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (project_id, engine, session_id)
   ); CREATE TABLE IF NOT EXISTS conversation_record_tombstones (
-    project_id TEXT NOT NULL, engine TEXT NOT NULL CHECK (engine IN ('pi', 'claude')), session_id TEXT NOT NULL,
+    project_id TEXT NOT NULL, engine TEXT NOT NULL, session_id TEXT NOT NULL,
     updated_at TEXT NOT NULL, origin_node_id TEXT NOT NULL, PRIMARY KEY (project_id, engine, session_id)
   );`);
-  const columns = db.prepare("PRAGMA table_info(conversation_records)").all() as unknown as Array<{ name: string }>;
-  if (!columns.some((column) => column.name === "origin_node_id")) db.exec("ALTER TABLE conversation_records ADD COLUMN origin_node_id TEXT NOT NULL DEFAULT ''");
+}
+
+export function ensureConversationRecordSchema(db: DatabaseSync): void {
+  createConversationRecordTables(db);
+  const records = db.prepare("PRAGMA table_info(conversation_records)").all() as unknown as Array<{ name: string }>;
+  if (!records.some((column) => column.name === "origin_node_id")) db.exec("ALTER TABLE conversation_records ADD COLUMN origin_node_id TEXT NOT NULL DEFAULT ''");
+  for (const table of ["conversation_records", "conversation_record_tombstones"]) {
+    const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) as { sql: string } | undefined;
+    if (!row?.sql.includes("engine IN ('pi', 'claude')")) continue;
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.exec(`ALTER TABLE ${table} RENAME TO ${table}_old`);
+      createConversationRecordTables(db);
+      const columns = db.prepare(`PRAGMA table_info(${table}_old)`).all() as unknown as Array<{ name: string }>;
+      const origin = columns.some((column) => column.name === "origin_node_id") ? "origin_node_id" : "''";
+      if (table === "conversation_records") db.exec(`INSERT INTO conversation_records (project_id, engine, session_id, created_at, updated_at, origin_node_id) SELECT project_id, engine, session_id, created_at, updated_at, ${origin} FROM conversation_records_old`);
+      else db.exec(`INSERT INTO conversation_record_tombstones (project_id, engine, session_id, updated_at, origin_node_id) SELECT project_id, engine, session_id, updated_at, ${origin} FROM conversation_record_tombstones_old`);
+      db.exec(`DROP TABLE ${table}_old`);
+      db.exec("COMMIT");
+    } catch (error) { db.exec("ROLLBACK"); throw error; }
+  }
 }
 
 function publishLegacyRecords(db: DatabaseSync): void {
@@ -132,7 +152,7 @@ function resolveProjectAlias(db: DatabaseSync, projectId: string): string {
 function payloadFor(event: ReplicationEvent): ConversationRecordPayload {
   const value = event.payload as Partial<ConversationRecordPayload>;
   if (event.entityType !== "conversation.record" || !["upsert", "delete"].includes(event.operation) || !value || typeof value !== "object" || Array.isArray(value)
-    || typeof value.projectId !== "string" || !["pi", "claude"].includes(value.engine ?? "") || typeof value.sessionId !== "string" || typeof value.updatedAt !== "string" || typeof value.originNodeId !== "string" || value.originNodeId !== event.originNodeId || event.entityKey !== `${value.projectId}:${value.engine}:${value.sessionId}` || (event.operation === "upsert") !== Boolean(value.record)) throw new Error("Malformed conversation record replication payload");
+    || typeof value.projectId !== "string" || !isHarnessId(value.engine) || typeof value.sessionId !== "string" || typeof value.updatedAt !== "string" || typeof value.originNodeId !== "string" || value.originNodeId !== event.originNodeId || event.entityKey !== `${value.projectId}:${value.engine}:${value.sessionId}` || (event.operation === "upsert") !== Boolean(value.record)) throw new Error("Malformed conversation record replication payload");
   if (value.record && (value.record.projectId !== value.projectId || value.record.engine !== value.engine || value.record.sessionId !== value.sessionId || value.record.updatedAt !== value.updatedAt || value.record.originNodeId !== value.originNodeId || typeof value.record.createdAt !== "string")) throw new Error("Malformed conversation record replication payload");
   return value as ConversationRecordPayload;
 }
@@ -154,6 +174,6 @@ export function applyConversationRecordEvent(db: DatabaseSync, event: Replicatio
 export function conversationDraftPath(engine: ConversationEngine, sessionId: string): string { return `draft:${engine}:${sessionId}`; }
 
 export function parseConversationDraftPath(value: string | null): { engine: ConversationEngine; sessionId: string } | undefined {
-  const match = value?.match(/^draft:(pi|claude):([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i);
+  const match = value?.match(/^draft:([a-z][a-z0-9-]*):([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/);
   return match ? { engine: match[1] as ConversationEngine, sessionId: match[2] } : undefined;
 }

@@ -1,36 +1,13 @@
-import os from "node:os";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import { sessionColorOverrides, sessionTitleOverrides } from "./names.js";
 import { conversationDraftPath, listConversationRecords } from "./conversation-records.js";
-import { createPiSession, listPiSessions, piSessionFiles, refreshPiSessions, simplifyMessages } from "./pi-service.js";
-import { claudeProjectsRoot, claudeSessionFiles, listClaudeSessions, loadClaudeMessages, refreshClaudeSessions } from "./claude-service.js";
-import { getSettings } from "./settings.js";
-import type { ChatMessage, HarnessId, ProjectRecord, SessionSummary } from "./types.js";
+import { listDiscoveredHarnesses, resolveHarnessForSessionPath } from "./harnesses/registry.js";
+import type { HarnessAdapter, HarnessProject } from "./harnesses/contract.js";
+import type { HarnessId, SessionSummary } from "./types.js";
 
-export interface HarnessProject extends ProjectRecord {
-  additionalPaths?: string[];
-}
-
-export interface HarnessAdapter<TId extends HarnessId = HarnessId> {
-  id: TId;
-  label: string;
-  paths: {
-    newSession: string;
-    ownsSession: (sessionPath: string) => boolean;
-    ownsTranscript: (filePath: string) => boolean;
-  };
-  sessions: {
-    files: (project: HarnessProject) => Promise<string[]>;
-    list: (project: HarnessProject) => Promise<SessionSummary[]>;
-    refresh: (project: HarnessProject, previous: SessionSummary[], changedFiles: string[]) => Promise<SessionSummary[]>;
-    loadMessages: (project: ProjectRecord, sessionPath: string) => Promise<ChatMessage[]>;
-  };
-}
-
-export function defineHarness<TId extends HarnessId>(adapter: HarnessAdapter<TId>): HarnessAdapter<TId> {
-  return adapter;
-}
+export { defineHarness } from "./harnesses/contract.js";
+export type { HarnessAdapter, HarnessProject } from "./harnesses/contract.js";
 
 interface CatalogEntry {
   project: HarnessProject;
@@ -126,53 +103,7 @@ export class HarnessSessionCatalog<TAdapters extends readonly HarnessAdapter[]> 
   }
 }
 
-function isWithin(filePath: string, root: string): boolean {
-  const relative = path.relative(path.resolve(root), path.resolve(filePath));
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-}
-
-function piSessionsRoot(): string {
-  return getSettings().pi.sessionPath || path.join(os.homedir(), ".pi/agent/sessions");
-}
-
-const adapters = [
-  defineHarness({
-    id: "pi",
-    label: "Pi",
-    paths: {
-      newSession: "new",
-      ownsSession: (sessionPath) => !sessionPath.startsWith("claude:") && !sessionPath.startsWith("draft:claude:"),
-      ownsTranscript: (filePath) => filePath.endsWith(".jsonl") && isWithin(filePath, piSessionsRoot()),
-    },
-    sessions: {
-      files: piSessionFiles,
-      list: listPiSessions,
-      refresh: refreshPiSessions,
-      loadMessages: async (project, sessionPath) => {
-        const handle = await createPiSession({ cwd: project.path, projectId: project.id, sessionPath });
-        const messages = simplifyMessages(handle.session.messages as unknown[]);
-        handle.dispose();
-        return messages;
-      },
-    },
-  }),
-  defineHarness({
-    id: "claude",
-    label: "Claude",
-    paths: {
-      newSession: "claude:new",
-      ownsSession: (sessionPath) => sessionPath.startsWith("claude:") || sessionPath.startsWith("draft:claude:"),
-      ownsTranscript: (filePath) => filePath.endsWith(".jsonl") && isWithin(filePath, claudeProjectsRoot()),
-    },
-    sessions: {
-      files: claudeSessionFiles,
-      list: listClaudeSessions,
-      refresh: refreshClaudeSessions,
-      loadMessages: async (_project, sessionPath) => loadClaudeMessages(sessionPath),
-    },
-  }),
-] as const;
-
+const adapters = listDiscoveredHarnesses();
 const sessionCatalog = new HarnessSessionCatalog(adapters);
 
 export function listHarnesses(): HarnessAdapter[] {
@@ -180,9 +111,7 @@ export function listHarnesses(): HarnessAdapter[] {
 }
 
 export function harnessForSessionPath(sessionPath: string): HarnessAdapter {
-  const harness = adapters.find((candidate) => candidate.paths.ownsSession(sessionPath));
-  if (!harness) throw new Error(`No harness owns session path: ${sessionPath}`);
-  return harness;
+  return resolveHarnessForSessionPath(adapters, sessionPath);
 }
 
 export function refreshHarnessSessions(projectId: string, changedFiles: string[]): Promise<void> {
@@ -243,13 +172,15 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
   const transcriptKeys = new Set(sessions.map((session) => `${session.harnessId}:${session.id}`));
   for (const record of records) {
     if (transcriptKeys.has(`${record.engine}:${record.sessionId}`)) continue;
+    const adapter = adapters.find((candidate) => candidate.id === record.engine);
+    if (!adapter) throw new Error(`No harness registered for conversation engine: ${record.engine}`);
     sessions.push({
       id: record.sessionId,
       path: conversationDraftPath(record.engine, record.sessionId),
       harnessId: record.engine,
       agentId: record.engine,
-      agentLabel: record.engine === "pi" ? "Pi" : "Claude",
-      title: overrides[record.sessionId] ?? (record.engine === "pi" ? "New Pi conversation" : "New Claude conversation"),
+      agentLabel: adapter.label,
+      title: overrides[record.sessionId] ?? `New ${adapter.label} conversation`,
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
       draft: true,

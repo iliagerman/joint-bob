@@ -125,7 +125,7 @@ test("secret assignments accept the three scope types and reject anything else",
 
     await assert.rejects(() => secrets.getScopeSecretAccounts("project_type" as never, "work"), /Secret scope type/);
     await assert.rejects(() => secrets.getScopeSecretAccounts("workspace", "missing"), /Secret workspace not found/);
-    await assert.rejects(() => secrets.getScopeSecretAccounts("conversation", "gpt:session-1"), /Secret conversation scope/);
+    await assert.rejects(() => secrets.getScopeSecretAccounts("conversation", "GPT:session-1"), /Secret conversation scope/);
   } finally {
     if (previous === undefined) delete process.env.PI_WEB_DATA_DIR; else process.env.PI_WEB_DATA_DIR = previous;
     await rm(root, { recursive: true, force: true });

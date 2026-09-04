@@ -51,7 +51,11 @@ export interface ProjectView extends ProjectRecord {
   lockedElsewhere?: boolean;
 }
 
-export type HarnessId = "pi" | "claude";
+export type HarnessId = string;
+
+export function isHarnessId(value: unknown): value is HarnessId {
+  return typeof value === "string" && /^[a-z][a-z0-9-]*$/.test(value);
+}
 
 export type AgentRunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 export type AgentTaskStatus = AgentRunStatus;
@@ -97,7 +101,7 @@ export interface SessionSummary {
 
 export type TaskStatus = "backlog" | "planning" | "in_progress" | "review" | "done";
 
-export type TaskEngine = "pi" | "claude";
+export type TaskEngine = HarnessId;
 
 export type TaskExecutionState = "idle" | "running" | "handoff_pending" | "failed";
 

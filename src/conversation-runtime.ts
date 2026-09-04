@@ -45,7 +45,7 @@ let database: DatabaseSync | undefined;
 
 export function ensureConversationRuntimeSchema(db: DatabaseSync): void {
   db.exec(`CREATE TABLE IF NOT EXISTS conversation_runtime_leases (
-    engine TEXT NOT NULL CHECK(engine IN ('pi', 'claude')),
+    engine TEXT NOT NULL,
     session_id TEXT NOT NULL,
     owner_node_id TEXT NOT NULL,
     ownership_epoch INTEGER NOT NULL,
@@ -57,6 +57,14 @@ export function ensureConversationRuntimeSchema(db: DatabaseSync): void {
     node_id TEXT PRIMARY KEY,
     generated_at TEXT NOT NULL
   );`);
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'conversation_runtime_leases'").get() as { sql: string } | undefined;
+  if (!row?.sql.includes("engine IN ('pi', 'claude')")) return;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec("ALTER TABLE conversation_runtime_leases RENAME TO conversation_runtime_leases_old");
+    db.exec(`CREATE TABLE conversation_runtime_leases (engine TEXT NOT NULL, session_id TEXT NOT NULL, owner_node_id TEXT NOT NULL, ownership_epoch INTEGER NOT NULL, run_id TEXT NOT NULL, updated_at TEXT NOT NULL, expires_at TEXT NOT NULL, PRIMARY KEY (engine, session_id)); INSERT INTO conversation_runtime_leases SELECT * FROM conversation_runtime_leases_old; DROP TABLE conversation_runtime_leases_old;`);
+    db.exec("COMMIT");
+  } catch (error) { db.exec("ROLLBACK"); throw error; }
 }
 
 function runtimeDatabase(): DatabaseSync {

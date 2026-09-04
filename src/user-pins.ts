@@ -4,6 +4,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { enqueueReplicationEvent, ensureReplicationSchema, resolveProjectAlias, type ReplicationEvent } from "./replication.js";
 import type { ConversationEngine } from "./conversation-ownership.js";
+import { isHarnessId } from "./types.js";
 
 export type UserPinTarget =
   | { kind: "project"; projectId: string }
@@ -33,13 +34,21 @@ export function ensureUserPinSchema(db: DatabaseSync): void {
     username TEXT NOT NULL COLLATE NOCASE,
     kind TEXT NOT NULL CHECK (kind IN ('project', 'conversation')),
     project_id TEXT NOT NULL,
-    engine TEXT NOT NULL DEFAULT '' CHECK (engine IN ('', 'pi', 'claude')),
+    engine TEXT NOT NULL DEFAULT '',
     session_id TEXT NOT NULL DEFAULT '',
     pinned INTEGER NOT NULL CHECK (pinned IN (0, 1)),
     updated_at TEXT NOT NULL,
     origin_node_id TEXT NOT NULL,
     PRIMARY KEY (username, kind, project_id, engine, session_id)
   );`);
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'user_pins'").get() as { sql: string } | undefined;
+  if (!row?.sql.includes("engine IN ('', 'pi', 'claude')")) return;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec("ALTER TABLE user_pins RENAME TO user_pins_old");
+    db.exec("CREATE TABLE user_pins (username TEXT NOT NULL COLLATE NOCASE, kind TEXT NOT NULL CHECK (kind IN ('project', 'conversation')), project_id TEXT NOT NULL, engine TEXT NOT NULL DEFAULT '', session_id TEXT NOT NULL DEFAULT '', pinned INTEGER NOT NULL CHECK (pinned IN (0, 1)), updated_at TEXT NOT NULL, origin_node_id TEXT NOT NULL, PRIMARY KEY (username, kind, project_id, engine, session_id)); INSERT INTO user_pins SELECT * FROM user_pins_old; DROP TABLE user_pins_old;");
+    db.exec("COMMIT");
+  } catch (error) { db.exec("ROLLBACK"); throw error; }
 }
 
 function pinDatabase(): DatabaseSync {
@@ -124,7 +133,7 @@ function pinPayload(event: ReplicationEvent): PinPayload {
     && typeof value.username === "string" && value.username.length > 0 && value.username.length <= 80
     && ["project", "conversation"].includes(value.kind ?? "")
     && typeof value.projectId === "string" && value.projectId.length > 0 && value.projectId.length <= 120
-    && (conversation ? ["pi", "claude"].includes(value.engine ?? "") && typeof value.sessionId === "string" && value.sessionId.length > 0 && value.sessionId.length <= 240 : value.engine === undefined && value.sessionId === undefined)
+    && (conversation ? isHarnessId(value.engine) && typeof value.sessionId === "string" && value.sessionId.length > 0 && value.sessionId.length <= 240 : value.engine === undefined && value.sessionId === undefined)
     && typeof value.pinned === "boolean" && value.pinned === (event.operation === "upsert")
     && typeof value.updatedAt === "string" && Number.isFinite(Date.parse(value.updatedAt))
     && typeof value.originNodeId === "string" && value.originNodeId === event.originNodeId;

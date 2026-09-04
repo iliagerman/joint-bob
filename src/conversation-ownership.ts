@@ -3,8 +3,9 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { enqueueReplicationEvent, ensureReplicationSchema, type ReplicationEvent } from "./replication.js";
+import { isHarnessId, type HarnessId } from "./types.js";
 
-export type ConversationEngine = "pi" | "claude";
+export type ConversationEngine = HarnessId;
 export type ConversationOwnershipStatus = "claiming" | "owned" | "recovering" | "transferring" | "conflict";
 
 export interface ConversationOwnership {
@@ -38,7 +39,7 @@ let databasePromise: Promise<DatabaseSync> | undefined;
 
 function createOwnershipTable(db: DatabaseSync): void {
   db.exec(`CREATE TABLE IF NOT EXISTS conversation_ownership (
-    engine TEXT NOT NULL CHECK(engine IN ('pi', 'claude')),
+    engine TEXT NOT NULL,
     session_id TEXT NOT NULL,
     owner_node_id TEXT NOT NULL,
     epoch INTEGER NOT NULL CHECK(epoch > 0),
@@ -51,12 +52,16 @@ function createOwnershipTable(db: DatabaseSync): void {
 export function ensureConversationOwnershipSchema(db: DatabaseSync): void {
   const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'conversation_ownership'").get() as { sql: string } | undefined;
   if (!row) { createOwnershipTable(db); return; }
-  if (row.sql.includes("'claiming'") && row.sql.includes("'conflict'")) return;
-  db.exec("ALTER TABLE conversation_ownership RENAME TO conversation_ownership_old");
-  createOwnershipTable(db);
-  db.exec(`INSERT INTO conversation_ownership SELECT engine, session_id, owner_node_id, epoch, status, transfer_to_node_id
-    FROM conversation_ownership_old`);
-  db.exec("DROP TABLE conversation_ownership_old");
+  if (row.sql.includes("'claiming'") && row.sql.includes("'conflict'") && !row.sql.includes("engine IN ('pi', 'claude')")) return;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec("ALTER TABLE conversation_ownership RENAME TO conversation_ownership_old");
+    createOwnershipTable(db);
+    db.exec(`INSERT INTO conversation_ownership SELECT engine, session_id, owner_node_id, epoch, status, transfer_to_node_id
+      FROM conversation_ownership_old`);
+    db.exec("DROP TABLE conversation_ownership_old");
+    db.exec("COMMIT");
+  } catch (error) { db.exec("ROLLBACK"); throw error; }
 }
 
 async function ownershipDatabase(): Promise<DatabaseSync> {
@@ -227,7 +232,7 @@ function ownershipPayload(event: ReplicationEvent): OwnershipPayload {
   const value = event.payload as Partial<OwnershipPayload>;
   const statuses: ConversationOwnershipStatus[] = ["claiming", "owned", "recovering", "transferring", "conflict"];
   const valid = event.entityType === "conversation.ownership" && event.operation === "upsert"
-    && value && typeof value === "object" && ["pi", "claude"].includes(value.engine ?? "")
+    && value && typeof value === "object" && isHarnessId(value.engine)
     && typeof value.sessionId === "string" && value.sessionId.length > 0
     && typeof value.ownerNodeId === "string" && value.ownerNodeId.length > 0
     && Number.isInteger(value.epoch) && (value.epoch ?? 0) > 0

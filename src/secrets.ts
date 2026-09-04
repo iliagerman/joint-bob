@@ -3,12 +3,13 @@ import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { isHarnessId, type HarnessId } from "./types.js";
 
 export type SecretProvider = "aws" | "google" | "github" | "custom";
 export type SecretKind = "value" | "file";
 /** Attachment tiers, broadest first. Resolution merges them in this order. */
 export type SecretScopeType = "workspace" | "project" | "conversation";
-export type ConversationEngineId = "pi" | "claude";
+export type ConversationEngineId = HarnessId;
 /** A conversation is identified by `<engine>:<sessionId>`. A brand-new conversation has no
     id until its engine reports one, so the accounts chosen in the new-conversation dialog
     travel as `accountIds` until `persistConversationSecretAccounts` can store them. */
@@ -156,7 +157,8 @@ function canonicalScopeId(scopeType: SecretScopeType, scopeId: string): string {
   if (scopeType === "conversation") {
     // A conversation exists as soon as its engine reports a session id, so the id shape
     // is the only thing to check; there is no row to look up.
-    if (!/^(pi|claude):.+$/.test(requested)) throw new Error("Secret conversation scope must be <engine>:<sessionId> with engine pi or claude");
+    const [engine, sessionId] = requested.split(":", 2);
+    if (!isHarnessId(engine) || !sessionId) throw new Error("Secret conversation scope must be <engine>:<sessionId>");
     return requested;
   }
   if (!hasTable("projects")) throw new Error("Secret project not found");
