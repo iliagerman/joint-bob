@@ -93,6 +93,15 @@ test("opening a conversation renders its transcript", async () => {
   assert.match(await message.innerText(), /re-threading the same builder prompt/);
 });
 
+test("conversation rows identify the harness with only its icon", async () => {
+  const conversation = page.locator(".session-card", { hasText: "Thread-Based Agent Builder" }).first();
+  const agent = conversation.getByTestId("session-agent-label");
+
+  assert.equal(await agent.getByTestId("session-agent-icon").count(), 1, "conversation shows one harness icon");
+  assert.equal(await agent.innerText(), "", "conversation does not repeat the harness name");
+  assert.equal(await agent.getAttribute("aria-label"), "Pi", "the icon keeps an accessible harness name");
+});
+
 test("the selected project and conversation stay highlighted in their sidebars", async () => {
   const project = page.locator(".project-card", { hasText: "Internal Assistant" }).first();
   const conversation = page.locator(".session-card", { hasText: "Thread-Based Agent Builder" }).first();

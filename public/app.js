@@ -2688,7 +2688,8 @@ function renderSessions() {
     agent.dataset.testid = "session-agent-label";
     const agentMark = agentIcon(agentId);
     agentMark.dataset.testid = "session-agent-icon";
-    agent.append(agentMark, document.createTextNode(`${session.agentLabel}${session.agentModel ? ` · ${session.agentModel}` : ""}`));
+    agent.setAttribute("aria-label", session.agentLabel);
+    agent.append(agentMark);
     meta.append(" ", agent);
     button.append(sessionName, meta);
     const chatState = sessionChatState(session);

@@ -56,7 +56,7 @@ test("chat names its controls and continues conversations through takeover", asy
   assert.match(app, /openSession\(session\.path, shortSessionTitle\(session\), false, Boolean\(state\.activeTaskId\)\)/);
   assert.match(app, /dataset\.testid = "session-agent-label"/);
   assert.match(app, /session\.agentLabel/);
-  assert.match(app, /session\.agentModel/);
+  assert.doesNotMatch(app, /session\.agentModel/);
   assert.match(server, /\(!config \|\| config\.engine === "pi"\) && shared/);
 });
 

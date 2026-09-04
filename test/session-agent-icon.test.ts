@@ -40,7 +40,9 @@ test("a conversation row shows a Pi or Claude mark, not only the agent name", as
   const render = functionBody(app, "function renderSessions() {");
   assert.match(render, /agentIcon\(/);
   assert.match(render, /dataset\.testid = "session-agent-icon"/);
-  // Decorative marks must not be read out twice, since the label beside them names the agent.
+  assert.match(render, /agent\.setAttribute\("aria-label", session\.agentLabel\)/);
+  assert.doesNotMatch(render, /document\.createTextNode\(`\$\{session\.agentLabel\}/);
+  // The wrapper names the harness; its decorative mark stays out of the accessibility tree.
   const icon = functionBody(app, "function brandIcon(name, className) {");
   assert.match(icon, /setAttribute\("aria-hidden", "true"\)/);
 });

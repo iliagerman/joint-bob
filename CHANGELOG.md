@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Conversation rows now show harness icons without redundant agent name text, keeping accessibility labels for screen readers
 - Chat headers now keep manually chosen conversation names when drafts sync their transcripts to disk
 - Secret accounts replicated across the cluster now carry their workspace attachments
 - App now reloads conversations and reviews missed while offline when the connection reconnects
