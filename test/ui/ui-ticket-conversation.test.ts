@@ -100,9 +100,18 @@ async function openJointBobProject(): Promise<void> {
   await page.locator(".session-card").first().waitFor({ timeout: 20_000 });
 }
 
-test("a ticket conversation is listed, marked, and jumps into its ticket", async () => {
+test("the board ticket chat button opens that ticket's conversation", async () => {
   await openJointBobProject();
+  await page.locator(".session-card", { hasText: "Canvas picker readability" }).click();
+  await page.locator(".message", { hasText: "grid tracks shrink" }).waitFor({ timeout: 20_000 });
 
+  await page.getByTestId("chats-open-board-button").click();
+  const ticketCard = page.getByTestId("board-task-card").filter({ hasText: TICKET_TITLE });
+  await ticketCard.getByTestId("board-task-open-chat-button").click();
+  await page.locator(".message", { hasText: "retry budget was per-session" }).waitFor({ timeout: 20_000 });
+});
+
+test("a ticket conversation is listed, marked, and jumps into its ticket", async () => {
   // The precondition the whole test hangs on: the ticket's conversation reached the list.
   const ticketRow = page.locator(".list-row", { hasText: CONVERSATION_NAME }).first();
   await ticketRow.waitFor({ timeout: 20_000 });
@@ -119,12 +128,19 @@ test("a ticket conversation is listed, marked, and jumps into its ticket", async
   const buttonRows = await page.locator(".list-row", { has: page.getByTestId("session-ticket-button") }).count();
   assert.equal(buttonRows, 1, "only the ticket conversation carries the ticket button");
 
+  // First open another conversation. Its id must not override the path from the
+  // ticket button when the ticket conversation opens next.
+  await page.locator(".session-card", { hasText: "Canvas picker readability" }).click();
+  await page.locator(".message", { hasText: "grid tracks shrink" }).waitFor({ timeout: 20_000 });
+
   // The button navigates directly into the ticket, not into the conversation.
   await page.getByTestId("session-ticket-button").click();
   await page.locator("#taskDialog[open]").waitFor({ timeout: 20_000 });
   assert.equal(await page.locator("#taskTitleInput").inputValue(), TICKET_TITLE, "the ticket dialog shows the ticket, not the chat");
-  // A ticket with a conversation opens on its conversation tab.
+  // A ticket with a conversation opens on its conversation tab and loads that
+  // ticket's transcript rather than the previously opened conversation.
   await page.locator('#taskChatHost:not([hidden])').waitFor({ timeout: 10_000 });
+  await page.locator("#taskChatHost .message", { hasText: "retry budget was per-session" }).waitFor({ timeout: 20_000 });
 
   await page.keyboard.press("Escape");
   await page.locator("#taskDialog[open]").waitFor({ state: "detached", timeout: 10_000 });

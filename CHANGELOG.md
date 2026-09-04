@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Ticket conversations now correctly open from the board button even when another conversation was previously open
+
 ## 1.3.1 — 2026-09-04
 
 - Secret accounts attached to workspaces now reject duplicate variable names when syncing across nodes

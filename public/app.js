@@ -4589,6 +4589,7 @@ function renderBoardView() {
     onAdd: openNewTaskDialog,
     onOpenChat: (task) => {
       state.activeTaskId = task.id;
+      state.activeSessionId = null;
       openSession(task.sessionPath, task.title, false, true);
     },
     onMerge: mergeTask,
@@ -4761,6 +4762,7 @@ function openEditTaskDialog(task) {
   elements.taskDialog.showModal();
   if (task.sessionPath && task.sessionPath !== state.activeSessionPath) {
     state.activeTaskId = task.id;
+    state.activeSessionId = null;
     // openSession switches the visible panel to the chat; the user opened this
     // from the board and expects to land back there when the dialog closes.
     const returnView = history.state?.mobileView ?? "board";
