@@ -13,6 +13,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test, { after, before } from "node:test";
+import { DatabaseSync } from "node:sqlite";
+import { randomUUID } from "node:crypto";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import { seedDevEnvironment, startDevNode, stopDevNode, type DevEnvironment, type SeededNode } from "../dev-nodes.js";
 
@@ -132,6 +134,60 @@ test("the chat toolbar actions are visible on a wide screen and fold into the me
 
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+});
+
+test("a phone reloads conversations missed while its watch socket was disconnected", async () => {
+  const mobileContext = await browser.newContext({
+    viewport: { width: 430, height: 900 },
+    reducedMotion: "reduce",
+    serviceWorkers: "block",
+  });
+  await mobileContext.addInitScript(() => {
+    const NativeWebSocket = window.WebSocket;
+    window.WebSocket = class extends NativeWebSocket {
+      constructor(url: string | URL) {
+        super(url);
+        if (String(url).includes("sessionPath=watch")) (window as typeof window & { testWatchSocket: WebSocket }).testWatchSocket = this;
+      }
+    };
+  });
+  const mobilePage = await mobileContext.newPage();
+  const sessionId = randomUUID();
+  const title = "Conversation created while phone slept";
+  const project = node.projects.find((candidate) => candidate.name === "Infra Scripts")!;
+
+  try {
+    await mobilePage.goto(node.url, { waitUntil: "domcontentloaded" });
+    await mobilePage.getByTestId("login-username-input").fill(environment.username);
+    await mobilePage.getByTestId("login-password-input").fill(environment.password);
+    await mobilePage.getByTestId("login-submit-button").click();
+    await mobilePage.locator(".project-card", { hasText: project.name }).first().waitFor({ state: "attached" });
+    await mobilePage.getByTestId("session-list-loading-bar").waitFor({ state: "hidden" });
+    await mobilePage.getByTestId("nav-projects-button").click();
+    await mobilePage.locator("body.view-projects #projectsPanel").waitFor();
+    await mobilePage.locator(".project-card", { hasText: project.name }).first().click();
+    await mobilePage.locator("#chatsLiveDot").waitFor({ state: "visible" });
+    await mobilePage.evaluate(() => (window as typeof window & { testWatchSocket: WebSocket }).testWatchSocket.close());
+    await mobilePage.locator("#chatsLiveDot").waitFor({ state: "hidden" });
+
+    const now = new Date().toISOString();
+    const database = new DatabaseSync(path.join(node.dataDir, "node.db"));
+    database.prepare("INSERT INTO conversation_records (project_id, engine, session_id, created_at, updated_at, origin_node_id) VALUES (?, 'claude', ?, ?, ?, ?)")
+      .run(project.id, sessionId, now, now, node.nodeId);
+    database.prepare("INSERT INTO name_overrides (scope, key, name, updated_at, origin_node_id) VALUES ('sessions', ?, ?, ?, ?)")
+      .run(sessionId, title, now, node.nodeId);
+    database.close();
+
+    assert.equal(await mobilePage.locator(".session-card", { hasText: title }).count(), 0, "the disconnected phone has stale conversations");
+    await mobilePage.locator("#chatsLiveDot").waitFor({ state: "visible", timeout: 10_000 });
+    await mobilePage.locator(".session-card", { hasText: title }).waitFor({ timeout: 10_000 });
+  } finally {
+    await mobileContext.close();
+    const database = new DatabaseSync(path.join(node.dataDir, "node.db"));
+    database.prepare("DELETE FROM conversation_records WHERE project_id = ? AND engine = 'claude' AND session_id = ?").run(project.id, sessionId);
+    database.prepare("DELETE FROM name_overrides WHERE scope = 'sessions' AND key = ?").run(sessionId);
+    database.close();
+  }
 });
 
 test("the canvas picker lists conversations at a readable height", async () => {

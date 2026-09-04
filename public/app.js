@@ -81,6 +81,7 @@ const state = {
   chatFilter: "all",
   watchSocket: null,
   watchProjectId: null,
+  watchNeedsRefresh: false,
   rowMenuAnchor: null,
   rowMenuAnchorSelector: null,
   watchReconnectTimer: null,
@@ -5093,6 +5094,11 @@ function ensureWatchSocket() {
   state.watchProjectId = state.activeProjectId;
   socket.addEventListener("open", () => {
     elements.chatsLiveDot.hidden = false;
+    if (state.watchNeedsRefresh) {
+      state.watchNeedsRefresh = false;
+      refreshSessionsQuietly();
+      schedulePendingReviewsRefresh();
+    }
     state.watchPingTimer = setInterval(() => {
       if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "ping" }));
     }, 25000);
@@ -5110,6 +5116,7 @@ function ensureWatchSocket() {
   });
   socket.addEventListener("close", () => {
     if (state.watchSocket !== socket) return;
+    state.watchNeedsRefresh = true;
     if (state.watchPingTimer) clearInterval(state.watchPingTimer);
     state.watchPingTimer = null;
     elements.chatsLiveDot.hidden = true;
