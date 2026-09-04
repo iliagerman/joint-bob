@@ -3,19 +3,20 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.3.0 — 2026-09-04
 
-- Conversation rows now show harness icons without redundant agent name text, keeping accessibility labels for screen readers
-- Chat headers now keep manually chosen conversation names when drafts sync their transcripts to disk
-- Secret accounts replicated across the cluster now carry their workspace attachments
-- App now reloads conversations and reviews missed while offline when the connection reconnects
-- Conversation ownership takeovers now reliably verify that transcripts have synchronized to the destination node before proceeding
-- Claude harness now provides a /goal command to set completion conditions
-- Canvas keyboard shortcuts are now customizable with a modifier chord selector and per-command key bindings, and a finder lets you search conversations by title to jump directly to them
-- Pinned conversations now synchronize across cluster nodes instead of being local to each machine
-- Pi, Claude, and future harness conversations now synchronize transcripts and ticket metadata across cluster nodes
-- The app now automatically refreshes to the latest version when deployed while the browser window is open
-- Conversation engines are now extensible, enabling support for future custom harnesses alongside Pi and Claude
+- Canvas panes now resize in both dimensions with visible drag handles and support configurable keyboard shortcuts to jump between conversations
+- Harness adapters are now automatically discovered and registered
+- Harness conversations now sync across all cluster nodes
+- Conversations and projects can now be pinned directly from list rows
+- Ticket conversations are marked in the chat and can jump to their tickets
+- Claude sessions now support compaction commands and tool selection configuration
+- Task descriptions now support up to 20,000 characters
+- Secret account changes now instantly replicate to all cluster nodes on save
+- Ticket management is now consolidated into projects
+- Conversation titles now correctly persist in chat headers after renaming
+- App automatically refreshes when deployed while the browser window is open
+- Server stability improved with better database lock handling and Syncthing startup retry logic
 
 ## 1.2.1 — 2026-09-03
 
