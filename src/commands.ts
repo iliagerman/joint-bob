@@ -32,12 +32,19 @@ const BUILTIN_COMMANDS = [
   { name: "compact", description: "Compact conversation context" },
 ] as const;
 
+const CLAUDE_BUILTIN_COMMANDS = [
+  { name: "goal", description: "Set a completion condition" },
+] as const;
+
 function commandScope(scope: string): HarnessCommand["scope"] {
   return scope === "project" ? "project" : "user";
 }
 
 function builtinCommands(harness: HarnessId): HarnessCommand[] {
-  return BUILTIN_COMMANDS.map((command) => ({
+  const commands = harness === "claude"
+    ? [...BUILTIN_COMMANDS, ...CLAUDE_BUILTIN_COMMANDS]
+    : BUILTIN_COMMANDS;
+  return commands.map((command) => ({
     harness,
     ...command,
     invocation: `/${command.name} `,

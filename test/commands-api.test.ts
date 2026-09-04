@@ -26,6 +26,7 @@ test("Pi commands come from the same resource loader used by Pi sessions", async
     assert.ok(commands.some((command) => command.kind === "builtin" && command.invocation === "/model "));
     assert.ok(commands.some((command) => command.kind === "builtin" && command.invocation === "/skills "));
     assert.ok(commands.some((command) => command.kind === "builtin" && command.invocation === "/help "));
+    assert.ok(commands.every((command) => command.invocation !== "/goal "));
     assert.ok(commands.every((command) => command.invocation !== "/skill "));
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -44,6 +45,7 @@ test("Claude command list uses Claude skills and invocation syntax", async () =>
     const commands = await listHarnessCommands(project, "claude", { claudeUser });
 
     assert.ok(commands.some((command) => command.kind === "skill" && command.invocation === "/push-code "));
+    assert.ok(commands.some((command) => command.kind === "builtin" && command.invocation === "/goal "));
     assert.ok(commands.every((command) => command.harness === "claude"));
   } finally {
     await rm(root, { recursive: true, force: true });
