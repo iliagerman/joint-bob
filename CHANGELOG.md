@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Ticket conversations now correctly open from the board button even when another conversation was previously open
+- Task conversations now preserve session identifiers when routed to remote cluster nodes
 
 ## 1.3.1 — 2026-09-04
 

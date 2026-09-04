@@ -5713,6 +5713,7 @@ webSocketServer.on("connection", async (socket, request) => {
   }
   const taskId = taskIdResult.success ? taskIdResult.data : undefined;
   const rawSessionPathFromUrl = url.searchParams.get("sessionPath");
+  const requestedSessionId = url.searchParams.get("sessionId");
   const canMatchTaskSession = rawSessionPathFromUrl && !["new", "watch", "claude:new"].includes(rawSessionPathFromUrl);
   const tasks = taskId || canMatchTaskSession ? await listTasks(project.id) : [];
   const task = taskId
@@ -5738,13 +5739,13 @@ webSocketServer.on("connection", async (socket, request) => {
     ownerUrl.searchParams.set("projectId", project.id);
     ownerUrl.searchParams.set("sessionPath", rawSessionPathFromUrl ?? "new");
     ownerUrl.searchParams.set("taskId", task.id);
+    if (requestedSessionId) ownerUrl.searchParams.set("sessionId", requestedSessionId);
     // A terminal socket must stay a terminal socket on the owner, not become a session.
     if (url.searchParams.get("mode") === "terminal") ownerUrl.searchParams.set("mode", "terminal");
     proxySocket(socket, new WebSocket(ownerUrl, { headers: { Authorization: `Bearer ${peer.token}` } }));
     return;
   }
   const requestedNodeId = url.searchParams.get("nodeId");
-  const requestedSessionId = url.searchParams.get("sessionId");
   const routingDraft = parseConversationDraftPath(rawSessionPathFromUrl);
   const routingEngine: ConversationEngine = routingDraft?.engine ?? (rawSessionPathFromUrl?.startsWith("claude:") ? "claude" : "pi");
   if (browserAuthenticated && !task) {
