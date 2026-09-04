@@ -259,11 +259,19 @@ export async function setScopeSecretAccounts(scopeType: SecretScopeType, scopeId
   if (new Set(accountIds).size !== accountIds.length) throw new Error("Secret account IDs must be unique");
   const rows = accountIds.map(accountRow);
   assertNoCollision(rows);
+  const previous = scopeType === "workspace" ? (await getScopeSecretAccounts(scopeType, canonical)).accountIds : [];
+  const changed = [...new Set([...previous, ...accountIds])].filter((id) => previous.includes(id) !== accountIds.includes(id));
   db().exec("BEGIN IMMEDIATE");
   try {
     db().prepare("DELETE FROM secret_assignments WHERE scope_type = ? AND scope_id = ?").run(scopeType, canonical);
     const insert = db().prepare("INSERT INTO secret_assignments (scope_type, scope_id, account_id) VALUES (?, ?, ?)");
     for (const id of accountIds) insert.run(scopeType, canonical, id);
+    const selectUpdatedAt = db().prepare("SELECT updated_at FROM secret_accounts WHERE id = ?");
+    const touch = db().prepare("UPDATE secret_accounts SET updated_at = ? WHERE id = ?");
+    for (const id of changed) {
+      const row = selectUpdatedAt.get(id) as { updated_at: string };
+      touch.run(new Date(Math.max(Date.now(), Date.parse(row.updated_at) + 1)).toISOString(), id);
+    }
     db().exec("COMMIT");
   } catch (error) {
     db().exec("ROLLBACK");

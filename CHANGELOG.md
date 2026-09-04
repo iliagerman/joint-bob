@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Secret accounts replicated across the cluster now carry their workspace attachments
 - App now reloads conversations and reviews missed while offline when the connection reconnects
 - Conversation ownership takeovers now reliably verify that transcripts have synchronized to the destination node before proceeding
 - Claude harness now provides a /goal command to set completion conditions

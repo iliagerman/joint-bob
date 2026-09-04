@@ -68,6 +68,27 @@ test("each node is paired with the other and holds its machine token", async () 
   assert.ok(peersA.body.peers[0].tokenConfigured && peersB.body.peers[0].tokenConfigured, "both sides hold a machine token");
 });
 
+test("workspace secret attachments replicate to the same workspace on a peer", async () => {
+  const created = await api<{ account: { id: string } }>(nodeA, sessionA, "POST", "/secrets/accounts", {
+    label: "Shared workspace secret",
+    provider: "custom",
+    replicate: true,
+    variables: [{ name: "SHARED_TOKEN", kind: "value", value: "cluster-test-token" }],
+  });
+  assert.equal(created.status, 201);
+
+  const attached = await api<{ accountIds: string[] }>(nodeA, sessionA, "PUT", "/secrets/scopes/workspace/personal", { accountIds: [created.body.account.id] });
+  assert.equal(attached.status, 200);
+
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const remote = await api<{ accountIds: string[] }>(nodeB, sessionB, "GET", "/secrets/scopes/workspace/personal");
+    if (remote.body.accountIds.includes(created.body.account.id)) return;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  assert.fail("workspace attachment did not replicate to node B");
+});
+
 test("every project on one node is aliased to its twin on the other", async () => {
   const inventory = await api<InventoryView>(nodeA, sessionA, "GET", "/cluster/local-inventory");
   assert.equal(inventory.status, 200);

@@ -356,6 +356,7 @@ const secretCredentialEventSchema = z.object({
     label: z.string().trim().min(1).max(64),
     provider: z.enum(["aws", "google", "github", "custom"]),
     variables: z.array(z.object({ name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), kind: z.enum(["value", "file"]), value: z.string().max(100000) }).strict()).min(1).max(20),
+    workspaceIds: z.array(z.string().trim().min(1).max(300)).max(100).optional(),
   }).strict(),
   updatedAt: z.string().datetime(),
   originNodeId: z.string().uuid(),
@@ -2380,7 +2381,16 @@ app.get("/api/secrets/scopes/:scopeType/:scopeId", async (request, response, nex
   try { const scope = secretScopeParamsSchema.parse(request.params); response.json(await getScopeSecretAccounts(scope.scopeType, scope.scopeId)); } catch (error) { next(error); }
 });
 app.put("/api/secrets/scopes/:scopeType/:scopeId", async (request, response, next) => {
-  try { const scope = secretScopeParamsSchema.parse(request.params); const payload = secretScopeSchema.parse(request.body); await setScopeSecretAccounts(scope.scopeType, scope.scopeId, payload.accountIds); response.json(await getScopeSecretAccounts(scope.scopeType, scope.scopeId)); } catch (error) { next(error); }
+  try {
+    const session = response.locals.authSession as AuthSession;
+    const scope = secretScopeParamsSchema.parse(request.params);
+    const payload = secretScopeSchema.parse(request.body);
+    const previous = await getScopeSecretAccounts(scope.scopeType, scope.scopeId);
+    await setScopeSecretAccounts(scope.scopeType, scope.scopeId, payload.accountIds);
+    const changed = [...new Set([...previous.accountIds, ...payload.accountIds])].filter((id) => previous.accountIds.includes(id) !== payload.accountIds.includes(id));
+    if (scope.scopeType === "workspace") await replicateWorkspaceSecretChanges(changed, session.userId);
+    response.json(await getScopeSecretAccounts(scope.scopeType, scope.scopeId));
+  } catch (error) { next(error); }
 });
 
 app.get("/api/workspaces", async (_request, response, next) => {
@@ -6129,6 +6139,12 @@ async function flushSecretCredentialOutbox(): Promise<void> {
 /** A saved account marked to replicate leaves for every paired node right away, so the
     checkbox means what it says. The manual "Sync to nodes" action remains for retries and
     for nodes paired after the save. */
+async function replicateWorkspaceSecretChanges(accountIds: string[], actorId: string): Promise<void> {
+  const changed = new Set(accountIds);
+  const account = (await listSecretAccounts()).find((candidate) => candidate.replicate && changed.has(candidate.id));
+  if (account) await replicateSecretAccount(account, actorId);
+}
+
 async function replicateSecretAccount(account: SecretAccount, actorId: string): Promise<Array<{ peerId: string; name: string; delivered: number; error?: string }> | undefined> {
   if (!account.replicate) return undefined;
   const peers = await listClusterPeers();

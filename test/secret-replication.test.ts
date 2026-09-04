@@ -61,6 +61,73 @@ test("a node-local account produces no outbound replication row", async () => {
   });
 });
 
+test("replicated accounts carry their workspace attachments", async () => {
+  await withNode("workspace-outbox", async ({ dataDir, secrets, replication }) => {
+    const database = new DatabaseSync(path.join(dataDir, "node.db"));
+    try {
+      database.exec("CREATE TABLE workspaces (id TEXT PRIMARY KEY); INSERT INTO workspaces (id) VALUES ('personal')");
+    } finally {
+      database.close();
+    }
+    const account = await secrets.saveSecretAccount({ label: "Shared", provider: "custom", replicate: true, variables: [{ name: "TOKEN", kind: "value", value: "travels" }] });
+    await secrets.setScopeSecretAccounts("workspace", "personal", [account.id]);
+
+    const peerId = randomUUID();
+    await replication.enqueueSecretCredentialSync([peerId]);
+    const events = await replication.secretCredentialEventsForPeer(peerId);
+
+    assert.deepEqual(events[0].value.workspaceIds, ["personal"]);
+  });
+});
+
+test("changing a workspace attachment produces a new replication event", async () => {
+  await withNode("workspace-update", async ({ dataDir, secrets, replication }) => {
+    const database = new DatabaseSync(path.join(dataDir, "node.db"));
+    try {
+      database.exec("CREATE TABLE workspaces (id TEXT PRIMARY KEY); INSERT INTO workspaces (id) VALUES ('personal')");
+    } finally {
+      database.close();
+    }
+    const account = await secrets.saveSecretAccount({ label: "Shared", provider: "custom", replicate: true, variables: [{ name: "TOKEN", kind: "value", value: "travels" }] });
+    const peerId = randomUUID();
+    await replication.enqueueSecretCredentialSync([peerId]);
+    const [first] = await replication.secretCredentialEventsForPeer(peerId);
+    await replication.recordSecretCredentialReceipt(peerId, [first.id]);
+
+    await secrets.setScopeSecretAccounts("workspace", "personal", [account.id]);
+    await replication.enqueueSecretCredentialSync([peerId]);
+    const events = await replication.secretCredentialEventsForPeer(peerId);
+
+    assert.equal(events.length, 1);
+    assert.deepEqual(events[0].value.workspaceIds, ["personal"]);
+  });
+});
+
+test("sync upgrades an older account event with workspace attachments", async () => {
+  await withNode("workspace-upgrade", async ({ dataDir, secrets, replication }) => {
+    const account = await secrets.saveSecretAccount({ label: "Shared", provider: "custom", replicate: true, variables: [{ name: "TOKEN", kind: "value", value: "travels" }] });
+    const peerId = randomUUID();
+    await replication.enqueueSecretCredentialSync([peerId]);
+    const [first] = await replication.secretCredentialEventsForPeer(peerId);
+    await replication.recordSecretCredentialReceipt(peerId, [first.id]);
+
+    const database = new DatabaseSync(path.join(dataDir, "node.db"));
+    try {
+      database.exec("CREATE TABLE workspaces (id TEXT PRIMARY KEY); INSERT INTO workspaces (id) VALUES ('personal')");
+      database.prepare("INSERT INTO secret_assignments (scope_type, scope_id, account_id) VALUES ('workspace', 'personal', ?)").run(account.id);
+      const legacy = { label: "Shared", provider: "custom", variables: [{ name: "TOKEN", kind: "value", value: "travels" }] };
+      database.prepare("UPDATE secret_credential_events SET payload_encrypted = ? WHERE event_id = ?").run(secrets.encryptSecretValue(JSON.stringify(legacy)), first.id);
+    } finally {
+      database.close();
+    }
+
+    await replication.enqueueSecretCredentialSync([peerId]);
+    const events = await replication.secretCredentialEventsForPeer(peerId);
+    assert.equal(events.length, 1);
+    assert.deepEqual(events[0].value.workspaceIds, ["personal"]);
+  });
+});
+
 test("switching an account back to node-local withdraws it from the outbox", async () => {
   await withNode("withdraw", async ({ dataDir, secrets, replication }) => {
     const account = await secrets.saveSecretAccount({ label: "Shared", provider: "custom", replicate: true, variables: [{ name: "SHARED_TOKEN", kind: "value", value: "travels" }] });
@@ -110,6 +177,34 @@ test("a received account is re-encrypted locally and a local overwrite wins afte
   });
 });
 
+test("a received account attaches to matching local workspaces", async () => {
+  await withNode("workspace-receive", async ({ dataDir, secrets, replication }) => {
+    const database = new DatabaseSync(path.join(dataDir, "node.db"));
+    try {
+      database.exec("CREATE TABLE workspaces (id TEXT PRIMARY KEY); INSERT INTO workspaces (id) VALUES ('personal')");
+    } finally {
+      database.close();
+    }
+    const accountId = randomUUID();
+    await replication.receiveSecretCredentialEvents([{
+      id: randomUUID(),
+      entityKey: accountId,
+      operation: "upsert",
+      value: {
+        label: "From peer",
+        provider: "github",
+        variables: [{ name: "GH_TOKEN", kind: "value", value: "ghp_test_peer" }],
+        workspaceIds: ["missing", "personal"],
+      },
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      originNodeId: randomUUID(),
+      createdAt: "2026-01-01T00:00:00.000Z",
+    }]);
+
+    assert.deepEqual(await secrets.getScopeSecretAccounts("workspace", "personal"), { accountIds: [accountId] });
+  });
+});
+
 test("malformed peer input is rejected rather than half-applied", async () => {
   await withNode("reject", async ({ secrets, replication }) => {
     const base = {
@@ -124,6 +219,7 @@ test("malformed peer input is rejected rather than half-applied", async () => {
     await assert.rejects(() => replication.receiveSecretCredentialEvents([{ ...base, entityKey: "not-a-uuid" }]), /secret account UUID/);
     await assert.rejects(() => replication.receiveSecretCredentialEvents([{ ...base, value: { ...base.value, provider: "gitlab" } }]), /provider is invalid/);
     await assert.rejects(() => replication.receiveSecretCredentialEvents([{ ...base, value: { ...base.value, variables: [] } }]), /between 1 and 20 variables/);
+    await assert.rejects(() => replication.receiveSecretCredentialEvents([{ ...base, value: { ...base.value, workspaceIds: [""] } }]), /workspace IDs are invalid/);
     // A rejected batch writes nothing at all.
     assert.deepEqual(await secrets.listSecretAccounts(), []);
   });

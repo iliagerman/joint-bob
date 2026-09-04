@@ -184,7 +184,7 @@ Existing Git-backed tickets keep their worktree and merge behavior. New tickets 
 
 Secret accounts hold named environment variables encrypted with the node key. Attach an account to a workspace, project, or conversation. More specific scopes override less specific scopes one variable at a time.
 
-Secret accounts stay node-local unless you explicitly replicate one. Use **Settings > Secrets > Sync to nodes** to send an account through encrypted cluster replication. Secrets never use filesystem synchronization.
+Secret accounts stay node-local unless you explicitly replicate one. Use **Settings > Secrets > Sync to nodes** to send an account through encrypted cluster replication. Workspace attachments follow the account when the destination has the same workspace. Secrets never use filesystem synchronization.
 
 ## Service management
 
