@@ -205,6 +205,38 @@ test("a received account attaches to matching local workspaces", async () => {
   });
 });
 
+test("a received workspace attachment rejects same-scope variable collisions", async () => {
+  await withNode("workspace-collision", async ({ dataDir, secrets, replication }) => {
+    const database = new DatabaseSync(path.join(dataDir, "node.db"));
+    try {
+      database.exec("CREATE TABLE workspaces (id TEXT PRIMARY KEY); INSERT INTO workspaces (id) VALUES ('personal')");
+    } finally {
+      database.close();
+    }
+    const local = await secrets.saveSecretAccount({ label: "Local", provider: "github", variables: [{ name: "GH_TOKEN", kind: "value", value: "ghp_test_local" }] });
+    await secrets.setScopeSecretAccounts("workspace", "personal", [local.id]);
+    const remoteId = randomUUID();
+
+    await assert.rejects(() => replication.receiveSecretCredentialEvents([{
+      id: randomUUID(),
+      entityKey: remoteId,
+      operation: "upsert",
+      value: {
+        label: "From peer",
+        provider: "github",
+        variables: [{ name: "GH_TOKEN", kind: "value", value: "ghp_test_peer" }],
+        workspaceIds: ["personal"],
+      },
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      originNodeId: randomUUID(),
+      createdAt: "2026-01-01T00:00:00.000Z",
+    }]), /duplicate environment variable/);
+
+    assert.deepEqual(await secrets.getScopeSecretAccounts("workspace", "personal"), { accountIds: [local.id] });
+    assert.deepEqual((await secrets.listSecretAccounts()).map((account: { id: string }) => account.id), [local.id]);
+  });
+});
+
 test("malformed peer input is rejected rather than half-applied", async () => {
   await withNode("reject", async ({ secrets, replication }) => {
     const base = {

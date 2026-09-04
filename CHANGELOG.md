@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Secret accounts attached to workspaces now prevent duplicate variable names across assigned accounts
+
 ## 1.3.0 — 2026-09-04
 
 - Canvas panes now resize in both dimensions with visible drag handles and support configurable keyboard shortcuts to jump between conversations

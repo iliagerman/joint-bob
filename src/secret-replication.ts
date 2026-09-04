@@ -94,8 +94,17 @@ function workspaceIds(handle: DatabaseSync, accountId: string): string[] {
   return (handle.prepare("SELECT scope_id FROM secret_assignments WHERE scope_type = 'workspace' AND account_id = ? ORDER BY scope_id").all(accountId) as unknown as Array<{ scope_id: string }>).map((row) => row.scope_id);
 }
 
-function applyWorkspaceAssignments(handle: DatabaseSync, accountId: string, ids: string[] | undefined): void {
+function applyWorkspaceAssignments(handle: DatabaseSync, accountId: string, ids: string[] | undefined, variables: SecretAccountPayload["variables"]): void {
   if (ids === undefined) return;
+  const incomingNames = new Set(variables.map((variable) => variable.name));
+  const assigned = handle.prepare("SELECT a.variables_encrypted FROM secret_assignments s JOIN secret_accounts a ON a.id = s.account_id WHERE s.scope_type = 'workspace' AND s.scope_id = ? AND a.id != ?");
+  for (const id of ids) {
+    const rows = assigned.all(id, accountId) as unknown as Array<{ variables_encrypted: string }>;
+    for (const row of rows) {
+      const existing = JSON.parse(decryptSecretValue(row.variables_encrypted)) as SecretAccountPayload["variables"];
+      if (existing.some((variable) => incomingNames.has(variable.name))) throw new Error("Selected secret accounts have duplicate environment variable names");
+    }
+  }
   handle.prepare("DELETE FROM secret_assignments WHERE scope_type = 'workspace' AND account_id = ?").run(accountId);
   const insert = handle.prepare("INSERT INTO secret_assignments (scope_type, scope_id, account_id) SELECT 'workspace', id, ? FROM workspaces WHERE id = ?");
   for (const id of ids) insert.run(accountId, id);
@@ -167,7 +176,7 @@ export async function receiveSecretCredentialEvents(events: SecretCredentialEven
         // Re-encrypted here with this node's own key, never stored under the sender's.
         handle.prepare("INSERT INTO secret_accounts (id, label, provider, variables_encrypted, replicate, origin_node_id, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET label = excluded.label, provider = excluded.provider, variables_encrypted = excluded.variables_encrypted, origin_node_id = excluded.origin_node_id, updated_at = excluded.updated_at")
           .run(event.entityKey, event.value.label, event.value.provider, encryptSecretValue(JSON.stringify(event.value.variables)), event.originNodeId, event.updatedAt, event.updatedAt);
-        applyWorkspaceAssignments(handle, event.entityKey, event.value.workspaceIds);
+        applyWorkspaceAssignments(handle, event.entityKey, event.value.workspaceIds, event.value.variables);
       }
       insertEvent(handle, event);
       received.push(event.id);
