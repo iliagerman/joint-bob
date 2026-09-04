@@ -159,6 +159,7 @@ const machineRoutes = new Set([
   "POST /cluster/sync/share",
   "DELETE /cluster/sessions/delete",
   "POST /cluster/sessions/take-ownership",
+  "GET /cluster/sessions/transcript-presence",
   "GET /cluster/sessions/ownership",
   "POST /cluster/sessions/ownership/claim",
   "POST /cluster/sessions/ownership/claim/cas",
@@ -2978,6 +2979,23 @@ app.post("/api/cluster/sessions/ownership/apply", async (request, response, next
   } catch (error) { next(error); }
 });
 
+interface ConversationTranscriptPresence { found: boolean; hasTranscript: boolean }
+
+async function localConversationTranscriptPresence(project: ProjectRecord, engine: ConversationEngine, sessionId: string): Promise<ConversationTranscriptPresence> {
+  const session = (await listHarnessSessions(project)).find((candidate) => candidate.harnessId === engine && candidate.id === sessionId);
+  return { found: Boolean(session), hasTranscript: Boolean(session && !session.draft) };
+}
+
+app.get("/api/cluster/sessions/transcript-presence", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const query = z.object({ projectId: z.string().min(1), engine: registeredHarnessIdSchema, sessionId: z.string().min(1).max(240) }).parse(request.query);
+    const project = await getProject(query.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    response.json(await localConversationTranscriptPresence(project, query.engine, query.sessionId));
+  } catch (error) { next(error); }
+});
+
 function conversationIsActive(projectId: string, engine: ConversationEngine, sessionId: string, sessionPath: string): boolean {
   if (engine === "claude") return Boolean(activeClaudeConnections.get(claudeConnectionKey(projectId, sessionId))?.claude.child);
   const active = [...new Set(sharedSessions.values())].find((session) => session.projectId === projectId && session.handle.session.sessionFile === sessionPath);
@@ -2995,13 +3013,34 @@ async function replicateExactOwnership(peers: ClusterPeer[], record: Conversatio
   if (rejected) throw new Error(`Peer rejected ownership state: ${JSON.stringify(rejected.current)}`);
 }
 
+async function assertDraftTakeoverReady(project: ProjectRecord, matching: SessionSummary, localId: string, peers: ClusterPeer[]): Promise<void> {
+  if (!matching.draft) return;
+  const ownership = await getConversationOwnership(matching.harnessId, matching.id);
+  if (!ownership || ownership.ownerNodeId === localId) return;
+  const owner = peers.find((peer) => peer.id === ownership.ownerNodeId);
+  if (!owner) throw new TaskWorktreeError("Conversation owner is unavailable; cannot verify transcript synchronization");
+  const url = new URL("/api/cluster/sessions/transcript-presence", owner.url);
+  url.searchParams.set("projectId", project.id);
+  url.searchParams.set("engine", matching.harnessId);
+  url.searchParams.set("sessionId", matching.id);
+  let response: globalThis.Response;
+  try {
+    response = await fetch(url, { headers: { Authorization: `Bearer ${owner.token}` }, signal: AbortSignal.timeout(3_000) });
+  } catch {
+    throw new TaskWorktreeError("Conversation owner is unavailable; cannot verify transcript synchronization");
+  }
+  if (!response.ok) throw new Error(`Transcript presence check failed on ${owner.name}`);
+  const presence = z.object({ found: z.boolean(), hasTranscript: z.boolean() }).parse(await response.json());
+  if (!presence.found || presence.hasTranscript) throw new TaskWorktreeError("Wait for the conversation transcript to synchronize to this node before taking ownership");
+}
+
 async function takeLocalSessionOwnership(project: ProjectRecord, payload: z.infer<typeof routedSessionTakeOwnershipSchema>): Promise<{ sessionPath: string; ownership: ConversationOwnership; pendingPeerIds: string[] }> {
   const [local, sessions, peers] = await Promise.all([getClusterNode(), listHarnessSessions(project), listClusterPeers()]);
   if (payload.peerId !== local.id) throw new Error("Takeover destination is not this node");
   const matching = payload.sessionId ? sessions.find((session) => session.id === payload.sessionId) : sessions.find((session) => session.path === payload.sessionPath);
   if (!matching) throw new TaskWorktreeError("Conversation was not found on the destination node");
-  if (matching.draft) throw new TaskWorktreeError("Wait for the conversation transcript to synchronize to this node before taking ownership");
-  const engine: ConversationEngine = matching.path.startsWith("claude:") ? "claude" : "pi";
+  await assertDraftTakeoverReady(project, matching, local.id, peers);
+  const engine: ConversationEngine = matching.harnessId;
   const sessionId = matching.id;
   if (conversationIsActive(project.id, engine, sessionId, matching.path)) throw new TaskWorktreeError("Wait for the current turn to finish before taking ownership");
   const ownership = await takeConversationOwnership(engine, sessionId, local.id);

@@ -84,14 +84,14 @@ test("copy-based transfer is gone and takeover is the only continuation path", a
   assert.doesNotMatch(server, /POST \/cluster\/sessions\/receive/);
 });
 
-test("takeover derives the engine from the session path instead of refusing Claude", async () => {
+test("takeover uses the listed session engine instead of refusing Claude", async () => {
   const server = await readFile("src/server.ts", "utf8");
 
   const take = server.slice(server.indexOf("async function takeLocalSessionOwnership("));
   assert.ok(take.startsWith("async function takeLocalSessionOwnership("), "Missing takeLocalSessionOwnership");
   const body = take.slice(0, take.indexOf("\n}"));
   assert.doesNotMatch(body, /Only Pi conversations can be taken over/);
-  assert.match(body, /const engine: ConversationEngine = matching\.path\.startsWith\("claude:"\) \? "claude" : "pi";/);
+  assert.match(body, /const engine: ConversationEngine = matching\.harnessId;/);
   // The preconditions and the epoch bump keep running, now for the derived engine.
   assert.match(body, /if \(conversationIsActive\(project\.id, engine, sessionId, matching\.path\)\) throw new TaskWorktreeError\("Wait for the current turn to finish before taking ownership"\);/);
   assert.match(body, /const ownership = await takeConversationOwnership\(engine, sessionId, local\.id\);/);

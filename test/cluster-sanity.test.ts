@@ -191,6 +191,35 @@ test("a conversation continues on the other node through takeover", async () => 
   await untilOwnedBy(nodeA, sessionA);
 });
 
+test("taking over an empty conversation succeeds when its owner also has no transcript", async () => {
+  const project = nodeA.projects.find((candidate) => candidate.name === "Internal Assistant")!;
+  const twin = nodeB.projects.find((candidate) => candidate.name === "Internal Assistant")!;
+  const sessionId = randomUUID();
+  const now = new Date().toISOString();
+  await Promise.all([
+    api(nodeA, sessionA, "GET", `/projects/${project.id}/sessions`),
+    api(nodeB, sessionB, "GET", `/projects/${twin.id}/sessions`),
+  ]);
+  for (const [node, projectId] of [[nodeA, project.id], [nodeB, twin.id]] as const) {
+    const seed = new DatabaseSync(path.join(node.dataDir, "node.db"));
+    try {
+      seed.exec("PRAGMA busy_timeout = 5000;");
+      seed.prepare("INSERT INTO conversation_records (project_id, engine, session_id, created_at, updated_at, origin_node_id) VALUES (?, 'pi', ?, ?, ?, ?)")
+        .run(projectId, sessionId, now, now, nodeA.nodeId);
+      seed.prepare("INSERT INTO conversation_ownership (engine, session_id, owner_node_id, epoch, status, transfer_to_node_id) VALUES ('pi', ?, ?, 1, 'owned', NULL)")
+        .run(sessionId, nodeA.nodeId);
+    } finally { seed.close(); }
+  }
+
+  const takeover = await api<{ ownership?: { ownerNodeId?: string }; error?: string }>(nodeB, sessionB, "POST", `/projects/${twin.id}/sessions/take-ownership`, {
+    peerId: nodeB.nodeId,
+    sessionId,
+    sessionPath: `draft:pi:${sessionId}`,
+  });
+  assert.equal(takeover.status, 200, `empty conversation takeover failed (${JSON.stringify(takeover.body)})`);
+  assert.equal(takeover.body.ownership?.ownerNodeId, nodeB.nodeId);
+});
+
 test("taking over a conversation whose transcript never synchronized fails instead of owning an empty card", async () => {
   const twin = nodeB.projects.find((candidate) => candidate.name === "Internal Assistant")!;
   // A record replicated from the owner while the transcript file itself never
