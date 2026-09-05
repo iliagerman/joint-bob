@@ -35,9 +35,11 @@ test("closing the watch socket forgets the project it was watching", async () =>
 test("a tasksChanged broadcast reloads the board", async () => {
   const app = await appSource();
 
-  // Both sockets carry it: the chat socket and the project watch socket.
-  const handlers = app.match(/payload\.type === "tasksChanged"/g) ?? [];
-  assert.equal(handlers.length, 2, "tasksChanged is not handled on both sockets");
+  // Both sockets use the shared invalidation handler for tasksChanged.
+  assert.match(app, /const INVALIDATION_HANDLERS = \{[\s\S]*?tasksChanged:/);
+  assert.match(app, /function handleInvalidation\(payload\)/);
+  assert.match(functionBody(app, "function handleSocketPayload(payload, scrollOnReady = false)"), /if \(handleInvalidation\(payload\)\) return;/);
+  assert.match(functionBody(app, "function ensureWatchSocket()"), /handleInvalidation\(JSON\.parse\(event\.data\)\);/);
   assert.match(functionBody(app, "async function loadTasks() {"), /renderBoardView\(\);/);
 });
 

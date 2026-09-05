@@ -156,8 +156,12 @@ test("the running and review wiring is present end to end", async () => {
   assert.match(server, /broadcastReplicationInvalidations/);
   // The client trails a sessionsChanged burst with a pending-reviews refresh.
   assert.match(app, /function schedulePendingReviewsRefresh\(\)/);
-  const watchHandler = app.slice(app.indexOf('socket.addEventListener("message"', app.indexOf("// ---- Project watch socket")), app.indexOf("close", app.indexOf('socket.addEventListener("message"', app.indexOf("// ---- Project watch socket"))));
-  assert.match(watchHandler, /schedulePendingReviewsRefresh\(\)/);
+  const handlersStart = app.indexOf("const INVALIDATION_HANDLERS = {");
+  const invalidationHandlers = app.slice(handlersStart, app.indexOf("};", handlersStart));
+  assert.match(invalidationHandlers, /sessionsChanged: \(\) => \{[\s\S]*?schedulePendingReviewsRefresh\(\);/);
+  const watchStart = app.indexOf('socket.addEventListener("message"', app.indexOf("export function ensureWatchSocket()"));
+  const watchHandler = app.slice(watchStart, app.indexOf("close", watchStart));
+  assert.match(watchHandler, /handleInvalidation\(/);
 });
 
 test("a review watermark too far in the future is rejected", async () => {

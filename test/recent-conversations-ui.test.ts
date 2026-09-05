@@ -112,8 +112,10 @@ test("both WebSocket message handlers reload replicated recents", async () => {
   const watchStart = app.indexOf("function ensureWatchSocket()");
   assert.ok(activeStart >= 0, "Missing active-chat socket handler");
   assert.ok(watchStart >= 0, "Missing watch socket handler");
-  assert.match(app.slice(activeStart, app.indexOf("\nfunction scheduleAgentRunPoll", activeStart)), /payload\.type === "recentsChanged"\) loadRecentSessions\(\)\.catch/);
-  assert.match(app.slice(watchStart, watchStart + 3000), /payload\.type === "recentsChanged"\) loadRecentSessions\(\)\.catch/);
+  // Both handlers use the shared INVALIDATION_HANDLERS table for recentsChanged.
+  assert.match(app, /const INVALIDATION_HANDLERS = \{[\s\S]*?recentsChanged:/);
+  assert.match(app.slice(activeStart, app.indexOf("\nfunction scheduleAgentRunPoll", activeStart)), /if \(handleInvalidation\(payload\)\) return;/);
+  assert.match(app.slice(watchStart, watchStart + 3000), /handleInvalidation\(JSON\.parse\(event\.data\)\);/);
 });
 
 test("legacy recents remain in preferences while active recents use their own API", async () => {
@@ -123,7 +125,8 @@ test("legacy recents remain in preferences while active recents use their own AP
     readFile("public/styles.css", "utf8"),
   ]);
 
-  assert.ok(preferences.includes("recentSessions"), "preferences.ts is missing recentSessions");
+  // The preferences API no longer carries recentSessions; they are in the replicated recents table.
+  assert.ok(preferences.includes("readLegacyRecentSessions"), "preferences.ts is missing readLegacyRecentSessions");
   assert.ok(server.includes("/api/recents"), "server.ts is missing the recents API");
   assert.match(preferences, /ALTER TABLE user_preferences ADD COLUMN recent_sessions TEXT NOT NULL DEFAULT '\[\]'/);
   assert.match(preferences, /export interface RecentSession/);

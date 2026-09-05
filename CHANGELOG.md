@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Real-time update handlers now use a shared registry to ensure consistent invalidation across WebSocket connections
 - Recent conversations are now stored in a replicated table instead of user preferences for better cluster synchronization
 - Event replication is now more robust with schemas initialized at startup instead of on-demand
 - Unhandled server errors are now logged for better visibility and debugging

@@ -366,18 +366,7 @@ function handleSocketPayload(payload, scrollOnReady = false) {
     }
   }
   if (payload.type === "sessionInfoChanged" && payload.name) syncChatTitleFromSessions(payload.name);
-  if (payload.type === "sessionsChanged") {
-    refreshSessionsQuietly();
-    schedulePendingReviewsRefresh();
-  }
-  if (payload.type === "projectsChanged") refreshProjectsQuietly();
-  if (payload.type === "pinsChanged") loadPins().catch((error) => console.warn(error));
-  if (payload.type === "recentsChanged") loadRecentSessions().catch((error) => console.warn(error));
-  if (payload.type === "shortcutsChanged") state.canvasController?.reloadShortcuts();
-  if (payload.type === "tasksChanged") {
-    loadTasks().catch((error) => console.warn(error));
-    return;
-  }
+  if (handleInvalidation(payload)) return;
   if (payload.type === "messages") {
     // Read-only Claude transcript synchronized from another node: re-render in
     // place, following if the reader was at the bottom, anchoring if not.
@@ -411,6 +400,27 @@ function scheduleAgentRunPoll() {
     state.agentRunPollTimer = null;
     refreshSessionsQuietly();
   }, 2000);
+}
+
+/** Server "something changed" notices and the loader each one re-runs. Both sockets share it. */
+const INVALIDATION_HANDLERS = {
+  sessionsChanged: () => {
+    refreshSessionsQuietly();
+    schedulePendingReviewsRefresh();
+  },
+  projectsChanged: () => refreshProjectsQuietly(),
+  pinsChanged: () => loadPins().catch((error) => console.warn(error)),
+  recentsChanged: () => loadRecentSessions().catch((error) => console.warn(error)),
+  shortcutsChanged: () => state.canvasController?.reloadShortcuts(),
+  tasksChanged: () => loadTasks().catch((error) => console.warn(error)),
+};
+
+/** Runs the loader for an invalidation notice; false when the payload is not one. */
+function handleInvalidation(payload) {
+  const handler = INVALIDATION_HANDLERS[payload.type];
+  if (!handler) return false;
+  handler();
+  return true;
 }
 
 export async function refreshSessionsQuietly() {
@@ -503,16 +513,7 @@ export function ensureWatchSocket() {
     }, 25000);
   });
   socket.addEventListener("message", (event) => {
-    const payload = JSON.parse(event.data);
-    if (payload.type === "sessionsChanged") {
-      refreshSessionsQuietly();
-      schedulePendingReviewsRefresh();
-    }
-    if (payload.type === "projectsChanged") refreshProjectsQuietly();
-    if (payload.type === "pinsChanged") loadPins().catch((error) => console.warn(error));
-    if (payload.type === "recentsChanged") loadRecentSessions().catch((error) => console.warn(error));
-    if (payload.type === "shortcutsChanged") state.canvasController?.reloadShortcuts();
-    if (payload.type === "tasksChanged") loadTasks().catch((error) => console.warn(error));
+    handleInvalidation(JSON.parse(event.data));
   });
   socket.addEventListener("close", () => {
     if (state.watchSocket !== socket) return;
