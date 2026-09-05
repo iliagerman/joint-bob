@@ -13,7 +13,7 @@ test("settings tabs absorb notification, secret, and cluster configuration", asy
 
   // The tab strip is a real tablist so screen readers and arrow keys work.
   assert.match(html, /class="settings-tabs"[^>]*role="tablist"/);
-  for (const tab of ["account", "notifications", "github", "cluster", "workspaces", "engines", "resources"]) {
+  for (const tab of ["account", "notifications", "secrets", "cluster", "workspaces", "engines", "resources"]) {
     assert.match(html, new RegExp(`data-settings-tab="${tab}"[^>]*role="tab"`));
     assert.match(html, new RegExp(`id="settingsPanel-${tab}"[^>]*role="tabpanel"`));
   }
@@ -35,7 +35,7 @@ test("settings tabs absorb notification, secret, and cluster configuration", asy
   assert.match(html, /data-settings-tab="workspaces"[^>]*data-testid="settings-tab-workspaces">Workspaces</);
   assert.doesNotMatch(html, /data-settings-tab="projects"/);
   assert.match(html, /id="workspaceAddButton"/);
-  assert.match(html, /id="settingsPanel-github"[\s\S]*id="secretAccountList"/);
+  assert.match(html, /id="settingsPanel-secrets"[\s\S]*id="secretAccountList"/);
 
   // Personal/Sela are no longer hardcoded anywhere in the UI.
   assert.doesNotMatch(html, /personalTokenInput|selaTokenInput/);

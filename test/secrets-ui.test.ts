@@ -10,7 +10,7 @@ test("secret accounts have an accessible node-local UI using authenticated api c
     readFile("public/styles.css", "utf8"),
     readFile("public/sw.js", "utf8"),
   ]);
-  assert.match(html, /data-settings-tab="github"[^>]*>Secrets/);
+  assert.match(html, /data-settings-tab="secrets"[^>]*>Secrets/);
   assert.match(html, /data-testid="secret-account-list"/);
   assert.match(html, /data-testid="secret-account-dialog"/);
   assert.match(html, /data-testid="secret-scope-dialog"/);

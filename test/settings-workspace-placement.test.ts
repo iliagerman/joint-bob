@@ -21,10 +21,10 @@ test("workspaces live in the Workspaces tab and every credential lives in the Se
   // The GitHub credential group concept is gone, not moved.
   assert.doesNotMatch(workspaces, /githubGroup/);
 
-  const github = settingsPanel(html, "github");
-  assert.match(github, /id="secretAccountList"/);
-  assert.match(github, /id="secretAccountAddButton"/);
-  assert.match(github, /id="secretSyncButton"/);
+  const secrets = settingsPanel(html, "secrets");
+  assert.match(secrets, /id="secretAccountList"/);
+  assert.match(secrets, /id="secretAccountAddButton"/);
+  assert.match(secrets, /id="secretSyncButton"/);
 });
 
 test("focused controls in a settings panel are not clipped by its scroll box", async () => {

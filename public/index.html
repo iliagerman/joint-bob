@@ -411,7 +411,7 @@
         <div class="settings-tabs" role="tablist" aria-label="Settings sections">
           <button class="settings-tab" type="button" data-settings-tab="account" role="tab" id="settingsTab-account" aria-controls="settingsPanel-account" aria-selected="true" data-testid="settings-tab-account">Account</button>
           <button class="settings-tab" type="button" data-settings-tab="notifications" role="tab" id="settingsTab-notifications" aria-controls="settingsPanel-notifications" aria-selected="false" tabindex="-1" data-testid="settings-tab-notifications">Notifications</button>
-          <button class="settings-tab" type="button" data-settings-tab="github" role="tab" id="settingsTab-github" aria-controls="settingsPanel-github" aria-selected="false" tabindex="-1" data-testid="settings-tab-github">Secrets</button>
+          <button class="settings-tab" type="button" data-settings-tab="secrets" role="tab" id="settingsTab-secrets" aria-controls="settingsPanel-secrets" aria-selected="false" tabindex="-1" data-testid="settings-tab-secrets">Secrets</button>
           <button class="settings-tab" type="button" data-settings-tab="cluster" role="tab" id="settingsTab-cluster" aria-controls="settingsPanel-cluster" aria-selected="false" tabindex="-1" data-testid="settings-tab-cluster">Cluster</button>
           <button class="settings-tab" type="button" data-settings-tab="workspaces" role="tab" id="settingsTab-workspaces" aria-controls="settingsPanel-workspaces" aria-selected="false" tabindex="-1" data-testid="settings-tab-workspaces">Workspaces</button>
           <button class="settings-tab" type="button" data-settings-tab="engines" role="tab" id="settingsTab-engines" aria-controls="settingsPanel-engines" aria-selected="false" tabindex="-1" data-testid="settings-tab-engines">Engines</button>
@@ -444,7 +444,7 @@
           <button class="ghost compact" id="previewSoundButton" type="button" data-testid="notifications-sound-preview-button">Preview sound</button>
         </section>
 
-        <section class="settings-panel" id="settingsPanel-github" role="tabpanel" aria-labelledby="settingsTab-github" tabindex="0" hidden>
+        <section class="settings-panel" id="settingsPanel-secrets" role="tabpanel" aria-labelledby="settingsTab-secrets" tabindex="0" hidden>
           <p>Named AWS, Google, GitHub, and custom accounts are encrypted and stay on this node unless you mark one to replicate. Attach them to a workspace, a project, or a single conversation.</p>
           <fieldset class="phase-settings"><legend>Secret accounts</legend><p>Attached accounts are exported into every new agent session in that scope, so the AWS CLI, gcloud, the gh CLI and git push work without being asked for keys. The most specific scope wins per variable name.</p><div id="secretAccountList" class="secret-account-list" data-testid="secret-account-list"></div><div class="github-group-actions"><button class="ghost" type="button" id="secretAccountAddButton" data-testid="secret-account-add-button">Add account</button><button class="ghost" type="button" id="secretSyncButton" data-testid="secret-sync-open-button">Sync to nodes</button></div></fieldset>
         </section>
