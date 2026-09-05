@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 test("dialog errors render above the backdrop as readable alerts", async () => {
   const [app, styles] = await Promise.all([
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/styles.css", "utf8"),
   ]);
 

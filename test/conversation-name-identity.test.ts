@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { appSource, serverSource } from "./source.js";
 
 test("conversation names are stored under the conversation id, not its file path", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-conversation-name-identity-"));
@@ -52,7 +53,7 @@ test("the conversation list applies renames by conversation id", async () => {
 });
 
 test("renaming a conversation does not require it to be in the conversation list", async () => {
-  const server = await readFile("src/server.ts", "utf8");
+  const server = await serverSource();
 
   const start = server.indexOf('app.put("/api/projects/:projectId/sessions/title"');
   assert.notEqual(start, -1, "the rename endpoint was not found");
@@ -67,7 +68,7 @@ test("renaming a conversation does not require it to be in the conversation list
 });
 
 test("a name typed for a new conversation is saved as soon as the conversation has an id", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   // Deferring the save to agent_end loses the name whenever the first turn
   // fails, is aborted, or the tab is closed before it ends.

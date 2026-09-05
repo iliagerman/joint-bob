@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource, serverSource } from "./source.js";
 
 test("conversation search composes with status filtering", async () => {
   const [html, app] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
   ]);
 
   assert.match(html, /id="sessionSearchInput"[^>]*type="search"[^>]*data-testid="conversation-list-search-input"/);
@@ -26,7 +27,7 @@ test("desktop chat uses available width and project header actions do not cover 
 });
 
 test("newly opened sessions can react immediately to synced file changes", async () => {
-  const server = await readFile("src/server.ts", "utf8");
+  const server = await serverSource();
 
   assert.match(server, /lastLocalEventAt:\s*0,/);
   assert.doesNotMatch(server, /lastLocalEventAt:\s*Date\.now\(\),/);

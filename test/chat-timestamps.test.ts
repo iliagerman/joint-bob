@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 function functionSource(app: string, name: string): string {
   const start = app.indexOf(`function ${name}(`);
@@ -11,7 +12,7 @@ function functionSource(app: string, name: string): string {
 }
 
 test("live chat messages carry the clock time they arrived", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   const stamp = functionSource(app, "messageTimestamp");
   assert.match(stamp, /document\.createElement\("time"\)/);
@@ -29,7 +30,7 @@ test("live chat messages carry the clock time they arrived", async () => {
 });
 
 test("durations are formatted once and reused everywhere", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   const format = functionSource(app, "formatDuration");
   assert.match(format, /toFixed\(1\)/);
@@ -38,7 +39,7 @@ test("durations are formatted once and reused everywhere", async () => {
 });
 
 test("a running tool shows its elapsed time and a finished one its total", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   // Only live tool bubbles get a start time; replayed history passes 0 and stays undated.
   assert.match(app, /function appendToolMessage\(toolName, toolCallId, startedAt = Date\.now\(\)\)/);
@@ -60,7 +61,7 @@ test("a running tool shows its elapsed time and a finished one its total", async
 });
 
 test("the turn timer counts up while the agent works and reports the total when it stops", async () => {
-  const [app, html] = await Promise.all([readFile("public/app.js", "utf8"), readFile("public/index.html", "utf8")]);
+  const [app, html] = await Promise.all([appSource(), readFile("public/index.html", "utf8")]);
 
   assert.match(html, /id="turnTimer"[^>]*data-testid="chat-turn-timer"/);
   assert.match(app, /turnTimer: document\.querySelector\("#turnTimer"\)/);

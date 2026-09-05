@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 async function writeSkill(root: string, name: string, contents: string): Promise<void> {
   await mkdir(path.join(root, name), { recursive: true });
@@ -156,7 +157,7 @@ test("shared skills override unmanaged copies and project skills override shared
 test("the skills dialog is searchable and inserts the harness-specific invocation", async () => {
   const [html, app, styles] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/styles.css", "utf8"),
   ]);
 

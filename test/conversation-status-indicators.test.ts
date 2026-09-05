@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { appSource, serverSource } from "./source.js";
 
 test("conversation review state starts reviewed and tracks later completion per account", async () => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "joint-bob-reviews-"));
@@ -65,9 +66,9 @@ test("conversation review state starts reviewed and tracks later completion per 
 test("conversation UI exposes state counts, automatic review, notifications, and sounds", async () => {
   const [html, app, styles, server] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/styles.css", "utf8"),
-    readFile("src/server.ts", "utf8"),
+    serverSource(),
   ]);
 
   assert.match(html, /data-filter="active"[^>]*>Running <span/);

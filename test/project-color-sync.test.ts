@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { serverSource } from "./source.js";
 
 async function withStore(run: (root: string, store: typeof import("../src/store.js")) => Promise<void>): Promise<void> {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-color-sync-"));
@@ -50,7 +51,7 @@ test("clearing a colour on the source node clears it on the importing node too",
 });
 
 test("a colour change tells the peers to pull the project inventory", async () => {
-  const server = await readFile("src/server.ts", "utf8");
+  const server = await serverSource();
 
   // Without the notification the new colour sits on this node until an unrelated sync happens.
   assert.match(server, /const colorChanged = payload\.color !== undefined && payload\.color !== \(existing\.color \?\? null\);/);

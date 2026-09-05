@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
+import { appSource, serverSource } from "./source.js";
 
 test("update recovery records persist queues and stop failed records retrying", async () => {
   const source = await readFile("src/update-recovery.ts", "utf8");
@@ -31,10 +32,10 @@ test("update recovery records persist queues and stop failed records retrying", 
 });
 
 test("server prepares and recovers active sessions around service updates", async () => {
-  const server = await readFile("src/server.ts", "utf8");
+  const server = await serverSource();
   assert.match(server, /"POST \/update\/prepare"/);
   assert.match(server, /app\.post\("\/api\/update\/prepare"/);
-  assert.match(server, /let updatePreparation: Promise<number> \| null = null;/);
+  assert.match(server, /updatePreparation: null as Promise<number> \| null,/);
   assert.match(server, /child\.exitCode !== null/);
   assert.match(server, /response\.status\(503\)\.json\(\{ error: "Server update in progress" \}\)/);
   assert.doesNotMatch(server, /catch \(error\) \{ updatePreparing = false; next\(error\); \}/);
@@ -76,8 +77,8 @@ test("installer coordinates update preparation before native restart", async () 
 });
 
 test("browser warns during update and refreshes cached shell", async () => {
-  const [app, worker] = await Promise.all([readFile("public/app.js", "utf8"), readFile("public/sw.js", "utf8")]);
+  const [app, worker] = await Promise.all([appSource(), readFile("public/sw.js", "utf8")]);
   assert.match(app, /payload\.type === "updatePreparing"/);
   assert.match(app, /Updating\.\.\. Work will resume automatically\./);
-  assert.match(worker, /joint-bob-v118/);
+  assert.match(worker, /joint-bob-v119/);
 });

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource, serverSource } from "./source.js";
 
 /** Returns the source text of a function, from its header to its closing brace at column 0. */
 function functionBody(source: string, header: string): string {
@@ -65,7 +66,7 @@ test("the overflow menu owns every remaining ticket action", async () => {
 
 test("every board menu icon is defined in the shared icon set", async () => {
   const [app, board] = await Promise.all([
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/board.js", "utf8"),
   ]);
 
@@ -98,7 +99,7 @@ function functionBodyCss(styles: string, header: string): string {
 }
 
 test("a running ticket links to its conversation before the run finishes", async () => {
-  const server = await readFile("src/server.ts", "utf8");
+  const server = await serverSource();
 
   // The session path is written to the ticket as soon as the run owns a session.
   assert.match(server, /async function persistTaskSessionPath\(/);
@@ -115,7 +116,7 @@ test("a ticket conversation keeps a user rename", async () => {
 });
 
 test("opening a ticket conversation searches the ticket workspaces too", async () => {
-  const server = await readFile("src/server.ts", "utf8");
+  const server = await serverSource();
 
   // The websocket open path must list the same conversations the sidebar lists,
   // or a ticket-workspace conversation is rejected as "Conversation not found".
@@ -126,7 +127,7 @@ test("opening a ticket conversation searches the ticket workspaces too", async (
 });
 
 test("a reconnect never pulls the user off the board", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   // openSession doubles as the reconnect path, so it may only change the visible
   // panel when the caller is a deliberate open (which also clears the transcript).

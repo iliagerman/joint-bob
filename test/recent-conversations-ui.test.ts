@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource, serverSource } from "./source.js";
 
 test("the projects header opens a recent conversations dialog", async () => {
   const [html, app] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
   ]);
 
   assert.match(html, /id="recentSessionsButton"[^>]*data-testid="recent-sessions-open-button"/);
@@ -32,7 +33,7 @@ test("the projects header opens a recent conversations dialog", async () => {
 test("recent conversations are reachable from the conversations list and an open chat", async () => {
   const [html, app, styles] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/styles.css", "utf8"),
   ]);
 
@@ -74,7 +75,7 @@ test("recent conversations are reachable from the conversations list and an open
 });
 
 test("recent conversations are recorded, pinnable, and reopenable", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   assert.match(app, /recentSessions: \[\]/);
   assert.match(app, /state\.recentSessions = recents\.recentSessions \|\| \[\];/);
@@ -106,7 +107,7 @@ test("recent conversations are recorded, pinnable, and reopenable", async () => 
 });
 
 test("both WebSocket message handlers reload replicated recents", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
   const activeStart = app.indexOf("function handleSocketPayload(payload, scrollOnReady = false)");
   const watchStart = app.indexOf("function ensureWatchSocket()");
   assert.ok(activeStart >= 0, "Missing active-chat socket handler");
@@ -118,7 +119,7 @@ test("both WebSocket message handlers reload replicated recents", async () => {
 test("legacy recents remain in preferences while active recents use their own API", async () => {
   const [preferences, server, styles] = await Promise.all([
     readFile("src/preferences.ts", "utf8"),
-    readFile("src/server.ts", "utf8"),
+    serverSource(),
     readFile("public/styles.css", "utf8"),
   ]);
 
@@ -135,7 +136,7 @@ test("legacy recents remain in preferences while active recents use their own AP
 test("the recents dialog can be searched", async () => {
   const [html, app] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
   ]);
 
   assert.match(html, /id="recentSessionsSearchInput"[^>]*data-testid="recent-sessions-search-input"/);
@@ -152,7 +153,7 @@ test("the recents dialog can be searched", async () => {
 
 test("the first ten recents are numbered and open with a digit key", async () => {
   const [app, styles] = await Promise.all([
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/styles.css", "utf8"),
   ]);
 
@@ -177,7 +178,7 @@ test("the first ten recents are numbered and open with a digit key", async () =>
 });
 
 test("a global shortcut opens the recents dialog", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   const start = app.indexOf('document.addEventListener("keydown"');
   const end = app.indexOf("\n});", start);
@@ -216,7 +217,7 @@ test("every recent conversations button draws the same clock icon", async () => 
 });
 
 test("the recents dialog shows one row per conversation, dated by its latest message", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   // Resuming on another node copies the transcript under a different project dir, so the
   // file name is the conversation's identity — the full path is not.

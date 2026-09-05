@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { appSource, serverSource } from "./source.js";
 
 /**
  * Review watermarks replicate by cluster-stable identity (username, project,
@@ -140,7 +141,7 @@ test("a remote watermark outranks the local row and another account's watermark 
 
 test("the running and review wiring is present end to end", async () => {
   const { readFile } = await import("node:fs/promises");
-  const [server, app, replication] = await Promise.all([readFile("src/server.ts", "utf8"), readFile("public/app.js", "utf8"), readFile("src/replication.ts", "utf8")]);
+  const [server, app, replication] = await Promise.all([serverSource(), appSource(), readFile("src/replication.ts", "utf8")]);
 
   // The conversation list consults replicated leases, not just local runtime.
   const listing = server.slice(server.indexOf("async function listProjectSessionsWithReviewState"), server.indexOf("app.get(\"/api/projects/:projectId/sessions\""));

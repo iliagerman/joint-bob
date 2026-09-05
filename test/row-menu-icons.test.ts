@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 /** Returns the source text of a function, from its header to its closing brace at column 0. */
 function functionBody(source: string, header: string): string {
@@ -12,7 +13,7 @@ function functionBody(source: string, header: string): string {
 }
 
 test("every row menu item carries an icon", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   for (const header of [
     "function projectMenuItems(project) {",
@@ -27,7 +28,7 @@ test("every row menu item carries an icon", async () => {
 });
 
 test("the menu renders each icon as an inline svg before the label", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   // The codebase never uses innerHTML, so icons are built as real SVG nodes.
   assert.match(app, /function menuIcon\(name\)/);
@@ -40,7 +41,7 @@ test("the menu renders each icon as an inline svg before the label", async () =>
 });
 
 test("every icon name a menu item asks for is defined", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   const defined = functionBody(app, "const rowMenuIconPaths = {");
   for (const match of app.matchAll(/icon: "([a-z-]+)"/g)) {

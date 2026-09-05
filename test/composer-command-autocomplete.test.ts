@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 test("typing a slash opens harness-specific skill autocomplete", async () => {
   const [html, app, styles] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/styles.css", "utf8"),
   ]);
 
@@ -19,7 +20,7 @@ test("typing a slash opens harness-specific skill autocomplete", async () => {
 });
 
 test("command autocomplete supports keyboard navigation and selection", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
   const handlerStart = app.indexOf('elements.messageInput.addEventListener("keydown"');
   const handler = app.slice(handlerStart, app.indexOf("\n});", handlerStart) + 4);
 
@@ -32,7 +33,7 @@ test("command autocomplete supports keyboard navigation and selection", async ()
 });
 
 test("selecting a skill inserts the syntax expected by the active agent", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   assert.match(app, /skillInvocation\(skill\)/);
   assert.match(app, /`\/skill:\$\{skill\.name\} `/);

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 /** Returns the source text of a function, from its header to its closing brace at column 0. */
 function functionBody(source: string, header: string): string {
@@ -12,7 +13,7 @@ function functionBody(source: string, header: string): string {
 }
 
 test("a conversation that belongs to a ticket is marked in the conversations list", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   // The ticket is resolved from the board's task list, keyed by the session's taskId.
   assert.match(app, /function sessionTicketTask\(session\) \{/);
@@ -34,7 +35,7 @@ test("a conversation that belongs to a ticket is marked in the conversations lis
 });
 
 test("the ticket mark is a quick button into the ticket, not just a label", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   const button = functionBody(app, "function ticketRowButton(task) {");
   assert.match(button, /data-testid", "session-ticket-button"/);
@@ -51,11 +52,11 @@ test("the ticket mark is a quick button into the ticket, not just a label", asyn
 test("the ticket glyph is the board's own glyph, so both read as the same object", async () => {
   const [board, app] = await Promise.all([
     readFile("public/board.js", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
   ]);
 
   assert.match(board, /export function ticketGlyph\(className\) \{/);
-  assert.match(app, /import \{ renderBoard, ticketGlyph \} from "\.\/board\.js";/);
+  assert.match(app, /import \{[^}]*\bticketGlyph\b[^}]*\} from "\.\.?\/board\.js";/);
 });
 
 test("the ticket mark and its button lane are styled with design tokens", async () => {

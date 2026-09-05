@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 /** Returns the source text of a function, from its header to its closing brace at column 0. */
 function functionBody(source: string, header: string): string {
@@ -38,7 +39,7 @@ test("the composer is not nested inside the ticket form", async () => {
 });
 
 test("the dialog hosts the real chat nodes instead of a copy", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   // Relocating the live nodes keeps streaming, tool bubbles and attachments
   // working, because every existing `elements.*` reference still points at them.
@@ -54,7 +55,7 @@ test("the dialog hosts the real chat nodes instead of a copy", async () => {
 });
 
 test("opening a ticket with a conversation connects it and restores the view on close", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   const open = functionBody(app, "function openEditTaskDialog(task) {");
   assert.match(open, /task\.sessionPath/);
@@ -68,7 +69,7 @@ test("opening a ticket with a conversation connects it and restores the view on 
 });
 
 test("a ticket with no conversation cannot open the Conversation tab", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   const setTab = functionBody(app, "function setTaskDialogTab(tab) {");
   assert.match(setTab, /aria-selected/);
@@ -77,7 +78,7 @@ test("a ticket with no conversation cannot open the Conversation tab", async () 
 });
 
 test("the new-ticket dialog opens on Settings with the Conversation tab locked", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   // The dialog is shared. Without this reset it reopens on whichever tab the
   // previously edited ticket left selected, showing an empty chat host.

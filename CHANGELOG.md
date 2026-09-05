@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Application and server code reorganized into modular components for improved maintainability
 - Recent conversation history now syncs across cluster nodes and merges concurrent opens correctly
 - Settings and project configurations now accept custom directories for agent skills, prompts, rules, and plugins
 - Task handoffs now preserve conversation ownership across cluster nodes

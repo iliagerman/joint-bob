@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource, serverSource } from "./source.js";
 
 test("toasts are dismissible and busy-session errors linger for six seconds", async () => {
   const [app, styles] = await Promise.all([
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/styles.css", "utf8"),
   ]);
 
@@ -32,7 +33,7 @@ test("toasts are dismissible and busy-session errors linger for six seconds", as
 });
 
 test("a busy Pi session is reported in words the user can act on", async () => {
-  const server = await readFile("src/server.ts", "utf8");
+  const server = await serverSource();
 
   const helperStart = server.indexOf("function chatErrorMessage(");
   assert.ok(helperStart >= 0, "Missing chatErrorMessage");

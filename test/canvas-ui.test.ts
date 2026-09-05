@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource, serverSource } from "./source.js";
 
 test("canvas is a desktop row view over exact existing conversations", async () => {
   const [html, app, canvas, styles, server, preferences] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/canvas.js", "utf8"),
     readFile("public/styles.css", "utf8"),
-    readFile("src/server.ts", "utf8"),
+    serverSource(),
     readFile("src/preferences.ts", "utf8"),
   ]);
 
@@ -112,7 +113,7 @@ test("canvas is a desktop row view over exact existing conversations", async () 
 
 test("the canvas shell ships in the service worker cache", async () => {
   const worker = await readFile("public/sw.js", "utf8");
-  assert.match(worker, /const CACHE_NAME = "joint-bob-v118"/);
+  assert.match(worker, /const CACHE_NAME = "joint-bob-v119"/);
   assert.match(worker, /"\/canvas\.js"/);
   assert.match(worker, /"\/canvas-layout\.js"/);
 });

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { appendLiveEvent, claudeRunIdFromSessionPath } from "../src/claude-service.ts";
+import { appSource, serverSource } from "./source.js";
 
 test("claude run id comes from the session path, not the summary id", () => {
   assert.equal(claudeRunIdFromSessionPath("claude:new"), null);
@@ -43,7 +43,7 @@ test("live event buffer does not alias the caller payload", () => {
 });
 
 test("server reattaches a dropped socket to the in-flight claude turn", async () => {
-  const server = await readFile("src/server.ts", "utf8");
+  const server = await serverSource();
 
   // The live-run key is derived from the path, never from the summary id.
   assert.match(server, /claudeRunIdFromSessionPath\(requestedSessionPath\)/);
@@ -59,7 +59,7 @@ test("server reattaches a dropped socket to the in-flight claude turn", async ()
 });
 
 test("chat status wording follows the active engine", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
   assert.doesNotMatch(app, /"Pi is working"/);
   assert.doesNotMatch(app, /`Pi error: \$\{payload\.error\}`/);
   assert.match(app, /is working/);

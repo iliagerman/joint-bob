@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource, serverSource } from "./source.js";
 
 test("projects and conversations can be pinned to the top of their list", async () => {
   const [app, styles] = await Promise.all([
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/styles.css", "utf8"),
   ]);
 
@@ -42,7 +43,7 @@ test("a pinned conversation survives the recency cap on the session list", async
 test("pinned ids and panel collapse round-trip through the preferences API", async () => {
   const [preferences, server] = await Promise.all([
     readFile("src/preferences.ts", "utf8"),
-    readFile("src/server.ts", "utf8"),
+    serverSource(),
   ]);
 
   for (const field of ["pinnedProjectIds", "pinnedSessionPaths", "projectsPanelCollapsed", "chatsPanelCollapsed"]) {
@@ -59,7 +60,7 @@ test("pinned ids and panel collapse round-trip through the preferences API", asy
 
 test("every conversation and project row carries the same pin quick action", async () => {
   const [app, styles] = await Promise.all([
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/styles.css", "utf8"),
   ]);
 

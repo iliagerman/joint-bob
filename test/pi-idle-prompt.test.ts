@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { promptIdlePiSession, type PiSessionHandle } from "../src/pi-service.js";
+import { serverSource } from "./source.js";
 
 /** A Pi session double that reports busy state on demand and rejects prompts
     exactly the way the SDK does while a turn is running. */
@@ -71,6 +71,6 @@ test("failures other than a busy session surface to the task run", async () => {
 });
 
 test("the task runner routes its phase prompt through the idle wait", async () => {
-  const source = await readFile("src/server.ts", "utf8");
+  const source = await serverSource();
   assert.match(source, /promptIdlePiSession\(shared\.handle, prompt\)/);
 });

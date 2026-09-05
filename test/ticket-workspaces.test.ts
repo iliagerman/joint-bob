@@ -12,6 +12,7 @@ import {
   removeTaskWorkspace,
   TICKET_WORKSPACE_FOLDER_ID,
 } from "../src/task-workspaces.js";
+import { appSource, serverSource } from "./source.js";
 
 async function missing(filePath: string): Promise<boolean> {
   try {
@@ -195,9 +196,9 @@ test("incoming handoff resolves the destination-local synchronized workspace", a
 
 test("server and board expose synchronized ticket archive behavior", async () => {
   const [server, board, app] = await Promise.all([
-    readFile("src/server.ts", "utf8"),
+    serverSource(),
     readFile("public/board.js", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
   ]);
 
   assert.equal(TICKET_WORKSPACE_FOLDER_ID, "joint-bob-ticket-workspaces");

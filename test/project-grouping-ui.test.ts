@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 test("the projects list is grouped by type and each group collapses", async () => {
   const [app, styles, serviceWorker] = await Promise.all([
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/styles.css", "utf8"),
     readFile("public/sw.js", "utf8"),
   ]);
@@ -29,13 +30,13 @@ test("the projects list is grouped by type and each group collapses", async () =
     assert.ok(styles.includes(selector));
   }
 
-  assert.match(serviceWorker, /joint-bob-v118/);
+  assert.match(serviceWorker, /joint-bob-v119/);
 });
 
 test("the branded boot screen releases before project discovery", async () => {
   const [html, app, styles, boot] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/styles.css", "utf8"),
     readFile("public/boot.js", "utf8"),
   ]);

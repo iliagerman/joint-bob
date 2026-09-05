@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource, serverSource } from "./source.js";
 
 test("markdown files open in a syntax-highlighted, wrapped editor", async () => {
   const [app, serviceWorker] = await Promise.all([
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/sw.js", "utf8"),
   ]);
 
@@ -58,7 +59,7 @@ test("mode helper addons ship with the shell so an auto-loaded mode cannot blank
 
 test("markdown always opens as raw source, with the rendered document beside it on request", async () => {
   const [app, html, styles] = await Promise.all([
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/index.html", "utf8"),
     readFile("public/styles.css", "utf8"),
   ]);
@@ -91,7 +92,7 @@ test("markdown always opens as raw source, with the rendered document beside it 
 
 test("the View link renders a file as a document instead of raw text", async () => {
   const [server, fileView, styles, serviceWorker] = await Promise.all([
-    readFile("src/server.ts", "utf8"),
+    serverSource(),
     readFile("public/file-view.js", "utf8"),
     readFile("public/styles.css", "utf8"),
     readFile("public/sw.js", "utf8"),

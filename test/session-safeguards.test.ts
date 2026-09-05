@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { isPermissionSafeguardExtension, sessionSafeguardsEnabled } from "../src/pi-service.js";
+import { appSource, serverSource } from "./source.js";
 
 test("Pi safeguard state defaults on and follows the latest session entry", () => {
   const sessionManager = SessionManager.inMemory("/tmp/session-safeguards");
@@ -60,8 +61,8 @@ test("unsafe mode removes only the permission safeguard extension", () => {
 test("chat exposes an accessible session safeguard control and socket contract", async () => {
   const [html, app, server, types] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
-    readFile("src/server.ts", "utf8"),
+    appSource(),
+    serverSource(),
     readFile("src/types.ts", "utf8"),
   ]);
 

@@ -6,6 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import { createTaskWorktree, mergeTaskWorktree } from "../src/worktrees.js";
+import { appSource, serverSource } from "./source.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -138,8 +139,8 @@ test("new tickets persist a synchronized workspace without a Git branch", async 
 test("ticket cards expose a done-only merge action and server endpoint", async () => {
   const [board, app, server] = await Promise.all([
     readFile("public/board.js", "utf8"),
-    readFile("public/app.js", "utf8"),
-    readFile("src/server.ts", "utf8"),
+    appSource(),
+    serverSource(),
   ]);
 
   assert.match(board, /board-task-merge-button/);

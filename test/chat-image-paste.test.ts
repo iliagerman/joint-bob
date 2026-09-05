@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource, serverSource } from "./source.js";
 
 test("pasting an image into the composer adds it as an attachment", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
   const handler = /elements\.messageInput\.addEventListener\("paste",[\s\S]*?\n\}\);/.exec(app)?.[0];
 
   assert.ok(handler, "app.js must register a paste handler on the message input");
@@ -15,7 +16,7 @@ test("pasting an image into the composer adds it as an attachment", async () => 
 });
 
 test("pasted text still reaches the composer when the clipboard also carries an image", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
   const handler = /elements\.messageInput\.addEventListener\("paste",[\s\S]*?\n\}\);/.exec(app)?.[0];
 
   assert.ok(handler);
@@ -33,8 +34,8 @@ test("file picker accepts every file type", async () => {
 
 test("non-image files are uploaded as binary attachments", async () => {
   const [client, server] = await Promise.all([
-    readFile("public/app.js", "utf8"),
-    readFile("src/server.ts", "utf8"),
+    appSource(),
+    serverSource(),
   ]);
 
   assert.match(client, /kind: "file"/);
@@ -48,7 +49,7 @@ test("non-image files are uploaded as binary attachments", async () => {
 
 test("dropping files on the composer adds them as attachments", async () => {
   const [app, styles] = await Promise.all([
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/styles.css", "utf8"),
   ]);
   const dragover = /elements\.composer\.addEventListener\("dragover",[\s\S]*?\n\}\);/.exec(app)?.[0];
@@ -69,7 +70,7 @@ test("dropping files on the composer adds them as attachments", async () => {
 });
 
 test("dropping is ignored while the composer is disabled", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
   const drop = /elements\.composer\.addEventListener\("drop",[\s\S]*?\n\}\);/.exec(app)?.[0];
 
   assert.ok(drop);

@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { appSource, serverSource } from "./source.js";
 
 async function withStore(run: (root: string, store: typeof import("../src/store.js")) => Promise<void>): Promise<void> {
   const root = await mkdtemp(path.join(os.tmpdir(), "master-bob-node-sync-"));
@@ -334,8 +335,8 @@ test("project removal atomically settles project task state and reservations", a
 
 test("sync UI provides pending mapping and a node filesystem picker", async () => {
   const [server, app, html] = await Promise.all([
-    readFile("src/server.ts", "utf8"),
-    readFile("public/app.js", "utf8"),
+    serverSource(),
+    appSource(),
     readFile("public/index.html", "utf8"),
   ]);
 

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource, serverSource } from "./source.js";
 
 /** Returns the source text of a function, from its header to its closing brace at column 0. */
 function functionBody(source: string, header: string): string {
@@ -14,7 +15,7 @@ function functionBody(source: string, header: string): string {
 test("the server names the agent that last drove each conversation", async () => {
   const [types, server] = await Promise.all([
     readFile("src/types.ts", "utf8"),
-    readFile("src/server.ts", "utf8"),
+    serverSource(),
   ]);
 
   // The label is prose; the id is what the UI can switch an icon on.
@@ -26,14 +27,14 @@ test("the server names the agent that last drove each conversation", async () =>
 });
 
 test("the review inbox carries the agent id alongside the label", async () => {
-  const server = await readFile("src/server.ts", "utf8");
+  const server = await serverSource();
 
   const pending = server.slice(server.indexOf('app.get("/api/reviews/pending"'));
   assert.match(pending.slice(0, 1200), /agentId: session\.agentId,/);
 });
 
 test("a conversation row shows a Pi or Claude mark, not only the agent name", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   assert.match(app, /function agentIcon\(agentId\)/);
 
@@ -48,7 +49,7 @@ test("a conversation row shows a Pi or Claude mark, not only the agent name", as
 });
 
 test("the review inbox rows carry the same mark as the conversation list", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   const dialog = functionBody(app, "function renderPendingReviewsDialog() {");
   assert.match(dialog, /agentIcon\(/);
@@ -66,7 +67,7 @@ test("the mark uses each agent's own colour in both themes", async () => {
  * for each vendor, and pi.dev's own logo geometry rescaled onto the same 24-unit grid.
  */
 test("every brand mark is the vendor's real logo", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   const brands = functionBody(app, "const brandIconPaths = {");
   for (const brand of ["aws", "google", "github", "openai", "claude", "pi", "custom"]) {
@@ -86,7 +87,7 @@ test("every brand mark is the vendor's real logo", async () => {
 });
 
 test("every brand mark is built the same way, so they line up wherever they appear", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   // One builder, one box, one fill: differing viewBoxes are what make icons sit at
   // different apparent sizes beside each other.
@@ -100,7 +101,7 @@ test("every brand mark is built the same way, so they line up wherever they appe
 
 test("the model picker names GPT with the OpenAI mark", async () => {
   const [app, styles] = await Promise.all([
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/styles.css", "utf8"),
   ]);
 

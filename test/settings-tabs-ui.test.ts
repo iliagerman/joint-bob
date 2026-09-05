@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 test("settings tabs absorb notification, secret, and cluster configuration", async () => {
   const [html, app, styles, serviceWorker] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/styles.css", "utf8"),
     readFile("public/sw.js", "utf8"),
   ]);
@@ -81,5 +82,5 @@ test("settings tabs absorb notification, secret, and cluster configuration", asy
 
   // Installed PWA clients must not keep the old shell.
   for (const id of ["settings-resource-skills-paths", "settings-resource-prompts-paths", "settings-resource-rules-paths", "settings-resource-plugins-paths", "project-resource-skills-paths", "project-resource-prompts-paths", "project-resource-rules-paths", "project-resource-plugins-paths"]) assert.match(html, new RegExp(`data-testid="${id}"`));
-  assert.match(serviceWorker, /joint-bob-v118/);
+  assert.match(serviceWorker, /joint-bob-v119/);
 });

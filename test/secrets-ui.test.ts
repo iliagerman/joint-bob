@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource, serverSource } from "./source.js";
 
 test("secret accounts have an accessible node-local UI using authenticated api calls", async () => {
   const [html, app, styles, worker] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/styles.css", "utf8"),
     readFile("public/sw.js", "utf8"),
   ]);
@@ -24,13 +25,13 @@ test("secret accounts have an accessible node-local UI using authenticated api c
   assert.match(app, /project-secrets-button/);
   for (const testid of ["secret-variable-name-input", "secret-variable-kind-select", "secret-variable-value-input", "secret-variable-remove-button", "secret-account-edit-button", "secret-account-delete-button", "secret-scope-account-checkbox"]) assert.ok(app.includes(testid));
   for (const selector of [".secret-account-list", ".secret-account-row", ".secret-account-meta", ".secret-variable-row", ".secret-scope-list"]) assert.ok(styles.includes(selector));
-  assert.match(worker, /const CACHE_NAME = "joint-bob-v118";/);
+  assert.match(worker, /const CACHE_NAME = "joint-bob-v119";/);
 });
 
 test("every secret provider carries a brand icon in the list, the picker, and the scope dialog", async () => {
   const [html, app, styles] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/styles.css", "utf8"),
   ]);
   assert.match(html, /<option value="github">GitHub<\/option>/);
@@ -43,8 +44,8 @@ test("every secret provider carries a brand icon in the list, the picker, and th
 
 test("GitHub is a built-in provider whose preset is an API token", async () => {
   const [app, server, secrets] = await Promise.all([
-    readFile("public/app.js", "utf8"),
-    readFile("src/server.ts", "utf8"),
+    appSource(),
+    serverSource(),
     readFile("src/secrets.ts", "utf8"),
   ]);
   assert.match(app, /GH_TOKEN/);
@@ -56,7 +57,7 @@ test("GitHub is a built-in provider whose preset is an API token", async () => {
 test("the GitHub credential group surfaces are gone, replaced by workspace-scoped accounts", async () => {
   const [html, app] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
   ]);
   for (const removed of ["githubGroupDialog", "githubSyncDialog", "githubGroupList", "projectGithubDialog", "project-github-button"]) {
     assert.doesNotMatch(html, new RegExp(removed), removed);
@@ -70,7 +71,7 @@ test("the GitHub credential group surfaces are gone, replaced by workspace-scope
 test("accounts attach at all three scopes and carry a replication toggle", async () => {
   const [html, app] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
   ]);
   for (const testid of ["workspace-secrets-button", "project-secrets-button", "conversation-secrets-checkbox"]) {
     assert.ok(app.includes(testid), testid);
@@ -84,7 +85,7 @@ test("accounts attach at all three scopes and carry a replication toggle", async
 test("the new-conversation dialog picks the accounts the conversation starts with", async () => {
   const [html, app] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
   ]);
   assert.match(html, /data-testid="conversation-secrets-list"/);
   // The environment is composed once at spawn, so the picks travel with the socket.
@@ -93,7 +94,7 @@ test("the new-conversation dialog picks the accounts the conversation starts wit
 });
 
 test("switching provider replaces the previous provider preset instead of keeping it", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
   const handler = /secretAccountProviderInput\.addEventListener\("change",[\s\S]*?\n\}\);/.exec(app)?.[0] ?? "";
   assert.ok(handler, "provider change handler is missing");
   // The old guard bailed out whenever the previous preset had added a second row,
@@ -105,7 +106,7 @@ test("switching provider replaces the previous provider preset instead of keepin
 
 test("Google accounts paste service account JSON into a private file entry", async () => {
   const [app, html] = await Promise.all([
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/index.html", "utf8"),
   ]);
   assert.match(app, /Paste the Google service account JSON/);
@@ -115,7 +116,7 @@ test("Google accounts paste service account JSON into a private file entry", asy
 });
 
 test("saving a replicating account pushes it instead of stranding it", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
   const handler = /secretAccountForm\.addEventListener\("submit",[\s\S]*?\n\}\);/.exec(app)?.[0] ?? "";
   assert.ok(handler, "secret account submit handler is missing");
   // The server pushes a replicating save to every paired node; the picker stays

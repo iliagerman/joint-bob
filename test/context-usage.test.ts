@@ -4,6 +4,7 @@ import test from "node:test";
 import { claudeContextUsage } from "../src/claude-service.js";
 import { getSessionStatus } from "../src/pi-service.js";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import { appSource } from "./source.js";
 
 const assistant = (model: string, usage: Record<string, number>): Record<string, unknown> => ({
   type: "assistant",
@@ -64,7 +65,7 @@ test("Pi status omits context usage while the session cannot measure it", () => 
 test("the chat header shows one context gauge for every harness", async () => {
   const [html, app, styles, worker] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/styles.css", "utf8"),
     readFile("public/sw.js", "utf8"),
   ]);
@@ -81,5 +82,5 @@ test("the chat header shows one context gauge for every harness", async () => {
   assert.match(app, /function syncContextUsage\(usage\)/);
   assert.match(app, /syncContextUsage\(status\.contextUsage\)/);
   assert.match(styles, /\.context-usage \{/);
-  assert.match(worker, /const CACHE_NAME = "joint-bob-v118";/);
+  assert.match(worker, /const CACHE_NAME = "joint-bob-v119";/);
 });

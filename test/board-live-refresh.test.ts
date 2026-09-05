@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource, serverSource } from "./source.js";
 
 /** Returns the source text of a function, from its header to its closing brace at column 0. */
 function functionBody(source: string, header: string): string {
@@ -12,7 +13,7 @@ function functionBody(source: string, header: string): string {
 }
 
 test("the watch socket is rebound when the active project changes", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
   const ensure = functionBody(app, "function ensureWatchSocket() {");
 
   // The subscription is bound to one project at connect time, so reusing a live
@@ -24,7 +25,7 @@ test("the watch socket is rebound when the active project changes", async () => 
 });
 
 test("closing the watch socket forgets the project it was watching", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
   const close = functionBody(app, "function closeWatchSocket() {");
 
   // Otherwise the stale id survives and the next connect is skipped as a match.
@@ -32,7 +33,7 @@ test("closing the watch socket forgets the project it was watching", async () =>
 });
 
 test("a tasksChanged broadcast reloads the board", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   // Both sockets carry it: the chat socket and the project watch socket.
   const handlers = app.match(/payload\.type === "tasksChanged"/g) ?? [];
@@ -41,7 +42,7 @@ test("a tasksChanged broadcast reloads the board", async () => {
 });
 
 test("the server tells the project when a ticket gains its conversation", async () => {
-  const server = await readFile("src/server.ts", "utf8");
+  const server = await serverSource();
   const persist = functionBody(server, "async function persistTaskSessionPath(");
 
   assert.match(persist, /updateTaskSessionPath\(/);
@@ -49,7 +50,7 @@ test("the server tells the project when a ticket gains its conversation", async 
 });
 
 test("a background refresh re-anchors an open row menu instead of closing it", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
   const refresh = functionBody(app, "function refreshRowMenuAnchor() {");
 
   // A running ticket writes its transcript about once a second, and every write
@@ -67,7 +68,7 @@ test("a background refresh re-anchors an open row menu instead of closing it", a
 });
 
 test("the board menu can find its button again after the cards are rebuilt", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
   const board = await readFile("public/board.js", "utf8");
 
   // renderBoard replaces every card, so the anchor node the menu was opened from

@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource, serverSource } from "./source.js";
 
 test("project loading does not wait for runtime or peer status discovery", async () => {
   const [app, server] = await Promise.all([
-    readFile("public/app.js", "utf8"),
-    readFile("src/server.ts", "utf8"),
+    appSource(),
+    serverSource(),
   ]);
 
   assert.match(app, /void loadHarnesses\(\)\.catch/);
@@ -18,7 +19,7 @@ test("project loading does not wait for runtime or peer status discovery", async
 });
 
 test("harness selection becomes the draft used when execution node changes", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
   const handler = app.match(/elements\.chatHarnessSelect\.addEventListener\("change", \(\) => \{([\s\S]*?)\n\}\);/)?.[1] ?? "";
 
   assert.match(handler, /state\.engine = harness\.id/);
@@ -30,8 +31,8 @@ test("harness selection becomes the draft used when execution node changes", asy
 test("chat exposes an embedded terminal on the selected project and node", async () => {
   const [html, app, server] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
-    readFile("src/server.ts", "utf8"),
+    appSource(),
+    serverSource(),
   ]);
 
   assert.match(html, /id="openTerminalButton"[^>]*data-testid="chat-open-terminal-button"/);

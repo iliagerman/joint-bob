@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 test("conversation rows put every action behind one overflow menu", async () => {
   const [html, app, styles] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/styles.css", "utf8"),
   ]);
 
@@ -37,7 +38,7 @@ test("conversation rows put every action behind one overflow menu", async () => 
 });
 
 test("any conversation can be renamed, not only the open one", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   assert.match(app, /async function renameSession\(sessionId, engine, title\)/);
   assert.match(app, /state\.renameSessionId/);

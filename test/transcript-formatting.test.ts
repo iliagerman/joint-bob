@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource, serverSource } from "./source.js";
 
 test("loaded transcripts keep the tool role and tool name instead of flattening them into chat text", async () => {
   const [piService, types] = await Promise.all([
@@ -14,7 +15,7 @@ test("loaded transcripts keep the tool role and tool name instead of flattening 
 });
 
 test("history rendering routes each transcript role to its own bubble", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   assert.match(app, /function appendTranscript\(/);
   // Tool results become collapsed monospace tool bubbles, never markdown prose.
@@ -29,9 +30,9 @@ test("history rendering routes each transcript role to its own bubble", async ()
 
 test("assistant filesystem paths open through the authenticated project file route", async () => {
   const [app, markdown, server, serviceWorker, html, styles] = await Promise.all([
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/markdown.js", "utf8"),
-    readFile("src/server.ts", "utf8"),
+    serverSource(),
     readFile("public/sw.js", "utf8"),
     readFile("public/index.html", "utf8"),
     readFile("public/styles.css", "utf8"),
@@ -78,7 +79,7 @@ test("assistant filesystem paths open through the authenticated project file rou
   assert.match(server, /File is outside the project directory/);
   assert.match(server, /project-file-content/);
   assert.match(server, /await rename\(temporary, resolved\)/);
-  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v118"/);
+  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v119"/);
   assert.match(serviceWorker, /\/vendor\/codemirror\/lib\/codemirror\.js/);
   assert.match(serviceWorker, /\/vendor\/codemirror\/keymap\/vim\.js/);
   assert.match(serviceWorker, /self\.addEventListener\("fetch"/);
@@ -87,7 +88,7 @@ test("assistant filesystem paths open through the authenticated project file rou
 
 test("empty states never stack up in the transcript", async () => {
   const [app, html] = await Promise.all([
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/index.html", "utf8"),
   ]);
 

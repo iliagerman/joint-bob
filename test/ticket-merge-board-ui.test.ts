@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 /** Returns the source text of a function, from its header to its closing brace at column 0. */
 function functionBody(source: string, header: string): string {
@@ -35,7 +36,7 @@ test("fs.cp ticket cards carry a merge state chip", async () => {
 });
 
 test("the app wires a conflict picker with per-file side choices", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
   assert.ok(app.includes("mergeConflictDialog"), "conflict dialog exists");
   assert.ok(app.includes("merge-resolve"), "picker calls the resolve route");
   assert.ok(app.includes("openFileAction(`.joint-bob-merge/staged/${conflict.path}`, task.id)"), "staged text files open with the ticket scope");
@@ -44,7 +45,7 @@ test("the app wires a conflict picker with per-file side choices", async () => {
 });
 
 test("the app wires merge resume, restart, and discard handlers to the board", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
   for (const [name, route] of [
     ["resumeTaskMerge", "merge-resume"],
     ["restartTaskMerge", "merge-restart"],

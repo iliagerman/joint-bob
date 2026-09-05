@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 const text = (path: string) => readFile(path, "utf8");
 
@@ -40,9 +41,9 @@ test("every PWA shell asset exists", async () => {
 });
 
 test("every referenced UI element is bound to the application shell before startup", async () => {
-  const [html, app] = await Promise.all([text("public/index.html"), text("public/app.js")]);
+  const [html, app] = await Promise.all([text("public/index.html"), appSource()]);
   const bindings = new Set([...app.matchAll(/^  ([A-Za-z_$][\w$]*): (?:document\.querySelector|Array\.from\(document\.querySelectorAll)/gm)].map((match) => match[1]));
-  const references = new Set([...app.matchAll(/elements\.([A-Za-z_$][\w$]*)/g)].map((match) => match[1]));
+  const references = new Set([...app.matchAll(/(?<![./\w])elements\.([A-Za-z_$][\w$]*)/g)].map((match) => match[1]));
   const ids = [...app.matchAll(/^  [A-Za-z_$][\w$]*: document\.querySelector\("#([A-Za-z_$][\w$-]*)/gm)].map((match) => match[1]);
 
   assert.deepEqual([...references].filter((name) => !bindings.has(name)).sort(), []);

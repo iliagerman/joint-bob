@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 test("the send button is a coloured send icon", async () => {
   const [html, styles] = await Promise.all([
@@ -20,7 +21,7 @@ test("the send button is a coloured send icon", async () => {
 test("a global menu reaches settings from every page and names the node and release", async () => {
   const [html, app, styles] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/styles.css", "utf8"),
   ]);
 
@@ -63,7 +64,7 @@ test("the bottom bar puts Current beside Chats and Board on the far right", asyn
 test("the chat header shows a traffic light, an icon Stop, and the project name", async () => {
   const [html, app, styles] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/styles.css", "utf8"),
   ]);
 
@@ -90,7 +91,7 @@ test("the chat header shows a traffic light, an icon Stop, and the project name"
 
 test("the copy button sits outside the message bubble", async () => {
   const [app, styles] = await Promise.all([
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/styles.css", "utf8"),
   ]);
 

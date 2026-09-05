@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { serverSource } from "./source.js";
 
 const oldBrand = /Master Bob|Pi Mobile Web|pi-mobile-console/i;
 
@@ -27,7 +28,7 @@ test("every PWA icon has its declared dimensions", async () => {
 
 test("runtime-facing text and new paths use Joint Bob", async () => {
   const [server, store, worktrees, push] = await Promise.all([
-    readFile("src/server.ts", "utf8"),
+    serverSource(),
     readFile("src/store.ts", "utf8"),
     readFile("src/worktrees.ts", "utf8"),
     readFile("src/push.ts", "utf8"),

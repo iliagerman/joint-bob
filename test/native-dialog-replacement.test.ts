@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 test("the frontend never falls back to a browser confirm, alert or prompt box", async () => {
   const names = (await readdir("public")).filter((name) => name.endsWith(".js"));
@@ -15,7 +16,7 @@ test("the frontend never falls back to a browser confirm, alert or prompt box", 
 test("the app owns a themed confirm dialog wired to a promise helper", async () => {
   const [html, app, styles] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/styles.css", "utf8"),
   ]);
   const start = html.indexOf('<dialog id="confirmDialog"');
@@ -37,7 +38,7 @@ test("the app owns a themed confirm dialog wired to a promise helper", async () 
 test("destination pickers use the app's choice dialog instead of a text prompt", async () => {
   const [html, app] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
   ]);
   const start = html.indexOf('<dialog id="choiceDialog"');
   const end = html.indexOf("</dialog>", start);
@@ -53,7 +54,7 @@ test("destination pickers use the app's choice dialog instead of a text prompt",
 });
 
 test("every destructive action asks through confirmAction before it calls the api", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
   for (const owner of [
     "async function removeProject(project)",
     "async function removeSessionFromRow(session, sessionActive)",

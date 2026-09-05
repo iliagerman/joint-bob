@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 /** Returns the source text of a function, from its header to its closing brace at column 0. */
 function functionBody(source: string, header: string): string {
@@ -12,7 +12,7 @@ function functionBody(source: string, header: string): string {
 }
 
 test("a project row menu finds its button again after the rows are rebuilt", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
   const row = functionBody(app, "function projectRow(project) {");
 
   // renderProjects replaces every row about once a second while an agent streams,
@@ -23,7 +23,7 @@ test("a project row menu finds its button again after the rows are rebuilt", asy
 });
 
 test("a conversation row menu finds its button again after the rows are rebuilt", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
   const render = functionBody(app, "function renderSessions() {");
 
   assert.match(render, /row\.dataset\.sessionPath = session\.path;/);
@@ -31,7 +31,7 @@ test("a conversation row menu finds its button again after the rows are rebuilt"
 });
 
 test("the sidebar lists keep their scroll position across a background rebuild", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
   const keep = functionBody(app, "function keepListScroll(container) {");
 
   assert.match(keep, /const top = container\.scrollTop;/);
@@ -53,7 +53,7 @@ test("the sidebar lists keep their scroll position across a background rebuild",
 });
 
 test("the chat dropdowns are only rebuilt when their options change", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
   const sync = functionBody(app, "function syncSelectOptions(select, options) {");
   const render = functionBody(app, "function renderChatSessionControls() {");
 

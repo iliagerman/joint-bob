@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 async function withDataDir(run: (dataDir: string) => Promise<void>): Promise<void> {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "joint-bob-review-notifications-"));
@@ -97,11 +98,11 @@ test("the service worker notification vibrates so a phone announces a review", a
   const worker = await readFile(new URL("../public/sw.js", import.meta.url), "utf8");
 
   assert.match(worker, /vibrate:/);
-  assert.match(worker, /const CACHE_NAME = "joint-bob-v118";/);
+  assert.match(worker, /const CACHE_NAME = "joint-bob-v119";/);
 });
 
 test("the client subscribes for reviews across every project", async () => {
-  const app = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
+  const app = await appSource();
 
   assert.match(app, /projectId: "\*"/);
 });

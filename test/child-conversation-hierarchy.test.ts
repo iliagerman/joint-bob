@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { orderSessionFamilies } from "../src/harnesses.js";
 import type { SessionSummary } from "../src/types.js";
+import { appSource } from "./source.js";
 
 function session(id: string, parentSessionPath?: string): SessionSummary {
   return {
@@ -38,7 +39,7 @@ test("a child can find a parent transcript moved to another node", () => {
 
 test("the conversation list renders child lineage", async () => {
   const [app, styles, serviceWorker] = await Promise.all([
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/styles.css", "utf8"),
     readFile("public/sw.js", "utf8"),
   ]);
@@ -48,5 +49,5 @@ test("the conversation list renders child lineage", async () => {
   assert.match(app, /for \(const \{ session, depth \} of nestedSessionRows\(sessions\)\)/);
   assert.match(styles, /\.list-row\[data-session-depth="1"\]/);
   assert.match(styles, /\.list-row\[data-session-depth="1"\] \.session-card/);
-  assert.match(serviceWorker, /joint-bob-v118/);
+  assert.match(serviceWorker, /joint-bob-v119/);
 });

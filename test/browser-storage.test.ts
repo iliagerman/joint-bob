@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 function functionSource(app: string, name: string, nextName: string): string {
   const start = app.indexOf(`function ${name}`);
@@ -11,7 +12,7 @@ function functionSource(app: string, name: string, nextName: string): string {
 }
 
 test("browser storage is limited to one-time legacy preference migration", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
   const migrationStart = app.indexOf("async function migrateLegacyPreferences");
   const migrationEnd = app.indexOf("function showSignedOut", migrationStart);
   assert.ok(migrationStart >= 0, "Missing legacy preference migration");
@@ -34,7 +35,7 @@ test("browser storage is limited to one-time legacy preference migration", async
 });
 
 test("preference state changes use the authenticated preferences API", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   assert.match(app, /function savePreferences\(partial\)[\s\S]*?\/api\/preferences/);
   for (const [name, nextName] of [["setTheme", "notificationsSupported"], ["setMobileView", "selectedProject"], ["selectProject", "socketOpen"], ["openSession", "handleSocketPayload"]]) {

@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 test("the toolbar owns one Pi Thinking or Claude Effort control", async () => {
   const [html, app] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
   ]);
   const toolbarStart = html.indexOf('<div class="chat-toolbar panel-toolbar" id="chatToolbar">');
   const toolbarEnd = html.indexOf('\n        <section class="messages"', toolbarStart);
@@ -35,7 +36,7 @@ test("the toolbar owns one Pi Thinking or Claude Effort control", async () => {
 test("model buttons are name-only and mobile controls use fixed toolbar rows", async () => {
   const [html, app, styles, serviceWorker] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/styles.css", "utf8"),
     readFile("public/sw.js", "utf8"),
   ]);
@@ -66,7 +67,7 @@ test("model buttons are name-only and mobile controls use fixed toolbar rows", a
   assert.match(styles, /\.chat-recents-button\s*\{[^}]*grid-column:\s*3;[^}]*grid-row:\s*2;/);
   assert.doesNotMatch(styles, /\.model-button-mode/);
   assert.doesNotMatch(styles, /\.chat-toolbar[^\{]*\{[^}]*overflow-x:\s*auto/);
-  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v118";/);
+  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v119";/);
 });
 
 test("the status light and Stop sit on the chat header's meta row", async () => {

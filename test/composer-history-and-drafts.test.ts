@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 function functionSource(app: string, name: string): string {
   const start = app.indexOf(`function ${name}(`);
@@ -11,7 +11,7 @@ function functionSource(app: string, name: string): string {
 }
 
 test("the arrow keys walk the conversation's own prompt history", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   // History is per conversation, so recalling in one chat never surfaces another chat's prompts.
   assert.match(app, /promptHistory: new Map\(\)/);
@@ -44,7 +44,7 @@ test("the arrow keys walk the conversation's own prompt history", async () => {
 });
 
 test("an unsent draft stays with the conversation it was typed in", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   assert.match(app, /drafts: new Map\(\)/);
 

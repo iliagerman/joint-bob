@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 test("the Claude harness never sends assistantFinal, so the client must finalize on its own", async () => {
   const claudeService = await readFile("src/claude-service.ts", "utf8");
@@ -11,7 +12,7 @@ test("the Claude harness never sends assistantFinal, so the client must finalize
 });
 
 test("a streaming assistant bubble is flushed to markdown whenever the stream leaves it", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   assert.match(app, /function finalizeAssistantBubble\(\) \{[\s\S]*renderBubbleContent\(state\.assistantBubble, state\.assistantBubble\._raw, true\)[\s\S]*state\.assistantBubble = null;[\s\S]*\}/);
 

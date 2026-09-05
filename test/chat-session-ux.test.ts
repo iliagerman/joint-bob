@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource, serverSource } from "./source.js";
 
 test("an empty connected conversation stays usable until its first message is saved", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   assert.match(app, /activeNode\?\.local[\s\S]*!socketOpen\(\)[\s\S]*activeSessionExists/);
   assert.match(app, /dispatchComposerInput\(message, state\.attachments\.length > 0/);
@@ -11,7 +12,7 @@ test("an empty connected conversation stays usable until its first message is sa
 });
 
 test("ticket chat controls hand off ownership instead of reconnecting", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   assert.match(app, /chatNodeSelect\.disabled = !state\.activeProjectId \|\| !state\.sessionNodes\.length/);
   assert.doesNotMatch(app, /chatNodeSelect\.disabled = [^;]*selectedSession/);
@@ -28,8 +29,8 @@ test("ticket chat controls hand off ownership instead of reconnecting", async ()
 test("chat names its controls and continues conversations through takeover", async () => {
   const [html, app, server] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
-    readFile("src/server.ts", "utf8"),
+    appSource(),
+    serverSource(),
   ]);
 
   assert.match(html, /<span>Runs on<\/span>[\s\S]*id="chatNodeSelect"/);
@@ -62,12 +63,12 @@ test("chat names its controls and continues conversations through takeover", asy
 });
 
 test("ticket handoff waits visibly for Syncthing before its shared POST", async () => {
-  const [html, app] = await Promise.all([readFile("public/index.html", "utf8"), readFile("public/app.js", "utf8")]);
+  const [html, app] = await Promise.all([readFile("public/index.html", "utf8"), appSource()]);
 
   assert.match(html, /id="handoffProgressDialog"[\s\S]*data-testid="handoff-progress-dialog"/);
   assert.match(html, /id="handoffProgressStatus"[\s\S]*data-testid="handoff-progress-status"/);
   assert.match(html, /id="handoffProgressCancelButton"[\s\S]*data-testid="handoff-progress-cancel-button"/);
-  assert.match(app, /let handoffWaitController/);
+  assert.match(app, /handoffWaitController: null,/);
   assert.match(app, /function renderHandoffProgress/);
   assert.match(app, /async function waitForTaskHandoffReadiness/);
   assert.match(app, /tasks\/\$\{encodeURIComponent\(task\.id\)\}\/eligibility/);
@@ -77,14 +78,14 @@ test("ticket handoff waits visibly for Syncthing before its shared POST", async 
 });
 
 test("ordinary node selection does not open a new conversation", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
   const start = app.indexOf('elements.chatNodeSelect.addEventListener("change"');
   const handler = app.slice(start, app.indexOf('elements.chatHarnessSelect.addEventListener', start));
   assert.match(handler, /if \(!activeChatSession\(\)\) \{\s*state\.activeSessionId = null;\s*return;/);
 });
 
 test("removing a conversation uses its identity", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
   const start = app.indexOf("async function removeSessionFromRow");
   const handler = app.slice(start, app.indexOf("function clearThinkingBubble", start));
   assert.match(handler, /sessionId=\$\{encodeURIComponent\(session\.id\)\}&engine=\$\{sessionEngine\(session\)\}/);
@@ -92,7 +93,7 @@ test("removing a conversation uses its identity", async () => {
 });
 
 test("switching projects discards in-flight responses from the previous project", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   // selectProject clears the old list up front and abandons a late response.
   assert.match(app, /state\.sessionNodes = \[\];\s*state\.sessions = \[\];/);
@@ -108,7 +109,7 @@ test("switching projects discards in-flight responses from the previous project"
 });
 
 test("the chat header keeps a Joint Bob rename over the engine's own session name", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   // Status updates and sessionInfoChanged carry the engine's live session name
   // (for example a generated one), which must not clobber the title the

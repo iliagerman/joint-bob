@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { appSource, serverSource } from "./source.js";
 
 test("a project colour persists and can be cleared", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-project-color-"));
@@ -31,7 +32,7 @@ test("the colour column is added with the guarded migration and exposed through 
   const [store, types, server] = await Promise.all([
     readFile("src/store.ts", "utf8"),
     readFile("src/types.ts", "utf8"),
-    readFile("src/server.ts", "utf8"),
+    serverSource(),
   ]);
 
   assert.match(store, /ALTER TABLE projects ADD COLUMN color TEXT/);
@@ -46,7 +47,7 @@ test("the colour column is added with the guarded migration and exposed through 
 test("the project editor offers the fixed colour palette", async () => {
   const [html, app, styles] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/styles.css", "utf8"),
   ]);
 
@@ -82,8 +83,8 @@ test("a colour chosen at creation is stored on the new project", async () => {
 test("the create-project dialog picks a colour on the same screen as the name", async () => {
   const [html, app, server] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
-    readFile("src/server.ts", "utf8"),
+    appSource(),
+    serverSource(),
   ]);
 
   // The picker lives inside the create form itself, beside the name field.

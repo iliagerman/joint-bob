@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 test("project rows put every action behind one overflow menu", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   assert.match(app, /menuButton\.dataset\.testid = "project-menu-button"/);
   assert.match(app, /function projectMenuItems\(project\)/);
@@ -32,7 +33,7 @@ test("project rows put every action behind one overflow menu", async () => {
 
 test("both lists show their row menu button at all times", async () => {
   const [app, styles] = await Promise.all([
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/styles.css", "utf8"),
   ]);
 

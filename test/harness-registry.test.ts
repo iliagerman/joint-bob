@@ -7,6 +7,7 @@ import { HarnessSessionCatalog, conversationSyncFolderId, defineHarness, harness
 import { discoverHarnesses, resolveHarnessForSessionPath } from "../src/harnesses/registry.js";
 import type { HarnessProject } from "../src/harnesses.js";
 import type { SessionSummary } from "../src/types.js";
+import { appSource } from "./source.js";
 
 test("harness registry exposes adapters instead of UI-specific engine checks", () => {
   const harnesses = listHarnesses();
@@ -174,7 +175,7 @@ test("generic harness catalog caches listings and refreshes only the owning adap
 test("chat provides independent harness and session selectors", async () => {
   const [html, app] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
   ]);
 
   assert.match(html, /id="chatHarnessSelect"[^>]*aria-label="Harness"[^>]*data-testid="chat-harness-select"/);

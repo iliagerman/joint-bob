@@ -3,9 +3,10 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 test("streamed assistant text paints cheaply before the final markdown render", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   assert.match(app, /function renderBubbleContent\(bubble, text, flush = false\)/);
   assert.match(app, /bubble\._renderFinal = bubble\._renderFinal \|\| flush;/);

@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource, serverSource } from "./source.js";
 
 test("managed home project creation and imported mappings use node folder pickers", async () => {
   const [html, app, server] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
-    readFile("src/server.ts", "utf8"),
+    appSource(),
+    serverSource(),
   ]);
 
   assert.equal([...html.matchAll(/data-testid="settings-project-home-input"/g)].length, 1);
@@ -60,7 +61,7 @@ test("managed home project creation and imported mappings use node folder picker
 test("chat keeps node, harness, and session selectors visible", async () => {
   const [html, app] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
   ]);
 
   assert.doesNotMatch(html, /id="chatToolbar"[^>]*hidden/);
@@ -69,6 +70,6 @@ test("chat keeps node, harness, and session selectors visible", async () => {
   assert.doesNotMatch(html, /id="chatSessionSelect"/);
   assert.match(app, /searchParams\.set\("nodeId"/);
   assert.match(app, /chatNodeSelect\.addEventListener\("change"/);
-  const server = await readFile("src/server.ts", "utf8");
+  const server = await serverSource();
   assert.match(server, /disconnects must not cancel an in-flight turn/);
 });

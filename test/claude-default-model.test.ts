@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource, serverSource } from "./source.js";
 
 // A fresh Claude chat used to report id "default" / label "Claude Code", so the
 // toolbar named no model and the model dialog highlighted nothing.
 test("a fresh Claude session defaults to a real, selectable model", async () => {
   const [server, app] = await Promise.all([
-    readFile("src/server.ts", "utf8"),
-    readFile("public/app.js", "utf8"),
+    serverSource(),
+    appSource(),
   ]);
 
   const emptyStart = server.indexOf("function emptyClaudeState(");

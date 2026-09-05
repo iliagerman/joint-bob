@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { appSource, serverSource } from "./source.js";
 
 test("a project lock records the local node, replicates, and can be cleared by anyone", async () => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "joint-bob-project-lock-"));
@@ -118,8 +119,8 @@ test("an inbound peer lock event wins or loses by last-writer-wins", async () =>
 test("the lock is exposed through the API, guards writes, and appears in the project row", async () => {
   const [types, server, app, styles, worker] = await Promise.all([
     readFile("src/types.ts", "utf8"),
-    readFile("src/server.ts", "utf8"),
-    readFile("public/app.js", "utf8"),
+    serverSource(),
+    appSource(),
     readFile("public/styles.css", "utf8"),
     readFile("public/sw.js", "utf8"),
   ]);

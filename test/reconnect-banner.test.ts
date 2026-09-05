@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 test("a dropped socket shows an animated connecting banner instead of a Cannot connect block", async () => {
   const [html, css, app] = await Promise.all([
     readFile("public/index.html", "utf8"),
     readFile("public/styles.css", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
   ]);
 
   // A single reusable banner lives outside the message list, so it can never
@@ -29,7 +30,7 @@ test("a dropped socket shows an animated connecting banner instead of a Cannot c
 
 test("the connection pill reads Connecting while the socket is down", async () => {
   const [app, css] = await Promise.all([
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/styles.css", "utf8"),
   ]);
 

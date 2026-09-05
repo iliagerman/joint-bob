@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 test("the projects header swaps the add button for a pending reviews button", async () => {
   const [html, styles] = await Promise.all([
@@ -30,7 +31,7 @@ test("the bottom navigation gains a reviews button that opens the same dialog", 
   const [html, styles, app] = await Promise.all([
     readFile("public/index.html", "utf8"),
     readFile("public/styles.css", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
   ]);
   const navStart = html.indexOf('<nav class="mobile-nav"');
   assert.ok(navStart >= 0, "Missing bottom navigation");
@@ -47,7 +48,7 @@ test("the bottom navigation gains a reviews button that opens the same dialog", 
 test("the pending reviews dialog lists every project and marks them all read", async () => {
   const [html, app] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
   ]);
   const dialogStart = html.indexOf('<dialog id="pendingReviewsDialog"');
   assert.ok(dialogStart >= 0, "Missing pending reviews dialog");

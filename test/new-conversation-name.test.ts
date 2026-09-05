@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 test("creating a conversation asks for a name before it opens", async () => {
   const [html, app] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
   ]);
 
   assert.match(html, /<dialog id="newSessionNameDialog" data-testid="new-session-name-dialog">/);
@@ -33,7 +34,7 @@ test("creating a conversation asks for a name before it opens", async () => {
 });
 
 test("the picked name is displayed right away and saved once the transcript exists", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   assert.match(app, /^  pendingSessionTitle: null,$/m);
   assert.match(app, /^  newSessionDraft: null,$/m);

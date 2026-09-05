@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 test("a chat opened from a board card links back to that card", async () => {
   const [html, app, board, styles] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/board.js", "utf8"),
     readFile("public/styles.css", "utf8"),
   ]);
@@ -41,7 +42,7 @@ test("a chat opened from a board card links back to that card", async () => {
 });
 
 test("a ticket conversation links back to its ticket however it was opened", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   // Opening the conversation from the Chats list never sets an active ticket, so
   // matching on the session file is what keeps the link visible there.

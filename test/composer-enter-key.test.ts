@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 test("Enter sends on a hardware keyboard and stays a newline on touch", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   // Pointer capability, not viewport width: a narrow desktop window still has a keyboard.
   assert.match(app, /function enterKeySends\(\) \{[\s\S]*?matchMedia\("\(hover: hover\) and \(pointer: fine\)"\)\.matches/);

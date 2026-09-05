@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import test from "node:test";
 import { agentRunDescriptor, refreshAgentRun } from "../src/agent-run-monitor.js";
+import { appSource } from "./source.js";
 
 const runId = "run-1";
 
@@ -49,7 +50,7 @@ test("multi-agent descriptors queue tool-result tasks and refresh dashboard stat
 });
 
 test("active agent runs refresh project sessions every two seconds", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   assert.match(app, /agentRunPollTimer: null/);
   assert.match(app, /function scheduleAgentRunPoll\(\)[\s\S]*clearTimeout\(state\.agentRunPollTimer\)[\s\S]*\["queued", "running"\]\.includes\(run\.status\)[\s\S]*setTimeout\([\s\S]*refreshSessionsQuietly\(\)[\s\S]*2000\)/);
@@ -118,7 +119,7 @@ test("a stack trace is capped before it reaches every session list payload", asy
 });
 
 test("the session list prints why a task failed", async () => {
-  const [app, styles] = await Promise.all([readFile("public/app.js", "utf8"), readFile("public/styles.css", "utf8")]);
+  const [app, styles] = await Promise.all([appSource(), readFile("public/styles.css", "utf8")]);
 
   // The reason renders inline: a phone has no hover, so a title attribute alone would hide it.
   assert.match(app, /agentRunTaskReason\(task\)/);

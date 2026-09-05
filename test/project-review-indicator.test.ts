@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 /** Returns the source text of a function, from its header to its closing brace at column 0. */
 function functionBody(source: string, header: string): string {
@@ -12,7 +13,7 @@ function functionBody(source: string, header: string): string {
 }
 
 test("a project row shows how many conversations there need review", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   assert.match(app, /function pendingReviewCountForProject\(projectId\)/);
   const row = functionBody(app, "function projectRow(project) {");
@@ -23,7 +24,7 @@ test("a project row shows how many conversations there need review", async () =>
 });
 
 test("the badge refreshes with the cross-project review snapshot", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   // The inbox is the only source that spans every project, so the project list
   // has to re-render whenever that snapshot changes.
@@ -39,7 +40,7 @@ test("the badge is visible against every project row state", async () => {
 });
 
 test("the open project's badge follows its own conversations, not the slow snapshot", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   // The inbox snapshot refreshes once a minute; the open project's conversations are live,
   // so a conversation that just finished must show on its project row straight away.
@@ -55,7 +56,7 @@ test("the open project's badge follows its own conversations, not the slow snaps
 });
 
 test("the inbox badge counts the open project live too", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   const total = functionBody(app, "function pendingReviewCount() {");
   assert.match(total, /pendingReviewCountForProject\(/);
@@ -63,7 +64,7 @@ test("the inbox badge counts the open project live too", async () => {
 
 test("a collapsed project group still shows that something inside needs review", async () => {
   const [app, styles] = await Promise.all([
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/styles.css", "utf8"),
   ]);
 

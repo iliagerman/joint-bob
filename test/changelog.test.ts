@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { appSource, serverSource } from "./source.js";
 
 test("the changelog parses versions, dates, and bullets newest first", async () => {
   const { parseChangelog } = await import("../src/changelog.js");
@@ -89,9 +90,9 @@ test("the last seen version round-trips through user preferences", async () => {
 });
 
 test("the server reports the semantic version and serves the changelog", async () => {
-  const server = await readFile("src/server.ts", "utf8");
+  const server = await serverSource();
 
-  assert.match(server, /import \{ appVersion, readChangelog \} from "\.\/changelog\.js";/);
+  assert.match(server, /import \{ appVersion, readChangelog \} from "[./]+changelog\.js";/);
   assert.match(server, /response\.json\(\{ status: "ok", version, release \}\)/);
   assert.match(server, /app\.get\("\/api\/changelog"/);
   assert.match(server, /response\.json\(\{ version: appVersion\(\), entries: readChangelog\(\) \}\)/);
@@ -104,7 +105,7 @@ test("the server reports the semantic version and serves the changelog", async (
 test("the app menu shows the semantic version and settings has a changelog tab", async () => {
   const [html, app] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
   ]);
 
   assert.match(app, /elements\.appMenuVersion\.textContent = `Version \$\{health\.version\}`;/);
@@ -120,7 +121,7 @@ test("the app menu shows the semantic version and settings has a changelog tab",
 test("the what's new dialog opens once per upgrade and never on a fresh install", async () => {
   const [html, app] = await Promise.all([
     readFile("public/index.html", "utf8"),
-    readFile("public/app.js", "utf8"),
+    appSource(),
   ]);
 
   assert.match(html, /<dialog id="whatsNewDialog" data-testid="whats-new-dialog">/);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { serverSource } from "./source.js";
 
 function functionBody(source: string, header: string): string {
   const start = source.indexOf(header);
@@ -11,7 +11,7 @@ function functionBody(source: string, header: string): string {
 }
 
 test("sending a message on a ticket in review moves it back to in progress", async () => {
-  const server = await readFile("src/server.ts", "utf8");
+  const server = await serverSource();
   const resume = functionBody(server, "async function resumeReviewedTask(connection: ChatConnection)");
 
   assert.match(server, /interface ChatConnection \{[\s\S]*taskId: string \| null;/);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { appSource } from "./source.js";
 
 // The chat pane follows the conversation while the reader is at the bottom and
 // releases the moment they scroll away. The follow decision lives in exactly
@@ -9,7 +9,7 @@ import test from "node:test";
 // The behavioural proof is test/ui/ui-chat-follow-scroll.test.ts; these
 // assertions guard the wiring that keeps that behaviour single-sourced.
 test("chat follow-scroll wiring is single-sourced", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   const scrollListeners = app.match(/elements\.messages\.addEventListener\("scroll"/g) || [];
   assert.equal(scrollListeners.length, 1, "exactly one scroll listener drives follow mode");
@@ -36,7 +36,7 @@ test("chat follow-scroll wiring is single-sourced", async () => {
 });
 
 test("transcript growth pins only while the reader is following", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   const pinStart = app.indexOf("function requestPinChat");
   assert.ok(pinStart > -1, "requestPinChat exists");
@@ -48,7 +48,7 @@ test("transcript growth pins only while the reader is following", async () => {
 });
 
 test("re-rendered transcripts either pin or restore the reader's position", async () => {
-  const app = await readFile("public/app.js", "utf8");
+  const app = await appSource();
 
   const handlerStart = app.indexOf("function handleSocketPayload(");
   const handler = app.slice(handlerStart, app.indexOf("\nfunction scheduleAgentRunPoll", handlerStart));

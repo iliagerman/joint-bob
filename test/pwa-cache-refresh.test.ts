@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { seedDevEnvironment, startDevNode, stopDevNode } from "./dev-nodes.js";
+import { appSource } from "./source.js";
 
 test("the served worker gets a release-derived cache name", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-worker-release-"));
@@ -28,7 +29,7 @@ test("the served worker gets a release-derived cache name", async () => {
 
 test("an updated worker refreshes open clients and keeps checking while the app stays open", async () => {
   const [app, worker] = await Promise.all([
-    readFile("public/app.js", "utf8"),
+    appSource(),
     readFile("public/sw.js", "utf8"),
   ]);
 
