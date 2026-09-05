@@ -97,6 +97,7 @@ body {
 }
 
 button, input, textarea, select { font: inherit; }
+.resource-paths-input { min-height: 88px; resize: vertical; font-family: var(--mono); }
 button { cursor: pointer; -webkit-tap-highlight-color: transparent; }
 input[type="search"]::-webkit-search-cancel-button { cursor: pointer; }
 h1, h2, p { margin: 0; }

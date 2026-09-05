@@ -1,13 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { cp, lstat, mkdir, readdir, readFile, realpath, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { SettingsManager, type PackageSource } from "@earendil-works/pi-coding-agent";
-import { getSettings } from "./settings.js";
+import { getSettings, type ScopedResourcePaths } from "./settings.js";
 
 export const AGENT_RESOURCES_FOLDER_ID = "joint-bob-agent-resources";
 export const AGENT_RESOURCES_FOLDER_LABEL = "Joint Bob agent resources";
+export const CLAUDE_RESOURCE_PLUGIN_NAME = "joint-bob-resources";
 
 export interface AgentResourcePaths {
   root: string;
@@ -380,19 +381,17 @@ async function importPlugins(paths: AgentResourcePaths, claudeConfigPath: string
   }
 }
 
-export async function commonAgentInstructionFiles(root?: string): Promise<Array<{ path: string; content: string }>> {
-  const base = agentResourcePaths(root).commonInstructions;
+export async function commonAgentInstructionFiles(root?: string, additionalPaths: string[] = []): Promise<Array<{ path: string; content: string }>> {
   const result: Array<{ path: string; content: string }> = [];
-
-  async function visit(directory: string): Promise<void> {
-    for (const name of await entries(directory)) {
-      const candidate = path.join(directory, name);
-      if ((await lstat(candidate)).isDirectory()) await visit(candidate);
-      else if (name.endsWith(".md")) result.push({ path: candidate, content: await readFile(candidate, "utf8") });
-    }
+  async function visit(source: string): Promise<void> {
+    let info;
+    try { info = await lstat(source); } catch (error) { if (missing(error)) return; throw error; }
+    if (info.isDirectory()) {
+      for (const name of await entries(source)) await visit(path.join(source, name));
+    } else if (source.endsWith(".md")) result.push({ path: source, content: await readFile(source, "utf8") });
   }
-
-  await visit(base);
+  await visit(agentResourcePaths(root).commonInstructions);
+  for (const source of additionalPaths) await visit(source);
   return result.sort((left, right) => left.path.localeCompare(right.path));
 }
 
@@ -413,12 +412,16 @@ async function generateCommonInstructions(paths: AgentResourcePaths): Promise<vo
   await atomicWrite(paths.commonInstructionsFile, content);
 }
 
-export function piAgentResourcePaths(root?: string): { extensions: string[]; skills: string[]; prompts: string[]; themes: string[] } {
+function configuredPaths(configured: ScopedResourcePaths | undefined, type: keyof ScopedResourcePaths["global"]): string[] {
+  return configured ? [...new Set([...configured.global[type], ...configured.project[type]])] : [];
+}
+
+export function piAgentResourcePaths(root?: string, configured?: ScopedResourcePaths): { extensions: string[]; skills: string[]; prompts: string[]; themes: string[] } {
   const paths = agentResourcePaths(root);
   return {
-    extensions: [paths.piExtensions],
-    skills: [paths.sharedSkills],
-    prompts: [paths.piPrompts],
+    extensions: [...new Set([paths.piExtensions, ...configuredPaths(configured, "plugins")])],
+    skills: [...new Set([paths.sharedSkills, ...configuredPaths(configured, "skills")])],
+    prompts: [...new Set([paths.piPrompts, ...configuredPaths(configured, "prompts")])],
     themes: [paths.piThemes],
   };
 }
@@ -438,20 +441,98 @@ function installedUserPluginNames(): Set<string> {
     .map(([identity]) => safePluginName(identity)));
 }
 
-export function claudeAgentResourceArgs(root?: string): string[] {
-  const paths = agentResourcePaths(root);
-  const installed = installedUserPluginNames();
-  const args: string[] = [];
-  if (existsSync(paths.claudePlugins)) {
-    for (const name of readdirSync(paths.claudePlugins).sort()) {
-      const plugin = path.join(paths.claudePlugins, name);
-      if (!installed.has(name) && existsSync(path.join(plugin, ".claude-plugin/plugin.json"))) {
-        args.push("--plugin-dir", plugin);
+function claudePluginSources(sources: string[]): string[] {
+  const plugins: string[] = [];
+  for (const source of sources) {
+    if (!existsSync(source)) continue;
+    if (source.endsWith(".zip") || existsSync(path.join(source, ".claude-plugin/plugin.json"))) plugins.push(source);
+    else if (lstatSync(source).isDirectory()) {
+      for (const name of readdirSync(source).sort()) {
+        const child = path.join(source, name);
+        if (child.endsWith(".zip") || existsSync(path.join(child, ".claude-plugin/plugin.json"))) plugins.push(child);
       }
     }
   }
+  return [...new Set(plugins)];
+}
+
+function resourceEntries(roots: string[], kind: "skills" | "prompts"): Map<string, string> {
+  const found = new Map<string, string>();
+  for (const root of roots) {
+    if (!existsSync(root)) continue;
+    if (kind === "skills" && existsSync(path.join(root, "SKILL.md"))) {
+      found.set(path.basename(root), root);
+      continue;
+    }
+    if (kind === "prompts" && root.endsWith(".md") && lstatSync(root).isFile()) {
+      found.set(path.basename(root, ".md"), root);
+      continue;
+    }
+    if (!lstatSync(root).isDirectory()) continue;
+    for (const name of readdirSync(root).sort()) {
+      const source = path.join(root, name);
+      if (kind === "skills" && existsSync(path.join(source, "SKILL.md"))) found.set(name, source);
+      if (kind === "prompts" && name.endsWith(".md") && lstatSync(source).isFile()) found.set(path.basename(name, ".md"), source);
+    }
+  }
+  return new Map([...found].sort(([left], [right]) => left.localeCompare(right)));
+}
+
+function generatedResourcePlugin(configured: ScopedResourcePaths | undefined): string | undefined {
+  if (!configured) return undefined;
+  const skills = resourceEntries([...configured.global.skills, ...configured.project.skills], "skills");
+  const prompts = resourceEntries([...configured.global.prompts, ...configured.project.prompts], "prompts");
+  if (!skills.size && !prompts.size) return undefined;
+  const mappings = [...skills, ...prompts].map(([name, source]) => `${name}\0${source}\0${existsSync(source) ? readFileSync(source.endsWith(".md") ? source : path.join(source, "SKILL.md")) : ""}`).join("\n");
+  const target = path.join(dataDirectory(), "runtime", "resource-plugins", createHash("sha256").update(mappings).digest("hex"));
+  if (existsSync(target)) return target;
+  const temporary = `${target}.${randomUUID()}.tmp`;
+  mkdirSync(path.join(temporary, ".claude-plugin"), { recursive: true });
+  writeFileSync(path.join(temporary, ".claude-plugin", "plugin.json"), JSON.stringify({ name: CLAUDE_RESOURCE_PLUGIN_NAME }));
+  for (const [name, source] of skills) { mkdirSync(path.join(temporary, "skills"), { recursive: true }); symlinkSync(source, path.join(temporary, "skills", name), "dir"); }
+  for (const [name, source] of prompts) { mkdirSync(path.join(temporary, "commands"), { recursive: true }); symlinkSync(source, path.join(temporary, "commands", `${name}.md`), "file"); }
+  mkdirSync(path.dirname(target), { recursive: true });
+  try {
+    renameSync(temporary, target);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (!code || !["EEXIST", "ENOTEMPTY"].includes(code) || !existsSync(target)) throw error;
+    rmSync(temporary, { recursive: true, force: true });
+  }
+  return target;
+}
+
+function generatedInstructionFile(paths: AgentResourcePaths, configured?: ScopedResourcePaths): string {
+  const additional = configuredPaths(configured, "rules");
+  if (!additional.length) return paths.commonInstructionsFile;
+  const files: string[] = [];
+  const visit = (source: string): void => {
+    if (!existsSync(source)) return;
+    if (lstatSync(source).isDirectory()) for (const name of readdirSync(source).sort()) visit(path.join(source, name));
+    else if (source.endsWith(".md")) files.push(source);
+  };
+  if (existsSync(paths.commonInstructionsFile)) files.push(paths.commonInstructionsFile);
+  for (const source of additional) visit(source);
+  const content = files.sort().map((file) => readFileSync(file, "utf8")).join("\n");
+  const filePath = path.join(dataDirectory(), "runtime", "resource-instructions", `${createHash("sha256").update(content).digest("hex")}.md`);
+  if (!existsSync(filePath)) { mkdirSync(path.dirname(filePath), { recursive: true }); writeFileSync(filePath, content); }
+  return filePath;
+}
+
+export function claudeAgentResourceArgs(root?: string, configured?: ScopedResourcePaths): string[] {
+  const paths = agentResourcePaths(root);
+  const installed = installedUserPluginNames();
+  const args: string[] = [];
+  if (existsSync(paths.claudePlugins)) for (const name of readdirSync(paths.claudePlugins).sort()) {
+    const plugin = path.join(paths.claudePlugins, name);
+    if (!installed.has(name) && existsSync(path.join(plugin, ".claude-plugin/plugin.json"))) args.push("--plugin-dir", plugin);
+  }
+  for (const plugin of claudePluginSources(configuredPaths(configured, "plugins"))) args.push("--plugin-dir", plugin);
+  const generated = generatedResourcePlugin(configured);
+  if (generated) args.push("--plugin-dir", generated);
   if (existsSync(paths.mcpConfig)) args.push("--mcp-config", paths.mcpConfig);
-  if (existsSync(paths.commonInstructionsFile)) args.push("--append-system-prompt-file", paths.commonInstructionsFile);
+  const instructions = generatedInstructionFile(paths, configured);
+  if (existsSync(instructions)) args.push("--append-system-prompt-file", instructions);
   return args;
 }
 

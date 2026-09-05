@@ -14,7 +14,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { agentCredentialContext, agentEnvironment, type SecretConversation } from "./secrets.js";
 import { discoverPiSessionDirectory, sessionCwds, type SessionProjectPaths } from "./session-paths.js";
-import { getSettings } from "./settings.js";
+import { getScopedResourcePaths, getSettings } from "./settings.js";
 import { commonAgentInstructionFiles, piAgentResourcePaths } from "./agent-resources.js";
 import type { ChatMessage, ContextUsage, ModelSummary, SessionStatus, SessionSummary } from "./types.js";
 
@@ -436,8 +436,9 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
   const agentDir = getAgentDir();
   const settingsManager = SettingsManager.create(options.cwd, agentDir);
   const credentialContext = agentCredentialContext(options.projectId, options.conversation);
-  const commonInstructions = await commonAgentInstructionFiles();
-  const resources = piAgentResourcePaths();
+  const configured = getScopedResourcePaths(options.projectId);
+  const commonInstructions = await commonAgentInstructionFiles(undefined, [...configured.global.rules, ...configured.project.rules]);
+  const resources = piAgentResourcePaths(undefined, configured);
   const resourceLoader = new DefaultResourceLoader({
     cwd: options.cwd,
     agentDir,

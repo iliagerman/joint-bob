@@ -77,6 +77,43 @@ test("signing in through the login form reaches the app and the session survives
   assert.equal(await page.locator("#loginDialog[open]").count(), 0, "reload stays signed in");
 });
 
+test("resource path fields save and reload in Settings", async () => {
+  await page.getByTestId("settings-open-button").click();
+  await page.getByTestId("settings-tab-resources").click();
+  const values = { skills: "/tmp/global-skills", prompts: "/tmp/global-prompts", rules: "/tmp/global-rules", plugins: "/tmp/global-plugins" };
+  await page.getByTestId("settings-resource-skills-paths").fill(values.skills);
+  await page.getByTestId("settings-resource-prompts-paths").fill(values.prompts);
+  await page.getByTestId("settings-resource-rules-paths").fill(values.rules);
+  await page.getByTestId("settings-resource-plugins-paths").fill(values.plugins);
+  await page.getByTestId("settings-save-button").click();
+  await page.getByTestId("settings-dialog").waitFor({ state: "hidden" });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByText("Internal Assistant", { exact: true }).waitFor({ timeout: 20_000 });
+  await page.getByTestId("settings-open-button").click();
+  await page.getByTestId("settings-tab-resources").click();
+  for (const [id, value] of Object.entries({ "settings-resource-skills-paths": values.skills, "settings-resource-prompts-paths": values.prompts, "settings-resource-rules-paths": values.rules, "settings-resource-plugins-paths": values.plugins })) assert.equal(await page.getByTestId(id).inputValue(), value);
+  await page.getByTestId("settings-cancel-button").click();
+});
+
+test("project resource path fields save and reload", async () => {
+  const project = page.locator(".project-card", { hasText: "Internal Assistant" }).first();
+  await project.locator("xpath=..").getByTestId("project-menu-button").click();
+  await page.getByTestId("project-rename-button").click();
+  const values = { skills: "/tmp/project-skills", prompts: "/tmp/project-prompts", rules: "/tmp/project-rules", plugins: "/tmp/project-plugins" };
+  await page.getByTestId("project-resource-skills-paths").fill(values.skills);
+  await page.getByTestId("project-resource-prompts-paths").fill(values.prompts);
+  await page.getByTestId("project-resource-rules-paths").fill(values.rules);
+  await page.getByTestId("project-resource-plugins-paths").fill(values.plugins);
+  await page.getByTestId("project-rename-save-button").click();
+  await page.locator("#projectRenameDialog").waitFor({ state: "hidden" });
+  await page.getByTestId("project-menu-button").first().waitFor();
+  await project.locator("xpath=..").getByTestId("project-menu-button").click();
+  await page.getByTestId("project-rename-button").click();
+  for (const [id, value] of Object.entries({ "project-resource-skills-paths": values.skills, "project-resource-prompts-paths": values.prompts, "project-resource-rules-paths": values.rules, "project-resource-plugins-paths": values.plugins })) assert.equal(await page.getByTestId(id).inputValue(), value);
+  await page.getByTestId("project-rename-save-button").click();
+  await page.locator("#projectRenameDialog").waitFor({ state: "hidden" });
+});
+
 test("the project list shows every seeded project", async () => {
   for (const project of node.projects) {
     await page.locator(".project-card", { hasText: project.name }).first().waitFor({ timeout: 15_000 });

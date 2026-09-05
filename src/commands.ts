@@ -9,7 +9,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { defaultSkillRoots, listSkills, parseResourceFrontmatter, type SkillRoots, type SkillSummary } from "./skills.js";
 import { piAgentResourcePaths } from "./agent-resources.js";
-import { getSettings } from "./settings.js";
+import { getSettings, type ScopedResourcePaths } from "./settings.js";
 import type { HarnessId } from "./types.js";
 
 export type HarnessCommandKind = "builtin" | "extension" | "prompt" | "skill";
@@ -27,6 +27,7 @@ export interface CommandDiscoveryOptions extends Partial<SkillRoots> {
   piAgentDir?: string;
   resourceRoot?: string;
   claudeConfigPath?: string;
+  resourcePaths?: ScopedResourcePaths;
 }
 
 const BUILTIN_COMMANDS = [
@@ -79,9 +80,9 @@ function piPromptCommand(prompt: PromptTemplate): HarnessCommand {
   };
 }
 
-async function listPiCommands(projectPath: string, agentDir: string, resourceRoot?: string): Promise<HarnessCommand[]> {
+async function listPiCommands(projectPath: string, agentDir: string, resourceRoot?: string, resourcePaths?: ScopedResourcePaths): Promise<HarnessCommand[]> {
   const settingsManager = SettingsManager.create(projectPath, agentDir);
-  const resources = piAgentResourcePaths(resourceRoot);
+  const resources = piAgentResourcePaths(resourceRoot, resourcePaths);
   const loader = new DefaultResourceLoader({
     cwd: projectPath,
     agentDir,
@@ -115,13 +116,27 @@ function claudeSkillCommand(skill: SkillSummary): HarnessCommand {
     harness: "claude",
     name: skill.name,
     description: skill.description,
-    invocation: `/${skill.name} `,
+    invocation: skill.invocation ?? `/${skill.name} `,
     kind: "skill",
     scope: skill.scope,
   };
 }
 
-async function markdownCommands(directory: string, scope: "user" | "project"): Promise<HarnessCommand[]> {
+async function markdownCommand(filePath: string, scope: "user" | "project", invocation?: string): Promise<HarnessCommand | undefined> {
+  try {
+    const fields = parseResourceFrontmatter(await readFile(filePath, "utf8"));
+    const name = path.basename(filePath, ".md");
+    return { harness: "claude", name, description: fields.description ?? "", invocation: invocation ? `${invocation}${name} ` : `/${name} `, kind: "prompt", scope };
+  } catch {
+    return undefined;
+  }
+}
+
+async function markdownCommands(directory: string, scope: "user" | "project", invocation?: string): Promise<HarnessCommand[]> {
+  if (directory.endsWith(".md")) {
+    const command = await markdownCommand(directory, scope, invocation);
+    return command ? [command] : [];
+  }
   let entries;
   try {
     entries = await readdir(directory, { withFileTypes: true });
@@ -132,21 +147,8 @@ async function markdownCommands(directory: string, scope: "user" | "project"): P
   const commands: HarnessCommand[] = [];
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
-    try {
-      const contents = await readFile(path.join(directory, entry.name), "utf8");
-      const fields = parseResourceFrontmatter(contents);
-      const name = path.basename(entry.name, ".md");
-      commands.push({
-        harness: "claude",
-        name,
-        description: fields.description ?? "",
-        invocation: `/${name} `,
-        kind: "prompt",
-        scope,
-      });
-    } catch {
-      continue;
-    }
+    const command = await markdownCommand(path.join(directory, entry.name), scope, invocation);
+    if (command) commands.push(command);
   }
   return commands;
 }
@@ -154,16 +156,19 @@ async function markdownCommands(directory: string, scope: "user" | "project"): P
 async function listClaudeCommands(projectPath: string, options: CommandDiscoveryOptions): Promise<HarnessCommand[]> {
   const roots = { ...defaultSkillRoots(), ...options };
   const config = options.claudeConfigPath ?? getSettings().claude.configPath;
-  const [global, skills, project] = await Promise.all([
+  const configured = options.resourcePaths;
+  const [global, skills, project, ...custom] = await Promise.all([
     markdownCommands(path.join(config, "commands"), "user"),
-    listSkills(projectPath, roots),
+    listSkills(projectPath, { ...roots, global: configured?.global.skills ?? [], project: configured?.project.skills ?? [] }),
     markdownCommands(path.join(projectPath, ".claude", "commands"), "project"),
+    ...(configured ? [...configured.global.prompts.map((root) => markdownCommands(root, "user", "/joint-bob-resources:")), ...configured.project.prompts.map((root) => markdownCommands(root, "project", "/joint-bob-resources:"))] : []),
   ]);
   return [
     ...builtinCommands("claude"),
     ...global,
     ...skills.filter((skill) => skill.harness === "claude").map(claudeSkillCommand),
     ...project,
+    ...custom.flat(),
   ];
 }
 
@@ -179,5 +184,5 @@ export async function listHarnessCommands(
 ): Promise<HarnessCommand[]> {
   if (harness === "claude") return uniqueCommands(await listClaudeCommands(projectPath, options));
   const agentDir = options.piAgentDir || getSettings().pi.configPath || getAgentDir();
-  return uniqueCommands(await listPiCommands(projectPath, agentDir, options.resourceRoot));
+  return uniqueCommands(await listPiCommands(projectPath, agentDir, options.resourceRoot, options.resourcePaths));
 }

@@ -45,9 +45,9 @@ import { harnessForSessionPath, harnessSyncFolderForSessionPath, listHarnesses, 
 import { deleteConversationRecord, ensureConversationRecord, getConversationRecord, parseConversationDraftPath } from "./conversation-records.js";
 import { agentRunDescriptor, refreshAgentRun, type AgentRunDescriptor } from "./agent-run-monitor.js";
 import { listHarnessCommands } from "./commands.js";
-import { listSkills } from "./skills.js";
+import { defaultSkillRoots, listSkills } from "./skills.js";
 import { authenticate, authenticationStatus, changePassword, clearSessionCookieValue, createAdministrator, listLoginSessions, revokeSession, revokeUserSession, sessionCookieName, sessionCookieValue, sessionForId, usernameForUser, type AuthSession } from "./auth.js";
-import { getSettings, updateSettings } from "./settings.js";
+import { getProjectResourcePaths, getScopedResourcePaths, getSettings, updateProjectResourcePaths, updateSettings } from "./settings.js";
 import { ensureManagedHome, managedProjectPath, managedProjectRelocationPath } from "./managed-home.js";
 import { importProjectDirectory, ProjectDirectoryImportError, relocateProjectDirectory } from "./project-directory-import.js";
 import { listAuditEvents } from "./audit.js";
@@ -406,7 +406,8 @@ const userPinSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("project"), projectId: z.string().trim().min(1).max(120), pinned: z.boolean() }).strict(),
   z.object({ kind: z.literal("conversation"), projectId: z.string().trim().min(1).max(120), engine: registeredHarnessIdSchema, sessionId: z.string().trim().min(1).max(240), pinned: z.boolean() }).strict(),
 ]);
-const sessionDeleteSchema = z.object({ projectId: z.string().min(1), engine: registeredHarnessIdSchema, sessionId: z.string().uuid() });
+const socketTaskIdSchema = z.string().trim().min(1).max(120);
+const sessionDeleteSchema = z.object({ projectId: z.string().min(1), engine: registeredHarnessIdSchema, sessionId: z.string().uuid(), taskId: socketTaskIdSchema.optional() });
 const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024;
 const attachmentDataSchema = z.string()
   .min(1)
@@ -447,7 +448,6 @@ const taskHandoffStatusSchema = taskHandoffActionSchema;
 const routedTaskUpdateSchema = z.object({ projectId: z.string().min(1), taskId: z.string().min(1), update: z.unknown() });
 const routedTaskSchema = z.object({ projectId: z.string().min(1), taskId: z.string().min(1) });
 const routedTaskHandoffSchema = routedTaskSchema.extend({ peerId: z.string().uuid() });
-const socketTaskIdSchema = z.string().trim().min(1).max(120);
 const taskUpdateSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
   description: z.string().trim().max(20_000).optional(),
@@ -496,6 +496,7 @@ const runtimeSettingsSchema = z.object({
   configPath: z.string().max(1000),
   sessionPath: z.string().max(1000),
 });
+const resourcePathsSchema = z.object({ skills: z.array(absolutePathSchema).max(20), prompts: z.array(absolutePathSchema).max(20), rules: z.array(absolutePathSchema).max(20), plugins: z.array(absolutePathSchema).max(20) }).strict();
 const settingsSchema = z.object({
   pi: runtimeSettingsSchema,
   claude: runtimeSettingsSchema,
@@ -506,6 +507,7 @@ const settingsSchema = z.object({
     personalRootPath: z.string().max(1000).optional(),
     workRootPath: z.string().max(1000).optional(),
   }).optional(),
+  resources: resourcePathsSchema.optional(),
 });
 const auditQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional().default(100),
@@ -835,6 +837,16 @@ function taskConversationIdentity(task: TaskRecord): { engine: ConversationEngin
   const sessionId = adapter.paths.sessionId(task.sessionPath);
   if (!sessionId) throw new Error("Task conversation path has no transcript identity");
   return { engine: adapter.id, sessionId };
+}
+
+function doneTaskOwnsConversation(task: TaskRecord, engine: string, sessionId: string): boolean {
+  if (task.status !== "done" || !task.sessionPath || task.sessionPath === "watch") return false;
+  const identity = taskConversationIdentity(task);
+  return identity?.engine === engine && identity.sessionId === sessionId;
+}
+
+async function conversationBelongsToDoneTask(projectId: string, engine: string, sessionId: string): Promise<boolean> {
+  return (await listTasks(projectId)).some((task) => doneTaskOwnsConversation(task, engine, sessionId));
 }
 
 interface TaskSyncStatus extends ProjectSyncStatus { label: string }
@@ -1406,11 +1418,33 @@ app.put("/api/settings", async (request, response, next) => {
       error.message === "Syncthing endpoint must use a loopback host" ||
       error.message === "Joint Bob home folder must be absolute" ||
       /^(Pi|Claude) (config path|session path) must be blank or absolute$/.test(error.message) ||
-      /^(Pi|Claude) executable must be a command name or absolute path$/.test(error.message)
+      /^(Pi|Claude) executable must be a command name or absolute path$/.test(error.message) ||
+      error.message.includes("Resource paths") || error.message.includes("resource paths")
     )) {
       sendError(response, 400, error.message);
       return;
     }
+    next(error);
+  }
+});
+
+app.get("/api/projects/:projectId/resource-paths", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    response.json({ resources: getProjectResourcePaths(project.id) });
+  } catch (error) { next(error); }
+});
+
+app.put("/api/projects/:projectId/resource-paths", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    const payload = z.object({ resources: resourcePathsSchema }).strict().parse(request.body);
+    const session = response.locals.authSession as AuthSession;
+    response.json({ resources: updateProjectResourcePaths(project.id, payload.resources, session.userId) });
+  } catch (error) {
+    if (error instanceof z.ZodError || error instanceof Error && error.message.includes("Resource paths")) { sendError(response, 400, error instanceof Error ? error.message : "Invalid resource paths"); return; }
     next(error);
   }
 });
@@ -2692,6 +2726,10 @@ app.put("/api/projects/:projectId/sessions/title", async (request, response, nex
       return;
     }
     const payload = sessionTitleSchema.parse(request.body);
+    if (await conversationBelongsToDoneTask(project.id, payload.engine, payload.sessionId)) {
+      sendError(response, 409, "Done ticket conversations are read-only");
+      return;
+    }
     // No conversation-list lookup: a conversation named at creation has no
     // transcript on disk yet, and the list is where that name matters most.
     await setSessionTitle(payload.sessionId, payload.title);
@@ -2710,6 +2748,10 @@ app.put("/api/projects/:projectId/sessions/color", async (request, response, nex
       return;
     }
     const payload = sessionColorSchema.parse(request.body);
+    if (await conversationBelongsToDoneTask(project.id, payload.engine, payload.sessionId)) {
+      sendError(response, 409, "Done ticket conversations are read-only");
+      return;
+    }
     await setSessionColor(payload.sessionId, payload.color);
     broadcastToProject(project.id, { type: "sessionsChanged" });
     response.json({ ok: true });
@@ -2779,7 +2821,8 @@ app.get("/api/projects/:projectId/skills", async (request, response, next) => {
       sendError(response, 404, "Project not found");
       return;
     }
-    response.json({ skills: await listSkills(project.path) });
+    const configured = getScopedResourcePaths(project.id);
+    response.json({ skills: await listSkills(project.path, { ...defaultSkillRoots(), global: configured.global.skills, project: configured.project.skills }) });
   } catch (error) {
     next(error);
   }
@@ -2793,7 +2836,7 @@ app.get("/api/projects/:projectId/commands", async (request, response, next) => 
       return;
     }
     const harness = registeredHarnessIdSchema.parse(request.query.harness);
-    response.json({ commands: await listHarnessCommands(project.path, harness) });
+    response.json({ commands: await listHarnessCommands(project.path, harness, { resourcePaths: getScopedResourcePaths(project.id) }) });
   } catch (error) {
     next(error);
   }
@@ -3307,9 +3350,13 @@ class ConversationDeleteError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
 }
 
-async function deleteLocalConversation(project: ProjectRecord, engine: ConversationEngine, sessionId: string): Promise<void> {
+async function deleteLocalConversation(project: ProjectRecord, engine: ConversationEngine, sessionId: string, taskId?: string): Promise<void> {
   await assertProjectEditable(project);
   const tasks = await listTasks(project.id);
+  const ticket = taskId ? tasks.find((task) => task.id === taskId) : undefined;
+  if (ticket?.status === "done" || tasks.some((task) => doneTaskOwnsConversation(task, engine, sessionId))) {
+    throw new ConversationDeleteError(409, "Done ticket conversations are read-only");
+  }
   const sessions = await listHarnessSessions({ ...project, additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []) });
   const session = sessions.find((candidate) => candidate.id === sessionId && (candidate.path.startsWith("draft:claude:") || candidate.path.startsWith("claude:") ? "claude" : "pi") === engine);
   if (!session) throw new ConversationDeleteError(404, "Session not found");
@@ -3336,7 +3383,7 @@ app.delete("/api/projects/:projectId/sessions", async (request, response, next) 
   try {
     const project = await getProject(request.params.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
-    const payload = sessionDeleteSchema.parse({ projectId: project.id, engine: request.query.engine, sessionId: request.query.sessionId });
+    const payload = sessionDeleteSchema.parse({ projectId: project.id, engine: request.query.engine, sessionId: request.query.sessionId, taskId: request.query.taskId });
     const local = await getClusterNode();
     const ownership = await getConversationOwnership(payload.engine, payload.sessionId);
     if (ownership && ownership.ownerNodeId !== local.id) {
@@ -3352,7 +3399,7 @@ app.delete("/api/projects/:projectId/sessions", async (request, response, next) 
       sendError(response, routed.status, typeof body?.error === "string" ? body.error : "Conversation owner delete failed");
       return;
     }
-    await deleteLocalConversation(project, payload.engine, payload.sessionId);
+    await deleteLocalConversation(project, payload.engine, payload.sessionId, payload.taskId);
     response.status(204).send();
   } catch (error) {
     if (error instanceof ConversationDeleteError) { sendError(response, error.status, error.message); return; }
@@ -3366,7 +3413,7 @@ app.delete("/api/cluster/sessions/delete", async (request, response, next) => {
     const payload = sessionDeleteSchema.parse(request.body);
     const project = await getProject(payload.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
-    await deleteLocalConversation(project, payload.engine, payload.sessionId);
+    await deleteLocalConversation(project, payload.engine, payload.sessionId, payload.taskId);
     response.status(204).send();
   } catch (error) {
     if (error instanceof ConversationDeleteError) { sendError(response, error.status, error.message); return; }
@@ -4721,7 +4768,7 @@ async function startMergeRun(project: ProjectRecord, task: TaskRecord): Promise<
       const resumeSessionId = claimed.sessionPath?.startsWith("claude:") ? path.basename(claimed.sessionPath.replace(/^claude:/, ""), ".jsonl") : undefined;
       const sessionId = resumeSessionId ?? randomUUID();
       await claimConversationAcrossCluster("claude", sessionId, local.id);
-      const run = runClaudePrompt({ cwd, prompt, env: agentEnvironment(project.id, { engine: "claude", sessionId }), resumeSessionId, sessionId: resumeSessionId ? undefined : sessionId, onEvent: () => undefined });
+      const run = runClaudePrompt({ cwd, prompt, projectId: project.id, env: agentEnvironment(project.id, { engine: "claude", sessionId }), resumeSessionId, sessionId: resumeSessionId ? undefined : sessionId, onEvent: () => undefined });
       claudeTaskRuns.set(task.id, { child: run.child, projectId: project.id, taskId: claimed.id, leaseToken, phase: "review", cwd, sessionId, sessionPath: claimed.sessionPath ?? `claude:${claudeSessionFilePath(cwd, sessionId)}`, model: null, effort: null, kind: "merge" });
       run.done
         .then(async () => {
@@ -4908,6 +4955,7 @@ async function startTaskRun(project: ProjectRecord, task: TaskRecord, requestedP
       const run = runClaudePrompt({
         cwd,
         prompt: claudePrompt,
+        projectId: project.id,
         env: agentEnvironment(project.id, { engine: "claude", sessionId }),
         resumeSessionId,
         sessionId: resumeSessionId ? undefined : sessionId,
@@ -4998,7 +5046,7 @@ async function runRecoveredClaudePrompt(record: UpdateRecoveryRecord, entry: Rec
   };
   onEvent({ type: "agent_start" });
   const run = runClaudePrompt({
-    cwd: record.cwd, prompt, resumeSessionId: record.sessionId,
+    cwd: record.cwd, projectId: record.projectId, prompt, resumeSessionId: record.sessionId,
     model: state.model ?? undefined, effort: state.effort ?? undefined,
     env: agentEnvironment(record.projectId, { engine: "claude", sessionId: record.sessionId }), onEvent,
   });
@@ -5436,6 +5484,7 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
     if (!result) {
       const run = runClaudePrompt({
         cwd: connection.cwd,
+        projectId: connection.project.id,
         prompt: fullPrompt,
         env: agentEnvironment(connection.project.id, conversationScope),
         resumeSessionId: connection.claude.filePath ? connection.claude.sessionId ?? undefined : undefined,

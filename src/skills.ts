@@ -9,12 +9,15 @@ export interface SkillSummary {
   name: string;
   description: string;
   scope: "user" | "project";
+  invocation?: string;
 }
 
 export interface SkillRoots {
   piUser: string;
   claudeUser: string;
   shared: string;
+  global?: string[];
+  project?: string[];
 }
 
 export function defaultSkillRoots(): SkillRoots {
@@ -22,6 +25,8 @@ export function defaultSkillRoots(): SkillRoots {
     piUser: path.join(os.homedir(), ".pi", "agent", "skills"),
     claudeUser: path.join(os.homedir(), ".claude", "skills"),
     shared: agentResourcePaths().sharedSkills,
+    global: [],
+    project: [],
   };
 }
 
@@ -66,6 +71,15 @@ export function parseResourceFrontmatter(contents: string): { name?: string; des
 }
 
 /** The filesystem is a real boundary: an agent that has never been installed simply has no skills directory. */
+async function readSkill(root: string, name: string, harness: HarnessId, scope: SkillSummary["scope"]): Promise<SkillSummary | undefined> {
+  try {
+    const fields = parseResourceFrontmatter(await readFile(path.join(root, "SKILL.md"), "utf8"));
+    return { harness, name: fields.name || name, description: fields.description || "", scope };
+  } catch {
+    return undefined;
+  }
+}
+
 async function readSkillDirectory(root: string, harness: HarnessId, scope: SkillSummary["scope"]): Promise<SkillSummary[]> {
   let entries;
   try {
@@ -77,16 +91,15 @@ async function readSkillDirectory(root: string, harness: HarnessId, scope: Skill
   const skills: SkillSummary[] = [];
   for (const entry of entries) {
     if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
-    let contents: string;
-    try {
-      contents = await readFile(path.join(root, entry.name, "SKILL.md"), "utf8");
-    } catch {
-      continue;
-    }
-    const fields = parseResourceFrontmatter(contents);
-    skills.push({ harness, name: fields.name || entry.name, description: fields.description || "", scope });
+    const skill = await readSkill(path.join(root, entry.name), entry.name, harness, scope);
+    if (skill) skills.push(skill);
   }
   return skills;
+}
+
+async function readConfiguredSkillPath(root: string, harness: HarnessId, scope: SkillSummary["scope"]): Promise<SkillSummary[]> {
+  const skill = await readSkill(root, path.basename(root), harness, scope);
+  return skill ? [skill] : readSkillDirectory(root, harness, scope);
 }
 
 /**
@@ -95,13 +108,23 @@ async function readSkillDirectory(root: string, harness: HarnessId, scope: Skill
  * skill shadows a user-level skill of the same name for the same harness.
  */
 export async function listSkills(projectPath: string, roots: SkillRoots = defaultSkillRoots()): Promise<SkillSummary[]> {
+  const global = roots.global ?? [];
+  const project = roots.project ?? [];
+  const configured = (paths: string[], harness: HarnessId, scope: SkillSummary["scope"]) =>
+    paths.map(async (root) => await readConfiguredSkillPath(root, harness, scope));
+  const claudeConfigured = (paths: string[], scope: SkillSummary["scope"]) =>
+    configured(paths, "claude", scope).map(async (skills) => (await skills).map((skill) => ({ ...skill, invocation: `/joint-bob-resources:${skill.name} ` })));
   const found = await Promise.all([
     readSkillDirectory(roots.piUser, "pi", "user"),
     readSkillDirectory(roots.shared, "pi", "user"),
+    ...configured(global, "pi", "user"),
     readSkillDirectory(path.join(projectPath, ".pi", "skills"), "pi", "project"),
+    ...configured(project, "pi", "project"),
     readSkillDirectory(roots.claudeUser, "claude", "user"),
     readSkillDirectory(roots.shared, "claude", "user"),
+    ...claudeConfigured(global, "user"),
     readSkillDirectory(path.join(projectPath, ".claude", "skills"), "claude", "project"),
+    ...claudeConfigured(project, "project"),
   ]);
 
   const byKey = new Map<string, SkillSummary>();

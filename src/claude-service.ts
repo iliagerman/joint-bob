@@ -5,7 +5,7 @@ import { access, copyFile, mkdir, readdir, readFile, rename, stat } from "node:f
 import os from "node:os";
 import path from "node:path";
 import { claudeProjectDir, claudeProjectDirs, isSyncConflictPath, sessionCwds, type SessionProjectPaths } from "./session-paths.js";
-import { getSettings } from "./settings.js";
+import { getScopedResourcePaths, getSettings } from "./settings.js";
 import { claudeAgentResourceArgs } from "./agent-resources.js";
 import type { ChatMessage, ContextUsage, SessionSummary } from "./types.js";
 
@@ -32,6 +32,7 @@ export interface ClaudeRunResult {
 export interface ClaudeRunOptions {
   cwd: string;
   prompt: string;
+  projectId?: string;
   resumeSessionId?: string;
   sessionId?: string;
   model?: string;
@@ -378,7 +379,7 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
   if (options.model) args.push("--model", options.model);
   if (options.effort) args.push("--effort", options.effort);
   if (options.tools) args.push("--tools", options.tools.join(","));
-  args.push(...claudeAgentResourceArgs());
+  args.push(...claudeAgentResourceArgs(undefined, getScopedResourcePaths(options.projectId)));
 
   const settings = getSettings().claude;
   const configPath = claudeConfigPath();

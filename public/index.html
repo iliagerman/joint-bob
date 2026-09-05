@@ -408,6 +408,7 @@
           <button class="settings-tab" type="button" data-settings-tab="cluster" role="tab" id="settingsTab-cluster" aria-controls="settingsPanel-cluster" aria-selected="false" tabindex="-1" data-testid="settings-tab-cluster">Cluster</button>
           <button class="settings-tab" type="button" data-settings-tab="workspaces" role="tab" id="settingsTab-workspaces" aria-controls="settingsPanel-workspaces" aria-selected="false" tabindex="-1" data-testid="settings-tab-workspaces">Workspaces</button>
           <button class="settings-tab" type="button" data-settings-tab="engines" role="tab" id="settingsTab-engines" aria-controls="settingsPanel-engines" aria-selected="false" tabindex="-1" data-testid="settings-tab-engines">Engines</button>
+          <button class="settings-tab" type="button" data-settings-tab="resources" role="tab" id="settingsTab-resources" aria-controls="settingsPanel-resources" aria-selected="false" tabindex="-1" data-testid="settings-tab-resources">Resources</button>
           <button class="settings-tab" type="button" data-settings-tab="changelog" role="tab" id="settingsTab-changelog" aria-controls="settingsPanel-changelog" aria-selected="false" tabindex="-1" data-testid="settings-tab-changelog">Changelog</button>
         </div>
 
@@ -520,6 +521,14 @@
             <label>Config path<input id="settingsClaudeConfigPath" autocomplete="off" data-testid="settings-claude-config-input" /></label>
             <label>Session path<input id="settingsClaudeSessionPath" autocomplete="off" data-testid="settings-claude-session-input" /></label>
           </fieldset>
+        </section>
+
+        <section class="settings-panel" id="settingsPanel-resources" role="tabpanel" aria-labelledby="settingsTab-resources" tabindex="0" hidden>
+          <p>Additional to managed and native defaults. One absolute file or directory path per line. These apply to new sessions.</p>
+          <label>Skills<textarea class="resource-paths-input" id="settingsResourceSkillsPaths" data-testid="settings-resource-skills-paths"></textarea></label>
+          <label>Prompts<textarea class="resource-paths-input" id="settingsResourcePromptsPaths" data-testid="settings-resource-prompts-paths"></textarea></label>
+          <label>Rules<textarea class="resource-paths-input" id="settingsResourceRulesPaths" data-testid="settings-resource-rules-paths"></textarea></label>
+          <label>Plugins<textarea class="resource-paths-input" id="settingsResourcePluginsPaths" data-testid="settings-resource-plugins-paths"></textarea></label>
         </section>
 
         <section class="settings-panel" id="settingsPanel-changelog" role="tabpanel" aria-labelledby="settingsTab-changelog" tabindex="0" hidden>
@@ -895,6 +904,11 @@
           <span class="field-label">Colour</span>
           <div class="color-swatches" id="projectColorSwatches" role="radiogroup" aria-label="Project colour" data-testid="project-color-swatches"></div>
         </div>
+        <p>Additional to managed and native defaults. One absolute file or directory path per line. These apply to new sessions.</p>
+        <label>Skills<textarea class="resource-paths-input" id="projectResourceSkillsPaths" data-testid="project-resource-skills-paths"></textarea></label>
+        <label>Prompts<textarea class="resource-paths-input" id="projectResourcePromptsPaths" data-testid="project-resource-prompts-paths"></textarea></label>
+        <label>Rules<textarea class="resource-paths-input" id="projectResourceRulesPaths" data-testid="project-resource-rules-paths"></textarea></label>
+        <label>Plugins<textarea class="resource-paths-input" id="projectResourcePluginsPaths" data-testid="project-resource-plugins-paths"></textarea></label>
         <div class="dialog-actions">
           <button class="ghost" value="cancel" type="button" id="cancelProjectRenameButton">Cancel</button>
           <button class="primary" value="default" type="submit" data-testid="project-rename-save-button">Save project</button>

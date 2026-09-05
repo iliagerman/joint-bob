@@ -251,6 +251,14 @@ const elements = {
   whatsNewList: document.querySelector("#whatsNewList"),
   whatsNewVersion: document.querySelector("#whatsNewVersion"),
   settingsProjectHome: document.querySelector("#settingsProjectHome"),
+  settingsResourceSkillsPaths: document.querySelector("#settingsResourceSkillsPaths"),
+  settingsResourcePromptsPaths: document.querySelector("#settingsResourcePromptsPaths"),
+  settingsResourceRulesPaths: document.querySelector("#settingsResourceRulesPaths"),
+  settingsResourcePluginsPaths: document.querySelector("#settingsResourcePluginsPaths"),
+  projectResourceSkillsPaths: document.querySelector("#projectResourceSkillsPaths"),
+  projectResourcePromptsPaths: document.querySelector("#projectResourcePromptsPaths"),
+  projectResourceRulesPaths: document.querySelector("#projectResourceRulesPaths"),
+  projectResourcePluginsPaths: document.querySelector("#projectResourcePluginsPaths"),
   settingsProjectHomeBrowseButton: document.querySelector("#settingsProjectHomeBrowseButton"),
   workspaceList: document.querySelector("#workspaceList"),
   workspaceNameInput: document.querySelector("#workspaceNameInput"),
@@ -801,6 +809,11 @@ function selectSettingsTab(name) {
   for (const panel of elements.settingsPanels) panel.hidden = panel.id !== `settingsPanel-${name}`;
 }
 
+const globalResourceFields = { skills: elements.settingsResourceSkillsPaths, prompts: elements.settingsResourcePromptsPaths, rules: elements.settingsResourceRulesPaths, plugins: elements.settingsResourcePluginsPaths };
+const projectResourceFields = { skills: elements.projectResourceSkillsPaths, prompts: elements.projectResourcePromptsPaths, rules: elements.projectResourceRulesPaths, plugins: elements.projectResourcePluginsPaths };
+function fillResourceFields(fields, resources) { for (const [type, field] of Object.entries(fields)) field.value = (resources[type] || []).join("\n"); }
+function resourceFieldsValue(fields) { return Object.fromEntries(Object.entries(fields).map(([type, field]) => [type, field.value.split("\n").map((line) => line.trim()).filter(Boolean)])); }
+
 async function openSettings(tab = "account") {
   const [settings, authSessions] = await Promise.all([api("/api/settings"), api("/api/auth/sessions"), loadSecretAccounts(), loadChangelogPanel()]);
   elements.settingsUsername.textContent = state.username;
@@ -817,6 +830,7 @@ async function openSettings(tab = "account") {
   elements.settingsClaudeExecutable.value = settings.claude.executable;
   elements.settingsClaudeConfigPath.value = settings.claude.configPath;
   elements.settingsClaudeSessionPath.value = settings.claude.sessionPath;
+  fillResourceFields(globalResourceFields, settings.resources);
   state.syncthingEndpoint = settings.syncthing.endpoint;
   elements.completionSoundSelect.value = state.completionSound;
   syncNotifyButton();
@@ -832,6 +846,7 @@ async function saveSettings(event) {
       claude: { executable: elements.settingsClaudeExecutable.value.trim(), configPath: elements.settingsClaudeConfigPath.value.trim(), sessionPath: elements.settingsClaudeSessionPath.value.trim() },
       syncthing: { endpoint: state.syncthingEndpoint },
       projects: { homePath: elements.settingsProjectHome.value.trim() },
+      resources: resourceFieldsValue(globalResourceFields),
     }),
   });
   const restartRequired = [
@@ -1635,7 +1650,8 @@ function selectedSessionColor(container) {
   return selectedColor(container);
 }
 
-function openProjectRename(project) {
+async function openProjectRename(project) {
+  const { resources } = await api(`/api/projects/${encodeURIComponent(project.id)}/resource-paths`);
   projectPendingRename = project;
   elements.projectRenameInput.value = project.name;
   renderProjectColorSwatches(project.color || null, elements.projectColorSwatches);
@@ -1647,6 +1663,7 @@ function openProjectRename(project) {
     elements.projectGroupInput.append(option);
   }
   elements.projectGroupInput.value = project.type;
+  fillResourceFields(projectResourceFields, resources);
   elements.projectRenameDialog.showModal();
 }
 
@@ -2221,7 +2238,7 @@ function projectMenuItems(project) {
       label: "Edit project",
       icon: "pencil",
       testid: "project-rename-button",
-      onSelect: () => openProjectRename(project),
+      onSelect: () => openProjectRename(project).catch((error) => toast(error.message)),
     },
     {
       label: project.lock ? "Unlock from this node" : "Lock to this node",
@@ -2866,7 +2883,8 @@ async function removeSessionFromRow(session, sessionActive) {
     destructive: true,
   });
   if (!confirmed) return;
-  await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions?sessionId=${encodeURIComponent(session.id)}&engine=${sessionEngine(session)}`, { method: "DELETE" });
+  const taskQuery = session.taskId ? `&taskId=${encodeURIComponent(session.taskId)}` : "";
+  await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions?sessionId=${encodeURIComponent(session.id)}&engine=${sessionEngine(session)}${taskQuery}`, { method: "DELETE" });
   if (sessionActive) {
     state.activeTaskId = null;
     closeSocket();
@@ -3468,7 +3486,7 @@ function modelOptionButton({ key, label, active, onSelect }) {
 
 /** Pi runs a skill as /skill:<name>; Claude runs it as a bare slash command. */
 function skillInvocation(skill) {
-  return skill.harness === "pi" ? `/skill:${skill.name} ` : `/${skill.name} `;
+  return skill.invocation || (skill.harness === "pi" ? `/skill:${skill.name} ` : `/${skill.name} `);
 }
 
 function renderSkillsDialog() {
@@ -5290,16 +5308,18 @@ elements.projectRenameForm.addEventListener("submit", async (event) => {
   const name = elements.projectRenameInput.value.trim();
   const type = elements.projectGroupInput.value;
   const color = selectedProjectColor(elements.projectColorSwatches);
-  elements.projectRenameDialog.close();
   if (!project || !name) return;
-  if (name === project.name && type === project.type && color === (project.color || null)) return;
   try {
-    await api(`/api/projects/${encodeURIComponent(project.id)}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, type, color }),
-    });
+    if (name !== project.name || type !== project.type || color !== (project.color || null)) {
+      await api(`/api/projects/${encodeURIComponent(project.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, type, color }),
+      });
+    }
+    await api(`/api/projects/${encodeURIComponent(project.id)}/resource-paths`, { method: "PUT", body: JSON.stringify({ resources: resourceFieldsValue(projectResourceFields) }) });
     await loadProjects();
+    elements.projectRenameDialog.close();
     toast("Project updated");
   } catch (error) {
     toast(error.message, 8000);

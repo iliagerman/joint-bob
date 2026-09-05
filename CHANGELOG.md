@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Settings and project configurations now accept custom directories for agent skills, prompts, rules, and plugins
 - Task handoffs now preserve conversation ownership across cluster nodes
 - Ticket conversation buttons now appear in the correct layout order in session lists
 - Planned tickets can now move directly to Done to skip remaining agent phases without starting implementation

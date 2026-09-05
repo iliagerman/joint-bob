@@ -17,11 +17,17 @@ export interface SyncthingSettings {
   apiKey?: string | null;
 }
 
+export const RESOURCE_TYPES = ["skills", "prompts", "rules", "plugins"] as const;
+export type ResourceType = (typeof RESOURCE_TYPES)[number];
+export interface ResourcePaths { skills: string[]; prompts: string[]; rules: string[]; plugins: string[]; }
+export interface ScopedResourcePaths { global: ResourcePaths; project: ResourcePaths; }
+
 export interface SettingsInput {
   pi: RuntimeSettings;
   claude: RuntimeSettings;
   syncthing: SyncthingSettings;
   projects?: { homePath?: string; rootPath?: string; personalRootPath?: string; workRootPath?: string };
+  resources?: ResourcePaths;
 }
 
 export interface SettingsResponse {
@@ -29,6 +35,7 @@ export interface SettingsResponse {
   claude: RuntimeSettings;
   syncthing: { endpoint: string; apiKeyConfigured: boolean };
   projects: { homePath: string };
+  resources: ResourcePaths;
   restartRequired: { pi: boolean; claude: boolean };
 }
 
@@ -153,6 +160,43 @@ export function syncthingApiKey(): string | undefined {
   return configured ? decrypt(configured.value) : undefined;
 }
 
+function emptyResourcePaths(): ResourcePaths {
+  return { skills: [], prompts: [], rules: [], plugins: [] };
+}
+
+function readResourcePaths(prefix: string): ResourcePaths {
+  const result = emptyResourcePaths();
+  for (const type of RESOURCE_TYPES) {
+    const stored = setting(`${prefix}${type}`);
+    if (!stored) continue;
+    const parsed: unknown = JSON.parse(stored.value);
+    if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== "string")) throw new Error(`Stored ${type} resource paths are invalid`);
+    result[type] = parsed;
+  }
+  return normalizeResourcePaths(result);
+}
+
+function normalizeResourcePaths(input: ResourcePaths): ResourcePaths {
+  const result = emptyResourcePaths();
+  for (const type of RESOURCE_TYPES) {
+    if (!Array.isArray(input[type]) || input[type].length > 20) throw new Error(`${type} resource paths must contain at most 20 entries`);
+    for (const entry of input[type]) {
+      if (typeof entry !== "string" || entry.length > 1000 || !path.isAbsolute(entry)) throw new Error("Resource paths must be absolute and at most 1000 characters");
+      const resolved = path.resolve(entry);
+      if (!result[type].includes(resolved)) result[type].push(resolved);
+    }
+  }
+  return result;
+}
+
+export function getProjectResourcePaths(projectId: string): ResourcePaths {
+  return readResourcePaths(`projects.${projectId}.resources.`);
+}
+
+export function getScopedResourcePaths(projectId?: string): ScopedResourcePaths {
+  return { global: getSettings().resources, project: projectId ? getProjectResourcePaths(projectId) : emptyResourcePaths() };
+}
+
 export function getSettings(): SettingsResponse {
   return {
     pi: runtime("pi"),
@@ -162,6 +206,7 @@ export function getSettings(): SettingsResponse {
       apiKeyConfigured: Boolean(setting("syncthing.apiKey")),
     },
     projects: { homePath: value("projects.homePath", defaultManagedHome()) },
+    resources: readResourcePaths("resources."),
     restartRequired: { pi: false, claude: false },
   };
 }
@@ -181,6 +226,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
   const db = settingsDatabase();
   const previous = getSettings();
   const homePath = input.projects?.homePath ?? previous.projects.homePath;
+  const resources = input.resources ? normalizeResourcePaths(input.resources) : previous.resources;
   if (!homePath.trim() || !path.isAbsolute(homePath)) throw new Error("Joint Bob home folder must be absolute");
   db.exec("BEGIN");
   try {
@@ -191,6 +237,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
     }
     save(db, "syncthing.endpoint", input.syncthing.endpoint);
     save(db, "projects.homePath", path.resolve(homePath));
+    for (const type of RESOURCE_TYPES) save(db, `resources.${type}`, JSON.stringify(resources[type]));
     if (input.syncthing.apiKey !== undefined) {
       if (input.syncthing.apiKey) save(db, "syncthing.apiKey", input.syncthing.apiKey, true);
       else db.prepare("DELETE FROM node_settings WHERE key = 'syncthing.apiKey'").run();
@@ -206,6 +253,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
         claudeChanged: JSON.stringify(previous.claude) !== JSON.stringify(settings.claude),
         syncthingChanged: previous.syncthing.endpoint !== settings.syncthing.endpoint || previous.syncthing.apiKeyConfigured !== settings.syncthing.apiKeyConfigured,
         projectHomeChanged: previous.projects.homePath !== settings.projects.homePath,
+        resourcesChanged: JSON.stringify(previous.resources) !== JSON.stringify(settings.resources),
         apiKeyConfigured: settings.syncthing.apiKeyConfigured,
       },
     });
@@ -217,6 +265,21 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
         claude: previous.claude.executable !== settings.claude.executable || previous.claude.configPath !== settings.claude.configPath,
       },
     };
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+export function updateProjectResourcePaths(projectId: string, input: ResourcePaths, actorId?: string): ResourcePaths {
+  const resources = normalizeResourcePaths(input);
+  const db = settingsDatabase();
+  db.exec("BEGIN");
+  try {
+    for (const type of RESOURCE_TYPES) save(db, `projects.${projectId}.resources.${type}`, JSON.stringify(resources[type]));
+    appendAuditEvent(db, { eventType: "settings.updated", actorType: actorId ? "user" : "system", actorId, entityType: "project", entityId: projectId, details: { resourcesChanged: true } });
+    db.exec("COMMIT");
+    return resources;
   } catch (error) {
     db.exec("ROLLBACK");
     throw error;
