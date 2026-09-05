@@ -22,7 +22,7 @@ app.post("/api/update/prepare", async (_request, response, next) => {
   } catch (error) { next(error); }
 });
 
-app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
+app.use((error: unknown, request: Request, response: Response, _next: NextFunction) => {
   if (error instanceof z.ZodError) {
     sendError(response, 400, error.errors.map((issue) => issue.message).join(", "));
     return;
@@ -32,5 +32,7 @@ app.use((error: unknown, _request: Request, response: Response, _next: NextFunct
     sendError(response, 400, message);
     return;
   }
-  sendError(response, error instanceof TaskWorktreeError || error instanceof TaskWorkspaceError || error instanceof ProjectDirectoryImportError || error instanceof ProjectLockedError ? 409 : 500, message);
+  const conflict = error instanceof TaskWorktreeError || error instanceof TaskWorkspaceError || error instanceof ProjectDirectoryImportError || error instanceof ProjectLockedError;
+  if (!conflict) console.error(`Unhandled ${request.method} ${request.path} error`, error);
+  sendError(response, conflict ? 409 : 500, message);
 });
