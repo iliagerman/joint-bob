@@ -2,13 +2,24 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import WebSocket from "ws";
+import type { TaskRecord } from "../src/types.js";
 
 interface NodeProcess { baseUrl: string; child: ChildProcess; homeDir: string; output: () => string; }
 interface Session { headers: Record<string, string>; }
+interface TaskReadyPayload {
+  type: string;
+  engine: string;
+  sessionId: string;
+  sessionFile: string | null;
+  messages: Array<{ text: string }>;
+  ownership: unknown;
+  executionNodeId: string;
+}
 interface SyncthingStatus { state: string; needTotalItems: number; needBytes: number; errors?: unknown[] | number; }
 
 async function listen(server: Server): Promise<number> {
@@ -66,6 +77,32 @@ async function waitForTask(node: NodeProcess, auth: Session, projectId: string, 
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
   throw new Error(node.output());
+}
+
+async function openTaskSocket(node: NodeProcess, auth: Session, projectId: string, taskId: string, sessionId: string, sessionPath: string): Promise<TaskReadyPayload> {
+  const url = new URL("/ws", node.baseUrl);
+  url.protocol = "ws:";
+  url.searchParams.set("projectId", projectId);
+  url.searchParams.set("taskId", taskId);
+  url.searchParams.set("sessionId", sessionId);
+  url.searchParams.set("sessionPath", sessionPath);
+  return await new Promise((resolve, reject) => {
+    const socket = new WebSocket(url, { headers: { Origin: node.baseUrl, Cookie: auth.headers.Cookie } });
+    const timeout = setTimeout(() => {
+      socket.close();
+      reject(new Error("Task WebSocket did not send ready"));
+    }, 10_000);
+    const fail = (error: Error) => { clearTimeout(timeout); reject(error); };
+    socket.once("error", fail);
+    socket.once("close", (code, reason) => fail(new Error(`Task WebSocket closed before ready (${code}): ${reason}`)));
+    socket.on("message", (raw) => {
+      const payload = JSON.parse(raw.toString()) as TaskReadyPayload;
+      if (payload.type !== "ready") return;
+      clearTimeout(timeout);
+      socket.close();
+      resolve(payload);
+    });
+  });
 }
 
 class FakeSyncthing {
@@ -212,6 +249,87 @@ test("Syncthing readiness fences handoff ownership until both nodes are synchron
     }
     assert.ok(sourceSyncthing.folders.find((folder) => folder.id === "joint-bob-ticket-workspaces")?.devices.some((device) => device.deviceID === "DESTINATION"));
     assert.ok(destinationSyncthing.folders.find((folder) => folder.id === "joint-bob-ticket-workspaces")?.devices.some((device) => device.deviceID === "SOURCE"));
+  } finally {
+    await Promise.all(nodes.map(stopNode));
+    await Promise.all([sourceSyncthing.stop(), destinationSyncthing.stop()]);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("task handoff preserves an undiscovered Claude ticket transcript and moves its ownership", { timeout: 120_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "pi-mobile-web-ticket-handoff-"));
+  const nodes: NodeProcess[] = [];
+  const sourceSyncthing = new FakeSyncthing();
+  const destinationSyncthing = new FakeSyncthing();
+  try {
+    const [sourceUrl, destinationUrl] = await Promise.all([sourceSyncthing.start("SOURCE"), destinationSyncthing.start("DESTINATION")]);
+    const [source, destination] = await Promise.all([startNode(root, "source", sourceUrl), startNode(root, "destination", destinationUrl)]);
+    nodes.push(source, destination);
+    const [sourceAuth, destinationAuth] = await Promise.all([login(source), login(destination)]);
+    for (const [node, auth, name] of [[source, sourceAuth, "Source"], [destination, destinationAuth, "Destination"]] as const) {
+      assert.equal((await fetch(`${node.baseUrl}/api/cluster/node`, { method: "PUT", headers: auth.headers, body: JSON.stringify({ name, url: node.baseUrl }) })).status, 200);
+      assert.equal((await fetch(`${node.baseUrl}/api/settings`, { method: "PUT", headers: auth.headers, body: JSON.stringify({ pi: { executable: "", configPath: "", sessionPath: "" }, claude: { executable: "true", configPath: "", sessionPath: "" }, syncthing: { endpoint: node === source ? sourceUrl : destinationUrl } }) })).status, 200);
+    }
+    const destinationToken = (await (await fetch(`${destination.baseUrl}/api/cluster/invite`, { headers: destinationAuth.headers })).json() as { token: string }).token;
+    assert.equal((await fetch(`${source.baseUrl}/api/cluster/peers`, { method: "POST", headers: sourceAuth.headers, body: JSON.stringify({ url: destination.baseUrl, token: destinationToken }) })).status, 201, source.output());
+    const [sourceId, destinationId, sourceToken] = await Promise.all([
+      (async () => ((await (await fetch(`${source.baseUrl}/api/cluster/node`, { headers: sourceAuth.headers })).json() as { node: { id: string } }).node.id))(),
+      (async () => ((await (await fetch(`${destination.baseUrl}/api/cluster/node`, { headers: destinationAuth.headers })).json() as { node: { id: string } }).node.id))(),
+      (async () => ((await (await fetch(`${source.baseUrl}/api/cluster/invite`, { headers: sourceAuth.headers })).json() as { token: string }).token))(),
+    ]);
+    const sourceProjectPath = path.join(root, "source-project");
+    const destinationProjectPath = path.join(destination.homeDir, "project");
+    await Promise.all([mkdir(sourceProjectPath, { recursive: true }), mkdir(destinationProjectPath, { recursive: true })]);
+    const project = (await (await fetch(`${source.baseUrl}/api/projects`, { method: "POST", headers: sourceAuth.headers, body: JSON.stringify({ name: "shared", path: sourceProjectPath, synced: true }) })).json() as { project: { id: string } }).project;
+    assert.equal((await fetch(`${destination.baseUrl}/api/cluster/projects/import`, { method: "POST", headers: destinationAuth.headers, body: JSON.stringify({ peerId: sourceId }) })).status, 200);
+    assert.equal((await fetch(`${destination.baseUrl}/api/cluster/projects/map`, { method: "POST", headers: destinationAuth.headers, body: JSON.stringify({ peerId: sourceId, projectId: project.id, localPath: destinationProjectPath }) })).status, 201, destination.output());
+
+    const sessionId = randomUUID();
+    const sourceSessionFile = path.join(source.homeDir, ".claude", "projects", "-legacy-ticket", `${sessionId}.jsonl`);
+    const destinationSessionFile = path.join(destination.homeDir, ".claude", "projects", "-legacy-ticket", `${sessionId}.jsonl`);
+    const transcript = `${JSON.stringify({ type: "user", sessionId, cwd: "/legacy/ticket", timestamp: "2026-01-01T00:00:00.000Z", message: { role: "user", content: "preserved ticket message" } })}\n`;
+    await Promise.all([
+      mkdir(path.dirname(sourceSessionFile), { recursive: true }).then(() => writeFile(sourceSessionFile, transcript)),
+      mkdir(path.dirname(destinationSessionFile), { recursive: true }).then(() => writeFile(destinationSessionFile, transcript)),
+    ]);
+    const now = "2026-01-01T00:00:00.000Z";
+    const task: TaskRecord = {
+      id: "legacy-ticket-task", title: "Legacy ticket", description: "Preserve transcript", attachments: [], status: "backlog", engine: "claude", planMode: false, reviewMode: false, phaseConfig: {}, sessionPath: `claude:${sourceSessionFile}`, worktreePath: null, worktreeBranch: null, mergedAt: null,
+      mergeState: "none", conflictCount: 0, mergeWarning: null, mergeTx: null, mergeDigests: null, runKind: null,
+      currentNodeId: sourceId, leaseOwnerNodeId: null, leaseExpiresAt: null, executionState: "idle", handoffContext: null, originNodeId: sourceId, createdAt: now, updatedAt: now,
+    };
+    const record = { projectId: project.id, engine: "claude", sessionId, createdAt: now, updatedAt: now, originNodeId: sourceId, taskId: task.id };
+    const events = [
+      { id: randomUUID(), originNodeId: sourceId, entityType: "task", entityKey: `${project.id}:${task.id}`, operation: "upsert", payload: { projectId: project.id, task, originNodeId: sourceId }, createdAt: now },
+      { id: randomUUID(), originNodeId: sourceId, entityType: "conversation.record", entityKey: `${project.id}:claude:${sessionId}`, operation: "upsert", payload: { projectId: project.id, engine: "claude", sessionId, record, updatedAt: now, originNodeId: sourceId }, createdAt: now },
+    ];
+    assert.equal((await fetch(`${source.baseUrl}/api/cluster/events`, { method: "POST", headers: { Authorization: `Bearer ${sourceToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ events }) })).status, 200, source.output());
+    await Promise.all([waitForTask(source, sourceAuth, project.id, task.id, () => true), waitForTask(destination, destinationAuth, project.id, task.id, () => true)]);
+
+    const coordinator = sourceId < destinationId ? source : destination;
+    const coordinatorAuth = coordinator === source ? sourceAuth : destinationAuth;
+    const coordinatorToken = (await (await fetch(`${coordinator.baseUrl}/api/cluster/invite`, { headers: coordinatorAuth.headers })).json() as { token: string }).token;
+    assert.equal((await fetch(`${coordinator.baseUrl}/api/cluster/sessions/ownership/claim`, { method: "POST", headers: { Authorization: `Bearer ${coordinatorToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ engine: "claude", sessionId, ownerNodeId: sourceId }) })).status, 200, coordinator.output());
+
+    const handoff = await fetch(`${source.baseUrl}/api/projects/${project.id}/tasks/${task.id}/handoff`, { method: "POST", headers: sourceAuth.headers, body: JSON.stringify({ peerId: destinationId }) });
+    assert.equal(handoff.status, 200, source.output());
+    const handedOff = await handoff.json() as { task: TaskRecord };
+    assert.equal(handedOff.task.sessionPath, `claude:${destinationSessionFile}`);
+    await Promise.all([
+      waitForTask(source, sourceAuth, project.id, task.id, (candidate) => candidate.currentNodeId === destinationId && candidate.executionState === "idle"),
+      waitForTask(destination, destinationAuth, project.id, task.id, (candidate) => candidate.currentNodeId === destinationId && candidate.executionState === "idle"),
+    ]);
+
+    const ready = await openTaskSocket(source, sourceAuth, project.id, task.id, sessionId, handedOff.task.sessionPath!);
+    assert.equal(ready.engine, "claude");
+    assert.equal(ready.sessionId, sessionId);
+    assert.equal(ready.sessionFile, `claude:${destinationSessionFile}`);
+    assert.equal(ready.messages.some((message: { text: string }) => message.text === "preserved ticket message"), true);
+    assert.equal(ready.ownership, null);
+    assert.equal(ready.executionNodeId, destinationId);
+    const ownership = await (await fetch(`${destination.baseUrl}/api/cluster/sessions/ownership?engine=claude&sessionId=${sessionId}`, { headers: { Authorization: `Bearer ${destinationToken}` } })).json() as { ownership: { ownerNodeId: string; status: string } };
+    assert.equal(ownership.ownership.ownerNodeId, destinationId);
+    assert.equal(ownership.ownership.status, "owned");
   } finally {
     await Promise.all(nodes.map(stopNode));
     await Promise.all([sourceSyncthing.stop(), destinationSyncthing.stop()]);

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Task handoffs now preserve conversation ownership across cluster nodes
+
 ## 1.4.1 — 2026-09-05
 
 - Symlinked skill directories are now discovered and loaded alongside regular directories

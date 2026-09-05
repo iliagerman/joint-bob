@@ -828,6 +828,14 @@ async function assertTaskFilesReady(project: ProjectRecord, task: TaskRecord, sy
   if (task.sessionPath) await assertTaskSessionReady(task.sessionPath, syncStatusChecked);
 }
 
+function taskConversationIdentity(task: TaskRecord): { engine: ConversationEngine; sessionId: string } | null {
+  if (!task.sessionPath) return null;
+  const adapter = harnessForSessionPath(task.sessionPath);
+  const sessionId = adapter.paths.sessionId(task.sessionPath);
+  if (!sessionId) throw new Error("Task conversation path has no transcript identity");
+  return { engine: adapter.id, sessionId };
+}
+
 interface TaskSyncStatus extends ProjectSyncStatus { label: string }
 
 const peerTaskEligibilitySchema = z.object({
@@ -1743,6 +1751,8 @@ app.post("/api/cluster/tasks/commit", async (request, response, next) => {
     await assertTaskFilesReady(project, record.task);
     const local = await getClusterNode();
     const task = await commitPreparedTaskHandoff(payload.handoffId, local.id);
+    const identity = task ? taskConversationIdentity(task) : null;
+    if (identity) await takeConversationOwnership(identity.engine, identity.sessionId, local.id);
     broadcastToProject(record.projectId, { type: "tasksChanged" });
     response.json(task ? { task } : { task: null, deleted: await taskHandoffDeletion(payload.handoffId) });
   } catch (error) { next(error); }
@@ -5949,8 +5959,12 @@ webSocketServer.on("connection", async (socket, request) => {
   const secretAccountIds = socketSecretAccountIdsSchema.parse((url.searchParams.get("secretAccountIds") ?? "").split(",").filter(Boolean));
   if (requestedSessionId && rawSessionPath !== "watch") {
     listedSessions = await listHarnessSessions(sessionSearchProject);
-    const matching = listedSessions.find((candidate) => candidate.id === requestedSessionId);
-    if (matching) rawSessionPath = matching.path;
+    const identity = task ? taskConversationIdentity(task) : null;
+    if (task?.sessionPath && identity?.sessionId === requestedSessionId) rawSessionPath = resolveLocalSessionPath(task.sessionPath).path;
+    else {
+      const matching = listedSessions.find((candidate) => candidate.id === requestedSessionId);
+      if (matching) rawSessionPath = matching.path;
+    }
   }
   if (rawSessionPath === "watch") {
     // Session dirs may have appeared since startup (first session, new sync).
@@ -5981,7 +5995,9 @@ webSocketServer.on("connection", async (socket, request) => {
   // Ticket conversations live in the ticket workspace, not the project directory,
   // so this must search the same paths the conversation list searches.
   if ((requestedSessionPath || draft) && !listedSessions) listedSessions = await listHarnessSessions(sessionSearchProject);
-  const listedSession = listedSessions?.find((candidate) => candidate.path === (draft ? rawSessionPath : requestedSessionPath));
+  const taskIdentity = task ? taskConversationIdentity(task) : null;
+  const listedSession = listedSessions?.find((candidate) => candidate.path === (draft ? rawSessionPath : requestedSessionPath)
+    || Boolean(!draft && taskIdentity && requestedSessionId === taskIdentity.sessionId && candidate.harnessId === taskIdentity.engine && candidate.id === taskIdentity.sessionId));
   if ((requestedSessionPath || draft) && !listedSession) {
     socket.close(1008, "Conversation not found");
     return;
