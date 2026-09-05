@@ -168,14 +168,14 @@ test("the ticket jump button keeps its lane when the row is also pinned", async 
     };
   });
 
-  // Three separate lanes, left to right: unpin, ticket, menu — none overlapping.
-  assert.ok(lanes.ticket.right < lanes.menu.left - 2,
-    `the ticket button clears the menu button (ticket ends ${lanes.ticket.right}, menu starts ${lanes.menu.left})`);
-  assert.ok(lanes.unpin.right < lanes.ticket.left - 2,
-    `the unpin button clears the ticket button (unpin ends ${lanes.unpin.right}, ticket starts ${lanes.ticket.left})`);
+  // Three separate lanes, left to right: ticket, unpin, menu — none overlapping.
+  assert.ok(lanes.unpin.right < lanes.menu.left - 2,
+    `the unpin button clears the menu button (unpin ends ${lanes.unpin.right}, menu starts ${lanes.menu.left})`);
+  assert.ok(lanes.ticket.right < lanes.unpin.left - 2,
+    `the ticket button clears the unpin button (ticket ends ${lanes.ticket.right}, unpin starts ${lanes.unpin.left})`);
   // The row pays for the lanes with padding, so the title stops before the first one.
-  assert.ok(lanes.titleRight <= lanes.unpin.left + 1,
-    `the title stops before the button lanes (title ends ${lanes.titleRight}, unpin starts ${lanes.unpin.left})`);
+  assert.ok(lanes.titleRight <= lanes.ticket.left + 1,
+    `the title stops before the button lanes (title ends ${lanes.titleRight}, ticket starts ${lanes.ticket.left})`);
 });
 
 test("the journey produced no console errors and no failed requests", () => {

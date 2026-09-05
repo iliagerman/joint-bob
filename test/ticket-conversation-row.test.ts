@@ -43,9 +43,9 @@ test("the ticket mark is a quick button into the ticket, not just a label", asyn
   // A click on the lane button must not also open the conversation behind it.
   assert.match(button, /event\.stopPropagation\(\)/);
 
-  // The row wires it in, next to the overflow menu.
+  // The row wires it in as the outermost lane, left of the pin and the overflow menu.
   const render = functionBody(app, "function renderSessions() {");
-  assert.match(render, /row\.append\(ticketRowButton\(ticketTask\)\)/);
+  assert.match(render, /row\.append\(button, ticketRowButton\(ticketTask\), pinToggle, menuButton\)/);
 });
 
 test("the ticket glyph is the board's own glyph, so both read as the same object", async () => {
@@ -66,11 +66,11 @@ test("the ticket mark and its button lane are styled with design tokens", async 
   assert.match(styles, /\.session-ticket-badge \{[^}]*color: var\(--accent\)/);
   assert.match(styles, /\.session-ticket-badge \{[^}]*color-mix\(in srgb, var\(--accent\) 12%, transparent\)/);
 
-  // The jump button owns a lane left of the menu button, and the row pays for
+  // The jump button owns the outermost lane, and the row pays for
   // the lane with padding so the title never runs under it.
-  assert.match(styles, /\.session-list \.ticket-link-button \{[^}]*right: 42px/);
-  // A ticket conversation needs three lanes: menu, ticket, pin.
-  assert.match(styles, /\.session-list \.list-row\.has-ticket \.pin-button \{[^}]*right: 74px/);
+  assert.match(styles, /\.session-list \.ticket-link-button \{[^}]*right: 74px/);
+  // A ticket conversation needs three lanes, left to right: ticket, pin, menu.
+  assert.match(styles, /\.session-list \.pin-button, \.project-list \.pin-button \{[^}]*right: 42px/);
   assert.match(styles, /\.session-list \.list-row\.has-ticket \.session-card \{[^}]*padding-right: 110px/);
 
   // Phones get the same real touch targets the other lane buttons get.

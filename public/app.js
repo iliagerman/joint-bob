@@ -2759,8 +2759,8 @@ function renderSessions() {
 
     const pinToggle = sessionPinToggle(session);
 
-    row.append(button, pinToggle, menuButton);
-    if (ticketTask) row.append(ticketRowButton(ticketTask));
+    if (ticketTask) row.append(button, ticketRowButton(ticketTask), pinToggle, menuButton);
+    else row.append(button, pinToggle, menuButton);
     if (session.agentRuns?.length) {
       const runs = document.createElement("div");
       runs.className = "agent-run-list";

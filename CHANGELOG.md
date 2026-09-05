@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Task handoffs now preserve conversation ownership across cluster nodes
+- Ticket conversation buttons now appear in the correct layout order in session lists
 
 ## 1.4.1 — 2026-09-05
 

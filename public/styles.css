@@ -1573,10 +1573,9 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   /* The pin button gets the same touch target, one lane to the left of the menu. */
   .session-list .pin-button, .project-list .pin-button { min-height: 34px; min-width: 34px; width: 34px; right: 48px; }
   .session-list .session-card, .project-list .project-card { padding-right: 90px; }
-  /* The ticket jump button gets the same touch target in that lane, and pushes
-     the pin button one lane further on a ticket row. */
-  .session-list .ticket-link-button { min-height: 34px; min-width: 34px; width: 34px; right: 48px; }
-  .session-list .list-row.has-ticket .pin-button { right: 86px; }
+  /* The ticket jump button gets the same touch target, one lane further out than
+     the pin button so the row reads ticket, pin, menu. */
+  .session-list .ticket-link-button { min-height: 34px; min-width: 34px; width: 34px; right: 86px; }
   .session-list .list-row.has-ticket .session-card { padding-right: 128px; }
   /* Stop stays a real touch target on phones without leaving the meta row. */
   .chat-actions .icon-button { min-width: 32px; width: 32px; min-height: 32px; }
@@ -1637,12 +1636,11 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 .session-list .session-card, .project-list .project-card { padding-right: 78px; }
 
 /* ---- Ticket conversations in the list ---- */
-/* The jump button owns a lane left of the menu button, and the row pays for the
+/* The jump button owns the outermost lane, and the row pays for the
    lane with padding so the title never runs under it. */
-.session-list .ticket-link-button { right: 42px; color: var(--accent); }
+.session-list .ticket-link-button { right: 74px; color: var(--accent); }
 .session-list .ticket-link-button svg { width: 15px; height: 15px; }
-/* A ticket conversation needs three lanes: menu, ticket, pin. */
-.session-list .list-row.has-ticket .pin-button { right: 74px; }
+/* A ticket conversation needs three lanes: ticket, pin, menu. */
 .session-list .list-row.has-ticket .session-card { padding-right: 110px; }
 
 /* ---- Skills browser ---- */
