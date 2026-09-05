@@ -81,7 +81,7 @@ test("ticket workspace copy excludes repository metadata, dependencies, builds, 
   try {
     const project = path.join(root, "project");
     const ticketRoot = path.join(root, "tickets");
-    for (const directory of [".git", "packages/nested/.git", "node_modules/pkg", "dist", "coverage", "logs", ".joint-bob", "src"]) {
+    for (const directory of [".git", "packages/nested/.git", "node_modules/pkg", "dist", "coverage", "logs", ".joint-bob", ".joint-bob-attachments", "src"]) {
       await mkdir(path.join(project, directory), { recursive: true });
     }
     await writeFile(path.join(project, "src", "kept.ts"), "kept\n");
@@ -94,11 +94,12 @@ test("ticket workspace copy excludes repository metadata, dependencies, builds, 
     await writeFile(path.join(project, "coverage", "index.html"), "coverage\n");
     await writeFile(path.join(project, "logs", "run.log"), "log\n");
     await writeFile(path.join(project, ".joint-bob", "state"), "state\n");
+    await writeFile(path.join(project, ".joint-bob-attachments", "ticket.txt"), "attachment\n");
 
     const workspace = await createTaskWorkspace(project, "project-two", "ticket-two", ticketRoot);
 
     assert.equal(await readFile(path.join(workspace, "src", "kept.ts"), "utf8"), "kept\n");
-    for (const excluded of [".git", "packages/nested/.git", "node_modules", "dist", "coverage", "logs", ".joint-bob", ".env", "private.pem"]) {
+    for (const excluded of [".git", "packages/nested/.git", "node_modules", "dist", "coverage", "logs", ".joint-bob", ".joint-bob-attachments", ".env", "private.pem"]) {
       assert.equal(await missing(path.join(workspace, excluded)), true, excluded);
     }
   } finally {

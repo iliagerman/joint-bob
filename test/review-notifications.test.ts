@@ -97,7 +97,7 @@ test("the service worker notification vibrates so a phone announces a review", a
   const worker = await readFile(new URL("../public/sw.js", import.meta.url), "utf8");
 
   assert.match(worker, /vibrate:/);
-  assert.match(worker, /const CACHE_NAME = "joint-bob-v111";/);
+  assert.match(worker, /const CACHE_NAME = "joint-bob-v112";/);
 });
 
 test("the client subscribes for reviews across every project", async () => {

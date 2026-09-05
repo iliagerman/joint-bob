@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Tasks now support file and image attachments that persist in the workspace and are included when agents take over the work
 - Ticket conversations now correctly open from the board button even when another conversation was previously open
 - Task conversations now preserve session identifiers when routed to remote cluster nodes
 

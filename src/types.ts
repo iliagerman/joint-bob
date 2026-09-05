@@ -120,10 +120,20 @@ export interface TaskPhaseConfig {
   effort: string;
 }
 
+export interface TaskAttachment {
+  id: string;
+  kind: "image" | "file";
+  name: string;
+  mimeType: string;
+  /** Path relative to the ticket workspace, so handoffs keep it valid. */
+  path: string;
+}
+
 export interface TaskRecord {
   id: string;
   title: string;
   description: string;
+  attachments?: TaskAttachment[];
   status: TaskStatus;
   engine: TaskEngine;
   planMode: boolean;

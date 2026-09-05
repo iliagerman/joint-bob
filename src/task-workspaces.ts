@@ -14,7 +14,7 @@ export const TICKET_MERGE_DIR = ".joint-bob-merge";
 
 const excludedDirectories = new Set([
   ".git", "node_modules", ".venv", "venv", "dist", "build", "coverage", "__pycache__",
-  ".joint-bob", ".pi-mobile-web", "logs",
+  ".joint-bob", ".joint-bob-attachments", ".pi-mobile-web", "logs",
 ]);
 const excludedFiles = new Set([
   ".DS_Store", ".npmrc", ".pypirc", ".netrc", "credentials.json",

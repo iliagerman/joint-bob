@@ -104,6 +104,7 @@ const state = {
   availableThinkingLevels: [],
   claudeEffort: "default",
   attachments: [],
+  taskAttachments: [],
   drafts: new Map(),
   promptHistory: new Map(),
   historyIndex: -1,
@@ -359,6 +360,10 @@ const elements = {
   taskDialogTitle: document.querySelector("#taskDialogTitle"),
   taskTitleInput: document.querySelector("#taskTitleInput"),
   taskDescriptionInput: document.querySelector("#taskDescriptionInput"),
+  taskDescriptionField: document.querySelector("#taskDescriptionField"),
+  taskAttachmentList: document.querySelector("#taskAttachmentList"),
+  taskAttachmentInput: document.querySelector("#taskAttachmentInput"),
+  taskAttachButton: document.querySelector("#taskAttachButton"),
   taskStatusInput: document.querySelector("#taskStatusInput"),
   taskEngineInput: document.querySelector("#taskEngineInput"),
   taskPlanModeInput: document.querySelector("#taskPlanModeInput"),
@@ -1212,51 +1217,78 @@ function resetAttachmentInput() {
   elements.attachmentInput.value = "";
 }
 
-function renderAttachments() {
-  elements.attachmentList.replaceChildren();
-  for (const attachment of state.attachments) {
+function renderAttachmentChips(container, attachments, removeAttachment) {
+  container.replaceChildren();
+  for (const attachment of attachments) {
     const chip = document.createElement("div");
     chip.className = "attachment-chip";
     const label = document.createElement("span");
     label.textContent = attachment.name;
     const remove = document.createElement("button");
     remove.type = "button";
+    remove.dataset.testid = "attachment-remove-button";
     remove.setAttribute("aria-label", `Remove ${attachment.name}`);
     remove.textContent = "×";
-    remove.addEventListener("click", () => {
-      state.attachments = state.attachments.filter((item) => item.id !== attachment.id);
-      renderAttachments();
-    });
+    remove.addEventListener("click", () => removeAttachment(attachment.id));
     chip.append(label, remove);
-    elements.attachmentList.append(chip);
+    container.append(chip);
   }
 }
 
-async function addAttachments(fileList) {
+function renderAttachments() {
+  renderAttachmentChips(elements.attachmentList, state.attachments, (id) => {
+    state.attachments = state.attachments.filter((item) => item.id !== id);
+    renderAttachments();
+  });
+}
+
+function renderTaskAttachments() {
+  renderAttachmentChips(elements.taskAttachmentList, state.taskAttachments, (id) => {
+    state.taskAttachments = state.taskAttachments.filter((item) => item.id !== id);
+    renderTaskAttachments();
+  });
+}
+
+async function attachmentsFromFiles(fileList, current) {
   const files = [...fileList];
-  if (!files.length) return;
   const nextAttachments = [];
   for (const file of files) {
     if (file.size > 4 * 1024 * 1024) throw new Error(`${file.name} is too large. Keep files under 4MB.`);
-    if (file.type.startsWith("image/")) {
-      const dataUrl = await fileToDataUrl(file);
-      const [, data = ""] = dataUrl.split(",", 2);
-      nextAttachments.push({ id: crypto.randomUUID(), kind: "image", name: file.name, mimeType: file.type || "image/png", data });
-      continue;
-    }
     const dataUrl = await fileToDataUrl(file);
     const [, data = ""] = dataUrl.split(",", 2);
-    nextAttachments.push({ id: crypto.randomUUID(), kind: "file", name: file.name, mimeType: file.type || "application/octet-stream", data });
+    const image = file.type.startsWith("image/");
+    nextAttachments.push({ id: crypto.randomUUID(), kind: image ? "image" : "file", name: file.name, mimeType: file.type || (image ? "image/png" : "application/octet-stream"), data });
   }
-  state.attachments = [...state.attachments, ...nextAttachments];
+  const attachments = [...current, ...nextAttachments];
+  if (attachments.filter((attachment) => attachment.kind === "image").length > 4) throw new Error("Attach no more than 4 images.");
+  if (attachments.filter((attachment) => attachment.kind === "file").length > 6) throw new Error("Attach no more than 6 files.");
+  return attachments;
+}
+
+async function addAttachments(fileList) {
+  if (!fileList.length) return;
+  state.attachments = await attachmentsFromFiles(fileList, state.attachments);
   renderAttachments();
   resetAttachmentInput();
+}
+
+async function addTaskAttachments(fileList) {
+  if (!fileList.length) return;
+  state.taskAttachments = await attachmentsFromFiles(fileList, state.taskAttachments);
+  renderTaskAttachments();
+  elements.taskAttachmentInput.value = "";
 }
 
 function clearAttachments() {
   state.attachments = [];
   renderAttachments();
   resetAttachmentInput();
+}
+
+function clearTaskAttachments() {
+  state.taskAttachments = [];
+  renderTaskAttachments();
+  elements.taskAttachmentInput.value = "";
 }
 
 function showNextProjectImport() {
@@ -4691,6 +4723,7 @@ function openNewTaskDialog(status = "backlog") {
   state.editingTaskId = null;
   elements.taskDialogTitle.textContent = "New task";
   elements.taskForm.reset();
+  clearTaskAttachments();
   elements.taskStatusInput.value = status;
   elements.taskEngineInput.value = "pi";
   elements.taskPlanModeInput.checked = status === "planning";
@@ -4747,6 +4780,8 @@ function openEditTaskDialog(task) {
   elements.taskDialogTitle.textContent = "Edit task";
   elements.taskTitleInput.value = task.title;
   elements.taskDescriptionInput.value = task.description || "";
+  state.taskAttachments = [...(task.attachments || [])];
+  renderTaskAttachments();
   elements.taskStatusInput.value = task.status;
   elements.taskEngineInput.value = task.engine || "pi";
   elements.taskPlanModeInput.checked = Boolean(task.planMode);
@@ -5005,9 +5040,13 @@ async function discardTaskChanges(task) {
 }
 
 async function saveTaskFromDialog() {
+  const newAttachments = state.taskAttachments.filter((attachment) => "data" in attachment);
   const payload = {
     title: elements.taskTitleInput.value.trim(),
     description: elements.taskDescriptionInput.value.trim(),
+    ...(state.editingTaskId ? { attachmentIds: state.taskAttachments.filter((attachment) => !("data" in attachment)).map((attachment) => attachment.id) } : {}),
+    images: newAttachments.filter((attachment) => attachment.kind === "image").map(({ name, mimeType, data }) => ({ name, mimeType, data })),
+    files: newAttachments.filter((attachment) => attachment.kind === "file").map(({ name, mimeType, data }) => ({ name, mimeType, data })),
     status: elements.taskPlanModeInput.checked ? elements.taskStatusInput.value : (elements.taskStatusInput.value === "planning" ? "backlog" : elements.taskStatusInput.value),
     engine: elements.taskEngineInput.value,
     planMode: elements.taskPlanModeInput.checked,
@@ -5189,6 +5228,34 @@ elements.projectRenameForm.addEventListener("submit", async (event) => {
   }
 });
 elements.newTaskButton.addEventListener("click", () => openNewTaskDialog());
+elements.taskAttachButton.addEventListener("click", () => elements.taskAttachmentInput.click());
+elements.taskAttachmentInput.addEventListener("change", async (event) => {
+  try { await addTaskAttachments(event.target.files || []); }
+  catch (error) { toast(error.message); elements.taskAttachmentInput.value = ""; }
+});
+elements.taskDescriptionInput.addEventListener("paste", async (event) => {
+  const images = [...event.clipboardData.files].filter((file) => file.type.startsWith("image/"));
+  if (!images.length) return;
+  if (!event.clipboardData.getData("text/plain")) event.preventDefault();
+  try { await addTaskAttachments(images); }
+  catch (error) { toast(error.message); }
+});
+elements.taskDescriptionField.addEventListener("dragover", (event) => {
+  if (!event.dataTransfer.types.includes("Files")) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "copy";
+  elements.taskDescriptionField.classList.add("dragging");
+});
+elements.taskDescriptionField.addEventListener("dragleave", (event) => {
+  if (!elements.taskDescriptionField.contains(event.relatedTarget)) elements.taskDescriptionField.classList.remove("dragging");
+});
+elements.taskDescriptionField.addEventListener("drop", async (event) => {
+  if (!event.dataTransfer.types.includes("Files")) return;
+  event.preventDefault();
+  elements.taskDescriptionField.classList.remove("dragging");
+  try { await addTaskAttachments(event.dataTransfer.files); }
+  catch (error) { toast(error.message); }
+});
 elements.taskEngineInput.addEventListener("change", () => populatePhaseModelInputs());
 elements.taskPlanModeInput.addEventListener("change", () => {
   if (elements.taskPlanModeInput.checked && elements.taskStatusInput.value === "backlog") elements.taskStatusInput.value = "planning";
@@ -5213,6 +5280,7 @@ elements.taskDialog.addEventListener("close", () => {
   if (elements.taskChatHost.firstChild) detachChatFromTaskDialog();
   elements.taskChatHost.hidden = true;
   elements.taskForm.hidden = false;
+  clearTaskAttachments();
 });
 
 for (const tab of elements.taskTabs) {

@@ -939,10 +939,13 @@
           Title
           <input id="taskTitleInput" name="title" autocomplete="off" placeholder="Fix login flow" required data-testid="task-form-title-input" />
         </label>
-        <label>
-          Task description (optional)
+        <div class="task-description-field" id="taskDescriptionField">
+          <label for="taskDescriptionInput">Task description (optional)</label>
           <textarea id="taskDescriptionInput" name="description" rows="3" placeholder="Details, links, acceptance criteria..." data-testid="task-form-description-input"></textarea>
-        </label>
+          <div class="attachment-list" id="taskAttachmentList" aria-live="polite"></div>
+          <input class="sr-only" id="taskAttachmentInput" type="file" multiple data-testid="task-form-attachment-input" />
+          <button class="ghost compact task-attach-button" id="taskAttachButton" type="button" data-testid="task-form-attach-button">+ Attach files</button>
+        </div>
         <label>
           Agent
           <select id="taskEngineInput" name="engine" data-testid="task-form-engine-select">

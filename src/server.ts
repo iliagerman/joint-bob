@@ -62,7 +62,7 @@ import { applyRuntimeLeaseSnapshot, conversationLeaseRunning, conversationRuntim
 import { claimReviewNotifications, markConversationReviewed, markConversationsReviewed, syncConversationReviewStates } from "./conversation-reviews.js";
 import { resetSyncthingConnection } from "./syncthing.js";
 import { isHarnessId, PROJECT_COLORS } from "./types.js";
-import type { AgentRunSummary, ChatMessage, ContextUsage, HarnessId, ProjectRecord, ProjectSyncStatus, ProjectView, SessionStatus, SessionSummary, TaskPhase, TaskPhaseConfig, TaskRecord } from "./types.js";
+import type { AgentRunSummary, ChatMessage, ContextUsage, HarnessId, ProjectRecord, ProjectSyncStatus, ProjectView, SessionStatus, SessionSummary, TaskAttachment, TaskPhase, TaskPhaseConfig, TaskRecord } from "./types.js";
 import { webSocketCloseReason } from "./websocket.js";
 import { capturePiRecoverySnapshot, recoverPiSessionDirectory, resolveLocalSessionPath } from "./session-paths.js";
 import { beginConversationRecovery, compareAndSetConversationOwnership, ConversationOwnershipError, finalizeConversationClaim, finishConversationRecovery, getConversationOwnership, sameConversationOwnership, takeConversationOwnership, type ConversationEngine, type ConversationOwnership, type ConversationOwnershipStatus, type OwnershipApplyResult } from "./conversation-ownership.js";
@@ -406,6 +406,25 @@ const userPinSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("conversation"), projectId: z.string().trim().min(1).max(120), engine: registeredHarnessIdSchema, sessionId: z.string().trim().min(1).max(240), pinned: z.boolean() }).strict(),
 ]);
 const sessionDeleteSchema = z.object({ projectId: z.string().min(1), engine: registeredHarnessIdSchema, sessionId: z.string().uuid() });
+const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024;
+const attachmentDataSchema = z.string()
+  .min(1)
+  .max(Math.ceil(MAX_ATTACHMENT_BYTES / 3) * 4)
+  .superRefine((data, context) => {
+    const decoded = Buffer.from(data, "base64");
+    if (decoded.toString("base64") !== data) context.addIssue({ code: z.ZodIssueCode.custom, message: "Invalid base64 attachment data" });
+    if (decoded.byteLength > MAX_ATTACHMENT_BYTES) context.addIssue({ code: z.ZodIssueCode.custom, message: "Attachment exceeds 4 MB" });
+  });
+const imageAttachmentSchema = z.object({
+  name: z.string().trim().min(1).max(240),
+  mimeType: z.string().trim().min(1).max(120),
+  data: attachmentDataSchema,
+});
+const fileAttachmentSchema = z.object({
+  name: z.string().trim().min(1).max(240),
+  mimeType: z.string().trim().min(1).max(120),
+  data: attachmentDataSchema,
+});
 const taskCreateSchema = z.object({
   title: z.string().trim().min(1).max(200),
   description: z.string().trim().max(20_000),
@@ -414,6 +433,8 @@ const taskCreateSchema = z.object({
   planMode: z.boolean().optional(),
   reviewMode: z.boolean().optional(),
   phaseConfig: taskPhaseConfigMapSchema,
+  images: z.array(imageAttachmentSchema).max(4).optional(),
+  files: z.array(fileAttachmentSchema).max(6).optional(),
 });
 const taskHandoffSchema = z.object({ peerId: z.string().uuid() });
 const taskBranchBundleSchema = z.object({ data: z.string().min(1).max(12_000_000), sha256: z.string().regex(/^[a-f0-9]{64}$/) });
@@ -434,16 +455,9 @@ const taskUpdateSchema = z.object({
   planMode: z.boolean().optional(),
   reviewMode: z.boolean().optional(),
   phaseConfig: taskPhaseConfigMapSchema,
-});
-const imageAttachmentSchema = z.object({
-  name: z.string().trim().min(1).max(240),
-  mimeType: z.string().trim().min(1).max(120),
-  data: z.string().min(1).max(6_000_000),
-});
-const fileAttachmentSchema = z.object({
-  name: z.string().trim().min(1).max(240),
-  mimeType: z.string().trim().min(1).max(120),
-  data: z.string().min(1).max(6_000_000),
+  attachmentIds: z.array(z.string().uuid()).max(10).optional(),
+  images: z.array(imageAttachmentSchema).max(4).optional(),
+  files: z.array(fileAttachmentSchema).max(6).optional(),
 });
 const pushSubscriptionSchema = z.object({
   endpoint: z.string().url(),
@@ -1010,7 +1024,7 @@ app.get("/sw.js", async (_request, response, next) => {
 });
 app.use("/vendor/codemirror", express.static(codemirrorDir, { index: false }));
 app.use(express.static(publicDir));
-app.use(express.json({ limit: "12mb" }));
+app.use(express.json({ limit: "56mb" }));
 
 app.get("/api/auth/status", (request, response) => {
   response.json(authenticationStatus(sessionForId(requestCookie(request, sessionCookieName))));
@@ -1742,7 +1756,7 @@ async function archiveOwnedTask(project: ProjectRecord, task: TaskRecord): Promi
   const workspaceKey = task.worktreePath ? taskWorkspaceKey(task.worktreePath, task.id) : project.id;
   const archived = await updateTask(project.id, task.id, {
     status: "done",
-    ...(synchronizedWorkspace ? { worktreePath: null } : {}),
+    ...(synchronizedWorkspace ? { worktreePath: null, attachments: [] } : {}),
   });
   if (synchronizedWorkspace) await removeTaskWorkspace(workspaceKey, task.id);
   broadcastToProject(project.id, { type: "tasksChanged" });
@@ -1965,7 +1979,7 @@ app.patch("/api/cluster/tasks/update", async (request, response, next) => {
         releaseTaskMergeReservation(existing.id);
       }
     }
-    let task = await updateTask(project.id, existing.id, update);
+    let task = await updateTaskWithAttachments(project.id, existing, update);
     if (reopenClearsMerge) task = await updateTask(project.id, existing.id, { mergedAt: null, mergeState: "none", conflictCount: 0, mergeWarning: null, mergeTx: null, mergeDigests: reopenBaselineAnchor ? { baseline: reopenBaselineAnchor } : null });
     const active = update.status !== undefined && update.status !== existing.status && (update.status === "planning" || update.status === "in_progress" || (update.status === "review" && task.reviewMode));
     if (active && !taskRunActive(task.id)) startTaskRun(project, task).catch((error) => console.warn("Task start failed", error));
@@ -3349,7 +3363,15 @@ app.post("/api/projects/:projectId/tasks", async (request, response, next) => {
       sendError(response, 400, "Planning status requires plan mode");
       return;
     }
-    const task = await createTask(project.id, project.path, payload.title, payload.description, payload.status ?? "backlog", engine, planMode, payload.reviewMode === true, payload.phaseConfig ?? {});
+    let task = await createTask(project.id, project.path, payload.title, payload.description, payload.status ?? "backlog", engine, planMode, payload.reviewMode === true, payload.phaseConfig ?? {});
+    try {
+      const attachments = await persistTaskAttachments(task.worktreePath!, payload.images ?? [], payload.files ?? []);
+      if (attachments.length) task = await updateTask(project.id, task.id, { attachments });
+    } catch (error) {
+      await deleteTask(project.id, task.id);
+      await removeTaskWorkspace(project.id, task.id);
+      throw error;
+    }
     if (task.status === "planning" || task.status === "in_progress" || (task.status === "review" && task.reviewMode)) {
       startTaskRun(project, task).catch((error) => console.warn("Task start failed", error));
     }
@@ -3404,7 +3426,7 @@ app.patch("/api/projects/:projectId/tasks/:taskId", async (request, response, ne
         releaseTaskMergeReservation(existing.id);
       }
     }
-    let task = await updateTask(project.id, existing.id, payload);
+    let task = await updateTaskWithAttachments(project.id, existing, payload);
     if (reopenClearsMerge) task = await updateTask(project.id, existing.id, { mergedAt: null, mergeState: "none", conflictCount: 0, mergeWarning: null, mergeTx: null, mergeDigests: reopenBaselineAnchor ? { baseline: reopenBaselineAnchor } : null });
     const active = payload.status !== undefined && payload.status !== existing.status && (payload.status === "planning" || payload.status === "in_progress" || (payload.status === "review" && task.reviewMode));
     if (active && !taskRunActive(task.id)) startTaskRun(project, task).catch((error) => console.warn("Task start failed", error));
@@ -4754,7 +4776,11 @@ async function taskHandoffContext(project: ProjectRecord, task: TaskRecord): Pro
 }
 
 async function taskPromptText(project: ProjectRecord, task: TaskRecord, phase: TaskPhase, engine: ChatEngine): Promise<string> {
-  const prompt = [task.title, task.description].filter(Boolean).join("\n\n");
+  const body = [task.title, task.description].filter(Boolean).join("\n\n");
+  const cwd = taskCwd(project, task);
+  const imageAttachments = (task.attachments ?? []).filter((attachment) => attachment.kind === "image").map((attachment) => ({ name: attachment.name, path: taskAttachmentFile(cwd, attachment) }));
+  const fileAttachments = (task.attachments ?? []).filter((attachment) => attachment.kind === "file").map((attachment) => ({ name: attachment.name, path: taskAttachmentFile(cwd, attachment) }));
+  const prompt = promptTextWithAttachments(body, imageAttachments, fileAttachments);
   const instruction = phase === "planning" && task.planMode ? planInstructions : phase === "review" ? reviewInstructions : "";
   const workspaceInstruction = !task.worktreePath
     ? ""
@@ -5101,6 +5127,65 @@ async function persistFileAttachments(cwd: string, files: Array<{ name: string; 
     savedFiles.push({ name: file.name, path: filePath });
   }
   return savedFiles;
+}
+
+async function persistTaskAttachments(
+  cwd: string,
+  images: Array<{ name: string; mimeType: string; data: string }>,
+  files: Array<{ name: string; mimeType: string; data: string }>,
+): Promise<TaskAttachment[]> {
+  const [savedImages, savedFiles] = await Promise.all([
+    persistImageAttachments(cwd, images),
+    persistFileAttachments(cwd, files),
+  ]);
+  return [
+    ...savedImages.map((saved, index) => ({ id: randomUUID(), kind: "image" as const, name: saved.name, mimeType: images[index].mimeType, path: path.relative(cwd, saved.path).split(path.sep).join("/") })),
+    ...savedFiles.map((saved, index) => ({ id: randomUUID(), kind: "file" as const, name: saved.name, mimeType: files[index].mimeType, path: path.relative(cwd, saved.path).split(path.sep).join("/") })),
+  ];
+}
+
+function taskAttachmentFile(cwd: string, attachment: TaskAttachment): string {
+  const attachmentRoot = path.resolve(cwd, ".joint-bob-attachments");
+  const filePath = path.resolve(cwd, attachment.path);
+  if (!filePath.startsWith(`${attachmentRoot}${path.sep}`)) throw new Error("Ticket attachment path is invalid");
+  return filePath;
+}
+
+async function removeTaskAttachments(cwd: string, attachments: TaskAttachment[]): Promise<void> {
+  for (const attachment of attachments) {
+    try { await unlink(taskAttachmentFile(cwd, attachment)); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  }
+}
+
+async function prepareTaskAttachmentUpdate(existing: TaskRecord, payload: z.infer<typeof taskUpdateSchema>) {
+  const { attachmentIds, images, files, ...fields } = payload;
+  const changesAttachments = attachmentIds !== undefined || images !== undefined || files !== undefined;
+  if (!changesAttachments) return { update: fields, added: [] as TaskAttachment[], removed: [] as TaskAttachment[] };
+  if (!existing.worktreePath) throw new TaskWorkspaceError("Ticket workspace is unavailable");
+  const current = existing.attachments ?? [];
+  const ids = attachmentIds ?? current.map((attachment) => attachment.id);
+  z.array(z.string().uuid().refine((id) => current.some((attachment) => attachment.id === id), "Ticket attachment was not found"))
+    .max(10).refine((values) => new Set(values).size === values.length, "Ticket attachments cannot repeat").parse(ids);
+  const retained = ids.map((id) => current.find((attachment) => attachment.id === id)!);
+  z.array(z.unknown()).max(4).parse([...retained.filter((attachment) => attachment.kind === "image"), ...(images ?? [])]);
+  z.array(z.unknown()).max(6).parse([...retained.filter((attachment) => attachment.kind === "file"), ...(files ?? [])]);
+  const added = await persistTaskAttachments(existing.worktreePath, images ?? [], files ?? []);
+  const removed = current.filter((attachment) => !ids.includes(attachment.id));
+  return { update: { ...fields, attachments: [...retained, ...added] }, added, removed };
+}
+
+async function updateTaskWithAttachments(projectId: string, existing: TaskRecord, payload: z.infer<typeof taskUpdateSchema>): Promise<TaskRecord> {
+  const prepared = await prepareTaskAttachmentUpdate(existing, payload);
+  let updated: TaskRecord;
+  try {
+    updated = await updateTask(projectId, existing.id, prepared.update);
+  } catch (error) {
+    if (existing.worktreePath) await removeTaskAttachments(existing.worktreePath, prepared.added);
+    throw error;
+  }
+  if (existing.worktreePath) await removeTaskAttachments(existing.worktreePath, prepared.removed);
+  return updated;
 }
 
 type SocketPayload = z.infer<typeof socketMessageSchema>;

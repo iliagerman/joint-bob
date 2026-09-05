@@ -26,10 +26,12 @@ test("task handoff prepares then routes later updates to its new owner", { timeo
     const aId = (await (await fetch(`${a.baseUrl}/api/cluster/node`, { headers: aAuth.headers })).json() as { node: { id: string } }).node.id;
     await fetch(`${b.baseUrl}/api/cluster/projects/import`, { method: "POST", headers: bAuth.headers, body: JSON.stringify({ peerId: aId }) });
     assert.equal((await fetch(`${b.baseUrl}/api/cluster/projects/map`, { method: "POST", headers: bAuth.headers, body: JSON.stringify({ peerId: aId, projectId: project.id, localPath: path.join(b.homeDir, "project") }) })).status, 201, b.output());
-    const taskId = "replicated-task"; const task = { id: taskId, title: "Before", description: "No Git", status: "backlog", engine: "pi", planMode: false, reviewMode: false, phaseConfig: {}, sessionPath: null, worktreePath: null, worktreeBranch: null, mergedAt: null, currentNodeId: aId, leaseOwnerNodeId: null, leaseExpiresAt: null, executionState: "idle", handoffContext: null, originNodeId: aId, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" };
+    const taskId = "replicated-task"; const task = { id: taskId, title: "Before", description: "No Git", attachments: [{ id: "22222222-2222-4222-8222-222222222222", kind: "file", name: "brief.md", mimeType: "text/markdown", path: ".joint-bob-attachments/brief.md" }], status: "backlog", engine: "pi", planMode: false, reviewMode: false, phaseConfig: {}, sessionPath: null, worktreePath: null, worktreeBranch: null, mergedAt: null, currentNodeId: aId, leaseOwnerNodeId: null, leaseExpiresAt: null, executionState: "idle", handoffContext: null, originNodeId: aId, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" };
     const aToken = (await (await fetch(`${a.baseUrl}/api/cluster/invite`, { headers: aAuth.headers })).json() as { token: string }).token;
     assert.equal((await fetch(`${a.baseUrl}/api/cluster/events`, { method: "POST", headers: { Authorization: `Bearer ${aToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ events: [{ id: randomUUID(), originNodeId: aId, entityType: "task", entityKey: `${project.id}:${taskId}`, operation: "upsert", payload: { projectId: project.id, task, originNodeId: aId }, createdAt: task.updatedAt }] }) })).status, 200);
-    await waitForTask(a, aAuth, project.id, taskId, () => true); await waitForTask(b, bAuth, project.id, taskId, () => true);
+    await waitForTask(a, aAuth, project.id, taskId, () => true);
+    const replicatedTask = await waitForTask(b, bAuth, project.id, taskId, () => true);
+    assert.deepEqual(replicatedTask.attachments, task.attachments, "ticket attachment metadata replicates to the peer");
     const unknown = await fetch(`${b.baseUrl}/api/cluster/tasks/eligibility`, { method: "POST", headers: { Authorization: `Bearer ${bToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ projectId: "unknown", task }) });
     assert.equal(unknown.status, 200); assert.match(((await unknown.json() as { reasons: string[] }).reasons).join(" "), /not mapped/);
     assert.equal((await waitForTask(a, aAuth, project.id, taskId, () => true)).currentNodeId, aId);
@@ -57,6 +59,7 @@ test("task handoff prepares then routes later updates to its new owner", { timeo
     assert.equal(handed.status, 200, a.output());
     const handedTask = (await handed.json() as { task: any }).task;
     assert.equal(handedTask.currentNodeId, bId);
+    assert.deepEqual(handedTask.attachments, task.attachments, "ticket attachments survive handoff");
     assert.ok(handedTask.updatedAt > task.updatedAt);
     await waitForTask(a, aAuth, project.id, taskId, (item) => item.currentNodeId === bId && item.executionState === "idle"); await waitForTask(b, bAuth, project.id, taskId, (item) => item.currentNodeId === bId && item.executionState === "idle");
     const patched = await fetch(`${a.baseUrl}/api/projects/${project.id}/tasks/${taskId}`, { method: "PATCH", headers: aAuth.headers, body: JSON.stringify({ title: "After" }) }); assert.equal(patched.status, 200, a.output()); assert.equal((await patched.json() as { task: any }).task.title, "After");

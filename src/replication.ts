@@ -50,7 +50,7 @@ export function ensureTaskSchema(db: DatabaseSync): void {
   const additions = [
     ["current_node_id", "TEXT NOT NULL DEFAULT ''"], ["lease_owner_node_id", "TEXT"], ["lease_expires_at", "TEXT"], ["lease_token", "TEXT"],
     ["execution_state", "TEXT NOT NULL DEFAULT 'idle'"], ["handoff_context", "TEXT"], ["origin_node_id", "TEXT NOT NULL DEFAULT ''"], ["active_handoff_id", "TEXT"],
-    ["merge_state", "TEXT NOT NULL DEFAULT 'none'"], ["conflict_count", "INTEGER NOT NULL DEFAULT 0"], ["merge_warning", "TEXT"], ["merge_tx", "TEXT"], ["merge_digests", "TEXT"], ["run_kind", "TEXT"],
+    ["attachments", "TEXT NOT NULL DEFAULT '[]'"], ["merge_state", "TEXT NOT NULL DEFAULT 'none'"], ["conflict_count", "INTEGER NOT NULL DEFAULT 0"], ["merge_warning", "TEXT"], ["merge_tx", "TEXT"], ["merge_digests", "TEXT"], ["run_kind", "TEXT"],
   ];
   for (const [name, definition] of additions) if (!columns.some((column) => column.name === name)) db.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${definition}`);
 }
@@ -138,13 +138,29 @@ function applyProjectLockEvent(db: DatabaseSync, event: ReplicationEvent): void 
     .run(payload.projectId, payload.lock?.nodeId ?? null, payload.lock?.nodeName ?? null, payload.lock?.lockedAt ?? null, payload.updatedAt, payload.originNodeId);
 }
 
+function taskAttachmentsAreValid(task: TaskRecord): boolean {
+  if (task.attachments === undefined) return true;
+  if (!Array.isArray(task.attachments) || task.attachments.length > 10) return false;
+  const valid = task.attachments.every((attachment) =>
+    attachment !== null && typeof attachment === "object"
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(attachment.id)
+    && ["image", "file"].includes(attachment.kind)
+    && typeof attachment.name === "string" && attachment.name.length > 0 && attachment.name.length <= 240
+    && typeof attachment.mimeType === "string" && attachment.mimeType.length > 0 && attachment.mimeType.length <= 120
+    && typeof attachment.path === "string" && /^\.joint-bob-attachments\/[a-zA-Z0-9._-]+$/.test(attachment.path));
+  if (!valid) return false;
+  return new Set(task.attachments.map((attachment) => attachment.id)).size === task.attachments.length
+    && task.attachments.filter((attachment) => attachment.kind === "image").length <= 4
+    && task.attachments.filter((attachment) => attachment.kind === "file").length <= 6;
+}
+
 function taskPayload(event: ReplicationEvent): TaskPayload {
   if (event.entityType !== "task" || !["upsert", "delete"].includes(event.operation)) throw new Error("Unsupported replication event");
   const payload = event.payload as Partial<TaskPayload>; const task = payload?.task;
   if (!payload || typeof payload !== "object" || typeof payload.projectId !== "string" || typeof payload.originNodeId !== "string" || payload.originNodeId !== event.originNodeId || event.entityKey !== `${payload.projectId}:${event.operation === "upsert" ? task?.id : event.entityKey.split(":").slice(1).join(":")}`) throw new Error("Malformed task replication payload");
   if (!task || typeof task !== "object" || typeof task.id !== "string" || typeof task.updatedAt !== "string" || typeof task.originNodeId !== "string" || task.originNodeId !== event.originNodeId) throw new Error("Malformed task replication payload");
   if (event.operation === "delete") return payload as TaskPayload;
-  if (typeof task.title !== "string" || typeof task.description !== "string" || !["backlog", "planning", "in_progress", "review", "done"].includes(task.status) || !isHarnessId(task.engine) || typeof task.planMode !== "boolean" || typeof task.reviewMode !== "boolean" || !["idle", "running", "handoff_pending", "failed"].includes(task.executionState) || typeof task.currentNodeId !== "string" || typeof task.createdAt !== "string") throw new Error("Malformed task replication payload");
+  if (typeof task.title !== "string" || typeof task.description !== "string" || !taskAttachmentsAreValid(task) || !["backlog", "planning", "in_progress", "review", "done"].includes(task.status) || !isHarnessId(task.engine) || typeof task.planMode !== "boolean" || typeof task.reviewMode !== "boolean" || !["idle", "running", "handoff_pending", "failed"].includes(task.executionState) || typeof task.currentNodeId !== "string" || typeof task.createdAt !== "string") throw new Error("Malformed task replication payload");
   return payload as TaskPayload;
 }
 function applyTaskEvent(db: DatabaseSync, event: ReplicationEvent): boolean {
@@ -163,13 +179,14 @@ function applyTaskEvent(db: DatabaseSync, event: ReplicationEvent): boolean {
   if (event.operation === "delete") { db.prepare("DELETE FROM tasks WHERE project_id = ? AND id = ?").run(projectId, id); db.prepare("INSERT INTO task_tombstones (project_id, task_id, updated_at, origin_node_id) VALUES (?, ?, ?, ?) ON CONFLICT(project_id, task_id) DO UPDATE SET updated_at=excluded.updated_at, origin_node_id=excluded.origin_node_id").run(projectId, id, updatedAt, event.originNodeId); return true; }
   if (!task) throw new Error("Malformed task replication payload");
   const localNode = (db.prepare("SELECT id FROM cluster_node WHERE singleton = 1").get() as { id: string } | undefined)?.id;
-  const previous = db.prepare("SELECT worktree_path, worktree_branch, session_path, handoff_context FROM tasks WHERE project_id = ? AND id = ?").get(projectId, task.id) as { worktree_path: string | null; worktree_branch: string | null; session_path: string | null; handoff_context: string | null } | undefined;
+  const previous = db.prepare("SELECT attachments, worktree_path, worktree_branch, session_path, handoff_context FROM tasks WHERE project_id = ? AND id = ?").get(projectId, task.id) as { attachments: string | null; worktree_path: string | null; worktree_branch: string | null; session_path: string | null; handoff_context: string | null } | undefined;
+  const attachments = task.attachments ?? (previous?.attachments ? JSON.parse(previous.attachments) as TaskRecord["attachments"] : []);
   const local = task.currentNodeId === localNode;
   const worktreePath = local && task.worktreePath === null ? previous?.worktree_path ?? null : task.worktreePath;
   const worktreeBranch = local && task.worktreeBranch === null ? previous?.worktree_branch ?? null : task.worktreeBranch;
   const sessionPath = local && task.sessionPath === null ? previous?.session_path ?? null : task.sessionPath;
   const handoffContext = local && task.handoffContext === null ? previous?.handoff_context ?? null : task.handoffContext;
-  db.prepare(`INSERT INTO tasks (id, project_id, title, description, status, engine, plan_mode, review_mode, phase_config, session_path, worktree_path, worktree_branch, merged_at, created_at, updated_at, current_node_id, lease_owner_node_id, lease_expires_at, execution_state, handoff_context, origin_node_id, merge_state, conflict_count, merge_warning, merge_tx, merge_digests, run_kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET title=excluded.title, description=excluded.description, status=excluded.status, engine=excluded.engine, plan_mode=excluded.plan_mode, review_mode=excluded.review_mode, phase_config=excluded.phase_config, session_path=excluded.session_path, worktree_path=excluded.worktree_path, worktree_branch=excluded.worktree_branch, merged_at=excluded.merged_at, updated_at=excluded.updated_at, current_node_id=excluded.current_node_id, lease_owner_node_id=excluded.lease_owner_node_id, lease_expires_at=excluded.lease_expires_at, execution_state=excluded.execution_state, handoff_context=excluded.handoff_context, origin_node_id=excluded.origin_node_id, merge_state=excluded.merge_state, conflict_count=excluded.conflict_count, merge_warning=excluded.merge_warning, merge_tx=excluded.merge_tx, merge_digests=excluded.merge_digests, run_kind=excluded.run_kind`).run(task.id, projectId, task.title, task.description, task.status, task.engine, task.planMode ? 1 : 0, task.reviewMode ? 1 : 0, JSON.stringify(task.phaseConfig), sessionPath, local ? worktreePath : null, local ? worktreeBranch : null, task.mergedAt, task.createdAt, task.updatedAt, task.currentNodeId, task.leaseOwnerNodeId, task.leaseExpiresAt, task.executionState, local ? handoffContext : null, task.originNodeId, task.mergeState ?? "none", task.conflictCount ?? 0, task.mergeWarning ?? null, task.mergeTx ?? null, task.mergeDigests ? JSON.stringify(task.mergeDigests) : null, task.runKind ?? null);
+  db.prepare(`INSERT INTO tasks (id, project_id, title, description, attachments, status, engine, plan_mode, review_mode, phase_config, session_path, worktree_path, worktree_branch, merged_at, created_at, updated_at, current_node_id, lease_owner_node_id, lease_expires_at, execution_state, handoff_context, origin_node_id, merge_state, conflict_count, merge_warning, merge_tx, merge_digests, run_kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET title=excluded.title, description=excluded.description, attachments=excluded.attachments, status=excluded.status, engine=excluded.engine, plan_mode=excluded.plan_mode, review_mode=excluded.review_mode, phase_config=excluded.phase_config, session_path=excluded.session_path, worktree_path=excluded.worktree_path, worktree_branch=excluded.worktree_branch, merged_at=excluded.merged_at, updated_at=excluded.updated_at, current_node_id=excluded.current_node_id, lease_owner_node_id=excluded.lease_owner_node_id, lease_expires_at=excluded.lease_expires_at, execution_state=excluded.execution_state, handoff_context=excluded.handoff_context, origin_node_id=excluded.origin_node_id, merge_state=excluded.merge_state, conflict_count=excluded.conflict_count, merge_warning=excluded.merge_warning, merge_tx=excluded.merge_tx, merge_digests=excluded.merge_digests, run_kind=excluded.run_kind`).run(task.id, projectId, task.title, task.description, JSON.stringify(attachments), task.status, task.engine, task.planMode ? 1 : 0, task.reviewMode ? 1 : 0, JSON.stringify(task.phaseConfig), sessionPath, local ? worktreePath : null, local ? worktreeBranch : null, task.mergedAt, task.createdAt, task.updatedAt, task.currentNodeId, task.leaseOwnerNodeId, task.leaseExpiresAt, task.executionState, local ? handoffContext : null, task.originNodeId, task.mergeState ?? "none", task.conflictCount ?? 0, task.mergeWarning ?? null, task.mergeTx ?? null, task.mergeDigests ? JSON.stringify(task.mergeDigests) : null, task.runKind ?? null);
   db.prepare("DELETE FROM task_tombstones WHERE project_id = ? AND task_id = ?").run(projectId, task.id);
   return true;
 }
