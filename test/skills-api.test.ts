@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -36,6 +36,32 @@ test("skills are discovered per harness with project scope shadowing the user sc
     const pushCode = claude.find((skill) => skill.name === "push-code");
     assert.equal(pushCode?.description, "Project-level version.");
     assert.equal(pushCode?.scope, "project");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("symlinked skill directories are discovered for both harnesses", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-skills-symlink-"));
+  const { listSkills } = await import("../src/skills.js");
+
+  try {
+    const piUser = path.join(root, "pi-user");
+    const claudeUser = path.join(root, "claude-user");
+    const targets = path.join(root, "targets");
+    await mkdir(piUser, { recursive: true });
+    await mkdir(claudeUser, { recursive: true });
+    await writeSkill(targets, "pi-develop", "---\nname: pi-develop\ndescription: Develop Pi.\n---\n");
+    await writeSkill(targets, "claude-develop", "---\nname: claude-develop\ndescription: Develop Claude.\n---\n");
+    await symlink(path.join(targets, "pi-develop"), path.join(piUser, "pi-develop"), "dir");
+    await symlink(path.join(targets, "claude-develop"), path.join(claudeUser, "claude-develop"), "dir");
+
+    const skills = await listSkills(path.join(root, "project"), { piUser, claudeUser });
+
+    assert.deepEqual(skills.map((skill) => `${skill.harness}:${skill.name}`), [
+      "claude:claude-develop",
+      "pi:pi-develop",
+    ]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

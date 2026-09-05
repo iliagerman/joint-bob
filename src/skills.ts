@@ -73,7 +73,7 @@ async function readSkillDirectory(root: string, harness: HarnessId, scope: Skill
 
   const skills: SkillSummary[] = [];
   for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
+    if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
     let contents: string;
     try {
       contents = await readFile(path.join(root, entry.name, "SKILL.md"), "utf8");

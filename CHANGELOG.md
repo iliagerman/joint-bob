@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Symlinked skill directories are now discovered and loaded alongside regular directories
+
 ## 1.4.0 — 2026-09-05
 
 - Tasks now support file and image attachments that persist in the workspace and are included when agents take over the work
