@@ -6,7 +6,7 @@ import { clearCanvasShortcut, listCanvasShortcuts, releaseCanvasShortcuts, setCa
 import { getClusterNode } from "../../cluster.js";
 import { harnessForSessionPath, listHarnessSessions } from "../../harnesses.js";
 import { ensureManagedHome } from "../../managed-home.js";
-import { getUserPreferences, migrateLegacyCanvasLayout, normalizeCanvasKeymapPreference, normalizeCanvasLayoutPreference, type RecentSession, updateUserPreferences, type UserPreferences } from "../../preferences.js";
+import { getUserPreferences, migrateLegacyCanvasLayout, normalizeCanvasKeymapPreference, normalizeCanvasLayoutPreference, readLegacyRecentSessions, type RecentSession, updateUserPreferences, type UserPreferences } from "../../preferences.js";
 import { listUserRecentSessions, migrateLegacyRecentSessions, removeUserRecentSession, setUserRecentSession, type SyncedRecentSession } from "../../recent-sessions.js";
 import { getProjectResourcePaths, getSettings, updateProjectResourcePaths, updateSettings } from "../../settings.js";
 import { getProject, listWorkspaces } from "../../store.js";
@@ -44,7 +44,7 @@ app.get("/api/recents", async (_request, response, next) => {
   try {
     const session = response.locals.authSession as AuthSession;
     const local = await getClusterNode();
-    migrateLegacyRecentSessions(session.username, stableLegacyRecents(getUserPreferences(session.userId).recentSessions), local.id);
+    migrateLegacyRecentSessions(session.username, stableLegacyRecents(readLegacyRecentSessions(session.userId)), local.id);
     response.json({ recentSessions: listUserRecentSessions(session.username) });
   } catch (error) { next(error); }
 });

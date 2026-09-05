@@ -61,6 +61,7 @@ test("the recents preference carries the conversation's activity time", async ()
   const server = await serverSource();
 
   assert.match(preferences, /interface RecentSession \{[\s\S]*?updatedAt: string \| null;/);
-  // Without a schema field the activity time is stripped on save and the list falls back to the open time.
-  assert.match(server, /recentSessions: z\.array\(z\.object\(\{[\s\S]*?updatedAt: z\.string\(\)\.max\(40\)\.nullable\(\)\.default\(null\)/);
+  // Recents moved to the replicated table; the preferences schema no longer carries them.
+  assert.match(server, /export const userPreferencesSchema = z\.object\(\{[\s\S]*?\}?\)\.strict\(\)/);
+  assert.doesNotMatch(server, /recentSessions: z\.array/);
 });

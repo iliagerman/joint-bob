@@ -69,7 +69,6 @@ test("preferences are authenticated, validated, and persist across listener rest
       pinnedSessionPaths: [],
       projectsPanelCollapsed: false,
       chatsPanelCollapsed: false,
-      recentSessions: [],
       lastSeenVersion: null,
       canvasLayout: { version: 5, rows: [], focusedPaneId: null },
       canvasKeymap: { modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F" },
@@ -90,7 +89,6 @@ test("preferences are authenticated, validated, and persist across listener rest
       pinnedSessionPaths: ["/tmp/session.jsonl"],
       projectsPanelCollapsed: true,
       chatsPanelCollapsed: true,
-      recentSessions: [{ projectId: "project-123", sessionPath: "/tmp/session.jsonl", title: "Session 123", openedAt: "2026-08-27T10:00:00.000Z", updatedAt: "2026-08-27T18:00:00.000Z" }],
       lastSeenVersion: "1.4.2",
       canvasLayout: {
         version: 5,
@@ -111,36 +109,13 @@ test("preferences are authenticated, validated, and persist across listener rest
     assert.equal(updated.status, 200);
     assert.deepEqual(await updated.json(), values);
 
-    const canonicalPath = "/tmp/session.jsonl";
-    const duplicateSessions = [
-      { projectId: "project-123", sessionPath: "/tmp/session.sync-conflict-20260827-120000-ABC.jsonl", title: "Newest", openedAt: "2026-08-27T12:00:00.000Z", updatedAt: "2026-08-27T20:00:00.000Z" },
-      { projectId: "project-123", sessionPath: "/tmp/session.sync-conflict-20260827-110000-ABC.jsonl", title: "Older conflict", openedAt: "2026-08-27T11:00:00.000Z" },
-      { projectId: "project-123", sessionPath: canonicalPath, title: "Older canonical", openedAt: "2026-08-27T10:00:00.000Z" },
-      { projectId: "other-project", sessionPath: canonicalPath, title: "Other project", openedAt: "2026-08-27T09:00:00.000Z" },
-    ];
-    // An entry stored before recents tracked conversation activity reads back with a null activity time.
-    const cleanedSessions = [
-      { ...duplicateSessions[0], sessionPath: canonicalPath },
-      { ...duplicateSessions[3], updatedAt: null },
-    ];
-    const deduplicated = await fetch(`${node.baseUrl}/api/preferences`, {
+    // Recents moved to the replicated recents table; the preferences API no longer carries them.
+    const legacyRecents = await fetch(`${node.baseUrl}/api/preferences`, {
       method: "PUT",
       headers: requestHeaders,
-      body: JSON.stringify({ recentSessions: duplicateSessions }),
+      body: JSON.stringify({ recentSessions: [{ projectId: "project-123", sessionPath: "/tmp/session.jsonl", title: "Session 123", openedAt: "2026-08-27T10:00:00.000Z" }] }),
     });
-    assert.equal(deduplicated.status, 200);
-    assert.deepEqual((await deduplicated.json() as { recentSessions: unknown }).recentSessions, cleanedSessions);
-
-    const persistenceDb = new DatabaseSync(path.join(root, "node.db"));
-    const stored = persistenceDb.prepare("SELECT recent_sessions FROM user_preferences").get() as { recent_sessions: string };
-    assert.deepEqual(JSON.parse(stored.recent_sessions), cleanedSessions);
-
-    const staleSessions = [duplicateSessions[2], duplicateSessions[0], duplicateSessions[0], duplicateSessions[3], { projectId: 1 }];
-    persistenceDb.prepare("UPDATE user_preferences SET recent_sessions = ?").run(JSON.stringify(staleSessions));
-    persistenceDb.close();
-    const repaired = await fetch(`${node.baseUrl}/api/preferences`, { headers: { Cookie: cookie } });
-    assert.equal(repaired.status, 200);
-    assert.deepEqual((await repaired.json() as { recentSessions: unknown }).recentSessions, [{ ...duplicateSessions[2], updatedAt: null }, { ...duplicateSessions[3], updatedAt: null }]);
+    assert.equal(legacyRecents.status, 400);
 
     const invalidEnum = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ mobileView: "invalid" }) });
     assert.equal(invalidEnum.status, 400);
@@ -214,10 +189,7 @@ test("preferences are authenticated, validated, and persist across listener rest
     node = await listen(app.createApp());
     const persisted = await fetch(`${node.baseUrl}/api/preferences`, { headers: { Cookie: cookie } });
     assert.equal(persisted.status, 200);
-    assert.deepEqual(await persisted.json(), {
-      ...values,
-      recentSessions: [{ ...duplicateSessions[2], updatedAt: null }, { ...duplicateSessions[3], updatedAt: null }],
-    });
+    assert.deepEqual(await persisted.json(), values);
 
     // A hand-edited or corrupt row must degrade to an empty canvas, never a broken one.
     await node.close();

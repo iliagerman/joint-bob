@@ -162,7 +162,6 @@ export interface UserPreferences {
   pinnedSessionPaths: string[];
   projectsPanelCollapsed: boolean;
   chatsPanelCollapsed: boolean;
-  recentSessions: RecentSession[];
   lastSeenVersion: string | null;
   canvasLayout: CanvasLayoutPreference;
   canvasKeymap: CanvasKeymapPreference;
@@ -183,7 +182,6 @@ interface PreferenceRow {
   pinned_session_paths: string;
   projects_panel_collapsed: number;
   chats_panel_collapsed: number;
-  recent_sessions: string;
   last_seen_version: string | null;
   canvas_layout: string;
   canvas_keymap: string;
@@ -427,7 +425,6 @@ function preferencesFromRow(row: PreferenceRow): UserPreferences {
     pinnedSessionPaths: parseStringList(row.pinned_session_paths),
     projectsPanelCollapsed: row.projects_panel_collapsed === 1,
     chatsPanelCollapsed: row.chats_panel_collapsed === 1,
-    recentSessions: parseRecentSessions(row.recent_sessions),
     lastSeenVersion: row.last_seen_version,
     canvasLayout: parseCanvasLayout(row.canvas_layout),
     canvasKeymap: parseCanvasKeymap(row.canvas_keymap),
@@ -439,7 +436,7 @@ function currentPreferences(userId: string): UserPreferences {
     SELECT theme, notifications_enabled, completion_sound, install_dismissed, mobile_view,
       active_project_id, active_session_path, active_session_id, active_node_id, legacy_migrated,
       pinned_project_ids, pinned_session_paths, projects_panel_collapsed, chats_panel_collapsed,
-      recent_sessions, last_seen_version, canvas_layout, canvas_keymap
+      last_seen_version, canvas_layout, canvas_keymap
     FROM user_preferences WHERE user_id = ?
   `).get(userId) as unknown as PreferenceRow;
   return preferencesFromRow(row);
@@ -448,6 +445,13 @@ function currentPreferences(userId: string): UserPreferences {
 export function getUserPreferences(userId: string): UserPreferences {
   ensurePreferences(userId);
   return currentPreferences(userId);
+}
+
+/** The pre-sync recents column, read once to seed the replicated recents table. */
+export function readLegacyRecentSessions(userId: string): RecentSession[] {
+  ensurePreferences(userId);
+  const row = preferencesDatabase().prepare("SELECT recent_sessions FROM user_preferences WHERE user_id = ?").get(userId) as { recent_sessions: string };
+  return parseRecentSessions(row.recent_sessions);
 }
 
 export function updateUserPreferences(userId: string, partial: Partial<UserPreferences>): UserPreferences {
@@ -468,7 +472,6 @@ export function updateUserPreferences(userId: string, partial: Partial<UserPrefe
     ["pinnedSessionPaths", "pinned_session_paths", (value) => JSON.stringify(value)],
     ["projectsPanelCollapsed", "projects_panel_collapsed", (value) => value ? 1 : 0],
     ["chatsPanelCollapsed", "chats_panel_collapsed", (value) => value ? 1 : 0],
-    ["recentSessions", "recent_sessions", (value) => JSON.stringify(canonicalRecentSessions(value as RecentSession[]))],
     ["lastSeenVersion", "last_seen_version", (value) => value as string | null],
     ["canvasLayout", "canvas_layout", (value) => JSON.stringify(value as CanvasLayoutPreference)],
     ["canvasKeymap", "canvas_keymap", (value) => JSON.stringify(value as CanvasKeymapPreference)],

@@ -401,15 +401,6 @@ export const userPreferencesSchema = z.object({
   projectsPanelCollapsed: z.boolean().optional(),
   chatsPanelCollapsed: z.boolean().optional(),
   lastSeenVersion: z.string().trim().regex(/^\d+\.\d+\.\d+$/).nullable().optional(),
-  recentSessions: z.array(z.object({
-    projectId: z.string().trim().min(1).max(120),
-    sessionPath: z.string().trim().min(1).max(2000),
-    title: z.string().max(300),
-    openedAt: z.string().max(40),
-    engine: registeredHarnessIdSchema.optional(),
-    sessionId: z.string().trim().min(1).max(240).optional(),
-    updatedAt: z.string().max(40).nullable().default(null),
-  })).max(50).optional(),
   canvasLayout: canvasLayoutPreferenceSchema.optional(),
   canvasKeymap: canvasKeymapPreferenceSchema.optional(),
 }).strict();
