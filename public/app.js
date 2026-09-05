@@ -44,6 +44,7 @@ const state = {
   renameSessionId: null,
   renameSessionEngine: "pi",
   newSessionDraft: null,
+  spinOffSourceTaskId: null,
   // Accounts picked in the new-conversation dialog; the server persists them once the engine reports an id.
   newSessionSecretAccountIds: [],
   pendingSessionTitle: null,
@@ -90,6 +91,7 @@ const state = {
   activeSessionPath: null,
   activeTaskId: null,
   conversationLock: null,
+  conversationReadOnly: false,
   socket: null,
   reconnectTimer: null,
   heartbeatTimer: null,
@@ -168,6 +170,8 @@ const elements = {
   conversationLockDetail: document.querySelector("#conversationLockDetail"),
   conversationLockStatus: document.querySelector("#conversationLockStatus"),
   conversationLockTakeButton: document.querySelector("#conversationLockTakeButton"),
+  doneConversationNotice: document.querySelector("#doneConversationNotice"),
+  doneConversationContinueButton: document.querySelector("#doneConversationContinueButton"),
   attachmentList: document.querySelector("#attachmentList"),
   attachmentInput: document.querySelector("#attachmentInput"),
   attachButton: document.querySelector("#attachButton"),
@@ -2831,6 +2835,7 @@ function sessionPinToggle(session) {
 function sessionMenuItems(session, sessionActive) {
   const name = shortSessionTitle(session);
   const isClaude = sessionEngine(session) === "claude";
+  const readOnly = sessionTicketTask(session)?.status === "done";
   return [
     {
       label: "Add to canvas",
@@ -2838,25 +2843,27 @@ function sessionMenuItems(session, sessionActive) {
       testid: "session-add-to-canvas-button",
       onSelect: () => addSessionToCanvas(session),
     },
-    {
-      label: "Colour",
-      icon: "sliders",
-      testid: "session-color-button",
-      onSelect: () => openConversationColorDialog(session),
-    },
-    {
-      label: "Rename",
-      icon: "pencil",
-      testid: "session-rename-button",
-      onSelect: () => openRenameDialog(session.id, isClaude ? "claude" : "pi", name),
-    },
-    {
-      label: "Remove",
-      icon: "trash",
-      testid: "session-remove-button",
-      danger: true,
-      onSelect: () => removeSessionFromRow(session, sessionActive).catch((error) => toast(error.message)),
-    },
+    ...(readOnly ? [] : [
+      {
+        label: "Colour",
+        icon: "sliders",
+        testid: "session-color-button",
+        onSelect: () => openConversationColorDialog(session),
+      },
+      {
+        label: "Rename",
+        icon: "pencil",
+        testid: "session-rename-button",
+        onSelect: () => openRenameDialog(session.id, isClaude ? "claude" : "pi", name),
+      },
+      {
+        label: "Remove",
+        icon: "trash",
+        testid: "session-remove-button",
+        danger: true,
+        onSelect: () => removeSessionFromRow(session, sessionActive).catch((error) => toast(error.message)),
+      },
+    ]),
   ];
 }
 
@@ -3858,10 +3865,13 @@ function renderModelDialog() {
   }
 }
 
+function conversationIsReadOnly() {
+  return state.conversationReadOnly || conversationTask()?.status === "done";
+}
+
 function setComposerEnabled(enabled) {
-  // A conversation owned elsewhere fences every write on the owner node, so the
-  // composer stays dead no matter how healthy this node's socket looks.
-  const allowed = enabled && !state.conversationLock;
+  // Ownership and completed tickets both fence writes, regardless of socket health.
+  const allowed = enabled && !state.conversationLock && !conversationIsReadOnly();
   elements.messageInput.disabled = !allowed;
   elements.sendButton.disabled = !allowed;
   elements.attachButton.disabled = !allowed;
@@ -3877,9 +3887,11 @@ function setComposerEnabled(enabled) {
 
 function renderConversationLock() {
   const lock = state.conversationLock;
+  const readOnly = conversationIsReadOnly();
   elements.conversationLock.hidden = !lock;
-  elements.composer.hidden = Boolean(lock);
-  elements.commandStrip.hidden = Boolean(lock);
+  elements.doneConversationNotice.hidden = !readOnly;
+  elements.composer.hidden = Boolean(lock) || readOnly;
+  elements.commandStrip.hidden = Boolean(lock) || readOnly;
   if (!lock) {
     elements.conversationLockStatus.textContent = "";
     return;
@@ -3960,16 +3972,16 @@ function renderChatSessionControls() {
   })));
   elements.chatNodeSelect.value = state.activeNodeId || "";
   const activeTicket = state.activeTaskId ? state.tasks.find((task) => task.id === state.activeTaskId) : null;
-  elements.chatNodeSelect.disabled = !state.activeProjectId || !state.sessionNodes.length;
+  elements.chatNodeSelect.disabled = !state.activeProjectId || !state.sessionNodes.length || conversationIsReadOnly();
 
   syncSelectOptions(elements.chatHarnessSelect, state.harnesses.map((harness) => ({ value: harness.id, label: harness.label })));
   elements.chatHarnessSelect.value = state.engine;
-  elements.chatHarnessSelect.disabled = !state.activeProjectId || !state.harnesses.length;
+  elements.chatHarnessSelect.disabled = !state.activeProjectId || !state.harnesses.length || conversationIsReadOnly();
 
   // Conversations are picked in the conversations panel; the toolbar no longer duplicates it.
 
   const terminalNode = state.sessionNodes.find((node) => node.id === state.activeNodeId);
-  elements.openTerminalButton.disabled = !state.activeProjectId || !terminalNode?.online || !terminalNode.mapped;
+  elements.openTerminalButton.disabled = !state.activeProjectId || !terminalNode?.online || !terminalNode.mapped || conversationIsReadOnly();
   elements.openTerminalButton.title = terminalNode
     ? activeTicket
       ? `Open this ticket's folder in Terminal on ${terminalNode.name}`
@@ -4283,6 +4295,7 @@ function websocketUrl(sessionPath) {
   if (state.activeSessionId) url.searchParams.set("sessionId", state.activeSessionId);
   if (state.activeNodeId && !state.activeTaskId) url.searchParams.set("nodeId", state.activeNodeId);
   if (state.activeTaskId) url.searchParams.set("taskId", state.activeTaskId);
+  if (state.spinOffSourceTaskId) url.searchParams.set("sourceTaskId", state.spinOffSourceTaskId);
   if (state.newSessionSecretAccountIds.length) url.searchParams.set("secretAccountIds", state.newSessionSecretAccountIds.join(","));
   return url.toString();
 }
@@ -4290,11 +4303,15 @@ function websocketUrl(sessionPath) {
 function openSession(sessionPath, title = "New Pi conversation", preserveChat = false, preserveTask = false) {
   rememberDraft();
   // Opening a conversation that already exists drops the picks made for a new one.
-  if (sessionPath && sessionPath !== "claude:new") state.newSessionSecretAccountIds = [];
+  if (sessionPath && sessionPath !== "claude:new") {
+    state.newSessionSecretAccountIds = [];
+    state.spinOffSourceTaskId = null;
+  }
   // A turn left running on the conversation being left must not keep counting
   // up in the header of the one being opened.
   state.lastTurnStartedAt = 0;
   if (!preserveTask) state.activeTaskId = null;
+  if (!preserveChat) state.conversationReadOnly = false;
   if (state.activeTaskId) {
     const task = state.tasks.find((candidate) => candidate.id === state.activeTaskId);
     if (task) state.activeNodeId = task.currentNodeId;
@@ -4360,6 +4377,7 @@ function handleSocketPayload(payload, scrollOnReady = false) {
   if (payload.type === "ready") {
     const openingDraft = ["new", "claude:new"].includes(state.activeSessionPath);
     state.conversationLock = payload.ownership ?? null;
+    state.conversationReadOnly = payload.readOnly === true;
     state.engine = payload.engine || "pi";
     if (payload.executionNodeId) {
       state.activeNodeId = payload.executionNodeId;
@@ -4454,6 +4472,7 @@ function handleSocketPayload(payload, scrollOnReady = false) {
   }
   if (payload.type === "userMessage") {
     finalizeAssistantBubble();
+    state.spinOffSourceTaskId = null;
     const bubble = appendMessage("user", payload.text);
     if (payload.queued) markMessageQueued(bubble, payload.queueId);
     state.thinkingBubble = null;
@@ -4687,9 +4706,14 @@ async function loadTasks() {
     if (state.activeProjectId !== projectId) return;
     state.tasks = body.tasks;
     const activeTask = state.tasks.find((task) => task.id === state.activeTaskId);
-    if (activeTask) state.activeNodeId = activeTask.currentNodeId;
+    if (activeTask) {
+      state.activeNodeId = activeTask.currentNodeId;
+      state.conversationReadOnly = activeTask.status === "done";
+    }
     renderBoardView();
     renderChatSessionControls();
+    renderConversationLock();
+    setComposerEnabled(socketOpen());
     // Sessions can paint before the task list lands; the ticket marks come from
     // the tasks, so a late task list repaints the conversation rows.
     renderSessions();
@@ -4771,6 +4795,7 @@ function taskChatNodes() {
     elements.reconnectBanner,
     elements.commandStrip,
     elements.conversationLock,
+    elements.doneConversationNotice,
     elements.composer,
   ];
 }
@@ -4844,7 +4869,11 @@ async function moveTask(task, nextStatus) {
       body: JSON.stringify({ status: nextStatus }),
     });
     state.tasks = state.tasks.map((item) => (item.id === task.id ? body.task : item));
+    if (state.activeTaskId === task.id) state.conversationReadOnly = body.task.status === "done";
     renderBoardView();
+    renderChatSessionControls();
+    renderConversationLock();
+    setComposerEnabled(socketOpen());
     if (nextStatus === "planning") toast(`Planning started for "${task.title}"`);
     if (nextStatus === "in_progress") toast(`${task.engine === "claude" ? "Claude" : "Pi"} started working on "${task.title}"`);
   } catch (error) {
@@ -5820,9 +5849,9 @@ function addOptimisticSession(sessionId, sessionPath, title, color) {
 }
 
 /** A conversation is named up front so the list shows the user's own label from the first turn. */
-function openNewSessionNameDialog(sessionPath, defaultTitle) {
-  state.newSessionDraft = { sessionPath, defaultTitle };
-  elements.newSessionNameInput.value = "";
+function openNewSessionNameDialog(sessionPath, defaultTitle, sourceTaskId = null) {
+  state.newSessionDraft = { sessionPath, defaultTitle, sourceTaskId };
+  elements.newSessionNameInput.value = sourceTaskId ? defaultTitle : "";
   elements.newSessionNodeSelect.replaceChildren(...state.sessionNodes.map((node) => {
     const option = document.createElement("option");
     option.value = node.id;
@@ -5843,6 +5872,13 @@ elements.handoffProgressDialog.addEventListener("cancel", (event) => {
 });
 elements.newSessionButton.addEventListener("click", () => openNewSessionNameDialog(null, "New Pi conversation"));
 elements.newClaudeSessionButton.addEventListener("click", () => openNewSessionNameDialog("claude:new", "New Claude conversation"));
+elements.doneConversationContinueButton.addEventListener("click", () => {
+  const task = conversationTask();
+  if (!task || task.status !== "done") throw new Error("Done ticket was not found");
+  const harness = state.harnesses.find((candidate) => candidate.id === state.engine);
+  if (!harness) throw new Error(`Harness ${state.engine} was not found`);
+  openNewSessionNameDialog(harness.newSessionPath, `Follow-up: ${task.title}`, task.id);
+});
 elements.cancelNewSessionNameButton.addEventListener("click", () => elements.newSessionNameDialog.close());
 elements.newSessionNameForm.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -5852,6 +5888,7 @@ elements.newSessionNameForm.addEventListener("submit", (event) => {
   const node = state.sessionNodes.find((candidate) => candidate.id === elements.newSessionNodeSelect.value);
   if (!node || !node.online || !node.mapped) { toast("Choose an online node with this project mapped"); return; }
   state.newSessionSecretAccountIds = [...elements.newSessionSecretList.querySelectorAll("input:checked")].map((input) => input.value);
+  state.spinOffSourceTaskId = draft.sourceTaskId;
   state.activeNodeId = node.id;
   if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: node.id });
   elements.newSessionNameDialog.close();

@@ -35,7 +35,7 @@ test("a conversation owned by another node replaces the composer with a take-own
 
   // A locked conversation must never leave the message box usable.
   const composerEnabled = app.slice(app.indexOf("function setComposerEnabled(enabled)"));
-  assert.match(composerEnabled.slice(0, composerEnabled.indexOf("\n}")), /const allowed = enabled && !state\.conversationLock;/);
+  assert.match(composerEnabled.slice(0, composerEnabled.indexOf("\n}")), /const allowed = enabled && !state\.conversationLock && !conversationIsReadOnly\(\);/);
 
   assert.match(app, /state\.conversationLock = payload\.ownership \?\? null;/);
   assert.match(app, /if \(payload\.type === "ownership"\)/);
@@ -44,7 +44,7 @@ test("a conversation owned by another node replaces the composer with a take-own
 
   assert.match(styles, /\.conversation-lock \{/);
   assert.match(styles, /\.conversation-lock\[hidden\] \{ display: none; \}/);
-  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v116";/);
+  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v117";/);
 });
 
 test("the take-ownership controls are engine-neutral, so a Claude conversation can be claimed", async () => {

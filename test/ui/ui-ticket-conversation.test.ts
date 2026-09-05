@@ -194,6 +194,32 @@ test("a planned ticket can move directly to Done without starting implementation
   assert.equal(task.execution_state, "idle", "Done skips the remaining agent phases");
 });
 
+test("a Done ticket keeps its conversation read-only and can continue in a new chat", async () => {
+  const ticketCard = page.getByTestId("board-task-card").filter({ hasText: TICKET_TITLE });
+  await ticketCard.getByTestId("board-task-open-chat-button").click();
+  await page.locator(".message", { hasText: "retry budget was per-session" }).waitFor({ timeout: 20_000 });
+  await page.getByTestId("done-conversation-notice").waitFor({ timeout: 10_000 });
+  assert.equal(await page.locator("#composer").isHidden(), true, "Done ticket composer stays hidden");
+
+  const ticketRow = page.locator(".list-row", { hasText: CONVERSATION_NAME }).first();
+  await ticketRow.getByTestId("session-menu-button").click();
+  assert.equal(await page.getByTestId("session-rename-button").count(), 0, "Done conversation cannot be renamed");
+  assert.equal(await page.getByTestId("session-color-button").count(), 0, "Done conversation cannot be recoloured");
+  assert.equal(await page.getByTestId("session-remove-button").count(), 0, "Done conversation cannot be removed");
+  await page.keyboard.press("Escape");
+
+  await page.getByTestId("done-conversation-continue-button").click();
+  await page.locator("#newSessionNameDialog[open]").waitFor({ timeout: 10_000 });
+  assert.equal(await page.getByTestId("new-session-name-input").inputValue(), `Follow-up: ${TICKET_TITLE}`);
+  await page.getByTestId("new-session-name-start-button").click();
+  await page.waitForFunction(() => {
+    const input = document.querySelector("[data-testid='chat-message-input']");
+    return input instanceof HTMLTextAreaElement && !input.disabled;
+  }, null, { timeout: 20_000 });
+  assert.equal(await page.getByTestId("chat-message-input").isEnabled(), true, "follow-up chat is writable");
+  assert.equal(await page.getByTestId("done-conversation-notice").isHidden(), true, "follow-up leaves read-only mode");
+});
+
 test("the journey produced no console errors and no failed requests", () => {
   assert.deepEqual(consoleErrors, [], "no console errors");
   assert.deepEqual(failedResponses, [], "no 4xx or 5xx responses");

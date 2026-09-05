@@ -601,7 +601,7 @@ export async function completeTaskHandoff(handoffId: string, projectId: string, 
     }
     if (current.current_node_id === sourceNodeId) {
       if (current.execution_state !== "handoff_pending" || current.active_handoff_id !== record.handoffId) throw new Error("Task ownership changed or has an active lease");
-      const result = db.prepare("UPDATE tasks SET current_node_id = ?, session_path = NULL, worktree_path = NULL, worktree_branch = NULL, lease_owner_node_id = NULL, lease_expires_at = NULL, lease_token = NULL, execution_state = 'idle', handoff_context = NULL, active_handoff_id = NULL WHERE project_id = ? AND id = ? AND current_node_id = ? AND execution_state = 'handoff_pending' AND active_handoff_id = ?").run(destinationNodeId, projectId, taskId, sourceNodeId, record.handoffId);
+      const result = db.prepare("UPDATE tasks SET current_node_id = ?, worktree_path = NULL, worktree_branch = NULL, lease_owner_node_id = NULL, lease_expires_at = NULL, lease_token = NULL, execution_state = 'idle', handoff_context = NULL, active_handoff_id = NULL WHERE project_id = ? AND id = ? AND current_node_id = ? AND execution_state = 'handoff_pending' AND active_handoff_id = ?").run(destinationNodeId, projectId, taskId, sourceNodeId, record.handoffId);
       if (!result.changes) throw new Error("Task ownership changed or has an active lease");
     } else if (current.active_handoff_id && current.active_handoff_id !== record.handoffId) throw new Error("Task has another active handoff");
     else if (current.active_handoff_id === record.handoffId) db.prepare("UPDATE tasks SET active_handoff_id = NULL WHERE project_id = ? AND id = ? AND active_handoff_id = ?").run(projectId, taskId, record.handoffId);

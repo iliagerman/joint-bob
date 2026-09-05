@@ -5306,9 +5306,17 @@ async function updateTaskWithAttachments(projectId: string, existing: TaskRecord
 
 type SocketPayload = z.infer<typeof socketMessageSchema>;
 
+async function conversationTask(connection: ChatConnection): Promise<TaskRecord | undefined> {
+  if (!connection.taskId) return undefined;
+  return (await listTasks(connection.project.id)).find((candidate) => candidate.id === connection.taskId);
+}
+
+async function assertConversationWritable(connection: ChatConnection): Promise<void> {
+  if ((await conversationTask(connection))?.status === "done") throw new Error("Done ticket conversations are read-only");
+}
+
 async function resumeReviewedTask(connection: ChatConnection): Promise<void> {
-  if (!connection.taskId) return;
-  const task = (await listTasks(connection.project.id)).find((candidate) => candidate.id === connection.taskId);
+  const task = await conversationTask(connection);
   if (!task || task.status !== "review") return;
   const local = await getClusterNode();
   if (task.currentNodeId !== local.id) throw new Error("Task owner changed");
@@ -5678,6 +5686,7 @@ async function handleChatMessage(connection: ChatConnection, raw: Buffer): Promi
   }
 
   if (updatePreparing) throw new Error("Server update in progress");
+  if (!["models", "tools"].includes(payload.type)) await assertConversationWritable(connection);
 
   if (payload.type === "setEngine") {
     if (!payload.engine) throw new Error("Missing engine");
@@ -5915,12 +5924,29 @@ webSocketServer.on("connection", async (socket, request) => {
   }
   const taskId = taskIdResult.success ? taskIdResult.data : undefined;
   const rawSessionPathFromUrl = url.searchParams.get("sessionPath");
-  const requestedSessionId = url.searchParams.get("sessionId");
+  const suppliedSessionId = url.searchParams.get("sessionId");
+  const sourceTaskIdResult = socketTaskIdSchema.safeParse(url.searchParams.get("sourceTaskId"));
+  if (url.searchParams.has("sourceTaskId") && !sourceTaskIdResult.success) {
+    socket.close(1008, "Invalid source task ID");
+    return;
+  }
+  const sourceTaskId = sourceTaskIdResult.success ? sourceTaskIdResult.data : undefined;
   const canMatchTaskSession = rawSessionPathFromUrl && !["new", "watch", "claude:new"].includes(rawSessionPathFromUrl);
-  const tasks = taskId || canMatchTaskSession ? await listTasks(project.id) : [];
+  const tasks = taskId || sourceTaskId || canMatchTaskSession ? await listTasks(project.id) : [];
   const task = taskId
     ? tasks.find((candidate) => candidate.id === taskId)
     : tasks.find((candidate) => candidate.sessionPath === rawSessionPathFromUrl);
+  const taskIdentity = task && rawSessionPathFromUrl !== "watch" ? taskConversationIdentity(task) : null;
+  const requestedSessionId = suppliedSessionId ?? taskIdentity?.sessionId ?? null;
+  const sourceTask = sourceTaskId ? tasks.find((candidate) => candidate.id === sourceTaskId) : undefined;
+  if (sourceTaskId && (!sourceTask || sourceTask.status !== "done")) {
+    socket.close(1008, "Source ticket is not Done");
+    return;
+  }
+  if (sourceTaskId && !["new", "claude:new"].includes(rawSessionPathFromUrl ?? "")) {
+    socket.close(1008, "A follow-up must start a new conversation");
+    return;
+  }
   if (taskId && !task) {
     socket.close(1008, "Task not found");
     return;
@@ -6014,8 +6040,7 @@ webSocketServer.on("connection", async (socket, request) => {
   const secretAccountIds = socketSecretAccountIdsSchema.parse((url.searchParams.get("secretAccountIds") ?? "").split(",").filter(Boolean));
   if (requestedSessionId && rawSessionPath !== "watch") {
     listedSessions = await listHarnessSessions(sessionSearchProject);
-    const identity = task ? taskConversationIdentity(task) : null;
-    if (task?.sessionPath && identity?.sessionId === requestedSessionId) rawSessionPath = resolveLocalSessionPath(task.sessionPath).path;
+    if (task?.sessionPath && taskIdentity?.sessionId === requestedSessionId) rawSessionPath = resolveLocalSessionPath(task.sessionPath).path;
     else {
       const matching = listedSessions.find((candidate) => candidate.id === requestedSessionId);
       if (matching) rawSessionPath = matching.path;
@@ -6050,7 +6075,6 @@ webSocketServer.on("connection", async (socket, request) => {
   // Ticket conversations live in the ticket workspace, not the project directory,
   // so this must search the same paths the conversation list searches.
   if ((requestedSessionPath || draft) && !listedSessions) listedSessions = await listHarnessSessions(sessionSearchProject);
-  const taskIdentity = task ? taskConversationIdentity(task) : null;
   const listedSession = listedSessions?.find((candidate) => candidate.path === (draft ? rawSessionPath : requestedSessionPath)
     || Boolean(!draft && taskIdentity && requestedSessionId === taskIdentity.sessionId && candidate.harnessId === taskIdentity.engine && candidate.id === taskIdentity.sessionId));
   if ((requestedSessionPath || draft) && !listedSession) {
@@ -6060,6 +6084,20 @@ webSocketServer.on("connection", async (socket, request) => {
   if (draft && (!listedSession?.draft || listedSession.id !== draft.sessionId || !await getConversationRecord(project.id, draft.engine, draft.sessionId))) {
     socket.close(1008, "Conversation not found");
     return;
+  }
+  let spinOffContext: string | null = null;
+  if (sourceTask) {
+    if (!sourceTask.sessionPath) {
+      socket.close(1008, "Source ticket has no conversation");
+      return;
+    }
+    try {
+      const localSessionPath = resolveLocalSessionPath(sourceTask.sessionPath).path;
+      spinOffContext = sourceTask.handoffContext ?? await taskHandoffContext(project, { ...sourceTask, sessionPath: localSessionPath });
+    } catch (error) {
+      socket.close(1008, webSocketCloseReason(error instanceof Error ? error.message : "Source conversation is unavailable"));
+      return;
+    }
   }
   const validRequestedSessionId = requestedSessionId && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestedSessionId) ? requestedSessionId : undefined;
   const ownershipSessionId = listedSession && !listedSession.draft ? listedSession.id : draft?.sessionId ?? validRequestedSessionId ?? randomUUID();
@@ -6092,7 +6130,7 @@ webSocketServer.on("connection", async (socket, request) => {
   }
   let connection: ChatConnection = {
     socket, project, taskId: task?.id ?? null, cwd, engine: "pi", shared: null,
-    claude: emptyClaudeState(ownershipSessionId), handoffContext: null, secretAccountIds,
+    claude: emptyClaudeState(ownershipSessionId), handoffContext: spinOffContext, secretAccountIds,
   };
 
   if (requestedEngine === "claude") {
@@ -6135,6 +6173,7 @@ webSocketServer.on("connection", async (socket, request) => {
       status: claudeStatus(connection),
       ownership: foreignOwner,
       executionNodeId: local.id,
+      readOnly: task?.status === "done",
     });
     // Replay the in-flight turn so a reconnecting client sees the text and tool
     // calls that streamed while its socket was down.
@@ -6170,6 +6209,7 @@ webSocketServer.on("connection", async (socket, request) => {
       status: getSessionStatus(sharedSession.handle.session, sharedSession.handle.safeguardsEnabled),
       ownership: foreignOwner,
       executionNodeId: local.id,
+      readOnly: task?.status === "done",
     });
   }
 

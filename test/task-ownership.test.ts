@@ -66,7 +66,7 @@ test("task handoff start atomically blocks mutations and source completion stays
     assert.equal(handed.title, task.title);
     assert.equal(handed.currentNodeId, peer);
     assert.equal(handed.executionState, "idle");
-    assert.equal(handed.sessionPath, null);
+    assert.equal(handed.sessionPath, task.sessionPath);
     assert.equal(handed.worktreePath, null);
     assert.equal(handed.worktreeBranch, null);
     assert.equal(handed.handoffContext, null);

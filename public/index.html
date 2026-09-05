@@ -225,6 +225,13 @@
           </div>
           <button class="primary compact" id="conversationLockTakeButton" type="button" data-testid="conversation-lock-take-button">Take ownership</button>
         </div>
+        <div class="conversation-lock done-conversation-notice" id="doneConversationNotice" role="status" data-testid="done-conversation-notice" hidden>
+          <div class="conversation-lock-copy">
+            <strong>Done ticket</strong>
+            <span>This conversation is read-only. Continue in a new project chat to do more work.</span>
+          </div>
+          <button class="primary compact" id="doneConversationContinueButton" type="button" data-testid="done-conversation-continue-button">Continue in new chat</button>
+        </div>
         <form class="composer" id="composer">
           <div class="attachment-list" id="attachmentList" aria-live="polite"></div>
           <div class="command-autocomplete" id="commandAutocomplete" role="listbox" aria-label="Commands" data-testid="chat-command-autocomplete" hidden></div>

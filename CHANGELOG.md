@@ -11,6 +11,7 @@ Every deployment is a version. The newest section must always match the
 - Planned tickets can now move directly to Done to skip remaining agent phases without starting implementation
 - Conversation row buttons on phones no longer sit flush against each other
 - The Settings tab that manages workspaces is now named Workspaces instead of Projects
+- Done tickets now show read-only conversations with a button to continue work in a new chat that inherits the completed context
 
 ## 1.4.1 — 2026-09-05
 

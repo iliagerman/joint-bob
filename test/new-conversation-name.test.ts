@@ -25,8 +25,8 @@ test("creating a conversation asks for a name before it opens", async () => {
   const openDialog = app.slice(app.indexOf("function openNewSessionNameDialog("));
   const openDialogBody = openDialog.slice(0, openDialog.indexOf("\n}"));
   assert.ok(openDialogBody.length > 0, "Missing openNewSessionNameDialog");
-  assert.match(openDialogBody, /state\.newSessionDraft = \{ sessionPath, defaultTitle \};/);
-  assert.match(openDialogBody, /elements\.newSessionNameInput\.value = "";/);
+  assert.match(openDialogBody, /state\.newSessionDraft = \{ sessionPath, defaultTitle, sourceTaskId \};/);
+  assert.match(openDialogBody, /elements\.newSessionNameInput\.value = sourceTaskId \? defaultTitle : "";/);
   assert.match(openDialogBody, /state\.sessionNodes\.map\(\(node\)/);
   assert.match(openDialogBody, /elements\.newSessionNodeSelect\.value = localSessionNode\(\)\?\.id/);
   assert.match(openDialogBody, /elements\.newSessionNameDialog\.showModal\(\);/);

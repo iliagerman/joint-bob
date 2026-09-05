@@ -19,6 +19,7 @@ interface TaskReadyPayload {
   messages: Array<{ text: string }>;
   ownership: unknown;
   executionNodeId: string;
+  readOnly: boolean;
 }
 interface SyncthingStatus { state: string; needTotalItems: number; needBytes: number; errors?: unknown[] | number; }
 
@@ -79,12 +80,12 @@ async function waitForTask(node: NodeProcess, auth: Session, projectId: string, 
   throw new Error(node.output());
 }
 
-async function openTaskSocket(node: NodeProcess, auth: Session, projectId: string, taskId: string, sessionId: string, sessionPath: string): Promise<TaskReadyPayload> {
+async function openTaskSocket(node: NodeProcess, auth: Session, projectId: string, taskId: string, sessionPath: string, sessionId?: string): Promise<{ socket: WebSocket; ready: TaskReadyPayload }> {
   const url = new URL("/ws", node.baseUrl);
   url.protocol = "ws:";
   url.searchParams.set("projectId", projectId);
   url.searchParams.set("taskId", taskId);
-  url.searchParams.set("sessionId", sessionId);
+  if (sessionId) url.searchParams.set("sessionId", sessionId);
   url.searchParams.set("sessionPath", sessionPath);
   return await new Promise((resolve, reject) => {
     const socket = new WebSocket(url, { headers: { Origin: node.baseUrl, Cookie: auth.headers.Cookie } });
@@ -99,9 +100,23 @@ async function openTaskSocket(node: NodeProcess, auth: Session, projectId: strin
       const payload = JSON.parse(raw.toString()) as TaskReadyPayload;
       if (payload.type !== "ready") return;
       clearTimeout(timeout);
-      socket.close();
-      resolve(payload);
+      socket.off("error", fail);
+      resolve({ socket, ready: payload });
     });
+  });
+}
+
+function nextSocketPayload(socket: WebSocket, type: string): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error(`Task WebSocket did not send ${type}`)), 10_000);
+    const onMessage = (raw: WebSocket.RawData): void => {
+      const payload = JSON.parse(raw.toString()) as Record<string, unknown>;
+      if (payload.type !== type) return;
+      clearTimeout(timeout);
+      socket.off("message", onMessage);
+      resolve(payload);
+    };
+    socket.on("message", onMessage);
   });
 }
 
@@ -294,7 +309,7 @@ test("task handoff preserves an undiscovered Claude ticket transcript and moves 
     ]);
     const now = "2026-01-01T00:00:00.000Z";
     const task: TaskRecord = {
-      id: "legacy-ticket-task", title: "Legacy ticket", description: "Preserve transcript", attachments: [], status: "backlog", engine: "claude", planMode: false, reviewMode: false, phaseConfig: {}, sessionPath: `claude:${sourceSessionFile}`, worktreePath: null, worktreeBranch: null, mergedAt: null,
+      id: "legacy-ticket-task", title: "Legacy ticket", description: "Preserve transcript", attachments: [], status: "done", engine: "claude", planMode: false, reviewMode: false, phaseConfig: {}, sessionPath: `claude:${sourceSessionFile}`, worktreePath: null, worktreeBranch: null, mergedAt: null,
       mergeState: "none", conflictCount: 0, mergeWarning: null, mergeTx: null, mergeDigests: null, runKind: null,
       currentNodeId: sourceId, leaseOwnerNodeId: null, leaseExpiresAt: null, executionState: "idle", handoffContext: null, originNodeId: sourceId, createdAt: now, updatedAt: now,
     };
@@ -320,13 +335,37 @@ test("task handoff preserves an undiscovered Claude ticket transcript and moves 
       waitForTask(destination, destinationAuth, project.id, task.id, (candidate) => candidate.currentNodeId === destinationId && candidate.executionState === "idle"),
     ]);
 
-    const ready = await openTaskSocket(source, sourceAuth, project.id, task.id, sessionId, handedOff.task.sessionPath!);
+    const sourceReplica = await waitForTask(source, sourceAuth, project.id, task.id, (candidate) => candidate.currentNodeId === destinationId);
+    assert.equal(sourceReplica.sessionPath, `claude:${sourceSessionFile}`, "Previous owner retains the synchronized conversation pointer");
+
+    // Board cards only carry their node-local task path, not the session id.
+    // The owner must recover the stable identity after the source proxies this path.
+    const opened = await openTaskSocket(source, sourceAuth, project.id, task.id, sourceReplica.sessionPath!);
+    const { ready } = opened;
     assert.equal(ready.engine, "claude");
     assert.equal(ready.sessionId, sessionId);
     assert.equal(ready.sessionFile, `claude:${destinationSessionFile}`);
     assert.equal(ready.messages.some((message: { text: string }) => message.text === "preserved ticket message"), true);
     assert.equal(ready.ownership, null);
     assert.equal(ready.executionNodeId, destinationId);
+    assert.equal(ready.readOnly, true);
+
+    const renamed = await fetch(`${destination.baseUrl}/api/projects/${project.id}/sessions/title`, {
+      method: "PUT",
+      headers: destinationAuth.headers,
+      body: JSON.stringify({ engine: "claude", sessionId, title: "Mutated title" }),
+    });
+    assert.equal(renamed.status, 409, "Done conversation title must be immutable");
+    const removed = await fetch(`${source.baseUrl}/api/projects/${project.id}/sessions?engine=claude&sessionId=${sessionId}&taskId=${task.id}`, {
+      method: "DELETE",
+      headers: sourceAuth.headers,
+    });
+    assert.equal(removed.status, 409, "Done conversation transcript must not be removable");
+
+    const rejected = nextSocketPayload(opened.socket, "error");
+    opened.socket.send(JSON.stringify({ type: "prompt", message: "mutate a finished ticket" }));
+    assert.deepEqual(await rejected, { type: "error", error: "Done ticket conversations are read-only" });
+    opened.socket.close();
     const ownership = await (await fetch(`${destination.baseUrl}/api/cluster/sessions/ownership?engine=claude&sessionId=${sessionId}`, { headers: { Authorization: `Bearer ${destinationToken}` } })).json() as { ownership: { ownerNodeId: string; status: string } };
     assert.equal(ownership.ownership.ownerNodeId, destinationId);
     assert.equal(ownership.ownership.status, "owned");
