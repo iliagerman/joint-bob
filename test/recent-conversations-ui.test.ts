@@ -77,14 +77,17 @@ test("recent conversations are recorded, pinnable, and reopenable", async () => 
   const app = await readFile("public/app.js", "utf8");
 
   assert.match(app, /recentSessions: \[\]/);
-  assert.match(app, /state\.recentSessions = preferences\.recentSessions \|\| \[\];/);
+  assert.match(app, /state\.recentSessions = recents\.recentSessions \|\| \[\];/);
+  assert.match(app, /async function loadRecentSessions\(\)/);
+  assert.match(app, /api\("\/api\/recents"/);
   assert.match(app, /function canonicalSessionPath\(sessionPath\)/);
   assert.match(app, /sessionPath\.replace\(\/\\\.sync-conflict-/);
   assert.match(app, /function rememberRecentSession\(session\)/);
   assert.match(app, /sessionPath: canonicalSessionPath\(session\.path\)/);
   assert.match(app, /recentSessionKey\(candidate\) !== recentSessionKey\(entry\)/);
   assert.match(app, /async function openRecentSession\(entry\)/);
-  assert.match(app, /savePreferencesInBackground\(\{ recentSessions: state\.recentSessions \}\)/);
+  assert.match(app, /method: "PUT"/);
+  assert.match(app, /method: "DELETE"/);
 
   // Opening any listed conversation is what makes it recent.
   const start = app.indexOf("function openListedSession(session)");
@@ -102,7 +105,17 @@ test("recent conversations are recorded, pinnable, and reopenable", async () => 
   assert.doesNotMatch(app, /\.setItem\(/);
 });
 
-test("recent conversations round-trip through the preferences API", async () => {
+test("both WebSocket message handlers reload replicated recents", async () => {
+  const app = await readFile("public/app.js", "utf8");
+  const activeStart = app.indexOf("function handleSocketPayload(payload, scrollOnReady = false)");
+  const watchStart = app.indexOf("function ensureWatchSocket()");
+  assert.ok(activeStart >= 0, "Missing active-chat socket handler");
+  assert.ok(watchStart >= 0, "Missing watch socket handler");
+  assert.match(app.slice(activeStart, app.indexOf("\nfunction scheduleAgentRunPoll", activeStart)), /payload\.type === "recentsChanged"\) loadRecentSessions\(\)\.catch/);
+  assert.match(app.slice(watchStart, watchStart + 3000), /payload\.type === "recentsChanged"\) loadRecentSessions\(\)\.catch/);
+});
+
+test("legacy recents remain in preferences while active recents use their own API", async () => {
   const [preferences, server, styles] = await Promise.all([
     readFile("src/preferences.ts", "utf8"),
     readFile("src/server.ts", "utf8"),
@@ -110,7 +123,7 @@ test("recent conversations round-trip through the preferences API", async () => 
   ]);
 
   assert.ok(preferences.includes("recentSessions"), "preferences.ts is missing recentSessions");
-  assert.ok(server.includes("recentSessions"), "server.ts is missing recentSessions");
+  assert.ok(server.includes("/api/recents"), "server.ts is missing the recents API");
   assert.match(preferences, /ALTER TABLE user_preferences ADD COLUMN recent_sessions TEXT NOT NULL DEFAULT '\[\]'/);
   assert.match(preferences, /export interface RecentSession/);
 
@@ -225,7 +238,7 @@ test("the recents dialog shows one row per conversation, dated by its latest mes
 
   // Listing and opening match copies too, so a merged row still resolves to a live session.
   const apply = app.slice(app.indexOf("function applyRecentSessionActivity(sessionsByProject)"));
-  assert.match(apply.slice(0, apply.indexOf("\n}")), /transcriptKey\(candidate\.path\) === recentSessionKey\(entry\)/);
+  assert.match(apply.slice(0, apply.indexOf("\n}")), /sessionRecentKey\(candidate\) === recentSessionKey\(entry\)/);
   const open = app.slice(app.indexOf("async function openRecentSession(entry)"));
-  assert.match(open.slice(0, open.indexOf("\n}")), /transcriptKey\(candidate\.path\) === recentSessionKey\(entry\)/);
+  assert.match(open.slice(0, open.indexOf("\n}")), /sessionRecentKey\(candidate\) === recentSessionKey\(entry\)/);
 });

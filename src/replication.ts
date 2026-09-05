@@ -8,6 +8,7 @@ import { applyCanvasShortcutEvent, ensureCanvasShortcutSchema } from "./canvas-s
 import { applyConversationReviewEvent, ensureConversationReviewReplicaSchema } from "./conversation-reviews.js";
 import { applyConversationRecordEvent, ensureConversationRecordSchema } from "./conversation-records.js";
 import { applyUserPinEvent, ensureUserPinSchema } from "./user-pins.js";
+import { applyUserRecentSessionEvent, ensureUserRecentSessionSchema } from "./recent-sessions.js";
 import { isHarnessId, PROJECT_COLORS, type TaskRecord } from "./types.js";
 
 export interface ReplicationEvent {
@@ -20,7 +21,7 @@ export interface ReplicationEvent {
   createdAt: string;
 }
 export interface ReplicationBatch { events: ReplicationEvent[]; }
-export type ReplicationInvalidation = "projectsChanged" | "sessionsChanged" | "tasksChanged" | "shortcutsChanged" | "pinsChanged";
+export type ReplicationInvalidation = "projectsChanged" | "sessionsChanged" | "tasksChanged" | "shortcutsChanged" | "pinsChanged" | "recentsChanged";
 interface OutboxRow { event_id: string; origin_node_id: string; entity_type: string; entity_key: string; operation: string; payload: string; created_at: string; }
 interface NamePayload { scope: "projects" | "sessions" | "session_colors"; key: string; name: string | null; updatedAt: string; originNodeId: string; }
 interface ProjectLockPayload { projectId: string; lock: { nodeId: string; nodeName: string; lockedAt: string } | null; updatedAt: string; originNodeId: string; }
@@ -94,6 +95,7 @@ export function replicationInvalidations(events: ReplicationEvent[]): Replicatio
   if (entityTypes.has("task")) invalidations.add("tasksChanged");
   if (entityTypes.has("canvas.shortcut")) invalidations.add("shortcutsChanged");
   if (entityTypes.has("user.pin")) invalidations.add("pinsChanged");
+  if (entityTypes.has("user.recent")) invalidations.add("recentsChanged");
   return [...invalidations];
 }
 
@@ -192,7 +194,7 @@ function applyTaskEvent(db: DatabaseSync, event: ReplicationEvent): boolean {
 }
 
 export async function receiveReplicationBatch(batch: ReplicationBatch): Promise<string[]> {
-  const db = await replicationDatabase(); ensureNameSchema(db); ensureTaskSchema(db); ensureProjectLockSchema(db); ensureConversationOwnershipSchema(db); ensureConversationRecordSchema(db); ensureConversationReviewReplicaSchema(db); ensureCanvasShortcutSchema(db); ensureUserPinSchema(db); db.exec("BEGIN IMMEDIATE");
+  const db = await replicationDatabase(); ensureNameSchema(db); ensureTaskSchema(db); ensureProjectLockSchema(db); ensureConversationOwnershipSchema(db); ensureConversationRecordSchema(db); ensureConversationReviewReplicaSchema(db); ensureCanvasShortcutSchema(db); ensureUserPinSchema(db); ensureUserRecentSessionSchema(db); db.exec("BEGIN IMMEDIATE");
   try {
     const insert = db.prepare("INSERT OR IGNORE INTO replication_inbox (event_id, origin_node_id, received_at) VALUES (?, ?, ?)");
     const remove = db.prepare("DELETE FROM replication_inbox WHERE event_id = ?");
@@ -203,7 +205,7 @@ export async function receiveReplicationBatch(batch: ReplicationBatch): Promise<
         received.push(event.id);
         continue;
       }
-      const applied = event.entityType === "name.override" ? (applyNameEvent(db, event), true) : event.entityType === "project.lock" ? (applyProjectLockEvent(db, event), true) : event.entityType === "task" ? applyTaskEvent(db, event) : event.entityType === "conversation.ownership" ? (applyConversationOwnershipEvent(db, event), true) : event.entityType === "conversation.record" ? (applyConversationRecordEvent(db, event), true) : event.entityType === "conversation.review" ? (applyConversationReviewEvent(db, event), true) : event.entityType === "canvas.shortcut" ? (applyCanvasShortcutEvent(db, event), true) : event.entityType === "user.pin" ? (applyUserPinEvent(db, event), true) : (() => { throw new Error("Unsupported replication event"); })();
+      const applied = event.entityType === "name.override" ? (applyNameEvent(db, event), true) : event.entityType === "project.lock" ? (applyProjectLockEvent(db, event), true) : event.entityType === "task" ? applyTaskEvent(db, event) : event.entityType === "conversation.ownership" ? (applyConversationOwnershipEvent(db, event), true) : event.entityType === "conversation.record" ? (applyConversationRecordEvent(db, event), true) : event.entityType === "conversation.review" ? (applyConversationReviewEvent(db, event), true) : event.entityType === "canvas.shortcut" ? (applyCanvasShortcutEvent(db, event), true) : event.entityType === "user.pin" ? (applyUserPinEvent(db, event), true) : event.entityType === "user.recent" ? (applyUserRecentSessionEvent(db, event), true) : (() => { throw new Error("Unsupported replication event"); })();
       if (!applied) {
         remove.run(event.id);
         continue;

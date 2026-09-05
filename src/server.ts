@@ -53,10 +53,11 @@ import { importProjectDirectory, ProjectDirectoryImportError, relocateProjectDir
 import { listAuditEvents } from "./audit.js";
 import { clearCanvasShortcut, listCanvasShortcuts, releaseCanvasShortcuts, setCanvasShortcut } from "./canvas-shortcuts.js";
 import { listUserPins, setUserPin } from "./user-pins.js";
+import { listUserRecentSessions, migrateLegacyRecentSessions, removeUserRecentSession, setUserRecentSession, type SyncedRecentSession } from "./recent-sessions.js";
 import {
   CANVAS_MAX_ROW_HEIGHT, CANVAS_MIN_ROW_HEIGHT, canvasRowGeometryIsLegal,
   getUserPreferences, migrateLegacyCanvasLayout, normalizeCanvasKeymapPreference, normalizeCanvasLayoutPreference,
-  updateUserPreferences, type UserPreferences,
+  updateUserPreferences, type RecentSession, type UserPreferences,
 } from "./preferences.js";
 import { appVersion, readChangelog } from "./changelog.js";
 import { applyRuntimeLeaseSnapshot, conversationLeaseRunning, conversationRuntimeDatabase, sweepExpiredRuntimeLeases, type RuntimeLeaseInput } from "./conversation-runtime.js";
@@ -406,6 +407,11 @@ const userPinSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("project"), projectId: z.string().trim().min(1).max(120), pinned: z.boolean() }).strict(),
   z.object({ kind: z.literal("conversation"), projectId: z.string().trim().min(1).max(120), engine: registeredHarnessIdSchema, sessionId: z.string().trim().min(1).max(240), pinned: z.boolean() }).strict(),
 ]);
+const recentSessionSchema = z.object({
+  projectId: z.string().trim().min(1).max(120), engine: registeredHarnessIdSchema, sessionId: z.string().trim().min(1).max(240),
+  sessionPath: z.string().trim().min(1).max(2000), title: z.string().max(300), openedAt: z.string().datetime(), updatedAt: z.string().datetime().nullable(),
+}).strict();
+const recentSessionIdentitySchema = recentSessionSchema.pick({ projectId: true, engine: true, sessionId: true });
 const socketTaskIdSchema = z.string().trim().min(1).max(120);
 const sessionDeleteSchema = z.object({ projectId: z.string().min(1), engine: registeredHarnessIdSchema, sessionId: z.string().uuid(), taskId: socketTaskIdSchema.optional() });
 const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024;
@@ -1237,6 +1243,53 @@ app.delete("/api/auth/sessions/:sessionId", (request, response) => {
 app.get("/api/preferences", (_request, response) => {
   const session = response.locals.authSession as AuthSession;
   response.json(getUserPreferences(session.userId));
+});
+
+function stableLegacyRecents(entries: RecentSession[]): SyncedRecentSession[] {
+  const stable: SyncedRecentSession[] = [];
+  for (const entry of entries) {
+    try {
+      const adapter = entry.engine && entry.sessionId ? null : harnessForSessionPath(entry.sessionPath);
+      const engine = entry.engine ?? adapter?.id;
+      const sessionId = entry.sessionId ?? adapter?.paths.sessionId(entry.sessionPath);
+      if (engine && sessionId && isHarnessId(engine) && Number.isFinite(Date.parse(entry.openedAt))) {
+        stable.push({ ...entry, engine, sessionId, updatedAt: entry.updatedAt ?? null });
+      }
+    } catch { /* Stored legacy preference JSON is an external persistence boundary. */ }
+  }
+  return stable;
+}
+
+app.get("/api/recents", async (_request, response, next) => {
+  try {
+    const session = response.locals.authSession as AuthSession;
+    const local = await getClusterNode();
+    migrateLegacyRecentSessions(session.username, stableLegacyRecents(getUserPreferences(session.userId).recentSessions), local.id);
+    response.json({ recentSessions: listUserRecentSessions(session.username) });
+  } catch (error) { next(error); }
+});
+
+app.put("/api/recents", async (request, response, next) => {
+  try {
+    const session = response.locals.authSession as AuthSession;
+    const entry = recentSessionSchema.parse(request.body);
+    const project = await getProject(entry.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    const local = await getClusterNode();
+    response.json({ recentSessions: setUserRecentSession(session.username, { ...entry, projectId: project.id }, local.id) });
+    broadcastToAllClients({ type: "recentsChanged" });
+  } catch (error) { next(error); }
+});
+
+app.delete("/api/recents", async (request, response, next) => {
+  try {
+    const session = response.locals.authSession as AuthSession;
+    const target = recentSessionIdentitySchema.parse(request.body);
+    const project = await getProject(target.projectId);
+    const local = await getClusterNode();
+    response.json({ recentSessions: removeUserRecentSession(session.username, { ...target, projectId: project?.id ?? target.projectId }, local.id) });
+    broadcastToAllClients({ type: "recentsChanged" });
+  } catch (error) { next(error); }
 });
 
 app.get("/api/pins", (_request, response) => {

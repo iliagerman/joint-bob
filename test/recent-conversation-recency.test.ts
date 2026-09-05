@@ -33,6 +33,10 @@ test("an opened conversation records its latest activity, and the list keeps it 
   assert.match(app, /function syncRecentSessionActivity\(\)/);
   const apply = functionBody(app, "function applyRecentSessionActivity(sessionsByProject) {");
   assert.match(apply, /sessions\.find/);
+  assert.match(apply, /const changedEntries = \[\];/);
+  assert.match(apply, /changedEntries\.push\(changed\)/);
+  assert.match(apply, /for \(const entry of changedEntries\) saveRecentSessionInBackground\(entry\)/);
+  assert.doesNotMatch(apply, /for \(const entry of state\.recentSessions\) saveRecentSessionInBackground\(entry\)/);
   const renderSessions = functionBody(app, "function renderSessions() {");
   assert.match(renderSessions, /syncRecentSessionActivity\(\);/);
 });

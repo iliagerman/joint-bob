@@ -130,6 +130,20 @@ test("opening a conversation renders its transcript", async () => {
   assert.match(await message.innerText(), /re-threading the same builder prompt/);
 });
 
+test("recent conversations persist through the replicated recents endpoint", async () => {
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+  await page.locator(".session-card", { hasText: "Thread-Based Agent Builder" }).first().click();
+  await page.locator(".message").first().waitFor({ timeout: 20_000 });
+  await page.getByTestId("recent-sessions-open-button").click();
+  await page.getByTestId("recent-sessions-dialog").getByText("Thread-Based Agent Builder", { exact: true }).waitFor({ timeout: 20_000 });
+  await page.getByTestId("recent-sessions-close-button").click();
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().waitFor({ timeout: 20_000 });
+  await page.getByTestId("recent-sessions-open-button").click();
+  await page.getByTestId("recent-sessions-dialog").getByText("Thread-Based Agent Builder", { exact: true }).waitFor({ timeout: 20_000 });
+  await page.getByTestId("recent-sessions-close-button").click();
+});
+
 test("conversation rows identify the harness with only its icon", async () => {
   const conversation = page.locator(".session-card", { hasText: "Thread-Based Agent Builder" }).first();
   const agent = conversation.getByTestId("session-agent-label");

@@ -18,6 +18,7 @@ interface PeerView { id: string; name: string; url: string; online: boolean; las
 interface InventoryView { node: { id: string }; projects: Array<{ project: { id: string; name: string }; aliases: string[] }> }
 interface SessionView { id: string; path: string; title: string; harnessId: string; executionNodeId?: string }
 interface PinsView { projectIds: string[]; conversations: Array<{ projectId: string; engine: string; sessionId: string }> }
+interface RecentSessionView { recentSessions: Array<{ projectId: string; engine: string; sessionId: string; title: string; openedAt: string }> }
 
 let root: string;
 let environment: DevEnvironment;
@@ -155,6 +156,59 @@ test("pin and unpin events replicate by stable conversation identity and wake re
   } finally {
     socket.close();
   }
+});
+
+test("recent conversations merge concurrent opens, map project twins, and wake remote tabs", async () => {
+  const projectA = nodeA.projects.find((candidate) => candidate.name === "Internal Assistant")!;
+  const projectB = nodeB.projects.find((candidate) => candidate.name === "Internal Assistant")!;
+  const sessions = (await api<{ sessions: SessionView[] }>(nodeA, sessionA, "GET", `/projects/${projectA.id}/sessions`)).body.sessions.filter((entry) => entry.harnessId === "pi");
+  const [first, second] = sessions;
+  assert.ok(first && second, "seeded project has two Pi conversations");
+  const watchUrl = new URL("/ws", nodeB.url.replace(/^http/, "ws"));
+  watchUrl.searchParams.set("projectId", projectB.id);
+  watchUrl.searchParams.set("sessionPath", "watch");
+  const socket = new WebSocket(watchUrl, { headers: { Cookie: sessionB.cookie, Origin: nodeB.url } });
+  const entry = (projectId: string, session: SessionView, openedAt: string) => ({ projectId, engine: "pi", sessionId: session.id, sessionPath: session.path, title: session.title, openedAt, updatedAt: null });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("watch socket did not become ready")), 10_000);
+      socket.on("message", (raw) => { if ((JSON.parse(raw.toString()) as { type?: string }).type === "watchReady") { clearTimeout(timeout); resolve(); } });
+      socket.once("error", reject);
+    });
+    const remoteChanged = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("remote tab did not receive recentsChanged")), 15_000);
+      socket.on("message", (raw) => { if ((JSON.parse(raw.toString()) as { type?: string }).type === "recentsChanged") { clearTimeout(timeout); resolve(); } });
+    });
+    await Promise.all([
+      api(nodeA, sessionA, "PUT", "/recents", entry(projectA.id, first, "2026-09-02T12:00:00.000Z")),
+      api(nodeB, sessionB, "PUT", "/recents", entry(projectB.id, second, "2026-09-02T13:00:00.000Z")),
+    ]);
+    await remoteChanged;
+    const deadline = Date.now() + 30_000;
+    let recentsA: RecentSessionView = { recentSessions: [] };
+    let recentsB: RecentSessionView = { recentSessions: [] };
+    while (Date.now() < deadline) {
+      const [a, b] = await Promise.all([api<RecentSessionView>(nodeA, sessionA, "GET", "/recents"), api<RecentSessionView>(nodeB, sessionB, "GET", "/recents")]);
+      recentsA = a.body;
+      recentsB = b.body;
+      if (recentsA.recentSessions.some((row) => row.sessionId === first.id) && recentsA.recentSessions.some((row) => row.sessionId === second.id)
+        && recentsB.recentSessions.some((row) => row.projectId === projectB.id && row.sessionId === first.id)
+        && recentsB.recentSessions.some((row) => row.sessionId === second.id)) break;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    assert.ok(recentsA.recentSessions.some((row) => row.sessionId === first.id), "node A received its first recent");
+    assert.ok(recentsA.recentSessions.some((row) => row.sessionId === second.id), "node A received node B's concurrent recent");
+    assert.ok(recentsB.recentSessions.some((row) => row.sessionId === second.id), "node B retained its concurrent recent");
+    assert.ok(recentsB.recentSessions.some((row) => row.projectId === projectB.id && row.sessionId === first.id), "node B mapped node A's recent to its project twin");
+    const removed = await api(nodeB, sessionB, "DELETE", "/recents", { projectId: projectB.id, engine: "pi", sessionId: first.id });
+    assert.equal(removed.status, 200);
+    while (Date.now() < deadline + 30_000) {
+      const rows = (await api<RecentSessionView>(nodeA, sessionA, "GET", "/recents")).body.recentSessions;
+      if (!rows.some((row) => row.sessionId === first.id)) return;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    assert.fail("recent delete did not replicate back to node A");
+  } finally { socket.close(); }
 });
 
 test("the two nodes reach each other over the network with their machine tokens", async () => {

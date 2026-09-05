@@ -609,9 +609,10 @@ async function initializeApplication() {
     showLogin();
     return;
   }
-  let [preferences, pins] = await Promise.all([
+  let [preferences, pins, recents] = await Promise.all([
     api("/api/preferences", { signal: AbortSignal.timeout(BOOT_REQUEST_TIMEOUT_MS) }),
     api("/api/pins", { signal: AbortSignal.timeout(BOOT_REQUEST_TIMEOUT_MS) }),
+    api("/api/recents", { signal: AbortSignal.timeout(BOOT_REQUEST_TIMEOUT_MS) }),
   ]);
   preferences = await migrateLegacyPreferences(preferences);
   state.preferencesLoaded = false;
@@ -627,7 +628,7 @@ async function initializeApplication() {
   state.pinnedSessionPaths = preferences.pinnedSessionPaths || [];
   state.replicatedPinnedProjectIds = pins.projectIds || [];
   state.pinnedConversations = pins.conversations || [];
-  state.recentSessions = preferences.recentSessions || [];
+  state.recentSessions = recents.recentSessions || [];
   setPanelCollapsed("projects", Boolean(preferences.projectsPanelCollapsed));
   setPanelCollapsed("chats", Boolean(preferences.chatsPanelCollapsed));
   syncNotifyButton();
@@ -2508,7 +2509,22 @@ function transcriptKey(sessionPath) {
 }
 
 function recentSessionKey(entry) {
-  return transcriptKey(entry.sessionPath);
+  return entry.engine && entry.sessionId ? `${entry.engine}:${entry.sessionId}` : transcriptKey(entry.sessionPath);
+}
+
+function sessionRecentKey(session) {
+  return session?.harnessId && session?.id ? `${session.harnessId}:${session.id}` : transcriptKey(session.path);
+}
+
+async function loadRecentSessions() {
+  const body = await api("/api/recents");
+  state.recentSessions = body.recentSessions || [];
+  if (elements.recentSessionsDialog.open) renderRecentSessionsDialog();
+}
+
+function saveRecentSessionInBackground(entry) {
+  api("/api/recents", { method: "PUT", body: JSON.stringify(entry) })
+    .catch((error) => console.warn("Could not save recent conversation", error));
 }
 
 /**
@@ -2540,7 +2556,7 @@ function rememberRecentSession(session) {
   };
   const others = state.recentSessions.filter((candidate) => recentSessionKey(candidate) !== recentSessionKey(entry));
   state.recentSessions = [entry, ...others].slice(0, RECENT_SESSIONS_LIMIT);
-  if (state.preferencesLoaded) savePreferencesInBackground({ recentSessions: state.recentSessions });
+  if (state.preferencesLoaded) saveRecentSessionInBackground(entry);
 }
 
 /** When the conversation last moved, not when this browser last opened it. */
@@ -2550,17 +2566,20 @@ function recentSessionActivityAt(entry) {
 
 /** Stamps each entry with the activity time from its project's freshly listed conversations. */
 function applyRecentSessionActivity(sessionsByProject) {
-  let changed = false;
+  const changedEntries = [];
   state.recentSessions = state.recentSessions.map((entry) => {
     const sessions = sessionsByProject.get(entry.projectId);
     if (!sessions) return entry;
-    const session = sessions.find((candidate) => transcriptKey(candidate.path) === recentSessionKey(entry));
+    const session = sessions.find((candidate) => sessionRecentKey(candidate) === recentSessionKey(entry));
     const updatedAt = session?.updatedAt ?? session?.createdAt ?? null;
     if (!updatedAt || updatedAt === entry.updatedAt) return entry;
-    changed = true;
-    return { ...entry, updatedAt };
+    const changed = { ...entry, updatedAt };
+    changedEntries.push(changed);
+    return changed;
   });
-  if (changed && state.preferencesLoaded) savePreferencesInBackground({ recentSessions: state.recentSessions });
+  if (state.preferencesLoaded) {
+    for (const entry of changedEntries) saveRecentSessionInBackground(entry);
+  }
 }
 
 /**
@@ -2600,7 +2619,10 @@ function recentSessionSearchText(entry) {
 
 function forgetRecentSession(entry) {
   state.recentSessions = state.recentSessions.filter((candidate) => recentSessionKey(candidate) !== recentSessionKey(entry));
-  if (state.preferencesLoaded) savePreferencesInBackground({ recentSessions: state.recentSessions });
+  if (state.preferencesLoaded) {
+    api("/api/recents", { method: "DELETE", body: JSON.stringify({ projectId: entry.projectId, engine: entry.engine, sessionId: entry.sessionId }) })
+      .catch((error) => { console.warn("Could not remove recent conversation", error); toast("Could not remove recent conversation"); });
+  }
   renderRecentSessionsDialog();
 }
 
@@ -2611,7 +2633,7 @@ function forgetRecentSession(entry) {
 async function openRecentSession(entry) {
   elements.recentSessionsDialog.close();
   if (state.activeProjectId !== entry.projectId) await selectProject(entry.projectId);
-  const session = state.sessions.find((candidate) => transcriptKey(candidate.path) === recentSessionKey(entry));
+  const session = state.sessions.find((candidate) => sessionRecentKey(candidate) === recentSessionKey(entry));
   if (!session) {
     forgetRecentSession(entry);
     toast("That conversation is no longer available");
@@ -4570,6 +4592,7 @@ function handleSocketPayload(payload, scrollOnReady = false) {
   }
   if (payload.type === "projectsChanged") refreshProjectsQuietly();
   if (payload.type === "pinsChanged") loadPins().catch((error) => console.warn(error));
+  if (payload.type === "recentsChanged") loadRecentSessions().catch((error) => console.warn(error));
   if (payload.type === "shortcutsChanged") state.canvasController?.reloadShortcuts();
   if (payload.type === "tasksChanged") {
     loadTasks().catch((error) => console.warn(error));
@@ -5279,6 +5302,7 @@ function ensureWatchSocket() {
     }
     if (payload.type === "projectsChanged") refreshProjectsQuietly();
     if (payload.type === "pinsChanged") loadPins().catch((error) => console.warn(error));
+    if (payload.type === "recentsChanged") loadRecentSessions().catch((error) => console.warn(error));
     if (payload.type === "shortcutsChanged") state.canvasController?.reloadShortcuts();
     if (payload.type === "tasksChanged") loadTasks().catch((error) => console.warn(error));
   });
