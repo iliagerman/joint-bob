@@ -15,6 +15,12 @@ for asset in boot.js app.js styles.css sw.js vendor/xterm/xterm.js; do
 done
 node --check "${work}/boot.js"
 node --check "${work}/app.js"
+# The app shell is app.js plus the feature modules it imports from /app/.
+mkdir -p "${work}/app"
+for module in $(grep -oE 'import "\./app/[a-z-]+\.js";' "${work}/app.js" | sed -E 's|^import "\./(app/[a-z-]+\.js)";$|\1|'); do
+  curl -fsS -o "${work}/${module}" -- "${BASE_URL}/${module}"
+  node --check "${work}/${module}"
+done
 
 EXPECTED_RELEASE="${EXPECTED_RELEASE}" node - "${work}" <<'NODE'
 const fs = require("node:fs");
@@ -25,12 +31,13 @@ if (health.status !== "ok" || health.release !== process.env.EXPECTED_RELEASE) {
   throw new Error(`Unexpected deployed release: ${JSON.stringify(health)}`);
 }
 const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
-const app = fs.readFileSync(path.join(root, "app.js"), "utf8");
+const modules = fs.readdirSync(path.join(root, "app")).sort().map((name) => path.join("app", name));
+const app = ["app.js", ...modules].map((file) => fs.readFileSync(path.join(root, file), "utf8")).join("\n");
 for (const asset of ["/boot.js", "/app.js", "/styles.css"]) {
   if (!html.includes(asset)) throw new Error(`Application shell does not load ${asset}`);
 }
 const bindings = new Set([...app.matchAll(/^  ([A-Za-z_$][\w$]*): (?:document\.querySelector|Array\.from\(document\.querySelectorAll)/gm)].map((match) => match[1]));
-const references = new Set([...app.matchAll(/elements\.([A-Za-z_$][\w$]*)/g)].map((match) => match[1]));
+const references = new Set([...app.matchAll(/(?<![./\w])elements\.([A-Za-z_$][\w$]*)/g)].map((match) => match[1]));
 const missingBindings = [...references].filter((name) => !bindings.has(name)).sort();
 if (missingBindings.length) throw new Error(`Unbound UI elements: ${missingBindings.join(", ")}`);
 const ids = [...app.matchAll(/^  [A-Za-z_$][\w$]*: document\.querySelector\("#([A-Za-z_$][\w$-]*)/gm)].map((match) => match[1]);
