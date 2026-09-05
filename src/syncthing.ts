@@ -63,6 +63,16 @@ const projectIgnorePatterns = [
   "dist/",
   "build/",
   "coverage/",
+  "test-results/",
+  "**/test-results/",
+  "playwright-report/",
+  "**/playwright-report/",
+  ".pytest_cache/",
+  "**/.pytest_cache/",
+  ".mypy_cache/",
+  "**/.mypy_cache/",
+  ".ruff_cache/",
+  "**/.ruff_cache/",
   "(?d)__pycache__/",
   ".DS_Store",
   ".env",
@@ -88,6 +98,8 @@ const projectIgnorePatterns = [
   ".netrc",
   "credentials.json",
   "service-account*.json",
+  "test_database_*.db",
+  "**/test_database_*.db",
 ];
 
 function defaultConfigPaths(): string[] {

@@ -13,7 +13,7 @@ export const TICKET_BASELINE_DIR = ".joint-bob-baseline";
 export const TICKET_MERGE_DIR = ".joint-bob-merge";
 
 const excludedDirectories = new Set([
-  ".git", "node_modules", ".venv", "venv", "dist", "build", "coverage", "__pycache__",
+  ".git", "node_modules", ".venv", "venv", "dist", "build", "coverage", "test-results", "playwright-report", ".pytest_cache", ".mypy_cache", ".ruff_cache", "__pycache__",
   ".joint-bob", ".joint-bob-attachments", ".pi-mobile-web", "logs",
 ]);
 const excludedFiles = new Set([
@@ -54,7 +54,7 @@ export function copyAllowed(projectPath: string, sourcePath: string): boolean {
   const name = path.basename(sourcePath);
   if (relative.split(path.sep).some((segment) => excludedDirectories.has(segment))) return false;
   if (excludedFiles.has(name) || name === ".env" || name.startsWith(".env.")) return false;
-  if (/^service-account.*\.json$/i.test(name) || excludedExtensions.has(path.extname(name).toLowerCase())) return false;
+  if (/^service-account.*\.json$/i.test(name) || /^test_database_.*\.db$/i.test(name) || excludedExtensions.has(path.extname(name).toLowerCase())) return false;
   return !excludedPrefixes.some((prefix) => name.startsWith(prefix));
 }
 

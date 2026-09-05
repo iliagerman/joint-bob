@@ -19,7 +19,8 @@ test("ticket chat controls hand off ownership instead of reconnecting", async ()
   assert.match(app, /Send a message first, then continue this ticket on another node/);
   assert.match(app, /if \(state\.activeTaskId\) \{[\s\S]*await continueTaskOnNode\(task, destination\)/);
   assert.match(app, /await continueTaskOnNode\(task, destination\)/);
-  assert.match(app, /if \(!task\.sessionPath\) throw new Error\("Send a message first, then continue this ticket on another node"\);[\s\S]*const body = await handoffTaskToPeer\(task, destination\);/);
+  assert.match(app, /if \(!body\) return false;/);
+  assert.match(app, /return true;/);
   assert.match(app, /tasks\/\$\{encodeURIComponent\(task\.id\)\}\/handoff/);
   assert.match(app, /openSession\(body\.task\.sessionPath, task\.title, false, true\)/);
 });
@@ -58,6 +59,21 @@ test("chat names its controls and continues conversations through takeover", asy
   assert.match(app, /session\.agentLabel/);
   assert.doesNotMatch(app, /session\.agentModel/);
   assert.match(server, /\(!config \|\| config\.engine === "pi"\) && shared/);
+});
+
+test("ticket handoff waits visibly for Syncthing before its shared POST", async () => {
+  const [html, app] = await Promise.all([readFile("public/index.html", "utf8"), readFile("public/app.js", "utf8")]);
+
+  assert.match(html, /id="handoffProgressDialog"[\s\S]*data-testid="handoff-progress-dialog"/);
+  assert.match(html, /id="handoffProgressStatus"[\s\S]*data-testid="handoff-progress-status"/);
+  assert.match(html, /id="handoffProgressCancelButton"[\s\S]*data-testid="handoff-progress-cancel-button"/);
+  assert.match(app, /let handoffWaitController/);
+  assert.match(app, /function renderHandoffProgress/);
+  assert.match(app, /async function waitForTaskHandoffReadiness/);
+  assert.match(app, /tasks\/\$\{encodeURIComponent\(task\.id\)\}\/eligibility/);
+  assert.match(app, /body\.source/);
+  assert.match(app, /waitingForSync/);
+  assert.match(app, /async function handoffTaskToPeer\(task, peer\)[\s\S]*waitForTaskHandoffReadiness\(task, peer\)/);
 });
 
 test("ordinary node selection does not open a new conversation", async () => {

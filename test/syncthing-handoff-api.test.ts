@@ -146,12 +146,44 @@ test("Syncthing readiness fences handoff ownership until both nodes are synchron
     assert.equal((await fetch(`${source.baseUrl}/api/cluster/events`, { method: "POST", headers: { Authorization: `Bearer ${sourceToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ events: [{ id: randomUUID(), originNodeId: sourceId, entityType: "task", entityKey: `${project.id}:${task.id}`, operation: "upsert", payload: { projectId: project.id, task, originNodeId: sourceId }, createdAt: task.updatedAt }] }) })).status, 200);
     await Promise.all([waitForTask(source, sourceAuth, project.id, task.id, () => true), waitForTask(destination, destinationAuth, project.id, task.id, () => true)]);
 
-    destinationSyncthing.status = { state: "syncing", needTotalItems: 1, needBytes: 0 };
+    destinationSyncthing.status = { state: "syncing", needTotalItems: 1, needBytes: 2048 };
+    const readiness = await fetch(`${source.baseUrl}/api/projects/${project.id}/tasks/${task.id}/eligibility`, { headers: sourceAuth.headers });
+    assert.equal(readiness.status, 200, source.output());
+    const destinationEntry = (await readiness.json() as { nodes: Array<{ node: { id: string }; eligible: boolean; waitingForSync: boolean; syncStatuses: Array<{ state: string; remainingFiles: number; remainingBytes: number }> }> }).nodes.find((entry) => entry.node.id === destinationId);
+    assert.ok(destinationEntry);
+    assert.equal(destinationEntry.eligible, false);
+    assert.equal(destinationEntry.waitingForSync, true);
+    assert.deepEqual(destinationEntry.syncStatuses.find((status) => status.state === "syncing"), { label: "shared", state: "syncing", remainingFiles: 1, remainingBytes: 2048, message: "Syncthing is synchronizing this folder" });
     const rejected = await fetch(`${source.baseUrl}/api/projects/${project.id}/tasks/${task.id}/handoff`, { method: "POST", headers: sourceAuth.headers, body: JSON.stringify({ peerId: destinationId }) });
     assert.equal(rejected.status, 409, source.output());
     assert.equal((await waitForTask(source, sourceAuth, project.id, task.id, (candidate) => candidate.executionState === "idle")).currentNodeId, sourceId);
 
+    destinationSyncthing.status = { state: "idle", needTotalItems: 0, needBytes: 0, errors: 1 };
+    const errorReadiness = await fetch(`${source.baseUrl}/api/projects/${project.id}/tasks/${task.id}/eligibility`, { headers: sourceAuth.headers });
+    assert.equal(errorReadiness.status, 200, source.output());
+    const errorDestinationEntry = (await errorReadiness.json() as { nodes: Array<{ node: { id: string }; eligible: boolean; waitingForSync: boolean; syncStatuses: Array<{ state: string }> }> }).nodes.find((entry) => entry.node.id === destinationId);
+    assert.ok(errorDestinationEntry);
+    assert.equal(errorDestinationEntry.eligible, false);
+    assert.equal(errorDestinationEntry.waitingForSync, true);
+    assert.equal(errorDestinationEntry.syncStatuses.find((status) => status.state === "error")?.state, "error");
+
     destinationSyncthing.status = { state: "idle", needTotalItems: 0, needBytes: 0 };
+    sourceSyncthing.status = { state: "scanning", needTotalItems: 0, needBytes: 0 };
+    const sourceReadiness = await fetch(`${source.baseUrl}/api/projects/${project.id}/tasks/${task.id}/eligibility`, { headers: sourceAuth.headers });
+    assert.equal(sourceReadiness.status, 200, source.output());
+    const sourceEntry = (await sourceReadiness.json() as { source: { node: { id: string }; eligible: boolean; waitingForSync: boolean; syncStatuses: Array<{ state: string }> } }).source;
+    assert.equal(sourceEntry.node.id, sourceId);
+    assert.equal(sourceEntry.eligible, false);
+    assert.equal(sourceEntry.waitingForSync, true);
+    assert.equal(sourceEntry.syncStatuses.find((status) => status.state === "syncing")?.state, "syncing");
+    const remoteReadiness = await fetch(`${destination.baseUrl}/api/projects/${project.id}/tasks/${task.id}/eligibility`, { headers: destinationAuth.headers });
+    assert.equal(remoteReadiness.status, 200, destination.output());
+    const remoteSourceEntry = (await remoteReadiness.json() as { source: { node: { id: string }; waitingForSync: boolean; syncStatuses: Array<{ state: string }> } }).source;
+    assert.equal(remoteSourceEntry.node.id, sourceId);
+    assert.equal(remoteSourceEntry.waitingForSync, true);
+    assert.equal(remoteSourceEntry.syncStatuses.find((status) => status.state === "syncing")?.state, "syncing");
+
+    sourceSyncthing.status = { state: "idle", needTotalItems: 0, needBytes: 0 };
     destinationSyncthing.statusSequence = [destinationSyncthing.status, { state: "syncing", needTotalItems: 1, needBytes: 0 }];
     const pending = await fetch(`${source.baseUrl}/api/projects/${project.id}/tasks/${task.id}/handoff`, { method: "POST", headers: sourceAuth.headers, body: JSON.stringify({ peerId: destinationId }) });
     assert.equal(pending.status, 202, source.output());

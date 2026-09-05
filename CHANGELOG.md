@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Symlinked skill directories are now discovered and loaded alongside regular directories
+- Ticket handoff now displays live Syncthing synchronization progress before finalizing the transfer, allowing users to see which files are still syncing instead of seeing an opaque eligibility error
 
 ## 1.4.0 — 2026-09-05
 

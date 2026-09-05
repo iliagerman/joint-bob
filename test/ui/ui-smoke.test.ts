@@ -447,6 +447,39 @@ test("the View link renders a source file as themed, highlighted code", async ()
   assert.ok(painted.width > 500, `the source uses the page width (got ${painted.width})`);
 });
 
+test("a top toast stays above the mobile composer", async () => {
+  const mobileContext = await browser.newContext({ viewport: { width: 430, height: 900 }, reducedMotion: "reduce", serviceWorkers: "block" });
+  const mobilePage = await mobileContext.newPage();
+  try {
+    await mobilePage.goto(node.url, { waitUntil: "domcontentloaded" });
+    await mobilePage.getByTestId("login-username-input").fill(environment.username);
+    await mobilePage.getByTestId("login-password-input").fill(environment.password);
+    await mobilePage.getByTestId("login-submit-button").click();
+    await mobilePage.getByTestId("nav-projects-button").click();
+    const project = mobilePage.locator(".project-card", { hasText: "Internal Assistant" }).first();
+    await project.waitFor({ timeout: 20_000 });
+    await project.click();
+    await mobilePage.locator(".session-card", { hasText: "Thread-Based Agent Builder" }).first().click();
+    await mobilePage.locator("#messageInput").waitFor();
+    await mobilePage.evaluate(() => {
+      const toast = document.createElement("div");
+      toast.className = "toast";
+      toast.innerHTML = '<span class="toast-message">Representative toast</span>';
+      document.body.append(toast);
+    });
+    await mobilePage.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const layout = await mobilePage.evaluate(() => {
+      const toast = document.querySelector(".toast")!.getBoundingClientRect();
+      const composer = document.querySelector("#messageInput")!.getBoundingClientRect();
+      return { top: toast.top, bottom: toast.bottom, composerTop: composer.top, viewport: window.innerHeight };
+    });
+    assert.ok(layout.top >= 0 && layout.top < layout.viewport / 4, `toast is in the safe top region (top ${layout.top})`);
+    assert.ok(layout.bottom < layout.composerTop, `toast clears composer (${layout.bottom} < ${layout.composerTop})`);
+  } finally {
+    await mobileContext.close();
+  }
+});
+
 test("the journey produced no console errors and no failed requests", () => {
   assert.deepEqual(consoleErrors, [], "no console errors");
   assert.deepEqual(failedResponses, [], "no 4xx or 5xx responses");

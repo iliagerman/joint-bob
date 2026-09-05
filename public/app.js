@@ -133,6 +133,8 @@ const state = {
 const TAKE_OWNERSHIP_WAIT_SECONDS = 5;
 let ownershipWait = null;
 let ownershipTaking = false;
+let handoffWaitController = null;
+let handoffFinalizing = false;
 const BOOT_MINIMUM_MS = 700;
 const BOOT_REQUEST_TIMEOUT_MS = 8_000;
 const bootStartedAt = performance.now();
@@ -426,6 +428,9 @@ const elements = {
   fileEditorMode: document.querySelector("#fileEditorMode"),
   fileEditorPreviewButton: document.querySelector("#fileEditorPreviewButton"),
   fileEditorPreview: document.querySelector("#fileEditorPreview"),
+  handoffProgressDialog: document.querySelector("#handoffProgressDialog"),
+  handoffProgressStatus: document.querySelector("#handoffProgressStatus"),
+  handoffProgressCancelButton: document.querySelector("#handoffProgressCancelButton"),
   confirmDialog: document.querySelector("#confirmDialog"),
   confirmEyebrow: document.querySelector("#confirmEyebrow"),
   confirmTitle: document.querySelector("#confirmTitle"),
@@ -913,6 +918,8 @@ function chooseOption({ title, message = "", eyebrow = "Choose", confirmLabel = 
 }
 
 function toast(message, duration = 3200) {
+  const existing = [...document.querySelectorAll(".toast")].find((node) => node.getClientRects().length > 0 && node.querySelector(".toast-message")?.textContent === message);
+  if (existing) return existing;
   const node = document.createElement("div");
   node.className = "toast";
   node.setAttribute("role", "alert");
@@ -4827,12 +4834,83 @@ async function moveTask(task, nextStatus) {
   }
 }
 
+function formatHandoffBytes(bytes) {
+  if (!bytes) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  return `${(bytes / 1024 ** index).toFixed(index ? 1 : 0)} ${units[index]}`;
+}
+
+function formatHandoffSyncStatus(status) {
+  const remaining = `${status.remainingFiles} files, ${formatHandoffBytes(status.remainingBytes)}`;
+  return `${status.label}: ${status.state}${status.state === "synced" ? "" : ` — ${remaining}`}${status.message ? ` (${status.message})` : ""}`;
+}
+
+function renderHandoffProgress(status, finalizing = false) {
+  elements.handoffProgressStatus.textContent = status;
+  elements.handoffProgressCancelButton.disabled = finalizing;
+  if (!elements.handoffProgressDialog.open) elements.handoffProgressDialog.showModal();
+}
+
+function cancelHandoffWait() {
+  if (handoffFinalizing) return;
+  handoffWaitController?.abort();
+}
+
+function handoffDelay(signal) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, 1000);
+    signal.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
+  });
+}
+
+function clearHandoffProgress() {
+  handoffWaitController = null;
+  handoffFinalizing = false;
+  if (elements.handoffProgressDialog.open) elements.handoffProgressDialog.close();
+}
+
+async function waitForTaskHandoffReadiness(task, peer) {
+  cancelHandoffWait();
+  const controller = new AbortController();
+  handoffWaitController = controller;
+  renderHandoffProgress(`Checking ${peer.name}…`);
+  try {
+    while (true) {
+      const body = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/tasks/${encodeURIComponent(task.id)}/eligibility`, { signal: controller.signal });
+      const candidate = body.nodes.find((entry) => entry.node.id === peer.id);
+      if (!candidate || !candidate.node.online) throw new Error(`${peer.name} is unavailable`);
+      const entries = [body.source, candidate].filter(Boolean);
+      const unavailable = entries.find((entry) => !entry.node.online);
+      if (unavailable) throw new Error(`${unavailable.node.name} is unavailable`);
+      const statuses = entries.flatMap((entry) => entry.syncStatuses.map((status) => ({ ...status, label: `${entry.node.name} · ${status.label}` })));
+      renderHandoffProgress(statuses.map(formatHandoffSyncStatus).join("\n") || `Checking ${peer.name}…`);
+      if (entries.every((entry) => entry.eligible)) return true;
+      const blocked = entries.filter((entry) => !entry.eligible);
+      if (blocked.some((entry) => !entry.waitingForSync)) throw new Error(blocked.flatMap((entry) => entry.reasons).join("; "));
+      await handoffDelay(controller.signal);
+    }
+  } catch (error) {
+    if (controller.signal.aborted) return false;
+    throw error;
+  } finally {
+    if (handoffWaitController === controller) handoffWaitController = null;
+  }
+}
+
 async function handoffTaskToPeer(task, peer) {
-  const body = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/tasks/${encodeURIComponent(task.id)}/handoff`, { method: "POST", body: JSON.stringify({ peerId: peer.id }) });
-  state.tasks = state.tasks.map((item) => item.id === task.id ? body.task : item);
-  renderBoardView();
-  toast(body.handoffPendingCommit ? `${body.destination.name}: destination commit pending` : `Handed off to ${body.destination.name}`);
-  return body;
+  try {
+    if (!await waitForTaskHandoffReadiness(task, peer)) return null;
+    handoffFinalizing = true;
+    renderHandoffProgress("Finalizing handoff…", true);
+    const body = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/tasks/${encodeURIComponent(task.id)}/handoff`, { method: "POST", body: JSON.stringify({ peerId: peer.id }) });
+    state.tasks = state.tasks.map((item) => item.id === task.id ? body.task : item);
+    renderBoardView();
+    toast(body.handoffPendingCommit ? `${body.destination.name}: destination commit pending` : `Handed off to ${body.destination.name}`);
+    return body;
+  } finally {
+    clearHandoffProgress();
+  }
 }
 
 async function handoffTask(task) {
@@ -4858,7 +4936,7 @@ async function handoffTask(task) {
       openProjectImportMapping([{ peerId: selected.node.id, projectId: project.id, name: project.name, remotePath: project.path, suggestedPath: "", mapOnPeer: true, handoffTaskId: task.id }]);
       return;
     }
-    if (!selected.eligible) throw new Error(selected.reasons.join("; "));
+    if (!selected.eligible && !selected.waitingForSync) throw new Error(selected.reasons.join("; "));
     await handoffTaskToPeer(task, selected.node);
   } catch (error) {
     toast(error.message);
@@ -5641,12 +5719,14 @@ async function continueTaskOnNode(task, destination) {
   if (task.executionState !== "idle") throw new Error("Wait for the ticket agent to finish before continuing on another node");
   if (!destination) throw new Error("Destination node was not found");
   const body = await handoffTaskToPeer(task, destination);
+  if (!body) return false;
   if (body.handoffPendingCommit) throw new Error(body.message);
   if (!body.task?.sessionPath) throw new Error("Ticket conversation is not available on the destination node");
   state.activeNodeId = destination.id;
   state.activeSessionId = null;
   if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: destination.id, activeSessionId: null });
   openSession(body.task.sessionPath, task.title, false, true);
+  return true;
 }
 
 elements.messages.addEventListener("scroll", () => {
@@ -5736,6 +5816,11 @@ function openNewSessionNameDialog(sessionPath, defaultTitle) {
   loadSecretAccounts().then(renderNewSessionSecrets).catch((error) => toast(error.message));
   elements.newSessionNameDialog.showModal();
 }
+elements.handoffProgressCancelButton.addEventListener("click", cancelHandoffWait);
+elements.handoffProgressDialog.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  cancelHandoffWait();
+});
 elements.newSessionButton.addEventListener("click", () => openNewSessionNameDialog(null, "New Pi conversation"));
 elements.newClaudeSessionButton.addEventListener("click", () => openNewSessionNameDialog("claude:new", "New Claude conversation"));
 elements.cancelNewSessionNameButton.addEventListener("click", () => elements.newSessionNameDialog.close());
@@ -5769,7 +5854,10 @@ elements.chatNodeSelect.addEventListener("change", async () => {
     const ownerId = task.currentNodeId;
     if (destination.id === ownerId) return;
     try {
-      await continueTaskOnNode(task, destination);
+      if (await continueTaskOnNode(task, destination)) return;
+      state.activeNodeId = ownerId;
+      elements.chatNodeSelect.value = ownerId;
+      if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: ownerId });
     } catch (error) {
       state.activeNodeId = ownerId;
       elements.chatNodeSelect.value = ownerId;

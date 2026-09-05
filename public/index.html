@@ -990,6 +990,20 @@
       </div>
     </dialog>
 
+    <dialog id="handoffProgressDialog" data-testid="handoff-progress-dialog">
+      <div class="dialog-card handoff-progress-card">
+        <div>
+          <span class="eyebrow">Ticket handoff</span>
+          <h2>Waiting for Syncthing</h2>
+        </div>
+        <p id="handoffProgressStatus" role="status" aria-live="polite" data-testid="handoff-progress-status"></p>
+        <progress aria-label="Handoff progress"></progress>
+        <div class="dialog-actions">
+          <button class="ghost" id="handoffProgressCancelButton" type="button" data-testid="handoff-progress-cancel-button">Cancel</button>
+        </div>
+      </div>
+    </dialog>
+
     <!-- The app's own confirm box. Replaces window.confirm so every prompt is themed and testable. -->
     <dialog id="confirmDialog" data-testid="confirm-dialog">
       <form method="dialog" class="dialog-card confirm-card">

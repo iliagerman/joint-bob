@@ -33,7 +33,7 @@ import { deletePushSubscription, getVapidPublicKey, listPushSubscriberUserIds, n
 import { abortOutgoingTaskHandoff, abortPreparedTaskHandoff, acknowledgeIncomingTaskHandoff, acknowledgeOutgoingTaskHandoff, assertTaskCanBeDeleted, beginOutgoingTaskHandoff, claimTaskLease, commitPreparedTaskHandoff, completeTaskHandoff, completeTaskLease, createTask, deleteTask, getTaskHandoff, isTaskHandoffRejected, listTasks, listUnfinishedOutgoingTaskHandoffs, markOutgoingTaskHandoff, prepareTaskHandoff, rejectTaskHandoff, releaseTaskLease, reserveTaskHandoff, taskHandoffDeletion, updateTask, updateTaskSessionPath, type TaskHandoffRecord } from "./tasks.js";
 import { assertTaskWorktreeTransferable, exportTaskBranchBundle, mergeTaskWorktree, prepareTaskWorktreeFromBundle, removePreparedTaskWorktree, TaskWorktreeError, validateTaskRepository, type PreparedTaskWorktree } from "./worktrees.js";
 import { assertSyncthingFolderReady, ensureConversationSyncFolders, ensureSyncthingDevice, ensureSyncthingFolder, ensureTicketWorkspaceFolder, pauseEngineSyncFolders, reconcileSyncthingProjectFolders, rescanSyncthingFolder, syncthingDeviceId, syncthingFolderIdForPath, syncthingFolderStatuses, syncthingPathForFolderId } from "./syncthing.js";
-import { assertTaskWorkspaceReady, createTaskWorkspace, removeTaskWorkspace, taskWorkspaceKey, TaskWorkspaceError, TICKET_BASELINE_DIR, TICKET_MERGE_DIR, TICKET_WORKSPACE_FOLDER_ID, ticketWorkspaceRoot } from "./task-workspaces.js";
+import { assertTaskWorkspaceReady, createTaskWorkspace, removeTaskWorkspace, taskWorkspaceKey, TaskWorkspaceError, TICKET_BASELINE_DIR, TICKET_MERGE_DIR, TICKET_WORKSPACE_FOLDER_ID, TICKET_WORKSPACE_FOLDER_LABEL, ticketWorkspaceRoot } from "./task-workspaces.js";
 import { unmergedWorkspaceBlocksClose } from "./tasks.js";
 import { beginTicketMerge, completeTicketMergeRun, discardTicketChanges, finalizeTicketMerge, resolveTicketChoiceConflict, restartTicketMerge, TicketMergeError, ticketMergeConflicts } from "./ticket-merge-service.js";
 import { openMergeTransactionCount, recoverMergeTransactions } from "./merge-journal.js";
@@ -439,7 +439,7 @@ const taskCreateSchema = z.object({
 const taskHandoffSchema = z.object({ peerId: z.string().uuid() });
 const taskBranchBundleSchema = z.object({ data: z.string().min(1).max(12_000_000), sha256: z.string().regex(/^[a-f0-9]{64}$/) });
 const preparedTaskSchema = z.object({ projectId: z.string().min(1), task: z.unknown(), handoffId: z.string().uuid(), handoffContext: z.string().max(500_000), handoffVersion: z.string().datetime(), bundle: taskBranchBundleSchema.nullable() });
-const taskEligibilitySchema = z.object({ projectId: z.string().min(1), task: z.unknown() });
+const taskEligibilitySchema = z.object({ projectId: z.string().min(1), task: z.unknown(), source: z.boolean().optional().default(false) });
 const taskHandoffActionSchema = z.object({ handoffId: z.string().uuid() });
 const taskHandoffDeletionSchema = z.object({ updatedAt: z.string().datetime(), originNodeId: z.string().uuid() });
 const taskHandoffStatusSchema = taskHandoffActionSchema;
@@ -806,12 +806,12 @@ async function abortPeerTaskHandoff(peer: ClusterPeer, handoffId: string): Promi
   return false;
 }
 
-async function assertTaskSessionReady(sessionPath: string): Promise<void> {
+async function assertTaskSessionReady(sessionPath: string, syncStatusChecked = false): Promise<void> {
   const session = resolveLocalSessionPath(sessionPath);
   const label = session.engine === "claude" ? "Claude" : "Pi";
   const filePath = session.engine === "claude" ? session.path.slice("claude:".length) : session.path;
   try {
-    await assertSyncthingFolderReady(harnessSyncFolderForSessionPath(sessionPath).id, false);
+    if (!syncStatusChecked) await assertSyncthingFolderReady(harnessSyncFolderForSessionPath(sessionPath).id, false);
     const info = await lstat(filePath);
     if (!info.isFile() || info.isSymbolicLink()) throw new Error("Conversation is not a regular file");
   } catch {
@@ -819,27 +819,84 @@ async function assertTaskSessionReady(sessionPath: string): Promise<void> {
   }
 }
 
-async function assertTaskFilesReady(project: ProjectRecord, task: TaskRecord): Promise<void> {
+async function assertTaskFilesReady(project: ProjectRecord, task: TaskRecord, syncStatusChecked = false): Promise<void> {
   if (task.worktreePath && !task.worktreeBranch) {
-    await assertSyncthingFolderReady(TICKET_WORKSPACE_FOLDER_ID);
+    if (!syncStatusChecked) await assertSyncthingFolderReady(TICKET_WORKSPACE_FOLDER_ID);
     await assertTaskWorkspaceReady(taskWorkspaceKey(task.worktreePath, task.id), task.id);
-  } else if (project.syncFolderId) await assertSyncthingFolderReady(project.syncFolderId);
+  } else if (project.syncFolderId && !syncStatusChecked) await assertSyncthingFolderReady(project.syncFolderId);
   if (task.worktreeBranch) await validateTaskRepository(project.path);
-  if (task.sessionPath) await assertTaskSessionReady(task.sessionPath);
+  if (task.sessionPath) await assertTaskSessionReady(task.sessionPath, syncStatusChecked);
 }
 
-async function taskHandoffEligibility(projectId: string, task: TaskRecord): Promise<string[]> {
-  const project = await getProject(projectId);
-  if (!project) return ["Project is not mapped on this node"];
-  try {
-    if (!(await stat(project.path)).isDirectory()) return ["Mapped project path is not a directory"];
-  } catch {
-    return ["Mapped project path is not available on this node"];
+interface TaskSyncStatus extends ProjectSyncStatus { label: string }
+
+const peerTaskEligibilitySchema = z.object({
+  eligible: z.boolean(),
+  reasons: z.array(z.string()),
+  syncStatuses: z.array(z.object({ label: z.string(), state: z.enum(["synced", "syncing", "paused", "error", "unavailable"]), remainingFiles: z.number(), remainingBytes: z.number(), message: z.string().optional() })).optional().default([]),
+  waitingForSync: z.boolean().optional().default(false),
+});
+
+async function taskSyncStatuses(project: ProjectRecord, task: TaskRecord): Promise<TaskSyncStatus[]> {
+  const targets: Array<{ id: string; label: string }> = [];
+  if (task.worktreePath && !task.worktreeBranch) targets.push({ id: TICKET_WORKSPACE_FOLDER_ID, label: TICKET_WORKSPACE_FOLDER_LABEL });
+  else if (project.syncFolderId) targets.push({ id: project.syncFolderId, label: project.name });
+  if (task.sessionPath) {
+    const folder = harnessSyncFolderForSessionPath(task.sessionPath);
+    targets.push({ id: folder.id, label: folder.label });
   }
-  const reasons = await runtimeAvailable(task.engine);
-  try { await assertTaskFilesReady(project, task); }
+  const unique = targets.filter((target, index) => targets.findIndex(({ id }) => id === target.id) === index);
+  const statuses = await syncthingFolderStatuses(unique.map((target) => target.id));
+  return unique.map((target) => ({ label: target.label, ...statuses[target.id] }));
+}
+
+interface TaskEligibility {
+  reasons: string[];
+  syncStatuses: TaskSyncStatus[];
+  waitingForSync: boolean;
+}
+
+interface TaskEligibilityEntry extends TaskEligibility {
+  node: { id: string; name: string; local?: boolean; online: boolean };
+  eligible: boolean;
+}
+
+async function taskHandoffEligibility(projectId: string, task: TaskRecord, requiresRuntime = true): Promise<TaskEligibility> {
+  const project = await getProject(projectId);
+  if (!project) return { reasons: ["Project is not mapped on this node"], syncStatuses: [], waitingForSync: false };
+  try {
+    if (!(await stat(project.path)).isDirectory()) return { reasons: ["Mapped project path is not a directory"], syncStatuses: [], waitingForSync: false };
+  } catch {
+    return { reasons: ["Mapped project path is not available on this node"], syncStatuses: [], waitingForSync: false };
+  }
+  const reasons = requiresRuntime ? await runtimeAvailable(task.engine) : [];
+  const permanentReasonCount = reasons.length;
+  const syncStatuses = await taskSyncStatuses(project, task);
+  const syncPending = syncStatuses.some((status) => status.state !== "synced");
+  const retryableSync = syncPending
+    && syncStatuses.every((status) => ["synced", "syncing", "error"].includes(status.state));
+  if (syncPending) reasons.push("Ticket files are not synchronized on this node");
+  try { await assertTaskFilesReady(project, task, true); }
   catch (error) { reasons.push(error instanceof Error ? error.message : "Ticket files are not ready on this node"); }
-  return reasons;
+  return { reasons, syncStatuses, waitingForSync: retryableSync && permanentReasonCount === 0 };
+}
+
+async function peerTaskEligibilityEntry(peer: ClusterPeer, projectId: string, task: TaskRecord, source = false): Promise<TaskEligibilityEntry> {
+  const node = publicClusterPeer(peer);
+  try {
+    const remote = await fetch(`${peer.url}/api/cluster/tasks/eligibility`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId, task, source }),
+      signal: AbortSignal.timeout(3_000),
+    });
+    if (!remote.ok) throw new Error(`Peer returned ${remote.status}`);
+    const result = peerTaskEligibilitySchema.parse(await remote.json());
+    await markClusterPeerSeen(peer.id);
+    return { node: { ...node, online: true }, ...result };
+  } catch (error) {
+    return { node: { ...node, online: false }, eligible: false, reasons: [error instanceof Error ? `Peer unreachable: ${error.message}` : "Peer unreachable"], syncStatuses: [], waitingForSync: false };
+  }
 }
 
 function projectWithLocalLocation(project: ProjectRecord, nodeId: string): ProjectRecord {
@@ -1621,8 +1678,8 @@ app.post("/api/cluster/tasks/eligibility", async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const payload = taskEligibilitySchema.parse(request.body);
-    const reasons = await taskHandoffEligibility(payload.projectId, payload.task as TaskRecord);
-    response.json({ eligible: reasons.length === 0, reasons });
+    const eligibility = await taskHandoffEligibility(payload.projectId, payload.task as TaskRecord, !payload.source);
+    response.json({ eligible: eligibility.reasons.length === 0, ...eligibility });
   } catch (error) { next(error); }
 });
 
@@ -1644,8 +1701,8 @@ app.post("/api/cluster/tasks/prepare", async (request, response, next) => {
     const task = payload.task as TaskRecord;
     const source = await getClusterPeer(task.currentNodeId);
     if (!source) { sendError(response, 403, "Task owner is not a known peer"); return; }
-    const reasons = await taskHandoffEligibility(payload.projectId, task);
-    if (reasons.length) { sendError(response, 409, reasons.join("; ")); return; }
+    const eligibility = await taskHandoffEligibility(payload.projectId, task);
+    if (eligibility.reasons.length) { sendError(response, 409, eligibility.reasons.join("; ")); return; }
     if (task.worktreeBranch && !payload.bundle) { sendError(response, 400, "Task worktree handoff requires a branch bundle"); return; }
     if (!task.worktreeBranch && payload.bundle) { sendError(response, 400, "Task has no worktree branch for this bundle"); return; }
     const project = await getProject(payload.projectId);
@@ -1889,7 +1946,7 @@ async function handoffOwnedTask(project: ProjectRecord, task: TaskRecord, peerId
   if (!peer) throw new Error("Peer not found");
   const eligibility = await fetch(`${peer.url}/api/cluster/tasks/eligibility`, { method: "POST", headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ projectId: project.id, task }), signal: AbortSignal.timeout(3_000) });
   if (!eligibility.ok) throw new Error(`Peer eligibility check failed: ${eligibility.status}`);
-  const eligibilityResult = z.object({ eligible: z.boolean(), reasons: z.array(z.string()) }).parse(await eligibility.json());
+  const eligibilityResult = peerTaskEligibilitySchema.parse(await eligibility.json());
   if (!eligibilityResult.eligible) throw new TaskWorktreeError(eligibilityResult.reasons.join("; "));
   const previous = (await listUnfinishedOutgoingTaskHandoffs()).find((candidate) => candidate.projectId === project.id && candidate.taskId === task.id && candidate.destinationNodeId === peer.id);
   await assertTaskFilesReady(project, task);
@@ -3321,29 +3378,24 @@ app.get("/api/projects/:projectId/tasks/:taskId/eligibility", async (request, re
     const task = (await listTasks(project.id)).find((candidate) => candidate.id === request.params.taskId);
     if (!task) { sendError(response, 404, "Task not found"); return; }
     const local = await getClusterNode();
-    const nodes = [] as Array<{ node: { id: string; name: string; local?: boolean; online: boolean }; eligible: boolean; reasons: string[] }>;
+    const peers = await listClusterPeers();
+    const nodes: TaskEligibilityEntry[] = [];
+    const localEligibility = task.currentNodeId === local.id ? await taskHandoffEligibility(project.id, task, false) : undefined;
     if (task.currentNodeId !== local.id) {
-      const reasons = await taskHandoffEligibility(project.id, task);
-      nodes.push({ node: { id: local.id, name: local.name, local: true, online: true }, eligible: reasons.length === 0, reasons });
+      const eligibility = await taskHandoffEligibility(project.id, task);
+      nodes.push({ node: { id: local.id, name: local.name, local: true, online: true }, eligible: eligibility.reasons.length === 0, ...eligibility });
     }
-    const peerNodes = await Promise.all((await listClusterPeers()).filter((peer) => peer.id !== task.currentNodeId).map(async (peer) => {
-      const node = publicClusterPeer(peer);
-      try {
-        const remote = await fetch(`${peer.url}/api/cluster/tasks/eligibility`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ projectId: project.id, task }),
-          signal: AbortSignal.timeout(3_000),
-        });
-        if (!remote.ok) throw new Error(`Peer returned ${remote.status}`);
-        const result = z.object({ eligible: z.boolean(), reasons: z.array(z.string()) }).parse(await remote.json());
-        await markClusterPeerSeen(peer.id);
-        return { node: { ...node, online: true }, ...result };
-      } catch (error) {
-        return { node: { ...node, online: false }, eligible: false, reasons: [error instanceof Error ? `Peer unreachable: ${error.message}` : "Peer unreachable"] };
-      }
-    }));
-    response.json({ nodes: [...nodes, ...peerNodes] });
+    const owner = peers.find((peer) => peer.id === task.currentNodeId);
+    let source: TaskEligibilityEntry;
+    if (localEligibility) {
+      source = { node: { id: local.id, name: local.name, local: true, online: true }, eligible: localEligibility.reasons.length === 0, ...localEligibility };
+    } else if (owner) {
+      source = await peerTaskEligibilityEntry(owner, project.id, task, true);
+    } else {
+      source = { node: { id: task.currentNodeId, name: "Task owner", online: false }, eligible: false, reasons: ["Task owner is unavailable"], syncStatuses: [], waitingForSync: false };
+    }
+    const peerNodes = await Promise.all(peers.filter((peer) => peer.id !== task.currentNodeId).map((peer) => peerTaskEligibilityEntry(peer, project.id, task)));
+    response.json({ source, nodes: [...nodes, ...peerNodes] });
   } catch (error) { next(error); }
 });
 

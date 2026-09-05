@@ -1421,10 +1421,13 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 .choice-option-label { color: var(--text); font-size: 13px; font-weight: 550; overflow-wrap: anywhere; }
 .choice-option-hint { color: var(--muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; padding-top: 2px; }
+.handoff-progress-card progress { width: 100%; accent-color: var(--accent); }
+#handoffProgressStatus { min-height: 2.8em; white-space: pre-line; }
+
 .toast {
   position: fixed;
   left: 50%;
-  bottom: calc(var(--nav-height) + 20px);
+  top: calc(12px + env(safe-area-inset-top, 0px));
   transform: translateX(-50%);
   width: max-content;
   max-width: min(560px, calc(100vw - 32px));
@@ -1511,7 +1514,6 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   .messages { padding-inline: clamp(16px, 4vw, 56px); }
   textarea { max-height: min(40dvh, 360px); font-size: 14px; }
   input, select { padding: 10px 13px; }
-  .toast { bottom: 20px; }
   .install-banner { bottom: 16px; }
   #chatsRecentSessionsButton, #chatRecentSessionsButton { display: none !important; }
 }
