@@ -11,15 +11,15 @@ function settingsPanel(html: string, name: string): string {
   return html.slice(start, end);
 }
 
-test("workspaces live in the Projects tab and every credential lives in the Secrets tab", async () => {
+test("workspaces live in the Workspaces tab and every credential lives in the Secrets tab", async () => {
   const html = await readFile("public/index.html", "utf8");
 
-  const projects = settingsPanel(html, "projects");
-  assert.match(projects, /id="workspaceList"/);
-  assert.match(projects, /id="workspaceAddButton"/);
-  assert.match(projects, /<legend>Workspaces<\/legend>/);
+  const workspaces = settingsPanel(html, "workspaces");
+  assert.match(workspaces, /id="workspaceList"/);
+  assert.match(workspaces, /id="workspaceAddButton"/);
+  assert.match(workspaces, /<legend>Workspaces<\/legend>/);
   // The GitHub credential group concept is gone, not moved.
-  assert.doesNotMatch(projects, /githubGroup/);
+  assert.doesNotMatch(workspaces, /githubGroup/);
 
   const github = settingsPanel(html, "github");
   assert.match(github, /id="secretAccountList"/);
