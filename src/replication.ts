@@ -69,7 +69,7 @@ function ensureProjectLockSchema(db: DatabaseSync): void {
 
 async function replicationDatabase(): Promise<DatabaseSync> {
   if (databasePromise) return databasePromise;
-  databasePromise = (async () => { await fs.mkdir(dataDir, { recursive: true, mode: 0o700 }); const db = new DatabaseSync(databasePath); db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;"); ensureReplicationSchema(db); return db; })();
+  databasePromise = (async () => { await fs.mkdir(dataDir, { recursive: true, mode: 0o700 }); const db = new DatabaseSync(databasePath); db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;"); ensureReplicationSchema(db); ensureNameSchema(db); ensureTaskSchema(db); ensureProjectLockSchema(db); ensureConversationOwnershipSchema(db); ensureConversationRecordSchema(db); ensureConversationReviewReplicaSchema(db); ensureCanvasShortcutSchema(db); ensureUserPinSchema(db); ensureUserRecentSessionSchema(db); return db; })();
   return databasePromise;
 }
 
@@ -193,8 +193,22 @@ function applyTaskEvent(db: DatabaseSync, event: ReplicationEvent): boolean {
   return true;
 }
 
+type ReplicationApplier = (db: DatabaseSync, event: ReplicationEvent) => unknown;
+/** Entity type -> applier. Returning false means the event was rejected and must not be re-queued. */
+const REPLICATION_APPLIERS: Record<string, ReplicationApplier> = {
+  "name.override": applyNameEvent,
+  "project.lock": applyProjectLockEvent,
+  task: applyTaskEvent,
+  "conversation.ownership": applyConversationOwnershipEvent,
+  "conversation.record": applyConversationRecordEvent,
+  "conversation.review": applyConversationReviewEvent,
+  "canvas.shortcut": applyCanvasShortcutEvent,
+  "user.pin": applyUserPinEvent,
+  "user.recent": applyUserRecentSessionEvent,
+};
+
 export async function receiveReplicationBatch(batch: ReplicationBatch): Promise<string[]> {
-  const db = await replicationDatabase(); ensureNameSchema(db); ensureTaskSchema(db); ensureProjectLockSchema(db); ensureConversationOwnershipSchema(db); ensureConversationRecordSchema(db); ensureConversationReviewReplicaSchema(db); ensureCanvasShortcutSchema(db); ensureUserPinSchema(db); ensureUserRecentSessionSchema(db); db.exec("BEGIN IMMEDIATE");
+  const db = await replicationDatabase(); db.exec("BEGIN IMMEDIATE");
   try {
     const insert = db.prepare("INSERT OR IGNORE INTO replication_inbox (event_id, origin_node_id, received_at) VALUES (?, ?, ?)");
     const remove = db.prepare("DELETE FROM replication_inbox WHERE event_id = ?");
@@ -205,7 +219,9 @@ export async function receiveReplicationBatch(batch: ReplicationBatch): Promise<
         received.push(event.id);
         continue;
       }
-      const applied = event.entityType === "name.override" ? (applyNameEvent(db, event), true) : event.entityType === "project.lock" ? (applyProjectLockEvent(db, event), true) : event.entityType === "task" ? applyTaskEvent(db, event) : event.entityType === "conversation.ownership" ? (applyConversationOwnershipEvent(db, event), true) : event.entityType === "conversation.record" ? (applyConversationRecordEvent(db, event), true) : event.entityType === "conversation.review" ? (applyConversationReviewEvent(db, event), true) : event.entityType === "canvas.shortcut" ? (applyCanvasShortcutEvent(db, event), true) : event.entityType === "user.pin" ? (applyUserPinEvent(db, event), true) : event.entityType === "user.recent" ? (applyUserRecentSessionEvent(db, event), true) : (() => { throw new Error("Unsupported replication event"); })();
+      const applier = REPLICATION_APPLIERS[event.entityType];
+      if (!applier) throw new Error("Unsupported replication event");
+      const applied = applier(db, event) !== false;
       if (!applied) {
         remove.run(event.id);
         continue;

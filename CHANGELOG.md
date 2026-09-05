@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Event replication is now more robust with schemas initialized at startup instead of on-demand
 - Unhandled server errors are now logged for better visibility and debugging
 - Application and server code reorganized into modular components for improved maintainability
 - Recent conversation history now syncs across cluster nodes and merges concurrent opens correctly
