@@ -48,6 +48,7 @@ test("the overflow menu owns every remaining ticket action", async () => {
 
   for (const testid of [
     "board-task-merge-button",
+    "board-task-move-done-button",
     "board-task-handoff-button",
     "board-task-models-button",
     "board-task-archive-button",

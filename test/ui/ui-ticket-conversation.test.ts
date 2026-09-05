@@ -54,7 +54,7 @@ async function seedTicketConversation(): Promise<void> {
     execution_state TEXT NOT NULL DEFAULT 'idle', handoff_context TEXT, origin_node_id TEXT NOT NULL DEFAULT '', active_handoff_id TEXT
   ); CREATE INDEX IF NOT EXISTS tasks_project_id_updated_at ON tasks(project_id, updated_at DESC);`);
   db.prepare(`INSERT INTO tasks (id, project_id, title, description, status, engine, plan_mode, review_mode, phase_config, session_path, worktree_path, worktree_branch, merged_at, created_at, updated_at, current_node_id, lease_owner_node_id, lease_expires_at, execution_state, handoff_context, origin_node_id)
-    VALUES (?, ?, ?, '', 'in_progress', 'pi', 0, 0, '{}', ?, ?, NULL, NULL, ?, ?, ?, NULL, NULL, 'idle', NULL, ?)`)
+    VALUES (?, ?, ?, '', 'planning', 'pi', 1, 0, '{}', ?, ?, NULL, NULL, ?, ?, ?, NULL, NULL, 'idle', NULL, ?)`)
     .run(taskId, project.id, TICKET_TITLE, transcriptPath, workspace, at(0), at(0), nodeId, nodeId);
   db.close();
 }
@@ -176,6 +176,22 @@ test("the ticket jump button keeps its lane when the row is also pinned", async 
   // The row pays for the lanes with padding, so the title stops before the first one.
   assert.ok(lanes.titleRight <= lanes.ticket.left + 1,
     `the title stops before the button lanes (title ends ${lanes.titleRight}, ticket starts ${lanes.ticket.left})`);
+});
+
+test("a planned ticket can move directly to Done without starting implementation", async () => {
+  await page.getByTestId("chats-open-board-button").click();
+  const ticketCard = page.getByTestId("board-task-card").filter({ hasText: TICKET_TITLE });
+  await ticketCard.getByTestId("board-task-menu-button").click();
+  await page.getByTestId("board-task-move-done-button").click();
+
+  const doneColumn = page.locator(".board-column.status-done");
+  await doneColumn.getByTestId("board-task-card").filter({ hasText: TICKET_TITLE }).waitFor({ timeout: 20_000 });
+
+  const db = new DatabaseSync(path.join(node.dataDir, "node.db"), { readOnly: true });
+  const task = db.prepare("SELECT status, execution_state FROM tasks WHERE id = ?").get("ticketwebhook1") as { status: string; execution_state: string };
+  db.close();
+  assert.equal(task.status, "done", "the action jumps straight to Done");
+  assert.equal(task.execution_state, "idle", "Done skips the remaining agent phases");
 });
 
 test("the journey produced no console errors and no failed requests", () => {

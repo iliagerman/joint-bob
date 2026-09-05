@@ -138,6 +138,16 @@ function taskMenuItems(task, handlers) {
       onSelect: () => handlers.onMerge(task),
     });
   }
+  if (task.status !== "done") {
+    items.push({
+      label: "Move to Done",
+      icon: "check",
+      testid: "board-task-move-done-button",
+      disabled: task.executionState === "running" || task.executionState === "handoff_pending",
+      title: "Skip remaining phases without starting the agent",
+      onSelect: () => handlers.onMove(task, "done"),
+    });
+  }
   items.push({
     label: "Hand off to another node",
     icon: "transfer",
