@@ -28,7 +28,7 @@ test("a queued prompt survives a node crash and runs when the node comes back", 
     await waitFor(opened.messages, () => opened.messages.some((message) => message.type === "sessionFile"));
     const sessionFile = String(opened.messages.find((message) => message.type === "sessionFile")!.sessionFile);
     socket.send(JSON.stringify({ type: "prompt", message: "second" }));
-    await waitFor(opened.messages, () => opened.messages.some((message) => message.type === "queueUpdate" && Number(message.pending) >= 1));
+    await waitFor(opened.messages, () => opened.messages.some((message) => message.type === "userMessage" && message.queued === true && message.text === "second"));
 
     // Kill the node with the prompt still pending, exactly as a crash would.
     socket.terminate();

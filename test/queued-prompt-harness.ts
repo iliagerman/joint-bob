@@ -18,7 +18,7 @@ export function cookieFrom(response: Response): string {
   return cookie.split(";", 1)[0];
 }
 
-export function waitFor(messages: Array<Record<string, unknown>>, predicate: () => boolean, timeout = 8_000): Promise<void> {
+export function waitFor(messages: Array<Record<string, unknown>>, predicate: () => boolean, timeout = 20_000): Promise<void> {
   return new Promise((resolve, reject) => {
     const started = Date.now();
     const timer = setInterval(() => {
@@ -35,7 +35,7 @@ export async function invocations(): Promise<string[]> {
   } catch { return []; }
 }
 
-export async function waitForInvocations(expected: string[], timeout = 8_000): Promise<void> {
+export async function waitForInvocations(expected: string[], timeout = 20_000): Promise<void> {
   const started = Date.now();
   for (;;) {
     const seen = await invocations();

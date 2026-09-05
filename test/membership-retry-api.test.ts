@@ -6,6 +6,8 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
+import { freePort } from "./dev-nodes.js";
+
 interface NodeProcess {
   baseUrl: string;
   dataDir: string;
@@ -34,10 +36,11 @@ async function startNode(root: string, name: string, port: number): Promise<Node
   child.stdout.on("data", (chunk) => { output += chunk.toString(); });
   child.stderr.on("data", (chunk) => { output += chunk.toString(); });
   const node = { baseUrl: `http://127.0.0.1:${port}`, dataDir, child, output: () => output };
-  for (let attempt = 0; attempt < 600; attempt += 1) {
+  const deadline = Date.now() + 90_000;
+  while (Date.now() < deadline) {
     if (child.exitCode !== null) throw new Error(`${name} exited during startup (${child.exitCode})\n${output}`);
     try {
-      if ((await fetch(`${node.baseUrl}/api/health`)).ok) return node;
+      if ((await fetch(`${node.baseUrl}/api/health`, { signal: AbortSignal.timeout(2_000) })).ok) return node;
     } catch {
       // The child has not started accepting requests yet.
     }
@@ -52,7 +55,10 @@ async function stopNode(node: NodeProcess): Promise<void> {
   const exited = new Promise<void>((resolve) => node.child.once("exit", () => resolve()));
   node.child.kill("SIGTERM");
   await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 2_000))]);
-  if (node.child.exitCode === null) node.child.kill("SIGKILL");
+  if (node.child.exitCode === null) {
+    node.child.kill("SIGKILL");
+    await exited;
+  }
 }
 
 async function session(node: NodeProcess): Promise<Session> {
@@ -158,10 +164,11 @@ test("membership retry converges after an offline peer restarts", { timeout: 120
   let b: NodeProcess | undefined;
   let c: NodeProcess | undefined;
   try {
+    const [portA, portB, portC] = await Promise.all([freePort(), freePort(), freePort()]);
     [a, b, c] = await Promise.all([
-      startNode(root, "a", 19481),
-      startNode(root, "b", 19482),
-      startNode(root, "c", 19483),
+      startNode(root, "a", portA),
+      startNode(root, "b", portB),
+      startNode(root, "c", portC),
     ]);
     const [aAuth, bAuth, cAuth] = await Promise.all([session(a), session(b), session(c)]);
     await Promise.all([configure(a, aAuth, "A"), configure(b, bAuth, "B"), configure(c, cAuth, "C")]);
@@ -173,7 +180,7 @@ test("membership retry converges after an offline peer restarts", { timeout: 120
     const pairWhileAOffline = await pair(b, bAuth, c, cToken);
     assert.equal(pairWhileAOffline.status, 201, `${b.output()}\n${c.output()}`);
 
-    a = await startNode(root, "a", 19481);
+    a = await startNode(root, "a", portA);
     await waitForMesh([{ node: a, auth: aAuth }, { node: b, auth: bAuth }, { node: c, auth: cAuth }]);
 
     const aId = await nodeId(a, aAuth);
