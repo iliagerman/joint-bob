@@ -2,6 +2,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { getSettings, syncthingApiKey } from "./settings.js";
+import { AGENT_RESOURCES_FOLDER_ID, AGENT_RESOURCES_FOLDER_LABEL } from "./agent-resources.js";
 import { TICKET_WORKSPACE_FOLDER_ID, TICKET_WORKSPACE_FOLDER_LABEL, ticketWorkspaceRoot } from "./task-workspaces.js";
 import type { ProjectSyncStatus } from "./types.js";
 
@@ -101,6 +102,21 @@ const projectIgnorePatterns = [
   "test_database_*.db",
   "**/test_database_*.db",
 ];
+
+const agentResourceIgnorePatterns = [
+  ...projectIgnorePatterns,
+  "cache/",
+  "cache/**",
+  "**/cache",
+  "**/cache/**",
+  "caches/",
+  "caches/**",
+  "**/caches",
+  "**/caches/**",
+  "*.sync-conflict-*",
+];
+
+type IgnorePolicy = "project" | "resources" | "none";
 
 function defaultConfigPaths(): string[] {
   return process.platform === "darwin"
@@ -205,6 +221,16 @@ export async function rescanSyncthingFolder(folderId: string): Promise<void> {
   await request<void>(`/rest/db/scan?folder=${encodeURIComponent(folderId)}`, { method: "POST" });
 }
 
+async function setIgnores(folderId: string, patterns: readonly string[], preserveUserRules: boolean): Promise<void> {
+  const endpoint = `/rest/db/ignores?folder=${encodeURIComponent(folderId)}`;
+  const existing = await request<SyncthingIgnores>(endpoint);
+  const existingIgnore = existing.ignore ?? [];
+  const userRules = preserveUserRules ? [...new Set(existingIgnore.filter((rule) => !patterns.includes(rule)))] : [];
+  const ignore = [...patterns, ...userRules];
+  if (ignore.length === existingIgnore.length && ignore.every((rule, index) => rule === existingIgnore[index])) return;
+  await request<void>(endpoint, { method: "POST", body: JSON.stringify({ ignore }) });
+}
+
 async function setProjectIgnores(folderId: string): Promise<void> {
   const endpoint = `/rest/db/ignores?folder=${encodeURIComponent(folderId)}`;
   const existing = await request<SyncthingIgnores>(endpoint);
@@ -296,9 +322,16 @@ export async function ensureTicketWorkspaceFolder(folderPath = ticketWorkspaceRo
 }
 
 export async function pauseEngineSyncFolders(): Promise<void> {
-  const engineFolderIds = new Set([PI_ENGINE_SYNC_FOLDER_ID, CLAUDE_ENGINE_SYNC_FOLDER_ID]);
+  const settings = getSettings();
+  const resourcePaths = new Set([
+    path.resolve(settings.pi.configPath),
+    path.resolve(settings.claude.configPath),
+    path.join(os.homedir(), ".agents"),
+  ]);
+  const legacyIds = new Set([PI_ENGINE_SYNC_FOLDER_ID, CLAUDE_ENGINE_SYNC_FOLDER_ID]);
   for (const folder of await listSyncthingFolders()) {
-    if (!engineFolderIds.has(folder.id) || folder.paused) continue;
+    const isLegacyResourceFolder = legacyIds.has(folder.id) || resourcePaths.has(path.resolve(folder.path));
+    if (folder.id === AGENT_RESOURCES_FOLDER_ID || !isLegacyResourceFolder || folder.paused) continue;
     await request<void>(`/rest/config/folders/${encodeURIComponent(folder.id)}`, {
       method: "PUT",
       body: JSON.stringify({ ...folder, paused: true }),
@@ -306,7 +339,7 @@ export async function pauseEngineSyncFolders(): Promise<void> {
   }
 }
 
-async function ensureFolder(folderId: string, label: string, folderPath: string, peerDeviceId: string | undefined, projectIgnores: boolean, unpause: boolean): Promise<void> {
+async function ensureFolder(folderId: string, label: string, folderPath: string, peerDeviceId: string | undefined, ignorePolicy: IgnorePolicy, unpause: boolean): Promise<void> {
   if (!await connection()) throw new Error("Syncthing is not configured on this node");
   const requestedPath = path.resolve(folderPath);
   const folders = await listSyncthingFolders();
@@ -333,17 +366,24 @@ async function ensureFolder(folderId: string, label: string, folderPath: string,
   } else if (pathChanged || deviceIds.length !== existing.devices.length || existing.label !== label || (unpause && existing.paused)) {
     await request<void>(`/rest/config/folders/${encodeURIComponent(folderId)}`, { method: "PUT", body: JSON.stringify(folder) });
   }
-  if (projectIgnores) await setProjectIgnores(folderId);
+  if (ignorePolicy === "project") await setProjectIgnores(folderId);
+  if (ignorePolicy === "resources") await setIgnores(folderId, agentResourceIgnorePatterns, false);
 }
 
 export async function ensureSyncthingFolder(folderId: string, label: string, folderPath: string, peerDeviceId?: string): Promise<void> {
-  await ensureFolder(folderId, label, folderPath, peerDeviceId, true, false);
+  await ensureFolder(folderId, label, folderPath, peerDeviceId, "project", false);
+}
+
+export async function ensureAgentResourcesFolder(folderPath: string, peerDeviceId?: string, peerName = peerDeviceId ?? ""): Promise<void> {
+  if (peerDeviceId) await ensureSyncthingDevice(peerDeviceId, peerName);
+  await mkdir(path.resolve(folderPath), { recursive: true });
+  await ensureFolder(AGENT_RESOURCES_FOLDER_ID, AGENT_RESOURCES_FOLDER_LABEL, folderPath, peerDeviceId, "resources", true);
 }
 
 export async function ensureConversationSyncFolders(folders: ConversationSyncFolder[], peerDeviceId?: string, peerName = peerDeviceId ?? ""): Promise<void> {
   if (peerDeviceId) await ensureSyncthingDevice(peerDeviceId, peerName);
   for (const folder of folders) {
     await mkdir(path.resolve(folder.path), { recursive: true });
-    await ensureFolder(folder.id, folder.label, folder.path, peerDeviceId, false, true);
+    await ensureFolder(folder.id, folder.label, folder.path, peerDeviceId, "none", true);
   }
 }

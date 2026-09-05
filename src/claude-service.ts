@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { claudeProjectDir, claudeProjectDirs, isSyncConflictPath, sessionCwds, type SessionProjectPaths } from "./session-paths.js";
 import { getSettings } from "./settings.js";
+import { claudeAgentResourceArgs } from "./agent-resources.js";
 import type { ChatMessage, ContextUsage, SessionSummary } from "./types.js";
 
 // Runs one Claude Code turn in print mode and maps its stream-json output to
@@ -377,6 +378,7 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
   if (options.model) args.push("--model", options.model);
   if (options.effort) args.push("--effort", options.effort);
   if (options.tools) args.push("--tools", options.tools.join(","));
+  args.push(...claudeAgentResourceArgs());
 
   const settings = getSettings().claude;
   const configPath = claudeConfigPath();

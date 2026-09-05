@@ -15,6 +15,7 @@ import {
 import { agentCredentialContext, agentEnvironment, type SecretConversation } from "./secrets.js";
 import { discoverPiSessionDirectory, sessionCwds, type SessionProjectPaths } from "./session-paths.js";
 import { getSettings } from "./settings.js";
+import { commonAgentInstructionFiles, piAgentResourcePaths } from "./agent-resources.js";
 import type { ChatMessage, ContextUsage, ModelSummary, SessionStatus, SessionSummary } from "./types.js";
 
 export interface PiSessionHandle {
@@ -435,11 +436,29 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
   const agentDir = getAgentDir();
   const settingsManager = SettingsManager.create(options.cwd, agentDir);
   const credentialContext = agentCredentialContext(options.projectId, options.conversation);
+  const commonInstructions = await commonAgentInstructionFiles();
+  const resources = piAgentResourcePaths();
   const resourceLoader = new DefaultResourceLoader({
     cwd: options.cwd,
     agentDir,
     settingsManager,
-    ...(credentialContext ? { agentsFilesOverride: (current) => ({ agentsFiles: [...current.agentsFiles, { path: "/virtual/JOINT_BOB_CREDENTIALS.md", content: credentialContext }] }) } : {}),
+    additionalExtensionPaths: resources.extensions,
+    additionalSkillPaths: resources.skills,
+    additionalPromptTemplatePaths: resources.prompts,
+    additionalThemePaths: resources.themes,
+    ...(commonInstructions.length || credentialContext
+      ? {
+          agentsFilesOverride: (current) => ({
+            agentsFiles: [
+              ...current.agentsFiles,
+              ...commonInstructions,
+              ...(credentialContext
+                ? [{ path: "/virtual/JOINT_BOB_CREDENTIALS.md", content: credentialContext }]
+                : []),
+            ],
+          }),
+        }
+      : {}),
     ...(!safeguardsEnabled ? { extensionsOverride: (base) => ({ ...base, extensions: base.extensions.filter((extension) => !isPermissionSafeguardExtension(extension.resolvedPath)) }) } : {}),
   });
   await resourceLoader.reload();

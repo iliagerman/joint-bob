@@ -23,7 +23,7 @@ test("skills are discovered per harness with project scope shadowing the user sc
     await writeSkill(claudeUser, "push-code", "---\nname: push-code\ndescription: User-level version.\n---\n");
     await writeSkill(path.join(project, ".claude", "skills"), "push-code", "---\nname: push-code\ndescription: Project-level version.\n---\n");
 
-    const skills = await listSkills(project, { piUser, claudeUser });
+    const skills = await listSkills(project, { piUser, claudeUser, shared: path.join(root, "shared") });
 
     const pi = skills.filter((skill) => skill.harness === "pi");
     assert.deepEqual(pi.map((skill) => skill.name), ["debugging"]);
@@ -56,7 +56,7 @@ test("symlinked skill directories are discovered for both harnesses", async () =
     await symlink(path.join(targets, "pi-develop"), path.join(piUser, "pi-develop"), "dir");
     await symlink(path.join(targets, "claude-develop"), path.join(claudeUser, "claude-develop"), "dir");
 
-    const skills = await listSkills(path.join(root, "project"), { piUser, claudeUser });
+    const skills = await listSkills(path.join(root, "project"), { piUser, claudeUser, shared: path.join(root, "shared") });
 
     assert.deepEqual(skills.map((skill) => `${skill.harness}:${skill.name}`), [
       "claude:claude-develop",
@@ -75,6 +75,7 @@ test("a missing skills directory yields no skills instead of throwing", async ()
     const skills = await listSkills(path.join(root, "no-such-project"), {
       piUser: path.join(root, "absent-pi"),
       claudeUser: path.join(root, "absent-claude"),
+      shared: path.join(root, "absent-shared"),
     });
     assert.deepEqual(skills, []);
   } finally {
@@ -92,7 +93,11 @@ test("block-scalar frontmatter descriptions parse instead of leaking YAML marker
     await writeSkill(claudeUser, "chomped", "---\nname: chomped\ndescription: >-\n  One folded line.\n---\n");
     await writeSkill(claudeUser, "literal", "---\nname: literal\ndescription: |\n  Line one.\n  Line two.\n---\n");
 
-    const skills = await listSkills(path.join(root, "project"), { piUser: path.join(root, "absent"), claudeUser });
+    const skills = await listSkills(path.join(root, "project"), {
+      piUser: path.join(root, "absent"),
+      claudeUser,
+      shared: path.join(root, "shared"),
+    });
     const byName = new Map(skills.map((skill) => [skill.name, skill.description]));
 
     assert.equal(byName.get("folded"), "Runs the AI-DLC workflow. Use it for lifecycle stages.");
@@ -112,9 +117,37 @@ test("a skill without frontmatter still lists under its directory name", async (
     const claudeUser = path.join(root, "claude-user");
     await writeSkill(claudeUser, "bare-skill", "# Just a heading, no frontmatter\n");
 
-    const skills = await listSkills(path.join(root, "project"), { piUser: path.join(root, "absent"), claudeUser });
+    const skills = await listSkills(path.join(root, "project"), {
+      piUser: path.join(root, "absent"),
+      claudeUser,
+      shared: path.join(root, "shared"),
+    });
     assert.deepEqual(skills.map((skill) => skill.name), ["bare-skill"]);
     assert.equal(skills[0].description, "");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("shared skills override unmanaged copies and project skills override shared skills", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-shared-skills-"));
+  const { listSkills } = await import("../src/skills.js");
+  try {
+    const project = path.join(root, "project");
+    const piUser = path.join(root, "pi-user");
+    const claudeUser = path.join(root, "claude-user");
+    const shared = path.join(root, "shared");
+    await writeSkill(piUser, "review", "---\nname: review\ndescription: Pi user\n---\n");
+    await writeSkill(claudeUser, "review", "---\nname: review\ndescription: Claude user\n---\n");
+    await writeSkill(shared, "review", "---\nname: review\ndescription: Shared\n---\n");
+    await writeSkill(path.join(project, ".pi", "skills"), "review", "---\nname: review\ndescription: Pi project\n---\n");
+    await writeSkill(path.join(project, ".claude", "skills"), "review", "---\nname: review\ndescription: Claude project\n---\n");
+
+    const skills = await listSkills(project, { piUser, claudeUser, shared });
+    assert.deepEqual(skills.map((skill) => `${skill.harness}:${skill.description}`), [
+      "claude:Claude project",
+      "pi:Pi project",
+    ]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

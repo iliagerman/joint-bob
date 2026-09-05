@@ -16,13 +16,19 @@ test("Pi commands come from the same resource loader used by Pi sessions", async
   try {
     const project = path.join(root, "project");
     const agentDir = path.join(root, "agent");
+    const resourceRoot = path.join(root, "resources");
+    const shared = path.join(resourceRoot, "shared", "skills");
     await writeMarkdown(path.join(agentDir, "skills", "debugging", "SKILL.md"), "---\nname: debugging\ndescription: Trace a bug.\n---\n");
     await writeMarkdown(path.join(project, ".pi", "prompts", "review.md"), "---\ndescription: Review current changes.\n---\nReview the changes.");
+    await writeMarkdown(path.join(shared, "canonical", "SKILL.md"), "---\nname: canonical\ndescription: Canonical skill.\n---\n");
+    await writeMarkdown(path.join(resourceRoot, "pi", "prompts", "canonical-review.md"), "---\ndescription: Canonical prompt.\n---\n");
 
-    const commands = await listHarnessCommands(project, "pi", { piAgentDir: agentDir });
+    const commands = await listHarnessCommands(project, "pi", { piAgentDir: agentDir, resourceRoot, shared });
 
     assert.ok(commands.some((command) => command.kind === "skill" && command.invocation === "/skill:debugging "));
+    assert.ok(commands.some((command) => command.kind === "skill" && command.invocation === "/skill:canonical "));
     assert.ok(commands.some((command) => command.kind === "prompt" && command.invocation === "/review "));
+    assert.ok(commands.some((command) => command.kind === "prompt" && command.invocation === "/canonical-review "));
     assert.ok(commands.some((command) => command.kind === "builtin" && command.invocation === "/model "));
     assert.ok(commands.some((command) => command.kind === "builtin" && command.invocation === "/skills "));
     assert.ok(commands.some((command) => command.kind === "builtin" && command.invocation === "/help "));
@@ -40,11 +46,28 @@ test("Claude command list uses Claude skills and invocation syntax", async () =>
   try {
     const project = path.join(root, "project");
     const claudeUser = path.join(root, "claude-user");
+    const claudeConfigPath = path.join(root, "claude-config");
+    const shared = path.join(root, "shared");
     await writeMarkdown(path.join(claudeUser, "push-code", "SKILL.md"), "---\nname: push-code\ndescription: Test and push changes.\n---\n");
+    await writeMarkdown(path.join(claudeConfigPath, "commands", "review.md"), "---\ndescription: User review\n---\n");
+    await writeMarkdown(path.join(project, ".claude", "commands", "review.md"), "---\ndescription: Project review\n---\n");
 
-    const commands = await listHarnessCommands(project, "claude", { claudeUser });
+    const commands = await listHarnessCommands(project, "claude", {
+      claudeUser,
+      claudeConfigPath,
+      shared,
+      resourceRoot: path.join(root, "resources"),
+    });
 
     assert.ok(commands.some((command) => command.kind === "skill" && command.invocation === "/push-code "));
+    assert.deepEqual(commands.find((command) => command.invocation === "/review "), {
+      harness: "claude",
+      name: "review",
+      description: "Project review",
+      invocation: "/review ",
+      kind: "prompt",
+      scope: "project",
+    });
     assert.ok(commands.some((command) => command.kind === "builtin" && command.invocation === "/goal "));
     assert.ok(commands.every((command) => command.harness === "claude"));
   } finally {

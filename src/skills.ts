@@ -2,6 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { HarnessId } from "./types.js";
+import { agentResourcePaths } from "./agent-resources.js";
 
 export interface SkillSummary {
   harness: HarnessId;
@@ -13,17 +14,19 @@ export interface SkillSummary {
 export interface SkillRoots {
   piUser: string;
   claudeUser: string;
+  shared: string;
 }
 
 export function defaultSkillRoots(): SkillRoots {
   return {
     piUser: path.join(os.homedir(), ".pi", "agent", "skills"),
     claudeUser: path.join(os.homedir(), ".claude", "skills"),
+    shared: agentResourcePaths().sharedSkills,
   };
 }
 
 /** Reads the `name` and `description` keys out of a SKILL.md YAML frontmatter block. */
-function parseFrontmatter(contents: string): { name?: string; description?: string } {
+export function parseResourceFrontmatter(contents: string): { name?: string; description?: string } {
   const lines = contents.split(/\r?\n/);
   if (lines[0]?.trim() !== "---") return {};
   const closing = lines.indexOf("---", 1);
@@ -80,7 +83,7 @@ async function readSkillDirectory(root: string, harness: HarnessId, scope: Skill
     } catch {
       continue;
     }
-    const fields = parseFrontmatter(contents);
+    const fields = parseResourceFrontmatter(contents);
     skills.push({ harness, name: fields.name || entry.name, description: fields.description || "", scope });
   }
   return skills;
@@ -94,16 +97,18 @@ async function readSkillDirectory(root: string, harness: HarnessId, scope: Skill
 export async function listSkills(projectPath: string, roots: SkillRoots = defaultSkillRoots()): Promise<SkillSummary[]> {
   const found = await Promise.all([
     readSkillDirectory(roots.piUser, "pi", "user"),
+    readSkillDirectory(roots.shared, "pi", "user"),
     readSkillDirectory(path.join(projectPath, ".pi", "skills"), "pi", "project"),
     readSkillDirectory(roots.claudeUser, "claude", "user"),
+    readSkillDirectory(roots.shared, "claude", "user"),
     readSkillDirectory(path.join(projectPath, ".claude", "skills"), "claude", "project"),
   ]);
 
   const byKey = new Map<string, SkillSummary>();
   for (const skill of found.flat()) {
     const key = `${skill.harness}:${skill.name}`;
-    // Project scope is read last per harness, so it overwrites the user copy.
-    if (skill.scope === "project" || !byKey.has(key)) byKey.set(key, skill);
+    // Sources are ordered from unmanaged user copies through shared and project.
+    byKey.set(key, skill);
   }
 
   return [...byKey.values()].sort((left, right) =>

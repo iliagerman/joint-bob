@@ -5,7 +5,10 @@ import {
   type PromptTemplate,
   type Skill,
 } from "@earendil-works/pi-coding-agent";
-import { defaultSkillRoots, listSkills, type SkillRoots, type SkillSummary } from "./skills.js";
+import { readdir, readFile } from "node:fs/promises";
+import path from "node:path";
+import { defaultSkillRoots, listSkills, parseResourceFrontmatter, type SkillRoots, type SkillSummary } from "./skills.js";
+import { piAgentResourcePaths } from "./agent-resources.js";
 import { getSettings } from "./settings.js";
 import type { HarnessId } from "./types.js";
 
@@ -22,6 +25,8 @@ export interface HarnessCommand {
 
 export interface CommandDiscoveryOptions extends Partial<SkillRoots> {
   piAgentDir?: string;
+  resourceRoot?: string;
+  claudeConfigPath?: string;
 }
 
 const BUILTIN_COMMANDS = [
@@ -74,9 +79,18 @@ function piPromptCommand(prompt: PromptTemplate): HarnessCommand {
   };
 }
 
-async function listPiCommands(projectPath: string, agentDir: string): Promise<HarnessCommand[]> {
+async function listPiCommands(projectPath: string, agentDir: string, resourceRoot?: string): Promise<HarnessCommand[]> {
   const settingsManager = SettingsManager.create(projectPath, agentDir);
-  const loader = new DefaultResourceLoader({ cwd: projectPath, agentDir, settingsManager });
+  const resources = piAgentResourcePaths(resourceRoot);
+  const loader = new DefaultResourceLoader({
+    cwd: projectPath,
+    agentDir,
+    settingsManager,
+    additionalExtensionPaths: resources.extensions,
+    additionalSkillPaths: resources.skills,
+    additionalPromptTemplatePaths: resources.prompts,
+    additionalThemePaths: resources.themes,
+  });
   await loader.reload();
   const extensions = loader.getExtensions().extensions.flatMap((extension) =>
     [...extension.commands.values()].map((command): HarnessCommand => ({
@@ -107,10 +121,50 @@ function claudeSkillCommand(skill: SkillSummary): HarnessCommand {
   };
 }
 
+async function markdownCommands(directory: string, scope: "user" | "project"): Promise<HarnessCommand[]> {
+  let entries;
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const commands: HarnessCommand[] = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+    try {
+      const contents = await readFile(path.join(directory, entry.name), "utf8");
+      const fields = parseResourceFrontmatter(contents);
+      const name = path.basename(entry.name, ".md");
+      commands.push({
+        harness: "claude",
+        name,
+        description: fields.description ?? "",
+        invocation: `/${name} `,
+        kind: "prompt",
+        scope,
+      });
+    } catch {
+      continue;
+    }
+  }
+  return commands;
+}
+
 async function listClaudeCommands(projectPath: string, options: CommandDiscoveryOptions): Promise<HarnessCommand[]> {
   const roots = { ...defaultSkillRoots(), ...options };
-  const skills = (await listSkills(projectPath, roots)).filter((skill) => skill.harness === "claude");
-  return [...builtinCommands("claude"), ...skills.map(claudeSkillCommand)];
+  const config = options.claudeConfigPath ?? getSettings().claude.configPath;
+  const [global, skills, project] = await Promise.all([
+    markdownCommands(path.join(config, "commands"), "user"),
+    listSkills(projectPath, roots),
+    markdownCommands(path.join(projectPath, ".claude", "commands"), "project"),
+  ]);
+  return [
+    ...builtinCommands("claude"),
+    ...global,
+    ...skills.filter((skill) => skill.harness === "claude").map(claudeSkillCommand),
+    ...project,
+  ];
 }
 
 function uniqueCommands(commands: HarnessCommand[]): HarnessCommand[] {
@@ -125,5 +179,5 @@ export async function listHarnessCommands(
 ): Promise<HarnessCommand[]> {
   if (harness === "claude") return uniqueCommands(await listClaudeCommands(projectPath, options));
   const agentDir = options.piAgentDir || getSettings().pi.configPath || getAgentDir();
-  return uniqueCommands(await listPiCommands(projectPath, agentDir));
+  return uniqueCommands(await listPiCommands(projectPath, agentDir, options.resourceRoot));
 }

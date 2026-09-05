@@ -8,7 +8,7 @@ export interface ManagedHomePaths {
 }
 
 /** `/projects/` stays so homes created by the previous layout keep ignoring their old tree. */
-const baseIgnoreRules = ["/projects/", "/tickets/"];
+const baseIgnoreRules = ["/projects/", "/tickets/", "/.agent-resources/"];
 
 export function defaultManagedHome(): string {
   return path.join(os.homedir(), "JointBob");

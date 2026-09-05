@@ -474,3 +474,45 @@ test("reconciliation updates ignores for existing synced folders without recreat
     { method: "POST", url: "/rest/db/ignores?folder=folder-b" },
   ]);
 });
+
+test("agent resources folder is shared unpaused with resource ignores", async () => {
+  const requests: Array<{ method: string; url: string; body: unknown }> = [];
+  const resourcePath = path.join(os.tmpdir(), "agent-resources");
+  await withSyncthingApi((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      requests.push({ method: request.method ?? "", url: request.url ?? "", body: body ? JSON.parse(body) : null });
+      response.setHeader("Content-Type", "application/json");
+      if (request.method === "GET" && request.url === "/rest/config/devices") { response.end(JSON.stringify([{ deviceID: "LOCAL" }])); return; }
+      if (request.method === "POST" && request.url === "/rest/config/devices") { response.end("{}"); return; }
+      if (request.method === "GET" && request.url === "/rest/config/folders") { response.end(JSON.stringify([])); return; }
+      if (request.method === "GET" && request.url === "/rest/system/status") { response.end(JSON.stringify({ myID: "LOCAL" })); return; }
+      if (request.method === "POST" && request.url === "/rest/config/folders") { response.end("{}"); return; }
+      if (request.method === "GET" && request.url === "/rest/db/ignores?folder=joint-bob-agent-resources") { response.end(JSON.stringify({ ignore: ["!.env"] })); return; }
+      if (request.method === "POST" && request.url === "/rest/db/ignores?folder=joint-bob-agent-resources") { response.end("{}"); return; }
+      response.statusCode = 404;
+      response.end();
+    });
+  }, async (syncthing) => {
+    await syncthing.ensureAgentResourcesFolder(resourcePath, "PEER", "Peer");
+  });
+
+  const folder = requests.find((request) => request.method === "POST" && request.url === "/rest/config/folders");
+  assert.ok(folder);
+  assert.deepEqual(folder.body, {
+    id: "joint-bob-agent-resources",
+    label: "Joint Bob agent resources",
+    path: path.resolve(resourcePath),
+    type: "sendreceive",
+    markerName: ".stfolder",
+    devices: [{ deviceID: "LOCAL" }, { deviceID: "PEER" }],
+  });
+  const ignores = requests.find((request) => request.method === "POST" && request.url === "/rest/db/ignores?folder=joint-bob-agent-resources");
+  assert.ok(ignores);
+  const ignore = (ignores.body as { ignore: string[] }).ignore;
+  assert.ok(ignore.includes(".env"));
+  assert.ok(ignore.includes("node_modules/"));
+  assert.ok(ignore.includes("*.sync-conflict-*"));
+  assert.ok(!ignore.includes("!.env"));
+});

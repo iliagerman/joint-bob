@@ -32,7 +32,8 @@ import {
 import { deletePushSubscription, getVapidPublicKey, listPushSubscriberUserIds, notifyConversationReview, savePushSubscription } from "./push.js";
 import { abortOutgoingTaskHandoff, abortPreparedTaskHandoff, acknowledgeIncomingTaskHandoff, acknowledgeOutgoingTaskHandoff, assertTaskCanBeDeleted, beginOutgoingTaskHandoff, claimTaskLease, commitPreparedTaskHandoff, completeTaskHandoff, completeTaskLease, createTask, deleteTask, getTaskHandoff, isTaskHandoffRejected, listTasks, listUnfinishedOutgoingTaskHandoffs, markOutgoingTaskHandoff, prepareTaskHandoff, rejectTaskHandoff, releaseTaskLease, reserveTaskHandoff, taskHandoffDeletion, updateTask, updateTaskSessionPath, type TaskHandoffRecord } from "./tasks.js";
 import { assertTaskWorktreeTransferable, exportTaskBranchBundle, mergeTaskWorktree, prepareTaskWorktreeFromBundle, removePreparedTaskWorktree, TaskWorktreeError, validateTaskRepository, type PreparedTaskWorktree } from "./worktrees.js";
-import { assertSyncthingFolderReady, ensureConversationSyncFolders, ensureSyncthingDevice, ensureSyncthingFolder, ensureTicketWorkspaceFolder, pauseEngineSyncFolders, reconcileSyncthingProjectFolders, rescanSyncthingFolder, syncthingDeviceId, syncthingFolderIdForPath, syncthingFolderStatuses, syncthingPathForFolderId } from "./syncthing.js";
+import { assertSyncthingFolderReady, ensureAgentResourcesFolder, ensureConversationSyncFolders, ensureSyncthingDevice, ensureSyncthingFolder, ensureTicketWorkspaceFolder, pauseEngineSyncFolders, reconcileSyncthingProjectFolders, rescanSyncthingFolder, syncthingDeviceId, syncthingFolderIdForPath, syncthingFolderStatuses, syncthingPathForFolderId } from "./syncthing.js";
+import { AGENT_RESOURCES_FOLDER_ID, agentResourcesRoot, reconcileAgentResources } from "./agent-resources.js";
 import { assertTaskWorkspaceReady, createTaskWorkspace, removeTaskWorkspace, taskWorkspaceKey, TaskWorkspaceError, TICKET_BASELINE_DIR, TICKET_MERGE_DIR, TICKET_WORKSPACE_FOLDER_ID, TICKET_WORKSPACE_FOLDER_LABEL, ticketWorkspaceRoot } from "./task-workspaces.js";
 import { unmergedWorkspaceBlocksClose } from "./tasks.js";
 import { beginTicketMerge, completeTicketMergeRun, discardTicketChanges, finalizeTicketMerge, resolveTicketChoiceConflict, restartTicketMerge, TicketMergeError, ticketMergeConflicts } from "./ticket-merge-service.js";
@@ -2209,6 +2210,11 @@ app.post("/api/cluster/peers/:peerId/projects/:projectId/map", async (request, r
 app.post("/api/cluster/sync/share", async (request, response, next) => {
   try {
     const payload = clusterSyncShareSchema.parse(request.body);
+    if (payload.folderId === AGENT_RESOURCES_FOLDER_ID) {
+      await ensureAgentResourcesFolder(agentResourcesRoot(), payload.deviceId, payload.deviceName);
+      response.json({ ok: true });
+      return;
+    }
     if (payload.folderId === TICKET_WORKSPACE_FOLDER_ID) {
       await ensureTicketWorkspaceFolder(ticketWorkspaceRoot(), payload.deviceId, payload.deviceName);
       response.json({ ok: true });
@@ -6168,12 +6174,18 @@ async function reconcileTaskConversationRecords(): Promise<void> {
   }
 }
 
+async function reconcileManagedAgentResources(): Promise<void> {
+  const resources = await reconcileAgentResources();
+  if (resources.conflicts.length) console.warn(`Agent resource reconciliation found ${resources.conflicts.length} conflict(s)`);
+}
+
 async function initializeStartupReadiness(): Promise<void> {
   if (startupReady || startupReadinessInProgress) return;
   startupReadinessInProgress = true;
   try {
     const projects = await listProjects();
     await reconcileSyncthingProjectFolders(projects);
+    await reconcileManagedAgentResources();
     startupReady = true;
     startupError = undefined;
     console.log("Startup reconciliation completed.");
@@ -6190,9 +6202,14 @@ async function configureTicketWorkspacePeer(peer: ClusterPeer, localDeviceId: st
   const inventory = await fetchPeerInventory(peer);
   if (!inventory.syncDeviceId) throw new Error("Peer Syncthing device ID is unavailable");
   await ensureTicketWorkspaceFolder(ticketWorkspaceRoot(), inventory.syncDeviceId, inventory.node.name);
+  await ensureAgentResourcesFolder(agentResourcesRoot(), inventory.syncDeviceId, inventory.node.name);
   const conversationFolders = listHarnessSyncFolders();
   await ensureConversationSyncFolders(conversationFolders, inventory.syncDeviceId, inventory.node.name);
-  for (const folderId of [TICKET_WORKSPACE_FOLDER_ID, ...conversationFolders.map((folder) => folder.id)]) {
+  for (const folderId of [
+    TICKET_WORKSPACE_FOLDER_ID,
+    AGENT_RESOURCES_FOLDER_ID,
+    ...conversationFolders.map((folder) => folder.id),
+  ]) {
     const response = await fetch(`${peer.url}/api/cluster/sync/share`, {
       method: "POST",
       headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
@@ -6214,6 +6231,7 @@ async function reconcileTicketWorkspaceSync(): Promise<void> {
     await pauseEngineSyncFolders();
     await ensureTicketWorkspaceFolder();
     await ensureConversationSyncFolders(listHarnessSyncFolders());
+    await ensureAgentResourcesFolder(agentResourcesRoot());
     if (!peers.length) return;
     const localNode = await getClusterNode();
     for (const peer of peers) {
@@ -6523,6 +6541,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     reconcileTaskHandoffs().catch((error) => console.warn("Task handoff reconciliation failed", error));
     discoverMissingPeerProjects().catch((error) => console.warn("Project discovery failed", error));
     setInterval(() => discoverMissingPeerProjects().catch((error) => console.warn("Project discovery failed", error)), 10_000).unref();
+    setInterval(() => reconcileManagedAgentResources().catch((error) => console.warn("Agent resource reconciliation failed", error)), 30_000).unref();
     setInterval(() => {
       void initializeStartupReadiness();
       reconcileTicketWorkspaceSync().catch((error) => console.warn("Ticket workspace sync failed", error));

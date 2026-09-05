@@ -176,6 +176,8 @@ export async function configure(baseUrl: string, root: string, executable: strin
 
 export function environment(root: string): Record<string, string> {
   return {
+    HOME: path.join(root, "home"),
+    NODE_ENV: "test",
     JOINT_BOB_DATA_DIR: path.join(root, "data"),
     MASTER_BOB_ADMIN_USERNAME: "admin",
     MASTER_BOB_INITIAL_PASSWORD: "initial-password",

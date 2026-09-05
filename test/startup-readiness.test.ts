@@ -66,6 +66,7 @@ function startServer(dataDir: string, port: number, syncthingPort: number): { ch
   const child = spawn(process.execPath, ["--import", "tsx", "src/server.ts"], {
     env: {
       ...process.env,
+      HOME: path.join(dataDir, "home"),
       PI_WEB_DATA_DIR: dataDir,
       PI_MOBILE_WEB_SYNCTHING_URL: `http://127.0.0.1:${syncthingPort}`,
       PI_MOBILE_WEB_SYNCTHING_API_KEY: "x",
