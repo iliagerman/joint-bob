@@ -3,10 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.4.1 — 2026-09-05
 
 - Symlinked skill directories are now discovered and loaded alongside regular directories
-- Ticket handoff now displays live Syncthing synchronization progress before finalizing the transfer, allowing users to see which files are still syncing instead of seeing an opaque eligibility error
+- Ticket handoffs now wait visibly for both nodes to finish synchronizing and continue automatically when ready
+- Volatile test artifacts no longer enter ticket workspaces or Syncthing scans
+- Notifications now stay above the mobile composer and duplicate messages no longer stack
 
 ## 1.4.0 — 2026-09-05
 
