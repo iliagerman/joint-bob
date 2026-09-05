@@ -3,22 +3,18 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.5.0 — 2026-09-06
 
-- Secrets tab configuration now uses consistent internal identifiers throughout the interface
-- Real-time update handlers now use a shared registry to ensure consistent invalidation across WebSocket connections
-- Recent conversations are now stored in a replicated table instead of user preferences for better cluster synchronization
-- Event replication is now more robust with schemas initialized at startup instead of on-demand
-- Unhandled server errors are now logged for better visibility and debugging
-- Application and server code reorganized into modular components for improved maintainability
-- Recent conversation history now syncs across cluster nodes and merges concurrent opens correctly
-- Settings and project configurations now accept custom directories for agent skills, prompts, rules, and plugins
-- Task handoffs now preserve conversation ownership across cluster nodes
+- Recent conversations now sync across cluster nodes and merge concurrent opens correctly
+- Settings and configurations now accept custom directories for agent skills, prompts, rules, and plugins
+- Shared agent resources now sync across cluster nodes
+- Tickets can now skip directly to Done without requiring implementation phases
+- Done ticket conversations now preserve with an option to continue work in a new chat
 - Ticket conversation buttons now appear in the correct layout order in session lists
-- Planned tickets can now move directly to Done to skip remaining agent phases without starting implementation
+- Task handoffs now preserve conversation ownership across cluster nodes
 - Conversation row buttons on phones no longer sit flush against each other
-- The Settings tab that manages workspaces is now named Workspaces instead of Projects
-- Done tickets now show read-only conversations with a button to continue work in a new chat that inherits the completed context
+- The workspace settings tab is now labeled "Workspaces" instead of "Projects"
+- Unhandled server errors are now logged for better debugging
 
 ## 1.4.1 — 2026-09-05
 
