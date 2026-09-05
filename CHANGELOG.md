@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.4.0 — 2026-09-05
 
 - Tasks now support file and image attachments that persist in the workspace and are included when agents take over the work
 - Ticket conversations now correctly open from the board button even when another conversation was previously open
