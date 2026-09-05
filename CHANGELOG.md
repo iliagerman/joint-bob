@@ -8,6 +8,7 @@ Every deployment is a version. The newest section must always match the
 - Task handoffs now preserve conversation ownership across cluster nodes
 - Ticket conversation buttons now appear in the correct layout order in session lists
 - Planned tickets can now move directly to Done to skip remaining agent phases without starting implementation
+- Conversation row buttons on phones no longer sit flush against each other
 - The Settings tab that manages workspaces is now named Workspaces instead of Projects
 
 ## 1.4.1 — 2026-09-05

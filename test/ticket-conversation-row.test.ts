@@ -76,5 +76,29 @@ test("the ticket mark and its button lane are styled with design tokens", async 
   // Phones get the same real touch targets the other lane buttons get.
   const mobile = styles.slice(styles.indexOf("@media (max-width: 1023px)"));
   assert.match(mobile, /\.session-list \.ticket-link-button \{[^}]*min-height: 34px/);
-  assert.match(mobile, /\.session-list \.list-row\.has-ticket \.session-card \{[^}]*padding-right: 128px/);
+  assert.match(mobile, /\.session-list \.list-row\.has-ticket \.session-card \{[^}]*padding-right: 136px/);
+});
+
+
+test("the phone lanes leave a visible gap between the three row buttons", async () => {
+  const styles = await readFile("public/styles.css", "utf8");
+  const mobile = styles.slice(styles.indexOf("@media (max-width: 1023px)"));
+
+  const rightOffset = (selector: RegExp): number => {
+    const rule = mobile.match(selector);
+    assert.ok(rule, `missing rule for ${selector}`);
+    const right = rule[0].match(/right: (\d+)px/);
+    assert.ok(right, `rule has no right offset: ${rule[0]}`);
+    return Number(right[1]);
+  };
+
+  // The menu button keeps the shared lane offset; the other two sit outside it.
+  const menuRight = 10;
+  const buttonWidth = 34;
+  const pinRight = rightOffset(/\.session-list \.pin-button, \.project-list \.pin-button \{[^}]*\}/);
+  const ticketRight = rightOffset(/\.session-list \.ticket-link-button \{[^}]*\}/);
+
+  // Touching buttons read as one blob on a phone, so each pair keeps 8px of air.
+  assert.ok(pinRight - (menuRight + buttonWidth) >= 8, `pin sits ${pinRight - (menuRight + buttonWidth)}px from the menu`);
+  assert.ok(ticketRight - (pinRight + buttonWidth) >= 8, `ticket sits ${ticketRight - (pinRight + buttonWidth)}px from the pin`);
 });

@@ -75,6 +75,6 @@ test("every conversation and project row carries the same pin quick action", asy
   assert.match(styles, /\.session-list \.session-card, \.project-list \.project-card \{ padding-right: 78px; \}/);
 
   // On phones both buttons grow to a real touch target, so the lanes widen with them.
-  assert.match(styles, /\.session-list \.pin-button, \.project-list \.pin-button \{ min-height: 34px; min-width: 34px; width: 34px; right: 48px; \}/);
-  assert.match(styles, /\.session-list \.session-card, \.project-list \.project-card \{ padding-right: 90px; \}/);
+  assert.match(styles, /\.session-list \.pin-button, \.project-list \.pin-button \{ min-height: 34px; min-width: 34px; width: 34px; right: 52px; \}/);
+  assert.match(styles, /\.session-list \.session-card, \.project-list \.project-card \{ padding-right: 94px; \}/);
 });

@@ -1096,6 +1096,8 @@ select.chat-toolbar-control {
 .conversation-lock[hidden] { display: none; }
 .conversation-lock-copy { display: grid; gap: 2px; min-width: 0; }
 .conversation-lock-copy strong { color: var(--amber); font-size: 12px; font-weight: 600; }
+.done-conversation-notice { background: color-mix(in srgb, var(--accent) 8%, var(--header)); }
+.done-conversation-notice .conversation-lock-copy strong { color: var(--accent); }
 .conversation-lock-copy span { color: var(--muted); font-size: 12px; line-height: 1.4; }
 .conversation-lock-status:empty { display: none; }
 .conversation-lock button { flex: 0 0 auto; }
@@ -1570,13 +1572,14 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   /* The menu is the only way to reach a row's actions, so it needs a real touch target,
      and a wider lane to sit in so the title still clears it. */
   .row-menu-button { min-height: 34px; min-width: 34px; }
-  /* The pin button gets the same touch target, one lane to the left of the menu. */
-  .session-list .pin-button, .project-list .pin-button { min-height: 34px; min-width: 34px; width: 34px; right: 48px; }
-  .session-list .session-card, .project-list .project-card { padding-right: 90px; }
-  /* The ticket jump button gets the same touch target, one lane further out than
-     the pin button so the row reads ticket, pin, menu. */
-  .session-list .ticket-link-button { min-height: 34px; min-width: 34px; width: 34px; right: 86px; }
-  .session-list .list-row.has-ticket .session-card { padding-right: 128px; }
+  /* The pin button gets the same touch target, one lane to the left of the menu,
+     with 8px of air between the two so they don't read as one blob on a phone. */
+  .session-list .pin-button, .project-list .pin-button { min-height: 34px; min-width: 34px; width: 34px; right: 52px; }
+  .session-list .session-card, .project-list .project-card { padding-right: 94px; }
+  /* The ticket jump button gets the same touch target and the same 8px of air,
+     one lane further out than the pin so the row reads ticket, pin, menu. */
+  .session-list .ticket-link-button { min-height: 34px; min-width: 34px; width: 34px; right: 94px; }
+  .session-list .list-row.has-ticket .session-card { padding-right: 136px; }
   /* Stop stays a real touch target on phones without leaving the meta row. */
   .chat-actions .icon-button { min-width: 32px; width: 32px; min-height: 32px; }
   .project-card, .session-card { padding-right: 52px; }
