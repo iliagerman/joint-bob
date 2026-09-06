@@ -323,6 +323,7 @@
         <label for="canvasSplitPosition">Place the new pane
           <select id="canvasSplitPosition" data-testid="canvas-split-position">
             <option value="right" selected>Right of target</option>
+            <option value="left">Left of target</option>
             <option value="below">Below, in a new row</option>
           </select>
         </label>
@@ -359,6 +360,7 @@
           <span class="eyebrow">Canvas</span>
           <h2>Canvas shortcuts</h2>
           <p>One modifier combination runs every canvas key, including the per-conversation keys. It must include Command, Control, or Option — Shift on its own would swallow ordinary typing. Each command takes one digit or letter; leave a field empty to unbind it. The switch key works everywhere in the app, including from the conversation list; the rest belong to the open canvas. A key a conversation already uses stays with that conversation.</p>
+          <p>Terminal-style splits are fixed: press Control+Space, then | or \ to open left of the active pane, or - to open below it.</p>
         </div>
         <fieldset class="canvas-keymap-modifiers">
           <legend>Modifier combination</legend>

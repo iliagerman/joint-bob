@@ -24,6 +24,7 @@ test("canvas is a desktop row view over exact existing conversations", async () 
   assert.match(html, /id="canvasProjectSelect"/);
   assert.match(html, /id="canvasSessionSearch"/);
   assert.match(html, /id="canvasSplitPosition"/);
+  assert.match(html, /<option value="left">Left of target<\/option>/);
   assert.match(html, /id="canvasProjectFilter"[^>]*data-testid="canvas-project-filter"/);
   assert.match(html, /id="canvasArrangeSelect"[^>]*data-testid="canvas-arrange-select"/);
   for (const value of ["project", "recent", "created"]) assert.match(html, new RegExp(`<option value="${value}">`));
@@ -116,7 +117,7 @@ test("canvas is a desktop row view over exact existing conversations", async () 
 
 test("the canvas shell ships in the service worker cache", async () => {
   const worker = await readFile("public/sw.js", "utf8");
-  assert.match(worker, /const CACHE_NAME = "joint-bob-v122"/);
+  assert.match(worker, /const CACHE_NAME = "joint-bob-v123"/);
   assert.match(worker, /"\/canvas\.js"/);
   assert.match(worker, /"\/canvas-layout\.js"/);
 });

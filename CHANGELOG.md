@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Terminal-style split shortcuts now open canvas panes left or below using Ctrl+Space followed by \ or -
 - Canvas conversations can now be filtered by project and arranged by project name, recent activity, or creation date
 - Resizing conversation rows now auto-scrolls the canvas when the drag handle reaches the viewport edge
 - One keyboard shortcut now switches between the canvas and the view it was opened from, from anywhere in the app

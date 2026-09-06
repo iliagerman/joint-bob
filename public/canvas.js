@@ -11,7 +11,8 @@
 
 import {
   addCanvasPane, arrangeCanvasLayout, CANVAS_KEYMAP_COMMANDS, CANVAS_MODIFIERS, canonicalCanvasKey, canvasChordLabel,
-  canvasChordIsUsable, canvasChordMatches, canvasKeyFromCode, canvasPaneEngine, canvasPaneMoves, canonicalSessionPath,
+  canvasChordIsUsable, canvasChordMatches, canvasKeyFromCode, canvasPaneEngine, canvasPaneMoves, canvasSplitPlacement,
+  canonicalSessionPath, isCanvasModifierKey, isCanvasSplitLeader,
   CANVAS_MAX_ROW_HEIGHT, CANVAS_MAX_ROW_PANES, CANVAS_MIN_PANE_WIDTH, CANVAS_MIN_ROW_HEIGHT, clearCanvasRowHeight,
   DEFAULT_CANVAS_KEYMAP, emptyCanvasLayout, fuzzyMatchScore, listCanvasPanes,
   moveCanvasPane, normalizeCanvasKeymap, normalizeCanvasLayout, organizeCanvasLayout, removeCanvasPane,
@@ -86,6 +87,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
   const visitOrder = [];
   let finderMatches = [];
   let finderIndex = 0;
+  let splitLeaderArmed = false;
 
   const text = (tag, value, className) => {
     const element = document.createElement(tag);
@@ -593,6 +595,22 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
     return revealPane(paneId);
   }
 
+  function handleSplitShortcut(combination) {
+    if (!active) return false;
+    if (isCanvasSplitLeader(combination)) {
+      splitLeaderArmed = true;
+      return true;
+    }
+    if (!splitLeaderArmed) return false;
+    if (isCanvasModifierKey(combination)) return false;
+    splitLeaderArmed = false;
+    const placement = canvasSplitPlacement(combination);
+    const targetPaneId = currentPaneId();
+    if (!placement || !targetPaneId) return false;
+    openPicker(targetPaneId, null, placement);
+    return true;
+  }
+
   /** A conversation's own key is checked first: adding a command must never silently
    * take a binding the user already had. */
   function handleShortcutCombination(combination) {
@@ -1027,7 +1045,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
 
   function addChosenPane(pane) {
     try {
-      const axis = positionSelect.value === "below" ? "column" : "row";
+      const axis = positionSelect.value === "below" ? "column" : positionSelect.value === "left" ? "left" : "row";
       if (replacePaneId) {
         const replaced = listCanvasPanes(layout).find((candidate) => candidate.id === replacePaneId);
         commit(replaceCanvasPane(layout, replacePaneId, pane));
@@ -1045,9 +1063,10 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
     }
   }
 
-  function openPicker(targetPaneId = null, replaceId = null) {
+  function openPicker(targetPaneId = null, replaceId = null, placement = null) {
     pickerTargetPaneId = targetPaneId;
     replacePaneId = replaceId;
+    if (placement) positionSelect.value = placement;
     searchInput.value = "";
     pickerStatus.textContent = "";
     const projects = getProjects();
@@ -1105,7 +1124,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
     keymapStatus.textContent = "";
   });
   window.addEventListener("keydown", (event) => {
-    if (handleShortcutCombination(event)) event.preventDefault();
+    if (handleSplitShortcut(event) || handleShortcutCombination(event)) event.preventDefault();
   });
   // Same origin is not enough: any window on this origin could post these. Only the
   // frames this canvas created may press a shortcut or ask for the binding table.
@@ -1116,6 +1135,9 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
     const paneId = paneIdForSource(event.source);
     if (paneId === null) return;
     if (event.data?.type === "canvasShortcut") handleShortcutCombination(event.data);
+    if (event.data?.type === "canvasSplitShortcut" && ["left", "below"].includes(event.data.placement)) {
+      openPicker(paneId, null, event.data.placement);
+    }
     // A pane that just finished loading has no bindings yet.
     if (event.data?.type === "canvasPaneReady") publishBindings();
     // Knowing which pane the user last touched is what makes "the current one" real.

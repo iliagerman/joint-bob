@@ -1,6 +1,9 @@
 // App entry point. The feature modules under ./app register their DOM listeners
 // when they load; this file wires the boot sequence and the canvas pane mode.
-import { canvasChordMatches, canvasKeyFromCode, DEFAULT_CANVAS_KEYMAP } from "./canvas-layout.js";
+import {
+  canvasChordMatches, canvasKeyFromCode, canvasSplitPlacement, DEFAULT_CANVAS_KEYMAP,
+  isCanvasModifierKey, isCanvasSplitLeader,
+} from "./canvas-layout.js";
 import { createConversationCanvas } from "./canvas.js";
 import { api, savePreferences } from "./app/api.js";
 import { initializeApplication, revealApplication } from "./app/auth.js";
@@ -61,7 +64,23 @@ if (state.canvasPaneMode) {
   // which keys it claims; every other combination still belongs to the conversation.
   const canvasBindings = new Set();
   let canvasModifiers = DEFAULT_CANVAS_KEYMAP.modifiers;
+  let splitLeaderArmed = false;
   window.addEventListener("keydown", (event) => {
+    if (isCanvasSplitLeader(event)) {
+      splitLeaderArmed = true;
+      event.preventDefault();
+      return;
+    }
+    if (splitLeaderArmed) {
+      if (isCanvasModifierKey(event)) return;
+      splitLeaderArmed = false;
+      const placement = canvasSplitPlacement(event);
+      if (placement) {
+        event.preventDefault();
+        parent.postMessage({ type: "canvasSplitShortcut", placement }, location.origin);
+        return;
+      }
+    }
     if (!canvasChordMatches({ modifiers: canvasModifiers }, event)) return;
     const binding = canvasKeyFromCode(event.code);
     if (!binding || !canvasBindings.has(binding)) return;

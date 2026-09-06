@@ -269,6 +269,44 @@ test("the picker adds an existing conversation through its button handlers", asy
   assert.deepEqual(framesAfterRemove, originalFrames, "removing one pane leaves both unaffected browsing contexts attached");
 });
 
+test("Ctrl+Space split shortcuts open the picker relative to the active pane", async () => {
+  const root = registry.get("#canvasRoot");
+  let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
+  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "row");
+  controller.setLayout({ ...layout, focusedPaneId: null });
+  await controller.activate();
+
+  const frames = [];
+  walk2(root, frames);
+  for (const frame of frames) frame.contentWindow = { postMessage() {} };
+  windowListeners.get("message")({
+    origin: "http://canvas.test", source: frames[1].contentWindow, data: { type: "canvasPaneActive" },
+  });
+
+  let prevented = 0;
+  const press = (event) => windowListeners.get("keydown")({ ...event, preventDefault: () => { prevented += 1; } });
+  press({ code: "Space", key: " ", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false });
+  press({ code: "ShiftLeft", key: "Shift", ctrlKey: false, metaKey: false, altKey: false, shiftKey: true });
+  press({ code: "Backslash", key: "|", ctrlKey: false, metaKey: false, altKey: false, shiftKey: true });
+  assert.equal(prevented, 2, "the split sequence never reaches the active conversation");
+  assert.equal(registry.get("#canvasConversationDialog").open, true);
+  assert.equal(registry.get("#canvasSplitPosition").value, "left");
+
+  registry.get("#canvasProjectSelect").value = "p-one";
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const option = registry.get("#canvasSessionOptions").children.find((child) => textOf(child).includes("Three"));
+  option.dispatch("click");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(listCanvasPanes(saved.at(-1)).map((pane) => pane.sessionId), ["s-one", "s-three", "s-two"],
+    "the new pane lands immediately left of the active pane");
+
+  press({ code: "Space", key: " ", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false });
+  press({ code: "Minus", key: "-", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false });
+  assert.equal(registry.get("#canvasConversationDialog").open, true);
+  assert.equal(registry.get("#canvasSplitPosition").value, "below");
+  registry.get("#canvasConversationDialog").close();
+});
+
 test("the picker opens a pane on a brand-new conversation", async () => {
   registry.get("#canvasProjectSelect").value = "p-one";
   controller.openPicker();

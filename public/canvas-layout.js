@@ -129,9 +129,9 @@ export function addCanvasPane(layout, pane, targetPaneId, axis) {
     rows.splice(rowIndex + 1, 0, rowOf([pane]));
     return withRows(layout, rows, pane.id);
   }
-  if (axis !== "row") throw new Error("Unknown placement");
+  if (axis !== "row" && axis !== "left") throw new Error("Unknown placement");
   if (rows[rowIndex].panes.length >= CANVAS_MAX_ROW_PANES) throw new Error("A row holds at most eight conversations");
-  rows[rowIndex] = insertPane(rows[rowIndex], pane, index);
+  rows[rowIndex] = insertPane(rows[rowIndex], pane, axis === "left" ? index - 1 : index);
   return withRows(layout, rows, pane.id);
 }
 
@@ -317,6 +317,21 @@ export function canvasKeyFromCode(code) {
 export function canvasChordLabel(keymap, key = "") {
   return CANVAS_MODIFIERS.filter((name) => keymap.modifiers.includes(name))
     .map((name) => MODIFIER_SYMBOLS[name]).join("") + key;
+}
+
+export function isCanvasSplitLeader(combination) {
+  return combination.code === "Space" && combination.ctrlKey
+    && !combination.metaKey && !combination.altKey && !combination.shiftKey;
+}
+
+export function canvasSplitPlacement(combination) {
+  if (combination.code === "Backslash") return "left";
+  if (combination.code === "Minus") return "below";
+  return null;
+}
+
+export function isCanvasModifierKey(combination) {
+  return /^(?:Control|Shift|Alt|Meta)(?:Left|Right)$/.test(combination.code);
 }
 
 /**

@@ -370,6 +370,24 @@ test("canvas panes resize in both directions and the canvas scrolls", async () =
   assert.ok(scrolling.scrollTop > 0, `the canvas can scroll vertically (got ${scrolling.scrollTop})`);
 });
 
+test("terminal-style split shortcuts open the picker from the active canvas pane", async () => {
+  const activePane = page.locator(".canvas-pane", { hasText: "Mobile Multi-Agent Threads" });
+  await activePane.locator("iframe").contentFrame().getByTestId("chat-message-input").click();
+
+  await page.keyboard.press("Control+Space");
+  await page.keyboard.press("Shift+Backslash");
+  await page.getByTestId("canvas-conversation-dialog").waitFor({ state: "visible" });
+  assert.equal(await page.getByTestId("canvas-split-position").inputValue(), "left");
+  await page.getByTestId("canvas-picker-cancel-button").click();
+
+  await activePane.locator("iframe").contentFrame().getByTestId("chat-message-input").click();
+  await page.keyboard.press("Control+Space");
+  await page.keyboard.press("Minus");
+  await page.getByTestId("canvas-conversation-dialog").waitFor({ state: "visible" });
+  assert.equal(await page.getByTestId("canvas-split-position").inputValue(), "below");
+  await page.getByTestId("canvas-picker-cancel-button").click();
+});
+
 test("the canvas filters and arranges conversations by project", async () => {
   await page.getByTestId("canvas-add-button").click();
   await page.selectOption("#canvasProjectSelect", { label: "Infra Scripts" });

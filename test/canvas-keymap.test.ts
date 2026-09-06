@@ -55,6 +55,13 @@ test("a binding reads the physical key, not the character", () => {
   assert.equal(canvasKeyFromCode("Slash"), null);
 });
 
+test("a pane can be inserted immediately left of its target", () => {
+  let layout = addCanvasPane(emptyCanvasLayout(), pane("one"));
+  layout = addCanvasPane(layout, pane("two"), "one", "row");
+  layout = addCanvasPane(layout, pane("left"), "two", "left");
+  assert.deepEqual(layout.rows[0].panes.map((item) => item.id), ["one", "left", "two"]);
+});
+
 test("the chord label draws the configured modifiers", () => {
   const keymap = normalizeCanvasKeymap({ modifiers: ["meta", "shift"] });
   assert.equal(canvasChordLabel(keymap, "4"), "⌘⇧4");
