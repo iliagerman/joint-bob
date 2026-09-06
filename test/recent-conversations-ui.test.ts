@@ -90,11 +90,13 @@ test("recent conversations are recorded, pinnable, and reopenable", async () => 
   assert.match(app, /method: "PUT"/);
   assert.match(app, /method: "DELETE"/);
 
-  // Opening any listed conversation is what makes it recent.
+  // Existing and newly created conversations both become recent when opened.
   const start = app.indexOf("function openListedSession(session)");
   const end = app.indexOf("\n}", start);
   assert.ok(start >= 0, "Missing openListedSession");
   assert.match(app.slice(start, end), /rememberRecentSession\(session\)/);
+  const optimistic = app.slice(app.indexOf("function addOptimisticSession("));
+  assert.match(optimistic.slice(0, optimistic.indexOf("\n}")), /rememberRecentSession\(session\)/);
 
   // Pinning reuses the stable conversation identity, so a pin set here shows in the chat list and on other nodes.
   assert.match(app, /testid: "recent-session-pin-button"/);

@@ -2,6 +2,7 @@ import { savePreferencesInBackground } from "./api.js";
 import { conversationTask } from "./chat-controls.js";
 import { elements } from "./elements.js";
 import { loadSecretAccounts, providerBadge, secretAccounts } from "./secrets.js";
+import { rememberRecentSession } from "./recents.js";
 import { renderSessionColorSwatches, selectedSessionColor } from "./session-identity.js";
 import { toast } from "./shell.js";
 import { openSession } from "./socket.js";
@@ -39,7 +40,7 @@ export function addOptimisticSession(sessionId, sessionPath, title, color) {
   const harness = state.harnesses.find((candidate) => candidate.newSessionPath === newSessionPath);
   if (!harness) throw new Error(`No harness owns new-session path: ${newSessionPath}`);
   const now = new Date().toISOString();
-  state.sessions = [{
+  const session = {
     id: sessionId,
     path: `draft:${harness.id}:${sessionId}`,
     harnessId: harness.id,
@@ -50,7 +51,9 @@ export function addOptimisticSession(sessionId, sessionPath, title, color) {
     createdAt: now,
     updatedAt: now,
     draft: true,
-  }, ...state.sessions.filter((session) => session.id !== sessionId)];
+  };
+  state.sessions = [session, ...state.sessions.filter((candidate) => candidate.id !== sessionId)];
+  rememberRecentSession(session);
 }
 
 /** A conversation is named up front so the list shows the user's own label from the first turn. */
