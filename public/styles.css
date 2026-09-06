@@ -472,19 +472,23 @@ input::placeholder, textarea::placeholder { color: color-mix(in srgb, var(--mute
 textarea:focus, input:focus, select:focus { border-color: var(--line-strong); box-shadow: 0 0 0 3px var(--focus-ring); }
 
 .conversation-search { margin-top: 8px; }
-.chat-filters { display: flex; gap: 2px; margin: 8px 12px 2px; overflow-x: auto; scrollbar-width: none; }
-.chat-filters::-webkit-scrollbar { display: none; }
+.chat-filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 3px; margin: 8px 12px 2px; }
 .chat-filters button {
-  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
   min-height: 30px;
   border: 1px solid transparent;
   border-radius: 999px;
   background: transparent;
   color: var(--muted);
-  padding: 0 13px;
+  padding: 0 4px;
   font-size: 12px;
   font-weight: 550;
 }
+.chat-filters button > svg { width: 15px; height: 15px; flex: 0 0 auto; }
 .chat-filters button:hover { color: var(--text); background: var(--field); }
 .chat-filters button.active {
   color: var(--hue);
@@ -496,7 +500,6 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
   place-items: center;
   min-width: 18px;
   height: 18px;
-  margin-left: 4px;
   padding: 0 5px;
   border-radius: 999px;
   background: color-mix(in srgb, currentColor 10%, transparent);

@@ -110,7 +110,7 @@ test("canvas panes and boot restore follow switched conversations to their newes
 
 test("the canvas shell ships in the service worker cache", async () => {
   const worker = await readFile("public/sw.js", "utf8");
-  assert.match(worker, /const CACHE_NAME = "joint-bob-v126"/);
+  assert.match(worker, /const CACHE_NAME = "joint-bob-v128"/);
   assert.match(worker, /"\/canvas\.js"/);
   assert.match(worker, /"\/canvas-layout\.js"/);
 });

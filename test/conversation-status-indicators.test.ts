@@ -71,9 +71,9 @@ test("conversation UI exposes state counts, automatic review, notifications, and
     serverSource(),
   ]);
 
-  assert.match(html, /data-filter="active"[^>]*>Running <span/);
-  assert.match(html, /data-filter="review"[^>]*>Needs review <span/);
-  assert.match(html, /data-filter="done"[^>]*>Reviewed <span/);
+  assert.match(html, /data-filter="active"[^>]*title="Running"[^>]*>.*<span class="sr-only">Running<\/span>/);
+  assert.match(html, /data-filter="review"[^>]*title="Needs review"[^>]*>.*<span class="sr-only">Needs review<\/span>/);
+  assert.match(html, /data-filter="done"[^>]*title="Reviewed"[^>]*>.*<span class="sr-only">Reviewed<\/span>/);
   assert.match(html, /id="completionSoundSelect"[^>]*data-testid="notifications-sound-select"/);
   assert.match(html, /id="previewSoundButton"[^>]*data-testid="notifications-sound-preview-button"/);
   assert.match(app, /markSessionReviewed/);

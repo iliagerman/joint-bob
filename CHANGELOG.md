@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Conversation filter buttons now display visual icons for All, Running, Needs review, and Reviewed states
 - The conversation canvas now nests panes in tmux-style recursive splits with draggable dividers and reorderable multi-page layouts that keep every pane alive
 - The keyboard shortcut to reopen the recent conversations list is now Ctrl/Cmd + K instead of Ctrl/Cmd + Shift + K
 - Engine settings now show detected node defaults and validate custom paths before you save
