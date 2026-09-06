@@ -10,16 +10,28 @@ import { formatDate, toast } from "./shell.js";
 import { openSession } from "./socket.js";
 import { state } from "./state.js";
 
+/**
+ * The open project's conversations are the live source for its own review count, so every
+ * surface that shows one has to be redrawn together: the list, the inbox badge, and the
+ * project rows. Leaving the badge until the next background refresh shows a count that
+ * disagrees with the list the user is looking at.
+ */
+function renderReviewCounts() {
+  renderSessions();
+  renderPendingReviewsBadge();
+  renderProjects();
+}
+
 function markSessionReviewed(session) {
   if (session.reviewState !== "needs_review" || session.running) return;
   session.reviewState = "reviewed";
-  renderSessions();
+  renderReviewCounts();
   void api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/reviewed`, {
     method: "PUT",
     body: JSON.stringify({ sessionPath: session.path, updatedAt: session.updatedAt }),
   }).catch((error) => {
     session.reviewState = "needs_review";
-    renderSessions();
+    renderReviewCounts();
     toast(error.message);
   });
 }
@@ -33,7 +45,7 @@ async function markAllSessionsReviewed() {
   if (!state.activeProjectId || !targets.length) return;
   const sessions = targets.map((session) => ({ sessionPath: session.path, updatedAt: session.updatedAt }));
   for (const session of targets) session.reviewState = "reviewed";
-  renderSessions();
+  renderReviewCounts();
   try {
     await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/reviewed-all`, {
       method: "PUT",
@@ -41,7 +53,7 @@ async function markAllSessionsReviewed() {
     });
   } catch (error) {
     for (const session of targets) session.reviewState = "needs_review";
-    renderSessions();
+    renderReviewCounts();
     toast(error.message);
   }
 }

@@ -384,6 +384,9 @@ const canvasKeymapPreferenceSchema = z.object({
   recentPane: canvasKeymapKeySchema,
   focusPane: canvasKeymapKeySchema,
   paneSearch: canvasKeymapKeySchema,
+  // Optional: a client that predates this command simply never sends it, and the
+  // normalizer gives it its default key.
+  toggleView: canvasKeymapKeySchema.optional(),
 });
 export const userPreferencesSchema = z.object({
   theme: z.enum(["light", "dark"]).nullable().optional(),

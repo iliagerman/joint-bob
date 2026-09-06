@@ -17,8 +17,29 @@ test("an empty modifier set falls back to the default chord", () => {
 });
 
 test("two commands cannot hold the same key", () => {
-  const keymap = normalizeCanvasKeymap({ modifiers: ["ctrl"], recentPane: "k", focusPane: "K", paneSearch: "9" });
-  assert.deepEqual(keymap, { modifiers: ["ctrl"], recentPane: "K", focusPane: null, paneSearch: "9" });
+  const keymap = normalizeCanvasKeymap({ modifiers: ["ctrl"], recentPane: "k", focusPane: "K", paneSearch: "9", toggleView: "v" });
+  assert.deepEqual(keymap, { modifiers: ["ctrl"], recentPane: "K", focusPane: null, paneSearch: "9", toggleView: "V" });
+});
+
+// Every account has a keymap saved from before the canvas gained a toggle key. A command
+// the stored keymap never had an opinion about starts on its default; a command the user
+// actually cleared arrives as an explicit null and stays cleared.
+test("a command missing from a stored keymap starts on its default key", async () => {
+  const upgraded = normalizeCanvasKeymap({ modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F" });
+  assert.equal(upgraded.toggleView, "V");
+  assert.equal(normalizeCanvasKeymap({ modifiers: ["meta", "shift"], toggleView: null }).toggleView, null);
+
+  const { normalizeCanvasKeymapPreference } = await import(`../src/preferences.js?canvas-keymap=${Date.now()}-${Math.random()}`);
+  assert.equal(normalizeCanvasKeymapPreference({ modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F" }).toggleView, "V");
+  assert.equal(normalizeCanvasKeymapPreference({ modifiers: ["meta", "shift"], toggleView: null }).toggleView, null);
+});
+
+// The toggle key is the one command that answers while the canvas is closed, so a
+// conversation shortcut must never be able to sit on the same key.
+test("a default key already taken by another command is dropped rather than duplicated", () => {
+  const keymap = normalizeCanvasKeymap({ modifiers: ["ctrl"], recentPane: "V" });
+  assert.equal(keymap.recentPane, "V");
+  assert.equal(keymap.toggleView, null);
 });
 
 test("a chord matches only when no extra modifier is held", () => {
@@ -61,8 +82,8 @@ test("clearing a row height gives the row its share back", () => {
 test("stored keymaps degrade instead of taking the node down", async () => {
   const { defaultCanvasKeymap, normalizeCanvasKeymapPreference } = await import(`../src/preferences.js?canvas-keymap=${Date.now()}-${Math.random()}`);
   assert.deepEqual(normalizeCanvasKeymapPreference(null), defaultCanvasKeymap());
-  const keymap = normalizeCanvasKeymapPreference({ modifiers: ["meta"], recentPane: "!!", focusPane: "g" });
-  assert.deepEqual(keymap, { modifiers: ["meta"], recentPane: null, focusPane: "G", paneSearch: null });
+  const keymap = normalizeCanvasKeymapPreference({ modifiers: ["meta"], recentPane: "!!", focusPane: "g", paneSearch: null, toggleView: null });
+  assert.deepEqual(keymap, { modifiers: ["meta"], recentPane: null, focusPane: "G", paneSearch: null, toggleView: null });
   assert.deepEqual(normalizeCanvasKeymapPreference({ modifiers: ["bogus"] }).modifiers, ["meta", "shift"]);
 });
 

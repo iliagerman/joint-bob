@@ -90,6 +90,35 @@ test("signing into both nodes through the form leaves both tabs signed in", asyn
   }
 });
 
+// The Cluster tab is where a person checks whether the other machine is up. Both nodes
+// are running here, so each tab must name itself and report the other as connected.
+test("the cluster settings list says which nodes are connected", async () => {
+  const [mac, homeserver] = environment.nodes;
+  const [macPage] = pages;
+
+  await macPage.getByTestId("settings-open-button").click();
+  await macPage.getByTestId("settings-tab-cluster").click();
+  const rows = macPage.getByTestId("cluster-node-row");
+  await rows.first().waitFor({ timeout: 30_000 });
+  assert.equal(await rows.count(), 2, "one row for this node and one for its peer");
+
+  const listed = await rows.evaluateAll((nodes) => nodes.map((node) => ({
+    name: node.querySelector("strong")?.textContent ?? "",
+    status: node.querySelector(".cluster-node-status")?.textContent ?? "",
+    state: (node as HTMLElement).dataset.state,
+  })));
+  const local = listed.find((entry) => entry.name === mac.name);
+  const peer = listed.find((entry) => entry.name === homeserver.name);
+  assert.ok(local, `the list names this node (${JSON.stringify(listed)})`);
+  assert.equal(local.status, "This node");
+  assert.ok(peer, `the list names the paired node by name, not by id (${JSON.stringify(listed)})`);
+  assert.equal(peer.status, "Connected", "a running peer reads as connected");
+  assert.equal(peer.state, "online");
+
+  await macPage.getByTestId("settings-cancel-button").click();
+  await macPage.getByTestId("settings-dialog").waitFor({ state: "hidden" });
+});
+
 test("an open remote conversation can switch locally and take ownership", async () => {
   const [mac, homeserver] = environment.nodes;
   const [macPage, homeserverPage] = pages;

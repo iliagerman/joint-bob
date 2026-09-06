@@ -27,6 +27,9 @@ export const state = {
   canvasKeymap: DEFAULT_CANVAS_KEYMAP,
   canvasController: null,
   canvasLayoutSave: null,
+  // The view the canvas was opened from, so the toggle key puts the user back where
+  // they were rather than always in the conversation list.
+  viewBeforeCanvas: null,
   projects: [],
   sessions: [],
   skills: [],

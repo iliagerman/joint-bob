@@ -9,7 +9,7 @@
 // report success while testing nothing.
 import assert from "node:assert/strict";
 import { type ChildProcess } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { appendFile, mkdtemp, rm, utimes } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test, { after, before } from "node:test";
@@ -544,6 +544,61 @@ test("a top toast stays above the mobile composer", async () => {
   } finally {
     await mobileContext.close();
   }
+});
+
+// The review inbox badge is the only sign a conversation is still waiting. Opening one
+// straight from the conversation list marks it read, so the badge has to drop with it:
+// leaving the count until the next background refresh shows a number that is already wrong.
+test("opening a conversation that is waiting for review updates the badge at once", async () => {
+  const transcript = path.join(environment.home, ".pi", "sessions", "terraform-state-locking.jsonl");
+  const answeredAt = new Date(Date.now() + 1_000);
+  await appendFile(transcript, `${JSON.stringify({
+    type: "message",
+    id: "terraform-state-locking-review",
+    parentId: "terraform-state-locking-1",
+    timestamp: answeredAt.toISOString(),
+    message: { role: "assistant", content: [{ type: "text", text: "State locking is configured." }], timestamp: answeredAt.getTime() },
+  })}\n`);
+  await utimes(transcript, answeredAt, answeredAt);
+
+  await page.goto(node.url, { waitUntil: "domcontentloaded" });
+  const badge = page.getByTestId("pending-reviews-badge");
+  await badge.waitFor({ timeout: 20_000 });
+  assert.equal(await badge.innerText(), "1", "the answered conversation is counted as waiting for review");
+
+  await page.locator(".project-card", { hasText: "Infra Scripts" }).first().click();
+  await page.locator(".session-card", { hasText: "Terraform state locking" }).first().click();
+  await page.locator(".message").first().waitFor({ timeout: 20_000 });
+
+  // Well inside the background refresh, which trails the burst by five seconds: this has
+  // to be the click's own doing, not a timer catching up.
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline && await badge.isVisible()) {
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  }
+  assert.equal(await badge.isVisible(), false, `the badge clears with the conversation it counted (still showing ${await badge.innerText().catch(() => "")})`);
+});
+
+// The canvas is a whole second surface. Reaching it and getting back has to be one key
+// from anywhere in the app, including from inside a conversation, and it has to return the
+// user to the view they left rather than dumping them in the conversation list.
+test("the canvas shortcut switches to the canvas and back to the view it was opened from", async () => {
+  const currentView = () => page.evaluate(() => [...document.body.classList].find((name) => name.startsWith("view-")) ?? "");
+  await page.goto(node.url, { waitUntil: "domcontentloaded" });
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().waitFor({ timeout: 20_000 });
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+  await page.locator(".session-card", { hasText: "Thread-Based Agent Builder" }).first().click();
+  await page.locator(".message").first().waitFor({ timeout: 20_000 });
+  const opened = await currentView();
+  assert.equal(opened, "view-chat", "the conversation is the view the shortcut is pressed from");
+
+  await page.keyboard.press("Meta+Shift+V");
+  await page.locator("#canvasPanel").waitFor({ state: "visible", timeout: 20_000 });
+  assert.equal(await currentView(), "view-canvas", "one key reaches the canvas from a conversation");
+
+  await page.keyboard.press("Meta+Shift+V");
+  await page.locator("#canvasPanel").waitFor({ state: "hidden", timeout: 20_000 });
+  assert.equal(await currentView(), opened, "the same key puts the user back where they were");
 });
 
 test("the journey produced no console errors and no failed requests", () => {

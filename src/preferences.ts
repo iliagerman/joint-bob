@@ -98,13 +98,16 @@ export interface CanvasKeymapPreference {
   recentPane: string | null;
   focusPane: string | null;
   paneSearch: string | null;
+  toggleView: string | null;
 }
 
 const CANVAS_MODIFIERS: CanvasModifier[] = ["meta", "ctrl", "alt", "shift"];
-const CANVAS_KEYMAP_COMMANDS = ["recentPane", "focusPane", "paneSearch"] as const;
+// Order matters: a command added later takes its default key only if no earlier command
+// already holds it, so an existing account never loses a binding it configured.
+const CANVAS_KEYMAP_COMMANDS = ["recentPane", "focusPane", "paneSearch", "toggleView"] as const;
 
 export const defaultCanvasKeymap = (): CanvasKeymapPreference => ({
-  modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F",
+  modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F", toggleView: "V",
 });
 
 /** Shift alone is not a chord: it would swallow every capital letter a conversation
@@ -125,11 +128,13 @@ export function normalizeCanvasKeymapPreference(value: unknown): CanvasKeymapPre
   const modifiers = CANVAS_MODIFIERS.filter((name) => chosen.includes(name));
   const keymap: CanvasKeymapPreference = {
     modifiers: canvasChordIsUsable(modifiers) ? modifiers : defaultCanvasKeymap().modifiers,
-    recentPane: null, focusPane: null, paneSearch: null,
+    recentPane: null, focusPane: null, paneSearch: null, toggleView: null,
   };
   const taken = new Set<string>();
   for (const command of CANVAS_KEYMAP_COMMANDS) {
-    const raw = source[command];
+    // A keymap saved before a command existed never had an opinion about it, so it starts on
+    // the default. A command the user cleared arrives as an explicit null and stays cleared.
+    const raw = source[command] === undefined ? defaultCanvasKeymap()[command] : source[command];
     const key = typeof raw === "string" && /^[0-9A-Za-z]$/.test(raw) ? raw.toUpperCase() : null;
     if (!key || taken.has(key)) continue;
     keymap[command] = key;

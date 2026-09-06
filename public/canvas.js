@@ -24,7 +24,7 @@ const CANVAS_ROW_HEIGHT_STEP = 40;
 const CANVAS_ROW_SCROLL_EDGE = 80;
 const CANVAS_ROW_SCROLL_SPEED = 18;
 
-export function createConversationCanvas({ api, getProjects, saveLayout, saveKeymap, showMessage }) {
+export function createConversationCanvas({ api, getProjects, saveLayout, saveKeymap, showMessage, toggleView }) {
   const root = document.querySelector("#canvasRoot");
   const dialog = document.querySelector("#canvasConversationDialog");
   const projectSelect = document.querySelector("#canvasProjectSelect");
@@ -576,9 +576,16 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
   /** A conversation's own key is checked first: adding a command must never silently
    * take a binding the user already had. */
   function handleShortcutCombination(combination) {
-    if (!active || !canvasChordMatches(keymap, combination)) return false;
+    if (!canvasChordMatches(keymap, combination)) return false;
     const key = canvasKeyFromCode(combination.code);
     if (!key) return false;
+    // Switching between the canvas and the conversation list is the only command that
+    // also answers while the canvas is closed: it is how the user gets back to it.
+    if (key === keymap.toggleView) {
+      toggleView();
+      return true;
+    }
+    if (!active) return false;
     const shortcut = shortcuts.find((candidate) => candidate.binding === key);
     if (shortcut) {
       const pane = listCanvasPanes(layout).find((candidate) => shortcutIdentity(paneShortcutTarget(candidate)) === shortcutIdentity(shortcut));

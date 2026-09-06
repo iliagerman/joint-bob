@@ -37,6 +37,25 @@ export function setPanelCollapsed(panel, collapsed) {
   else savePreferencesInBackground({ chatsPanelCollapsed: collapsed });
 }
 
+const MOBILE_VIEWS = ["projects", "sessions", "board", "chat", "canvas"];
+
+function currentMobileView() {
+  return MOBILE_VIEWS.find((name) => document.body.classList.contains(`view-${name}`)) ?? "projects";
+}
+
+/**
+ * The app-wide canvas key. It opens the canvas from anywhere and puts the user back in the
+ * view they left, so one key moves in both directions rather than only out of the canvas.
+ */
+export function toggleCanvasView() {
+  if (state.canvasPaneMode) return;
+  if (currentMobileView() === "canvas") {
+    setMobileView(state.viewBeforeCanvas || (state.activeProjectId ? "sessions" : "projects"));
+    return;
+  }
+  setMobileView("canvas");
+}
+
 export function setMobileView(view, updateHistory = true) {
   // A pane frame hosts exactly one conversation; it never navigates elsewhere.
   if (state.canvasPaneMode) {
@@ -50,6 +69,7 @@ export function setMobileView(view, updateHistory = true) {
     view = state.activeProjectId ? "sessions" : "projects";
   }
   const currentView = history.state?.mobileView;
+  if (view === "canvas" && currentMobileView() !== "canvas") state.viewBeforeCanvas = currentMobileView();
   if (state.preferencesLoaded) savePreferencesInBackground({ mobileView: view });
 
   document.body.classList.remove("view-projects", "view-sessions", "view-board", "view-chat", "view-canvas");

@@ -6,6 +6,9 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Resizing conversation rows now auto-scrolls the canvas when the drag handle reaches the viewport edge
+- One keyboard shortcut now switches between the canvas and the view it was opened from, from anywhere in the app
+- The Cluster settings tab now shows each node's name, address, and whether this machine can reach it
+- Opening a conversation that is waiting for review now clears the review badge immediately
 
 ## 1.5.0 — 2026-09-06
 

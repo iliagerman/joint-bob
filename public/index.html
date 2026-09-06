@@ -345,7 +345,7 @@
         <div>
           <span class="eyebrow">Canvas</span>
           <h2>Canvas shortcuts</h2>
-          <p>One modifier combination runs every canvas key, including the per-conversation keys. It must include Command, Control, or Option — Shift on its own would swallow ordinary typing. Each command takes one digit or letter; leave a field empty to unbind it. A key a conversation already uses stays with that conversation.</p>
+          <p>One modifier combination runs every canvas key, including the per-conversation keys. It must include Command, Control, or Option — Shift on its own would swallow ordinary typing. Each command takes one digit or letter; leave a field empty to unbind it. The switch key works everywhere in the app, including from the conversation list; the rest belong to the open canvas. A key a conversation already uses stays with that conversation.</p>
         </div>
         <fieldset class="canvas-keymap-modifiers">
           <legend>Modifier combination</legend>
@@ -363,6 +363,9 @@
           </label>
           <label class="canvas-keymap-command" for="canvasKeymapCommand-paneSearch">Search conversations on the canvas
             <input id="canvasKeymapCommand-paneSearch" type="text" maxlength="1" autocomplete="off" spellcheck="false" placeholder="F" data-testid="canvas-keymap-pane-search-input" />
+          </label>
+          <label class="canvas-keymap-command" for="canvasKeymapCommand-toggleView">Switch between the canvas and the conversation you left
+            <input id="canvasKeymapCommand-toggleView" type="text" maxlength="1" autocomplete="off" spellcheck="false" placeholder="V" data-testid="canvas-keymap-toggle-view-input" />
           </label>
         </div>
         <p class="canvas-picker-status" id="canvasKeymapStatus" role="status" data-testid="canvas-keymap-status"></p>

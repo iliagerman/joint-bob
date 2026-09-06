@@ -4,33 +4,56 @@ import { openProjectImportMapping } from "./project-forms.js";
 import { loadProjects } from "./project-selection.js";
 import { toast } from "./shell.js";
 
+function clusterNodeRow({ name, url, state, status }) {
+  const row = document.createElement("div");
+  row.className = "cluster-node";
+  row.dataset.state = state;
+  row.dataset.testid = "cluster-node-row";
+  const dot = document.createElement("span");
+  dot.className = "cluster-node-dot";
+  dot.setAttribute("aria-hidden", "true");
+  const identity = document.createElement("div");
+  identity.className = "cluster-node-identity";
+  const title = document.createElement("strong");
+  title.textContent = name;
+  identity.append(title);
+  if (url) {
+    const address = document.createElement("span");
+    address.className = "cluster-node-url";
+    address.textContent = url;
+    identity.append(address);
+  }
+  const label = document.createElement("span");
+  label.className = "cluster-node-status";
+  label.dataset.testid = "cluster-node-status";
+  label.textContent = status;
+  row.append(dot, identity, label);
+  return row;
+}
+
+/**
+ * One row per node, each saying whether this machine can currently reach it. An
+ * unreachable peer keeps the name and address it was paired under, so the list still
+ * says which machine is missing rather than showing an opaque id.
+ */
 function renderClusterInventory(inventory) {
   elements.clusterInventory.replaceChildren();
-  const nodes = [
-    { node: inventory.local, status: "Local" },
-    ...inventory.remote.map((entry) => ({
-      node: entry.inventory?.node || { name: entry.peerId },
-      status: entry.reachable ? "Online" : `Offline — ${entry.error}`,
-      peerId: entry.peerId,
-      reachable: entry.reachable,
-    })),
-  ];
-  for (const item of nodes) {
-    const row = document.createElement("div");
-    row.className = "cluster-node";
-    const name = document.createElement("strong");
-    name.textContent = item.node.name;
-    const status = document.createElement("span");
-    status.textContent = item.status;
-    row.append(name, status);
-    if (item.peerId && item.reachable) {
+  const local = clusterNodeRow({ name: inventory.local.name, url: inventory.local.url, state: "local", status: "This node" });
+  elements.clusterInventory.append(local);
+  for (const entry of inventory.remote) {
+    const name = entry.name || entry.inventory?.node?.name || entry.peerId;
+    const url = entry.url || entry.inventory?.node?.url || "";
+    const status = entry.reachable ? "Connected" : `Not connected — ${entry.error}`;
+    const row = clusterNodeRow({ name, url, state: entry.reachable ? "online" : "offline", status });
+    if (entry.reachable) {
       const importButton = document.createElement("button");
       importButton.type = "button";
       importButton.className = "ghost compact";
       importButton.textContent = "Import projects";
+      importButton.dataset.testid = "cluster-import-projects-button";
       importButton.addEventListener("click", async () => {
         try {
-          const result = await api("/api/cluster/projects/import", { method: "POST", body: JSON.stringify({ peerId: item.peerId }) });
+          const result = await api("/api/cluster/projects/import", { method: "POST", body: JSON.stringify({ peerId: entry.peerId }) });
           toast(`Imported ${result.imported.length} projects${result.pending.length ? `; ${result.pending.length} need a local folder` : ""}${result.skipped.length ? `; skipped ${result.skipped.length}` : ""}`);
           await loadProjects();
           renderClusterInventory(await api("/api/cluster/inventory"));

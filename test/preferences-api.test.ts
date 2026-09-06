@@ -71,7 +71,7 @@ test("preferences are authenticated, validated, and persist across listener rest
       chatsPanelCollapsed: false,
       lastSeenVersion: null,
       canvasLayout: { version: 5, rows: [], focusedPaneId: null },
-      canvasKeymap: { modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F" },
+      canvasKeymap: { modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F", toggleView: "V" },
     });
 
     const values = {
@@ -103,7 +103,7 @@ test("preferences are authenticated, validated, and persist across listener rest
         }],
         focusedPaneId: "pane-b",
       },
-      canvasKeymap: { modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F" },
+      canvasKeymap: { modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F", toggleView: "B" },
     };
     const updated = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify(values) });
     assert.equal(updated.status, 200);
@@ -123,6 +123,15 @@ test("preferences are authenticated, validated, and persist across listener rest
     assert.equal(invalidSound.status, 400);
     const invalidPath = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ activeSessionPath: "x".repeat(2001) }) });
     assert.equal(invalidPath.status, 400);
+    // A client from before the view-toggle command simply omits it; the node fills in the
+    // default rather than rejecting the save or leaving the account without the key.
+    const olderClient = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasKeymap: { modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F" } }) });
+    assert.equal(olderClient.status, 200);
+    assert.deepEqual((await olderClient.json() as { canvasKeymap: unknown }).canvasKeymap, { modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F", toggleView: "V" });
+    // Restore the value used by the restart assertion below.
+    const restoredKeymap = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasKeymap: values.canvasKeymap }) });
+    assert.equal(restoredKeymap.status, 200);
+
     const shiftOnlyChord = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasKeymap: { modifiers: ["shift"], recentPane: "E", focusPane: "G", paneSearch: "F" } }) });
     assert.equal(shiftOnlyChord.status, 400);
     const pane = (id: string, sessionId: string) => ({ kind: "pane" as const, id, projectId: "p", sessionPath: `/tmp/${sessionId}.jsonl`, sessionId, executionNodeId: null });

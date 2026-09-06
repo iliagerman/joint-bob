@@ -86,7 +86,7 @@ const document = {
   createElement: (tag) => new FakeElement(tag),
   querySelector: (selector) => registry.get(selector) || null,
 };
-for (const selector of ["#canvasRoot", "#canvasConversationDialog", "#canvasProjectSelect", "#canvasSessionSearch", "#canvasSplitPosition", "#canvasSessionOptions", "#canvasPickerStatus", "#canvasPickerCancelButton", "#canvasAddButton", "#canvasOrganizeButton", "#canvasShortcutBar", "#canvasShortcutDialog", "#canvasShortcutSubject", "#canvasShortcutKey", "#canvasShortcutStatus", "#canvasShortcutRemoveButton", "#canvasShortcutSaveButton", "#canvasShortcutChordLabel", "#canvasFinderButton", "#canvasFinderDialog", "#canvasFinderInput", "#canvasFinderResults", "#canvasFinderStatus", "#canvasKeymapButton", "#canvasKeymapDialog", "#canvasKeymapStatus", "#canvasKeymapSaveButton", "#canvasKeymapResetButton", "#canvasKeymapModifier-meta", "#canvasKeymapModifier-ctrl", "#canvasKeymapModifier-alt", "#canvasKeymapModifier-shift", "#canvasKeymapCommand-recentPane", "#canvasKeymapCommand-focusPane", "#canvasKeymapCommand-paneSearch"]) {
+for (const selector of ["#canvasRoot", "#canvasConversationDialog", "#canvasProjectSelect", "#canvasSessionSearch", "#canvasSplitPosition", "#canvasSessionOptions", "#canvasPickerStatus", "#canvasPickerCancelButton", "#canvasAddButton", "#canvasOrganizeButton", "#canvasShortcutBar", "#canvasShortcutDialog", "#canvasShortcutSubject", "#canvasShortcutKey", "#canvasShortcutStatus", "#canvasShortcutRemoveButton", "#canvasShortcutSaveButton", "#canvasShortcutChordLabel", "#canvasFinderButton", "#canvasFinderDialog", "#canvasFinderInput", "#canvasFinderResults", "#canvasFinderStatus", "#canvasKeymapButton", "#canvasKeymapDialog", "#canvasKeymapStatus", "#canvasKeymapSaveButton", "#canvasKeymapResetButton", "#canvasKeymapModifier-meta", "#canvasKeymapModifier-ctrl", "#canvasKeymapModifier-alt", "#canvasKeymapModifier-shift", "#canvasKeymapCommand-recentPane", "#canvasKeymapCommand-focusPane", "#canvasKeymapCommand-paneSearch", "#canvasKeymapCommand-toggleView"]) {
   registry.set(selector, new FakeElement(selector.slice(1)));
 }
 const windowListeners = new Map<string, (event: unknown) => void>();
@@ -114,6 +114,7 @@ const savedKeymaps = [];
 let failSessions = false;
 let storedShortcuts = [];
 const apiCalls = [];
+const viewToggles = [];
 const controller = createConversationCanvas({
   api: async (path, options = {}) => {
     apiCalls.push(`${options.method || "GET"} ${path}`);
@@ -141,6 +142,7 @@ const controller = createConversationCanvas({
   saveLayout: (next) => saved.push(next),
   saveKeymap: async (next) => { savedKeymaps.push(next); },
   showMessage: () => {},
+  toggleView: () => { viewToggles.push("toggled"); },
 });
 
 const paneFor = (sessionId, sessionPath) => ({ kind: "pane", id: `pane-${sessionId}`, projectId: "p-one", sessionPath, sessionId, executionNodeId: null });
@@ -599,7 +601,7 @@ test("a saved keymap changes which combination the canvas answers", async () => 
   registry.get("#canvasKeymapSaveButton").dispatch("click");
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  assert.deepEqual(savedKeymaps.at(-1), { modifiers: ["ctrl", "alt"], recentPane: null, focusPane: null, paneSearch: "J" });
+  assert.deepEqual(savedKeymaps.at(-1), { modifiers: ["ctrl", "alt"], recentPane: null, focusPane: null, paneSearch: "J", toggleView: "V" });
 
   windowListeners.get("keydown")({ code: "KeyF", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false, preventDefault() {} });
   assert.equal(registry.get("#canvasFinderDialog").open, false, "old combination does not open finder");
@@ -740,4 +742,27 @@ test("the keymap dialog refuses a key a conversation already holds", async () =>
 
   storedShortcuts = [];
   await controller.reloadShortcuts();
+});
+
+// Switching between the canvas and the conversation list is the one canvas command that
+// has to answer from the conversation list too — otherwise the key only ever works in the
+// direction that leaves the canvas.
+test("the view toggle answers whether the canvas is open or closed", async () => {
+  controller.setKeymap({ modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F", toggleView: "V" });
+  const chord = { metaKey: true, shiftKey: true, ctrlKey: false, altKey: false };
+  controller.deactivate();
+
+  let prevented = false;
+  windowListeners.get("keydown")({ ...chord, code: "KeyV", preventDefault: () => { prevented = true; } });
+  assert.equal(viewToggles.length, 1, "the closed canvas still answers its own toggle key");
+  assert.equal(prevented, true, "the toggle takes the keystroke");
+
+  // Every other command belongs to the canvas and stays inert while it is closed.
+  const finder = registry.get("#canvasFinderDialog");
+  windowListeners.get("keydown")({ ...chord, code: "KeyF", preventDefault() {} });
+  assert.equal(finder.open, false, "the pane search stays with the open canvas");
+
+  await controller.activate();
+  windowListeners.get("keydown")({ ...chord, code: "KeyV", preventDefault() {} });
+  assert.equal(viewToggles.length, 2, "and answers again from inside the canvas");
 });

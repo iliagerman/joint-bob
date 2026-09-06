@@ -1471,8 +1471,16 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 .install-banner-copy span { color: var(--muted); font-size: 12px; line-height: 1.4; }
 .install-banner-actions { margin-left: auto; display: flex; gap: 8px; flex: 0 0 auto; }
 .cluster-inventory { display: grid; gap: 6px; max-height: 220px; overflow: auto; }
-.cluster-node { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
-.cluster-node span { margin-left: auto; color: var(--muted); font-family: var(--mono); font-size: 11px; text-align: right; }
+.cluster-node { display: flex; align-items: center; gap: 10px; padding: 11px 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
+/* The dot carries no information of its own: every row states its status in words beside it. */
+.cluster-node-dot { flex: none; width: 8px; height: 8px; border-radius: 999px; background: var(--muted); }
+.cluster-node[data-state="local"] .cluster-node-dot { background: var(--accent); }
+.cluster-node[data-state="online"] .cluster-node-dot { background: var(--live); }
+.cluster-node[data-state="offline"] .cluster-node-dot { background: var(--danger); }
+.cluster-node-identity { display: grid; gap: 2px; min-width: 0; }
+.cluster-node-url { overflow: hidden; color: var(--muted); font-family: var(--mono); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+.cluster-node-status { margin-left: auto; color: var(--muted); font-family: var(--mono); font-size: 11px; text-align: right; }
+.cluster-node[data-state="offline"] .cluster-node-status { color: var(--danger); }
 .cluster-token-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
 .cluster-token-row input { font-family: var(--mono); }
 .folder-input-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; }

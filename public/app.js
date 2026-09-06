@@ -5,7 +5,7 @@ import { createConversationCanvas } from "./canvas.js";
 import { api, savePreferences } from "./app/api.js";
 import { initializeApplication, revealApplication } from "./app/auth.js";
 import { elements } from "./app/elements.js";
-import { setMobileView } from "./app/layout.js";
+import { setMobileView, toggleCanvasView } from "./app/layout.js";
 import { SERVICE_WORKER_UPDATE_MS, setTheme, syncNotifyButton, toast, updateInstallButton, updateServiceWorker } from "./app/shell.js";
 import { state } from "./app/state.js";
 import "./app/state.js";
@@ -101,6 +101,7 @@ if (!state.canvasPaneMode) {
         .catch((error) => toast(`Could not save the canvas layout: ${error.message}`, 8000));
     },
     saveKeymap: (next) => savePreferences({ canvasKeymap: next }),
+    toggleView: toggleCanvasView,
     showMessage: (message) => toast(message, 8000),
   });
 }

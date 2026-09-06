@@ -132,6 +132,9 @@ app.get("/api/cluster/inventory", async (_request, response, next) => {
     const local = await getClusterNode();
     const peers = await listClusterPeers();
     const remote = await Promise.all(peers.map(async (peer) => {
+      // A peer that cannot answer still has to be identifiable: the settings list draws
+      // one row per node, and a row can only name a node it was told the name of.
+      const identity = { peerId: peer.id, name: peer.name, url: peer.url, lastSeenAt: peer.lastSeenAt };
       try {
         const peerResponse = await fetch(`${peer.url}/api/cluster/local-inventory`, {
           headers: { Authorization: `Bearer ${peer.token}` },
@@ -140,9 +143,9 @@ app.get("/api/cluster/inventory", async (_request, response, next) => {
         if (!peerResponse.ok) throw new Error(`Peer returned ${peerResponse.status}`);
         const inventory = await peerResponse.json();
         await markClusterPeerSeen(peer.id);
-        return { peerId: peer.id, reachable: true, inventory };
+        return { ...identity, lastSeenAt: new Date().toISOString(), reachable: true, inventory };
       } catch (error) {
-        return { peerId: peer.id, reachable: false, error: error instanceof Error ? error.message : "Peer unavailable" };
+        return { ...identity, reachable: false, error: error instanceof Error ? error.message : "Peer unavailable" };
       }
     }));
     response.json({ local, remote, generatedAt: new Date().toISOString() });

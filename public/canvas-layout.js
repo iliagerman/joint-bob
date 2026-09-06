@@ -240,12 +240,15 @@ export function toggleCanvasFocus(layout, paneId) {
  * drawn in, so ⌘ comes first and the labels match what the panes already showed.
  */
 export const CANVAS_MODIFIERS = ["meta", "ctrl", "alt", "shift"];
-export const CANVAS_KEYMAP_COMMANDS = ["recentPane", "focusPane", "paneSearch"];
+// Order matters: a command added later takes its default key only if no earlier command
+// already holds it, so an existing account never loses a binding it configured.
+export const CANVAS_KEYMAP_COMMANDS = ["recentPane", "focusPane", "paneSearch", "toggleView"];
 export const DEFAULT_CANVAS_KEYMAP = {
   modifiers: ["meta", "shift"],
   recentPane: "E",
   focusPane: "G",
   paneSearch: "F",
+  toggleView: "V",
 };
 
 /** Shift alone is not a chord: it would swallow every capital letter a conversation
@@ -274,7 +277,10 @@ export function normalizeCanvasKeymap(keymap) {
   const normalized = { modifiers: canvasChordIsUsable(modifiers) ? modifiers : [...DEFAULT_CANVAS_KEYMAP.modifiers] };
   const taken = new Set();
   for (const command of CANVAS_KEYMAP_COMMANDS) {
-    const key = canonicalCanvasKey(source[command]);
+    // A keymap saved before a command existed never had an opinion about it, so it starts on
+    // the default. A command the user cleared arrives as an explicit null and stays cleared.
+    const stored = source[command] === undefined ? DEFAULT_CANVAS_KEYMAP[command] : source[command];
+    const key = canonicalCanvasKey(stored);
     normalized[command] = key && !taken.has(key) ? key : null;
     if (normalized[command]) taken.add(key);
   }
