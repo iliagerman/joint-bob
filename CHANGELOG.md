@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Resizing conversation rows now auto-scrolls the canvas when the drag handle reaches the viewport edge
+
 ## 1.5.0 — 2026-09-06
 
 - Recent conversations now sync across cluster nodes and merge concurrent opens correctly

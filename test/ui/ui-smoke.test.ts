@@ -341,6 +341,21 @@ test("canvas panes resize in both directions and the canvas scrolls", async () =
   const afterHeight = await page.locator(".canvas-pane").first().boundingBox();
   assert.ok(afterHeight && afterHeight.height > beforeHeight.height,
     `the row grows (from ${beforeHeight.height}px to ${afterHeight?.height}px)`);
+
+  // Holding the handle at the viewport edge must keep growing the row and reveal its
+  // new bottom. Otherwise expanding a tall conversation takes several drag-scroll cycles.
+  const canvasBox = await page.getByTestId("canvas-root").boundingBox();
+  const edgeHandleBox = await heightHandle.boundingBox();
+  assert.ok(canvasBox && edgeHandleBox);
+  await page.mouse.move(edgeHandleBox.x + edgeHandleBox.width / 2, edgeHandleBox.y + edgeHandleBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(edgeHandleBox.x + edgeHandleBox.width / 2, canvasBox.y + canvasBox.height - 4);
+  await page.waitForFunction(() => document.querySelector("#canvasRoot")?.scrollTop > 40, null, { timeout: 3_000 });
+  await page.mouse.up();
+  const edgeHeight = await page.locator(".canvas-pane").first().boundingBox();
+  assert.ok(edgeHeight && edgeHeight.height > afterHeight.height + 80,
+    `edge dragging keeps growing the row (from ${afterHeight.height}px to ${edgeHeight?.height}px)`);
+
   await heightHandle.focus();
   for (let press = 0; press < 9; press += 1) await page.keyboard.press("ArrowDown");
 

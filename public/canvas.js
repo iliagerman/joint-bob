@@ -21,6 +21,8 @@ import {
 const CANVAS_GRID_UNITS = 1000;
 const CANVAS_WIDTH_STEP = 0.05;
 const CANVAS_ROW_HEIGHT_STEP = 40;
+const CANVAS_ROW_SCROLL_EDGE = 80;
+const CANVAS_ROW_SCROLL_SPEED = 18;
 
 export function createConversationCanvas({ api, getProjects, saveLayout, saveKeymap, showMessage }) {
   const root = document.querySelector("#canvasRoot");
@@ -393,27 +395,58 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
     return strip;
   }
 
+  function rowDragHeight(drag) {
+    return drag.height + drag.clientY - drag.startY + root.scrollTop - drag.startScrollTop;
+  }
+
+  function rowDragScrollSpeed(clientY) {
+    const bounds = root.getBoundingClientRect();
+    if (clientY < bounds.top + CANVAS_ROW_SCROLL_EDGE) {
+      return -CANVAS_ROW_SCROLL_SPEED * (bounds.top + CANVAS_ROW_SCROLL_EDGE - clientY) / CANVAS_ROW_SCROLL_EDGE;
+    }
+    if (clientY > bounds.bottom - CANVAS_ROW_SCROLL_EDGE) {
+      return CANVAS_ROW_SCROLL_SPEED * (clientY - bounds.bottom + CANVAS_ROW_SCROLL_EDGE) / CANVAS_ROW_SCROLL_EDGE;
+    }
+    return 0;
+  }
+
   function wireRowPointer(strip, rowId) {
     let drag = null;
+    const preview = () => {
+      const height = Math.min(CANVAS_MAX_ROW_HEIGHT, Math.max(CANVAS_MIN_ROW_HEIGHT, rowDragHeight(drag)));
+      root.style.gridTemplateRows = rowTemplate(rowId, Math.round(height));
+    };
+    const autoScroll = () => {
+      if (!drag) return;
+      root.scrollTop += rowDragScrollSpeed(drag.clientY);
+      preview();
+      drag.frame = requestAnimationFrame(autoScroll);
+    };
     strip.addEventListener("pointerdown", (event) => {
       const row = layout.rows.find((candidate) => candidate.id === rowId);
       if (!row) return;
-      drag = { pointerId: event.pointerId, startY: event.clientY, height: rowHeightOf(row) };
+      event.preventDefault();
+      drag = {
+        pointerId: event.pointerId, startY: event.clientY, clientY: event.clientY,
+        startScrollTop: root.scrollTop, height: rowHeightOf(row), frame: requestAnimationFrame(autoScroll),
+      };
       strip.setPointerCapture(event.pointerId);
       root.classList.add("canvas-resizing");
     });
     strip.addEventListener("pointermove", (event) => {
       if (!drag || event.pointerId !== drag.pointerId) return;
-      const height = Math.min(CANVAS_MAX_ROW_HEIGHT, Math.max(CANVAS_MIN_ROW_HEIGHT, drag.height + event.clientY - drag.startY));
-      root.style.gridTemplateRows = rowTemplate(rowId, Math.round(height));
+      drag.clientY = event.clientY;
+      preview();
     });
     const finish = (event, complete) => {
       if (!drag || event.pointerId !== drag.pointerId) return;
       const ending = drag;
+      ending.clientY = event.clientY;
       drag = null;
+      cancelAnimationFrame(ending.frame);
       strip.releasePointerCapture(event.pointerId);
       root.classList.remove("canvas-resizing");
-      if (complete) commit(setCanvasRowHeight(layout, rowId, ending.height + event.clientY - ending.startY));
+      if (complete) commit(setCanvasRowHeight(layout, rowId, rowDragHeight(ending)));
       placeAll();
     };
     strip.addEventListener("pointerup", (event) => finish(event, true));
