@@ -40,15 +40,23 @@ export const clusterMembershipMemberSchema = clusterNodeSchema.extend({
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   token: z.string().trim().min(1).max(500),
+  invitedByNodeId: z.string().uuid().nullable().optional().default(null),
 });
 const clusterMemberTombstoneSchema = z.object({
   id: z.string().uuid(),
   removedAt: z.string().datetime(),
   originNodeId: z.string().uuid(),
 });
+const clusterProjectGrantSchema = z.object({
+  nodeId: z.string().uuid(),
+  projectIds: z.array(z.string().min(1).max(120)).max(200),
+  updatedAt: z.string().datetime(),
+  originNodeId: z.string().uuid(),
+});
 export const clusterMembershipSnapshotSchema = z.object({
   members: z.array(clusterMembershipMemberSchema).min(1),
   removed: z.array(clusterMemberTombstoneSchema).max(100).optional().default([]),
+  projectGrants: z.array(clusterProjectGrantSchema).max(50).optional().default([]),
 });
 export const clusterInvitationRedeemSchema = z.object({
   invitationId: z.string().uuid(),
@@ -61,6 +69,19 @@ export const clusterJoinSchema = clusterNodeSchema.extend({
 export const clusterInvitationRedemptionSchema = z.object({
   inviterNodeId: z.string().uuid(),
   membership: clusterMembershipSnapshotSchema,
+});
+export const clusterInvitationCreateSchema = z.object({
+  projectIds: z.array(z.string().min(1).max(120)).min(1, "Share at least one project").max(200)
+    .refine((ids) => new Set(ids).size === ids.length, "Project IDs must be unique"),
+});
+export const clusterInvitationPreflightSchema = z.object({
+  invitationId: z.string().uuid(),
+  secret: z.string().trim().min(1).max(500),
+  nodeId: z.string().uuid(),
+});
+export const clusterMembershipLeaveSchema = z.object({
+  nodeId: z.string().uuid(),
+  leftAt: z.string().datetime(),
 });
 export const clusterProjectImportSchema = z.object({
   peerId: z.string().uuid(),
@@ -124,7 +145,7 @@ const nullableOwnershipSchema = ownershipSchema.nullable();
 export const ownershipClaimSchema = z.object({ engine: registeredHarnessIdSchema, sessionId: z.string().min(1).max(240), ownerNodeId: z.string().uuid() });
 export const ownershipCasSchema = z.object({ expected: nullableOwnershipSchema, proposed: ownershipSchema, originNodeId: z.string().uuid() });
 export const sessionRecoverySchema = z.object({ engine: z.literal("pi"), sessionId: z.string().min(1).max(240), sessionPath: z.string().min(1).max(2000) });
-const secretCredentialEventSchema = z.object({
+  const secretCredentialEventSchema = z.object({
   id: z.string().uuid(),
   entityKey: z.string().uuid(),
   operation: z.literal("upsert"),
@@ -133,6 +154,7 @@ const secretCredentialEventSchema = z.object({
     provider: z.enum(["aws", "google", "github", "custom"]),
     variables: z.array(z.object({ name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), kind: z.enum(["value", "file"]), value: z.string().max(100000) }).strict()).min(1).max(20),
     workspaceIds: z.array(z.string().trim().min(1).max(300)).max(100).optional(),
+    assignments: z.array(z.object({ scopeType: z.enum(["workspace", "project", "conversation"]), scopeId: z.string().trim().min(1).max(300) }).strict()).max(200).optional(),
   }).strict(),
   updatedAt: z.string().datetime(),
   originNodeId: z.string().uuid(),

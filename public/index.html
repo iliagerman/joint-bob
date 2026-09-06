@@ -492,7 +492,14 @@
           </fieldset>
           <fieldset class="phase-settings">
             <legend>Invite a node</legend>
-            <p>Generating a link invalidates any unused link from this machine.</p>
+            <p>Generating a link invalidates any unused link from this machine. Pick the projects the new node may see — only they will be available on it, and the choice is frozen into the link.</p>
+            <div class="cluster-invite-projects">
+              <label class="checkbox-row" data-testid="cluster-invite-select-all-row">
+                <input type="checkbox" id="clusterInviteAllProjects" data-testid="cluster-invite-select-all" checked />
+                All projects
+              </label>
+              <div id="clusterInviteProjectList" data-testid="cluster-invite-project-list"></div>
+            </div>
             <button class="ghost" type="button" id="clusterGenerateInviteButton" data-testid="cluster-invite-generate-button">Generate one-time link</button>
             <label>
               Join link

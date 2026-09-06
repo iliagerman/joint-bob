@@ -28,7 +28,7 @@ test("settings tabs absorb notification, secret, and cluster configuration", asy
   assert.match(html, /id="clusterJoinLinkInput"[^>]*data-testid="cluster-join-link-input"/);
   assert.match(html, /id="clusterJoinButton"[^>]*data-testid="cluster-join-button"/);
   assert.doesNotMatch(html, /clusterLocalToken|clusterPeerUrlInput|clusterPeerTokenInput/);
-  assert.match(app, /api\("\/api\/cluster\/invitations", \{ method: "POST" \}\)/);
+  assert.match(app, /api\("\/api\/cluster\/invitations", \{ method: "POST", body: JSON\.stringify\(\{ projectIds \}\) \}\)/);
   assert.match(app, /api\("\/api\/cluster\/join", \{[\s\S]*method: "POST"/);
   // Workspaces live in the Workspaces tab; the Secrets tab carries every secret account.
   assert.match(html, /id="settingsPanel-workspaces"[\s\S]*id="workspaceList"/);
@@ -82,5 +82,5 @@ test("settings tabs absorb notification, secret, and cluster configuration", asy
 
   // Installed PWA clients must not keep the old shell.
   for (const id of ["settings-resource-skills-paths", "settings-resource-prompts-paths", "settings-resource-rules-paths", "settings-resource-plugins-paths", "project-resource-skills-paths", "project-resource-prompts-paths", "project-resource-rules-paths", "project-resource-plugins-paths"]) assert.match(html, new RegExp(`data-testid="${id}"`));
-  assert.match(serviceWorker, /joint-bob-v125/);
+  assert.match(serviceWorker, /joint-bob-v126/);
 });
