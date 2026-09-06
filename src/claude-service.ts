@@ -222,7 +222,10 @@ function cleanClaudeTitle(value: unknown): string {
 }
 
 function meaningfulClaudePrompt(record: UnknownRecord): string {
-  const text = claudeMessageText(record).trim();
+  let text = claudeMessageText(record).trim();
+  if (text.startsWith("## Available secret accounts")) text = text.split("\n\n").slice(1).join("\n\n").trim();
+  const handoffMarker = "Continue the work seamlessly. The user's next message follows.\n---\n";
+  if (text.startsWith("Context handoff:") && text.includes(handoffMarker)) text = text.slice(text.indexOf(handoffMarker) + handoffMarker.length).trim();
   if (/^<(local-command-caveat|command-message|command-name|command-args)>/.test(text)) return "";
   return text.split("\n")[0].slice(0, 80);
 }

@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Claude session titles now show your actual prompt intent instead of framework scaffolding and account headers
 - Terminal-style shortcuts now close canvas panes using Ctrl+Space followed by X with Y/N confirmation
 - Terminal-style split shortcuts now open canvas panes left or below using Ctrl+Space followed by \ or -
 - Canvas conversations can now be filtered by project and arranged by project name, recent activity, or creation date

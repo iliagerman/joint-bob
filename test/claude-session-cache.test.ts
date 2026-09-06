@@ -76,11 +76,14 @@ test("Claude titles prefer metadata and skip synthetic command prompts", async (
     await mkdir(projectDir, { recursive: true });
     const metadata = path.join(projectDir, "metadata.jsonl");
     const synthetic = path.join(projectDir, "synthetic.jsonl");
+    const switched = path.join(projectDir, "switched.jsonl");
     const user = (text: string) => ({ type: "user", cwd: projectCwd, message: { role: "user", content: [{ text }] } });
     await writeFile(metadata, [user("User prompt"), { type: "ai-title", aiTitle: "Old AI" }, { type: "ai-title", aiTitle: "New AI" }, { type: "custom-title", customTitle: "Old custom" }, { type: "custom-title", customTitle: "Latest custom" }].map(JSON.stringify).join("\n"));
     await writeFile(synthetic, [user("<command-message>synthetic"), user("<local-command-caveat>synthetic"), user("Real later prompt")].map(JSON.stringify).join("\n"));
+    await writeFile(switched, `${JSON.stringify(user("## Available secret accounts\nAccount details\n\nContext handoff: previous transcript\n\nContinue the work seamlessly. The user's next message follows.\n---\nReview my implementation"))}\n`);
     assert.equal(await claude.claudeSessionTitle(`claude:${metadata}`), "Latest custom");
     assert.equal(await claude.claudeSessionTitle(`claude:${synthetic}`), "Real later prompt");
+    assert.equal(await claude.claudeSessionTitle(`claude:${switched}`), "Review my implementation");
     await writeFile(metadata, [user("User prompt"), { type: "ai-title", aiTitle: "AI title" }, { type: "custom-title", customTitle: "" }].map(JSON.stringify).join("\n"));
     assert.equal(await claude.claudeSessionTitle(`claude:${metadata}`), "AI title");
   } finally {
