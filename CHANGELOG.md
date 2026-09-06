@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Handoff messages are now shorter when conversations continue across components
 - Newly created conversations now appear immediately in your recent conversations list
 - Conversation filter buttons now display visual icons for All, Running, Needs review, and Reviewed states
 - The conversation canvas now nests panes in tmux-style recursive splits with draggable dividers and reorderable multi-page layouts that keep every pane alive

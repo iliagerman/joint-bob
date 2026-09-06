@@ -367,7 +367,7 @@ export function buildHandoffContext(transcript: ChatMessage[]): string {
   ].join("\n");
 }
 
-const HANDOFF_ENVELOPE_PREFIX = "Context handoff: you are continuing a conversation";
+const HANDOFF_ENVELOPE_PREFIX = "Context handoff:";
 
 /** The handoff envelope is transport, not dialogue; a reloaded transcript shows only the user's text. */
 export function stripHandoffEnvelope(text: string): string {
