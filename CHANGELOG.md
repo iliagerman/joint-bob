@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- The keyboard shortcut to reopen the recent conversations list is now Ctrl/Cmd + K instead of Ctrl/Cmd + Shift + K
 - Engine settings now show detected node defaults and validate custom paths before you save
 - Claude session titles now show your actual prompt intent instead of framework scaffolding and account headers
 - Terminal-style shortcuts now close canvas panes using Ctrl+Space followed by X with Y/N confirmation
