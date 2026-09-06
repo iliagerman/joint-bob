@@ -86,7 +86,7 @@ const document = {
   createElement: (tag) => new FakeElement(tag),
   querySelector: (selector) => registry.get(selector) || null,
 };
-for (const selector of ["#canvasRoot", "#canvasConversationDialog", "#canvasProjectSelect", "#canvasSessionSearch", "#canvasSplitPosition", "#canvasSessionOptions", "#canvasPickerStatus", "#canvasPickerCancelButton", "#canvasAddButton", "#canvasOrganizeButton", "#canvasShortcutBar", "#canvasShortcutDialog", "#canvasShortcutSubject", "#canvasShortcutKey", "#canvasShortcutStatus", "#canvasShortcutRemoveButton", "#canvasShortcutSaveButton", "#canvasShortcutChordLabel", "#canvasFinderButton", "#canvasFinderDialog", "#canvasFinderInput", "#canvasFinderResults", "#canvasFinderStatus", "#canvasKeymapButton", "#canvasKeymapDialog", "#canvasKeymapStatus", "#canvasKeymapSaveButton", "#canvasKeymapResetButton", "#canvasKeymapModifier-meta", "#canvasKeymapModifier-ctrl", "#canvasKeymapModifier-alt", "#canvasKeymapModifier-shift", "#canvasKeymapCommand-recentPane", "#canvasKeymapCommand-focusPane", "#canvasKeymapCommand-paneSearch", "#canvasKeymapCommand-toggleView"]) {
+for (const selector of ["#canvasRoot", "#canvasConversationDialog", "#canvasProjectSelect", "#canvasSessionSearch", "#canvasSplitPosition", "#canvasSessionOptions", "#canvasPickerStatus", "#canvasPickerCancelButton", "#canvasAddButton", "#canvasOrganizeButton", "#canvasShortcutBar", "#canvasShortcutDialog", "#canvasShortcutSubject", "#canvasShortcutKey", "#canvasShortcutStatus", "#canvasShortcutRemoveButton", "#canvasShortcutSaveButton", "#canvasShortcutChordLabel", "#canvasFinderButton", "#canvasFinderDialog", "#canvasFinderInput", "#canvasFinderResults", "#canvasFinderStatus", "#canvasKeymapButton", "#canvasKeymapDialog", "#canvasKeymapStatus", "#canvasKeymapSaveButton", "#canvasKeymapResetButton", "#canvasKeymapModifier-meta", "#canvasKeymapModifier-ctrl", "#canvasKeymapModifier-alt", "#canvasKeymapModifier-shift", "#canvasKeymapCommand-recentPane", "#canvasKeymapCommand-focusPane", "#canvasKeymapCommand-paneSearch", "#canvasKeymapCommand-toggleView", "#canvasProjectFilter", "#canvasArrangeSelect"]) {
   registry.set(selector, new FakeElement(selector.slice(1)));
 }
 const windowListeners = new Map<string, (event: unknown) => void>();
@@ -104,9 +104,9 @@ globalThis.Option = class {
 const { createConversationCanvas } = await import("../public/canvas.js");
 
 const sessions = [
-  { id: "s-one", path: "/tmp/one.jsonl", title: "One", firstMessage: "first one", harnessId: "pi", reviewState: "reviewed", running: false, executionNodeId: null },
-  { id: "s-two", path: "/tmp/two.jsonl", title: "Two", firstMessage: "first two", harnessId: "claude", reviewState: "needs_review", running: false, executionNodeId: null },
-  { id: "s-three", path: "/tmp/three.jsonl", title: "Three", firstMessage: "first three", harnessId: "pi", reviewState: "reviewed", running: false, executionNodeId: null },
+  { id: "s-one", path: "/tmp/one.jsonl", title: "One", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-03-01T00:00:00.000Z", firstMessage: "first one", harnessId: "pi", reviewState: "reviewed", running: false, executionNodeId: null },
+  { id: "s-two", path: "/tmp/two.jsonl", title: "Two", createdAt: "2026-02-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", firstMessage: "first two", harnessId: "claude", reviewState: "needs_review", running: false, executionNodeId: null },
+  { id: "s-three", path: "/tmp/three.jsonl", title: "Three", createdAt: "2026-03-01T00:00:00.000Z", updatedAt: "2026-02-01T00:00:00.000Z", firstMessage: "first three", harnessId: "pi", reviewState: "reviewed", running: false, executionNodeId: null },
 ];
 const harnesses = [{ id: "pi", label: "Pi", newSessionPath: "new" }, { id: "claude", label: "Claude", newSessionPath: "claude:new" }];
 const saved = [];
@@ -356,6 +356,23 @@ test("the empty-canvas message never lingers under real panes", async () => {
   assert.equal(root.children.filter((element) => element.tagName === "section").length, 1);
   assert.ok(!root.children.some((element) => element.classNames === "canvas-empty"),
     "the placeholder is removed as soon as the first pane arrives");
+});
+
+test("arrange orders panes by activity or creation date", async () => {
+  let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-two", "/tmp/two.jsonl"));
+  layout = addCanvasPane(layout, paneFor("s-one", "/tmp/one.jsonl"), "pane-s-two", "row");
+  layout = addCanvasPane(layout, paneFor("s-three", "/tmp/three.jsonl"), "pane-s-one", "row");
+  controller.setLayout(layout);
+  await controller.activate();
+
+  const arrange = registry.get("#canvasArrangeSelect");
+  arrange.value = "recent";
+  arrange.dispatch("change");
+  assert.deepEqual(listCanvasPanes(saved.at(-1)).map((item) => item.sessionId), ["s-one", "s-three", "s-two"]);
+
+  arrange.value = "created";
+  arrange.dispatch("change");
+  assert.deepEqual(listCanvasPanes(saved.at(-1)).map((item) => item.sessionId), ["s-three", "s-two", "s-one"]);
 });
 
 test("organize lays every pane out as an even grid", async () => {

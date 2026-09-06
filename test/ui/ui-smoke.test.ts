@@ -370,6 +370,42 @@ test("canvas panes resize in both directions and the canvas scrolls", async () =
   assert.ok(scrolling.scrollTop > 0, `the canvas can scroll vertically (got ${scrolling.scrollTop})`);
 });
 
+test("the canvas filters and arranges conversations by project", async () => {
+  await page.getByTestId("canvas-add-button").click();
+  await page.selectOption("#canvasProjectSelect", { label: "Infra Scripts" });
+  await page.selectOption("#canvasSplitPosition", "below");
+  const option = page.locator(".canvas-session-option", { hasText: "Terraform state locking" });
+  await option.waitFor({ timeout: 20_000 });
+  await option.click();
+  await page.locator(".canvas-pane", { hasText: "Infra Scripts" }).waitFor({ timeout: 20_000 });
+
+  const projectFilter = page.getByTestId("canvas-project-filter");
+  await projectFilter.selectOption({ label: "Infra Scripts" });
+  assert.equal(await page.locator(".canvas-pane:visible").count(), 1, "the project filter hides every other project's panes");
+  assert.match(await page.locator(".canvas-pane:visible").innerText(), /Infra Scripts/);
+
+  await projectFilter.selectOption("");
+  const arrange = page.getByTestId("canvas-arrange-select");
+  assert.deepEqual(await arrange.locator("option").allTextContents(), ["Arrange", "Project", "Recent activity", "Date added"]);
+  await arrange.selectOption("project");
+  const visualProjects = () => [...document.querySelectorAll(".canvas-pane:not([hidden])")]
+    .sort((left, right) => {
+      const leftBox = left.getBoundingClientRect();
+      const rightBox = right.getBoundingClientRect();
+      return leftBox.top - rightBox.top || leftBox.left - rightBox.left;
+    })
+    .map((pane) => pane.querySelector(".canvas-pane-title")?.textContent || "");
+  await page.waitForFunction(() => [...document.querySelectorAll(".canvas-pane:not([hidden])")]
+    .sort((left, right) => {
+      const leftBox = left.getBoundingClientRect();
+      const rightBox = right.getBoundingClientRect();
+      return leftBox.top - rightBox.top || leftBox.left - rightBox.left;
+    })[0]?.querySelector(".canvas-pane-title")?.textContent?.startsWith("Infra Scripts"));
+  const projects = await page.evaluate(visualProjects);
+  assert.match(projects[0], /^Infra Scripts/, `project arrangement starts with Infra Scripts (got ${projects.join(", ")})`);
+  await page.getByTestId("canvas-back-button").evaluate((button) => button.click());
+});
+
 test("a markdown file opens as raw source and previews beside it", async () => {
   // A fresh load, because the previous test left the canvas picker open. The dialog is
   // then reached the way a person reaches it: a file mentioned in a conversation.

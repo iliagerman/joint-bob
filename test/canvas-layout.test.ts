@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  addCanvasPane, canonicalSessionPath, canvasPaneMoves, CANVAS_MIN_PANE_WIDTH,
+  addCanvasPane, arrangeCanvasLayout, canonicalSessionPath, canvasPaneMoves, CANVAS_MIN_PANE_WIDTH,
   CANVAS_MIN_ROW_HEIGHT, emptyCanvasLayout, listCanvasPanes, migrateCanvasLayout,
   moveCanvasPane, normalizeCanvasLayout, organizeCanvasLayout, removeCanvasPane,
   replaceCanvasPane, setCanvasRowBoundary, setCanvasRowHeight, toggleCanvasFocus,
@@ -139,6 +139,18 @@ test("stored canvas versions migrate to resizable rows", () => {
 
   const current = { version: 5, rows: [{ id: "row-c", height: 500, weights: [1], panes: [pane("one")] }], focusedPaneId: null };
   assert.equal(normalizeCanvasLayout(current), current, "a version 5 layout is already current");
+});
+
+test("arrange reflows panes in the requested order", () => {
+  let layout = emptyCanvasLayout();
+  for (const id of ["one", "two", "three", "four"]) {
+    layout = addCanvasPane(layout, pane(id), listCanvasPanes(layout).at(-1)?.id, layout.rows.length ? "column" : undefined);
+  }
+
+  const arranged = arrangeCanvasLayout(layout, ["three", "one", "four", "two"]);
+  assert.deepEqual(listCanvasPanes(arranged).map((item) => item.id), ["three", "one", "four", "two"]);
+  assert.equal(arranged.focusedPaneId, null);
+  assert.throws(() => arrangeCanvasLayout(layout, ["one"]), /every canvas pane/i);
 });
 
 test("organize reflows every pane into an even grid", () => {

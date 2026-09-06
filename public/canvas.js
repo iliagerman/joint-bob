@@ -10,9 +10,9 @@
 // and no draft or scroll position is lost.
 
 import {
-  addCanvasPane, CANVAS_KEYMAP_COMMANDS, CANVAS_MODIFIERS, canonicalCanvasKey, canvasChordLabel,
+  addCanvasPane, arrangeCanvasLayout, CANVAS_KEYMAP_COMMANDS, CANVAS_MODIFIERS, canonicalCanvasKey, canvasChordLabel,
   canvasChordIsUsable, canvasChordMatches, canvasKeyFromCode, canvasPaneEngine, canvasPaneMoves, canonicalSessionPath,
-  CANVAS_MAX_ROW_HEIGHT, CANVAS_MIN_PANE_WIDTH, CANVAS_MIN_ROW_HEIGHT, clearCanvasRowHeight,
+  CANVAS_MAX_ROW_HEIGHT, CANVAS_MAX_ROW_PANES, CANVAS_MIN_PANE_WIDTH, CANVAS_MIN_ROW_HEIGHT, clearCanvasRowHeight,
   DEFAULT_CANVAS_KEYMAP, emptyCanvasLayout, fuzzyMatchScore, listCanvasPanes,
   moveCanvasPane, normalizeCanvasKeymap, normalizeCanvasLayout, organizeCanvasLayout, removeCanvasPane,
   replaceCanvasPane, setCanvasRowBoundary, setCanvasRowHeight, toggleCanvasFocus,
@@ -33,6 +33,8 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
   const optionsList = document.querySelector("#canvasSessionOptions");
   const pickerStatus = document.querySelector("#canvasPickerStatus");
   const organizeButton = document.querySelector("#canvasOrganizeButton");
+  const projectFilter = document.querySelector("#canvasProjectFilter");
+  const arrangeSelect = document.querySelector("#canvasArrangeSelect");
   const shortcutBar = document.querySelector("#canvasShortcutBar");
   const shortcutDialog = document.querySelector("#canvasShortcutDialog");
   const shortcutSubject = document.querySelector("#canvasShortcutSubject");
@@ -64,6 +66,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
   let pickerSessions = [];
   let pickerGeneration = 0;
   let harnesses = [];
+  let canvasMetadata = new Map();
   // conversation identity -> { element, body, strip, paneId }: keyed by the
   // conversation, not the layout slot, so a move only restyles the same element.
   const paneNodes = new Map();
@@ -248,9 +251,21 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
   }
 
   const rowTrack = (row) => (row.height ? `${row.height}px` : `minmax(${CANVAS_MIN_ROW_HEIGHT}px, 1fr)`);
-  function rowTemplate(resizedRowId = null, resizedHeight = null) {
-    if (!layout.rows.length) return "minmax(0, 1fr)";
-    return layout.rows.map((row) => rowTrack(row.id === resizedRowId ? { ...row, height: resizedHeight } : row)).join(" ");
+  function rowTemplate(resizedRowId = null, resizedHeight = null, rows = layout.rows) {
+    if (!rows.length) return "minmax(0, 1fr)";
+    return rows.map((row) => rowTrack(row.id === resizedRowId ? { ...row, height: resizedHeight } : row)).join(" ");
+  }
+
+  function canvasRows() {
+    if (!projectFilter.value) return layout.rows;
+    const panes = listCanvasPanes(layout).filter((pane) => pane.projectId === projectFilter.value);
+    const columns = Math.min(CANVAS_MAX_ROW_PANES, Math.ceil(Math.sqrt(panes.length)));
+    const rows = [];
+    for (let start = 0; start < panes.length; start += columns) {
+      const rowPanes = panes.slice(start, start + columns);
+      rows.push({ id: `filter-${start}`, height: null, weights: rowPanes.map(() => 1 / rowPanes.length), panes: rowPanes });
+    }
+    return rows;
   }
 
   function rowHeightOf(row) {
@@ -261,13 +276,18 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
 
   /** Styles only: positions every pane on the root grid. No DOM structure changes. */
   function placeAll() {
+    const rows = canvasRows();
+    root.classList.toggle("canvas-filtered", Boolean(projectFilter.value));
     root.style.gridTemplateColumns = `repeat(${CANVAS_GRID_UNITS}, minmax(0, 1fr))`;
-    root.style.gridTemplateRows = rowTemplate();
-    for (const [rowIndex, row] of layout.rows.entries()) {
+    root.style.gridTemplateRows = rowTemplate(null, null, rows);
+    for (const node of paneNodes.values()) node.element.hidden = true;
+    for (const separator of rowNodes.values()) separator.hidden = Boolean(projectFilter.value);
+    for (const [rowIndex, row] of rows.entries()) {
       const lines = boundaryLines(row.weights);
       for (const [index, pane] of row.panes.entries()) {
         const node = paneNodes.get(paneIdentity(pane));
         if (!node) continue;
+        node.element.hidden = false;
         node.element.style.gridRow = `${rowIndex + 1} / ${rowIndex + 2}`;
         node.element.style.gridColumn = `${lines[index]} / ${lines[index + 1]}`;
         node.strip.hidden = index === 0;
@@ -846,6 +866,9 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
   }
 
   function renderEmptyCanvas() {
+    projectFilter.replaceChildren(new Option("All projects", ""));
+    projectFilter.value = "";
+    arrangeSelect.disabled = true;
     paneNodes.clear();
     rowNodes.clear();
     renderShortcutBar();
@@ -880,6 +903,9 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
     if (emptyNode) { emptyNode.remove(); emptyNode = null; }
     const metadata = await loadCanvasMetadata(panes);
     if (!active || current !== generation) return;
+    canvasMetadata = metadata;
+    syncProjectFilter();
+    arrangeSelect.disabled = false;
     const onPicker = (targetPaneId, replaceId) => openPicker(targetPaneId, replaceId);
     for (const pane of panes) syncPaneElement(pane, metadata.get(pane.projectId) || {}, onPicker);
     syncRowSeparators();
@@ -887,6 +913,40 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
     applyFocus();
     renderShortcutBar();
     publishBindings();
+  }
+
+  function syncProjectFilter() {
+    const selected = projectFilter.value;
+    const projects = getProjects();
+    const projectIds = new Set(listCanvasPanes(layout).map((pane) => pane.projectId));
+    const represented = projects.filter((project) => projectIds.has(project.id))
+      .sort((left, right) => left.name.localeCompare(right.name));
+    projectFilter.replaceChildren(new Option("All projects", ""), ...represented.map((project) => new Option(project.name, project.id)));
+    projectFilter.value = represented.some((project) => project.id === selected) ? selected : "";
+  }
+
+  function sessionForPane(pane) {
+    return canvasMetadata.get(pane.projectId)?.sessions.find((session) => session.id === pane.sessionId
+      || canonicalSessionPath(session.path) === canonicalSessionPath(pane.sessionPath)) || null;
+  }
+
+  function arrangeCanvas(by) {
+    const projects = new Map(getProjects().map((project) => [project.id, project]));
+    const entries = listCanvasPanes(layout).map((pane) => ({ pane, session: sessionForPane(pane) }));
+    const title = (entry) => entry.session?.title || entry.pane.sessionPath;
+    const tieBreak = (left, right) => title(left).localeCompare(title(right));
+    entries.sort((left, right) => {
+      if (by === "project") {
+        const projectOrder = (projects.get(left.pane.projectId)?.name || left.pane.projectId)
+          .localeCompare(projects.get(right.pane.projectId)?.name || right.pane.projectId);
+        return projectOrder || tieBreak(left, right);
+      }
+      const field = by === "recent" ? "updatedAt" : "createdAt";
+      return String(right.session?.[field] || "").localeCompare(String(left.session?.[field] || "")) || tieBreak(left, right);
+    });
+    commit(arrangeCanvasLayout(layout, entries.map((entry) => entry.pane.id)));
+    arrangeSelect.value = "";
+    render();
   }
 
   function sessionTaken(session, projectId) {
@@ -1011,6 +1071,14 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
     commit(organizeCanvasLayout(layout));
     placeAll();
     render();
+  });
+  projectFilter.addEventListener("change", () => {
+    if (layout.focusedPaneId) commit(toggleCanvasFocus(layout, layout.focusedPaneId));
+    root.scrollTop = 0;
+    placeAll();
+  });
+  arrangeSelect.addEventListener("change", () => {
+    if (arrangeSelect.value) arrangeCanvas(arrangeSelect.value);
   });
   shortcutSaveButton.addEventListener("click", () => void saveShortcut());
   shortcutRemoveButton.addEventListener("click", () => void removeShortcut());

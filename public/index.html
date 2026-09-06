@@ -143,6 +143,19 @@
           <button class="ghost compact" id="canvasOrganizeButton" type="button" title="Lay every conversation out as an even grid" data-testid="canvas-organize-button">Organize</button>
           <button class="primary compact" id="canvasAddButton" type="button" data-testid="canvas-add-button">+ Add conversation</button>
         </header>
+        <div class="canvas-view-controls" aria-label="Canvas view controls">
+          <label for="canvasProjectFilter">Project
+            <select id="canvasProjectFilter" data-testid="canvas-project-filter"><option value="">All projects</option></select>
+          </label>
+          <label for="canvasArrangeSelect">Arrange
+            <select id="canvasArrangeSelect" data-testid="canvas-arrange-select">
+              <option value="">Arrange</option>
+              <option value="project">Project</option>
+              <option value="recent">Recent activity</option>
+              <option value="created">Date added</option>
+            </select>
+          </label>
+        </div>
         <div class="canvas-shortcut-bar" id="canvasShortcutBar" aria-label="Canvas keyboard shortcuts" data-testid="canvas-shortcut-bar" hidden></div>
         <div class="canvas-root" id="canvasRoot" data-testid="canvas-root"></div>
       </section>

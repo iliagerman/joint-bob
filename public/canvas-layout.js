@@ -216,13 +216,22 @@ export function clearCanvasRowHeight(layout, rowId) {
   return withRows(layout, layout.rows.map((row) => row.id === rowId ? { ...row, height: null } : row));
 }
 
+export function arrangeCanvasLayout(layout, paneIds) {
+  const panes = listCanvasPanes(layout);
+  const order = new Map(paneIds.map((paneId, index) => [paneId, index]));
+  if (order.size !== panes.length || panes.some((pane) => !order.has(pane.id))) {
+    throw new Error("An arrangement must include every canvas pane");
+  }
+  const arranged = [...panes].sort((left, right) => order.get(left.id) - order.get(right.id));
+  const columns = Math.min(CANVAS_MAX_ROW_PANES, Math.ceil(Math.sqrt(arranged.length)));
+  const rows = [];
+  for (let start = 0; start < arranged.length; start += columns) rows.push(rowOf(arranged.slice(start, start + columns)));
+  return withRows(layout, rows, null);
+}
+
 export function organizeCanvasLayout(layout) {
   const panes = listCanvasPanes(layout);
-  if (!panes.length) return layout;
-  const columns = Math.min(CANVAS_MAX_ROW_PANES, Math.ceil(Math.sqrt(panes.length)));
-  const rows = [];
-  for (let start = 0; start < panes.length; start += columns) rows.push(rowOf(panes.slice(start, start + columns)));
-  return withRows(layout, rows, null);
+  return panes.length ? arrangeCanvasLayout(layout, panes.map((pane) => pane.id)) : layout;
 }
 
 export function canvasPaneEngine(pane) {
