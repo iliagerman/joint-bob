@@ -9,7 +9,7 @@
 // report success while testing nothing.
 import assert from "node:assert/strict";
 import { type ChildProcess } from "node:child_process";
-import { appendFile, mkdtemp, rm, utimes } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test, { after, before } from "node:test";
@@ -158,7 +158,7 @@ test("opening a conversation renders its transcript", async () => {
   await page.locator(".session-card", { hasText: "Thread-Based Agent Builder" }).first().click();
 
   const message = page.locator(".message").first();
-  await message.waitFor({ timeout: 20_000 });
+  await message.getByText(/re-threading the same builder prompt/).waitFor({ timeout: 20_000 });
   assert.ok((await page.locator(".message").count()) >= 2, "both turns of the conversation render");
   assert.match(await message.innerText(), /re-threading the same builder prompt/);
 });
@@ -184,6 +184,19 @@ test("conversation rows identify the harness with only its icon", async () => {
   assert.equal(await agent.getByTestId("session-agent-icon").count(), 1, "conversation shows one harness icon");
   assert.equal(await agent.innerText(), "", "conversation does not repeat the harness name");
   assert.equal(await agent.getAttribute("aria-label"), "Pi", "the icon keeps an accessible harness name");
+});
+
+test("conversation filters fit the sidebar without horizontal scrolling", async () => {
+  const filters = page.locator("#chatFilters");
+  const dimensions = await filters.evaluate((element) => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+  }));
+
+  assert.ok(dimensions.scrollWidth <= dimensions.clientWidth, `filters overflow: ${dimensions.scrollWidth}px inside ${dimensions.clientWidth}px`);
+  for (const name of ["All", "Running", "Needs review", "Reviewed"]) {
+    assert.equal(await filters.getByRole("button", { name: new RegExp(`^${name} \\d+$`) }).isVisible(), true, `${name} filter is visible`);
+  }
 });
 
 test("the selected project and conversation stay highlighted in their sidebars", async () => {
@@ -260,6 +273,7 @@ test("a phone reloads conversations missed while its watch socket was disconnect
     await mobilePage.locator("body.view-projects #projectsPanel").waitFor();
     await mobilePage.locator(".project-card", { hasText: project.name }).first().click();
     await mobilePage.locator("#chatsLiveDot").waitFor({ state: "visible" });
+    await mobileContext.setOffline(true);
     await mobilePage.evaluate(() => (window as typeof window & { testWatchSocket: WebSocket }).testWatchSocket.close());
     await mobilePage.locator("#chatsLiveDot").waitFor({ state: "hidden" });
 
@@ -272,6 +286,7 @@ test("a phone reloads conversations missed while its watch socket was disconnect
     database.close();
 
     assert.equal(await mobilePage.locator(".session-card", { hasText: title }).count(), 0, "the disconnected phone has stale conversations");
+    await mobileContext.setOffline(false);
     await mobilePage.locator("#chatsLiveDot").waitFor({ state: "visible", timeout: 10_000 });
     await mobilePage.locator(".session-card", { hasText: title }).waitFor({ timeout: 10_000 });
   } finally {
@@ -550,7 +565,9 @@ test("a markdown file opens as raw source and previews beside it", async () => {
   await page.locator("#fileEditorView:not([hidden])").waitFor({ timeout: 20_000 });
 
   // Raw is the default: the heading marker is in the buffer and the gutter numbers lines.
-  const source = await page.locator("#fileEditorView .CodeMirror").first().innerText();
+  const editor = page.locator("#fileEditorView .CodeMirror").first();
+  await editor.getByText(/#\s*Internal Assistant/).waitFor({ timeout: 10_000 });
+  const source = await editor.innerText();
   assert.match(source, /#\s*Internal Assistant/, `the editor shows the raw heading marker (got ${JSON.stringify(source.slice(0, 80))})`);
   const gutter = await page.evaluate(() => {
     const gutters = document.querySelector("#fileEditorView .CodeMirror-gutters");
@@ -759,24 +776,31 @@ test("a top toast stays above the mobile composer", async () => {
 // straight from the conversation list marks it read, so the badge has to drop with it:
 // leaving the count until the next background refresh shows a number that is already wrong.
 test("opening a conversation that is waiting for review updates the badge at once", async () => {
-  const transcript = path.join(environment.home, ".pi", "sessions", "terraform-state-locking.jsonl");
-  const answeredAt = new Date(Date.now() + 1_000);
-  await appendFile(transcript, `${JSON.stringify({
-    type: "message",
-    id: "terraform-state-locking-review",
-    parentId: "terraform-state-locking-1",
-    timestamp: answeredAt.toISOString(),
-    message: { role: "assistant", content: [{ type: "text", text: "State locking is configured." }], timestamp: answeredAt.getTime() },
-  })}\n`);
-  await utimes(transcript, answeredAt, answeredAt);
-
+  // Establish the review baseline, then close every app socket before writing the reply.
+  // A hidden canvas frame may otherwise open the same conversation and consume its review.
+  const baselineLoaded = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/reviews/pending" && response.ok());
   await page.goto(node.url, { waitUntil: "domcontentloaded" });
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().waitFor({ timeout: 20_000 });
+  await baselineLoaded;
+
+  // This test covers browser redraw, not transcript parsing. Move the disposable
+  // review watermark behind known activity so the real endpoint reports one review.
+  const transcript = path.join(environment.home, ".pi", "sessions", "thread-notifications-naming.jsonl");
+  const reviewDatabase = new DatabaseSync(path.join(node.dataDir, "node.db"));
+  const updated = reviewDatabase.prepare("UPDATE conversation_review_states SET reviewed_at = '1970-01-01T00:00:00.000Z' WHERE session_path = ?").run(transcript);
+  reviewDatabase.close();
+  assert.equal(updated.changes, 1, "the review baseline exists for the seeded conversation");
+
+  const pendingLoaded = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/reviews/pending" && response.ok());
+  await page.reload({ waitUntil: "domcontentloaded" });
+  const pending = await (await pendingLoaded).json() as { projects: Array<{ sessions: Array<{ title: string }> }> };
+  assert.ok(pending.projects.some((group) => group.sessions.some((session) => session.title === "Thread Notifications Naming and Pinning")), `the server counts the new reply as waiting for review (got ${JSON.stringify(pending.projects)})`);
   const badge = page.getByTestId("pending-reviews-badge");
   await badge.waitFor({ timeout: 20_000 });
   assert.equal(await badge.innerText(), "1", "the answered conversation is counted as waiting for review");
 
-  await page.locator(".project-card", { hasText: "Infra Scripts" }).first().click();
-  await page.locator(".session-card", { hasText: "Terraform state locking" }).first().click();
+  await page.locator(".project-card", { hasText: "Joint Bob" }).first().click();
+  await page.locator(".session-card", { hasText: "Thread Notifications Naming and Pinning" }).first().click();
   await page.locator(".message").first().waitFor({ timeout: 20_000 });
 
   // Well inside the background refresh, which trails the burst by five seconds: this has
@@ -808,6 +832,20 @@ test("the canvas shortcut switches to the canvas and back to the view it was ope
   await page.keyboard.press("Meta+Shift+V");
   await page.locator("#canvasPanel").waitFor({ state: "hidden", timeout: 20_000 });
   assert.equal(await currentView(), opened, "the same key puts the user back where they were");
+});
+
+test("a new conversation appears in recents immediately", async () => {
+  const title = "Immediate recent conversation";
+
+  await page.getByTestId("session-create-button").click();
+  await page.getByTestId("new-session-name-input").fill(title);
+  const recentSaved = page.waitForResponse((response) =>
+    response.request().method() === "PUT" && new URL(response.url()).pathname === "/api/recents" && response.ok());
+  await page.getByTestId("new-session-name-start-button").click();
+  await page.getByTestId("recent-sessions-open-button").click();
+  await page.getByTestId("recent-sessions-dialog").getByText(title, { exact: true }).waitFor();
+  await recentSaved;
+  await page.getByTestId("recent-sessions-close-button").click();
 });
 
 test("the journey produced no console errors and no failed requests", () => {
