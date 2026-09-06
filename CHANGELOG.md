@@ -3,25 +3,20 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.6.0 — 2026-09-06
 
 - Handoff messages are now shorter when conversations continue across components
 - Newly created conversations now appear immediately in your recent conversations list
 - Conversation filter buttons now display visual icons for All, Running, Needs review, and Reviewed states
-- The conversation canvas now nests panes in tmux-style recursive splits with draggable dividers and reorderable multi-page layouts that keep every pane alive
-- The keyboard shortcut to reopen the recent conversations list is now Ctrl/Cmd + K instead of Ctrl/Cmd + Shift + K
-- Engine settings now show detected node defaults and validate custom paths before you save
-- Claude session titles now show your actual prompt intent instead of framework scaffolding and account headers
-- Terminal-style shortcuts now close canvas panes using Ctrl+Space followed by X with Y/N confirmation
-- Terminal-style split shortcuts now open canvas panes left or below using Ctrl+Space followed by \ or -
-- Canvas conversations can now be filtered by project and arranged by project name, recent activity, or creation date
-- Resizing conversation rows now auto-scrolls the canvas when the drag handle reaches the viewport edge
-- One keyboard shortcut now switches between the canvas and the view it was opened from, from anywhere in the app
-- The Cluster settings tab now shows each node's name, address, and whether this machine can reach it
-- Opening a conversation that is waiting for review now clears the review badge immediately
-- Conversations can now switch between Claude and Pi mid-chat while staying as one unified conversation with a visible section showing where the switch happened
-- Done ticket conversations now lock all segments of a switched conversation to prevent accidental edits across harness boundaries
-- Pinned conversations now remain pinned across harness switches and full transcript history is preserved when reopening a switched conversation
+- Canvas now uses recursive tmux-style splits with draggable dividers and reorderable multi-page layouts to keep panes organized
+- Canvas conversations can now be filtered by project and arranged by name, recent activity, or creation date
+- Terminal-style keyboard shortcuts now control canvas panes: Ctrl+Space to split or close, and ⌘⇧V to return to the previous view
+- Files now open in the dialog editor with aligned split panes instead of opening in a new tab
+- Conversations can now switch between Claude and Pi mid-chat while staying as one unified conversation with a visible handoff marker
+- Cluster settings now show each connected node's name, address, and connection status
+- Claude session titles now display your actual prompt intent instead of framework scaffolding
+- Engine settings now validate custom runtime paths and show detected defaults before saving
+- Pinned conversations remain pinned across harness switches with full transcript history preserved
 
 ## 1.5.0 — 2026-09-06
 
