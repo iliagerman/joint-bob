@@ -330,7 +330,7 @@ test("the canvas picker lists conversations at a readable height", async () => {
   );
 });
 
-test("canvas panes resize in both directions and the canvas scrolls", async () => {
+test("canvas splits nest recursively and resize by handle", async () => {
   await page.getByTestId("canvas-picker-cancel-button").click();
 
   const addConversation = async (title: string, position: "right" | "below") => {
@@ -348,60 +348,60 @@ test("canvas panes resize in both directions and the canvas scrolls", async () =
   await page.locator(".canvas-pane").nth(2).waitFor({ timeout: 20_000 });
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 
-  const widthHandle = page.locator('[data-testid="canvas-pane-width-handle"]:not([hidden])').first();
+  const panes = page.locator(".canvas-pane");
+  const rootBox = await page.getByTestId("canvas-root").boundingBox();
+  const left = await panes.nth(0).boundingBox();
+  const topRight = await panes.nth(1).boundingBox();
+  const bottomRight = await panes.nth(2).boundingBox();
+  assert.ok(rootBox && left && topRight && bottomRight);
+  // The left pane keeps the full canvas height while the right panes stack independently.
+  // The root keeps 10px of padding around the grid.
+  assert.ok(left.y - rootBox.y < 16 && rootBox.y + rootBox.height - (left.y + left.height) < 16,
+    "the left pane spans the full canvas height");
+  assert.ok(topRight.y - rootBox.y < 16, "the top-right pane starts at the top");
+  assert.ok(bottomRight.y > topRight.y + topRight.height - 2, "the right panes stack vertically");
+  // Padding (20px) plus each pane's inline margins (8px apiece) sit between the
+  // root box and the panes.
+  assert.ok(Math.abs(left.width + topRight.width - (rootBox.width - 36)) < 12,
+    `the left and right panes share the full width (got ${left.width}+${topRight.width} of ${rootBox.width})`);
+
+  const widthHandle = page.locator(".canvas-resize-row").first();
   assert.equal(await widthHandle.getAttribute("role"), "separator");
   assert.equal(await widthHandle.getAttribute("aria-orientation"), "vertical");
-  const before = await page.locator(".canvas-pane").first().boundingBox();
   const widthBox = await widthHandle.boundingBox();
-  assert.ok(before && widthBox);
-  await page.mouse.move(widthBox.x + widthBox.width / 2, widthBox.y + widthBox.height / 2);
+  assert.ok(widthBox);
+  // Grab the vertical handle above the perpendicular split, where the two
+  // handles' hit strips do not overlap.
+  const widthGrab = { x: widthBox.x + widthBox.width / 2, y: widthBox.y + widthBox.height * 0.3 };
+  await page.mouse.move(widthGrab.x, widthGrab.y);
   await page.mouse.down();
-  await page.mouse.move(widthBox.x + widthBox.width / 2 + 80, widthBox.y + widthBox.height / 2);
+  await page.mouse.move(widthGrab.x + 80, widthGrab.y);
   await page.mouse.up();
-  const afterWidth = await page.locator(".canvas-pane").first().boundingBox();
-  assert.ok(afterWidth && afterWidth.width > before.width, `the left pane grows (from ${before.width}px to ${afterWidth?.width}px)`);
+  const afterWidth = await panes.nth(0).boundingBox();
+  assert.ok(afterWidth && afterWidth.width > left.width + 40,
+    `the left pane grows (from ${left.width}px to ${afterWidth?.width}px)`);
 
-  const heightHandle = page.getByTestId("canvas-row-height-handle").first();
+  const heightHandle = page.locator(".canvas-resize-column").first();
   assert.equal(await heightHandle.getAttribute("role"), "separator");
   assert.equal(await heightHandle.getAttribute("aria-orientation"), "horizontal");
-  const beforeHeight = await page.locator(".canvas-pane").first().boundingBox();
   const heightBox = await heightHandle.boundingBox();
-  assert.ok(beforeHeight && heightBox);
+  assert.ok(heightBox);
   await page.mouse.move(heightBox.x + heightBox.width / 2, heightBox.y + heightBox.height / 2);
   await page.mouse.down();
   await page.mouse.move(heightBox.x + heightBox.width / 2, heightBox.y + heightBox.height / 2 + 80);
   await page.mouse.up();
-  const afterHeight = await page.locator(".canvas-pane").first().boundingBox();
-  assert.ok(afterHeight && afterHeight.height > beforeHeight.height,
-    `the row grows (from ${beforeHeight.height}px to ${afterHeight?.height}px)`);
+  const afterTop = await panes.nth(1).boundingBox();
+  assert.ok(afterTop && afterTop.height > topRight.height + 40,
+    `the upper right pane grows (from ${topRight.height}px to ${afterTop?.height}px)`);
 
-  // Holding the handle at the viewport edge must keep growing the row and reveal its
-  // new bottom. Otherwise expanding a tall conversation takes several drag-scroll cycles.
-  const canvasBox = await page.getByTestId("canvas-root").boundingBox();
-  const edgeHandleBox = await heightHandle.boundingBox();
-  assert.ok(canvasBox && edgeHandleBox);
-  await page.mouse.move(edgeHandleBox.x + edgeHandleBox.width / 2, edgeHandleBox.y + edgeHandleBox.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(edgeHandleBox.x + edgeHandleBox.width / 2, canvasBox.y + canvasBox.height - 4);
-  await page.waitForFunction(() => document.querySelector("#canvasRoot")?.scrollTop > 40, null, { timeout: 3_000 });
-  await page.mouse.up();
-  const edgeHeight = await page.locator(".canvas-pane").first().boundingBox();
-  assert.ok(edgeHeight && edgeHeight.height > afterHeight.height + 80,
-    `edge dragging keeps growing the row (from ${afterHeight.height}px to ${edgeHeight?.height}px)`);
-
+  // Keyboard resize commits the same geometry without a pointer.
   await heightHandle.focus();
-  for (let press = 0; press < 9; press += 1) await page.keyboard.press("ArrowDown");
-
-  const scrolling = await page.evaluate(() => {
-    const canvas = document.querySelector("#canvasRoot");
-    if (!canvas) return { overflows: false, scrollTop: 0 };
-    const overflows = canvas.scrollHeight > canvas.clientHeight + 1;
-    canvas.scrollTop = canvas.scrollHeight;
-    return { overflows, scrollTop: canvas.scrollTop };
-  });
-  assert.equal(scrolling.overflows, true, "taller rows make the canvas scroll instead of shrinking panes");
-  assert.ok(scrolling.scrollTop > 0, `the canvas can scroll vertically (got ${scrolling.scrollTop})`);
+  for (let press = 0; press < 6; press += 1) await page.keyboard.press("ArrowDown");
+  const keyed = await panes.nth(1).boundingBox();
+  assert.ok(keyed && keyed.height > afterTop.height + 20,
+    `arrow keys nudge the split (from ${afterTop?.height}px to ${keyed?.height}px)`);
 });
+
 
 test("terminal-style split shortcuts open the picker from the active canvas pane", async () => {
   const activePane = page.locator(".canvas-pane", { hasText: "Mobile Multi-Agent Threads" });
@@ -470,6 +470,70 @@ test("the canvas filters and arranges conversations by project", async () => {
   const projects = await page.evaluate(visualProjects);
   assert.match(projects[0], /^Infra Scripts/, `project arrangement starts with Infra Scripts (got ${projects.join(", ")})`);
   await page.getByTestId("canvas-back-button").evaluate((button) => button.click());
+});
+test("canvas pages hold independent layouts and keep their frames", async () => {
+  // The arrange journey leaves the canvas; come back to it first.
+  await page.locator("#openCanvasButton").click();
+  await page.getByTestId("canvas-root").waitFor({ state: "visible", timeout: 5_000 });
+  const tabs = page.locator('[data-testid="canvas-page-tab"]');
+  const visiblePanes = page.locator(".canvas-pane:visible");
+
+  await page.getByTestId("canvas-page-add-button").click();
+  await page.waitForFunction(() => {
+    const created = document.querySelectorAll('[data-testid="canvas-page-tab"]')[1];
+    return created?.textContent === "Page 2" && created.getAttribute("aria-selected") === "true";
+  }, null, { timeout: 5_000 });
+  assert.equal(await visiblePanes.count(), 0, "a fresh page hides every other page's panes");
+  assert.ok(await page.locator(".canvas-empty").isVisible(), "an empty page explains itself");
+
+  await page.getByTestId("canvas-add-button").click();
+  await page.selectOption("#canvasProjectSelect", { label: "Internal Assistant" });
+  const option = page.locator(".canvas-session-option", { hasText: "Makor deployment information" });
+  await option.waitFor({ timeout: 20_000 });
+  await option.click();
+  await visiblePanes.first().waitFor({ timeout: 20_000 });
+  assert.equal(await visiblePanes.count(), 1, "the new pane lands on the active page");
+  const frameHandle = await page.locator(".canvas-pane:visible iframe").first().elementHandle();
+  assert.ok(frameHandle);
+  const frameBox = await frameHandle.boundingBox();
+  const frameSrc = await frameHandle.evaluate((element) => (element as HTMLIFrameElement).src);
+  assert.ok(frameBox && frameSrc);
+
+  await tabs.nth(0).click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="canvas-page-tab"]')[0]
+    ?.getAttribute("aria-selected") === "true", null, { timeout: 5_000 });
+  assert.ok((await visiblePanes.count()) >= 1, "page one still shows its own panes");
+  assert.equal(await frameHandle.boundingBox(), null, "the other page's frame is hidden, not removed");
+
+  await tabs.nth(1).click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="canvas-page-tab"]')[1]
+    ?.getAttribute("aria-selected") === "true", null, { timeout: 5_000 });
+  const backBox = await frameHandle.boundingBox();
+  assert.ok(backBox, "switching back restores the pane");
+  assert.equal(await frameHandle.evaluate((element) => (element as HTMLIFrameElement).src), frameSrc,
+    "switching pages never reloads a pane");
+  assert.ok(Math.abs(backBox.width - frameBox.width) < 2 && Math.abs(backBox.height - frameBox.height) < 2,
+    "the pane keeps its exact geometry");
+
+  // Reordering moves the tab with its page.
+  await page.getByTestId("canvas-page-move-left-button").click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="canvas-page-tab"]')[0]
+    ?.textContent === "Page 2", null, { timeout: 5_000 });
+
+  // Deleting the active page keeps the conversations on the remaining page: switch
+  // to the other page first, delete it, and the tracked pane must come back intact.
+  await tabs.nth(1).click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="canvas-page-tab"]')[1]
+    ?.getAttribute("aria-selected") === "true", null, { timeout: 5_000 });
+  await page.getByTestId("canvas-page-delete-button").click();
+  await page.getByTestId("confirm-accept-button").click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="canvas-page-tab"]').length === 1,
+    null, { timeout: 5_000 });
+  await page.locator(".canvas-pane:visible iframe").first().waitFor({ timeout: 5_000 });
+  const finalBox = await frameHandle.boundingBox();
+  assert.ok(finalBox, "the surviving pane stays attached after the other page is deleted");
+  assert.ok(Math.abs(finalBox.width - frameBox.width) < 2 && Math.abs(finalBox.height - frameBox.height) < 2,
+    "the surviving pane keeps its exact geometry");
 });
 
 test("a markdown file opens as raw source and previews beside it", async () => {

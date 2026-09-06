@@ -1,357 +1,110 @@
-// Pure Canvas layout operations. The canvas is a stack of up to ten rows, each
-// holding up to eight conversation panes. Rows persist a pixel height after the
-// user resizes them; panes persist proportional widths that always fill the row.
+// Pure recursive canvas layout operations.
+export const CANVAS_MAX_PAGES = 9;
+export const CANVAS_MAX_PAGE_PANES = 8;
+export const CANVAS_MAX_SPLIT_DEPTH = 8;
+export const CANVAS_MIN_SPLIT_RATIO = 0.15;
+export const CANVAS_MAX_SPLIT_RATIO = 0.85;
 
-export const CANVAS_MAX_ROWS = 10;
-export const CANVAS_MAX_ROW_PANES = 8;
-export const CANVAS_MIN_PANE_WIDTH = 0.08;
-export const CANVAS_MIN_ROW_HEIGHT = 200;
-export const CANVAS_MAX_ROW_HEIGHT = 2400;
-
-export function canonicalSessionPath(sessionPath) {
-  return sessionPath.replace(/\.sync-conflict-[^/\\]+(?=\.jsonl$)/, "");
-}
-
-export function emptyCanvasLayout() {
-  return { version: 5, rows: [], focusedPaneId: null };
-}
-
-export function listCanvasPanes(layout) {
-  return layout.rows.flatMap((row) => row.panes);
-}
-
-function paneOf(layout, paneId) {
-  for (let rowIndex = 0; rowIndex < layout.rows.length; rowIndex += 1) {
-    const index = layout.rows[rowIndex].panes.findIndex((pane) => pane.id === paneId);
-    if (index >= 0) return { rowIndex, index };
-  }
-  throw new Error("Unknown canvas pane");
-}
-
-function equalWeights(count) {
-  return Array.from({ length: count }, () => 1 / count);
-}
-
-function normalizedWeights(weights, count) {
-  if (!Array.isArray(weights) || weights.length !== count) return equalWeights(count);
-  const total = weights.reduce((sum, weight) => sum + weight, 0);
-  const normalized = weights.map((weight) => weight / total);
-  return normalized.every((weight) => weight >= CANVAS_MIN_PANE_WIDTH) ? normalized : equalWeights(count);
-}
-
-function rowOf(panes, weights = equalWeights(panes.length), height = null) {
-  return {
-    id: crypto.randomUUID(),
-    height,
-    weights: normalizedWeights(weights, panes.length),
-    panes: panes.map((pane) => ({ ...pane })),
-  };
-}
-
-function assertIdentityFree(layout, pane, ignoredPaneId = null) {
-  for (const candidate of listCanvasPanes(layout)) {
-    if (candidate.id === ignoredPaneId) continue;
-    const sameSession = candidate.projectId === pane.projectId && candidate.sessionId === pane.sessionId;
-    const samePath = candidate.projectId === pane.projectId
-      && canonicalSessionPath(candidate.sessionPath) === canonicalSessionPath(pane.sessionPath);
-    if (sameSession || samePath) throw new Error("Conversation is already on the canvas");
-  }
-}
-
-function withRows(layout, rows, focusedPaneId = layout.focusedPaneId) {
-  return { version: 5, rows, focusedPaneId };
-}
-
-function rebalance(row) {
-  if (!row.panes.length) return row;
-  return { ...row, weights: normalizedWeights(row.weights, row.panes.length) };
-}
-
-function insertPane(row, pane, index) {
-  const panes = [...row.panes];
-  panes.splice(index, 0, { ...pane });
-  return { ...row, panes, weights: equalWeights(panes.length) };
-}
-
-/** Flattens a legacy subtree into panes in reading order; old split ratios are discarded. */
-function legacyPanes(node) {
-  if (!node) return [];
-  if (node.kind === "pane") return [node];
-  return [...legacyPanes(node.first), ...legacyPanes(node.second)];
-}
-
-/** Version 1 columns stack rows; row splits flatten into one row. */
-export function migrateCanvasLayout(legacy) {
-  const rows = [];
-  const visit = (node) => {
-    if (!node) return;
-    if (node.kind === "pane") { rows.push(rowOf([node])); return; }
-    if (node.axis === "column") {
-      visit(node.first);
-      visit(node.second);
-      return;
-    }
-    const panes = legacyPanes(node);
-    for (let start = 0; start < panes.length; start += CANVAS_MAX_ROW_PANES) {
-      rows.push(rowOf(panes.slice(start, start + CANVAS_MAX_ROW_PANES)));
-    }
-  };
-  visit(legacy.root);
-  return { version: 5, rows: rows.slice(0, CANVAS_MAX_ROWS), focusedPaneId: legacy.focusedPaneId ?? null };
-}
-
-/** Accepts every stored layout and returns the current resizable format. */
-export function normalizeCanvasLayout(layout) {
-  if (!layout || layout.version === 1) return migrateCanvasLayout(layout || { root: null, focusedPaneId: null });
-  if (layout.version === 5) return layout;
-  const rows = layout.rows.map((row) => ({
-    id: row.id,
-    height: row.height ?? null,
-    weights: normalizedWeights(row.weights, row.panes.length),
-    panes: row.panes,
-  }));
-  return { version: 5, rows, focusedPaneId: layout.focusedPaneId ?? null };
-}
-
-export function addCanvasPane(layout, pane, targetPaneId, axis) {
-  assertIdentityFree(layout, pane);
-  const rows = layout.rows.map((row) => ({ ...row, panes: [...row.panes], weights: [...row.weights] }));
-  if (!rows.length) return withRows(layout, [rowOf([pane])], pane.id);
-  let rowIndex = rows.length - 1;
-  let index = rows[rowIndex].panes.length;
-  if (targetPaneId) {
-    const target = paneOf(layout, targetPaneId);
-    rowIndex = target.rowIndex;
-    index = target.index + 1;
-  }
-  if (axis === "column") {
-    if (rows.length >= CANVAS_MAX_ROWS) throw new Error("The canvas holds at most ten rows");
-    rows.splice(rowIndex + 1, 0, rowOf([pane]));
-    return withRows(layout, rows, pane.id);
-  }
-  if (axis !== "row" && axis !== "left") throw new Error("Unknown placement");
-  if (rows[rowIndex].panes.length >= CANVAS_MAX_ROW_PANES) throw new Error("A row holds at most eight conversations");
-  rows[rowIndex] = insertPane(rows[rowIndex], pane, axis === "left" ? index - 1 : index);
-  return withRows(layout, rows, pane.id);
-}
-
-export function replaceCanvasPane(layout, paneId, pane) {
-  const at = paneOf(layout, paneId);
-  assertIdentityFree(layout, pane, paneId);
-  const rows = layout.rows.map((row, rowNumber) => rowNumber === at.rowIndex
-    ? { ...row, panes: row.panes.map((candidate, index) => index === at.index ? { ...pane, id: paneId } : candidate) }
-    : row);
-  return withRows(layout, rows);
-}
-
-export function removeCanvasPane(layout, paneId) {
-  const at = paneOf(layout, paneId);
-  const rows = layout.rows
-    .map((row, rowNumber) => rowNumber === at.rowIndex
-      ? rebalance({ ...row, panes: row.panes.filter((_, index) => index !== at.index), weights: row.weights.filter((_, index) => index !== at.index) })
-      : row)
-    .filter((row) => row.panes.length);
-  return withRows(layout, rows, layout.focusedPaneId === paneId ? null : layout.focusedPaneId);
-}
-
-export function canvasPaneMoves(layout, paneId) {
-  const at = paneOf(layout, paneId);
-  const row = layout.rows[at.rowIndex];
-  return {
-    left: at.index > 0,
-    right: at.index < row.panes.length - 1,
-    up: at.rowIndex > 0 && layout.rows[at.rowIndex - 1].panes.length < CANVAS_MAX_ROW_PANES,
-    down: at.rowIndex < layout.rows.length - 1
-      ? layout.rows[at.rowIndex + 1].panes.length < CANVAS_MAX_ROW_PANES
-      : row.panes.length > 1 && layout.rows.length < CANVAS_MAX_ROWS,
-  };
-}
-
-export function moveCanvasPane(layout, paneId, direction) {
-  const moves = canvasPaneMoves(layout, paneId);
-  if (!moves[direction]) throw new Error(`Cannot move that pane ${direction}`);
-  const at = paneOf(layout, paneId);
-  const rows = layout.rows.map((row) => ({ ...row, panes: [...row.panes], weights: [...row.weights] }));
-  const row = rows[at.rowIndex];
-  const [pane] = row.panes.splice(at.index, 1);
-  const [weight] = row.weights.splice(at.index, 1);
-  if (direction === "left" || direction === "right") {
-    const target = direction === "left" ? at.index - 1 : at.index + 1;
-    row.panes.splice(target, 0, pane);
-    row.weights.splice(target, 0, weight);
-  } else {
-    rows[at.rowIndex] = rebalance(row);
-    const targetIndex = direction === "up" ? at.rowIndex - 1 : at.rowIndex + 1;
-    if (rows[targetIndex]) rows[targetIndex] = insertPane(rows[targetIndex], pane, direction === "up" ? rows[targetIndex].panes.length : 0);
-    else rows.splice(targetIndex, 0, rowOf([pane]));
-  }
-  return withRows(layout, rows.filter((candidate) => candidate.panes.length));
-}
-
-export function setCanvasRowBoundary(layout, rowId, paneIndex, left, right) {
-  const row = layout.rows.find((candidate) => candidate.id === rowId);
-  if (!row || paneIndex < 0 || paneIndex + 1 >= row.panes.length) throw new Error("Unknown canvas boundary");
-  if (![left, right].every((value) => Number.isFinite(value) && value > 0)) throw new Error("Invalid canvas weights");
-  const total = left + right;
-  if (!Number.isFinite(total)) throw new Error("Invalid canvas weights");
-  const minimum = Math.min(CANVAS_MIN_PANE_WIDTH, total / 2);
-  const nextLeft = Math.min(total - minimum, Math.max(minimum, left));
-  const rows = layout.rows.map((candidate) => candidate.id === rowId ? {
-    ...candidate,
-    weights: candidate.weights.map((weight, index) => index === paneIndex ? nextLeft : index === paneIndex + 1 ? total - nextLeft : weight),
-  } : candidate);
-  return withRows(layout, rows);
-}
-
-export function setCanvasRowHeight(layout, rowId, height) {
-  if (!Number.isFinite(height)) throw new Error("Invalid canvas row height");
-  if (!layout.rows.some((row) => row.id === rowId)) throw new Error("Unknown canvas row");
-  const clamped = Math.round(Math.min(CANVAS_MAX_ROW_HEIGHT, Math.max(CANVAS_MIN_ROW_HEIGHT, height)));
-  return withRows(layout, layout.rows.map((row) => row.id === rowId ? { ...row, height: clamped } : row));
-}
-
-/** Gives a row its share of the canvas back, so a double-click undoes a drag. */
-export function clearCanvasRowHeight(layout, rowId) {
-  if (!layout.rows.some((row) => row.id === rowId)) throw new Error("Unknown canvas row");
-  return withRows(layout, layout.rows.map((row) => row.id === rowId ? { ...row, height: null } : row));
-}
-
-export function arrangeCanvasLayout(layout, paneIds) {
-  const panes = listCanvasPanes(layout);
-  const order = new Map(paneIds.map((paneId, index) => [paneId, index]));
-  if (order.size !== panes.length || panes.some((pane) => !order.has(pane.id))) {
-    throw new Error("An arrangement must include every canvas pane");
-  }
-  const arranged = [...panes].sort((left, right) => order.get(left.id) - order.get(right.id));
-  const columns = Math.min(CANVAS_MAX_ROW_PANES, Math.ceil(Math.sqrt(arranged.length)));
-  const rows = [];
-  for (let start = 0; start < arranged.length; start += columns) rows.push(rowOf(arranged.slice(start, start + columns)));
-  return withRows(layout, rows, null);
-}
-
-export function organizeCanvasLayout(layout) {
-  const panes = listCanvasPanes(layout);
-  return panes.length ? arrangeCanvasLayout(layout, panes.map((pane) => pane.id)) : layout;
-}
-
-export function canvasPaneEngine(pane) {
-  return pane.sessionPath.startsWith("claude:") || pane.sessionPath.startsWith("draft:claude:") ? "claude" : "pi";
-}
-
-export function toggleCanvasFocus(layout, paneId) {
-  paneOf(layout, paneId);
-  return withRows(layout, layout.rows, layout.focusedPaneId === paneId ? null : paneId);
-}
-
-/**
- * Canvas keyboard shortcuts. One modifier chord serves every canvas key, so the user
- * configures it once instead of per binding. Order here is the order the chord is
- * drawn in, so ⌘ comes first and the labels match what the panes already showed.
- */
-export const CANVAS_MODIFIERS = ["meta", "ctrl", "alt", "shift"];
-// Order matters: a command added later takes its default key only if no earlier command
-// already holds it, so an existing account never loses a binding it configured.
-export const CANVAS_KEYMAP_COMMANDS = ["recentPane", "focusPane", "paneSearch", "toggleView"];
-export const DEFAULT_CANVAS_KEYMAP = {
-  modifiers: ["meta", "shift"],
-  recentPane: "E",
-  focusPane: "G",
-  paneSearch: "F",
-  toggleView: "V",
+export function canonicalSessionPath(sessionPath) { return sessionPath.replace(/\.sync-conflict-[^/\\]+(?=\.jsonl$)/, ""); }
+export function emptyCanvasLayout() { return { version: 6, pages: [{ id: "page-1", name: "Page 1", root: null, focusedPaneId: null, projectFilter: "" }], activePageId: "page-1" }; }
+const copy = (node) => !node ? null : node.kind === "pane" ? { ...node } : { ...node, first: copy(node.first), second: copy(node.second) };
+const panes = (node, result = []) => { if (!node) return result; if (node.kind === "pane") result.push(node); else { panes(node.first, result); panes(node.second, result); } return result; };
+const find = (node, id) => !node ? null : node.id === id ? node : node.kind === "split" ? find(node.first, id) || find(node.second, id) : null;
+const replace = (node, id, value) => node.id === id ? value : node.kind === "pane" ? node : { ...node, first: replace(node.first, id, value), second: replace(node.second, id, value) };
+const pageIndex = (layout, pageId) => { const index = layout.pages.findIndex((page) => page.id === pageId); if (index < 0) throw new Error("Unknown canvas page"); return index; };
+export function activeCanvasPage(layout) { return layout.pages[pageIndex(layout, layout.activePageId)]; }
+export function listCanvasPagePanes(layout, pageId = layout.activePageId) { return panes(layout.pages[pageIndex(layout, pageId)].root); }
+export function listCanvasPanes(layout) { return layout.pages.flatMap((page) => panes(page.root)); }
+const panePage = (layout, paneId) => {
+  const index = layout.pages.findIndex((page) => panes(page.root).some((pane) => pane.id === paneId));
+  if (index < 0) throw new Error("Unknown canvas pane");
+  return index;
 };
-
-/** Shift alone is not a chord: it would swallow every capital letter a conversation
- * is typing. Every canvas chord needs Command, Control, or Option. */
-export function canvasChordIsUsable(modifiers) {
-  return modifiers.some((name) => name !== "shift");
+export function canvasPageForPane(layout, paneId) { return layout.pages[panePage(layout, paneId)]; }
+const withPage = (layout, index, page) => ({ ...layout, pages: layout.pages.map((item, i) => i === index ? page : item) });
+const withRoot = (layout, index, root, focusedPaneId = layout.pages[index].focusedPaneId) => withPage(layout, index, { ...layout.pages[index], root, focusedPaneId });
+function assertIdentityFree(layout, pane, ignored = null) { for (const item of listCanvasPanes(layout)) { if (item.id === ignored) continue; if (item.id === pane.id || item.projectId === pane.projectId && (item.sessionId === pane.sessionId || canonicalSessionPath(item.sessionPath) === canonicalSessionPath(pane.sessionPath))) throw new Error("Conversation is already on the canvas"); } }
+function depth(node) { return !node ? 0 : node.kind === "pane" ? 1 : 1 + Math.max(depth(node.first), depth(node.second)); }
+function split(pane, target, placement) { const axis = placement === "left" || placement === "right" ? "row" : "column"; const node = { kind: "split", id: crypto.randomUUID(), axis, ratio: 0.5, first: copy(target), second: copy(pane) }; if (placement === "left" || placement === "above") [node.first, node.second] = [node.second, node.first]; return node; }
+export function addCanvasPane(layout, pane, targetPaneId = null, placement = "right") {
+  placement = placement === "row" ? "right" : placement === "column" ? "below" : placement;
+  if (!["left", "right", "above", "below"].includes(placement)) throw new Error("Unknown placement");
+  assertIdentityFree(layout, pane); const index = targetPaneId ? panePage(layout, targetPaneId) : pageIndex(layout, layout.activePageId); const page = layout.pages[index];
+  if (panes(page.root).length >= CANVAS_MAX_PAGE_PANES) throw new Error("A page holds at most eight conversations");
+  const target = targetPaneId ? find(page.root, targetPaneId) : panes(page.root).at(-1);
+  if (page.root && (!target || target.kind !== "pane")) throw new Error("Unknown canvas pane");
+  let root = !page.root ? copy(pane) : replace(page.root, target.id, split(pane, target, placement));
+  if (depth(root) > CANVAS_MAX_SPLIT_DEPTH) throw new Error("Canvas splits cannot nest deeper than eight levels");
+  return { ...withRoot(layout, index, root), activePageId: page.id };
 }
-
-const MODIFIER_SYMBOLS = { meta: "⌘", ctrl: "⌃", alt: "⌥", shift: "⇧" };
-
-/** One digit or letter, upper case, or null when nothing is bound. */
-export function canonicalCanvasKey(key) {
-  const canonical = String(key ?? "").toUpperCase();
-  return /^[0-9A-Z]$/.test(canonical) ? canonical : null;
-}
-
-/**
- * Accepts anything the node or an older client stored. A chord with no modifier would
- * swallow ordinary typing, so an empty set falls back to the default; two commands
- * sharing one key would make the second unreachable, so the later one is dropped.
- */
-export function normalizeCanvasKeymap(keymap) {
-  const source = keymap && typeof keymap === "object" ? keymap : {};
-  const chosen = Array.isArray(source.modifiers) ? source.modifiers : [];
-  const modifiers = CANVAS_MODIFIERS.filter((name) => chosen.includes(name));
-  const normalized = { modifiers: canvasChordIsUsable(modifiers) ? modifiers : [...DEFAULT_CANVAS_KEYMAP.modifiers] };
-  const taken = new Set();
-  for (const command of CANVAS_KEYMAP_COMMANDS) {
-    // A keymap saved before a command existed never had an opinion about it, so it starts on
-    // the default. A command the user cleared arrives as an explicit null and stays cleared.
-    const stored = source[command] === undefined ? DEFAULT_CANVAS_KEYMAP[command] : source[command];
-    const key = canonicalCanvasKey(stored);
-    normalized[command] = key && !taken.has(key) ? key : null;
-    if (normalized[command]) taken.add(key);
-  }
-  return normalized;
-}
-
-/** Exactly the configured modifiers, so a chord never fires with an extra one held. */
-export function canvasChordMatches(keymap, combination) {
-  const held = {
-    meta: Boolean(combination.metaKey),
-    ctrl: Boolean(combination.ctrlKey),
-    alt: Boolean(combination.altKey),
-    shift: Boolean(combination.shiftKey),
+export function replaceCanvasPane(layout, paneId, pane) { const index = panePage(layout, paneId); assertIdentityFree(layout, pane, paneId); return withRoot(layout, index, replace(layout.pages[index].root, paneId, { ...pane, id: paneId })); }
+export function removeCanvasPane(layout, paneId) { const index = panePage(layout, paneId); const remove = (node) => { if (node.kind === "pane") return node.id === paneId ? null : node; const first = remove(node.first); const second = remove(node.second); return !first ? second : !second ? first : { ...node, first, second }; }; const page = layout.pages[index]; return withRoot(layout, index, remove(page.root), page.focusedPaneId === paneId ? null : page.focusedPaneId); }
+export function setCanvasSplitRatio(layout, splitId, ratio) { if (!Number.isFinite(ratio)) throw new Error("Invalid canvas ratio"); const index = layout.pages.findIndex((page) => find(page.root, splitId)?.kind === "split"); if (index < 0) throw new Error("Unknown canvas split"); const node = find(layout.pages[index].root, splitId); return withRoot(layout, index, replace(layout.pages[index].root, splitId, { ...node, ratio: Math.min(CANVAS_MAX_SPLIT_RATIO, Math.max(CANVAS_MIN_SPLIT_RATIO, ratio)) })); }
+export function canvasPageGeometry(layout, pageId = layout.activePageId) { const result = { panes: new Map(), splits: new Map() }; const walk = (node, top, bottom, left, right) => { if (!node) return; if (node.kind === "pane") { result.panes.set(node.id, { top, bottom, left, right }); return; } const boundary = node.axis === "row" ? left + (right - left) * node.ratio : top + (bottom - top) * node.ratio; result.splits.set(node.id, { axis: node.axis, ratio: node.ratio, top, bottom, left, right, boundary }); if (node.axis === "row") { walk(node.first, top, bottom, left, boundary); walk(node.second, top, bottom, boundary, right); } else { walk(node.first, top, boundary, left, right); walk(node.second, boundary, bottom, left, right); } }; walk(activeCanvasPage({ ...layout, activePageId: pageId }).root, 0, 1, 0, 1); return result; }
+export function canvasPaneNeighbor(layout, paneId, direction) { if (!["left", "right", "up", "down"].includes(direction)) throw new Error("Unknown canvas direction"); const index = panePage(layout, paneId); const geometry = canvasPageGeometry(layout, layout.pages[index].id); const source = geometry.panes.get(paneId); if (!source) throw new Error("Unknown canvas pane"); const horizontal = direction === "left" || direction === "right"; const candidates = [...geometry.panes.entries()].flatMap(([id, box]) => { if (id === paneId) return []; const forward = direction === "left" ? source.left - box.right : direction === "right" ? box.left - source.right : direction === "up" ? source.top - box.bottom : box.top - source.bottom; if (forward < -1e-9) return []; const overlap = horizontal ? Math.min(source.bottom, box.bottom) - Math.max(source.top, box.top) : Math.min(source.right, box.right) - Math.max(source.left, box.left); const center = horizontal ? Math.abs((source.top + source.bottom - box.top - box.bottom) / 2) : Math.abs((source.left + source.right - box.left - box.right) / 2); return [{ id, overlap, forward, center }]; }); candidates.sort((a, b) => {
+    const overlapOrder = Number(b.overlap > 0) - Number(a.overlap > 0);
+    return overlapOrder || a.forward - b.forward || a.center - b.center || a.id.localeCompare(b.id);
+  }); return candidates[0]?.id || null; }
+export function canvasPaneMoves(layout, paneId) { return Object.fromEntries(["left", "right", "up", "down"].map((direction) => [direction, Boolean(canvasPaneNeighbor(layout, paneId, direction))])); }
+export function moveCanvasPane(layout, paneId, direction) { const target = canvasPaneNeighbor(layout, paneId, direction); if (!target) throw new Error(`Cannot move that pane ${direction}`); const index = panePage(layout, paneId); const first = find(layout.pages[index].root, paneId); const second = find(layout.pages[index].root, target); // The whole node swaps position, ids included: a pane's identity follows its
+  // conversation, so focus and visit history keep pointing at it after the move.
+  const exchange = (node) => node.kind === "pane" ? node.id === paneId ? second : node.id === target ? first : node : { ...node, first: exchange(node.first), second: exchange(node.second) }; return withRoot(layout, index, exchange(layout.pages[index].root)); }
+export function toggleCanvasFocus(layout, paneId) { const index = panePage(layout, paneId); const page = layout.pages[index]; return withRoot(layout, index, page.root, page.focusedPaneId === paneId ? null : paneId); }
+function balanced(items, axis = "row") { if (!items.length) return null; if (items.length === 1) return copy(items[0]); const middle = Math.ceil(items.length / 2); return { kind: "split", id: crypto.randomUUID(), axis, ratio: middle / items.length, first: balanced(items.slice(0, middle), axis === "row" ? "column" : "row"), second: balanced(items.slice(middle), axis === "row" ? "column" : "row") }; }
+export function arrangeCanvasLayout(layout, paneIds) { const page = activeCanvasPage(layout); const existing = panes(page.root); if (new Set(paneIds).size !== paneIds.length || paneIds.length !== existing.length || existing.some((pane) => !paneIds.includes(pane.id))) throw new Error("An arrangement must include every canvas pane"); const ordered = paneIds.map((id) => find(page.root, id)); return withRoot(layout, pageIndex(layout, page.id), balanced(ordered), null); }
+export function organizeCanvasLayout(layout) { const page = activeCanvasPage(layout); return page.root ? arrangeCanvasLayout(layout, panes(page.root).map((pane) => pane.id)) : layout; }
+export function createCanvasPage(layout) { if (layout.pages.length >= CANVAS_MAX_PAGES) throw new Error("The canvas holds at most nine pages"); const used = layout.pages.map((page) => Number(/^Page (\d+)$/.exec(page.name)?.[1]) || 0); const number = Math.max(0, ...used) + 1; const page = { id: crypto.randomUUID(), name: `Page ${number}`, root: null, focusedPaneId: null, projectFilter: "" }; return { ...layout, pages: [...layout.pages, page], activePageId: page.id }; }
+export function selectCanvasPage(layout, pageId) { pageIndex(layout, pageId); return { ...layout, activePageId: pageId }; }
+export function moveCanvasPage(layout, pageId, direction) { if (direction !== "left" && direction !== "right") throw new Error("Unknown canvas page direction"); const index = pageIndex(layout, pageId); const target = index + (direction === "left" ? -1 : 1); if (target < 0 || target >= layout.pages.length) throw new Error(`Cannot move that page ${direction}`); const pages = [...layout.pages]; [pages[index], pages[target]] = [pages[target], pages[index]]; return { ...layout, pages }; }
+export function removeCanvasPage(layout, pageId) { const index = pageIndex(layout, pageId); if (layout.pages.length === 1) return emptyCanvasLayout(); const pages = layout.pages.filter((page) => page.id !== pageId); return { ...layout, pages, activePageId: layout.activePageId === pageId ? pages[Math.min(index, pages.length - 1)].id : layout.activePageId }; }
+export function setCanvasPageFilter(layout, projectFilter) { const index = pageIndex(layout, layout.activePageId); return withPage(layout, index, { ...layout.pages[index], projectFilter }); }
+function rowsTree(rows) {
+  const weighted = (items, weights, axis) => {
+    if (!items.length) return null;
+    if (items.length === 1) return copy(items[0]);
+    const valid = Array.isArray(weights) && weights.length === items.length && weights.every((weight) => Number.isFinite(weight) && weight > 0);
+    const values = valid ? weights : items.map(() => 1);
+    const total = values.reduce((sum, value) => sum + value, 0);
+    const ratio = Math.min(CANVAS_MAX_SPLIT_RATIO, Math.max(CANVAS_MIN_SPLIT_RATIO, values[0] / total));
+    return { kind: "split", id: crypto.randomUUID(), axis, ratio, first: copy(items[0]), second: weighted(items.slice(1), values.slice(1), axis) };
   };
-  return CANVAS_MODIFIERS.every((name) => held[name] === keymap.modifiers.includes(name));
+  return weighted(rows.map((row) => weighted(row.panes, row.weights, "row")).filter(Boolean), rows.map(() => 1), "column");
 }
-
-/** Reading `code` keeps a binding on the physical key, so Shift's punctuation and
- * other keyboard layouts never change it. */
-export function canvasKeyFromCode(code) {
-  const match = /^(?:Digit([0-9])|Key([A-Z]))$/.exec(code || "");
-  return match ? match[1] || match[2] : null;
-}
-
-export function canvasChordLabel(keymap, key = "") {
-  return CANVAS_MODIFIERS.filter((name) => keymap.modifiers.includes(name))
-    .map((name) => MODIFIER_SYMBOLS[name]).join("") + key;
-}
-
-export function isCanvasSplitLeader(combination) {
-  return combination.code === "Space" && combination.ctrlKey
-    && !combination.metaKey && !combination.altKey && !combination.shiftKey;
-}
-
-export function canvasSplitPlacement(combination) {
-  if (combination.code === "Backslash") return "left";
-  if (combination.code === "Minus") return "below";
-  return null;
-}
-
-export function isCanvasModifierKey(combination) {
-  return /^(?:Control|Shift|Alt|Meta)(?:Left|Right)$/.test(combination.code);
-}
-
-/**
- * Subsequence match with a score, so typing initials finds the conversation people
- * mean. Adjacent characters and matches that start a word rank highest; a shorter
- * title wins a tie. Returns null when the query is not a subsequence at all.
- */
-export function fuzzyMatchScore(text, query) {
-  if (!query) return 0;
-  const haystack = String(text).toLowerCase();
-  const needle = String(query).toLowerCase();
-  let score = 0;
-  let index = -1;
-  let previous = -2;
-  for (const character of needle) {
-    index = haystack.indexOf(character, index + 1);
-    if (index < 0) return null;
-    score += index === previous + 1 ? 10 : 1;
-    if (index === 0 || /[\s·\-_/]/.test(haystack[index - 1])) score += 5;
-    previous = index;
+/** A legacy tree that breaks the v6 limits (more than eight conversations, or splits
+ *  deeper than eight) is spread over pages of eight as balanced trees, in reading
+ *  order. Panes past nine pages are dropped: a pane is only a view onto a
+ *  conversation that stays in its project. */
+function pagesFromTree(tree) {
+  const items = panes(tree);
+  if (items.length <= CANVAS_MAX_PAGE_PANES && depth(tree) <= CANVAS_MAX_SPLIT_DEPTH) return [tree];
+  const pages = [];
+  for (let start = 0; start < items.length && pages.length < CANVAS_MAX_PAGES; start += CANVAS_MAX_PAGE_PANES) {
+    pages.push(balanced(items.slice(start, start + CANVAS_MAX_PAGE_PANES)));
   }
-  return score - haystack.length / 100;
+  return pages.length ? pages : [null];
 }
+function legacyPageLayout(roots, focusedPaneId) {
+  return {
+    version: 6,
+    // Focus lands on the page that actually holds the pane, and only when that
+    // pane survived the spread; otherwise it is dropped rather than invalidated.
+    pages: roots.map((root, index) => ({ id: `page-${index + 1}`, name: `Page ${index + 1}`, root, focusedPaneId: focusedPaneId && panes(root).some((pane) => pane.id === focusedPaneId) ? focusedPaneId : null, projectFilter: "" })),
+    activePageId: "page-1",
+  };
+}
+export function migrateCanvasLayout(legacy) {
+  return legacyPageLayout(pagesFromTree(legacy?.root ? copy(legacy.root) : null), legacy?.focusedPaneId);
+}
+export function normalizeCanvasLayout(layout) {
+  if (!layout || layout.version === 1) return migrateCanvasLayout(layout);
+  if (layout.version >= 2 && layout.version <= 5) return legacyPageLayout(pagesFromTree(rowsTree(layout.rows)), layout.focusedPaneId);
+  if (layout.version !== 6) throw new Error("Unknown canvas layout version");
+  return layout;
+}
+export function canvasPaneEngine(pane) { return pane.sessionPath.startsWith("claude:") || pane.sessionPath.startsWith("draft:claude:") ? "claude" : "pi"; }
+export const CANVAS_MODIFIERS = ["meta", "ctrl", "alt", "shift"]; export const CANVAS_KEYMAP_COMMANDS = ["recentPane", "focusPane", "paneSearch", "toggleView"]; export const DEFAULT_CANVAS_KEYMAP = { modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F", toggleView: "V" };
+export const canvasChordIsUsable = (modifiers) => modifiers.some((name) => name !== "shift"); export const canonicalCanvasKey = (key) => /^[0-9A-Z]$/.test(String(key ?? "").toUpperCase()) ? String(key).toUpperCase() : null;
+export function normalizeCanvasKeymap(keymap) { const source = keymap && typeof keymap === "object" ? keymap : {}; const modifiers = CANVAS_MODIFIERS.filter((name) => (source.modifiers || []).includes(name)); const result = { modifiers: canvasChordIsUsable(modifiers) ? modifiers : [...DEFAULT_CANVAS_KEYMAP.modifiers] }; const used = new Set(); for (const command of CANVAS_KEYMAP_COMMANDS) { const key = canonicalCanvasKey(source[command] === undefined ? DEFAULT_CANVAS_KEYMAP[command] : source[command]); result[command] = key && !used.has(key) ? key : null; if (result[command]) used.add(key); } return result; }
+export function canvasChordMatches(keymap, combination) { return CANVAS_MODIFIERS.every((name) => Boolean(combination[`${name}Key`]) === keymap.modifiers.includes(name)); } export const canvasKeyFromCode = (code) => /^(?:Digit([0-9])|Key([A-Z]))$/.exec(code || "")?.slice(1).find(Boolean) || null; const symbols = { meta: "⌘", ctrl: "⌃", alt: "⌥", shift: "⇧" }; export const canvasChordLabel = (keymap, key = "") => CANVAS_MODIFIERS.filter((name) => keymap.modifiers.includes(name)).map((name) => symbols[name]).join("") + key;
+export const isCanvasSplitLeader = (combination) => combination.code === "Space" && combination.ctrlKey && !combination.metaKey && !combination.altKey && !combination.shiftKey; export const canvasSplitPlacement = (combination) => combination.code === "Backslash" ? "left" : combination.code === "Minus" ? "below" : null; export const isCanvasModifierKey = (combination) => /^(?:Control|Shift|Alt|Meta)(?:Left|Right)$/.test(combination.code);
+export function fuzzyMatchScore(text, query) { if (!query) return 0; let score = 0, index = -1, prior = -2; const haystack = String(text).toLowerCase(); for (const character of String(query).toLowerCase()) { index = haystack.indexOf(character, index + 1); if (index < 0) return null; score += index === prior + 1 ? 10 : 1; if (index === 0 || /[\s·\-_/]/.test(haystack[index - 1])) score += 5; prior = index; } return score - haystack.length / 100; }

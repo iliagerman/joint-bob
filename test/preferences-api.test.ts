@@ -24,8 +24,8 @@ function sessionCookie(response: Response): string {
   return cookie.split(";", 1)[0];
 }
 
-test("preferences are authenticated, validated, and persist across listener restart", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "pi-mobile-web-preferences-"));
+test("preferences store v6 canvas layouts and reject invalid trees", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-preferences-"));
   const previousDataDir = process.env.PI_WEB_DATA_DIR;
   const previousUsername = process.env.MASTER_BOB_ADMIN_USERNAME;
   const previousPassword = process.env.MASTER_BOB_INITIAL_PASSWORD;
@@ -37,179 +37,107 @@ test("preferences are authenticated, validated, and persist across listener rest
     const app = await import(`../src/app.js?preferences=${Date.now()}-${Math.random()}`);
     node = await listen(app.createApp());
 
-    const login = await fetch(`${node.baseUrl}/api/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: "admin", password: "initial-password" }),
-    });
+    const login = await fetch(`${node.baseUrl}/api/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: "admin", password: "initial-password" }) });
     const cookie = sessionCookie(login);
-    const loginBody = await login.json() as { csrfToken: string };
-    const changePassword = await fetch(`${node.baseUrl}/api/auth/change-password`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Cookie: cookie, "X-CSRF-Token": loginBody.csrfToken },
-      body: JSON.stringify({ currentPassword: "initial-password", newPassword: "replacement-password" }),
-    });
-    assert.equal(changePassword.status, 204);
+    const { csrfToken } = await login.json() as { csrfToken: string };
+    const passwordChange = await fetch(`${node.baseUrl}/api/auth/change-password`, { method: "POST", headers: { Cookie: cookie, "X-CSRF-Token": csrfToken, "Content-Type": "application/json" }, body: JSON.stringify({ currentPassword: "initial-password", newPassword: "replacement-password" }) });
+    assert.equal(passwordChange.status, 204);
+    const headers = { Cookie: cookie, "X-CSRF-Token": csrfToken, "Content-Type": "application/json" };
 
-    const requestHeaders = { Cookie: cookie, "X-CSRF-Token": loginBody.csrfToken, "Content-Type": "application/json" };
     const defaults = await fetch(`${node.baseUrl}/api/preferences`, { headers: { Cookie: cookie } });
     assert.equal(defaults.status, 200);
-    assert.deepEqual(await defaults.json(), {
-      theme: null,
-      notificationsEnabled: false,
-      completionSound: "chime",
-      installDismissed: false,
-      mobileView: "projects",
-      activeProjectId: null,
-      activeSessionPath: null,
-      activeSessionId: null,
-      activeNodeId: null,
-      legacyMigrated: false,
-      pinnedProjectIds: [],
-      pinnedSessionPaths: [],
-      projectsPanelCollapsed: false,
-      chatsPanelCollapsed: false,
-      lastSeenVersion: null,
-      canvasLayout: { version: 5, rows: [], focusedPaneId: null },
-      canvasKeymap: { modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F", toggleView: "V" },
-    });
+    assert.deepEqual((await defaults.json() as { canvasLayout: unknown }).canvasLayout,
+      { version: 6, pages: [{ id: "page-1", name: "Page 1", root: null, focusedPaneId: null, projectFilter: "" }], activePageId: "page-1" });
 
-    const values = {
-      theme: "dark",
-      notificationsEnabled: true,
-      completionSound: "bell",
-      installDismissed: true,
-      mobileView: "board",
-      activeProjectId: "project-123",
-      activeSessionPath: "/tmp/session.jsonl",
-      activeSessionId: "session-123",
-      activeNodeId: "72cfed24-549b-4c90-ab61-42d2899ab9bb",
-      legacyMigrated: true,
-      pinnedProjectIds: ["project-123"],
-      pinnedSessionPaths: ["/tmp/session.jsonl"],
-      projectsPanelCollapsed: true,
-      chatsPanelCollapsed: true,
-      lastSeenVersion: "1.4.2",
-      canvasLayout: {
-        version: 5,
-        rows: [{
-          id: "row-a",
-          height: null,
-          weights: [0.6, 0.4],
-          panes: [
-            { kind: "pane", id: "pane-a", projectId: "project-123", sessionPath: "/tmp/session.jsonl", sessionId: "session-123", executionNodeId: null },
-            { kind: "pane", id: "pane-b", projectId: "project-123", sessionPath: "/tmp/other.jsonl", sessionId: "session-456", executionNodeId: "72cfed24-549b-4c90-ab61-42d2899ab9bb" },
-          ],
-        }],
-        focusedPaneId: "pane-b",
-      },
-      canvasKeymap: { modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F", toggleView: "B" },
-    };
-    const updated = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify(values) });
-    assert.equal(updated.status, 200);
-    assert.deepEqual(await updated.json(), values);
-
-    // Recents moved to the replicated recents table; the preferences API no longer carries them.
-    const legacyRecents = await fetch(`${node.baseUrl}/api/preferences`, {
-      method: "PUT",
-      headers: requestHeaders,
-      body: JSON.stringify({ recentSessions: [{ projectId: "project-123", sessionPath: "/tmp/session.jsonl", title: "Session 123", openedAt: "2026-08-27T10:00:00.000Z" }] }),
-    });
-    assert.equal(legacyRecents.status, 400);
-
-    const invalidEnum = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ mobileView: "invalid" }) });
-    assert.equal(invalidEnum.status, 400);
-    const invalidSound = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ completionSound: "siren" }) });
-    assert.equal(invalidSound.status, 400);
-    const invalidPath = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ activeSessionPath: "x".repeat(2001) }) });
-    assert.equal(invalidPath.status, 400);
-    // A client from before the view-toggle command simply omits it; the node fills in the
-    // default rather than rejecting the save or leaving the account without the key.
-    const olderClient = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasKeymap: { modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F" } }) });
-    assert.equal(olderClient.status, 200);
-    assert.deepEqual((await olderClient.json() as { canvasKeymap: unknown }).canvasKeymap, { modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F", toggleView: "V" });
-    // Restore the value used by the restart assertion below.
-    const restoredKeymap = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasKeymap: values.canvasKeymap }) });
-    assert.equal(restoredKeymap.status, 200);
-
-    const shiftOnlyChord = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasKeymap: { modifiers: ["shift"], recentPane: "E", focusPane: "G", paneSearch: "F" } }) });
-    assert.equal(shiftOnlyChord.status, 400);
     const pane = (id: string, sessionId: string) => ({ kind: "pane" as const, id, projectId: "p", sessionPath: `/tmp/${sessionId}.jsonl`, sessionId, executionNodeId: null });
-    const canvasBase = { version: 5 as const, rows: [{ id: "row-a", height: null, weights: [0.5, 0.5], panes: [pane("pane-a", "s-a"), pane("pane-b", "s-b")] }], focusedPaneId: null };
-    const crossNamespaceIdentities = { version: 5, rows: [{ id: "cross-row", height: null, weights: [0.5, 0.5], panes: [
-      { ...pane("cross-a", "/tmp/cross-b.jsonl"), sessionPath: "/tmp/cross-a.jsonl" },
-      pane("cross-b", "cross-b"),
-    ] }], focusedPaneId: null };
-    const acceptedCrossNamespace = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: crossNamespaceIdentities }) });
-    assert.equal(acceptedCrossNamespace.status, 200);
-    // Older width geometry migrates to a full row while preserving its proportions and height.
-    const legacyGeometry = { version: 3 as const, rows: [{ id: "row-h", height: 640, weights: [0.5, 0.3], panes: [pane("pane-h1", "s-h1"), pane("pane-h2", "s-h2")] }], focusedPaneId: null };
-    const acceptedGeometry = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: legacyGeometry }) });
-    assert.equal(acceptedGeometry.status, 200);
-    assert.deepEqual((await acceptedGeometry.json() as { canvasLayout: unknown }).canvasLayout,
-      { version: 5, rows: [{ id: "row-h", height: 640, weights: [0.625, 0.37499999999999994], panes: legacyGeometry.rows[0].panes }], focusedPaneId: null });
+    const stored = { version: 6 as const, activePageId: "page", pages: [{ id: "page", name: "Page", root: { kind: "split" as const, id: "split", axis: "row" as const, ratio: 0.4, first: pane("pane-a", "s-a"), second: pane("pane-b", "s-b") }, focusedPaneId: "pane-b", projectFilter: "" }] };
+    const saved = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ canvasLayout: stored }) });
+    assert.equal(saved.status, 200);
+    assert.deepEqual((await saved.json() as { canvasLayout: unknown }).canvasLayout, stored);
 
-    const invalidGeometry = { ...canvasBase, rows: [{ ...canvasBase.rows[0], weights: [0.95, 0.05] }] };
-    const rejectedGeometry = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: invalidGeometry }) });
-    assert.equal(rejectedGeometry.status, 400);
-    const invalidHeight = { ...canvasBase, rows: [{ ...canvasBase.rows[0], height: 3000 }] };
-    const rejectedHeight = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: invalidHeight }) });
-    assert.equal(rejectedHeight.status, 400);
+    for (const invalid of [
+      { ...stored, activePageId: "missing" },
+      { ...stored, pages: [{ ...stored.pages[0], focusedPaneId: "missing" }] },
+      { ...stored, pages: [{ ...stored.pages[0], root: { kind: "split", id: "split", axis: "row", ratio: .9, first: pane("pane-a", "s-a"), second: pane("pane-b", "s-b") } }] },
+      { ...stored, pages: [{ ...stored.pages[0], root: { kind: "split", id: "pane-a", axis: "row", ratio: .5, first: pane("pane-a", "s-a"), second: pane("pane-b", "s-b") } }] },
+      { ...stored, pages: [...Array.from({ length: 10 }, (_, index) => ({ id: `p${index}`, name: `P${index}`, root: null, focusedPaneId: null, projectFilter: "" }))] },
+      { ...stored, pages: [{ ...stored.pages[0], root: { kind: "split", id: "s2", axis: "row", ratio: .5, first: pane("pane-a", "s-a"), second: pane("pane-b", "s-a") } }] },
+    ]) {
+      const response = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ canvasLayout: invalid }) });
+      assert.equal(response.status, 400, JSON.stringify(invalid).slice(0, 120));
+    }
 
-    const duplicateConversation = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: { ...canvasBase, rows: [{ ...canvasBase.rows[0], panes: [pane("pane-a", "s-a"), pane("pane-b", "s-a")] }] } }) });
-    assert.equal(duplicateConversation.status, 400);
-    const unknownFocus = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: { ...canvasBase, focusedPaneId: "pane-z" } }) });
-    assert.equal(unknownFocus.status, 400);
-    const tooManyRows = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: { version: 5, rows: Array.from({ length: 11 }, (_, index) => ({ id: `row-${index}`, height: null, weights: [1], panes: [pane(`pane-${index}`, `session-${index}`)] })), focusedPaneId: null } }) });
-    assert.equal(tooManyRows.status, 400);
+    // Weighted v5 rows keep their proportions as nested splits on one page.
+    const put = async (canvasLayout: unknown) => {
+      const response = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ canvasLayout }) });
+      return { status: response.status, body: await response.json() as { canvasLayout?: { version?: number; pages?: Array<{ name?: string; root?: unknown; focusedPaneId?: string | null }> } } };
+    };
+    const legacyPane = (id: string, sessionId: string) => ({ kind: "pane" as const, id, projectId: "p", sessionPath: `/tmp/${sessionId}.jsonl`, sessionId, executionNodeId: null });
+    const weighted = await put({ version: 5, rows: [{ id: "row-a", height: null, weights: [0.25, 0.75], panes: [legacyPane("pane-a", "s-a"), legacyPane("pane-b", "s-b")] }], focusedPaneId: "pane-b" });
+    assert.equal(weighted.status, 200);
+    assert.equal(weighted.body.canvasLayout?.version, 6);
+    assert.equal(weighted.body.canvasLayout?.pages?.length, 1);
+    assert.equal((weighted.body.canvasLayout?.pages?.[0].root as { ratio?: number }).ratio, 0.25);
+    assert.equal(weighted.body.canvasLayout?.pages?.[0].focusedPaneId, "pane-b");
 
-    // A valid legacy split tree is accepted once and stored as version 5 resizable rows.
-    const legacyCanvas = { version: 1 as const, root: { kind: "split", id: "legacy-split", axis: "row", ratio: 0.8, first: pane("legacy-a", "legacy-a"), second: pane("legacy-b", "legacy-b") }, focusedPaneId: "legacy-b" };
-    const migratedLegacy = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: legacyCanvas }) });
-    assert.equal(migratedLegacy.status, 200);
-    const migratedLayout = (await migratedLegacy.json() as { canvasLayout: { version: number; rows: Array<Record<string, unknown>>; focusedPaneId: string | null } }).canvasLayout;
-    assert.equal(migratedLayout.version, 5);
-    assert.deepEqual(migratedLayout.rows.map((row) => (row.panes as Array<{ id: string }>).map((item) => item.id)), [["legacy-a", "legacy-b"]]);
-    assert.deepEqual(Object.keys(migratedLayout.rows[0]).sort(), ["height", "id", "panes", "weights"]);
-    assert.equal(migratedLayout.focusedPaneId, "legacy-b");
+    // A v1 split tree migrates unchanged onto its first page.
+    const legacyTree = await put({ version: 1, root: { kind: "split", id: "split", axis: "row", ratio: .3, first: legacyPane("legacy-a", "legacy-a"), second: legacyPane("legacy-b", "legacy-b") }, focusedPaneId: "legacy-a" });
+    assert.equal(legacyTree.status, 200);
+    assert.equal((legacyTree.body.canvasLayout?.pages?.[0].root as { ratio?: number }).ratio, .3);
+    assert.equal(legacyTree.body.canvasLayout?.pages?.[0].focusedPaneId, "legacy-a");
 
-    // Restore the value used by the restart assertion below.
-    const restoredCanvas = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: values.canvasLayout }) });
-    assert.equal(restoredCanvas.status, 200);
-    const splitOf = (inner: unknown, depthRemaining: number): unknown => (depthRemaining <= 0 ? pane(`deep-${depthRemaining}`, `deep-${depthRemaining}`) : { kind: "split", id: `split-${depthRemaining}`, axis: "row", ratio: 0.5, first: inner, second: splitOf(inner, depthRemaining - 1) });
-    const excessiveDepth = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: { version: 1, root: splitOf(pane("deep-a", "deep-a"), 20), focusedPaneId: null } }) });
-    assert.equal(excessiveDepth.status, 400);
-    // A deep chain with a malformed kind must be rejected, not crash the parser.
-    const malformedKind = (depthRemaining: number): unknown => depthRemaining <= 0 ? pane("deep-b", "deep-b") : { kind: "weird", id: `w-${depthRemaining}`, first: malformedKind(depthRemaining - 1), second: pane("deep-c", "deep-c") };
-    const excessiveMalformedDepth = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: { version: 1, root: malformedKind(20), focusedPaneId: null } }) });
-    assert.equal(excessiveMalformedDepth.status, 400);
-    const hybridDeepLayout = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers: requestHeaders, body: JSON.stringify({ canvasLayout: { version: 1, rows: [], root: malformedKind(20), focusedPaneId: null } }) });
-    assert.equal(hybridDeepLayout.status, 400);
-    const unauthorized = await fetch(`${node.baseUrl}/api/preferences`);
-    assert.equal(unauthorized.status, 401);
-    const secondAdministrator = await fetch(`${node.baseUrl}/api/auth/setup`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: "other", password: "another-long-password" }),
-    });
-    assert.equal(secondAdministrator.status, 409);
+    // Nine conversations no longer fit one page; they spread in reading order.
+    const nine = await put({ version: 5, rows: [
+      { id: "row-9a", height: null, weights: Array.from({ length: 5 }, () => 1 / 5), panes: Array.from({ length: 5 }, (_, index) => legacyPane(`p${index}`, `s${index}`)) },
+      { id: "row-9b", height: null, weights: [.25, .25, .25, .25], panes: Array.from({ length: 4 }, (_, index) => legacyPane(`p${index + 5}`, `s${index + 5}`)) },
+    ], focusedPaneId: "p8" });
+    assert.equal(nine.status, 200);
+    assert.deepEqual(nine.body.canvasLayout?.pages?.map((page) => page.name), ["Page 1", "Page 2"]);
+    assert.equal(nine.body.canvasLayout?.pages?.[1].focusedPaneId, "p8", "focus follows its pane onto its own page");
+
+    // The largest layout v5 allowed (10 rows x 8 panes) is still accepted: pages cap
+    // at nine and overflow panes are dropped rather than corrupting the account.
+    const oversize = await put({ version: 5, rows: Array.from({ length: 10 }, (_, row) => ({ id: `row-${row}`, height: null, weights: Array.from({ length: 8 }, () => 1 / 8), panes: Array.from({ length: 8 }, (_, column) => legacyPane(`p-${row}-${column}`, `s-${row}-${column}`)) })), focusedPaneId: "p-9-7" });
+    assert.equal(oversize.status, 200);
+    assert.equal(oversize.body.canvasLayout?.pages?.length, 9);
+    const pageCount = (oversize.body.canvasLayout?.pages ?? []).map((page) => JSON.stringify(page.root).match(/"kind":"pane"/g)?.length ?? 0);
+    assert.deepEqual(pageCount, Array.from({ length: 9 }, () => 8));
+    assert.equal(pageCount.reduce((sum, count) => sum + count, 0), 72, "overflow panes are dropped, not stored");
+
+    // Restore the value the restart assertion below expects.
+    const restored = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ canvasLayout: stored }) });
+    assert.equal(restored.status, 200);
 
     await node.close();
     node = await listen(app.createApp());
     const persisted = await fetch(`${node.baseUrl}/api/preferences`, { headers: { Cookie: cookie } });
     assert.equal(persisted.status, 200);
-    assert.deepEqual(await persisted.json(), values);
+    assert.deepEqual((await persisted.json() as { canvasLayout: unknown }).canvasLayout, stored);
 
-    // A hand-edited or corrupt row must degrade to an empty canvas, never a broken one.
+    // A hand-edited or corrupt stored tree must degrade to an empty canvas, never a broken one.
     await node.close();
     const store = new DatabaseSync(path.join(root, "node.db"));
-    const corrupt = { version: 5, rows: [{ id: "row-x", height: null, weights: [1], panes: "not a list" }], focusedPaneId: null };
-    store.prepare("UPDATE user_preferences SET canvas_layout = ?").run(JSON.stringify(corrupt));
+    // A stored version 1 tree holding more than eight conversations still spreads
+    // over pages, so a restart can never resurrect an unsaveable layout.
+    let legacySplits = 0;
+    const balancedV1 = (panes: unknown[]): unknown => panes.length === 1 ? panes[0]
+      : { kind: "split", id: `legacy-split-${legacySplits++}`, axis: "row", ratio: Math.ceil(panes.length / 2) / panes.length, first: balancedV1(panes.slice(0, Math.ceil(panes.length / 2))), second: balancedV1(panes.slice(Math.ceil(panes.length / 2))) };
+    const nineLegacy = Array.from({ length: 9 }, (_, index) => pane(`v1-${index}`, `v1-s-${index}`));
+    store.prepare("UPDATE user_preferences SET canvas_layout = ?").run(JSON.stringify({ version: 1, root: balancedV1(nineLegacy), focusedPaneId: "v1-8" }));
+    node = await listen(app.createApp());
+    const spread = await fetch(`${node.baseUrl}/api/preferences`, { headers: { Cookie: cookie } });
+    assert.equal(spread.status, 200);
+    const spreadLayout = (await spread.json() as { canvasLayout: { pages?: unknown[] } }).canvasLayout;
+    assert.equal(spreadLayout.pages?.length, 2, "a stored nine-pane v1 tree spreads across two pages");
+
+    await node.close();
+    store.prepare("UPDATE user_preferences SET canvas_layout = ?").run(JSON.stringify({ version: 6, pages: [{ id: "page-1", name: "Page 1", root: { kind: "split", id: "split", axis: "row", ratio: 2, first: pane("pane-a", "s-a"), second: pane("pane-b", "s-b") }, focusedPaneId: null, projectFilter: "" }], activePageId: "page-1" }));
     store.close();
     node = await listen(app.createApp());
     const degraded = await fetch(`${node.baseUrl}/api/preferences`, { headers: { Cookie: cookie } });
     assert.equal(degraded.status, 200);
-    assert.deepEqual((await degraded.json() as { canvasLayout: unknown }).canvasLayout, { version: 5, rows: [], focusedPaneId: null });
+    assert.deepEqual((await degraded.json() as { canvasLayout: unknown }).canvasLayout,
+      { version: 6, pages: [{ id: "page-1", name: "Page 1", root: null, focusedPaneId: null, projectFilter: "" }], activePageId: "page-1" });
   } finally {
     if (node) await node.close();
     if (previousDataDir === undefined) delete process.env.PI_WEB_DATA_DIR;

@@ -1,29 +1,25 @@
-// Canvas controller: renders a persisted row-based layout of panes, each embedding
-// the normal chat surface pointed at one exact conversation. A pane never clones or
-// copies a conversation; it reopens an existing session, or - only when the user
-// picks it in the dialog - opens one brand-new conversation the pane document
+// Canvas controller: renders a persisted recursive, multi-page layout of panes, each
+// embedding the normal chat surface pointed at one exact conversation. A pane never
+// clones or copies a conversation; it reopens an existing session, or - only when the
+// user picks it in the dialog - opens one brand-new conversation the pane document
 // creates on its own node.
 //
 // Panes are direct children of the canvas root, placed on a fine-grained CSS grid
-// through inline grid-area styles. Adding, removing, moving, resizing, or focusing a
-// pane only changes styles: pane elements are never reparented, so no iframe reloads
-// and no draft or scroll position is lost.
+// through inline grid-area styles. Adding, removing, moving, resizing, focusing, or
+// switching pages only changes styles: pane elements are never reparented, so no
+// iframe reloads and no draft or scroll position is lost.
 
 import {
-  addCanvasPane, arrangeCanvasLayout, CANVAS_KEYMAP_COMMANDS, CANVAS_MODIFIERS, canonicalCanvasKey, canvasChordLabel,
-  canvasChordIsUsable, canvasChordMatches, canvasKeyFromCode, canvasPaneEngine, canvasPaneMoves, canvasSplitPlacement,
+  addCanvasPane, arrangeCanvasLayout, CANVAS_KEYMAP_COMMANDS, CANVAS_MAX_PAGES, CANVAS_MODIFIERS, canonicalCanvasKey, canvasChordLabel,
+  canvasChordIsUsable, canvasChordMatches, canvasKeyFromCode, canvasPaneEngine, canvasPaneMoves, canvasPaneNeighbor, canvasSplitPlacement,
   canonicalSessionPath, isCanvasModifierKey, isCanvasSplitLeader,
-  CANVAS_MAX_ROW_HEIGHT, CANVAS_MAX_ROW_PANES, CANVAS_MIN_PANE_WIDTH, CANVAS_MIN_ROW_HEIGHT, clearCanvasRowHeight,
-  DEFAULT_CANVAS_KEYMAP, emptyCanvasLayout, fuzzyMatchScore, listCanvasPanes,
-  moveCanvasPane, normalizeCanvasKeymap, normalizeCanvasLayout, organizeCanvasLayout, removeCanvasPane,
-  replaceCanvasPane, setCanvasRowBoundary, setCanvasRowHeight, toggleCanvasFocus,
+  DEFAULT_CANVAS_KEYMAP, emptyCanvasLayout, fuzzyMatchScore, activeCanvasPage, canvasPageForPane,
+  canvasPageGeometry, createCanvasPage, listCanvasPagePanes, listCanvasPanes, moveCanvasPage, moveCanvasPane,
+  normalizeCanvasKeymap, normalizeCanvasLayout, organizeCanvasLayout, removeCanvasPage, removeCanvasPane,
+  replaceCanvasPane, selectCanvasPage, setCanvasPageFilter, setCanvasSplitRatio, toggleCanvasFocus,
 } from "./canvas-layout.js";
 
 const CANVAS_GRID_UNITS = 1000;
-const CANVAS_WIDTH_STEP = 0.05;
-const CANVAS_ROW_HEIGHT_STEP = 40;
-const CANVAS_ROW_SCROLL_EDGE = 80;
-const CANVAS_ROW_SCROLL_SPEED = 18;
 
 export function createConversationCanvas({ api, getProjects, saveLayout, saveKeymap, showMessage, toggleView, confirmAction }) {
   const root = document.querySelector("#canvasRoot");
@@ -59,7 +55,13 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
   const keymapCommandInputs = new Map(CANVAS_KEYMAP_COMMANDS
     .map((command) => [command, document.querySelector(`#canvasKeymapCommand-${command}`)]));
 
+  const pageTabs = document.querySelector("#canvasPageTabs");
+  const pageMoveLeftButton = document.querySelector("#canvasPageMoveLeftButton");
+  const pageMoveRightButton = document.querySelector("#canvasPageMoveRightButton");
+  const pageAddButton = document.querySelector("#canvasPageAddButton");
+  const pageDeleteButton = document.querySelector("#canvasPageDeleteButton");
   let layout = emptyCanvasLayout();
+  let previewLayout = null;
   let active = false;
   let generation = 0;
   let pickerTargetPaneId = null;
@@ -71,8 +73,8 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
   // conversation identity -> { element, body, strip, paneId }: keyed by the
   // conversation, not the layout slot, so a move only restyles the same element.
   const paneNodes = new Map();
-  // row id -> separator that changes that row's height.
-  const rowNodes = new Map();
+  // Split separators are direct children of the canvas root.
+  const splitNodes = new Map();
   let emptyNode = null;
   // Keyboard bindings for this account, as the node last reported them. They belong to
   // the account rather than the canvas, so a pane may hold one that no row shows yet.
@@ -184,8 +186,8 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
       bar.append(element);
     };
     action("Add beside", `Add a conversation beside ${title}`, () => onPicker(pane.id, null));
-    const focusLabel = layout.focusedPaneId === pane.id ? "Show all canvas panes" : `Focus on ${title}`;
-    action(layout.focusedPaneId === pane.id ? "Show all" : "Focus", focusLabel, () => focusPane(pane.id));
+    const focusLabel = activeCanvasPage(layout).focusedPaneId === pane.id ? "Show all canvas panes" : `Focus on ${title}`;
+    action(activeCanvasPage(layout).focusedPaneId === pane.id ? "Show all" : "Focus", focusLabel, () => focusPane(pane.id));
     const moves = canvasPaneMoves(layout, pane.id);
     const moveSymbols = { left: "◀", right: "▶", up: "▲", down: "▼" };
     for (const direction of ["left", "right", "up", "down"]) {
@@ -238,282 +240,132 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
     return body;
   }
 
-  /** Grid lines for proportional pane widths, kept strictly increasing. */
-  function boundaryLines(weights) {
-    const lines = [1];
-    let consumed = 0;
-    for (let index = 0; index < weights.length; index += 1) {
-      consumed += weights[index];
-      const remaining = weights.length - index - 1;
-      const lastLine = CANVAS_GRID_UNITS + 1 - remaining;
-      lines.push(Math.min(lastLine, Math.max(lines[index] + 1, 1 + Math.round(consumed * CANVAS_GRID_UNITS))));
-    }
-    lines[lines.length - 1] = CANVAS_GRID_UNITS + 1;
-    return lines;
-  }
-
-  const rowTrack = (row) => (row.height ? `${row.height}px` : `minmax(${CANVAS_MIN_ROW_HEIGHT}px, 1fr)`);
-  function rowTemplate(resizedRowId = null, resizedHeight = null, rows = layout.rows) {
-    if (!rows.length) return "minmax(0, 1fr)";
-    return rows.map((row) => rowTrack(row.id === resizedRowId ? { ...row, height: resizedHeight } : row)).join(" ");
-  }
-
-  function canvasRows() {
-    if (!projectFilter.value) return layout.rows;
-    const panes = listCanvasPanes(layout).filter((pane) => pane.projectId === projectFilter.value);
-    const columns = Math.min(CANVAS_MAX_ROW_PANES, Math.ceil(Math.sqrt(panes.length)));
-    const rows = [];
-    for (let start = 0; start < panes.length; start += columns) {
-      const rowPanes = panes.slice(start, start + columns);
-      rows.push({ id: `filter-${start}`, height: null, weights: rowPanes.map(() => 1 / rowPanes.length), panes: rowPanes });
-    }
-    return rows;
-  }
-
-  function rowHeightOf(row) {
-    if (row.height) return row.height;
-    const node = paneNodes.get(paneIdentity(row.panes[0]));
-    return node?.element.getBoundingClientRect().height || CANVAS_MIN_ROW_HEIGHT;
-  }
-
-  /** Styles only: positions every pane on the root grid. No DOM structure changes. */
-  function placeAll() {
-    const rows = canvasRows();
-    root.classList.toggle("canvas-filtered", Boolean(projectFilter.value));
-    root.style.gridTemplateColumns = `repeat(${CANVAS_GRID_UNITS}, minmax(0, 1fr))`;
-    root.style.gridTemplateRows = rowTemplate(null, null, rows);
-    for (const node of paneNodes.values()) node.element.hidden = true;
-    for (const separator of rowNodes.values()) separator.hidden = Boolean(projectFilter.value);
-    for (const [rowIndex, row] of rows.entries()) {
-      const lines = boundaryLines(row.weights);
-      for (const [index, pane] of row.panes.entries()) {
-        const node = paneNodes.get(paneIdentity(pane));
-        if (!node) continue;
-        node.element.hidden = false;
-        node.element.style.gridRow = `${rowIndex + 1} / ${rowIndex + 2}`;
-        node.element.style.gridColumn = `${lines[index]} / ${lines[index + 1]}`;
-        node.strip.hidden = index === 0;
-        if (index > 0) {
-          const pair = row.weights[index - 1] + row.weights[index];
-          const minimum = Math.round((CANVAS_MIN_PANE_WIDTH / pair) * 100);
-          node.strip.setAttribute("aria-valuemin", String(minimum));
-          node.strip.setAttribute("aria-valuemax", String(100 - minimum));
-          node.strip.setAttribute("aria-valuenow", String(Math.round((row.weights[index - 1] / pair) * 100)));
-        }
+  const gridLine = (value) => 1 + Math.round(value * CANVAS_GRID_UNITS);
+  const paneStyle = (element, box) => {
+    element.style.gridRow = `${gridLine(box.top)} / ${gridLine(box.bottom)}`;
+    element.style.gridColumn = `${gridLine(box.left)} / ${gridLine(box.right)}`;
+  };
+  function filteredGeometry(panes) {
+    const result = new Map();
+    const walk = (items, top, bottom, left, right, axis = "row") => {
+      if (items.length === 1) { result.set(items[0].id, { top, bottom, left, right }); return; }
+      const middle = Math.ceil(items.length / 2);
+      if (axis === "row") {
+        const boundary = left + (right - left) * middle / items.length;
+        walk(items.slice(0, middle), top, bottom, left, boundary, "column");
+        walk(items.slice(middle), top, bottom, boundary, right, "column");
+      } else {
+        const boundary = top + (bottom - top) * middle / items.length;
+        walk(items.slice(0, middle), top, boundary, left, right, "row");
+        walk(items.slice(middle), boundary, bottom, left, right, "row");
       }
-      const separator = rowNodes.get(row.id);
-      if (!separator) continue;
-      separator.style.gridRow = `${rowIndex + 1} / ${rowIndex + 2}`;
-      separator.style.gridColumn = "1 / -1";
-      separator.setAttribute("aria-valuenow", String(Math.round(rowHeightOf(row))));
+    };
+    if (panes.length) walk(panes, 0, 1, 0, 1);
+    return result;
+  }
+  function placeAll(source = previewLayout || layout) {
+    const page = activeCanvasPage(source);
+    const filtered = page.projectFilter ? listCanvasPagePanes(source).filter((pane) => pane.projectId === page.projectFilter) : null;
+    const geometry = filtered ? { panes: filteredGeometry(filtered), splits: new Map() } : canvasPageGeometry(source);
+    root.classList.toggle("canvas-filtered", Boolean(filtered));
+    // Only the active page's panes and separators are placed; every other page's
+    // elements stay attached but hidden, so switching pages never reloads a frame.
+    for (const node of paneNodes.values()) node.element.hidden = true;
+    for (const node of splitNodes.values()) node.element.hidden = true;
+    for (const [paneId, box] of geometry.panes) {
+      const pane = listCanvasPanes(source).find((item) => item.id === paneId);
+      const node = pane && paneNodes.get(paneIdentity(pane));
+      if (node) { node.element.hidden = false; paneStyle(node.element, box); }
+    }
+    for (const [splitId, box] of geometry.splits) {
+      const node = splitNodes.get(splitId);
+      if (!node) continue;
+      node.element.hidden = false;
+      node.element.setAttribute("aria-valuenow", String(Math.round(box.ratio * 100)));
+      // A handle starts on the boundary line and spills half over each neighbour,
+      // so it never occupies layout space of its own.
+      if (box.axis === "row") {
+        node.element.style.gridRow = `${gridLine(box.top)} / ${gridLine(box.bottom)}`;
+        node.element.style.gridColumn = `${gridLine(box.boundary)} / ${gridLine(box.boundary) + 1}`;
+      } else {
+        node.element.style.gridRow = `${gridLine(box.boundary)} / ${gridLine(box.boundary) + 1}`;
+        node.element.style.gridColumn = `${gridLine(box.left)} / ${gridLine(box.right)}`;
+      }
     }
   }
 
-  // Focus is styles only: the focused pane spans the whole grid, others hide.
   function applyFocus() {
-    const focused = layout.focusedPaneId;
+    const focused = activeCanvasPage(layout).focusedPaneId;
     root.classList.toggle("canvas-focused", Boolean(focused));
     for (const node of paneNodes.values()) node.element.classList.toggle("focused", node.paneId === focused);
-    root.style.gridTemplateRows = focused ? "minmax(0, 1fr)" : rowTemplate();
-    for (const node of paneNodes.values()) {
-      if (node.paneId === focused) node.element.style.gridArea = "1 / 1 / -1 / -1";
-    }
+    if (focused) for (const node of paneNodes.values()) if (node.paneId === focused) node.element.style.gridArea = "1 / 1 / -1 / -1";
   }
 
   function focusPane(paneId) {
     commit(toggleCanvasFocus(layout, paneId));
-    if (layout.focusedPaneId) applyFocus();
-    else { applyFocus(); placeAll(); }
+    placeAll();
+    applyFocus();
     // Refresh controls in place; cached frame bodies stay attached.
     render();
   }
-
-  function locatePane(paneId) {
-    for (const [rowIndex, row] of layout.rows.entries()) {
-      const index = row.panes.findIndex((pane) => pane.id === paneId);
-      if (index >= 0) return { row, rowIndex, index };
-    }
-    return null;
-  }
-
-  function boundaryPair(weights, fraction) {
-    const total = weights[0] + weights[1];
-    const left = Math.min(total - CANVAS_MIN_PANE_WIDTH, Math.max(CANVAS_MIN_PANE_WIDTH, fraction * total));
-    return [left, total - left];
-  }
-
-  function previewBoundary(at, pair) {
-    const weights = [...at.row.weights];
-    weights[at.index - 1] = pair[0];
-    weights[at.index] = pair[1];
-    const lines = boundaryLines(weights);
-    for (const index of [at.index - 1, at.index]) {
-      const node = paneNodes.get(paneIdentity(at.row.panes[index]));
-      if (node) node.element.style.gridColumn = `${lines[index]} / ${lines[index + 1]}`;
-    }
-  }
-
-  function wireBoundaryPointer(strip, pane) {
+  function wireSplitPointer(handle, splitId) {
     let drag = null;
-    strip.addEventListener("pointerdown", (event) => {
-      const at = locatePane(pane.id);
-      if (!at || at.index === 0) return;
-      const own = paneNodes.get(paneIdentity(pane))?.element.getBoundingClientRect();
-      const left = paneNodes.get(paneIdentity(at.row.panes[at.index - 1]))?.element.getBoundingClientRect();
-      if (!own || !left) return;
-      drag = {
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        startLeft: own.left - left.left,
-        pairWidth: own.right - left.left,
-        weights: [at.row.weights[at.index - 1], at.row.weights[at.index]],
-      };
-      strip.setPointerCapture(event.pointerId);
+    const ratioFor = (event, box) => {
+      const bounds = root.getBoundingClientRect();
+      return box.axis === "row"
+        ? (event.clientX - (bounds.left + box.left * bounds.width)) / ((box.right - box.left) * bounds.width)
+        : (event.clientY - (bounds.top + box.top * bounds.height)) / ((box.bottom - box.top) * bounds.height);
+    };
+    handle.addEventListener("pointerdown", (event) => {
+      const box = canvasPageGeometry(layout).splits.get(splitId);
+      if (!box) return;
+      drag = { pointerId: event.pointerId, box };
+      handle.setPointerCapture(event.pointerId);
       root.classList.add("canvas-resizing");
     });
-    const pairAt = (event, from) => boundaryPair(from.weights,
-      (from.startLeft + event.clientX - from.startX) / Math.max(1, from.pairWidth));
-    strip.addEventListener("pointermove", (event) => {
+    handle.addEventListener("pointermove", (event) => {
       if (!drag || event.pointerId !== drag.pointerId) return;
-      const at = locatePane(pane.id);
-      if (at?.index > 0) previewBoundary(at, pairAt(event, drag));
+      previewLayout = setCanvasSplitRatio(layout, splitId, ratioFor(event, drag.box));
+      placeAll();
     });
-    const finish = (event, complete) => {
+    const finish = (event, save) => {
       if (!drag || event.pointerId !== drag.pointerId) return;
       const ending = drag;
       drag = null;
-      strip.releasePointerCapture(event.pointerId);
+      handle.releasePointerCapture(event.pointerId);
       root.classList.remove("canvas-resizing");
-      const at = locatePane(pane.id);
-      if (!complete || !at || at.index === 0) { placeAll(); return; }
-      const pair = pairAt(event, ending);
-      commit(setCanvasRowBoundary(layout, at.row.id, at.index - 1, pair[0], pair[1]));
+      previewLayout = null;
+      if (save) commit(setCanvasSplitRatio(layout, splitId, ratioFor(event, ending.box)));
       placeAll();
     };
-    strip.addEventListener("pointerup", (event) => finish(event, true));
-    strip.addEventListener("pointercancel", (event) => finish(event, false));
-  }
-
-  function boundaryStrip(pane) {
-    const strip = text("div", "", "canvas-resize");
-    strip.tabIndex = 0;
-    strip.dataset.testid = "canvas-pane-width-handle";
-    strip.setAttribute("role", "separator");
-    strip.setAttribute("aria-orientation", "vertical");
-    strip.setAttribute("aria-label", "Resize adjacent conversation widths");
-    wireBoundaryPointer(strip, pane);
-    strip.addEventListener("keydown", (event) => {
-      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    handle.addEventListener("pointerup", (event) => finish(event, true));
+    handle.addEventListener("pointercancel", (event) => finish(event, false));
+    handle.addEventListener("keydown", (event) => {
+      const box = canvasPageGeometry(layout).splits.get(splitId);
+      const keys = box?.axis === "row" ? ["ArrowLeft", "ArrowRight"] : ["ArrowUp", "ArrowDown"];
+      if (!box || !keys.includes(event.key)) return;
       event.preventDefault();
-      const at = locatePane(pane.id);
-      if (!at || at.index === 0) return;
-      const left = at.row.weights[at.index - 1];
-      const right = at.row.weights[at.index];
-      const delta = event.key === "ArrowRight" ? CANVAS_WIDTH_STEP : -CANVAS_WIDTH_STEP;
-      const pair = boundaryPair([left, right], (left + delta) / (left + right));
-      commit(setCanvasRowBoundary(layout, at.row.id, at.index - 1, pair[0], pair[1]));
+      commit(setCanvasSplitRatio(layout, splitId, box.ratio + (["ArrowRight", "ArrowDown"].includes(event.key) ? .05 : -.05)));
       placeAll();
     });
-    return strip;
   }
-
-  function rowDragHeight(drag) {
-    return drag.height + drag.clientY - drag.startY + root.scrollTop - drag.startScrollTop;
-  }
-
-  function rowDragScrollSpeed(clientY) {
-    const bounds = root.getBoundingClientRect();
-    if (clientY < bounds.top + CANVAS_ROW_SCROLL_EDGE) {
-      return -CANVAS_ROW_SCROLL_SPEED * (bounds.top + CANVAS_ROW_SCROLL_EDGE - clientY) / CANVAS_ROW_SCROLL_EDGE;
-    }
-    if (clientY > bounds.bottom - CANVAS_ROW_SCROLL_EDGE) {
-      return CANVAS_ROW_SCROLL_SPEED * (clientY - bounds.bottom + CANVAS_ROW_SCROLL_EDGE) / CANVAS_ROW_SCROLL_EDGE;
-    }
-    return 0;
-  }
-
-  function wireRowPointer(strip, rowId) {
-    let drag = null;
-    const preview = () => {
-      const height = Math.min(CANVAS_MAX_ROW_HEIGHT, Math.max(CANVAS_MIN_ROW_HEIGHT, rowDragHeight(drag)));
-      root.style.gridTemplateRows = rowTemplate(rowId, Math.round(height));
-    };
-    const autoScroll = () => {
-      if (!drag) return;
-      root.scrollTop += rowDragScrollSpeed(drag.clientY);
-      preview();
-      drag.frame = requestAnimationFrame(autoScroll);
-    };
-    strip.addEventListener("pointerdown", (event) => {
-      const row = layout.rows.find((candidate) => candidate.id === rowId);
-      if (!row) return;
-      event.preventDefault();
-      drag = {
-        pointerId: event.pointerId, startY: event.clientY, clientY: event.clientY,
-        startScrollTop: root.scrollTop, height: rowHeightOf(row), frame: requestAnimationFrame(autoScroll),
-      };
-      strip.setPointerCapture(event.pointerId);
-      root.classList.add("canvas-resizing");
-    });
-    strip.addEventListener("pointermove", (event) => {
-      if (!drag || event.pointerId !== drag.pointerId) return;
-      drag.clientY = event.clientY;
-      preview();
-    });
-    const finish = (event, complete) => {
-      if (!drag || event.pointerId !== drag.pointerId) return;
-      const ending = drag;
-      ending.clientY = event.clientY;
-      drag = null;
-      cancelAnimationFrame(ending.frame);
-      strip.releasePointerCapture(event.pointerId);
-      root.classList.remove("canvas-resizing");
-      if (complete) commit(setCanvasRowHeight(layout, rowId, rowDragHeight(ending)));
-      placeAll();
-    };
-    strip.addEventListener("pointerup", (event) => finish(event, true));
-    strip.addEventListener("pointercancel", (event) => finish(event, false));
-  }
-
-  function rowSeparator(rowId) {
-    const strip = text("div", "", "canvas-row-resize");
-    strip.tabIndex = 0;
-    strip.dataset.testid = "canvas-row-height-handle";
-    strip.setAttribute("role", "separator");
-    strip.setAttribute("aria-orientation", "horizontal");
-    strip.setAttribute("aria-valuemin", String(CANVAS_MIN_ROW_HEIGHT));
-    strip.setAttribute("aria-valuemax", String(CANVAS_MAX_ROW_HEIGHT));
-    strip.setAttribute("aria-label", "Resize this canvas row's height");
-    strip.title = "Drag to resize this row · double-click to fit";
-    wireRowPointer(strip, rowId);
-    strip.addEventListener("keydown", (event) => {
-      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
-      event.preventDefault();
-      const row = layout.rows.find((candidate) => candidate.id === rowId);
-      if (!row) return;
-      const delta = event.key === "ArrowDown" ? CANVAS_ROW_HEIGHT_STEP : -CANVAS_ROW_HEIGHT_STEP;
-      commit(setCanvasRowHeight(layout, rowId, rowHeightOf(row) + delta));
-      placeAll();
-    });
-    strip.addEventListener("dblclick", () => {
-      commit(clearCanvasRowHeight(layout, rowId));
-      placeAll();
-    });
-    return strip;
-  }
-
-  function syncRowSeparators() {
-    const liveRows = new Set(layout.rows.map((row) => row.id));
-    for (const [rowId, element] of [...rowNodes.entries()]) {
-      if (liveRows.has(rowId)) continue;
-      element.remove();
-      rowNodes.delete(rowId);
-    }
-    for (const row of layout.rows) {
-      if (rowNodes.has(row.id)) continue;
-      const separator = rowSeparator(row.id);
-      rowNodes.set(row.id, separator);
-      root.append(separator);
+  function syncSplitSeparators() {
+    const splits = new Map();
+    for (const page of layout.pages) for (const [id, box] of canvasPageGeometry(layout, page.id).splits) splits.set(id, box);
+    for (const [id, node] of splitNodes) if (!splits.has(id)) { node.element.remove(); splitNodes.delete(id); }
+    for (const [id, box] of splits) {
+      if (splitNodes.has(id)) continue;
+      const element = text("div", "", `canvas-resize canvas-resize-${box.axis}`);
+      element.tabIndex = 0;
+      element.dataset.testid = "canvas-split-handle";
+      element.setAttribute("role", "separator");
+      element.setAttribute("aria-orientation", box.axis === "row" ? "vertical" : "horizontal");
+      element.setAttribute("aria-label", box.axis === "row" ? "Resize the panes beside each other" : "Resize the panes above and below each other");
+      element.setAttribute("aria-valuemin", "15");
+      element.setAttribute("aria-valuemax", "85");
+      wireSplitPointer(element, id);
+      splitNodes.set(id, { element, splitId: id });
+      root.append(element);
     }
   }
 
@@ -548,12 +400,12 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
     visitOrder.length = Math.min(visitOrder.length, 20);
   }
 
-  const livePaneIds = () => new Set(listCanvasPanes(layout).map((pane) => pane.id));
+  const livePaneIds = () => new Set(listCanvasPagePanes(layout).map((pane) => pane.id));
 
   /** The pane the user last worked in; before they have, the layout's own order decides. */
   function currentPaneId() {
     const live = livePaneIds();
-    return visitOrder.find((id) => live.has(id)) || layout.focusedPaneId || listCanvasPanes(layout)[0]?.id || null;
+    return visitOrder.find((id) => live.has(id)) || activeCanvasPage(layout).focusedPaneId || listCanvasPagePanes(layout)[0]?.id || null;
   }
 
   /** The pane before the current one, so one key jumps back and forth between two. */
@@ -561,7 +413,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
     const live = livePaneIds();
     const visited = visitOrder.filter((id) => live.has(id));
     if (visited[1]) return visited[1];
-    return listCanvasPanes(layout).find((pane) => pane.id !== visited[0])?.id || null;
+    return listCanvasPagePanes(layout).find((pane) => pane.id !== visited[0])?.id || null;
   }
 
   function revealPane(paneId) {
@@ -571,7 +423,12 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
     noteVisit(paneId);
     // Focus mode hides every other pane, so a shortcut into one moves focus instead of
     // scrolling to something the canvas is not showing.
-    if (layout.focusedPaneId && layout.focusedPaneId !== paneId) {
+    const owner = canvasPageForPane(layout, paneId);
+    if (owner.id !== layout.activePageId) {
+      commit(selectCanvasPage(layout, owner.id));
+      showActivePage();
+    }
+    if (activeCanvasPage(layout).focusedPaneId && activeCanvasPage(layout).focusedPaneId !== paneId) {
       commit(toggleCanvasFocus(layout, paneId));
       applyFocus();
       render();
@@ -587,7 +444,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
   function focusCurrentPane() {
     const paneId = currentPaneId();
     if (!paneId) return false;
-    if (layout.focusedPaneId !== paneId) {
+    if (activeCanvasPage(layout).focusedPaneId !== paneId) {
       commit(toggleCanvasFocus(layout, paneId));
       applyFocus();
       render();
@@ -595,21 +452,47 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
     return revealPane(paneId);
   }
 
-  function handleLeaderShortcut(combination) {
+  function handleLeaderShortcut(combination, explicitPaneId = null) {
     if (!active) return false;
-    if (isCanvasSplitLeader(combination)) {
-      splitLeaderArmed = true;
-      return true;
-    }
-    if (!splitLeaderArmed) return false;
+    if (isCanvasSplitLeader(combination)) { splitLeaderArmed = true; return true; }
+    if (!splitLeaderArmed && !explicitPaneId) return false;
     if (isCanvasModifierKey(combination)) return false;
     splitLeaderArmed = false;
-    const targetPaneId = currentPaneId();
+    const page = activeCanvasPage(layout);
+    if (combination.code === "KeyC") {
+      try {
+        commit(createCanvasPage(layout));
+        showActivePage();
+      } catch (error) {
+        showMessage(error instanceof Error ? error.message : "Could not create that page");
+      }
+      render();
+      return true;
+    }
+    if (combination.code === "KeyN" || combination.code === "KeyP") {
+      const step = combination.code === "KeyN" ? 1 : -1;
+      const pages = layout.pages;
+      commit(selectCanvasPage(layout, pages[(pages.indexOf(page) + step + pages.length) % pages.length].id));
+      showActivePage();
+      render();
+      return true;
+    }
+    const digit = /^Digit([1-9])$/.exec(combination.code);
+    if (digit && layout.pages[Number(digit[1]) - 1]) {
+      commit(selectCanvasPage(layout, layout.pages[Number(digit[1]) - 1].id));
+      showActivePage();
+      render();
+      return true;
+    }
+    const targetPaneId = explicitPaneId || currentPaneId();
     if (!targetPaneId) return false;
     const placement = canvasSplitPlacement(combination);
     if (placement) openPicker(targetPaneId, null, placement);
     else if (combination.code === "KeyX") void confirmClosePane(targetPaneId);
-    else return false;
+    else if (/^Arrow(?:Left|Right|Up|Down)$/.test(combination.code)) {
+      const neighbor = canvasPaneNeighbor(layout, targetPaneId, combination.code.slice(5).toLowerCase());
+      if (neighbor) revealPane(neighbor);
+    } else return false;
     return true;
   }
 
@@ -809,22 +692,30 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
    * Puts one already-open conversation on the canvas, from the conversation list or the
    * chat menu. A full row spills into a new one rather than refusing.
    */
+  /** Adding a pane leaves focus mode, as it did before: the canvas must show the
+   *  new conversation, not keep hiding it behind the previously focused one. */
+  function addPaneExitingFocus(layout, pane, target, placement) {
+    let next = addCanvasPane(layout, pane, target, placement);
+    const focused = activeCanvasPage(next).focusedPaneId;
+    if (focused) next = toggleCanvasFocus(next, focused);
+    return next;
+  }
+
   function addSessionPane(projectId, session) {
     const pane = {
       kind: "pane", id: crypto.randomUUID(), projectId,
       sessionPath: session.path, sessionId: session.id,
       executionNodeId: session.executionNodeId ?? null,
     };
-    const panes = listCanvasPanes(layout);
-    const target = layout.focusedPaneId || panes[panes.length - 1]?.id || null;
+    const target = activeCanvasPage(layout).focusedPaneId || listCanvasPagePanes(layout).at(-1)?.id || null;
     let next;
     try {
-      next = addCanvasPane(layout, pane, target, "row");
+      next = addPaneExitingFocus(layout, pane, target, "right");
     } catch (error) {
       if (!/at most eight/.test(error.message)) throw error;
-      next = addCanvasPane(layout, pane, target, "column");
+      next = addPaneExitingFocus(layout, pane, target, "below");
     }
-    commit({ ...next, focusedPaneId: null });
+    commit(next);
     if (active) render();
   }
 
@@ -887,44 +778,32 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
         : paneUnavailable(entry.error || "This conversation is no longer listed on this node.", pane, onPicker);
     const header = paneHeader(pane, entry.project || null, session, onPicker);
     let element = cached?.element || null;
-    let strip = cached?.strip || null;
     if (!element) {
       element = document.createElement("section");
       element.className = "canvas-pane";
-      strip = boundaryStrip(pane);
-      element.append(strip);
       root.append(element);
     }
     element.dataset.paneId = pane.id;
     // Replace only the header. The body and iframe stay attached.
-    const headerSlot = element.children.length > 1 ? element.children[1] : null;
+    const headerSlot = element.children[0] || null;
     if (headerSlot) headerSlot.replaceWith(header);
     else element.append(header);
     if (cached && cached.body !== body && cached.body.parentElement === element) cached.body.replaceWith(body);
     else if (!body.isConnected || body.parentElement !== element) element.append(body);
-    paneNodes.set(identity, { element, body, strip, paneId: pane.id });
+    paneNodes.set(identity, { element, body, paneId: pane.id });
   }
 
   function renderEmptyCanvas() {
-    projectFilter.replaceChildren(new Option("All projects", ""));
-    projectFilter.value = "";
     arrangeSelect.disabled = true;
-    paneNodes.clear();
-    rowNodes.clear();
-    renderShortcutBar();
-    root.replaceChildren();
-    root.classList.remove("canvas-focused");
-    root.style.gridTemplateColumns = "";
-    root.style.gridTemplateRows = "";
-    const empty = text("div", "", "canvas-empty");
-    empty.append(text("h2", "The canvas is empty"));
-    empty.append(text("p", "Add an existing conversation to begin."));
-    const add = button("Add conversation");
-    add.className = "primary";
-    add.addEventListener("click", () => openPicker(null, null));
-    empty.append(add);
-    emptyNode = empty;
-    root.append(empty);
+    if (!emptyNode) {
+      emptyNode = text("div", "", "canvas-empty");
+      emptyNode.append(text("h2", "The canvas is empty"), text("p", "Add an existing conversation to begin."));
+      const add = button("Add conversation");
+      add.className = "primary";
+      add.addEventListener("click", () => openPicker(null, null));
+      emptyNode.append(add);
+    }
+    root.append(emptyNode);
   }
 
   async function render() {
@@ -938,9 +817,8 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
         paneNodes.delete(identity);
       }
     }
-    if (!panes.length) { renderEmptyCanvas(); return; }
-    // The placeholder is a plain child of the grid: drop it the moment panes exist.
-    if (emptyNode) { emptyNode.remove(); emptyNode = null; }
+    if (!listCanvasPagePanes(layout).length) renderEmptyCanvas();
+    else if (emptyNode) { emptyNode.remove(); emptyNode = null; }
     const metadata = await loadCanvasMetadata(panes);
     if (!active || current !== generation) return;
     canvasMetadata = metadata;
@@ -948,20 +826,56 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
     arrangeSelect.disabled = false;
     const onPicker = (targetPaneId, replaceId) => openPicker(targetPaneId, replaceId);
     for (const pane of panes) syncPaneElement(pane, metadata.get(pane.projectId) || {}, onPicker);
-    syncRowSeparators();
+    renderPages();
+    syncSplitSeparators();
     placeAll();
     applyFocus();
     renderShortcutBar();
     publishBindings();
   }
 
+  /** Swaps the visible page at once, before any metadata refresh: a slow sessions
+   *  response must never keep the previous page on screen after the switch. */
+  function showActivePage() {
+    renderPages();
+    placeAll();
+    applyFocus();
+  }
+  function renderPages() {
+    const page = activeCanvasPage(layout);
+    pageTabs.replaceChildren(...layout.pages.map((item) => {
+      const tab = button(item.name);
+      tab.className = "canvas-page-tab";
+      tab.dataset.testid = "canvas-page-tab";
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-selected", String(item.id === page.id));
+      tab.addEventListener("click", () => {
+        commit(selectCanvasPage(layout, item.id));
+        showActivePage();
+        render();
+      });
+      return tab;
+    }));
+    const index = layout.pages.indexOf(page);
+    pageMoveLeftButton.disabled = index === 0;
+    pageMoveRightButton.disabled = index === layout.pages.length - 1;
+    pageAddButton.disabled = layout.pages.length >= CANVAS_MAX_PAGES;
+  }
+
   function syncProjectFilter() {
-    const selected = projectFilter.value;
     const projects = getProjects();
-    const projectIds = new Set(listCanvasPanes(layout).map((pane) => pane.projectId));
+    const projectIds = new Set(listCanvasPagePanes(layout).map((pane) => pane.projectId));
     const represented = projects.filter((project) => projectIds.has(project.id))
       .sort((left, right) => left.name.localeCompare(right.name));
     projectFilter.replaceChildren(new Option("All projects", ""), ...represented.map((project) => new Option(project.name, project.id)));
+    const selected = activeCanvasPage(layout).projectFilter;
+    // A persisted filter can outlive its project. Clear it in the layout too, or
+    // the canvas would keep rendering a filtered, empty page forever.
+    if (selected && !represented.some((project) => project.id === selected)) {
+      commit(setCanvasPageFilter(layout, ""));
+      projectFilter.value = "";
+      return;
+    }
     projectFilter.value = represented.some((project) => project.id === selected) ? selected : "";
   }
 
@@ -972,7 +886,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
 
   function arrangeCanvas(by) {
     const projects = new Map(getProjects().map((project) => [project.id, project]));
-    const entries = listCanvasPanes(layout).map((pane) => ({ pane, session: sessionForPane(pane) }));
+    const entries = listCanvasPagePanes(layout).map((pane) => ({ pane, session: sessionForPane(pane) }));
     const title = (entry) => entry.session?.title || entry.pane.sessionPath;
     const tieBreak = (left, right) => title(left).localeCompare(title(right));
     entries.sort((left, right) => {
@@ -1067,16 +981,13 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
 
   function addChosenPane(pane) {
     try {
-      const axis = positionSelect.value === "below" ? "column" : positionSelect.value === "left" ? "left" : "row";
       if (replacePaneId) {
         const replaced = listCanvasPanes(layout).find((candidate) => candidate.id === replacePaneId);
         commit(replaceCanvasPane(layout, replacePaneId, pane));
         if (replaced) void releaseShortcuts([replaced]).then(render, reportShortcutFailure);
       } else {
-        const panes = listCanvasPanes(layout);
-        const target = pickerTargetPaneId || layout.focusedPaneId || panes[panes.length - 1]?.id;
-        // Adding while a pane is focused would hide the new pane; show the whole canvas.
-        commit({ ...addCanvasPane(layout, pane, target, axis), focusedPaneId: null });
+        const target = pickerTargetPaneId || activeCanvasPage(layout).focusedPaneId || listCanvasPagePanes(layout).at(-1)?.id;
+        commit(addPaneExitingFocus(layout, pane, target, positionSelect.value));
       }
       dialog.close();
       render();
@@ -1106,6 +1017,26 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
     dialog.showModal();
   }
 
+  pageAddButton.addEventListener("click", () => {
+    try {
+      commit(createCanvasPage(layout));
+      showActivePage();
+    } catch (error) {
+      showMessage(error instanceof Error ? error.message : "Could not create that page");
+    }
+    render();
+  });
+  pageMoveLeftButton.addEventListener("click", () => { commit(moveCanvasPage(layout, layout.activePageId, "left")); render(); });
+  pageMoveRightButton.addEventListener("click", () => { commit(moveCanvasPage(layout, layout.activePageId, "right")); render(); });
+  pageDeleteButton.addEventListener("click", async () => {
+    const page = activeCanvasPage(layout);
+    if (!await confirmAction({ eyebrow: "Delete canvas page", title: `Delete ${page.name}?`, message: "Its conversations remain available.", confirmLabel: "Delete", cancelLabel: "Cancel" })) return;
+    const removed = listCanvasPagePanes(layout, page.id);
+    commit(removeCanvasPage(layout, page.id));
+    void releaseShortcuts(removed).then(render, reportShortcutFailure);
+    showActivePage();
+    render();
+  });
   projectSelect.addEventListener("change", () => void loadPickerSessions());
   searchInput.addEventListener("input", renderPickerOptions);
   organizeButton.addEventListener("click", () => {
@@ -1114,8 +1045,12 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
     render();
   });
   projectFilter.addEventListener("change", () => {
-    if (layout.focusedPaneId) commit(toggleCanvasFocus(layout, layout.focusedPaneId));
+    const page = activeCanvasPage(layout);
+    let next = setCanvasPageFilter(layout, projectFilter.value);
+    if (page.focusedPaneId) next = toggleCanvasFocus(next, page.focusedPaneId);
+    commit(next);
     root.scrollTop = 0;
+    applyFocus();
     placeAll();
   });
   arrangeSelect.addEventListener("change", () => {
@@ -1157,10 +1092,10 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
     const paneId = paneIdForSource(event.source);
     if (paneId === null) return;
     if (event.data?.type === "canvasShortcut") handleShortcutCombination(event.data);
-    if (event.data?.type === "canvasSplitShortcut" && ["left", "below"].includes(event.data.placement)) {
-      openPicker(paneId, null, event.data.placement);
+    if (event.data?.type === "canvasLeaderShortcut") {
+      const codes = new Set(["Backslash", "Minus", "KeyX", "KeyC", "KeyN", "KeyP", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Digit1", "Digit2", "Digit3", "Digit4", "Digit5", "Digit6", "Digit7", "Digit8", "Digit9"]);
+      if (codes.has(event.data.code)) handleLeaderShortcut({ code: event.data.code, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false }, paneId);
     }
-    if (event.data?.type === "canvasCloseShortcut") void confirmClosePane(paneId);
     // A pane that just finished loading has no bindings yet.
     if (event.data?.type === "canvasPaneReady") publishBindings();
     // Knowing which pane the user last touched is what makes "the current one" real.
@@ -1171,7 +1106,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
     setLayout(next) {
       layout = normalizeCanvasLayout(next);
       paneNodes.clear();
-      rowNodes.clear();
+      splitNodes.clear();
       emptyNode = null;
       root.replaceChildren();
       if (active) render();

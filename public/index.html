@@ -143,6 +143,13 @@
           <button class="ghost compact" id="canvasOrganizeButton" type="button" title="Lay every conversation out as an even grid" data-testid="canvas-organize-button">Organize</button>
           <button class="primary compact" id="canvasAddButton" type="button" data-testid="canvas-add-button">+ Add conversation</button>
         </header>
+        <div class="canvas-page-strip" aria-label="Canvas pages">
+          <div id="canvasPageTabs" role="tablist" data-testid="canvas-page-tabs"></div>
+          <button class="ghost compact" id="canvasPageMoveLeftButton" type="button" aria-label="Move page left" data-testid="canvas-page-move-left-button">←</button>
+          <button class="ghost compact" id="canvasPageMoveRightButton" type="button" aria-label="Move page right" data-testid="canvas-page-move-right-button">→</button>
+          <button class="ghost compact" id="canvasPageAddButton" type="button" aria-label="Create page" data-testid="canvas-page-add-button">+ Page</button>
+          <button class="ghost compact danger" id="canvasPageDeleteButton" type="button" aria-label="Delete page" data-testid="canvas-page-delete-button">Delete</button>
+        </div>
         <div class="canvas-view-controls" aria-label="Canvas view controls">
           <label for="canvasProjectFilter">Project
             <select id="canvasProjectFilter" data-testid="canvas-project-filter"><option value="">All projects</option></select>
@@ -324,7 +331,8 @@
           <select id="canvasSplitPosition" data-testid="canvas-split-position">
             <option value="right" selected>Right of target</option>
             <option value="left">Left of target</option>
-            <option value="below">Below, in a new row</option>
+            <option value="below">Below</option>
+            <option value="above">Above</option>
           </select>
         </label>
         <p class="canvas-picker-status" id="canvasPickerStatus" role="status" data-testid="canvas-picker-status"></p>
@@ -360,7 +368,7 @@
           <span class="eyebrow">Canvas</span>
           <h2>Canvas shortcuts</h2>
           <p>One modifier combination runs every canvas key, including the per-conversation keys. It must include Command, Control, or Option — Shift on its own would swallow ordinary typing. Each command takes one digit or letter; leave a field empty to unbind it. The switch key works everywhere in the app, including from the conversation list; the rest belong to the open canvas. A key a conversation already uses stays with that conversation.</p>
-          <p>Terminal-style commands are fixed: press Control+Space, then | or \ to open left of the active pane, - to open below it, or X to close it after Y/N confirmation.</p>
+          <p>Terminal-style commands are fixed: press Control+Space, then | or \ to open left of the active pane, - to open below it, X to close it after Y/N confirmation, C to create a page, N or P to move between pages, 1–9 to jump to a page, or an arrow to move between panes.</p>
         </div>
         <fieldset class="canvas-keymap-modifiers">
           <legend>Modifier combination</legend>

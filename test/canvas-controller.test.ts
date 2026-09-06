@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { addCanvasPane, emptyCanvasLayout, listCanvasPanes } from "../public/canvas-layout.js";
+import { addCanvasPane, createCanvasPage, emptyCanvasLayout, listCanvasPanes, selectCanvasPage, toggleCanvasFocus, canvasPageGeometry } from "../public/canvas-layout.js";
 
 // Minimal DOM stub: enough surface for the canvas controller's render and picker
 // paths to actually execute, so runtime errors (not just source shapes) fail.
@@ -86,7 +86,7 @@ const document = {
   createElement: (tag) => new FakeElement(tag),
   querySelector: (selector) => registry.get(selector) || null,
 };
-for (const selector of ["#canvasRoot", "#canvasConversationDialog", "#canvasProjectSelect", "#canvasSessionSearch", "#canvasSplitPosition", "#canvasSessionOptions", "#canvasPickerStatus", "#canvasPickerCancelButton", "#canvasAddButton", "#canvasOrganizeButton", "#canvasShortcutBar", "#canvasShortcutDialog", "#canvasShortcutSubject", "#canvasShortcutKey", "#canvasShortcutStatus", "#canvasShortcutRemoveButton", "#canvasShortcutSaveButton", "#canvasShortcutChordLabel", "#canvasFinderButton", "#canvasFinderDialog", "#canvasFinderInput", "#canvasFinderResults", "#canvasFinderStatus", "#canvasKeymapButton", "#canvasKeymapDialog", "#canvasKeymapStatus", "#canvasKeymapSaveButton", "#canvasKeymapResetButton", "#canvasKeymapModifier-meta", "#canvasKeymapModifier-ctrl", "#canvasKeymapModifier-alt", "#canvasKeymapModifier-shift", "#canvasKeymapCommand-recentPane", "#canvasKeymapCommand-focusPane", "#canvasKeymapCommand-paneSearch", "#canvasKeymapCommand-toggleView", "#canvasProjectFilter", "#canvasArrangeSelect"]) {
+for (const selector of ["#canvasRoot", "#canvasPageTabs", "#canvasPageMoveLeftButton", "#canvasPageMoveRightButton", "#canvasPageAddButton", "#canvasPageDeleteButton", "#canvasConversationDialog", "#canvasProjectSelect", "#canvasSessionSearch", "#canvasSplitPosition", "#canvasSessionOptions", "#canvasPickerStatus", "#canvasPickerCancelButton", "#canvasAddButton", "#canvasOrganizeButton", "#canvasShortcutBar", "#canvasShortcutDialog", "#canvasShortcutSubject", "#canvasShortcutKey", "#canvasShortcutStatus", "#canvasShortcutRemoveButton", "#canvasShortcutSaveButton", "#canvasShortcutChordLabel", "#canvasFinderButton", "#canvasFinderDialog", "#canvasFinderInput", "#canvasFinderResults", "#canvasFinderStatus", "#canvasKeymapButton", "#canvasKeymapDialog", "#canvasKeymapStatus", "#canvasKeymapSaveButton", "#canvasKeymapResetButton", "#canvasKeymapModifier-meta", "#canvasKeymapModifier-ctrl", "#canvasKeymapModifier-alt", "#canvasKeymapModifier-shift", "#canvasKeymapCommand-recentPane", "#canvasKeymapCommand-focusPane", "#canvasKeymapCommand-paneSearch", "#canvasKeymapCommand-toggleView", "#canvasProjectFilter", "#canvasArrangeSelect"]) {
   registry.set(selector, new FakeElement(selector.slice(1)));
 }
 const windowListeners = new Map<string, (event: unknown) => void>();
@@ -156,7 +156,7 @@ let originalFrames = [];
 test("the canvas renders and moves direct-child panes without rebuilding frames", async () => {
   const root = registry.get("#canvasRoot");
   let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
-  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "row");
+  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "right");
   controller.setLayout(layout);
   await controller.activate();
 
@@ -199,16 +199,8 @@ test("the canvas renders and moves direct-child panes without rebuilding frames"
   await new Promise((resolve) => setTimeout(resolve, 0));
   assertFramesUnchanged("unfocus keeps browsing contexts attached");
 
-  const moveDown = findElement(root, (element) => String(element["attr:aria-label"] || "").includes("Move Project One · Two one row down"));
-  moveDown.dispatch("click");
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assertFramesUnchanged("cross-row movement keeps browsing contexts attached");
-  const moveUp = findElement(root, (element) => String(element["attr:aria-label"] || "").includes("Move Project One · Two one row up"));
-  moveUp.dispatch("click");
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assertFramesUnchanged("returning across rows keeps browsing contexts attached");
-
-  // Horizontal movement also changes only grid placement.
+  // A geometric move swaps the two panes' slots while every browsing context stays
+  // attached, and the pane that moved offers to move back.
   const moveLeft = findElement(root, (element) => String(element["attr:aria-label"] || "").includes("Move Project One · Two left"));
   assert.ok(moveLeft);
   moveLeft.dispatch("click");
@@ -216,7 +208,13 @@ test("the canvas renders and moves direct-child panes without rebuilding frames"
   const framesAfterMove = [];
   walk2(root, framesAfterMove);
   assert.deepEqual(framesAfterMove, frames);
-  assert.deepEqual(saved.at(-1).rows[0].panes.map((item) => item.sessionId), ["s-two", "s-one"]);
+  assert.deepEqual(listCanvasPanes(saved.at(-1)).map((item) => item.sessionId), ["s-two", "s-one"],
+    "a geometric move swaps the two panes' positions");
+  const moveBack = findElement(root, (element) => String(element["attr:aria-label"] || "").includes("Move Project One · One left"));
+  assert.ok(moveBack, "the pane that moved right offers to move back");
+  moveBack.dispatch("click");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assertFramesUnchanged("returning across the split keeps browsing contexts attached");
   originalFrames = frames;
 });
 
@@ -250,7 +248,7 @@ test("the picker adds an existing conversation through its button handlers", asy
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(registry.get("#canvasConversationDialog").open, false);
   const added = saved.at(-1);
-  assert.equal(added.version, 5);
+  assert.equal(added.version, 6);
   assert.deepEqual(listCanvasPanes(added).map((pane) => pane.sessionId).sort(), ["s-one", "s-three", "s-two"]);
 
   const root = registry.get("#canvasRoot");
@@ -258,10 +256,7 @@ test("the picker adds an existing conversation through its button handlers", asy
   walk2(root, frames);
   assert.equal(frames.length, 3);
   assert.ok(originalFrames.every((frame) => frames.includes(frame)), "adding a pane keeps every existing iframe alive");
-  // Three panes in one row split it into three equal, gapless thirds.
-  const spans = added.rows[0].panes.map((pane) => root.children
-    .find((candidate) => candidate.dataset.paneId === pane.id).style.gridColumn.split(" / ").map(Number));
-  assert.deepEqual(spans, [[1, 334], [334, 668], [668, 1001]], "every pane owns an equal share and the row ends filled");
+  assert.equal(root.children.filter((child) => child.dataset.paneId).length, 3);
 
   const removeThree = findElement(root, (element) => String(element["attr:aria-label"] || "").includes("Remove Project One · Three from the canvas"));
   assert.ok(removeThree);
@@ -275,8 +270,8 @@ test("the picker adds an existing conversation through its button handlers", asy
 test("Ctrl+Space split shortcuts open the picker relative to the active pane", async () => {
   const root = registry.get("#canvasRoot");
   let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
-  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "row");
-  controller.setLayout({ ...layout, focusedPaneId: null });
+  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "right");
+  controller.setLayout(layout);
   await controller.activate();
 
   const frames = [];
@@ -362,7 +357,7 @@ test("the picker opens a pane on a brand-new conversation", async () => {
     "the pane frame opens on the draft identity, so no listed conversation is required");
 });
 
-test("stored widths and pinned heights render in the canvas", async () => {
+test("stored widths render from a migrated v5 layout", async () => {
   const layout = {
     version: 5,
     rows: [{
@@ -382,33 +377,33 @@ test("stored widths and pinned heights render in the canvas", async () => {
   const root = registry.get("#canvasRoot");
   const spans = layout.rows[0].panes.map((pane) => root.children
     .find((candidate) => candidate.dataset.paneId === pane.id).style.gridColumn.split(" / ").map(Number));
-  assert.deepEqual(spans, [[1, 601], [601, 851], [851, 1001]], "stored pane widths control the grid");
-  assert.equal(root.style.gridTemplateRows, "900px", "stored row height controls the grid");
+  assert.deepEqual(spans, [[1, 601], [601, 851], [851, 1001]],
+    "the migrated split tree keeps the exact widths the row weights described");
+  assert.deepEqual(root.children.find((candidate) => candidate.dataset.paneId === "pane-s-one").style.gridRow.split(" / ").map(Number), [1, 1001]);
 });
 
-test("keyboard resize handles change pane widths and row heights", async () => {
+test("keyboard split handles change nested split ratios", async () => {
   const root = registry.get("#canvasRoot");
   let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
-  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "row");
-  layout = addCanvasPane(layout, paneFor("s-three", "/tmp/three.jsonl"), "pane-s-two", "column");
-  controller.setLayout({ ...layout, focusedPaneId: null });
+  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "right");
+  layout = addCanvasPane(layout, paneFor("s-three", "/tmp/three.jsonl"), "pane-s-two", "below");
+  controller.setLayout(layout);
   await controller.activate();
 
-  const secondPane = root.children.find((element) => element.dataset.paneId === "pane-s-two");
-  const widthHandle = secondPane.children.find((child) => child.classNames === "canvas-resize");
-  assert.ok(widthHandle, "side-by-side panes have a width handle");
+  const widthHandle = root.children.find((element) => element.classNames === "canvas-resize canvas-resize-row");
+  assert.ok(widthHandle, "a nested layout has a vertical split handle");
+  assert.equal(widthHandle["attr:role"], "separator");
   assert.equal(widthHandle["attr:aria-orientation"], "vertical");
   widthHandle.dispatch("keydown", { key: "ArrowRight", preventDefault() {} });
-  assert.deepEqual(saved.at(-1).rows[0].weights.map((weight) => Math.round(weight * 100) / 100), [0.55, 0.45]);
+  const activePage = () => saved.at(-1).pages.find((page) => page.id === saved.at(-1).activePageId);
+  assert.ok(Math.abs(activePage().root.ratio - 0.55) < 1e-9, "ArrowRight grows the left pane's share");
 
-  const heightHandles = root.children.filter((element) => element.classNames === "canvas-row-resize");
-  assert.equal(heightHandles.length, 2, "every row has a height handle");
-  assert.equal(heightHandles[0]["attr:aria-orientation"], "horizontal");
-  heightHandles[0].dispatch("keydown", { key: "ArrowDown", preventDefault() {} });
-  assert.equal(saved.at(-1).rows[0].height, 340);
-  assert.equal(saved.at(-1).rows[1].height, null);
-  assert.equal(root.style.gridTemplateRows, "340px minmax(200px, 1fr)",
-    "a taller row pins its height and lets the canvas overflow");
+  const heightHandle = root.children.find((element) => element.classNames === "canvas-resize canvas-resize-column");
+  assert.ok(heightHandle, "a nested layout has a horizontal split handle");
+  assert.equal(heightHandle["attr:role"], "separator");
+  assert.equal(heightHandle["attr:aria-orientation"], "horizontal");
+  heightHandle.dispatch("keydown", { key: "ArrowDown", preventDefault() {} });
+  assert.ok(Math.abs(activePage().root.second.ratio - 0.55) < 1e-9, "ArrowDown grows the upper pane's share");
 });
 
 test("the empty-canvas message never lingers under real panes", async () => {
@@ -449,9 +444,9 @@ test("arrange orders panes by activity or creation date", async () => {
 test("organize lays every pane out as an even grid", async () => {
   const root = registry.get("#canvasRoot");
   let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
-  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "column");
-  layout = addCanvasPane(layout, paneFor("s-three", "/tmp/three.jsonl"), "pane-s-two", "column");
-  controller.setLayout({ ...layout, focusedPaneId: null });
+  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "below");
+  layout = addCanvasPane(layout, paneFor("s-three", "/tmp/three.jsonl"), "pane-s-two", "below");
+  controller.setLayout(layout);
   await controller.activate();
 
   const before = [];
@@ -459,7 +454,11 @@ test("organize lays every pane out as an even grid", async () => {
   registry.get("#canvasOrganizeButton").dispatch("click");
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  assert.deepEqual(saved.at(-1).rows.map((row) => row.panes.length), [2, 1], "three panes become a two-column grid");
+  const geometry = canvasPageGeometry(saved.at(-1));
+  const twoThirds = 2 / 3;
+  assert.deepEqual(geometry.panes.get("pane-s-one"), { top: 0, bottom: 0.5, left: 0, right: twoThirds }, "one lands in the upper left half");
+  assert.deepEqual(geometry.panes.get("pane-s-two"), { top: 0.5, bottom: 1, left: 0, right: twoThirds }, "two lands below it");
+  assert.deepEqual(geometry.panes.get("pane-s-three"), { top: 0, bottom: 1, left: twoThirds, right: 1 }, "three takes the remaining right column");
   const after = [];
   walk2(root, after);
   assert.deepEqual(after, before, "organizing keeps every browsing context attached");
@@ -526,9 +525,9 @@ test("a shortcut is assigned from the title, listed in the bar, and released whe
 test("a shortcut reaches a pane that focus mode is hiding", async () => {
   const root = registry.get("#canvasRoot");
   let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
-  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "row");
+  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "right");
   storedShortcuts = [{ binding: "5", projectId: "p-one", engine: "pi", sessionId: "s-two" }];
-  controller.setLayout({ ...layout, focusedPaneId: "pane-s-one" });
+  controller.setLayout(toggleCanvasFocus(layout, "pane-s-one"));
   await controller.activate();
 
   const pane = root.children.find((element) => element.dataset.paneId === "pane-s-two");
@@ -539,8 +538,16 @@ test("a shortcut reaches a pane that focus mode is hiding", async () => {
 
   windowListeners.get("keydown")({ code: "Digit5", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false, preventDefault() {} });
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(saved.at(-1).focusedPaneId, "pane-s-two", "focus moves to the pane the key names, instead of revealing a hidden one");
+  assert.equal(saved.at(-1).pages.find((page) => page.id === saved.at(-1).activePageId).focusedPaneId, "pane-s-two",
+    "focus moves to the pane the key names, instead of revealing a hidden one");
   assert.ok(posted.some((message) => message.type === "canvasFocusComposer"));
+
+  // Filtering releases focus mode in the DOM as well as the data, or the stale
+  // focus CSS would keep hiding every pane the filter shows.
+  registry.get("#canvasProjectFilter").value = "p-one";
+  registry.get("#canvasProjectFilter").dispatch("change");
+  assert.equal(root.classList.contains("canvas-focused"), false, "filtering releases focus mode");
+  assert.equal(saved.at(-1).pages.find((page) => page.id === saved.at(-1).activePageId).focusedPaneId, null);
 });
 
 test("only the real pane frames may drive the canvas over postMessage", async () => {
@@ -609,8 +616,8 @@ test("the focus key brings the pane the user last touched forward", async () => 
   controller.setKeymap({ modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F" });
   const root = registry.get("#canvasRoot");
   let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
-  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "row");
-  controller.setLayout({ ...layout, focusedPaneId: null });
+  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "right");
+  controller.setLayout(layout);
   await controller.activate();
 
   const frames = [];
@@ -626,10 +633,9 @@ test("the focus key brings the pane the user last touched forward", async () => 
   windowListeners.get("keydown")({ code: "KeyG", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false, preventDefault() {} });
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  // `saved` is shared by every test in this file, so the length check is what proves a
-  // layout was actually committed rather than an older one still sitting at the end.
   assert.ok(saved.length > priorSaves, "focusing commits a layout");
-  assert.equal(saved.at(-1).focusedPaneId, "pane-s-two", "the conversation the user was in becomes the focused one");
+  assert.equal(saved.at(-1).pages.find((page) => page.id === saved.at(-1).activePageId).focusedPaneId, "pane-s-two",
+    "the conversation the user was in becomes the focused one");
   assert.equal(second.classList.contains("focused"), true, "and the canvas actually shows it alone");
   assert.equal(root.classList.contains("canvas-focused"), true);
   assert.ok(posted.some((message) => message.type === "canvasFocusComposer"), "the cursor lands in that conversation");
@@ -747,23 +753,112 @@ test("an open conversation can be added to the canvas from outside it", async ()
   assert.throws(() => controller.addSessionPane("p-one", { id: "s-two", path: "/tmp/two.jsonl", executionNodeId: null }), /already on the canvas/);
 });
 
-test("double-clicking a row handle gives the row its share of the canvas back", async () => {
+test("pages render tabs and keep every frame while switching", async () => {
+  const root = registry.get("#canvasRoot");
+  const layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
+  controller.setLayout(layout);
+  await controller.activate();
+  const frames = [];
+  walk2(root, frames);
+  assert.equal(frames.length, 1);
+
+  registry.get("#canvasPageAddButton").dispatch("click");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const created = saved.at(-1);
+  assert.equal(created.pages.length, 2);
+  assert.equal(created.pages[1].name, "Page 2");
+  assert.equal(created.activePageId, created.pages[1].id);
+  const tabs = registry.get("#canvasPageTabs");
+  assert.equal(tabs.children.length, 2);
+  assert.equal(tabs.children[1]["attr:aria-selected"], "true");
+  assert.ok(root.children.some((element) => element.classNames === "canvas-empty"),
+    "an empty page explains itself");
+  assert.equal(root.children.filter((element) => element.tagName === "section").length, 1,
+    "the other page's pane section stays attached");
+  assert.equal(frames[0].isConnected, true, "the other page's frame is hidden, not destroyed");
+
+  registry.get("#canvasProjectSelect").value = "p-one";
+  controller.openPicker();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const option = registry.get("#canvasSessionOptions").children.find((child) => textOf(child).includes("Three"));
+  option.dispatch("click");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const withTwoPages = saved.at(-1);
+  const activeRoot = withTwoPages.pages.find((page) => page.id === withTwoPages.activePageId).root;
+  assert.ok(activeRoot, "the new pane lands on the active page");
+  assert.deepEqual(listCanvasPanes(withTwoPages).map((pane) => pane.sessionId).sort(), ["s-one", "s-three"],
+    "the pages hold their own conversations");
+  const framesTwo = [];
+  walk2(root, framesTwo);
+  assert.equal(framesTwo.length, 2);
+  assert.ok(framesTwo.includes(frames[0]), "adding to a page keeps every existing frame alive");
+
+  tabs.children[0].dispatch("click");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(saved.at(-1).activePageId, saved.at(-1).pages[0].id);
+  const framesBack = [];
+  walk2(root, framesBack);
+  assert.deepEqual(framesBack, framesTwo, "switching pages keeps every browsing context attached");
+
+  assert.equal(registry.get("#canvasPageMoveLeftButton").disabled, true, "the first page cannot move left");
+  registry.get("#canvasPageMoveRightButton").dispatch("click");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(saved.at(-1).pages.map((page) => page.name), ["Page 2", "Page 1"],
+    "moving a page reorders its tab");
+
+  confirmClose = true;
+  registry.get("#canvasPageDeleteButton").dispatch("click");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const afterDelete = saved.at(-1);
+  assert.equal(afterDelete.pages.length, 1);
+  assert.equal(afterDelete.pages[0].name, "Page 2");
+  const framesAfterDelete = [];
+  walk2(root, framesAfterDelete);
+  const pageTwoFrame = framesTwo.find((frame) => frame !== frames[0]);
+  assert.deepEqual(framesAfterDelete, [pageTwoFrame], "deleting the active page removes only its own pane");
+  confirmClose = false;
+});
+
+test("a shortcut into another page switches pages without stale focus", async () => {
+  // Earlier tests in this file leave a custom keymap behind; start from the defaults.
+  controller.setKeymap({ modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F", toggleView: "V" });
   const root = registry.get("#canvasRoot");
   let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
-  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "row");
-  controller.setLayout({ ...layout, focusedPaneId: null });
+  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "right");
+  layout = createCanvasPage(layout);
+  layout = addCanvasPane(layout, paneFor("s-three", "/tmp/three.jsonl"), null, "right");
+  layout = selectCanvasPage(layout, layout.pages[0].id);
+  layout = toggleCanvasFocus(layout, "pane-s-one");
+  storedShortcuts = [{ binding: "7", projectId: "p-one", engine: "pi", sessionId: "s-three" }];
+  controller.setLayout(layout);
   await controller.activate();
 
-  const handle = findElement(root, (element) => element.classNames?.includes("canvas-row-resize"));
-  assert.ok(handle, "row handle exists");
-
-  handle.dispatch("keydown", { key: "ArrowDown", preventDefault() {} });
+  const frames = [];
+  walk2(root, frames);
+  for (const frame of frames) frame.contentWindow = { postMessage() {} };
+  windowListeners.get("keydown")({ code: "Digit7", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false, preventDefault() {} });
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.ok(saved.at(-1).rows[0].height !== null, "ArrowDown sets a height");
+  assert.equal(saved.at(-1).activePageId, saved.at(-1).pages[1].id, "the shortcut switches to the owning page");
+  assert.equal(root.classList.contains("canvas-focused"), false, "the previous page's focus mode does not survive the switch");
+  const pane = root.children.find((element) => element.dataset.paneId === "pane-s-three");
+  assert.equal(pane.hidden, false, "the target pane is visible at once");
+});
 
-  handle.dispatch("dblclick");
+test("adding a pane leaves focus mode so the new conversation is visible", async () => {
+  const root = registry.get("#canvasRoot");
+  let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
+  layout = toggleCanvasFocus(layout, "pane-s-one");
+  controller.setLayout(layout);
+  await controller.activate();
+
+  controller.addSessionPane("p-one", { id: "s-two", path: "/tmp/two.jsonl", executionNodeId: null });
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(saved.at(-1).rows[0].height, null, "double-click resets height to null");
+  const page = saved.at(-1).pages.find((item) => item.id === saved.at(-1).activePageId);
+  assert.equal(page.focusedPaneId, null, "adding a pane exits focus mode");
+  assert.deepEqual(listCanvasPanes(saved.at(-1)).map((pane) => pane.sessionId).sort(), ["s-one", "s-two"]);
+  const sections = root.children.filter((element) => element.tagName === "section");
+  assert.equal(sections.length, 2);
+  assert.ok(sections.every((section) => !section.hidden), "both panes are visible");
 });
 
 test("a conversation keeps a key a canvas command also wants", async () => {

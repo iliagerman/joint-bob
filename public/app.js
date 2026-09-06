@@ -1,7 +1,7 @@
 // App entry point. The feature modules under ./app register their DOM listeners
 // when they load; this file wires the boot sequence and the canvas pane mode.
 import {
-  canvasChordMatches, canvasKeyFromCode, canvasSplitPlacement, DEFAULT_CANVAS_KEYMAP,
+  canvasChordMatches, canvasKeyFromCode, DEFAULT_CANVAS_KEYMAP,
   isCanvasModifierKey, isCanvasSplitLeader,
 } from "./canvas-layout.js";
 import { createConversationCanvas } from "./canvas.js";
@@ -65,6 +65,9 @@ if (state.canvasPaneMode) {
   const canvasBindings = new Set();
   let canvasModifiers = DEFAULT_CANVAS_KEYMAP.modifiers;
   let splitLeaderArmed = false;
+  // The command keys the canvas answers after its leader, hoisted so the handler
+  // stays a cheap lookup.
+  const leaderCodes = new Set(["Backslash", "Minus", "KeyX", "KeyC", "KeyN", "KeyP", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Digit1", "Digit2", "Digit3", "Digit4", "Digit5", "Digit6", "Digit7", "Digit8", "Digit9"]);
   window.addEventListener("keydown", (event) => {
     if (isCanvasSplitLeader(event)) {
       splitLeaderArmed = true;
@@ -74,15 +77,9 @@ if (state.canvasPaneMode) {
     if (splitLeaderArmed) {
       if (isCanvasModifierKey(event)) return;
       splitLeaderArmed = false;
-      const placement = canvasSplitPlacement(event);
-      if (placement) {
+      if (leaderCodes.has(event.code)) {
         event.preventDefault();
-        parent.postMessage({ type: "canvasSplitShortcut", placement }, location.origin);
-        return;
-      }
-      if (event.code === "KeyX") {
-        event.preventDefault();
-        parent.postMessage({ type: "canvasCloseShortcut" }, location.origin);
+        parent.postMessage({ type: "canvasLeaderShortcut", code: event.code }, location.origin);
         return;
       }
     }

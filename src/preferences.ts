@@ -35,13 +35,29 @@ export interface CanvasRowPreference {
   panes: CanvasPanePreference[];
 }
 
-export interface CanvasLayoutPreference {
-  version: 5;
-  rows: CanvasRowPreference[];
+export interface CanvasSplitPreference {
+  kind: "split";
+  id: string;
+  axis: "row" | "column";
+  ratio: number;
+  first: CanvasNodePreference;
+  second: CanvasNodePreference;
+}
+export type CanvasNodePreference = CanvasPanePreference | CanvasSplitPreference;
+export interface CanvasPagePreference {
+  id: string;
+  name: string;
+  root: CanvasNodePreference | null;
   focusedPaneId: string | null;
+  projectFilter: string;
+}
+export interface CanvasLayoutPreference {
+  version: 6;
+  pages: CanvasPagePreference[];
+  activePageId: string;
 }
 
-const emptyCanvasLayout = (): CanvasLayoutPreference => ({ version: 5, rows: [], focusedPaneId: null });
+const emptyCanvasLayout = (): CanvasLayoutPreference => ({ version: 6, pages: [{ id: "page-1", name: "Page 1", root: null, focusedPaneId: null, projectFilter: "" }], activePageId: "page-1" });
 
 export const CANVAS_MIN_PANE_WIDTH = 0.08;
 export const CANVAS_WIDTH_TOLERANCE = 1e-6;
@@ -73,18 +89,66 @@ interface StoredCanvasLayout {
   focusedPaneId: string | null;
 }
 
-/** Migrates row layouts to persisted resize geometry. */
-export function normalizeCanvasLayoutPreference(layout: StoredCanvasLayout): CanvasLayoutPreference {
-  return {
-    version: 5,
-    rows: layout.rows.map((row) => ({
-      id: row.id,
-      height: layout.version === 3 || layout.version === 5 ? row.height ?? null : null,
-      weights: normalizedCanvasWeights(row.weights, row.panes.length),
-      panes: row.panes,
-    })),
-    focusedPaneId: layout.focusedPaneId,
+/** Migrates row layouts to persisted split trees. */
+function splitRows(rows: StoredCanvasLayout["rows"]): CanvasNodePreference | null {
+  // Right-nested splits reproduce the exact widths the row weights described, and
+  // rows stack in a column split with equal shares — the same shape the client builds.
+  const weighted = (items: CanvasNodePreference[], weights: number[] | undefined, axis: "row" | "column"): CanvasNodePreference | null => {
+    if (!items.length) return null;
+    if (items.length === 1) return items[0];
+    const values = Array.isArray(weights) && weights.length === items.length && weights.every((weight) => Number.isFinite(weight) && weight > 0)
+      ? weights
+      : items.map(() => 1);
+    const total = values.reduce((sum, value) => sum + value, 0);
+    const ratio = Math.min(0.85, Math.max(0.15, values[0] / total));
+    // items.length >= 2 here, so the tail always yields at least one pane.
+    const rest = weighted(items.slice(1), values.slice(1), axis) as CanvasNodePreference;
+    return { kind: "split", id: crypto.randomUUID(), axis, ratio, first: items[0], second: rest };
   };
+  return weighted(rows.map((row) => weighted(row.panes, row.weights, "row")).filter((node): node is CanvasNodePreference => Boolean(node)), rows.map(() => 1), "column");
+}
+function nodeDepth(node: CanvasNodePreference | null): number {
+  return !node ? 0 : node.kind === "pane" ? 1 : 1 + Math.max(nodeDepth(node.first), nodeDepth(node.second));
+}
+function balancedNodes(items: CanvasPanePreference[], axis: "row" | "column" = "row"): CanvasNodePreference | null {
+  if (!items.length) return null;
+  if (items.length === 1) return items[0];
+  const middle = Math.ceil(items.length / 2);
+  return { kind: "split", id: crypto.randomUUID(), axis, ratio: middle / items.length, first: balancedNodes(items.slice(0, middle), axis === "row" ? "column" : "row")!, second: balancedNodes(items.slice(middle), axis === "row" ? "column" : "row")! };
+}
+/** A legacy tree that breaks the v6 limits is spread over pages of eight as balanced
+ *  trees, in reading order, exactly like the client's migration. Panes past nine
+ *  pages are dropped: a pane is only a view onto a conversation. */
+function legacyPages(tree: CanvasNodePreference | null, focusedPaneId: string | null): { roots: Array<CanvasNodePreference | null>; focusedPaneId: string | null } {
+  const items = panesInCanvasNode(tree);
+  let roots: Array<CanvasNodePreference | null>;
+  if (items.length <= 8 && nodeDepth(tree) <= 8) {
+    roots = [tree];
+  } else {
+    roots = [];
+    for (let start = 0; start < items.length && roots.length < 9; start += 8) {
+      roots.push(balancedNodes(items.slice(start, start + 8)));
+    }
+    if (!roots.length) roots = [null];
+  }
+  const ids = new Set(roots.flatMap((root) => panesInCanvasNode(root).map((pane) => pane.id)));
+  return { roots, focusedPaneId: focusedPaneId && ids.has(focusedPaneId) ? focusedPaneId : null };
+}
+function legacyPageLayout(roots: Array<CanvasNodePreference | null>, focusedPaneId: string | null): CanvasLayoutPreference {
+  return {
+    version: 6,
+    // Focus lands on the page that actually holds the pane, and only when that
+    // pane survived the spread; otherwise it is dropped rather than invalidated.
+    pages: roots.map((root, index) => ({ id: `page-${index + 1}`, name: `Page ${index + 1}`, root, focusedPaneId: focusedPaneId && panesInCanvasNode(root).some((pane) => pane.id === focusedPaneId) ? focusedPaneId : null, projectFilter: "" })),
+    activePageId: "page-1",
+  };
+}
+
+export function normalizeCanvasLayoutPreference(layout: StoredCanvasLayout | CanvasLayoutPreference | { version: 1; root: CanvasNodePreference | null; focusedPaneId: string | null }): CanvasLayoutPreference {
+  const source = layout as StoredCanvasLayout & CanvasLayoutPreference & { root?: CanvasNodePreference | null };
+  if (source.version === 6) return source;
+  const { roots, focusedPaneId } = legacyPages(source.version === 1 ? source.root ?? null : splitRows(source.rows), source.focusedPaneId ?? null);
+  return legacyPageLayout(roots, focusedPaneId);
 }
 
 export type CanvasModifier = "meta" | "ctrl" | "alt" | "shift";
@@ -291,13 +355,66 @@ function parseRecentSessions(value: string): RecentSession[] {
   }
 }
 
-/** A hand-edited canvas row must degrade to an empty canvas, never take the node down.
- * Version 1 split trees are accepted and flattened into rows, matching the client. */
+function validStoredCanvasNode(node: unknown, depth: number, ids: Set<string>, identities: Set<string>): CanvasNodePreference | null {
+  if (!node || typeof node !== "object" || depth > 8) return null;
+  const item = node as Record<string, unknown>;
+  if (typeof item.id !== "string" || !item.id || item.id.length > 200 || ids.has(item.id)) return null;
+  ids.add(item.id);
+  if (item.kind === "pane") {
+    if (typeof item.projectId !== "string" || !item.projectId || item.projectId.length > 120 || typeof item.sessionPath !== "string" || !item.sessionPath || item.sessionPath.length > 2000 || typeof item.sessionId !== "string" || !item.sessionId || item.sessionId.length > 200 || !(item.executionNodeId === null || typeof item.executionNodeId === "string" && item.executionNodeId.length <= 100)) return null;
+    const sessionPath = canonicalSessionPath(item.sessionPath);
+    const identity = `${item.projectId}\0${item.sessionId}`;
+    const pathIdentity = `${item.projectId}\0${sessionPath}`;
+    if (identities.has(identity) || identities.has(pathIdentity)) return null;
+    identities.add(identity); identities.add(pathIdentity);
+    return { kind: "pane", id: item.id, projectId: item.projectId, sessionPath, sessionId: item.sessionId, executionNodeId: item.executionNodeId as string | null };
+  }
+  if (item.kind !== "split" || (item.axis !== "row" && item.axis !== "column") || typeof item.ratio !== "number" || !Number.isFinite(item.ratio) || item.ratio < .15 || item.ratio > .85) return null;
+  const first = validStoredCanvasNode(item.first, depth + 1, ids, identities);
+  const second = validStoredCanvasNode(item.second, depth + 1, ids, identities);
+  return first && second ? { kind: "split", id: item.id, axis: item.axis, ratio: item.ratio, first, second } : null;
+}
+function validStoredCanvasLayout(value: unknown): CanvasLayoutPreference | null {
+  if (!value || typeof value !== "object") return null;
+  const source = value as Record<string, unknown>;
+  if (source.version !== 6 || !Array.isArray(source.pages) || source.pages.length < 1 || source.pages.length > 9 || typeof source.activePageId !== "string") return null;
+  const ids = new Set<string>(); const identities = new Set<string>(); const pages: CanvasPagePreference[] = [];
+  for (const item of source.pages) {
+    if (!item || typeof item !== "object") return null;
+    const page = item as Record<string, unknown>;
+    if (typeof page.id !== "string" || !page.id || page.id.length > 200 || ids.has(page.id) || typeof page.name !== "string" || !page.name.trim() || page.name.length > 80 || typeof page.projectFilter !== "string" || page.projectFilter.length > 120 || !(page.focusedPaneId === null || typeof page.focusedPaneId === "string")) return null;
+    ids.add(page.id); const root = page.root === null ? null : validStoredCanvasNode(page.root, 1, ids, identities);
+    if (page.root !== null && !root) return null;
+    const pagePanes = panesInCanvasNode(root);
+    if (pagePanes.length > 8 || page.focusedPaneId && !pagePanes.some((pane) => pane.id === page.focusedPaneId)) return null;
+    pages.push({ id: page.id, name: page.name, root, focusedPaneId: page.focusedPaneId as string | null, projectFilter: page.projectFilter });
+  }
+  return pages.some((page) => page.id === source.activePageId) ? { version: 6, pages, activePageId: source.activePageId } : null;
+}
+function panesInCanvasNode(node: CanvasNodePreference | null, result: CanvasPanePreference[] = []): CanvasPanePreference[] { if (!node) return result; if (node.kind === "pane") result.push(node); else { panesInCanvasNode(node.first, result); panesInCanvasNode(node.second, result); } return result; }
+
+/** A hand-edited canvas row must degrade to an empty canvas, never take the node down. */
 function parseCanvasLayout(value: string): CanvasLayoutPreference {
   try {
     const parsed = JSON.parse(value) as unknown;
     if (!parsed || typeof parsed !== "object") return emptyCanvasLayout();
-    if ((parsed as { version?: unknown }).version === 1) return migrateLegacyCanvasLayout(parsed);
+    if ((parsed as { version?: unknown }).version === 1) {
+      // A stored version 1 tree is validated exactly like a stored version 6 page,
+      // then runs through the same spread-over-pages migration so oversized legacy
+      // trees cannot produce a layout the schema would reject.
+      const legacy = parsed as { root?: unknown; focusedPaneId?: unknown };
+      const ids = new Set<string>();
+      const identities = new Set<string>();
+      const root = validStoredCanvasNode(legacy.root ?? null, 1, ids, identities);
+      if (legacy.root != null && !root) return emptyCanvasLayout();
+      const panes = panesInCanvasNode(root);
+      const focusedPaneId = typeof legacy.focusedPaneId === "string" && panes.some((pane) => pane.id === legacy.focusedPaneId)
+        ? legacy.focusedPaneId
+        : null;
+      const { roots, focusedPaneId: keptFocus } = legacyPages(root, focusedPaneId);
+      return legacyPageLayout(roots, keptFocus);
+    }
+    if ((parsed as { version?: unknown }).version === 6) return validStoredCanvasLayout(parsed) ?? emptyCanvasLayout();
     const layout = parsed as unknown as {
       version: number;
       rows: Array<CanvasRowPreference & { height?: number | null; weights?: number[] }>;
@@ -411,7 +528,7 @@ export function migrateLegacyCanvasLayout(parsed: unknown): CanvasLayoutPreferen
   };
   visit(legacy.root, 0);
   if (!valid || (typeof legacy.focusedPaneId === "string" && !paneIds.has(legacy.focusedPaneId))) return emptyCanvasLayout();
-  return { version: 5, rows, focusedPaneId: typeof legacy.focusedPaneId === "string" ? legacy.focusedPaneId : null };
+  return normalizeCanvasLayoutPreference({ version: 5, rows, focusedPaneId: typeof legacy.focusedPaneId === "string" ? legacy.focusedPaneId : null });
 }
 
 function preferencesFromRow(row: PreferenceRow): UserPreferences {

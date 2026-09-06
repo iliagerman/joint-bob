@@ -1,174 +1,99 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  addCanvasPane, arrangeCanvasLayout, canonicalSessionPath, canvasPaneMoves, CANVAS_MIN_PANE_WIDTH,
-  CANVAS_MIN_ROW_HEIGHT, emptyCanvasLayout, listCanvasPanes, migrateCanvasLayout,
-  moveCanvasPane, normalizeCanvasLayout, organizeCanvasLayout, removeCanvasPane,
-  replaceCanvasPane, setCanvasRowBoundary, setCanvasRowHeight, toggleCanvasFocus,
+  addCanvasPane, arrangeCanvasLayout, canvasPageGeometry, canvasPaneNeighbor, createCanvasPage,
+  emptyCanvasLayout, listCanvasPagePanes, listCanvasPanes, moveCanvasPage, moveCanvasPane,
+  normalizeCanvasLayout, removeCanvasPane, removeCanvasPage, selectCanvasPage, setCanvasPageFilter,
+  setCanvasSplitRatio,
 } from "../public/canvas-layout.js";
 
-const pane = (id, sessionId = id, sessionPath = `/tmp/${id}.jsonl`) => ({
-  kind: "pane", id, projectId: "project", sessionPath, sessionId, executionNodeId: null,
+const pane = (id, sessionId = id) => ({ kind: "pane", id, projectId: "project", sessionId, sessionPath: `/tmp/${sessionId}.jsonl`, executionNodeId: null });
+
+test("nested geometry is local and removing collapses its parent", () => {
+  let layout = addCanvasPane(emptyCanvasLayout(), pane("a"));
+  layout = addCanvasPane(layout, pane("b"), "a", "right");
+  layout = addCanvasPane(layout, pane("c"), "b", "below");
+  const boxes = canvasPageGeometry(layout).panes;
+  assert.equal(boxes.get("a").top, 0);
+  assert.equal(boxes.get("a").bottom, 1);
+  assert.equal(boxes.get("b").right, 1);
+  assert.equal(boxes.get("c").left, .5);
+  layout = removeCanvasPane(layout, "c");
+  assert.equal(canvasPageGeometry(layout).splits.size, 1);
 });
 
-test("canvas layout operations build rows and remove empty rows", () => {
-  const first = addCanvasPane(emptyCanvasLayout(), pane("one"));
-  assert.equal(first.version, 5);
-  assert.equal(listCanvasPanes(first).length, 1);
-  assert.deepEqual(first.rows[0].panes.map((item) => item.id), ["one"]);
-  assert.deepEqual(first.rows[0].weights, [1]);
-  assert.equal(first.rows[0].height, null);
-  assert.equal(canvasPaneMoves(first, "one").down, false);
-
-  const beside = addCanvasPane(first, pane("two"), "one", "row");
-  assert.deepEqual(beside.rows.map((row) => row.panes.map((item) => item.id)), [["one", "two"]]);
-
-  const below = addCanvasPane(beside, pane("three"), "one", "column");
-  assert.deepEqual(below.rows.map((row) => row.panes.map((item) => item.id)), [["one", "two"], ["three"]]);
-
-  const removed = removeCanvasPane(removeCanvasPane(below, "one"), "two");
-  assert.deepEqual(removed.rows.map((row) => row.panes.map((item) => item.id)), [["three"]]);
+test("split ratios clamp and geometric moves swap pane positions, ids follow their conversations", () => {
+  let layout = addCanvasPane(emptyCanvasLayout(), pane("a"));
+  layout = addCanvasPane(layout, pane("b"), "a", "right");
+  const split = [...canvasPageGeometry(layout).splits.keys()][0];
+  layout = setCanvasSplitRatio(layout, split, 99);
+  assert.equal(canvasPageGeometry(layout).splits.get(split).ratio, .85);
+  assert.equal(canvasPaneNeighbor(layout, "a", "right"), "b");
+  layout = moveCanvasPane(layout, "a", "right");
+  assert.deepEqual(listCanvasPagePanes(layout).map((item) => item.id), ["b", "a"],
+    "the moving pane keeps its id and takes the other slot");
+  assert.equal(listCanvasPagePanes(layout).find((item) => item.id === "a").sessionId, "a");
 });
 
-test("pane widths and row heights can be resized without collapsing the grid", () => {
-  let layout = addCanvasPane(emptyCanvasLayout(), pane("one"));
-  layout = addCanvasPane(layout, pane("two"), "one", "row");
-  layout = addCanvasPane(layout, pane("three"), "two", "column");
-
-  const rowId = layout.rows[0].id;
-  const widened = setCanvasRowBoundary(layout, rowId, 0, 0.7, 0.3);
-  assert.deepEqual(widened.rows[0].weights.map((weight) => Math.round(weight * 10) / 10), [0.7, 0.3]);
-  assert.equal(widened.rows[0].weights.reduce((sum, weight) => sum + weight, 0), 1,
-    "resizing keeps the row filled");
-
-  const clamped = setCanvasRowBoundary(layout, rowId, 0, 0.99, 0.01);
-  assert.ok(Math.abs(clamped.rows[0].weights[1] - CANVAS_MIN_PANE_WIDTH) < 1e-9);
-  assert.equal(clamped.rows[0].weights.reduce((sum, weight) => sum + weight, 0), 1);
-  assert.throws(() => setCanvasRowBoundary(layout, "missing", 0, 0.5, 0.5), /unknown canvas boundary/i);
-  assert.throws(() => setCanvasRowBoundary(layout, rowId, 0, Number.NaN, 0.5), /invalid canvas weights/i);
-
-  const taller = setCanvasRowHeight(layout, rowId, 720);
-  assert.equal(taller.rows[0].height, 720);
-  assert.equal(taller.rows[1].height, null, "resizing one row leaves the other row fluid");
-  assert.equal(setCanvasRowHeight(layout, rowId, 1).rows[0].height, CANVAS_MIN_ROW_HEIGHT);
-  assert.throws(() => setCanvasRowHeight(layout, "missing", 720), /unknown canvas row/i);
+test("pages create, select, move, delete, and filter independently", () => {
+  let layout = addCanvasPane(emptyCanvasLayout(), pane("a"));
+  layout = createCanvasPage(layout);
+  const second = layout.activePageId;
+  layout = addCanvasPane(layout, pane("b", "b"));
+  layout = setCanvasPageFilter(layout, "project");
+  assert.equal(listCanvasPagePanes(layout).length, 1);
+  layout = moveCanvasPage(layout, second, "left");
+  assert.equal(layout.pages[0].id, second);
+  layout = removeCanvasPage(layout, second);
+  assert.equal(listCanvasPanes(layout)[0].id, "a");
+  assert.equal(selectCanvasPage(layout, layout.activePageId).version, 6);
 });
 
-test("the canvas rejects duplicate identities and enforces row limits", () => {
-  const layout = addCanvasPane(emptyCanvasLayout(), pane("one"));
-  assert.throws(() => addCanvasPane(layout, pane("dupe", "one"), "one", "row"), /already on the canvas/i);
-  assert.throws(() => addCanvasPane(layout, pane("conflict", "other", "/tmp/one.sync-conflict-x.jsonl"), "one", "row"), /already on the canvas/i);
-  assert.throws(() => addCanvasPane(layout, pane("two"), "missing", "row"), /unknown canvas pane/i);
-  assert.throws(() => addCanvasPane(layout, pane("two"), "one", "diagonal"), /unknown placement/i);
-
-  let fullRow = layout;
-  for (let index = 2; index <= 8; index += 1) fullRow = addCanvasPane(fullRow, pane(`pane-${index}`), "one", "row");
-  assert.throws(() => addCanvasPane(fullRow, pane("nine"), "one", "row"), /at most eight/i);
-
-  let tenRows = layout;
-  let target = "one";
-  for (let index = 2; index <= 10; index += 1) {
-    const id = `row-${index}`;
-    tenRows = addCanvasPane(tenRows, pane(id), target, "column");
-    target = id;
-  }
-  assert.equal(tenRows.rows.length, 10);
-  assert.throws(() => addCanvasPane(tenRows, pane("row-11"), target, "column"), /at most ten rows/i);
+test("duplicate conversations and page limits are rejected", () => {
+  let layout = addCanvasPane(emptyCanvasLayout(), pane("a"));
+  assert.throws(() => addCanvasPane(layout, pane("b", "a")), /already on the canvas/);
+  for (let index = 0; index < 8; index += 1) layout = createCanvasPage(layout);
+  assert.throws(() => createCanvasPage(layout), /at most nine/);
 });
 
-test("directional movement, replace, and focus preserve identities", () => {
-  let layout = addCanvasPane(emptyCanvasLayout(), pane("one"));
-  layout = addCanvasPane(layout, pane("two"), "one", "row");
-  layout = addCanvasPane(layout, pane("three"), "one", "column");
-
-  assert.deepEqual(canvasPaneMoves(layout, "two"), { left: true, right: false, up: false, down: true });
-  const left = moveCanvasPane(layout, "two", "left");
-  assert.deepEqual(left.rows[0].panes.map((item) => item.id), ["two", "one"]);
-  const down = moveCanvasPane(layout, "two", "down");
-  assert.deepEqual(down.rows.map((row) => row.panes.map((item) => item.id)), [["one"], ["two", "three"]]);
-  const up = moveCanvasPane(down, "three", "up");
-  assert.deepEqual(up.rows.map((row) => row.panes.map((item) => item.id)), [["one", "three"], ["two"]]);
-  assert.throws(() => moveCanvasPane(layout, "one", "left"), /cannot move/i);
-
-  const replaced = replaceCanvasPane(layout, "two", pane("fresh"));
-  assert.equal(replaced.rows[0].panes[1].id, "two");
-  assert.equal(replaced.rows[0].panes[1].sessionId, "fresh");
-  assert.throws(() => replaceCanvasPane(layout, "two", pane("one")), /already on the canvas/i);
-
-  assert.equal(toggleCanvasFocus(layout, "two").focusedPaneId, "two");
-  assert.equal(toggleCanvasFocus(toggleCanvasFocus(layout, "two"), "two").focusedPaneId, null);
-  assert.throws(() => toggleCanvasFocus(layout, "missing"), /unknown canvas pane/i);
-  assert.equal(canonicalSessionPath("/tmp/a.sync-conflict-20260901-x.jsonl"), "/tmp/a.jsonl");
+test("v1 roots and weighted v5 rows migrate to v6", () => {
+  const root = { kind: "split", id: "split", axis: "row", ratio: .3, first: pane("a"), second: pane("b") };
+  assert.equal(normalizeCanvasLayout({ version: 1, root, focusedPaneId: "a" }).pages[0].root.ratio, .3);
+  const layout = normalizeCanvasLayout({ version: 5, rows: [{ panes: [pane("a"), pane("b")], weights: [.25, .75] }], focusedPaneId: null });
+  assert.equal(layout.pages[0].root.ratio, .25);
 });
 
-test("version 1 split trees migrate into rows that keep reading order", () => {
-  const legacy = {
-    version: 1,
-    root: {
-      kind: "split", id: "vertical", axis: "column", ratio: 0.5,
-      first: { kind: "split", id: "horizontal", axis: "row", ratio: 0.85, first: pane("one"), second: pane("two") },
-      second: pane("three"),
-    },
-    focusedPaneId: "two",
-  };
-  const migrated = migrateCanvasLayout(legacy);
-  assert.equal(migrated.version, 5);
-  assert.deepEqual(migrated.rows.map((row) => row.panes.map((item) => item.id)), [["one", "two"], ["three"]]);
-  assert.deepEqual(migrated.rows[0].weights, [0.5, 0.5]);
-  assert.equal(migrated.focusedPaneId, "two");
+test("legacy layouts that break the v6 limits spread over pages of eight", () => {
+  // Ten stacked rows would nest eleven splits deep; the migration must still land
+  // inside the depth limit.
+  const rowsOf = (count, perRow = 1) => Array.from({ length: count }, (_, index) =>
+    ({ panes: Array.from({ length: perRow }, (_, slot) => pane(`pane-${index}-${slot}`)) }));
+  const tenRows = normalizeCanvasLayout({ version: 5, rows: rowsOf(10), focusedPaneId: "pane-9-0" });
+  assert.equal(tenRows.pages.length, 2, "ten single-pane rows become two pages");
+  assert.equal(tenRows.pages[0].root.kind, "split");
+  assert.equal(tenRows.pages[0].focusedPaneId, null, "focus on a later page's pane does not stay on page one");
+  assert.equal(tenRows.pages[1].focusedPaneId, "pane-9-0", "focus follows its pane onto its own page");
+
+  const eighteen = normalizeCanvasLayout({ version: 5, rows: rowsOf(3, 6), focusedPaneId: "pane-0-0" });
+  assert.equal(eighteen.pages.length, 3);
+  assert.deepEqual(eighteen.pages.map((page) => listCanvasPagePanes(eighteen, page.id).length), [8, 8, 2]);
+  assert.equal(eighteen.pages[0].focusedPaneId, "pane-0-0", "focus survives when its pane is on page one");
+  assert.deepEqual(listCanvasPanes(eighteen).slice(0, 3).map((item) => item.id),
+    ["pane-0-0", "pane-0-1", "pane-0-2"], "reading order survives the spread");
+
+  const oversize = normalizeCanvasLayout({ version: 5, rows: rowsOf(10, 8), focusedPaneId: "pane-9-7" });
+  assert.equal(oversize.pages.length, 9, "the canvas holds at most nine pages");
+  assert.equal(listCanvasPanes(oversize).length, 72, "overflow panes are dropped, conversations are not");
+  assert.equal(oversize.pages.every((page) => listCanvasPagePanes(oversize, page.id).length <= 8), true);
 });
 
-test("stored canvas versions migrate to resizable rows", () => {
-  const v3 = normalizeCanvasLayout({
-    version: 3,
-    rows: [{ id: "row-a", height: 900, weights: [0.5, 0.2], panes: [pane("one"), pane("two")] }],
-    focusedPaneId: null,
-  });
-  assert.equal(v3.version, 5);
-  assert.equal(v3.rows[0].height, 900);
-  assert.deepEqual(v3.rows[0].weights.map((weight) => Math.round(weight * 10) / 10), [0.7, 0.3]);
-
-  const v4 = normalizeCanvasLayout({
-    version: 4,
-    rows: [{ id: "row-b", panes: [pane("one"), pane("two")] }],
-    focusedPaneId: null,
-  });
-  assert.equal(v4.version, 5);
-  assert.deepEqual(v4.rows[0].weights, [0.5, 0.5]);
-  assert.equal(v4.rows[0].height, null);
-
-  const current = { version: 5, rows: [{ id: "row-c", height: 500, weights: [1], panes: [pane("one")] }], focusedPaneId: null };
-  assert.equal(normalizeCanvasLayout(current), current, "a version 5 layout is already current");
-});
-
-test("arrange reflows panes in the requested order", () => {
-  let layout = emptyCanvasLayout();
-  for (const id of ["one", "two", "three", "four"]) {
-    layout = addCanvasPane(layout, pane(id), listCanvasPanes(layout).at(-1)?.id, layout.rows.length ? "column" : undefined);
-  }
-
-  const arranged = arrangeCanvasLayout(layout, ["three", "one", "four", "two"]);
-  assert.deepEqual(listCanvasPanes(arranged).map((item) => item.id), ["three", "one", "four", "two"]);
-  assert.equal(arranged.focusedPaneId, null);
-  assert.throws(() => arrangeCanvasLayout(layout, ["one"]), /every canvas pane/i);
-});
-
-test("organize reflows every pane into an even grid", () => {
-  let layout = emptyCanvasLayout();
-  for (let index = 1; index <= 6; index += 1) {
-    const id = `pane-${index}`;
-    layout = index === 1 ? addCanvasPane(layout, pane(id)) : addCanvasPane(layout, pane(id), `pane-${index - 1}`, "column");
-  }
-
-  const organized = organizeCanvasLayout(toggleCanvasFocus(layout, "pane-3"));
-  assert.equal(organized.focusedPaneId, null, "organizing shows the whole grid it just built");
-  assert.deepEqual(organized.rows.map((row) => row.panes.map((item) => item.id)),
-    [["pane-1", "pane-2", "pane-3"], ["pane-4", "pane-5", "pane-6"]]);
-  assert.ok(organized.rows.every((row) => row.height === null));
-  assert.ok(organized.rows.every((row) => row.weights.every((weight) => Math.abs(weight - 1 / 3) < 1e-9)));
-
-  const seven = addCanvasPane(organized, pane("pane-7"), "pane-6", "column");
-  const regridded = organizeCanvasLayout(seven);
-  assert.deepEqual(regridded.rows.map((row) => row.panes.length), [3, 3, 1]);
-  assert.equal(organizeCanvasLayout(emptyCanvasLayout()).rows.length, 0);
+test("arrange affects only the active page", () => {
+  let layout = addCanvasPane(emptyCanvasLayout(), pane("a"));
+  layout = addCanvasPane(layout, pane("b"), "a");
+  layout = createCanvasPage(layout);
+  const second = layout.activePageId;
+  layout = addCanvasPane(layout, pane("c"));
+  layout = selectCanvasPage(layout, layout.pages.find((page) => page.id !== second).id);
+  layout = arrangeCanvasLayout(layout, ["b", "a"]);
+  assert.deepEqual(listCanvasPagePanes(layout, second).map((item) => item.id), ["c"]);
 });

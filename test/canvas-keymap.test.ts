@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   canonicalCanvasKey, canvasChordLabel, canvasChordIsUsable, canvasChordMatches, canvasKeyFromCode,
-  clearCanvasRowHeight, emptyCanvasLayout, fuzzyMatchScore, normalizeCanvasKeymap,
-  addCanvasPane, setCanvasRowHeight,
+  emptyCanvasLayout, fuzzyMatchScore, normalizeCanvasKeymap,
+  addCanvasPane, listCanvasPanes,
 } from "../public/canvas-layout.js";
 
 const pane = (id, sessionId = id, sessionPath = `/tmp/${id}.jsonl`) => ({
@@ -57,9 +57,9 @@ test("a binding reads the physical key, not the character", () => {
 
 test("a pane can be inserted immediately left of its target", () => {
   let layout = addCanvasPane(emptyCanvasLayout(), pane("one"));
-  layout = addCanvasPane(layout, pane("two"), "one", "row");
+  layout = addCanvasPane(layout, pane("two"), "one", "right");
   layout = addCanvasPane(layout, pane("left"), "two", "left");
-  assert.deepEqual(layout.rows[0].panes.map((item) => item.id), ["one", "left", "two"]);
+  assert.deepEqual(listCanvasPanes(layout).map((item) => item.id), ["one", "left", "two"]);
 });
 
 test("the chord label draws the configured modifiers", () => {
@@ -76,14 +76,14 @@ test("fuzzy matching ranks initials and adjacent runs above scattered hits", () 
   assert.equal(fuzzyMatchScore("Alpha", ""), 0);
 });
 
-test("clearing a row height gives the row its share back", () => {
-  let layout = addCanvasPane(emptyCanvasLayout(), pane("one"));
-  const rowId = layout.rows[0].id;
-  layout = setCanvasRowHeight(layout, rowId, 720);
-  assert.equal(typeof layout.rows[0].height, "number");
-  layout = clearCanvasRowHeight(layout, rowId);
-  assert.equal(layout.rows[0].height, null);
-  assert.throws(() => clearCanvasRowHeight(layout, "no-such-row"), /unknown canvas row/i);
+test("a placement word and legacy axis word both name the same side", () => {
+  const base = addCanvasPane(emptyCanvasLayout(), pane("one"));
+  const beside = addCanvasPane(base, pane("two"), "one", "right");
+  const legacy = addCanvasPane(base, pane("two"), "one", "row");
+  assert.equal(beside.pages[0].root.axis, "row");
+  assert.equal(beside.pages[0].root.axis, legacy.pages[0].root.axis);
+  assert.equal(addCanvasPane(base, pane("two"), "one", "below").pages[0].root.axis, "column");
+  assert.throws(() => addCanvasPane(base, pane("two"), "one", "sideways"), /Unknown placement/);
 });
 
 test("stored keymaps degrade instead of taking the node down", async () => {

@@ -331,8 +331,18 @@ const canvasLayoutV1Schema = z.object({
   root: canvasNodePreferenceSchema.nullable(),
   focusedPaneId: z.string().min(1).max(200).nullable(),
 }).strict();
+const canvasLayoutV6Schema = z.object({
+  version: z.literal(6),
+  pages: z.array(z.object({
+    id: z.string().min(1).max(200), name: z.string().trim().min(1).max(80),
+    root: canvasNodePreferenceSchema.nullable(), focusedPaneId: z.string().min(1).max(200).nullable(),
+    projectFilter: z.string().max(120),
+  }).strict()).min(1).max(9),
+  activePageId: z.string().min(1).max(200),
+}).strict();
 const canvasLayoutPreferenceSchema = z.union([
   canvasLayoutV1Schema,
+  canvasLayoutV6Schema,
   z.object({
     version: z.union([z.literal(2), z.literal(3), z.literal(4), z.literal(5)]),
     rows: z.array(canvasRowPreferenceSchema).max(10),
@@ -366,6 +376,24 @@ const canvasLayoutPreferenceSchema = z.union([
     }
   };
   if (layout.version === 1 && layout.root) walk(layout.root, 1);
+  if (layout.version === 6) {
+    if (!layout.pages.some((page) => page.id === layout.activePageId)) context.addIssue({ code: z.ZodIssueCode.custom, message: "Active canvas page is unknown" });
+    const pagePaneIds = (node: z.infer<typeof canvasNodePreferenceSchema> | null, result = new Set<string>()) => {
+      if (!node) return result;
+      if (node.kind === "pane") result.add(node.id);
+      else { pagePaneIds(node.first, result); pagePaneIds(node.second, result); }
+      return result;
+    };
+    for (const page of layout.pages) {
+      if (ids.has(page.id)) context.addIssue({ code: z.ZodIssueCode.custom, message: "Canvas ids must be unique" });
+      ids.add(page.id);
+      const before = paneIds.size;
+      if (page.root) walk(page.root, 1);
+      if (paneIds.size - before > 8) context.addIssue({ code: z.ZodIssueCode.custom, message: "A canvas page holds at most eight conversations" });
+      if (page.focusedPaneId && !pagePaneIds(page.root).has(page.focusedPaneId)) context.addIssue({ code: z.ZodIssueCode.custom, message: "Focused canvas pane is unknown" });
+    }
+    return;
+  }
   if (layout.version !== 1) for (const row of layout.rows) {
     if (ids.has(row.id)) context.addIssue({ code: z.ZodIssueCode.custom, message: "Canvas ids must be unique" });
     ids.add(row.id);
