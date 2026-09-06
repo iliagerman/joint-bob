@@ -13,6 +13,7 @@ import {
   type AgentSessionEvent,
 } from "@earendil-works/pi-coding-agent";
 import { agentCredentialContext, agentEnvironment, type SecretConversation } from "./secrets.js";
+import { stripHandoffEnvelope } from "./claude-service.js";
 import { discoverPiSessionDirectory, sessionCwds, type SessionProjectPaths } from "./session-paths.js";
 import { getScopedResourcePaths, getSettings } from "./settings.js";
 import { commonAgentInstructionFiles, piAgentResourcePaths } from "./agent-resources.js";
@@ -247,6 +248,23 @@ export function simplifyMessages(messages: unknown[]): ChatMessage[] {
       };
     })
     .filter((message) => message.text.trim().length > 0);
+}
+
+/** Reads a Pi transcript file into chat messages without opening a live session. */
+export async function loadPiMessages(sessionPath: string): Promise<ChatMessage[]> {
+  const lines = (await readFile(sessionPath, "utf8")).split("\n").filter(Boolean);
+  const messages: ChatMessage[] = [];
+  for (const [index, line] of lines.entries()) {
+    const record = asRecord(JSON.parse(line));
+    if (record.type !== "message") continue;
+    const message = asRecord(record.message);
+    const role = roleFromMessage(message);
+    if (role !== "user" && role !== "assistant" && role !== "toolCall" && role !== "toolResult") continue;
+    const text = role === "user" ? stripHandoffEnvelope(textFromMessage(message)) : textFromMessage(message);
+    const toolName = typeof message.toolName === "string" ? message.toolName : undefined;
+    if (text.trim().length > 0) messages.push({ id: `${index}`, role, text, ...(toolName ? { toolName } : {}) });
+  }
+  return messages;
 }
 
 async function summarizeSession(sessionInfo: unknown): Promise<SessionSummary> {

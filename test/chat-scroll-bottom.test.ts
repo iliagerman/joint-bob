@@ -54,14 +54,14 @@ test("re-rendered transcripts either pin or restore the reader's position", asyn
   const handler = app.slice(handlerStart, app.indexOf("\nfunction scheduleAgentRunPoll", handlerStart));
 
   // The ready payload: fresh opens pin; reconnects keep following or restore.
-  assert.match(handler, /rerenderChatTranscript\(payload\.messages\)/);
+  assert.match(handler, /rerenderChatTranscript\(payload\.messages, payload\.segments\)/);
   assert.match(handler, /scrollOnReady \|\| state\.followChat/);
   assert.match(handler, /restoreChatScrollTop\(resumeFromTop\)/);
 
   // The messages payload (a transcript synchronized from another node) must not
   // drop the reader at the top of the conversation.
   const messagesBranch = handler.slice(handler.indexOf('payload.type === "messages"'));
-  assert.match(messagesBranch, /rerenderChatTranscript\(payload\.messages\)/);
+  assert.match(messagesBranch, /rerenderChatTranscript\(payload\.messages, payload\.segments \|\| state\.conversationSegments\)/);
   assert.match(messagesBranch, /restoreChatScrollTop\(resumeFromTop\)/);
 
   // The re-render itself must not be read as a scroll-away.

@@ -1,19 +1,22 @@
 import { randomUUID } from "node:crypto";
-import { access, appendFile, mkdir, unlink, writeFile } from "node:fs/promises";
+import { access, appendFile, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import WebSocket from "ws";
 import { z } from "zod";
 import { agentRunDescriptor } from "../agent-run-monitor.js";
 import { appendLiveEvent, buildHandoffContext, type ClaudeRunResult, claudeSessionFilePath, ensureLocalClaudeTranscript, runClaudePrompt } from "../claude-service.js";
 import { getClusterNode } from "../cluster.js";
-import { ensureConversationRecord } from "../conversation-records.js";
+import { ensureConversationRecord, getConversationRecord } from "../conversation-records.js";
+import { conversationTranscriptPayload } from "../conversation-segments.js";
+import { listHarnessSessions } from "../harnesses.js";
 import { createPiSession, eventPayload, getSessionStatus, listAvailableModels, reloadPiAuth, sessionIsBusy, setSessionModel, simplifyMessages } from "../pi-service.js";
 import { claimQueuedPrompt, enqueuePrompt, rekeyQueuedPrompts } from "../prompt-queue.js";
 import { agentCredentialContext, agentEnvironment, persistConversationSecretAccounts } from "../secrets.js";
+import { conversationBelongsToDoneTask } from "./cluster-helpers.js";
 import { getProject, listProjects } from "../store.js";
 import { TaskWorkspaceError } from "../task-workspaces.js";
 import { listTasks, updateTask } from "../tasks.js";
-import type { ContextUsage, SessionStatus, TaskAttachment, TaskRecord } from "../types.js";
+import type { ChatMessage, ContextUsage, SessionStatus, TaskAttachment, TaskRecord } from "../types.js";
 import { SessionWatcher } from "../watcher.js";
 import { webSocketCloseReason } from "../websocket.js";
 import { broadcast, broadcastStatus, broadcastTools, broadcastToProject, clearIdleTimer, handleSessionChange, piTools, scheduleIdleDispose, scheduleReviewNotifications, send, sendStatus, sessionKey, setSharedSessionSafeguards } from "./realtime.js";
@@ -218,6 +221,12 @@ async function conversationTask(connection: ChatConnection): Promise<TaskRecord 
 
 async function assertConversationWritable(connection: ChatConnection): Promise<void> {
   if ((await conversationTask(connection))?.status === "done") throw new Error("Done ticket conversations are read-only");
+  // A switched conversation opened without its ticket still belongs to it: the
+  // Done lock follows the logical conversation, not the open socket's segment.
+  const sessionId = connection.engine === "claude" ? connection.claude.sessionId : connection.shared?.handle.session.sessionId;
+  if (sessionId && await conversationBelongsToDoneTask(connection.project.id, connection.engine, sessionId)) {
+    throw new Error("Done ticket conversations are read-only");
+  }
 }
 
 async function resumeReviewedTask(connection: ChatConnection): Promise<void> {
@@ -303,7 +312,11 @@ async function logStubbedEngineInvocation(engine: ChatEngine): Promise<boolean> 
 
 async function runStubbedClaudePrompt(connection: ChatConnection, promptText: string, onEvent: (payload: Record<string, unknown>) => void): Promise<ClaudeRunResult | undefined> {
   if (!await logStubbedEngineInvocation("claude")) return undefined;
-  if (!connection.claude.filePath || !connection.claude.sessionId) throw new Error("Stubbed Claude session has no transcript path");
+  if (!connection.claude.sessionId) throw new Error("Stubbed Claude session has no transcript identity");
+  // A first turn on a switched-to-Claude conversation creates the transcript here,
+  // exactly where the real CLI would create it.
+  connection.claude.filePath ??= claudeSessionFilePath(connection.cwd, connection.claude.sessionId);
+  await mkdir(path.dirname(connection.claude.filePath), { recursive: true });
   const timestamp = new Date().toISOString();
   const records = [
     { type: "user", sessionId: connection.claude.sessionId, cwd: connection.cwd, timestamp, message: { role: "user", content: promptText } },
@@ -539,26 +552,57 @@ function claudeTools(connection: ChatConnection): Array<{ name: string; descript
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
+/** Links the segment being left into the logical conversation, so the switch target joins it. */
+async function conversationLineage(projectId: string, engine: ChatEngine, sessionId: string, localNodeId: string, taskId: string | null): Promise<{ conversationId: string; segmentIndex: number } | undefined> {
+  const record = await getConversationRecord(projectId, engine, sessionId);
+  const conversationId = record?.conversationId ?? sessionId;
+  const segmentIndex = record?.conversationId ? record.segmentIndex ?? 0 : 0;
+  await ensureConversationRecord(projectId, engine, sessionId, localNodeId, taskId ?? undefined, { conversationId, segmentIndex });
+  return { conversationId, segmentIndex };
+}
+
+/** The whole logical transcript, every segment in order, for handoff context. */
+async function logicalConversationTranscript(connection: ChatConnection): Promise<ChatMessage[]> {
+  const engine = connection.engine;
+  const sessionId = engine === "claude" ? connection.claude.sessionId : connection.shared?.handle.session.sessionId;
+  const active = engine === "claude"
+    ? connection.claude.transcript
+    : connection.shared ? simplifyMessages(connection.shared.handle.session.messages as unknown[]) : [];
+  if (!sessionId) return active;
+  try {
+    // The payload's messages are exactly the earlier segments: the active one is
+    // excluded by identity and the active messages are supplied separately.
+    const payload = await conversationTranscriptPayload(connection.project.id, engine, sessionId, await listHarnessSessions(connection.project), []);
+    return [...payload.messages, ...active];
+  } catch (error) {
+    console.warn("Could not load earlier segments for handoff", error);
+    return active;
+  }
+}
+
 async function switchEngine(connection: ChatConnection, engine: ChatEngine): Promise<void> {
   if (engine === connection.engine) return;
+  const local = await getClusterNode();
+  const currentEngine = connection.engine;
+  const currentSessionId = currentEngine === "claude" ? connection.claude.sessionId : connection.shared?.handle.session.sessionId;
+  const lineage = currentSessionId ? await conversationLineage(connection.project.id, currentEngine, currentSessionId, local.id, connection.taskId) : undefined;
+  const transcript = await logicalConversationTranscript(connection);
 
   if (engine === "claude") {
-    const transcript = connection.shared ? simplifyMessages(connection.shared.handle.session.messages as unknown[]) : [];
     if (connection.shared) {
       connection.shared.clients.delete(connection.socket);
       scheduleIdleDispose(connection.shared);
       connection.shared = null;
     }
-    const local = await getClusterNode();
     const sessionId = randomUUID();
     await claimConversationAcrossCluster("claude", sessionId, local.id);
-    await ensureConversationRecord(connection.project.id, "claude", sessionId, local.id);
+    await ensureConversationRecord(connection.project.id, "claude", sessionId, local.id, connection.taskId ?? undefined, lineage ? { conversationId: lineage.conversationId, segmentIndex: lineage.segmentIndex + 1 } : undefined);
     broadcastToProject(connection.project.id, { type: "sessionsChanged" });
     connection.engine = "claude";
-    connection.claude = { ...emptyClaudeState(sessionId), transcript };
+    connection.claude = emptyClaudeState(sessionId);
     connection.handoffContext = transcript.length ? buildHandoffContext(transcript) : null;
     claudeClients.set(connection.socket, connection);
-    send(connection.socket, { type: "engineChanged", engine: "claude" });
+    send(connection.socket, { type: "engineChanged", engine: "claude", sessionId, ...(lineage ? { conversationId: lineage.conversationId } : {}) });
     sendClaudeStatus(connection);
     return;
   }
@@ -566,18 +610,16 @@ async function switchEngine(connection: ChatConnection, engine: ChatEngine): Pro
   connection.claude.child?.kill("SIGTERM");
   activeClaudeConnections.delete(claudeConnectionKey(connection.project.id, connection.claude.sessionId));
   claudeClients.delete(connection.socket);
-  const transcript = connection.claude.transcript;
   connection.handoffContext = transcript.length ? buildHandoffContext(transcript) : null;
-  const local = await getClusterNode();
   const sessionId = randomUUID();
   await claimConversationAcrossCluster("pi", sessionId, local.id);
-  await ensureConversationRecord(connection.project.id, "pi", sessionId, local.id);
+  await ensureConversationRecord(connection.project.id, "pi", sessionId, local.id, connection.taskId ?? undefined, lineage ? { conversationId: lineage.conversationId, segmentIndex: lineage.segmentIndex + 1 } : undefined);
   broadcastToProject(connection.project.id, { type: "sessionsChanged" });
   const sharedSession = await getSharedSession(connection.project.id, connection.cwd, undefined, sessionId, connection.secretAccountIds);
   sharedSession.clients.add(connection.socket);
   connection.shared = sharedSession;
   connection.engine = "pi";
-  send(connection.socket, { type: "engineChanged", engine: "pi" });
+  send(connection.socket, { type: "engineChanged", engine: "pi", ...(lineage ? { conversationId: lineage.conversationId } : {}) });
   send(connection.socket, { type: "sessionFile", sessionId: sharedSession.handle.session.sessionId, sessionFile: sharedSession.handle.session.sessionFile ?? null });
   sendStatus(connection.socket, sharedSession.handle);
 }
@@ -619,12 +661,16 @@ async function runStubbedPiPrompt(shared: SharedPiSession, promptText: string): 
   const sessionFile = shared.handle.session.sessionFile;
   if (!sessionFile) throw new Error("Stubbed Pi session has no transcript path");
   const timestamp = new Date().toISOString();
+  // A real first turn writes the session header before its messages; mirror that
+  // so a stubbed new session is discoverable like a real one.
+  const existing = await readFile(sessionFile, "utf8").catch(() => "");
+  const header = existing.trim() ? "" : `${JSON.stringify({ type: "session", version: 3, id: shared.handle.session.sessionId, timestamp, cwd: shared.cwd })}\n`;
   const userId = randomUUID();
   const records = [
     { type: "message", id: userId, parentId: null, timestamp, message: { role: "user", content: [{ type: "text", text: promptText }], timestamp: Date.parse(timestamp) } },
     { type: "message", id: randomUUID(), parentId: userId, timestamp, message: { role: "assistant", content: [{ type: "text", text: "stubbed response" }], timestamp: Date.parse(timestamp) } },
   ];
-  await appendFile(sessionFile, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
+  await appendFile(sessionFile, `${header}${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
   broadcast(shared, { type: "textDelta", delta: "stubbed response" });
   broadcast(shared, { type: "agent_end" });
   return true;

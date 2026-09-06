@@ -48,7 +48,7 @@ test("a Claude conversation is identified by its run id, like a Pi conversation"
 test("the conversation list applies renames by conversation id", async () => {
   const harnesses = await readFile("src/harnesses.ts", "utf8");
 
-  assert.match(harnesses, /overrides\[session\.id\] \?\? session\.title/);
+  assert.match(harnesses, /overrides\[conversationId\] \?\? \(segments\.length > 1 \? firstLive\?\.title \?\? face\.title : face\.title\)/);
   assert.doesNotMatch(harnesses, /sessionKey/);
 });
 

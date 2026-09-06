@@ -3,6 +3,7 @@ import WebSocket from "ws";
 import { usernameForUser } from "../auth.js";
 import { type ClaudeRunHandle, claudeSessionContextUsage, loadClaudeMessages } from "../claude-service.js";
 import { claimReviewNotifications } from "../conversation-reviews.js";
+import { conversationTranscriptPayload } from "../conversation-segments.js";
 import { listHarnessSessions, refreshHarnessSessions } from "../harnesses.js";
 import { createPiSession, getSessionStatus, sessionIsBusy } from "../pi-service.js";
 import { listPushSubscriberUserIds, notifyConversationReview } from "../push.js";
@@ -164,9 +165,11 @@ async function reloadClaudeClients(projectId: string, changedFiles: string[]): P
       const messages = await loadClaudeMessages(`claude:${connection.claude.filePath}`);
       connection.claude.transcript = messages;
       connection.claude.contextUsage = await claudeSessionContextUsage(`claude:${connection.claude.filePath}`) ?? null;
-      const listed = (await listHarnessSessions(connection.project)).find((session) => session.path === `claude:${connection.claude.filePath}`);
+      const listedSessions = await listHarnessSessions(connection.project);
+      const listed = listedSessions.find((session) => session.path === `claude:${connection.claude.filePath}`);
       if (listed) connection.claude.sessionName = listed.title;
-      send(connection.socket, { type: "messages", messages });
+      const transcript = await conversationTranscriptPayload(connection.project.id, "claude", connection.claude.sessionId, listedSessions, messages);
+      send(connection.socket, { type: "messages", messages: transcript.messages, ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
       sendClaudeStatus(connection);
     } catch (error) {
       console.warn("Could not reload Claude transcript", error);

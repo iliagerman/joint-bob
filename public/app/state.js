@@ -88,6 +88,8 @@ export const state = {
   appMenuLoaded: false,
   activeNodeId: null,
   activeSessionId: null,
+  activeConversationId: null,
+  conversationSegments: null,
   chatFilter: "all",
   watchSocket: null,
   watchProjectId: null,

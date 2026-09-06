@@ -13,16 +13,31 @@ export function isProjectPinned(projectId) {
   return state.pinnedProjectIds.includes(projectId) || state.replicatedPinnedProjectIds.includes(projectId);
 }
 
-function sessionPinIdentity(session) {
+function sessionPinEngine(session) {
+  // The logical identity uses the FIRST segment's engine, which never changes,
+  // so a pin survives later harness switches.
+  return session.segments?.[0]?.engine || session.engine || session.harnessId || ((session.sessionPath || session.path || "").startsWith("claude:") ? "claude" : "pi");
+}
+
+function sessionPinIdentities(session) {
   const projectId = session.projectId || state.activeProjectId;
-  const engine = session.engine || session.harnessId || ((session.sessionPath || session.path || "").startsWith("claude:") ? "claude" : "pi");
   const sessionId = session.sessionId || session.id;
-  return projectId && sessionId ? { projectId, engine, sessionId } : null;
+  if (!projectId || !sessionId) return [];
+  const identities = [{ engine: sessionPinEngine(session), sessionId: session.conversationId || sessionId }];
+  for (const segment of session.segments || []) identities.push({ engine: segment.engine, sessionId: segment.sessionId });
+  return identities.map((identity) => ({ projectId, ...identity }));
+}
+
+function sessionPinIdentity(session) {
+  return sessionPinIdentities(session)[0] ?? null;
 }
 
 export function isSessionPinned(session) {
-  const identity = typeof session === "object" ? sessionPinIdentity(session) : null;
-  if (identity && state.pinnedConversations.some((pin) => pin.projectId === identity.projectId && pin.engine === identity.engine && pin.sessionId === identity.sessionId)) return true;
+  if (typeof session === "object") {
+    if ((session.segments || []).some((segment) => state.pinnedSessionPaths.includes(segment.path))) return true;
+    const identities = sessionPinIdentities(session);
+    if (identities.some((identity) => state.pinnedConversations.some((pin) => pin.projectId === identity.projectId && pin.engine === identity.engine && pin.sessionId === identity.sessionId))) return true;
+  }
   const sessionPath = typeof session === "string" ? session : session.sessionPath || session.path;
   return state.pinnedSessionPaths.includes(sessionPath);
 }
@@ -120,13 +135,20 @@ export function togglePinnedSession(session) {
   const identity = sessionPinIdentity(session);
   if (!identity) throw new Error("Conversation pin needs a stable identity");
   const pinned = !isSessionPinned(session);
-  const sessionPath = session.sessionPath || session.path;
-  state.pinnedSessionPaths = state.pinnedSessionPaths.filter((path) => path !== sessionPath);
-  state.pinnedConversations = state.pinnedConversations.filter((pin) => !(pin.projectId === identity.projectId && pin.engine === identity.engine && pin.sessionId === identity.sessionId));
+  // Pins made before a switch name older segments; unpinning clears them all so
+  // the row cannot resurrect from a stale segment pin.
+  const legacy = sessionPinIdentities(session).filter((candidate) => candidate.engine !== identity.engine || candidate.sessionId !== identity.sessionId);
+  const segmentPaths = [session.sessionPath || session.path, ...(session.segments || []).map((segment) => segment.path)];
+  state.pinnedSessionPaths = state.pinnedSessionPaths.filter((path) => !segmentPaths.includes(path));
+  state.pinnedConversations = state.pinnedConversations.filter((pin) => !(pin.projectId === identity.projectId
+    && (pin.engine === identity.engine && pin.sessionId === identity.sessionId
+      || legacy.some((candidate) => candidate.engine === pin.engine && candidate.sessionId === pin.sessionId))));
   if (pinned) state.pinnedConversations.push(identity);
   if (state.preferencesLoaded) {
     savePreferencesInBackground({ pinnedSessionPaths: state.pinnedSessionPaths });
-    void api("/api/pins", { method: "PUT", body: JSON.stringify({ kind: "conversation", ...identity, pinned }) }).catch((error) => toast(error.message));
+    for (const target of pinned ? [identity] : [identity, ...legacy]) {
+      void api("/api/pins", { method: "PUT", body: JSON.stringify({ kind: "conversation", ...target, pinned }) }).catch((error) => toast(error.message));
+    }
   }
   renderSessions();
 }

@@ -65,7 +65,7 @@ test("the picked name is displayed right away and saved once the transcript exis
   const ready = app.slice(app.indexOf('if (payload.type === "ready")'), app.indexOf('if (payload.type === "ownership")'));
   assert.match(ready, /const pendingTitle = state\.pendingSessionTitle;/);
   assert.match(ready, /state\.pendingSessionTitle = null;/);
-  assert.match(ready, /saveSessionTitle\(payload\.sessionId, state\.engine, pendingTitle\)/);
+  assert.match(ready, /saveSessionTitle\(state\.activeConversationId \|\| payload\.sessionId, state\.engine, pendingTitle\)/);
   assert.match(ready, /\.then\(\(\) => refreshSessionsQuietly\(\)\)/);
   assert.match(ready, /elements\.sessionTitle\.textContent = pendingTitle\s*\?\s*pendingTitle\s*:/);
   assert.doesNotMatch(app, /\bloadSessions\s*\(/);

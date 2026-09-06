@@ -87,6 +87,44 @@ export function clearChat() {
   state.assistantBubble = null;
   state.thinkingBubble = null;
   state.toolBubbles.clear();
+  currentSegment = null;
+}
+
+// Harness segments: after a switch, new bubbles render inside a tinted section
+// so one conversation shows both halves with a visible seam.
+let currentSegment = null;
+
+function engineLabel(engine) {
+  return engine === "claude" ? "Claude" : "Pi";
+}
+
+function appendSwitchNotice(engine) {
+  const notice = document.createElement("div");
+  notice.className = "harness-switch-notice";
+  notice.dataset.testid = "harness-switch-notice";
+  notice.dataset.engine = engine;
+  notice.textContent = `Switched to ${engineLabel(engine)}`;
+  elements.messages.append(notice);
+}
+
+/** Starts the next harness segment live, when the user switches mid-conversation. */
+export function startHarnessSegment(engine) {
+  finalizeAssistantBubble();
+  clearThinkingBubble();
+  if (elements.messages.querySelector(".empty-state")) clearChat();
+  appendSwitchNotice(engine);
+  const section = document.createElement("section");
+  section.className = "harness-segment";
+  section.dataset.harness = engine;
+  section.dataset.testid = `harness-segment-${engine}`;
+  elements.messages.append(section);
+  currentSegment = section;
+  requestPinChat();
+  return section;
+}
+
+function messageHost() {
+  return currentSegment ?? elements.messages;
 }
 
 function prettyText(text) {
@@ -159,11 +197,11 @@ export function restoreChatScrollTop(top) {
 // Bracket the re-render so the follow listener ignores the churn; the flag
 // clears in the next frame, before any pin or restore settles.
 let rerenderingChat = false;
-export function rerenderChatTranscript(messages) {
+export function rerenderChatTranscript(messages, segments) {
   rerenderingChat = true;
   const resumeFromTop = elements.messages.scrollTop;
   clearChat();
-  appendTranscript(messages);
+  appendTranscript(messages, segments);
   requestAnimationFrame(() => { rerenderingChat = false; });
   return resumeFromTop;
 }
@@ -307,7 +345,7 @@ export function appendMessage(role, text, timestamped = true) {
   bubble.append(content);
   if (timestamped && (role === "user" || role === "assistant")) bubble.append(messageTimestamp());
   renderBubbleContent(bubble, text, true);
-  elements.messages.append(bubble);
+  messageHost().append(bubble);
   if (isMarkdown) appendCopyButton(bubble);
   requestPinChat();
   return bubble;
@@ -360,7 +398,7 @@ export function appendToolMessage(toolName, toolCallId, startedAt = Date.now()) 
   const content = document.createElement("pre");
   content.className = "message-content";
   bubble.append(summary, content);
-  elements.messages.append(bubble);
+  messageHost().append(bubble);
   requestPinChat();
   return bubble;
 }
@@ -376,14 +414,25 @@ export function updateToolMessage(bubble, text, status, isError = false) {
 // A saved transcript interleaves chat text with tool results. Rendering every
 // non-user entry as assistant markdown reflowed file dumps into prose, so each
 // role gets the same bubble the live stream would have produced.
-function appendTranscript(messages) {
+function appendTranscript(messages, segments) {
+  let lastSegment = 0;
   for (const message of messages || []) {
+    const segment = typeof message.segment === "number" ? message.segment : 0;
+    if (segment > lastSegment) {
+      startHarnessSegment(segments?.[segment]?.engine || state.engine);
+      lastSegment = segment;
+    }
     if (message.role === "toolResult" || message.role === "toolCall") {
       const bubble = appendToolMessage(message.toolName || "tool", `history-${message.id}`, 0);
       updateToolMessage(bubble, message.text, "Done");
       continue;
     }
     appendMessage(message.role === "user" ? "user" : "assistant", message.text, false);
+  }
+  // A freshly switched segment has no messages yet, but its seam still shows
+  // where the conversation changed harness.
+  for (let index = lastSegment + 1; index < (segments?.length ?? 0); index += 1) {
+    startHarnessSegment(segments[index]?.engine || state.engine);
   }
 }
 

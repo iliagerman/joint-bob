@@ -14,6 +14,10 @@ export interface ConversationRecord {
   updatedAt: string;
   originNodeId: string;
   taskId: string | null;
+  /** Logical conversation this segment belongs to; absent means the session is its own conversation. */
+  conversationId?: string;
+  /** Position in the conversation; segment 0 is the first harness to own it. */
+  segmentIndex?: number;
 }
 
 interface ConversationRecordPayload {
@@ -32,6 +36,7 @@ function createConversationRecordTables(db: DatabaseSync): void {
   db.exec(`CREATE TABLE IF NOT EXISTS conversation_records (
     project_id TEXT NOT NULL, engine TEXT NOT NULL, session_id TEXT NOT NULL,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, origin_node_id TEXT NOT NULL DEFAULT '', task_id TEXT,
+    conversation_id TEXT, segment_index INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (project_id, engine, session_id)
   ); CREATE TABLE IF NOT EXISTS conversation_record_tombstones (
     project_id TEXT NOT NULL, engine TEXT NOT NULL, session_id TEXT NOT NULL,
@@ -44,6 +49,8 @@ export function ensureConversationRecordSchema(db: DatabaseSync): void {
   const records = db.prepare("PRAGMA table_info(conversation_records)").all() as unknown as Array<{ name: string }>;
   if (!records.some((column) => column.name === "origin_node_id")) db.exec("ALTER TABLE conversation_records ADD COLUMN origin_node_id TEXT NOT NULL DEFAULT ''");
   if (!records.some((column) => column.name === "task_id")) db.exec("ALTER TABLE conversation_records ADD COLUMN task_id TEXT");
+  if (!records.some((column) => column.name === "conversation_id")) db.exec("ALTER TABLE conversation_records ADD COLUMN conversation_id TEXT");
+  if (!records.some((column) => column.name === "segment_index")) db.exec("ALTER TABLE conversation_records ADD COLUMN segment_index INTEGER NOT NULL DEFAULT 0");
   for (const table of ["conversation_records", "conversation_record_tombstones"]) {
     const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) as { sql: string } | undefined;
     if (!row?.sql.includes("engine IN ('pi', 'claude')")) continue;
@@ -97,7 +104,12 @@ async function database(): Promise<DatabaseSync> {
 }
 
 function row(record: Record<string, unknown>): ConversationRecord {
-  return { projectId: String(record.project_id), engine: record.engine as ConversationEngine, sessionId: String(record.session_id), createdAt: String(record.created_at), updatedAt: String(record.updated_at), originNodeId: String(record.origin_node_id), taskId: record.task_id === null || record.task_id === undefined ? null : String(record.task_id) };
+  const conversationId = record.conversation_id === null || record.conversation_id === undefined ? undefined : String(record.conversation_id);
+  return {
+    projectId: String(record.project_id), engine: record.engine as ConversationEngine, sessionId: String(record.session_id), createdAt: String(record.created_at), updatedAt: String(record.updated_at), originNodeId: String(record.origin_node_id),
+    taskId: record.task_id === null || record.task_id === undefined ? null : String(record.task_id),
+    ...(conversationId ? { conversationId, segmentIndex: Number(record.segment_index ?? 0) } : {}),
+  };
 }
 
 function selectRecord(db: DatabaseSync, projectId: string, engine: ConversationEngine, sessionId: string): ConversationRecord | undefined {
@@ -109,13 +121,22 @@ function publish(db: DatabaseSync, operation: "upsert" | "delete", projectId: st
   enqueueReplicationEvent(db, { originNodeId, entityType: "conversation.record", entityKey: `${projectId}:${engine}:${sessionId}`, operation, payload: { projectId, engine, sessionId, record, updatedAt, originNodeId } });
 }
 
-export async function ensureConversationRecord(projectId: string, engine: ConversationEngine, sessionId: string, originNodeId: string, taskId?: string): Promise<ConversationRecord> {
+export async function ensureConversationRecord(projectId: string, engine: ConversationEngine, sessionId: string, originNodeId: string, taskId?: string, lineage?: { conversationId: string; segmentIndex: number }): Promise<ConversationRecord> {
   const db = await database();
   db.exec("BEGIN IMMEDIATE");
   try {
     const existing = selectRecord(db, projectId, engine, sessionId);
     if (existing) {
       if (taskId && existing.taskId && taskId !== existing.taskId) throw new Error("Conversation record has a different task ID");
+      // A record from before its conversation gained segments adopts the lineage now.
+      if (lineage && !existing.conversationId) {
+        const updated = { ...existing, ...lineage, updatedAt: new Date().toISOString(), originNodeId };
+        db.prepare("UPDATE conversation_records SET conversation_id = ?, segment_index = ?, updated_at = ?, origin_node_id = ? WHERE project_id = ? AND engine = ? AND session_id = ?")
+          .run(lineage.conversationId, lineage.segmentIndex, updated.updatedAt, originNodeId, projectId, engine, sessionId);
+        publish(db, "upsert", projectId, engine, sessionId, updated, updated.updatedAt, originNodeId);
+        db.exec("COMMIT");
+        return updated;
+      }
       if (!taskId || existing.taskId) { db.exec("COMMIT"); return existing; }
       const updated = { ...existing, taskId, updatedAt: new Date().toISOString(), originNodeId };
       db.prepare("UPDATE conversation_records SET task_id = ?, updated_at = ?, origin_node_id = ? WHERE project_id = ? AND engine = ? AND session_id = ?").run(taskId, updated.updatedAt, originNodeId, projectId, engine, sessionId);
@@ -125,8 +146,9 @@ export async function ensureConversationRecord(projectId: string, engine: Conver
     }
     if (db.prepare("SELECT 1 FROM conversation_record_tombstones WHERE project_id = ? AND engine = ? AND session_id = ?").get(projectId, engine, sessionId)) throw new Error("Conversation record was deleted");
     const now = new Date().toISOString();
-    const record = { projectId, engine, sessionId, createdAt: now, updatedAt: now, originNodeId, taskId: taskId ?? null };
-    db.prepare("INSERT INTO conversation_records (project_id, engine, session_id, created_at, updated_at, origin_node_id, task_id) VALUES (?, ?, ?, ?, ?, ?, ?)").run(projectId, engine, sessionId, now, now, originNodeId, record.taskId);
+    const record: ConversationRecord = { projectId, engine, sessionId, createdAt: now, updatedAt: now, originNodeId, taskId: taskId ?? null, ...(lineage ? { conversationId: lineage.conversationId, segmentIndex: lineage.segmentIndex } : {}) };
+    db.prepare("INSERT INTO conversation_records (project_id, engine, session_id, created_at, updated_at, origin_node_id, task_id, conversation_id, segment_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(projectId, engine, sessionId, now, now, originNodeId, record.taskId, record.conversationId ?? null, record.segmentIndex ?? 0);
     publish(db, "upsert", projectId, engine, sessionId, record, now, originNodeId);
     db.exec("COMMIT");
     return record;
@@ -139,6 +161,14 @@ export async function getConversationRecord(projectId: string, engine: Conversat
 
 export async function listConversationRecords(projectId: string): Promise<ConversationRecord[]> {
   return ((await database()).prepare("SELECT * FROM conversation_records WHERE project_id = ? ORDER BY updated_at DESC").all(projectId) as Record<string, unknown>[]).map(row);
+}
+
+/** Every segment of one logical conversation, oldest segment first. */
+export async function listConversationSegments(projectId: string, conversationId: string): Promise<ConversationRecord[]> {
+  const records = await listConversationRecords(projectId);
+  return records
+    .filter((record) => (record.conversationId ?? record.sessionId) === conversationId)
+    .sort((left, right) => (left.segmentIndex ?? 0) - (right.segmentIndex ?? 0) || left.createdAt.localeCompare(right.createdAt));
 }
 
 export async function deleteConversationRecord(projectId: string, engine: ConversationEngine, sessionId: string, originNodeId: string): Promise<boolean> {
@@ -166,7 +196,7 @@ function payloadFor(event: ReplicationEvent): ConversationRecordPayload {
   const value = event.payload as Partial<ConversationRecordPayload>;
   if (event.entityType !== "conversation.record" || !["upsert", "delete"].includes(event.operation) || !value || typeof value !== "object" || Array.isArray(value)
     || typeof value.projectId !== "string" || !isHarnessId(value.engine) || typeof value.sessionId !== "string" || typeof value.updatedAt !== "string" || typeof value.originNodeId !== "string" || value.originNodeId !== event.originNodeId || event.entityKey !== `${value.projectId}:${value.engine}:${value.sessionId}` || (event.operation === "upsert") !== Boolean(value.record)) throw new Error("Malformed conversation record replication payload");
-  if (value.record && (value.record.projectId !== value.projectId || value.record.engine !== value.engine || value.record.sessionId !== value.sessionId || value.record.updatedAt !== value.updatedAt || value.record.originNodeId !== value.originNodeId || typeof value.record.createdAt !== "string" || (value.record.taskId !== undefined && value.record.taskId !== null && typeof value.record.taskId !== "string"))) throw new Error("Malformed conversation record replication payload");
+  if (value.record && (value.record.projectId !== value.projectId || value.record.engine !== value.engine || value.record.sessionId !== value.sessionId || value.record.updatedAt !== value.updatedAt || value.record.originNodeId !== value.originNodeId || typeof value.record.createdAt !== "string" || (value.record.taskId !== undefined && value.record.taskId !== null && typeof value.record.taskId !== "string") || (value.record.conversationId !== undefined && typeof value.record.conversationId !== "string") || (value.record.segmentIndex !== undefined && typeof value.record.segmentIndex !== "number"))) throw new Error("Malformed conversation record replication payload");
   return value as ConversationRecordPayload;
 }
 
@@ -180,7 +210,7 @@ export function applyConversationRecordEvent(db: DatabaseSync, event: Replicatio
     db.prepare("INSERT INTO conversation_record_tombstones (project_id, engine, session_id, updated_at, origin_node_id) VALUES (?, ?, ?, ?, ?) ON CONFLICT(project_id, engine, session_id) DO UPDATE SET updated_at = excluded.updated_at, origin_node_id = excluded.origin_node_id").run(projectId, payload.engine, payload.sessionId, payload.updatedAt, payload.originNodeId);
     return;
   }
-  db.prepare("INSERT INTO conversation_records (project_id, engine, session_id, created_at, updated_at, origin_node_id, task_id) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id, engine, session_id) DO UPDATE SET created_at = excluded.created_at, updated_at = excluded.updated_at, origin_node_id = excluded.origin_node_id, task_id = excluded.task_id").run(projectId, payload.engine, payload.sessionId, payload.record.createdAt, payload.updatedAt, payload.originNodeId, payload.record.taskId ?? null);
+  db.prepare("INSERT INTO conversation_records (project_id, engine, session_id, created_at, updated_at, origin_node_id, task_id, conversation_id, segment_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id, engine, session_id) DO UPDATE SET created_at = excluded.created_at, updated_at = excluded.updated_at, origin_node_id = excluded.origin_node_id, task_id = excluded.task_id, conversation_id = excluded.conversation_id, segment_index = excluded.segment_index").run(projectId, payload.engine, payload.sessionId, payload.record.createdAt, payload.updatedAt, payload.originNodeId, payload.record.taskId ?? null, payload.record.conversationId ?? null, payload.record.segmentIndex ?? 0);
   db.prepare("DELETE FROM conversation_record_tombstones WHERE project_id = ? AND engine = ? AND session_id = ?").run(projectId, payload.engine, payload.sessionId);
 }
 

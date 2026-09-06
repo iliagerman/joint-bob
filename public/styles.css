@@ -352,6 +352,8 @@ body.view-chat #chatPanel :is(.panel-scroll, .board-columns, .messages) {
 .ghost:hover:not(:disabled) { background: var(--field); }
 .ghost:disabled { opacity: 0.4; cursor: not-allowed; }
 .danger { color: var(--danger); }
+.cluster-invite-projects { display: grid; gap: 0.35rem; margin-block: 0.5rem; }
+.cluster-invite-projects #clusterInviteProjectList { display: grid; gap: 0.25rem; max-height: 14rem; overflow-y: auto; padding-inline-start: 0.25rem; }
 .primary.destructive { color: #ffffff; background: var(--danger); border-color: var(--danger); }
 .primary.destructive:hover:not(:disabled) { background: var(--danger); filter: brightness(1.1); }
 .wide { margin: 12px 14px 0; }
@@ -1089,6 +1091,12 @@ select.chat-toolbar-control {
 .message.tool-output .tool-download { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; word-break: break-all; }
 .message.tool-output .tool-download:hover { color: var(--text); }
 .message.tool-output .tool-download-open { display: inline-block; margin-left: 2px; padding: 0 5px; border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 5px; color: var(--accent); font-weight: 600; text-decoration: none; }
+
+/* ---- Harness segments: one conversation, visibly split where the agent changed ---- */
+.harness-switch-notice { display: flex; align-items: center; gap: 10px; margin: 14px 0 2px; color: var(--muted); font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; }
+.harness-switch-notice::before, .harness-switch-notice::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
+.harness-segment { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px 2px; border: 1px solid var(--line); border-radius: var(--radius-card); background: color-mix(in srgb, var(--accent) 3%, transparent); }
+.harness-segment[data-harness="claude"] { background: color-mix(in srgb, var(--claude) 5%, transparent); border-color: color-mix(in srgb, var(--claude) 18%, var(--line)); }
 
 .command-strip { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; padding: 10px 14px 0; border-top: 1px solid var(--line); background: var(--header); }
 .command-strip button { flex: 0 0 auto; min-height: 30px; border: 1px solid var(--line); border-radius: 999px; color: var(--text); background: var(--field); padding: 0 13px; font-family: var(--mono); font-size: 12px; font-weight: 600; transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease; }

@@ -214,7 +214,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
     url.searchParams.set("canvasPane", "1");
     url.searchParams.set("projectId", pane.projectId);
     url.searchParams.set("sessionPath", session.path);
-    url.searchParams.set("sessionId", pane.sessionId);
+    url.searchParams.set("sessionId", session.id);
     if (session.executionNodeId) url.searchParams.set("nodeId", session.executionNodeId);
     const frame = document.createElement("iframe");
     frame.src = url.href;
@@ -865,9 +865,16 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
     return metadata;
   }
 
+  function sessionMatchesPane(candidate, pane) {
+    if (candidate.id === pane.sessionId || canonicalSessionPath(candidate.path) === canonicalSessionPath(pane.sessionPath)) return true;
+    // A conversation that switched harness lists only its newest segment; older
+    // segments still identify the same conversation.
+    return Boolean(candidate.segments?.some((segment) => segment.sessionId === pane.sessionId
+      || canonicalSessionPath(segment.path) === canonicalSessionPath(pane.sessionPath)));
+  }
+
   function syncPaneElement(pane, entry, onPicker) {
-    const listed = (entry.sessions || []).find((candidate) => candidate.id === pane.sessionId
-      || canonicalSessionPath(candidate.path) === canonicalSessionPath(pane.sessionPath)) || null;
+    const listed = (entry.sessions || []).find((candidate) => sessionMatchesPane(candidate, pane)) || null;
     // The draft stays renderable before its first transcript line reaches the list.
     const session = listed || (draftHarnessId(pane.sessionPath) ? draftSession(pane) : null);
     const identity = paneIdentity(pane);

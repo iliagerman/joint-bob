@@ -112,7 +112,7 @@ export function sessionEngine(session) {
 }
 
 export function openConversationColorDialog(session) {
-  state.colorSessionId = session.id;
+  state.colorSessionId = session.conversationId || session.id;
   state.colorSessionEngine = sessionEngine(session);
   renderSessionColorSwatches(session.color || null, elements.conversationColorSwatches);
   elements.conversationColorDialog.showModal();
@@ -143,7 +143,7 @@ elements.projectRenameForm.addEventListener("submit", async (event) => {
 });
 
 elements.renameSessionButton.addEventListener("click", () => {
-  openRenameDialog(state.activeSessionId, state.engine, elements.sessionTitle.textContent);
+  openRenameDialog(state.activeConversationId || state.activeSessionId, state.engine, elements.sessionTitle.textContent);
 });
 elements.cancelRenameButton.addEventListener("click", () => elements.renameDialog.close());
 elements.cancelConversationColorButton.addEventListener("click", () => elements.conversationColorDialog.close());

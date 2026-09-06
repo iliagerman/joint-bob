@@ -217,19 +217,44 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
   const seen = new Set<string>();
   const pinnedPaths = new Set(pinnedSessionPaths);
   const pinnedIds = new Set(pinnedSessionIds);
-  const isPinned = (session: SessionSummary): boolean => pinnedPaths.has(session.path) || pinnedIds.has(`${session.harnessId}:${session.id}`);
-  const ordered = sessions
-    .filter((session) => {
-      if (!session.path || seen.has(session.path)) return false;
-      seen.add(session.path);
-      return true;
-    })
-    .map((session) => ({
-      ...session,
-      title: overrides[session.id] ?? session.title,
-      ...(colors[session.id] ? { color: colors[session.id] } : {}),
-    }))
-    .sort((left, right) => (right.updatedAt ?? right.createdAt ?? "").localeCompare(left.updatedAt ?? left.createdAt ?? ""));
+  const isPinned = (session: SessionSummary): boolean => pinnedPaths.has(session.path)
+    || pinnedIds.has(`${session.harnessId}:${session.id}`)
+    // A switched conversation is one pinning unit: its logical id, any legacy
+    // segment pin, or any segment path keeps the group pinned.
+    || pinnedIds.has(`${session.segments?.[0]?.engine ?? session.harnessId}:${session.conversationId ?? session.id}`)
+    || Boolean(session.segments?.some((segment) => pinnedPaths.has(segment.path) || pinnedIds.has(`${segment.engine}:${segment.sessionId}`)));
+  const flat = sessions.filter((session) => {
+    if (!session.path || seen.has(session.path)) return false;
+    seen.add(session.path);
+    return true;
+  });
+  // A harness switch continues one logical conversation: group its segments and
+  // let the newest segment face the list. Single sessions group as themselves.
+  const byConversation = new Map<string, Array<{ session: SessionSummary; segmentIndex: number }>>();
+  for (const session of flat) {
+    const record = recordsBySession.get(`${session.harnessId}:${session.id}`);
+    const conversationId = record?.conversationId ?? session.id;
+    byConversation.set(conversationId, [...(byConversation.get(conversationId) ?? []), { session, segmentIndex: record?.segmentIndex ?? 0 }]);
+  }
+  const ordered = [...byConversation.entries()].map(([conversationId, segments]) => {
+    segments.sort((left, right) => left.segmentIndex - right.segmentIndex || (left.session.updatedAt ?? "").localeCompare(right.session.updatedAt ?? ""));
+    const face = segments.at(-1)!.session;
+    const firstLive = segments.map((segment) => segment.session).find((session) => !session.draft);
+    const createdAt = segments.map((segment) => segment.session.createdAt).filter(Boolean).sort().at(0);
+    const segmentViews = segments.length > 1
+      ? segments.map((segment) => ({ engine: segment.session.harnessId, sessionId: segment.session.id, path: segment.session.path, ...(segment.session.draft ? { draft: true } : {}) }))
+      : undefined;
+    return {
+      ...face,
+      conversationId,
+      ...(segmentViews ? { segments: segmentViews } : {}),
+      // A switched conversation keeps the title of its first real segment; a fresh
+      // segment's own title may be derived from the handoff envelope.
+      title: overrides[conversationId] ?? (segments.length > 1 ? firstLive?.title ?? face.title : face.title),
+      ...(colors[conversationId] ? { color: colors[conversationId] } : {}),
+      ...(createdAt ? { createdAt } : {}),
+    };
+  }).sort((left, right) => (right.updatedAt ?? right.createdAt ?? "").localeCompare(left.updatedAt ?? left.createdAt ?? ""));
 
   return orderSessionFamilies([
     ...ordered.filter(isPinned),

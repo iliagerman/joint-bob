@@ -46,7 +46,7 @@ test("server reattaches a dropped socket to the in-flight claude turn", async ()
   const server = await serverSource();
 
   // The live-run key is derived from the path, never from the summary id.
-  assert.match(server, /claudeRunIdFromSessionPath\(requestedSessionPath\)/);
+  assert.match(server, /claudeRunIdFromSessionPath\(sessionRequest\.sessionPath\)/);
   assert.doesNotMatch(server, /requestedClaudeId = requestedSessionId/);
 
   // In-flight turn events are buffered and replayed on reattach.

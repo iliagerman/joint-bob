@@ -69,7 +69,9 @@ export async function loadProjects() {
   }
 
   await selectProject(state.activeProjectId, false, !state.initialProjectId || Boolean(state.initialSessionPath));
-  const activeSession = state.sessions.find((session) => state.activeSessionId ? session.id === state.activeSessionId : session.path === state.activeSessionPath);
+  const activeSession = state.sessions.find((session) => session.path === state.activeSessionPath
+    || session.segments?.some((segment) => segment.path === state.activeSessionPath)
+    || Boolean(state.activeSessionId && (session.id === state.activeSessionId || session.segments?.some((segment) => segment.sessionId === state.activeSessionId))));
   if (state.activeSessionPath && activeSession) {
     openListedSession(activeSession);
     return;

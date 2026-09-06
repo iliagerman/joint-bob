@@ -89,6 +89,10 @@ export interface SessionSummary {
   firstMessage?: string;
   /** Parent Pi transcript path when another conversation created this one. */
   parentSessionPath?: string;
+  /** Logical conversation identity; a harness switch continues the same conversation id. */
+  conversationId?: string;
+  /** Every harness segment of a switched conversation, oldest first; absent for single sessions. */
+  segments?: Array<{ engine: HarnessId; sessionId: string; path: string; draft?: boolean }>;
   taskStatus?: TaskStatus;
   taskId?: string;
   running?: boolean;

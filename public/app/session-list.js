@@ -184,7 +184,7 @@ function sessionMenuItems(session, sessionActive) {
         label: "Rename",
         icon: "pencil",
         testid: "session-rename-button",
-        onSelect: () => openRenameDialog(session.id, isClaude ? "claude" : "pi", name),
+        onSelect: () => openRenameDialog(session.conversationId || session.id, isClaude ? "claude" : "pi", name),
       },
       {
         label: "Remove",

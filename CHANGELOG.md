@@ -15,6 +15,9 @@ Every deployment is a version. The newest section must always match the
 - One keyboard shortcut now switches between the canvas and the view it was opened from, from anywhere in the app
 - The Cluster settings tab now shows each node's name, address, and whether this machine can reach it
 - Opening a conversation that is waiting for review now clears the review badge immediately
+- Conversations can now switch between Claude and Pi mid-chat while staying as one unified conversation with a visible section showing where the switch happened
+- Done ticket conversations now lock all segments of a switched conversation to prevent accidental edits across harness boundaries
+- Pinned conversations now remain pinned across harness switches and full transcript history is preserved when reopening a switched conversation
 
 ## 1.5.0 — 2026-09-06
 

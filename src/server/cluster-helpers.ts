@@ -3,19 +3,22 @@ import { access, lstat, realpath, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
-import { type ClusterPeer, getClusterNode, listClusterPeers, markClusterPeerSeen } from "../cluster.js";
+import type { NextFunction, Request, Response } from "express";
+import { type ClusterPeer, clusterProjectGrantFor, getClusterMachineToken, getClusterNode, listClusterPeers, markClusterPeerSeen } from "../cluster.js";
+import { listConversationRecords } from "../conversation-records.js";
 import type { ConversationEngine } from "../conversation-ownership.js";
 import { harnessForSessionPath, harnessSyncFolderForSessionPath } from "../harnesses.js";
 import { managedProjectPath } from "../managed-home.js";
 import { resolveLocalSessionPath } from "../session-paths.js";
 import { getSettings } from "../settings.js";
-import { getProject, importProject, listProjects, listWorkspaces, registerProjectAliases } from "../store.js";
+import { canonicalProjectId, getProject, importProject, listProjects, listWorkspaces, projectAliasIds, registerProjectAliases } from "../store.js";
 import { assertSyncthingFolderReady, ensureSyncthingDevice, ensureSyncthingFolder, syncthingDeviceId, syncthingFolderStatuses, syncthingPathForFolderId } from "../syncthing.js";
 import { assertTaskWorkspaceReady, TaskWorkspaceError, taskWorkspaceKey, TICKET_WORKSPACE_FOLDER_ID, TICKET_WORKSPACE_FOLDER_LABEL } from "../task-workspaces.js";
 import { listTasks } from "../tasks.js";
 import type { ProjectRecord, ProjectSyncStatus, TaskRecord } from "../types.js";
 import { validateTaskRepository } from "../worktrees.js";
 import { sessionWatcher } from "./chat.js";
+import { sendError } from "./http-auth.js";
 import { relocateProjectWorkspace } from "./projects.js";
 import { execFileAsync, flags } from "./state.js";
 
@@ -24,6 +27,41 @@ interface PeerInventory {
   syncDeviceId?: string;
   projectRoot?: string;
   projects: Array<{ project: ProjectRecord; aliases?: string[] }>;
+}
+
+/** May the authenticated machine peer see this project? A peer without a grant row is a
+    legacy pairing and stays unrestricted; a granted peer sees exactly its invitation's
+    selection, matched through aliases because each node may know the project under a
+    different id. */
+export async function clusterPeerMayAccessProject(machineNodeId: string, projectId: string, grant?: string[]): Promise<boolean> {
+  const selection = grant ?? await clusterProjectGrantFor(machineNodeId);
+  if (!selection) return true;
+  if (selection.includes(projectId)) return true;
+  const canonical = await canonicalProjectId(projectId);
+  if (canonical && selection.includes(canonical)) return true;
+  const aliases = canonical ? await projectAliasIds(canonical) : [];
+  return aliases.some((alias) => selection.includes(alias));
+}
+
+/** Machine-route gate: any cluster machine call that names a project is refused unless the
+    calling peer's grant covers it. Calls that do not name a project pass through; their own
+    handlers decide. Secret traffic never names a project, so it is unaffected by design. */
+export async function machineProjectAccessGuard(request: Request, response: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!response.locals.machineAuth) { next(); return; }
+    const machineNodeId = response.locals.machineNodeId as string;
+    // Callers on older builds present the receiver's own token; treat them as legacy.
+    if (machineNodeId === (await getClusterNode()).id) { next(); return; }
+    const grant = await clusterProjectGrantFor(machineNodeId);
+    if (!grant) { next(); return; }
+    const candidate = typeof request.query.projectId === "string" ? request.query.projectId
+      : (request.body as { projectId?: unknown } | undefined)?.projectId;
+    if (typeof candidate !== "string" || !candidate) { next(); return; }
+    if (await clusterPeerMayAccessProject(machineNodeId, candidate, grant)) { next(); return; }
+    sendError(response, 403, "Project is not shared with this node");
+  } catch (error) {
+    next(error);
+  }
 }
 
 export function publicClusterPeer(peer: ClusterPeer): Omit<ClusterPeer, "token"> & { tokenConfigured: boolean; online: boolean } {
@@ -52,7 +90,7 @@ async function runtimeAvailable(engine: TaskRecord["engine"]): Promise<string[]>
 
 export async function abortPeerTaskHandoff(peer: ClusterPeer, handoffId: string): Promise<boolean> {
   try {
-    const response = await fetch(`${peer.url}/api/cluster/tasks/abort`, { method: "POST", headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ handoffId }), signal: AbortSignal.timeout(30_000) });
+    const response = await fetch(`${peer.url}/api/cluster/tasks/abort`, { method: "POST", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" }, body: JSON.stringify({ handoffId }), signal: AbortSignal.timeout(30_000) });
     if (response.ok) return true;
     console.warn(`Handoff abort failed: ${response.status}`);
   } catch (error) {
@@ -98,7 +136,16 @@ export function doneTaskOwnsConversation(task: TaskRecord, engine: string, sessi
 }
 
 export async function conversationBelongsToDoneTask(projectId: string, engine: string, sessionId: string): Promise<boolean> {
-  return (await listTasks(projectId)).some((task) => doneTaskOwnsConversation(task, engine, sessionId));
+  const tasks = await listTasks(projectId);
+  const owns = (target: { engine: string; sessionId: string }): boolean => tasks.some((task) => doneTaskOwnsConversation(task, target.engine, target.sessionId));
+  if (owns({ engine, sessionId })) return true;
+  // The id may be a logical conversation id or any segment of a switched chain;
+  // a Done ticket holding any segment locks the whole conversation.
+  const records = await listConversationRecords(projectId);
+  const record = records.find((candidate) => candidate.sessionId === sessionId || candidate.conversationId === sessionId);
+  if (!record) return false;
+  const conversationId = record.conversationId ?? record.sessionId;
+  return records.filter((candidate) => (candidate.conversationId ?? candidate.sessionId) === conversationId).some(owns);
 }
 
 interface TaskSyncStatus extends ProjectSyncStatus { label: string }
@@ -159,7 +206,7 @@ export async function peerTaskEligibilityEntry(peer: ClusterPeer, projectId: str
   try {
     const remote = await fetch(`${peer.url}/api/cluster/tasks/eligibility`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
       body: JSON.stringify({ projectId, task, source }),
       signal: AbortSignal.timeout(3_000),
     });
@@ -179,8 +226,10 @@ export function projectWithLocalLocation(project: ProjectRecord, nodeId: string)
 }
 
 export async function fetchPeerInventory(peer: ClusterPeer, timeoutMs = 10_000): Promise<PeerInventory> {
+  // Our own machine token identifies the caller, which is what lets the peer filter
+  // this inventory down to the projects our invitation granted us.
   const response = await fetch(`${peer.url}/api/cluster/local-inventory`, {
-    headers: peer.token ? { Authorization: `Bearer ${peer.token}` } : {},
+    headers: { Authorization: `Bearer ${await getClusterMachineToken()}` },
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) throw new Error(`Peer returned ${response.status}`);
@@ -245,13 +294,20 @@ export async function importProjectsFromPeer(peer: ClusterPeer, missingOnly = fa
 
 export async function syncPairedProjects(peer: ClusterPeer, localNodeId: string): Promise<ProjectImportResult> {
   const localImport = await importProjectsFromPeer(peer);
+  // The reverse import is best effort: a peer may still hold a credential this node rotated
+  // moments ago during membership merging, and the periodic project discovery reconciles
+  // anything this call misses. Failing the whole join for it would leave an established
+  // membership reporting an error.
   const response = await fetch(`${peer.url}/api/cluster/projects/import`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
     body: JSON.stringify({ peerId: localNodeId }),
     signal: AbortSignal.timeout(10_000),
+  }).catch((error) => {
+    console.warn(`Reverse project import to ${peer.id} failed`, error);
+    return undefined;
   });
-  if (!response.ok) throw new Error(`Peer project import failed: ${peer.url} returned ${response.status}`);
+  if (response && !response.ok) console.warn(`Reverse project import to ${peer.id} failed: ${peer.url} returned ${response.status}`);
   return localImport;
 }
 
@@ -322,7 +378,7 @@ export async function mapProjectFromPeer(peer: ClusterPeer, inventory: PeerInven
     if (localDeviceId) {
       const shareResponse = await fetch(`${peer.url}/api/cluster/sync/share`, {
         method: "POST",
-        headers: { ...(peer.token ? { Authorization: `Bearer ${peer.token}` } : {}), "Content-Type": "application/json" },
+        headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
         body: JSON.stringify({ folderId: remoteProject.syncFolderId, deviceId: localDeviceId, deviceName: (await getClusterNode()).name }),
         signal: AbortSignal.timeout(10_000),
       });

@@ -1,7 +1,7 @@
 import { api, loadPins, savePreferencesInBackground } from "./api.js";
 import { clearAttachments } from "./attachments.js";
 import { renderChatSessionControls, renderConversationLock, sendSocket, setComposerEnabled, setModels, syncEngineUI, syncSafeguardsButton, updateStatus } from "./chat-controls.js";
-import { appendMessage, appendToolMessage, clearChat, clearQueuedMark, clearThinkingBubble, finalizeAssistantBubble, finishTurnTimer, markMessageQueued, renderBubbleContent, requestPinChat, rerenderChatTranscript, restoreChatScrollTop, showChatEmptyState, startDurationTicker, updateToolMessage } from "./chat-transcript.js";
+import { appendMessage, appendToolMessage, clearChat, clearQueuedMark, clearThinkingBubble, finalizeAssistantBubble, finishTurnTimer, markMessageQueued, renderBubbleContent, requestPinChat, rerenderChatTranscript, restoreChatScrollTop, showChatEmptyState, startDurationTicker, startHarnessSegment, updateToolMessage } from "./chat-transcript.js";
 import { rememberDraft, restoreDraft, setActiveSessionPath } from "./composer.js";
 import { renderToolsDialog } from "./composer-dialogs.js";
 import { elements } from "./elements.js";
@@ -122,6 +122,8 @@ export function openSession(sessionPath, title = "New Pi conversation", preserve
   if (!preserveChat) {
     state.pendingSessionTitle = null;
     state.pendingSessionColor = null;
+    state.conversationSegments = null;
+    state.activeConversationId = null;
     // A conversation being opened fresh starts out following the newest message.
     state.followChat = true;
     clearChat();
@@ -188,6 +190,8 @@ function handleSocketPayload(payload, scrollOnReady = false) {
     setComposerEnabled(true);
     renderConversationLock();
     state.activeSessionId = payload.sessionId || state.activeSessionId;
+    state.activeConversationId = payload.conversationId || payload.sessionId || null;
+    state.conversationSegments = payload.segments || null;
     syncEngineUI();
     if (payload.sessionFile) {
       setActiveSessionPath(payload.sessionFile);
@@ -198,14 +202,14 @@ function handleSocketPayload(payload, scrollOnReady = false) {
     const pendingTitle = state.pendingSessionTitle;
     if (pendingTitle && payload.sessionId) {
       state.pendingSessionTitle = null;
-      saveSessionTitle(payload.sessionId, state.engine, pendingTitle)
+      saveSessionTitle(state.activeConversationId || payload.sessionId, state.engine, pendingTitle)
         .then(() => refreshSessionsQuietly())
         .catch((error) => toast(error.message, 8000));
     }
     const pendingColor = state.pendingSessionColor;
     if (pendingColor && payload.sessionId) {
       state.pendingSessionColor = null;
-      saveSessionColor(payload.sessionId, state.engine, pendingColor)
+      saveSessionColor(state.activeConversationId || payload.sessionId, state.engine, pendingColor)
         .then(() => refreshSessionsQuietly())
         .catch((error) => toast(error.message, 8000));
     }
@@ -217,7 +221,7 @@ function handleSocketPayload(payload, scrollOnReady = false) {
         : openingDraft
           ? `New ${state.engine === "claude" ? "Claude" : "Pi"} conversation`
           : state.engine === "claude" ? "Claude conversation" : "Pi conversation";
-    const resumeFromTop = rerenderChatTranscript(payload.messages);
+    const resumeFromTop = rerenderChatTranscript(payload.messages, payload.segments);
     // A fresh open starts on the newest message; a reconnect re-render follows
     // if the reader was following and otherwise puts them back where they were.
     if (scrollOnReady || state.followChat) {
@@ -245,8 +249,11 @@ function handleSocketPayload(payload, scrollOnReady = false) {
   }
   if (payload.type === "engineChanged") {
     state.engine = payload.engine || "pi";
-    state.activeSessionId = null;
+    state.activeSessionId = payload.sessionId || null;
+    state.activeConversationId = payload.conversationId || state.activeConversationId;
+    if (payload.conversationId) state.conversationSegments = [...(state.conversationSegments || [{ engine: state.engine === "claude" ? "pi" : "claude" }]), { engine: state.engine }];
     syncEngineUI();
+    startHarnessSegment(state.engine);
     toast(state.engine === "claude" ? "Switched to Claude — context carries over on your next message" : "Switched to Pi — context carries over on your next message");
     return;
   }
@@ -370,7 +377,7 @@ function handleSocketPayload(payload, scrollOnReady = false) {
   if (payload.type === "messages") {
     // Read-only Claude transcript synchronized from another node: re-render in
     // place, following if the reader was at the bottom, anchoring if not.
-    const resumeFromTop = rerenderChatTranscript(payload.messages);
+    const resumeFromTop = rerenderChatTranscript(payload.messages, payload.segments || state.conversationSegments);
     if (state.followChat) requestPinChat();
     else restoreChatScrollTop(resumeFromTop);
     return;

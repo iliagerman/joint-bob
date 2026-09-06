@@ -37,7 +37,7 @@ test("conversation creation and the row menu both offer the colour palette", asy
   assert.match(html, /data-testid="conversation-color-swatches"/);
   assert.match(app, /testid: "session-color-button"/);
   assert.match(app, /selectedSessionColor\(elements\.newSessionColorSwatches\)/);
-  assert.match(app, /saveSessionColor\(payload\.sessionId, state\.engine, pendingColor\)/);
+  assert.match(app, /saveSessionColor\(state\.activeConversationId \|\| payload\.sessionId, state\.engine, pendingColor\)/);
   assert.match(app, /button\.dataset\.color = session\.color/);
   assert.match(styles, /\.session-card\[data-color\]/);
   assert.match(server, /app\.put\("\/api\/projects\/:projectId\/sessions\/color"/);

@@ -48,7 +48,7 @@ test("canvas is a desktop row view over exact existing conversations", async () 
   assert.match(canvas, /url\.searchParams\.set\("canvasPane", "1"\)/);
   assert.match(canvas, /url\.searchParams\.set\("projectId", pane\.projectId\)/);
   assert.match(canvas, /url\.searchParams\.set\("sessionPath", session\.path\)/);
-  assert.match(canvas, /url\.searchParams\.set\("sessionId", pane\.sessionId\)/);
+  assert.match(canvas, /url\.searchParams\.set\("sessionId", session\.id\)/);
   assert.match(canvas, /if \(session\.executionNodeId\) url\.searchParams\.set\("nodeId", session\.executionNodeId\)/);
   assert.doesNotMatch(canvas, /localStorage|sessionStorage|transferSession|cloneSession|new-session/);
 
@@ -113,6 +113,21 @@ test("canvas is a desktop row view over exact existing conversations", async () 
   // Malformed deep legacy layouts are bounded; only pane documents may frame.
   assert.match(server, /function canvasLayoutExceedsLimits\(value: unknown\): boolean/);
   assert.match(server, /request\.path === "\/" && request\.query\.canvasPane === "1" \? "SAMEORIGIN" : "DENY"/);
+});
+
+test("canvas panes and boot restore follow switched conversations to their newest segment", async () => {
+  const [canvas, selection] = await Promise.all([
+    readFile("public/canvas.js", "utf8"),
+    readFile("public/app/project-selection.js", "utf8"),
+  ]);
+
+  // A conversation that switched harness lists only its newest segment; panes
+  // saved against an older segment still resolve to the same conversation.
+  assert.match(canvas, /function sessionMatchesPane\(candidate, pane\)/);
+  assert.match(canvas, /candidate\.segments\?\.some\(\(segment\) => segment\.sessionId === pane\.sessionId/);
+  assert.match(canvas, /url\.searchParams\.set\("sessionId", session\.id\)/);
+  assert.match(selection, /session\.segments\?\.some\(\(segment\) => segment\.path === state\.activeSessionPath\)/);
+  assert.match(selection, /session\.segments\?\.some\(\(segment\) => segment\.sessionId === state\.activeSessionId\)/);
 });
 
 test("the canvas shell ships in the service worker cache", async () => {

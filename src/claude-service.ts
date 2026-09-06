@@ -224,8 +224,7 @@ function cleanClaudeTitle(value: unknown): string {
 function meaningfulClaudePrompt(record: UnknownRecord): string {
   let text = claudeMessageText(record).trim();
   if (text.startsWith("## Available secret accounts")) text = text.split("\n\n").slice(1).join("\n\n").trim();
-  const handoffMarker = "Continue the work seamlessly. The user's next message follows.\n---\n";
-  if (text.startsWith("Context handoff:") && text.includes(handoffMarker)) text = text.slice(text.indexOf(handoffMarker) + handoffMarker.length).trim();
+  text = stripHandoffEnvelope(text).trim();
   if (/^<(local-command-caveat|command-message|command-name|command-args)>/.test(text)) return "";
   return text.split("\n")[0].slice(0, 80);
 }
@@ -347,7 +346,8 @@ export async function loadClaudeMessages(sessionPath: string): Promise<ChatMessa
     .map((line, index) => {
       const record = JSON.parse(line) as UnknownRecord;
       const message = asRecord(record.message);
-      return { id: `${index}`, role: message.role === "user" ? "user" : "assistant", text: claudeMessageText(record) };
+      const text = claudeMessageText(record);
+      return { id: `${index}`, role: message.role === "user" ? "user" : "assistant", text: message.role === "user" ? stripHandoffEnvelope(text) : text };
     })
     .filter((message) => message.text.trim().length > 0);
 }
@@ -365,6 +365,16 @@ export function buildHandoffContext(transcript: ChatMessage[]): string {
     "---",
     "",
   ].join("\n");
+}
+
+const HANDOFF_ENVELOPE_PREFIX = "Context handoff: you are continuing a conversation";
+
+/** The handoff envelope is transport, not dialogue; a reloaded transcript shows only the user's text. */
+export function stripHandoffEnvelope(text: string): string {
+  const start = text.startsWith(HANDOFF_ENVELOPE_PREFIX) ? 0 : text.indexOf(`\n${HANDOFF_ENVELOPE_PREFIX}`);
+  if (start === -1) return text;
+  const separator = text.indexOf("\n---\n", start);
+  return separator === -1 ? text : text.slice(separator + "\n---\n".length);
 }
 
 export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {

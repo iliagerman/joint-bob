@@ -15,7 +15,7 @@ import { listTasks } from "../../tasks.js";
 import type { ProjectRecord, SessionSummary } from "../../types.js";
 import { TaskWorktreeError } from "../../worktrees.js";
 import { claudeConnectionKey } from "../chat.js";
-import { doneTaskOwnsConversation } from "../cluster-helpers.js";
+import { conversationBelongsToDoneTask } from "../cluster-helpers.js";
 import { sendError } from "../http-auth.js";
 import { assertProjectEditable, projectsWithSharedNames } from "../projects.js";
 import { broadcastToProject } from "../realtime.js";
@@ -151,7 +151,7 @@ async function assertDraftTakeoverReady(project: ProjectRecord, matching: Sessio
   url.searchParams.set("sessionId", matching.id);
   let response: globalThis.Response;
   try {
-    response = await fetch(url, { headers: { Authorization: `Bearer ${owner.token}` }, signal: AbortSignal.timeout(3_000) });
+    response = await fetch(url, { headers: { Authorization: `Bearer ${await getClusterMachineToken()}` }, signal: AbortSignal.timeout(3_000) });
   } catch {
     throw new TaskWorktreeError("Conversation owner is unavailable; cannot verify transcript synchronization");
   }
@@ -333,7 +333,7 @@ async function deleteLocalConversation(project: ProjectRecord, engine: Conversat
   await assertProjectEditable(project);
   const tasks = await listTasks(project.id);
   const ticket = taskId ? tasks.find((task) => task.id === taskId) : undefined;
-  if (ticket?.status === "done" || tasks.some((task) => doneTaskOwnsConversation(task, engine, sessionId))) {
+  if (ticket?.status === "done" || await conversationBelongsToDoneTask(project.id, engine, sessionId)) {
     throw new ConversationDeleteError(409, "Done ticket conversations are read-only");
   }
   const sessions = await listHarnessSessions({ ...project, additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []) });
@@ -341,19 +341,30 @@ async function deleteLocalConversation(project: ProjectRecord, engine: Conversat
   if (!session) throw new ConversationDeleteError(404, "Session not found");
   await requireLocalConversationOwner(engine, sessionId);
   const local = await getClusterNode();
-  if (session.draft) {
-    await deleteConversationRecord(project.id, engine, sessionId, local.id);
-  } else {
-    const filePath = session.path.startsWith("claude:") ? session.path.slice("claude:".length) : session.path;
+  // Harness-switched segments are one conversation; removing it removes every segment.
+  const targets: Array<{ engine: ConversationEngine; sessionId: string; path: string; draft?: boolean }> = [
+    { engine, sessionId, path: session.path, ...(session.draft ? { draft: true } : {}) },
+    ...(session.segments ?? []).filter((segment) => !(segment.sessionId === sessionId && segment.engine === engine)),
+  ];
+  for (const [index, target] of targets.entries()) {
+    if (target.draft || target.path.startsWith("draft:")) {
+      await deleteConversationRecord(project.id, target.engine, target.sessionId, local.id);
+      continue;
+    }
+    const filePath = target.path.startsWith("claude:") ? target.path.slice("claude:".length) : target.path;
     try {
       const fileStats = await lstat(filePath);
       if (!fileStats.isFile() || fileStats.isSymbolicLink()) throw new ConversationDeleteError(400, "Session path is not a regular file");
       await unlink(filePath);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new ConversationDeleteError(404, "Session not found");
-      throw error;
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        // The primary transcript must exist; an already-synchronized-away segment still drops its record.
+        if (index === 0) throw new ConversationDeleteError(404, "Session not found");
+      } else {
+        throw error;
+      }
     }
-    await deleteConversationRecord(project.id, engine, sessionId, local.id);
+    await deleteConversationRecord(project.id, target.engine, target.sessionId, local.id);
   }
   broadcastToProject(project.id, { type: "sessionsChanged" });
 }

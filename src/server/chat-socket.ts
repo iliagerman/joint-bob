@@ -6,6 +6,7 @@ import { claudeRunIdFromSessionPath, claudeSessionContextUsage, loadClaudeMessag
 import { getClusterMachineToken, getClusterNode, getClusterPeer } from "../cluster.js";
 import { type ConversationEngine, ConversationOwnershipError, getConversationOwnership } from "../conversation-ownership.js";
 import { ensureConversationRecord, getConversationRecord, parseConversationDraftPath } from "../conversation-records.js";
+import { conversationTranscriptPayload } from "../conversation-segments.js";
 import { listHarnessSessions } from "../harnesses.js";
 import { getSessionStatus, simplifyMessages } from "../pi-service.js";
 import { getProjectLock } from "../project-locks.js";
@@ -17,7 +18,7 @@ import { attachTerminalSession } from "../terminal-session.js";
 import type { SessionSummary } from "../types.js";
 import { webSocketCloseReason } from "../websocket.js";
 import { claudeConnectionKey, claudeQueueKey, claudeRunKey, claudeStatus, drainClaudePromptQueue, emptyClaudeState, getSharedSession, handleChatMessage, proxySocket, sessionWatcher } from "./chat.js";
-import { taskConversationIdentity } from "./cluster-helpers.js";
+import { conversationBelongsToDoneTask, taskConversationIdentity } from "./cluster-helpers.js";
 import { machineTokenMatches } from "./http-auth.js";
 import { broadcastToProject, chatErrorMessage, parseSessionPath, scheduleIdleDispose, send, sendStatus } from "./realtime.js";
 import { socketSecretAccountIdsSchema, socketTaskIdSchema } from "./schemas.js";
@@ -25,6 +26,15 @@ import { describeConversationOwner, type ForeignConversationOwner, openConversat
 import { activeClaudeConnections, type ChatConnection, claudeClients, recoveredClaudeChats, type SharedPiSession, watchClients, webSocketServer } from "./state.js";
 import { ownerPeer } from "./task-handoff.js";
 import { mergeReservations, taskCwd, taskHandoffContext, taskTerminalCounts } from "./task-runs.js";
+
+function describeSessionRequest(rawSessionPath: string | null) {
+  const draft = parseConversationDraftPath(rawSessionPath);
+  return {
+    draft,
+    engine: (draft?.engine ?? (rawSessionPath?.startsWith("claude:") ? "claude" : "pi")) as ConversationEngine,
+    sessionPath: draft ? undefined : parseSessionPath(rawSessionPath),
+  };
+}
 
 webSocketServer.on("connection", async (socket, request) => {
   const host = request.headers.host;
@@ -201,22 +211,35 @@ webSocketServer.on("connection", async (socket, request) => {
     return;
   }
 
-  const draft = parseConversationDraftPath(rawSessionPath);
-  const requestedEngine: ConversationEngine = draft?.engine ?? (rawSessionPath?.startsWith("claude:") ? "claude" : "pi");
-  const requestedSessionPath = draft ? undefined : parseSessionPath(rawSessionPath);
-  const recovered = requestedSessionPath ? recoveredClaudeChats.get(claudeRunKey(project.id, requestedSessionPath)) : undefined;
-  const requestedTask = requestedSessionPath ? tasks.find((candidate) => candidate.sessionPath === requestedSessionPath) : undefined;
-  const cwd = requestedTask ? taskCwd(project, requestedTask) : project.path;
+  let sessionRequest = describeSessionRequest(rawSessionPath);
+  let recovered = sessionRequest.sessionPath ? recoveredClaudeChats.get(claudeRunKey(project.id, sessionRequest.sessionPath)) : undefined;
+  let requestedTask = sessionRequest.sessionPath ? tasks.find((candidate) => candidate.sessionPath === sessionRequest.sessionPath) : undefined;
+  let cwd = requestedTask ? taskCwd(project, requestedTask) : project.path;
   // Ticket conversations live in the ticket workspace, not the project directory,
   // so this must search the same paths the conversation list searches.
-  if ((requestedSessionPath || draft) && !listedSessions) listedSessions = await listHarnessSessions(sessionSearchProject);
-  const listedSession = listedSessions?.find((candidate) => candidate.path === (draft ? rawSessionPath : requestedSessionPath)
-    || Boolean(!draft && taskIdentity && requestedSessionId === taskIdentity.sessionId && candidate.harnessId === taskIdentity.engine && candidate.id === taskIdentity.sessionId));
-  if ((requestedSessionPath || draft) && !listedSession) {
+  if ((sessionRequest.sessionPath || sessionRequest.draft) && !listedSessions) listedSessions = await listHarnessSessions(sessionSearchProject);
+  let listedSession = listedSessions?.find((candidate) => candidate.path === (sessionRequest.draft ? rawSessionPath : sessionRequest.sessionPath)
+    || Boolean(!sessionRequest.draft && taskIdentity && requestedSessionId === taskIdentity.sessionId && candidate.harnessId === taskIdentity.engine && candidate.id === taskIdentity.sessionId)
+    || Boolean(sessionRequest.sessionPath && candidate.segments?.some((segment) => segment.path === sessionRequest.sessionPath)));
+  if ((sessionRequest.sessionPath || sessionRequest.draft) && !listedSession) {
     socket.close(1008, "Conversation not found");
     return;
   }
-  if (draft && (!listedSession?.draft || listedSession.id !== draft.sessionId || !await getConversationRecord(project.id, draft.engine, draft.sessionId))) {
+  // A conversation that switched harness lists only its newest segment; opening
+  // any older segment's path opens the conversation itself. A path that is not
+  // part of a listed group (an undiscovered ticket transcript) stays authoritative.
+  const openedStaleSegment = Boolean(sessionRequest.sessionPath && listedSession?.segments?.some((segment) => segment.path === sessionRequest.sessionPath && segment.path !== listedSession.path));
+  if (openedStaleSegment && listedSession) {
+    rawSessionPath = listedSession.path;
+    sessionRequest = describeSessionRequest(rawSessionPath);
+    recovered = sessionRequest.sessionPath ? recoveredClaudeChats.get(claudeRunKey(project.id, sessionRequest.sessionPath)) : undefined;
+    const redirectedTask = sessionRequest.sessionPath ? tasks.find((candidate) => candidate.sessionPath === sessionRequest.sessionPath) : undefined;
+    if (redirectedTask) {
+      requestedTask = redirectedTask;
+      cwd = taskCwd(project, redirectedTask);
+    }
+  }
+  if (sessionRequest.draft && (!listedSession?.draft || listedSession.id !== sessionRequest.draft.sessionId || !await getConversationRecord(project.id, sessionRequest.draft.engine, sessionRequest.draft.sessionId))) {
     socket.close(1008, "Conversation not found");
     return;
   }
@@ -235,10 +258,10 @@ webSocketServer.on("connection", async (socket, request) => {
     }
   }
   const validRequestedSessionId = requestedSessionId && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestedSessionId) ? requestedSessionId : undefined;
-  const ownershipSessionId = listedSession && !listedSession.draft ? listedSession.id : draft?.sessionId ?? validRequestedSessionId ?? randomUUID();
+  const ownershipSessionId = listedSession && !listedSession.draft ? listedSession.id : sessionRequest.draft?.sessionId ?? validRequestedSessionId ?? randomUUID();
   let foreignOwner: ForeignConversationOwner | null = null;
   try {
-    foreignOwner = await openConversationOwnership(requestedEngine, ownershipSessionId, local.id);
+    foreignOwner = await openConversationOwnership(sessionRequest.engine, ownershipSessionId, local.id);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Conversation ownership claim failed";
     // A new conversation with no owner is unusable, but an existing one still
@@ -251,7 +274,7 @@ webSocketServer.on("connection", async (socket, request) => {
   }
   if (!listedSession || listedSession.draft) {
     try {
-      await ensureConversationRecord(project.id, requestedEngine, ownershipSessionId, local.id);
+      await ensureConversationRecord(project.id, sessionRequest.engine, ownershipSessionId, local.id);
       broadcastToProject(project.id, { type: "sessionsChanged" });
     } catch (error) {
       // A browser still naming a conversation that was deleted (here or on a peer)
@@ -263,15 +286,16 @@ webSocketServer.on("connection", async (socket, request) => {
       throw error;
     }
   }
+  const conversationReadOnly = task?.status === "done" || await conversationBelongsToDoneTask(project.id, sessionRequest.engine, ownershipSessionId);
   let connection: ChatConnection = {
     socket, project, taskId: task?.id ?? null, cwd, engine: "pi", shared: null,
     claude: emptyClaudeState(ownershipSessionId), handoffContext: spinOffContext, secretAccountIds,
   };
 
-  if (requestedEngine === "claude") {
+  if (sessionRequest.engine === "claude") {
     // The client sends the conversation-list summary id (`claude:<id>.jsonl`),
     // which never matches the bare run id, so resolve the id from the path.
-    const requestedClaudeId = requestedSessionPath ? claudeRunIdFromSessionPath(requestedSessionPath) : ownershipSessionId;
+    const requestedClaudeId = sessionRequest.sessionPath ? claudeRunIdFromSessionPath(sessionRequest.sessionPath) : ownershipSessionId;
     const active = activeClaudeConnections.get(claudeConnectionKey(project.id, requestedClaudeId));
     if (recovered) {
       connection = {
@@ -285,11 +309,11 @@ webSocketServer.on("connection", async (socket, request) => {
       connection = active;
     } else {
       connection.engine = "claude";
-      if (requestedSessionPath) {
+      if (sessionRequest.sessionPath) {
         try {
-          connection.claude.transcript = await loadClaudeMessages(requestedSessionPath);
-          connection.claude.contextUsage = await claudeSessionContextUsage(requestedSessionPath) ?? null;
-          connection.claude.filePath = path.resolve(requestedSessionPath.replace(/^claude:/, ""));
+          connection.claude.transcript = await loadClaudeMessages(sessionRequest.sessionPath);
+          connection.claude.contextUsage = await claudeSessionContextUsage(sessionRequest.sessionPath) ?? null;
+          connection.claude.filePath = path.resolve(sessionRequest.sessionPath.replace(/^claude:/, ""));
           connection.claude.sessionId = path.basename(connection.claude.filePath, ".jsonl");
           connection.claude.sessionName = listedSession?.title ?? null;
         } catch (error) {
@@ -298,17 +322,20 @@ webSocketServer.on("connection", async (socket, request) => {
       }
     }
     claudeClients.set(socket, connection);
+    const transcript = await conversationTranscriptPayload(project.id, "claude", connection.claude.sessionId, listedSessions, connection.claude.transcript);
     send(socket, {
       type: "ready",
       project,
       engine: "claude",
       sessionId: connection.claude.sessionId ?? "claude:new",
       sessionFile: connection.claude.filePath ? `claude:${connection.claude.filePath}` : null,
-      messages: connection.claude.transcript,
+      messages: transcript.messages,
+      conversationId: transcript.conversationId ?? connection.claude.sessionId ?? undefined,
+      ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}),
       status: claudeStatus(connection),
       ownership: foreignOwner,
       executionNodeId: local.id,
-      readOnly: task?.status === "done",
+      readOnly: conversationReadOnly,
     });
     // Replay the in-flight turn so a reconnecting client sees the text and tool
     // calls that streamed while its socket was down.
@@ -324,7 +351,7 @@ webSocketServer.on("connection", async (socket, request) => {
   } else {
     let sharedSession: SharedPiSession;
     try {
-      sharedSession = await getSharedSession(project.id, cwd, requestedSessionPath, ownershipSessionId, secretAccountIds);
+      sharedSession = await getSharedSession(project.id, cwd, sessionRequest.sessionPath, ownershipSessionId, secretAccountIds);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not start Pi session";
       send(socket, { type: "error", error: message });
@@ -334,17 +361,20 @@ webSocketServer.on("connection", async (socket, request) => {
 
     connection.shared = sharedSession;
     sharedSession.clients.add(socket);
+    const transcript = await conversationTranscriptPayload(project.id, "pi", sharedSession.handle.session.sessionId, listedSessions, simplifyMessages(sharedSession.handle.session.messages as unknown[]));
     send(socket, {
       type: "ready",
       project,
       engine: "pi",
       sessionId: sharedSession.handle.session.sessionId,
       sessionFile: sharedSession.handle.session.sessionFile,
-      messages: simplifyMessages(sharedSession.handle.session.messages as unknown[]),
+      messages: transcript.messages,
+      conversationId: transcript.conversationId ?? sharedSession.handle.session.sessionId,
+      ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}),
       status: getSessionStatus(sharedSession.handle.session, sharedSession.handle.safeguardsEnabled),
       ownership: foreignOwner,
       executionNodeId: local.id,
-      readOnly: task?.status === "done",
+      readOnly: conversationReadOnly,
     });
   }
 

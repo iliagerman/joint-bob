@@ -126,7 +126,7 @@ test("opening a conversation establishes its owner so the other node can see the
 
   // Every opened conversation runs the claim, not just brand-new ones.
   assert.doesNotMatch(server, /if \(!listedSession\) await claimConversationAcrossCluster/);
-  assert.match(server, /foreignOwner = await openConversationOwnership\(requestedEngine, ownershipSessionId, local\.id\)/);
+  assert.match(server, /foreignOwner = await openConversationOwnership\(sessionRequest\.engine, ownershipSessionId, local\.id\)/);
   // A claim that fails for a reason other than ownership must not block reading an existing conversation.
   assert.match(server, /if \(!listedSession\) \{[\s\S]*socket\.close\(1008, webSocketCloseReason\(message\)\);[\s\S]*return;[\s\S]*\}\s*console\.warn\("Conversation ownership claim failed on open"/);
 });
