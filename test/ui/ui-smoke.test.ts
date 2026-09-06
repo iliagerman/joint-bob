@@ -386,6 +386,21 @@ test("terminal-style split shortcuts open the picker from the active canvas pane
   await page.getByTestId("canvas-conversation-dialog").waitFor({ state: "visible" });
   assert.equal(await page.getByTestId("canvas-split-position").inputValue(), "below");
   await page.getByTestId("canvas-picker-cancel-button").click();
+
+  await activePane.locator("iframe").contentFrame().getByTestId("chat-message-input").click();
+  await page.keyboard.press("Control+Space");
+  await page.keyboard.press("x");
+  await page.getByTestId("confirm-dialog").waitFor({ state: "visible" });
+  await page.keyboard.press("n");
+  await page.getByTestId("confirm-dialog").waitFor({ state: "hidden" });
+  assert.equal(await activePane.count(), 1, "N keeps the active pane open");
+
+  await activePane.locator("iframe").contentFrame().getByTestId("chat-message-input").click();
+  await page.keyboard.press("Control+Space");
+  await page.keyboard.press("x");
+  await page.getByTestId("confirm-dialog").waitFor({ state: "visible" });
+  await page.keyboard.press("y");
+  await activePane.waitFor({ state: "detached" });
 });
 
 test("the canvas filters and arranges conversations by project", async () => {

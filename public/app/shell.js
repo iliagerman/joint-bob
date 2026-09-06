@@ -7,6 +7,12 @@ import { state } from "./state.js";
 // The app's own replacements for window.confirm / window.prompt. Both resolve
 // once the dialog closes: Escape, the backdrop and Cancel all mean "no".
 elements.confirmCancelButton.addEventListener("click", () => elements.confirmDialog.close("cancel"));
+elements.confirmDialog.addEventListener("keydown", (event) => {
+  if (event.metaKey || event.ctrlKey || event.altKey) return;
+  const key = event.key.toLowerCase();
+  if (key === "y") { event.preventDefault(); elements.confirmDialog.close("confirm"); }
+  if (key === "n") { event.preventDefault(); elements.confirmDialog.close("cancel"); }
+});
 elements.choiceCancelButton.addEventListener("click", () => elements.choiceDialog.close("cancel"));
 
 export function confirmAction({ title, message = "", eyebrow = "Confirm", confirmLabel = "Confirm", cancelLabel = "Cancel", destructive = false }) {

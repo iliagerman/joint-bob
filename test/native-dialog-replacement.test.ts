@@ -31,6 +31,7 @@ test("the app owns a themed confirm dialog wired to a promise helper", async () 
   assert.match(dialog, /type="submit" value="confirm" id="confirmAcceptButton"[^>]*data-testid="confirm-accept-button"/);
 
   assert.match(app, /elements\.confirmCancelButton\.addEventListener\("click", \(\) => elements\.confirmDialog\.close\("cancel"\)\)/);
+  assert.match(app, /confirmDialog\.addEventListener\("keydown",[\s\S]*?key === "y"[\s\S]*?key === "n"/);
   assert.match(app, /function confirmAction\(\{[\s\S]*?dialog\.showModal\(\)[\s\S]*?resolve\(dialog\.returnValue === "confirm"\)/);
   assert.match(styles, /\.primary\.destructive \{[^}]*background: var\(--danger\)/);
 });

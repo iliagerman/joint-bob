@@ -9,7 +9,7 @@ import { api, savePreferences } from "./app/api.js";
 import { initializeApplication, revealApplication } from "./app/auth.js";
 import { elements } from "./app/elements.js";
 import { setMobileView, toggleCanvasView } from "./app/layout.js";
-import { SERVICE_WORKER_UPDATE_MS, setTheme, syncNotifyButton, toast, updateInstallButton, updateServiceWorker } from "./app/shell.js";
+import { confirmAction, SERVICE_WORKER_UPDATE_MS, setTheme, syncNotifyButton, toast, updateInstallButton, updateServiceWorker } from "./app/shell.js";
 import { state } from "./app/state.js";
 import "./app/state.js";
 import "./app/elements.js";
@@ -80,6 +80,11 @@ if (state.canvasPaneMode) {
         parent.postMessage({ type: "canvasSplitShortcut", placement }, location.origin);
         return;
       }
+      if (event.code === "KeyX") {
+        event.preventDefault();
+        parent.postMessage({ type: "canvasCloseShortcut" }, location.origin);
+        return;
+      }
     }
     if (!canvasChordMatches({ modifiers: canvasModifiers }, event)) return;
     const binding = canvasKeyFromCode(event.code);
@@ -121,6 +126,7 @@ if (!state.canvasPaneMode) {
     },
     saveKeymap: (next) => savePreferences({ canvasKeymap: next }),
     toggleView: toggleCanvasView,
+    confirmAction,
     showMessage: (message) => toast(message, 8000),
   });
 }

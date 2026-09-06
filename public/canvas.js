@@ -25,7 +25,7 @@ const CANVAS_ROW_HEIGHT_STEP = 40;
 const CANVAS_ROW_SCROLL_EDGE = 80;
 const CANVAS_ROW_SCROLL_SPEED = 18;
 
-export function createConversationCanvas({ api, getProjects, saveLayout, saveKeymap, showMessage, toggleView }) {
+export function createConversationCanvas({ api, getProjects, saveLayout, saveKeymap, showMessage, toggleView, confirmAction }) {
   const root = document.querySelector("#canvasRoot");
   const dialog = document.querySelector("#canvasConversationDialog");
   const projectSelect = document.querySelector("#canvasProjectSelect");
@@ -595,7 +595,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
     return revealPane(paneId);
   }
 
-  function handleSplitShortcut(combination) {
+  function handleLeaderShortcut(combination) {
     if (!active) return false;
     if (isCanvasSplitLeader(combination)) {
       splitLeaderArmed = true;
@@ -604,10 +604,12 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
     if (!splitLeaderArmed) return false;
     if (isCanvasModifierKey(combination)) return false;
     splitLeaderArmed = false;
-    const placement = canvasSplitPlacement(combination);
     const targetPaneId = currentPaneId();
-    if (!placement || !targetPaneId) return false;
-    openPicker(targetPaneId, null, placement);
+    if (!targetPaneId) return false;
+    const placement = canvasSplitPlacement(combination);
+    if (placement) openPicker(targetPaneId, null, placement);
+    else if (combination.code === "KeyX") void confirmClosePane(targetPaneId);
+    else return false;
     return true;
   }
 
@@ -824,6 +826,19 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
     }
     commit({ ...next, focusedPaneId: null });
     if (active) render();
+  }
+
+  async function confirmClosePane(paneId) {
+    const pane = listCanvasPanes(layout).find((candidate) => candidate.id === paneId);
+    if (!pane) return;
+    const confirmed = await confirmAction({
+      eyebrow: "Close canvas pane",
+      title: `Close "${paneTitle(pane)}"?`,
+      message: "The conversation stays in its project and can be added to the canvas again.",
+      confirmLabel: "Yes (Y)",
+      cancelLabel: "No (N)",
+    });
+    if (confirmed) removePane(pane);
   }
 
   function removePane(pane) {
@@ -1124,7 +1139,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
     keymapStatus.textContent = "";
   });
   window.addEventListener("keydown", (event) => {
-    if (handleSplitShortcut(event) || handleShortcutCombination(event)) event.preventDefault();
+    if (handleLeaderShortcut(event) || handleShortcutCombination(event)) event.preventDefault();
   });
   // Same origin is not enough: any window on this origin could post these. Only the
   // frames this canvas created may press a shortcut or ask for the binding table.
@@ -1138,6 +1153,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, saveKey
     if (event.data?.type === "canvasSplitShortcut" && ["left", "below"].includes(event.data.placement)) {
       openPicker(paneId, null, event.data.placement);
     }
+    if (event.data?.type === "canvasCloseShortcut") void confirmClosePane(paneId);
     // A pane that just finished loading has no bindings yet.
     if (event.data?.type === "canvasPaneReady") publishBindings();
     // Knowing which pane the user last touched is what makes "the current one" real.

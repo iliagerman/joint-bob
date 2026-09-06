@@ -115,6 +115,8 @@ let failSessions = false;
 let storedShortcuts = [];
 const apiCalls = [];
 const viewToggles = [];
+let confirmClose = false;
+const confirmations = [];
 const controller = createConversationCanvas({
   api: async (path, options = {}) => {
     apiCalls.push(`${options.method || "GET"} ${path}`);
@@ -143,6 +145,7 @@ const controller = createConversationCanvas({
   saveKeymap: async (next) => { savedKeymaps.push(next); },
   showMessage: () => {},
   toggleView: () => { viewToggles.push("toggled"); },
+  confirmAction: async (options) => { confirmations.push(options); return confirmClose; },
 });
 
 const paneFor = (sessionId, sessionPath) => ({ kind: "pane", id: `pane-${sessionId}`, projectId: "p-one", sessionPath, sessionId, executionNodeId: null });
@@ -305,6 +308,36 @@ test("Ctrl+Space split shortcuts open the picker relative to the active pane", a
   assert.equal(registry.get("#canvasConversationDialog").open, true);
   assert.equal(registry.get("#canvasSplitPosition").value, "below");
   registry.get("#canvasConversationDialog").close();
+});
+
+test("Ctrl+Space X closes the active pane only after Y confirmation", async () => {
+  const root = registry.get("#canvasRoot");
+  let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
+  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "row");
+  controller.setLayout({ ...layout, focusedPaneId: null });
+  await controller.activate();
+
+  const frames = [];
+  walk2(root, frames);
+  for (const frame of frames) frame.contentWindow = { postMessage() {} };
+  windowListeners.get("message")({
+    origin: "http://canvas.test", source: frames[1].contentWindow, data: { type: "canvasPaneActive" },
+  });
+  const pressClose = () => {
+    windowListeners.get("keydown")({ code: "Space", key: " ", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false, preventDefault() {} });
+    windowListeners.get("keydown")({ code: "KeyX", key: "x", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, preventDefault() {} });
+  };
+
+  confirmClose = false;
+  pressClose();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.match(confirmations.at(-1).title, /Two/);
+  assert.equal(root.children.filter((element) => element.tagName === "section").length, 2, "N keeps the pane open");
+
+  confirmClose = true;
+  pressClose();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(listCanvasPanes(saved.at(-1)).map((pane) => pane.sessionId), ["s-one"], "Y closes the active pane");
 });
 
 test("the picker opens a pane on a brand-new conversation", async () => {
