@@ -271,11 +271,12 @@ export const passwordChangeSchema = z.object({
   currentPassword: z.string().min(1).max(200),
   newPassword: z.string().min(1).max(200),
 });
-const runtimeSettingsSchema = z.object({
+export const runtimeSettingsSchema = z.object({
   executable: z.string().max(1000),
   configPath: z.string().max(1000),
   sessionPath: z.string().max(1000),
-});
+}).strict();
+export const runtimeCheckSchema = z.object({ pi: runtimeSettingsSchema, claude: runtimeSettingsSchema }).strict();
 export const resourcePathsSchema = z.object({ skills: z.array(absolutePathSchema).max(20), prompts: z.array(absolutePathSchema).max(20), rules: z.array(absolutePathSchema).max(20), plugins: z.array(absolutePathSchema).max(20) }).strict();
 export const settingsSchema = z.object({
   pi: runtimeSettingsSchema,

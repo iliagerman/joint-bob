@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { accessSync, constants as fsConstants, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { accessSync, constants as fsConstants, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -130,9 +130,7 @@ function loopbackEndpoint(endpoint: string): boolean {
   }
 }
 
-function detectedExecutable(command: "pi" | "claude"): string {
-  const configured = value(`${command}.executable`);
-  if (configured) return configured;
+function detectedExecutable(command: string): string {
   for (const directory of (process.env.PATH ?? "").split(path.delimiter).filter(Boolean)) {
     const candidate = path.join(directory, command);
     try {
@@ -145,13 +143,21 @@ function detectedExecutable(command: "pi" | "claude"): string {
   return command;
 }
 
-function runtime(prefix: "pi" | "claude"): RuntimeSettings {
+function runtimeDefaults(prefix: "pi" | "claude"): RuntimeSettings {
   const configPath = prefix === "pi" ? path.join(os.homedir(), ".pi", "agent") : path.join(os.homedir(), ".claude");
-  const sessionPath = prefix === "pi" ? path.join(configPath, "sessions") : path.join(configPath, "projects");
+  return { executable: detectedExecutable(prefix), configPath, sessionPath: path.join(configPath, prefix === "pi" ? "sessions" : "projects") };
+}
+
+export function getRuntimeDefaults(): { pi: RuntimeSettings; claude: RuntimeSettings } {
+  return { pi: runtimeDefaults("pi"), claude: runtimeDefaults("claude") };
+}
+
+function runtime(prefix: "pi" | "claude"): RuntimeSettings {
+  const defaults = runtimeDefaults(prefix);
   return {
-    executable: detectedExecutable(prefix),
-    configPath: value(`${prefix}.configPath`) || configPath,
-    sessionPath: value(`${prefix}.sessionPath`) || sessionPath,
+    executable: value(`${prefix}.executable`) || defaults.executable,
+    configPath: value(`${prefix}.configPath`) || defaults.configPath,
+    sessionPath: value(`${prefix}.sessionPath`) || defaults.sessionPath,
   };
 }
 
@@ -211,18 +217,74 @@ export function getSettings(): SettingsResponse {
   };
 }
 
+function isInside(parent: string, child: string): boolean {
+  const relative = path.relative(path.resolve(parent), path.resolve(child));
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
+}
+
+function isTemporaryPath(candidate: string): boolean {
+  const roots = [os.tmpdir(), ...(process.platform === "win32" ? [] : ["/tmp", "/private/tmp"])];
+  return roots.some((root) => isInside(root, candidate));
+}
+
+function validateRuntimePath(label: "Pi" | "Claude", field: "config" | "session", input: string, defaultPath: string): void {
+  if (!input) return;
+  if (!path.isAbsolute(input)) throw new Error(`${label} ${field} path must be blank or absolute`);
+  const resolved = path.resolve(input);
+  if (resolved !== path.resolve(defaultPath) && isTemporaryPath(resolved) && !isTemporaryPath(dataDir)) throw new Error(`${label} ${field} path must not be under the OS temporary directory`);
+  if (/^\/(Users|home)\/[^/]+(?:\/|$)/.test(resolved) && !isInside(os.homedir(), resolved)) throw new Error(`${label} ${field} path must be under the current home directory`);
+}
+
 function validateRuntimeSettings(label: "Pi" | "Claude", settings: RuntimeSettings): void {
-  if (settings.configPath && !path.isAbsolute(settings.configPath)) throw new Error(`${label} config path must be blank or absolute`);
-  if (settings.sessionPath && !path.isAbsolute(settings.sessionPath)) throw new Error(`${label} session path must be blank or absolute`);
-  if (settings.executable && (settings.executable.includes("/") || settings.executable.includes("\\")) && !path.isAbsolute(settings.executable)) {
-    throw new Error(`${label} executable must be a command name or absolute path`);
+  const defaults = runtimeDefaults(label === "Pi" ? "pi" : "claude");
+  validateRuntimePath(label, "config", settings.configPath, defaults.configPath);
+  validateRuntimePath(label, "session", settings.sessionPath, defaults.sessionPath);
+  if (settings.executable && (settings.executable.includes("/") || settings.executable.includes("\\")) && !path.isAbsolute(settings.executable)) throw new Error(`${label} executable must be a command name or absolute path`);
+}
+
+function validateSessionRoots(pi: RuntimeSettings, claude: RuntimeSettings): void {
+  if (pi.sessionPath && claude.sessionPath && (isInside(pi.sessionPath, claude.sessionPath) || isInside(claude.sessionPath, pi.sessionPath))) throw new Error("Pi and Claude session paths must not overlap");
+}
+
+export interface RuntimeReadiness { executable: RuntimeFieldReadiness; configPath: RuntimeFieldReadiness; sessionPath: RuntimeFieldReadiness; }
+export interface RuntimeFieldReadiness { ok: boolean; message: string; }
+
+function unavailable(error: unknown): boolean { return ["EACCES", "ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? ""); }
+
+function checkDirectory(value: string, writable: boolean): RuntimeFieldReadiness {
+  if (!value) return { ok: true, message: "Blank (uses node default)" };
+  try {
+    if (!statSync(value).isDirectory()) return { ok: false, message: "Path is not a directory" };
+    accessSync(value, fsConstants.R_OK | (writable ? fsConstants.W_OK : 0));
+    return { ok: true, message: "Ready" };
+  } catch (error) {
+    if (unavailable(error)) return { ok: false, message: "Directory is unavailable" };
+    throw error;
   }
+}
+
+function checkExecutable(value: string): RuntimeFieldReadiness {
+  if (!value) return { ok: true, message: "Blank (uses node default)" };
+  const executable = path.isAbsolute(value) ? value : detectedExecutable(value);
+  try { accessSync(executable, fsConstants.X_OK); return { ok: true, message: "Ready" }; } catch (error) {
+    if (unavailable(error)) return { ok: false, message: "Executable is unavailable" };
+    throw error;
+  }
+}
+
+function checkRuntime(settings: RuntimeSettings): RuntimeReadiness {
+  return { executable: checkExecutable(settings.executable), configPath: checkDirectory(settings.configPath, false), sessionPath: checkDirectory(settings.sessionPath, true) };
+}
+
+export function checkRuntimeSettings(input: { pi: RuntimeSettings; claude: RuntimeSettings }): { pi: RuntimeReadiness; claude: RuntimeReadiness } {
+  return { pi: checkRuntime(input.pi), claude: checkRuntime(input.claude) };
 }
 
 export function updateSettings(input: SettingsInput, actorId?: string): SettingsResponse {
   if (!loopbackEndpoint(input.syncthing.endpoint)) throw new Error("Syncthing endpoint must use a loopback host");
   validateRuntimeSettings("Pi", input.pi);
   validateRuntimeSettings("Claude", input.claude);
+  validateSessionRoots(input.pi, input.claude);
   const db = settingsDatabase();
   const previous = getSettings();
   const homePath = input.projects?.homePath ?? previous.projects.homePath;

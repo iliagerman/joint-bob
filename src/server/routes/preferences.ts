@@ -8,7 +8,7 @@ import { harnessForSessionPath, listHarnessSessions } from "../../harnesses.js";
 import { ensureManagedHome } from "../../managed-home.js";
 import { getUserPreferences, migrateLegacyCanvasLayout, normalizeCanvasKeymapPreference, normalizeCanvasLayoutPreference, readLegacyRecentSessions, type RecentSession, updateUserPreferences, type UserPreferences } from "../../preferences.js";
 import { listUserRecentSessions, migrateLegacyRecentSessions, removeUserRecentSession, setUserRecentSession, type SyncedRecentSession } from "../../recent-sessions.js";
-import { getProjectResourcePaths, getSettings, updateProjectResourcePaths, updateSettings } from "../../settings.js";
+import { checkRuntimeSettings, getProjectResourcePaths, getRuntimeDefaults, getSettings, updateProjectResourcePaths, updateSettings } from "../../settings.js";
 import { getProject, listWorkspaces } from "../../store.js";
 import { resetSyncthingConnection } from "../../syncthing.js";
 import { listTasks } from "../../tasks.js";
@@ -17,7 +17,7 @@ import { listUserPins, setUserPin } from "../../user-pins.js";
 import { assertManagedHomeChangeAllowed } from "../cluster-helpers.js";
 import { sendError } from "../http-auth.js";
 import { broadcastToAllClients } from "../realtime.js";
-import { auditQuerySchema, recentSessionIdentitySchema, recentSessionSchema, registeredHarnessIdSchema, resourcePathsSchema, settingsSchema, userPinSchema, userPreferencesSchema } from "../schemas.js";
+import { auditQuerySchema, recentSessionIdentitySchema, recentSessionSchema, registeredHarnessIdSchema, resourcePathsSchema, runtimeCheckSchema, settingsSchema, userPinSchema, userPreferencesSchema } from "../schemas.js";
 import { app } from "../state.js";
 
 app.get("/api/preferences", (_request, response) => {
@@ -231,6 +231,19 @@ app.get("/api/settings", (_request, response) => {
   response.json(getSettings());
 });
 
+app.get("/api/settings/runtime-defaults", (_request, response) => {
+  response.json(getRuntimeDefaults());
+});
+
+app.post("/api/settings/runtime-check", (request, response, next) => {
+  try {
+    response.json(checkRuntimeSettings(runtimeCheckSchema.parse(request.body)));
+  } catch (error) {
+    if (error instanceof z.ZodError) { sendError(response, 400, error.errors.map((issue) => issue.message).join(", ")); return; }
+    next(error);
+  }
+});
+
 app.put("/api/settings", async (request, response, next) => {
   try {
     const session = response.locals.authSession as AuthSession;
@@ -251,6 +264,8 @@ app.put("/api/settings", async (request, response, next) => {
       error.message === "Syncthing endpoint must use a loopback host" ||
       error.message === "Joint Bob home folder must be absolute" ||
       /^(Pi|Claude) (config path|session path) must be blank or absolute$/.test(error.message) ||
+      /^(Pi|Claude) (config|session) path must (not be under the OS temporary directory|be under the current home directory)$/.test(error.message) ||
+      error.message === "Pi and Claude session paths must not overlap" ||
       /^(Pi|Claude) executable must be a command name or absolute path$/.test(error.message) ||
       error.message.includes("Resource paths") || error.message.includes("resource paths")
     )) {

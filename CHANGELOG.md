@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Engine settings now show detected node defaults and validate custom paths before you save
 - Claude session titles now show your actual prompt intent instead of framework scaffolding and account headers
 - Terminal-style shortcuts now close canvas panes using Ctrl+Space followed by X with Y/N confirmation
 - Terminal-style split shortcuts now open canvas panes left or below using Ctrl+Space followed by \ or -

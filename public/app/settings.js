@@ -76,13 +76,27 @@ function selectSettingsTab(name) {
   for (const panel of elements.settingsPanels) panel.hidden = panel.id !== `settingsPanel-${name}`;
 }
 
+let runtimeDefaults;
+let clearRuntimeOverridesOnSave = false;
 const globalResourceFields = { skills: elements.settingsResourceSkillsPaths, prompts: elements.settingsResourcePromptsPaths, rules: elements.settingsResourceRulesPaths, plugins: elements.settingsResourcePluginsPaths };
+const runtimeFields = { pi: { executable: elements.settingsPiExecutable, configPath: elements.settingsPiConfigPath, sessionPath: elements.settingsPiSessionPath }, claude: { executable: elements.settingsClaudeExecutable, configPath: elements.settingsClaudeConfigPath, sessionPath: elements.settingsClaudeSessionPath } };
+const runtimeLabels = { pi: { executable: "Pi executable", configPath: "Pi config path", sessionPath: "Pi session path" }, claude: { executable: "Claude executable", configPath: "Claude config path", sessionPath: "Claude session path" } };
+
+function runtimeFieldsValue() { return Object.fromEntries(Object.entries(runtimeFields).map(([engine, fields]) => [engine, Object.fromEntries(Object.entries(fields).map(([field, input]) => [field, input.value.trim()]))])); }
+function blankRuntimePayload() { return { pi: { executable: "", configPath: "", sessionPath: "" }, claude: { executable: "", configPath: "", sessionPath: "" } }; }
+function fillRuntimeFields(values) { for (const [engine, fields] of Object.entries(runtimeFields)) for (const [field, input] of Object.entries(fields)) input.value = values[engine][field]; }
+function renderRuntimeDefaults(defaults) { elements.settingsRuntimeDefaults.textContent = `Node defaults — Pi: ${defaults.pi.executable}; ${defaults.pi.configPath}; ${defaults.pi.sessionPath}. Claude: ${defaults.claude.executable}; ${defaults.claude.configPath}; ${defaults.claude.sessionPath}.`; }
+function renderRuntimeReadiness(readiness) { elements.settingsRuntimeStatus.textContent = Object.entries(readiness).flatMap(([engine, fields]) => Object.entries(fields).map(([field, result]) => `${runtimeLabels[engine][field]}: ${result.ok ? "ready" : result.message}`)).join(". "); }
+async function checkRuntimePaths() { const readiness = await api("/api/settings/runtime-check", { method: "POST", body: JSON.stringify(runtimeFieldsValue()) }); renderRuntimeReadiness(readiness); return readiness; }
+function invalidRuntimeOverrides(readiness, values) { return Object.entries(readiness).flatMap(([engine, fields]) => Object.entries(fields).filter(([field, result]) => !result.ok && values[engine][field] !== runtimeDefaults[engine][field]).map(([field]) => runtimeLabels[engine][field])); }
 export const projectResourceFields = { skills: elements.projectResourceSkillsPaths, prompts: elements.projectResourcePromptsPaths, rules: elements.projectResourceRulesPaths, plugins: elements.projectResourcePluginsPaths };
 export function fillResourceFields(fields, resources) { for (const [type, field] of Object.entries(fields)) field.value = (resources[type] || []).join("\n"); }
 export function resourceFieldsValue(fields) { return Object.fromEntries(Object.entries(fields).map(([type, field]) => [type, field.value.split("\n").map((line) => line.trim()).filter(Boolean)])); }
 
 export async function openSettings(tab = "account") {
-  const [settings, authSessions] = await Promise.all([api("/api/settings"), api("/api/auth/sessions"), loadSecretAccounts(), loadChangelogPanel()]);
+  const [settings, authSessions, defaults] = await Promise.all([api("/api/settings"), api("/api/auth/sessions"), api("/api/settings/runtime-defaults"), loadSecretAccounts(), loadChangelogPanel()]);
+  runtimeDefaults = defaults;
+  clearRuntimeOverridesOnSave = false;
   elements.settingsUsername.textContent = state.username;
   selectSettingsTab(tab);
   await loadClusterPanel();
@@ -91,12 +105,10 @@ export async function openSettings(tab = "account") {
   elements.settingsRestartMessage.hidden = true;
   elements.settingsRestartMessage.textContent = "";
   elements.settingsProjectHome.value = settings.projects.homePath;
-  elements.settingsPiExecutable.value = settings.pi.executable;
-  elements.settingsPiConfigPath.value = settings.pi.configPath;
-  elements.settingsPiSessionPath.value = settings.pi.sessionPath;
-  elements.settingsClaudeExecutable.value = settings.claude.executable;
-  elements.settingsClaudeConfigPath.value = settings.claude.configPath;
-  elements.settingsClaudeSessionPath.value = settings.claude.sessionPath;
+  fillRuntimeFields(settings);
+  renderRuntimeDefaults(defaults);
+  elements.settingsRuntimeOverrides.open = false;
+  elements.settingsRuntimeStatus.textContent = "";
   fillResourceFields(globalResourceFields, settings.resources);
   state.syncthingEndpoint = settings.syncthing.endpoint;
   elements.completionSoundSelect.value = state.completionSound;
@@ -106,11 +118,15 @@ export async function openSettings(tab = "account") {
 
 async function saveSettings(event) {
   event.preventDefault();
+  const displayedRuntime = runtimeFieldsValue();
+  const invalid = invalidRuntimeOverrides(await checkRuntimePaths(), displayedRuntime);
+  const runtime = clearRuntimeOverridesOnSave ? blankRuntimePayload() : displayedRuntime;
+  if (invalid.length) throw new Error(`Fix unavailable custom paths: ${invalid.join(", ")}`);
   const saved = await api("/api/settings", {
     method: "PUT",
     body: JSON.stringify({
-      pi: { executable: elements.settingsPiExecutable.value.trim(), configPath: elements.settingsPiConfigPath.value.trim(), sessionPath: elements.settingsPiSessionPath.value.trim() },
-      claude: { executable: elements.settingsClaudeExecutable.value.trim(), configPath: elements.settingsClaudeConfigPath.value.trim(), sessionPath: elements.settingsClaudeSessionPath.value.trim() },
+      pi: runtime.pi,
+      claude: runtime.claude,
       syncthing: { endpoint: state.syncthingEndpoint },
       projects: { homePath: elements.settingsProjectHome.value.trim() },
       resources: resourceFieldsValue(globalResourceFields),
@@ -127,6 +143,13 @@ async function saveSettings(event) {
 }
 
 elements.settingsButton.addEventListener("click", () => openSettings().catch((error) => toast(error.message)));
+elements.settingsUseRuntimeDefaultsButton.addEventListener("click", () => {
+  clearRuntimeOverridesOnSave = true;
+  fillRuntimeFields(runtimeDefaults);
+  checkRuntimePaths().catch((error) => toast(error.message));
+});
+for (const fields of Object.values(runtimeFields)) for (const input of Object.values(fields)) input.addEventListener("input", () => { clearRuntimeOverridesOnSave = false; });
+elements.settingsCheckRuntimePathsButton.addEventListener("click", () => checkRuntimePaths().catch((error) => toast(error.message)));
 for (const tab of elements.settingsTabs) {
   tab.addEventListener("click", () => selectSettingsTab(tab.dataset.settingsTab));
   tab.addEventListener("keydown", (event) => {

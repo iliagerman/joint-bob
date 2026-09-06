@@ -77,10 +77,43 @@ test("signing in through the login form reaches the app and the session survives
   assert.equal(await page.locator("#loginDialog[open]").count(), 0, "reload stays signed in");
 });
 
+test("engine path onboarding keeps overrides advanced and restores node defaults", async () => {
+  await page.getByTestId("settings-open-button").click();
+  await page.getByTestId("settings-tab-engines").click();
+  const overrides = page.locator("#settingsRuntimeOverrides");
+  assert.equal(await overrides.getAttribute("open"), null, "advanced overrides start collapsed");
+  assert.match(await page.getByTestId("settings-runtime-defaults").innerText(), /Node defaults.*Pi:.*Claude:/);
+  await overrides.locator("summary").click();
+  const piExecutable = page.getByTestId("settings-pi-executable-input");
+  const defaultExecutable = await piExecutable.inputValue();
+  await piExecutable.fill("custom-pi");
+  await page.getByTestId("settings-use-runtime-defaults-button").click();
+  assert.equal(await piExecutable.inputValue(), defaultExecutable, "reset restores the node default");
+  await page.getByTestId("settings-check-runtime-paths-button").click();
+  await page.getByTestId("settings-runtime-status").getByText(/Pi executable:.*Claude session path:/).waitFor();
+  await page.getByTestId("settings-save-button").click();
+  const restartMessage = page.locator("#settingsRestartMessage");
+  await restartMessage.waitFor({ state: "visible" });
+  assert.match(await restartMessage.innerText(), /restart required/i);
+  await page.getByTestId("settings-cancel-button").click();
+  await page.getByTestId("settings-dialog").waitFor({ state: "hidden" });
+  const database = new DatabaseSync(path.join(node.dataDir, "node.db"));
+  try {
+    const rows = database.prepare("SELECT value FROM node_settings WHERE key IN ('pi.executable', 'pi.configPath', 'pi.sessionPath', 'claude.executable', 'claude.configPath', 'claude.sessionPath')").all() as Array<{ value: string }>;
+    assert.ok(rows.every((row) => row.value === ""), "reset saves only blank runtime overrides");
+  } finally {
+    database.close();
+  }
+  await page.getByTestId("settings-open-button").click();
+  await page.getByTestId("settings-tab-engines").click();
+  assert.equal(await piExecutable.inputValue(), defaultExecutable, "blank overrides keep the effective node default");
+  await page.getByTestId("settings-cancel-button").click();
+});
+
 test("resource path fields save and reload in Settings", async () => {
   await page.getByTestId("settings-open-button").click();
   await page.getByTestId("settings-tab-resources").click();
-  const values = { skills: "/tmp/global-skills", prompts: "/tmp/global-prompts", rules: "/tmp/global-rules", plugins: "/tmp/global-plugins" };
+  const values = { skills: "/tmp/global-skills\n/tmp/global-skills-second", prompts: "/tmp/global-prompts", rules: "/tmp/global-rules", plugins: "/tmp/global-plugins" };
   await page.getByTestId("settings-resource-skills-paths").fill(values.skills);
   await page.getByTestId("settings-resource-prompts-paths").fill(values.prompts);
   await page.getByTestId("settings-resource-rules-paths").fill(values.rules);

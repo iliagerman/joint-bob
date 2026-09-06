@@ -533,23 +533,26 @@
         </section>
 
         <section class="settings-panel" id="settingsPanel-engines" role="tabpanel" aria-labelledby="settingsTab-engines" tabindex="0" hidden>
-          <p>Engine paths are detected automatically. Edit these only to override a non-standard installation. Shareable configuration and sessions synchronize; authentication and credential-bearing settings stay node-local.</p>
-          <fieldset class="phase-settings">
-            <legend>Pi</legend>
-            <label>Executable<input id="settingsPiExecutable" autocomplete="off" data-testid="settings-pi-executable-input" /></label>
-            <label>Config path<input id="settingsPiConfigPath" autocomplete="off" data-testid="settings-pi-config-input" /></label>
-            <label>Session path<input id="settingsPiSessionPath" autocomplete="off" data-testid="settings-pi-session-input" /></label>
-          </fieldset>
-          <fieldset class="phase-settings">
-            <legend>Claude</legend>
-            <label>Executable<input id="settingsClaudeExecutable" autocomplete="off" data-testid="settings-claude-executable-input" /></label>
-            <label>Config path<input id="settingsClaudeConfigPath" autocomplete="off" data-testid="settings-claude-config-input" /></label>
-            <label>Session path<input id="settingsClaudeSessionPath" autocomplete="off" data-testid="settings-claude-session-input" /></label>
-          </fieldset>
+          <p>Engine paths are detected automatically for this node. Do not copy paths from another machine.</p>
+          <output class="engine-defaults" id="settingsRuntimeDefaults" data-testid="settings-runtime-defaults"></output>
+          <div class="engine-actions"><button class="ghost" id="settingsUseRuntimeDefaultsButton" type="button" data-testid="settings-use-runtime-defaults-button">Use node defaults</button><button class="ghost" id="settingsCheckRuntimePathsButton" type="button" data-testid="settings-check-runtime-paths-button">Check paths</button></div>
+          <p class="engine-readiness" id="settingsRuntimeStatus" role="status" aria-live="polite" data-testid="settings-runtime-status"></p>
+          <details class="engine-overrides" id="settingsRuntimeOverrides"><summary>Advanced path overrides</summary>
+            <fieldset class="phase-settings"><legend>Pi</legend>
+              <label>Executable<input id="settingsPiExecutable" autocomplete="off" data-testid="settings-pi-executable-input" /></label>
+              <label>Node-local config and auth path<input id="settingsPiConfigPath" autocomplete="off" data-testid="settings-pi-config-input" /></label>
+              <label>Synchronized transcript/session root<input id="settingsPiSessionPath" autocomplete="off" data-testid="settings-pi-session-input" /></label>
+            </fieldset>
+            <fieldset class="phase-settings"><legend>Claude</legend>
+              <label>Executable<input id="settingsClaudeExecutable" autocomplete="off" data-testid="settings-claude-executable-input" /></label>
+              <label>Node-local config and auth path<input id="settingsClaudeConfigPath" autocomplete="off" data-testid="settings-claude-config-input" /></label>
+              <label>Synchronized transcript/session root<input id="settingsClaudeSessionPath" autocomplete="off" data-testid="settings-claude-session-input" /></label>
+            </fieldset>
+          </details>
         </section>
 
         <section class="settings-panel" id="settingsPanel-resources" role="tabpanel" aria-labelledby="settingsTab-resources" tabindex="0" hidden>
-          <p>Additional to managed and native defaults. One absolute file or directory path per line. These apply to new sessions.</p>
+          <p>Additional to managed and native defaults. Enter one absolute file or folder per line; replace lines or add multiple folders (up to 20) per type. Project-scoped folders are additional and more specific than these global lists.</p>
           <label>Skills<textarea class="resource-paths-input" id="settingsResourceSkillsPaths" data-testid="settings-resource-skills-paths"></textarea></label>
           <label>Prompts<textarea class="resource-paths-input" id="settingsResourcePromptsPaths" data-testid="settings-resource-prompts-paths"></textarea></label>
           <label>Rules<textarea class="resource-paths-input" id="settingsResourceRulesPaths" data-testid="settings-resource-rules-paths"></textarea></label>

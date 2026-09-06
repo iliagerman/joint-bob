@@ -67,17 +67,50 @@ console.log(JSON.stringify({ type: "system", subtype: "init", session_id: "fixtu
     assert.equal((await defaultConfigRun.done).ok, true);
     assert.equal(await readFile(markerPath, "utf8"), "");
 
+    await Promise.all([mkdir(piConfigRoot, { recursive: true }), mkdir(piSessionRoot, { recursive: true }), mkdir(configRoot, { recursive: true }), mkdir(sessionRoot, { recursive: true })]);
     const validInput = {
-      pi: { executable: "pi", configPath: piConfigRoot, sessionPath: piSessionRoot },
+      pi: { executable: "missing-pi", configPath: piConfigRoot, sessionPath: piSessionRoot },
       claude: { executable: executablePath, configPath: configRoot, sessionPath: sessionRoot },
       syncthing: { endpoint: "" },
     };
     assert.throws(() => settings.updateSettings({ ...validInput, pi: { ...validInput.pi, configPath: "relative" } }), /Pi config path must be blank or absolute/);
     assert.throws(() => settings.updateSettings({ ...validInput, claude: { ...validInput.claude, sessionPath: "relative" } }), /Claude session path must be blank or absolute/);
     assert.throws(() => settings.updateSettings({ ...validInput, claude: { ...validInput.claude, executable: "bin/claude" } }), /Claude executable must be a command name or absolute path/);
+    assert.throws(() => settings.updateSettings({ ...validInput, claude: { ...validInput.claude, sessionPath: piSessionRoot } }), /Pi and Claude session paths must not overlap/);
+    assert.doesNotThrow(() => settings.updateSettings(validInput), "paths nested in the configured data directory are accepted");
+    const foreignHome = "/home/another-user/.claude";
+    if (path.isAbsolute(foreignHome) && path.relative(foreignHome, os.homedir()).startsWith("..")) {
+      assert.throws(() => settings.updateSettings({ ...validInput, claude: { ...validInput.claude, configPath: foreignHome } }), /Claude config path must be under the current home directory/);
+    }
+    const readiness = settings.checkRuntimeSettings({ pi: validInput.pi, claude: validInput.claude });
+    assert.equal(readiness.pi.configPath.ok, true);
+    assert.equal(readiness.claude.sessionPath.ok, true);
+    assert.equal(readiness.pi.executable.ok, false, "missing executable is reported without creating it");
   } finally {
     if (previousDataDir === undefined) delete process.env.PI_WEB_DATA_DIR;
     else process.env.PI_WEB_DATA_DIR = previousDataDir;
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("runtime paths under OS temp are rejected when Joint Bob data is not temporary", async () => {
+  const dataDir = await mkdtemp(path.join(process.cwd(), "joint-bob-runtime-settings-"));
+  const temporaryRuntimePath = await mkdtemp(path.join(os.tmpdir(), "joint-bob-runtime-config-"));
+  const previousDataDir = process.env.PI_WEB_DATA_DIR;
+  process.env.PI_WEB_DATA_DIR = dataDir;
+  try {
+    const settings = await import(`../src/settings.js?runtime-temp-guard=${Date.now()}-${Math.random()}`);
+    assert.throws(() => settings.updateSettings({
+      pi: { executable: "pi", configPath: temporaryRuntimePath, sessionPath: "" },
+      claude: { executable: "claude", configPath: "", sessionPath: "" },
+      syncthing: { endpoint: "" },
+    }), /Pi config path must not be under the OS temporary directory/);
+  } finally {
+    if (previousDataDir === undefined) delete process.env.PI_WEB_DATA_DIR;
+    else process.env.PI_WEB_DATA_DIR = previousDataDir;
+    await Promise.all([
+      rm(dataDir, { recursive: true, force: true }),
+      rm(temporaryRuntimePath, { recursive: true, force: true }),
+    ]);
   }
 });

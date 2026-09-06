@@ -44,12 +44,22 @@ test("settings API persists runtime and Syncthing choices without returning secr
   try {
     node = await startNode(root);
     const headers = await authenticatedHeaders(node.baseUrl);
+    const piRuntime = { configPath: path.join(root, "pi-config"), sessionPath: path.join(root, "pi-sessions") };
+    const claudeRuntime = { configPath: path.join(root, "claude-config"), sessionPath: path.join(root, "claude-sessions") };
+    const defaults = await fetch(`${node.baseUrl}/api/settings/runtime-defaults`, { headers });
+    assert.equal(defaults.status, 200);
+    const checked = await fetch(`${node.baseUrl}/api/settings/runtime-check`, {
+      method: "POST", headers,
+      body: JSON.stringify({ pi: { executable: "missing-pi", configPath: path.join(root, "missing"), sessionPath: path.join(root, "missing") }, claude: { executable: "claude", configPath: "", sessionPath: "" } }),
+    });
+    assert.equal(checked.status, 200);
+    assert.equal((await checked.json()).pi.configPath.ok, false, "missing config folder is reported");
     const saved = await fetch(`${node.baseUrl}/api/settings`, {
       method: "PUT",
       headers,
       body: JSON.stringify({
-        pi: { executable: "/usr/local/bin/pi", configPath: "/tmp/pi-config", sessionPath: "/tmp/pi-sessions" },
-        claude: { executable: "/usr/local/bin/claude", configPath: "/tmp/claude-config", sessionPath: "/tmp/claude-sessions" },
+        pi: { executable: "/usr/local/bin/pi", ...piRuntime },
+        claude: { executable: "/usr/local/bin/claude", ...claudeRuntime },
         syncthing: { endpoint: "http://127.0.0.1:8384", apiKey: "secret-api-key" },
         projects: { homePath: path.join(root, "JointBob") },
         resources: { skills: [path.join(root, "skills"), path.join(root, "skills")], prompts: [path.join(root, "prompts")], rules: [path.join(root, "rules")], plugins: [path.join(root, "plugins")] },
@@ -57,8 +67,8 @@ test("settings API persists runtime and Syncthing choices without returning secr
     });
     assert.equal(saved.status, 200);
     assert.deepEqual(await saved.json(), {
-      pi: { executable: "/usr/local/bin/pi", configPath: "/tmp/pi-config", sessionPath: "/tmp/pi-sessions" },
-      claude: { executable: "/usr/local/bin/claude", configPath: "/tmp/claude-config", sessionPath: "/tmp/claude-sessions" },
+      pi: { executable: "/usr/local/bin/pi", ...piRuntime },
+      claude: { executable: "/usr/local/bin/claude", ...claudeRuntime },
       syncthing: { endpoint: "http://127.0.0.1:8384", apiKeyConfigured: true },
       projects: { homePath: path.join(root, "JointBob") },
       resources: { skills: [path.join(root, "skills")], prompts: [path.join(root, "prompts")], rules: [path.join(root, "rules")], plugins: [path.join(root, "plugins")] },
@@ -68,8 +78,8 @@ test("settings API persists runtime and Syncthing choices without returning secr
     const read = await fetch(`${node.baseUrl}/api/settings`, { headers });
     assert.equal(read.status, 200);
     assert.deepEqual(await read.json(), {
-      pi: { executable: "/usr/local/bin/pi", configPath: "/tmp/pi-config", sessionPath: "/tmp/pi-sessions" },
-      claude: { executable: "/usr/local/bin/claude", configPath: "/tmp/claude-config", sessionPath: "/tmp/claude-sessions" },
+      pi: { executable: "/usr/local/bin/pi", ...piRuntime },
+      claude: { executable: "/usr/local/bin/claude", ...claudeRuntime },
       syncthing: { endpoint: "http://127.0.0.1:8384", apiKeyConfigured: true },
       projects: { homePath: path.join(root, "JointBob") },
       resources: { skills: [path.join(root, "skills")], prompts: [path.join(root, "prompts")], rules: [path.join(root, "rules")], plugins: [path.join(root, "plugins")] },
@@ -80,8 +90,8 @@ test("settings API persists runtime and Syncthing choices without returning secr
       method: "PUT",
       headers,
       body: JSON.stringify({
-        pi: { executable: "/usr/local/bin/pi", configPath: "/tmp/pi-config", sessionPath: "/tmp/pi-sessions" },
-        claude: { executable: "/usr/local/bin/claude", configPath: "/tmp/claude-config", sessionPath: "/tmp/claude-sessions" },
+        pi: { executable: "/usr/local/bin/pi", ...piRuntime },
+        claude: { executable: "/usr/local/bin/claude", ...claudeRuntime },
         syncthing: { endpoint: "http://127.0.0.1:8384" },
         projects: { homePath: path.join(root, "JointBob") },
       }),
@@ -140,6 +150,13 @@ test("settings API persists runtime and Syncthing choices without returning secr
     });
     assert.equal(relativeHomeFolder.status, 400);
     assert.deepEqual(await relativeHomeFolder.json(), { error: "Joint Bob home folder must be absolute" });
+
+    const overlappingSessions = await fetch(`${node.baseUrl}/api/settings`, {
+      method: "PUT", headers,
+      body: JSON.stringify({ pi: { executable: "", configPath: "", sessionPath: path.join(root, "sessions") }, claude: { executable: "", configPath: "", sessionPath: path.join(root, "sessions", "claude") }, syncthing: { endpoint: "" } }),
+    });
+    assert.equal(overlappingSessions.status, 400);
+    assert.match((await overlappingSessions.json() as { error: string }).error, /must not overlap/);
   } finally {
     if (node) await node.close();
     if (previousDataDir === undefined) delete process.env.PI_WEB_DATA_DIR;

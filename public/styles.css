@@ -2318,3 +2318,9 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
   color: var(--danger, #b3261e);
   margin: 0;
 }
+
+.engine-defaults, .engine-readiness { display: block; color: var(--muted); font-family: var(--mono); font-size: 11px; line-height: 1.5; }
+.engine-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.engine-overrides { display: grid; gap: 10px; }
+.engine-overrides summary { cursor: pointer; color: var(--text); font-weight: 600; }
+.engine-overrides[open] summary { margin-bottom: 2px; }
