@@ -1,29 +1,40 @@
-import { createClusterInvitation, createClusterPeer, getClusterMachineToken, getClusterMembership, getClusterNode, getClusterPeer, listClusterPeers, markClusterPeerSeen, mergeClusterMembership, saveClusterPeer, updateClusterNode } from "../../cluster.js";
+import { assertClusterDepartureAllowed, clusterProjectGrantFor, createClusterInvitation, createClusterPeer, getClusterMachineToken, getClusterMembership, getClusterNode, getClusterPeer, leaveCluster, listClusterPeers, markClusterPeerSeen, mergeClusterMembership, removeClusterPeer, saveClusterPeer, setClusterInviter, updateClusterNode } from "../../cluster.js";
 import { getConversationOwnership, takeConversationOwnership } from "../../conversation-ownership.js";
 import { applyRuntimeLeaseSnapshot, conversationRuntimeDatabase, type RuntimeLeaseInput } from "../../conversation-runtime.js";
 import { receiveReplicationBatch, type ReplicationBatch } from "../../replication.js";
 import { receiveSecretCredentialEvents, type SecretCredentialEvent } from "../../secret-replication.js";
 import { getSettings } from "../../settings.js";
-import { getProject, listProjects, projectAliasIds, updateProjectSyncFolderId } from "../../store.js";
+import { canonicalProjectId, getProject, listProjects, projectAliasIds, updateProjectSyncFolderId } from "../../store.js";
 import { syncthingDeviceId, syncthingFolderIdForPath } from "../../syncthing.js";
 import { abortPreparedTaskHandoff, acknowledgeIncomingTaskHandoff, commitPreparedTaskHandoff, getTaskHandoff, isTaskHandoffRejected, listTasks, prepareTaskHandoff, rejectTaskHandoff, reserveTaskHandoff, taskHandoffDeletion } from "../../tasks.js";
+import { z } from "zod";
 import type { HarnessId, TaskRecord } from "../../types.js";
 import { type PreparedTaskWorktree, prepareTaskWorktreeFromBundle, removePreparedTaskWorktree } from "../../worktrees.js";
 import { assertTaskFilesReady, projectWithLocalLocation, publicClusterPeer, syncPairedProjects, taskConversationIdentity, taskHandoffEligibility } from "../cluster-helpers.js";
 import { canonicalClusterUrl, parseClusterInvitationLink, prospectiveClusterNode, sendError } from "../http-auth.js";
 import { broadcastReplicationInvalidations, broadcastSessionsChangedToAllProjects, broadcastToProject } from "../realtime.js";
-import { clusterInvitationRedemptionSchema, clusterJoinSchema, clusterMembershipMemberSchema, clusterMembershipSnapshotSchema, clusterNodeSchema, clusterPeerSchema, preparedTaskSchema, replicationBatchSchema, runtimeSnapshotSchema, secretCredentialBatchSchema, taskEligibilitySchema, taskHandoffActionSchema, taskHandoffStatusSchema } from "../schemas.js";
+import { clusterInvitationCreateSchema, clusterInvitationRedemptionSchema, clusterJoinSchema, clusterMembershipLeaveSchema, clusterMembershipMemberSchema, clusterMembershipSnapshotSchema, clusterNodeSchema, clusterPeerSchema, preparedTaskSchema, replicationBatchSchema, runtimeSnapshotSchema, secretCredentialBatchSchema, taskEligibilitySchema, taskHandoffActionSchema, taskHandoffStatusSchema } from "../schemas.js";
 import { app } from "../state.js";
 
-app.post("/api/cluster/invitations", async (_request, response, next) => {
+app.post("/api/cluster/invitations", async (request, response, next) => {
   try {
+    const payload = clusterInvitationCreateSchema.parse(request.body);
     const node = await getClusterNode();
     if (!node.url) { sendError(response, 409, "Configure this node's public Tailscale URL before generating an invitation"); return; }
     if ((await listClusterPeers()).length >= 4) { sendError(response, 409, "A cluster supports at most five nodes"); return; }
-    const invitation = await createClusterInvitation();
+    // Selection is canonicalised here and frozen server-side: the link carries no project
+    // ids, so the joining node can never widen its own access.
+    const canonical: string[] = [];
+    for (const projectId of payload.projectIds) {
+      const resolved = await canonicalProjectId(projectId);
+      if (!resolved) { sendError(response, 400, `Unknown project: ${projectId}`); return; }
+      if (!canonical.includes(resolved)) canonical.push(resolved);
+    }
+    if (!canonical.length) { sendError(response, 400, "Share at least one project"); return; }
+    const invitation = await createClusterInvitation(canonical);
     const link = new URL("/join", `${node.url}/`);
     link.hash = `${invitation.id}.${invitation.secret}`;
-    response.status(201).json({ link: link.href });
+    response.status(201).json({ link: link.href, projectIds: canonical });
   } catch (error) {
     next(error);
   }
@@ -40,11 +51,58 @@ app.post("/api/cluster/join", async (request, response, next) => {
       return;
     }
     const [currentNode, peers, machineToken] = await Promise.all([getClusterNode(), listClusterPeers(), getClusterMachineToken()]);
-    if (peers.length && !peers.some((peer) => canonicalClusterUrl(peer.url) === invitation.inviterUrl)) {
-      sendError(response, 409, "This node already belongs to a different cluster");
+    // Preflight validates the invitation without consuming it, so a node already in a
+    // cluster only leaves after it knows the new invitation is usable. A failed preflight
+    // leaves the current cluster untouched.
+    const preflightResponse = await fetch(`${invitation.inviterUrl}/api/cluster/invitations/preflight`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ invitationId: invitation.invitationId, secret: invitation.secret, nodeId: currentNode.id }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!preflightResponse.ok) {
+      const body = await preflightResponse.json().catch(() => ({})) as { error?: string };
+      sendError(response, preflightResponse.status, body.error ?? `Inviting node returned ${preflightResponse.status}`);
       return;
     }
-    const member = { ...prospectiveClusterNode(currentNode, payload.name, payload.url), token: machineToken };
+    const preflight = z.object({ status: z.enum(["accepted", "active", "expired", "invalid", "used", "retry"]), inviterNodeId: z.string().uuid(), inviterName: z.string(), projectIds: z.array(z.string()) }).parse(await preflightResponse.json());
+    if (preflight.status === "invalid") { sendError(response, 401, "Invalid cluster invitation"); return; }
+    if (preflight.status === "expired") { sendError(response, 410, "Cluster invitation has expired"); return; }
+    if (preflight.status === "used") { sendError(response, 410, "Cluster invitation has already been used"); return; }
+    const alreadyMemberHere = peers.some((peer) => canonicalClusterUrl(peer.url) === invitation.inviterUrl);
+    // Accepting a new invitation always means leaving the current cluster first: a retry
+    // against the cluster this node already belongs to keeps its existing membership.
+    if (peers.length && !(alreadyMemberHere && preflight.status === "retry")) {
+      // Validate the departure before telling anyone: a leave that would fail locally after
+      // the peers already dropped this node strands it between two clusters.
+      try {
+        await assertClusterDepartureAllowed();
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith("Transfer owned tasks and settle handoffs")) {
+          sendError(response, 409, error.message);
+          return;
+        }
+        throw error;
+      }
+      const leftAt = new Date().toISOString();
+      for (const peer of peers) {
+        // Best-effort notice so peers drop this node immediately; membership tombstones
+        // converge the rest even when a peer is unreachable. `leftAt` lets a peer that
+        // receives this late, after a re-pairing, ignore it instead of rolling the
+        // membership back.
+        await fetch(`${peer.url}/api/cluster/membership/leave`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${machineToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ nodeId: currentNode.id, leftAt }),
+          signal: AbortSignal.timeout(3_000),
+        }).catch(() => undefined);
+      }
+      await leaveCluster();
+    }
+    const prospective = prospectiveClusterNode(currentNode, payload.name, payload.url);
+    // A fresh version timestamp clears this node's removal tombstones on the inviter, and
+    // leaving rotated the credential, so the token is read after the leave.
+    const member = { ...prospective, updatedAt: new Date().toISOString(), token: await getClusterMachineToken() };
     const redeemResponse = await fetch(`${invitation.inviterUrl}/api/cluster/invitations/redeem`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -58,6 +116,7 @@ app.post("/api/cluster/join", async (request, response, next) => {
     }
     const redemption = clusterInvitationRedemptionSchema.parse(await redeemResponse.json());
     const localNode = await updateClusterNode(payload.name, payload.url);
+    await setClusterInviter(redemption.inviterNodeId);
     await mergeClusterMembership(redemption.membership, redemption.inviterNodeId);
     const inviter = await getClusterPeer(redemption.inviterNodeId);
     if (!inviter) throw new Error("Inviting node was not added to cluster membership");
@@ -100,10 +159,24 @@ app.put("/api/cluster/node", async (request, response, next) => {
   }
 });
 
-app.get("/api/cluster/local-inventory", async (_request, response, next) => {
+app.get("/api/cluster/local-inventory", async (request, response, next) => {
   try {
     const node = await getClusterNode();
-    const projects = await listProjects();
+    let projects = await listProjects();
+    // A granted machine peer only discovers the projects its invitation selected; session
+    // users and legacy peers (no grant row) still see everything this node holds.
+    if (response.locals.machineAuth && response.locals.machineNodeId !== node.id) {
+      const grant = await clusterProjectGrantFor(response.locals.machineNodeId as string);
+      if (grant) {
+        const allowed = new Set(grant);
+        const visible: typeof projects = [];
+        for (const project of projects) {
+          const aliases = await projectAliasIds(project.id);
+          if (allowed.has(project.id) || aliases.some((alias) => allowed.has(alias))) visible.push(project);
+        }
+        projects = visible;
+      }
+    }
     let syncDeviceId: string | undefined;
     let syncError: string | undefined;
     try {
@@ -137,7 +210,7 @@ app.get("/api/cluster/inventory", async (_request, response, next) => {
       const identity = { peerId: peer.id, name: peer.name, url: peer.url, lastSeenAt: peer.lastSeenAt };
       try {
         const peerResponse = await fetch(`${peer.url}/api/cluster/local-inventory`, {
-          headers: { Authorization: `Bearer ${peer.token}` },
+          headers: { Authorization: `Bearer ${await getClusterMachineToken()}` },
           signal: AbortSignal.timeout(3_000),
         });
         if (!peerResponse.ok) throw new Error(`Peer returned ${peerResponse.status}`);
@@ -220,6 +293,41 @@ app.post("/api/cluster/membership/sync", async (request, response, next) => {
     await mergeClusterMembership(snapshot, response.locals.machineNodeId as string | undefined);
     response.json({ ok: true });
   } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/cluster/membership/leave", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const payload = clusterMembershipLeaveSchema.parse(request.body);
+    const callerNodeId = response.locals.machineNodeId as string;
+    const localNode = await getClusterNode();
+    if (payload.nodeId === callerNodeId && payload.nodeId !== localNode.id) {
+      // Voluntary leave: the authenticated caller announces its own departure. A notice
+      // that lost a race against the caller's re-pairing (peer row newer than the notice)
+      // must not tear down the fresh membership.
+      const departing = await getClusterPeer(callerNodeId);
+      if (departing && departing.updatedAt > payload.leftAt) {
+        response.status(204).send();
+        return;
+      }
+      await removeClusterPeer(callerNodeId);
+      response.status(204).send();
+      return;
+    }
+    if (payload.nodeId === localNode.id && localNode.invitedByNodeId === callerNodeId) {
+      // Forced drop: only the node that created this node's invitation may end it.
+      await leaveCluster();
+      response.status(204).send();
+      return;
+    }
+    sendError(response, 403, "Only the node that created this member's invitation can remove it");
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Transfer owned tasks and settle handoffs")) {
+      sendError(response, 409, error.message);
+      return;
+    }
     next(error);
   }
 });

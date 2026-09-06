@@ -3,15 +3,15 @@ import { readdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { AGENT_RESOURCES_FOLDER_ID, agentResourcesRoot } from "../../agent-resources.js";
-import { getClusterNode, getClusterPeer, listClusterPeers, removeClusterPeer } from "../../cluster.js";
+import { getClusterMachineToken, getClusterNode, getClusterPeer, listClusterPeers, removeClusterPeer } from "../../cluster.js";
 import { listHarnessSyncFolders } from "../../harnesses.js";
-import { getProject } from "../../store.js";
+import { getProject, listProjects } from "../../store.js";
 import { ensureAgentResourcesFolder, ensureConversationSyncFolders, ensureSyncthingDevice, ensureSyncthingFolder, ensureTicketWorkspaceFolder, pauseEngineSyncFolders, syncthingPathForFolderId } from "../../syncthing.js";
 import { createTaskWorkspace, removeTaskWorkspace, TaskWorkspaceError, taskWorkspaceKey, TICKET_MERGE_DIR, TICKET_WORKSPACE_FOLDER_ID, ticketWorkspaceRoot } from "../../task-workspaces.js";
 import { listTasks, updateTask } from "../../tasks.js";
 import { TaskWorktreeError } from "../../worktrees.js";
 import { updateTaskWithAttachments } from "../chat.js";
-import { fetchPeerInventory, importProjectsFromPeer, mapProjectFromPeer, type ProjectImportResult, requirePathInsideHome } from "../cluster-helpers.js";
+import { clusterPeerMayAccessProject, fetchPeerInventory, importProjectsFromPeer, mapProjectFromPeer, type ProjectImportResult, requirePathInsideHome } from "../cluster-helpers.js";
 import { sendError } from "../http-auth.js";
 import { broadcastToAllClients, broadcastToProject } from "../realtime.js";
 import { absolutePathSchema, clusterProjectImportSchema, clusterProjectMapSchema, clusterSyncShareSchema, directoryBrowseSchema, routedTaskHandoffSchema, routedTaskSchema, routedTaskUpdateSchema, taskUpdateSchema } from "../schemas.js";
@@ -203,7 +203,7 @@ app.post("/api/cluster/peers/:peerId/projects/:projectId/map", async (request, r
     const local = await getClusterNode();
     const peerResponse = await fetch(`${peer.url}/api/cluster/projects/map`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
       body: JSON.stringify({ peerId: local.id, projectId: request.params.projectId, localPath }),
       signal: AbortSignal.timeout(30_000),
     });
@@ -240,6 +240,14 @@ app.post("/api/cluster/sync/share", async (request, response, next) => {
     }
     const folderPath = await syncthingPathForFolderId(payload.folderId);
     if (!folderPath) { sendError(response, 404, "Syncthing folder not found"); return; }
+    // A project repository folder is only shared with peers whose grant covers the project.
+    if (response.locals.machineAuth) {
+      const owner = (await listProjects()).find((project) => project.syncFolderId === payload.folderId);
+      if (owner && !(await clusterPeerMayAccessProject(response.locals.machineNodeId as string, owner.id))) {
+        sendError(response, 403, "Project is not shared with this node");
+        return;
+      }
+    }
     await ensureSyncthingDevice(payload.deviceId, payload.deviceName ?? payload.deviceId);
     await ensureSyncthingFolder(payload.folderId, payload.folderId, folderPath, payload.deviceId);
     response.json({ ok: true });
@@ -276,7 +284,7 @@ app.get("/api/cluster/peers/:peerId/filesystem/directories", async (request, res
     if (!peer) { sendError(response, 404, "Peer not found"); return; }
     const peerUrl = new URL("/api/cluster/filesystem/directories", peer.url);
     if (typeof request.query.path === "string") peerUrl.searchParams.set("path", request.query.path);
-    const peerResponse = await fetch(peerUrl, { headers: { Authorization: `Bearer ${peer.token}` }, signal: AbortSignal.timeout(10_000) });
+    const peerResponse = await fetch(peerUrl, { headers: { Authorization: `Bearer ${await getClusterMachineToken()}` }, signal: AbortSignal.timeout(10_000) });
     const body = await peerResponse.json();
     response.status(peerResponse.status).json(body);
   } catch (error) {
@@ -286,6 +294,30 @@ app.get("/api/cluster/peers/:peerId/filesystem/directories", async (request, res
 
 app.delete("/api/cluster/peers/:peerId", async (request, response, next) => {
   try {
+    const peer = await getClusterPeer(request.params.peerId);
+    if (!peer) { sendError(response, 404, "Peer not found"); return; }
+    const localNode = await getClusterNode();
+    // Only the node whose invitation created this member may remove it. Members joined
+    // before invitations carried projects (no recorded inviter) stay removable by anyone,
+    // matching the behaviour those clusters were built on.
+    if (peer.invitedByNodeId && peer.invitedByNodeId !== localNode.id) {
+      sendError(response, 403, "Only the node that created this member's invitation can remove it");
+      return;
+    }
+    const [peers, invitedBy] = await Promise.all([listClusterPeers(), Promise.resolve(localNode.invitedByNodeId)]);
+    const children = peers.filter((candidate) => candidate.invitedByNodeId === peer.id).map((candidate) => candidate.name);
+    if (children.length || invitedBy === peer.id) {
+      sendError(response, 409, `Remove this node's invited members first${children.length ? `: ${children.join(", ")}` : ""}`);
+      return;
+    }
+    // Tell the target first so it clears its own state while it still trusts our token;
+    // an unreachable target still converges through the tombstone this removal writes.
+    await fetch(`${peer.url}/api/cluster/membership/leave`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ nodeId: peer.id, leftAt: new Date().toISOString() }),
+      signal: AbortSignal.timeout(3_000),
+    }).catch(() => undefined);
     await removeClusterPeer(request.params.peerId);
     response.status(204).send();
   } catch (error) {

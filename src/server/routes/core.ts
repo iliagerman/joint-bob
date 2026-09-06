@@ -4,9 +4,10 @@ import express from "express";
 import { z } from "zod";
 import { authenticate, authenticationStatus, type AuthSession, changePassword, clearSessionCookieValue, createAdministrator, listLoginSessions, revokeSession, revokeUserSession, sessionCookieName, sessionCookieValue, sessionForId } from "../../auth.js";
 import { appVersion } from "../../changelog.js";
-import { clusterInvitationStatus, consumeClusterInvitation, createClusterPeer, getClusterMembership, getClusterNode, listClusterPeers, saveClusterPeer } from "../../cluster.js";
-import { clusterInvitationConflict, requestCookie, requireCsrf, requireHttpAuth, securityHeaders, sendError } from "../http-auth.js";
-import { clusterInvitationRedeemSchema, loginSchema, passwordChangeSchema } from "../schemas.js";
+import { clusterInvitationProjects, clusterInvitationStatus, consumeClusterInvitation, createClusterPeer, getClusterMembership, getClusterNode, listClusterPeers, saveClusterPeer, saveClusterProjectGrant } from "../../cluster.js";
+import { clusterInvitationConflict, canonicalClusterUrl, requestCookie, requireCsrf, requireHttpAuth, securityHeaders, sendError } from "../http-auth.js";
+import { machineProjectAccessGuard } from "../cluster-helpers.js";
+import { clusterInvitationPreflightSchema, clusterInvitationRedeemSchema, loginSchema, passwordChangeSchema } from "../schemas.js";
 import { app, codemirrorDir, flags, publicDir } from "../state.js";
 
 app.use(securityHeaders);
@@ -84,6 +85,20 @@ app.post("/api/auth/login", (request, response, next) => {
   }
 });
 
+/** Reports what an invitation would grant without consuming it, so a node can decide to
+    leave its current cluster before redeeming. Placed before the auth middleware like redeem. */
+app.post("/api/cluster/invitations/preflight", async (request, response, next) => {
+  try {
+    const payload = clusterInvitationPreflightSchema.parse(request.body);
+    const status = await clusterInvitationStatus(payload.invitationId, payload.secret, payload.nodeId);
+    const localNode = await getClusterNode();
+    const projectIds = status === "active" || status === "retry" ? await clusterInvitationProjects(payload.invitationId) : [];
+    response.json({ status, inviterNodeId: localNode.id, inviterName: localNode.name, projectIds });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/api/cluster/invitations/redeem", async (request, response, next) => {
   try {
     const payload = clusterInvitationRedeemSchema.parse(request.body);
@@ -92,7 +107,11 @@ app.post("/api/cluster/invitations/redeem", async (request, response, next) => {
     if (invitationResult === "expired") { sendError(response, 410, "Cluster invitation has expired"); return; }
     if (invitationResult === "used") { sendError(response, 410, "Cluster invitation has already been used"); return; }
     const [localNode, peers] = await Promise.all([getClusterNode(), listClusterPeers()]);
-    const conflict = clusterInvitationConflict(payload.member, localNode, peers, invitationResult === "retry");
+    // A fresh invitation lets a node reclaim its own slot: it may have left a cluster whose
+    // members still hold a stale credential for it, so it cannot prove itself through the
+    // token they know. Same id and URL under a one-time invitation is that same node.
+    const rejoiningSelf = peers.some((peer) => peer.id === payload.member.id && canonicalClusterUrl(peer.url) === canonicalClusterUrl(payload.member.url));
+    const conflict = rejoiningSelf ? undefined : clusterInvitationConflict(payload.member, localNode, peers, invitationResult === "retry");
     if (conflict) { sendError(response, 409, conflict); return; }
     const existing = peers.find((peer) => peer.id === payload.member.id);
     if (!existing && peers.length >= 4) { sendError(response, 409, "A cluster supports at most five nodes"); return; }
@@ -104,6 +123,9 @@ app.post("/api/cluster/invitations/redeem", async (request, response, next) => {
       const { token, ...node } = payload.member;
       await saveClusterPeer(createClusterPeer(node, token));
     }
+    // The invitation's frozen project selection becomes the joining node's grant; a retry
+    // of the same invitation rewrites the identical grant, never a wider one.
+    await saveClusterProjectGrant(payload.member.id, await clusterInvitationProjects(payload.invitationId), localNode.id);
     response.status(201).json({ inviterNodeId: localNode.id, membership: await getClusterMembership() });
   } catch (error) {
     next(error);
@@ -111,6 +133,7 @@ app.post("/api/cluster/invitations/redeem", async (request, response, next) => {
 });
 
 app.use("/api", requireHttpAuth, requireCsrf);
+app.use("/api/cluster", machineProjectAccessGuard);
 app.use("/api", (request, response, next) => {
   if (flags.updatePreparing && !["GET", "HEAD", "OPTIONS"].includes(request.method) && request.path !== "/update/prepare") {
     response.status(503).json({ error: "Server update in progress" });

@@ -10,12 +10,19 @@ import { decryptSecretValue, encryptSecretValue, ensureSecretSchema, type Secret
 /** The material a replicating account carries to a peer. Values travel in the event body,
     which the mesh transport already authenticates and encrypts in flight; each side stores
     them under its own key. */
+export interface SecretAssignmentPayload {
+  scopeType: "workspace" | "project" | "conversation";
+  scopeId: string;
+}
+
 export interface SecretAccountPayload {
   label: string;
   provider: SecretProvider;
   variables: Array<{ name: string; kind: SecretKind; value: string }>;
   /** Optional for compatibility with events sent by older nodes. */
   workspaceIds?: string[];
+  /** Every scope attachment, including projects the receiving node may not share yet. */
+  assignments?: SecretAssignmentPayload[];
 }
 
 export interface SecretCredentialEvent {
@@ -83,6 +90,9 @@ function validateEvent(event: SecretCredentialEvent): void {
   if (value.workspaceIds !== undefined && (!Array.isArray(value.workspaceIds) || value.workspaceIds.length > 100 || new Set(value.workspaceIds).size !== value.workspaceIds.length || value.workspaceIds.some((id) => typeof id !== "string" || !id || id !== id.trim() || id.length > 300))) {
     throw new Error("Secret credential event workspace IDs are invalid");
   }
+  if (value.assignments !== undefined && (!Array.isArray(value.assignments) || value.assignments.length > 200 || new Set(value.assignments.map((entry) => `${entry?.scopeType}:${entry?.scopeId}`)).size !== value.assignments.length || value.assignments.some((entry) => !entry || typeof entry !== "object" || !["workspace", "project", "conversation"].includes(entry.scopeType) || typeof entry.scopeId !== "string" || !entry.scopeId.trim() || entry.scopeId.length > 300))) {
+    throw new Error("Secret credential event assignments are invalid");
+  }
 }
 
 function insertEvent(handle: DatabaseSync, event: SecretCredentialEvent): void {
@@ -92,6 +102,11 @@ function insertEvent(handle: DatabaseSync, event: SecretCredentialEvent): void {
 
 function workspaceIds(handle: DatabaseSync, accountId: string): string[] {
   return (handle.prepare("SELECT scope_id FROM secret_assignments WHERE scope_type = 'workspace' AND account_id = ? ORDER BY scope_id").all(accountId) as unknown as Array<{ scope_id: string }>).map((row) => row.scope_id);
+}
+
+function assignments(handle: DatabaseSync, accountId: string): SecretAssignmentPayload[] {
+  return (handle.prepare("SELECT scope_type, scope_id FROM secret_assignments WHERE account_id = ? ORDER BY scope_type, scope_id").all(accountId) as unknown as Array<{ scope_type: SecretAssignmentPayload["scopeType"]; scope_id: string }>)
+    .map((row) => ({ scopeType: row.scope_type, scopeId: row.scope_id }));
 }
 
 function applyWorkspaceAssignments(handle: DatabaseSync, accountId: string, ids: string[] | undefined, variables: SecretAccountPayload["variables"]): void {
@@ -110,6 +125,27 @@ function applyWorkspaceAssignments(handle: DatabaseSync, accountId: string, ids:
   for (const id of ids) insert.run(accountId, id);
 }
 
+/** Applies the full attachment set. Project and conversation rows are stored even when the
+    scope does not exist on this node yet, so an attachment activates on its own once the
+    project arrives through a later invitation. */
+function applyAssignments(handle: DatabaseSync, accountId: string, payload: SecretAssignmentPayload[] | undefined, variables: SecretAccountPayload["variables"]): void {
+  if (payload === undefined) return;
+  const incomingNames = new Set(variables.map((variable) => variable.name));
+  const collision = handle.prepare("SELECT a.variables_encrypted FROM secret_assignments s JOIN secret_accounts a ON a.id = s.account_id WHERE s.scope_type = ? AND s.scope_id = ? AND a.id != ?");
+  handle.prepare("DELETE FROM secret_assignments WHERE account_id = ?").run(accountId);
+  const insert = handle.prepare("INSERT INTO secret_assignments (scope_type, scope_id, account_id) VALUES (?, ?, ?)");
+  for (const entry of payload) {
+    if (entry.scopeType === "workspace" && !handle.prepare("SELECT 1 FROM workspaces WHERE id = ?").get(entry.scopeId)) continue;
+    // The same duplicate-variable rule the local setter enforces, for every scope: two
+    // accounts exporting one name into one scope would make the winner depend on row order.
+    for (const row of collision.all(entry.scopeType, entry.scopeId, accountId) as unknown as Array<{ variables_encrypted: string }>) {
+      const existing = JSON.parse(decryptSecretValue(row.variables_encrypted)) as SecretAccountPayload["variables"];
+      if (existing.some((variable) => incomingNames.has(variable.name))) throw new Error("Selected secret accounts have duplicate environment variable names");
+    }
+    insert.run(entry.scopeType, entry.scopeId, accountId);
+  }
+}
+
 /** Rebuilds the outbox from the accounts that are marked to replicate right now. An account
     switched back to node-local has its queued events removed, so it can no longer leave. */
 function refreshOutbox(handle: DatabaseSync, nodeId: string): void {
@@ -124,12 +160,12 @@ function refreshOutbox(handle: DatabaseSync, nodeId: string): void {
     if (!account.origin_node_id) handle.prepare("UPDATE secret_accounts SET origin_node_id = ? WHERE id = ?").run(nodeId, account.id);
     const known = handle.prepare("SELECT payload_encrypted FROM secret_credential_events WHERE entity_key = ? AND updated_at = ? AND origin_node_id = ?").get(account.id, account.updated_at, originNodeId) as { payload_encrypted: string } | undefined;
     const knownPayload = known ? JSON.parse(decryptSecretValue(known.payload_encrypted)) as SecretAccountPayload : undefined;
-    if (knownPayload?.workspaceIds !== undefined) continue;
+    if (knownPayload?.assignments !== undefined) continue;
     const updatedAt = known ? new Date(Math.max(Date.now(), Date.parse(account.updated_at) + 1)).toISOString() : account.updated_at;
     if (known) handle.prepare("UPDATE secret_accounts SET updated_at = ? WHERE id = ?").run(updatedAt, account.id);
     insertEvent(handle, {
       id: randomUUID(), entityKey: account.id, operation: "upsert",
-      value: { label: account.label, provider: account.provider, variables: JSON.parse(decryptSecretValue(account.variables_encrypted)), workspaceIds: workspaceIds(handle, account.id) },
+      value: { label: account.label, provider: account.provider, variables: JSON.parse(decryptSecretValue(account.variables_encrypted)), workspaceIds: workspaceIds(handle, account.id), assignments: assignments(handle, account.id) },
       updatedAt, originNodeId, createdAt: new Date().toISOString(),
     });
   }
@@ -176,6 +212,7 @@ export async function receiveSecretCredentialEvents(events: SecretCredentialEven
         // Re-encrypted here with this node's own key, never stored under the sender's.
         handle.prepare("INSERT INTO secret_accounts (id, label, provider, variables_encrypted, replicate, origin_node_id, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET label = excluded.label, provider = excluded.provider, variables_encrypted = excluded.variables_encrypted, origin_node_id = excluded.origin_node_id, updated_at = excluded.updated_at")
           .run(event.entityKey, event.value.label, event.value.provider, encryptSecretValue(JSON.stringify(event.value.variables)), event.originNodeId, event.updatedAt, event.updatedAt);
+        if (event.value.assignments !== undefined) applyAssignments(handle, event.entityKey, event.value.assignments, event.value.variables);
         applyWorkspaceAssignments(handle, event.entityKey, event.value.workspaceIds, event.value.variables);
       }
       insertEvent(handle, event);

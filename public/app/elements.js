@@ -133,6 +133,8 @@ export const elements = {
   clusterNodeUrlInput: document.querySelector("#clusterNodeUrlInput"),
   clusterGenerateInviteButton: document.querySelector("#clusterGenerateInviteButton"),
   clusterInviteLink: document.querySelector("#clusterInviteLink"),
+  clusterInviteProjectList: document.querySelector("#clusterInviteProjectList"),
+  clusterInviteAllProjects: document.querySelector("#clusterInviteAllProjects"),
   copyClusterInviteButton: document.querySelector("#copyClusterInviteButton"),
   clusterJoinLinkInput: document.querySelector("#clusterJoinLinkInput"),
   clusterJoinButton: document.querySelector("#clusterJoinButton"),

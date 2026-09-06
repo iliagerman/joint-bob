@@ -11,6 +11,8 @@ export interface ClusterNode {
   url: string;
   createdAt: string;
   updatedAt: string;
+  /** The node whose invitation this node joined under; null for a root node or a legacy pairing. */
+  invitedByNodeId: string | null;
 }
 
 export interface ClusterPeer extends ClusterNode {
@@ -29,9 +31,20 @@ export interface ClusterMemberTombstone {
   originNodeId: string;
 }
 
+/** The exact set of projects a node may see. A node with no grant row is unrestricted
+    (legacy pairings and pre-selection clusters); a grant row always holds the full,
+    invitation-frozen selection. */
+export interface ClusterProjectGrant {
+  nodeId: string;
+  projectIds: string[];
+  updatedAt: string;
+  originNodeId: string;
+}
+
 export interface ClusterMembershipSnapshot {
   members: ClusterMembershipMember[];
   removed?: ClusterMemberTombstone[];
+  projectGrants?: ClusterProjectGrant[];
 }
 
 export interface MembershipDelivery {
@@ -43,6 +56,7 @@ export interface MembershipDelivery {
 export interface ClusterInvitation {
   id: string;
   secret: string;
+  projectIds: string[];
 }
 
 export type ClusterInvitationResult = "accepted" | "expired" | "invalid" | "retry" | "used";
@@ -58,6 +72,7 @@ interface NodeRow {
   url: string;
   created_at: string;
   updated_at: string;
+  invited_by_node_id: string | null;
 }
 
 interface PeerRow extends NodeRow {
@@ -69,6 +84,13 @@ interface PeerRow extends NodeRow {
 interface TombstoneRow {
   id: string;
   removed_at: string;
+  origin_node_id: string;
+}
+
+interface ProjectGrantRow {
+  node_id: string;
+  project_ids: string;
+  updated_at: string;
   origin_node_id: string;
 }
 
@@ -115,12 +137,14 @@ function decryptToken(value: string): string {
 
 function defaultNode(): ClusterNode {
   const now = new Date().toISOString();
-  return { id: randomUUID(), name: os.hostname(), url: (process.env.JOINT_BOB_NODE_URL ?? process.env.PI_MOBILE_WEB_NODE_URL)?.trim() ?? "", createdAt: now, updatedAt: now };
+  return { id: randomUUID(), name: os.hostname(), url: (process.env.JOINT_BOB_NODE_URL ?? process.env.PI_MOBILE_WEB_NODE_URL)?.trim() ?? "", createdAt: now, updatedAt: now, invitedByNodeId: null };
 }
 
 function nodeFromRow(row: NodeRow): ClusterNode {
-  return { id: row.id, name: row.name, url: row.url, createdAt: row.created_at, updatedAt: row.updated_at };
+  return { id: row.id, name: row.name, url: row.url, createdAt: row.created_at, updatedAt: row.updated_at, invitedByNodeId: row.invited_by_node_id ?? null };
 }
+
+const PEER_COLUMNS = "id, name, url, token, paired_at, last_seen_at, created_at, updated_at, invited_by_node_id";
 
 function peerFromRow(row: PeerRow): ClusterPeer {
   return { ...nodeFromRow(row), token: decryptToken(row.token), pairedAt: row.paired_at, lastSeenAt: row.last_seen_at };
@@ -220,6 +244,12 @@ async function clusterDatabase(): Promise<DatabaseSync> {
         consumed_at TEXT,
         consumed_by_node_id TEXT
       );
+      CREATE TABLE IF NOT EXISTS cluster_project_grants (
+        node_id TEXT PRIMARY KEY,
+        project_ids TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        origin_node_id TEXT NOT NULL
+      );
     `);
     ensureAuditSchema(db);
     db.prepare("INSERT OR IGNORE INTO cluster_membership_state (singleton, generation) VALUES (1, 1)").run();
@@ -229,8 +259,12 @@ async function clusterDatabase(): Promise<DatabaseSync> {
     `).run(new Date().toISOString());
     const peerColumns = db.prepare("PRAGMA table_info(cluster_peers)").all() as unknown as Array<{ name: string }>;
     if (!peerColumns.some((column) => column.name === "last_seen_at")) db.exec("ALTER TABLE cluster_peers ADD COLUMN last_seen_at TEXT");
+    if (!peerColumns.some((column) => column.name === "invited_by_node_id")) db.exec("ALTER TABLE cluster_peers ADD COLUMN invited_by_node_id TEXT");
+    const nodeColumns = db.prepare("PRAGMA table_info(cluster_node)").all() as unknown as Array<{ name: string }>;
+    if (!nodeColumns.some((column) => column.name === "invited_by_node_id")) db.exec("ALTER TABLE cluster_node ADD COLUMN invited_by_node_id TEXT");
     const invitationColumns = db.prepare("PRAGMA table_info(cluster_invitations)").all() as unknown as Array<{ name: string }>;
     if (!invitationColumns.some((column) => column.name === "consumed_by_node_id")) db.exec("ALTER TABLE cluster_invitations ADD COLUMN consumed_by_node_id TEXT");
+    if (!invitationColumns.some((column) => column.name === "project_ids")) db.exec("ALTER TABLE cluster_invitations ADD COLUMN project_ids TEXT NOT NULL DEFAULT '[]'");
     const current = db.prepare("SELECT COUNT(*) AS count FROM cluster_node").get() as { count: number };
     if (current.count !== 0) {
       if (!db.prepare("SELECT version FROM cluster_secret_migrations WHERE version = 1").get()) {
@@ -256,10 +290,10 @@ async function clusterDatabase(): Promise<DatabaseSync> {
       db.prepare("INSERT INTO cluster_node (singleton, id, name, url, created_at, updated_at) VALUES (1, ?, ?, ?, ?, ?)")
         .run(store.node.id, store.node.name, store.node.url, store.node.createdAt, store.node.updatedAt);
       const savePeer = db.prepare(`
-        INSERT INTO cluster_peers (id, name, url, token, paired_at, last_seen_at, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO cluster_peers (id, name, url, token, paired_at, last_seen_at, created_at, updated_at, invited_by_node_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
-      for (const peer of store.peers) savePeer.run(peer.id, peer.name, peer.url, encryptToken(peer.token), peer.pairedAt, peer.lastSeenAt ?? null, peer.createdAt, peer.updatedAt);
+      for (const peer of store.peers) savePeer.run(peer.id, peer.name, peer.url, encryptToken(peer.token), peer.pairedAt, peer.lastSeenAt ?? null, peer.createdAt, peer.updatedAt, peer.invitedByNodeId ?? null);
       db.prepare(`
         INSERT OR IGNORE INTO cluster_membership_deliveries (peer_id, generation, attempts, next_attempt_at, delivered_at, last_error)
         SELECT id, 1, 0, ?, NULL, NULL FROM cluster_peers
@@ -289,20 +323,34 @@ function invitationHashMatches(secret: string, expectedHash: string): boolean {
   return timingSafeEqual(Buffer.from(invitationHash(secret), "hex"), Buffer.from(expectedHash, "hex"));
 }
 
-export async function createClusterInvitation(): Promise<ClusterInvitation> {
+export async function createClusterInvitation(projectIds: string[]): Promise<ClusterInvitation> {
   const db = await clusterDatabase();
-  const invitation = { id: randomUUID(), secret: randomBytes(32).toString("base64url") };
+  const selection = [...new Set(projectIds)];
+  if (!selection.length) throw new Error("A cluster invitation must share at least one project");
+  const invitation = { id: randomUUID(), secret: randomBytes(32).toString("base64url"), projectIds: selection };
   const now = new Date().toISOString();
   db.exec("BEGIN IMMEDIATE");
   try {
     db.prepare("DELETE FROM cluster_invitations").run();
-    db.prepare("INSERT INTO cluster_invitations (id, secret_hash, created_at, consumed_at, consumed_by_node_id) VALUES (?, ?, ?, NULL, NULL)")
-      .run(invitation.id, invitationHash(invitation.secret), now);
+    db.prepare("INSERT INTO cluster_invitations (id, secret_hash, created_at, consumed_at, consumed_by_node_id, project_ids) VALUES (?, ?, ?, NULL, NULL, ?)")
+      .run(invitation.id, invitationHash(invitation.secret), now, JSON.stringify(selection));
     db.exec("COMMIT");
     return invitation;
   } catch (error) {
     db.exec("ROLLBACK");
     throw error;
+  }
+}
+
+/** The frozen project selection of a consumed invitation, applied to the joining node's grant. */
+export async function clusterInvitationProjects(id: string): Promise<string[]> {
+  const row = (await clusterDatabase()).prepare("SELECT project_ids FROM cluster_invitations WHERE id = ?").get(id) as { project_ids: string } | undefined;
+  if (!row) return [];
+  try {
+    const parsed = JSON.parse(row.project_ids) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === "string") : [];
+  } catch {
+    return [];
   }
 }
 
@@ -328,7 +376,7 @@ export async function consumeClusterInvitation(id: string, secret: string, nodeI
 }
 
 export async function getClusterNode(): Promise<ClusterNode> {
-  const row = (await clusterDatabase()).prepare("SELECT id, name, url, created_at, updated_at FROM cluster_node WHERE singleton = 1").get() as unknown as NodeRow;
+  const row = (await clusterDatabase()).prepare("SELECT id, name, url, created_at, updated_at, invited_by_node_id FROM cluster_node WHERE singleton = 1").get() as unknown as NodeRow;
   return nodeFromRow(row);
 }
 
@@ -350,7 +398,7 @@ function queueMembershipChange(db: DatabaseSync): void {
 export async function updateClusterNode(name: string, url: string): Promise<ClusterNode> {
   const db = await clusterDatabase();
   const normalizedUrl = url.replace(/\/$/, "");
-  const node = nodeFromRow(db.prepare("SELECT id, name, url, created_at, updated_at FROM cluster_node WHERE singleton = 1").get() as unknown as NodeRow);
+  const node = nodeFromRow(db.prepare("SELECT id, name, url, created_at, updated_at, invited_by_node_id FROM cluster_node WHERE singleton = 1").get() as unknown as NodeRow);
   if (node.name === name && node.url === normalizedUrl) return node;
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -364,16 +412,38 @@ export async function updateClusterNode(name: string, url: string): Promise<Clus
   return getClusterNode();
 }
 
+/** Records whose invitation this node joined under, or clears it on leave. Versioned so
+    every member learns the relationship, which is what authorises later removals. */
+export async function setClusterInviter(invitedByNodeId: string | null): Promise<ClusterNode> {
+  const db = await clusterDatabase();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const node = nodeFromRow(db.prepare("SELECT id, name, url, created_at, updated_at, invited_by_node_id FROM cluster_node WHERE singleton = 1").get() as unknown as NodeRow);
+    if (node.invitedByNodeId === invitedByNodeId) {
+      db.exec("COMMIT");
+      return node;
+    }
+    const updatedAt = nextVersionTimestamp(node.updatedAt);
+    db.prepare("UPDATE cluster_node SET invited_by_node_id = ?, updated_at = ? WHERE singleton = 1").run(invitedByNodeId, updatedAt);
+    queueMembershipChange(db);
+    db.exec("COMMIT");
+    return { ...node, invitedByNodeId, updatedAt };
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 export async function listClusterPeers(): Promise<ClusterPeer[]> {
   const rows = (await clusterDatabase()).prepare(`
-    SELECT id, name, url, token, paired_at, last_seen_at, created_at, updated_at FROM cluster_peers ORDER BY name, id
+    SELECT ${PEER_COLUMNS} FROM cluster_peers ORDER BY name, id
   `).all() as unknown as PeerRow[];
   return rows.map(peerFromRow);
 }
 
 export async function getClusterPeer(peerId: string): Promise<ClusterPeer | undefined> {
   const row = (await clusterDatabase()).prepare(`
-    SELECT id, name, url, token, paired_at, last_seen_at, created_at, updated_at FROM cluster_peers WHERE id = ?
+    SELECT ${PEER_COLUMNS} FROM cluster_peers WHERE id = ?
   `).get(peerId) as PeerRow | undefined;
   return row ? peerFromRow(row) : undefined;
 }
@@ -416,7 +486,7 @@ export async function saveClusterPeer(peer: ClusterPeer): Promise<ClusterPeer> {
   const normalizedPeer = { ...peer, url: peer.url.replace(/\/$/, "") };
   db.exec("BEGIN IMMEDIATE");
   try {
-    const localNode = nodeFromRow(db.prepare("SELECT id, name, url, created_at, updated_at FROM cluster_node WHERE singleton = 1").get() as unknown as NodeRow);
+    const localNode = nodeFromRow(db.prepare("SELECT id, name, url, created_at, updated_at, invited_by_node_id FROM cluster_node WHERE singleton = 1").get() as unknown as NodeRow);
     const rows = db.prepare("SELECT id, name, url, token, paired_at, last_seen_at, created_at, updated_at FROM cluster_peers WHERE id = ? OR url = ?").all(normalizedPeer.id, normalizedPeer.url) as unknown as PeerRow[];
     const existing = rows.find((row) => row.id === normalizedPeer.id);
     const displacedRows = rows.filter((row) => row.id !== normalizedPeer.id);
@@ -429,7 +499,7 @@ export async function saveClusterPeer(peer: ClusterPeer): Promise<ClusterPeer> {
       const count = db.prepare("SELECT COUNT(*) AS count FROM cluster_peers").get() as { count: number };
       if (count.count >= 4) throw new Error("A cluster supports at most five nodes");
     }
-    const membershipChanged = !existing || existing.name !== normalizedPeer.name || existing.url !== normalizedPeer.url || decryptToken(existing.token) !== normalizedPeer.token || existing.created_at !== normalizedPeer.createdAt || existing.updated_at !== normalizedPeer.updatedAt || displacedRows.length > 0 || Boolean(tombstoneRow);
+    const membershipChanged = !existing || existing.name !== normalizedPeer.name || existing.url !== normalizedPeer.url || decryptToken(existing.token) !== normalizedPeer.token || existing.created_at !== normalizedPeer.createdAt || existing.updated_at !== normalizedPeer.updatedAt || (existing.invited_by_node_id ?? null) !== (normalizedPeer.invitedByNodeId ?? null) || displacedRows.length > 0 || Boolean(tombstoneRow);
     if (displacedRows.length > 0) {
       const rotatedLocalNode = rotateLocalMachineCredential(db, localNode, ...displacedRows.map((row) => row.updated_at));
       for (const row of displacedRows) {
@@ -440,8 +510,8 @@ export async function saveClusterPeer(peer: ClusterPeer): Promise<ClusterPeer> {
       }
     }
     db.prepare(`
-      INSERT INTO cluster_peers (id, name, url, token, paired_at, last_seen_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO cluster_peers (id, name, url, token, paired_at, last_seen_at, created_at, updated_at, invited_by_node_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         url = excluded.url,
@@ -449,8 +519,9 @@ export async function saveClusterPeer(peer: ClusterPeer): Promise<ClusterPeer> {
         paired_at = excluded.paired_at,
         last_seen_at = excluded.last_seen_at,
         created_at = excluded.created_at,
-        updated_at = excluded.updated_at
-    `).run(normalizedPeer.id, normalizedPeer.name, normalizedPeer.url, encryptToken(normalizedPeer.token), normalizedPeer.pairedAt, normalizedPeer.lastSeenAt, normalizedPeer.createdAt, normalizedPeer.updatedAt);
+        updated_at = excluded.updated_at,
+        invited_by_node_id = excluded.invited_by_node_id
+    `).run(normalizedPeer.id, normalizedPeer.name, normalizedPeer.url, encryptToken(normalizedPeer.token), normalizedPeer.pairedAt, normalizedPeer.lastSeenAt, normalizedPeer.createdAt, normalizedPeer.updatedAt, normalizedPeer.invitedByNodeId ?? null);
     db.prepare("DELETE FROM cluster_member_tombstones WHERE id = ?").run(normalizedPeer.id);
     if (membershipChanged) queueMembershipChange(db);
     db.exec("COMMIT");
@@ -461,20 +532,66 @@ export async function saveClusterPeer(peer: ClusterPeer): Promise<ClusterPeer> {
   return normalizedPeer;
 }
 
+function projectGrantFromRow(row: ProjectGrantRow): ClusterProjectGrant {
+  let projectIds: string[] = [];
+  try {
+    const parsed = JSON.parse(row.project_ids) as unknown;
+    if (Array.isArray(parsed)) projectIds = parsed.filter((entry): entry is string => typeof entry === "string");
+  } catch { /* an unreadable grant degrades to "nothing shared" rather than full access */ }
+  return { nodeId: row.node_id, projectIds, updatedAt: row.updated_at, originNodeId: row.origin_node_id };
+}
+
+export async function listClusterProjectGrants(): Promise<ClusterProjectGrant[]> {
+  const rows = (await clusterDatabase()).prepare("SELECT node_id, project_ids, updated_at, origin_node_id FROM cluster_project_grants ORDER BY node_id").all() as unknown as ProjectGrantRow[];
+  return rows.map(projectGrantFromRow);
+}
+
+/** A node's frozen project selection, or undefined when the node is unrestricted. */
+export async function clusterProjectGrantFor(nodeId: string): Promise<string[] | undefined> {
+  const row = (await clusterDatabase()).prepare("SELECT node_id, project_ids, updated_at, origin_node_id FROM cluster_project_grants WHERE node_id = ?").get(nodeId) as ProjectGrantRow | undefined;
+  return row ? projectGrantFromRow(row).projectIds : undefined;
+}
+
+/** Writes a node's full project selection. Only invitation redemption calls this: project
+    access is never edited in place, a new invitation replaces the whole grant. */
+export async function saveClusterProjectGrant(nodeId: string, projectIds: string[], originNodeId: string): Promise<void> {
+  const db = await clusterDatabase();
+  const selection = [...new Set(projectIds)];
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const current = db.prepare("SELECT project_ids, updated_at, origin_node_id FROM cluster_project_grants WHERE node_id = ?").get(nodeId) as ProjectGrantRow | undefined;
+    const nextIds = JSON.stringify(selection);
+    if (current && current.project_ids === nextIds) {
+      db.exec("COMMIT");
+      return;
+    }
+    const updatedAt = nextVersionTimestamp(...(current ? [current.updated_at] : []));
+    db.prepare(`INSERT INTO cluster_project_grants (node_id, project_ids, updated_at, origin_node_id) VALUES (?, ?, ?, ?)
+      ON CONFLICT(node_id) DO UPDATE SET project_ids = excluded.project_ids, updated_at = excluded.updated_at, origin_node_id = excluded.origin_node_id`)
+      .run(nodeId, nextIds, updatedAt, originNodeId);
+    queueMembershipChange(db);
+    appendAuditEvent(db, { eventType: "cluster.project.grant.updated", actorType: "node", actorId: originNodeId, entityType: "cluster.project.grant", entityId: nodeId, details: { projectCount: selection.length } });
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 export async function getClusterMembership(): Promise<ClusterMembershipSnapshot> {
   const db = await clusterDatabase();
   const [node, token, peers] = await Promise.all([getClusterNode(), getClusterMachineToken(), listClusterPeers()]);
   const tombstones = db.prepare("SELECT id, removed_at, origin_node_id FROM cluster_member_tombstones ORDER BY id").all() as unknown as TombstoneRow[];
   const members = [{ ...node, token }, ...peers.map(({ pairedAt: _pairedAt, lastSeenAt: _lastSeenAt, ...member }) => member)].sort((left, right) => left.id.localeCompare(right.id));
-  return { members, removed: tombstones.map(tombstoneFromRow) };
+  return { members, removed: tombstones.map(tombstoneFromRow), projectGrants: await listClusterProjectGrants() };
 }
 
 export async function mergeClusterMembership(snapshot: ClusterMembershipSnapshot, originNodeId?: string): Promise<void> {
   const db = await clusterDatabase();
   db.exec("BEGIN IMMEDIATE");
   try {
-    const localNode = nodeFromRow(db.prepare("SELECT id, name, url, created_at, updated_at FROM cluster_node WHERE singleton = 1").get() as unknown as NodeRow);
-    const existingRows = db.prepare("SELECT id, name, url, token, paired_at, last_seen_at, created_at, updated_at FROM cluster_peers").all() as unknown as PeerRow[];
+    const localNode = nodeFromRow(db.prepare("SELECT id, name, url, created_at, updated_at, invited_by_node_id FROM cluster_node WHERE singleton = 1").get() as unknown as NodeRow);
+    const existingRows = db.prepare(`SELECT ${PEER_COLUMNS} FROM cluster_peers`).all() as unknown as PeerRow[];
     const storedTombstones = (db.prepare("SELECT id, removed_at, origin_node_id FROM cluster_member_tombstones").all() as unknown as TombstoneRow[]).map(tombstoneFromRow);
     const incomingMembers = new Map<string, ClusterMembershipMember>();
     for (const member of snapshot.members) {
@@ -554,19 +671,20 @@ export async function mergeClusterMembership(snapshot: ClusterMembershipSnapshot
     for (const row of rowsToDelete) {
       db.prepare("DELETE FROM cluster_peers WHERE id = ?").run(row.id);
       db.prepare("DELETE FROM cluster_membership_deliveries WHERE peer_id = ?").run(row.id);
+      db.prepare("DELETE FROM cluster_project_grants WHERE node_id = ?").run(row.id);
       membershipChanged = true;
     }
-    const insert = db.prepare("INSERT INTO cluster_peers (id, name, url, token, paired_at, last_seen_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-    const update = db.prepare("UPDATE cluster_peers SET name = ?, url = ?, token = ?, created_at = ?, updated_at = ? WHERE id = ?");
+    const insert = db.prepare("INSERT INTO cluster_peers (id, name, url, token, paired_at, last_seen_at, created_at, updated_at, invited_by_node_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    const update = db.prepare("UPDATE cluster_peers SET name = ?, url = ?, token = ?, created_at = ?, updated_at = ?, invited_by_node_id = ? WHERE id = ?");
     for (const peer of desiredPeers.values()) {
       const existing = existingById.get(peer.id);
       if (!existing) {
-        insert.run(peer.id, peer.name, peer.url, encryptToken(peer.token), peer.pairedAt, peer.lastSeenAt, peer.createdAt, peer.updatedAt);
+        insert.run(peer.id, peer.name, peer.url, encryptToken(peer.token), peer.pairedAt, peer.lastSeenAt, peer.createdAt, peer.updatedAt, peer.invitedByNodeId ?? null);
         membershipChanged = true;
         continue;
       }
-      if (existing.name === peer.name && existing.url === peer.url && existing.token === peer.token && existing.createdAt === peer.createdAt && existing.updatedAt === peer.updatedAt) continue;
-      update.run(peer.name, peer.url, encryptToken(peer.token), peer.createdAt, peer.updatedAt, peer.id);
+      if (existing.name === peer.name && existing.url === peer.url && existing.token === peer.token && existing.createdAt === peer.createdAt && existing.updatedAt === peer.updatedAt && (existing.invitedByNodeId ?? null) === (peer.invitedByNodeId ?? null)) continue;
+      update.run(peer.name, peer.url, encryptToken(peer.token), peer.createdAt, peer.updatedAt, peer.invitedByNodeId ?? null, peer.id);
       membershipChanged = true;
     }
     const storedById = new Map(storedTombstones.map((tombstone) => [tombstone.id, tombstone]));
@@ -579,6 +697,24 @@ export async function mergeClusterMembership(snapshot: ClusterMembershipSnapshot
       if (existing && sameTombstone(existing, tombstone)) continue;
       db.prepare(`INSERT INTO cluster_member_tombstones (id, removed_at, origin_node_id) VALUES (?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET removed_at = excluded.removed_at, origin_node_id = excluded.origin_node_id`).run(tombstone.id, tombstone.removedAt, tombstone.originNodeId);
+      db.prepare("DELETE FROM cluster_project_grants WHERE node_id = ?").run(tombstone.id);
+      membershipChanged = true;
+    }
+    // Project grants merge last-write-wins like every other membership fact, so all
+    // members agree on who may see which project without a second consensus channel.
+    // Trust matches the rest of the membership protocol: any authenticated member's
+    // snapshot is accepted, and only a strictly newer version replaces a stored grant —
+    // a stale relay with different ids must never overwrite what it lost the race to.
+    const grantedIds = new Set([...desiredPeers.keys(), localNode.id]);
+    for (const grant of snapshot.projectGrants ?? []) {
+      if (!grantedIds.has(grant.nodeId)) continue;
+      const current = db.prepare("SELECT project_ids, updated_at, origin_node_id FROM cluster_project_grants WHERE node_id = ?").get(grant.nodeId) as ProjectGrantRow | undefined;
+      if (current && compareVersion(grant.updatedAt, grant.originNodeId, current.updated_at, current.origin_node_id) <= 0) continue;
+      const nextIds = JSON.stringify([...new Set(grant.projectIds)].sort());
+      const updatedAt = nextVersionTimestamp(...(current ? [current.updated_at] : []), grant.updatedAt);
+      db.prepare(`INSERT INTO cluster_project_grants (node_id, project_ids, updated_at, origin_node_id) VALUES (?, ?, ?, ?)
+        ON CONFLICT(node_id) DO UPDATE SET project_ids = excluded.project_ids, updated_at = excluded.updated_at, origin_node_id = excluded.origin_node_id`)
+        .run(grant.nodeId, nextIds, updatedAt, grant.originNodeId);
       membershipChanged = true;
     }
     if (membershipChanged) {
@@ -600,18 +736,57 @@ export async function removeClusterPeer(peerId: string): Promise<void> {
   const db = await clusterDatabase();
   db.exec("BEGIN IMMEDIATE");
   try {
-    const localNode = nodeFromRow(db.prepare("SELECT id, name, url, created_at, updated_at FROM cluster_node WHERE singleton = 1").get() as unknown as NodeRow);
-    const peer = db.prepare("SELECT id, name, url, token, paired_at, last_seen_at, created_at, updated_at FROM cluster_peers WHERE id = ?").get(peerId) as PeerRow | undefined;
+    const localNode = nodeFromRow(db.prepare("SELECT id, name, url, created_at, updated_at, invited_by_node_id FROM cluster_node WHERE singleton = 1").get() as unknown as NodeRow);
+    const peer = db.prepare(`SELECT ${PEER_COLUMNS} FROM cluster_peers WHERE id = ?`).get(peerId) as PeerRow | undefined;
     if (peer) {
       assertPeerCanBeRemoved(db, peerId);
       db.prepare("DELETE FROM cluster_peers WHERE id = ?").run(peerId);
       const rotatedLocalNode = rotateLocalMachineCredential(db, localNode, peer.updated_at);
       db.prepare("DELETE FROM cluster_membership_deliveries WHERE peer_id = ?").run(peerId);
+      db.prepare("DELETE FROM cluster_project_grants WHERE node_id = ?").run(peerId);
       db.prepare(`INSERT INTO cluster_member_tombstones (id, removed_at, origin_node_id) VALUES (?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET removed_at = excluded.removed_at, origin_node_id = excluded.origin_node_id`).run(peerId, rotatedLocalNode.updatedAt, localNode.id);
       queueMembershipChange(db);
       appendAuditEvent(db, { eventType: "cluster.member.removed", actorType: "node", actorId: localNode.id, entityType: "cluster.member", entityId: peerId });
     }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+/** Checks the same settlement rules leaveCluster enforces, without changing anything, so
+    callers can validate a departure before telling peers about it. */
+export async function assertClusterDepartureAllowed(): Promise<void> {
+  const db = await clusterDatabase();
+  for (const row of db.prepare(`SELECT ${PEER_COLUMNS} FROM cluster_peers`).all() as unknown as PeerRow[]) {
+    assertPeerCanBeRemoved(db, row.id);
+  }
+}
+
+/** Voluntary departure: forgets every peer, drops all project grants, and rotates the
+    machine credential so former peers can no longer drive this node's machine routes.
+    Callers notify the peers first; this only settles local state. */
+export async function leaveCluster(): Promise<void> {
+  const db = await clusterDatabase();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const localNode = nodeFromRow(db.prepare("SELECT id, name, url, created_at, updated_at, invited_by_node_id FROM cluster_node WHERE singleton = 1").get() as unknown as NodeRow);
+    const rows = db.prepare(`SELECT ${PEER_COLUMNS} FROM cluster_peers`).all() as unknown as PeerRow[];
+    for (const row of rows) assertPeerCanBeRemoved(db, row.id);
+    const rotatedLocalNode = rows.length ? rotateLocalMachineCredential(db, localNode, ...rows.map((row) => row.updated_at)) : localNode;
+    // No local tombstones: each former peer tombstones this node when it processes the leave
+    // notice. A tombstone written here would outrank the inviter's live membership row and
+    // block a later re-join, because the leave timestamp is newer than any member version.
+    for (const row of rows) {
+      db.prepare("DELETE FROM cluster_peers WHERE id = ?").run(row.id);
+      db.prepare("DELETE FROM cluster_membership_deliveries WHERE peer_id = ?").run(row.id);
+    }
+    db.prepare("DELETE FROM cluster_project_grants").run();
+    db.prepare("UPDATE cluster_node SET invited_by_node_id = NULL, updated_at = ? WHERE singleton = 1").run(nextVersionTimestamp(localNode.updatedAt, rotatedLocalNode.updatedAt));
+    queueMembershipChange(db);
+    if (rows.length) appendAuditEvent(db, { eventType: "cluster.member.left", actorType: "node", actorId: localNode.id, entityType: "cluster.membership", entityId: localNode.id, details: { peers: rows.length } });
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");

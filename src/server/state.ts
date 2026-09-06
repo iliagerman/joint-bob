@@ -105,6 +105,7 @@ export const machineRoutes = new Set([
   "GET /cluster/local-inventory",
   "POST /cluster/peers/accept",
   "POST /cluster/membership/sync",
+  "POST /cluster/membership/leave",
   "POST /cluster/projects/import",
   "POST /cluster/projects/map",
   "GET /cluster/filesystem/directories",

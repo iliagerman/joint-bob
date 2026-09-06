@@ -460,6 +460,14 @@ export async function registerProjectAliases(projectId: string, aliasIds: string
   try {
     for (const aliasId of [...new Set(aliasIds)].sort()) {
       if (aliasId !== canonicalId) saveProjectAlias(db, aliasId, canonicalId);
+      // A replicated secret may already be attached to the remote id before this node knows
+      // the project; once the alias lands, rekey the attachment to the local canonical id.
+      if (aliasId !== canonicalId && db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'secret_assignments'").get()) {
+        // Insert-then-delete: a plain UPDATE would hit the composite primary key when the
+        // account already carries both the alias and the canonical attachment.
+        db.prepare("INSERT OR IGNORE INTO secret_assignments (scope_type, scope_id, account_id) SELECT 'project', ?, account_id FROM secret_assignments WHERE scope_type = 'project' AND scope_id = ?").run(canonicalId, aliasId);
+        db.prepare("DELETE FROM secret_assignments WHERE scope_type = 'project' AND scope_id = ?").run(aliasId);
+      }
     }
     db.exec("COMMIT");
   } catch (error) {

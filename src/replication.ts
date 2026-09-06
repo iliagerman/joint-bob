@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { clusterProjectGrantFor } from "./cluster.js";
 import { applyConversationOwnershipEvent, ensureConversationOwnershipSchema } from "./conversation-ownership.js";
 import { applyCanvasShortcutEvent, ensureCanvasShortcutSchema } from "./canvas-shortcuts.js";
 import { applyConversationReviewEvent, ensureConversationReviewReplicaSchema } from "./conversation-reviews.js";
@@ -79,10 +80,39 @@ export function enqueueReplicationEvent(db: DatabaseSync, input: Omit<Replicatio
   return event;
 }
 function eventFromRow(row: OutboxRow): ReplicationEvent { return { id: row.event_id, originNodeId: row.origin_node_id, entityType: row.entity_type, entityKey: row.entity_key, operation: row.operation, payload: JSON.parse(row.payload), createdAt: row.created_at }; }
+
+/** The project an event belongs to, read from its payload. Events that carry no project
+    (conversation ownership, session names, pins without a project) are user-global and
+    replicate everywhere. */
+export function replicationEventProjectId(event: ReplicationEvent): string | undefined {
+  const payload = event.payload as Record<string, unknown> | null | undefined;
+  if (!payload || typeof payload !== "object") return undefined;
+  if (event.entityType === "name.override") return payload.scope === "projects" && typeof payload.key === "string" ? payload.key : undefined;
+  if (!["task", "project.lock", "conversation.record", "canvas.shortcut", "user.pin", "user.recent", "conversation.review"].includes(event.entityType)) return undefined;
+  return typeof payload.projectId === "string" && payload.projectId ? payload.projectId : undefined;
+}
+
+function eventWithinGrant(db: DatabaseSync, event: ReplicationEvent, grant: string[]): boolean {
+  const projectId = replicationEventProjectId(event);
+  if (!projectId) return true;
+  return grant.includes(projectId) || grant.includes(resolveProjectAlias(db, projectId));
+}
+
 export async function eventsForPeer(peerId: string, now = new Date()): Promise<ReplicationEvent[]> {
   const db = await replicationDatabase(); const at = now.toISOString();
   db.prepare("INSERT OR IGNORE INTO replication_deliveries (event_id, peer_id, attempts, next_attempt_at, delivered_at, last_error) SELECT event_id, ?, 0, ?, NULL, NULL FROM replication_outbox").run(peerId, at);
-  return (db.prepare(`SELECT o.event_id, o.origin_node_id, o.entity_type, o.entity_key, o.operation, o.payload, o.created_at FROM replication_outbox o JOIN replication_deliveries d ON d.event_id = o.event_id WHERE d.peer_id = ? AND d.delivered_at IS NULL AND d.next_attempt_at <= ? ORDER BY o.created_at, o.event_id LIMIT 100`).all(peerId, at) as unknown as OutboxRow[]).map(eventFromRow);
+  const events = (db.prepare(`SELECT o.event_id, o.origin_node_id, o.entity_type, o.entity_key, o.operation, o.payload, o.created_at FROM replication_outbox o JOIN replication_deliveries d ON d.event_id = o.event_id WHERE d.peer_id = ? AND d.delivered_at IS NULL AND d.next_attempt_at <= ? ORDER BY o.created_at, o.event_id LIMIT 100`).all(peerId, at) as unknown as OutboxRow[]).map(eventFromRow);
+  // A granted peer never receives events outside its project selection. Blocked events are
+  // marked delivered so they drain instead of blocking the queue forever.
+  const grant = await clusterProjectGrantFor(peerId);
+  if (!grant) return events;
+  const allowed = events.filter((event) => eventWithinGrant(db, event, grant));
+  const blocked = events.filter((event) => !eventWithinGrant(db, event, grant)).map((event) => event.id);
+  if (blocked.length) {
+    const settle = db.prepare("UPDATE replication_deliveries SET delivered_at = COALESCE(delivered_at, ?), last_error = NULL WHERE peer_id = ? AND event_id = ?");
+    for (const id of blocked) settle.run(at, peerId, id);
+  }
+  return allowed;
 }
 export async function recordPeerReceipt(peerId: string, eventIds: string[]): Promise<void> { if (!eventIds.length) return; const db = await replicationDatabase(); db.exec("BEGIN IMMEDIATE"); try { const update = db.prepare("UPDATE replication_deliveries SET delivered_at = COALESCE(delivered_at, ?), last_error = NULL WHERE peer_id = ? AND event_id = ?"); for (const id of eventIds) update.run(new Date().toISOString(), peerId, id); db.exec("COMMIT"); } catch (error) { db.exec("ROLLBACK"); throw error; } }
 export async function recordPeerFailure(peerId: string, eventIds: string[], message: string, now = new Date()): Promise<void> { if (!eventIds.length) return; const db = await replicationDatabase(); db.exec("BEGIN IMMEDIATE"); try { const current = db.prepare("SELECT attempts FROM replication_deliveries WHERE peer_id = ? AND event_id = ? AND delivered_at IS NULL"); const update = db.prepare("UPDATE replication_deliveries SET attempts = ?, next_attempt_at = ?, last_error = ? WHERE peer_id = ? AND event_id = ? AND delivered_at IS NULL"); for (const id of eventIds) { const row = current.get(peerId, id) as { attempts: number } | undefined; if (!row) continue; const attempts = row.attempts + 1; update.run(attempts, new Date(now.getTime() + Math.min(300, 2 ** Math.min(attempts, 8)) * 1000).toISOString(), message, peerId, id); } db.exec("COMMIT"); } catch (error) { db.exec("ROLLBACK"); throw error; } }
@@ -208,14 +238,23 @@ const REPLICATION_APPLIERS: Record<string, ReplicationApplier> = {
 };
 
 export async function receiveReplicationBatch(batch: ReplicationBatch): Promise<string[]> {
-  const db = await replicationDatabase(); db.exec("BEGIN IMMEDIATE");
+  const db = await replicationDatabase();
+  // Read the local grant before the write transaction: it lives in the cluster store,
+  // and initialising that connection while holding this transaction's write lock deadlocks.
+  const localNode = (db.prepare("SELECT id FROM cluster_node WHERE singleton = 1").get() as { id: string } | undefined)?.id;
+  const localGrant = localNode ? await clusterProjectGrantFor(localNode) : undefined;
+  db.exec("BEGIN IMMEDIATE");
   try {
     const insert = db.prepare("INSERT OR IGNORE INTO replication_inbox (event_id, origin_node_id, received_at) VALUES (?, ?, ?)");
     const remove = db.prepare("DELETE FROM replication_inbox WHERE event_id = ?");
     const received: string[] = [];
-    const localNode = (db.prepare("SELECT id FROM cluster_node WHERE singleton = 1").get() as { id: string } | undefined)?.id;
     for (const event of batch.events) {
       if (!insert.run(event.id, event.originNodeId, new Date().toISOString()).changes) {
+        received.push(event.id);
+        continue;
+      }
+      if (localGrant && !eventWithinGrant(db, event, localGrant)) {
+        remove.run(event.id);
         received.push(event.id);
         continue;
       }

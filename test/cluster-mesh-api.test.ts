@@ -95,7 +95,15 @@ async function invite(node: NodeProcess, auth: Session): Promise<string> {
 }
 
 async function createJoinLink(node: NodeProcess, auth: Session): Promise<string> {
-  const response = await fetch(`${node.baseUrl}/api/cluster/invitations`, { method: "POST", headers: auth.headers });
+  // Invitations always share a project selection; one throwaway project is enough here.
+  const project = await fetch(`${node.baseUrl}/api/projects`, {
+    method: "POST",
+    headers: auth.headers,
+    body: JSON.stringify({ name: `Mesh project ${Date.now()}` }),
+  });
+  assert.equal(project.status, 201, node.output());
+  const projectId = (await project.json() as { project: { id: string } }).project.id;
+  const response = await fetch(`${node.baseUrl}/api/cluster/invitations`, { method: "POST", headers: auth.headers, body: JSON.stringify({ projectIds: [projectId] }) });
   assert.equal(response.status, 201, node.output());
   return (await response.json() as { link: string }).link;
 }

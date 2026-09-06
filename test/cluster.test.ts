@@ -23,8 +23,8 @@ async function withClusterStore(run: (dataDir: string) => Promise<void>): Promis
 test("cluster invitations are hashed, replace earlier links, and can be consumed once", async () => {
   await withClusterStore(async (dataDir) => {
     const cluster = await import(new URL(`../src/cluster.ts?invitation=${Date.now()}`, import.meta.url).href);
-    const first = await cluster.createClusterInvitation();
-    const second = await cluster.createClusterInvitation();
+    const first = await cluster.createClusterInvitation(["project-1"]);
+    const second = await cluster.createClusterInvitation(["project-1"]);
     const databaseBytes = (await readFile(path.join(dataDir, "node.db"))).toString("utf8");
 
     assert.match(first.secret, /^[A-Za-z0-9_-]{43}$/);
@@ -39,7 +39,7 @@ test("cluster invitations are hashed, replace earlier links, and can be consumed
     database.close();
     assert.equal(await cluster.consumeClusterInvitation(second.id, second.secret, "node-a"), "expired");
 
-    const third = await cluster.createClusterInvitation();
+    const third = await cluster.createClusterInvitation(["project-1"]);
     assert.equal(await cluster.consumeClusterInvitation(third.id, third.secret, "node-a"), "accepted");
     assert.equal(await cluster.consumeClusterInvitation(third.id, third.secret, "node-a"), "retry");
     assert.equal(await cluster.consumeClusterInvitation(third.id, third.secret, "node-b"), "used");

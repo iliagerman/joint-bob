@@ -256,3 +256,92 @@ test("malformed peer input is rejected rather than half-applied", async () => {
     assert.deepEqual(await secrets.listSecretAccounts(), []);
   });
 });
+
+test("replicated accounts carry project and conversation attachments even without a local project", async () => {
+  await withNode("assignments-outbox", async ({ dataDir, secrets, replication }) => {
+    const database = new DatabaseSync(path.join(dataDir, "node.db"));
+    try {
+      database.exec("PRAGMA busy_timeout = 5000; CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY); INSERT OR IGNORE INTO workspaces (id) VALUES ('personal')");
+    } catch {
+      database.close();
+      throw new Error("workspaces seed failed");
+    }
+    const account = await secrets.saveSecretAccount({ label: "Shared", provider: "custom", replicate: true, variables: [{ name: "TOKEN", kind: "value", value: "travels" }] });
+    // No local project exists for "remote-project" — the attachment must still travel.
+    const insert = database.prepare("INSERT INTO secret_assignments (scope_type, scope_id, account_id) VALUES (?, ?, ?)");
+    insert.run("project", "remote-project", account.id);
+    insert.run("conversation", "pi:session-1", account.id);
+    database.close();
+
+    const peerId = randomUUID();
+    await replication.enqueueSecretCredentialSync([peerId]);
+    const events = await replication.secretCredentialEventsForPeer(peerId);
+    assert.deepEqual(events[0].value.assignments, [
+      { scopeType: "conversation", scopeId: "pi:session-1" },
+      { scopeType: "project", scopeId: "remote-project" },
+    ]);
+  });
+});
+
+test("a received assignment set stores project attachments for projects this node does not have", async () => {
+  await withNode("assignments-receive", async ({ dataDir, secrets, replication }) => {
+    const database = new DatabaseSync(path.join(dataDir, "node.db"));
+    try {
+      database.exec("CREATE TABLE workspaces (id TEXT PRIMARY KEY); INSERT INTO workspaces (id) VALUES ('personal')");
+    } finally {
+      database.close();
+    }
+    const accountId = randomUUID();
+    await replication.receiveSecretCredentialEvents([{
+      id: randomUUID(),
+      entityKey: accountId,
+      operation: "upsert",
+      value: {
+        label: "From peer",
+        provider: "github",
+        variables: [{ name: "GH_TOKEN", kind: "value", value: "ghp_test_peer" }],
+        assignments: [
+          { scopeType: "workspace", scopeId: "personal" },
+          { scopeType: "workspace", scopeId: "missing" },
+          { scopeType: "project", scopeId: "not-here-yet" },
+          { scopeType: "conversation", scopeId: "claude:session-9" },
+        ],
+      },
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      originNodeId: randomUUID(),
+      createdAt: "2026-01-01T00:00:00.000Z",
+    }]);
+
+    // Unknown workspace rows are skipped; project and conversation rows persist so they
+    // activate when the project later arrives through an invitation.
+    const rows = new DatabaseSync(path.join(dataDir, "node.db"));
+    try {
+      const stored = (rows.prepare("SELECT scope_type, scope_id FROM secret_assignments WHERE account_id = ? ORDER BY scope_type, scope_id").all(accountId) as Array<{ scope_type: string; scope_id: string }>).map((row) => ({ ...row }));
+      assert.deepEqual(stored, [
+        { scope_type: "conversation", scope_id: "claude:session-9" },
+        { scope_type: "project", scope_id: "not-here-yet" },
+        { scope_type: "workspace", scope_id: "personal" },
+      ]);
+    } finally {
+      rows.close();
+    }
+  });
+});
+
+test("malformed assignments are rejected rather than half-applied", async () => {
+  await withNode("assignments-reject", async ({ secrets, replication }) => {
+    const base = {
+      id: randomUUID(),
+      entityKey: randomUUID(),
+      operation: "upsert" as const,
+      value: { label: "Bad", provider: "custom" as const, variables: [{ name: "TOKEN", kind: "value" as const, value: "value" }] },
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      originNodeId: randomUUID(),
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    await assert.rejects(() => replication.receiveSecretCredentialEvents([{ ...base, value: { ...base.value, assignments: [{ scopeType: "galaxy", scopeId: "x" }] } }]), /assignments are invalid/);
+    await assert.rejects(() => replication.receiveSecretCredentialEvents([{ ...base, value: { ...base.value, assignments: [{ scopeType: "project", scopeId: "" }] } }]), /assignments are invalid/);
+    await assert.rejects(() => replication.receiveSecretCredentialEvents([{ ...base, value: { ...base.value, assignments: [{ scopeType: "project", scopeId: "p" }, { scopeType: "project", scopeId: "p" }] } }]), /assignments are invalid/);
+    assert.deepEqual(await secrets.listSecretAccounts(), []);
+  });
+});
