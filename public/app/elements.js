@@ -281,7 +281,7 @@ export const elements = {
   fileActionDialog: document.querySelector("#fileActionDialog"),
   fileActionPath: document.querySelector("#fileActionPath"),
   fileActionView: document.querySelector("#fileActionView"),
-  fileActionViewLink: document.querySelector("#fileActionViewLink"),
+  fileActionViewButton: document.querySelector("#fileActionViewButton"),
   fileActionStatus: document.querySelector("#fileActionStatus"),
   fileActionDownloadLink: document.querySelector("#fileActionDownloadLink"),
   fileActionCancelButton: document.querySelector("#fileActionCancelButton"),

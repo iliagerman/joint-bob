@@ -495,6 +495,13 @@ test("a markdown file opens as raw source and previews beside it", async () => {
   assert.ok(gutter > 0, `the line-number gutter is visible while editing (got ${gutter}px)`);
   assert.equal(await page.getByTestId("file-editor-preview").isVisible(), false, "preview stays closed until it is asked for");
 
+  // A document taller than the editor is where the two panes drifted apart, so the
+  // buffer is filled before the preview opens.
+  await page.evaluate(() => {
+    const editor = (document.querySelector("#fileEditorView .CodeMirror") as HTMLElement & { CodeMirror: { setValue(value: string): void } }).CodeMirror;
+    editor.setValue(`# Internal Assistant\n\n${Array.from({ length: 400 }, (_, line) => `Paragraph ${line} of a long document.`).join("\n\n")}`);
+  });
+
   await page.getByTestId("file-editor-preview-button").click();
   const heading = page.locator('[data-testid="file-editor-preview"] h1');
   await heading.waitFor({ timeout: 10_000 });
@@ -505,10 +512,46 @@ test("a markdown file opens as raw source and previews beside it", async () => {
   const boxes = await page.evaluate(() => {
     const editor = document.querySelector("#fileEditorView .CodeMirror").getBoundingClientRect();
     const preview = document.querySelector("#fileEditorPreview").getBoundingClientRect();
-    return { editorRight: Math.round(editor.right), previewLeft: Math.round(preview.left), previewWidth: Math.round(preview.width) };
+    return {
+      editorRight: Math.round(editor.right), previewLeft: Math.round(preview.left), previewWidth: Math.round(preview.width),
+      editorTop: Math.round(editor.top), previewTop: Math.round(preview.top),
+      editorBottom: Math.round(editor.bottom), previewBottom: Math.round(preview.bottom),
+    };
   });
   assert.ok(boxes.previewLeft >= boxes.editorRight, `preview sits beside the editor (editor ends at ${boxes.editorRight}, preview starts at ${boxes.previewLeft})`);
   assert.ok(boxes.previewWidth > 300, `preview is wide enough to read (got ${boxes.previewWidth})`);
+  // The bug this covers: the preview grew to the document's height while the editor
+  // stayed short, so the two panes ended hundreds of pixels apart.
+  assert.ok(Math.abs(boxes.editorTop - boxes.previewTop) <= 1, `panes start on the same line (editor ${boxes.editorTop}, preview ${boxes.previewTop})`);
+  assert.ok(Math.abs(boxes.editorBottom - boxes.previewBottom) <= 1, `panes end on the same line (editor ${boxes.editorBottom}, preview ${boxes.previewBottom})`);
+
+  // The buffer was replaced, so closing asks before throwing the edits away.
+  await page.getByTestId("file-editor-cancel-button").click();
+  await page.getByTestId("confirm-accept-button").click();
+  await page.locator("#fileActionDialog[open]").waitFor({ state: "detached", timeout: 10_000 });
+});
+
+test("View opens the file inside the dialog, read-only", async () => {
+  await page.goto(node.url, { waitUntil: "domcontentloaded" });
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().waitFor({ timeout: 20_000 });
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+  await page.locator(".session-card", { hasText: "Thread-Based Agent Builder" }).first().click();
+  await page.getByTestId("chat-file-link").first().click();
+
+  await page.locator("#fileActionDialog[open]").waitFor({ timeout: 20_000 });
+  const before = page.context().pages().length;
+  await page.getByTestId("file-action-view-button").click();
+  await page.locator("#fileEditorView:not([hidden])").waitFor({ timeout: 20_000 });
+  assert.equal(page.context().pages().length, before, "viewing stays in the dialog instead of opening a tab");
+
+  // A markdown file opens as the rendered document beside its source.
+  const heading = page.locator('[data-testid="file-editor-preview"] h1');
+  await heading.waitFor({ timeout: 10_000 });
+  assert.equal((await heading.innerText()).trim(), "Internal Assistant");
+  assert.equal(await page.getByTestId("file-editor-save-button").isVisible(), false, "a read-only view offers no Save");
+  const readOnly = await page.evaluate(() =>
+    (document.querySelector("#fileEditorView .CodeMirror") as HTMLElement & { CodeMirror: { getOption(name: string): unknown } }).CodeMirror.getOption("readOnly"));
+  assert.equal(readOnly, true, "the buffer is locked while viewing");
 
   await page.getByTestId("file-editor-cancel-button").click();
 });

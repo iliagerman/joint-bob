@@ -48,7 +48,7 @@ test("assistant filesystem paths open through the authenticated project file rou
   assert.match(app, /url\.searchParams\.set\("download", "1"\)/);
   assert.match(app, /closest\("a\[data-file-path\]"\)/);
   assert.match(app, /file-resolution/);
-  assert.match(app, /fileActionViewLink/);
+  assert.match(app, /fileActionViewButton/);
   assert.match(app, /fileActionStatus/);
   assert.match(app, /CodeMirror\.fromTextArea/);
   assert.match(app, /keyMap: "vim"/);
@@ -59,14 +59,14 @@ test("assistant filesystem paths open through the authenticated project file rou
   assert.match(app, /CodeMirror\.commands\.save = \(\) => \{ void saveProjectFile\(false\); \}/);
   assert.match(server, /async function assertProjectFileConversationOwner\([\s\S]*listHarnessSessions\(project\)[\s\S]*requireLocalConversationOwner\([\s\S]*session\.id\)/);
   assert.match(server, /await assertProjectEditable\(project\);\s*await assertProjectFileConversationOwner\(project, payload\.sessionId\);[\s\S]*await readFile\(resolved\)/);
-  for (const testid of ["file-action-dialog", "file-action-view-link", "file-action-download-link", "file-action-cancel-button", "file-action-edit-button", "file-editor-mode", "file-editor-textarea", "file-editor-cancel-button", "file-editor-save-button"]) assert.ok(html.includes(testid));
+  for (const testid of ["file-action-dialog", "file-action-view-button", "file-action-download-link", "file-action-cancel-button", "file-action-edit-button", "file-editor-mode", "file-editor-textarea", "file-editor-cancel-button", "file-editor-save-button"]) assert.ok(html.includes(testid));
   assert.match(app, /dataset\.testid = "file-editor-input"/);
-  assert.ok(html.indexOf('id="fileActionCancelButton"') < html.indexOf('id="fileActionViewLink"'));
+  assert.ok(html.indexOf('id="fileActionCancelButton"') < html.indexOf('id="fileActionViewButton"'));
   assert.match(styles, /\.file-editor-card\s*\{[^}]*width:\s*min\(440px,/);
   assert.match(styles, /\.file-editor-card:has\(#fileEditorView:not\(\[hidden\]\)\)/);
   assert.match(styles, /\.file-editor-path\s*\{[^}]*border:\s*1px solid var\(--line\)/);
   assert.match(styles, /\.file-editor-actions\s*\{[^}]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\)/);
-  assert.match(styles, /#fileActionViewLink, #fileActionDownloadLink\s*\{[^}]*text-decoration:\s*none;[^}]*background:\s*var\(--field\)/);
+  assert.match(styles, /#fileActionViewButton, #fileActionDownloadLink\s*\{[^}]*text-decoration:\s*none;[^}]*background:\s*var\(--field\)/);
   assert.match(styles, /\.file-editor-card \.CodeMirror\s*\{/);
   assert.match(styles, /#fileActionEditButton\s*\{[^}]*background:\s*var\(--accent\)/);
   assert.match(html, /id="fileActionEditButton"[^>]*autofocus/);

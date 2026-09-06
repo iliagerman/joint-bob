@@ -72,8 +72,8 @@ test("markdown always opens as raw source, with the rendered document beside it 
   assert.match(app, /fileEditor\.setOption\("lineNumbers", true\)/);
   assert.ok(!app.includes("styleActiveLine"), "the editor must not hide markdown syntax while editing");
   assert.ok(!app.includes("file-editor-rendered"), "the in-editor rendered mode is gone");
-  // Markdown files open raw, never previewed.
-  assert.match(app, /applyFileEditorView\(markdown, false\)/);
+  // Editing opens raw; viewing opens the rendered document beside it.
+  assert.match(app, /applyFileEditorView\(markdown, readOnly\)/);
   // The toggle flips only the preview half and keeps the markdown half on.
   assert.match(app, /elements\.fileEditorPreviewButton\.addEventListener\("click", \(\) => \{/);
   assert.match(app, /applyFileEditorView\(true, !state\.fileEditor\.preview\)/);
@@ -90,7 +90,32 @@ test("markdown always opens as raw source, with the rendered document beside it 
   assert.ok(!styles.includes(".file-editor-rendered"), "the in-editor rendered styling is gone");
 });
 
-test("the View link renders a file as a document instead of raw text", async () => {
+test("View opens the file in the dialog, read-only, beside the rendered document", async () => {
+  const [app, html, styles] = await Promise.all([
+    appSource(),
+    readFile("public/index.html", "utf8"),
+    readFile("public/styles.css", "utf8"),
+  ]);
+
+  // View is no longer a link to another tab: it loads the same dialog the Edit
+  // button loads, with the buffer locked and Save out of the way.
+  assert.match(html, /<button[^>]*id="fileActionViewButton"[^>]*data-testid="file-action-view-button"/);
+  assert.ok(!html.includes('id="fileActionViewLink"'), "the View link is replaced by a button");
+  assert.match(app, /function openProjectFile\(readOnly\)/);
+  assert.match(app, /fileEditor\.setOption\("readOnly", readOnly\)/);
+  assert.match(app, /elements\.fileEditorSaveButton\.hidden = readOnly/);
+  assert.match(app, /elements\.fileActionViewButton\.addEventListener\("click", \(\) => openProjectFile\(true\)\)/);
+  assert.match(app, /elements\.fileActionEditButton\.addEventListener\("click", \(\) => openProjectFile\(false\)\)/);
+
+  // Both halves of the split are the same height, so the source and the rendered
+  // document start and end on the same line instead of one dangling below the other.
+  assert.match(styles, /\.file-editor-card \{[^}]*--file-editor-height:/);
+  assert.match(styles, /\.file-editor-preview \{[^}]*height: var\(--file-editor-height\)/);
+  assert.match(styles, /\.file-editor-card \.CodeMirror \{[^}]*height: var\(--file-editor-height\)/);
+  assert.match(styles, /\.file-editor-split \{[^}]*align-items: stretch/);
+});
+
+test("the file URL renders a file as a document instead of raw text", async () => {
   const [server, fileView, styles, serviceWorker] = await Promise.all([
     serverSource(),
     readFile("public/file-view.js", "utf8"),

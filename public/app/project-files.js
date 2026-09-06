@@ -34,7 +34,7 @@ function projectFileResolutionUrl(filePath) {
 }
 
 function resetFileEditor() {
-  state.fileEditor = { requestedPath: null, path: null, viewUrl: null, downloadUrl: null, contentUrl: null, version: null, original: "", loading: false, saving: false, markdown: false, preview: false };
+  state.fileEditor = { requestedPath: null, path: null, downloadUrl: null, contentUrl: null, version: null, original: "", loading: false, saving: false, markdown: false, preview: false, readOnly: false };
   elements.fileActionView.hidden = false;
   elements.fileEditorView.hidden = true;
   fileEditor.setValue("");
@@ -42,10 +42,9 @@ function resetFileEditor() {
   applyFileEditorView(false, false);
   elements.fileActionStatus.textContent = "";
   elements.fileEditorStatus.textContent = "";
-  for (const link of [elements.fileActionViewLink, elements.fileActionDownloadLink]) {
-    link.removeAttribute("href");
-    link.setAttribute("aria-disabled", "true");
-  }
+  elements.fileActionDownloadLink.removeAttribute("href");
+  elements.fileActionDownloadLink.setAttribute("aria-disabled", "true");
+  elements.fileActionViewButton.disabled = true;
   elements.fileActionEditButton.disabled = true;
 }
 
@@ -59,12 +58,11 @@ export async function openFileAction(path, taskId) {
   try {
     const body = await api(`${projectFileApiUrl("file-resolution", path, taskId).pathname}${projectFileApiUrl("file-resolution", path, taskId).search}`);
     if (!elements.fileActionDialog.open || state.fileEditor.requestedPath !== path) return;
-    Object.assign(state.fileEditor, { path: body.path, viewUrl: body.viewUrl, downloadUrl: body.downloadUrl, contentUrl: body.contentUrl });
+    Object.assign(state.fileEditor, { path: body.path, downloadUrl: body.downloadUrl, contentUrl: body.contentUrl });
     elements.fileActionPath.textContent = body.path;
-    elements.fileActionViewLink.href = body.viewUrl;
     elements.fileActionDownloadLink.href = body.downloadUrl;
-    elements.fileActionViewLink.removeAttribute("aria-disabled");
     elements.fileActionDownloadLink.removeAttribute("aria-disabled");
+    elements.fileActionViewButton.disabled = false;
     elements.fileActionEditButton.disabled = false;
     elements.fileActionStatus.textContent = "";
   } catch (error) {
@@ -91,10 +89,14 @@ function applyFileEditorView(markdown, preview) {
   if (showPreview) renderMarkdown(elements.fileEditorPreview, fileEditor.getValue());
 }
 
-async function editProjectFile() {
+// Viewing and editing are the same dialog: viewing locks the buffer, hides Save, and
+// opens markdown on its rendered half, so reading a file never leaves the app.
+async function openProjectFile(readOnly) {
   const { contentUrl } = state.fileEditor;
   if (!contentUrl) return;
   state.fileEditor.loading = true;
+  state.fileEditor.readOnly = readOnly;
+  elements.fileActionViewButton.disabled = true;
   elements.fileActionEditButton.disabled = true;
   elements.fileEditorStatus.textContent = "Loading…";
   try {
@@ -107,14 +109,16 @@ async function editProjectFile() {
     // and the Preview toggle is what shows the rendered document.
     const markdown = spec?.mode === "markdown" || spec?.mode === "gfm";
     fileEditor.setOption("mode", markdown ? { name: spec.mode, highlightFormatting: true } : spec?.mime ?? spec?.mode ?? null);
-    applyFileEditorView(markdown, false);
+    fileEditor.setOption("readOnly", readOnly);
+    elements.fileEditorSaveButton.hidden = readOnly;
+    applyFileEditorView(markdown, readOnly);
     if (spec) window.CodeMirror.autoLoadMode(fileEditor, spec.mode);
     elements.fileActionView.hidden = true;
     elements.fileEditorView.hidden = false;
     elements.fileEditorStatus.textContent = "";
     requestAnimationFrame(() => { fileEditor.refresh(); fileEditor.focus(); });
   } catch (error) { toast(error.message, 8000); elements.fileEditorStatus.textContent = error.message; }
-  finally { state.fileEditor.loading = false; elements.fileActionEditButton.disabled = false; }
+  finally { state.fileEditor.loading = false; elements.fileActionViewButton.disabled = false; elements.fileActionEditButton.disabled = false; }
 }
 
 async function attemptCloseFileEditor() {
@@ -134,7 +138,7 @@ async function attemptCloseFileEditor() {
 }
 
 async function saveProjectFile(closeAfterSave = true) {
-  if (state.fileEditor.saving) return;
+  if (state.fileEditor.saving || state.fileEditor.readOnly) return;
   const { contentUrl, version } = state.fileEditor;
   if (!contentUrl || !version) return;
   const session = activeChatSession();
@@ -170,7 +174,8 @@ fileEditor.on("changes", () => {
 });
 
 window.CodeMirror.commands.save = () => { void saveProjectFile(false); };
-elements.fileActionEditButton.addEventListener("click", () => editProjectFile());
+elements.fileActionViewButton.addEventListener("click", () => openProjectFile(true));
+elements.fileActionEditButton.addEventListener("click", () => openProjectFile(false));
 elements.fileActionCancelButton.addEventListener("click", attemptCloseFileEditor);
 elements.fileEditorSaveButton.addEventListener("click", () => saveProjectFile());
 elements.fileEditorCancelButton.addEventListener("click", attemptCloseFileEditor);
