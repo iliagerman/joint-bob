@@ -15,12 +15,19 @@ function terminalCssColor(name, fallback) {
   return getComputedStyle(elements.terminalHost).getPropertyValue(name).trim() || fallback;
 }
 
+// Nerd Font families come first so a powerline prompt draws its glyphs instead of
+// tofu boxes; the browser falls through to the plain mono stack when none exist.
+const TERMINAL_FONT = '"MesloLGS NF", "JetBrainsMono Nerd Font", "FiraCode Nerd Font", "Hack Nerd Font", "SauceCodePro Nerd Font", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace';
+
 function ensureTerminalEmulator() {
   if (state.terminalEmulator) return state.terminalEmulator;
   const emulator = new window.Terminal({
     cursorBlink: true,
-    fontFamily: "var(--mono)",
-    fontSize: 12.5,
+    cursorStyle: "bar",
+    fontFamily: TERMINAL_FONT,
+    fontSize: 13,
+    // Rows sit flush against each other at the default 1.0 and clip descenders.
+    lineHeight: 1.25,
     scrollback: 5000,
     theme: {
       background: terminalCssColor("--code-bg", "#08090b"),
@@ -28,6 +35,11 @@ function ensureTerminalEmulator() {
       cursor: terminalCssColor("--accent", "#37cfab"),
       cursorAccent: terminalCssColor("--code-bg", "#08090b"),
       selectionBackground: "#37cfab55",
+      // Left to itself xterm derives these from the foreground and paints a pale
+      // bar across the dark frame.
+      scrollbarSliderBackground: "#ffffff1f",
+      scrollbarSliderHoverBackground: "#ffffff33",
+      scrollbarSliderActiveBackground: "#ffffff4d",
     },
   });
   // The addon's UMD bundle assigns its whole module namespace to window.FitAddon,
@@ -41,14 +53,18 @@ function ensureTerminalEmulator() {
       state.terminalSocket.send(JSON.stringify({ type: "terminalInput", data }));
     }
   });
-  state.terminalObserver = new ResizeObserver(() => {
-    if (!state.terminalSocket || state.terminalSocket.readyState !== WebSocket.OPEN) return;
-    fit.fit();
-    state.terminalSocket.send(JSON.stringify({ type: "terminalResize", cols: emulator.cols, rows: emulator.rows }));
-  });
+  state.terminalObserver = new ResizeObserver(() => fitTerminalOnceVisible());
   state.terminalObserver.observe(elements.terminalHost);
   state.terminalEmulator = emulator;
   return emulator;
+}
+
+// The heading pill is a traffic light plus a line of text: red idle, amber while
+// the socket opens, green once the shell answers.
+function setTerminalStatus(connection, text) {
+  elements.terminalStatus.dataset.state = connection;
+  elements.terminalStatusText.textContent = text;
+  elements.terminalStatusText.title = text;
 }
 
 function fitTerminalOnceVisible() {
@@ -83,7 +99,7 @@ function openProjectTerminal() {
   if (!state.activeProjectId || !state.activeNodeId) throw new Error("Select a project and execution node first");
   const node = state.sessionNodes.find((candidate) => candidate.id === state.activeNodeId);
   closeTerminalSocket();
-  elements.terminalStatus.textContent = `Connecting to ${node?.name || "node"}...`;
+  setTerminalStatus("connecting", `Connecting to ${node?.name || "node"}...`);
   elements.terminalDialog.showModal();
   const emulator = ensureTerminalEmulator();
   emulator.reset();
@@ -95,7 +111,7 @@ function openProjectTerminal() {
     if (state.terminalSocket !== socket) return;
     const payload = JSON.parse(event.data);
     if (payload.type === "terminalReady") {
-      elements.terminalStatus.textContent = `${node?.name || "Node"} \u00b7 ${payload.cwd}`;
+      setTerminalStatus("live", `${node?.name || "Node"} \u00b7 ${payload.cwd}`);
       emulator.focus();
     }
     if (payload.type === "terminalOutput") emulator.write(payload.data || "");
@@ -105,7 +121,7 @@ function openProjectTerminal() {
   socket.addEventListener("close", () => {
     if (state.terminalSocket !== socket) return;
     state.terminalSocket = null;
-    elements.terminalStatus.textContent = "Disconnected";
+    setTerminalStatus("idle", "Disconnected");
   });
   socket.addEventListener("error", () => {
     if (state.terminalSocket === socket) emulator.write("\r\nCould not connect to terminal.\r\n");

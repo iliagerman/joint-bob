@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { canonicalCanvasKeyToken } from "./canvas-keys.js";
 import { isHarnessId, type HarnessId } from "./types.js";
 
 /** One conversation the user opened, newest first, capped by the client. */
@@ -155,7 +156,7 @@ export type CanvasModifier = "meta" | "ctrl" | "alt" | "shift";
 
 /**
  * Canvas keyboard shortcuts for one account. One modifier chord serves every canvas
- * key; each command holds one digit or letter, or null when it is unbound.
+ * key; each command holds one key from the canvas vocabulary, or null when unbound.
  */
 export interface CanvasKeymapPreference {
   modifiers: CanvasModifier[];
@@ -163,15 +164,17 @@ export interface CanvasKeymapPreference {
   focusPane: string | null;
   paneSearch: string | null;
   toggleView: string | null;
+  spotlight: string | null;
+  pendingReviews: string | null;
 }
 
 const CANVAS_MODIFIERS: CanvasModifier[] = ["meta", "ctrl", "alt", "shift"];
 // Order matters: a command added later takes its default key only if no earlier command
 // already holds it, so an existing account never loses a binding it configured.
-const CANVAS_KEYMAP_COMMANDS = ["recentPane", "focusPane", "paneSearch", "toggleView"] as const;
+const CANVAS_KEYMAP_COMMANDS = ["recentPane", "focusPane", "paneSearch", "toggleView", "spotlight", "pendingReviews"] as const;
 
 export const defaultCanvasKeymap = (): CanvasKeymapPreference => ({
-  modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F", toggleView: "V",
+  modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F", toggleView: "V", spotlight: "P", pendingReviews: "R",
 });
 
 /** Shift alone is not a chord: it would swallow every capital letter a conversation
@@ -192,14 +195,14 @@ export function normalizeCanvasKeymapPreference(value: unknown): CanvasKeymapPre
   const modifiers = CANVAS_MODIFIERS.filter((name) => chosen.includes(name));
   const keymap: CanvasKeymapPreference = {
     modifiers: canvasChordIsUsable(modifiers) ? modifiers : defaultCanvasKeymap().modifiers,
-    recentPane: null, focusPane: null, paneSearch: null, toggleView: null,
+    recentPane: null, focusPane: null, paneSearch: null, toggleView: null, spotlight: null, pendingReviews: null,
   };
   const taken = new Set<string>();
   for (const command of CANVAS_KEYMAP_COMMANDS) {
     // A keymap saved before a command existed never had an opinion about it, so it starts on
     // the default. A command the user cleared arrives as an explicit null and stays cleared.
     const raw = source[command] === undefined ? defaultCanvasKeymap()[command] : source[command];
-    const key = typeof raw === "string" && /^[0-9A-Za-z]$/.test(raw) ? raw.toUpperCase() : null;
+    const key = canonicalCanvasKeyToken(raw);
     if (!key || taken.has(key)) continue;
     keymap[command] = key;
     taken.add(key);

@@ -139,6 +139,7 @@ export const machineRoutes = new Set([
   "POST /cluster/tasks/merge-action",
   "GET /cluster/tasks/merge-conflicts",
   "POST /cluster/tasks/handoff",
+  "POST /cluster/update/install",
   "POST /update/prepare",
 ]);
 export const app = express();

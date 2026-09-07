@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Chat now shows a button to jump to the newest message when you scroll up to read older messages
+- Settings > Updates lets nodes check for, install, and automatically update to new releases, with cluster-wide rollout available
 
 ## 1.6.0 — 2026-09-06
 

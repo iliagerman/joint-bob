@@ -83,6 +83,21 @@ curl -fsSL https://raw.githubusercontent.com/iliagerman/joint-bob/main/scripts/i
 
 The installer preserves projects, credentials, settings, tasks, cluster identity, and other state. It restores the previous installed copy if the replacement fails. Existing `~/.pi-mobile-web` state migrates automatically.
 
+A node can also update itself. Open **Settings > Updates** to check the newest GitHub release, install it on this node, or enable automatic updates for this node. On a cluster, **Update all nodes** rolls the same release out one node at a time, this node last, and stops at the first failure. Updates download the checksum-verified release archive, swap the installation with rollback, restart the node's service, and resume interrupted work automatically. The first release that includes this system must still be installed manually on every node.
+
+## Update from the app
+
+**Settings → Updates** shows the version this node runs, the newest published release, and every node in the cluster.
+
+- **Check for updates** reads the GitHub release feed. Only a published, non-prerelease `v<major>.<minor>.<patch>` release carrying both `joint-bob.tar.gz` and `joint-bob.tar.gz.sha256` counts as installable.
+- **Install** downloads that release, verifies its SHA-256 checksum before extracting, confirms the archive's `package.json` version matches the target, and installs it through the packaged CLI. The swap runs in a detached helper so it survives the service restart it causes. A failed swap restores and restarts the previous installation.
+- **Update all nodes** rolls the release out one node at a time, peers first and this node last, so the node driving the rollout is the last one to restart.
+- **Update automatically** installs a newer release on its own. It checks every six hours and waits six hours after a failure before trying again.
+
+Updates are only available on an installed node. A development checkout reports `development checkout`, disables the controls, and answers the update endpoints with `409`.
+
+Progress and failures appear in the same panel; each node also keeps its own update history in `~/.joint-bob/node.db`.
+
 ## Install on EC2 or another remote Linux host
 
 For a persistent remote node, create a supported Linux host, connect over SSH as a non-root user, and run the normal installer there. On Ubuntu, the default `ubuntu` user is suitable.

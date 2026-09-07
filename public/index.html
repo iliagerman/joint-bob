@@ -309,7 +309,7 @@
         </div>
         <p class="canvas-shortcut-subject" id="canvasShortcutSubject" data-testid="canvas-shortcut-subject"></p>
         <label for="canvasShortcutKey"><span id="canvasShortcutChordLabel">Press ⌘⇧ with this key</span>
-          <input id="canvasShortcutKey" type="text" maxlength="1" autocomplete="off" spellcheck="false" placeholder="1-9 or A-Z" data-testid="canvas-shortcut-key-input" />
+          <input id="canvasShortcutKey" type="text" maxlength="5" autocomplete="off" spellcheck="false" placeholder="A-Z, 0-9, [ or Enter" data-testid="canvas-shortcut-key-input" />
         </label>
         <p class="canvas-picker-status" id="canvasShortcutStatus" role="status" data-testid="canvas-shortcut-status"></p>
         <div class="dialog-actions">
@@ -348,6 +348,25 @@
       </form>
     </dialog>
 
+    <dialog id="spotlightDialog" data-testid="spotlight-dialog">
+      <form class="dialog-card spotlight-card" method="dialog">
+        <div>
+          <span class="eyebrow">Go to</span>
+          <h2>Search everything</h2>
+          <p>Every project and every conversation in them. Type any part of a name; the arrow keys move the highlight and Enter opens it.</p>
+        </div>
+        <label class="search-shell" for="spotlightInput">
+          <span class="sr-only">Search projects and conversations</span>
+          <input id="spotlightInput" type="search" role="combobox" aria-autocomplete="list" aria-controls="spotlightResults" aria-expanded="false" autocomplete="off" spellcheck="false" placeholder="Search projects and conversations" data-testid="spotlight-input" />
+        </label>
+        <p class="canvas-picker-status" id="spotlightStatus" role="status" data-testid="spotlight-status"></p>
+        <div class="spotlight-results" id="spotlightResults" role="listbox" data-testid="spotlight-results"></div>
+        <div class="dialog-actions">
+          <button class="ghost" type="submit" data-testid="spotlight-cancel-button">Close</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="canvasFinderDialog" data-testid="canvas-finder-dialog">
       <form class="dialog-card" method="dialog">
         <div>
@@ -367,43 +386,6 @@
       </form>
     </dialog>
 
-    <dialog id="canvasKeymapDialog" data-testid="canvas-keymap-dialog">
-      <form class="dialog-card" method="dialog">
-        <div>
-          <span class="eyebrow">Canvas</span>
-          <h2>Canvas shortcuts</h2>
-          <p>One modifier combination runs every canvas key, including the per-conversation keys. It must include Command, Control, or Option — Shift on its own would swallow ordinary typing. Each command takes one digit or letter; leave a field empty to unbind it. The switch key works everywhere in the app, including from the conversation list; the rest belong to the open canvas. A key a conversation already uses stays with that conversation.</p>
-          <p>Terminal-style commands are fixed: press Control+Space, then | or \ to open left of the active pane, - to open below it, X to close it after Y/N confirmation, C to create a page, N or P to move between pages, 1–9 to jump to a page, or an arrow to move between panes.</p>
-        </div>
-        <fieldset class="canvas-keymap-modifiers">
-          <legend>Modifier combination</legend>
-          <label for="canvasKeymapModifier-meta"><input id="canvasKeymapModifier-meta" type="checkbox" data-testid="canvas-keymap-modifier-meta" /> Command ⌘</label>
-          <label for="canvasKeymapModifier-ctrl"><input id="canvasKeymapModifier-ctrl" type="checkbox" data-testid="canvas-keymap-modifier-ctrl" /> Control ⌃</label>
-          <label for="canvasKeymapModifier-alt"><input id="canvasKeymapModifier-alt" type="checkbox" data-testid="canvas-keymap-modifier-alt" /> Option ⌥</label>
-          <label for="canvasKeymapModifier-shift"><input id="canvasKeymapModifier-shift" type="checkbox" data-testid="canvas-keymap-modifier-shift" /> Shift ⇧</label>
-        </fieldset>
-        <div class="canvas-keymap-grid">
-          <label class="canvas-keymap-command" for="canvasKeymapCommand-recentPane">Jump to the conversation you were in before
-            <input id="canvasKeymapCommand-recentPane" type="text" maxlength="1" autocomplete="off" spellcheck="false" placeholder="E" data-testid="canvas-keymap-recent-pane-input" />
-          </label>
-          <label class="canvas-keymap-command" for="canvasKeymapCommand-focusPane">Bring the current conversation forward
-            <input id="canvasKeymapCommand-focusPane" type="text" maxlength="1" autocomplete="off" spellcheck="false" placeholder="G" data-testid="canvas-keymap-focus-pane-input" />
-          </label>
-          <label class="canvas-keymap-command" for="canvasKeymapCommand-paneSearch">Search conversations on the canvas
-            <input id="canvasKeymapCommand-paneSearch" type="text" maxlength="1" autocomplete="off" spellcheck="false" placeholder="F" data-testid="canvas-keymap-pane-search-input" />
-          </label>
-          <label class="canvas-keymap-command" for="canvasKeymapCommand-toggleView">Switch between the canvas and the conversation you left
-            <input id="canvasKeymapCommand-toggleView" type="text" maxlength="1" autocomplete="off" spellcheck="false" placeholder="V" data-testid="canvas-keymap-toggle-view-input" />
-          </label>
-        </div>
-        <p class="canvas-picker-status" id="canvasKeymapStatus" role="status" data-testid="canvas-keymap-status"></p>
-        <div class="dialog-actions">
-          <button class="ghost" type="submit" data-testid="canvas-keymap-cancel-button">Cancel</button>
-          <button class="ghost" id="canvasKeymapResetButton" type="button" data-testid="canvas-keymap-reset-button">Reset</button>
-          <button class="primary" id="canvasKeymapSaveButton" type="button" data-testid="canvas-keymap-save-button">Save</button>
-        </div>
-      </form>
-    </dialog>
 
     <dialog id="loginDialog" data-testid="login-dialog">
       <form class="dialog-card" id="loginForm">
@@ -447,6 +429,8 @@
           <button class="settings-tab" type="button" data-settings-tab="workspaces" role="tab" id="settingsTab-workspaces" aria-controls="settingsPanel-workspaces" aria-selected="false" tabindex="-1" data-testid="settings-tab-workspaces">Workspaces</button>
           <button class="settings-tab" type="button" data-settings-tab="engines" role="tab" id="settingsTab-engines" aria-controls="settingsPanel-engines" aria-selected="false" tabindex="-1" data-testid="settings-tab-engines">Engines</button>
           <button class="settings-tab" type="button" data-settings-tab="resources" role="tab" id="settingsTab-resources" aria-controls="settingsPanel-resources" aria-selected="false" tabindex="-1" data-testid="settings-tab-resources">Resources</button>
+          <button class="settings-tab" type="button" data-settings-tab="shortcuts" role="tab" id="settingsTab-shortcuts" aria-controls="settingsPanel-shortcuts" aria-selected="false" tabindex="-1" data-testid="settings-tab-shortcuts">Shortcuts</button>
+          <button class="settings-tab" type="button" data-settings-tab="updates" role="tab" id="settingsTab-updates" aria-controls="settingsPanel-updates" aria-selected="false" tabindex="-1" data-testid="settings-tab-updates">Updates</button>
           <button class="settings-tab" type="button" data-settings-tab="changelog" role="tab" id="settingsTab-changelog" aria-controls="settingsPanel-changelog" aria-selected="false" tabindex="-1" data-testid="settings-tab-changelog">Changelog</button>
         </div>
 
@@ -579,6 +563,88 @@
           <label>Plugins<textarea class="resource-paths-input" id="settingsResourcePluginsPaths" data-testid="settings-resource-plugins-paths"></textarea></label>
         </section>
 
+        <section class="settings-panel" id="settingsPanel-shortcuts" role="tabpanel" aria-labelledby="settingsTab-shortcuts" tabindex="0" hidden>
+          <p>Every keyboard shortcut in Joint Bob, in one place. Press <kbd>&#8984;</kbd><kbd>?</kbd> or <kbd>&#8963;</kbd><kbd>?</kbd> anywhere in the app to come straight back here. One modifier combination runs all of them. It must include Command, Control, or Option &mdash; Shift on its own would swallow ordinary typing.</p>
+          <fieldset class="canvas-keymap-modifiers">
+            <legend>Modifier combination</legend>
+            <label for="canvasKeymapModifier-meta"><input id="canvasKeymapModifier-meta" type="checkbox" data-testid="canvas-keymap-modifier-meta" /> Command &#8984;</label>
+            <label for="canvasKeymapModifier-ctrl"><input id="canvasKeymapModifier-ctrl" type="checkbox" data-testid="canvas-keymap-modifier-ctrl" /> Control &#8963;</label>
+            <label for="canvasKeymapModifier-alt"><input id="canvasKeymapModifier-alt" type="checkbox" data-testid="canvas-keymap-modifier-alt" /> Option &#8997;</label>
+            <label for="canvasKeymapModifier-shift"><input id="canvasKeymapModifier-shift" type="checkbox" data-testid="canvas-keymap-modifier-shift" /> Shift &#8679;</label>
+          </fieldset>
+          <p class="settings-hint">Click a field and press the key you want. A key can be a letter, a digit, a punctuation key such as <kbd>[</kbd>, or <kbd>Enter</kbd>. Empty a field to unbind it.</p>
+          <div class="canvas-keymap-grid">
+            <label class="canvas-keymap-command" for="canvasKeymapCommand-spotlight">Open the search bar over every project and conversation
+              <input id="canvasKeymapCommand-spotlight" type="text" maxlength="5" autocomplete="off" spellcheck="false" placeholder="P" data-testid="canvas-keymap-spotlight-input" />
+            </label>
+            <label class="canvas-keymap-command" for="canvasKeymapCommand-pendingReviews">Open the pending reviews list
+              <input id="canvasKeymapCommand-pendingReviews" type="text" maxlength="5" autocomplete="off" spellcheck="false" placeholder="R" data-testid="canvas-keymap-pending-reviews-input" />
+            </label>
+            <label class="canvas-keymap-command" for="canvasKeymapCommand-toggleView">Switch between the canvas and the conversation you left
+              <input id="canvasKeymapCommand-toggleView" type="text" maxlength="5" autocomplete="off" spellcheck="false" placeholder="V" data-testid="canvas-keymap-toggle-view-input" />
+            </label>
+            <label class="canvas-keymap-command" for="canvasKeymapCommand-recentPane">Canvas: jump to the conversation you were in before
+              <input id="canvasKeymapCommand-recentPane" type="text" maxlength="5" autocomplete="off" spellcheck="false" placeholder="E" data-testid="canvas-keymap-recent-pane-input" />
+            </label>
+            <label class="canvas-keymap-command" for="canvasKeymapCommand-focusPane">Canvas: bring the current conversation forward, or put it back
+              <input id="canvasKeymapCommand-focusPane" type="text" maxlength="5" autocomplete="off" spellcheck="false" placeholder="G" data-testid="canvas-keymap-focus-pane-input" />
+            </label>
+            <label class="canvas-keymap-command" for="canvasKeymapCommand-paneSearch">Canvas: search the conversations already on the canvas
+              <input id="canvasKeymapCommand-paneSearch" type="text" maxlength="5" autocomplete="off" spellcheck="false" placeholder="F" data-testid="canvas-keymap-pane-search-input" />
+            </label>
+          </div>
+          <div class="shortcut-conversation-keys">
+            <h3>Conversation keys</h3>
+            <p class="settings-hint">A key you gave one conversation on the canvas. Set these from a conversation&rsquo;s shortcut button on the canvas.</p>
+            <div id="shortcutConversationList" data-testid="settings-conversation-shortcut-list"></div>
+          </div>
+          <div class="canvas-keymap-leader" data-testid="canvas-keymap-leader">
+            <h3>Fixed shortcuts</h3>
+            <p>These cannot be changed. On the canvas, press <kbd>&#8963;</kbd><kbd>Space</kbd>, let go, then press:</p>
+            <ul>
+              <li><kbd>\</kbd> or <kbd>|</kbd> &mdash; split to the right of this conversation</li>
+              <li><kbd>-</kbd> &mdash; split below it</li>
+              <li><kbd>&larr;</kbd> <kbd>&rarr;</kbd> <kbd>&uarr;</kbd> <kbd>&darr;</kbd> &mdash; go to the conversation that way</li>
+              <li><kbd>X</kbd> &mdash; close this conversation, after a Y/N confirmation</li>
+              <li><kbd>C</kbd> &mdash; new page</li>
+              <li><kbd>N</kbd> or <kbd>P</kbd> &mdash; next or previous page</li>
+              <li><kbd>1</kbd>&ndash;<kbd>9</kbd> &mdash; jump straight to a page</li>
+            </ul>
+            <p>Anywhere in the app:</p>
+            <ul>
+              <li><kbd>&#8984;</kbd><kbd>?</kbd> or <kbd>&#8963;</kbd><kbd>?</kbd> &mdash; this panel</li>
+              <li><kbd>&#8984;</kbd><kbd>K</kbd> or <kbd>&#8963;</kbd><kbd>K</kbd> &mdash; recent conversations</li>
+              <li><kbd>1</kbd>&ndash;<kbd>9</kbd>, <kbd>0</kbd> in that list &mdash; open that row</li>
+              <li><kbd>&uarr;</kbd> <kbd>&darr;</kbd> and <kbd>Enter</kbd> in the search bar &mdash; move and open</li>
+            </ul>
+          </div>
+          <p class="canvas-picker-status" id="canvasKeymapStatus" role="status" data-testid="canvas-keymap-status"></p>
+          <div class="shortcut-actions">
+            <button class="ghost" id="canvasKeymapResetButton" type="button" data-testid="canvas-keymap-reset-button">Reset to defaults</button>
+            <button class="primary" id="canvasKeymapSaveButton" type="button" data-testid="canvas-keymap-save-button">Save shortcuts</button>
+          </div>
+        </section>
+
+        <section class="settings-panel" id="settingsPanel-updates" role="tabpanel" aria-labelledby="settingsTab-updates" tabindex="0" hidden>
+          <p>Updates install the newest GitHub release and restart this node. Running work is prepared, saved, and resumed automatically; if the installation fails, the previous version is restored.</p>
+          <p class="updates-version-line" id="updatesVersionLine" data-testid="updates-version-line">…</p>
+          <p class="updates-state-line" id="updatesStateLine" role="status" data-testid="updates-state-line"></p>
+          <div class="github-group-actions">
+            <button class="ghost" type="button" id="updatesCheckButton" data-testid="updates-check-button">Check for updates</button>
+            <button class="primary" type="button" id="updatesInstallButton" data-testid="updates-install-button" disabled>Update this node</button>
+          </div>
+          <label class="checkbox-row">
+            <input type="checkbox" id="updatesAutoInput" data-testid="updates-auto-input" />
+            Automatically install updates on this node
+          </label>
+          <fieldset class="phase-settings">
+            <legend>Cluster nodes</legend>
+            <p>Update all nodes rolls out the same release one node at a time, this node last, and stops at the first failure.</p>
+            <div class="updates-node-list" id="updatesNodeList" data-testid="updates-node-list"></div>
+            <button class="ghost" type="button" id="updatesInstallAllButton" data-testid="updates-install-all-button">Update all nodes</button>
+          </fieldset>
+        </section>
+
         <section class="settings-panel" id="settingsPanel-changelog" role="tabpanel" aria-labelledby="settingsTab-changelog" tabindex="0" hidden>
           <p>What shipped in the last ten deployments. This node is running <strong id="settingsChangelogVersion" data-testid="settings-changelog-version">…</strong>.</p>
           <div class="changelog-list" id="settingsChangelogList" data-testid="settings-changelog-list"></div>
@@ -660,13 +726,18 @@
     <dialog id="terminalDialog" data-testid="terminal-dialog">
       <div class="dialog-card terminal-card">
         <div class="terminal-heading">
-          <div>
+          <div class="terminal-title">
             <span class="eyebrow">Selected node shell</span>
             <h2>Terminal</h2>
           </div>
-          <span class="terminal-status" id="terminalStatus" role="status">Disconnected</span>
+          <span class="terminal-status" id="terminalStatus" data-state="idle" role="status">
+            <span class="terminal-status-dot" aria-hidden="true"></span>
+            <span class="terminal-status-text" id="terminalStatusText">Disconnected</span>
+          </span>
         </div>
-        <div class="terminal-output" id="terminalHost" data-testid="terminal-output"></div>
+        <div class="terminal-frame">
+          <div class="terminal-output" id="terminalHost" data-testid="terminal-output"></div>
+        </div>
         <div class="dialog-actions">
           <button class="ghost compact" id="clearTerminalButton" type="button" data-testid="terminal-clear-button">Clear</button>
           <button class="ghost compact" id="closeTerminalButton" type="button" data-testid="terminal-close-button">Close terminal</button>
@@ -697,9 +768,9 @@
         <div>
           <span class="eyebrow">Waiting on you</span>
           <h2>Pending reviews</h2>
-          <p>Conversations that finished since you last looked, across every project.</p>
+          <p>Conversations that finished since you last looked, across every project. Press 1-9 or 0 to open one.</p>
         </div>
-        <div class="pending-reviews-list" id="pendingReviewsList"></div>
+        <div class="pending-reviews-list" id="pendingReviewsList" tabindex="-1"></div>
         <div class="dialog-actions">
           <button class="ghost" type="button" id="markAllPendingReviewedButton" data-testid="pending-reviews-mark-all-button" disabled>Mark all as read</button>
           <button class="ghost" type="button" id="closePendingReviewsButton" data-testid="pending-reviews-close-button">Close</button>

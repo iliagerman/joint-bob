@@ -102,9 +102,27 @@ export function normalizeCanvasLayout(layout) {
   return layout;
 }
 export function canvasPaneEngine(pane) { return pane.sessionPath.startsWith("claude:") || pane.sessionPath.startsWith("draft:claude:") ? "claude" : "pi"; }
-export const CANVAS_MODIFIERS = ["meta", "ctrl", "alt", "shift"]; export const CANVAS_KEYMAP_COMMANDS = ["recentPane", "focusPane", "paneSearch", "toggleView"]; export const DEFAULT_CANVAS_KEYMAP = { modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F", toggleView: "V" };
-export const canvasChordIsUsable = (modifiers) => modifiers.some((name) => name !== "shift"); export const canonicalCanvasKey = (key) => /^[0-9A-Z]$/.test(String(key ?? "").toUpperCase()) ? String(key).toUpperCase() : null;
+export const CANVAS_MODIFIERS = ["meta", "ctrl", "alt", "shift"]; export const CANVAS_KEYMAP_COMMANDS = ["recentPane", "focusPane", "paneSearch", "toggleView", "spotlight", "pendingReviews"]; export const DEFAULT_CANVAS_KEYMAP = { modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F", toggleView: "V", spotlight: "P", pendingReviews: "R" };
+export const canvasChordIsUsable = (modifiers) => modifiers.some((name) => name !== "shift");
+/** The keys a canvas shortcut may hold. Mirrors `src/canvas-keys.ts`; Space is the
+ *  split leader, and "/" and "\\" cannot ride a URL path segment to the shortcut routes. */
+export const CANVAS_KEY_TOKENS = [..."0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ", "[", "]", ";", "'", ",", ".", "-", "=", "`", "ENTER"];
+const CANVAS_KEYS = new Set(CANVAS_KEY_TOKENS);
+export const canonicalCanvasKey = (key) => { const canonical = typeof key === "string" ? key.toUpperCase() : ""; return CANVAS_KEYS.has(canonical) ? canonical : null; };
 export function normalizeCanvasKeymap(keymap) { const source = keymap && typeof keymap === "object" ? keymap : {}; const modifiers = CANVAS_MODIFIERS.filter((name) => (source.modifiers || []).includes(name)); const result = { modifiers: canvasChordIsUsable(modifiers) ? modifiers : [...DEFAULT_CANVAS_KEYMAP.modifiers] }; const used = new Set(); for (const command of CANVAS_KEYMAP_COMMANDS) { const key = canonicalCanvasKey(source[command] === undefined ? DEFAULT_CANVAS_KEYMAP[command] : source[command]); result[command] = key && !used.has(key) ? key : null; if (result[command]) used.add(key); } return result; }
-export function canvasChordMatches(keymap, combination) { return CANVAS_MODIFIERS.every((name) => Boolean(combination[`${name}Key`]) === keymap.modifiers.includes(name)); } export const canvasKeyFromCode = (code) => /^(?:Digit([0-9])|Key([A-Z]))$/.exec(code || "")?.slice(1).find(Boolean) || null; const symbols = { meta: "⌘", ctrl: "⌃", alt: "⌥", shift: "⇧" }; export const canvasChordLabel = (keymap, key = "") => CANVAS_MODIFIERS.filter((name) => keymap.modifiers.includes(name)).map((name) => symbols[name]).join("") + key;
-export const isCanvasSplitLeader = (combination) => combination.code === "Space" && combination.ctrlKey && !combination.metaKey && !combination.altKey && !combination.shiftKey; export const canvasSplitPlacement = (combination) => combination.code === "Backslash" ? "left" : combination.code === "Minus" ? "below" : null; export const isCanvasModifierKey = (combination) => /^(?:Control|Shift|Alt|Meta)(?:Left|Right)$/.test(combination.code);
+export function canvasChordMatches(keymap, combination) { return CANVAS_MODIFIERS.every((name) => Boolean(combination[`${name}Key`]) === keymap.modifiers.includes(name)); }
+/** Physical keys, so a shortcut survives a layout that moves the character elsewhere. */
+const CANVAS_KEY_CODES = { BracketLeft: "[", BracketRight: "]", Semicolon: ";", Quote: "'", Comma: ",", Period: ".", Minus: "-", Equal: "=", Backquote: "`", Enter: "ENTER", NumpadEnter: "ENTER" };
+export const canvasKeyFromCode = (code) => CANVAS_KEY_CODES[code] || /^(?:Digit([0-9])|Key([A-Z]))$/.exec(code || "")?.slice(1).find(Boolean) || null;
+/** A key that types no character needs a symbol a person can read on a badge. */
+export const canvasKeyLabel = (key) => key === "ENTER" ? "⏎" : (key || "");
+const symbols = { meta: "⌘", ctrl: "⌃", alt: "⌥", shift: "⇧" }; export const canvasChordLabel = (keymap, key = "") => CANVAS_MODIFIERS.filter((name) => keymap.modifiers.includes(name)).map((name) => symbols[name]).join("") + canvasKeyLabel(key);
+export const isCanvasSplitLeader = (combination) => combination.code === "Space" && combination.ctrlKey && !combination.metaKey && !combination.altKey && !combination.shiftKey; export const canvasSplitPlacement = (combination) => combination.code === "Backslash" ? "right" : combination.code === "Minus" ? "below" : null; export const isCanvasModifierKey = (combination) => /^(?:Control|Shift|Alt|Meta)(?:Left|Right)$/.test(combination.code);
+/** Command/Control + ? opens the shortcuts panel. This one is fixed: it is how a person
+ *  finds out what the configurable keys are. It matches the typed "?" as well as
+ *  Shift and "/", so a layout that puts "?" elsewhere still works - and the bare "/"
+ *  is deliberately left alone, because the terminal and the code editor use it. */
+export const isCanvasHelpShortcut = (combination) => (combination.metaKey || combination.ctrlKey)
+  && !combination.altKey
+  && (combination.key === "?" || (combination.code === "Slash" && combination.shiftKey));
 export function fuzzyMatchScore(text, query) { if (!query) return 0; let score = 0, index = -1, prior = -2; const haystack = String(text).toLowerCase(); for (const character of String(query).toLowerCase()) { index = haystack.indexOf(character, index + 1); if (index < 0) return null; score += index === prior + 1 ? 10 : 1; if (index === 0 || /[\s·\-_/]/.test(haystack[index - 1])) score += 5; prior = index; } return score - haystack.length / 100; }

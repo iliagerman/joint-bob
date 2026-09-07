@@ -1,6 +1,8 @@
 import { api, savePreferencesInBackground } from "./api.js";
+import { fillShortcutSettings } from "./shortcut-settings.js";
 import { renderLoginSessions, showSignedOut } from "./auth.js";
 import { loadClusterPanel } from "./cluster-panel.js";
+import { loadUpdatesPanel } from "./updates.js";
 import { elements } from "./elements.js";
 import { loadSecretAccounts } from "./secrets.js";
 import { syncNotifyButton, toast } from "./shell.js";
@@ -99,7 +101,9 @@ export async function openSettings(tab = "account") {
   clearRuntimeOverridesOnSave = false;
   elements.settingsUsername.textContent = state.username;
   selectSettingsTab(tab);
-  await loadClusterPanel();
+  void fillShortcutSettings();
+  const clusterInventory = await loadClusterPanel();
+  await loadUpdatesPanel(clusterInventory);
   await loadWorkspaces();
   renderLoginSessions(authSessions);
   elements.settingsRestartMessage.hidden = true;

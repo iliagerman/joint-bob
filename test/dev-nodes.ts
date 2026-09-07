@@ -70,6 +70,8 @@ export function startDevNode(environment: DevEnvironment, node: SeededNode, extr
         // configuration a developer's browser talks to.
         JOINT_BOB_SESSION_COOKIE: node.cookieName,
         JOINT_BOB_INSECURE_COOKIE: "1",
+        // A developer shell may export a real release commit; tests always run as a checkout unless they say otherwise.
+        JOINT_BOB_RELEASE: "development",
         ...extraEnv,
       },
       stdio: ["ignore", "pipe", "pipe"],

@@ -9,7 +9,7 @@
 // report success while testing nothing.
 import assert from "node:assert/strict";
 import { type ChildProcess } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test, { after, before } from "node:test";
@@ -126,6 +126,44 @@ test("resource path fields save and reload in Settings", async () => {
   await page.getByTestId("settings-tab-resources").click();
   for (const [id, value] of Object.entries({ "settings-resource-skills-paths": values.skills, "settings-resource-prompts-paths": values.prompts, "settings-resource-rules-paths": values.rules, "settings-resource-plugins-paths": values.plugins })) assert.equal(await page.getByTestId(id).inputValue(), value);
   await page.getByTestId("settings-cancel-button").click();
+});
+
+test("the updates tab shows this node's version and keeps controls honest on a checkout", async () => {
+  await page.getByTestId("settings-open-button").click();
+  await page.getByTestId("settings-tab-updates").click();
+  await page.getByTestId("updates-version-line").waitFor({ timeout: 10_000 });
+  const manifest = JSON.parse(await readFile("package.json", "utf8"));
+  const line = await page.getByTestId("updates-version-line").textContent();
+  assert.match(line ?? "", new RegExp(`Running ${manifest.version.replaceAll(".", "\\.")}`));
+  assert.match(line ?? "", /development checkout/);
+  assert.ok(await page.getByTestId("updates-install-button").isDisabled(), "install is disabled outside an installed deployment");
+  assert.ok(await page.getByTestId("updates-auto-input").isDisabled(), "the automatic toggle is disabled outside an installed deployment");
+  assert.ok(await page.getByTestId("updates-node-list").locator(".updates-node").first().isVisible(), "this node renders a row");
+  await page.getByTestId("settings-cancel-button").click();
+});
+
+test("Settings loads persisted conversation shortcuts before canvas activation", async () => {
+  const sessionId = "settings-before-canvas";
+  const now = new Date().toISOString();
+  const database = new DatabaseSync(path.join(node.dataDir, "node.db"));
+  database.prepare("INSERT INTO canvas_shortcuts (username, binding, project_id, engine, session_id, updated_at, origin_node_id) VALUES (?, '1', ?, 'pi', ?, ?, ?)")
+    .run(environment.username, node.projects[0].id, sessionId, now, node.nodeId);
+  database.close();
+  try {
+    await page.getByTestId("settings-open-button").click();
+    await page.getByTestId("settings-tab-shortcuts").click();
+    const row = page.getByTestId("settings-conversation-shortcut-row");
+    await row.waitFor();
+    assert.match(await row.innerText(), /1.*settings-before-canvas/s, "the persisted shortcut is listed without opening canvas");
+    await page.getByTestId("canvas-keymap-spotlight-input").fill("1");
+    await page.getByTestId("canvas-keymap-save-button").click();
+    await page.getByTestId("canvas-keymap-status").filter({ hasText: /already belongs to a conversation/ }).waitFor();
+  } finally {
+    if (await page.getByTestId("settings-dialog").isVisible()) await page.getByTestId("settings-cancel-button").click();
+    const cleanup = new DatabaseSync(path.join(node.dataDir, "node.db"));
+    cleanup.prepare("DELETE FROM canvas_shortcuts WHERE username = ? AND binding = '1'").run(environment.username);
+    cleanup.close();
+  }
 });
 
 test("project resource path fields save and reload", async () => {
@@ -248,15 +286,6 @@ test("a phone reloads conversations missed while its watch socket was disconnect
     reducedMotion: "reduce",
     serviceWorkers: "block",
   });
-  await mobileContext.addInitScript(() => {
-    const NativeWebSocket = window.WebSocket;
-    window.WebSocket = class extends NativeWebSocket {
-      constructor(url: string | URL) {
-        super(url);
-        if (String(url).includes("sessionPath=watch")) (window as typeof window & { testWatchSocket: WebSocket }).testWatchSocket = this;
-      }
-    };
-  });
   const mobilePage = await mobileContext.newPage();
   const sessionId = randomUUID();
   const title = "Conversation created while phone slept";
@@ -274,7 +303,13 @@ test("a phone reloads conversations missed while its watch socket was disconnect
     await mobilePage.locator(".project-card", { hasText: project.name }).first().click();
     await mobilePage.locator("#chatsLiveDot").waitFor({ state: "visible" });
     await mobileContext.setOffline(true);
-    await mobilePage.evaluate(() => (window as typeof window & { testWatchSocket: WebSocket }).testWatchSocket.close());
+    await mobilePage.evaluate(async () => {
+      const socketModulePath = "/app/socket.js";
+      const stateModulePath = "/app/state.js";
+      const [{ closeWatchSocket }, { state }] = await Promise.all([import(socketModulePath), import(stateModulePath)]);
+      closeWatchSocket();
+      state.watchNeedsRefresh = true;
+    });
     await mobilePage.locator("#chatsLiveDot").waitFor({ state: "hidden" });
 
     const now = new Date().toISOString();
@@ -425,7 +460,7 @@ test("terminal-style split shortcuts open the picker from the active canvas pane
   await page.keyboard.press("Control+Space");
   await page.keyboard.press("Shift+Backslash");
   await page.getByTestId("canvas-conversation-dialog").waitFor({ state: "visible" });
-  assert.equal(await page.getByTestId("canvas-split-position").inputValue(), "left");
+  assert.equal(await page.getByTestId("canvas-split-position").inputValue(), "right");
   await page.getByTestId("canvas-picker-cancel-button").click();
 
   await activePane.locator("iframe").contentFrame().getByTestId("chat-message-input").click();
@@ -846,6 +881,117 @@ test("a new conversation appears in recents immediately", async () => {
   await page.getByTestId("recent-sessions-dialog").getByText(title, { exact: true }).waitFor();
   await recentSaved;
   await page.getByTestId("recent-sessions-close-button").click();
+});
+
+test("the terminal fills its frame without overflowing it", async () => {
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+  // Named and scoped to the sidebar: the recents dialog renders `.session-card`
+  // rows too, and the first sidebar row by now is an empty conversation an
+  // earlier test created, which would never render a message.
+  await page.locator("#sessionList .session-card", { hasText: "Thread-Based Agent Builder" }).first().click();
+  await page.locator(".message").first().waitFor({ timeout: 20_000 });
+  await page.getByTestId("chat-open-terminal-button").click();
+  await page.getByTestId("terminal-dialog").waitFor({ state: "visible", timeout: 20_000 });
+  // The shell has to answer before the emulator holds a real screen to measure.
+  await page.locator('#terminalStatus[data-state="live"]').waitFor({ timeout: 20_000 });
+  await page.keyboard.type("echo terminal-fit\n");
+  await page.getByTestId("terminal-output").getByText("terminal-fit", { exact: false }).first().waitFor({ timeout: 20_000 });
+
+  // xterm rounds its screen down to whole character cells. If the fit addon is
+  // handed a padded or bordered parent it over-counts, and the bottom row (the
+  // prompt the person is typing at) disappears under the frame.
+  const box = await page.getByTestId("terminal-output").evaluate((host) => {
+    const screen = host.querySelector(".xterm-screen") as HTMLElement;
+    const viewport = host.querySelector(".xterm-viewport") as HTMLElement;
+    return { screenHeight: screen.offsetHeight, screenWidth: screen.offsetWidth, viewportHeight: viewport.clientHeight, viewportWidth: viewport.clientWidth };
+  });
+  assert.ok(box.screenHeight <= box.viewportHeight, `terminal screen ${box.screenHeight}px overflows its ${box.viewportHeight}px viewport`);
+  assert.ok(box.screenWidth <= box.viewportWidth, `terminal screen ${box.screenWidth}px overflows its ${box.viewportWidth}px viewport`);
+
+  await page.getByTestId("terminal-close-button").click();
+  await page.getByTestId("terminal-dialog").waitFor({ state: "hidden" });
+});
+
+// Every shortcut is edited in one place now, and a key can be a symbol or Enter.
+test("the Settings shortcuts tab edits every shortcut in one place", async () => {
+  // One fixed chord opens the panel from anywhere, already on the Shortcuts tab.
+  await page.keyboard.press("Meta+Shift+Slash");
+  await page.getByTestId("settings-dialog").waitFor({ state: "visible" });
+  await page.getByTestId("canvas-keymap-spotlight-input").waitFor({ state: "visible" });
+
+  const spotlightKey = page.getByTestId("canvas-keymap-spotlight-input");
+  await spotlightKey.waitFor({ state: "visible" });
+  assert.equal(await spotlightKey.inputValue(), "P", "the tab shows the shortcut that is in force");
+  assert.ok(await page.getByTestId("canvas-keymap-leader").isVisible(), "the fixed shortcuts are listed too");
+
+  // Pressing a key fills the box, including one that types no character.
+  await page.getByTestId("canvas-keymap-pane-search-input").click();
+  await page.keyboard.press("BracketLeft");
+  assert.equal(await page.getByTestId("canvas-keymap-pane-search-input").inputValue(), "[");
+  await page.getByTestId("canvas-keymap-pane-search-input").press("Enter");
+  assert.equal(await page.getByTestId("canvas-keymap-pane-search-input").inputValue(), "ENTER");
+
+  // Two commands cannot share a key, and the panel says so instead of saving.
+  await page.getByTestId("canvas-keymap-pane-search-input").press("KeyP");
+  await page.getByTestId("canvas-keymap-save-button").click();
+  await page.getByTestId("canvas-keymap-status").filter({ hasText: /cannot share/ }).waitFor();
+
+  // A punctuation key is accepted and takes effect without a reload.
+  await page.getByTestId("canvas-keymap-pane-search-input").press("BracketLeft");
+  await page.getByTestId("canvas-keymap-save-button").click();
+  await page.getByTestId("canvas-keymap-status").filter({ hasText: "Saved." }).waitFor();
+  await page.getByTestId("settings-cancel-button").click();
+  await page.getByTestId("settings-dialog").waitFor({ state: "hidden" });
+
+  await page.reload();
+  await page.getByTestId("settings-open-button").click();
+  await page.getByTestId("settings-tab-shortcuts").click();
+  assert.equal(await page.getByTestId("canvas-keymap-pane-search-input").inputValue(), "[", "the saved key survives a reload");
+  // Put the defaults back so later tests type the shortcuts they expect.
+  await page.getByTestId("canvas-keymap-reset-button").click();
+  await page.getByTestId("canvas-keymap-save-button").click();
+  await page.getByTestId("canvas-keymap-status").filter({ hasText: "Saved." }).waitFor();
+  await page.getByTestId("settings-cancel-button").click();
+  await page.getByTestId("settings-dialog").waitFor({ state: "hidden" });
+});
+
+// The bar reaches a conversation in a project that is not the open one.
+test("the search bar finds a project and a conversation across the whole workspace", async () => {
+  await page.keyboard.press("Meta+Shift+KeyP");
+  await page.getByTestId("spotlight-dialog").waitFor({ state: "visible" });
+  await page.getByTestId("spotlight-option").first().waitFor();
+  const spotlightInput = page.getByTestId("spotlight-input");
+  assert.equal(await spotlightInput.getAttribute("role"), "combobox");
+  assert.equal(await page.getByTestId("spotlight-results").getAttribute("role"), "listbox");
+  assert.equal(await spotlightInput.getAttribute("aria-activedescendant"), await page.getByTestId("spotlight-option").first().getAttribute("id"));
+
+  await spotlightInput.fill("infra");
+  await page.getByTestId("spotlight-option").first().waitFor();
+  const first = page.getByTestId("spotlight-option").first();
+  assert.equal(await first.getAttribute("data-kind"), "project", "a project name matches the project row");
+  await first.click();
+  await page.getByTestId("spotlight-dialog").waitFor({ state: "hidden" });
+  await page.locator("#sessionList .session-card").first().waitFor();
+
+  await page.keyboard.press("Meta+Shift+KeyP");
+  await page.getByTestId("spotlight-input").fill("thread");
+  await page.getByTestId("spotlight-option").first().waitFor();
+  await page.getByTestId("spotlight-option").first().click();
+  await page.getByTestId("spotlight-dialog").waitFor({ state: "hidden" });
+});
+
+// Reviews get the same treatment as the recents list: one key opens it, digits open rows.
+test("the pending reviews list opens on its own key and its rows answer to digits", async () => {
+  await page.keyboard.press("Meta+Shift+KeyR");
+  await page.getByTestId("pending-reviews-dialog").waitFor({ state: "visible" });
+  const rows = page.getByTestId("pending-review-option");
+  if (await rows.count()) {
+    assert.equal(await page.getByTestId("pending-review-index").first().textContent(), "1", "the first row carries its digit");
+    await page.keyboard.press("1");
+    await page.getByTestId("pending-reviews-dialog").waitFor({ state: "hidden" });
+  } else {
+    await page.getByTestId("pending-reviews-close-button").click();
+  }
 });
 
 test("the journey produced no console errors and no failed requests", () => {

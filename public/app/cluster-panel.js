@@ -2,7 +2,7 @@ import { api } from "./api.js";
 import { elements } from "./elements.js";
 import { openProjectImportMapping } from "./project-forms.js";
 import { loadProjects } from "./project-selection.js";
-import { toast } from "./shell.js";
+import { confirmAction, toast } from "./shell.js";
 
 function clusterNodeRow({ name, url, state, status }) {
   const row = document.createElement("div");
@@ -136,6 +136,7 @@ export async function loadClusterPanel() {
   elements.clusterJoinLinkInput.value = "";
   renderClusterInventory(inventory);
   await renderInviteProjectList();
+  return inventory;
 }
 
 function clusterNodePayload() {
@@ -162,7 +163,13 @@ async function joinCluster() {
   const link = elements.clusterJoinLinkInput.value.trim();
   if (!link) throw new Error("Join link is required");
   const { peers } = await api("/api/cluster/peers");
-  if (peers.length && !window.confirm("Joining a new cluster removes this node from its current cluster first. Continue?")) return;
+  if (peers.length && !await confirmAction({
+    eyebrow: "Replace cluster",
+    title: "Join a new cluster?",
+    message: "This removes this node from its current cluster first.",
+    confirmLabel: "Join cluster",
+    destructive: true,
+  })) return;
   await api("/api/cluster/join", {
     method: "POST",
     body: JSON.stringify({ ...clusterNodePayload(), link }),

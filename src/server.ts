@@ -10,6 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { discoverMissingPeerProjects } from "./server/cluster-helpers.js";
 import { flushMembershipOutbox, flushReplicationOutbox, flushSecretCredentialOutbox, initializeStartupReadiness, pushRuntimeLeaseSnapshots, reconcileManagedAgentResources, reconcileTaskConversationRecords, reconcileTaskHandoffs, reconcileTicketWorkspaceSync, sweepRuntimeLeases } from "./server/maintenance.js";
+import { reconcileUpdateJobs, startUpdateScheduler } from "./updater.js";
 import { flags, port, server } from "./server/state.js";
 import { recoverPendingUpdateRuns } from "./server/task-runs.js";
 import "./server/schemas.js";
@@ -31,6 +32,7 @@ import "./server/routes/projects.js";
 import "./server/routes/sessions.js";
 import "./server/routes/tasks.js";
 import "./server/routes/project-files.js";
+import "./server/routes/search.js";
 import "./server/routes/updates.js";
 export { app, createApp, server } from "./server/state.js";
 
@@ -66,6 +68,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const address = server.address();
     const listeningPort = typeof address === "object" && address ? address.port : port;
     console.log(`Joint Bob listening on http://${bindHost}:${listeningPort}`);
+    reconcileUpdateJobs();
+    startUpdateScheduler();
     initializeStartupReadiness()
       .then(async () => { await recoverPendingUpdateRuns(); await reconcileTicketWorkspaceSync(); await reconcileTaskConversationRecords(); })
       .catch((error) => console.warn("Ticket workspace sync failed", error));

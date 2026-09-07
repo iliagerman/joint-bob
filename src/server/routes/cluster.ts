@@ -6,6 +6,8 @@ import { receiveSecretCredentialEvents, type SecretCredentialEvent } from "../..
 import { getSettings } from "../../settings.js";
 import { canonicalProjectId, getProject, listProjects, projectAliasIds, updateProjectSyncFolderId } from "../../store.js";
 import { syncthingDeviceId, syncthingFolderIdForPath } from "../../syncthing.js";
+import { appVersion } from "../../changelog.js";
+import { updateInventoryView } from "../../updater.js";
 import { abortPreparedTaskHandoff, acknowledgeIncomingTaskHandoff, commitPreparedTaskHandoff, getTaskHandoff, isTaskHandoffRejected, listTasks, prepareTaskHandoff, rejectTaskHandoff, reserveTaskHandoff, taskHandoffDeletion } from "../../tasks.js";
 import { z } from "zod";
 import type { HarnessId, TaskRecord } from "../../types.js";
@@ -194,7 +196,7 @@ app.get("/api/cluster/local-inventory", async (request, response, next) => {
       aliases: await projectAliasIds(project.id),
       tasks: await listTasks(project.id),
     })));
-    response.json({ node, syncDeviceId, syncError, projectRoot: getSettings().projects.homePath, projects: inventory, generatedAt: new Date().toISOString() });
+    response.json({ node, syncDeviceId, syncError, projectRoot: getSettings().projects.homePath, projects: inventory, version: appVersion(), release: process.env.JOINT_BOB_RELEASE ?? process.env.MASTER_BOB_RELEASE ?? "development", updates: updateInventoryView(), generatedAt: new Date().toISOString() });
   } catch (error) {
     next(error);
   }

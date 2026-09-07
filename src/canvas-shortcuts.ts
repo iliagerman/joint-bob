@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { canonicalCanvasKeyToken } from "./canvas-keys.js";
 import type { ConversationEngine } from "./conversation-ownership.js";
 import { enqueueReplicationEvent, ensureReplicationSchema, resolveProjectAlias, type ReplicationEvent } from "./replication.js";
 import { isHarnessId } from "./types.js";
@@ -162,10 +163,10 @@ function shortcutDatabase(): DatabaseSync {
   return database;
 }
 
-/** One digit or letter, stored upper case so `b` and `B` are the same key. */
+/** One key from the canvas vocabulary, stored upper case so `b` and `B` are the same. */
 export function canonicalCanvasBinding(binding: string): string {
-  const canonical = String(binding).toUpperCase();
-  if (!/^[0-9A-Z]$/.test(canonical)) throw new Error("A canvas binding is one digit or letter");
+  const canonical = canonicalCanvasKeyToken(binding);
+  if (!canonical) throw new Error("A canvas binding is one digit, letter, punctuation key, or Enter");
   return canonical;
 }
 
@@ -342,7 +343,7 @@ function shortcutPayload(event: ReplicationEvent): ShortcutPayload {
   const valid = event.entityType === "canvas.shortcut" && ["upsert", "delete"].includes(event.operation)
     && value && typeof value === "object" && !Array.isArray(value)
     && typeof value.username === "string" && value.username.length > 0
-    && (value.binding === undefined || (typeof value.binding === "string" && /^[0-9A-Z]$/.test(value.binding)))
+    && (value.binding === undefined || canonicalCanvasKeyToken(value.binding) === value.binding)
     && typeof value.updatedAt === "string" && Number.isFinite(Date.parse(value.updatedAt))
     && typeof value.originNodeId === "string" && value.originNodeId === event.originNodeId
     && event.entityKey === `${value.username}:${value.binding ?? `${value.projectId}/${value.engine}/${value.sessionId}`}`

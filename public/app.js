@@ -2,11 +2,14 @@
 // when they load; this file wires the boot sequence and the canvas pane mode.
 import {
   canvasChordMatches, canvasKeyFromCode, DEFAULT_CANVAS_KEYMAP,
-  isCanvasModifierKey, isCanvasSplitLeader,
+  isCanvasHelpShortcut, isCanvasModifierKey, isCanvasSplitLeader,
 } from "./canvas-layout.js";
 import { createConversationCanvas } from "./canvas.js";
 import { api, savePreferences } from "./app/api.js";
 import { initializeApplication, revealApplication } from "./app/auth.js";
+import { openSettings } from "./app/settings.js";
+import { openSpotlight } from "./app/spotlight.js";
+import { openPendingReviews } from "./app/reviews.js";
 import { elements } from "./app/elements.js";
 import { setMobileView, toggleCanvasView } from "./app/layout.js";
 import { confirmAction, SERVICE_WORKER_UPDATE_MS, setTheme, syncNotifyButton, toast, updateInstallButton, updateServiceWorker } from "./app/shell.js";
@@ -22,6 +25,7 @@ import "./app/layout.js";
 import "./app/attachments.js";
 import "./app/project-forms.js";
 import "./app/cluster-panel.js";
+import "./app/updates.js";
 import "./app/workspaces.js";
 import "./app/session-identity.js";
 import "./app/session-rows.js";
@@ -30,6 +34,8 @@ import "./app/row-menu.js";
 import "./app/project-list.js";
 import "./app/reviews.js";
 import "./app/recents.js";
+import "./app/spotlight.js";
+import "./app/shortcut-settings.js";
 import "./app/session-list.js";
 import "./app/chat-transcript.js";
 import "./app/composer-dialogs.js";
@@ -83,6 +89,11 @@ if (state.canvasPaneMode) {
         return;
       }
     }
+    if (isCanvasHelpShortcut(event)) {
+      event.preventDefault();
+      parent.postMessage({ type: "canvasHelpShortcut" }, location.origin);
+      return;
+    }
     if (!canvasChordMatches({ modifiers: canvasModifiers }, event)) return;
     const binding = canvasKeyFromCode(event.code);
     if (!binding || !canvasBindings.has(binding)) return;
@@ -121,12 +132,24 @@ if (!state.canvasPaneMode) {
         .then(() => savePreferences({ canvasLayout: next }))
         .catch((error) => toast(`Could not save the canvas layout: ${error.message}`, 8000));
     },
-    saveKeymap: (next) => savePreferences({ canvasKeymap: next }),
     toggleView: toggleCanvasView,
+    openShortcutSettings: () => { void openSettings("shortcuts"); },
+    openSpotlight,
+    openPendingReviews,
     confirmAction,
     showMessage: (message) => toast(message, 8000),
   });
 }
+/** One fixed chord opens the shortcuts panel, so the configurable keys are always
+ *  findable. A pane forwards its own copy of this chord through the canvas. */
+if (!state.canvasPaneMode) {
+  document.addEventListener("keydown", (event) => {
+    if (!isCanvasHelpShortcut(event)) return;
+    event.preventDefault();
+    void openSettings("shortcuts");
+  });
+}
+
 const desktopViewportQuery = matchMedia("(min-width: 1024px)");
 desktopViewportQuery.addEventListener("change", (event) => {
   if (!event.matches && document.body.classList.contains("view-canvas")) {

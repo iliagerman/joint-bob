@@ -22,8 +22,10 @@ test("canvas is a recursive multi-page view over exact existing conversations", 
   assert.match(html, /id="canvasPageMoveLeftButton"/);
   assert.match(html, /id="canvasPageMoveRightButton"/);
   for (const value of ["right", "left", "below", "above"]) assert.match(html, new RegExp(`<option value="${value}"(?: selected)?>`));
-  assert.match(html, /Control\+Space, then \| or \\\d* to open left/);
-  assert.match(html, /C to create a page, N or P to move between pages, 1–9 to jump to a page/);
+  // The leader commands are documented in Settings now, beside every other shortcut.
+  assert.match(html, /id="settingsPanel-shortcuts"[\s\S]*split to the right of this conversation/);
+  assert.match(html, /<kbd>C<\/kbd> &mdash; new page/);
+  assert.match(html, /<kbd>N<\/kbd> or <kbd>P<\/kbd> &mdash; next or previous page/);
 
   // Layout operations are pure recursive tree transforms over pages.
   assert.match(layout, /export function canvasPageGeometry/);
@@ -110,7 +112,7 @@ test("canvas panes and boot restore follow switched conversations to their newes
 
 test("the canvas shell ships in the service worker cache", async () => {
   const worker = await readFile("public/sw.js", "utf8");
-  assert.match(worker, /const CACHE_NAME = "joint-bob-v128"/);
+  assert.match(worker, /const CACHE_NAME = "joint-bob-v132"/);
   assert.match(worker, /"\/canvas\.js"/);
   assert.match(worker, /"\/canvas-layout\.js"/);
 });

@@ -65,6 +65,7 @@ test("the invite form shares exactly the selected projects", { timeout: 120_000 
   const payload = JSON.parse(request.postData() ?? "{}") as { projectIds: string[] };
   const expected = node.projects.map((project) => project.id).filter((id) => id !== deselectedId);
   assert.deepEqual([...payload.projectIds].sort(), [...expected].sort());
+  await page.waitForFunction(() => (document.querySelector("#clusterInviteLink") as HTMLInputElement).value !== "");
   assert.notEqual(await page.getByTestId("cluster-invite-link-input").inputValue(), "", "a link was generated");
 
   // Changing the selection invalidates the generated link on screen.

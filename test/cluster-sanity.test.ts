@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -381,4 +381,25 @@ test("a canvas shortcut assigned on one node reaches the same account on the oth
   assert.equal(released.status, 200);
   assert.deepEqual(released.body.shortcuts, []);
   await untilShortcuts(nodeB, sessionB, (rows) => rows.length === 0, "node B still holds the released binding");
+});
+
+test("cluster inventory reports each node's version and a peer update needs machine auth", async () => {
+  const manifest = JSON.parse(await readFile("package.json", "utf8"));
+  interface InventoryEntry { peerId: string; reachable: boolean; inventory?: { version: string; updates?: { supported: boolean; activeJob: unknown } } }
+  const inventory = await api<{ local: { id: string }; remote: InventoryEntry[] }>(nodeA, sessionA, "GET", "/cluster/inventory");
+  assert.equal(inventory.status, 200);
+  assert.equal(inventory.body.remote.length, 1);
+  const peer = inventory.body.remote[0];
+  assert.ok(peer.reachable, "node B answers its inventory call");
+  assert.equal(peer.inventory?.version, manifest.version, "the peer reports its running version");
+  assert.equal(peer.inventory?.updates?.supported, false, "a dev node reports itself not update-capable");
+
+  const installUrl = `${nodeB.url}/api/cluster/update/install`;
+  const unauthenticated = await fetch(installUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: "9.9.9" }) });
+  assert.equal(unauthenticated.status, 401, "the fleet install route rejects session-less callers");
+
+  const { token } = (await api<{ token: string }>(nodeA, sessionA, "GET", "/cluster/invite")).body;
+  const machineAuthenticated = await fetch(installUrl, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ version: "9.9.9" }) });
+  assert.equal(machineAuthenticated.status, 409, "a paired machine peer reaches the route and the dev checkout refuses");
+  assert.match(((await machineAuthenticated.json()) as { error: string }).error, /development checkout/);
 });

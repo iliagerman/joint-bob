@@ -369,3 +369,31 @@ test("opening a database repairs rows and a clock left behind by an older build"
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("a binding may be punctuation or Enter, and nothing the routes cannot carry", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-canvas-shortcuts-keys-"));
+  const previous = process.env.JOINT_BOB_DATA_DIR;
+  process.env.JOINT_BOB_DATA_DIR = path.join(root, "data");
+  const originNodeId = randomUUID();
+  try {
+    await mkdir(process.env.JOINT_BOB_DATA_DIR, { recursive: true });
+    const shortcuts = await import(`../src/canvas-shortcuts.ts?keys=${Date.now()}`);
+
+    shortcuts.setCanvasShortcut("ada", "[", target("s-bracket"), originNodeId);
+    // Enter arrives as a name because it types no character.
+    shortcuts.setCanvasShortcut("ada", "enter", target("s-enter"), originNodeId);
+    assert.deepEqual(listing(shortcuts.listCanvasShortcuts("ada")).sort(), ["ENTER:s-enter", "[:s-bracket"].sort());
+
+    // Clearing finds the same row from the same spelling.
+    assert.deepEqual(listing(shortcuts.clearCanvasShortcut("ada", "Enter", originNodeId)), ["[:s-bracket"]);
+
+    for (const rejected of [" ", "/", "\\", "F1", "ESC", ""]) {
+      assert.throws(() => shortcuts.setCanvasShortcut("ada", rejected, target("s-bad"), originNodeId),
+        /canvas binding/i, `${JSON.stringify(rejected)} is refused`);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.JOINT_BOB_DATA_DIR;
+    else process.env.JOINT_BOB_DATA_DIR = previous;
+    await rm(root, { recursive: true, force: true });
+  }
+});

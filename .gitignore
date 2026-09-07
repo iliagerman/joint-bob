@@ -14,6 +14,8 @@ node_modules/
 .joint-bob/
 /.dev-env/
 .pi-mobile-web-attachments/
+.joint-bob-attachments/
+/tmp/
 .joint-bob-release
 .master-bob-release
 /app.js

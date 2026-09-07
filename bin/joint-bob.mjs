@@ -33,7 +33,12 @@ function install() {
     rmSync(backup, { recursive: true, force: true });
   } catch (error) {
     rmSync(installDir, { recursive: true, force: true });
-    if (existsSync(backup)) renameSync(backup, installDir);
+    if (existsSync(backup)) {
+      renameSync(backup, installDir);
+      // The failed installation stopped the service; bring the restored version back up.
+      const restored = spawnSync("bash", [path.join(installDir, "scripts", "install-service.sh")], { cwd: installDir, stdio: "inherit", env: process.env });
+      if (restored.status !== 0) console.error("Could not restart the restored installation");
+    }
     throw error;
   } finally {
     rmSync(staging, { recursive: true, force: true });

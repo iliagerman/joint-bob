@@ -56,7 +56,13 @@ export function prospectiveClusterNode(node: Awaited<ReturnType<typeof getCluste
 }
 
 export function securityHeaders(request: Request, response: Response, next: NextFunction): void {
-  response.setHeader("Content-Security-Policy", "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; style-src 'self'; script-src 'self'");
+  // xterm.js sizes its rows by injecting a <style> element it rewrites on every
+  // resize, and paints ANSI colours through per-cell style attributes. Neither can
+  // carry a nonce or a stable hash, so the terminal needs inline styles allowed.
+  // Scripts stay locked to 'self', and default-src/img-src keep CSS from reaching
+  // any off-origin URL, so this does not open a data-exfiltration path.
+  const inlineStyle = "'self' 'unsafe-inline'";
+  response.setHeader("Content-Security-Policy", `default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; style-src-elem ${inlineStyle}; style-src-attr ${inlineStyle}; script-src 'self'`);
   response.setHeader("X-Content-Type-Options", "nosniff");
   // The canvas embeds the normal chat surface in a same-origin iframe; every other
   // document stays unframeable.

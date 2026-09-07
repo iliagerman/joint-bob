@@ -4,12 +4,14 @@ import test from "node:test";
 import { appSource } from "./source.js";
 
 test("the frontend never falls back to a browser confirm, alert or prompt box", async () => {
-  const names = (await readdir("public")).filter((name) => name.endsWith(".js"));
-  assert.ok(names.length > 0, "Missing frontend scripts");
-  for (const name of names) {
-    const source = await readFile(`public/${name}`, "utf8");
+  const paths = (await Promise.all(["public", "public/app"].map(async (directory) =>
+    (await readdir(directory)).filter((name) => name.endsWith(".js")).map((name) => `${directory}/${name}`),
+  ))).flat();
+  assert.ok(paths.length > 0, "Missing frontend scripts");
+  for (const filePath of paths) {
+    const source = await readFile(filePath, "utf8");
     const code = source.replace(/^\s*\/\/.*$/gm, "");
-    assert.doesNotMatch(code, /(?<![.\w$])(?:window\.)?(?:confirm|alert|prompt)\s*\(/, `public/${name} still opens a browser dialog`);
+    assert.doesNotMatch(code, /(?<![.\w$])(?:window\.)?(?:confirm|alert|prompt)\s*\(/, `${filePath} still opens a browser dialog`);
   }
 });
 

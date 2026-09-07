@@ -185,7 +185,9 @@ test("the first ten recents are numbered and open with a digit key", async () =>
 test("a global shortcut opens the recents dialog", async () => {
   const app = await appSource();
 
-  const start = app.indexOf('document.addEventListener("keydown"');
+  // The app has more than one document-level keydown handler now, so this finds the
+  // one that owns the recents chord rather than whichever comes first in the bundle.
+  const start = app.lastIndexOf('document.addEventListener("keydown"', app.indexOf("openRecentSessionsDialog();"));
   const end = app.indexOf("\n});", start);
   assert.ok(start >= 0, "Missing global keydown handler");
   const handler = app.slice(start, end);

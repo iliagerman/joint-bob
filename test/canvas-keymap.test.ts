@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   canonicalCanvasKey, canvasChordLabel, canvasChordIsUsable, canvasChordMatches, canvasKeyFromCode,
-  emptyCanvasLayout, fuzzyMatchScore, normalizeCanvasKeymap,
+  canvasSplitPlacement, emptyCanvasLayout, fuzzyMatchScore, normalizeCanvasKeymap,
   addCanvasPane, listCanvasPanes,
 } from "../public/canvas-layout.js";
 
@@ -17,8 +17,8 @@ test("an empty modifier set falls back to the default chord", () => {
 });
 
 test("two commands cannot hold the same key", () => {
-  const keymap = normalizeCanvasKeymap({ modifiers: ["ctrl"], recentPane: "k", focusPane: "K", paneSearch: "9", toggleView: "v" });
-  assert.deepEqual(keymap, { modifiers: ["ctrl"], recentPane: "K", focusPane: null, paneSearch: "9", toggleView: "V" });
+  const keymap = normalizeCanvasKeymap({ modifiers: ["ctrl"], recentPane: "k", focusPane: "K", paneSearch: "9", toggleView: "v", spotlight: "p", pendingReviews: "r" });
+  assert.deepEqual(keymap, { modifiers: ["ctrl"], recentPane: "K", focusPane: null, paneSearch: "9", toggleView: "V", spotlight: "P", pendingReviews: "R" });
 });
 
 // Every account has a keymap saved from before the canvas gained a toggle key. A command
@@ -90,7 +90,7 @@ test("stored keymaps degrade instead of taking the node down", async () => {
   const { defaultCanvasKeymap, normalizeCanvasKeymapPreference } = await import(`../src/preferences.js?canvas-keymap=${Date.now()}-${Math.random()}`);
   assert.deepEqual(normalizeCanvasKeymapPreference(null), defaultCanvasKeymap());
   const keymap = normalizeCanvasKeymapPreference({ modifiers: ["meta"], recentPane: "!!", focusPane: "g", paneSearch: null, toggleView: null });
-  assert.deepEqual(keymap, { modifiers: ["meta"], recentPane: null, focusPane: "G", paneSearch: null, toggleView: null });
+  assert.deepEqual(keymap, { modifiers: ["meta"], recentPane: null, focusPane: "G", paneSearch: null, toggleView: null, spotlight: "P", pendingReviews: "R" });
   assert.deepEqual(normalizeCanvasKeymapPreference({ modifiers: ["bogus"] }).modifiers, ["meta", "shift"]);
 });
 
@@ -104,4 +104,52 @@ test("a shift-only chord falls back to the default instead of eating capital let
   assert.deepEqual(normalizeCanvasKeymap({ modifiers: ["shift"], paneSearch: "f" }).modifiers, ["meta", "shift"]);
   const { normalizeCanvasKeymapPreference: normalizeCanvasKeymapPreferenceTypescript, defaultCanvasKeymap } = await import(`../src/preferences.js?canvas-keymap=${Date.now()}-${Math.random()}`);
   assert.deepEqual(normalizeCanvasKeymapPreferenceTypescript({ modifiers: ["shift"], recentPane: "E", focusPane: "G", paneSearch: "F" }).modifiers, defaultCanvasKeymap().modifiers);
+});
+
+// A key under a finger beats a letter the conversation is also typing, so punctuation
+// and Enter are bindable. Space stays out: it is the split leader. "/" and "\\" stay out
+// because a binding travels as a URL path segment, and "\\" already means "split".
+test("a shortcut key can be punctuation or Enter, but not Space or a slash", () => {
+  assert.equal(canonicalCanvasKey("["), "[");
+  assert.equal(canonicalCanvasKey("enter"), "ENTER");
+  assert.equal(canonicalCanvasKey("ENTER"), "ENTER");
+  assert.equal(canonicalCanvasKey(" "), null);
+  assert.equal(canonicalCanvasKey("SPACE"), null);
+  assert.equal(canonicalCanvasKey("/"), null);
+  assert.equal(canonicalCanvasKey("\\"), null);
+
+  assert.equal(canvasKeyFromCode("BracketLeft"), "[");
+  assert.equal(canvasKeyFromCode("Quote"), "'");
+  assert.equal(canvasKeyFromCode("Enter"), "ENTER");
+  assert.equal(canvasKeyFromCode("NumpadEnter"), "ENTER");
+  assert.equal(canvasKeyFromCode("Space"), null);
+  assert.equal(canvasKeyFromCode("Slash"), null);
+
+  const keymap = normalizeCanvasKeymap({ modifiers: ["ctrl"], recentPane: "[", focusPane: "enter", paneSearch: "/" });
+  assert.equal(keymap.recentPane, "[");
+  assert.equal(keymap.focusPane, "ENTER");
+  assert.equal(keymap.paneSearch, null, "a key the canvas cannot carry is dropped, not stored");
+  assert.equal(canvasChordLabel({ modifiers: ["meta"] }, "ENTER"), "\u2318\u23ce", "Enter reads as a symbol, not as four letters");
+  assert.equal(canvasChordLabel({ modifiers: ["meta"] }, "["), "\u2318[");
+});
+
+// Terminal muscle memory: the new pane appears where the key points.
+test("the split leader opens to the right or below, the way a terminal does", () => {
+  assert.equal(canvasSplitPlacement({ code: "Backslash" }), "right");
+  assert.equal(canvasSplitPlacement({ code: "Minus" }), "below");
+  assert.equal(canvasSplitPlacement({ code: "KeyQ" }), null);
+});
+
+// The panel that lists every shortcut is itself reachable by a fixed chord. The bare
+// "/" is left to the terminal and the code editor, which both use it.
+test("the help chord is Command or Control with a question mark, never a bare slash", async () => {
+  const { isCanvasHelpShortcut } = await import("../public/canvas-layout.js");
+  assert.equal(isCanvasHelpShortcut({ code: "Slash", key: "?", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false }), true);
+  assert.equal(isCanvasHelpShortcut({ code: "Slash", key: "?", metaKey: false, shiftKey: true, ctrlKey: true, altKey: false }), true);
+  // A layout that types "?" from another key still answers.
+  assert.equal(isCanvasHelpShortcut({ code: "Minus", key: "?", metaKey: true, shiftKey: false, ctrlKey: false, altKey: false }), true);
+  assert.equal(isCanvasHelpShortcut({ code: "Slash", key: "/", metaKey: true, shiftKey: false, ctrlKey: false, altKey: false }), false,
+    "a bare slash belongs to the terminal and the editor");
+  assert.equal(isCanvasHelpShortcut({ code: "Slash", key: "?", metaKey: false, shiftKey: true, ctrlKey: false, altKey: false }), false);
+  assert.equal(isCanvasHelpShortcut({ code: "Slash", key: "?", metaKey: true, shiftKey: true, ctrlKey: false, altKey: true }), false);
 });

@@ -105,8 +105,13 @@ function renderPendingReviewsBadge() {
   elements.markAllPendingReviewedButton.disabled = count === 0;
 }
 
+/** Rows 1-10 carry a digit shortcut, the way the recent conversations list does. */
+const PENDING_REVIEW_SHORTCUT_LIMIT = 10;
+let pendingReviewShortcuts = [];
+
 function renderPendingReviewsDialog() {
   elements.pendingReviewsList.replaceChildren();
+  pendingReviewShortcuts = [];
   if (!pendingReviewCount()) {
     const empty = document.createElement("p");
     empty.className = "muted";
@@ -128,6 +133,13 @@ function renderPendingReviewsDialog() {
       button.dataset.testid = "pending-review-option";
       // Rows are single-line, so the full title lives in the tooltip.
       button.title = entry.title;
+      if (pendingReviewShortcuts.length < PENDING_REVIEW_SHORTCUT_LIMIT) {
+        pendingReviewShortcuts.push({ group, entry });
+        const index = document.createElement("kbd");
+        index.dataset.testid = "pending-review-index";
+        index.textContent = pendingReviewShortcuts.length === 10 ? "0" : String(pendingReviewShortcuts.length);
+        button.append(index);
+      }
       const title = document.createElement("strong");
       title.textContent = entry.title;
       const meta = document.createElement("span");
@@ -175,9 +187,19 @@ async function markAllPendingReviewed() {
   toast("All conversations marked as read");
 }
 
+export function openPendingReviews() {
+  if (elements.pendingReviewsDialog.open) {
+    elements.pendingReviewsDialog.close();
+    return;
+  }
+  openPendingReviewsDialog();
+}
+
 function openPendingReviewsDialog() {
   renderPendingReviewsDialog();
   elements.pendingReviewsDialog.showModal();
+  // Digits are shortcuts, so focus starts on the list rather than in a text field.
+  elements.pendingReviewsList.focus();
   // The badge may be up to a minute stale, and mark-all sends these exact watermarks.
   refreshPendingReviews()
     .then(renderPendingReviewsDialog)
@@ -204,3 +226,13 @@ elements.markAllPendingReviewedButton.addEventListener("click", () => {
   markAllPendingReviewed().catch((error) => toast(error.message));
 });
 elements.closePendingReviewsButton.addEventListener("click", () => elements.pendingReviewsDialog.close());
+/** A digit opens that row, exactly as it does in the recent conversations list. */
+elements.pendingReviewsDialog.addEventListener("keydown", (event) => {
+  if (event.metaKey || event.ctrlKey || event.altKey) return;
+  const position = event.key === "0" ? 10 : Number(event.key);
+  if (!Number.isInteger(position) || position < 1 || position > PENDING_REVIEW_SHORTCUT_LIMIT) return;
+  const row = pendingReviewShortcuts[position - 1];
+  if (!row) return;
+  event.preventDefault();
+  openPendingReview(row.group, row.entry).catch((error) => toast(error.message));
+});

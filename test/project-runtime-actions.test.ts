@@ -48,3 +48,18 @@ test("chat exposes an embedded terminal on the selected project and node", async
   assert.doesNotMatch(server, /app\.post\("\/api\/projects\/:projectId\/terminal"/);
   assert.doesNotMatch(server, /app\.post\("\/api\/cluster\/projects\/terminal"/);
 });
+
+test("the security policy leaves room for the styles xterm writes at runtime", async () => {
+  const server = await serverSource();
+  const policy = server.match(/"Content-Security-Policy", `([^`]+)`/)?.[1] ?? "";
+
+  // xterm re-writes a <style> element on every resize and paints ANSI colours
+  // through per-cell style attributes. Neither can carry a nonce or a stable
+  // hash, so tightening these two directives silently breaks the terminal.
+  assert.match(policy, /style-src-elem \$\{inlineStyle\}/);
+  assert.match(policy, /style-src-attr \$\{inlineStyle\}/);
+  assert.match(server, /const inlineStyle = "'self' 'unsafe-inline'"/);
+  // Scripts stay locked down: inline styles are the only relaxation.
+  assert.match(policy, /script-src 'self'/);
+  assert.doesNotMatch(policy, /script-src[^;]*unsafe-inline/);
+});

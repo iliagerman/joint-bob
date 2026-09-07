@@ -1,5 +1,6 @@
 import path from "node:path";
 import { z } from "zod";
+import { canonicalCanvasKeyToken } from "../canvas-keys.js";
 import { listHarnesses } from "../harnesses.js";
 import { CANVAS_MAX_ROW_HEIGHT, CANVAS_MIN_ROW_HEIGHT, canvasRowGeometryIsLegal } from "../preferences.js";
 import { isHarnessId, PROJECT_COLORS } from "../types.js";
@@ -427,7 +428,7 @@ const canvasLayoutPreferenceSchema = z.union([
   }
   if (layout.focusedPaneId && !paneIds.has(layout.focusedPaneId)) context.addIssue({ code: z.ZodIssueCode.custom, message: "Focused canvas pane is unknown" });
 });
-const canvasKeymapKeySchema = z.string().trim().regex(/^[0-9A-Za-z]$/).nullable();
+const canvasKeymapKeySchema = z.string().trim().refine((key) => canonicalCanvasKeyToken(key) !== null, "Unsupported canvas key").nullable();
 const canvasKeymapPreferenceSchema = z.object({
   // Shift alone would swallow every capital letter typed in a canvas conversation.
   modifiers: z.array(z.enum(["meta", "ctrl", "alt", "shift"])).min(1).max(4)
@@ -438,6 +439,8 @@ const canvasKeymapPreferenceSchema = z.object({
   // Optional: a client that predates this command simply never sends it, and the
   // normalizer gives it its default key.
   toggleView: canvasKeymapKeySchema.optional(),
+  spotlight: canvasKeymapKeySchema.optional(),
+  pendingReviews: canvasKeymapKeySchema.optional(),
 });
 export const userPreferencesSchema = z.object({
   theme: z.enum(["light", "dark"]).nullable().optional(),
