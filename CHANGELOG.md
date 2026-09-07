@@ -3,14 +3,16 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.8.0 — 2026-09-07
 
-- Canvas keyboard shortcuts are now recorded as single chords you can fully customize in Settings, replacing the two-step Ctrl+Space leader system
-- Conversations now open reliably on any cluster node even when other nodes are temporarily offline
-- Spotlight search now navigates to workspace windows and settings tabs, and displays recent conversations
-- Settings tabs now display as a vertical sidebar on wide screens for easier navigation through many configuration sections
-- Recent conversations dialog now focuses on the search field when opened for immediate searching
-- Running conversations across all projects are now viewable in a single dialog with quick navigation to any live conversation
+- Customize keyboard shortcuts for any canvas or app command in Settings—record your preferred key combination instead of using preset leaders.
+- Canvas splits now have dedicated shortcuts: Ctrl+Backslash splits right, Ctrl+Minus splits below.
+- Conversations reliably open on any cluster node, even when other nodes are temporarily offline.
+- Spotlight search navigates to workspace windows, settings tabs, and recent conversations.
+- Settings tabs reorganized into a vertical sidebar on wide screens for easier access to all configuration sections.
+- Recent conversations dialog now focuses on the search field automatically when opened.
+- View all running conversations across your projects in one place with quick navigation to any live conversation.
+- Changelog no longer shows internal hook runs, keeping it focused on user-visible changes.
 
 ## 1.7.0 — 2026-09-07
 
