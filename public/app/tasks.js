@@ -157,7 +157,7 @@ function openNewTaskDialog(status = "backlog") {
  */
 function taskChatNodes() {
   return [
-    elements.messages,
+    elements.messagesWrap,
     elements.reconnectBanner,
     elements.commandStrip,
     elements.conversationLock,
@@ -172,6 +172,9 @@ function attachChatToTaskDialog() {
 
 function detachChatFromTaskDialog() {
   for (const node of taskChatNodes()) elements.chatPanel.append(node);
+  // The pane changes height on the way back without firing a scroll event, so
+  // the pin and the jump button would otherwise settle on the dialog's geometry.
+  requestPinChat();
 }
 
 function conversationTabButton() {

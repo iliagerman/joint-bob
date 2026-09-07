@@ -145,6 +145,37 @@ test("opening a conversation with a long transcript lands on the newest message"
   assert.ok(distanceFromBottom(state) < BOTTOM_THRESHOLD_PX, `pane opens at the bottom, ${distanceFromBottom(state)}px away`);
 });
 
+function jumpButton() {
+  return page.getByTestId("chat-jump-to-bottom-button");
+}
+
+test("the jump-to-bottom button stays out of the way while the reader is at the bottom", async () => {
+  await setScrollTop((await metrics()).scrollHeight);
+  await waitFrames();
+  // Present in the markup, but not shown: an absent button would also read as
+  // hidden, so the count assertion is what makes this a real check.
+  assert.equal(await jumpButton().count(), 1, "the chat ships a jump-to-bottom button");
+  await waitFor(async () => await jumpButton().isHidden(), "jump button to be hidden at the bottom");
+});
+
+test("scrolling up reveals the jump-to-bottom button and clicking it returns to the newest message", async () => {
+  const start = await metrics();
+  await setScrollTop(Math.floor(start.scrollHeight * 0.2));
+  await waitFrames();
+  await waitFor(async () => await jumpButton().isVisible(), "jump button to appear once scrolled away");
+
+  await jumpButton().click();
+  await waitFor(async () => distanceFromBottom(await metrics()) < BOTTOM_THRESHOLD_PX, "pane to return to the bottom");
+  await waitFor(async () => await jumpButton().isHidden(), "jump button to hide again once back at the bottom");
+
+  // Clicking it re-arms follow, so the next record keeps the pane pinned.
+  const before = await metrics();
+  await appendExternalTurnPair("Jump button marker");
+  await waitForTurnPair("Jump button marker", before.messageCount);
+  const after = await metrics();
+  assert.ok(distanceFromBottom(after) < BOTTOM_THRESHOLD_PX, `pane follows again after the jump, ${distanceFromBottom(after)}px away`);
+});
+
 test("records arriving on disk while the reader is at the bottom keep the pane pinned", async () => {
   const before = await metrics();
   await appendExternalTurnPair("Disk sync marker one");

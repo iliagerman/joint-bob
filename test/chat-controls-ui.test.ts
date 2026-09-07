@@ -9,7 +9,7 @@ test("the toolbar owns one Pi Thinking or Claude Effort control", async () => {
     appSource(),
   ]);
   const toolbarStart = html.indexOf('<div class="chat-toolbar panel-toolbar" id="chatToolbar">');
-  const toolbarEnd = html.indexOf('\n        <section class="messages"', toolbarStart);
+  const toolbarEnd = html.indexOf('\n        <div class="messages-wrap"', toolbarStart);
   const dialogStart = html.indexOf('<dialog id="modelDialog"');
   const dialogEnd = html.indexOf("</dialog>", dialogStart);
   assert.ok(toolbarStart >= 0 && toolbarEnd >= 0, "Missing chat toolbar");
@@ -67,7 +67,7 @@ test("model buttons are name-only and mobile controls use fixed toolbar rows", a
   assert.match(styles, /\.chat-recents-button\s*\{[^}]*grid-column:\s*3;[^}]*grid-row:\s*2;/);
   assert.doesNotMatch(styles, /\.model-button-mode/);
   assert.doesNotMatch(styles, /\.chat-toolbar[^\{]*\{[^}]*overflow-x:\s*auto/);
-  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v128";/);
+  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v131";/);
 });
 
 test("the status light and Stop sit on the chat header's meta row", async () => {

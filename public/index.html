@@ -217,13 +217,18 @@
           </details>
         </div>
 
-        <section class="messages" id="messages" aria-live="polite">
-          <div class="empty-state">
-            <div class="orb" aria-hidden="true"><img src="/icon.svg" alt="" width="56" height="56" /></div>
-            <h2>Your server-side Pi, in your pocket.</h2>
-            <p>Select a project and start a Pi or Claude conversation on any connected node.</p>
-          </div>
-        </section>
+        <div class="messages-wrap" id="messagesWrap">
+          <section class="messages" id="messages" aria-live="polite">
+            <div class="empty-state">
+              <div class="orb" aria-hidden="true"><img src="/icon.svg" alt="" width="56" height="56" /></div>
+              <h2>Your server-side Pi, in your pocket.</h2>
+              <p>Select a project and start a Pi or Claude conversation on any connected node.</p>
+            </div>
+          </section>
+          <button class="jump-to-bottom" id="jumpToBottomButton" type="button" hidden aria-label="Jump to the newest message" title="Jump to the newest message" data-testid="chat-jump-to-bottom-button">
+            <span aria-hidden="true">↓</span>
+          </button>
+        </div>
 
         <div class="reconnect-banner" id="reconnectBanner" role="status" data-testid="chat-reconnect-banner" hidden>
           <span class="reconnect-dots" aria-hidden="true"><i></i><i></i><i></i></span>

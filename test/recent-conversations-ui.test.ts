@@ -54,7 +54,7 @@ test("recent conversations are reachable from the conversations list and an open
   );
 
   const toolbarStart = html.indexOf('<div class="chat-toolbar panel-toolbar" id="chatToolbar">');
-  const toolbarEnd = html.indexOf('\n        <section class="messages"', toolbarStart);
+  const toolbarEnd = html.indexOf('\n        <div class="messages-wrap"', toolbarStart);
   assert.ok(toolbarStart >= 0 && toolbarEnd >= 0, "Missing chat toolbar");
   const toolbar = html.slice(toolbarStart, toolbarEnd);
   const modeStart = toolbar.indexOf('id="chatModeControl"');

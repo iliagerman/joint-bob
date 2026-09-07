@@ -960,6 +960,32 @@ select.chat-toolbar-control {
 
 /* The scroll box stays full width so the scrollbar hugs the edge; the inline
    padding grows on a wide screen to hold the transcript in a centred column. */
+/* The transcript sits in a positioned wrapper so the jump button can float over
+   its bottom edge without joining the scrolling column. */
+.messages-wrap { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.jump-to-bottom {
+  position: absolute;
+  right: 18px;
+  bottom: 14px;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--text);
+  background: var(--field);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 28%);
+  font-size: 16px;
+  line-height: 1;
+  transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+}
+.jump-to-bottom:hover { color: var(--accent); border-color: var(--accent); }
+.jump-to-bottom[hidden] { display: none; }
 .messages { flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; background: transparent; padding-block: 18px; padding-inline: max(clamp(12px, 2.5vw, 40px), calc((100% - 1100px) / 2)); display: flex; flex-direction: column; gap: 10px; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
 .empty-state { margin: auto; max-width: 480px; text-align: center; display: grid; gap: 14px; place-items: center; padding: 12px; }
 .empty-state h2 { font-size: 24px; line-height: 1.25; letter-spacing: -0.01em; }

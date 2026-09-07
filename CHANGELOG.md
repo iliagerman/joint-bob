@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Chat now shows a button to jump to the newest message when you scroll up to read older messages
+
 ## 1.6.0 — 2026-09-06
 
 - Handoff messages are now shorter when conversations continue across components

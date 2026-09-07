@@ -82,6 +82,7 @@ export function finishTurnTimer() {
 
 export function clearChat() {
   elements.messages.replaceChildren();
+  elements.jumpToBottomButton.hidden = true;
   elements.turnTimer.hidden = true;
   elements.turnTimer.textContent = "";
   state.assistantBubble = null;
@@ -179,8 +180,24 @@ export function requestPinChat() {
   pinChatFrame = requestAnimationFrame(() => {
     pinChatFrame = 0;
     if (state.followChat) pinChatToBottom();
+    syncJumpButton();
   });
 }
+
+// The jump button is the escape hatch from a long scroll back: it shows exactly
+// when the reader is away from the bottom, and hides the moment they are on it.
+function syncJumpButton() {
+  elements.jumpToBottomButton.hidden = chatAtBottom();
+}
+
+// The jump lands in one step rather than animating: a smooth scroll spans several
+// frames with a target fixed at click time, so content arriving mid-flight would
+// leave the reader short of the real bottom with follow already released.
+elements.jumpToBottomButton.addEventListener("click", () => {
+  state.followChat = true;
+  pinChatToBottom();
+  syncJumpButton();
+});
 
 // Restores the reading position after a re-render replaced the whole
 // transcript. It runs one frame later, once the re-rendered bubbles' markdown
@@ -189,6 +206,7 @@ export function restoreChatScrollTop(top) {
   requestAnimationFrame(() => {
     const box = elements.messages;
     box.scrollTop = Math.max(0, Math.min(top, box.scrollHeight - box.clientHeight));
+    syncJumpButton();
   });
 }
 
@@ -441,6 +459,7 @@ elements.messages.addEventListener("scroll", () => {
   // pane, so its position no longer reads as "at the bottom". Scrolling to the
   // exact spot a pin landed is that settle event, not a reader scrolling away;
   // growth sites keep requesting pins, so follow simply continues.
+  syncJumpButton();
   if (rerenderingChat) return;
   if (Math.abs(elements.messages.scrollTop - lastPinScrollTop) < 1) return;
   state.followChat = chatAtBottom();

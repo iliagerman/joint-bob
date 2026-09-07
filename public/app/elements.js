@@ -13,6 +13,8 @@ export const elements = {
   sessionTitle: document.querySelector("#sessionTitle"),
   connectionStatus: document.querySelector("#connectionStatus"),
   messages: document.querySelector("#messages"),
+  messagesWrap: document.querySelector("#messagesWrap"),
+  jumpToBottomButton: document.querySelector("#jumpToBottomButton"),
   composer: document.querySelector("#composer"),
   commandStrip: document.querySelector("#commandStrip"),
   conversationLock: document.querySelector("#conversationLock"),
