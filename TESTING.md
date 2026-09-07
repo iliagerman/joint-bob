@@ -16,7 +16,7 @@ npm run build
 Run a single file while iterating:
 
 ```bash
-node --import tsx --test test/canvas-ui.test.ts
+node --import ./test/setup.mjs --import tsx --test test/canvas-ui.test.ts
 ```
 
 ## The three kinds of test in this repository
