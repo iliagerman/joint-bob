@@ -34,6 +34,7 @@ import "./app/row-menu.js";
 import "./app/project-list.js";
 import "./app/reviews.js";
 import "./app/recents.js";
+import "./app/running.js";
 import "./app/spotlight.js";
 import "./app/shortcut-settings.js";
 import "./app/session-list.js";

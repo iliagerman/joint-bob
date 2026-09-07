@@ -1025,6 +1025,34 @@ test("the pending reviews list opens on its own key and its rows answer to digit
   }
 });
 
+test("running conversations open their live conversation in another project", async () => {
+  const currentProject = await page.getByTestId("chat-project-name").textContent();
+  const project = node.projects.find((candidate) => candidate.name !== currentProject)!;
+  const target = await page.evaluate(async (projectId) => {
+    await fetch("/api/running");
+    const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/sessions`);
+    return (await response.json()).sessions[0];
+  }, project.id) as { id: string; path: string; title: string; harnessId: string };
+  const database = new DatabaseSync(path.join(node.dataDir, "node.db"));
+  try {
+    const now = new Date();
+    database.prepare(`INSERT INTO conversation_runtime_leases
+      (engine, session_id, owner_node_id, ownership_epoch, run_id, updated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(target.harnessId, target.id, node.nodeId, 1, randomUUID(), now.toISOString(), new Date(now.getTime() + 60_000).toISOString());
+    await page.getByTestId("running-conversations-open-button").click();
+    const dialog = page.getByTestId("running-conversations-dialog");
+    await dialog.getByText(project.name, { exact: true }).waitFor();
+    await dialog.getByTestId("running-conversation-option").filter({ hasText: target.title }).click();
+    await page.getByTestId("chat-project-name").getByText(project.name, { exact: true }).waitFor();
+    await page.locator("#sessionTitle").getByText(target.title, { exact: true }).waitFor();
+  } finally {
+    if (await page.getByTestId("running-conversations-dialog").isVisible()) await page.getByTestId("running-conversations-close-button").click();
+    database.prepare("DELETE FROM conversation_runtime_leases WHERE engine = ? AND session_id = ?").run(target.harnessId, target.id);
+    database.close();
+  }
+});
+
+
 test("the journey produced no console errors and no failed requests", () => {
   assert.deepEqual(consoleErrors, [], "no console errors");
   assert.deepEqual(failedResponses, [], "no 4xx or 5xx responses");

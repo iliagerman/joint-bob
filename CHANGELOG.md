@@ -8,6 +8,7 @@ Every deployment is a version. The newest section must always match the
 - Spotlight search now navigates to workspace windows and settings tabs, and displays recent conversations
 - Settings tabs now display as a vertical sidebar on wide screens for easier navigation through many configuration sections
 - Recent conversations dialog now focuses on the search field when opened for immediate searching
+- Running conversations across all projects are now viewable in a single dialog with quick navigation to any live conversation
 
 ## 1.7.0 — 2026-09-07
 

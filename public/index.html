@@ -53,6 +53,7 @@
             <button class="ghost icon-button" id="recentSessionsButton" type="button" data-recent-sessions-open aria-label="Recent conversations" title="Recent conversations" data-testid="recent-sessions-open-button">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" /><path d="M3 4v4h4" /><path d="M12 7.5V12l3.2 1.9" /></svg>
             </button>
+            <button class="ghost icon-button" type="button" data-running-conversations-open aria-label="Running conversations" title="Running conversations" data-testid="running-conversations-open-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5.5 10 6.5L8 18.5z"/></svg></button>
             <button class="ghost icon-button" id="settingsButton" type="button" aria-label="Settings" title="Settings" data-testid="settings-open-button">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
             </button>
@@ -90,6 +91,7 @@
           <button class="ghost icon-button" id="chatsRecentSessionsButton" type="button" data-recent-sessions-open aria-label="Recent conversations" title="Recent conversations" data-testid="chats-recent-sessions-open-button">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" /><path d="M3 4v4h4" /><path d="M12 7.5V12l3.2 1.9" /></svg>
           </button>
+          <button class="ghost icon-button" type="button" data-running-conversations-open aria-label="Running conversations" title="Running conversations" data-testid="chats-running-conversations-open-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5.5 10 6.5L8 18.5z"/></svg></button>
           <button class="ghost icon-button collapse-button" id="collapseChatsButton" type="button" aria-label="Collapse conversations panel" title="Collapse conversations panel" data-testid="chats-panel-collapse-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 6 8.5 12l6 6"/></svg></button>
         </header>
         <div class="list-loading" id="sessionsLoading" role="progressbar" aria-label="Loading conversations" data-testid="session-list-loading-bar" hidden><span></span></div>
@@ -204,6 +206,7 @@
             <select id="reasoningLevelSelect" class="chat-toolbar-control" aria-labelledby="chatModeLabel" data-testid="chat-reasoning-select"></select>
           </label>
           <button class="ghost icon-button chat-recents-button" id="chatRecentSessionsButton" type="button" aria-label="Recent conversations" title="Recent conversations" data-recent-sessions-open data-testid="chat-recent-sessions-open-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" /><path d="M3 4v4h4" /><path d="M12 7.5V12l3.2 1.9" /></svg></button>
+          <button class="ghost icon-button" type="button" data-running-conversations-open aria-label="Running conversations" title="Running conversations" data-testid="chat-running-conversations-open-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5.5 10 6.5L8 18.5z"/></svg></button>
           <details class="chat-more" id="chatMoreMenu">
             <summary class="ghost icon-button" aria-label="More chat actions" title="More chat actions" data-testid="chat-more-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7" fill="currentColor" /><circle cx="12" cy="12" r="1.7" fill="currentColor" /><circle cx="19" cy="12" r="1.7" fill="currentColor" /></svg></summary>
             <div class="chat-more-actions">
@@ -761,6 +764,20 @@
         <div class="recent-sessions-list" id="recentSessionsList" tabindex="-1"></div>
         <div class="dialog-actions">
           <button class="ghost" type="button" id="closeRecentSessionsButton" data-testid="recent-sessions-close-button">Close</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="runningConversationsDialog" data-testid="running-conversations-dialog">
+      <div class="dialog-card">
+        <div>
+          <span class="eyebrow">Live work</span>
+          <h2>Running conversations</h2>
+          <p>Conversations currently running, across every project.</p>
+        </div>
+        <div class="running-conversations-list" id="runningConversationsList" tabindex="-1"></div>
+        <div class="dialog-actions">
+          <button class="ghost" type="button" id="closeRunningConversationsButton" data-testid="running-conversations-close-button">Close</button>
         </div>
       </div>
     </dialog>

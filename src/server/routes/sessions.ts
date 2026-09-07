@@ -272,6 +272,37 @@ app.get("/api/reviews/pending", async (_request, response, next) => {
   }
 });
 
+app.get("/api/running", async (_request, response, next) => {
+  try {
+    const authSession = response.locals.authSession as AuthSession;
+    const projects = await projectsWithSharedNames(false);
+    const groups = await Promise.all(projects.map(async (project) => {
+      const sessions = await listProjectSessionsWithReviewState(project, authSession.userId, authSession.username);
+      return {
+        projectId: project.id,
+        projectName: project.name,
+        sessions: sessions.filter((session) => session.running).map((session) => ({
+          id: session.id,
+          path: session.path,
+          color: session.color,
+          harnessId: session.harnessId,
+          title: session.title,
+          agentId: session.agentId,
+          agentLabel: session.agentLabel,
+          agentModel: session.agentModel,
+          updatedAt: session.updatedAt,
+          executionNodeId: session.executionNodeId,
+          running: true,
+        })),
+      };
+    }));
+    response.json({ projects: groups.filter((group) => group.sessions.length > 0) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+
 app.post("/api/cluster/sessions/take-ownership", async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
