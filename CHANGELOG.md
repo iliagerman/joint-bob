@@ -3,10 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.7.0 — 2026-09-07
 
-- Chat now shows a button to jump to the newest message when you scroll up to read older messages
-- Settings > Updates lets nodes check for, install, and automatically update to new releases, with cluster-wide rollout available
+- Search workspace shortcuts using a new spotlight interface
+- Customize keyboard shortcuts from workspace settings
+- Chat now displays a floating jump-to-bottom button with auto-follow
+- Nodes can check for and install application updates from Settings
 
 ## 1.6.0 — 2026-09-06
 
