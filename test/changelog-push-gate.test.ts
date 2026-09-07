@@ -136,6 +136,7 @@ test("a staged application commit gets an Unreleased changelog entry", async () 
     await mkdir(bin);
     await writeFile(path.join(bin, "claude"), [
       "#!/bin/sh",
+      "printf '%s\\n' \"$@\" > claude-args",
       "awk 'BEGIN { added=0 } /^## / && !added { print \"## Unreleased\\n\\n- Changed the server port\\n\"; added=1 } { print }' CHANGELOG.md > CHANGELOG.tmp",
       "mv CHANGELOG.tmp CHANGELOG.md",
     ].join("\n"), { mode: 0o755 });
@@ -149,6 +150,7 @@ test("a staged application commit gets an Unreleased changelog entry", async () 
     assert.equal(result.status, 0, result.stderr);
     assert.match(await readFile(path.join(root, "CHANGELOG.md"), "utf8"), /^## Unreleased$/m);
     assert.match(git(root, "diff", "--cached", "--name-only"), /^CHANGELOG\.md$/m);
+    assert.match(await readFile(path.join(root, "claude-args"), "utf8"), /--no-session-persistence/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -190,6 +192,7 @@ test("the pre-push hook blocks on the gate before triggering a deploy", async ()
 
   // Per-commit entries and final release notes are written by the cheap model.
   assert.match(script, /"--model", "haiku"/);
+  assert.match(script, /"--no-session-persistence"/);
   assert.match(script, /"--permission-mode", "acceptEdits"/);
   assert.match(script, /spawnSync\("claude"/);
   assert.match(script, /## Unreleased/);

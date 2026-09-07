@@ -41,6 +41,7 @@ const prompt = [
 
 const claude = spawnSync("claude", [
   "-p", prompt,
+  "--no-session-persistence",
   "--model", "haiku",
   "--permission-mode", "acceptEdits",
   "--allowedTools", "Read Edit",
