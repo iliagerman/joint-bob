@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Settings tabs now display as a vertical sidebar on wide screens for easier navigation through many configuration sections
+- Recent conversations dialog now focuses on the search field when opened for immediate searching
 
 ## 1.7.0 — 2026-09-07
 

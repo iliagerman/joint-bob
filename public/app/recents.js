@@ -228,8 +228,7 @@ function openRecentSessionsDialog() {
   elements.recentSessionsSearchInput.value = "";
   renderRecentSessionsDialog();
   elements.recentSessionsDialog.showModal();
-  // Digits are shortcuts, so focus must start on the list rather than in the search field.
-  elements.recentSessionsList.focus();
+  elements.recentSessionsSearchInput.focus();
   // Stored times go stale while the dialog is closed; the rows reorder once the fresh ones land.
   refreshRecentSessionActivity().catch((error) => console.warn(error));
 }

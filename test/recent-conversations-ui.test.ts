@@ -178,8 +178,8 @@ test("the first ten recents are numbered and open with a digit key", async () =>
   assert.match(handler, /recentSessionShortcuts\[position - 1\]/);
   assert.match(handler, /openRecentSession\(entry\)/);
 
-  // Focus starts on the list, so a digit is a shortcut rather than typed text.
-  assert.match(app, /elements\.recentSessionsList\.focus\(\)/);
+  // Search is ready for typing as soon as the dialog opens.
+  assert.match(app, /elements\.recentSessionsSearchInput\.focus\(\)/);
 });
 
 test("a global shortcut opens the recents dialog", async () => {

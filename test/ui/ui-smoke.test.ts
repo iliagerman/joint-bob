@@ -207,6 +207,10 @@ test("recent conversations persist through the replicated recents endpoint", asy
   await page.locator(".message").first().waitFor({ timeout: 20_000 });
   await page.getByTestId("recent-sessions-open-button").click();
   await page.getByTestId("recent-sessions-dialog").getByText("Thread-Based Agent Builder", { exact: true }).waitFor({ timeout: 20_000 });
+  const recentsSearch = page.getByTestId("recent-sessions-search-input");
+  assert.equal(await recentsSearch.evaluate((input) => input === document.activeElement), true, "recents search is ready for typing when the dialog opens");
+  await recentsSearch.pressSequentially("Thread");
+  assert.equal(await recentsSearch.inputValue(), "Thread");
   await page.getByTestId("recent-sessions-close-button").click();
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().waitFor({ timeout: 20_000 });
