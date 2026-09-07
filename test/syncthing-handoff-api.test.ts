@@ -321,10 +321,15 @@ test("task handoff preserves an undiscovered Claude ticket transcript and moves 
     assert.equal((await fetch(`${source.baseUrl}/api/cluster/events`, { method: "POST", headers: { Authorization: `Bearer ${sourceToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ events }) })).status, 200, source.output());
     await Promise.all([waitForTask(source, sourceAuth, project.id, task.id, () => true), waitForTask(destination, destinationAuth, project.id, task.id, () => true)]);
 
-    const coordinator = sourceId < destinationId ? source : destination;
-    const coordinatorAuth = coordinator === source ? sourceAuth : destinationAuth;
-    const coordinatorToken = (await (await fetch(`${coordinator.baseUrl}/api/cluster/invite`, { headers: coordinatorAuth.headers })).json() as { token: string }).token;
-    assert.equal((await fetch(`${coordinator.baseUrl}/api/cluster/sessions/ownership/claim`, { method: "POST", headers: { Authorization: `Bearer ${coordinatorToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ engine: "claude", sessionId, ownerNodeId: sourceId }) })).status, 200, coordinator.output());
+    // Claims are local-first, so the handoff's owner is established by applying the
+    // same ownership record through the replication endpoint instead of the removed
+    // coordinator claim.
+    const ownershipRecord = { engine: "claude", sessionId, ownerNodeId: sourceId, epoch: 1, status: "owned", transferToNodeId: null };
+    for (const node of [source, destination]) {
+      const apply = await fetch(`${node.baseUrl}/api/cluster/sessions/ownership/apply`, { method: "POST", headers: { Authorization: `Bearer ${sourceToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ record: ownershipRecord, originNodeId: sourceId }) });
+      assert.equal(apply.status, 200, node.output());
+      assert.equal(((await apply.json()) as { accepted: boolean }).accepted, true, node.output());
+    }
 
     const handoff = await fetch(`${source.baseUrl}/api/projects/${project.id}/tasks/${task.id}/handoff`, { method: "POST", headers: sourceAuth.headers, body: JSON.stringify({ peerId: destinationId }) });
     assert.equal(handoff.status, 200, source.output());

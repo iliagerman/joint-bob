@@ -99,6 +99,17 @@ function machinePost(node: NodeFixture, route: string, body: unknown): Promise<{
   return machinePostAs(node, node, route, body);
 }
 
+/** Claims are local-first, so a test that needs a peer-owned conversation applies the
+    same ownership record through the replication endpoint every node serves. */
+async function seedConversationOwnership(nodes: NodeFixture[], engine: "pi" | "claude", sessionId: string, owner: NodeFixture): Promise<void> {
+  const record = { engine, sessionId, ownerNodeId: owner.id, epoch: 1, status: "owned", transferToNodeId: null };
+  for (const node of nodes) {
+    const apply = await machinePostAs(owner, node, "/api/cluster/sessions/ownership/apply", { record, originNodeId: owner.id });
+    assert.equal(apply.status, 200, JSON.stringify(apply.body));
+    assert.equal(apply.body.accepted, true, JSON.stringify(apply.body));
+  }
+}
+
 async function machineGetAs(authenticator: NodeFixture, target: NodeFixture, route: string): Promise<{ status: number; body: Record<string, unknown> }> {
   const response = await fetch(`${target.url}${route}`, { headers: { Authorization: `Bearer ${authenticator.token}` } });
   return { status: response.status, body: await response.json() as Record<string, unknown> };
@@ -195,10 +206,9 @@ async function exerciseConcurrentBoundary(
   assert.equal(invocations.length, 1);
 }
 
-async function exerciseClaudeOwnership(coordinator: NodeFixture, source: NodeFixture, destination: NodeFixture, sessionPath: string, invocationLog: string, holdDir: string, sockets: WebSocket[]): Promise<void> {
+async function exerciseClaudeOwnership(source: NodeFixture, destination: NodeFixture, sessionPath: string, invocationLog: string, holdDir: string, sockets: WebSocket[]): Promise<void> {
   const sessionId = path.basename(sessionPath, ".jsonl");
-  const claim = await machinePost(coordinator, "/api/cluster/sessions/ownership/claim", { engine: "claude", sessionId, ownerNodeId: source.id });
-  assert.equal(claim.status, 200, JSON.stringify(claim.body));
+  await seedConversationOwnership([source, destination], "claude", sessionId, source);
   await assertSpoofRejected(source, destination, "claude", sessionId, `claude:${sessionPath}`);
   await exerciseConcurrentBoundary("claude", source, destination, sessionPath, invocationLog, holdDir, sockets);
   const beforeTakeover = await readFile(sessionPath, "utf8");
@@ -209,12 +219,11 @@ async function exerciseClaudeOwnership(coordinator: NodeFixture, source: NodeFix
 }
 
 async function exercisePiOwnership(
-  source: NodeFixture, destination: NodeFixture, coordinator: NodeFixture,
+  source: NodeFixture, destination: NodeFixture,
   sessionId: string, transcriptPath: string, invocationLog: string,
   home: string, sessionRoot: string, holdDir: string, children: ChildProcess[], sockets: WebSocket[],
 ): Promise<void> {
-  const claim = await machinePost(coordinator, "/api/cluster/sessions/ownership/claim", { engine: "pi", sessionId, ownerNodeId: source.id });
-  assert.equal(claim.status, 200, JSON.stringify(claim.body));
+  await seedConversationOwnership([source, destination], "pi", sessionId, source);
   await assertSpoofRejected(source, destination, "pi", sessionId, transcriptPath);
   await exerciseConcurrentBoundary("pi", source, destination, transcriptPath, invocationLog, holdDir, sockets);
   const sourceSocket = sockets[sockets.length - 2];
@@ -284,9 +293,8 @@ test("two real servers fence a second writer and preserve takeover across an off
     ]);
     await Promise.all([pairNode(source, destination, home), pairNode(destination, source, home)]);
     children.push(await startNode(source, home, invocationLog, holdDir), await startNode(destination, home, invocationLog, holdDir));
-    const coordinator = source.id.localeCompare(destination.id) < 0 ? source : destination;
-    await exerciseClaudeOwnership(coordinator, source, destination, claudePath, invocationLog, holdDir, sockets);
-    await exercisePiOwnership(source, destination, coordinator, "mesh-session", transcriptPath, invocationLog, home, sessionRoot, holdDir, children, sockets);
+    await exerciseClaudeOwnership(source, destination, claudePath, invocationLog, holdDir, sockets);
+    await exercisePiOwnership(source, destination, "mesh-session", transcriptPath, invocationLog, home, sessionRoot, holdDir, children, sockets);
   } finally {
     for (const socket of sockets) socket.close();
     await Promise.all(children.map(stopNode));

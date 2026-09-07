@@ -107,11 +107,26 @@ async function stopNode(child: ChildProcess): Promise<void> {
   await new Promise<void>((resolve) => { child.once("exit", () => resolve()); child.kill("SIGTERM"); });
 }
 
-async function machinePost(node: NodeFixture, route: string, body: unknown): Promise<{ status: number; body: Record<string, unknown> }> {
-  const response = await fetch(`${node.url}${route}`, {
-    method: "POST", headers: { Authorization: `Bearer ${node.token}`, "Content-Type": "application/json" }, body: JSON.stringify(body),
+/** Claims are local-first, so a test that needs a peer-owned conversation applies the
+    same ownership record through the replication endpoint every node serves. */
+async function seedConversationOwnership(nodes: NodeFixture[], engine: "pi" | "claude", sessionId: string, owner: NodeFixture): Promise<void> {
+  const record = { engine, sessionId, ownerNodeId: owner.id, epoch: 1, status: "owned", transferToNodeId: null };
+  for (const node of nodes) {
+    const apply = await machinePostAs(owner, node, "/api/cluster/sessions/ownership/apply", { record, originNodeId: owner.id });
+    assert.equal(apply.status, 200, JSON.stringify(apply.body));
+    assert.equal(apply.body.accepted, true, JSON.stringify(apply.body));
+  }
+}
+
+async function machinePostAs(authenticator: NodeFixture, target: NodeFixture, route: string, body: unknown): Promise<{ status: number; body: Record<string, unknown> }> {
+  const response = await fetch(`${target.url}${route}`, {
+    method: "POST", headers: { Authorization: `Bearer ${authenticator.token}`, "Content-Type": "application/json" }, body: JSON.stringify(body),
   });
   return { status: response.status, body: await response.json() as Record<string, unknown> };
+}
+
+async function machinePost(node: NodeFixture, route: string, body: unknown): Promise<{ status: number; body: Record<string, unknown> }> {
+  return machinePostAs(node, node, route, body);
 }
 
 async function machineGet(node: NodeFixture, route: string): Promise<{ status: number; body: Record<string, unknown> }> {
@@ -190,9 +205,7 @@ test("a Claude conversation is claimed from a node whose checkout sits elsewhere
     await Promise.all([pairNode(nodeA, nodeB, home), pairNode(nodeB, nodeA, home)]);
     children.push(await startNode(nodeA, home, invocationLog, holdDir), await startNode(nodeB, home, invocationLog, holdDir));
 
-    const coordinator = nodeA.id.localeCompare(nodeB.id) < 0 ? nodeA : nodeB;
-    const claim = await machinePost(coordinator, "/api/cluster/sessions/ownership/claim", { engine: "claude", sessionId, ownerNodeId: nodeA.id });
-    assert.equal(claim.status, 200, JSON.stringify(claim.body));
+    await seedConversationOwnership([nodeA, nodeB], "claude", sessionId, nodeA);
 
     // FR1.1/FR1.2 — the takeover no longer refuses a `claude:` path and derives the engine from it.
     const takeover = await machinePost(nodeB, "/api/cluster/sessions/take-ownership", {

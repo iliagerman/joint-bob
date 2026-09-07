@@ -16,7 +16,7 @@ import type { HarnessId, ProjectRecord, TaskPhase, TaskPhaseConfig, TaskRecord }
 import { completeUpdateRecovery, failUpdateRecovery, listPendingUpdateRecoveries, type UpdateRecoveryRecord } from "../update-recovery.js";
 import { claudeRunKey, drainClaudePromptQueue, emptyClaudeState, finishPiTaskRun, getSharedSession, promptTextWithAttachments, sendClaudeStatus, taskAttachmentFile } from "./chat.js";
 import { broadcastToProject, send } from "./realtime.js";
-import { claimConversationAcrossCluster } from "./sessions-helpers.js";
+import { claimConversationLocally } from "./sessions-helpers.js";
 import { type ChatEngine, type RecoveredClaudeChat, recoveredClaudeChats, runningClaudeSessionPaths, type SharedPiSession, updateContinuationPrompt } from "./state.js";
 
 // ---- Kanban task runs: moving a task to "in progress" starts its agent ----
@@ -163,7 +163,7 @@ export async function startMergeRun(project: ProjectRecord, task: TaskRecord): P
     if (claimed.engine === "claude") {
       const resumeSessionId = claimed.sessionPath?.startsWith("claude:") ? path.basename(claimed.sessionPath.replace(/^claude:/, ""), ".jsonl") : undefined;
       const sessionId = resumeSessionId ?? randomUUID();
-      await claimConversationAcrossCluster("claude", sessionId, local.id);
+      await claimConversationLocally("claude", sessionId, local.id);
       const run = runClaudePrompt({ cwd, prompt, projectId: project.id, env: agentEnvironment(project.id, { engine: "claude", sessionId }), resumeSessionId, sessionId: resumeSessionId ? undefined : sessionId, onEvent: () => undefined });
       claudeTaskRuns.set(task.id, { child: run.child, projectId: project.id, taskId: claimed.id, leaseToken, phase: "review", cwd, sessionId, sessionPath: claimed.sessionPath ?? `claude:${claudeSessionFilePath(cwd, sessionId)}`, model: null, effort: null, kind: "merge" });
       run.done
@@ -189,8 +189,8 @@ export async function startMergeRun(project: ProjectRecord, task: TaskRecord): P
       const listed = (await listHarnessSessions({ ...project, additionalPaths: [cwd] })).find((session) => session.path === samePiSession);
       if (!listed) throw new Error("Task conversation was not found");
       conversationId = listed.id;
-      await claimConversationAcrossCluster("pi", listed.id, local.id);
-    } else await claimConversationAcrossCluster("pi", newSessionId!, local.id);
+      await claimConversationLocally("pi", listed.id, local.id);
+    } else await claimConversationLocally("pi", newSessionId!, local.id);
     shared = await getSharedSession(project.id, cwd, samePiSession, newSessionId);
     piTaskRuns.set(shared, { projectId: project.id, taskId: claimed.id, title: claimed.title, conversationId: conversationId!, leaseToken, phase: "review", sessionPath: null, kind: "merge" });
     await persistPiTaskSession(shared);
@@ -346,7 +346,7 @@ export async function startTaskRun(project: ProjectRecord, task: TaskRecord, req
     if (config.engine === "claude") {
       const resumeSessionId = task.sessionPath?.startsWith("claude:") ? path.basename(task.sessionPath.replace(/^claude:/, ""), ".jsonl") : undefined;
       const sessionId = resumeSessionId ?? randomUUID();
-      await claimConversationAcrossCluster("claude", sessionId, local.id);
+      await claimConversationLocally("claude", sessionId, local.id);
       const claudePrompt = resumeSessionId ? prompt : [agentCredentialContext(project.id, { engine: "claude", sessionId }), prompt].filter(Boolean).join("\n\n");
       const run = runClaudePrompt({
         cwd,
@@ -397,8 +397,8 @@ export async function startTaskRun(project: ProjectRecord, task: TaskRecord, req
       const listed = (await listHarnessSessions({ ...project, additionalPaths: [cwd] })).find((session) => session.path === samePiSession);
       if (!listed) throw new Error("Task conversation was not found");
       conversationId = listed.id;
-      await claimConversationAcrossCluster("pi", listed.id, local.id);
-    } else await claimConversationAcrossCluster("pi", newSessionId!, local.id);
+      await claimConversationLocally("pi", listed.id, local.id);
+    } else await claimConversationLocally("pi", newSessionId!, local.id);
     shared = await getSharedSession(project.id, cwd, samePiSession, newSessionId);
     if (config.provider && config.modelId) await setSessionModel(shared.handle.session, config.provider, config.modelId);
     piTaskRuns.set(shared, { projectId: project.id, taskId: claimed.id, title: claimed.title, conversationId: conversationId!, leaseToken, phase, sessionPath: null });

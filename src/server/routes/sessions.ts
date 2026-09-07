@@ -4,7 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 import type { AuthSession } from "../../auth.js";
 import { type ClusterPeer, getClusterMachineToken, getClusterNode, getClusterPeer, listClusterPeers } from "../../cluster.js";
-import { beginConversationRecovery, compareAndSetConversationOwnership, type ConversationEngine, type ConversationOwnership, finalizeConversationClaim, finishConversationRecovery, getConversationOwnership, type OwnershipApplyResult, sameConversationOwnership, takeConversationOwnership } from "../../conversation-ownership.js";
+import { beginConversationRecovery, type ConversationEngine, type ConversationOwnership, finishConversationRecovery, getConversationOwnership, type OwnershipApplyResult, sameConversationOwnership, takeConversationOwnership } from "../../conversation-ownership.js";
 import { deleteConversationRecord } from "../../conversation-records.js";
 import { markConversationReviewed, markConversationsReviewed } from "../../conversation-reviews.js";
 import { listHarnessSessions } from "../../harnesses.js";
@@ -19,8 +19,8 @@ import { conversationBelongsToDoneTask } from "../cluster-helpers.js";
 import { sendError } from "../http-auth.js";
 import { assertProjectEditable, projectsWithSharedNames } from "../projects.js";
 import { broadcastToProject } from "../realtime.js";
-import { ownershipCasSchema, ownershipClaimSchema, ownershipSchema, registeredHarnessIdSchema, routedSessionTakeOwnershipSchema, sessionDeleteSchema, sessionRecoverySchema, sessionReviewedSchema, sessionsReviewedSchema, sessionTakeOwnershipSchema } from "../schemas.js";
-import { coordinateOwnershipClaim, listProjectSessionsWithReviewState, requireLocalConversationOwner } from "../sessions-helpers.js";
+import { ownershipSchema, registeredHarnessIdSchema, routedSessionTakeOwnershipSchema, sessionDeleteSchema, sessionRecoverySchema, sessionReviewedSchema, sessionsReviewedSchema, sessionTakeOwnershipSchema } from "../schemas.js";
+import { listProjectSessionsWithReviewState, requireLocalConversationOwner } from "../sessions-helpers.js";
 import { activeClaudeConnections, app, sharedSessions } from "../state.js";
 
 app.get("/api/projects/:projectId/sessions", async (request, response, next) => {
@@ -65,31 +65,6 @@ app.get("/api/cluster/sessions/ownership", async (request, response, next) => {
     const engine = registeredHarnessIdSchema.parse(request.query.engine);
     const sessionId = z.string().min(1).max(240).parse(request.query.sessionId);
     response.json({ ownership: await getConversationOwnership(engine, sessionId) ?? null });
-  } catch (error) { next(error); }
-});
-
-app.post("/api/cluster/sessions/ownership/claim", async (request, response, next) => {
-  try {
-    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
-    const payload = ownershipClaimSchema.parse(request.body);
-    response.json({ ownership: await coordinateOwnershipClaim(payload.engine, payload.sessionId, payload.ownerNodeId) });
-  } catch (error) { next(error); }
-});
-
-app.post("/api/cluster/sessions/ownership/claim/cas", async (request, response, next) => {
-  try {
-    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
-    const payload = ownershipCasSchema.parse(request.body);
-    response.json(await compareAndSetConversationOwnership(payload.expected ?? undefined, payload.proposed, payload.originNodeId));
-  } catch (error) { next(error); }
-});
-
-app.post("/api/cluster/sessions/ownership/claim/commit", async (request, response, next) => {
-  try {
-    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
-    const { proposed } = z.object({ proposed: ownershipSchema }).parse(request.body);
-    const local = await getClusterNode();
-    response.json({ ownership: await finalizeConversationClaim(proposed, local.id) });
   } catch (error) { next(error); }
 });
 
@@ -301,7 +276,6 @@ app.get("/api/running", async (_request, response, next) => {
     next(error);
   }
 });
-
 
 app.post("/api/cluster/sessions/take-ownership", async (request, response, next) => {
   try {

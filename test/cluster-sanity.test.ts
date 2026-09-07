@@ -403,3 +403,170 @@ test("cluster inventory reports each node's version and a peer update needs mach
   assert.equal(machineAuthenticated.status, 409, "a paired machine peer reaches the route and the dev checkout refuses");
   assert.match(((await machineAuthenticated.json()) as { error: string }).error, /development checkout/);
 });
+
+test("a node opens new conversations while its peer is down, and the claim replicates when it returns", async () => {
+  const project = nodeA.projects.find((candidate) => candidate.name === "Internal Assistant")!;
+  await stopDevNode(servers[1]);
+
+  // Claims used to require the cluster coordinator, so a sleeping peer blocked
+  // every new conversation. The node must claim locally and let replication
+  // carry the claim across once the peer returns.
+  const url = new URL("/ws", nodeA.url.replace(/^http/, "ws"));
+  url.searchParams.set("projectId", project.id);
+  url.searchParams.set("sessionPath", "claude:new");
+  const socket = new WebSocket(url, { headers: { Cookie: sessionA.cookie, Origin: nodeA.url } });
+  let sessionId: string | undefined;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("new conversation did not open while the peer was down")), 15_000);
+      socket.on("message", (raw) => {
+        const event = JSON.parse(raw.toString()) as { type?: string; sessionId?: string };
+        if (event.type !== "ready") return;
+        clearTimeout(timeout);
+        sessionId = event.sessionId;
+        resolve();
+      });
+      socket.once("close", (code, reason) => reject(new Error(`socket closed while the peer was down: ${code} ${reason}`)));
+      socket.once("error", reject);
+    });
+    assert.ok(sessionId && sessionId !== "claude:new", `ready reported a concrete session id, got ${sessionId}`);
+
+    const local = new DatabaseSync(path.join(nodeA.dataDir, "node.db"));
+    try {
+      local.exec("PRAGMA busy_timeout = 5000;");
+      const owner = local.prepare("SELECT owner_node_id, status FROM conversation_ownership WHERE engine = 'claude' AND session_id = ?").get(sessionId) as { owner_node_id: string; status: string } | undefined;
+      assert.equal(owner?.owner_node_id, nodeA.nodeId, "the offline node owns the conversation it opened");
+      assert.equal(owner?.status, "owned");
+    } finally { local.close(); }
+  } finally { socket.close(); }
+
+  servers[1] = await startDevNode(environment, nodeB);
+
+  const deadline = Date.now() + 45_000;
+  while (Date.now() < deadline) {
+    const replicated = new DatabaseSync(path.join(nodeB.dataDir, "node.db"));
+    try {
+      replicated.exec("PRAGMA busy_timeout = 5000;");
+      const owner = replicated.prepare("SELECT owner_node_id FROM conversation_ownership WHERE engine = 'claude' AND session_id = ?").get(sessionId) as { owner_node_id: string } | undefined;
+      if (owner?.owner_node_id === nodeA.nodeId) return;
+    } finally { replicated.close(); }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  assert.fail("the claim did not replicate to node B after it returned");
+});
+
+interface ReadyFrame { ownership: { nodeId: string; status: string } | null }
+
+function openConversationSocket(node: SeededNode, session: SignedIn, projectId: string, sessionPath: string): Promise<{ socket: WebSocket; ready: Record<string, unknown> }> {
+  return new Promise((resolve, reject) => {
+    const url = new URL("/ws", node.url.replace(/^http/, "ws"));
+    url.searchParams.set("projectId", projectId);
+    url.searchParams.set("sessionPath", sessionPath);
+    const socket = new WebSocket(url, { headers: { Cookie: session.cookie, Origin: node.url } });
+    const timeout = setTimeout(() => reject(new Error("conversation socket did not become ready")), 15_000);
+    socket.on("message", (raw) => {
+      const event = JSON.parse(raw.toString()) as Record<string, unknown>;
+      if (event.type !== "ready") return;
+      clearTimeout(timeout);
+      resolve({ socket, ready: event });
+    });
+    socket.once("close", (code, reason) => reject(new Error(`socket closed: ${code} ${reason}`)));
+    socket.once("error", reject);
+  });
+}
+
+function seedOwnershipRow(node: SeededNode, engine: string, sessionId: string, ownerNodeId: string, status: string, transferToNodeId: string | null): void {
+  const db = new DatabaseSync(path.join(node.dataDir, "node.db"));
+  try {
+    db.exec("PRAGMA busy_timeout = 5000;");
+    db.prepare("INSERT OR REPLACE INTO conversation_ownership (engine, session_id, owner_node_id, epoch, status, transfer_to_node_id) VALUES (?, ?, ?, 1, ?, ?)")
+      .run(engine, sessionId, ownerNodeId, status, transferToNodeId);
+  } finally { db.close(); }
+}
+
+function readOwnershipRow(node: SeededNode, engine: string, sessionId: string): { owner_node_id: string; epoch: number; status: string } | undefined {
+  const db = new DatabaseSync(path.join(node.dataDir, "node.db"));
+  try {
+    db.exec("PRAGMA busy_timeout = 5000;");
+    return db.prepare("SELECT owner_node_id, epoch, status FROM conversation_ownership WHERE engine = ? AND session_id = ?").get(engine, sessionId) as { owner_node_id: string; epoch: number; status: string } | undefined;
+  } finally { db.close(); }
+}
+
+test("a conflicted conversation is locked on both sides and recovers through takeover", async () => {
+  const project = nodeA.projects.find((candidate) => candidate.name === "Internal Assistant")!;
+  const twin = nodeB.projects.find((candidate) => candidate.name === "Internal Assistant")!;
+  const conversation = (await api<{ sessions: SessionView[] }>(nodeA, sessionA, "GET", `/projects/${project.id}/sessions`)).body.sessions.find((candidate) => candidate.harnessId === "pi")!;
+  const owners = [nodeA.nodeId, nodeB.nodeId].sort();
+
+  // The exact state a partitioned double claim converges on: same epoch, two owners.
+  seedOwnershipRow(nodeA, "pi", conversation.id, owners[0], "conflict", owners[1]);
+  seedOwnershipRow(nodeB, "pi", conversation.id, owners[0], "conflict", owners[1]);
+
+  // Both sides must report a lock, including the node the record names as owner.
+  const openedA = await openConversationSocket(nodeA, sessionA, project.id, conversation.path);
+  const openedB = await openConversationSocket(nodeB, sessionB, twin.id, conversation.path);
+  try {
+    const ownershipA = (openedA.ready as unknown as ReadyFrame).ownership;
+    const ownershipB = (openedB.ready as unknown as ReadyFrame).ownership;
+    const other = (local: string): string => (local === nodeA.nodeId ? nodeB.nodeId : nodeA.nodeId);
+    assert.equal(ownershipA?.status, "conflict", "the listed owner side sees the conflict");
+    assert.equal(ownershipA?.nodeId, other(nodeA.nodeId), "the listed owner side is told about the other node");
+    assert.equal(ownershipB?.status, "conflict", "the transfer side sees the conflict");
+    assert.equal(ownershipB?.nodeId, other(nodeB.nodeId), "the transfer side is told about the other node");
+  } finally {
+    openedA.socket.close();
+    openedB.socket.close();
+  }
+
+  // Taking over must commit locally and converge both nodes instead of being
+  // rejected by the conflicted peer.
+  const taker = owners[0] === nodeA.nodeId ? nodeB : nodeA;
+  const takerSession = taker === nodeA ? sessionA : sessionB;
+  const takerProject = taker === nodeA ? project : twin;
+  const takeover = await api<{ ownership?: { ownerNodeId?: string }; pendingPeerIds?: string[]; error?: string }>(taker, takerSession, "POST", `/projects/${takerProject.id}/sessions/take-ownership`, {
+    peerId: taker.nodeId, sessionId: conversation.id, sessionPath: conversation.path,
+  });
+  assert.equal(takeover.status, 200, `conflict takeover failed (${JSON.stringify(takeover.body)})`);
+  assert.equal(takeover.body.ownership?.ownerNodeId, taker.nodeId);
+  assert.deepEqual(takeover.body.pendingPeerIds, [], "the conflicted peer accepted the takeover");
+
+  for (const node of [nodeA, nodeB]) {
+    const row = readOwnershipRow(node, "pi", conversation.id);
+    assert.equal(row?.owner_node_id, taker.nodeId, `${node.key} converged on the taker`);
+    assert.equal(row?.status, "owned");
+    assert.equal(row?.epoch, 2, `${node.key} saw the takeover epoch`);
+  }
+});
+
+test("a stale foreign two-phase claim stays locked instead of being stolen on open", async () => {
+  const project = nodeA.projects.find((candidate) => candidate.name === "Internal Assistant")!;
+  const twin = nodeB.projects.find((candidate) => candidate.name === "Internal Assistant")!;
+  const conversation = (await api<{ sessions: SessionView[] }>(nodeA, sessionA, "GET", `/projects/${project.id}/sessions`)).body.sessions.filter((candidate) => candidate.harnessId === "pi")[1]!;
+
+  // A claiming record owned by the peer may belong to a live old-version
+  // protocol, so opening here must report the lock, not claim over it.
+  seedOwnershipRow(nodeB, "pi", conversation.id, nodeA.nodeId, "claiming", null);
+  const opened = await openConversationSocket(nodeB, sessionB, twin.id, conversation.path);
+  try {
+    const ownership = (opened.ready as unknown as ReadyFrame).ownership;
+    assert.equal(ownership?.nodeId, nodeA.nodeId, "the foreign claim is reported");
+    assert.equal(ownership?.status, "claiming");
+  } finally { opened.socket.close(); }
+  assert.equal(readOwnershipRow(nodeB, "pi", conversation.id)?.owner_node_id, nodeA.nodeId, "ownership was not stolen");
+});
+
+test("a stale two-phase claim by the local node heals when the conversation opens", async () => {
+  const twin = nodeB.projects.find((candidate) => candidate.name === "Internal Assistant")!;
+  const listed = (await api<{ sessions: SessionView[] }>(nodeB, sessionB, "GET", `/projects/${twin.id}/sessions`)).body.sessions.filter((candidate) => candidate.harnessId === "pi");
+  const target = listed[listed.length - 1]!;
+  seedOwnershipRow(nodeB, "pi", target.id, nodeB.nodeId, "claiming", null);
+
+  const opened = await openConversationSocket(nodeB, sessionB, twin.id, target.path);
+  try {
+    assert.equal((opened.ready as unknown as ReadyFrame).ownership, null, "a healed claim shows no lock");
+  } finally { opened.socket.close(); }
+  const healed = readOwnershipRow(nodeB, "pi", target.id);
+  assert.equal(healed?.owner_node_id, nodeB.nodeId, "the local node still owns it");
+  assert.equal(healed?.status, "owned", "the stale claim healed to owned");
+  assert.equal(healed?.epoch, 2, "healing bumps the epoch");
+});

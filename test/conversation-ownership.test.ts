@@ -91,6 +91,47 @@ test("replicated ownership rejects stale epochs and persists split-brain fencing
   const persisted = db.prepare("SELECT status, transfer_to_node_id FROM conversation_ownership").get() as { status: string; transfer_to_node_id: string };
   assert.equal(persisted.status, "conflict");
   assert.equal(persisted.transfer_to_node_id, destinationNodeId);
-  assert.equal(ownership.applyConversationOwnershipEvent(db, event(sourceNodeId, 3)).accepted, false);
+  // A conflicted conversation is fenced at equal epochs, but a takeover at a higher
+  // epoch must be able to replace the conflict; otherwise takeover could never
+  // replicate and the nodes would stay divergent forever.
+  const takeover = ownership.applyConversationOwnershipEvent(db, event(sourceNodeId, 3));
+  assert.equal(takeover.accepted, true);
+  assert.equal(takeover.current?.status, "owned");
+  assert.equal(takeover.current?.ownerNodeId, sourceNodeId);
+  assert.equal(takeover.current?.epoch, 3);
+  const persistedTakeover = db.prepare("SELECT status, owner_node_id, epoch FROM conversation_ownership").get() as { status: string; owner_node_id: string; epoch: number };
+  assert.equal(persistedTakeover.status, "owned");
+  assert.equal(persistedTakeover.owner_node_id, sourceNodeId);
+  assert.equal(persistedTakeover.epoch, 3);
   assert.doesNotMatch(warnings[0], /transcript|token|credential/i);
+});
+
+test("a stale local two-phase claim heals only against the exact claiming record", async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), "joint-bob-ownership-heal-"));
+  const previous = process.env.JOINT_BOB_DATA_DIR;
+  process.env.JOINT_BOB_DATA_DIR = dataDir;
+  try {
+    const ownership = await import(`../src/conversation-ownership.ts?heal=${Date.now()}-${Math.random()}`);
+    const claiming = { engine, sessionId: "session-claiming", ownerNodeId: sourceNodeId, epoch: 1, status: "claiming" as const, transferToNodeId: null };
+    await ownership.compareAndSetConversationOwnership(undefined, claiming, sourceNodeId);
+
+    const healed = await ownership.healStaleLocalClaim(engine, claiming.sessionId, claiming);
+    assert.deepEqual(healed, { engine, sessionId: claiming.sessionId, ownerNodeId: sourceNodeId, epoch: 2, status: "owned", transferToNodeId: null });
+    // A concurrent identical heal is returned as-is instead of failing.
+    assert.deepEqual(await ownership.healStaleLocalClaim(engine, claiming.sessionId, claiming), healed);
+
+    // Ownership that changed after the caller's read must not be stolen: the
+    // heal rejects the concurrent record instead of bumping over it.
+    const stolenFrom = { engine, sessionId: "session-raced", ownerNodeId: sourceNodeId, epoch: 1, status: "claiming" as const, transferToNodeId: null };
+    await ownership.compareAndSetConversationOwnership(undefined, stolenFrom, sourceNodeId);
+    await ownership.takeConversationOwnership(engine, stolenFrom.sessionId, destinationNodeId);
+    await assert.rejects(ownership.healStaleLocalClaim(engine, stolenFrom.sessionId, stolenFrom), (error: unknown) => {
+      assert.ok(error instanceof ownership.ConversationOwnershipError);
+      assert.equal(error.ownership.ownerNodeId, destinationNodeId);
+      return true;
+    });
+  } finally {
+    if (previous === undefined) delete process.env.JOINT_BOB_DATA_DIR; else process.env.JOINT_BOB_DATA_DIR = previous;
+    await rm(dataDir, { recursive: true, force: true });
+  }
 });

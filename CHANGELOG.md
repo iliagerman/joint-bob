@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Conversations now open reliably on any cluster node even when other nodes are temporarily offline
 - Spotlight search now navigates to workspace windows and settings tabs, and displays recent conversations
 - Settings tabs now display as a vertical sidebar on wide screens for easier navigation through many configuration sections
 - Recent conversations dialog now focuses on the search field when opened for immediate searching

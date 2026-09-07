@@ -102,6 +102,19 @@ function openConversation(node: NodeFixture, sessionPath: string, sockets: WebSo
   });
 }
 
+// Ownership claims replicate asynchronously now, so a peer only reports the lock
+// once the claim event reaches it.
+async function waitForOwnershipOn(node: NodeFixture, sessionId: string, ownerNodeId: string): Promise<void> {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const response = await fetch(`${node.url}/api/cluster/sessions/ownership?engine=pi&sessionId=${encodeURIComponent(sessionId)}`, { headers: { Authorization: `Bearer ${node.token}` } });
+    const ownership = (await response.json() as { ownership: { ownerNodeId: string } | null }).ownership;
+    if (ownership?.ownerNodeId === ownerNodeId) return;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  throw new Error(`Timed out waiting for ${node.url} to see the owner ${ownerNodeId}`);
+}
+
 test("opening a never-prompted conversation claims it, and the second node is told who owns it", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-lock-mesh-"));
   const home = path.join(root, "home");
@@ -124,6 +137,7 @@ test("opening a never-prompted conversation claims it, and the second node is to
     const first = await openConversation(homeserver, transcriptPath, sockets);
     assert.equal(first.ownership, null, "The node that opens an unowned conversation owns it");
 
+    await waitForOwnershipOn(mac, "lock-session", homeserver.id);
     const second = await openConversation(mac, transcriptPath, sockets);
     assert.deepEqual(second.ownership, { nodeId: homeserver.id, nodeName: "Homeserver", status: "owned" });
 

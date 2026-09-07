@@ -21,7 +21,7 @@ import { SessionWatcher } from "../watcher.js";
 import { webSocketCloseReason } from "../websocket.js";
 import { broadcast, broadcastStatus, broadcastTools, broadcastToProject, clearIdleTimer, handleSessionChange, piTools, scheduleIdleDispose, scheduleReviewNotifications, send, sendStatus, sessionKey, setSharedSessionSafeguards } from "./realtime.js";
 import { socketMessageSchema, taskUpdateSchema } from "./schemas.js";
-import { claimConversationAcrossCluster, requireLocalConversationOwner } from "./sessions-helpers.js";
+import { claimConversationLocally, requireLocalConversationOwner } from "./sessions-helpers.js";
 import { activeClaudeConnections, type ChatConnection, type ChatEngine, CLAUDE_DEFAULT_MODEL, CLAUDE_MODEL_LABELS, CLAUDE_MODELS, type ClaudeChatState, claudeClients, flags, runningClaudeSessionPaths, type SharedPiSession, sharedSessions } from "./state.js";
 import { finishTaskPhase, persistPiTaskSession, type PiTaskRun } from "./task-runs.js";
 
@@ -595,7 +595,7 @@ async function switchEngine(connection: ChatConnection, engine: ChatEngine): Pro
       connection.shared = null;
     }
     const sessionId = randomUUID();
-    await claimConversationAcrossCluster("claude", sessionId, local.id);
+    await claimConversationLocally("claude", sessionId, local.id);
     await ensureConversationRecord(connection.project.id, "claude", sessionId, local.id, connection.taskId ?? undefined, lineage ? { conversationId: lineage.conversationId, segmentIndex: lineage.segmentIndex + 1 } : undefined);
     broadcastToProject(connection.project.id, { type: "sessionsChanged" });
     connection.engine = "claude";
@@ -612,7 +612,7 @@ async function switchEngine(connection: ChatConnection, engine: ChatEngine): Pro
   claudeClients.delete(connection.socket);
   connection.handoffContext = transcript.length ? buildHandoffContext(transcript) : null;
   const sessionId = randomUUID();
-  await claimConversationAcrossCluster("pi", sessionId, local.id);
+  await claimConversationLocally("pi", sessionId, local.id);
   await ensureConversationRecord(connection.project.id, "pi", sessionId, local.id, connection.taskId ?? undefined, lineage ? { conversationId: lineage.conversationId, segmentIndex: lineage.segmentIndex + 1 } : undefined);
   broadcastToProject(connection.project.id, { type: "sessionsChanged" });
   const sharedSession = await getSharedSession(connection.project.id, connection.cwd, undefined, sessionId, connection.secretAccountIds);

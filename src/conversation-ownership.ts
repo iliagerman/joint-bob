@@ -163,12 +163,15 @@ export async function claimConversationOwnership(engine: ConversationEngine, ses
   throw new ConversationOwnershipError(result.current!);
 }
 
-export async function finalizeConversationClaim(record: ConversationOwnership, nodeId: string): Promise<ConversationOwnership> {
-  if (record.status !== "claiming" || record.ownerNodeId !== nodeId) throw new Error("Invalid ownership claim finalization");
-  const owned = { ...record, status: "owned" as const };
-  const result = await compareAndSetConversationOwnership(record, owned, nodeId);
-  if (result.accepted || sameConversationOwnership(result.current ?? undefined, owned)) return owned;
-  throw new Error("Ownership claim state changed before commit");
+/** Heals a leftover two-phase `claiming` record from this node. The compare-and-set
+    against the exact record means ownership that replicated in after the caller's
+    read is rejected instead of silently stolen at a higher epoch. */
+export async function healStaleLocalClaim(engine: ConversationEngine, sessionId: string, record: ConversationOwnership): Promise<ConversationOwnership> {
+  if (record.status !== "claiming") throw new Error("Only a claiming record can be healed");
+  const healed: ConversationOwnership = { engine, sessionId, ownerNodeId: record.ownerNodeId, epoch: record.epoch + 1, status: "owned", transferToNodeId: null };
+  const result = await compareAndSetConversationOwnership(record, healed, record.ownerNodeId);
+  if (result.accepted || sameConversationOwnership(result.current ?? undefined, healed)) return healed;
+  throw new ConversationOwnershipError(result.current!);
 }
 
 export async function takeConversationOwnership(engine: ConversationEngine, sessionId: string, destinationNodeId: string): Promise<ConversationOwnership> {
@@ -214,7 +217,9 @@ export function applyConversationOwnershipEvent(db: DatabaseSync, event: Replica
   const incoming = ownershipPayload(event);
   ensureConversationOwnershipSchema(db);
   const current = selectOwnership(db, incoming.engine, incoming.sessionId);
-  if (current?.status === "conflict") return { accepted: false, current };
+  // A conflict is fenced at its own epoch, but a higher-epoch takeover must
+  // replace it: rejecting every incoming state would strand the conflict
+  // because the takeover could never replicate.
   if (current && incoming.epoch < current.epoch) return { accepted: false, current };
   if (current && incoming.epoch === current.epoch && !sameConversationOwnership(current, incoming)) {
     if (validSameEpochTransition(current, incoming)) { saveOwnership(db, incoming); return { accepted: true, current: incoming }; }

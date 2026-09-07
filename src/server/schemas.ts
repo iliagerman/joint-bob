@@ -142,9 +142,6 @@ export const ownershipSchema = z.object({
   engine: registeredHarnessIdSchema, sessionId: z.string().min(1).max(240), ownerNodeId: z.string().uuid(),
   epoch: z.number().int().positive(), status: z.enum(["claiming", "owned", "recovering", "transferring", "conflict"]), transferToNodeId: z.string().uuid().nullable(),
 });
-const nullableOwnershipSchema = ownershipSchema.nullable();
-export const ownershipClaimSchema = z.object({ engine: registeredHarnessIdSchema, sessionId: z.string().min(1).max(240), ownerNodeId: z.string().uuid() });
-export const ownershipCasSchema = z.object({ expected: nullableOwnershipSchema, proposed: ownershipSchema, originNodeId: z.string().uuid() });
 export const sessionRecoverySchema = z.object({ engine: z.literal("pi"), sessionId: z.string().min(1).max(240), sessionPath: z.string().min(1).max(2000) });
   const secretCredentialEventSchema = z.object({
   id: z.string().uuid(),

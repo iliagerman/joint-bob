@@ -103,9 +103,11 @@ test("the execution node reports foreign conversation ownership to the browser",
   const describe = server.slice(server.indexOf("async function describeConversationOwner("));
   assert.ok(describe.startsWith("async function describeConversationOwner("), "Missing describeConversationOwner");
   const body = describe.slice(0, describe.indexOf("\n}"));
-  assert.match(body, /if \(ownership\.ownerNodeId === localId\) return null;/);
+  assert.match(body, /if \(ownership\.ownerNodeId === localId && ownership\.status !== "conflict"\) return null;/);
   assert.match(body, /nodeName: peer\?\.name \?\? "another node"/);
-  assert.match(server, /async function foreignConversationOwner\([\s\S]*ownership \? describeConversationOwner\(ownership, localId\) : null/);
+  // A conflicted record fences the node it names as owner too, so that side is
+  // told about the other node instead of seeing an unlocked composer.
+  assert.match(body, /ownership\.status === "conflict" && ownership\.ownerNodeId === localId[\s\S]*ownership\.transferToNodeId/);
 
   assert.equal([...server.matchAll(/ownership: foreignOwner,/g)].length, 2, "Both engines must publish ownership in the ready payload");
   assert.equal([...server.matchAll(/executionNodeId: local\.id,/g)].length, 2, "Both ready payloads identify their execution node");
@@ -118,14 +120,15 @@ test("opening a conversation establishes its owner so the other node can see the
   const open = server.slice(server.indexOf("async function openConversationOwnership("));
   assert.ok(open.startsWith("async function openConversationOwnership("), "Missing openConversationOwnership");
   const body = open.slice(0, open.indexOf("\n}"));
-  // An unowned conversation is claimed on open; one already owned elsewhere is reported, not stolen.
-  assert.match(body, /if \(foreign\) return foreign;/);
-  assert.match(body, /await claimConversationAcrossCluster\(engine, sessionId, localId\)/);
+  // An unowned conversation is claimed on open; one already owned elsewhere is
+  // reported, not stolen, and only a stale claim by this node re-claims.
+  assert.match(body, /if \(current && !\(current\.status === "claiming" && current\.ownerNodeId === localId\)\) \{[\s\S]*return describeConversationOwner\(current, localId\);/);
+  assert.match(body, /await claimConversationLocally\(engine, sessionId, localId\)/);
   assert.match(body, /if \(!\(error instanceof ConversationOwnershipError\)\) throw error;/);
   assert.match(body, /return describeConversationOwner\(error\.ownership, localId\)/);
 
   // Every opened conversation runs the claim, not just brand-new ones.
-  assert.doesNotMatch(server, /if \(!listedSession\) await claimConversationAcrossCluster/);
+  assert.doesNotMatch(server, /if \(!listedSession\) await claimConversationLocally/);
   assert.match(server, /foreignOwner = await openConversationOwnership\(sessionRequest\.engine, ownershipSessionId, local\.id\)/);
   // A claim that fails for a reason other than ownership must not block reading an existing conversation.
   assert.match(server, /if \(!listedSession\) \{[\s\S]*socket\.close\(1008, webSocketCloseReason\(message\)\);[\s\S]*return;[\s\S]*\}\s*console\.warn\("Conversation ownership claim failed on open"/);

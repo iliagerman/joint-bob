@@ -135,11 +135,26 @@ async function browserSession(node: NodeFixture): Promise<BrowserSession> {
   return { headers: { Cookie: relogin.headers.get("set-cookie")!.split(";", 1)[0], "X-CSRF-Token": reloginBody.csrfToken, "Content-Type": "application/json" } };
 }
 
-async function machinePost(node: NodeFixture, route: string, body: unknown): Promise<{ status: number; body: Record<string, unknown> }> {
-  const response = await fetch(`${node.url}${route}`, {
-    method: "POST", headers: { Authorization: `Bearer ${node.token}`, "Content-Type": "application/json" }, body: JSON.stringify(body),
+/** Claims are local-first, so a test that needs a peer-owned conversation applies the
+    same ownership record through the replication endpoint every node serves. */
+async function seedConversationOwnership(nodes: NodeFixture[], engine: "pi" | "claude", sessionId: string, owner: NodeFixture): Promise<void> {
+  const record = { engine, sessionId, ownerNodeId: owner.id, epoch: 1, status: "owned", transferToNodeId: null };
+  for (const node of nodes) {
+    const apply = await machinePostAs(owner, node, "/api/cluster/sessions/ownership/apply", { record, originNodeId: owner.id });
+    assert.equal(apply.status, 200, JSON.stringify(apply.body));
+    assert.equal(apply.body.accepted, true, JSON.stringify(apply.body));
+  }
+}
+
+async function machinePostAs(authenticator: NodeFixture, target: NodeFixture, route: string, body: unknown): Promise<{ status: number; body: Record<string, unknown> }> {
+  const response = await fetch(`${target.url}${route}`, {
+    method: "POST", headers: { Authorization: `Bearer ${authenticator.token}`, "Content-Type": "application/json" }, body: JSON.stringify(body),
   });
   return { status: response.status, body: await response.json() as Record<string, unknown> };
+}
+
+async function machinePost(node: NodeFixture, route: string, body: unknown): Promise<{ status: number; body: Record<string, unknown> }> {
+  return machinePostAs(node, node, route, body);
 }
 
 interface ListedSession {
@@ -255,11 +270,9 @@ test("running leases and review watermarks travel between two real nodes", { tim
     await Promise.all([pairNode(mac, server, home), pairNode(server, mac, home)]);
     children.push(await startNode(server, home, invocationLog, holdDir), await startNode(mac, home, invocationLog, holdDir));
     const [macAuth, serverAuth] = await Promise.all([browserSession(mac), browserSession(server)]);
-    const coordinator = mac.id.localeCompare(server.id) < 0 ? mac : server;
 
     // Phase 1: the homeserver executes, the Mac watches.
-    const claim = await machinePost(coordinator, "/api/cluster/sessions/ownership/claim", { engine: "pi", sessionId, ownerNodeId: server.id });
-    assert.equal(claim.status, 200, JSON.stringify(claim.body));
+    await seedConversationOwnership([mac, server], "pi", sessionId, server);
     const serverSocket = await openConversation(server, transcriptPath);
     sockets.push(serverSocket);
     sendPrompt(serverSocket, "run on the homeserver");
@@ -340,9 +353,7 @@ test("a Claude conversation's running and review states sync the same way", { ti
     children.push(await startNode(server, home, invocationLog, holdDir), await startNode(mac, home, invocationLog, holdDir));
     const [macAuth, serverAuth] = await Promise.all([browserSession(mac), browserSession(server)]);
 
-    const coordinator = mac.id.localeCompare(server.id) < 0 ? mac : server;
-    const claim = await machinePost(coordinator, "/api/cluster/sessions/ownership/claim", { engine: "claude", sessionId, ownerNodeId: server.id });
-    assert.equal(claim.status, 200, JSON.stringify(claim.body));
+    await seedConversationOwnership([mac, server], "claude", sessionId, server);
     const serverSocket = await openConversation(server, `claude:${claudePath}`);
     sockets.push(serverSocket);
     sendPrompt(serverSocket, "claude run on the homeserver");

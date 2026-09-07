@@ -1,7 +1,7 @@
 import { refreshAgentRun } from "../agent-run-monitor.js";
 import { isClaudeSessionRunning } from "../claude-runtime.js";
-import { type ClusterPeer, getClusterNode, getClusterPeer, listClusterPeers } from "../cluster.js";
-import { compareAndSetConversationOwnership, type ConversationEngine, type ConversationOwnership, ConversationOwnershipError, type ConversationOwnershipStatus, finalizeConversationClaim, getConversationOwnership, type OwnershipApplyResult, sameConversationOwnership } from "../conversation-ownership.js";
+import { getClusterNode, getClusterPeer } from "../cluster.js";
+import { claimConversationOwnership, type ConversationEngine, type ConversationOwnership, ConversationOwnershipError, type ConversationOwnershipStatus, getConversationOwnership, healStaleLocalClaim } from "../conversation-ownership.js";
 import { syncConversationReviewStates } from "../conversation-reviews.js";
 import { conversationLeaseRunning } from "../conversation-runtime.js";
 import { listHarnessSessions } from "../harnesses.js";
@@ -79,98 +79,16 @@ export async function listProjectSessionsWithReviewState(project: ProjectRecord,
   });
 }
 
-async function ownershipFromPeer(peer: ClusterPeer, engine: ConversationEngine, sessionId: string): Promise<ConversationOwnership | null> {
-  const url = new URL("/api/cluster/sessions/ownership", peer.url);
-  url.searchParams.set("engine", engine);
-  url.searchParams.set("sessionId", sessionId);
-  const response = await fetch(url, { headers: { Authorization: `Bearer ${peer.token}` }, signal: AbortSignal.timeout(3_000) });
-  if (!response.ok) throw new Error(`Ownership read failed from ${peer.name}`);
-  return (await response.json() as { ownership: ConversationOwnership | null }).ownership;
-}
-
-async function claimCasOnPeer(peer: ClusterPeer, expected: ConversationOwnership | null, proposed: ConversationOwnership, originNodeId: string): Promise<OwnershipApplyResult> {
-  const response = await fetch(`${peer.url}/api/cluster/sessions/ownership/claim/cas`, {
-    method: "POST", headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ expected, proposed, originNodeId }), signal: AbortSignal.timeout(3_000),
-  });
-  const result = await response.json() as OwnershipApplyResult & { error?: string };
-  if (!response.ok) throw new Error(result.error || `Ownership compare-and-set failed on ${peer.name}`);
-  return result;
-}
-
-function assertClaimAccepted(results: OwnershipApplyResult[], proposed: ConversationOwnership): void {
-  const rejected = results.find((result) => !result.accepted || !sameConversationOwnership(result.current ?? undefined, proposed));
-  if (rejected) throw new Error(`Ownership claim rejected; current state: ${JSON.stringify(rejected.current)}`);
-}
-
-async function finalizeClaimOnOwner(ownerNodeId: string, peers: ClusterPeer[], proposed: ConversationOwnership): Promise<ConversationOwnership> {
-  const local = await getClusterNode();
-  if (ownerNodeId === local.id) return finalizeConversationClaim(proposed, ownerNodeId);
-  const peer = peers.find((candidate) => candidate.id === ownerNodeId);
-  if (!peer) throw new Error("Ownership claimant left the captured membership");
-  const response = await fetch(`${peer.url}/api/cluster/sessions/ownership/claim/commit`, {
-    method: "POST", headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ proposed }), signal: AbortSignal.timeout(3_000),
-  });
-  const result = await response.json() as { ownership?: ConversationOwnership; error?: string };
-  if (!response.ok || !result.ownership) throw new Error(result.error || "Ownership claim commit failed");
-  return result.ownership;
-}
-
-function claimStateMatches(record: ConversationOwnership | null, proposed: ConversationOwnership): boolean {
-  if (!record) return true;
-  if (sameConversationOwnership(record, proposed)) return true;
-  return record.status === "owned" && sameConversationOwnership(record, { ...proposed, status: "owned" });
-}
-
-async function commitPreparedClaim(localId: string, peers: ClusterPeer[], proposed: ConversationOwnership): Promise<ConversationOwnership> {
-  const owned = { ...proposed, status: "owned" as const };
-  const nonOwnerResults: OwnershipApplyResult[] = [];
-  if (localId !== proposed.ownerNodeId) nonOwnerResults.push(await compareAndSetConversationOwnership(proposed, owned, proposed.ownerNodeId));
-  const remoteResults = await Promise.all(peers.filter((peer) => peer.id !== proposed.ownerNodeId)
-    .map((peer) => claimCasOnPeer(peer, proposed, owned, proposed.ownerNodeId)));
-  assertClaimAccepted([...nonOwnerResults, ...remoteResults], owned);
-  return finalizeClaimOnOwner(proposed.ownerNodeId, peers, proposed);
-}
-
-export async function coordinateOwnershipClaim(engine: ConversationEngine, sessionId: string, ownerNodeId: string): Promise<ConversationOwnership> {
-  const local = await getClusterNode();
-  const peers = await listClusterPeers();
-  const memberIds = [local.id, ...peers.map((peer) => peer.id)].sort();
-  if (memberIds[0] !== local.id) throw new Error("Ownership claim reached a non-coordinator node");
-  if (!memberIds.includes(ownerNodeId)) throw new Error("Ownership claimant is not a captured cluster member");
-  const currents = await Promise.all([getConversationOwnership(engine, sessionId).then((value) => value ?? null), ...peers.map((peer) => ownershipFromPeer(peer, engine, sessionId))]);
-  const retry = currents.find((record) => record?.status === "claiming" || record?.status === "owned");
-  const proposed = retry ? { ...retry, status: "claiming" as const } : { engine, sessionId, ownerNodeId, epoch: 1, status: "claiming" as const, transferToNodeId: null };
-  if (proposed.ownerNodeId !== ownerNodeId) throw new ConversationOwnershipError(retry!);
-  if (currents.some((record) => !claimStateMatches(record, proposed))) throw new Error("Ownership claim states differ across captured members");
-  if (currents.every((record) => record?.status === "owned")) return { ...proposed, status: "owned" };
-  const localPrepare = currents[0]?.status === "owned"
-    ? Promise.resolve({ accepted: true, current: proposed })
-    : compareAndSetConversationOwnership(currents[0] ?? undefined, proposed, local.id);
-  const remotePrepare = peers.map((peer, index) => currents[index + 1]?.status === "owned"
-    ? Promise.resolve({ accepted: true, current: proposed })
-    : claimCasOnPeer(peer, currents[index + 1], proposed, local.id));
-  const prepareResults = await Promise.all([localPrepare, ...remotePrepare]);
-  assertClaimAccepted(prepareResults, proposed);
-  return commitPreparedClaim(local.id, peers, proposed);
-}
-
-export async function claimConversationAcrossCluster(engine: ConversationEngine, sessionId: string, localNodeId: string): Promise<ConversationOwnership> {
+// A leftover `claiming` record is a crashed two-phase claim from this node; no
+// protocol can still be holding it, so healing it is safe. A foreign
+// `claiming` record may belong to a live old-version protocol, so it stays
+// locked behind an explicit takeover instead of being stolen.
+export async function claimConversationLocally(engine: ConversationEngine, sessionId: string, localNodeId: string): Promise<ConversationOwnership> {
   const current = await getConversationOwnership(engine, sessionId);
-  if (current?.ownerNodeId === localNodeId && current.status === "owned") return current;
-  if (current && current.status !== "claiming") throw new ConversationOwnershipError(current);
-  const peers = await listClusterPeers();
-  const coordinatorId = [localNodeId, ...peers.map((peer) => peer.id)].sort()[0];
-  if (coordinatorId === localNodeId) return coordinateOwnershipClaim(engine, sessionId, localNodeId);
-  const coordinator = peers.find((peer) => peer.id === coordinatorId)!;
-  const response = await fetch(`${coordinator.url}/api/cluster/sessions/ownership/claim`, {
-    method: "POST", headers: { Authorization: `Bearer ${coordinator.token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ engine, sessionId, ownerNodeId: localNodeId }), signal: AbortSignal.timeout(5_000),
-  });
-  const result = await response.json() as { ownership?: ConversationOwnership; error?: string };
-  if (!response.ok || !result.ownership || result.ownership.status !== "owned") throw new Error(result.error || "Ownership claim failed");
-  return result.ownership;
+  if (!current) return claimConversationOwnership(engine, sessionId, localNodeId);
+  if (current.ownerNodeId === localNodeId && current.status === "owned") return current;
+  if (current.status === "claiming" && current.ownerNodeId === localNodeId) return healStaleLocalClaim(engine, sessionId, current);
+  throw new ConversationOwnershipError(current);
 }
 
 async function assertLocalConversationOwner(engine: ConversationEngine, sessionId: string): Promise<void> {
@@ -184,26 +102,29 @@ export interface ForeignConversationOwner { nodeId: string; nodeName: string; st
 
 // The browser locks its composer on this, so a conversation owned elsewhere is
 // reported by name instead of letting the user type a prompt that node rejects.
+// A conflicted conversation is fenced on both sides, including the node the
+// conflict record names as owner, so each side is told about the other node.
 export async function describeConversationOwner(ownership: ConversationOwnership, localId: string): Promise<ForeignConversationOwner | null> {
-  if (ownership.ownerNodeId === localId) return null;
-  const peer = await getClusterPeer(ownership.ownerNodeId);
-  return { nodeId: ownership.ownerNodeId, nodeName: peer?.name ?? "another node", status: ownership.status };
-}
-
-async function foreignConversationOwner(engine: ConversationEngine, sessionId: string, localId: string): Promise<ForeignConversationOwner | null> {
-  const ownership = await getConversationOwnership(engine, sessionId);
-  return ownership ? describeConversationOwner(ownership, localId) : null;
+  if (ownership.ownerNodeId === localId && ownership.status !== "conflict") return null;
+  const otherNodeId = ownership.status === "conflict" && ownership.ownerNodeId === localId
+    ? ownership.transferToNodeId ?? ownership.ownerNodeId
+    : ownership.ownerNodeId;
+  const peer = await getClusterPeer(otherNodeId);
+  return { nodeId: otherNodeId, nodeName: peer?.name ?? "another node", status: ownership.status };
 }
 
 // Opening a conversation is what establishes its owner. Claiming only on the
 // first prompt left every unprompted conversation ownerless, so a second node
 // had nothing to report and its composer stayed open.
 export async function openConversationOwnership(engine: ConversationEngine, sessionId: string, localId: string): Promise<ForeignConversationOwner | null> {
-  const foreign = await foreignConversationOwner(engine, sessionId, localId);
-  if (foreign) return foreign;
-  if (await getConversationOwnership(engine, sessionId)) return null;
+  const current = await getConversationOwnership(engine, sessionId);
+  // A stale two-phase claim by this node is healed by claiming again; every
+  // other existing record already names an owner and needs no claim.
+  if (current && !(current.status === "claiming" && current.ownerNodeId === localId)) {
+    return describeConversationOwner(current, localId);
+  }
   try {
-    await claimConversationAcrossCluster(engine, sessionId, localId);
+    await claimConversationLocally(engine, sessionId, localId);
     return null;
   } catch (error) {
     if (!(error instanceof ConversationOwnershipError)) throw error;
@@ -213,6 +134,6 @@ export async function openConversationOwnership(engine: ConversationEngine, sess
 
 export async function requireLocalConversationOwner(engine: ConversationEngine, sessionId: string): Promise<void> {
   const local = await getClusterNode();
-  if (!await getConversationOwnership(engine, sessionId)) await claimConversationAcrossCluster(engine, sessionId, local.id);
+  if (!await getConversationOwnership(engine, sessionId)) await claimConversationLocally(engine, sessionId, local.id);
   await assertLocalConversationOwner(engine, sessionId);
 }
