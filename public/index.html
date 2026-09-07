@@ -421,7 +421,8 @@
           <p>Paths and generic secret accounts are node-local. GitHub credentials move only by explicit sync to a node you pick.</p>
         </div>
 
-        <div class="settings-tabs" role="tablist" aria-label="Settings sections">
+        <div class="settings-body">
+        <div class="settings-tabs settings-tabs--sidebar" role="tablist" aria-orientation="vertical" aria-label="Settings sections">
           <button class="settings-tab" type="button" data-settings-tab="account" role="tab" id="settingsTab-account" aria-controls="settingsPanel-account" aria-selected="true" data-testid="settings-tab-account">Account</button>
           <button class="settings-tab" type="button" data-settings-tab="notifications" role="tab" id="settingsTab-notifications" aria-controls="settingsPanel-notifications" aria-selected="false" tabindex="-1" data-testid="settings-tab-notifications">Notifications</button>
           <button class="settings-tab" type="button" data-settings-tab="secrets" role="tab" id="settingsTab-secrets" aria-controls="settingsPanel-secrets" aria-selected="false" tabindex="-1" data-testid="settings-tab-secrets">Secrets</button>
@@ -649,6 +650,7 @@
           <p>What shipped in the last ten deployments. This node is running <strong id="settingsChangelogVersion" data-testid="settings-changelog-version">…</strong>.</p>
           <div class="changelog-list" id="settingsChangelogList" data-testid="settings-changelog-list"></div>
         </section>
+        </div>
 
         <p class="settings-restart-message" id="settingsRestartMessage" role="status" hidden></p>
         <div class="dialog-actions">

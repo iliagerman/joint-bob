@@ -1349,7 +1349,15 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 /* One size for every tab: switching tabs must never move or resize the dialog. */
 .settings-card {
   gap: 14px;
-  width: min(900px, calc(100vw - 24px));
+  width: min(1000px, calc(100vw - 24px));
+}
+/* Tab sidebar beside the panel, so ten sections read as a list instead of a strip
+   that runs off the edge. The sidebar is the fixed column; the panel takes the rest. */
+.settings-body {
+  display: grid;
+  grid-template-columns: 184px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
 }
 /* Tab strip: scrolls sideways on narrow screens rather than wrapping into a tall block. */
 .settings-tabs {
@@ -1364,6 +1372,20 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
   background: var(--panel);
 }
 .settings-tabs::-webkit-scrollbar { display: none; }
+/* The settings sidebar: same height as the panel beside it, and it scrolls on its own
+   when the section list is taller than that. */
+.settings-tabs--sidebar {
+  flex-direction: column;
+  align-items: stretch;
+  height: min(440px, 58dvh);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+.settings-tabs--sidebar::-webkit-scrollbar { display: revert; width: 8px; }
+.settings-tabs--sidebar .settings-tab { text-align: left; }
 .settings-tab {
   flex: 0 0 auto;
   min-height: 36px;
@@ -1451,9 +1473,21 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 .secret-scope-row { display: flex; align-items: center; gap: 8px; }
 .secret-scope-row .secret-provider-badge { width: 28px; height: 28px; }
 
-/* The wide tabs earn a second column instead of one very tall stack. */
-@media (min-width: 940px) {
+/* The wide tabs earn a second column instead of one very tall stack. The sidebar takes
+   184px plus its gap off the panel, so the breakpoint sits that much higher than the card. */
+@media (min-width: 1040px) {
   #settingsPanel-engines { grid-template-columns: 1fr 1fr; }
+}
+/* Too narrow for a side-by-side split: the sidebar folds back into the strip above. */
+@media (max-width: 720px) {
+  .settings-body { grid-template-columns: minmax(0, 1fr); }
+  .settings-tabs--sidebar {
+    flex-direction: row;
+    height: auto;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .settings-tabs--sidebar::-webkit-scrollbar { display: none; }
 }
 @media (max-width: 640px) {
   .secret-account-row { align-items: stretch; flex-wrap: wrap; }

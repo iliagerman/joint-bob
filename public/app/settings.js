@@ -157,7 +157,9 @@ elements.settingsCheckRuntimePathsButton.addEventListener("click", () => checkRu
 for (const tab of elements.settingsTabs) {
   tab.addEventListener("click", () => selectSettingsTab(tab.dataset.settingsTab));
   tab.addEventListener("keydown", (event) => {
-    const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+    // The tablist is a vertical sidebar on wide screens and a horizontal strip on narrow
+    // ones, so both axes walk it.
+    const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
     if (!step) return;
     event.preventDefault();
     const index = elements.settingsTabs.indexOf(tab);

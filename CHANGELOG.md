@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Settings tabs now display as a vertical sidebar on wide screens for easier navigation through many configuration sections
+
 ## 1.7.0 — 2026-09-07
 
 - Search workspace shortcuts using a new spotlight interface

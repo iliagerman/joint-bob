@@ -50,6 +50,18 @@ test("settings tabs absorb notification, secret, and cluster configuration", asy
   assert.match(html, /id="settingsPanel-account"[\s\S]*id="themeToggleButton"/);
   assert.match(app, /function selectSettingsTab/);
   assert.match(app, /ArrowRight|ArrowLeft/);
+  // A vertical list is walked with Up/Down as well as Left/Right.
+  assert.match(app, /ArrowDown/);
+  assert.match(app, /ArrowUp/);
+
+  // Settings tabs are a sidebar beside the panels, not a strip above them.
+  assert.match(html, /class="settings-body"[\s\S]*class="settings-tabs settings-tabs--sidebar"[\s\S]*id="settingsPanel-account"/);
+  assert.match(html, /aria-orientation="vertical"/);
+  assert.match(styles, /\.settings-body \{[^}]*grid-template-columns:/);
+  assert.match(styles, /\.settings-tabs--sidebar \{[^}]*flex-direction: column/);
+  assert.match(styles, /\.settings-tabs--sidebar \{[^}]*overflow-y: auto/);
+  // Below the split breakpoint the sidebar folds back into a horizontal strip.
+  assert.match(styles, /@media \(max-width: 720px\)[\s\S]*\.settings-tabs--sidebar \{[^}]*flex-direction: row/);
 
   // Styling: a scrollable strip on narrow screens, and no animation for reduced-motion users.
   assert.match(styles, /\.settings-tabs\s*\{[^}]*overflow-x:\s*auto/);
@@ -66,7 +78,7 @@ test("settings tabs absorb notification, secret, and cluster configuration", asy
   // The dialog widens on the dense tabs, and its opening focus draws no ring.
   assert.match(app, /elements\.settingsForm\.dataset\.tab = name/);
   assert.doesNotMatch(styles, /\.settings-card\[data-tab=/);
-  assert.match(styles, /\.settings-card \{[^}]*width: min\(900px/);
+  assert.match(styles, /\.settings-card \{[^}]*width: min\(1000px/);
   assert.match(styles, /\.settings-panel \{[^}]*height: min\(440px/);
   assert.match(html, /class="dialog-heading" tabindex="-1" autofocus/);
   assert.match(styles, /\.dialog-heading:focus \{ outline: none; \}/);
@@ -82,5 +94,5 @@ test("settings tabs absorb notification, secret, and cluster configuration", asy
 
   // Installed PWA clients must not keep the old shell.
   for (const id of ["settings-resource-skills-paths", "settings-resource-prompts-paths", "settings-resource-rules-paths", "settings-resource-plugins-paths", "project-resource-skills-paths", "project-resource-prompts-paths", "project-resource-rules-paths", "project-resource-plugins-paths"]) assert.match(html, new RegExp(`data-testid="${id}"`));
-  assert.match(serviceWorker, /joint-bob-v132/);
+  assert.match(serviceWorker, /joint-bob-v134/);
 });
