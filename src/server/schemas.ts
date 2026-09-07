@@ -426,18 +426,23 @@ const canvasLayoutPreferenceSchema = z.union([
   if (layout.focusedPaneId && !paneIds.has(layout.focusedPaneId)) context.addIssue({ code: z.ZodIssueCode.custom, message: "Focused canvas pane is unknown" });
 });
 const canvasKeymapKeySchema = z.string().trim().refine((key) => canonicalCanvasKeyToken(key) !== null, "Unsupported canvas key").nullable();
+// A chord is the modifiers held plus one key, at most four keys; everything semantic
+// (which modifiers, which key, collisions) is decided by the normalizer, so the
+// schema only caps how much of either a client may send.
+const canvasChordSchema = z.array(z.string().trim().min(1).max(16)).max(8);
 const canvasKeymapPreferenceSchema = z.object({
-  // Shift alone would swallow every capital letter typed in a canvas conversation.
-  modifiers: z.array(z.enum(["meta", "ctrl", "alt", "shift"])).min(1).max(4)
-    .refine((modifiers) => modifiers.some((name) => name !== "shift"), "A canvas chord needs Command, Control, or Option"),
-  recentPane: canvasKeymapKeySchema,
-  focusPane: canvasKeymapKeySchema,
-  paneSearch: canvasKeymapKeySchema,
-  // Optional: a client that predates this command simply never sends it, and the
-  // normalizer gives it its default key.
+  // Legacy shape, from a client that predates chords: one modifier set plus one key
+  // per command. Still accepted and migrated by the normalizer.
+  modifiers: z.array(z.enum(["meta", "ctrl", "alt", "shift"])).max(4).optional(),
+  recentPane: canvasKeymapKeySchema.optional(),
+  focusPane: canvasKeymapKeySchema.optional(),
+  paneSearch: canvasKeymapKeySchema.optional(),
   toggleView: canvasKeymapKeySchema.optional(),
   spotlight: canvasKeymapKeySchema.optional(),
   pendingReviews: canvasKeymapKeySchema.optional(),
+  // Chord shape: the base chord conversation keys ride, plus one chord per command.
+  base: canvasChordSchema.optional(),
+  commands: z.record(z.string().max(24), canvasChordSchema.nullable()).optional(),
 });
 export const userPreferencesSchema = z.object({
   theme: z.enum(["light", "dark"]).nullable().optional(),
@@ -461,6 +466,7 @@ export const userPreferencesSchema = z.object({
 export const socketMessageSchema = z.object({
   type: z.string().max(40),
   message: z.string().max(100_000).optional(),
+  queueId: z.number().int().positive().optional(),
   name: z.string().trim().max(120).optional(),
   provider: z.string().max(80).optional(),
   modelId: z.string().max(200).optional(),

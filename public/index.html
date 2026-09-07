@@ -568,57 +568,25 @@
         </section>
 
         <section class="settings-panel" id="settingsPanel-shortcuts" role="tabpanel" aria-labelledby="settingsTab-shortcuts" tabindex="0" hidden>
-          <p>Every keyboard shortcut in Joint Bob, in one place. Press <kbd>&#8984;</kbd><kbd>?</kbd> or <kbd>&#8963;</kbd><kbd>?</kbd> anywhere in the app to come straight back here. One modifier combination runs all of them. It must include Command, Control, or Option &mdash; Shift on its own would swallow ordinary typing.</p>
-          <fieldset class="canvas-keymap-modifiers">
-            <legend>Modifier combination</legend>
-            <label for="canvasKeymapModifier-meta"><input id="canvasKeymapModifier-meta" type="checkbox" data-testid="canvas-keymap-modifier-meta" /> Command &#8984;</label>
-            <label for="canvasKeymapModifier-ctrl"><input id="canvasKeymapModifier-ctrl" type="checkbox" data-testid="canvas-keymap-modifier-ctrl" /> Control &#8963;</label>
-            <label for="canvasKeymapModifier-alt"><input id="canvasKeymapModifier-alt" type="checkbox" data-testid="canvas-keymap-modifier-alt" /> Option &#8997;</label>
-            <label for="canvasKeymapModifier-shift"><input id="canvasKeymapModifier-shift" type="checkbox" data-testid="canvas-keymap-modifier-shift" /> Shift &#8679;</label>
-          </fieldset>
-          <p class="settings-hint">Click a field and press the key you want. A key can be a letter, a digit, a punctuation key such as <kbd>[</kbd>, or <kbd>Enter</kbd>. Empty a field to unbind it.</p>
+          <p>Every keyboard shortcut in Joint Bob, in one place. Press <kbd>&#8984;</kbd><kbd>?</kbd> or <kbd>&#8963;</kbd><kbd>?</kbd> anywhere in the app to come straight back here.</p>
+          <p class="settings-hint">Click a field, then press and hold the keys you want, modifiers included: the recorder captures up to four keys exactly as you hold them. A chord needs Command, Control, or Option &mdash; Shift alone would swallow ordinary typing. Backspace in a field clears it to unbind that shortcut.</p>
           <div class="canvas-keymap-grid">
-            <label class="canvas-keymap-command" for="canvasKeymapCommand-spotlight">Open the search bar over every project and conversation
-              <input id="canvasKeymapCommand-spotlight" type="text" maxlength="5" autocomplete="off" spellcheck="false" placeholder="P" data-testid="canvas-keymap-spotlight-input" />
-            </label>
-            <label class="canvas-keymap-command" for="canvasKeymapCommand-pendingReviews">Open the pending reviews list
-              <input id="canvasKeymapCommand-pendingReviews" type="text" maxlength="5" autocomplete="off" spellcheck="false" placeholder="R" data-testid="canvas-keymap-pending-reviews-input" />
-            </label>
-            <label class="canvas-keymap-command" for="canvasKeymapCommand-toggleView">Switch between the canvas and the conversation you left
-              <input id="canvasKeymapCommand-toggleView" type="text" maxlength="5" autocomplete="off" spellcheck="false" placeholder="V" data-testid="canvas-keymap-toggle-view-input" />
-            </label>
-            <label class="canvas-keymap-command" for="canvasKeymapCommand-recentPane">Canvas: jump to the conversation you were in before
-              <input id="canvasKeymapCommand-recentPane" type="text" maxlength="5" autocomplete="off" spellcheck="false" placeholder="E" data-testid="canvas-keymap-recent-pane-input" />
-            </label>
-            <label class="canvas-keymap-command" for="canvasKeymapCommand-focusPane">Canvas: bring the current conversation forward, or put it back
-              <input id="canvasKeymapCommand-focusPane" type="text" maxlength="5" autocomplete="off" spellcheck="false" placeholder="G" data-testid="canvas-keymap-focus-pane-input" />
-            </label>
-            <label class="canvas-keymap-command" for="canvasKeymapCommand-paneSearch">Canvas: search the conversations already on the canvas
-              <input id="canvasKeymapCommand-paneSearch" type="text" maxlength="5" autocomplete="off" spellcheck="false" placeholder="F" data-testid="canvas-keymap-pane-search-input" />
+            <label class="canvas-keymap-command canvas-keymap-base" for="canvasKeymapBase">The chord every conversation key rides under
+              <input id="canvasKeymapBase" type="text" readonly autocomplete="off" spellcheck="false" data-testid="canvas-keymap-base-input" />
             </label>
           </div>
+          <div id="canvasKeymapCommands" class="canvas-keymap-grid" data-testid="canvas-keymap-commands"></div>
           <div class="shortcut-conversation-keys">
             <h3>Conversation keys</h3>
-            <p class="settings-hint">A key you gave one conversation on the canvas. Set these from a conversation&rsquo;s shortcut button on the canvas.</p>
+            <p class="settings-hint">A key you gave one conversation on the canvas, fired with the chord above plus its key. Set these from a conversation&rsquo;s shortcut button on the canvas.</p>
             <div id="shortcutConversationList" data-testid="settings-conversation-shortcut-list"></div>
           </div>
           <div class="canvas-keymap-leader" data-testid="canvas-keymap-leader">
             <h3>Fixed shortcuts</h3>
-            <p>These cannot be changed. On the canvas, press <kbd>&#8963;</kbd><kbd>Space</kbd>, let go, then press:</p>
-            <ul>
-              <li><kbd>\</kbd> or <kbd>|</kbd> &mdash; split to the right of this conversation</li>
-              <li><kbd>-</kbd> &mdash; split below it</li>
-              <li><kbd>&larr;</kbd> <kbd>&rarr;</kbd> <kbd>&uarr;</kbd> <kbd>&darr;</kbd> &mdash; go to the conversation that way</li>
-              <li><kbd>X</kbd> &mdash; close this conversation, after a Y/N confirmation</li>
-              <li><kbd>C</kbd> &mdash; new page</li>
-              <li><kbd>N</kbd> or <kbd>P</kbd> &mdash; next or previous page</li>
-              <li><kbd>1</kbd>&ndash;<kbd>9</kbd> &mdash; jump straight to a page</li>
-            </ul>
-            <p>Anywhere in the app:</p>
+            <p>These cannot be changed:</p>
             <ul>
               <li><kbd>&#8984;</kbd><kbd>?</kbd> or <kbd>&#8963;</kbd><kbd>?</kbd> &mdash; this panel</li>
-              <li><kbd>&#8984;</kbd><kbd>K</kbd> or <kbd>&#8963;</kbd><kbd>K</kbd> &mdash; recent conversations</li>
-              <li><kbd>1</kbd>&ndash;<kbd>9</kbd>, <kbd>0</kbd> in that list &mdash; open that row</li>
+              <li><kbd>1</kbd>&ndash;<kbd>0</kbd> in the recent conversations list &mdash; open that row</li>
               <li><kbd>&uarr;</kbd> <kbd>&darr;</kbd> and <kbd>Enter</kbd> in the search bar &mdash; move and open</li>
             </ul>
           </div>

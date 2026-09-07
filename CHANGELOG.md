@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Canvas keyboard shortcuts are now recorded as single chords you can fully customize in Settings, replacing the two-step Ctrl+Space leader system
 - Conversations now open reliably on any cluster node even when other nodes are temporarily offline
 - Spotlight search now navigates to workspace windows and settings tabs, and displays recent conversations
 - Settings tabs now display as a vertical sidebar on wide screens for easier navigation through many configuration sections

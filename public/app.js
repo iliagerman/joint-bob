@@ -1,8 +1,7 @@
 // App entry point. The feature modules under ./app register their DOM listeners
 // when they load; this file wires the boot sequence and the canvas pane mode.
 import {
-  canvasChordMatches, canvasKeyFromCode, DEFAULT_CANVAS_KEYMAP,
-  isCanvasHelpShortcut, isCanvasModifierKey, isCanvasSplitLeader,
+  chordFromEvent, chordId, conversationChord, DEFAULT_CANVAS_KEYMAP, isCanvasHelpShortcut,
 } from "./canvas-layout.js";
 import { createConversationCanvas } from "./canvas.js";
 import { api, savePreferences } from "./app/api.js";
@@ -12,6 +11,7 @@ import { openSpotlight } from "./app/spotlight.js";
 import { openPendingReviews } from "./app/reviews.js";
 import { elements } from "./app/elements.js";
 import { setMobileView, toggleCanvasView } from "./app/layout.js";
+import { openRecentSessions } from "./app/recents.js";
 import { confirmAction, SERVICE_WORKER_UPDATE_MS, setTheme, syncNotifyButton, toast, updateInstallButton, updateServiceWorker } from "./app/shell.js";
 import { state } from "./app/state.js";
 import "./app/state.js";
@@ -67,37 +67,17 @@ if (state.canvasPaneMode) {
   // A pane has no canvas of its own, so this action belongs to the top-level app only.
   elements.addToCanvasButton.hidden = true;
   // A pane is an iframe, so a canvas shortcut typed in here never reaches the canvas
-  // document. The canvas owns the chord and the binding table and tells this pane
-  // which keys it claims; every other combination still belongs to the conversation.
-  const canvasBindings = new Set();
-  let canvasModifiers = DEFAULT_CANVAS_KEYMAP.modifiers;
-  let splitLeaderArmed = false;
-  // The command keys the canvas answers after its leader, hoisted so the handler
-  // stays a cheap lookup.
-  const leaderCodes = new Set(["Backslash", "Minus", "KeyX", "KeyC", "KeyN", "KeyP", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Digit1", "Digit2", "Digit3", "Digit4", "Digit5", "Digit6", "Digit7", "Digit8", "Digit9"]);
+  // document. The canvas owns the chords and the binding table and tells this pane
+  // which ones it claims; every other combination still belongs to the conversation.
+  const claimedChords = new Set();
   window.addEventListener("keydown", (event) => {
-    if (isCanvasSplitLeader(event)) {
-      splitLeaderArmed = true;
-      event.preventDefault();
-      return;
-    }
-    if (splitLeaderArmed) {
-      if (isCanvasModifierKey(event)) return;
-      splitLeaderArmed = false;
-      if (leaderCodes.has(event.code)) {
-        event.preventDefault();
-        parent.postMessage({ type: "canvasLeaderShortcut", code: event.code }, location.origin);
-        return;
-      }
-    }
     if (isCanvasHelpShortcut(event)) {
       event.preventDefault();
       parent.postMessage({ type: "canvasHelpShortcut" }, location.origin);
       return;
     }
-    if (!canvasChordMatches({ modifiers: canvasModifiers }, event)) return;
-    const binding = canvasKeyFromCode(event.code);
-    if (!binding || !canvasBindings.has(binding)) return;
+    const chord = chordFromEvent(event);
+    if (!chord || !claimedChords.has(chordId(chord))) return;
     event.preventDefault();
     parent.postMessage({
       type: "canvasShortcut", code: event.code,
@@ -105,12 +85,13 @@ if (state.canvasPaneMode) {
     }, location.origin);
   });
   window.addEventListener("message", (event) => {
-    // Only the canvas that framed this pane may set its bindings or move its cursor.
+    // Only the canvas that framed this pane may set its chords or move its cursor.
     if (event.origin !== location.origin || event.source !== parent) return;
     if (event.data?.type === "canvasShortcutBindings") {
-      canvasBindings.clear();
-      for (const binding of event.data.bindings || []) canvasBindings.add(binding);
-      if (event.data.modifiers?.length) canvasModifiers = event.data.modifiers;
+      claimedChords.clear();
+      const base = Array.isArray(event.data.base) ? event.data.base : DEFAULT_CANVAS_KEYMAP.base;
+      for (const chord of event.data.chords || []) claimedChords.add(chordId(chord));
+      for (const binding of event.data.bindings || []) claimedChords.add(chordId(conversationChord({ base }, binding)));
     }
     if (event.data?.type === "canvasFocusComposer") document.querySelector("#messageInput")?.focus();
   });
@@ -137,6 +118,7 @@ if (!state.canvasPaneMode) {
     openShortcutSettings: () => { void openSettings("shortcuts"); },
     openSpotlight,
     openPendingReviews,
+    openRecentSessions,
     confirmAction,
     showMessage: (message) => toast(message, 8000),
   });

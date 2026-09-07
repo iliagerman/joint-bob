@@ -271,7 +271,7 @@ test("the picker adds an existing conversation through its button handlers", asy
   assert.deepEqual(framesAfterRemove, originalFrames, "removing one pane leaves both unaffected browsing contexts attached");
 });
 
-test("Ctrl+Space split shortcuts open the picker relative to the active pane", async () => {
+test("split chords open the picker relative to the active pane", async () => {
   const root = registry.get("#canvasRoot");
   let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
   layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "right");
@@ -287,10 +287,8 @@ test("Ctrl+Space split shortcuts open the picker relative to the active pane", a
 
   let prevented = 0;
   const press = (event) => windowListeners.get("keydown")({ ...event, preventDefault: () => { prevented += 1; } });
-  press({ code: "Space", key: " ", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false });
-  press({ code: "ShiftLeft", key: "Shift", ctrlKey: false, metaKey: false, altKey: false, shiftKey: true });
-  press({ code: "Backslash", key: "|", ctrlKey: false, metaKey: false, altKey: false, shiftKey: true });
-  assert.equal(prevented, 2, "the split sequence never reaches the active conversation");
+  press({ code: "Backslash", key: "|", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false });
+  assert.equal(prevented, 1, "the split chord never reaches the active conversation");
   assert.equal(registry.get("#canvasConversationDialog").open, true);
   assert.equal(registry.get("#canvasSplitPosition").value, "right");
 
@@ -302,14 +300,40 @@ test("Ctrl+Space split shortcuts open the picker relative to the active pane", a
   assert.deepEqual(listCanvasPanes(saved.at(-1)).map((pane) => pane.sessionId), ["s-one", "s-two", "s-three"],
     "the new pane lands immediately right of the active pane");
 
-  press({ code: "Space", key: " ", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false });
-  press({ code: "Minus", key: "-", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false });
+  press({ code: "Minus", key: "-", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false });
   assert.equal(registry.get("#canvasConversationDialog").open, true);
   assert.equal(registry.get("#canvasSplitPosition").value, "below");
   registry.get("#canvasConversationDialog").close();
 });
 
-test("Ctrl+Space X closes the active pane only after Y confirmation", async () => {
+test("a re-recorded chord drives the same command, and a pane can forward it", async () => {
+  const root = registry.get("#canvasRoot");
+  const layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
+  controller.setLayout(layout);
+  await controller.activate();
+  const frames = [];
+  walk2(root, frames);
+  for (const frame of frames) frame.contentWindow = { postMessage() {} };
+
+  // The old muscle memory, one step shorter: the split itself on Control+Space.
+  controller.setKeymap({ base: ["meta", "shift"], commands: { splitRight: ["ctrl", "SPACE"], splitBelow: ["ctrl", "-"], closePane: ["meta", "shift", "X"] } });
+  let prevented = 0;
+  windowListeners.get("keydown")({ code: "Space", key: " ", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false, preventDefault: () => { prevented += 1; } });
+  assert.equal(prevented, 1, "the re-recorded chord opens the split picker");
+  assert.equal(registry.get("#canvasSplitPosition").value, "right");
+  registry.get("#canvasConversationDialog").close();
+
+  // A pane forwards the keystroke it cannot keep, and the split lands beside that pane.
+  windowListeners.get("message")({
+    origin: "http://canvas.test", source: frames[0].contentWindow,
+    data: { type: "canvasShortcut", code: "Minus", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false },
+  });
+  assert.equal(registry.get("#canvasConversationDialog").open, true);
+  assert.equal(registry.get("#canvasSplitPosition").value, "below");
+  registry.get("#canvasConversationDialog").close();
+});
+
+test("the close chord closes the active pane only after Y confirmation", async () => {
   const root = registry.get("#canvasRoot");
   let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
   layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "row");
@@ -323,8 +347,7 @@ test("Ctrl+Space X closes the active pane only after Y confirmation", async () =
     origin: "http://canvas.test", source: frames[1].contentWindow, data: { type: "canvasPaneActive" },
   });
   const pressClose = () => {
-    windowListeners.get("keydown")({ code: "Space", key: " ", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false, preventDefault() {} });
-    windowListeners.get("keydown")({ code: "KeyX", key: "x", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, preventDefault() {} });
+    windowListeners.get("keydown")({ code: "KeyX", key: "x", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false, preventDefault() {} });
   };
 
   confirmClose = false;

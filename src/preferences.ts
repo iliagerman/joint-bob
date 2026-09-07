@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { canonicalCanvasKeyToken } from "./canvas-keys.js";
+import { CANVAS_CHORD_MODIFIERS, normalizeCanvasChordTokens, type CanvasChordModifier } from "./canvas-keys.js";
 import { isHarnessId, type HarnessId } from "./types.js";
 
 /** One conversation the user opened, newest first, capped by the client. */
@@ -152,62 +152,83 @@ export function normalizeCanvasLayoutPreference(layout: StoredCanvasLayout | Can
   return legacyPageLayout(roots, focusedPaneId);
 }
 
-export type CanvasModifier = "meta" | "ctrl" | "alt" | "shift";
+export type CanvasModifier = CanvasChordModifier;
 
-/**
- * Canvas keyboard shortcuts for one account. One modifier chord serves every canvas
- * key; each command holds one key from the canvas vocabulary, or null when unbound.
- */
+/** Canvas keyboard shortcuts for one account. Every command holds one chord - the
+ * modifiers held plus one key, at most four keys - or null when unbound. Conversation
+ * keys ride the `base` modifier chord plus their own single key. */
 export interface CanvasKeymapPreference {
-  modifiers: CanvasModifier[];
-  recentPane: string | null;
-  focusPane: string | null;
-  paneSearch: string | null;
-  toggleView: string | null;
-  spotlight: string | null;
-  pendingReviews: string | null;
+  base: CanvasModifier[];
+  commands: Record<string, string[] | null>;
 }
 
-const CANVAS_MODIFIERS: CanvasModifier[] = ["meta", "ctrl", "alt", "shift"];
-// Order matters: a command added later takes its default key only if no earlier command
-// already holds it, so an existing account never loses a binding it configured.
-const CANVAS_KEYMAP_COMMANDS = ["recentPane", "focusPane", "paneSearch", "toggleView", "spotlight", "pendingReviews"] as const;
+const CANVAS_MODIFIERS: CanvasModifier[] = [...CANVAS_CHORD_MODIFIERS];
+// Order matters: a command added later takes its default chord only if no earlier
+// command already holds it, so an existing account never loses a binding it configured.
+const CANVAS_KEYMAP_COMMANDS = [
+  "toggleView", "spotlight", "pendingReviews", "recents",
+  "paneSearch", "recentPane", "focusPane",
+  "splitRight", "splitBelow", "closePane", "createPage",
+  "nextPage", "prevPage", "focusLeft", "focusRight", "focusUp", "focusDown",
+  "page1", "page2", "page3", "page4", "page5", "page6", "page7", "page8", "page9",
+] as const;
 
 export const defaultCanvasKeymap = (): CanvasKeymapPreference => ({
-  modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F", toggleView: "V", spotlight: "P", pendingReviews: "R",
+  base: ["meta", "shift"],
+  commands: {
+    toggleView: ["meta", "shift", "V"],
+    spotlight: ["meta", "shift", "P"],
+    pendingReviews: ["meta", "shift", "R"],
+    recents: ["meta", "K"],
+    paneSearch: ["meta", "shift", "F"],
+    recentPane: ["meta", "shift", "E"],
+    focusPane: ["meta", "shift", "G"],
+    splitRight: ["ctrl", "\\"],
+    splitBelow: ["ctrl", "-"],
+    closePane: ["meta", "shift", "X"],
+    createPage: ["meta", "shift", "C"],
+    nextPage: ["ctrl", "alt", "ARROWRIGHT"],
+    prevPage: ["ctrl", "alt", "ARROWLEFT"],
+    focusLeft: ["ctrl", "shift", "ARROWLEFT"],
+    focusRight: ["ctrl", "shift", "ARROWRIGHT"],
+    focusUp: ["ctrl", "shift", "ARROWUP"],
+    focusDown: ["ctrl", "shift", "ARROWDOWN"],
+    ...Object.fromEntries([..."123456789"].map((digit, index) => [`page${index + 1}`, ["ctrl", "alt", digit]])),
+  },
 });
 
-/** Shift alone is not a chord: it would swallow every capital letter a conversation
- * is typing. Every canvas chord needs Command, Control, or Option. */
-export function canvasChordIsUsable(modifiers: CanvasModifier[]): boolean {
-  return modifiers.some((name) => name !== "shift");
-}
+// Keymaps saved before chords existed held one key per command under one shared
+// modifier set; those keys ride whatever modifiers the account had chosen.
+const LEGACY_COMMAND_KEYS: Record<string, string> = { recentPane: "E", focusPane: "G", paneSearch: "F", toggleView: "V", spotlight: "P", pendingReviews: "R" };
+// Legacy keys were stored in any case; the chord vocabulary is upper case.
+const canonicalChordKey = (key: unknown): string | undefined => (typeof key === "string" ? key.toUpperCase() : undefined);
 
 /**
- * Accepts any stored or posted shape. A chord with no modifier would swallow ordinary
- * typing, so an empty set falls back to the default; two commands on one key would
- * make the second unreachable, so the later one is dropped.
+ * Accepts any stored or posted shape and mirrors the page's `normalizeCanvasKeymap`:
+ * a chord without Command, Control, or Option would swallow ordinary typing, so an
+ * unusable one falls back to the default; a chord two commands would share goes to
+ * the earlier command, and the later one is left unbound.
  */
 export function normalizeCanvasKeymapPreference(value: unknown): CanvasKeymapPreference {
-  if (!value || typeof value !== "object") return defaultCanvasKeymap();
+  if (!value || typeof value !== "object" || Array.isArray(value)) return defaultCanvasKeymap();
   const source = value as Record<string, unknown>;
-  const chosen = Array.isArray(source.modifiers) ? source.modifiers : [];
-  const modifiers = CANVAS_MODIFIERS.filter((name) => chosen.includes(name));
-  const keymap: CanvasKeymapPreference = {
-    modifiers: canvasChordIsUsable(modifiers) ? modifiers : defaultCanvasKeymap().modifiers,
-    recentPane: null, focusPane: null, paneSearch: null, toggleView: null, spotlight: null, pendingReviews: null,
-  };
+  const legacy = !source.commands;
+  const base = (normalizeCanvasChordTokens(legacy ? source.modifiers : source.base, true) ?? [...defaultCanvasKeymap().base]) as CanvasModifier[];
+  const commands: Record<string, string[] | null> = {};
   const taken = new Set<string>();
   for (const command of CANVAS_KEYMAP_COMMANDS) {
-    // A keymap saved before a command existed never had an opinion about it, so it starts on
-    // the default. A command the user cleared arrives as an explicit null and stays cleared.
-    const raw = source[command] === undefined ? defaultCanvasKeymap()[command] : source[command];
-    const key = canonicalCanvasKeyToken(raw);
-    if (!key || taken.has(key)) continue;
-    keymap[command] = key;
-    taken.add(key);
+    const raw = legacy
+      ? (source[command] === null ? null
+        : LEGACY_COMMAND_KEYS[command] ? [...base, canonicalChordKey(source[command]) ?? LEGACY_COMMAND_KEYS[command]]
+          : [...defaultCanvasKeymap().commands[command]!])
+      : (((source.commands as Record<string, unknown> | undefined)?.[command] === undefined
+        ? [...defaultCanvasKeymap().commands[command]!]
+        : (source.commands as Record<string, unknown>)[command]) as unknown);
+    const chord = raw === null || typeof raw === "string" ? null : normalizeCanvasChordTokens(raw);
+    commands[command] = chord && !taken.has(JSON.stringify(chord)) ? chord : null;
+    if (commands[command]) taken.add(JSON.stringify(commands[command]));
   }
-  return keymap;
+  return { base, commands };
 }
 
 /** A hand-edited column must degrade to the default chord, never take the node down. */

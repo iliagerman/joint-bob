@@ -1,4 +1,4 @@
-import { DEFAULT_CANVAS_KEYMAP, emptyCanvasLayout } from "../canvas-layout.js";
+import { DEFAULT_CANVAS_KEYMAP, emptyCanvasLayout, normalizeCanvasKeymap } from "../canvas-layout.js";
 import { api, savePreferences, savePreferencesInBackground } from "./api.js";
 import { clearAttachments } from "./attachments.js";
 import { setComposerEnabled } from "./chat-controls.js";
@@ -145,7 +145,9 @@ export async function initializeApplication() {
   syncNotifyButton();
   updateInstallButton();
   state.canvasLayout = preferences.canvasLayout || emptyCanvasLayout();
-  state.canvasKeymap = preferences.canvasKeymap || DEFAULT_CANVAS_KEYMAP;
+  // The node normalizes on the way out; normalizing again costs nothing and keeps a
+  // stale shape (or an older node) from reaching the dispatcher unvalidated.
+  state.canvasKeymap = normalizeCanvasKeymap(preferences.canvasKeymap || DEFAULT_CANVAS_KEYMAP);
   if (!state.canvasPaneMode) {
     state.canvasController?.setKeymap(state.canvasKeymap);
     state.canvasController?.setLayout(state.canvasLayout);

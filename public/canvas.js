@@ -11,9 +11,9 @@
 
 import { captureCanvasKeyInput } from "./app/key-capture.js";
 import {
-  addCanvasPane, arrangeCanvasLayout, CANVAS_KEYMAP_COMMANDS, CANVAS_MAX_PAGES, canonicalCanvasKey, canvasChordLabel,
-  canvasChordMatches, canvasKeyFromCode, canvasPaneEngine, canvasPaneMoves, canvasPaneNeighbor, canvasSplitPlacement,
-  canonicalSessionPath, isCanvasModifierKey, isCanvasSplitLeader,
+  addCanvasPane, arrangeCanvasLayout, CANVAS_MAX_PAGES, canonicalCanvasKey, chordFromEvent, chordId, chordLabel,
+  conversationChord, conversationChordLabel, canvasPaneEngine, canvasPaneMoves, canvasPaneNeighbor,
+  canonicalSessionPath,
   DEFAULT_CANVAS_KEYMAP, emptyCanvasLayout, fuzzyMatchScore, activeCanvasPage, canvasPageForPane,
   canvasPageGeometry, createCanvasPage, listCanvasPagePanes, listCanvasPanes, moveCanvasPage, moveCanvasPane,
   normalizeCanvasKeymap, normalizeCanvasLayout, organizeCanvasLayout, removeCanvasPage, removeCanvasPane,
@@ -22,7 +22,7 @@ import {
 
 const CANVAS_GRID_UNITS = 1000;
 
-export function createConversationCanvas({ api, getProjects, saveLayout, showMessage, toggleView, confirmAction, openShortcutSettings, openSpotlight, openPendingReviews }) {
+export function createConversationCanvas({ api, getProjects, saveLayout, showMessage, toggleView, confirmAction, openShortcutSettings, openSpotlight, openPendingReviews, openRecentSessions }) {
   const root = document.querySelector("#canvasRoot");
   const dialog = document.querySelector("#canvasConversationDialog");
   const projectSelect = document.querySelector("#canvasProjectSelect");
@@ -76,13 +76,20 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
   // conversation identity -> the title last rendered for it, so the shortcut bar can
   // name a conversation without waiting for another metadata round trip.
   const paneTitles = new Map();
-  // The account's canvas chord and command keys, as the node last reported them.
+  // The account's canvas chords and commands, as the node last reported them, plus
+  // the chord-to-command lookup the dispatcher answers from.
   let keymap = normalizeCanvasKeymap(DEFAULT_CANVAS_KEYMAP);
+  let chordCommands = new Map();
+  const rebuildChordCommands = () => {
+    chordCommands = new Map(Object.entries(keymap.commands)
+      .filter(([, chord]) => Array.isArray(chord))
+      .map(([command, chord]) => [chordId(chord), command]));
+  };
+  rebuildChordCommands();
   // Pane ids, most recently reached first, so one key toggles between the last two.
   const visitOrder = [];
   let finderMatches = [];
   let finderIndex = 0;
-  let splitLeaderArmed = false;
 
   const text = (tag, value, className) => {
     const element = document.createElement(tag);
@@ -162,11 +169,11 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     paneTitles.set(paneIdentity(pane), title);
     bar.append(text("strong", title, "canvas-pane-title"));
     const held = shortcutFor(pane);
-    const badge = button(canvasChordLabel(keymap, held ? held.binding : ""));
+    const badge = button(conversationChordLabel(keymap, held ? held.binding : ""));
     badge.className = "canvas-shortcut-badge";
     badge.dataset.testid = "canvas-pane-shortcut-button";
     badge.setAttribute("aria-label", held
-      ? `Change the keyboard shortcut for ${title}, currently ${canvasChordLabel(keymap, held.binding)}`
+      ? `Change the keyboard shortcut for ${title}, currently ${conversationChordLabel(keymap, held.binding)}`
       : `Assign a keyboard shortcut to ${title}`);
     badge.addEventListener("click", () => openShortcutDialog(pane, title));
     bar.append(badge);
@@ -373,15 +380,16 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     publishBindings();
   }
 
-  /** Panes are iframes and swallow the keystroke, so each one learns the chord and the
-   * keys the canvas claims, and forwards only those; everything else stays with the
-   * conversation. */
+  /** Panes are iframes and swallow the keystroke, so each one learns every chord the
+   * canvas claims - the commands, and the base chord each conversation key rides under
+   * - and forwards only those; everything else stays with the conversation. */
   function publishBindings() {
-    const commands = CANVAS_KEYMAP_COMMANDS.map((command) => keymap[command]).filter(Boolean);
-    const bindings = [...shortcuts.map((shortcut) => shortcut.binding), ...commands];
+    const chords = Object.values(keymap.commands).filter((chord) => Array.isArray(chord));
+    const bindings = shortcuts.map((shortcut) => shortcut.binding);
     for (const node of paneNodes.values()) {
-      const frame = node.body.firstElementChild;
-      frame?.contentWindow?.postMessage({ type: "canvasShortcutBindings", bindings, modifiers: keymap.modifiers }, location.origin);
+      node.body.firstElementChild?.contentWindow?.postMessage({
+        type: "canvasShortcutBindings", chords, bindings, base: keymap.base,
+      }, location.origin);
     }
   }
 
@@ -445,14 +453,12 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     return revealPane(paneId);
   }
 
-  function handleLeaderShortcut(combination, explicitPaneId = null) {
-    if (!active) return false;
-    if (isCanvasSplitLeader(combination)) { splitLeaderArmed = true; return true; }
-    if (!splitLeaderArmed && !explicitPaneId) return false;
-    if (isCanvasModifierKey(combination)) return false;
-    splitLeaderArmed = false;
+  /** The structure commands act on whichever pane the user is working in, unless a
+   * pane forwarded the keystroke and named itself. */
+  function runCanvasCommand(command, explicitPaneId) {
+    const targetPaneId = explicitPaneId || currentPaneId();
     const page = activeCanvasPage(layout);
-    if (combination.code === "KeyC") {
+    if (command === "createPage") {
       try {
         commit(createCanvasPage(layout));
         showActivePage();
@@ -462,64 +468,65 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
       render();
       return true;
     }
-    if (combination.code === "KeyN" || combination.code === "KeyP") {
-      const step = combination.code === "KeyN" ? 1 : -1;
+    if (command === "nextPage" || command === "prevPage") {
+      const step = command === "nextPage" ? 1 : -1;
       const pages = layout.pages;
       commit(selectCanvasPage(layout, pages[(pages.indexOf(page) + step + pages.length) % pages.length].id));
       showActivePage();
       render();
       return true;
     }
-    const digit = /^Digit([1-9])$/.exec(combination.code);
-    if (digit && layout.pages[Number(digit[1]) - 1]) {
-      commit(selectCanvasPage(layout, layout.pages[Number(digit[1]) - 1].id));
+    const pageMatch = /^page([1-9])$/.exec(command);
+    if (pageMatch && layout.pages[Number(pageMatch[1]) - 1]) {
+      commit(selectCanvasPage(layout, layout.pages[Number(pageMatch[1]) - 1].id));
       showActivePage();
       render();
       return true;
     }
-    const targetPaneId = explicitPaneId || currentPaneId();
     if (!targetPaneId) return false;
-    const placement = canvasSplitPlacement(combination);
-    if (placement) openPicker(targetPaneId, null, placement);
-    else if (combination.code === "KeyX") void confirmClosePane(targetPaneId);
-    else if (/^Arrow(?:Left|Right|Up|Down)$/.test(combination.code)) {
-      const neighbor = canvasPaneNeighbor(layout, targetPaneId, combination.code.slice(5).toLowerCase());
+    if (command === "splitRight" || command === "splitBelow") {
+      openPicker(targetPaneId, null, command === "splitRight" ? "right" : "below");
+      return true;
+    }
+    if (command === "closePane") {
+      void confirmClosePane(targetPaneId);
+      return true;
+    }
+    const direction = { focusLeft: "left", focusRight: "right", focusUp: "up", focusDown: "down" }[command];
+    if (direction) {
+      const neighbor = canvasPaneNeighbor(layout, targetPaneId, direction);
       if (neighbor) revealPane(neighbor);
-    } else return false;
-    return true;
+      return true;
+    }
+    return false;
   }
 
-  /** A conversation's own key is checked first: adding a command must never silently
-   * take a binding the user already had. */
-  function handleShortcutCombination(combination) {
-    if (!canvasChordMatches(keymap, combination)) return false;
-    const key = canvasKeyFromCode(combination.code);
-    if (!key) return false;
+  /** Every shortcut is one recorded chord. A conversation's own key is checked first:
+   * adding a command must never silently take a binding the user already had. */
+  function handleShortcutCombination(combination, explicitPaneId = null) {
+    const chord = chordFromEvent(combination);
+    if (!chord) return false;
+    if (active) {
+      const shortcut = shortcuts.find((candidate) => chordId(conversationChord(keymap, candidate.binding)) === chordId(chord));
+      if (shortcut) {
+        const pane = listCanvasPanes(layout).find((candidate) => shortcutIdentity(paneShortcutTarget(candidate)) === shortcutIdentity(shortcut));
+        return pane ? revealPane(pane.id) : false;
+      }
+    }
+    const command = chordCommands.get(chordId(chord));
+    if (!command) return false;
     // Switching between the canvas and the conversation list is the only command that
     // also answers while the canvas is closed: it is how the user gets back to it.
-    if (key === keymap.toggleView) {
-      toggleView();
-      return true;
-    }
-    // These two span the whole workspace, so they answer with the canvas closed too.
-    if (key === keymap.spotlight) {
-      openSpotlight();
-      return true;
-    }
-    if (key === keymap.pendingReviews) {
-      openPendingReviews();
-      return true;
-    }
+    if (command === "toggleView") { toggleView(); return true; }
+    // These span the whole workspace, so they answer with the canvas closed too.
+    if (command === "spotlight") { openSpotlight(); return true; }
+    if (command === "pendingReviews") { openPendingReviews(); return true; }
+    if (command === "recents") { openRecentSessions(); return true; }
     if (!active) return false;
-    const shortcut = shortcuts.find((candidate) => candidate.binding === key);
-    if (shortcut) {
-      const pane = listCanvasPanes(layout).find((candidate) => shortcutIdentity(paneShortcutTarget(candidate)) === shortcutIdentity(shortcut));
-      return pane ? revealPane(pane.id) : false;
-    }
-    if (key === keymap.paneSearch) { openFinder(); return true; }
-    if (key === keymap.recentPane) return revealPane(previousPaneId());
-    if (key === keymap.focusPane) return focusCurrentPane();
-    return false;
+    if (command === "paneSearch") { openFinder(); return true; }
+    if (command === "recentPane") return revealPane(previousPaneId());
+    if (command === "focusPane") return focusCurrentPane();
+    return runCanvasCommand(command, explicitPaneId);
   }
 
   function renderShortcutBar() {
@@ -532,7 +539,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
       const chip = button("");
       chip.className = "canvas-shortcut-chip";
       chip.setAttribute("aria-label", `Go to ${paneTitle(entry.pane)}`);
-      chip.append(text("kbd", canvasChordLabel(keymap, entry.shortcut.binding)));
+      chip.append(text("kbd", conversationChordLabel(keymap, entry.shortcut.binding)));
       chip.append(text("span", paneTitle(entry.pane)));
       chip.addEventListener("click", () => revealPane(entry.pane.id));
       shortcutBar.append(chip);
@@ -545,7 +552,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     const current = shortcutFor(pane);
     shortcutKeyInput.value = current ? current.binding : "";
     shortcutKeyInput.dataset.key = current ? current.binding : "";
-    shortcutChordLabel.textContent = `Press ${canvasChordLabel(keymap)} with this key`;
+    shortcutChordLabel.textContent = `Press ${chordLabel(keymap.base)} with this key`;
     shortcutStatus.textContent = "";
     shortcutRemoveButton.hidden = !current;
     shortcutDialog.showModal();
@@ -557,7 +564,12 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
       shortcutStatus.textContent = "Pick one digit, letter, punctuation key, or Enter.";
       return;
     }
-    if (CANVAS_KEYMAP_COMMANDS.some((command) => keymap[command] === binding)) {
+    const chord = conversationChord(keymap, binding);
+    if (!chord) {
+      shortcutStatus.textContent = "That key does not fit under the conversation chord.";
+      return;
+    }
+    if (Object.values(keymap.commands).some((command) => Array.isArray(command) && chordId(command) === chordId(chord))) {
       shortcutStatus.textContent = "That key already runs a canvas command.";
       return;
     }
@@ -619,7 +631,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
       option.setAttribute("aria-label", `Go to ${entry.title}`);
       option.append(text("strong", entry.title));
       const held = shortcutFor(entry.pane);
-      if (held) option.append(text("kbd", canvasChordLabel(keymap, held.binding)));
+      if (held) option.append(text("kbd", conversationChordLabel(keymap, held.binding)));
       option.addEventListener("click", () => chooseFinderMatch(index));
       finderResults.append(option);
     }
@@ -1034,7 +1046,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
 
   keymapButton.addEventListener("click", openShortcutSettings);
   window.addEventListener("keydown", (event) => {
-    if (handleLeaderShortcut(event) || handleShortcutCombination(event)) event.preventDefault();
+    if (handleShortcutCombination(event)) event.preventDefault();
   });
   // Same origin is not enough: any window on this origin could post these. Only the
   // frames this canvas created may press a shortcut or ask for the binding table.
@@ -1044,11 +1056,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     if (event.origin !== location.origin) return;
     const paneId = paneIdForSource(event.source);
     if (paneId === null) return;
-    if (event.data?.type === "canvasShortcut") handleShortcutCombination(event.data);
-    if (event.data?.type === "canvasLeaderShortcut") {
-      const codes = new Set(["Backslash", "Minus", "KeyX", "KeyC", "KeyN", "KeyP", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Digit1", "Digit2", "Digit3", "Digit4", "Digit5", "Digit6", "Digit7", "Digit8", "Digit9"]);
-      if (codes.has(event.data.code)) handleLeaderShortcut({ code: event.data.code, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false }, paneId);
-    }
+    if (event.data?.type === "canvasShortcut") handleShortcutCombination(event.data, paneId);
     if (event.data?.type === "canvasHelpShortcut") openShortcutSettings();
     // A pane that just finished loading has no bindings yet.
     if (event.data?.type === "canvasPaneReady") publishBindings();
@@ -1081,6 +1089,8 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     },
     setKeymap(next) {
       keymap = normalizeCanvasKeymap(next);
+      rebuildChordCommands();
+      publishBindings();
       if (active) render();
     },
     openFinder,

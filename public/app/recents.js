@@ -1,3 +1,4 @@
+import { chordMatches } from "../canvas-layout.js";
 import { api } from "./api.js";
 import { elements } from "./elements.js";
 import { normalizedQuery, shortSessionTitle } from "./layout.js";
@@ -223,8 +224,9 @@ export function renderRecentSessionsDialog() {
     elements.recentSessionsList.append(row);
   }
 }
-/** One dialog, several triggers: the projects header, the conversations header, and the chat menu. */
-function openRecentSessionsDialog() {
+/** One dialog, several triggers: the projects header, the conversations header, the
+ *  chat menu, and the recorded shortcut. Exported for the canvas dispatcher. */
+export function openRecentSessions() {
   elements.recentSessionsSearchInput.value = "";
   renderRecentSessionsDialog();
   elements.recentSessionsDialog.showModal();
@@ -233,7 +235,7 @@ function openRecentSessionsDialog() {
   refreshRecentSessionActivity().catch((error) => console.warn(error));
 }
 for (const trigger of document.querySelectorAll("[data-recent-sessions-open]")) {
-  trigger.addEventListener("click", openRecentSessionsDialog);
+  trigger.addEventListener("click", openRecentSessions);
 }
 elements.recentSessionsSearchInput.addEventListener("input", () => renderRecentSessionsDialog());
 elements.recentSessionsDialog.addEventListener("keydown", (event) => {
@@ -246,15 +248,18 @@ elements.recentSessionsDialog.addEventListener("keydown", (event) => {
   event.preventDefault();
   openRecentSession(entry).catch((error) => toast(error.message));
 });
-/** Ctrl/Cmd+K reaches the recents list from any view, including mid-conversation. */
+/** The recorded recents chord reaches the list from any view, including
+ * mid-conversation. A canvas pane stays out of the way: it forwards the keystroke to
+ * the canvas, which opens the list once for the whole workspace. */
 document.addEventListener("keydown", (event) => {
-  if (!(event.metaKey || event.ctrlKey) || event.shiftKey) return;
-  if (event.key.toLowerCase() !== "k") return;
+  if (state.canvasPaneMode) return;
+  const chord = state.canvasKeymap?.commands?.recents;
+  if (!Array.isArray(chord) || !chordMatches(chord, event)) return;
   event.preventDefault();
   if (elements.recentSessionsDialog.open) {
     elements.recentSessionsDialog.close();
     return;
   }
-  openRecentSessionsDialog();
+  openRecentSessions();
 });
 elements.closeRecentSessionsButton.addEventListener("click", () => elements.recentSessionsDialog.close());

@@ -155,7 +155,10 @@ test("Settings loads persisted conversation shortcuts before canvas activation",
     const row = page.getByTestId("settings-conversation-shortcut-row");
     await row.waitFor();
     assert.match(await row.innerText(), /1.*settings-before-canvas/s, "the persisted shortcut is listed without opening canvas");
-    await page.getByTestId("canvas-keymap-spotlight-input").fill("1");
+    // The conversation holds the key 1 under the default base chord, so a command
+    // recorded on that same chord must be refused.
+    await page.getByTestId("canvas-keymap-spotlight-input").click();
+    await page.keyboard.press("Meta+Shift+1");
     await page.getByTestId("canvas-keymap-save-button").click();
     await page.getByTestId("canvas-keymap-status").filter({ hasText: /already belongs to a conversation/ }).waitFor();
   } finally {
@@ -457,34 +460,42 @@ test("canvas splits nest recursively and resize by handle", async () => {
 });
 
 
-test("terminal-style split shortcuts open the picker from the active canvas pane", async () => {
+test("split chords open the picker from the active canvas pane and really split the screen", async () => {
   const activePane = page.locator(".canvas-pane", { hasText: "Mobile Multi-Agent Threads" });
-  await activePane.locator("iframe").contentFrame().getByTestId("chat-message-input").click();
+  const focusPaneComposer = () => activePane.locator("iframe").contentFrame().getByTestId("chat-message-input").click();
+  const panesBefore = await page.locator(".canvas-pane").count();
 
-  await page.keyboard.press("Control+Space");
-  await page.keyboard.press("Shift+Backslash");
+  // One chord, not a leader and then a key: Control+Backslash splits to the right even
+  // with the caret inside a pane, whose iframe swallows keystrokes from the canvas.
+  await focusPaneComposer();
+  await page.keyboard.press("Control+Backslash");
   await page.getByTestId("canvas-conversation-dialog").waitFor({ state: "visible" });
   assert.equal(await page.getByTestId("canvas-split-position").inputValue(), "right");
   await page.getByTestId("canvas-picker-cancel-button").click();
 
-  await activePane.locator("iframe").contentFrame().getByTestId("chat-message-input").click();
-  await page.keyboard.press("Control+Space");
-  await page.keyboard.press("Minus");
+  // Control+Minus splits below, and choosing a conversation completes the split.
+  await focusPaneComposer();
+  await page.keyboard.press("Control+Minus");
   await page.getByTestId("canvas-conversation-dialog").waitFor({ state: "visible" });
   assert.equal(await page.getByTestId("canvas-split-position").inputValue(), "below");
-  await page.getByTestId("canvas-picker-cancel-button").click();
+  await page.selectOption("#canvasProjectSelect", { label: "Internal Assistant" });
+  const option = page.locator(".canvas-session-option", { hasText: "Short one" });
+  await option.waitFor({ timeout: 20_000 });
+  await option.click();
+  await page.locator(".canvas-pane", { hasText: "Short one" }).waitFor({ timeout: 20_000 });
+  assert.equal(await page.locator(".canvas-pane").count(), panesBefore + 1, "the split chord put a new pane on the screen");
+  assert.ok((await page.locator(".canvas-resize").count()) >= 1, "the split chord left a resize handle between the panes");
 
-  await activePane.locator("iframe").contentFrame().getByTestId("chat-message-input").click();
-  await page.keyboard.press("Control+Space");
-  await page.keyboard.press("x");
+  // The close chord asks first, and only Y closes the pane.
+  await focusPaneComposer();
+  await page.keyboard.press("Meta+Shift+x");
   await page.getByTestId("confirm-dialog").waitFor({ state: "visible" });
   await page.keyboard.press("n");
   await page.getByTestId("confirm-dialog").waitFor({ state: "hidden" });
   assert.equal(await activePane.count(), 1, "N keeps the active pane open");
 
-  await activePane.locator("iframe").contentFrame().getByTestId("chat-message-input").click();
-  await page.keyboard.press("Control+Space");
-  await page.keyboard.press("x");
+  await focusPaneComposer();
+  await page.keyboard.press("Meta+Shift+x");
   await page.getByTestId("confirm-dialog").waitFor({ state: "visible" });
   await page.keyboard.press("y");
   await activePane.waitFor({ state: "detached" });
@@ -916,32 +927,43 @@ test("the terminal fills its frame without overflowing it", async () => {
   await page.getByTestId("terminal-dialog").waitFor({ state: "hidden" });
 });
 
-// Every shortcut is edited in one place now, and a key can be a symbol or Enter.
+// Every shortcut is edited in one place now: one row per command, each a recorder
+// that captures the modifiers you hold with the key.
 test("the Settings shortcuts tab edits every shortcut in one place", async () => {
   // One fixed chord opens the panel from anywhere, already on the Shortcuts tab.
   await page.keyboard.press("Meta+Shift+Slash");
   await page.getByTestId("settings-dialog").waitFor({ state: "visible" });
   await page.getByTestId("canvas-keymap-spotlight-input").waitFor({ state: "visible" });
 
-  const spotlightKey = page.getByTestId("canvas-keymap-spotlight-input");
-  await spotlightKey.waitFor({ state: "visible" });
-  assert.equal(await spotlightKey.inputValue(), "P", "the tab shows the shortcut that is in force");
+  const spotlight = page.getByTestId("canvas-keymap-spotlight-input");
+  const paneSearch = page.getByTestId("canvas-keymap-pane-search-input");
+  assert.equal(await spotlight.inputValue(), "\u2318\u21e7P", "the tab shows the chord that is in force");
+  assert.equal(await page.getByTestId("canvas-keymap-base-input").inputValue(), "\u2318\u21e7", "the conversation-key chord has its own recorder");
   assert.ok(await page.getByTestId("canvas-keymap-leader").isVisible(), "the fixed shortcuts are listed too");
 
-  // Pressing a key fills the box, including one that types no character.
-  await page.getByTestId("canvas-keymap-pane-search-input").click();
-  await page.keyboard.press("BracketLeft");
-  assert.equal(await page.getByTestId("canvas-keymap-pane-search-input").inputValue(), "[");
-  await page.getByTestId("canvas-keymap-pane-search-input").press("Enter");
-  assert.equal(await page.getByTestId("canvas-keymap-pane-search-input").inputValue(), "ENTER");
+  // Holding modifiers with the key records one chord, exactly as held.
+  await paneSearch.click();
+  await page.keyboard.press("Control+BracketLeft");
+  assert.equal(await paneSearch.inputValue(), "\u2303[");
+  // A bare key never lands in the field: the recorder previews it and steps back.
+  await page.keyboard.press("Enter");
+  assert.equal(await paneSearch.inputValue(), "\u2303[", "a key without Command, Control, or Option does not commit");
+  // Enter under a modifier does, and reads as a symbol.
+  await page.keyboard.press("Control+Enter");
+  assert.equal(await paneSearch.inputValue(), "\u2303\u23ce");
+  // Backspace clears to unbind.
+  await paneSearch.press("Backspace");
+  assert.equal(await paneSearch.inputValue(), "");
 
-  // Two commands cannot share a key, and the panel says so instead of saving.
-  await page.getByTestId("canvas-keymap-pane-search-input").press("KeyP");
+  // Two commands cannot share one chord, and the panel says so instead of saving.
+  await paneSearch.click();
+  await page.keyboard.press("Meta+Shift+KeyP");
   await page.getByTestId("canvas-keymap-save-button").click();
   await page.getByTestId("canvas-keymap-status").filter({ hasText: /cannot share/ }).waitFor();
 
-  // A punctuation key is accepted and takes effect without a reload.
-  await page.getByTestId("canvas-keymap-pane-search-input").press("BracketLeft");
+  // A recorded chord is accepted and takes effect without a reload.
+  await paneSearch.click();
+  await page.keyboard.press("Control+BracketLeft");
   await page.getByTestId("canvas-keymap-save-button").click();
   await page.getByTestId("canvas-keymap-status").filter({ hasText: "Saved." }).waitFor();
   await page.getByTestId("settings-cancel-button").click();
@@ -950,7 +972,7 @@ test("the Settings shortcuts tab edits every shortcut in one place", async () =>
   await page.reload();
   await page.getByTestId("settings-open-button").click();
   await page.getByTestId("settings-tab-shortcuts").click();
-  assert.equal(await page.getByTestId("canvas-keymap-pane-search-input").inputValue(), "[", "the saved key survives a reload");
+  assert.equal(await paneSearch.inputValue(), "\u2303[", "the saved chord survives a reload");
   // Put the defaults back so later tests type the shortcuts they expect.
   await page.getByTestId("canvas-keymap-reset-button").click();
   await page.getByTestId("canvas-keymap-save-button").click();
@@ -1051,7 +1073,6 @@ test("running conversations open their live conversation in another project", as
     database.close();
   }
 });
-
 
 test("the journey produced no console errors and no failed requests", () => {
   assert.deepEqual(consoleErrors, [], "no console errors");

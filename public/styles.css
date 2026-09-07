@@ -1076,7 +1076,14 @@ select.chat-toolbar-control {
    reload, so it must read as pending rather than as an ordinary sent message. */
 .message.user.queued { background: var(--field); border-style: dashed; border-color: var(--line-strong); }
 .message.user.queued .message-content { opacity: 0.72; }
-.queued-badge { display: block; margin-top: 6px; text-align: right; color: var(--muted); font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; }
+.queued-controls { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 7px; }
+.queued-badge { margin-right: auto; color: var(--muted); font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; }
+.queued-controls button, .queued-editor button { min-height: 26px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--muted); font-size: 11px; }
+.queued-controls button:hover, .queued-controls button:focus-visible, .queued-editor button:hover, .queued-editor button:focus-visible { border-color: var(--line-strong); color: var(--text); }
+.queued-editor { display: grid; grid-template-columns: 1fr auto auto; gap: 7px; margin-top: 8px; }
+.queued-editor[hidden] { display: none; }
+.queued-editor textarea { grid-column: 1 / -1; width: min(520px, 70vw); min-height: 80px; resize: vertical; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--panel); color: var(--text); font: inherit; }
+.queued-editor button:first-of-type { grid-column: 2; }
 .message.assistant { align-self: flex-start; width: 100%; max-width: 100%; padding: 12px 15px; border-color: var(--line); background: var(--panel); }
 /* A sibling of the bubble, not a child, so the control sits outside the card.
    The .messages column already supplies 10px of gap, hence the negative margin. */
@@ -2326,25 +2333,18 @@ body.file-view { overflow: auto; }
   border-color: var(--accent);
   background: var(--field);
 }
-.canvas-keymap-modifiers {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin: 0;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-ctl);
-}
-.canvas-keymap-modifiers legend { padding: 0 4px; color: var(--muted); font-size: 12px; }
-.canvas-keymap-modifiers label { display: flex; align-items: center; gap: 6px; font-size: 13px; }
 .canvas-keymap-grid { display: grid; gap: 10px; }
 .canvas-keymap-command {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 72px;
+  grid-template-columns: minmax(0, 1fr) 110px;
   align-items: center;
   gap: 10px;
   font-size: 13px;
 }
+/* Recorder fields show a captured chord, never typed text, so they read as keys. */
+.canvas-keymap-command input { text-align: center; font-family: inherit; cursor: pointer; }
+.canvas-keymap-command input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.canvas-keymap-base { padding-bottom: 6px; border-bottom: 1px solid var(--line); }
 #canvasConversationDialog .dialog-card { width: min(720px, calc(100vw - 24px)); }
 /* Flex column, not grid: grid tracks shrink to min-content once the list hits
    its max-height, which squashed every row down to its 44px floor and clipped

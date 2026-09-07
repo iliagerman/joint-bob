@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { CANVAS_KEYMAP_COMMANDS } from "../public/canvas-layout.js";
 import { appSource, serverSource } from "./source.js";
 
 test("canvas is a recursive multi-page view over exact existing conversations", async () => {
-  const [html, app, canvas, layout, styles, server, preferences] = await Promise.all([
+  const [html, app, canvas, layout, styles, server, preferences, shortcutSettings] = await Promise.all([
     readFile("public/index.html", "utf8"),
     appSource(),
     readFile("public/canvas.js", "utf8"),
@@ -12,6 +13,7 @@ test("canvas is a recursive multi-page view over exact existing conversations", 
     readFile("public/styles.css", "utf8"),
     serverSource(),
     readFile("src/preferences.ts", "utf8"),
+    readFile("public/app/shortcut-settings.js", "utf8"),
   ]);
 
   // The shell carries a page strip beside the canvas controls.
@@ -22,10 +24,22 @@ test("canvas is a recursive multi-page view over exact existing conversations", 
   assert.match(html, /id="canvasPageMoveLeftButton"/);
   assert.match(html, /id="canvasPageMoveRightButton"/);
   for (const value of ["right", "left", "below", "above"]) assert.match(html, new RegExp(`<option value="${value}"(?: selected)?>`));
-  // The leader commands are documented in Settings now, beside every other shortcut.
-  assert.match(html, /id="settingsPanel-shortcuts"[\s\S]*split to the right of this conversation/);
-  assert.match(html, /<kbd>C<\/kbd> &mdash; new page/);
-  assert.match(html, /<kbd>N<\/kbd> or <kbd>P<\/kbd> &mdash; next or previous page/);
+  // Every command is editable in Settings now: the split commands sit in generated
+  // rows beside every other shortcut, not under a fixed two-step leader.
+  assert.match(html, /id="settingsPanel-shortcuts"[\s\S]*id="canvasKeymapCommands"/);
+  assert.match(shortcutSettings, /command: "splitRight", label: "Canvas: split the screen and put a new conversation to the right"/);
+  assert.match(shortcutSettings, /command: "splitBelow", label: "Canvas: split the screen and put a new conversation below"/);
+  // Every command the keymap can bind has a row in the panel that edits it: the page
+  // commands arrive through one generator, everything else as an explicit row.
+  for (const command of CANVAS_KEYMAP_COMMANDS) {
+    if (/^page[1-9]$/.test(command)) continue;
+    assert.ok(new RegExp(`command: "${command}"`).test(shortcutSettings), `${command} is listed in Settings`);
+  }
+  assert.match(shortcutSettings, /\.\.\.[\."123456789"\]]*\.map\(\(digit, index\) => \(\{ command: `page\$\{index \+ 1\}`/,
+    "the nine page commands are listed too");
+  // The recorder captures modifiers instead of asking for them as checkboxes.
+  assert.doesNotMatch(html, /canvasKeymapModifier/);
+  assert.match(shortcutSettings, /captureChordInput\(baseInput, \{ modifierOnly: true \}\)/);
 
   // Layout operations are pure recursive tree transforms over pages.
   assert.match(layout, /export function canvasPageGeometry/);
@@ -76,9 +90,10 @@ test("canvas is a recursive multi-page view over exact existing conversations", 
   assert.doesNotMatch(styles, /\.canvas-row-resize/);
   assert.match(styles, /\.canvas-root\.canvas-focused \.canvas-pane:not\(\.focused\) \{ display: none; \}/);
 
-  // A pane swallows the keystroke, so it forwards only the keys the canvas claims.
+  // A pane swallows the keystroke, so it forwards only the chords the canvas claims.
   assert.match(app, /type: "canvasShortcut", code: event\.code/);
-  assert.match(app, /type: "canvasLeaderShortcut", code: event\.code/);
+  assert.match(app, /chordFromEvent\(event\)/);
+  assert.doesNotMatch(app, /canvasLeaderShortcut|splitLeaderArmed/, "the two-step leader is gone; every shortcut is one recorded chord");
   assert.match(app, /event\.data\?\.type === "canvasShortcutBindings"/);
   assert.match(app, /event\.data\?\.type === "canvasFocusComposer"/);
   assert.match(canvas, /publishBindings\(\)/);

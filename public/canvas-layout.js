@@ -102,22 +102,130 @@ export function normalizeCanvasLayout(layout) {
   return layout;
 }
 export function canvasPaneEngine(pane) { return pane.sessionPath.startsWith("claude:") || pane.sessionPath.startsWith("draft:claude:") ? "claude" : "pi"; }
-export const CANVAS_MODIFIERS = ["meta", "ctrl", "alt", "shift"]; export const CANVAS_KEYMAP_COMMANDS = ["recentPane", "focusPane", "paneSearch", "toggleView", "spotlight", "pendingReviews"]; export const DEFAULT_CANVAS_KEYMAP = { modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F", toggleView: "V", spotlight: "P", pendingReviews: "R" };
-export const canvasChordIsUsable = (modifiers) => modifiers.some((name) => name !== "shift");
-/** The keys a canvas shortcut may hold. Mirrors `src/canvas-keys.ts`; Space is the
- *  split leader, and "/" and "\\" cannot ride a URL path segment to the shortcut routes. */
+// ── Shortcut chords ─────────────────────────────────────────────────────────────
+// Every shortcut is one chord: the modifier keys held plus one key, written as a token
+// array in canonical order - ["ctrl", "\\"], ["meta", "shift", "P"], ["ctrl", "SPACE"] -
+// holding at most four keys. The recorder captures the modifiers as they are held, so
+// there is no modifier picker to fall out of step with the keyboard, and Shift alone
+// never counts (it would swallow every capital letter a conversation is typing).
+export const CANVAS_MODIFIERS = ["meta", "ctrl", "alt", "shift"];
+const MODIFIER_TOKENS = new Set(CANVAS_MODIFIERS);
+const modifierSymbols = { meta: "⌘", ctrl: "⌃", alt: "⌥", shift: "⇧" };
+/** The keys a canvas conversation shortcut may hold. Mirrors `src/canvas-keys.ts`;
+ *  Space and the slashes cannot ride a URL path segment to the shortcut routes. */
 export const CANVAS_KEY_TOKENS = [..."0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ", "[", "]", ";", "'", ",", ".", "-", "=", "`", "ENTER"];
 const CANVAS_KEYS = new Set(CANVAS_KEY_TOKENS);
 export const canonicalCanvasKey = (key) => { const canonical = typeof key === "string" ? key.toUpperCase() : ""; return CANVAS_KEYS.has(canonical) ? canonical : null; };
-export function normalizeCanvasKeymap(keymap) { const source = keymap && typeof keymap === "object" ? keymap : {}; const modifiers = CANVAS_MODIFIERS.filter((name) => (source.modifiers || []).includes(name)); const result = { modifiers: canvasChordIsUsable(modifiers) ? modifiers : [...DEFAULT_CANVAS_KEYMAP.modifiers] }; const used = new Set(); for (const command of CANVAS_KEYMAP_COMMANDS) { const key = canonicalCanvasKey(source[command] === undefined ? DEFAULT_CANVAS_KEYMAP[command] : source[command]); result[command] = key && !used.has(key) ? key : null; if (result[command]) used.add(key); } return result; }
-export function canvasChordMatches(keymap, combination) { return CANVAS_MODIFIERS.every((name) => Boolean(combination[`${name}Key`]) === keymap.modifiers.includes(name)); }
+/** Keys a chord may end in: the binding vocabulary plus the keys a binding could never
+ *  carry - Space, the arrows, and both slashes. A chord lives in the saved keymap,
+ *  never in a URL path segment, so it may use them. */
+export const CANVAS_CHORD_KEYS = [...CANVAS_KEY_TOKENS, "/", "\\", "SPACE", "ARROWLEFT", "ARROWUP", "ARROWRIGHT", "ARROWDOWN"];
+const CHORD_KEYS = new Set(CANVAS_CHORD_KEYS);
+/** Canonical chord tokens, or null when the value cannot be a chord. `modifierOnly`
+ *  accepts the bare modifier chord a conversation key rides under; it may hold three
+ *  modifiers so the conversation's own key is still the fourth key of the chord. */
+export function normalizeChord(tokens, { modifierOnly = false } = {}) {
+  if (!Array.isArray(tokens)) return null;
+  const modifiers = CANVAS_MODIFIERS.filter((name) => tokens.includes(name));
+  const keys = [...new Set(tokens.filter((token) => !MODIFIER_TOKENS.has(token)))];
+  if (!modifiers.some((name) => name !== "shift")) return null;
+  if (keys.some((key) => !CHORD_KEYS.has(key))) return null;
+  if (keys.length > 1) return null;
+  if (modifierOnly ? keys.length !== 0 : keys.length !== 1) return null;
+  if (modifierOnly && modifiers.length > 3) return null;
+  if (modifiers.length + keys.length > 4) return null;
+  return [...modifiers, ...keys];
+}
+export const chordId = (chord) => JSON.stringify(chord);
 /** Physical keys, so a shortcut survives a layout that moves the character elsewhere. */
-const CANVAS_KEY_CODES = { BracketLeft: "[", BracketRight: "]", Semicolon: ";", Quote: "'", Comma: ",", Period: ".", Minus: "-", Equal: "=", Backquote: "`", Enter: "ENTER", NumpadEnter: "ENTER" };
+const CANVAS_KEY_CODES = { BracketLeft: "[", BracketRight: "]", Semicolon: ";", Quote: "'", Comma: ",", Period: ".", Minus: "-", Equal: "=", Backquote: "`", Enter: "ENTER", NumpadEnter: "ENTER", Space: "SPACE", Backslash: "\\", Slash: "/", ArrowLeft: "ARROWLEFT", ArrowRight: "ARROWRIGHT", ArrowUp: "ARROWUP", ArrowDown: "ARROWDOWN" };
 export const canvasKeyFromCode = (code) => CANVAS_KEY_CODES[code] || /^(?:Digit([0-9])|Key([A-Z]))$/.exec(code || "")?.slice(1).find(Boolean) || null;
+/** The chord a keydown event describes: every modifier held plus the key it pressed. */
+export function chordFromEvent(event) {
+  if (!event || event.repeat) return null;
+  const key = canvasKeyFromCode(event.code);
+  if (!key) return null;
+  return normalizeChord([...CANVAS_MODIFIERS.filter((name) => event[`${name}Key`]), key]);
+}
+/** A chord answers an event only when every modifier and the key match exactly: a
+ *  stray Control held beside Command+Shift+P must not fire it. */
+export const chordMatches = (chord, event) => Array.isArray(chord)
+  && CANVAS_MODIFIERS.every((name) => Boolean(event[`${name}Key`]) === chord.includes(name))
+  && canvasKeyFromCode(event.code) === chord[chord.length - 1];
 /** A key that types no character needs a symbol a person can read on a badge. */
-export const canvasKeyLabel = (key) => key === "ENTER" ? "⏎" : (key || "");
-const symbols = { meta: "⌘", ctrl: "⌃", alt: "⌥", shift: "⇧" }; export const canvasChordLabel = (keymap, key = "") => CANVAS_MODIFIERS.filter((name) => keymap.modifiers.includes(name)).map((name) => symbols[name]).join("") + canvasKeyLabel(key);
-export const isCanvasSplitLeader = (combination) => combination.code === "Space" && combination.ctrlKey && !combination.metaKey && !combination.altKey && !combination.shiftKey; export const canvasSplitPlacement = (combination) => combination.code === "Backslash" ? "right" : combination.code === "Minus" ? "below" : null; export const isCanvasModifierKey = (combination) => /^(?:Control|Shift|Alt|Meta)(?:Left|Right)$/.test(combination.code);
+export const canvasKeyLabel = (key) => ({ ENTER: "⏎", SPACE: "Space", ARROWLEFT: "←", ARROWRIGHT: "→", ARROWUP: "↑", ARROWDOWN: "↓" })[key] ?? (key || "");
+export function chordLabel(chord) {
+  if (!Array.isArray(chord)) return "";
+  const key = chord.find((token) => !MODIFIER_TOKENS.has(token));
+  return CANVAS_MODIFIERS.filter((name) => chord.includes(name)).map((name) => modifierSymbols[name]).join("") + canvasKeyLabel(key);
+}
+/** The chord a conversation's own key fires on: the base modifiers plus that key. */
+export const conversationChord = (keymap, key) => normalizeChord([...keymap.base, key]);
+export const conversationChordLabel = (keymap, key) => chordLabel(conversationChord(keymap, key));
+
+/** Every command the keymap can bind, in collision-priority order: where a stored
+ *  keymap hands one chord to two commands, the earlier command keeps it. The first
+ *  four answer even while the canvas is closed. */
+export const CANVAS_KEYMAP_COMMANDS = [
+  "toggleView", "spotlight", "pendingReviews", "recents",
+  "paneSearch", "recentPane", "focusPane",
+  "splitRight", "splitBelow", "closePane", "createPage",
+  "nextPage", "prevPage", "focusLeft", "focusRight", "focusUp", "focusDown",
+  "page1", "page2", "page3", "page4", "page5", "page6", "page7", "page8", "page9",
+];
+export const DEFAULT_CANVAS_KEYMAP = {
+  // The chord every conversation key rides under: the base modifiers plus its key.
+  base: ["meta", "shift"],
+  commands: {
+    toggleView: ["meta", "shift", "V"],
+    spotlight: ["meta", "shift", "P"],
+    pendingReviews: ["meta", "shift", "R"],
+    recents: ["meta", "K"],
+    paneSearch: ["meta", "shift", "F"],
+    recentPane: ["meta", "shift", "E"],
+    focusPane: ["meta", "shift", "G"],
+    // Splits are Control chords: Command or Control+Space, the old split leader, is
+    // taken by the operating system's input-source switch on macOS and many Linux
+    // setups, which is how a two-step leader could silently never arrive. One chord
+    // has no such gap, and every chord here is re-recordable in Settings anyway.
+    splitRight: ["ctrl", "\\"],
+    splitBelow: ["ctrl", "-"],
+    closePane: ["meta", "shift", "X"],
+    createPage: ["meta", "shift", "C"],
+    nextPage: ["ctrl", "alt", "ARROWRIGHT"],
+    prevPage: ["ctrl", "alt", "ARROWLEFT"],
+    focusLeft: ["ctrl", "shift", "ARROWLEFT"],
+    focusRight: ["ctrl", "shift", "ARROWRIGHT"],
+    focusUp: ["ctrl", "shift", "ARROWUP"],
+    focusDown: ["ctrl", "shift", "ARROWDOWN"],
+    ...Object.fromEntries([..."123456789"].map((digit, index) => [`page${index + 1}`, ["ctrl", "alt", digit]])),
+  },
+};
+// Keymaps saved before chords existed held one key per command under one shared
+// modifier set, so those keys ride whatever modifiers the account had chosen.
+const LEGACY_COMMAND_KEYS = { recentPane: "E", focusPane: "G", paneSearch: "F", toggleView: "V", spotlight: "P", pendingReviews: "R" };
+// Legacy keys were stored in any case; the chord vocabulary is upper case.
+const canonicalChordKey = (key) => (typeof key === "string" ? key.toUpperCase() : key);
+export function normalizeCanvasKeymap(keymap) {
+  const source = keymap && typeof keymap === "object" ? keymap : {};
+  const legacy = !source.commands;
+  const base = normalizeChord(legacy ? source.modifiers : source.base, { modifierOnly: true }) || [...DEFAULT_CANVAS_KEYMAP.base];
+  const commands = {};
+  const taken = new Set();
+  for (const command of CANVAS_KEYMAP_COMMANDS) {
+    const raw = legacy
+      ? (source[command] === null ? null
+        : LEGACY_COMMAND_KEYS[command] ? [...base, canonicalChordKey(source[command]) ?? LEGACY_COMMAND_KEYS[command]]
+          : [...DEFAULT_CANVAS_KEYMAP.commands[command]])
+      : (source.commands?.[command] === undefined ? [...DEFAULT_CANVAS_KEYMAP.commands[command]] : source.commands[command]);
+    const chord = raw === null ? null : normalizeChord(raw);
+    // A chord the canvas cannot carry is dropped, not stored; a chord two commands
+    // would share goes to the earlier one, so the second is unbound rather than random.
+    commands[command] = chord && !taken.has(chordId(chord)) ? chord : null;
+    if (commands[command]) taken.add(chordId(chord));
+  }
+  return { base, commands };
+}
 /** Command/Control + ? opens the shortcuts panel. This one is fixed: it is how a person
  *  finds out what the configurable keys are. It matches the typed "?" as well as
  *  Shift and "/", so a layout that puts "?" elsewhere still works - and the bare "/"
