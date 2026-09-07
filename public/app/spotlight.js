@@ -4,8 +4,10 @@
 
 import { api } from "./api.js";
 import { elements } from "./elements.js";
+import { setMobileView } from "./layout.js";
 import { selectProject } from "./project-selection.js";
 import { openListedSession } from "./reviews.js";
+import { openSettings } from "./settings.js";
 import { toast } from "./shell.js";
 import { state } from "./state.js";
 
@@ -13,6 +15,29 @@ import { state } from "./state.js";
 let generation = 0;
 let results = [];
 let highlighted = 0;
+
+const workspaceDestinations = [
+  { kind: "destination", title: "Projects window", subtitle: "Workspace window", action: () => setMobileView("projects") },
+  { kind: "destination", title: "Conversations window", subtitle: "Workspace window", action: () => setMobileView("sessions") },
+  { kind: "destination", title: "Messages window", subtitle: "Current conversation", action: () => setMobileView("chat") },
+  { kind: "destination", title: "Canvas window", subtitle: "Workspace canvas", action: () => setMobileView("canvas") },
+  { kind: "destination", title: "Recent conversations", subtitle: "Recently opened conversations", action: () => document.querySelector("[data-recent-sessions-open]").click() },
+  ...elements.settingsTabs.map((tab) => ({
+    kind: "settings",
+    title: tab.textContent.trim(),
+    subtitle: "Settings tab",
+    action: () => openSettings(tab.dataset.settingsTab),
+  })),
+];
+
+function matchingDestinations(query) {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  return workspaceDestinations.filter((result) => {
+    const text = `${result.title} ${result.subtitle}`.toLowerCase();
+    return words.every((word) => text.includes(word));
+  });
+}
 
 function renderResults() {
   elements.spotlightResults.replaceChildren();
@@ -28,7 +53,7 @@ function renderResults() {
     option.setAttribute("aria-label", `Go to ${result.title}`);
     const kind = document.createElement("span");
     kind.className = "spotlight-kind";
-    kind.textContent = result.kind === "project" ? "Project" : "Chat";
+    kind.textContent = ({ project: "Project", conversation: "Chat", destination: "Go to", settings: "Settings" })[result.kind];
     const title = document.createElement("strong");
     title.textContent = result.title;
     const subtitle = document.createElement("span");
@@ -46,10 +71,11 @@ function renderResults() {
 
 async function runSearch() {
   const mine = ++generation;
+  const query = elements.spotlightInput.value.trim();
   try {
-    const body = await api(`/api/search?q=${encodeURIComponent(elements.spotlightInput.value.trim())}`);
+    const body = await api(`/api/search?q=${encodeURIComponent(query)}`);
     if (mine !== generation) return;
-    results = body.results || [];
+    results = [...matchingDestinations(query), ...(body.results || [])];
     highlighted = 0;
     renderResults();
   } catch (error) {
@@ -62,6 +88,10 @@ async function runSearch() {
 let searchTimer = null;
 function scheduleSearch() {
   clearTimeout(searchTimer);
+  generation += 1;
+  results = matchingDestinations(elements.spotlightInput.value.trim());
+  highlighted = 0;
+  renderResults();
   searchTimer = setTimeout(() => { void runSearch(); }, 120);
 }
 
@@ -70,6 +100,10 @@ async function chooseResult(index) {
   if (!result) return;
   elements.spotlightDialog.close();
   try {
+    if (result.action) {
+      await result.action();
+      return;
+    }
     await selectProject(result.projectId);
     if (result.kind === "project") return;
     const session = state.sessions.find((candidate) => candidate.path === result.sessionPath)
@@ -100,6 +134,11 @@ export function openSpotlight() {
 
 elements.spotlightInput.addEventListener("input", scheduleSearch);
 elements.spotlightDialog.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    elements.spotlightDialog.close();
+    return;
+  }
   if (event.key === "ArrowDown" || event.key === "ArrowUp") {
     event.preventDefault();
     if (!results.length) return;

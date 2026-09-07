@@ -124,6 +124,7 @@ test("one search reaches every project and every conversation in them", async ()
     // An empty query is the opening state of the bar, so it offers somewhere to go.
     const idle = await search("");
     assert.ok(idle.length > 0, "an empty query still offers projects and recent conversations");
+    assert.equal(idle[0].kind, "conversation", "the newest conversations come before projects while idle");
     assert.ok(idle.some((hit) => hit.kind === "project"));
   } finally {
     await new Promise<void>((resolve, reject) => node.server.close((error) => error ? reject(error) : resolve()));

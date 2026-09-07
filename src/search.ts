@@ -91,8 +91,8 @@ export async function searchWorkspace(query: string): Promise<SearchResult[]> {
   const trimmed = query.trim();
   if (!trimmed) {
     return [
-      ...projectResults.sort(byNewest).slice(0, IDLE_PROJECTS),
       ...conversationResults.sort(byNewest).slice(0, IDLE_CONVERSATIONS),
+      ...projectResults.sort(byNewest).slice(0, IDLE_PROJECTS),
     ];
   }
   return [...projectResults, ...conversationResults]

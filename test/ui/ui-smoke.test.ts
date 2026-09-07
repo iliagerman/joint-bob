@@ -959,8 +959,9 @@ test("the Settings shortcuts tab edits every shortcut in one place", async () =>
   await page.getByTestId("settings-dialog").waitFor({ state: "hidden" });
 });
 
-// The bar reaches a conversation in a project that is not the open one.
-test("the search bar finds a project and a conversation across the whole workspace", async () => {
+// The bar opens on recent conversations, reaches workspace destinations, and still
+// finds a conversation in a project that is not the open one.
+test("the search bar navigates the whole workspace", async () => {
   await page.keyboard.press("Meta+Shift+KeyP");
   await page.getByTestId("spotlight-dialog").waitFor({ state: "visible" });
   await page.getByTestId("spotlight-option").first().waitFor();
@@ -968,10 +969,35 @@ test("the search bar finds a project and a conversation across the whole workspa
   assert.equal(await spotlightInput.getAttribute("role"), "combobox");
   assert.equal(await page.getByTestId("spotlight-results").getAttribute("role"), "listbox");
   assert.equal(await spotlightInput.getAttribute("aria-activedescendant"), await page.getByTestId("spotlight-option").first().getAttribute("id"));
+  assert.equal(await page.getByTestId("spotlight-option").first().getAttribute("data-kind"), "conversation", "recent conversations come first before typing");
 
+  await page.keyboard.press("Escape");
+  await page.getByTestId("spotlight-dialog").waitFor({ state: "hidden" });
+  await page.keyboard.press("Meta+Shift+KeyP");
+  await spotlightInput.fill("recent conversations");
+  await page.getByTestId("spotlight-option").filter({ hasText: "Recent conversations" }).click();
+  await page.getByTestId("recent-sessions-dialog").waitFor({ state: "visible" });
+  await page.getByTestId("recent-sessions-close-button").click();
+
+  await page.keyboard.press("Meta+Shift+KeyP");
+  await spotlightInput.fill("settings shortcuts");
+  await page.getByTestId("spotlight-option").filter({ hasText: "Shortcuts" }).click();
+  await page.getByTestId("settings-dialog").waitFor({ state: "visible" });
+  assert.equal(await page.locator("#settingsForm").getAttribute("data-tab"), "shortcuts");
+  await page.getByTestId("settings-cancel-button").click();
+
+  for (const [query, view] of [["projects window", "projects"], ["conversations window", "sessions"], ["messages window", "chat"], ["canvas window", "canvas"]]) {
+    await page.keyboard.press("Meta+Shift+KeyP");
+    await spotlightInput.fill(query);
+    await page.getByTestId("spotlight-option").filter({ hasText: new RegExp(`^Go to${query.split(" ")[0]} window`, "i") }).click();
+    await page.getByTestId("spotlight-dialog").waitFor({ state: "hidden" });
+    assert.ok(await page.locator("body").evaluate((body, name) => body.classList.contains(`view-${name}`), view), `${query} opens the ${view} view`);
+  }
+
+  await page.keyboard.press("Meta+Shift+KeyP");
   await spotlightInput.fill("infra");
-  await page.getByTestId("spotlight-option").first().waitFor();
-  const first = page.getByTestId("spotlight-option").first();
+  const first = page.getByTestId("spotlight-option").filter({ hasText: "Infra Scripts" }).first();
+  await first.waitFor();
   assert.equal(await first.getAttribute("data-kind"), "project", "a project name matches the project row");
   await first.click();
   await page.getByTestId("spotlight-dialog").waitFor({ state: "hidden" });
@@ -979,8 +1005,9 @@ test("the search bar finds a project and a conversation across the whole workspa
 
   await page.keyboard.press("Meta+Shift+KeyP");
   await page.getByTestId("spotlight-input").fill("thread");
-  await page.getByTestId("spotlight-option").first().waitFor();
-  await page.getByTestId("spotlight-option").first().click();
+  const conversation = page.getByTestId("spotlight-option").filter({ hasText: "Mobile Multi-Agent Threads" });
+  await conversation.waitFor();
+  await conversation.click();
   await page.getByTestId("spotlight-dialog").waitFor({ state: "hidden" });
 });
 
