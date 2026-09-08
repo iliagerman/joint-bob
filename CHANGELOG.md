@@ -3,9 +3,15 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.9.0 — 2026-09-08
 
-- Added visible and two-stroke shortcuts, editable queued messages, safer cluster departure, and stronger test-data isolation.
+- Header buttons show their assigned shortcut, and digits 1–9 and 0 select the first ten rows in picker dialogs.
+- Shortcuts can use two-stroke sequences such as Control-Space followed by Backslash, without allowing prefix conflicts.
+- Queued Claude messages can be edited or cancelled before they run; cancelled message attachments are removed.
+- Leaving a cluster now requires reachable peers and removes their devices from Joint Bob's Syncthing folders.
+- Settings adds secret-provider filters, separate Pi and Claude path tabs, resource folder pickers, and password changes.
+- The project header gives its controls a separate row and puts Board beside the global conversation controls.
+- Test processes reject production data paths, including symlinks to `~/.joint-bob`.
 
 ## 1.8.0 — 2026-09-07
 
