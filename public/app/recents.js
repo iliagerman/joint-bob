@@ -235,6 +235,12 @@ for (const trigger of document.querySelectorAll("[data-recent-sessions-open]")) 
   trigger.addEventListener("click", openRecentSessions);
 }
 elements.recentSessionsSearchInput.addEventListener("input", () => renderRecentSessionsDialog());
+// Search inputs consume Escape to clear their query instead of dismissing the dialog.
+elements.recentSessionsSearchInput.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  event.preventDefault();
+  elements.recentSessionsDialog.close();
+});
 attachDigitShortcuts(elements.recentSessionsDialog, () => recentSessionShortcuts, (entry) => openRecentSession(entry).catch((error) => toast(error.message)));
 /** The recorded recents chord reaches the list from any view, including
  * mid-conversation. A canvas pane stays out of the way: it forwards the keystroke to

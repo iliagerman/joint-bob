@@ -93,6 +93,18 @@ test("chat controls advertise shortcuts except safeguards", async () => {
   assert.equal(await page.getByTestId("chat-safeguards-button").getAttribute("data-shortcut-hint"), null);
 });
 
+test("Escape closes recent conversations even with a search query", async () => {
+  for (const query of ["", "Thread"]) {
+    await page.getByTestId("recent-sessions-open-button").click();
+    const dialog = page.getByTestId("recent-sessions-dialog");
+    await dialog.waitFor({ state: "visible" });
+    await page.getByTestId("recent-sessions-search-input").fill(query);
+    await page.keyboard.press("Escape");
+    await dialog.waitFor({ state: "hidden", timeout: 2000 });
+    assert.equal(await page.getByTestId("recent-sessions-open-button").evaluate((button) => button === document.activeElement), true);
+  }
+});
+
 test("the running and settings shortcuts open their dialogs", async () => {
   await page.keyboard.press("Meta+Shift+KeyO");
   await page.getByTestId("running-conversations-dialog").waitFor({ state: "visible" });
