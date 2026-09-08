@@ -17,7 +17,7 @@ test("the toolbar owns one Pi Thinking or Claude Effort control", async () => {
   const toolbar = html.slice(toolbarStart, toolbarEnd);
   const dialog = html.slice(dialogStart, dialogEnd);
 
-  assert.match(toolbar, /<label class="chat-control chat-mode-control" id="chatModeControl" for="reasoningLevelSelect" hidden>/);
+  assert.match(toolbar, /<label class="chat-control chat-mode-control" id="chatModeControl" data-shortcut-hint="selectThinking" for="reasoningLevelSelect" hidden>/);
   assert.match(toolbar, /<span id="chatModeLabel">Thinking<\/span>[\s\S]*id="reasoningLevelSelect" class="chat-toolbar-control" aria-labelledby="chatModeLabel" data-testid="chat-reasoning-select"/);
   assert.doesNotMatch(dialog, /reasoningLevelSelect|modelDialogReasoning/);
   for (const id of ["chatNodeSelect", "chatHarnessSelect", "modelButton", "reasoningLevelSelect"]) {
@@ -67,7 +67,7 @@ test("model buttons are name-only and mobile controls use fixed toolbar rows", a
   assert.match(styles, /\.chat-recents-button\s*\{[^}]*grid-column:\s*3;[^}]*grid-row:\s*2;/);
   assert.doesNotMatch(styles, /\.model-button-mode/);
   assert.doesNotMatch(styles, /\.chat-toolbar[^\{]*\{[^}]*overflow-x:\s*auto/);
-  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v142";/);
+  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v146";/);
 });
 
 test("the status light and Stop sit on the chat header's meta row", async () => {

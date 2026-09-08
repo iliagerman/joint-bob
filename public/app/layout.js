@@ -37,6 +37,11 @@ export function setPanelCollapsed(panel, collapsed) {
   else savePreferencesInBackground({ chatsPanelCollapsed: collapsed });
 }
 
+export function togglePanel(panel) {
+  if (matchMedia("(max-width: 1023px)").matches) return;
+  setPanelCollapsed(panel, !document.body.classList.contains(`${panel}-collapsed`));
+}
+
 const MOBILE_VIEWS = ["projects", "sessions", "board", "chat", "canvas"];
 
 function currentMobileView() {

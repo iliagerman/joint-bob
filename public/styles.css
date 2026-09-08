@@ -325,23 +325,19 @@ body.view-chat #chatPanel :is(.panel-scroll, .board-columns, .messages) {
 /* Project tools mirror the conversations controls: title row first, controls below. */
 .project-actions { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 12px 12px 0; }
 .project-actions .icon-button { min-width: 31px; width: 31px; min-height: 31px; font-size: 14px; }
-.project-actions .icon-button svg { width: 16px; height: 16px; }
-/* A tiny key badge pinned to an icon's corner, so the shortcut in force is visible
-   where the action lives. */
-[data-shortcut-hint] { position: relative; }
+.project-actions .icon-button svg { width: 22px; height: 22px; }
+/* Keep key badges in the button layout rather than overlapping its icon. */
 .shortcut-hint {
-  position: absolute;
-  right: -4px;
-  bottom: -4px;
-  min-width: 13px;
-  padding: 0 3px;
+  flex: 0 0 auto;
+  padding: 1px 2px;
   border: 1px solid var(--line-strong);
   border-radius: 6px;
   background: var(--header);
-  color: var(--muted);
+  color: var(--text);
   font-family: var(--mono);
-  font-size: 8.5px;
-  line-height: 12px;
+  font-size: 16px;
+  line-height: 22px;
+  white-space: nowrap;
   text-align: center;
   pointer-events: none;
 }
@@ -464,9 +460,6 @@ body.view-chat #chatPanel :is(.panel-scroll, .board-columns, .messages) {
 .project-search-row { display: flex; align-items: center; gap: 6px; margin: 12px 12px 2px; }
 .project-search-row .search-shell { flex: 1; min-width: 0; margin: 0; }
 .project-search-row .icon-button { min-width: 40px; width: 40px; min-height: 40px; flex: none; }
-/* The canvas launcher sits on its own row under the search and add-project row. */
-.project-canvas-row { margin: 6px 12px 2px; }
-.project-canvas-row .canvas-launch { width: 100%; }
 input, textarea, select {
   width: 100%;
   min-width: 0;
@@ -1187,7 +1180,7 @@ select.chat-toolbar-control {
 .attachment-chip button { border: 0; background: transparent; color: var(--muted); padding: 0; min-height: auto; }
 .attach-button { font-size: 20px; min-width: 42px; width: 42px; min-height: 44px; border-radius: var(--radius-ctl); }
 textarea { flex: 1; resize: none; max-height: 160px; min-height: 46px; border: 1px solid var(--line); border-radius: 14px; padding: 12px 15px; font-size: 16px; background-color: var(--panel); }
-.send { min-width: 46px; width: 46px; min-height: 46px; padding: 0; border-radius: 14px; color: var(--on-ink); background: var(--accent); border-color: transparent; }
+.send { display: inline-grid; place-items: center; min-width: 46px; width: 46px; min-height: 46px; padding: 0; border-radius: 14px; color: var(--on-ink); background: var(--accent); border-color: transparent; }
 .send:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, var(--text)); }
 .send svg { width: 20px; height: 20px; }
 
@@ -1651,6 +1644,17 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
     gap: 10px;
     padding: 10px;
   }
+  button[data-shortcut-hint] { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: wrap; }
+  button.icon-button[data-shortcut-hint] { flex-direction: column; flex-wrap: nowrap; width: auto; min-width: 36px; min-height: 50px; padding: 4px 2px; gap: 3px; }
+  .project-actions { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 2px; }
+  .project-actions button.icon-button[data-shortcut-hint] { min-width: 0; width: 100%; min-height: 58px; padding-inline: 0; }
+  .chat-toolbar button[data-shortcut-hint] { flex-direction: column; flex-wrap: nowrap; padding: 5px 10px; }
+  .chat-more-actions > button { min-height: 70px; }
+  .chat-control > .shortcut-hint { justify-self: center; }
+  .chat-toolbar .shortcut-hint { min-height: 24px; }
+  .new-chat-row button[data-shortcut-hint] { padding: 6px 8px; }
+  .new-chat-row button[data-shortcut-hint]::before { margin-right: 0; }
+  .new-chat-row .shortcut-hint { flex-basis: 100%; }
   .mobile-nav { display: none; }
   .back-button { display: none; }
   /* `.shell` declares these custom properties, so the override has to land on
@@ -1721,7 +1725,7 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   .panel-bar, .chat-topbar { height: auto; min-height: 58px; padding: 10px 52px 10px 12px; padding-top: calc(10px + env(safe-area-inset-top, 0px)); }
   .app-menu { display: block; position: fixed; top: calc(18px + env(safe-area-inset-top, 0px)); right: 16px; z-index: 50; }
   /* The bottom bar already reaches the board and settings, so the header drops both. */
-  #settingsButton, #projectBoardButton, #openCanvasButton, .project-canvas-row, #canvasPanel { display: none; }
+  #settingsButton, #projectBoardButton, #openCanvasButton, #canvasPanel { display: none; }
   .shortcut-hint { display: none; }
   .messages { padding: 12px; }
   .composer { padding: 6px 8px 10px; }
@@ -2123,29 +2127,6 @@ body.file-view { overflow: auto; }
 /* ---- Canvas: several existing conversations at once ---- */
 /* Panels are display:none until their body view class shows them; the canvas is a
    desktop surface, so its show rule lives inside the desktop media block only. */
-.canvas-launch {
-  flex: none;
-  min-height: 40px;
-  padding: 0 12px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--line));
-  border-radius: var(--radius-ctl);
-  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
-  color: var(--heading-soft);
-  font-size: 12.5px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  cursor: pointer;
-  transition: background-color 140ms ease, border-color 140ms ease;
-}
-.canvas-launch svg { width: 15px; height: 15px; }
-.canvas-launch:hover, .canvas-launch:focus-visible {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 20%, var(--panel));
-}
 .canvas-view-controls {
   flex: none;
   display: flex;
@@ -2419,7 +2400,7 @@ body.file-view { overflow: auto; }
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
-.canvas-session-option span {
+.canvas-session-option span:not(.list-shortcut-index) {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -2430,6 +2411,7 @@ body.file-view { overflow: auto; }
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
+.canvas-session-numbered { position: relative; padding-left: 38px; }
 .canvas-session-option:hover, .canvas-session-option:focus-visible { background: var(--field); }
 .canvas-picker-empty { margin: 0; color: var(--muted); font-size: 12.5px; }
 

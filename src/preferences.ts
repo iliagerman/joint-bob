@@ -158,7 +158,7 @@ export type CanvasModifier = CanvasChordModifier;
  * two-stroke sequence, at most four physical keys, or null when unbound. Conversation
  * keys ride the `base` modifier chord plus their own single key. */
 export interface CanvasKeymapPreference {
-  version: 2;
+  version: 3;
   base: CanvasModifier[];
   commands: Record<string, string[] | null>;
 }
@@ -167,15 +167,17 @@ const CANVAS_MODIFIERS: CanvasModifier[] = [...CANVAS_CHORD_MODIFIERS];
 // Order matters: a command added later takes its default chord only if no earlier
 // command already holds it, so an existing account never loses a binding it configured.
 const CANVAS_KEYMAP_COMMANDS = [
-  "toggleView", "spotlight", "pendingReviews", "recents", "runningConversations", "settings",
+  "toggleView", "spotlight", "pendingReviews", "recents", "runningConversations", "settings", "focusInput",
   "paneSearch", "recentPane", "focusPane",
   "splitRight", "splitBelow", "closePane", "createPage",
   "nextPage", "prevPage", "focusLeft", "focusRight", "focusUp", "focusDown",
   "page1", "page2", "page3", "page4", "page5", "page6", "page7", "page8", "page9",
+  "toggleProjects", "toggleChats", "board", "newProject", "newPiChat", "newClaudeChat",
+  "runsOn", "selectAgent", "selectModel", "selectThinking", "terminal", "notify", "addToCanvas", "rename",
 ] as const;
 
 export const defaultCanvasKeymap = (): CanvasKeymapPreference => ({
-  version: 2,
+  version: 3,
   base: ["meta", "shift"],
   commands: {
     toggleView: ["meta", "shift", "V"],
@@ -184,12 +186,27 @@ export const defaultCanvasKeymap = (): CanvasKeymapPreference => ({
     recents: ["meta", "K"],
     runningConversations: ["meta", "shift", "O"],
     settings: ["meta", ","],
+    focusInput: ["meta", "shift", "I"],
+    toggleProjects: ["ctrl", "shift", "["],
+    toggleChats: ["ctrl", "shift", "]"],
+    board: ["meta", "shift", "B"],
+    newProject: ["meta", "alt", "P"],
+    newPiChat: ["meta", "alt", "N"],
+    newClaudeChat: ["meta", "alt", "C"],
+    runsOn: ["ctrl", "alt", "N"],
+    selectAgent: ["ctrl", "alt", "A"],
+    selectModel: ["ctrl", "alt", "M"],
+    selectThinking: ["ctrl", "alt", "T"],
+    terminal: ["ctrl", "alt", "X"],
+    notify: ["ctrl", "alt", "Y"],
+    addToCanvas: ["ctrl", "alt", "V"],
+    rename: ["ctrl", "alt", "R"],
     paneSearch: ["meta", "shift", "F"],
     recentPane: ["meta", "shift", "E"],
     focusPane: ["meta", "shift", "G"],
     splitRight: ["ctrl", "SPACE", "\\"],
     splitBelow: ["ctrl", "SPACE", "-"],
-    closePane: ["meta", "shift", "X"],
+    closePane: ["ctrl", "SPACE", "X"],
     createPage: ["meta", "shift", "C"],
     nextPage: ["ctrl", "alt", "ARROWRIGHT"],
     prevPage: ["ctrl", "alt", "ARROWLEFT"],
@@ -240,13 +257,14 @@ export function normalizeCanvasKeymapPreference(value: unknown): CanvasKeymapPre
       : (((source.commands as Record<string, unknown> | undefined)?.[command] === undefined
         ? [...defaultCanvasKeymap().commands[command]!]
         : (source.commands as Record<string, unknown>)[command]) as unknown);
-    if (source.version !== 2 && command === "splitRight" && JSON.stringify(raw) === JSON.stringify(["ctrl", "\\"])) raw = ["ctrl", "SPACE", "\\"];
-    if (source.version !== 2 && command === "splitBelow" && JSON.stringify(raw) === JSON.stringify(["ctrl", "-"])) raw = ["ctrl", "SPACE", "-"];
+    if (!(Number(source.version) >= 2) && command === "splitRight" && JSON.stringify(raw) === JSON.stringify(["ctrl", "\\"])) raw = ["ctrl", "SPACE", "\\"];
+    if (!(Number(source.version) >= 2) && command === "splitBelow" && JSON.stringify(raw) === JSON.stringify(["ctrl", "-"])) raw = ["ctrl", "SPACE", "-"];
+    if (!(Number(source.version) >= 3) && command === "closePane" && JSON.stringify(raw) === JSON.stringify(["meta", "shift", "X"])) raw = ["ctrl", "SPACE", "X"];
     const chord = raw === null || typeof raw === "string" ? null : normalizeCanvasChordTokens(raw);
     commands[command] = chord && !taken.some((existing) => shortcutsConflict(existing, chord)) ? chord : null;
     if (commands[command]) taken.push(commands[command]);
   }
-  return { version: 2, base, commands };
+  return { version: 3, base, commands };
 }
 
 /** A hand-edited column must degrade to the default chord, never take the node down. */

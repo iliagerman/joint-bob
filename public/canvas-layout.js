@@ -178,16 +178,18 @@ export const conversationChordLabel = (keymap, key) => chordLabel(conversationCh
 
 /** Every command the keymap can bind, in collision-priority order: where a stored
  *  keymap hands one chord to two commands, the earlier command keeps it. The first
- *  six answer even while the canvas is closed. */
+ *  six and the app toolbar commands answer even while the canvas is closed. */
 export const CANVAS_KEYMAP_COMMANDS = [
-  "toggleView", "spotlight", "pendingReviews", "recents", "runningConversations", "settings",
+  "toggleView", "spotlight", "pendingReviews", "recents", "runningConversations", "settings", "focusInput",
   "paneSearch", "recentPane", "focusPane",
   "splitRight", "splitBelow", "closePane", "createPage",
   "nextPage", "prevPage", "focusLeft", "focusRight", "focusUp", "focusDown",
   "page1", "page2", "page3", "page4", "page5", "page6", "page7", "page8", "page9",
+  "toggleProjects", "toggleChats", "board", "newProject", "newPiChat", "newClaudeChat",
+  "runsOn", "selectAgent", "selectModel", "selectThinking", "terminal", "notify", "addToCanvas", "rename",
 ];
 export const DEFAULT_CANVAS_KEYMAP = {
-  version: 2,
+  version: 3,
   // The chord every conversation key rides under: the base modifiers plus its key.
   base: ["meta", "shift"],
   commands: {
@@ -197,12 +199,27 @@ export const DEFAULT_CANVAS_KEYMAP = {
     recents: ["meta", "K"],
     runningConversations: ["meta", "shift", "O"],
     settings: ["meta", ","],
+    focusInput: ["meta", "shift", "I"],
+    toggleProjects: ["ctrl", "shift", "["],
+    toggleChats: ["ctrl", "shift", "]"],
+    board: ["meta", "shift", "B"],
+    newProject: ["meta", "alt", "P"],
+    newPiChat: ["meta", "alt", "N"],
+    newClaudeChat: ["meta", "alt", "C"],
+    runsOn: ["ctrl", "alt", "N"],
+    selectAgent: ["ctrl", "alt", "A"],
+    selectModel: ["ctrl", "alt", "M"],
+    selectThinking: ["ctrl", "alt", "T"],
+    terminal: ["ctrl", "alt", "X"],
+    notify: ["ctrl", "alt", "Y"],
+    addToCanvas: ["ctrl", "alt", "V"],
+    rename: ["ctrl", "alt", "R"],
     paneSearch: ["meta", "shift", "F"],
     recentPane: ["meta", "shift", "E"],
     focusPane: ["meta", "shift", "G"],
     splitRight: ["ctrl", "SPACE", "\\"],
     splitBelow: ["ctrl", "SPACE", "-"],
-    closePane: ["meta", "shift", "X"],
+    closePane: ["ctrl", "SPACE", "X"],
     createPage: ["meta", "shift", "C"],
     nextPage: ["ctrl", "alt", "ARROWRIGHT"],
     prevPage: ["ctrl", "alt", "ARROWLEFT"],
@@ -230,15 +247,16 @@ export function normalizeCanvasKeymap(keymap) {
         : LEGACY_COMMAND_KEYS[command] ? [...base, canonicalChordKey(source[command]) ?? LEGACY_COMMAND_KEYS[command]]
           : [...DEFAULT_CANVAS_KEYMAP.commands[command]])
       : (source.commands?.[command] === undefined ? [...DEFAULT_CANVAS_KEYMAP.commands[command]] : source.commands[command]);
-    if (source.version !== 2 && command === "splitRight" && chordId(raw) === chordId(["ctrl", "\\"])) raw = ["ctrl", "SPACE", "\\"];
-    if (source.version !== 2 && command === "splitBelow" && chordId(raw) === chordId(["ctrl", "-"])) raw = ["ctrl", "SPACE", "-"];
+    if (!(source.version >= 2) && command === "splitRight" && chordId(raw) === chordId(["ctrl", "\\"])) raw = ["ctrl", "SPACE", "\\"];
+    if (!(source.version >= 2) && command === "splitBelow" && chordId(raw) === chordId(["ctrl", "-"])) raw = ["ctrl", "SPACE", "-"];
+    if (!(source.version >= 3) && command === "closePane" && chordId(raw) === chordId(["meta", "shift", "X"])) raw = ["ctrl", "SPACE", "X"];
     const chord = raw === null ? null : normalizeChord(raw);
     // A chord the canvas cannot carry is dropped, not stored; a chord two commands
     // would share goes to the earlier one, so the second is unbound rather than random.
     commands[command] = chord && !taken.some((existing) => shortcutsConflict(existing, chord)) ? chord : null;
     if (commands[command]) taken.push(chord);
   }
-  return { version: 2, base, commands };
+  return { version: 3, base, commands };
 }
 /** Command/Control + ? opens the shortcuts panel. This one is fixed: it is how a person
  *  finds out what the configurable keys are. It matches the typed "?" as well as

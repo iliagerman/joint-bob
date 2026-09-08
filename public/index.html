@@ -44,7 +44,7 @@
               <span>agent workspace</span>
             </div>
           </div>
-          <button class="ghost icon-button collapse-button" id="collapseProjectsButton" type="button" aria-label="Collapse projects panel" title="Collapse projects panel" data-testid="projects-panel-collapse-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 6 8.5 12l6 6"/></svg></button>
+          <button class="ghost icon-button collapse-button" id="collapseProjectsButton" data-shortcut-hint="toggleProjects" type="button" aria-label="Collapse projects panel" title="Collapse projects panel" data-testid="projects-panel-collapse-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 6 8.5 12l6 6"/></svg></button>
         </header>
         <div class="list-loading" id="projectsLoading" role="progressbar" aria-label="Loading projects" data-testid="project-list-loading-bar"><span></span></div>
         <div class="project-actions">
@@ -56,7 +56,8 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" /><path d="M3 4v4h4" /><path d="M12 7.5V12l3.2 1.9" /></svg>
           </button>
           <button class="ghost icon-button" type="button" data-running-conversations-open aria-label="Running conversations" title="Running conversations" data-shortcut-hint="runningConversations" data-testid="running-conversations-open-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5.5 10 6.5L8 18.5z"/></svg></button>
-          <button class="ghost icon-button" id="projectBoardButton" type="button" aria-label="Project board" title="Project board" data-testid="projects-open-board-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M10 4v16M16 4v16"/></svg></button>
+          <button class="ghost icon-button" id="projectBoardButton" data-shortcut-hint="board" type="button" aria-label="Project board" title="Project board" data-testid="projects-open-board-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M10 4v16M16 4v16"/></svg></button>
+          <button class="ghost icon-button" id="openCanvasButton" type="button" aria-label="Open the canvas" title="Canvas" data-shortcut-hint="toggleView" data-testid="projects-open-canvas-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg></button>
           <button class="ghost icon-button" id="settingsButton" type="button" aria-label="Settings" title="Settings" data-shortcut-hint="settings" data-testid="settings-open-button">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           </button>
@@ -66,17 +67,11 @@
             <span class="sr-only">Search projects</span>
             <input id="projectSearchInput" type="search" autocomplete="off" placeholder="Search projects" data-testid="project-list-search-input" />
           </label>
-          <button class="primary icon-button" id="newProjectButton" type="button" aria-label="Add project" title="Add project" data-testid="project-create-button">+</button>
-        </div>
-        <div class="project-canvas-row">
-          <button class="canvas-launch" id="openCanvasButton" type="button" aria-label="Open the canvas" title="Canvas: conversations side by side" data-shortcut-hint="toggleView" data-testid="projects-open-canvas-button">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg>
-            <span>Canvas</span>
-          </button>
+          <button class="primary icon-button" id="newProjectButton" data-shortcut-hint="newProject" type="button" aria-label="Add project" title="Add project" data-testid="project-create-button">+</button>
         </div>
         <div class="panel-scroll project-list" id="projectList"></div>
         <div class="panel-rail">
-          <button class="ghost icon-button" id="expandProjectsButton" type="button" aria-label="Expand projects panel" title="Expand projects panel" data-testid="projects-panel-expand-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 6l6 6-6 6"/></svg></button>
+          <button class="ghost icon-button" id="expandProjectsButton" data-shortcut-hint="toggleProjects" type="button" aria-label="Expand projects panel" title="Expand projects panel" data-testid="projects-panel-expand-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 6l6 6-6 6"/></svg></button>
           <span class="panel-rail-label">Projects</span>
         </div>
       </section>
@@ -91,12 +86,12 @@
           <button class="ghost icon-button" id="chatsRecentSessionsButton" type="button" data-recent-sessions-open aria-label="Recent conversations" title="Recent conversations" data-shortcut-hint="recents" data-testid="chats-recent-sessions-open-button">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" /><path d="M3 4v4h4" /><path d="M12 7.5V12l3.2 1.9" /></svg>
           </button>
-          <button class="ghost icon-button collapse-button" id="collapseChatsButton" type="button" aria-label="Collapse conversations panel" title="Collapse conversations panel" data-testid="chats-panel-collapse-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 6 8.5 12l6 6"/></svg></button>
+          <button class="ghost icon-button collapse-button" id="collapseChatsButton" data-shortcut-hint="toggleChats" type="button" aria-label="Collapse conversations panel" title="Collapse conversations panel" data-testid="chats-panel-collapse-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 6 8.5 12l6 6"/></svg></button>
         </header>
         <div class="list-loading" id="sessionsLoading" role="progressbar" aria-label="Loading conversations" data-testid="session-list-loading-bar" hidden><span></span></div>
         <div class="new-chat-row">
-          <button class="primary" id="newSessionButton" type="button" disabled data-testid="session-create-button">＋ Pi chat</button>
-          <button class="primary claude" id="newClaudeSessionButton" type="button" disabled data-testid="session-create-claude-button">＋ Claude chat</button>
+          <button class="primary" id="newSessionButton" data-shortcut-hint="newPiChat" type="button" disabled data-testid="session-create-button">＋ Pi chat</button>
+          <button class="primary claude" id="newClaudeSessionButton" data-shortcut-hint="newClaudeChat" type="button" disabled data-testid="session-create-claude-button">＋ Claude chat</button>
         </div>
         <div class="section-title live-row">
           <span>Conversations</span>
@@ -115,7 +110,7 @@
         </div>
         <div class="panel-scroll session-list" id="sessionList"></div>
         <div class="panel-rail">
-          <button class="ghost icon-button" id="expandChatsButton" type="button" aria-label="Expand conversations panel" title="Expand conversations panel" data-testid="chats-panel-expand-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 6l6 6-6 6"/></svg></button>
+          <button class="ghost icon-button" id="expandChatsButton" data-shortcut-hint="toggleChats" type="button" aria-label="Expand conversations panel" title="Expand conversations panel" data-testid="chats-panel-expand-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 6l6 6-6 6"/></svg></button>
           <span class="panel-rail-label">Conversations</span>
         </div>
       </section>
@@ -139,7 +134,7 @@
             <h1>Canvas</h1>
             <p>Existing conversations, side by side</p>
           </div>
-          <button class="ghost compact" id="canvasFinderButton" type="button" title="Search the conversations on the canvas" data-testid="canvas-finder-button">Find</button>
+          <button class="ghost compact" id="canvasFinderButton" data-shortcut-hint="paneSearch" type="button" title="Search the conversations on the canvas" data-testid="canvas-finder-button">Find</button>
           <button class="ghost compact" id="canvasKeymapButton" type="button" title="Configure canvas keyboard shortcuts" data-testid="canvas-keymap-button">Shortcuts</button>
           <button class="ghost compact" id="canvasOrganizeButton" type="button" title="Lay every conversation out as an even grid" data-testid="canvas-organize-button">Organize</button>
           <button class="primary compact" id="canvasAddButton" type="button" data-testid="canvas-add-button">+ Add conversation</button>
@@ -148,7 +143,7 @@
           <div id="canvasPageTabs" role="tablist" data-testid="canvas-page-tabs"></div>
           <button class="ghost compact" id="canvasPageMoveLeftButton" type="button" aria-label="Move page left" data-testid="canvas-page-move-left-button">←</button>
           <button class="ghost compact" id="canvasPageMoveRightButton" type="button" aria-label="Move page right" data-testid="canvas-page-move-right-button">→</button>
-          <button class="ghost compact" id="canvasPageAddButton" type="button" aria-label="Create page" data-testid="canvas-page-add-button">+ Page</button>
+          <button class="ghost compact" id="canvasPageAddButton" data-shortcut-hint="createPage" type="button" aria-label="Create page" data-testid="canvas-page-add-button">+ Page</button>
           <button class="ghost compact danger" id="canvasPageDeleteButton" type="button" aria-label="Delete page" data-testid="canvas-page-delete-button">Delete</button>
         </div>
         <div class="canvas-view-controls" aria-label="Canvas view controls">
@@ -187,20 +182,20 @@
         </header>
         <div class="chat-toolbar panel-toolbar" id="chatToolbar">
           <div class="chat-session-controls">
-            <label class="chat-control" for="chatNodeSelect">
+            <label class="chat-control" for="chatNodeSelect" data-shortcut-hint="runsOn">
               <span>Runs on</span>
               <select id="chatNodeSelect" class="chat-toolbar-control" aria-label="Execution node" data-testid="chat-node-select"></select>
             </label>
-            <label class="chat-control" for="chatHarnessSelect">
+            <label class="chat-control" for="chatHarnessSelect" data-shortcut-hint="selectAgent">
               <span>Agent</span>
               <select id="chatHarnessSelect" class="chat-toolbar-control" aria-label="Harness" data-testid="chat-harness-select"></select>
             </label>
           </div>
           <div class="chat-control chat-model-control">
             <span>Model</span>
-            <button class="ghost compact model-button chat-toolbar-control" id="modelButton" type="button" disabled data-testid="chat-model-button"><span id="modelButtonName">Model</span></button>
+            <button class="ghost compact model-button chat-toolbar-control" id="modelButton" data-shortcut-hint="selectModel" type="button" disabled data-testid="chat-model-button"><span id="modelButtonName">Model</span></button>
           </div>
-          <label class="chat-control chat-mode-control" id="chatModeControl" for="reasoningLevelSelect" hidden>
+          <label class="chat-control chat-mode-control" id="chatModeControl" data-shortcut-hint="selectThinking" for="reasoningLevelSelect" hidden>
             <span id="chatModeLabel">Thinking</span>
             <select id="reasoningLevelSelect" class="chat-toolbar-control" aria-labelledby="chatModeLabel" data-testid="chat-reasoning-select"></select>
           </label>
@@ -209,10 +204,10 @@
             <summary class="ghost icon-button" aria-label="More chat actions" title="More chat actions" data-testid="chat-more-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7" fill="currentColor" /><circle cx="12" cy="12" r="1.7" fill="currentColor" /><circle cx="19" cy="12" r="1.7" fill="currentColor" /></svg></summary>
             <div class="chat-more-actions">
               <button class="ghost compact safeguards-button" id="safeguardsButton" type="button" aria-pressed="true" title="Safe Guard checks are active for this Pi session" disabled data-testid="chat-safeguards-button">Safeguards on</button>
-              <button class="ghost compact" id="openTerminalButton" type="button" disabled data-testid="chat-open-terminal-button">Terminal</button>
-              <button class="ghost compact" id="notifyButton" type="button" aria-pressed="false" title="Notify when a conversation needs review" data-testid="chat-notify-button">Notify</button>
-              <button class="ghost compact" id="addToCanvasButton" type="button" disabled data-testid="chat-add-to-canvas-button">Add to canvas</button>
-              <button class="ghost compact" id="renameSessionButton" type="button" disabled data-testid="chat-rename-button">Rename</button>
+              <button class="ghost compact" id="openTerminalButton" data-shortcut-hint="terminal" type="button" disabled data-testid="chat-open-terminal-button">Terminal</button>
+              <button class="ghost compact" id="notifyButton" data-shortcut-hint="notify" type="button" aria-pressed="false" title="Notify when a conversation needs review" data-testid="chat-notify-button">Notify</button>
+              <button class="ghost compact" id="addToCanvasButton" data-shortcut-hint="addToCanvas" type="button" disabled data-testid="chat-add-to-canvas-button">Add to canvas</button>
+              <button class="ghost compact" id="renameSessionButton" data-shortcut-hint="rename" type="button" disabled data-testid="chat-rename-button">Rename</button>
               <button class="ghost compact" id="installAppButton" type="button" hidden data-testid="chat-install-button">Install</button>
             </div>
           </details>

@@ -14,6 +14,21 @@ const event = (code, modifiers = {}) => ({
   code, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...modifiers,
 });
 
+import { normalizeCanvasKeymapPreference } from "../src/preferences.js";
+
+for (const normalize of [normalizeCanvasKeymap, normalizeCanvasKeymapPreference]) {
+  test(`${normalize.name}: close uses a sequence and migrates only the old default`, () => {
+    assert.deepEqual(normalize({}).commands.closePane, ["ctrl", "SPACE", "X"]);
+    assert.deepEqual(normalize({ version: 2, commands: { closePane: ["meta", "shift", "X"] } }).commands.closePane, ["ctrl", "SPACE", "X"]);
+    for (const binding of [null, ["alt", "X"]]) {
+      assert.deepEqual(normalize({ version: 2, commands: { closePane: binding } }).commands.closePane, binding);
+    }
+    const current = normalize({});
+    assert.deepEqual(normalize({ ...current, commands: { closePane: ["meta", "shift", "X"], splitBelow: ["ctrl", "-"] } }).commands.closePane, ["meta", "shift", "X"]);
+    assert.deepEqual(normalize({ ...current, commands: { splitBelow: ["ctrl", "-"] } }).commands.splitBelow, ["ctrl", "-"]);
+  });
+}
+
 // ─── Chords ────────────────────────────────────────────────────────────────────────
 
 test("a shortcut supports one chord or a two-stroke sequence, at most four keys", () => {

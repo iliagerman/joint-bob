@@ -27,6 +27,21 @@ const COMMAND_ROWS = [
   { command: "recents", label: "Open the recent conversations list" },
   { command: "runningConversations", label: "Open the running conversations list" },
   { command: "settings", label: "Open the settings dialog" },
+  { command: "focusInput", label: "Put the cursor in the field you can type in" },
+  { command: "toggleProjects", label: "Collapse or expand the projects panel" },
+  { command: "toggleChats", label: "Collapse or expand the conversations panel" },
+  { command: "board", label: "Open the project board" },
+  { command: "newProject", label: "Add a project" },
+  { command: "newPiChat", label: "Start a Pi conversation" },
+  { command: "newClaudeChat", label: "Start a Claude conversation" },
+  { command: "runsOn", label: "Chat: focus the Runs on selector" },
+  { command: "selectAgent", label: "Chat: focus the agent selector" },
+  { command: "selectModel", label: "Chat: choose a model" },
+  { command: "selectThinking", label: "Chat: focus the thinking or effort selector" },
+  { command: "terminal", label: "Chat: open the terminal" },
+  { command: "notify", label: "Chat: toggle notifications" },
+  { command: "addToCanvas", label: "Chat: add this conversation to the canvas" },
+  { command: "rename", label: "Chat: rename this conversation" },
   { command: "toggleView", label: "Switch between the canvas and the conversation you left" },
   { command: "recentPane", label: "Canvas: jump to the conversation you were in before" },
   { command: "focusPane", label: "Canvas: bring the current conversation forward, or put it back" },
@@ -133,7 +148,7 @@ export async function fillShortcutSettings() {
 function keymapFromPanel() {
   const base = normalizeChord(baseInput.dataset.chord ? JSON.parse(baseInput.dataset.chord) : null, { modifierOnly: true });
   if (!base) throw new Error("The conversation-key chord needs Command, Control, or Option, and at most three modifiers.");
-  const draft = { version: 2, base, commands: {} };
+  const draft = { version: 3, base, commands: {} };
   const taken = [];
   for (const [command, input] of commandInputs) {
     const raw = input.dataset.chord ? JSON.parse(input.dataset.chord) : null;

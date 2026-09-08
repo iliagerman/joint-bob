@@ -21,9 +21,12 @@ import {
   replaceCanvasPane, selectCanvasPage, setCanvasPageFilter, setCanvasSplitRatio, toggleCanvasFocus,
 } from "./canvas-layout.js";
 
+import { CHAT_SHORTCUT_CONTROLS, runChatShortcut } from "./app/chat-shortcuts.js";
+import { attachDigitShortcuts, LIST_SHORTCUT_LIMIT, shortcutIndexBadge } from "./app/list-shortcuts.js";
+
 const CANVAS_GRID_UNITS = 1000;
 
-export function createConversationCanvas({ api, getProjects, saveLayout, showMessage, toggleView, confirmAction, openShortcutSettings, openSpotlight, openPendingReviews, openRecentSessions, openRunningConversations, openSettings }) {
+export function createConversationCanvas({ api, getProjects, saveLayout, showMessage, toggleView, confirmAction, openShortcutSettings, openSpotlight, openPendingReviews, openRecentSessions, openRunningConversations, openSettings, focusInput, appCommands = {} }) {
   const root = document.querySelector("#canvasRoot");
   const dialog = document.querySelector("#canvasConversationDialog");
   const projectSelect = document.querySelector("#canvasProjectSelect");
@@ -406,7 +409,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     const bindings = shortcuts.map((shortcut) => shortcut.binding);
     for (const node of paneNodes.values()) {
       node.body.firstElementChild?.contentWindow?.postMessage({
-        type: "canvasShortcutBindings", chords, bindings, base: keymap.base,
+        type: "canvasShortcutBindings", chords, bindings, base: keymap.base, keymap,
       }, location.origin);
     }
   }
@@ -519,13 +522,43 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     return false;
   }
 
+  /** The composer of the conversation the user last worked in. The pane is an iframe,
+   * so the canvas asks it to move its own cursor rather than reaching across. */
+  function focusCurrentPaneComposer() {
+    const paneId = currentPaneId();
+    const pane = paneId ? listCanvasPanes(layout).find((candidate) => candidate.id === paneId) : null;
+    const node = pane ? paneNodes.get(paneIdentity(pane)) : null;
+    if (!node) return false;
+    noteVisit(paneId);
+    node.body.firstElementChild?.contentWindow?.postMessage({ type: "canvasFocusComposer" }, location.origin);
+    return true;
+  }
+
+  function runConversationCommand(command, explicitPaneId) {
+    if (document.querySelector("dialog[open]")) return;
+    if (!active) { runChatShortcut(command); return; }
+    const paneId = explicitPaneId || currentPaneId();
+    const pane = listCanvasPanes(layout).find((candidate) => candidate.id === paneId);
+    if (!pane) return;
+    const node = paneNodes.get(paneIdentity(pane));
+    node.body.firstElementChild.contentWindow.postMessage({ type: "canvasChatCommand", command }, location.origin);
+  }
+
   function runShortcutCommand(command, explicitPaneId) {
+    if (Object.hasOwn(CHAT_SHORTCUT_CONTROLS, command)) { runConversationCommand(command, explicitPaneId); return true; }
     if (command === "toggleView") { toggleView(); return true; }
     if (command === "spotlight") { openSpotlight(); return true; }
     if (command === "pendingReviews") { openPendingReviews(); return true; }
     if (command === "recents") { openRecentSessions(); return true; }
     if (command === "runningConversations") { openRunningConversations(); return true; }
     if (command === "settings") { openSettings(); return true; }
+    // A dialog on top owns the keyboard. With none open, the conversation the user is
+    // working in does - and on the canvas that conversation lives inside an iframe.
+    if (command === "focusInput") {
+      if (!focusInput() && active) focusCurrentPaneComposer();
+      return true;
+    }
+    if (Object.hasOwn(appCommands, command)) { appCommands[command](); return true; }
     if (!active) return false;
     if (command === "paneSearch") { openFinder(); return true; }
     if (command === "recentPane") return revealPane(previousPaneId());
@@ -557,7 +590,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     const command = chordCommands.get(id);
     if (command) return runShortcutCommand(command, explicitPaneId);
     const endings = sequenceCommands.get(id);
-    if (!endings || !active && ![...endings.values()].some(({ command }) => ["toggleView", "spotlight", "pendingReviews", "recents", "runningConversations", "settings"].includes(command))) return false;
+    if (!endings || !active && ![...endings.values()].some(({ command }) => ["toggleView", "spotlight", "pendingReviews", "recents", "runningConversations", "settings", "focusInput"].includes(command) || Object.hasOwn(appCommands, command) || Object.hasOwn(CHAT_SHORTCUT_CONTROLS, command))) return false;
     pendingSequence = { id, paneId: explicitPaneId, timer: setTimeout(clearPendingSequence, 1500) };
     return true;
   }
@@ -917,9 +950,14 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     const option = document.createElement("button");
     option.type = "button";
     option.className = "canvas-session-option";
-    if (testId) option.dataset.testid = testId;
+    option.dataset.testid = testId || "canvas-conversation-option";
     option.append(text("strong", title));
     if (subtitle) option.append(text("span", subtitle));
+    const position = optionsList.childElementCount + 1;
+    if (position <= LIST_SHORTCUT_LIMIT) {
+      option.classList.add("canvas-session-numbered");
+      option.append(shortcutIndexBadge("canvas-picker-digit", position));
+    }
     option.addEventListener("click", onChoose);
     optionsList.append(option);
   }
@@ -1017,6 +1055,8 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
       void loadPickerSessions();
     }
     dialog.showModal();
+    optionsList.tabIndex = -1;
+    optionsList.focus();
   }
 
   pageAddButton.addEventListener("click", () => {
@@ -1041,6 +1081,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
   });
   projectSelect.addEventListener("change", () => void loadPickerSessions());
   searchInput.addEventListener("input", renderPickerOptions);
+  attachDigitShortcuts(dialog, () => optionsList.querySelectorAll(".canvas-session-option"), (option) => option.click());
   organizeButton.addEventListener("click", () => {
     commit(organizeCanvasLayout(layout));
     placeAll();

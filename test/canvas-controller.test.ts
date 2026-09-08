@@ -113,6 +113,8 @@ const saved = [];
 const shortcutSettingsOpens = [];
 const spotlightOpens = [];
 const pendingReviewOpens = [];
+// What the app reports back: true when a dialog on top took the keyboard.
+let focusInputResult = false;
 let failSessions = false;
 let storedShortcuts = [];
 const apiCalls = [];
@@ -147,6 +149,7 @@ const controller = createConversationCanvas({
   openShortcutSettings: () => { shortcutSettingsOpens.push(Date.now()); },
   openSpotlight: () => { spotlightOpens.push(Date.now()); },
   openPendingReviews: () => { pendingReviewOpens.push(Date.now()); },
+  focusInput: () => focusInputResult,
   showMessage: () => {},
   toggleView: () => { viewToggles.push("toggled"); },
   confirmAction: async (options) => { confirmations.push(options); return confirmClose; },
@@ -337,6 +340,7 @@ test("a re-recorded chord drives the same command, and a pane can forward it", a
 });
 
 test("the close chord closes the active pane only after Y confirmation", async () => {
+  controller.setKeymap({});
   const root = registry.get("#canvasRoot");
   let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
   layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "row");
@@ -350,7 +354,8 @@ test("the close chord closes the active pane only after Y confirmation", async (
     origin: "http://canvas.test", source: frames[1].contentWindow, data: { type: "canvasPaneActive" },
   });
   const pressClose = () => {
-    windowListeners.get("keydown")({ code: "KeyX", key: "x", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false, preventDefault() {} });
+    windowListeners.get("keydown")({ code: "Space", key: " ", metaKey: false, shiftKey: false, ctrlKey: true, altKey: false, preventDefault() {} });
+    windowListeners.get("keydown")({ code: "KeyX", key: "x", metaKey: false, shiftKey: false, ctrlKey: false, altKey: false, preventDefault() {} });
   };
 
   confirmClose = false;
@@ -751,6 +756,36 @@ test("the canvas Shortcuts button opens the Settings shortcuts panel", async () 
   const priorOpens = shortcutSettingsOpens.length;
   registry.get("#canvasKeymapButton").dispatch("click");
   assert.equal(shortcutSettingsOpens.length, priorOpens + 1);
+});
+
+// A dialog on top owns the keyboard; with none open, the conversation the user is
+// working in does, and that conversation is an iframe the canvas has to reach into.
+test("the focus key reaches the current pane's composer, unless a dialog is on top", async () => {
+  const root = registry.get("#canvasRoot");
+  let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
+  layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "right");
+  controller.setLayout({ ...layout, focusedPaneId: null });
+  await controller.activate();
+
+  const frames = [];
+  walk2(root, frames);
+  const posted = [];
+  for (const frame of frames) frame.contentWindow = { postMessage: (message) => posted.push(message) };
+  windowListeners.get("message")({ origin: "http://canvas.test", source: frames[1].contentWindow, data: { type: "canvasPaneActive" } });
+
+  focusInputResult = false;
+  posted.length = 0;
+  windowListeners.get("keydown")({ code: "KeyI", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false, preventDefault() {} });
+  assert.equal(posted.filter((message) => message.type === "canvasFocusComposer").length, 1,
+    "with no dialog open the cursor lands in the conversation the user was in");
+
+  // The canvas must not steal the keystroke from a dialog the app already focused.
+  focusInputResult = true;
+  posted.length = 0;
+  windowListeners.get("keydown")({ code: "KeyI", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false, preventDefault() {} });
+  assert.deepEqual(posted.filter((message) => message.type === "canvasFocusComposer"), [],
+    "a dialog on top keeps the cursor");
+  focusInputResult = false;
 });
 
 // A pane is an iframe, so the help chord typed inside a conversation never reaches the

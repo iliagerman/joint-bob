@@ -8,10 +8,13 @@ import { createConversationCanvas } from "./canvas.js";
 import { api, savePreferences } from "./app/api.js";
 import { initializeApplication, revealApplication } from "./app/auth.js";
 import { openSettings } from "./app/settings.js";
+import { runChatShortcut } from "./app/chat-shortcuts.js";
+import { syncShortcutHints } from "./app/shortcut-hints.js";
+import { focusTopmostInput } from "./app/focus-input.js";
 import { openSpotlight } from "./app/spotlight.js";
 import { openPendingReviews } from "./app/reviews.js";
 import { elements } from "./app/elements.js";
-import { setMobileView, toggleCanvasView } from "./app/layout.js";
+import { setMobileView, toggleCanvasView, togglePanel } from "./app/layout.js";
 import { openRecentSessions } from "./app/recents.js";
 import { openRunningConversationsDialog } from "./app/running.js";
 import { confirmAction, SERVICE_WORKER_UPDATE_MS, setTheme, syncNotifyButton, toast, updateInstallButton, updateServiceWorker } from "./app/shell.js";
@@ -111,7 +114,10 @@ if (state.canvasPaneMode) {
   window.addEventListener("message", (event) => {
     // Only the canvas that framed this pane may set its chords or move its cursor.
     if (event.origin !== location.origin || event.source !== parent) return;
+    if (event.data?.type === "canvasChatCommand") runChatShortcut(event.data.command);
     if (event.data?.type === "canvasShortcutBindings") {
+      state.canvasKeymap = event.data.keymap;
+      syncShortcutHints();
       claimedChords.clear();
       claimedSequences.clear();
       clearPendingSequence();
@@ -148,12 +154,21 @@ if (!state.canvasPaneMode) {
         .catch((error) => toast(`Could not save the canvas layout: ${error.message}`, 8000));
     },
     toggleView: toggleCanvasView,
+    appCommands: {
+      toggleProjects: () => togglePanel("projects"),
+      toggleChats: () => togglePanel("chats"),
+      board: () => elements.openBoardButton.click(),
+      newProject: () => elements.newProjectButton.click(),
+      newPiChat: () => elements.newSessionButton.click(),
+      newClaudeChat: () => elements.newClaudeSessionButton.click(),
+    },
     openShortcutSettings: () => { void openSettings("shortcuts"); },
     openSpotlight,
     openPendingReviews,
     openRecentSessions,
     openRunningConversations: () => { void openRunningConversationsDialog().catch((error) => toast(error.message)); },
     openSettings: () => { void openSettings().catch((error) => toast(error.message)); },
+    focusInput: focusTopmostInput,
     confirmAction,
     showMessage: (message) => toast(message, 8000),
   });

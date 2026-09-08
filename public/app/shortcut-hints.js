@@ -1,5 +1,5 @@
-// Header icons wear their keyboard shortcut as a tiny key badge, so the chord in
-// force is visible where the action lives. A button declares its command with
+// Buttons show the active keyboard shortcut beside their label or below their
+// icon. A button declares its command with
 // data-shortcut-hint; this module fills the badge from the saved keymap.
 import { chordLabel, normalizeCanvasKeymap } from "../canvas-layout.js";
 import { state } from "./state.js";

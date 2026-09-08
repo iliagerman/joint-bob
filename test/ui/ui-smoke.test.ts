@@ -77,6 +77,43 @@ test("signing in through the login form reaches the app and the session survives
   assert.equal(await page.locator("#loginDialog[open]").count(), 0, "reload stays signed in");
 });
 
+test("shortcut badges are readable and stay inside their buttons", async () => {
+  for (const width of [1440, 1024]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    const badges = await page.locator(".shortcut-hint:visible").evaluateAll((items) => items.map((badge) => {
+      const box = badge.getBoundingClientRect();
+      const host = badge.parentElement!.getBoundingClientRect();
+      return { text: badge.textContent, size: parseFloat(getComputedStyle(badge).fontSize), fits: box.left >= host.left && box.right <= host.right && box.top >= host.top && box.bottom <= host.bottom };
+    }));
+    assert.ok(badges.length > 0);
+    for (const badge of badges) {
+      assert.ok(badge.size >= 13, `${badge.text} is ${badge.size}px at ${width}px; needs at least 13px`);
+      assert.ok(badge.fits, `${badge.text} must fit inside its button at ${width}px`);
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+});
+
+test("both side panels have independent collapse and expand shortcuts", async () => {
+  for (const [panel, key] of [["projects", "["], ["chats", "]"]]) {
+    const collapse = page.getByTestId(`${panel}-panel-collapse-button`);
+    assert.equal(await collapse.locator(".shortcut-hint").count(), 1, `${panel} collapse needs a shortcut label`);
+    await page.keyboard.press(`Control+Shift+${key}`);
+    await page.getByTestId(`${panel}-panel-expand-button`).waitFor();
+    assert.equal(await page.locator("body").evaluate((body, name) => body.classList.contains(`${name}-collapsed`), panel), true);
+    await page.keyboard.press(`Control+Shift+${key}`);
+    await collapse.waitFor();
+    assert.equal(await page.locator("body").evaluate((body, name) => body.classList.contains(`${name}-collapsed`), panel), false);
+  }
+});
+
+test("other toolbar actions advertise their shortcuts", async () => {
+  for (const id of ["projects-open-board-button", "project-create-button", "session-create-button", "session-create-claude-button", "canvas-finder-button", "canvas-page-add-button"]) {
+    assert.equal(await page.getByTestId(id).locator(".shortcut-hint").count(), 1, `${id} needs a shortcut badge`);
+  }
+});
+
 test("harness settings show per-harness tabs and restore node defaults", async () => {
   await page.getByTestId("settings-open-button").click();
   await page.getByTestId("settings-tab-engines").click();
@@ -439,6 +476,13 @@ test("the canvas picker lists conversations at a readable height", async () => {
   await page.selectOption("#canvasProjectSelect", { label: "Internal Assistant" });
   await page.locator(".canvas-session-option", { hasText: "Thread-Based Agent Builder" }).waitFor({ timeout: 20_000 });
 
+  assert.deepEqual(await page.locator(".canvas-session-option .list-shortcut-index").allTextContents(),
+    ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"], "picker options carry digit badges");
+
+  const badge = await page.locator(".canvas-session-option .list-shortcut-index").first().boundingBox();
+  const title = await page.locator(".canvas-session-option strong").first().boundingBox();
+  assert.ok(badge && title && badge.x + badge.width < title.x, "digit badge has its own lane before the title");
+
   // Two frames, so the measurements below read settled layout.
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 
@@ -474,6 +518,24 @@ test("the canvas picker lists conversations at a readable height", async () => {
     wrapping.subtitleHeight >= wrapping.lineHeight * 2,
     `a long preview wraps to two lines (got ${wrapping.subtitleHeight} for a ${wrapping.lineHeight}px line)`,
   );
+});
+
+test("zero selects the tenth canvas picker option", async () => {
+  await page.getByTestId("canvas-picker-cancel-button").click();
+  await page.getByTestId("canvas-add-button").click();
+  const options = page.locator(".canvas-session-option");
+  const title = await options.nth(9).locator("strong").textContent();
+  await page.keyboard.press("0");
+  await page.getByTestId("canvas-conversation-dialog").waitFor({ state: "hidden" });
+  const pane = page.locator(".canvas-pane", { hasText: title! });
+  await pane.waitFor();
+  await pane.locator("iframe").contentFrame().getByTestId("chat-message-input").click();
+  await page.keyboard.press("Control+Space");
+  await page.keyboard.press("x");
+  await page.getByTestId("confirm-dialog").waitFor({ state: "visible" });
+  await page.keyboard.press("y");
+  await pane.waitFor({ state: "detached" });
+  await page.getByTestId("canvas-add-button").click();
 });
 
 test("canvas splits nest recursively and resize by handle", async () => {
@@ -572,21 +634,30 @@ test("split chords open the picker from the active canvas pane and really split 
   await page.selectOption("#canvasProjectSelect", { label: "Internal Assistant" });
   const option = page.locator(".canvas-session-option", { hasText: "Short one" });
   await option.waitFor({ timeout: 20_000 });
-  await option.click();
+  const search = page.locator("#canvasSessionSearch");
+  await search.fill("Short");
+  await search.press("1");
+  assert.equal(await search.inputValue(), "Short1", "digits in search stay text");
+  await search.fill("Short one");
+  assert.equal(await option.locator(".list-shortcut-index").textContent(), "1", "filtered results renumber");
+  await option.focus();
+  await page.keyboard.press("1");
   await page.locator(".canvas-pane", { hasText: "Short one" }).waitFor({ timeout: 20_000 });
   assert.equal(await page.locator(".canvas-pane").count(), panesBefore + 1, "the split chord put a new pane on the screen");
   assert.ok((await page.locator(".canvas-resize").count()) >= 1, "the split chord left a resize handle between the panes");
 
   // The close chord asks first, and only Y closes the pane.
   await focusPaneComposer();
-  await page.keyboard.press("Meta+Shift+x");
+  await page.keyboard.press("Control+Space");
+  await page.keyboard.press("x");
   await page.getByTestId("confirm-dialog").waitFor({ state: "visible" });
   await page.keyboard.press("n");
   await page.getByTestId("confirm-dialog").waitFor({ state: "hidden" });
   assert.equal(await activePane.count(), 1, "N keeps the active pane open");
 
   await focusPaneComposer();
-  await page.keyboard.press("Meta+Shift+x");
+  await page.keyboard.press("Control+Space");
+  await page.keyboard.press("x");
   await page.getByTestId("confirm-dialog").waitFor({ state: "visible" });
   await page.keyboard.press("y");
   await activePane.waitFor({ state: "detached" });
@@ -1169,6 +1240,56 @@ test("running conversations open their live conversation in another project", as
     database.prepare("DELETE FROM conversation_runtime_leases WHERE engine = ? AND session_id = ?").run(target.harnessId, target.id);
     database.close();
   }
+});
+
+test("toolbar shortcuts open the same actions as their buttons", async () => {
+  await page.keyboard.press("Meta+Alt+P");
+  assert.equal(await page.locator("#projectDialog").isVisible(), true, "new-project shortcut opens the project form");
+  await page.keyboard.press("Escape");
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+  await page.keyboard.press("Meta+Shift+B");
+  assert.equal(await page.locator("#boardPanel").isVisible(), true, "board shortcut opens the board");
+  for (const [key, button] of [["N", "session-create-button"], ["C", "session-create-claude-button"]]) {
+    await page.locator(`[data-testid="${button}"]:enabled`).waitFor();
+    await page.keyboard.press(`Meta+Alt+${key}`);
+    assert.equal(await page.getByTestId("new-session-name-dialog").isVisible(), true, `${key} opens the conversation form`);
+    await page.keyboard.press("Escape");
+  }
+});
+
+// "Put my cursor where I can type", without reaching for the mouse.
+test("the focus key lands the cursor in the composer, or in the dialog on top", async () => {
+  await page.locator("#sessionList .session-card").first().click();
+  await page.getByTestId("chat-message-input").waitFor({ state: "visible" });
+  await page.locator("body").click({ position: { x: 5, y: 5 } });
+
+  await page.keyboard.press("Meta+Shift+KeyI");
+  assert.equal(await page.evaluate(() => document.activeElement?.id), "messageInput",
+    "with nothing open the cursor goes to the conversation composer");
+
+  // A dialog on top owns the keyboard, so its own field wins instead.
+  await page.keyboard.press("Meta+Shift+KeyP");
+  await page.getByTestId("spotlight-dialog").waitFor({ state: "visible" });
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  await page.keyboard.press("Meta+Shift+KeyI");
+  assert.equal(await page.evaluate(() => document.activeElement?.id), "spotlightInput",
+    "an open dialog keeps the cursor");
+  await page.keyboard.press("Escape");
+  await page.getByTestId("spotlight-dialog").waitFor({ state: "hidden" });
+});
+
+// An inline <svg> sits on the text baseline, which used to push the icon low.
+test("the send button's icon sits in the middle of the button", async () => {
+  const offsets = await page.getByTestId("chat-send-button").evaluate((button) => {
+    const icon = button.querySelector("svg").getBoundingClientRect();
+    const box = button.getBoundingClientRect();
+    return {
+      horizontal: Math.abs((icon.left + icon.right) / 2 - (box.left + box.right) / 2),
+      vertical: Math.abs((icon.top + icon.bottom) / 2 - (box.top + box.bottom) / 2),
+    };
+  });
+  assert.ok(offsets.horizontal <= 1, `the icon is ${offsets.horizontal}px off centre horizontally`);
+  assert.ok(offsets.vertical <= 1, `the icon is ${offsets.vertical}px off centre vertically`);
 });
 
 test("the journey produced no console errors and no failed requests", () => {
