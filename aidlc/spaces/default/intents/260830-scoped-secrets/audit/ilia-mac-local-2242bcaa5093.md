@@ -879,3 +879,43 @@
 **Event**: HUMAN_TURN
 
 ---
+
+## Session End
+**Timestamp**: 2026-09-08T09:36:03Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-08T09:36:10Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-08T09:36:12Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-09-08T09:36:48Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Session Resume
+**Timestamp**: 2026-09-08T09:36:55Z
+**Event**: SESSION_RESUMED
+**Source**: resume
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-08T09:36:57Z
+**Event**: HUMAN_TURN
+
+---
