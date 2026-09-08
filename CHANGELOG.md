@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Running conversations button moved to projects panel only; chat toolbar now focuses on core messaging controls.
+- Child sub-agent conversations are now collapsible in the session list and hidden by default; expand them individually to view task details.
 
 ## 1.10.0 — 2026-09-08
 

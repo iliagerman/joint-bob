@@ -65,6 +65,8 @@ export const state = {
   sessionsLoading: false,
   sessionsRefreshing: false,
   agentRunPollTimer: null,
+  // Parent conversation paths whose sub-agent children are shown; collapsed by default.
+  expandedSessionParents: new Set(),
   projectSyncTimer: null,
   tasks: [],
   editingTaskId: null,

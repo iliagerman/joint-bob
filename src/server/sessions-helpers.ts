@@ -71,7 +71,7 @@ export async function listProjectSessionsWithReviewState(project: ProjectRecord,
       sessionId: session.id,
     };
   });
-  const reviewStates = syncConversationReviewStates(userId, username, project.id, listedSessions);
+  const reviewStates = syncConversationReviewStates(userId, username, project.id, listedSessions.filter((session) => !session.readOnly));
   const ownership = await Promise.all(listedSessions.map((session) => getConversationOwnership(session.path.startsWith("claude:") || session.path.startsWith("draft:claude:") ? "claude" : "pi", session.id)));
   return listedSessions.map((session, index) => {
     const { engine: _engine, sessionId: _sessionId, ...summary } = session;

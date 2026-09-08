@@ -53,12 +53,14 @@ export function renderSessions() {
     return;
   }
 
-  for (const { session, depth } of nestedSessionRows(sessions)) {
+  const sessionIsActive = (candidate) => state.activeSessionId ? candidate.id === state.activeSessionId : candidate.path === state.activeSessionPath;
+  const rows = nestedSessionRows(sessions, (parent, childSessions) => state.expandedSessionParents.has(parent.path) || childSessions.some(sessionIsActive));
+  for (const { session, depth, childCount } of rows) {
     const sessionPinned = isSessionPinned(session);
     const ticketTask = sessionTicketTask(session);
     const row = document.createElement("div");
-    const sessionActive = state.activeSessionId ? session.id === state.activeSessionId : session.path === state.activeSessionPath;
-    row.className = `list-row${sessionActive ? " active" : ""}${sessionPinned ? " pinned" : ""}${ticketTask ? " has-ticket" : ""}`;
+    const sessionActive = sessionIsActive(session);
+    row.className = `list-row${sessionActive ? " active" : ""}${sessionPinned ? " pinned" : ""}${ticketTask ? " has-ticket" : ""}${childCount ? " has-children" : ""}`;
     row.dataset.sessionDepth = String(depth);
     // The row menu is re-pointed at this row after a refresh replaces it.
     row.dataset.sessionPath = session.path;
@@ -110,8 +112,27 @@ export function renderSessions() {
 
     const pinToggle = sessionPinToggle(session);
 
+    let childToggle = null;
+    if (childCount) {
+      const expanded = state.expandedSessionParents.has(session.path);
+      childToggle = document.createElement("button");
+      childToggle.type = "button";
+      childToggle.className = "ghost icon-button row-action-button session-children-toggle";
+      childToggle.dataset.testid = "session-children-toggle";
+      childToggle.setAttribute("aria-expanded", String(expanded));
+      childToggle.setAttribute("aria-label", `${expanded ? "Hide" : "Show"} ${childCount} sub-agent conversation${childCount === 1 ? "" : "s"}`);
+      childToggle.textContent = `${expanded ? "▾" : "▸"} ${childCount}`;
+      childToggle.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (expanded) state.expandedSessionParents.delete(session.path);
+        else state.expandedSessionParents.add(session.path);
+        renderSessions();
+      });
+    }
+
     if (ticketTask) row.append(button, ticketRowButton(ticketTask), pinToggle, menuButton);
     else row.append(button, pinToggle, menuButton);
+    if (childToggle) row.append(childToggle);
     if (session.agentRuns?.length) {
       const runs = document.createElement("div");
       runs.className = "agent-run-list";

@@ -82,7 +82,7 @@ export function ticketRowButton(task) {
   return button;
 }
 
-export function nestedSessionRows(sessions) {
+export function nestedSessionRows(sessions, shouldExpand = () => true) {
   const ranked = sortPinnedFirst(sessions, isSessionPinned);
   const byPath = new Map(ranked.map((session) => [session.path, session]));
   const byName = new Map(ranked.map((session) => [sessionTranscriptName(session.path), session]));
@@ -111,8 +111,10 @@ export function nestedSessionRows(sessions) {
   const rows = [];
   const append = (session, depth) => {
     if (rows.some((row) => row.session === session)) return;
-    rows.push({ session, depth });
-    for (const child of children.get(session.path) || []) append(child, depth + 1);
+    const childSessions = children.get(session.path) || [];
+    rows.push({ session, depth, childCount: childSessions.length });
+    if (!shouldExpand(session, childSessions)) return;
+    for (const child of childSessions) append(child, depth + 1);
   };
   for (const root of roots) append(root, 0);
   return rows;

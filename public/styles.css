@@ -1733,11 +1733,13 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   /* The pin button gets the same touch target, one lane to the left of the menu,
      with 8px of air between the two so they don't read as one blob on a phone. */
   .session-list .pin-button, .project-list .pin-button { min-height: 34px; min-width: 34px; width: 34px; right: 52px; }
+  .session-list .session-children-toggle { min-height: 34px; right: 94px; }
   .session-list .session-card, .project-list .project-card { padding-right: 94px; }
   /* The ticket jump button gets the same touch target and the same 8px of air,
      one lane further out than the pin so the row reads ticket, pin, menu. */
   .session-list .ticket-link-button { min-height: 34px; min-width: 34px; width: 34px; right: 94px; }
   .session-list .list-row.has-ticket .session-card { padding-right: 136px; }
+  .session-list .list-row.has-children .session-card { padding-right: 136px; }
   /* Stop stays a real touch target on phones without leaving the meta row. */
   .chat-actions .icon-button { min-width: 32px; width: 32px; min-height: 32px; }
   .project-card, .session-card { padding-right: 52px; }
@@ -1795,6 +1797,9 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
    lane and pays for it with padding — the button is the pinned indicator. */
 .session-list .pin-button, .project-list .pin-button { right: 42px; }
 .session-list .session-card, .project-list .project-card { padding-right: 78px; }
+/* Parents with sub-agent children carry a third lane for the expand toggle. */
+.session-children-toggle { right: 74px; width: auto; min-width: 28px; padding: 0 7px; font-family: var(--mono); font-size: 10.5px; }
+.session-list .list-row.has-children .session-card { padding-right: 118px; }
 
 /* ---- Ticket conversations in the list ---- */
 /* The jump button owns the outermost lane, and the row pays for the
