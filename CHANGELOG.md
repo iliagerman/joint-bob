@@ -3,10 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.10.0 — 2026-09-08
 
-- Agent task instructions and outputs now display in the session list; Claude sub-agent transcripts appear as read-only child sessions.
-- Project panel action buttons (reviews, recents, running, board, settings) now sit in their own row below the title instead of wrapping inside the header.
+- Claude sub-agent sessions now appear as read-only child sessions within your conversation list, showing task instructions and outputs.
+- Project panel action buttons now sit in their own row below the title for clearer layout.
 
 ## 1.9.0 — 2026-09-08
 
