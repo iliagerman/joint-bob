@@ -987,3 +987,23 @@
 **Stage**: observability-setup
 
 ---
+
+## Session Start
+**Timestamp**: 2026-09-08T14:20:44Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-08T14:20:46Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-09-08T14:21:08Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
