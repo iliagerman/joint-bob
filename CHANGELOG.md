@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## 1.10.0 — 2026-09-08
 
 - Claude sub-agent sessions now appear as read-only child sessions within your conversation list, showing task instructions and outputs.
+- Node name and URL changes now reach every connected node as soon as they are saved.
 - Project panel action buttons now sit in their own row below the title for clearer layout.
 
 ## 1.9.0 — 2026-09-08
