@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { appendAuditEvent, ensureAuditSchema } from "./audit.js";
+import { resolveDataDirectory } from "./data-directory.js";
 
 export interface ClusterNode {
   id: string;
@@ -94,7 +95,7 @@ interface ProjectGrantRow {
   origin_node_id: string;
 }
 
-const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
+const dataDir = resolveDataDirectory();
 const databasePath = path.join(dataDir, "node.db");
 const legacyStorePath = path.join(dataDir, "cluster.json");
 const keyPath = path.join(dataDir, "secret.key");

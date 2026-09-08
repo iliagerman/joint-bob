@@ -77,6 +77,7 @@ export const state = {
   folderPickerParentPath: null,
   folderPickerApiPath: "/api/filesystem/directories",
   folderPickerTarget: null,
+  folderPickerApply: null,
   projectDefaultBase: null,
   projectAutofilledPath: null,
   syncthingEndpoint: "",

@@ -1,5 +1,5 @@
 import { mkdirSync } from "node:fs";
-import os from "node:os";
+import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -15,15 +15,23 @@ export interface QueuedPrompt {
   id: number;
   promptText: string;
   displayText: string;
+  messageText: string | null;
+  promptSuffix: string | null;
+  displaySuffix: string | null;
+  attachmentPaths: string[];
 }
 
 interface QueuedPromptRow {
   id: number;
   prompt_text: string;
   display_text: string;
+  message_text: string | null;
+  prompt_suffix: string | null;
+  display_suffix: string | null;
+  attachment_paths: string | null;
 }
 
-const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
+const dataDir = resolveDataDirectory();
 const databasePath = path.join(dataDir, "node.db");
 let database: DatabaseSync | undefined;
 
@@ -33,8 +41,16 @@ export function ensurePromptQueueSchema(db: DatabaseSync): void {
     queue_key TEXT NOT NULL,
     prompt_text TEXT NOT NULL,
     display_text TEXT NOT NULL,
+    message_text TEXT,
+    prompt_suffix TEXT,
+    display_suffix TEXT,
+    attachment_paths TEXT,
     created_at TEXT NOT NULL
   ); CREATE INDEX IF NOT EXISTS conversation_prompt_queue_order ON conversation_prompt_queue(queue_key, id);`);
+  const columns = new Set((db.prepare("PRAGMA table_info(conversation_prompt_queue)").all() as Array<{ name: string }>).map((column) => column.name));
+  for (const column of ["message_text", "prompt_suffix", "display_suffix", "attachment_paths"]) {
+    if (!columns.has(column)) db.exec(`ALTER TABLE conversation_prompt_queue ADD COLUMN ${column} TEXT`);
+  }
 }
 
 function queueDatabase(): DatabaseSync {
@@ -47,19 +63,39 @@ function queueDatabase(): DatabaseSync {
 }
 
 function rowToPrompt(row: QueuedPromptRow): QueuedPrompt {
-  return { id: row.id, promptText: row.prompt_text, displayText: row.display_text };
+  return {
+    id: row.id,
+    promptText: row.prompt_text,
+    displayText: row.display_text,
+    messageText: row.message_text,
+    promptSuffix: row.prompt_suffix,
+    displaySuffix: row.display_suffix,
+    attachmentPaths: row.attachment_paths ? JSON.parse(row.attachment_paths) as string[] : [],
+  };
 }
 
-export function enqueuePrompt(queueKey: string, promptText: string, displayText: string): QueuedPrompt {
+interface QueuedPromptMetadata {
+  messageText: string;
+  promptSuffix: string;
+  displaySuffix: string;
+  attachmentPaths: string[];
+}
+
+export function enqueuePrompt(queueKey: string, promptText: string, displayText: string, metadata: QueuedPromptMetadata): QueuedPrompt {
   const db = queueDatabase();
-  const result = db.prepare("INSERT INTO conversation_prompt_queue (queue_key, prompt_text, display_text, created_at) VALUES (?, ?, ?, ?)")
-    .run(queueKey, promptText, displayText, new Date().toISOString());
-  return { id: Number(result.lastInsertRowid), promptText, displayText };
+  const result = db.prepare(`INSERT INTO conversation_prompt_queue
+    (queue_key, prompt_text, display_text, message_text, prompt_suffix, display_suffix, attachment_paths, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      queueKey, promptText, displayText, metadata.messageText, metadata.promptSuffix,
+      metadata.displaySuffix, JSON.stringify(metadata.attachmentPaths), new Date().toISOString(),
+    );
+  return { id: Number(result.lastInsertRowid), promptText, displayText, ...metadata };
 }
 
 /** Oldest first, so a caller replays the queue in the order it was typed. */
 export function listQueuedPrompts(queueKey: string): QueuedPrompt[] {
-  const rows = queueDatabase().prepare("SELECT id, prompt_text, display_text FROM conversation_prompt_queue WHERE queue_key = ? ORDER BY id").all(queueKey) as unknown as QueuedPromptRow[];
+  const rows = queueDatabase().prepare(`SELECT id, prompt_text, display_text, message_text, prompt_suffix, display_suffix, attachment_paths
+    FROM conversation_prompt_queue WHERE queue_key = ? ORDER BY id`).all(queueKey) as unknown as QueuedPromptRow[];
   return rows.map(rowToPrompt);
 }
 
@@ -67,6 +103,20 @@ export function listQueuedPrompts(queueKey: string): QueuedPrompt[] {
  * conversation cannot both run it. Returns false when someone else took it. */
 export function claimQueuedPrompt(id: number): boolean {
   return Number(queueDatabase().prepare("DELETE FROM conversation_prompt_queue WHERE id = ?").run(id).changes) > 0;
+}
+
+export function cancelQueuedPrompt(queueKey: string, id: number): QueuedPrompt | null {
+  const db = queueDatabase();
+  const row = db.prepare(`SELECT id, prompt_text, display_text, message_text, prompt_suffix, display_suffix, attachment_paths
+    FROM conversation_prompt_queue WHERE queue_key = ? AND id = ?`).get(queueKey, id) as unknown as QueuedPromptRow | undefined;
+  if (!row) return null;
+  db.prepare("DELETE FROM conversation_prompt_queue WHERE queue_key = ? AND id = ?").run(queueKey, id);
+  return rowToPrompt(row);
+}
+
+export function editQueuedPrompt(queueKey: string, id: number, promptText: string, displayText: string, messageText: string): boolean {
+  return Number(queueDatabase().prepare("UPDATE conversation_prompt_queue SET prompt_text = ?, display_text = ?, message_text = ? WHERE queue_key = ? AND id = ?")
+    .run(promptText, displayText, messageText, queueKey, id).changes) > 0;
 }
 
 export function clearQueuedPrompts(queueKey: string): void {

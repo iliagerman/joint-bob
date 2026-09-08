@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
-import os from "node:os";
+import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { nanoid } from "nanoid";
@@ -12,7 +12,7 @@ import { createTaskWorkspace, expectedTaskWorkspacePath, removeTaskWorkspace, ta
 import { appendAuditEvent, ensureAuditSchema } from "./audit.js";
 import { resolveLocalSessionPath } from "./session-paths.js";
 
-const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
+const dataDir = resolveDataDirectory();
 const databasePath = path.join(dataDir, "node.db");
 const legacyTasksDir = path.join(dataDir, "tasks");
 let databasePromise: Promise<DatabaseSync> | undefined;

@@ -134,6 +134,7 @@ export async function loadClusterPanel() {
   elements.clusterInviteLink.value = "";
   elements.copyClusterInviteButton.disabled = true;
   elements.clusterJoinLinkInput.value = "";
+  elements.clusterLeaveButton.disabled = inventory.remote.length === 0;
   renderClusterInventory(inventory);
   await renderInviteProjectList();
   return inventory;
@@ -220,6 +221,22 @@ async function submitSecretSync() {
   elements.secretSyncDialog.close();
   toast(failed.length ? `Synced ${results.length - failed.length} of ${results.length} nodes; ${failed[0].name}: ${failed[0].error}` : `Synced accounts to ${results.length} ${results.length === 1 ? "node" : "nodes"}`);
 }
+async function leaveCluster() {
+  const confirmed = await confirmAction({
+    eyebrow: "Leave cluster",
+    title: "Leave the cluster?",
+    message: "This node forgets every paired node, and the other nodes drop this one. Paired projects stay on disk but stop syncing.",
+    confirmLabel: "Leave cluster",
+    destructive: true,
+  });
+  if (!confirmed) return;
+  await api("/api/cluster/leave", { method: "POST" });
+  await loadClusterPanel();
+  await loadProjects();
+  toast("Left the cluster");
+}
+
+elements.clusterLeaveButton.addEventListener("click", () => leaveCluster().catch((error) => toast(error.message)));
 elements.clusterSaveButton.addEventListener("click", () => saveClusterNode().catch((error) => toast(error.message)));
 elements.clusterGenerateInviteButton.addEventListener("click", () => generateClusterInvitation().catch((error) => toast(error.message)));
 elements.clusterJoinButton.addEventListener("click", () => joinCluster().catch((error) => toast(error.message)));

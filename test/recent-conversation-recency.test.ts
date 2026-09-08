@@ -52,7 +52,7 @@ test("opening the recents dialog refreshes activity for every project it lists",
   assert.match(refresh, /applyRecentSessionActivity/);
   assert.match(refresh, /renderRecentSessionsDialog\(\)/);
 
-  const open = functionBody(app, "function openRecentSessionsDialog() {");
+  const open = functionBody(app, "function openRecentSessions() {");
   assert.match(open, /refreshRecentSessionActivity\(\)/);
 });
 

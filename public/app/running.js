@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { elements } from "./elements.js";
 import { agentIcon, sessionAgentId } from "./icons.js";
+import { attachDigitShortcuts, LIST_SHORTCUT_LIMIT, shortcutIndexBadge } from "./list-shortcuts.js";
 import { selectProject } from "./project-selection.js";
 import { openListedSession } from "./reviews.js";
 import { formatDate, toast } from "./shell.js";
@@ -8,9 +9,12 @@ import { state } from "./state.js";
 
 let runningProjects = [];
 let refreshInterval;
+/** Rows 1-10 carry a digit shortcut; the refresh re-render renumbers the list. */
+let runningShortcuts = [];
 
 function renderRunningConversationsDialog() {
   elements.runningConversationsList.replaceChildren();
+  runningShortcuts = [];
   if (!runningProjects.length) {
     const empty = document.createElement("p");
     empty.className = "muted";
@@ -37,6 +41,10 @@ function renderRunningEntry(group, entry) {
   button.dataset.testid = "running-conversation-option";
   if (entry.color) button.dataset.color = entry.color;
   button.title = entry.title;
+  if (runningShortcuts.length < LIST_SHORTCUT_LIMIT) {
+    runningShortcuts.push({ group, entry });
+    button.append(shortcutIndexBadge("running-conversation-index", runningShortcuts.length));
+  }
   const title = document.createElement("strong");
   title.textContent = entry.title;
   const meta = document.createElement("span");
@@ -91,3 +99,4 @@ for (const trigger of document.querySelectorAll("[data-running-conversations-ope
 }
 elements.closeRunningConversationsButton.addEventListener("click", () => elements.runningConversationsDialog.close());
 elements.runningConversationsDialog.addEventListener("close", () => clearInterval(refreshInterval));
+attachDigitShortcuts(elements.runningConversationsDialog, () => runningShortcuts, (row) => openRunningConversation(row.group, row.entry).catch((error) => toast(error.message)));

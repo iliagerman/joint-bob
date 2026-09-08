@@ -1,5 +1,5 @@
 import { promises as fs } from "node:fs";
-import os from "node:os";
+import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
@@ -20,7 +20,7 @@ interface NameStore {
 
 type OverrideScope = "projects" | "sessions" | "session_colors";
 
-const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
+const dataDir = resolveDataDirectory();
 const databasePath = path.join(dataDir, "node.db");
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const legacyNamesPath = process.env.JOINT_BOB_NAMES_PATH ?? process.env.PI_MOBILE_WEB_NAMES_PATH ?? path.join(repositoryRoot, ".pi-mobile-web", "names.json");

@@ -4,6 +4,7 @@
 
 import { api } from "./api.js";
 import { elements } from "./elements.js";
+import { attachDigitShortcuts, LIST_SHORTCUT_LIMIT, shortcutIndexBadge } from "./list-shortcuts.js";
 import { setMobileView } from "./layout.js";
 import { selectProject } from "./project-selection.js";
 import { openListedSession } from "./reviews.js";
@@ -51,6 +52,7 @@ function renderResults() {
     option.setAttribute("role", "option");
     option.setAttribute("aria-selected", String(index === highlighted));
     option.setAttribute("aria-label", `Go to ${result.title}`);
+    if (index < LIST_SHORTCUT_LIMIT) option.append(shortcutIndexBadge("spotlight-option-index", index + 1));
     const kind = document.createElement("span");
     kind.className = "spotlight-kind";
     kind.textContent = ({ project: "Project", conversation: "Chat", destination: "Go to", settings: "Settings" })[result.kind];
@@ -154,3 +156,6 @@ elements.spotlightDialog.addEventListener("keydown", (event) => {
 for (const trigger of document.querySelectorAll("[data-spotlight-open]")) {
   trigger.addEventListener("click", openSpotlight);
 }
+// A digit opens that result. The input keeps focus while typing, so its digits
+// stay typed; Tab or a click moves focus out and the digits become shortcuts.
+attachDigitShortcuts(elements.spotlightDialog, () => results, (_, position) => chooseResult(position - 1));

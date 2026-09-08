@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import os from "node:os";
+import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { appendAuditEvent, ensureAuditSchema } from "./audit.js";
@@ -38,7 +38,7 @@ export interface SecretCredentialEvent {
 interface EventRow { event_id: string; entity_key: string; operation: "upsert"; payload_encrypted: string; updated_at: string; origin_node_id: string; created_at: string }
 interface VersionRow { updated_at: string; origin_node_id: string }
 
-const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
+const dataDir = resolveDataDirectory();
 const databasePath = path.join(dataDir, "node.db");
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 let database: DatabaseSync | undefined;

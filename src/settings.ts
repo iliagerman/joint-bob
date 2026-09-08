@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { appendAuditEvent, ensureAuditSchema } from "./audit.js";
+import { resolveDataDirectory } from "./data-directory.js";
 import { defaultManagedHome } from "./managed-home.js";
 
 export interface RuntimeSettings {
@@ -33,13 +34,14 @@ export interface SettingsInput {
 export interface SettingsResponse {
   pi: RuntimeSettings;
   claude: RuntimeSettings;
+  runtimeOverrides: { pi: RuntimeSettings; claude: RuntimeSettings };
   syncthing: { endpoint: string; apiKeyConfigured: boolean };
   projects: { homePath: string };
   resources: ResourcePaths;
   restartRequired: { pi: boolean; claude: boolean };
 }
 
-const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
+const dataDir = resolveDataDirectory();
 const databasePath = path.join(dataDir, "node.db");
 const keyPath = path.join(dataDir, "secret.key");
 let database: DatabaseSync | undefined;
@@ -152,12 +154,21 @@ export function getRuntimeDefaults(): { pi: RuntimeSettings; claude: RuntimeSett
   return { pi: runtimeDefaults("pi"), claude: runtimeDefaults("claude") };
 }
 
+function runtimeOverrides(prefix: "pi" | "claude"): RuntimeSettings {
+  return {
+    executable: value(`${prefix}.executable`),
+    configPath: value(`${prefix}.configPath`),
+    sessionPath: value(`${prefix}.sessionPath`),
+  };
+}
+
 function runtime(prefix: "pi" | "claude"): RuntimeSettings {
   const defaults = runtimeDefaults(prefix);
+  const overrides = runtimeOverrides(prefix);
   return {
-    executable: value(`${prefix}.executable`) || defaults.executable,
-    configPath: value(`${prefix}.configPath`) || defaults.configPath,
-    sessionPath: value(`${prefix}.sessionPath`) || defaults.sessionPath,
+    executable: overrides.executable || defaults.executable,
+    configPath: overrides.configPath || defaults.configPath,
+    sessionPath: overrides.sessionPath || defaults.sessionPath,
   };
 }
 
@@ -207,6 +218,7 @@ export function getSettings(): SettingsResponse {
   return {
     pi: runtime("pi"),
     claude: runtime("claude"),
+    runtimeOverrides: { pi: runtimeOverrides("pi"), claude: runtimeOverrides("claude") },
     syncthing: {
       endpoint: value("syncthing.endpoint"),
       apiKeyConfigured: Boolean(setting("syncthing.apiKey")),

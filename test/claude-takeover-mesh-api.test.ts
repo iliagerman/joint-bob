@@ -18,7 +18,7 @@ interface NodeFixture {
 
 function runScript(dataDir: string, home: string, code: string, args: string[] = []): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", code, ...args], {
+    const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", code, "--", ...args], {
       cwd: process.cwd(), env: { ...process.env, HOME: home, JOINT_BOB_DATA_DIR: dataDir }, stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";

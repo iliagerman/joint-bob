@@ -251,6 +251,27 @@ test("Syncthing folder rescan posts the encoded folder ID", async () => {
   assert.deepEqual(scanRequest, { method: "POST", url: "/rest/db/scan?folder=project%20folder" });
 });
 
+test("leaving a cluster removes peer devices only from Joint Bob folders", async () => {
+  const folders = [
+    { id: "owned", label: "Owned", path: "/tmp/owned", type: "sendreceive", devices: [{ deviceID: "LOCAL" }, { deviceID: "PEER" }] },
+    { id: "unrelated", label: "Unrelated", path: "/tmp/unrelated", type: "sendreceive", devices: [{ deviceID: "LOCAL" }, { deviceID: "PEER" }] },
+  ];
+  await withSyncthingApi((request, response) => {
+    response.setHeader("Content-Type", "application/json");
+    if (request.method === "GET" && request.url === "/rest/config/folders") { response.end(JSON.stringify(folders)); return; }
+    if (request.method === "PUT" && request.url === "/rest/config/folders/owned") {
+      let body = "";
+      request.on("data", (chunk) => { body += chunk; });
+      request.on("end", () => { folders[0] = JSON.parse(body); response.end("{}"); });
+      return;
+    }
+    response.statusCode = 404;
+    response.end();
+  }, async (syncthing) => syncthing.removeSyncthingDevices(["PEER"], ["owned"]));
+  assert.deepEqual(folders[0].devices, [{ deviceID: "LOCAL" }]);
+  assert.deepEqual(folders[1].devices, [{ deviceID: "LOCAL" }, { deviceID: "PEER" }]);
+});
+
 test("Syncthing folder statuses report every project sync state", async () => {
   await withSyncthingApi((request, response) => {
     response.setHeader("Content-Type", "application/json");

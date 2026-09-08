@@ -4,7 +4,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, openSync } from "node:fs";
-import os from "node:os";
+import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
@@ -12,7 +12,7 @@ import { appVersion } from "./changelog.js";
 import { getClusterMachineToken, getClusterNode, listClusterPeers } from "./cluster.js";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
+const dataDir = resolveDataDirectory();
 const CHECK_FRESH_MS = 5 * 60_000;
 const AUTO_CHECK_INTERVAL_MS = 6 * 60 * 60_000;
 const AUTO_FAILURE_BACKOFF_MS = 6 * 60 * 60_000;

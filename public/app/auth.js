@@ -10,7 +10,8 @@ import { renderProjects } from "./project-list.js";
 import { loadProjects, refreshProjectsQuietly, startProjectSyncPolling } from "./project-selection.js";
 import { renderSessions } from "./session-list.js";
 import { showWhatsNew } from "./settings.js";
-import { formatDate, setTheme, syncNotifyButton, toast, updateInstallButton } from "./shell.js";
+import { setTheme, syncNotifyButton, updateInstallButton } from "./shell.js";
+import { syncShortcutHints } from "./shortcut-hints.js";
 import { closeSocket, closeWatchSocket } from "./socket.js";
 import { BOOT_MINIMUM_MS, BOOT_REQUEST_TIMEOUT_MS, bootStartedAt, LEGACY_PREFERENCE_KEYS, shared, state } from "./state.js";
 import { renderBoardView } from "./tasks.js";
@@ -148,6 +149,7 @@ export async function initializeApplication() {
   // The node normalizes on the way out; normalizing again costs nothing and keeps a
   // stale shape (or an older node) from reaching the dispatcher unvalidated.
   state.canvasKeymap = normalizeCanvasKeymap(preferences.canvasKeymap || DEFAULT_CANVAS_KEYMAP);
+  syncShortcutHints();
   if (!state.canvasPaneMode) {
     state.canvasController?.setKeymap(state.canvasKeymap);
     state.canvasController?.setLayout(state.canvasLayout);
@@ -230,31 +232,4 @@ async function submitLogin(event) {
   }
 }
 
-export function renderLoginSessions(authSessions) {
-  elements.settingsSessionList.replaceChildren();
-  for (const session of authSessions.sessions) {
-    const row = document.createElement("div");
-    row.className = "settings-session-row";
-    const details = document.createElement("span");
-    details.textContent = `${session.id === authSessions.currentSessionId ? "Current session" : "Login session"} · ${formatDate(session.createdAt)}`;
-    const revoke = document.createElement("button");
-    revoke.type = "button";
-    revoke.className = "ghost compact danger";
-    revoke.textContent = "Revoke";
-    revoke.addEventListener("click", async () => {
-      try {
-        await api(`/api/auth/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" });
-        if (session.id === authSessions.currentSessionId) {
-          showSignedOut();
-          return;
-        }
-        renderLoginSessions(await api("/api/auth/sessions"));
-      } catch (error) {
-        toast(error.message);
-      }
-    });
-    row.append(details, revoke);
-    elements.settingsSessionList.append(row);
-  }
-}
 elements.loginForm.addEventListener("submit", submitLogin);

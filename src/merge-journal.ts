@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
-import os from "node:os";
+import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -39,7 +39,7 @@ export interface MergeTransaction {
 
 export class MergeJournalError extends Error {}
 
-const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
+const dataDir = resolveDataDirectory();
 let journalPromise: Promise<DatabaseSync> | undefined;
 
 export function mergeBackupRoot(): string {

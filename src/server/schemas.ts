@@ -426,11 +426,11 @@ const canvasLayoutPreferenceSchema = z.union([
   if (layout.focusedPaneId && !paneIds.has(layout.focusedPaneId)) context.addIssue({ code: z.ZodIssueCode.custom, message: "Focused canvas pane is unknown" });
 });
 const canvasKeymapKeySchema = z.string().trim().refine((key) => canonicalCanvasKeyToken(key) !== null, "Unsupported canvas key").nullable();
-// A chord is the modifiers held plus one key, at most four keys; everything semantic
-// (which modifiers, which key, collisions) is decided by the normalizer, so the
-// schema only caps how much of either a client may send.
+// A shortcut is one modified key or a two-stroke sequence. The normalizer decides
+// token semantics and collisions; the schema only caps client input size.
 const canvasChordSchema = z.array(z.string().trim().min(1).max(16)).max(8);
 const canvasKeymapPreferenceSchema = z.object({
+  version: z.literal(2).optional(),
   // Legacy shape, from a client that predates chords: one modifier set plus one key
   // per command. Still accepted and migrated by the normalizer.
   modifiers: z.array(z.enum(["meta", "ctrl", "alt", "shift"])).max(4).optional(),
@@ -440,7 +440,7 @@ const canvasKeymapPreferenceSchema = z.object({
   toggleView: canvasKeymapKeySchema.optional(),
   spotlight: canvasKeymapKeySchema.optional(),
   pendingReviews: canvasKeymapKeySchema.optional(),
-  // Chord shape: the base chord conversation keys ride, plus one chord per command.
+  // Current shape: the base chord conversation keys ride, plus one shortcut per command.
   base: canvasChordSchema.optional(),
   commands: z.record(z.string().max(24), canvasChordSchema.nullable()).optional(),
 });

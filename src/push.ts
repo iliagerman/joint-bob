@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
-import os from "node:os";
+import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import webpush, { type PushSubscription } from "web-push";
@@ -35,7 +35,7 @@ interface ColumnRow {
   name: string;
 }
 
-const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
+const dataDir = resolveDataDirectory();
 const databasePath = path.join(dataDir, "node.db");
 const legacyStorePath = path.join(dataDir, "push.json");
 const keyPath = path.join(dataDir, "secret.key");

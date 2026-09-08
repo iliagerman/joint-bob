@@ -1,7 +1,8 @@
 // App entry point. The feature modules under ./app register their DOM listeners
 // when they load; this file wires the boot sequence and the canvas pane mode.
 import {
-  chordFromEvent, chordId, conversationChord, DEFAULT_CANVAS_KEYMAP, isCanvasHelpShortcut,
+  canvasKeyFromCode, chordFromEvent, chordId, conversationChord, DEFAULT_CANVAS_KEYMAP,
+  isCanvasHelpShortcut, shortcutFinalMatches, shortcutPrefix,
 } from "./canvas-layout.js";
 import { createConversationCanvas } from "./canvas.js";
 import { api, savePreferences } from "./app/api.js";
@@ -12,6 +13,7 @@ import { openPendingReviews } from "./app/reviews.js";
 import { elements } from "./app/elements.js";
 import { setMobileView, toggleCanvasView } from "./app/layout.js";
 import { openRecentSessions } from "./app/recents.js";
+import { openRunningConversationsDialog } from "./app/running.js";
 import { confirmAction, SERVICE_WORKER_UPDATE_MS, setTheme, syncNotifyButton, toast, updateInstallButton, updateServiceWorker } from "./app/shell.js";
 import { state } from "./app/state.js";
 import "./app/state.js";
@@ -70,27 +72,58 @@ if (state.canvasPaneMode) {
   // document. The canvas owns the chords and the binding table and tells this pane
   // which ones it claims; every other combination still belongs to the conversation.
   const claimedChords = new Set();
+  const claimedSequences = new Map();
+  let pendingSequence = null;
+  const clearPendingSequence = () => {
+    if (pendingSequence?.timer) clearTimeout(pendingSequence.timer);
+    pendingSequence = null;
+  };
+  const forwardShortcut = (event) => {
+    event.preventDefault();
+    parent.postMessage({
+      type: "canvasShortcut", code: event.code,
+      metaKey: event.metaKey, shiftKey: event.shiftKey, ctrlKey: event.ctrlKey, altKey: event.altKey,
+    }, location.origin);
+  };
   window.addEventListener("keydown", (event) => {
     if (isCanvasHelpShortcut(event)) {
       event.preventDefault();
       parent.postMessage({ type: "canvasHelpShortcut" }, location.origin);
       return;
     }
+    if (pendingSequence) {
+      const finalKey = canvasKeyFromCode(event.code);
+      if (finalKey) {
+        const pending = pendingSequence;
+        clearPendingSequence();
+        const shortcut = claimedSequences.get(pending.id)?.get(finalKey);
+        if (shortcut && shortcutFinalMatches(shortcut, event)) { forwardShortcut(event); return; }
+      }
+    }
     const chord = chordFromEvent(event);
-    if (!chord || !claimedChords.has(chordId(chord))) return;
-    event.preventDefault();
-    parent.postMessage({
-      type: "canvasShortcut", code: event.code,
-      metaKey: event.metaKey, shiftKey: event.shiftKey, ctrlKey: event.ctrlKey, altKey: event.altKey,
-    }, location.origin);
+    if (!chord) return;
+    const id = chordId(chord);
+    if (claimedChords.has(id)) { forwardShortcut(event); return; }
+    if (!claimedSequences.has(id)) return;
+    pendingSequence = { id, timer: setTimeout(clearPendingSequence, 1500) };
+    forwardShortcut(event);
   });
   window.addEventListener("message", (event) => {
     // Only the canvas that framed this pane may set its chords or move its cursor.
     if (event.origin !== location.origin || event.source !== parent) return;
     if (event.data?.type === "canvasShortcutBindings") {
       claimedChords.clear();
+      claimedSequences.clear();
+      clearPendingSequence();
       const base = Array.isArray(event.data.base) ? event.data.base : DEFAULT_CANVAS_KEYMAP.base;
-      for (const chord of event.data.chords || []) claimedChords.add(chordId(chord));
+      for (const shortcut of event.data.chords || []) {
+        const prefix = shortcutPrefix(shortcut);
+        if (!prefix) { claimedChords.add(chordId(shortcut)); continue; }
+        const id = chordId(prefix);
+        const endings = claimedSequences.get(id) || new Map();
+        endings.set(shortcut[shortcut.length - 1], shortcut);
+        claimedSequences.set(id, endings);
+      }
       for (const binding of event.data.bindings || []) claimedChords.add(chordId(conversationChord({ base }, binding)));
     }
     if (event.data?.type === "canvasFocusComposer") document.querySelector("#messageInput")?.focus();
@@ -119,6 +152,8 @@ if (!state.canvasPaneMode) {
     openSpotlight,
     openPendingReviews,
     openRecentSessions,
+    openRunningConversations: () => { void openRunningConversationsDialog().catch((error) => toast(error.message)); },
+    openSettings: () => { void openSettings().catch((error) => toast(error.message)); },
     confirmAction,
     showMessage: (message) => toast(message, 8000),
   });

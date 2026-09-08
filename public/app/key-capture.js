@@ -3,11 +3,10 @@ import { CANVAS_MODIFIERS, canvasKeyFromCode, chordFromEvent, chordLabel, normal
 const modifierTokenForCode = (code) => ({ ControlLeft: "ctrl", ControlRight: "ctrl", MetaLeft: "meta", MetaRight: "meta", AltLeft: "alt", AltRight: "alt", ShiftLeft: "shift", ShiftRight: "shift" })[code] || null;
 
 /**
- * Turns a text field into a shortcut recorder: press and hold the keys - modifiers
- * included - and the chord of up to four keys is captured exactly as it is held.
- * Backspace or Delete clears the field to unbind; Escape hands focus back. A key
- * without Command, Control, or Option held beside it previews and then steps back to
- * what was committed, so ordinary typing never lands in the field.
+ * Turns a text field into a shortcut recorder. One modified key starts the shortcut;
+ * one bare key pressed within 1.5 seconds can finish a two-stroke sequence. Backspace
+ * or Delete clears the field. Escape hands focus back. Ordinary typing never lands
+ * in the field.
  *
  * `modifierOnly` records the bare modifier chord a conversation key rides under:
  * hold the modifiers and let go, and the release commits the combination that was
@@ -16,6 +15,13 @@ const modifierTokenForCode = (code) => ({ ControlLeft: "ctrl", ControlRight: "ct
 export function captureChordInput(input, { modifierOnly = false } = {}) {
   let held = new Set();
   let peak = new Set();
+  let sequencePrefix = null;
+  let sequenceTimer = null;
+  const clearSequencePrefix = () => {
+    if (sequenceTimer) clearTimeout(sequenceTimer);
+    sequenceTimer = null;
+    sequencePrefix = null;
+  };
   const committed = () => (input.dataset.chord ? JSON.parse(input.dataset.chord) : null);
   const show = (chord) => {
     input.dataset.chord = chord ? JSON.stringify(chord) : "";
@@ -31,11 +37,13 @@ export function captureChordInput(input, { modifierOnly = false } = {}) {
     event.stopPropagation();
     if (event.code === "Backspace" || event.code === "Delete") {
       event.preventDefault();
+      clearSequencePrefix();
       show(null);
       return;
     }
     if (event.code === "Escape") {
       event.preventDefault();
+      clearSequencePrefix();
       restore();
       input.blur();
       return;
@@ -52,6 +60,15 @@ export function captureChordInput(input, { modifierOnly = false } = {}) {
     }
     const chord = chordFromEvent(event);
     const key = chord ? null : canvasKeyFromCode(event.code);
+    if (sequencePrefix && key && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      const sequence = normalizeChord([...sequencePrefix, key]);
+      if (sequence) {
+        event.preventDefault();
+        clearSequencePrefix();
+        show(sequence);
+        return;
+      }
+    }
     if (!chord && !key) return; // Tab, the F keys, and friends keep their usual job.
     if (!chord) {
       // An unbindable press: a bare key, or a fifth key already held. Show the key,
@@ -64,6 +81,11 @@ export function captureChordInput(input, { modifierOnly = false } = {}) {
     // key that is. The handler opened by stopping propagation on the way in.
     event.preventDefault();
     show(chord);
+    if (!modifierOnly) {
+      clearSequencePrefix();
+      sequencePrefix = chord;
+      sequenceTimer = setTimeout(clearSequencePrefix, 1500);
+    }
   });
   input.addEventListener("keyup", (event) => {
     const token = modifierTokenForCode(event.code);
@@ -88,8 +110,8 @@ export function captureChordInput(input, { modifierOnly = false } = {}) {
       peak = new Set();
     }
   });
-  input.addEventListener("blur", () => { held = new Set(); peak = new Set(); restore(); });
-  input.addEventListener("focus", () => { held = new Set(); peak = new Set(); });
+  input.addEventListener("blur", () => { held = new Set(); peak = new Set(); clearSequencePrefix(); restore(); });
+  input.addEventListener("focus", () => { held = new Set(); peak = new Set(); clearSequencePrefix(); });
 }
 
 /**

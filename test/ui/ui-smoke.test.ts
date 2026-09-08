@@ -77,37 +77,83 @@ test("signing in through the login form reaches the app and the session survives
   assert.equal(await page.locator("#loginDialog[open]").count(), 0, "reload stays signed in");
 });
 
-test("engine path onboarding keeps overrides advanced and restores node defaults", async () => {
+test("harness settings show per-harness tabs and restore node defaults", async () => {
   await page.getByTestId("settings-open-button").click();
   await page.getByTestId("settings-tab-engines").click();
-  const overrides = page.locator("#settingsRuntimeOverrides");
-  assert.equal(await overrides.getAttribute("open"), null, "advanced overrides start collapsed");
-  assert.match(await page.getByTestId("settings-runtime-defaults").innerText(), /Node defaults.*Pi:.*Claude:/);
-  await overrides.locator("summary").click();
+  const claudePanel = page.locator("[data-harness-panel='claude']");
+  const piPanel = page.locator("[data-harness-panel='pi']");
+  assert.equal(await piPanel.isVisible(), true, "the Pi tab shows first");
+  assert.equal(await claudePanel.isVisible(), false, "Claude waits behind its own tab");
+  assert.match(await page.getByTestId("settings-pi-defaults").innerText(), /Node defaults — executable:/);
+  await page.getByTestId("harness-tab-pi").focus();
+  await page.keyboard.press("ArrowRight");
+  assert.equal(await claudePanel.isVisible(), true, "Claude has its own defaults and fields");
+  assert.equal(await piPanel.isVisible(), false, "the Pi tab yields to Claude");
+  assert.match(await page.getByTestId("settings-claude-defaults").innerText(), /Node defaults — executable:/);
+  await page.getByTestId("harness-tab-pi").click();
   const piExecutable = page.getByTestId("settings-pi-executable-input");
-  const defaultExecutable = await piExecutable.inputValue();
   await piExecutable.fill("custom-pi");
-  await page.getByTestId("settings-use-runtime-defaults-button").click();
-  assert.equal(await piExecutable.inputValue(), defaultExecutable, "reset restores the node default");
-  await page.getByTestId("settings-check-runtime-paths-button").click();
-  await page.getByTestId("settings-runtime-status").getByText(/Pi executable:.*Claude session path:/).waitFor();
+  await page.getByTestId("settings-use-pi-defaults-button").click();
+  await page.getByTestId("settings-runtime-status").getByText(/Pi executable: Blank \(uses node default\)/).waitFor();
   await page.getByTestId("settings-save-button").click();
   const restartMessage = page.locator("#settingsRestartMessage");
   await restartMessage.waitFor({ state: "visible" });
   assert.match(await restartMessage.innerText(), /restart required/i);
-  await page.getByTestId("settings-cancel-button").click();
-  await page.getByTestId("settings-dialog").waitFor({ state: "hidden" });
   const database = new DatabaseSync(path.join(node.dataDir, "node.db"));
   try {
-    const rows = database.prepare("SELECT value FROM node_settings WHERE key IN ('pi.executable', 'pi.configPath', 'pi.sessionPath', 'claude.executable', 'claude.configPath', 'claude.sessionPath')").all() as Array<{ value: string }>;
-    assert.ok(rows.every((row) => row.value === ""), "reset saves only blank runtime overrides");
+    const rows = database.prepare("SELECT key, value FROM node_settings WHERE key IN ('pi.executable', 'pi.configPath', 'pi.sessionPath', 'claude.executable', 'claude.configPath', 'claude.sessionPath')").all() as Array<{ key: string; value: string }>;
+    assert.ok(rows.filter((row) => row.key.startsWith("pi.")).every((row) => row.value === ""), "Pi reset saves blank Pi overrides");
+    assert.ok(rows.filter((row) => row.key.startsWith("claude.")).some((row) => row.value !== ""), "Pi reset leaves Claude overrides alone");
   } finally {
     database.close();
   }
+  await page.getByTestId("settings-cancel-button").click();
+  await page.getByTestId("settings-dialog").waitFor({ state: "hidden" });
   await page.getByTestId("settings-open-button").click();
   await page.getByTestId("settings-tab-engines").click();
-  assert.equal(await piExecutable.inputValue(), defaultExecutable, "blank overrides keep the effective node default");
+  assert.equal(await piExecutable.inputValue(), "", "blank overrides keep the effective node default");
   await page.getByTestId("settings-cancel-button").click();
+});
+
+test("settings sub-tabs, shortcut search, and the account panel stay focused", async () => {
+  await page.getByTestId("settings-open-button").click();
+
+  // Account: username and password, no login-session history.
+  await page.getByTestId("settings-tab-account").click();
+  assert.match(await page.getByTestId("settings-username").innerText(), /\w/);
+  assert.ok(await page.getByTestId("settings-current-password-input").isVisible());
+  assert.ok(await page.getByTestId("settings-change-password-button").isVisible());
+  assert.equal(await page.locator("#settingsPanel-account").getByText("Revoke").count(), 0, "no per-session revoke buttons");
+
+  // Secrets: one tab per secret type.
+  await page.getByTestId("settings-tab-secrets").click();
+  await page.getByTestId("secret-tab-github").click();
+  await page.getByTestId("secret-account-list").getByText("No GitHub accounts.").waitFor();
+  await page.getByTestId("secret-tab-all").click();
+
+  // Shortcuts: the search box fuzzy-filters the command rows.
+  await page.getByTestId("settings-tab-shortcuts").click();
+  await page.getByTestId("canvas-keymap-search-input").fill("page jump");
+  const splitRow = page.locator("#canvasKeymapCommands .canvas-keymap-command", { hasText: "split the screen" }).first();
+  const pageRow = page.locator("#canvasKeymapCommands .canvas-keymap-command", { hasText: "jump to page 1" });
+  await pageRow.waitFor();
+  assert.equal(await splitRow.isVisible(), false, "non-matching commands hide");
+  assert.equal(await pageRow.isVisible(), true, "matching commands stay");
+  await page.getByTestId("canvas-keymap-search-input").fill("");
+  assert.equal(await splitRow.isVisible(), true, "clearing the search brings rows back");
+
+  // Cluster: leaving is offered and, on a lone node, disabled.
+  await page.getByTestId("settings-tab-cluster").click();
+  await page.getByTestId("cluster-leave-button").waitFor();
+  assert.ok(await page.getByTestId("cluster-leave-button").isDisabled(), "a lone node cannot leave");
+
+  // Resources: every path list can be pasted into or browsed to.
+  await page.getByTestId("settings-tab-resources").click();
+  await page.getByTestId("settings-resource-skills-browse").click();
+  await page.getByTestId("folder-picker-dialog").waitFor({ state: "visible" });
+  await page.getByTestId("folder-picker-cancel-button").click();
+  await page.getByTestId("settings-cancel-button").click();
+  await page.getByTestId("settings-dialog").waitFor({ state: "hidden" });
 });
 
 test("resource path fields save and reload in Settings", async () => {
@@ -220,6 +266,42 @@ test("recent conversations persist through the replicated recents endpoint", asy
   await page.getByTestId("recent-sessions-open-button").click();
   await page.getByTestId("recent-sessions-dialog").getByText("Thread-Based Agent Builder", { exact: true }).waitFor({ timeout: 20_000 });
   await page.getByTestId("recent-sessions-close-button").click();
+});
+
+test("a digit opens the row it numbers in the recents dialog", async () => {
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+  await page.locator(".session-card", { hasText: "Mobile Multi-Agent Threads" }).first().click();
+  await page.locator(".message").first().waitFor({ timeout: 20_000 });
+  await page.getByTestId("recent-sessions-open-button").click();
+  const rows = page.getByTestId("recent-session-option");
+  await rows.first().waitFor({ timeout: 20_000 });
+
+  // While the search field holds focus a digit belongs to the query, not the list.
+  const search = page.getByTestId("recent-sessions-search-input");
+  await search.pressSequentially("2");
+  assert.equal(await search.inputValue(), "2", "a digit types while the search field is focused");
+  assert.equal(
+    await page.getByTestId("recent-sessions-dialog").evaluate((dialog) => dialog.open),
+    true,
+    "typing a digit must not pick a row",
+  );
+  await search.fill("");
+
+  // Row 2 carries the chip "2"; focusing the list lets that digit open the row.
+  const chip = rows.nth(1).getByTestId("recent-session-index");
+  assert.equal(await chip.innerText(), "2", "the second row is numbered 2");
+  const title = await rows.nth(1).locator("strong").innerText();
+  await page.locator("#recentSessionsList").focus();
+  await page.keyboard.press("2");
+
+  assert.equal(
+    await page.getByTestId("recent-sessions-dialog").evaluate((dialog) => dialog.open),
+    false,
+    "the digit closed the dialog and opened the row",
+  );
+  await page.locator('.session-card[aria-current="true"]', { hasText: title }).first().waitFor({ timeout: 20_000 });
+  await page.locator(".session-card", { hasText: "Thread-Based Agent Builder" }).first().click();
+  await page.locator(".message").first().waitFor({ timeout: 20_000 });
 });
 
 test("conversation rows identify the harness with only its icon", async () => {
@@ -465,17 +547,19 @@ test("split chords open the picker from the active canvas pane and really split 
   const focusPaneComposer = () => activePane.locator("iframe").contentFrame().getByTestId("chat-message-input").click();
   const panesBefore = await page.locator(".canvas-pane").count();
 
-  // One chord, not a leader and then a key: Control+Backslash splits to the right even
-  // with the caret inside a pane, whose iframe swallows keystrokes from the canvas.
+  // The three-key sequence reaches the canvas even with the caret inside a pane,
+  // whose iframe swallows keystrokes from the canvas document.
   await focusPaneComposer();
-  await page.keyboard.press("Control+Backslash");
+  await page.keyboard.press("Control+Space");
+  await page.keyboard.press("Shift+Backslash");
   await page.getByTestId("canvas-conversation-dialog").waitFor({ state: "visible" });
   assert.equal(await page.getByTestId("canvas-split-position").inputValue(), "right");
   await page.getByTestId("canvas-picker-cancel-button").click();
 
-  // Control+Minus splits below, and choosing a conversation completes the split.
+  // Control+Space then Minus splits below, and choosing a conversation completes it.
   await focusPaneComposer();
-  await page.keyboard.press("Control+Minus");
+  await page.keyboard.press("Control+Space");
+  await page.keyboard.press("Minus");
   await page.getByTestId("canvas-conversation-dialog").waitFor({ state: "visible" });
   assert.equal(await page.getByTestId("canvas-split-position").inputValue(), "below");
   await page.selectOption("#canvasProjectSelect", { label: "Internal Assistant" });
@@ -945,10 +1029,16 @@ test("the Settings shortcuts tab edits every shortcut in one place", async () =>
   await paneSearch.click();
   await page.keyboard.press("Control+BracketLeft");
   assert.equal(await paneSearch.inputValue(), "\u2303[");
-  // A bare key never lands in the field: the recorder previews it and steps back.
+  // Refocusing ends sequence capture. A bare key then never replaces the shortcut.
+  await spotlight.click();
+  await paneSearch.click();
   await page.keyboard.press("Enter");
-  assert.equal(await paneSearch.inputValue(), "\u2303[", "a key without Command, Control, or Option does not commit");
-  // Enter under a modifier does, and reads as a symbol.
+  assert.equal(await paneSearch.inputValue(), "\u2303[", "a bare key does not replace a shortcut");
+  // A second stroke within the capture window creates a three-key sequence.
+  await page.keyboard.press("Control+Space");
+  await page.keyboard.press("Shift+Backslash");
+  assert.equal(await paneSearch.inputValue(), "\u2303Space \\");
+  // Enter under a modifier replaces it and reads as a symbol.
   await page.keyboard.press("Control+Enter");
   assert.equal(await paneSearch.inputValue(), "\u2303\u23ce");
   // Backspace clears to unbind.
@@ -1011,7 +1101,7 @@ test("the search bar navigates the whole workspace", async () => {
   for (const [query, view] of [["projects window", "projects"], ["conversations window", "sessions"], ["messages window", "chat"], ["canvas window", "canvas"]]) {
     await page.keyboard.press("Meta+Shift+KeyP");
     await spotlightInput.fill(query);
-    await page.getByTestId("spotlight-option").filter({ hasText: new RegExp(`^Go to${query.split(" ")[0]} window`, "i") }).click();
+    await page.getByRole("option", { name: new RegExp(`^Go to ${query.split(" ")[0]} window$`, "i") }).click();
     await page.getByTestId("spotlight-dialog").waitFor({ state: "hidden" });
     assert.ok(await page.locator("body").evaluate((body, name) => body.classList.contains(`view-${name}`), view), `${query} opens the ${view} view`);
   }

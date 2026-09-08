@@ -36,18 +36,16 @@ export const CANVAS_CHORD_KEY_TOKENS: readonly string[] = [
 
 const CHORD_TOKENS = new Set(CANVAS_CHORD_KEY_TOKENS);
 
-/** The canonical form of one shortcut chord, or null when the value cannot be one. A
- *  chord is the modifier keys held plus one key — ["ctrl", "\\"], ["meta", "shift", "P"] —
- *  at most four keys altogether. `modifierOnly` accepts the bare modifier chord a
- *  conversation key rides under, which may hold three modifiers so the key still fits. */
+/** The canonical form of one shortcut, or null when the value cannot be one. A
+ * shortcut is one modified key or a modified key followed by one more key, with at
+ * most four physical keys altogether. */
 export function normalizeCanvasChordTokens(tokens: unknown, modifierOnly = false): string[] | null {
   if (!Array.isArray(tokens)) return null;
   const modifiers = CANVAS_CHORD_MODIFIERS.filter((name) => tokens.includes(name));
-  const keys = [...new Set(tokens.filter((token) => typeof token === "string" && !CANVAS_CHORD_MODIFIERS.includes(token as CanvasChordModifier)))];
+  const keys = tokens.filter((token): token is string => typeof token === "string" && !CANVAS_CHORD_MODIFIERS.includes(token as CanvasChordModifier));
   if (!modifiers.some((name) => name !== "shift")) return null;
-  if (keys.length > 1) return null;
-  if (keys.length === 1 && !CHORD_TOKENS.has(keys[0]!)) return null;
-  if (!modifierOnly && keys.length !== 1) return null;
+  if (keys.some((key) => !CHORD_TOKENS.has(key))) return null;
+  if (!modifierOnly && (keys.length < 1 || keys.length > 2)) return null;
   if (modifierOnly && keys.length !== 0) return null;
   if (modifierOnly && modifiers.length > 3) return null;
   if (modifiers.length + keys.length > 4) return null;

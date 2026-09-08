@@ -66,13 +66,13 @@ before(async () => {
 }, { timeout: 120_000 });
 
 after(async () => {
-  await Promise.all(["hold the line", "and this one waits"].map((prompt) => releaseTurn(prompt).catch(() => undefined)));
+  await Promise.all(["hold the line", "and this one waits", "edited while waiting"].map((prompt) => releaseTurn(prompt).catch(() => undefined)));
   if (browser) await browser.close();
   if (server) await stopDevNode(server);
   if (root) await rm(root, { recursive: true, force: true });
 });
 
-test("a prompt typed while the agent is working is still on the conversation after a reload", async () => {
+test("a queued prompt can be edited, survives reload, and can be cancelled", async () => {
   await openConversation();
   await page.getByTestId("chat-message-input").fill("hold the line");
   await page.keyboard.press("Enter");
@@ -84,6 +84,11 @@ test("a prompt typed while the agent is working is still on the conversation aft
   await queued.first().waitFor({ timeout: 20_000 });
   assert.match(await queued.first().innerText(), /queued/i);
 
+  await queued.getByTestId("queued-message-edit-button").click();
+  await queued.getByTestId("queued-message-edit-input").fill("edited while waiting");
+  await queued.getByTestId("queued-message-save-button").click();
+  await page.locator(".message.user.queued", { hasText: "edited while waiting" }).waitFor();
+
   // The app reopens the conversation it was last in, so the reload lands back
   // in this chat without walking the project list again.
   await page.reload({ waitUntil: "domcontentloaded" });
@@ -92,7 +97,13 @@ test("a prompt typed while the agent is working is still on the conversation aft
 
   // The bubble is rebuilt from the conversation, not from anything this page
   // was holding, so it is still there and still reads as pending.
-  const restored = page.locator(".message.user.queued", { hasText: "and this one waits" });
+  const restored = page.locator(".message.user.queued", { hasText: "edited while waiting" });
   await restored.first().waitFor({ timeout: 20_000 });
-  assert.equal(await restored.count(), 1, "the queued prompt is shown exactly once");
+  assert.equal(await restored.count(), 1, "the edited queued prompt is shown exactly once");
+
+  await restored.getByTestId("queued-message-cancel-button").click();
+  await restored.waitFor({ state: "detached" });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByTestId("chat-message-input").waitFor({ timeout: 20_000 });
+  assert.equal(await page.locator(".message.user.queued", { hasText: "edited while waiting" }).count(), 0, "the cancelled prompt stays gone");
 }, { timeout: 120_000 });

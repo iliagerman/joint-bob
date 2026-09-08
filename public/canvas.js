@@ -11,8 +11,9 @@
 
 import { captureCanvasKeyInput } from "./app/key-capture.js";
 import {
-  addCanvasPane, arrangeCanvasLayout, CANVAS_MAX_PAGES, canonicalCanvasKey, chordFromEvent, chordId, chordLabel,
+  addCanvasPane, arrangeCanvasLayout, CANVAS_MAX_PAGES, canonicalCanvasKey, canvasKeyFromCode, chordFromEvent, chordId, chordLabel,
   conversationChord, conversationChordLabel, canvasPaneEngine, canvasPaneMoves, canvasPaneNeighbor,
+  shortcutFinalMatches, shortcutPrefix,
   canonicalSessionPath,
   DEFAULT_CANVAS_KEYMAP, emptyCanvasLayout, fuzzyMatchScore, activeCanvasPage, canvasPageForPane,
   canvasPageGeometry, createCanvasPage, listCanvasPagePanes, listCanvasPanes, moveCanvasPage, moveCanvasPane,
@@ -22,7 +23,7 @@ import {
 
 const CANVAS_GRID_UNITS = 1000;
 
-export function createConversationCanvas({ api, getProjects, saveLayout, showMessage, toggleView, confirmAction, openShortcutSettings, openSpotlight, openPendingReviews, openRecentSessions }) {
+export function createConversationCanvas({ api, getProjects, saveLayout, showMessage, toggleView, confirmAction, openShortcutSettings, openSpotlight, openPendingReviews, openRecentSessions, openRunningConversations, openSettings }) {
   const root = document.querySelector("#canvasRoot");
   const dialog = document.querySelector("#canvasConversationDialog");
   const projectSelect = document.querySelector("#canvasProjectSelect");
@@ -80,10 +81,27 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
   // the chord-to-command lookup the dispatcher answers from.
   let keymap = normalizeCanvasKeymap(DEFAULT_CANVAS_KEYMAP);
   let chordCommands = new Map();
+  let sequenceCommands = new Map();
+  let pendingSequence = null;
+  const clearPendingSequence = () => {
+    if (pendingSequence?.timer) clearTimeout(pendingSequence.timer);
+    pendingSequence = null;
+  };
   const rebuildChordCommands = () => {
-    chordCommands = new Map(Object.entries(keymap.commands)
-      .filter(([, chord]) => Array.isArray(chord))
-      .map(([command, chord]) => [chordId(chord), command]));
+    chordCommands = new Map();
+    sequenceCommands = new Map();
+    for (const [command, shortcut] of Object.entries(keymap.commands)) {
+      if (!Array.isArray(shortcut)) continue;
+      const prefix = shortcutPrefix(shortcut);
+      if (!prefix) chordCommands.set(chordId(shortcut), command);
+      else {
+        const id = chordId(prefix);
+        const endings = sequenceCommands.get(id) || new Map();
+        endings.set(shortcut[shortcut.length - 1], { command, shortcut });
+        sequenceCommands.set(id, endings);
+      }
+    }
+    clearPendingSequence();
   };
   rebuildChordCommands();
   // Pane ids, most recently reached first, so one key toggles between the last two.
@@ -501,9 +519,31 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     return false;
   }
 
-  /** Every shortcut is one recorded chord. A conversation's own key is checked first:
-   * adding a command must never silently take a binding the user already had. */
+  function runShortcutCommand(command, explicitPaneId) {
+    if (command === "toggleView") { toggleView(); return true; }
+    if (command === "spotlight") { openSpotlight(); return true; }
+    if (command === "pendingReviews") { openPendingReviews(); return true; }
+    if (command === "recents") { openRecentSessions(); return true; }
+    if (command === "runningConversations") { openRunningConversations(); return true; }
+    if (command === "settings") { openSettings(); return true; }
+    if (!active) return false;
+    if (command === "paneSearch") { openFinder(); return true; }
+    if (command === "recentPane") return revealPane(previousPaneId());
+    if (command === "focusPane") return focusCurrentPane();
+    return runCanvasCommand(command, explicitPaneId);
+  }
+
+  /** A conversation's direct chord wins over commands. A command sequence remembers
+   * its first stroke for 1.5 seconds, including which iframe supplied it. */
   function handleShortcutCombination(combination, explicitPaneId = null) {
+    if (pendingSequence) {
+      const pending = pendingSequence;
+      clearPendingSequence();
+      const ending = sequenceCommands.get(pending.id)?.get(canvasKeyFromCode(combination.code));
+      if (ending && shortcutFinalMatches(ending.shortcut, combination)) {
+        return runShortcutCommand(ending.command, explicitPaneId || pending.paneId);
+      }
+    }
     const chord = chordFromEvent(combination);
     if (!chord) return false;
     if (active) {
@@ -513,20 +553,13 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
         return pane ? revealPane(pane.id) : false;
       }
     }
-    const command = chordCommands.get(chordId(chord));
-    if (!command) return false;
-    // Switching between the canvas and the conversation list is the only command that
-    // also answers while the canvas is closed: it is how the user gets back to it.
-    if (command === "toggleView") { toggleView(); return true; }
-    // These span the whole workspace, so they answer with the canvas closed too.
-    if (command === "spotlight") { openSpotlight(); return true; }
-    if (command === "pendingReviews") { openPendingReviews(); return true; }
-    if (command === "recents") { openRecentSessions(); return true; }
-    if (!active) return false;
-    if (command === "paneSearch") { openFinder(); return true; }
-    if (command === "recentPane") return revealPane(previousPaneId());
-    if (command === "focusPane") return focusCurrentPane();
-    return runCanvasCommand(command, explicitPaneId);
+    const id = chordId(chord);
+    const command = chordCommands.get(id);
+    if (command) return runShortcutCommand(command, explicitPaneId);
+    const endings = sequenceCommands.get(id);
+    if (!endings || !active && ![...endings.values()].some(({ command }) => ["toggleView", "spotlight", "pendingReviews", "recents", "runningConversations", "settings"].includes(command))) return false;
+    pendingSequence = { id, paneId: explicitPaneId, timer: setTimeout(clearPendingSequence, 1500) };
+    return true;
   }
 
   function renderShortcutBar() {

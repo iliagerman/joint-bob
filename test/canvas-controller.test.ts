@@ -287,8 +287,10 @@ test("split chords open the picker relative to the active pane", async () => {
 
   let prevented = 0;
   const press = (event) => windowListeners.get("keydown")({ ...event, preventDefault: () => { prevented += 1; } });
-  press({ code: "Backslash", key: "|", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false });
-  assert.equal(prevented, 1, "the split chord never reaches the active conversation");
+  const bare = { ctrlKey: false, metaKey: false, altKey: false, shiftKey: false };
+  press({ ...bare, code: "Space", key: " ", ctrlKey: true });
+  press({ ...bare, code: "Backslash", key: "|", shiftKey: true });
+  assert.equal(prevented, 2, "both split keystrokes stay out of the active conversation");
   assert.equal(registry.get("#canvasConversationDialog").open, true);
   assert.equal(registry.get("#canvasSplitPosition").value, "right");
 
@@ -300,7 +302,8 @@ test("split chords open the picker relative to the active pane", async () => {
   assert.deepEqual(listCanvasPanes(saved.at(-1)).map((pane) => pane.sessionId), ["s-one", "s-two", "s-three"],
     "the new pane lands immediately right of the active pane");
 
-  press({ code: "Minus", key: "-", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false });
+  press({ ...bare, code: "Space", key: " ", ctrlKey: true });
+  press({ ...bare, code: "Minus", key: "-" });
   assert.equal(registry.get("#canvasConversationDialog").open, true);
   assert.equal(registry.get("#canvasSplitPosition").value, "below");
   registry.get("#canvasConversationDialog").close();
@@ -316,7 +319,7 @@ test("a re-recorded chord drives the same command, and a pane can forward it", a
   for (const frame of frames) frame.contentWindow = { postMessage() {} };
 
   // The old muscle memory, one step shorter: the split itself on Control+Space.
-  controller.setKeymap({ base: ["meta", "shift"], commands: { splitRight: ["ctrl", "SPACE"], splitBelow: ["ctrl", "-"], closePane: ["meta", "shift", "X"] } });
+  controller.setKeymap({ version: 2, base: ["meta", "shift"], commands: { splitRight: ["ctrl", "SPACE"], splitBelow: ["ctrl", "-"], closePane: ["meta", "shift", "X"] } });
   let prevented = 0;
   windowListeners.get("keydown")({ code: "Space", key: " ", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false, preventDefault: () => { prevented += 1; } });
   assert.equal(prevented, 1, "the re-recorded chord opens the split picker");

@@ -69,6 +69,10 @@ test("settings API persists runtime and Syncthing choices without returning secr
     assert.deepEqual(await saved.json(), {
       pi: { executable: "/usr/local/bin/pi", ...piRuntime },
       claude: { executable: "/usr/local/bin/claude", ...claudeRuntime },
+      runtimeOverrides: {
+        pi: { executable: "/usr/local/bin/pi", ...piRuntime },
+        claude: { executable: "/usr/local/bin/claude", ...claudeRuntime },
+      },
       syncthing: { endpoint: "http://127.0.0.1:8384", apiKeyConfigured: true },
       projects: { homePath: path.join(root, "JointBob") },
       resources: { skills: [path.join(root, "skills")], prompts: [path.join(root, "prompts")], rules: [path.join(root, "rules")], plugins: [path.join(root, "plugins")] },
@@ -80,6 +84,10 @@ test("settings API persists runtime and Syncthing choices without returning secr
     assert.deepEqual(await read.json(), {
       pi: { executable: "/usr/local/bin/pi", ...piRuntime },
       claude: { executable: "/usr/local/bin/claude", ...claudeRuntime },
+      runtimeOverrides: {
+        pi: { executable: "/usr/local/bin/pi", ...piRuntime },
+        claude: { executable: "/usr/local/bin/claude", ...claudeRuntime },
+      },
       syncthing: { endpoint: "http://127.0.0.1:8384", apiKeyConfigured: true },
       projects: { homePath: path.join(root, "JointBob") },
       resources: { skills: [path.join(root, "skills")], prompts: [path.join(root, "prompts")], rules: [path.join(root, "rules")], plugins: [path.join(root, "plugins")] },

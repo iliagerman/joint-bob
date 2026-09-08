@@ -1,5 +1,5 @@
 import { mkdirSync } from "node:fs";
-import os from "node:os";
+import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { CANVAS_CHORD_MODIFIERS, normalizeCanvasChordTokens, type CanvasChordModifier } from "./canvas-keys.js";
@@ -154,10 +154,11 @@ export function normalizeCanvasLayoutPreference(layout: StoredCanvasLayout | Can
 
 export type CanvasModifier = CanvasChordModifier;
 
-/** Canvas keyboard shortcuts for one account. Every command holds one chord - the
- * modifiers held plus one key, at most four keys - or null when unbound. Conversation
+/** Canvas keyboard shortcuts for one account. Every command holds one chord or a
+ * two-stroke sequence, at most four physical keys, or null when unbound. Conversation
  * keys ride the `base` modifier chord plus their own single key. */
 export interface CanvasKeymapPreference {
+  version: 2;
   base: CanvasModifier[];
   commands: Record<string, string[] | null>;
 }
@@ -166,7 +167,7 @@ const CANVAS_MODIFIERS: CanvasModifier[] = [...CANVAS_CHORD_MODIFIERS];
 // Order matters: a command added later takes its default chord only if no earlier
 // command already holds it, so an existing account never loses a binding it configured.
 const CANVAS_KEYMAP_COMMANDS = [
-  "toggleView", "spotlight", "pendingReviews", "recents",
+  "toggleView", "spotlight", "pendingReviews", "recents", "runningConversations", "settings",
   "paneSearch", "recentPane", "focusPane",
   "splitRight", "splitBelow", "closePane", "createPage",
   "nextPage", "prevPage", "focusLeft", "focusRight", "focusUp", "focusDown",
@@ -174,17 +175,20 @@ const CANVAS_KEYMAP_COMMANDS = [
 ] as const;
 
 export const defaultCanvasKeymap = (): CanvasKeymapPreference => ({
+  version: 2,
   base: ["meta", "shift"],
   commands: {
     toggleView: ["meta", "shift", "V"],
     spotlight: ["meta", "shift", "P"],
     pendingReviews: ["meta", "shift", "R"],
     recents: ["meta", "K"],
+    runningConversations: ["meta", "shift", "O"],
+    settings: ["meta", ","],
     paneSearch: ["meta", "shift", "F"],
     recentPane: ["meta", "shift", "E"],
     focusPane: ["meta", "shift", "G"],
-    splitRight: ["ctrl", "\\"],
-    splitBelow: ["ctrl", "-"],
+    splitRight: ["ctrl", "SPACE", "\\"],
+    splitBelow: ["ctrl", "SPACE", "-"],
     closePane: ["meta", "shift", "X"],
     createPage: ["meta", "shift", "C"],
     nextPage: ["ctrl", "alt", "ARROWRIGHT"],
@@ -203,10 +207,22 @@ const LEGACY_COMMAND_KEYS: Record<string, string> = { recentPane: "E", focusPane
 // Legacy keys were stored in any case; the chord vocabulary is upper case.
 const canonicalChordKey = (key: unknown): string | undefined => (typeof key === "string" ? key.toUpperCase() : undefined);
 
+function shortcutPrefix(shortcut: string[]): string[] | null {
+  return shortcut.filter((token) => !CANVAS_MODIFIERS.includes(token as CanvasModifier)).length === 2 ? shortcut.slice(0, -1) : null;
+}
+
+function shortcutsConflict(left: string[], right: string[]): boolean {
+  if (JSON.stringify(left) === JSON.stringify(right)) return true;
+  const leftPrefix = shortcutPrefix(left);
+  const rightPrefix = shortcutPrefix(right);
+  return Boolean(leftPrefix && !rightPrefix && JSON.stringify(leftPrefix) === JSON.stringify(right)
+    || rightPrefix && !leftPrefix && JSON.stringify(rightPrefix) === JSON.stringify(left));
+}
+
 /**
  * Accepts any stored or posted shape and mirrors the page's `normalizeCanvasKeymap`:
- * a chord without Command, Control, or Option would swallow ordinary typing, so an
- * unusable one falls back to the default; a chord two commands would share goes to
+ * a shortcut without Command, Control, or Option would swallow ordinary typing, so
+ * an unusable one falls back to the default; a shortcut two commands would share goes to
  * the earlier command, and the later one is left unbound.
  */
 export function normalizeCanvasKeymapPreference(value: unknown): CanvasKeymapPreference {
@@ -215,20 +231,22 @@ export function normalizeCanvasKeymapPreference(value: unknown): CanvasKeymapPre
   const legacy = !source.commands;
   const base = (normalizeCanvasChordTokens(legacy ? source.modifiers : source.base, true) ?? [...defaultCanvasKeymap().base]) as CanvasModifier[];
   const commands: Record<string, string[] | null> = {};
-  const taken = new Set<string>();
+  const taken: string[][] = [];
   for (const command of CANVAS_KEYMAP_COMMANDS) {
-    const raw = legacy
+    let raw = legacy
       ? (source[command] === null ? null
         : LEGACY_COMMAND_KEYS[command] ? [...base, canonicalChordKey(source[command]) ?? LEGACY_COMMAND_KEYS[command]]
           : [...defaultCanvasKeymap().commands[command]!])
       : (((source.commands as Record<string, unknown> | undefined)?.[command] === undefined
         ? [...defaultCanvasKeymap().commands[command]!]
         : (source.commands as Record<string, unknown>)[command]) as unknown);
+    if (source.version !== 2 && command === "splitRight" && JSON.stringify(raw) === JSON.stringify(["ctrl", "\\"])) raw = ["ctrl", "SPACE", "\\"];
+    if (source.version !== 2 && command === "splitBelow" && JSON.stringify(raw) === JSON.stringify(["ctrl", "-"])) raw = ["ctrl", "SPACE", "-"];
     const chord = raw === null || typeof raw === "string" ? null : normalizeCanvasChordTokens(raw);
-    commands[command] = chord && !taken.has(JSON.stringify(chord)) ? chord : null;
-    if (commands[command]) taken.add(JSON.stringify(commands[command]));
+    commands[command] = chord && !taken.some((existing) => shortcutsConflict(existing, chord)) ? chord : null;
+    if (commands[command]) taken.push(commands[command]);
   }
-  return { base, commands };
+  return { version: 2, base, commands };
 }
 
 /** A hand-edited column must degrade to the default chord, never take the node down. */
@@ -280,7 +298,7 @@ interface PreferenceRow {
   canvas_keymap: string;
 }
 
-const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
+const dataDir = resolveDataDirectory();
 const databasePath = path.join(dataDir, "node.db");
 let database: DatabaseSync | undefined;
 

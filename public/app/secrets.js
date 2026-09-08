@@ -7,6 +7,8 @@ import { confirmAction, toast } from "./shell.js";
 export const secretAccounts = [];
 let editingSecretAccountId = null;
 let secretScopeTarget = null;
+// Which provider tab Settings shows; "all" lists every account.
+let secretTypeFilter = "all";
 
 // Brand marks, drawn inline so the offline shell never reaches for a network icon.
 const providerLabels = { aws: "AWS", google: "Google", github: "GitHub", custom: "Custom" };
@@ -79,9 +81,13 @@ function secretRow(variable = { name: "", kind: "value", configured: false }) {
 
 function renderSecretAccounts() {
   elements.secretAccountList.replaceChildren();
-  if (!secretAccounts.length) { elements.secretAccountList.textContent = "No node-local secret accounts."; return; }
-  for (const account of secretAccounts) {
-    const row = document.createElement("div"); row.className = "secret-account-row";
+  const visible = secretAccounts.filter((account) => secretTypeFilter === "all" || account.provider === secretTypeFilter);
+  if (!visible.length) {
+    elements.secretAccountList.textContent = secretTypeFilter === "all" ? "No node-local secret accounts." : `No ${providerLabels[secretTypeFilter] ?? secretTypeFilter} accounts.`;
+    return;
+  }
+  for (const account of visible) {
+    const row = document.createElement("div"); row.className = "secret-account-row"; row.dataset.provider = account.provider;
     const meta = document.createElement("span"); meta.className = "secret-account-meta";
     const name = document.createElement("strong"); name.textContent = `${account.label} · ${providerLabels[account.provider] ?? account.provider}`;
     const variables = document.createElement("span"); variables.className = "secret-account-vars";
@@ -100,6 +106,17 @@ export async function loadSecretAccounts() {
   secretAccounts.splice(0, secretAccounts.length, ...payload.accounts);
   renderSecretAccounts();
 }
+
+/** The provider tabs above the list: one per secret type, plus "all". */
+function selectSecretTypeTab(name) {
+  secretTypeFilter = name;
+  for (const tab of elements.secretTypeTabs) {
+    const selected = tab.dataset.secretTab === name;
+    tab.setAttribute("aria-pressed", selected ? "true" : "false");
+  }
+  renderSecretAccounts();
+}
+for (const tab of elements.secretTypeTabs) tab.addEventListener("click", () => selectSecretTypeTab(tab.dataset.secretTab));
 
 async function deleteSecretAccount(account) {
   const confirmed = await confirmAction({
@@ -133,7 +150,8 @@ function openSecretAccount(account = null) {
   editingSecretAccountId = account?.id ?? null;
   elements.secretAccountTitle.textContent = account ? "Edit secret account" : "Add secret account";
   elements.secretAccountLabelInput.value = account?.label ?? "";
-  elements.secretAccountProviderInput.value = account?.provider ?? "aws";
+  // A provider tab opened from the list starts the form on that provider; "all" keeps AWS.
+  elements.secretAccountProviderInput.value = account?.provider ?? (secretTypeFilter === "all" ? "aws" : secretTypeFilter);
   // Node-local is the default, so a new account never leaves this node by accident.
   elements.secretAccountReplicateInput.checked = Boolean(account?.replicate);
   elements.secretVariableRows.replaceChildren();

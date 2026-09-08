@@ -8,6 +8,7 @@ import WebSocket, { WebSocketServer } from "ws";
 import type { AgentRunDescriptor } from "../agent-run-monitor.js";
 import type { ClaudeRunHandle } from "../claude-service.js";
 import { createPiSession } from "../pi-service.js";
+import type { QueuedPrompt } from "../prompt-queue.js";
 import type { AgentRunSummary, ChatMessage, ContextUsage, HarnessId, ProjectRecord } from "../types.js";
 
 /** Node-wide mutable flags shared by several server modules. */
@@ -45,10 +46,7 @@ export interface SharedPiSession {
 
 export type ChatEngine = HarnessId;
 
-interface ClaudeQueuedPrompt {
-  id: number;
-  promptText: string;
-  displayText: string;
+interface ClaudeQueuedPrompt extends QueuedPrompt {
   acknowledged: boolean;
 }
 

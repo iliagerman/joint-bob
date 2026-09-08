@@ -369,15 +369,92 @@ export function appendMessage(role, text, timestamped = true) {
   return bubble;
 }
 
-export function markMessageQueued(bubble, queueId) {
+function sendQueuedPromptAction(payload) {
+  if (!state.socket || state.socket.readyState !== WebSocket.OPEN) {
+    toast("Conversation is not connected yet");
+    return false;
+  }
+  state.socket.send(JSON.stringify(payload));
+  return true;
+}
+
+function queuedButton(label, testId) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = label;
+  button.dataset.testid = testId;
+  return button;
+}
+
+function queuedEditableText(text) {
+  const attachmentIndex = text.lastIndexOf("\n\nAttached: ");
+  if (attachmentIndex >= 0) return text.slice(0, attachmentIndex);
+  return text.startsWith("Attached: ") ? "" : text;
+}
+
+export function markMessageQueued(bubble, queueId, editableText = null) {
   bubble.classList.add("queued");
   bubble.dataset.queueId = String(queueId);
+  if (typeof editableText === "string") bubble.dataset.queuedEditableText = editableText;
   bubble.dataset.testid = `queued-message-${queueId}`;
+
+  const footer = document.createElement("div");
+  footer.className = "queued-controls";
   const badge = document.createElement("span");
   badge.className = "queued-badge";
   badge.textContent = "Queued";
-  bubble.append(badge);
+  const edit = queuedButton("Edit", "queued-message-edit-button");
+  const cancel = queuedButton("Cancel", "queued-message-cancel-button");
+  footer.append(badge, edit, cancel);
+
+  const editor = document.createElement("div");
+  editor.className = "queued-editor";
+  editor.hidden = true;
+  const input = document.createElement("textarea");
+  input.dataset.testid = "queued-message-edit-input";
+  input.setAttribute("aria-label", "Edit queued message");
+  const save = queuedButton("Save", "queued-message-save-button");
+  const discard = queuedButton("Keep", "queued-message-edit-cancel-button");
+  editor.append(input, save, discard);
+
+  edit.addEventListener("click", () => {
+    input.value = bubble.dataset.queuedEditableText ?? queuedEditableText(bubble._raw);
+    footer.hidden = true;
+    editor.hidden = false;
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  });
+  discard.addEventListener("click", () => {
+    editor.hidden = true;
+    footer.hidden = false;
+  });
+  save.addEventListener("click", () => {
+    const message = input.value.trim();
+    if (!message) { toast("Queued message cannot be empty"); return; }
+    sendQueuedPromptAction({ type: "editQueuedPrompt", queueId, message });
+  });
+  cancel.addEventListener("click", () => {
+    sendQueuedPromptAction({ type: "cancelQueuedPrompt", queueId });
+  });
+
+  bubble.append(footer, editor);
   return bubble;
+}
+
+export function updateQueuedMessage(queueId, text, editableText) {
+  const bubble = elements.messages.querySelector(`[data-queue-id="${queueId}"]`);
+  if (!bubble) return;
+  renderBubbleContent(bubble, text, true);
+  bubble.dataset.queuedEditableText = editableText;
+  bubble.querySelector(".queued-editor").hidden = true;
+  bubble.querySelector(".queued-controls").hidden = false;
+}
+
+export function removeQueuedMessage(queueId) {
+  const bubble = elements.messages.querySelector(`[data-queue-id="${queueId}"]`);
+  if (!bubble) return;
+  if (bubble.nextElementSibling?.classList.contains("message-actions")) bubble.nextElementSibling.remove();
+  bubble.remove();
 }
 
 export function clearQueuedMark(queueId) {
@@ -385,7 +462,9 @@ export function clearQueuedMark(queueId) {
   if (!bubble) return;
   bubble.classList.remove("queued");
   delete bubble.dataset.queueId;
-  bubble.querySelector(".queued-badge")?.remove();
+  delete bubble.dataset.queuedEditableText;
+  bubble.querySelector(".queued-controls")?.remove();
+  bubble.querySelector(".queued-editor")?.remove();
 }
 
 // startedAt is 0 for a replayed transcript entry: it already finished, at a

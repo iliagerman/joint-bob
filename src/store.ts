@@ -1,5 +1,5 @@
 import { promises as fs } from "node:fs";
-import os from "node:os";
+import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { nanoid } from "nanoid";
@@ -41,7 +41,7 @@ export class WorkspaceError extends Error {}
 /** These names are taken by the managed home's own folders, so a workspace cannot use them. */
 const reservedWorkspaceIds = new Set(["projects", "tickets"]);
 
-const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
+const dataDir = resolveDataDirectory();
 const legacyStorePath = path.join(dataDir, "projects.json");
 const databasePath = path.join(dataDir, "node.db");
 let database: DatabaseSync | null = null;

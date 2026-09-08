@@ -83,8 +83,8 @@ test("settings tabs absorb notification, secret, and cluster configuration", asy
   assert.match(html, /class="dialog-heading" tabindex="-1" autofocus/);
   assert.match(styles, /\.dialog-heading:focus \{ outline: none; \}/);
 
-  // Engine paths and Syncthing are automatic; normal settings do not ask for Syncthing credentials.
-  assert.match(html, /Engine paths are detected automatically/);
+  // Harness paths and Syncthing are automatic; normal settings do not ask for Syncthing credentials.
+  assert.match(html, /Harness paths are detected automatically/);
   assert.match(html, /Syncthing is installed, started, discovered, and configured automatically/);
   assert.doesNotMatch(html, /settingsSyncthingEndpoint|settingsSyncthingApiKey/);
   assert.doesNotMatch(app, /settingsSyncthingEndpoint|settingsSyncthingApiKey/);
@@ -94,5 +94,5 @@ test("settings tabs absorb notification, secret, and cluster configuration", asy
 
   // Installed PWA clients must not keep the old shell.
   for (const id of ["settings-resource-skills-paths", "settings-resource-prompts-paths", "settings-resource-rules-paths", "settings-resource-plugins-paths", "project-resource-skills-paths", "project-resource-prompts-paths", "project-resource-rules-paths", "project-resource-plugins-paths"]) assert.match(html, new RegExp(`data-testid="${id}"`));
-  assert.match(serviceWorker, /joint-bob-v137/);
+  assert.match(serviceWorker, /joint-bob-v139/);
 });

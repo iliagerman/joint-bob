@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added visible and two-stroke shortcuts, editable queued messages, safer cluster departure, and stronger test-data isolation.
+
 ## 1.8.0 — 2026-09-07
 
 - Customize keyboard shortcuts for any canvas or app command in Settings—record your preferred key combination instead of using preset leaders.

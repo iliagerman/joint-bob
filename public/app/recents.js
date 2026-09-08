@@ -1,5 +1,6 @@
-import { chordMatches } from "../canvas-layout.js";
+import { chordMatches, shortcutPrefix } from "../canvas-layout.js";
 import { api } from "./api.js";
+import { attachDigitShortcuts, LIST_SHORTCUT_LIMIT, shortcutIndexBadge } from "./list-shortcuts.js";
 import { elements } from "./elements.js";
 import { normalizedQuery, shortSessionTitle } from "./layout.js";
 import { selectProject } from "./project-selection.js";
@@ -161,7 +162,6 @@ async function openRecentSession(entry) {
 }
 
 /** Rows 1-10 carry a digit shortcut; the list is renumbered whenever the search narrows it. */
-const RECENT_SESSION_SHORTCUT_LIMIT = 10;
 let recentSessionShortcuts = [];
 
 export function renderRecentSessionsDialog() {
@@ -194,13 +194,9 @@ export function renderRecentSessionsDialog() {
     button.dataset.testid = "recent-session-option";
     // Rows are single-line, so the full title lives in the tooltip.
     button.title = entry.title;
-    if (recentSessionShortcuts.length < RECENT_SESSION_SHORTCUT_LIMIT) {
+    if (recentSessionShortcuts.length < LIST_SHORTCUT_LIMIT) {
       recentSessionShortcuts.push(entry);
-      const index = document.createElement("span");
-      index.className = "recent-session-index";
-      index.dataset.testid = "recent-session-index";
-      index.textContent = recentSessionShortcuts.length === 10 ? "0" : String(recentSessionShortcuts.length);
-      button.append(index);
+      button.append(shortcutIndexBadge("recent-session-index", recentSessionShortcuts.length));
     }
     const title = document.createElement("strong");
     title.textContent = entry.title;
@@ -238,23 +234,14 @@ for (const trigger of document.querySelectorAll("[data-recent-sessions-open]")) 
   trigger.addEventListener("click", openRecentSessions);
 }
 elements.recentSessionsSearchInput.addEventListener("input", () => renderRecentSessionsDialog());
-elements.recentSessionsDialog.addEventListener("keydown", (event) => {
-  if (event.target === elements.recentSessionsSearchInput) return;
-  if (event.metaKey || event.ctrlKey || event.altKey) return;
-  const position = event.key === "0" ? 10 : Number(event.key);
-  if (!Number.isInteger(position) || position < 1 || position > RECENT_SESSION_SHORTCUT_LIMIT) return;
-  const entry = recentSessionShortcuts[position - 1];
-  if (!entry) return;
-  event.preventDefault();
-  openRecentSession(entry).catch((error) => toast(error.message));
-});
+attachDigitShortcuts(elements.recentSessionsDialog, () => recentSessionShortcuts, (entry) => openRecentSession(entry).catch((error) => toast(error.message)));
 /** The recorded recents chord reaches the list from any view, including
  * mid-conversation. A canvas pane stays out of the way: it forwards the keystroke to
  * the canvas, which opens the list once for the whole workspace. */
 document.addEventListener("keydown", (event) => {
   if (state.canvasPaneMode) return;
   const chord = state.canvasKeymap?.commands?.recents;
-  if (!Array.isArray(chord) || !chordMatches(chord, event)) return;
+  if (!Array.isArray(chord) || shortcutPrefix(chord) || !chordMatches(chord, event)) return;
   event.preventDefault();
   if (elements.recentSessionsDialog.open) {
     elements.recentSessionsDialog.close();

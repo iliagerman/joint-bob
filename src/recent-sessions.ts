@@ -1,5 +1,5 @@
 import { mkdirSync } from "node:fs";
-import os from "node:os";
+import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { enqueueReplicationEvent, ensureReplicationSchema, resolveProjectAlias, type ReplicationEvent } from "./replication.js";
@@ -22,7 +22,7 @@ interface RecentRow {
   opened_at: string; activity_updated_at: string | null; updated_at: string; origin_node_id: string;
 }
 
-const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
+const dataDir = resolveDataDirectory();
 let database: DatabaseSync | undefined;
 
 export function ensureUserRecentSessionSchema(db: DatabaseSync): void {

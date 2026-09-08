@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import os from "node:os";
+import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { isHarnessId, type HarnessId } from "./types.js";
@@ -23,7 +23,7 @@ type AccountRow = { id: string; label: string; provider: SecretProvider; replica
 /** A `github` account's variable set is fixed: the user never types the name. */
 export const GITHUB_TOKEN_VARIABLE = "GH_TOKEN";
 
-const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
+const dataDir = resolveDataDirectory();
 const databasePath = path.join(dataDir, "node.db");
 const keyPath = path.join(dataDir, "secret.key");
 const askPassPath = path.join(dataDir, "github-askpass.sh");

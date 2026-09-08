@@ -316,6 +316,21 @@ export async function ensureSyncthingDevice(deviceId: string, name: string): Pro
   });
 }
 
+export async function removeSyncthingDevices(deviceIds: string[], folderIds: string[]): Promise<void> {
+  if (!deviceIds.length || !folderIds.length || !await connection()) return;
+  const removed = new Set(deviceIds);
+  const ownedFolders = new Set(folderIds);
+  for (const folder of await listSyncthingFolders()) {
+    if (!ownedFolders.has(folder.id)) continue;
+    const devices = folder.devices.filter((device) => !removed.has(device.deviceID));
+    if (devices.length === folder.devices.length) continue;
+    await request<void>(`/rest/config/folders/${encodeURIComponent(folder.id)}`, {
+      method: "PUT",
+      body: JSON.stringify({ ...folder, devices }),
+    });
+  }
+}
+
 export async function ensureTicketWorkspaceFolder(folderPath = ticketWorkspaceRoot(), peerDeviceId?: string, peerName = peerDeviceId ?? ""): Promise<void> {
   if (peerDeviceId) await ensureSyncthingDevice(peerDeviceId, peerName);
   await ensureSyncthingFolder(TICKET_WORKSPACE_FOLDER_ID, TICKET_WORKSPACE_FOLDER_LABEL, folderPath, peerDeviceId);

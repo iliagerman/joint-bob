@@ -21,11 +21,11 @@ npm run test:file test/canvas-ui.test.ts
 
 Always go through `npm run test:file`. It carries `--import ./test/setup.mjs`,
 which points `HOME` and `PI_WEB_DATA_DIR` at a throwaway directory before any
-test code loads. A bare `node --test test/<file>.test.ts` skips that setup, and
-every module that resolves its data directory as
-`JOINT_BOB_DATA_DIR ?? PI_WEB_DATA_DIR ?? ~/.joint-bob` then writes into the
-real `~/.joint-bob/node.db` — which is how test fixtures such as `peer-locked`
-and `painted` once landed in the live project list.
+test code loads. The shared data-directory resolver also detects Node's test
+runner. A bare `node --test test/<file>.test.ts` gets its own temporary data
+directory, and a test process aimed at `~/.joint-bob` fails before opening
+SQLite. This second boundary prevents a missed setup import from writing
+fixtures into the production database.
 
 ## The three kinds of test in this repository
 

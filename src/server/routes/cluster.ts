@@ -1,13 +1,16 @@
+import { AGENT_RESOURCES_FOLDER_ID } from "../../agent-resources.js";
 import { assertClusterDepartureAllowed, clusterProjectGrantFor, createClusterInvitation, createClusterPeer, getClusterMachineToken, getClusterMembership, getClusterNode, getClusterPeer, leaveCluster, listClusterPeers, markClusterPeerSeen, mergeClusterMembership, removeClusterPeer, saveClusterPeer, setClusterInviter, updateClusterNode } from "../../cluster.js";
 import { getConversationOwnership, takeConversationOwnership } from "../../conversation-ownership.js";
+import { listHarnessSyncFolders } from "../../harnesses.js";
 import { applyRuntimeLeaseSnapshot, conversationRuntimeDatabase, type RuntimeLeaseInput } from "../../conversation-runtime.js";
 import { receiveReplicationBatch, type ReplicationBatch } from "../../replication.js";
 import { receiveSecretCredentialEvents, type SecretCredentialEvent } from "../../secret-replication.js";
 import { getSettings } from "../../settings.js";
 import { canonicalProjectId, getProject, listProjects, projectAliasIds, updateProjectSyncFolderId } from "../../store.js";
-import { syncthingDeviceId, syncthingFolderIdForPath } from "../../syncthing.js";
+import { removeSyncthingDevices, syncthingDeviceId, syncthingFolderIdForPath } from "../../syncthing.js";
 import { appVersion } from "../../changelog.js";
 import { updateInventoryView } from "../../updater.js";
+import { TICKET_WORKSPACE_FOLDER_ID } from "../../task-workspaces.js";
 import { abortPreparedTaskHandoff, acknowledgeIncomingTaskHandoff, commitPreparedTaskHandoff, getTaskHandoff, isTaskHandoffRejected, listTasks, prepareTaskHandoff, rejectTaskHandoff, reserveTaskHandoff, taskHandoffDeletion } from "../../tasks.js";
 import { z } from "zod";
 import type { HarnessId, TaskRecord } from "../../types.js";
@@ -131,6 +134,53 @@ app.post("/api/cluster/join", async (request, response, next) => {
     if (!confirmation.ok) throw new Error(`Cluster membership confirmation failed: inviting node returned ${confirmation.status}`);
     const localImport = await syncPairedProjects(inviter, localNode.id);
     response.status(201).json({ peers: (await listClusterPeers()).map(publicClusterPeer), pending: localImport.pending });
+  } catch (error) {
+    next(error);
+  }
+});
+
+async function notifyPeersOfDeparture(peers: Awaited<ReturnType<typeof listClusterPeers>>, nodeId: string, machineToken: string, leftAt: string): Promise<void> {
+  const departureHeaders = { Authorization: `Bearer ${machineToken}`, "Content-Type": "application/json" };
+  const inventories = await Promise.all(peers.map(async (peer) => {
+    const reachable = await fetch(`${peer.url}/api/health`, { signal: AbortSignal.timeout(3_000) });
+    if (!reachable.ok) throw new Error(`${peer.name} rejected cluster departure preflight (${reachable.status})`);
+    const inventory = await fetch(`${peer.url}/api/cluster/inventory`, {
+      headers: { Authorization: `Bearer ${peer.token}` }, signal: AbortSignal.timeout(3_000),
+    });
+    return inventory.ok ? await inventory.json() as { syncDeviceId?: unknown } : {};
+  }));
+  const peerDeviceIds = inventories.map((inventory) => inventory.syncDeviceId).filter((deviceId): deviceId is string => typeof deviceId === "string" && Boolean(deviceId));
+  const projectFolderIds = (await listProjects()).map((project) => project.syncFolderId).filter((folderId): folderId is string => Boolean(folderId));
+  const folderIds = [TICKET_WORKSPACE_FOLDER_ID, AGENT_RESOURCES_FOLDER_ID, ...listHarnessSyncFolders().map((folder) => folder.id), ...projectFolderIds];
+  await removeSyncthingDevices(peerDeviceIds, folderIds);
+  await Promise.all(peers.map(async (peer) => {
+    const departure = await fetch(`${peer.url}/api/cluster/membership/leave`, {
+      method: "POST", headers: departureHeaders, body: JSON.stringify({ nodeId, leftAt }), signal: AbortSignal.timeout(3_000),
+    });
+    if (!departure.ok) throw new Error(`${peer.name} rejected cluster departure (${departure.status})`);
+  }));
+}
+
+// Voluntary departure from this node's own Settings: notify every reachable peer so
+// they drop this node, then settle local membership. An offline peer blocks departure.
+app.post("/api/cluster/leave", async (_request, response, next) => {
+  try {
+    const peers = await listClusterPeers();
+    try {
+      await assertClusterDepartureAllowed();
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("Transfer owned tasks and settle handoffs")) {
+        sendError(response, 409, error.message);
+        return;
+      }
+      throw error;
+    }
+    const currentNode = await getClusterNode();
+    const machineToken = await getClusterMachineToken();
+    const leftAt = new Date().toISOString();
+    await notifyPeersOfDeparture(peers, currentNode.id, machineToken, leftAt);
+    await leaveCluster();
+    response.json({ notified: peers.length });
   } catch (error) {
     next(error);
   }

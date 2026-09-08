@@ -10,7 +10,7 @@ import { ensureConversationRecord, getConversationRecord } from "../conversation
 import { conversationTranscriptPayload } from "../conversation-segments.js";
 import { listHarnessSessions } from "../harnesses.js";
 import { createPiSession, eventPayload, getSessionStatus, listAvailableModels, reloadPiAuth, sessionIsBusy, setSessionModel, simplifyMessages } from "../pi-service.js";
-import { claimQueuedPrompt, enqueuePrompt, rekeyQueuedPrompts } from "../prompt-queue.js";
+import { cancelQueuedPrompt, claimQueuedPrompt, editQueuedPrompt, enqueuePrompt, rekeyQueuedPrompts, type QueuedPrompt } from "../prompt-queue.js";
 import { agentCredentialContext, agentEnvironment, persistConversationSecretAccounts } from "../secrets.js";
 import { conversationBelongsToDoneTask } from "./cluster-helpers.js";
 import { getProject, listProjects } from "../store.js";
@@ -108,6 +108,28 @@ function promptDisplayText(message: string, imageNames: string[], fileNames: str
   if (!attachmentNames.length) return body;
   const suffix = `Attached: ${attachmentNames.join(", ")}`;
   return body ? `${body}\n\n${suffix}` : suffix;
+}
+
+function editedQueuedPrompt(queued: QueuedPrompt, message: string): { promptText: string; displayText: string } {
+  if (queued.messageText !== null) {
+    return {
+      promptText: [message, queued.promptSuffix].filter(Boolean).join("\n\n"),
+      displayText: [message, queued.displaySuffix].filter(Boolean).join("\n\n"),
+    };
+  }
+  const attachmentIndexes = ["Image attachments:\n", "File attachments:\n"]
+    .map((marker) => queued.promptText.lastIndexOf(marker)).filter((index) => index >= 0);
+  const promptSuffix = attachmentIndexes.length ? queued.promptText.slice(Math.min(...attachmentIndexes)) : "";
+  const displayIndex = queued.displayText.lastIndexOf("Attached: ");
+  const displaySuffix = displayIndex >= 0 ? queued.displayText.slice(displayIndex) : "";
+  return { promptText: [message, promptSuffix].filter(Boolean).join("\n\n"), displayText: [message, displaySuffix].filter(Boolean).join("\n\n") };
+}
+
+async function removeQueuedPromptAttachments(queued: QueuedPrompt): Promise<void> {
+  for (const attachmentPath of queued.attachmentPaths) {
+    try { await unlink(attachmentPath); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  }
 }
 
 export function promptTextWithAttachments(message: string, imageAttachments: Array<{ name: string; path: string }>, fileAttachments: Array<{ name: string; path: string }>): string {
@@ -480,16 +502,44 @@ async function handleClaudeCommand(connection: ChatConnection, payload: SocketPa
     connection.claude.child?.kill("SIGTERM");
     return;
   }
+  if (payload.type === "cancelQueuedPrompt") {
+    if (!payload.queueId) throw new Error("Missing queued prompt ID");
+    const index = connection.claude.promptQueue.findIndex((prompt) => prompt.id === payload.queueId);
+    if (index < 0) throw new Error("Queued prompt has already started");
+    const cancelled = cancelQueuedPrompt(claudeQueueKey(connection), payload.queueId);
+    if (!cancelled) throw new Error("Queued prompt has already started");
+    connection.claude.promptQueue.splice(index, 1);
+    await removeQueuedPromptAttachments(cancelled);
+    send(connection.socket, { type: "queuedPromptCancelled", queueId: payload.queueId });
+    send(connection.socket, { type: "queueUpdate", pending: connection.claude.promptQueue.length });
+    return;
+  }
+  if (payload.type === "editQueuedPrompt") {
+    if (!payload.queueId) throw new Error("Missing queued prompt ID");
+    const message = payload.message?.trim();
+    if (!message) throw new Error("Queued prompt cannot be empty");
+    const queued = connection.claude.promptQueue.find((prompt) => prompt.id === payload.queueId);
+    if (!queued) throw new Error("Queued prompt has already started");
+    const edited = editedQueuedPrompt(queued, message);
+    if (!editQueuedPrompt(claudeQueueKey(connection), payload.queueId, edited.promptText, edited.displayText, message)) throw new Error("Queued prompt has already started");
+    Object.assign(queued, edited, { messageText: message });
+    send(connection.socket, { type: "queuedPromptEdited", queueId: payload.queueId, text: edited.displayText, editableText: message });
+    return;
+  }
   if (payload.type === "prompt") {
     const imageAttachments = await persistImageAttachments(connection.cwd, payload.images ?? []);
     const fileAttachments = await persistFileAttachments(connection.cwd, payload.files ?? []);
     const promptText = promptTextWithAttachments(payload.message ?? "", imageAttachments, fileAttachments);
     if (!promptText) return;
     await resumeReviewedTask(connection);
-    const displayText = promptDisplayText(payload.message ?? "", imageAttachments.map((image) => image.name), fileAttachments.map((file) => file.name));
+    const messageText = (payload.message ?? "").trim();
+    const displayText = promptDisplayText(messageText, imageAttachments.map((image) => image.name), fileAttachments.map((file) => file.name));
+    const promptSuffix = promptTextWithAttachments("", imageAttachments, fileAttachments);
+    const displaySuffix = promptDisplayText("", imageAttachments.map((image) => image.name), fileAttachments.map((file) => file.name));
+    const attachmentPaths = [...imageAttachments, ...fileAttachments].map((attachment) => attachment.path);
     const acknowledged = Boolean(connection.claude.child || connection.claude.promptQueue.length);
-    const stored = enqueuePrompt(claudeQueueKey(connection), promptText, displayText);
-    if (acknowledged) send(connection.socket, { type: "userMessage", text: displayText, queued: true, queueId: stored.id });
+    const stored = enqueuePrompt(claudeQueueKey(connection), promptText, displayText, { messageText, promptSuffix, displaySuffix, attachmentPaths });
+    if (acknowledged) send(connection.socket, { type: "userMessage", text: displayText, editableText: messageText, queued: true, queueId: stored.id });
     connection.claude.promptQueue.push({ ...stored, acknowledged });
     send(connection.socket, { type: "queueUpdate", pending: connection.claude.promptQueue.length });
     await drainClaudePromptQueue(connection);

@@ -1,5 +1,5 @@
 import { mkdirSync } from "node:fs";
-import os from "node:os";
+import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { ConversationEngine } from "./conversation-ownership.js";
@@ -32,7 +32,7 @@ interface LeaseRow {
   expires_at: string;
 }
 
-const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
+const dataDir = resolveDataDirectory();
 const databasePath = path.join(dataDir, "node.db");
 // A lease may cover between one second and one minute of runtime; anything outside
 // that band is a misbehaving peer, not a run.

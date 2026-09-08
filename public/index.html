@@ -46,15 +46,16 @@
           </div>
           <div class="project-actions">
             <button class="ghost icon-button collapse-button" id="collapseProjectsButton" type="button" aria-label="Collapse projects panel" title="Collapse projects panel" data-testid="projects-panel-collapse-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 6 8.5 12l6 6"/></svg></button>
-            <button class="ghost icon-button reviews-button" id="pendingReviewsButton" type="button" data-pending-reviews-open aria-label="Pending reviews" title="Pending reviews" data-testid="pending-reviews-open-button">
+            <button class="ghost icon-button reviews-button" id="pendingReviewsButton" type="button" data-pending-reviews-open aria-label="Pending reviews" title="Pending reviews" data-shortcut-hint="pendingReviews" data-testid="pending-reviews-open-button">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 13h4l1.6 2.5h4.8L16 13h4"/><path d="M4 13 6.4 5.6A2 2 0 0 1 8.3 4.2h7.4a2 2 0 0 1 1.9 1.4L20 13v4.3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>
               <span class="reviews-badge" id="pendingReviewsBadge" data-testid="pending-reviews-badge" hidden>0</span>
             </button>
-            <button class="ghost icon-button" id="recentSessionsButton" type="button" data-recent-sessions-open aria-label="Recent conversations" title="Recent conversations" data-testid="recent-sessions-open-button">
+            <button class="ghost icon-button" id="recentSessionsButton" type="button" data-recent-sessions-open aria-label="Recent conversations" title="Recent conversations" data-shortcut-hint="recents" data-testid="recent-sessions-open-button">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" /><path d="M3 4v4h4" /><path d="M12 7.5V12l3.2 1.9" /></svg>
             </button>
-            <button class="ghost icon-button" type="button" data-running-conversations-open aria-label="Running conversations" title="Running conversations" data-testid="running-conversations-open-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5.5 10 6.5L8 18.5z"/></svg></button>
-            <button class="ghost icon-button" id="settingsButton" type="button" aria-label="Settings" title="Settings" data-testid="settings-open-button">
+            <button class="ghost icon-button" type="button" data-running-conversations-open aria-label="Running conversations" title="Running conversations" data-shortcut-hint="runningConversations" data-testid="running-conversations-open-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5.5 10 6.5L8 18.5z"/></svg></button>
+            <button class="ghost icon-button" id="projectBoardButton" type="button" aria-label="Project board" title="Project board" data-testid="projects-open-board-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M10 4v16M16 4v16"/></svg></button>
+            <button class="ghost icon-button" id="settingsButton" type="button" aria-label="Settings" title="Settings" data-shortcut-hint="settings" data-testid="settings-open-button">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
             </button>
           </div>
@@ -68,7 +69,7 @@
           <button class="primary icon-button" id="newProjectButton" type="button" aria-label="Add project" title="Add project" data-testid="project-create-button">+</button>
         </div>
         <div class="project-canvas-row">
-          <button class="canvas-launch" id="openCanvasButton" type="button" aria-label="Open the canvas" title="Canvas: conversations side by side" data-testid="projects-open-canvas-button">
+          <button class="canvas-launch" id="openCanvasButton" type="button" aria-label="Open the canvas" title="Canvas: conversations side by side" data-shortcut-hint="toggleView" data-testid="projects-open-canvas-button">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg>
             <span>Canvas</span>
           </button>
@@ -87,11 +88,9 @@
             <h1 id="projectName">No project selected</h1>
             <p id="projectPath">Create or select a local folder.</p>
           </div>
-          <button class="ghost compact" id="openBoardButton" type="button" data-testid="chats-open-board-button">Board</button>
-          <button class="ghost icon-button" id="chatsRecentSessionsButton" type="button" data-recent-sessions-open aria-label="Recent conversations" title="Recent conversations" data-testid="chats-recent-sessions-open-button">
+          <button class="ghost icon-button" id="chatsRecentSessionsButton" type="button" data-recent-sessions-open aria-label="Recent conversations" title="Recent conversations" data-shortcut-hint="recents" data-testid="chats-recent-sessions-open-button">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" /><path d="M3 4v4h4" /><path d="M12 7.5V12l3.2 1.9" /></svg>
           </button>
-          <button class="ghost icon-button" type="button" data-running-conversations-open aria-label="Running conversations" title="Running conversations" data-testid="chats-running-conversations-open-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5.5 10 6.5L8 18.5z"/></svg></button>
           <button class="ghost icon-button collapse-button" id="collapseChatsButton" type="button" aria-label="Collapse conversations panel" title="Collapse conversations panel" data-testid="chats-panel-collapse-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 6 8.5 12l6 6"/></svg></button>
         </header>
         <div class="list-loading" id="sessionsLoading" role="progressbar" aria-label="Loading conversations" data-testid="session-list-loading-bar" hidden><span></span></div>
@@ -205,8 +204,8 @@
             <span id="chatModeLabel">Thinking</span>
             <select id="reasoningLevelSelect" class="chat-toolbar-control" aria-labelledby="chatModeLabel" data-testid="chat-reasoning-select"></select>
           </label>
-          <button class="ghost icon-button chat-recents-button" id="chatRecentSessionsButton" type="button" aria-label="Recent conversations" title="Recent conversations" data-recent-sessions-open data-testid="chat-recent-sessions-open-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" /><path d="M3 4v4h4" /><path d="M12 7.5V12l3.2 1.9" /></svg></button>
-          <button class="ghost icon-button" type="button" data-running-conversations-open aria-label="Running conversations" title="Running conversations" data-testid="chat-running-conversations-open-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5.5 10 6.5L8 18.5z"/></svg></button>
+          <button class="ghost icon-button chat-recents-button" id="chatRecentSessionsButton" type="button" aria-label="Recent conversations" title="Recent conversations" data-recent-sessions-open data-shortcut-hint="recents" data-testid="chat-recent-sessions-open-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" /><path d="M3 4v4h4" /><path d="M12 7.5V12l3.2 1.9" /></svg></button>
+          <button class="ghost icon-button" type="button" data-running-conversations-open aria-label="Running conversations" title="Running conversations" data-shortcut-hint="runningConversations" data-testid="chat-running-conversations-open-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5.5 10 6.5L8 18.5z"/></svg></button>
           <details class="chat-more" id="chatMoreMenu">
             <summary class="ghost icon-button" aria-label="More chat actions" title="More chat actions" data-testid="chat-more-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7" fill="currentColor" /><circle cx="12" cy="12" r="1.7" fill="currentColor" /><circle cx="19" cy="12" r="1.7" fill="currentColor" /></svg></summary>
             <div class="chat-more-actions">
@@ -431,7 +430,7 @@
           <button class="settings-tab" type="button" data-settings-tab="secrets" role="tab" id="settingsTab-secrets" aria-controls="settingsPanel-secrets" aria-selected="false" tabindex="-1" data-testid="settings-tab-secrets">Secrets</button>
           <button class="settings-tab" type="button" data-settings-tab="cluster" role="tab" id="settingsTab-cluster" aria-controls="settingsPanel-cluster" aria-selected="false" tabindex="-1" data-testid="settings-tab-cluster">Cluster</button>
           <button class="settings-tab" type="button" data-settings-tab="workspaces" role="tab" id="settingsTab-workspaces" aria-controls="settingsPanel-workspaces" aria-selected="false" tabindex="-1" data-testid="settings-tab-workspaces">Workspaces</button>
-          <button class="settings-tab" type="button" data-settings-tab="engines" role="tab" id="settingsTab-engines" aria-controls="settingsPanel-engines" aria-selected="false" tabindex="-1" data-testid="settings-tab-engines">Engines</button>
+          <button class="settings-tab" type="button" data-settings-tab="engines" role="tab" id="settingsTab-engines" aria-controls="settingsPanel-engines" aria-selected="false" tabindex="-1" data-testid="settings-tab-engines">Harnesses</button>
           <button class="settings-tab" type="button" data-settings-tab="resources" role="tab" id="settingsTab-resources" aria-controls="settingsPanel-resources" aria-selected="false" tabindex="-1" data-testid="settings-tab-resources">Resources</button>
           <button class="settings-tab" type="button" data-settings-tab="shortcuts" role="tab" id="settingsTab-shortcuts" aria-controls="settingsPanel-shortcuts" aria-selected="false" tabindex="-1" data-testid="settings-tab-shortcuts">Shortcuts</button>
           <button class="settings-tab" type="button" data-settings-tab="updates" role="tab" id="settingsTab-updates" aria-controls="settingsPanel-updates" aria-selected="false" tabindex="-1" data-testid="settings-tab-updates">Updates</button>
@@ -443,9 +442,23 @@
             <legend>Appearance</legend>
             <button class="ghost" id="themeToggleButton" type="button" aria-label="Switch to dark theme" title="Switch to dark theme" data-testid="settings-theme-toggle-button">☾ Switch to dark theme</button>
           </fieldset>
-          <p>Manage login sessions for this administrator account. Revoking this device signs it out.</p>
-          <output id="settingsUsername"></output>
-          <div class="settings-session-list" id="settingsSessionList"></div>
+          <fieldset class="phase-settings">
+            <legend>Account</legend>
+            <p>Signed in as <output id="settingsUsername" data-testid="settings-username"></output>.</p>
+            <div class="account-password-fields">
+              <label>Current password
+                <input id="settingsCurrentPassword" type="password" autocomplete="current-password" data-testid="settings-current-password-input" />
+              </label>
+              <label>New password
+                <input id="settingsNewPassword" type="password" autocomplete="new-password" data-testid="settings-new-password-input" />
+              </label>
+              <label>Repeat new password
+                <input id="settingsNewPasswordRepeat" type="password" autocomplete="new-password" data-testid="settings-new-password-repeat-input" />
+              </label>
+              <p class="settings-hint">At least 16 characters.</p>
+              <button class="ghost" id="settingsChangePasswordButton" type="button" data-testid="settings-change-password-button">Change password</button>
+            </div>
+          </fieldset>
           <button class="ghost danger" id="settingsLogoutButton" type="button">Log out</button>
         </section>
 
@@ -465,12 +478,26 @@
 
         <section class="settings-panel" id="settingsPanel-secrets" role="tabpanel" aria-labelledby="settingsTab-secrets" tabindex="0" hidden>
           <p>Named AWS, Google, GitHub, and custom accounts are encrypted and stay on this node unless you mark one to replicate. Attach them to a workspace, a project, or a single conversation.</p>
+          <div class="settings-subtabs" role="group" aria-label="Secret types" id="secretTypeTabs">
+            <button class="settings-subtab" type="button" data-secret-tab="all" aria-pressed="true" data-testid="secret-tab-all">All</button>
+            <button class="settings-subtab" type="button" data-secret-tab="aws" aria-pressed="false" data-testid="secret-tab-aws">AWS</button>
+            <button class="settings-subtab" type="button" data-secret-tab="google" aria-pressed="false" data-testid="secret-tab-google">Google</button>
+            <button class="settings-subtab" type="button" data-secret-tab="github" aria-pressed="false" data-testid="secret-tab-github">GitHub</button>
+            <button class="settings-subtab" type="button" data-secret-tab="custom" aria-pressed="false" data-testid="secret-tab-custom">Custom</button>
+          </div>
           <fieldset class="phase-settings"><legend>Secret accounts</legend><p>Attached accounts are exported into every new agent session in that scope, so the AWS CLI, gcloud, the gh CLI and git push work without being asked for keys. The most specific scope wins per variable name.</p><div id="secretAccountList" class="secret-account-list" data-testid="secret-account-list"></div><div class="github-group-actions"><button class="ghost" type="button" id="secretAccountAddButton" data-testid="secret-account-add-button">Add account</button><button class="ghost" type="button" id="secretSyncButton" data-testid="secret-sync-open-button">Sync to nodes</button></div></fieldset>
         </section>
 
         <section class="settings-panel" id="settingsPanel-cluster" role="tabpanel" aria-labelledby="settingsTab-cluster" tabindex="0" hidden>
           <p>Every cluster member can create a one-time link. Paste it into the new node to join.</p>
-          <div class="cluster-inventory" id="clusterInventory"></div>
+          <fieldset class="phase-settings">
+            <legend>Cluster nodes</legend>
+            <div class="cluster-inventory" id="clusterInventory"></div>
+            <div class="cluster-leave">
+              <button class="ghost danger" type="button" id="clusterLeaveButton" data-testid="cluster-leave-button" disabled>Leave cluster</button>
+              <p class="settings-hint">Leaving removes every paired node from this machine and from the other nodes. Running conversations and task handoffs must settle first.</p>
+            </div>
+          </fieldset>
           <fieldset class="phase-settings">
             <legend>This machine</legend>
             <label>
@@ -541,35 +568,57 @@
         </section>
 
         <section class="settings-panel" id="settingsPanel-engines" role="tabpanel" aria-labelledby="settingsTab-engines" tabindex="0" hidden>
-          <p>Engine paths are detected automatically for this node. Do not copy paths from another machine.</p>
-          <output class="engine-defaults" id="settingsRuntimeDefaults" data-testid="settings-runtime-defaults"></output>
-          <div class="engine-actions"><button class="ghost" id="settingsUseRuntimeDefaultsButton" type="button" data-testid="settings-use-runtime-defaults-button">Use node defaults</button><button class="ghost" id="settingsCheckRuntimePathsButton" type="button" data-testid="settings-check-runtime-paths-button">Check paths</button></div>
-          <p class="engine-readiness" id="settingsRuntimeStatus" role="status" aria-live="polite" data-testid="settings-runtime-status"></p>
-          <details class="engine-overrides" id="settingsRuntimeOverrides"><summary>Advanced path overrides</summary>
-            <fieldset class="phase-settings"><legend>Pi</legend>
+          <p>Harness paths are detected automatically for this node. Do not copy paths from another machine. Overrides are blank until you change them; a blank field uses the node default shown here.</p>
+          <div class="settings-subtabs" role="tablist" aria-label="Installed harnesses" id="harnessTabs">
+            <button class="settings-subtab" type="button" role="tab" id="harnessTab-pi" aria-controls="harnessPanel-pi" aria-selected="true" data-harness-tab="pi" data-testid="harness-tab-pi">Pi</button>
+            <button class="settings-subtab" type="button" role="tab" id="harnessTab-claude" aria-controls="harnessPanel-claude" aria-selected="false" data-harness-tab="claude" tabindex="-1" data-testid="harness-tab-claude">Claude</button>
+          </div>
+          <div id="harnessPanel-pi" role="tabpanel" aria-labelledby="harnessTab-pi" data-harness-panel="pi">
+            <output class="engine-defaults" id="settingsPiDefaults" data-testid="settings-pi-defaults"></output>
+            <fieldset class="phase-settings">
+              <legend>Pi path overrides</legend>
               <label>Executable<input id="settingsPiExecutable" autocomplete="off" data-testid="settings-pi-executable-input" /></label>
               <label>Node-local config and auth path<input id="settingsPiConfigPath" autocomplete="off" data-testid="settings-pi-config-input" /></label>
               <label>Synchronized transcript/session root<input id="settingsPiSessionPath" autocomplete="off" data-testid="settings-pi-session-input" /></label>
+              <button class="ghost" id="settingsUsePiDefaultsButton" type="button" data-testid="settings-use-pi-defaults-button">Use node defaults for Pi</button>
             </fieldset>
-            <fieldset class="phase-settings"><legend>Claude</legend>
+          </div>
+          <div id="harnessPanel-claude" role="tabpanel" aria-labelledby="harnessTab-claude" data-harness-panel="claude" hidden>
+            <output class="engine-defaults" id="settingsClaudeDefaults" data-testid="settings-claude-defaults"></output>
+            <fieldset class="phase-settings">
+              <legend>Claude path overrides</legend>
               <label>Executable<input id="settingsClaudeExecutable" autocomplete="off" data-testid="settings-claude-executable-input" /></label>
               <label>Node-local config and auth path<input id="settingsClaudeConfigPath" autocomplete="off" data-testid="settings-claude-config-input" /></label>
               <label>Synchronized transcript/session root<input id="settingsClaudeSessionPath" autocomplete="off" data-testid="settings-claude-session-input" /></label>
+              <button class="ghost" id="settingsUseClaudeDefaultsButton" type="button" data-testid="settings-use-claude-defaults-button">Use node defaults for Claude</button>
             </fieldset>
-          </details>
+          </div>
+          <div class="engine-actions"><button class="ghost" id="settingsCheckRuntimePathsButton" type="button" data-testid="settings-check-runtime-paths-button">Check paths</button></div>
+          <p class="engine-readiness" id="settingsRuntimeStatus" role="status" aria-live="polite" data-testid="settings-runtime-status"></p>
         </section>
 
         <section class="settings-panel" id="settingsPanel-resources" role="tabpanel" aria-labelledby="settingsTab-resources" tabindex="0" hidden>
           <p>Additional to managed and native defaults. Enter one absolute file or folder per line; replace lines or add multiple folders (up to 20) per type. Project-scoped folders are additional and more specific than these global lists.</p>
-          <label>Skills<textarea class="resource-paths-input" id="settingsResourceSkillsPaths" data-testid="settings-resource-skills-paths"></textarea></label>
-          <label>Prompts<textarea class="resource-paths-input" id="settingsResourcePromptsPaths" data-testid="settings-resource-prompts-paths"></textarea></label>
-          <label>Rules<textarea class="resource-paths-input" id="settingsResourceRulesPaths" data-testid="settings-resource-rules-paths"></textarea></label>
-          <label>Plugins<textarea class="resource-paths-input" id="settingsResourcePluginsPaths" data-testid="settings-resource-plugins-paths"></textarea></label>
+          <label>Skills
+            <span class="folder-input-row resource-paths-row"><textarea class="resource-paths-input" id="settingsResourceSkillsPaths" data-testid="settings-resource-skills-paths"></textarea><button class="ghost" type="button" id="settingsResourceSkillsBrowse" data-testid="settings-resource-skills-browse">Browse</button></span>
+          </label>
+          <label>Prompts
+            <span class="folder-input-row resource-paths-row"><textarea class="resource-paths-input" id="settingsResourcePromptsPaths" data-testid="settings-resource-prompts-paths"></textarea><button class="ghost" type="button" id="settingsResourcePromptsBrowse" data-testid="settings-resource-prompts-browse">Browse</button></span>
+          </label>
+          <label>Rules
+            <span class="folder-input-row resource-paths-row"><textarea class="resource-paths-input" id="settingsResourceRulesPaths" data-testid="settings-resource-rules-paths"></textarea><button class="ghost" type="button" id="settingsResourceRulesBrowse" data-testid="settings-resource-rules-browse">Browse</button></span>
+          </label>
+          <label>Plugins
+            <span class="folder-input-row resource-paths-row"><textarea class="resource-paths-input" id="settingsResourcePluginsPaths" data-testid="settings-resource-plugins-paths"></textarea><button class="ghost" type="button" id="settingsResourcePluginsBrowse" data-testid="settings-resource-plugins-browse">Browse</button></span>
+          </label>
         </section>
 
         <section class="settings-panel" id="settingsPanel-shortcuts" role="tabpanel" aria-labelledby="settingsTab-shortcuts" tabindex="0" hidden>
           <p>Every keyboard shortcut in Joint Bob, in one place. Press <kbd>&#8984;</kbd><kbd>?</kbd> or <kbd>&#8963;</kbd><kbd>?</kbd> anywhere in the app to come straight back here.</p>
-          <p class="settings-hint">Click a field, then press and hold the keys you want, modifiers included: the recorder captures up to four keys exactly as you hold them. A chord needs Command, Control, or Option &mdash; Shift alone would swallow ordinary typing. Backspace in a field clears it to unbind that shortcut.</p>
+          <label class="canvas-keymap-search" for="canvasKeymapSearch">Find a shortcut
+            <input id="canvasKeymapSearch" type="text" autocomplete="off" spellcheck="false" placeholder="split, page, reviews, pane&hellip;" data-testid="canvas-keymap-search-input" />
+          </label>
+          <p class="settings-hint">Click a field, then press a shortcut. You can follow one modified key with a second key, as in Control Space then Backslash. Shortcuts hold at most four physical keys and need Command, Control, or Option. Backspace clears a shortcut.</p>
           <div class="canvas-keymap-grid">
             <label class="canvas-keymap-command canvas-keymap-base" for="canvasKeymapBase">The chord every conversation key rides under
               <input id="canvasKeymapBase" type="text" readonly autocomplete="off" spellcheck="false" data-testid="canvas-keymap-base-input" />

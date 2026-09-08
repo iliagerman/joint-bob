@@ -1,14 +1,15 @@
 // The Shortcuts tab in Settings: one place that shows and edits every keyboard
-// shortcut. Each row is a recorder - press and hold up to four keys, modifiers
-// included, and the chord is captured exactly as it is held.
+// shortcut. Each row records one modified key or a modified key followed by a
+// second stroke, with at most four physical keys total.
 
 import {
-  chordId, chordLabel, conversationChord, DEFAULT_CANVAS_KEYMAP,
-  normalizeCanvasKeymap, normalizeChord,
+  chordId, chordLabel, conversationChord, DEFAULT_CANVAS_KEYMAP, fuzzyMatchScore,
+  normalizeCanvasKeymap, normalizeChord, shortcutsConflict,
 } from "../canvas-layout.js";
 import { api, savePreferences } from "./api.js";
 import { elements } from "./elements.js";
 import { captureChordInput } from "./key-capture.js";
+import { syncShortcutHints } from "./shortcut-hints.js";
 import { state } from "./state.js";
 
 const baseInput = document.querySelector("#canvasKeymapBase");
@@ -24,6 +25,8 @@ const COMMAND_ROWS = [
   { command: "spotlight", label: "Open the search bar over every project and conversation" },
   { command: "pendingReviews", label: "Open the pending reviews list" },
   { command: "recents", label: "Open the recent conversations list" },
+  { command: "runningConversations", label: "Open the running conversations list" },
+  { command: "settings", label: "Open the settings dialog" },
   { command: "toggleView", label: "Switch between the canvas and the conversation you left" },
   { command: "recentPane", label: "Canvas: jump to the conversation you were in before" },
   { command: "focusPane", label: "Canvas: bring the current conversation forward, or put it back" },
@@ -43,6 +46,7 @@ const COMMAND_ROWS = [
 const rowTestid = (command) => `canvas-keymap-${command.replace(/[A-Z0-9]/g, (character) => `-${character.toLowerCase()}`)}-input`;
 
 const commandInputs = new Map();
+const commandRowEntries = [];
 captureChordInput(baseInput, { modifierOnly: true });
 for (const { command, label } of COMMAND_ROWS) {
   const row = document.createElement("label");
@@ -62,7 +66,19 @@ for (const { command, label } of COMMAND_ROWS) {
   row.append(description, input);
   commandsHost.append(row);
   commandInputs.set(command, input);
+  commandRowEntries.push({ row, command, label });
 }
+
+/** Fuzzy-finds rows: an empty query shows everything, otherwise a row stays only when
+    the query's characters appear in order in its label. Rows are hidden, not removed, so
+    recording a chord into a found field keeps working without an un-filter step. */
+function filterShortcutRows(rawQuery) {
+  const terms = rawQuery.trim().split(/\s+/).filter(Boolean);
+  const matches = (text) => terms.every((term) => fuzzyMatchScore(text, term) !== null);
+  for (const { row, command, label } of commandRowEntries) row.hidden = !matches(`${label} ${command}`);
+  for (const row of elements.shortcutConversationList.querySelectorAll("[data-testid='settings-conversation-shortcut-row']")) row.hidden = !matches(row.textContent);
+}
+elements.canvasKeymapSearch.addEventListener("input", () => filterShortcutRows(elements.canvasKeymapSearch.value));
 
 function fillFields(keymap) {
   baseInput.dataset.chord = JSON.stringify(keymap.base);
@@ -103,6 +119,8 @@ export async function fillShortcutSettings() {
   const keymap = normalizeCanvasKeymap(state.canvasKeymap);
   fillFields(keymap);
   statusLine.textContent = "";
+  elements.canvasKeymapSearch.value = "";
+  filterShortcutRows("");
   try {
     conversationShortcuts = (await api("/api/canvas/shortcuts")).shortcuts || [];
   } catch {
@@ -115,18 +133,18 @@ export async function fillShortcutSettings() {
 function keymapFromPanel() {
   const base = normalizeChord(baseInput.dataset.chord ? JSON.parse(baseInput.dataset.chord) : null, { modifierOnly: true });
   if (!base) throw new Error("The conversation-key chord needs Command, Control, or Option, and at most three modifiers.");
-  const draft = { base, commands: {} };
-  const taken = new Map();
+  const draft = { version: 2, base, commands: {} };
+  const taken = [];
   for (const [command, input] of commandInputs) {
     const raw = input.dataset.chord ? JSON.parse(input.dataset.chord) : null;
     const chord = raw ? normalizeChord(raw) : null;
-    if (raw && !chord) throw new Error("Each shortcut needs Command, Control, or Option, exactly one key, and at most four keys.");
+    if (raw && !chord) throw new Error("Each shortcut needs Command, Control, or Option, one or two strokes, and at most four keys.");
     if (!chord) { draft.commands[command] = null; continue; }
-    const clash = taken.get(chordId(chord));
-    if (clash) throw new Error(`Two commands cannot share one chord: ${chordLabel(chord)} is on ${clash}.`);
+    const clash = taken.find((entry) => shortcutsConflict(entry.chord, chord));
+    if (clash) throw new Error(`Two commands cannot share or shadow one shortcut: ${chordLabel(chord)} conflicts with ${clash.command}.`);
     const holder = conversationShortcuts.find((shortcut) => chordId(conversationChord({ base }, shortcut.binding)) === chordId(chord));
     if (holder) throw new Error(`${chordLabel(chord)} already belongs to a conversation on the canvas.`);
-    taken.set(chordId(chord), command);
+    taken.push({ command, chord });
     draft.commands[command] = chord;
   }
   return normalizeCanvasKeymap(draft);
@@ -148,6 +166,7 @@ async function saveShortcutSettings() {
   }
   state.canvasKeymap = next;
   state.canvasController?.setKeymap(next);
+  syncShortcutHints();
   statusLine.textContent = "Saved.";
 }
 

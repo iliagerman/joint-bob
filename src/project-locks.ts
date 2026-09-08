@@ -1,5 +1,5 @@
 import { promises as fs } from "node:fs";
-import os from "node:os";
+import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { getClusterNode } from "./cluster.js";
@@ -14,7 +14,7 @@ interface LockRow {
   locked_at: string | null;
 }
 
-const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
+const dataDir = resolveDataDirectory();
 const databasePath = path.join(dataDir, "node.db");
 let databasePromise: Promise<DatabaseSync> | undefined;
 

@@ -1,6 +1,7 @@
 import { api, savePreferencesInBackground } from "./api.js";
 import { elements } from "./elements.js";
 import { agentIcon, sessionAgentId } from "./icons.js";
+import { attachDigitShortcuts, LIST_SHORTCUT_LIMIT, shortcutIndexBadge } from "./list-shortcuts.js";
 import { shortSessionTitle } from "./layout.js";
 import { renderProjects } from "./project-list.js";
 import { selectProject } from "./project-selection.js";
@@ -106,7 +107,6 @@ function renderPendingReviewsBadge() {
 }
 
 /** Rows 1-10 carry a digit shortcut, the way the recent conversations list does. */
-const PENDING_REVIEW_SHORTCUT_LIMIT = 10;
 let pendingReviewShortcuts = [];
 
 function renderPendingReviewsDialog() {
@@ -133,12 +133,9 @@ function renderPendingReviewsDialog() {
       button.dataset.testid = "pending-review-option";
       // Rows are single-line, so the full title lives in the tooltip.
       button.title = entry.title;
-      if (pendingReviewShortcuts.length < PENDING_REVIEW_SHORTCUT_LIMIT) {
+      if (pendingReviewShortcuts.length < LIST_SHORTCUT_LIMIT) {
         pendingReviewShortcuts.push({ group, entry });
-        const index = document.createElement("kbd");
-        index.dataset.testid = "pending-review-index";
-        index.textContent = pendingReviewShortcuts.length === 10 ? "0" : String(pendingReviewShortcuts.length);
-        button.append(index);
+        button.append(shortcutIndexBadge("pending-review-index", pendingReviewShortcuts.length));
       }
       const title = document.createElement("strong");
       title.textContent = entry.title;
@@ -227,12 +224,4 @@ elements.markAllPendingReviewedButton.addEventListener("click", () => {
 });
 elements.closePendingReviewsButton.addEventListener("click", () => elements.pendingReviewsDialog.close());
 /** A digit opens that row, exactly as it does in the recent conversations list. */
-elements.pendingReviewsDialog.addEventListener("keydown", (event) => {
-  if (event.metaKey || event.ctrlKey || event.altKey) return;
-  const position = event.key === "0" ? 10 : Number(event.key);
-  if (!Number.isInteger(position) || position < 1 || position > PENDING_REVIEW_SHORTCUT_LIMIT) return;
-  const row = pendingReviewShortcuts[position - 1];
-  if (!row) return;
-  event.preventDefault();
-  openPendingReview(row.group, row.entry).catch((error) => toast(error.message));
-});
+attachDigitShortcuts(elements.pendingReviewsDialog, () => pendingReviewShortcuts, (row) => openPendingReview(row.group, row.entry).catch((error) => toast(error.message)));

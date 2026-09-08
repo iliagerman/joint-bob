@@ -4,6 +4,7 @@ import { cp, lstat, mkdir, readdir, readFile, realpath, rename, rm, symlink, unl
 import os from "node:os";
 import path from "node:path";
 import { SettingsManager, type PackageSource } from "@earendil-works/pi-coding-agent";
+import { resolveDataDirectory } from "./data-directory.js";
 import { getSettings, type ScopedResourcePaths } from "./settings.js";
 
 export const AGENT_RESOURCES_FOLDER_ID = "joint-bob-agent-resources";
@@ -89,7 +90,7 @@ export function agentResourcePaths(root = agentResourcesRoot()): AgentResourcePa
 }
 
 function dataDirectory(configured?: string): string {
-  return configured ?? process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
+  return resolveDataDirectory(configured);
 }
 
 function missing(error: unknown): boolean {

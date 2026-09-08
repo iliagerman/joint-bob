@@ -346,7 +346,7 @@ webSocketServer.on("connection", async (socket, request) => {
     if (!connection.claude.promptQueue.length) {
       connection.claude.promptQueue = listQueuedPrompts(claudeQueueKey(connection)).map((prompt) => ({ ...prompt, acknowledged: true }));
     }
-    send(socket, { type: "queuedPrompts", prompts: connection.claude.promptQueue.map(({ id, displayText }) => ({ id, text: displayText })) });
+    send(socket, { type: "queuedPrompts", prompts: connection.claude.promptQueue.map(({ id, displayText, messageText }) => ({ id, text: displayText, editableText: messageText })) });
     if (!foreignOwner) void drainClaudePromptQueue(connection).catch((error) => send(socket, { type: "error", error: chatErrorMessage(error) }));
   } else {
     let sharedSession: SharedPiSession;

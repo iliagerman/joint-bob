@@ -43,7 +43,7 @@ test("a global menu reaches settings from every page and names the node and rele
   assert.match(styles, /@media \(max-width: 1023px\)[\s\S]*?\.app-menu \{[^}]*display: block;/);
   assert.match(styles, /@media \(max-width: 1023px\)[\s\S]*?padding: 10px 52px 10px 12px;/);
   // The bottom bar already reaches both, so the header drops them on mobile.
-  assert.match(styles, /@media \(max-width: 1023px\)[\s\S]*?#settingsButton, #openBoardButton, #openCanvasButton, \.project-canvas-row, #canvasPanel \{ display: none; \}/);
+  assert.match(styles, /@media \(max-width: 1023px\)[\s\S]*?#settingsButton, #projectBoardButton, #openCanvasButton, \.project-canvas-row, #canvasPanel \{ display: none; \}/);
 });
 
 test("the bottom bar puts Current beside Chats and Board on the far right", async () => {

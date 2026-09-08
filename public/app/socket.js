@@ -1,7 +1,7 @@
 import { api, loadPins, savePreferencesInBackground } from "./api.js";
 import { clearAttachments } from "./attachments.js";
 import { renderChatSessionControls, renderConversationLock, sendSocket, setComposerEnabled, setModels, syncEngineUI, syncSafeguardsButton, updateStatus } from "./chat-controls.js";
-import { appendMessage, appendToolMessage, clearChat, clearQueuedMark, clearThinkingBubble, finalizeAssistantBubble, finishTurnTimer, markMessageQueued, renderBubbleContent, requestPinChat, rerenderChatTranscript, restoreChatScrollTop, showChatEmptyState, startDurationTicker, startHarnessSegment, updateToolMessage } from "./chat-transcript.js";
+import { appendMessage, appendToolMessage, clearChat, clearQueuedMark, clearThinkingBubble, finalizeAssistantBubble, finishTurnTimer, markMessageQueued, removeQueuedMessage, renderBubbleContent, requestPinChat, rerenderChatTranscript, restoreChatScrollTop, showChatEmptyState, startDurationTicker, startHarnessSegment, updateQueuedMessage, updateToolMessage } from "./chat-transcript.js";
 import { rememberDraft, restoreDraft, setActiveSessionPath } from "./composer.js";
 import { renderToolsDialog } from "./composer-dialogs.js";
 import { elements } from "./elements.js";
@@ -283,7 +283,7 @@ function handleSocketPayload(payload, scrollOnReady = false) {
     finalizeAssistantBubble();
     state.spinOffSourceTaskId = null;
     const bubble = appendMessage("user", payload.text);
-    if (payload.queued) markMessageQueued(bubble, payload.queueId);
+    if (payload.queued) markMessageQueued(bubble, payload.queueId, payload.editableText);
     state.thinkingBubble = null;
     return;
   }
@@ -292,12 +292,20 @@ function handleSocketPayload(payload, scrollOnReady = false) {
   if (payload.type === "queuedPrompts") {
     for (const prompt of payload.prompts || []) {
       if (elements.messages.querySelector(`[data-queue-id="${prompt.id}"]`)) continue;
-      markMessageQueued(appendMessage("user", prompt.text), prompt.id);
+      markMessageQueued(appendMessage("user", prompt.text), prompt.id, prompt.editableText);
     }
     return;
   }
   if (payload.type === "promptStarted") {
     clearQueuedMark(payload.queueId);
+    return;
+  }
+  if (payload.type === "queuedPromptEdited") {
+    updateQueuedMessage(payload.queueId, payload.text, payload.editableText);
+    return;
+  }
+  if (payload.type === "queuedPromptCancelled") {
+    removeQueuedMessage(payload.queueId);
     return;
   }
   if (payload.type === "textDelta") {

@@ -1,6 +1,6 @@
 import { api, savePreferencesInBackground } from "./api.js";
 import { fillShortcutSettings } from "./shortcut-settings.js";
-import { renderLoginSessions, showSignedOut } from "./auth.js";
+import { showSignedOut } from "./auth.js";
 import { loadClusterPanel } from "./cluster-panel.js";
 import { loadUpdatesPanel } from "./updates.js";
 import { elements } from "./elements.js";
@@ -79,39 +79,62 @@ function selectSettingsTab(name) {
 }
 
 let runtimeDefaults;
-let clearRuntimeOverridesOnSave = false;
+// Harnesses whose overrides the user reset to the node defaults; saving stores blanks for
+// them so the node default keeps applying after the built-in paths move in a future build.
+const clearedHarnessesOnSave = new Set();
 const globalResourceFields = { skills: elements.settingsResourceSkillsPaths, prompts: elements.settingsResourcePromptsPaths, rules: elements.settingsResourceRulesPaths, plugins: elements.settingsResourcePluginsPaths };
 const runtimeFields = { pi: { executable: elements.settingsPiExecutable, configPath: elements.settingsPiConfigPath, sessionPath: elements.settingsPiSessionPath }, claude: { executable: elements.settingsClaudeExecutable, configPath: elements.settingsClaudeConfigPath, sessionPath: elements.settingsClaudeSessionPath } };
 const runtimeLabels = { pi: { executable: "Pi executable", configPath: "Pi config path", sessionPath: "Pi session path" }, claude: { executable: "Claude executable", configPath: "Claude config path", sessionPath: "Claude session path" } };
+const defaultsOutputs = { pi: elements.settingsPiDefaults, claude: elements.settingsClaudeDefaults };
 
 function runtimeFieldsValue() { return Object.fromEntries(Object.entries(runtimeFields).map(([engine, fields]) => [engine, Object.fromEntries(Object.entries(fields).map(([field, input]) => [field, input.value.trim()]))])); }
-function blankRuntimePayload() { return { pi: { executable: "", configPath: "", sessionPath: "" }, claude: { executable: "", configPath: "", sessionPath: "" } }; }
+function blankHarnessPayload() { return { executable: "", configPath: "", sessionPath: "" }; }
 function fillRuntimeFields(values) { for (const [engine, fields] of Object.entries(runtimeFields)) for (const [field, input] of Object.entries(fields)) input.value = values[engine][field]; }
-function renderRuntimeDefaults(defaults) { elements.settingsRuntimeDefaults.textContent = `Node defaults — Pi: ${defaults.pi.executable}; ${defaults.pi.configPath}; ${defaults.pi.sessionPath}. Claude: ${defaults.claude.executable}; ${defaults.claude.configPath}; ${defaults.claude.sessionPath}.`; }
-function renderRuntimeReadiness(readiness) { elements.settingsRuntimeStatus.textContent = Object.entries(readiness).flatMap(([engine, fields]) => Object.entries(fields).map(([field, result]) => `${runtimeLabels[engine][field]}: ${result.ok ? "ready" : result.message}`)).join(". "); }
+function renderRuntimeDefaults(defaults) {
+  for (const [engine, output] of Object.entries(defaultsOutputs)) {
+    output.textContent = `Node defaults — executable: ${defaults[engine].executable}; config: ${defaults[engine].configPath}; sessions: ${defaults[engine].sessionPath}.`;
+  }
+}
+
+/** Shows one harness's override fields and hides the other, like the outer settings tablist. */
+function selectHarnessTab(name) {
+  for (const tab of elements.harnessTabs) {
+    const selected = tab.dataset.harnessTab === name;
+    tab.setAttribute("aria-selected", selected ? "true" : "false");
+    tab.tabIndex = selected ? 0 : -1;
+  }
+  for (const panel of document.querySelectorAll("[data-harness-panel]")) panel.hidden = panel.dataset.harnessPanel !== name;
+}
+
+function renderRuntimeReadiness(readiness) { elements.settingsRuntimeStatus.textContent = Object.entries(readiness).flatMap(([engine, fields]) => Object.entries(fields).map(([field, result]) => `${runtimeLabels[engine][field]}: ${result.message}`)).join(". "); }
 async function checkRuntimePaths() { const readiness = await api("/api/settings/runtime-check", { method: "POST", body: JSON.stringify(runtimeFieldsValue()) }); renderRuntimeReadiness(readiness); return readiness; }
+function useHarnessDefaults(harness) {
+  clearedHarnessesOnSave.add(harness);
+  for (const input of Object.values(runtimeFields[harness])) input.value = "";
+  checkRuntimePaths().catch((error) => toast(error.message));
+}
 function invalidRuntimeOverrides(readiness, values) { return Object.entries(readiness).flatMap(([engine, fields]) => Object.entries(fields).filter(([field, result]) => !result.ok && values[engine][field] !== runtimeDefaults[engine][field]).map(([field]) => runtimeLabels[engine][field])); }
 export const projectResourceFields = { skills: elements.projectResourceSkillsPaths, prompts: elements.projectResourcePromptsPaths, rules: elements.projectResourceRulesPaths, plugins: elements.projectResourcePluginsPaths };
 export function fillResourceFields(fields, resources) { for (const [type, field] of Object.entries(fields)) field.value = (resources[type] || []).join("\n"); }
 export function resourceFieldsValue(fields) { return Object.fromEntries(Object.entries(fields).map(([type, field]) => [type, field.value.split("\n").map((line) => line.trim()).filter(Boolean)])); }
 
 export async function openSettings(tab = "account") {
-  const [settings, authSessions, defaults] = await Promise.all([api("/api/settings"), api("/api/auth/sessions"), api("/api/settings/runtime-defaults"), loadSecretAccounts(), loadChangelogPanel()]);
+  const [settings, defaults] = await Promise.all([api("/api/settings"), api("/api/settings/runtime-defaults"), loadSecretAccounts(), loadChangelogPanel()]);
   runtimeDefaults = defaults;
-  clearRuntimeOverridesOnSave = false;
+  clearedHarnessesOnSave.clear();
   elements.settingsUsername.textContent = state.username;
+  for (const input of [elements.settingsCurrentPassword, elements.settingsNewPassword, elements.settingsNewPasswordRepeat]) input.value = "";
   selectSettingsTab(tab);
+  selectHarnessTab("pi");
   void fillShortcutSettings();
   const clusterInventory = await loadClusterPanel();
   await loadUpdatesPanel(clusterInventory);
   await loadWorkspaces();
-  renderLoginSessions(authSessions);
   elements.settingsRestartMessage.hidden = true;
   elements.settingsRestartMessage.textContent = "";
   elements.settingsProjectHome.value = settings.projects.homePath;
-  fillRuntimeFields(settings);
+  fillRuntimeFields(settings.runtimeOverrides);
   renderRuntimeDefaults(defaults);
-  elements.settingsRuntimeOverrides.open = false;
   elements.settingsRuntimeStatus.textContent = "";
   fillResourceFields(globalResourceFields, settings.resources);
   state.syncthingEndpoint = settings.syncthing.endpoint;
@@ -122,9 +145,9 @@ export async function openSettings(tab = "account") {
 
 async function saveSettings(event) {
   event.preventDefault();
-  const displayedRuntime = runtimeFieldsValue();
-  const invalid = invalidRuntimeOverrides(await checkRuntimePaths(), displayedRuntime);
-  const runtime = clearRuntimeOverridesOnSave ? blankRuntimePayload() : displayedRuntime;
+  const runtime = runtimeFieldsValue();
+  for (const harness of clearedHarnessesOnSave) runtime[harness] = blankHarnessPayload();
+  const invalid = invalidRuntimeOverrides(await checkRuntimePaths(), runtime);
   if (invalid.length) throw new Error(`Fix unavailable custom paths: ${invalid.join(", ")}`);
   const saved = await api("/api/settings", {
     method: "PUT",
@@ -147,12 +170,21 @@ async function saveSettings(event) {
 }
 
 elements.settingsButton.addEventListener("click", () => openSettings().catch((error) => toast(error.message)));
-elements.settingsUseRuntimeDefaultsButton.addEventListener("click", () => {
-  clearRuntimeOverridesOnSave = true;
-  fillRuntimeFields(runtimeDefaults);
-  checkRuntimePaths().catch((error) => toast(error.message));
-});
-for (const fields of Object.values(runtimeFields)) for (const input of Object.values(fields)) input.addEventListener("input", () => { clearRuntimeOverridesOnSave = false; });
+elements.settingsUsePiDefaultsButton.addEventListener("click", () => useHarnessDefaults("pi"));
+elements.settingsUseClaudeDefaultsButton.addEventListener("click", () => useHarnessDefaults("claude"));
+for (const [harness, fields] of Object.entries(runtimeFields)) for (const input of Object.values(fields)) input.addEventListener("input", () => clearedHarnessesOnSave.delete(harness));
+for (const tab of elements.harnessTabs) {
+  tab.addEventListener("click", () => selectHarnessTab(tab.dataset.harnessTab));
+  tab.addEventListener("keydown", (event) => {
+    const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
+    if (!step) return;
+    event.preventDefault();
+    const index = elements.harnessTabs.indexOf(tab);
+    const next = elements.harnessTabs[(index + step + elements.harnessTabs.length) % elements.harnessTabs.length];
+    selectHarnessTab(next.dataset.harnessTab);
+    next.focus();
+  });
+}
 elements.settingsCheckRuntimePathsButton.addEventListener("click", () => checkRuntimePaths().catch((error) => toast(error.message)));
 for (const tab of elements.settingsTabs) {
   tab.addEventListener("click", () => selectSettingsTab(tab.dataset.settingsTab));
@@ -173,6 +205,23 @@ elements.settingsLogoutButton.addEventListener("click", async () => {
   try {
     await api("/api/auth/logout", { method: "POST" });
     showSignedOut();
+  } catch (error) {
+    toast(error.message);
+  }
+});
+elements.settingsChangePasswordButton.addEventListener("click", async () => {
+  const newPassword = elements.settingsNewPassword.value;
+  if (newPassword !== elements.settingsNewPasswordRepeat.value) {
+    toast("New passwords do not match");
+    return;
+  }
+  try {
+    await api("/api/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ currentPassword: elements.settingsCurrentPassword.value, newPassword }),
+    });
+    for (const input of [elements.settingsCurrentPassword, elements.settingsNewPassword, elements.settingsNewPasswordRepeat]) input.value = "";
+    toast("Password changed");
   } catch (error) {
     toast(error.message);
   }

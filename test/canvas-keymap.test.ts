@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   canonicalCanvasKey, canvasKeyFromCode, chordFromEvent, chordId, chordLabel, chordMatches,
   conversationChordLabel, CANVAS_KEYMAP_COMMANDS, DEFAULT_CANVAS_KEYMAP, emptyCanvasLayout,
-  fuzzyMatchScore, normalizeCanvasKeymap, normalizeChord, addCanvasPane, listCanvasPanes,
+  fuzzyMatchScore, normalizeCanvasKeymap, normalizeChord, shortcutsConflict, addCanvasPane, listCanvasPanes,
 } from "../public/canvas-layout.js";
 
 const pane = (id, sessionId = id, sessionPath = `/tmp/${id}.jsonl`) => ({
@@ -16,14 +16,15 @@ const event = (code, modifiers = {}) => ({
 
 // ─── Chords ────────────────────────────────────────────────────────────────────────
 
-test("a chord is the modifiers held plus one key, at most four keys", () => {
+test("a shortcut supports one chord or a two-stroke sequence, at most four keys", () => {
   assert.deepEqual(normalizeChord(["shift", "ctrl", "X"]), ["ctrl", "shift", "X"]);
   assert.deepEqual(normalizeChord(["meta", "K"]), ["meta", "K"]);
   assert.deepEqual(normalizeChord(["ctrl", "alt", "shift", "9"]), ["ctrl", "alt", "shift", "9"]);
+  assert.deepEqual(normalizeChord(["ctrl", "SPACE", "\\"]), ["ctrl", "SPACE", "\\"]);
   assert.equal(normalizeChord(["meta", "ctrl", "alt", "shift", "X"]), null, "five keys is over the ceiling");
   assert.equal(normalizeChord(["shift", "X"]), null, "Shift alone would swallow capitals");
-  assert.equal(normalizeChord(["meta"]), null, "a chord needs a key");
-  assert.equal(normalizeChord(["meta", "X", "Y"]), null, "one key, not a roll");
+  assert.equal(normalizeChord(["meta"]), null, "a shortcut needs a key");
+  assert.equal(normalizeChord(["meta", "X", "Y", "Z"]), null, "sequences stop after two strokes");
   assert.equal(normalizeChord("meta"), null);
   assert.equal(normalizeChord(["meta", "NOPE"]), null, "a key outside the vocabulary");
 });
@@ -61,6 +62,7 @@ test("the chord label draws the captured modifiers and a readable key", () => {
   assert.equal(chordLabel(["meta", "shift", "P"]), "\u2318\u21e7P");
   assert.equal(chordLabel(["ctrl", "\\"]), "\u2303\\");
   assert.equal(chordLabel(["ctrl", "SPACE"]), "\u2303Space");
+  assert.equal(chordLabel(["ctrl", "SPACE", "\\"]), "\u2303Space \\");
   assert.equal(chordLabel(["meta", "shift", "ARROWLEFT"]), "\u2318\u21e7\u2190");
   assert.equal(chordLabel(["meta", "ENTER"]), "\u2318\u23ce");
   assert.equal(chordLabel(["ctrl", "alt"]), "\u2303\u2325");
@@ -77,10 +79,20 @@ test("every command has a default chord, and the defaults never collide", () => 
   }
   const ids = Object.values(defaults).map(chordId);
   assert.equal(new Set(ids).size, ids.length, "no two defaults share one chord");
-  // The user's broken split: one direct chord each, no leader to be swallowed by the
-  // operating system's input-source switch.
-  assert.deepEqual(defaults.splitRight, ["ctrl", "\\"]);
-  assert.deepEqual(defaults.splitBelow, ["ctrl", "-"]);
+  assert.deepEqual(defaults.splitRight, ["ctrl", "SPACE", "\\"]);
+  assert.deepEqual(defaults.splitBelow, ["ctrl", "SPACE", "-"]);
+});
+
+test("a direct shortcut and a sequence using it as a prefix cannot coexist", () => {
+  assert.equal(shortcutsConflict(["ctrl", "SPACE"], ["ctrl", "SPACE", "K"]), true);
+  assert.equal(shortcutsConflict(["ctrl", "SPACE", "K"], ["ctrl", "SPACE", "L"]), false);
+  const keymap = normalizeCanvasKeymap({
+    version: 2,
+    base: ["meta", "shift"],
+    commands: { spotlight: ["ctrl", "SPACE"], recents: ["ctrl", "SPACE", "K"] },
+  });
+  assert.deepEqual(keymap.commands.spotlight, ["ctrl", "SPACE"]);
+  assert.equal(keymap.commands.recents, null);
 });
 
 test("a stored chord-shape keymap keeps its chords, drops the unbindable, and unbinds duplicates", () => {
@@ -122,6 +134,8 @@ test("a legacy keymap migrates onto its own modifiers", () => {
 
 test("stored keymaps degrade instead of taking the page down", () => {
   assert.deepEqual(normalizeCanvasKeymap(null).commands.splitRight, DEFAULT_CANVAS_KEYMAP.commands.splitRight);
+  assert.deepEqual(normalizeCanvasKeymap({ base: ["meta", "shift"], commands: { splitRight: ["ctrl", "\\"], splitBelow: ["ctrl", "-"] } }).commands.splitRight,
+    ["ctrl", "SPACE", "\\"], "the broken direct split default migrates back to its leader sequence");
   assert.deepEqual(normalizeCanvasKeymap("nope"), normalizeCanvasKeymap(null));
   assert.deepEqual(normalizeCanvasKeymap({ base: ["bogus"] }).base, DEFAULT_CANVAS_KEYMAP.base);
 });
@@ -135,6 +149,7 @@ test("the node and the page normalize keymaps identically", async () => {
     { base: ["ctrl", "alt"], commands: { spotlight: ["ctrl", "alt", "P"], recents: ["meta", "K"], paneSearch: ["shift", "F"], recentPane: ["ctrl", "alt", "P"] } },
     { base: ["meta", "ctrl", "alt", "shift"], commands: {} },
     { commands: { splitRight: ["ctrl", "SPACE"], page9: ["ctrl", "alt", "9"] } },
+    { version: 2, commands: { spotlight: ["ctrl", "SPACE"], recents: ["ctrl", "SPACE", "K"] } },
   ];
   for (const sample of samples) {
     assert.deepEqual(normalizeCanvasKeymapPreference(sample), normalizeCanvasKeymap(sample), JSON.stringify(sample));

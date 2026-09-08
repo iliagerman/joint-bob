@@ -26,7 +26,7 @@ test("the projects header opens a recent conversations dialog", async () => {
 
   // One listener loop wires every trigger, so the dialog behaves the same from any view.
   assert.match(app, /querySelectorAll\("\[data-recent-sessions-open\]"\)/);
-  assert.match(app, /function openRecentSessionsDialog\(\)/);
+  assert.match(app, /function openRecentSessions\(\)/);
   assert.match(app, /function renderRecentSessionsDialog\(\)/);
 });
 
@@ -150,9 +150,9 @@ test("the recents dialog can be searched", async () => {
   assert.match(app, /elements\.recentSessionsSearchInput\.addEventListener\("input", \(\) => renderRecentSessionsDialog\(\)\)/);
 
   // A stale query must not survive a reopen.
-  const start = app.indexOf("function openRecentSessionsDialog()");
+  const start = app.indexOf("function openRecentSessions()");
   const end = app.indexOf("\n}", start);
-  assert.ok(start >= 0, "Missing openRecentSessionsDialog");
+  assert.ok(start >= 0, "Missing openRecentSessions");
   assert.match(app.slice(start, end), /elements\.recentSessionsSearchInput\.value = ""/);
 });
 
@@ -162,21 +162,17 @@ test("the first ten recents are numbered and open with a digit key", async () =>
     readFile("public/styles.css", "utf8"),
   ]);
 
-  assert.match(app, /const RECENT_SESSION_SHORTCUT_LIMIT = 10;/);
-  assert.match(app, /index\.dataset\.testid = "recent-session-index"/);
+  // The rule itself lives in the shared list-shortcuts module; the recents list
+  // installs its rows into it and draws the same chip as every other list.
+  assert.match(app, /import \{ attachDigitShortcuts, LIST_SHORTCUT_LIMIT, shortcutIndexBadge \} from "\.\/list-shortcuts\.js";/);
   assert.match(app, /recentSessionShortcuts\.push\(entry\)/);
-  assert.match(app, /recentSessionShortcuts\.length === 10 \? "0" : String\(recentSessionShortcuts\.length\)/);
-  assert.match(styles, /\.recent-sessions-list \.recent-session-index \{/);
+  assert.match(app, /shortcutIndexBadge\("recent-session-index", recentSessionShortcuts\.length\)/);
+  assert.match(styles, /\.recent-sessions-list \.session-card \{[^}]*padding-left: 38px;/);
+  assert.match(styles, /\.list-shortcut-index \{/);
 
-  // The digit must reach the list, not the search field the user is typing in.
-  const start = app.indexOf('elements.recentSessionsDialog.addEventListener("keydown"');
-  const end = app.indexOf("\n});", start);
-  assert.ok(start >= 0, "Missing recents dialog keydown handler");
-  const handler = app.slice(start, end);
-  assert.match(handler, /event\.target === elements\.recentSessionsSearchInput/);
-  assert.match(handler, /event\.key === "0" \? 10 : Number\(event\.key\)/);
-  assert.match(handler, /recentSessionShortcuts\[position - 1\]/);
-  assert.match(handler, /openRecentSession\(entry\)/);
+  // The digit must reach the list, not the search field the user is typing in,
+  // and a digit opens that row through the dialog's own open path.
+  assert.match(app, /attachDigitShortcuts\(elements\.recentSessionsDialog, \(\) => recentSessionShortcuts, \(entry\) => openRecentSession\(entry\)\.catch\(\(error\) => toast\(error\.message\)\)\)/);
 
   // Search is ready for typing as soon as the dialog opens.
   assert.match(app, /elements\.recentSessionsSearchInput\.focus\(\)/);
@@ -187,15 +183,12 @@ test("a global shortcut opens the recents dialog", async () => {
 
   // The app has more than one document-level keydown handler now, so this finds the
   // one that owns the recents chord rather than whichever comes first in the bundle.
-  const start = app.lastIndexOf('document.addEventListener("keydown"', app.indexOf("openRecentSessionsDialog();"));
+  const start = app.lastIndexOf('document.addEventListener("keydown"', app.indexOf("openRecentSessions();"));
   const end = app.indexOf("\n});", start);
   assert.ok(start >= 0, "Missing global keydown handler");
   const handler = app.slice(start, end);
-  assert.match(handler, /event\.metaKey \|\| event\.ctrlKey/);
-  assert.match(handler, /\|\| event\.shiftKey\) return/);
-  assert.doesNotMatch(handler, /!event\.shiftKey/);
-  assert.match(handler, /event\.key\.toLowerCase\(\) !== "k"/);
-  assert.match(handler, /openRecentSessionsDialog\(\)/);
+  assert.match(handler, /chordMatches\(chord, event\)/);
+  assert.match(handler, /openRecentSessions\(\)/);
 });
 
 test("the recents list leaves room for the focus ring", async () => {

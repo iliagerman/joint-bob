@@ -1,5 +1,5 @@
 import { mkdir } from "node:fs/promises";
-import os from "node:os";
+import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { ConversationEngine } from "./conversation-ownership.js";
@@ -29,7 +29,7 @@ interface ConversationRecordPayload {
   originNodeId: string;
 }
 
-const dataDir = process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob");
+const dataDir = resolveDataDirectory();
 let databasePromise: Promise<DatabaseSync> | undefined;
 
 function createConversationRecordTables(db: DatabaseSync): void {

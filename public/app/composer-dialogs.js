@@ -4,6 +4,7 @@ import { sendSocket } from "./chat-controls.js";
 import { setInputValue } from "./composer.js";
 import { elements } from "./elements.js";
 import { brandIcon } from "./icons.js";
+import { attachDigitShortcuts, LIST_SHORTCUT_LIMIT, shortcutIndexBadge } from "./list-shortcuts.js";
 import { normalizedQuery } from "./layout.js";
 import { toast } from "./shell.js";
 import { state } from "./state.js";
@@ -37,14 +38,21 @@ export function syncModelButton() {
   if (elements.modelDialog.open) renderModelDialog();
 }
 
+/** Rows 1-10 carry a digit shortcut, in the order this render lists them. */
+let modelShortcuts = [];
+
 function modelOptionButton({ key, label, active, onSelect }) {
   const option = document.createElement("button");
   option.type = "button";
   option.className = "model-option";
   option.dataset.modelKey = key;
   option.dataset.testid = `model-option-${key.replace(/[^a-z0-9.-]+/gi, "-")}`;
-  option.textContent = label;
   option.classList.toggle("active", active);
+  if (modelShortcuts.length < LIST_SHORTCUT_LIMIT) {
+    modelShortcuts.push(onSelect);
+    option.append(shortcutIndexBadge("model-option-index", modelShortcuts.length));
+  }
+  option.append(document.createTextNode(label));
   option.addEventListener("click", () => {
     onSelect();
     elements.modelDialog.close();
@@ -57,8 +65,20 @@ function skillInvocation(skill) {
   return skill.invocation || (skill.harness === "pi" ? `/skill:${skill.name} ` : `/${skill.name} `);
 }
 
+/** Rows 1-10 carry a digit shortcut; a filtered list renumbers on every keystroke. */
+let skillShortcuts = [];
+
+function chooseSkill(skill) {
+  const invocation = skillInvocation(skill);
+  elements.skillsDialog.close();
+  elements.messageInput.value = invocation;
+  elements.messageInput.focus();
+  elements.messageInput.setSelectionRange(invocation.length, invocation.length);
+}
+
 function renderSkillsDialog() {
   elements.skillsDialogList.replaceChildren();
+  skillShortcuts = [];
   if (state.skillsLoading) {
     const loading = document.createElement("span");
     loading.className = "model-shortcuts-empty";
@@ -85,6 +105,10 @@ function renderSkillsDialog() {
     option.type = "button";
     option.className = "skill-option";
     option.dataset.testid = "skill-option";
+    if (skillShortcuts.length < LIST_SHORTCUT_LIMIT) {
+      skillShortcuts.push(skill);
+      option.append(shortcutIndexBadge("skill-option-index", skillShortcuts.length));
+    }
     const name = document.createElement("strong");
     name.textContent = skill.name;
     if (skill.scope === "project") {
@@ -97,13 +121,7 @@ function renderSkillsDialog() {
     description.className = "skill-option-description";
     description.textContent = skill.description;
     option.append(name, description);
-    option.addEventListener("click", () => {
-      const invocation = skillInvocation(skill);
-      elements.skillsDialog.close();
-      elements.messageInput.value = invocation;
-      elements.messageInput.focus();
-      elements.messageInput.setSelectionRange(invocation.length, invocation.length);
-    });
+    option.addEventListener("click", () => chooseSkill(skill));
     elements.skillsDialogList.append(option);
   }
 }
@@ -146,6 +164,9 @@ async function openSkillsDialog() {
   if (elements.skillsDialog.open) elements.skillsDialogSearchInput.focus();
 }
 
+/** A digit toggles that tool row, exactly as clicking its checkbox does. */
+let toolShortcuts = [];
+
 function toolOption(tool) {
   const label = document.createElement("label");
   label.className = "tool-option";
@@ -166,6 +187,10 @@ function toolOption(tool) {
     state.toolsLoading = true;
     renderToolsDialog();
   });
+  if (toolShortcuts.length < LIST_SHORTCUT_LIMIT) {
+    toolShortcuts.push(checkbox);
+    label.append(shortcutIndexBadge("tool-option-index", toolShortcuts.length));
+  }
   const copy = document.createElement("span");
   const name = document.createElement("strong");
   name.textContent = tool.name;
@@ -179,6 +204,7 @@ function toolOption(tool) {
 
 export function renderToolsDialog() {
   elements.toolsDialogList.replaceChildren();
+  toolShortcuts = [];
   if (state.toolsLoading) {
     const loading = document.createElement("span");
     loading.className = "model-shortcuts-empty";
@@ -380,6 +406,7 @@ function renderModelDialog() {
   elements.modelDialogTitle.textContent = isClaude ? "Claude model" : "Pi model";
   elements.modelDialogList.classList.toggle("claude", isClaude);
   elements.modelDialogList.replaceChildren();
+  modelShortcuts = [];
   if (isClaude) {
     for (const option of CLAUDE_MODEL_OPTIONS) {
       elements.modelDialogList.append(
@@ -429,3 +456,9 @@ elements.skillsDialogSearchInput.addEventListener("input", () => renderSkillsDia
 elements.closeSkillsDialogButton.addEventListener("click", () => elements.skillsDialog.close());
 elements.closeToolsDialogButton.addEventListener("click", () => elements.toolsDialog.close());
 elements.modelButton.addEventListener("click", openModelDialog);
+attachDigitShortcuts(elements.skillsDialog, () => skillShortcuts, (skill) => chooseSkill(skill));
+attachDigitShortcuts(elements.toolsDialog, () => toolShortcuts, (checkbox) => checkbox.click());
+attachDigitShortcuts(elements.modelDialog, () => modelShortcuts, (onSelect) => {
+  onSelect();
+  elements.modelDialog.close();
+});

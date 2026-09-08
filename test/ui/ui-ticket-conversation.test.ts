@@ -105,7 +105,7 @@ test("the board ticket chat button opens that ticket's conversation", async () =
   await page.locator(".session-card", { hasText: "Canvas picker readability" }).click();
   await page.locator(".message", { hasText: "grid tracks shrink" }).waitFor({ timeout: 20_000 });
 
-  await page.getByTestId("chats-open-board-button").click();
+  await page.getByTestId("projects-open-board-button").click();
   const ticketCard = page.getByTestId("board-task-card").filter({ hasText: TICKET_TITLE });
   await ticketCard.getByTestId("board-task-open-chat-button").click();
   await page.locator(".message", { hasText: "retry budget was per-session" }).waitFor({ timeout: 20_000 });
@@ -179,7 +179,7 @@ test("the ticket jump button keeps its lane when the row is also pinned", async 
 });
 
 test("a planned ticket can move directly to Done without starting implementation", async () => {
-  await page.getByTestId("chats-open-board-button").click();
+  await page.getByTestId("projects-open-board-button").click();
   const ticketCard = page.getByTestId("board-task-card").filter({ hasText: TICKET_TITLE });
   await ticketCard.getByTestId("board-task-menu-button").click();
   await page.getByTestId("board-task-move-done-button").click();

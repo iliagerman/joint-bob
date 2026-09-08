@@ -48,14 +48,18 @@ async function loadFolderPickerDirectory(requestedPath) {
   }
 }
 
-async function openFolderPicker(target, title, apiPath = "/api/filesystem/directories") {
+/** Opens the folder picker for a plain input, or hands the picked path to `onPick` so a
+    multi-line field (the resource path lists) can append instead of overwrite. */
+async function openFolderPicker(target, title, apiPath = "/api/filesystem/directories", onPick = null) {
   state.folderPickerTarget = target;
+  state.folderPickerApply = onPick;
   state.folderPickerApiPath = apiPath;
   elements.folderPickerTitle.textContent = title;
+  const initialPath = onPick ? "" : target.value.trim();
   try {
-    await loadFolderPickerDirectory(target.value.trim());
+    await loadFolderPickerDirectory(initialPath);
   } catch {
-    const parentPath = target.value.trim().replace(/\/[^/]+\/?$/, "");
+    const parentPath = initialPath.replace(/\/[^/]+\/?$/, "");
     try { await loadFolderPickerDirectory(parentPath); }
     catch { await loadFolderPickerDirectory(); }
   }
@@ -114,12 +118,29 @@ elements.folderPickerParentButton.addEventListener("click", () => {
 elements.folderPickerCancelButton.addEventListener("click", () => elements.folderPickerDialog.close());
 elements.folderPickerUseButton.addEventListener("click", () => {
   if (state.folderPickerTarget && state.folderPickerPath) {
-    state.folderPickerTarget.value = state.folderPickerPath;
-    state.folderPickerTarget.dispatchEvent(new Event("input", { bubbles: true }));
+    if (state.folderPickerApply) state.folderPickerApply(state.folderPickerPath);
+    else {
+      state.folderPickerTarget.value = state.folderPickerPath;
+      state.folderPickerTarget.dispatchEvent(new Event("input", { bubbles: true }));
+    }
   }
   elements.folderPickerDialog.close();
   state.folderPickerTarget?.focus();
 });
+
+/** Appends one absolute path per line to a resource path list. */
+function appendResourcePath(textarea, pickedPath) {
+  const existing = textarea.value.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (!existing.includes(pickedPath)) existing.push(pickedPath);
+  textarea.value = existing.join("\n");
+}
+function browseResourcePaths(textarea, title, browseButton) {
+  browseButton.addEventListener("click", () => openFolderPicker(textarea, title, "/api/filesystem/directories", (picked) => appendResourcePath(textarea, picked)).catch((error) => toast(error.message, 8000)));
+}
+browseResourcePaths(elements.settingsResourceSkillsPaths, "Add a skills folder", elements.settingsResourceSkillsBrowse);
+browseResourcePaths(elements.settingsResourcePromptsPaths, "Add a prompts folder", elements.settingsResourcePromptsBrowse);
+browseResourcePaths(elements.settingsResourceRulesPaths, "Add a rules folder", elements.settingsResourceRulesBrowse);
+browseResourcePaths(elements.settingsResourcePluginsPaths, "Add a plugins folder", elements.settingsResourcePluginsBrowse);
 elements.settingsProjectHomeBrowseButton.addEventListener("click", () => openFolderPicker(elements.settingsProjectHome, "Choose Joint Bob home folder").catch((error) => toast(error.message, 8000)));
 elements.projectImportBrowseButton.addEventListener("click", async () => {
   const pending = state.activeProjectImport;

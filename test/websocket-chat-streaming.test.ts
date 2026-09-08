@@ -35,7 +35,7 @@ const resumed = args.indexOf('--resume');
 const sessionId = supplied >= 0 ? args[supplied + 1] : args[resumed + 1];
 console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: sessionId }));
 console.log(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: prompt.trim() } } }));
-await new Promise((resolve) => setTimeout(resolve, 120));
+await new Promise((resolve) => setTimeout(resolve, 500));
 console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: prompt.trim() }] } }));
 console.log(JSON.stringify({ type: 'result', is_error: false }));
 `);
@@ -86,6 +86,17 @@ test("Claude WebSocket streams before finalization and executes queued prompts o
     socket.send(JSON.stringify({ type: "prompt", message: "first" }));
     await waitFor(messages, () => messages.some((message) => message.type === "textDelta" && message.text === "first"));
     socket.send(JSON.stringify({ type: "prompt", message: "second" }));
+    await waitFor(messages, () => messages.some((message) => message.type === "userMessage" && message.text === "second" && message.queued === true));
+    const second = messages.find((message) => message.type === "userMessage" && message.text === "second");
+    socket.send(JSON.stringify({ type: "editQueuedPrompt", queueId: second?.queueId, message: "second, edited" }));
+    await waitFor(messages, () => messages.some((message) => message.type === "queuedPromptEdited" && message.queueId === second?.queueId));
+
+    socket.send(JSON.stringify({ type: "prompt", message: "cancel me" }));
+    await waitFor(messages, () => messages.some((message) => message.type === "userMessage" && message.text === "cancel me" && message.queued === true));
+    const cancelled = messages.find((message) => message.type === "userMessage" && message.text === "cancel me");
+    socket.send(JSON.stringify({ type: "cancelQueuedPrompt", queueId: cancelled?.queueId }));
+    await waitFor(messages, () => messages.some((message) => message.type === "queuedPromptCancelled" && message.queueId === cancelled?.queueId));
+
     socket.send(JSON.stringify({ type: "setEffort", effort: "high" }));
     await waitFor(messages, () => messages.filter((message) => message.type === "agent_end").length === 2);
 
@@ -93,7 +104,7 @@ test("Claude WebSocket streams before finalization and executes queued prompts o
     const firstEnd = messages.findIndex((message) => message.type === "agent_end");
     assert.ok(firstDelta >= 0 && firstDelta < firstEnd);
     assert.ok(messages.some((message) => message.type === "userMessage" && message.text === "second" && message.queued === true));
-    assert.ok(messages.some((message) => message.type === "queueUpdate" && Number(message.pending) >= 1));
+    assert.ok(messages.some((message) => message.type === "queueUpdate" && Number(message.pending) >= 2));
     assert.ok(messages.some((message) => message.type === "error" && String(message.error).includes("while Claude is working")));
 
     socket.send(JSON.stringify({ type: "prompt", message: "third" }));
@@ -102,7 +113,7 @@ test("Claude WebSocket streams before finalization and executes queued prompts o
     socket.send(JSON.stringify({ type: "abort" }));
     await waitFor(messages, () => messages.filter((message) => message.type === "agent_end").length === 3);
     assert.ok(Date.now() - abortedAt < 1_000);
-    assert.deepEqual((await readFile(process.env.JOINT_BOB_FAKE_INVOCATIONS, "utf8")).trim().split("\n"), ["first", "second", "third"]);
+    assert.deepEqual((await readFile(process.env.JOINT_BOB_FAKE_INVOCATIONS, "utf8")).trim().split("\n"), ["first", "second, edited", "third"]);
   } finally {
     socket?.terminate();
     if (server?.listening) await new Promise<void>((resolve) => server!.close(() => resolve()));
