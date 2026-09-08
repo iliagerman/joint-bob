@@ -322,19 +322,8 @@ body.view-chat #chatPanel :is(.panel-scroll, .board-columns, .messages) {
 
 /* ---- Brand ---- */
 .brand { display: flex; gap: 11px; align-items: center; flex: 1; min-width: 0; }
-.project-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
-/* The projects header stacks: the brand owns the first row and the action icons sit
-   on their own row below it, so a narrow panel never squeezes the name. */
-#projectsPanel .panel-bar {
-  flex-wrap: wrap;
-  height: auto;
-  min-height: calc(var(--panel-header-height) + env(safe-area-inset-top, 0px));
-  padding-top: calc(10px + env(safe-area-inset-top, 0px));
-  padding-bottom: 10px;
-}
-#projectsPanel .brand { flex: 1 1 100%; }
-#projectsPanel .project-actions { flex: 1 1 100%; justify-content: space-between; }
-/* Four controls share this header, so they run one step smaller than a stock icon button. */
+/* Project tools mirror the conversations controls: title row first, controls below. */
+.project-actions { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 12px 12px 0; }
 .project-actions .icon-button { min-width: 31px; width: 31px; min-height: 31px; font-size: 14px; }
 .project-actions .icon-button svg { width: 16px; height: 16px; }
 /* A tiny key badge pinned to an icon's corner, so the shortcut in force is visible

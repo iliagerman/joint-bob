@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Project panel action buttons (reviews, recents, running, board, settings) now sit in their own row below the title instead of wrapping inside the header.
+
 ## 1.9.0 — 2026-09-08
 
 - Header buttons show their assigned shortcut, and digits 1–9 and 0 select the first ten rows in picker dialogs.

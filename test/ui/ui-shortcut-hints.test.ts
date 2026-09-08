@@ -110,7 +110,6 @@ test("the board icon sits between running and settings, and the conversations he
   const order = await page.locator("#projectsPanel .project-actions button[data-testid]")
     .evaluateAll((nodes) => nodes.map((element) => element.getAttribute("data-testid")));
   assert.deepEqual(order, [
-    "projects-panel-collapse-button",
     "pending-reviews-open-button",
     "recent-sessions-open-button",
     "running-conversations-open-button",
@@ -125,11 +124,15 @@ test("the board icon sits between running and settings, and the conversations he
     "the board has no keyboard shortcut, so it wears no badge");
 });
 
-test("the projects brand owns a row and the action buttons sit on the row below it", async () => {
-  const brand = await page.locator("#projectsPanel .brand").boundingBox();
+test("the project title keeps collapse while its action row sits above search", async () => {
+  const header = await page.locator("#projectsPanel .panel-bar").boundingBox();
   const actions = await page.locator("#projectsPanel .project-actions").boundingBox();
-  assert.ok(brand && actions, "both header rows rendered");
-  assert.ok(actions!.y >= brand!.y + brand!.height - 1, `actions row (y=${actions!.y}) starts below the brand row (ends ${brand!.y + brand!.height})`);
+  const search = await page.locator("#projectsPanel .project-search-row").boundingBox();
+  assert.ok(header && actions && search, "the project panel rows rendered");
+  assert.equal(await page.locator("#projectsPanel .panel-bar > #collapseProjectsButton").count(), 1, "collapse stays in the title row");
+  assert.equal(await page.locator("#projectsPanel > .project-actions").count(), 1, "other actions leave the title row");
+  assert.ok(actions!.y >= header!.y + header!.height - 1, `actions row (y=${actions!.y}) starts below the title row (ends ${header!.y + header!.height})`);
+  assert.ok(actions!.y + actions!.height <= search!.y, `actions row ends above search (${actions!.y + actions!.height}px vs ${search!.y}px)`);
 
   // Neither the name nor the subtitle may be truncated now that the buttons moved away.
   const cut = await page.locator("#projectsPanel .brand-copy")
