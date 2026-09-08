@@ -1426,6 +1426,16 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 }
 .settings-tab:hover { color: var(--text); }
 .settings-tab[aria-selected="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.18)); }
+/* Sub-tabs inside one settings panel: secret types, installed harnesses. Same segmented
+   control as the outer tab strip, one size down. Secret tabs mark the current one with
+   aria-pressed, harness tabs with aria-selected; both read as the same pill. */
+.settings-subtabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 3px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
+.settings-subtab { flex: 0 0 auto; min-height: 32px; padding: 0 12px; border: 0; border-radius: calc(var(--radius-ctl) - 3px); background: transparent; color: var(--muted); font-size: 12px; font-weight: 550; cursor: pointer; transition: color 140ms ease, background-color 140ms ease; }
+.settings-subtab:hover { color: var(--text); }
+.settings-subtab:is([aria-pressed="true"], [aria-selected="true"]) { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.18)); }
+@media (prefers-reduced-motion: reduce) {
+  .settings-subtab { transition: none; }
+}
 /* A fixed panel box, so a short tab and a long tab leave the dialog the same height.
    `align-content: start` stops the grid stretching rows to fill it. */
 .settings-panel {
@@ -1497,11 +1507,6 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 .secret-scope-row { display: flex; align-items: center; gap: 8px; }
 .secret-scope-row .secret-provider-badge { width: 28px; height: 28px; }
 
-/* The wide tabs earn a second column instead of one very tall stack. The sidebar takes
-   184px plus its gap off the panel, so the breakpoint sits that much higher than the card. */
-@media (min-width: 1040px) {
-  #settingsPanel-engines { grid-template-columns: 1fr 1fr; }
-}
 /* Too narrow for a side-by-side split: the sidebar folds back into the strip above. */
 @media (max-width: 720px) {
   .settings-body { grid-template-columns: minmax(0, 1fr); }
@@ -2442,8 +2447,15 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
   margin: 0;
 }
 
-.engine-defaults, .engine-readiness { display: block; color: var(--muted); font-family: var(--mono); font-size: 11px; line-height: 1.5; }
+.engine-defaults, .engine-readiness { display: block; color: var(--muted); font-family: var(--mono); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+/* Three long absolute paths in one run: a bordered block keeps them off the prose above. */
+.engine-defaults:not(:empty) { padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
 .engine-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+/* One harness panel reads top to bottom: node defaults, then that harness's overrides. */
+[data-harness-panel] { display: grid; gap: 12px; }
+/* The reset button sits in a grid fieldset; keep it at its own width instead of stretching. */
+[data-harness-panel] .phase-settings > button { justify-self: start; }
+[data-harness-panel][hidden] { display: none; }
 .engine-overrides { display: grid; gap: 10px; }
 .engine-overrides summary { cursor: pointer; color: var(--text); font-weight: 600; }
 .engine-overrides[open] summary { margin-bottom: 2px; }

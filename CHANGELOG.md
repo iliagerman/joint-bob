@@ -6,6 +6,9 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Shortcut index badges in session and project cards are now properly centered.
+- Settings panels now display nested tabs for organizing related options like secret types and harness configurations.
+- Escape closes the recent conversations dialog even when searching.
+- Engine configuration in settings now displays with improved spacing and clearer section organization.
 
 ## 1.12.0 — 2026-09-08
 
