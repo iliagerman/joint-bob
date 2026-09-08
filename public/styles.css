@@ -1933,7 +1933,9 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 /* ---- Numeric row shortcuts ---- */
 /* Every pick-list dialog numbers its first ten rows and opens a row on its digit,
    so the chip and the lane it sits in are shared, not per-list. */
-.list-shortcut-index {
+.list-shortcut-index,
+.session-card .list-shortcut-index,
+.project-card .list-shortcut-index {
   position: absolute;
   left: 10px;
   top: 50%;

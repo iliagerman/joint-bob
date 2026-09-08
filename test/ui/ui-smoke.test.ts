@@ -1232,6 +1232,15 @@ test("running conversations open their live conversation in another project", as
     await page.getByTestId("running-conversations-open-button").click();
     const dialog = page.getByTestId("running-conversations-dialog");
     await dialog.getByText(project.name, { exact: true }).waitFor();
+    const offset = await dialog.locator(".list-shortcut-index").first().evaluate((badge) => {
+      const frame = badge.getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(badge);
+      const digit = range.getBoundingClientRect();
+      return { x: Math.abs(digit.left + digit.width / 2 - frame.left - frame.width / 2),
+        y: Math.abs(digit.top + digit.height / 2 - frame.top - frame.height / 2) };
+    });
+    assert.ok(offset.x <= 1 && offset.y <= 1, `shortcut digit must be centered: ${JSON.stringify(offset)}`);
     await dialog.getByTestId("running-conversation-option").filter({ hasText: target.title }).click();
     await page.getByTestId("chat-project-name").getByText(project.name, { exact: true }).waitFor();
     await page.locator("#sessionTitle").getByText(target.title, { exact: true }).waitFor();

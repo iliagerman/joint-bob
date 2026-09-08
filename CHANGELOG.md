@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Shortcut index badges in session and project cards are now properly centered.
+
 ## 1.12.0 — 2026-09-08
 
 - Keyboard shortcuts are now visible alongside action buttons, and new shortcuts added for app navigation, chat controls, and canvas operations.
