@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Agent task instructions and outputs now display in the session list; Claude sub-agent transcripts appear as read-only child sessions.
 - Project panel action buttons (reviews, recents, running, board, settings) now sit in their own row below the title instead of wrapping inside the header.
 
 ## 1.9.0 — 2026-09-08

@@ -42,7 +42,7 @@ test("a Claude conversation is identified by its run id, like a Pi conversation"
 
   // The summary id is the conversation identity used for ownership, renames and
   // the active-row highlight, so it must be the bare run id on both engines.
-  assert.match(claude, /id: path\.basename\(filePath, "\.jsonl"\)/);
+  assert.match(claude, /id: subagentParentId \? `\$\{subagentParentId\}\/\$\{path\.basename\(filePath, "\.jsonl"\)\}` : path\.basename\(filePath, "\.jsonl"\)/);
 });
 
 test("the conversation list applies renames by conversation id", async () => {

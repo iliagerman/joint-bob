@@ -277,8 +277,11 @@ async function summarizeClaudeTranscript(project: SessionProjectPaths, filePath:
   const facts = await claudeSessionFacts(filePath, fileStat);
   const projectCwds = new Set(sessionCwds(project));
   if (![...facts.cwds].some((cwd) => projectCwds.has(cwd))) return null;
+  const subagentParentId = path.basename(path.dirname(filePath)) === "subagents"
+    ? path.basename(path.dirname(path.dirname(filePath)))
+    : undefined;
   return {
-    id: path.basename(filePath, ".jsonl"),
+    id: subagentParentId ? `${subagentParentId}/${path.basename(filePath, ".jsonl")}` : path.basename(filePath, ".jsonl"),
     path: `claude:${filePath}`,
     harnessId: "claude",
     agentId: "claude",
@@ -288,13 +291,25 @@ async function summarizeClaudeTranscript(project: SessionProjectPaths, filePath:
     // Syncthing rewrites mtime when a peer advertises new metadata, so transcript events own recency.
     updatedAt: facts.lastEventAt || fileStat.mtime.toISOString(),
     firstMessage: facts.title,
+    ...(subagentParentId ? {
+      parentSessionPath: `claude:${path.join(path.dirname(path.dirname(path.dirname(filePath))), `${subagentParentId}.jsonl`)}`,
+      readOnly: true,
+    } : {}),
   };
 }
 
 export async function claudeSessionFiles(project: SessionProjectPaths): Promise<string[]> {
   const groups = await Promise.all(claudeProjectDirs(project, claudeProjectsRoot()).map(async (dir) => {
-    try { return (await readdir(dir)).filter((file) => file.endsWith(".jsonl") && !isSyncConflictPath(file)).map((file) => path.join(dir, file)); }
-    catch { return []; }
+    try {
+      const entries = await readdir(dir, { recursive: true }) as string[];
+      return entries
+        .filter((file) => file.endsWith(".jsonl") && !isSyncConflictPath(file))
+        .filter((file) => {
+          const parts = file.split(path.sep);
+          return parts.length === 1 || (parts.length === 3 && parts[1] === "subagents");
+        })
+        .map((file) => path.join(dir, file));
+    } catch { return []; }
   }));
   return [...new Set(groups.flat().map((filePath) => path.resolve(filePath)))];
 }

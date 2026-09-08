@@ -127,3 +127,21 @@ test("the session list prints why a task failed", async () => {
   assert.match(app, /dataset\.testid = "agent-run-task-reason"/);
   assert.match(styles, /\.agent-run-task-reason \{/);
 });
+
+test("worker detail fields ride along when the dashboard reports them", async () => {
+  const server = createServer((_request, reply) => { reply.setHeader("Content-Type", "application/json"); reply.end(JSON.stringify({ runs: [{ runId, status: "running", tasks: [
+    { id: "worker", role: "worker", agent: "default", status: "succeeded", task: "  review the diff  ", model: "gpt-x", finalOutput: `done${"!".repeat(3000)}` },
+  ] }] })); });
+  try {
+    const port = await listen(server);
+    const descriptor = agentRunDescriptor({ type: "tool_execution_end", toolName: "multi_agent_run", result: { details: { runId, dashboardUrl: `http://127.0.0.1:${port}/?key=k`, tasks: [{ id: "worker", role: "worker", agent: "default", task: "review the diff" }] } } });
+    assert.ok(descriptor);
+    assert.equal(descriptor.summary.tasks[0].task, "review the diff");
+    const refreshed = await refreshAgentRun(descriptor);
+    assert.equal(refreshed.tasks[0].task, "review the diff");
+    assert.equal(refreshed.tasks[0].model, "gpt-x");
+    assert.equal(refreshed.tasks[0].finalOutput?.length, 2000);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});

@@ -3,21 +3,21 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { appSource } from "./source.js";
 
-test("the projects header swaps the add button for a pending reviews button", async () => {
+test("the projects action row shows pending reviews above project search", async () => {
   const [html, styles] = await Promise.all([
     readFile("public/index.html", "utf8"),
     readFile("public/styles.css", "utf8"),
   ]);
   const actionsStart = html.indexOf('<div class="project-actions">');
   assert.ok(actionsStart >= 0, "Missing project actions bar");
-  const actions = html.slice(actionsStart, html.indexOf("</header>", actionsStart));
+  const searchRowStart = html.indexOf('<div class="project-search-row">');
+  const actions = html.slice(actionsStart, searchRowStart);
 
   assert.doesNotMatch(actions, /id="newProjectButton"/);
   assert.match(actions, /id="pendingReviewsButton"[^>]*data-pending-reviews-open/);
   assert.match(actions, /data-testid="pending-reviews-open-button"/);
   assert.match(actions, /id="pendingReviewsBadge"/);
 
-  const searchRowStart = html.indexOf('<div class="project-search-row">');
   assert.ok(searchRowStart >= 0, "Missing project search row");
   const searchRow = html.slice(searchRowStart, html.indexOf("</div>", searchRowStart));
   assert.match(searchRow, /id="projectSearchInput"/);

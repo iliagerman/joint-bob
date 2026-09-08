@@ -5,6 +5,10 @@ type RecordValue = Record<string, unknown>;
 
 function record(value: unknown): RecordValue | undefined { return typeof value === "object" && value !== null ? value as RecordValue : undefined; }
 function text(value: unknown): string | undefined { return typeof value === "string" ? value : undefined; }
+function clip(value: unknown, max: number): string | undefined {
+  const trimmed = (text(value) ?? "").trim();
+  return trimmed ? trimmed.slice(0, max) : undefined;
+}
 function status(value: unknown): AgentRunTaskSummary["status"] | undefined {
   return ["queued", "running", "succeeded", "failed", "cancelled"].includes(String(value)) ? value as AgentRunTaskSummary["status"] : undefined;
 }
@@ -40,7 +44,10 @@ function tasks(value: unknown, initial = false): AgentRunTaskSummary[] | undefin
     const taskStatus = status(task?.status) ?? (initial && task?.status === undefined ? "queued" : undefined);
     if (!name || !role || !taskStatus) return undefined;
     const error = reason(task, taskStatus);
-    return { name, role, status: taskStatus, ...(error ? { error } : {}) };
+    const taskText = clip(task?.task, 300);
+    const model = clip(task?.model, 100);
+    const finalOutput = clip(task?.finalOutput, 2000);
+    return { name, role, status: taskStatus, ...(taskText ? { task: taskText } : {}), ...(model ? { model } : {}), ...(finalOutput ? { finalOutput } : {}), ...(error ? { error } : {}) };
   });
   return mapped.every(Boolean) ? mapped as AgentRunTaskSummary[] : undefined;
 }

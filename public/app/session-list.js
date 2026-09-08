@@ -123,6 +123,7 @@ export function renderSessions() {
           taskElement.dataset.role = task.role;
           taskElement.dataset.status = task.status;
           taskElement.textContent = `${task.name} · ${task.role} · ${task.status}`;
+          if (task.task) taskElement.title = task.task;
           runs.append(taskElement);
           const reason = agentRunTaskReason(task);
           if (reason) {
@@ -132,6 +133,17 @@ export function renderSessions() {
             reasonElement.textContent = reason;
             reasonElement.title = reason;
             runs.append(reasonElement);
+          }
+          if (task.finalOutput) {
+            const output = document.createElement("details");
+            output.className = "agent-run-task-output";
+            const summaryElement = document.createElement("summary");
+            summaryElement.textContent = `${task.name} output`;
+            summaryElement.dataset.testid = "agent-run-task-output-toggle";
+            const body = document.createElement("pre");
+            body.textContent = task.finalOutput;
+            output.append(summaryElement, body);
+            runs.append(output);
           }
         }
       }
@@ -165,7 +177,7 @@ function sessionPinToggle(session) {
 function sessionMenuItems(session, sessionActive) {
   const name = shortSessionTitle(session);
   const isClaude = sessionEngine(session) === "claude";
-  const readOnly = sessionTicketTask(session)?.status === "done";
+  const readOnly = session.readOnly === true || sessionTicketTask(session)?.status === "done";
   return [
     {
       label: "Add to canvas",

@@ -69,6 +69,22 @@ test("each node is paired with the other and holds its machine token", async () 
   assert.ok(peersA.body.peers[0].tokenConfigured && peersB.body.peers[0].tokenConfigured, "both sides hold a machine token");
 });
 
+test("saving this node's identity updates every peer before the request completes", async () => {
+  const renamedUrl = `http://localhost:${new URL(nodeA.url).port}`;
+  const saved = await api<{ node: { name: string; url: string } }>(nodeA, sessionA, "PUT", "/cluster/node", {
+    name: "Renamed node A",
+    url: renamedUrl,
+  });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.node.name, "Renamed node A");
+  assert.equal(saved.body.node.url, renamedUrl);
+
+  const peersB = await api<{ peers: PeerView[] }>(nodeB, sessionB, "GET", "/cluster/peers");
+  const nodeAOnB = peersB.body.peers.find((peer) => peer.id === nodeA.nodeId);
+  assert.equal(nodeAOnB?.name, "Renamed node A");
+  assert.equal(nodeAOnB?.url, renamedUrl);
+});
+
 test("workspace secret attachments replicate to the same workspace on a peer", async () => {
   const created = await api<{ account: { id: string } }>(nodeA, sessionA, "POST", "/secrets/accounts", {
     label: "Shared workspace secret",

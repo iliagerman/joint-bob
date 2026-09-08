@@ -403,7 +403,7 @@ export async function updateClusterNode(name: string, url: string): Promise<Clus
   if (node.name === name && node.url === normalizedUrl) return node;
   db.exec("BEGIN IMMEDIATE");
   try {
-    db.prepare("UPDATE cluster_node SET name = ?, url = ?, updated_at = ? WHERE singleton = 1").run(name, normalizedUrl, new Date().toISOString());
+    db.prepare("UPDATE cluster_node SET name = ?, url = ?, updated_at = ? WHERE singleton = 1").run(name, normalizedUrl, nextVersionTimestamp(node.updatedAt));
     queueMembershipChange(db);
     db.exec("COMMIT");
   } catch (error) {

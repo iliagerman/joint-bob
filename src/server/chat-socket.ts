@@ -259,18 +259,21 @@ webSocketServer.on("connection", async (socket, request) => {
   }
   const validRequestedSessionId = requestedSessionId && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestedSessionId) ? requestedSessionId : undefined;
   const ownershipSessionId = listedSession && !listedSession.draft ? listedSession.id : sessionRequest.draft?.sessionId ?? validRequestedSessionId ?? randomUUID();
+  const sessionReadOnly = listedSession?.readOnly === true;
   let foreignOwner: ForeignConversationOwner | null = null;
-  try {
-    foreignOwner = await openConversationOwnership(sessionRequest.engine, ownershipSessionId, local.id);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Conversation ownership claim failed";
-    // A new conversation with no owner is unusable, but an existing one still
-    // reads fine: the send-time fence catches whatever the claim could not.
-    if (!listedSession) {
-      socket.close(1008, webSocketCloseReason(message));
-      return;
+  if (!sessionReadOnly) {
+    try {
+      foreignOwner = await openConversationOwnership(sessionRequest.engine, ownershipSessionId, local.id);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Conversation ownership claim failed";
+      // A new conversation with no owner is unusable, but an existing one still
+      // reads fine: the send-time fence catches whatever the claim could not.
+      if (!listedSession) {
+        socket.close(1008, webSocketCloseReason(message));
+        return;
+      }
+      console.warn("Conversation ownership claim failed on open", error);
     }
-    console.warn("Conversation ownership claim failed on open", error);
   }
   if (!listedSession || listedSession.draft) {
     try {
@@ -286,10 +289,10 @@ webSocketServer.on("connection", async (socket, request) => {
       throw error;
     }
   }
-  const conversationReadOnly = task?.status === "done" || await conversationBelongsToDoneTask(project.id, sessionRequest.engine, ownershipSessionId);
+  const conversationReadOnly = sessionReadOnly || task?.status === "done" || await conversationBelongsToDoneTask(project.id, sessionRequest.engine, ownershipSessionId);
   let connection: ChatConnection = {
     socket, project, taskId: task?.id ?? null, cwd, engine: "pi", shared: null,
-    claude: emptyClaudeState(ownershipSessionId), handoffContext: spinOffContext, secretAccountIds,
+    claude: emptyClaudeState(ownershipSessionId), handoffContext: spinOffContext, secretAccountIds, readOnly: sessionReadOnly,
   };
 
   if (sessionRequest.engine === "claude") {

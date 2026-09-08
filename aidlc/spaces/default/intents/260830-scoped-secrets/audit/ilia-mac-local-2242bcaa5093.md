@@ -919,3 +919,71 @@
 **Event**: HUMAN_TURN
 
 ---
+
+## Session End
+**Timestamp**: 2026-09-08T09:40:15Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Session Resume
+**Timestamp**: 2026-09-08T09:43:04Z
+**Event**: SESSION_RESUMED
+**Source**: resume
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-08T09:43:07Z
+**Event**: HUMAN_TURN
+
+---
+
+## Workflow Parked
+**Timestamp**: 2026-09-08T09:45:39Z
+**Event**: WORKFLOW_PARKED
+**Stage**: observability-setup
+
+---
+
+## Session End
+**Timestamp**: 2026-09-08T10:55:16Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Workflow Parked
+**Timestamp**: 2026-09-08T13:24:25Z
+**Event**: WORKFLOW_PARKED
+**Stage**: observability-setup
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-08T13:42:23Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-08T13:42:25Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-09-08T13:42:45Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Workflow Parked
+**Timestamp**: 2026-09-08T13:42:47Z
+**Event**: WORKFLOW_PARKED
+**Stage**: observability-setup
+
+---

@@ -242,6 +242,7 @@ async function conversationTask(connection: ChatConnection): Promise<TaskRecord 
 }
 
 async function assertConversationWritable(connection: ChatConnection): Promise<void> {
+  if (connection.readOnly) throw new Error("This conversation is read-only");
   if ((await conversationTask(connection))?.status === "done") throw new Error("Done ticket conversations are read-only");
   // A switched conversation opened without its ticket still belongs to it: the
   // Done lock follows the logical conversation, not the open socket's segment.

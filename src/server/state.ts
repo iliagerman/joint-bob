@@ -95,6 +95,8 @@ export interface ChatConnection {
   handoffContext: string | null;
   // Accounts picked in the new-conversation dialog, before the engine reported a session id.
   secretAccountIds: string[];
+  // A read-only transcript (Claude sub-agent sidechain); the send fence rejects writes.
+  readOnly?: boolean;
 }
 
 export const port = Number(process.env.PORT ?? 8790);

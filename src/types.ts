@@ -64,6 +64,11 @@ export interface AgentRunTaskSummary {
   name: string;
   role: string;
   status: AgentTaskStatus;
+  /** The instruction given to the worker, trimmed to keep session-list payloads small. */
+  task?: string;
+  model?: string;
+  /** The worker's final answer once the dashboard reports one, trimmed like `task`. */
+  finalOutput?: string;
   /** Why a failed task failed, as the dashboard reported it. Absent unless the task failed. */
   error?: string;
 }
@@ -89,6 +94,8 @@ export interface SessionSummary {
   firstMessage?: string;
   /** Parent Pi transcript path when another conversation created this one. */
   parentSessionPath?: string;
+  /** A transcript that can be viewed but never continued (e.g. a Claude sub-agent sidechain). */
+  readOnly?: boolean;
   /** Logical conversation identity; a harness switch continues the same conversation id. */
   conversationId?: string;
   /** Every harness segment of a switched conversation, oldest first; absent for single sessions. */

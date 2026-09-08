@@ -17,6 +17,7 @@ import type { HarnessId, TaskRecord } from "../../types.js";
 import { type PreparedTaskWorktree, prepareTaskWorktreeFromBundle, removePreparedTaskWorktree } from "../../worktrees.js";
 import { assertTaskFilesReady, projectWithLocalLocation, publicClusterPeer, syncPairedProjects, taskConversationIdentity, taskHandoffEligibility } from "../cluster-helpers.js";
 import { canonicalClusterUrl, parseClusterInvitationLink, prospectiveClusterNode, sendError } from "../http-auth.js";
+import { flushMembershipOutbox } from "../maintenance.js";
 import { broadcastReplicationInvalidations, broadcastSessionsChangedToAllProjects, broadcastToProject } from "../realtime.js";
 import { clusterInvitationCreateSchema, clusterInvitationRedemptionSchema, clusterJoinSchema, clusterMembershipLeaveSchema, clusterMembershipMemberSchema, clusterMembershipSnapshotSchema, clusterNodeSchema, clusterPeerSchema, preparedTaskSchema, replicationBatchSchema, runtimeSnapshotSchema, secretCredentialBatchSchema, taskEligibilitySchema, taskHandoffActionSchema, taskHandoffStatusSchema } from "../schemas.js";
 import { app } from "../state.js";
@@ -205,7 +206,9 @@ app.get("/api/cluster/node", async (_request, response, next) => {
 app.put("/api/cluster/node", async (request, response, next) => {
   try {
     const payload = clusterNodeSchema.parse(request.body);
-    response.json({ node: await updateClusterNode(payload.name, payload.url) });
+    const node = await updateClusterNode(payload.name, payload.url);
+    await flushMembershipOutbox();
+    response.json({ node });
   } catch (error) {
     next(error);
   }

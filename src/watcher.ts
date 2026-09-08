@@ -84,7 +84,7 @@ export class SessionWatcher {
     for (const dir of desiredDirs) {
       if (project.dirWatchers.has(dir)) continue;
       try {
-        const watcher = watch(dir, (_eventType, fileName) => this.handleEvent(projectId, dir, fileName));
+        const watcher = watch(dir, { recursive: true }, (_eventType, fileName) => this.handleEvent(projectId, dir, fileName));
         watcher.unref();
         watcher.on("error", () => {
           watcher.close();

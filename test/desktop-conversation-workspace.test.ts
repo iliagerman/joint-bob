@@ -15,15 +15,11 @@ test("conversation search composes with status filtering", async () => {
   assert.match(app, /sessionSearchInput\.addEventListener\("input", \(\) => renderSessions\(\)\)/);
 });
 
-test("desktop chat uses available width and project header actions do not cover title", async () => {
+test("desktop chat uses available width and project actions do not cover title", async () => {
   const styles = await readFile("public/styles.css", "utf8");
 
-  // The projects header stacks: the brand owns one row and the actions sit on the
-  // next, so the buttons never squeeze the app name into an ellipsis.
-  assert.match(styles, /#projectsPanel \.panel-bar \{[^}]*flex-wrap:\s*wrap/);
-  assert.match(styles, /#projectsPanel \.brand \{[^}]*flex:\s*1 1 100%/);
-  assert.match(styles, /#projectsPanel \.project-actions \{[^}]*flex:\s*1 1 100%/);
-  assert.match(styles, /\.project-actions \{[^}]*flex:\s*0 0 auto/);
+  // Project actions occupy their own row below the title.
+  assert.match(styles, /\.project-actions \{[^}]*display:\s*flex[^}]*justify-content:\s*space-between[^}]*margin:\s*12px 12px 0/);
   assert.match(styles, /\.brand \{[^}]*flex:\s*1[^}]*min-width:\s*0/);
   assert.match(styles, /\.brand-copy strong, \.brand-copy span \{[^}]*text-overflow:\s*ellipsis/);
   assert.match(styles, /@media \(min-width: 1024px\)[\s\S]*\.message\.assistant[\s\S]*width:\s*100%[\s\S]*max-width:\s*100%/);
