@@ -353,6 +353,13 @@ test("the chat toolbar actions are visible on a wide screen and fold into the me
   for (const id of ids) {
     assert.equal(await page.getByTestId(id).isVisible(), true, `${id} is visible in the desktop toolbar`);
   }
+  const [terminalBox, safeguardsBox] = await Promise.all([
+    page.getByTestId("chat-open-terminal-button").boundingBox(),
+    page.getByTestId("chat-safeguards-button").boundingBox(),
+  ]);
+  assert.ok(terminalBox && safeguardsBox, "desktop toolbar actions have layout boxes");
+  assert.equal(safeguardsBox.y, terminalBox.y, "Safeguards aligns vertically with the other toolbar actions");
+  assert.equal(safeguardsBox.height, terminalBox.height, "Safeguards matches the other toolbar action height");
   assert.equal(await page.getByTestId("chat-more-button").isVisible(), false, "the overflow summary stays hidden on desktop");
 
   await page.setViewportSize({ width: 430, height: 900 });

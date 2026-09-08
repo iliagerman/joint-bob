@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Running conversations button moved to projects panel only; chat toolbar now focuses on core messaging controls.
+
 ## 1.10.0 — 2026-09-08
 
 - Claude sub-agent sessions now appear as read-only child sessions within your conversation list, showing task instructions and outputs.
