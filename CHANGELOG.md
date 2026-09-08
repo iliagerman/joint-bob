@@ -3,10 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.11.0 — 2026-09-08
 
-- Running conversations button moved to projects panel only; chat toolbar now focuses on core messaging controls.
-- Child sub-agent conversations are now collapsible in the session list and hidden by default; expand them individually to view task details.
+- Chat toolbar was streamlined by moving running conversations to the projects panel.
+- Sub-agent conversations now collapse under their parent, are excluded from review counts, and can be expanded individually.
 
 ## 1.10.0 — 2026-09-08
 
