@@ -4,7 +4,7 @@
 
 import { api } from "./api.js";
 import { elements } from "./elements.js";
-import { attachDigitShortcuts, LIST_SHORTCUT_LIMIT, shortcutIndexBadge } from "./list-shortcuts.js";
+import { attachDigitShortcuts, isRowSelectorQuery, LIST_SHORTCUT_LIMIT, shortcutIndexBadge } from "./list-shortcuts.js";
 import { setMobileView } from "./layout.js";
 import { selectProject } from "./project-selection.js";
 import { openListedSession } from "./reviews.js";
@@ -73,7 +73,10 @@ function renderResults() {
 
 async function runSearch() {
   const mine = ++generation;
-  const query = elements.spotlightInput.value.trim();
+  const typed = elements.spotlightInput.value.trim();
+  // A lone digit is naming one of the rows on screen, so the search does not move.
+  if (isRowSelectorQuery(typed)) return;
+  const query = typed;
   try {
     const body = await api(`/api/search?q=${encodeURIComponent(query)}`);
     if (mine !== generation) return;

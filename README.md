@@ -209,6 +209,14 @@ Ticket agents work in the synchronized `<home>/tickets` folder. Handoff waits fo
 
 Existing Git-backed tickets keep their worktree and merge behavior. New tickets do not create a branch and do not show **Merge to main**.
 
+## Skills and resources
+
+In **Settings > Resources**, enter absolute global skill paths such as `/Users/alice/my-skills`, then save settings. **Sync local skills** explicitly publishes complete skill directories to `<Joint Bob home>/.agent-resources/shared/skills`; it does not watch local folders. Sync again after every local edit. Sources remain untouched, matching shared skills are backed up under `<node data>/agent-resources-backups/<operation>/` and replaced, and removing a source does not delete its shared copy.
+
+Published skills use the existing Syncthing-managed agent-resources folder. Paired nodes may receive them after a transfer delay; publishing does not mean transfer has finished. Use **Reload skills** on each node after Syncthing finishes. Reload preserves idle Pi conversations and reports busy sessions and failures; retry skipped sessions when idle. Claude starts a process per turn and sees changes on its next run.
+
+Skills can execute their included instructions and scripts. Publish only trusted folders, especially when sharing with paired nodes.
+
 ## Secret accounts
 
 Secret accounts hold named environment variables encrypted with the node key. Attach an account to a workspace, project, or conversation. More specific scopes override less specific scopes one variable at a time.

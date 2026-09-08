@@ -1,5 +1,6 @@
 import path from "node:path";
 import { z } from "zod";
+import { syncLocalSkills } from "../../agent-resources.js";
 import { listAuditEvents } from "../../audit.js";
 import type { AuthSession } from "../../auth.js";
 import { clearCanvasShortcut, listCanvasShortcuts, releaseCanvasShortcuts, setCanvasShortcut } from "../../canvas-shortcuts.js";
@@ -16,7 +17,7 @@ import { isHarnessId } from "../../types.js";
 import { listUserPins, setUserPin } from "../../user-pins.js";
 import { assertManagedHomeChangeAllowed } from "../cluster-helpers.js";
 import { sendError } from "../http-auth.js";
-import { broadcastToAllClients } from "../realtime.js";
+import { broadcastToAllClients, reloadSharedSkills } from "../realtime.js";
 import { auditQuerySchema, recentSessionIdentitySchema, recentSessionSchema, registeredHarnessIdSchema, resourcePathsSchema, runtimeCheckSchema, settingsSchema, userPinSchema, userPreferencesSchema } from "../schemas.js";
 import { app } from "../state.js";
 
@@ -241,6 +242,28 @@ app.get("/api/audit", async (request, response, next) => {
     }
     next(error);
   }
+});
+
+let syncingSkills = false;
+const skillSyncSchema = z.object({ paths: resourcePathsSchema.shape.skills.min(1) }).strict();
+
+app.post("/api/settings/skills/sync", async (request, response, next) => {
+  if (syncingSkills) { sendError(response, 409, "A skill publish is already running"); return; }
+  try {
+    const { paths } = skillSyncSchema.parse(request.body);
+    syncingSkills = true;
+    response.json(await syncLocalSkills(paths));
+  } catch (error) {
+    const validation = error instanceof Error && /^(Skill paths|Skill file|Invalid skill|No valid SKILL|Conflicting skill|Nested symbolic link|Unsupported file type|Skill source and destination overlap|Skill destination is a symbolic link)/.test(error.message);
+    if (error instanceof z.ZodError || validation || (error as NodeJS.ErrnoException).code === "ENOENT") {
+      sendError(response, 400, error instanceof Error ? error.message : "Invalid skill paths"); return;
+    }
+    next(error);
+  } finally { syncingSkills = false; }
+});
+
+app.post("/api/settings/skills/reload", async (_request, response, next) => {
+  try { response.json(await reloadSharedSkills()); } catch (error) { next(error); }
 });
 
 app.get("/api/settings", (_request, response) => {

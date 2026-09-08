@@ -112,8 +112,10 @@ export async function listSkills(projectPath: string, roots: SkillRoots = defaul
   const project = roots.project ?? [];
   const configured = (paths: string[], harness: HarnessId, scope: SkillSummary["scope"]) =>
     paths.map(async (root) => await readConfiguredSkillPath(root, harness, scope));
+  const claudePluginSkills = async (promise: Promise<SkillSummary[]>) =>
+    (await promise).map((skill) => ({ ...skill, invocation: `/joint-bob-resources:${skill.name} ` }));
   const claudeConfigured = (paths: string[], scope: SkillSummary["scope"]) =>
-    configured(paths, "claude", scope).map(async (skills) => (await skills).map((skill) => ({ ...skill, invocation: `/joint-bob-resources:${skill.name} ` })));
+    configured(paths, "claude", scope).map(claudePluginSkills);
   const found = await Promise.all([
     readSkillDirectory(roots.piUser, "pi", "user"),
     readSkillDirectory(roots.shared, "pi", "user"),
@@ -121,7 +123,7 @@ export async function listSkills(projectPath: string, roots: SkillRoots = defaul
     readSkillDirectory(path.join(projectPath, ".pi", "skills"), "pi", "project"),
     ...configured(project, "pi", "project"),
     readSkillDirectory(roots.claudeUser, "claude", "user"),
-    readSkillDirectory(roots.shared, "claude", "user"),
+    claudePluginSkills(readSkillDirectory(roots.shared, "claude", "user")),
     ...claudeConfigured(global, "user"),
     readSkillDirectory(path.join(projectPath, ".claude", "skills"), "claude", "project"),
     ...claudeConfigured(project, "project"),

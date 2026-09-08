@@ -1,11 +1,12 @@
 import { api, savePreferencesInBackground } from "./api.js";
 import { fillShortcutSettings } from "./shortcut-settings.js";
+import { loadSkills } from "./composer-dialogs.js";
 import { showSignedOut } from "./auth.js";
 import { loadClusterPanel } from "./cluster-panel.js";
 import { loadUpdatesPanel } from "./updates.js";
 import { elements } from "./elements.js";
 import { loadSecretAccounts } from "./secrets.js";
-import { syncNotifyButton, toast } from "./shell.js";
+import { confirmAction, syncNotifyButton, toast } from "./shell.js";
 import { state } from "./state.js";
 import { loadWorkspaces } from "./workspaces.js";
 
@@ -136,6 +137,7 @@ export async function openSettings(tab = "account") {
   fillRuntimeFields(settings.runtimeOverrides);
   renderRuntimeDefaults(defaults);
   elements.settingsRuntimeStatus.textContent = "";
+  elements.settingsSkillsStatus.textContent = "";
   fillResourceFields(globalResourceFields, settings.resources);
   state.syncthingEndpoint = settings.syncthing.endpoint;
   elements.completionSoundSelect.value = state.completionSound;
@@ -185,6 +187,35 @@ for (const tab of elements.harnessTabs) {
     next.focus();
   });
 }
+async function runSkillOperation(operation) {
+  const buttons = [elements.settingsSyncSkillsButton, elements.settingsReloadSkillsButton];
+  for (const item of buttons) item.disabled = true;
+  try { await operation(); await loadSkills(true); }
+  catch (error) { elements.settingsSkillsStatus.textContent = error.message; toast(error.message); }
+  finally { for (const item of buttons) item.disabled = false; }
+}
+
+async function syncLocalSkills() {
+  const paths = resourceFieldsValue(globalResourceFields).skills;
+  if (!await confirmAction({
+    title: "Sync local skills?",
+    message: "Publish these trusted skill directories, including scripts, to paired nodes? Matching shared skills are replaced with backups.",
+    confirmLabel: "Sync skills",
+    destructive: true,
+  })) return;
+  const result = await api("/api/settings/skills/sync", { method: "POST", body: JSON.stringify({ paths }) });
+  const backup = result.backupPath ? ` Backups: ${result.backupPath}.` : "";
+  elements.settingsSkillsStatus.textContent = `Published ${result.published.length}; unchanged ${result.unchanged.length}.${backup} Published for Syncthing; peer transfer may still be pending.`;
+}
+
+async function reloadSkills() {
+  const result = await api("/api/settings/skills/reload", { method: "POST", body: JSON.stringify({}) });
+  const failures = result.failed.map((failure) => `${failure.sessionId}: ${failure.error}`).join("; ");
+  elements.settingsSkillsStatus.textContent = `Reloaded ${result.reloaded}; skipped ${result.skipped}; failed ${result.failed.length}.${failures ? ` ${failures}.` : ""} Busy sessions skipped; retry when idle. Claude loads changes on its next run.`;
+}
+
+elements.settingsSyncSkillsButton.addEventListener("click", () => runSkillOperation(syncLocalSkills));
+elements.settingsReloadSkillsButton.addEventListener("click", () => runSkillOperation(reloadSkills));
 elements.settingsCheckRuntimePathsButton.addEventListener("click", () => checkRuntimePaths().catch((error) => toast(error.message)));
 for (const tab of elements.settingsTabs) {
   tab.addEventListener("click", () => selectSettingsTab(tab.dataset.settingsTab));

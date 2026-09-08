@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -39,6 +39,21 @@ before(async () => {
 after(async () => {
   await Promise.all(servers.map((server) => stopDevNode(server)));
   if (root) await rm(root, { recursive: true, force: true });
+});
+
+// This verifies peer discovery from the harness's shared managed fixture, not Syncthing transport.
+test("published external skills are discovered by a peer from the shared managed fixture", async () => {
+  const source = path.join(root, "external-skills", "cluster-skill");
+  await mkdir(source, { recursive: true });
+  await writeFile(path.join(source, "SKILL.md"), "---\nname: cluster-skill\ndescription: first\n---\n");
+  assert.equal((await api(nodeA, sessionA, "POST", "/settings/skills/sync", { paths: [source] })).status, 200);
+  const project = nodeB.projects[0];
+  const first = await api<{ skills: Array<{ name: string; description: string }> }>(nodeB, sessionB, "GET", `/projects/${project.id}/skills`);
+  assert.ok(first.body.skills.some((skill) => skill.name === "cluster-skill" && skill.description === "first"));
+  await writeFile(path.join(source, "SKILL.md"), "---\nname: cluster-skill\ndescription: second\n---\n");
+  assert.equal((await api(nodeA, sessionA, "POST", "/settings/skills/sync", { paths: [source] })).status, 200);
+  const second = await api<{ skills: Array<{ name: string; description: string }> }>(nodeB, sessionB, "GET", `/projects/${project.id}/skills`);
+  assert.ok(second.body.skills.some((skill) => skill.name === "cluster-skill" && skill.description === "second"));
 });
 
 test("both nodes serve the same seeded projects to their own signed-in session", async () => {

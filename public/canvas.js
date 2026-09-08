@@ -22,7 +22,7 @@ import {
 } from "./canvas-layout.js";
 
 import { CHAT_SHORTCUT_CONTROLS, runChatShortcut } from "./app/chat-shortcuts.js";
-import { attachDigitShortcuts, LIST_SHORTCUT_LIMIT, shortcutIndexBadge } from "./app/list-shortcuts.js";
+import { attachDigitShortcuts, isRowSelectorQuery, LIST_SHORTCUT_LIMIT, shortcutIndexBadge } from "./app/list-shortcuts.js";
 
 const CANVAS_GRID_UNITS = 1000;
 
@@ -963,7 +963,8 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
   }
 
   function renderPickerOptions() {
-    const query = searchInput.value.trim().toLowerCase();
+    const typed = searchInput.value.trim();
+    const query = isRowSelectorQuery(typed) ? "" : typed.toLowerCase();
     optionsList.replaceChildren();
     const projectId = projectSelect.value;
     if (projectId) {

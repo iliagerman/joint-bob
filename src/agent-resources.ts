@@ -3,7 +3,7 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync
 import { cp, lstat, mkdir, readdir, readFile, realpath, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { SettingsManager, type PackageSource } from "@earendil-works/pi-coding-agent";
+import { loadSkills, SettingsManager, type PackageSource } from "@earendil-works/pi-coding-agent";
 import { resolveDataDirectory } from "./data-directory.js";
 import { getSettings, type ScopedResourcePaths } from "./settings.js";
 
@@ -101,6 +101,108 @@ function safeName(name: string): boolean {
   return name !== "." && name !== ".." && !name.includes("/") && !name.includes("\\") && name === path.basename(name);
 }
 
+interface LocalSkill { name: string; source: string }
+
+function skillName(source: string, manifest: string): string {
+  const loaded = loadSkills({ cwd: source, agentDir: source, skillPaths: [manifest], includeDefaults: false });
+  const skill = loaded.skills[0];
+  if (loaded.skills.length !== 1 || typeof skill.description !== "string" || !skill.description.trim()) {
+    throw new Error(`Invalid skill metadata at ${manifest}`);
+  }
+  if (!safeName(skill.name) || skill.name.startsWith(".")) throw new Error(`Invalid skill metadata at ${manifest}: unsafe name`);
+  return skill.name;
+}
+
+async function validateSkillTree(source: string, relative = ""): Promise<void> {
+  for (const entry of await readdir(source, { withFileTypes: true })) {
+    const childRelative = path.join(relative, entry.name);
+    if (excluded(childRelative)) continue;
+    const child = path.join(source, entry.name);
+    const info = await lstat(child);
+    if (info.isSymbolicLink()) throw new Error(`Nested symbolic link is not allowed: ${child}`);
+    if (info.isDirectory()) await validateSkillTree(child, childRelative);
+    else if (!info.isFile()) throw new Error(`Unsupported file type in skill: ${child}`);
+  }
+}
+
+async function discoverLocalSkills(roots: string[]): Promise<LocalSkill[]> {
+  const found = new Map<string, LocalSkill>();
+  const realSources = new Set<string>();
+  for (const root of roots) {
+    const resolvedInput = await realpath(root);
+    const info = await lstat(resolvedInput);
+    if (info.isFile() && path.basename(resolvedInput) !== "SKILL.md") throw new Error(`Skill file must be named SKILL.md: ${root}`);
+    const candidates = info.isFile() ? [path.dirname(resolvedInput)] : existsSync(path.join(resolvedInput, "SKILL.md")) ? [resolvedInput] : (await readdir(resolvedInput, { withFileTypes: true })).filter((entry) => entry.isDirectory() || entry.isSymbolicLink()).map((entry) => path.join(resolvedInput, entry.name));
+    for (const candidate of candidates) {
+      const source = await realpath(candidate);
+      const manifest = path.join(source, "SKILL.md");
+      if (!existsSync(manifest)) continue;
+      const name = skillName(source, manifest);
+      if (realSources.has(source)) continue;
+      const previous = found.get(name);
+      if (previous && previous.source !== source) throw new Error(`Conflicting skill name ${name}: ${previous.source} and ${source}`);
+      await validateSkillTree(source);
+      found.set(name, { name, source }); realSources.add(source);
+    }
+  }
+  if (!found.size) throw new Error("No valid SKILL.md skills found");
+  return [...found.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function overlaps(left: string, right: string): boolean {
+  const relative = path.relative(left, right);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+async function destinationExists(destination: string): Promise<boolean> {
+  try { await lstat(destination); return true; } catch (error) { if (missing(error)) return false; throw error; }
+}
+
+async function replacePublishedSkill(staged: string, destination: string, backup: string | null): Promise<void> {
+  if (backup) { await mkdir(path.dirname(backup), { recursive: true }); await cp(destination, backup, { recursive: true }); }
+  await rm(destination, { recursive: true, force: true });
+  try { await rename(staged, destination); }
+  catch (error) {
+    if (backup) await cp(backup, destination, { recursive: true });
+    throw error;
+  }
+}
+
+export async function syncLocalSkills(roots: string[], options: { root?: string; dataDir?: string } = {}): Promise<{ published: string[]; unchanged: string[]; backupPath: string | null }> {
+  if (!roots.length || roots.length > 20) throw new Error("Skill paths must contain between 1 and 20 entries");
+  if (roots.some((root) => !path.isAbsolute(root))) throw new Error("Skill paths must be absolute");
+  const skills = await discoverLocalSkills(roots);
+  const paths = agentResourcePaths(options.root);
+  const operation = randomUUID();
+  const stagingRoot = path.join(paths.root, "cache/skill-sync", operation);
+  const backupRoot = path.join(dataDirectory(options.dataDir), "agent-resources-backups", operation);
+  const published: string[] = [], unchanged: string[] = [];
+  const stagedSkills: LocalSkill[] = [];
+  try {
+    for (const skill of skills) {
+      const destination = path.join(paths.sharedSkills, skill.name);
+      if (overlaps(skill.source, destination) || overlaps(destination, skill.source)) {
+        if (path.resolve(skill.source) === path.resolve(destination)) { unchanged.push(skill.name); continue; }
+        throw new Error(`Skill source and destination overlap: ${skill.source}`);
+      }
+      if (await destinationExists(destination) && (await lstat(destination)).isSymbolicLink()) throw new Error(`Skill destination is a symbolic link: ${destination}`);
+      const staged = path.join(stagingRoot, skill.name);
+      await mkdir(path.dirname(staged), { recursive: true });
+      await cp(skill.source, staged, { recursive: true, filter: (candidate) => !excluded(path.relative(skill.source, candidate)) });
+      stagedSkills.push({ name: skill.name, source: staged });
+    }
+    for (const staged of stagedSkills) {
+      const destination = path.join(paths.sharedSkills, staged.name);
+      if (await destinationExists(destination) && await samePublished(staged.source, destination)) { unchanged.push(staged.name); continue; }
+      const backup = await destinationExists(destination) ? path.join(backupRoot, staged.name) : null;
+      await mkdir(paths.sharedSkills, { recursive: true });
+      await replacePublishedSkill(staged.source, destination, backup);
+      published.push(staged.name);
+    }
+    return { published, unchanged, backupPath: published.some((name) => existsSync(path.join(backupRoot, name))) ? backupRoot : null };
+  } finally { await rm(stagingRoot, { recursive: true, force: true }); }
+}
+
 function excluded(relativePath: string): boolean {
   const normalized = relativePath.split(path.sep);
   const name = normalized.at(-1) ?? "";
@@ -163,6 +265,28 @@ async function digest(source: string): Promise<string> {
 
 async function same(left: string, right: string): Promise<boolean> {
   return await digest(left) === await digest(right);
+}
+
+async function publishDigest(source: string): Promise<string> {
+  const files: string[] = [];
+  async function visit(entry: string): Promise<void> {
+    const info = await lstat(entry);
+    if (info.isDirectory()) {
+      for (const name of await entries(entry)) await visit(path.join(entry, name));
+    } else files.push(entry);
+  }
+  await visit(source);
+  const hash = createHash("sha256");
+  for (const file of files.sort()) {
+    const info = await lstat(file);
+    hash.update(`${path.relative(source, file)}\0${info.mode & 0o111}\0`);
+    hash.update(await readFile(file));
+  }
+  return hash.digest("hex");
+}
+
+async function samePublished(left: string, right: string): Promise<boolean> {
+  return await publishDigest(left) === await publishDigest(right);
 }
 
 async function canonicalLink(source: string, destination: string): Promise<boolean> {
@@ -479,10 +603,15 @@ function resourceEntries(roots: string[], kind: "skills" | "prompts"): Map<strin
   return new Map([...found].sort(([left], [right]) => left.localeCompare(right)));
 }
 
-function generatedResourcePlugin(configured: ScopedResourcePaths | undefined): string | undefined {
-  if (!configured) return undefined;
-  const skills = resourceEntries([...configured.global.skills, ...configured.project.skills], "skills");
-  const prompts = resourceEntries([...configured.global.prompts, ...configured.project.prompts], "prompts");
+function generatedResourcePlugin(paths: AgentResourcePaths, configured?: ScopedResourcePaths): string | undefined {
+  let skillPaths = [paths.sharedSkills];
+  let promptPaths: string[] = [];
+  if (configured) {
+    skillPaths = [...skillPaths, ...configured.global.skills, ...configured.project.skills];
+    promptPaths = [...configured.global.prompts, ...configured.project.prompts];
+  }
+  const skills = resourceEntries(skillPaths, "skills");
+  const prompts = resourceEntries(promptPaths, "prompts");
   if (!skills.size && !prompts.size) return undefined;
   const mappings = [...skills, ...prompts].map(([name, source]) => `${name}\0${source}\0${existsSync(source) ? readFileSync(source.endsWith(".md") ? source : path.join(source, "SKILL.md")) : ""}`).join("\n");
   const target = path.join(dataDirectory(), "runtime", "resource-plugins", createHash("sha256").update(mappings).digest("hex"));
@@ -529,7 +658,7 @@ export function claudeAgentResourceArgs(root?: string, configured?: ScopedResour
     if (!installed.has(name) && existsSync(path.join(plugin, ".claude-plugin/plugin.json"))) args.push("--plugin-dir", plugin);
   }
   for (const plugin of claudePluginSources(configuredPaths(configured, "plugins"))) args.push("--plugin-dir", plugin);
-  const generated = generatedResourcePlugin(configured);
+  const generated = generatedResourcePlugin(paths, configured);
   if (generated) args.push("--plugin-dir", generated);
   if (existsSync(paths.mcpConfig)) args.push("--mcp-config", paths.mcpConfig);
   const instructions = generatedInstructionFile(paths, configured);

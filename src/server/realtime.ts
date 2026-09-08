@@ -5,7 +5,7 @@ import { type ClaudeRunHandle, claudeSessionContextUsage, loadClaudeMessages } f
 import { claimReviewNotifications } from "../conversation-reviews.js";
 import { conversationTranscriptPayload } from "../conversation-segments.js";
 import { listHarnessSessions, refreshHarnessSessions } from "../harnesses.js";
-import { createPiSession, getSessionStatus, sessionIsBusy } from "../pi-service.js";
+import { createPiSession, getSessionStatus, reloadPiSkills, sessionIsBusy } from "../pi-service.js";
 import { listPushSubscriberUserIds, notifyConversationReview } from "../push.js";
 import { type ReplicationBatch, replicationInvalidations } from "../replication.js";
 import { getProject } from "../store.js";
@@ -58,6 +58,22 @@ export function piTools(handle: PiSessionHandle): Array<{ name: string; descript
 
 export function broadcastTools(session: SharedPiSession): void {
   broadcast(session, { type: "tools", supported: true, tools: piTools(session.handle) });
+}
+
+export async function reloadSharedSkills(): Promise<{ reloaded: number; skipped: number; failed: Array<{ sessionId: string; error: string }> }> {
+  let reloaded = 0, skipped = 0;
+  const failed: Array<{ sessionId: string; error: string }> = [];
+  for (const shared of new Set(sharedSessions.values())) {
+    if (sessionIsBusy(shared.handle) || shared.turnInFlight > 0) { skipped += 1; continue; }
+    clearIdleTimer(shared);
+    try {
+      await reloadPiSkills(shared.handle);
+      broadcastStatus(shared); broadcastTools(shared); reloaded += 1;
+    } catch (error) {
+      failed.push({ sessionId: shared.handle.session.sessionId, error: error instanceof Error ? error.message : String(error) });
+    } finally { if (!shared.clients.size) scheduleIdleDispose(shared); }
+  }
+  return { reloaded, skipped, failed };
 }
 
 export async function setSharedSessionSafeguards(session: SharedPiSession, enabled: boolean): Promise<void> {

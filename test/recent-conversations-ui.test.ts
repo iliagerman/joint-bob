@@ -146,7 +146,8 @@ test("the recents dialog can be searched", async () => {
 
   assert.match(html, /id="recentSessionsSearchInput"[^>]*data-testid="recent-sessions-search-input"/);
   assert.match(app, /recentSessionsSearchInput: document\.querySelector\("#recentSessionsSearchInput"\)/);
-  assert.match(app, /normalizedQuery\(elements\.recentSessionsSearchInput\.value \|\| ""\)/);
+  assert.match(app, /const typed = elements\.recentSessionsSearchInput\.value \|\| "";/);
+  assert.match(app, /isRowSelectorQuery\(typed\) \? "" : normalizedQuery\(typed\)/);
   assert.match(app, /elements\.recentSessionsSearchInput\.addEventListener\("input", \(\) => renderRecentSessionsDialog\(\)\)/);
 
   // A stale query must not survive a reopen.

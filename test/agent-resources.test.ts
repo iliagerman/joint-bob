@@ -97,6 +97,27 @@ test("reconciles native agent resources into canonical links without copying sec
   }
 });
 
+test("generates a refreshed Claude plugin from shared skills without changing native copies", async () => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), "joint-bob-claude-shared-"));
+  try {
+    const root = path.join(fixture, "resources");
+    const native = path.join(fixture, "native", "review", "SKILL.md");
+    const { agentResourcePaths, claudeAgentResourceArgs } = await import("../src/agent-resources.js");
+    const shared = path.join(agentResourcePaths(root).sharedSkills, "review", "SKILL.md");
+    await write(native, "", "---\nname: review\ndescription: stale\n---\n");
+    await write(shared, "", "---\nname: review\ndescription: first\n---\n");
+    const firstArgs = claudeAgentResourceArgs(root);
+    const firstPlugin = firstArgs[firstArgs.indexOf("--plugin-dir") + 1];
+    assert.equal(await readFile(path.join(firstPlugin, "skills/review/SKILL.md"), "utf8"), "---\nname: review\ndescription: first\n---\n");
+    await writeFile(shared, "---\nname: review\ndescription: second\n---\n");
+    const secondArgs = claudeAgentResourceArgs(root);
+    const secondPlugin = secondArgs[secondArgs.indexOf("--plugin-dir") + 1];
+    assert.notEqual(secondPlugin, firstPlugin);
+    assert.equal(await readFile(path.join(secondPlugin, "skills/review/SKILL.md"), "utf8"), "---\nname: review\ndescription: second\n---\n");
+    assert.match(await readFile(native, "utf8"), /stale/);
+  } finally { await rm(fixture, { recursive: true, force: true }); }
+});
+
 test("imports a resource source below an ancestor named build", async () => {
   const fixture = await mkdtemp(path.join(os.tmpdir(), "joint-bob-agent-resource-build-"));
   const root = path.join(fixture, "resources");

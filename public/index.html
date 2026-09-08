@@ -596,6 +596,10 @@
           <label>Skills
             <span class="folder-input-row resource-paths-row"><textarea class="resource-paths-input" id="settingsResourceSkillsPaths" data-testid="settings-resource-skills-paths"></textarea><button class="ghost" type="button" id="settingsResourceSkillsBrowse" data-testid="settings-resource-skills-browse">Browse</button></span>
           </label>
+          <p class="settings-hint">Save settings first when changing load paths. Sync local skills publishes entire trusted skill folders (including executable scripts) to the Syncthing-managed shared skills folder. Local sources stay untouched; matching shared skills are backed up and replaced. Removed local skills do not delete shared copies. Sync again after local edits. Scripts are shared with paired nodes.</p>
+          <div class="github-group-actions"><button class="ghost" type="button" id="settingsSyncSkillsButton" data-testid="settings-sync-skills-button">Sync local skills</button><button class="ghost" type="button" id="settingsReloadSkillsButton" data-testid="settings-reload-skills-button">Reload skills</button></div>
+          <p class="settings-hint">Reload updates idle Pi sessions on this node. Peers need Reload skills after Syncthing finishes.</p>
+          <p id="settingsSkillsStatus" data-testid="settings-skills-status" role="status" aria-live="polite"></p>
           <label>Prompts
             <span class="folder-input-row resource-paths-row"><textarea class="resource-paths-input" id="settingsResourcePromptsPaths" data-testid="settings-resource-prompts-paths"></textarea><button class="ghost" type="button" id="settingsResourcePromptsBrowse" data-testid="settings-resource-prompts-browse">Browse</button></span>
           </label>

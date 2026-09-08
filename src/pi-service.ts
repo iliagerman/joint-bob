@@ -9,19 +9,22 @@ import {
   SessionManager,
   SettingsManager,
   createBashTool,
+  loadSkills,
   type AgentSession,
+  type Skill,
   type AgentSessionEvent,
 } from "@earendil-works/pi-coding-agent";
 import { agentCredentialContext, agentEnvironment, type SecretConversation } from "./secrets.js";
 import { stripHandoffEnvelope } from "./claude-service.js";
 import { discoverPiSessionDirectory, sessionCwds, type SessionProjectPaths } from "./session-paths.js";
 import { getScopedResourcePaths, getSettings } from "./settings.js";
-import { commonAgentInstructionFiles, piAgentResourcePaths } from "./agent-resources.js";
+import { agentResourcePaths, commonAgentInstructionFiles, piAgentResourcePaths } from "./agent-resources.js";
 import type { ChatMessage, ContextUsage, ModelSummary, SessionStatus, SessionSummary } from "./types.js";
 
 export interface PiSessionHandle {
   session: AgentSession;
   safeguardsEnabled: boolean;
+  reloadingSkills?: boolean;
   dispose: () => void;
 }
 
@@ -129,7 +132,33 @@ function piContextUsage(session: AgentSession): ContextUsage | undefined {
 
 /** Any turn, queued-message drain, compaction, or retry in flight on this Pi session. */
 export function sessionIsBusy(handle: PiSessionHandle): boolean {
-  return handle.session.isStreaming || handle.session.isBashRunning || handle.session.isCompacting || handle.session.isRetrying;
+  return Boolean(handle.reloadingSkills) || handle.session.isStreaming || handle.session.isBashRunning || handle.session.isCompacting || handle.session.isRetrying;
+}
+
+export async function reloadPiSkills(handle: PiSessionHandle): Promise<void> {
+  if (sessionIsBusy(handle)) throw new Error("Pi session is busy");
+  handle.reloadingSkills = true;
+  const activeTools = handle.session.getActiveToolNames();
+  try {
+    await handle.session.reload();
+    const available = new Set(handle.session.getAllTools().map((tool) => tool.name));
+    handle.session.setActiveToolsByName(activeTools.filter((name) => available.has(name)));
+  } finally { handle.reloadingSkills = false; }
+}
+
+function skillsOverride(cwd: string, projectId: string, agentDir: string) {
+  return (current: { skills: Skill[]; diagnostics: ReturnType<typeof loadSkills>["diagnostics"] }) => {
+    const configured = getScopedResourcePaths(projectId);
+    const roots = [agentResourcePaths().sharedSkills, ...configured.global.skills, path.join(cwd, ".pi", "skills"), ...configured.project.skills];
+    const byName = new Map(current.skills.map((skill) => [skill.name, skill]));
+    const diagnostics = [...current.diagnostics];
+    for (const skillPath of roots) {
+      const loaded = loadSkills({ cwd, agentDir, skillPaths: [skillPath], includeDefaults: false });
+      for (const skill of loaded.skills) byName.set(skill.name, skill);
+      diagnostics.push(...loaded.diagnostics);
+    }
+    return { skills: [...byName.values()], diagnostics };
+  };
 }
 
 /** Sends a prompt as its own turn once the session is idle. A task phase must run
@@ -462,7 +491,7 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
     agentDir,
     settingsManager,
     additionalExtensionPaths: resources.extensions,
-    additionalSkillPaths: resources.skills,
+    skillsOverride: skillsOverride(options.cwd, options.projectId, agentDir),
     additionalPromptTemplatePaths: resources.prompts,
     additionalThemePaths: resources.themes,
     ...(commonInstructions.length || credentialContext

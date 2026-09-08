@@ -4,7 +4,7 @@ import { sendSocket } from "./chat-controls.js";
 import { setInputValue } from "./composer.js";
 import { elements } from "./elements.js";
 import { brandIcon } from "./icons.js";
-import { attachDigitShortcuts, LIST_SHORTCUT_LIMIT, shortcutIndexBadge } from "./list-shortcuts.js";
+import { attachDigitShortcuts, isRowSelectorQuery, LIST_SHORTCUT_LIMIT, shortcutIndexBadge } from "./list-shortcuts.js";
 import { normalizedQuery } from "./layout.js";
 import { toast } from "./shell.js";
 import { state } from "./state.js";
@@ -87,7 +87,8 @@ function renderSkillsDialog() {
     return;
   }
 
-  const query = normalizedQuery(elements.skillsDialogSearchInput.value || "");
+  const typed = elements.skillsDialogSearchInput.value || "";
+  const query = isRowSelectorQuery(typed) ? "" : normalizedQuery(typed);
   const matches = state.skills
     .filter((skill) => skill.harness === state.engine)
     .filter((skill) => !query || `${skill.name}\n${skill.description}`.toLowerCase().includes(query));
@@ -126,7 +127,7 @@ function renderSkillsDialog() {
   }
 }
 
-async function loadSkills(force = false) {
+export async function loadSkills(force = false) {
   const projectId = state.activeProjectId;
   if (!projectId) {
     state.skills = [];

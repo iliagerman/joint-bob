@@ -1080,3 +1080,254 @@
 **Reason**: other
 
 ---
+
+## Session Start
+**Timestamp**: 2026-09-08T15:03:50Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-08T15:03:52Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-09-08T15:04:06Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Session End
+**Timestamp**: 2026-09-08T15:04:20Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Session Resume
+**Timestamp**: 2026-09-08T15:56:09Z
+**Event**: SESSION_RESUMED
+**Source**: resume
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-08T15:56:12Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-08T15:56:57Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-08T15:57:00Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-09-08T15:58:02Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Session End
+**Timestamp**: 2026-09-08T15:59:38Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Session Resume
+**Timestamp**: 2026-09-08T16:00:23Z
+**Event**: SESSION_RESUMED
+**Source**: resume
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-08T16:00:26Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-09-08T16:01:09Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Error Logged
+**Timestamp**: 2026-09-08T16:27:34Z
+**Event**: ERROR_LOGGED
+**Tool**: aidlc-utility
+**Command**: aidlc-utility --status
+**Error**: Unknown command "undefined". Run `aidlc-utility help` for what this tool can do.\n\nAvailable commands: help, version, status, doctor, intent-create, intent, space, space-create, codekb-path, codekb-scope-diff, detect, select-plugins, plugin-list, plugin-sync, recompose, scope-change, config-change, config-get, config-list, set-status, detect-scope, resolve-env-scope, scope-table, stage-table, upgrade\nCommon options: [--project-dir <path>] [--scope <scope>] [--json]
+
+---
+
+## Error Logged
+**Timestamp**: 2026-09-08T16:27:34Z
+**Event**: ERROR_LOGGED
+**Tool**: aidlc-state
+**Command**: aidlc-state help
+**Error**: Unknown subcommand: help. Valid: get, set, set-skeleton-stance, set-construction-iteration, checkbox, count, advance, finalize, complete-workflow, gate-start, approve, reject, revise, skip, resume, acknowledge-compaction, reuse-artifact, lookup, practices-event, practices-promote, fork, merge, park, unpark
+
+---
+
+## Error Logged
+**Timestamp**: 2026-09-08T16:27:53Z
+**Event**: ERROR_LOGGED
+**Tool**: aidlc-state
+**Command**: aidlc-state park
+**Error**: Direct aidlc-state.ts park is blocked: workflow lifecycle transitions are engine-owned. Use aidlc-orchestrate.ts report --stage <slug> --result <awaiting-approval|approved|rejected|revised|completed|skipped>; use aidlc-orchestrate.ts park to park, and next/jump for routing changes.
+
+---
+
+## Workflow Parked
+**Timestamp**: 2026-09-08T16:27:58Z
+**Event**: WORKFLOW_PARKED
+**Stage**: observability-setup
+
+---
+
+## Session Resume
+**Timestamp**: 2026-09-08T16:39:13Z
+**Event**: SESSION_RESUMED
+**Source**: resume
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-08T16:39:15Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-08T17:03:13Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-08T17:03:16Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-09-08T17:03:44Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-08T17:04:03Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-08T17:04:06Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-09-08T17:04:22Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Session End
+**Timestamp**: 2026-09-08T17:28:46Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Session Resume
+**Timestamp**: 2026-09-08T17:28:48Z
+**Event**: SESSION_RESUMED
+**Source**: resume
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-08T17:28:50Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-09-08T19:02:53Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Session Resume
+**Timestamp**: 2026-09-08T19:05:43Z
+**Event**: SESSION_RESUMED
+**Source**: resume
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-08T19:05:45Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session Compacted
+**Timestamp**: 2026-09-08T19:05:46Z
+**Event**: SESSION_COMPACTED
+**Current Stage**: observability-setup
+**State Validity**: valid
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-09-08T19:06:31Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**: 
+**Agent ID**: a2076f3ef4d906c99
+**Message**: <analysis>\nLet me chronologically trace through this conversation:\n\n1. The user made four explicit requests in the initial message, formatted as numbered items in rough notes:\n   - Feature 1: bring fo
+
+---
+
+## Session End
+**Timestamp**: 2026-09-08T19:06:32Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-08T19:09:12Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-08T19:09:14Z
+**Event**: HUMAN_TURN
+
+---

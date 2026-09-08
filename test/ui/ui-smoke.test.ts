@@ -1292,6 +1292,56 @@ test("the send button's icon sits in the middle of the button", async () => {
   assert.ok(offsets.vertical <= 1, `the icon is ${offsets.vertical}px off centre vertically`);
 });
 
+// A lone digit in a search box is naming a row, not searching for text: the list
+// must hold still so the number still points at what the user can see, and Enter
+// must open that row rather than whichever one is highlighted.
+test("a digit typed into a dialog's search box names a row, and Enter opens it", async () => {
+  await page.keyboard.press("Meta+KeyK");
+  await page.getByTestId("recent-sessions-dialog").waitFor({ state: "visible" });
+  const rows = page.getByTestId("recent-session-option");
+  await rows.first().waitFor();
+  const before = await rows.count();
+  assert.ok(before >= 2, `the recents list needs two rows to test row 2, saw ${before}`);
+  const second = (await rows.nth(1).locator("strong").textContent())?.trim();
+
+  await page.getByTestId("recent-sessions-search-input").fill("2");
+  assert.equal(await rows.count(), before, "a lone digit does not re-filter the list");
+  assert.equal((await rows.nth(1).locator("strong").textContent())?.trim(), second,
+    "row 2 is still the row the digit names");
+
+  await page.getByTestId("recent-sessions-search-input").press("Enter");
+  await page.getByTestId("recent-sessions-dialog").waitFor({ state: "hidden" });
+  await page.locator(`#sessionTitle:text-is("${second}")`).waitFor({ timeout: 10_000 });
+});
+
+// Escape belongs to the shell whenever a full-screen program is running in it, and
+// to the dialog the rest of the time.
+test("Escape closes the terminal, and reaches the shell while a full-screen program runs", async () => {
+  await page.getByTestId("chat-open-terminal-button").click();
+  await page.getByTestId("terminal-dialog").waitFor({ state: "visible", timeout: 20_000 });
+  await page.locator('#terminalStatus[data-state="live"]').waitFor({ timeout: 20_000 });
+
+  // Wide enough for the 80-odd columns most shell output is written for.
+  const width = await page.getByTestId("terminal-dialog").locator(".terminal-card").evaluate((card) => card.getBoundingClientRect().width);
+  assert.ok(width >= 1100, `the terminal card is only ${width}px wide`);
+
+  await page.keyboard.press("Escape");
+  await page.getByTestId("terminal-dialog").waitFor({ state: "hidden" });
+
+  // The alternate screen buffer is what vim, less and htop draw on. Entering it
+  // directly proves the guard without depending on which programs the box has.
+  await page.getByTestId("chat-open-terminal-button").click();
+  await page.locator('#terminalStatus[data-state="live"]').waitFor({ timeout: 20_000 });
+  await page.keyboard.type("printf '\\e[?1049h'\n");
+  await page.waitForTimeout(500);
+  await page.keyboard.press("Escape");
+  assert.equal(await page.getByTestId("terminal-dialog").isVisible(), true,
+    "Escape belongs to the shell while a full-screen program is running");
+
+  await page.getByTestId("terminal-close-button").click();
+  await page.getByTestId("terminal-dialog").waitFor({ state: "hidden" });
+});
+
 test("the journey produced no console errors and no failed requests", () => {
   assert.deepEqual(consoleErrors, [], "no console errors");
   assert.deepEqual(failedResponses, [], "no 4xx or 5xx responses");

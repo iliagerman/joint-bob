@@ -114,7 +114,7 @@ function openProjectTerminal() {
       setTerminalStatus("live", `${node?.name || "Node"} \u00b7 ${payload.cwd}`);
       emulator.focus();
     }
-    if (payload.type === "terminalOutput") emulator.write(payload.data || "");
+    if (payload.type === "terminalOutput") emulator.write(payload.data || "", () => emulator.scrollToBottom());
     if (payload.type === "terminalError") emulator.write(`\r\nError: ${payload.error}\r\n`);
     if (payload.type === "terminalExit") emulator.write(`\r\n[Shell exited${payload.code === null ? "" : ` with code ${payload.code}`}]\r\n`);
   });
@@ -149,3 +149,14 @@ elements.openTerminalButton.addEventListener("click", () => {
 elements.clearTerminalButton.addEventListener("click", () => { state.terminalEmulator?.clear(); });
 elements.closeTerminalButton.addEventListener("click", () => elements.terminalDialog.close());
 elements.terminalDialog.addEventListener("close", closeTerminalSocket);
+/**
+ * Escape closes the terminal - except while a full-screen program is running in it.
+ * vim, less and htop draw on the alternate screen buffer and Escape is one of their
+ * real keys, so there it belongs to the shell and the dialog stays put.
+ */
+elements.terminalDialog.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || event.metaKey || event.ctrlKey || event.altKey) return;
+  if (state.terminalEmulator?.buffer.active.type === "alternate") return;
+  event.preventDefault();
+  elements.terminalDialog.close();
+}, true);

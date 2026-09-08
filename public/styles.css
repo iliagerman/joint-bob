@@ -1317,7 +1317,7 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 .dialog-card p { margin-top: 6px; color: var(--muted); font-size: 13px; line-height: 1.6; }
 /* Wider than a normal dialog: 80-odd columns is the width most shell output is
    written for, and wrapping it costs more than the extra dialog width does. */
-.terminal-card { width: min(940px, calc(100vw - 24px)); }
+.terminal-card { width: min(1360px, calc(100vw - 24px)); }
 .terminal-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .terminal-title { min-width: 0; }
 /* Traffic light plus a line of text, on one row that never grows taller than the
@@ -1346,8 +1346,8 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
    border-box includes padding and border, and any it finds there buys a row and a
    column more than actually fit. */
 .terminal-frame {
-  height: min(58dvh, 540px);
-  min-height: 260px;
+  height: min(70dvh, 680px);
+  min-height: 320px;
   /* xterm sizes its screen in whole character cells, so the part-row of slack
      under the last line is clipped rather than bleeding past the frame. */
   overflow: hidden;

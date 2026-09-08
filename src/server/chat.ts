@@ -731,6 +731,7 @@ async function handlePiCommand(connection: ChatConnection, shared: SharedPiSessi
   const handle = shared.handle;
   const socket = connection.socket;
   const cwd = connection.cwd;
+  if (handle.reloadingSkills) throw new Error("Skills are reloading; try again when reload finishes");
 
   if (payload.type === "prompt") {
     await reloadPiAuth();
@@ -759,6 +760,7 @@ async function handlePiCommand(connection: ChatConnection, shared: SharedPiSessi
     if (handle.session.isStreaming) send(socket, { type: "queueUpdate", pending: handle.session.pendingMessageCount + 1 });
     // The engine only reports streaming for real turns; the wrapper also covers stubbed
     // test turns, and gives the runtime lease loop an honest in-flight marker.
+    if (handle.reloadingSkills) throw new Error("Skills are reloading; try again when reload finishes");
     shared.turnInFlight += 1;
     broadcastToProject(connection.project.id, { type: "sessionsChanged" });
     try {

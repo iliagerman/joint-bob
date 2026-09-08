@@ -1,6 +1,6 @@
 import { chordMatches, shortcutPrefix } from "../canvas-layout.js";
 import { api } from "./api.js";
-import { attachDigitShortcuts, LIST_SHORTCUT_LIMIT, shortcutIndexBadge } from "./list-shortcuts.js";
+import { attachDigitShortcuts, isRowSelectorQuery, LIST_SHORTCUT_LIMIT, shortcutIndexBadge } from "./list-shortcuts.js";
 import { elements } from "./elements.js";
 import { normalizedQuery, shortSessionTitle } from "./layout.js";
 import { selectProject } from "./project-selection.js";
@@ -168,7 +168,8 @@ export function renderRecentSessionsDialog() {
   elements.recentSessionsList.replaceChildren();
   recentSessionShortcuts = [];
 
-  const query = normalizedQuery(elements.recentSessionsSearchInput.value || "");
+  const typed = elements.recentSessionsSearchInput.value || "";
+  const query = isRowSelectorQuery(typed) ? "" : normalizedQuery(typed);
   const byActivity = [...mergeRecentSessions(state.recentSessions)].sort((left, right) =>
     recentSessionActivityAt(right).localeCompare(recentSessionActivityAt(left)));
   const ordered = sortPinnedFirst(byActivity, isSessionPinned);
