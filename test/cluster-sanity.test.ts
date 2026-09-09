@@ -6,13 +6,14 @@
 import assert from "node:assert/strict";
 import { type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test, { after, before } from "node:test";
 import WebSocket from "ws";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, type SignedIn } from "./dev-nodes.js";
+import { openPiRuntimeDatabase, publishPiRuntime } from "../src/pi-runtime.js";
 
 interface PeerView { id: string; name: string; url: string; online: boolean; lastSeenAt?: string; tokenConfigured: boolean }
 interface InventoryView { node: { id: string }; projects: Array<{ project: { id: string; name: string }; aliases: string[] }> }
@@ -68,6 +69,91 @@ test("both nodes serve the same seeded projects to their own signed-in session",
     projectsB.body.projects.map((project) => project.name).sort(),
   );
   assert.equal(projectsA.body.projects.length, 3);
+});
+
+test("terminal Pi running and settled states reach the paired node", { timeout: 30_000 }, async () => {
+  const projectA = nodeA.projects[0];
+  const projectB = nodeB.projects.find((project) => project.name === projectA.name)!;
+  const listed = await api<{ sessions: SessionView[] }>(nodeA, sessionA, "GET", `/projects/${projectA.id}/sessions`);
+  const target = listed.body.sessions.find((row) => row.harnessId === "pi")!;
+  const db = openPiRuntimeDatabase(nodeA.dataDir);
+  const terminal = { sessionId: target.id, transcriptPath: target.path, runId: randomUUID() };
+  const waitForState = async (running: boolean) => {
+    const deadline = Date.now() + 10_000;
+    let actual: (SessionView & { running: boolean; reviewState: string }) | undefined;
+    do {
+      const result = await api<{ sessions: Array<SessionView & { running: boolean; reviewState: string }> }>(nodeB, sessionB, "GET", `/projects/${projectB.id}/sessions`);
+      assert.equal(result.status, 200);
+      actual = result.body.sessions.find((row) => row.id === target.id);
+      if (actual?.running === running) return actual;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    } while (Date.now() < deadline);
+    assert.fail(`Expected terminal running=${running} on peer, got ${JSON.stringify(actual)}`);
+  };
+  try {
+    await waitForState(false);
+    publishPiRuntime(db, terminal, true);
+    assert.equal((await waitForState(true)).reviewState, "running");
+    const inbox = await api<{ projects: Array<{ sessions: Array<{ id: string }> }> }>(nodeB, sessionB, "GET", "/reviews/pending");
+    assert.equal(inbox.body.projects.flatMap((group) => group.sessions).some((row) => row.id === target.id), false);
+    publishPiRuntime(db, terminal, false);
+    assert.notEqual((await waitForState(false)).reviewState, "running");
+  } finally {
+    publishPiRuntime(db, terminal, false);
+    db.close();
+  }
+});
+
+test("a replicated review survives a cold listing on the other node and new activity needs review", { timeout: 90_000 }, async () => {
+  const projectA = nodeA.projects[0];
+  const projectB = nodeB.projects.find((project) => project.name === projectA.name)!;
+  type ReviewSession = SessionView & { updatedAt: string; reviewState: string };
+  const list = async (node: SeededNode, auth: SignedIn, projectId: string) => {
+    const result = await api<{ sessions: ReviewSession[] }>(node, auth, "GET", `/projects/${projectId}/sessions`);
+    assert.equal(result.status, 200);
+    return result.body.sessions;
+  };
+  const target = (await list(nodeA, sessionA, projectA.id)).find((session) => session.harnessId === "pi")!;
+  assert.ok(target);
+  await list(nodeB, sessionB, projectB.id);
+  const waitState = async (node: SeededNode, auth: SignedIn, projectId: string, state: string) => {
+    const deadline = Date.now() + 15_000;
+    let current: ReviewSession | undefined;
+    do {
+      current = (await list(node, auth, projectId)).find((session) => session.id === target.id);
+      if (current?.reviewState === state) return current;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    } while (Date.now() < deadline);
+    assert.fail(`Expected ${state} on ${node.key}, got ${JSON.stringify(current)}`);
+  };
+  const activityTime = Date.now() + 1_000;
+  const activityAt = new Date(activityTime).toISOString();
+  const appendActivity = async (timestamp: string) => {
+    await appendFile(target.path, `${JSON.stringify({ type: "message", id: randomUUID(), parentId: null, timestamp,
+      message: { role: "assistant", content: [{ type: "text", text: "Cluster review regression" }], timestamp: Date.parse(timestamp) } })}\n`);
+    const syncedAt = new Date(activityTime + 10_000);
+    await utimes(target.path, syncedAt, syncedAt);
+  };
+  await appendActivity(activityAt);
+  const pending = await waitState(nodeA, sessionA, projectA.id, "needs_review");
+  await waitState(nodeB, sessionB, projectB.id, "needs_review");
+  const reviewed = await fetch(`${nodeA.url}/api/projects/${projectA.id}/sessions/reviewed`, {
+    method: "PUT",
+    headers: { Cookie: sessionA.cookie, "x-csrf-token": sessionA.csrfToken, "Content-Type": "application/json" },
+    body: JSON.stringify({ sessionPath: pending.path, updatedAt: pending.updatedAt }),
+  });
+  assert.equal(reviewed.status, 204);
+  await waitState(nodeB, sessionB, projectB.id, "reviewed");
+
+  // The peer starts without a warm transcript cache, after receiving the review event.
+  await stopDevNode(servers[1]);
+  servers[1] = await startDevNode(environment, nodeB);
+  sessionB = await signIn(environment, nodeB);
+  await waitState(nodeB, sessionB, projectB.id, "reviewed");
+
+  await appendActivity(new Date(activityTime + 2_000).toISOString());
+  await waitState(nodeA, sessionA, projectA.id, "needs_review");
+  await waitState(nodeB, sessionB, projectB.id, "needs_review");
 });
 
 test("each node is paired with the other and holds its machine token", async () => {

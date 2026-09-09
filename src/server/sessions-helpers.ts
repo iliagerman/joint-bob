@@ -6,6 +6,7 @@ import { syncConversationReviewStates } from "../conversation-reviews.js";
 import { conversationLeaseRunning } from "../conversation-runtime.js";
 import { listHarnessSessions } from "../harnesses.js";
 import { getSessionStatus } from "../pi-service.js";
+import { listRunningPiSessions } from "../pi-runtime.js";
 import { getUserPreferences } from "../preferences.js";
 import { listTasks } from "../tasks.js";
 import type { ProjectRecord, SessionSummary } from "../types.js";
@@ -39,6 +40,7 @@ export async function listProjectSessionsWithReviewState(project: ProjectRecord,
       catch (error) { console.warn(`Could not refresh agent run ${run.descriptor.runId}`, error); }
     }
   }));
+  const runningPiSessions = new Set(listRunningPiSessions().map((session) => session.sessionId));
   const listedSessions = sessions.map((session) => {
     const task = (session.taskId ? tasksById.get(session.taskId) : undefined) ?? tasksBySessionPath.get(session.path);
     const shared = sharedSessions.get(sessionKey(task ? taskCwd(project, task) : project.path, session.path))
@@ -65,6 +67,7 @@ export async function listProjectSessionsWithReviewState(project: ProjectRecord,
         || task?.executionState === "running"
         || runningClaudeSessionPaths.has(claudeRunKey(project.id, session.path))
         || (session.harnessId === "claude" && isClaudeSessionRunning(session.path))
+        || (session.harnessId === "pi" && runningPiSessions.has(session.id))
         || conversationLeaseRunning(session.harnessId, session.id)
       ),
       engine: session.harnessId,

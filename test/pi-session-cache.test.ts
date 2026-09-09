@@ -23,8 +23,8 @@ test("Pi session listing re-reads a session directory only when it changes", asy
 
     const transcript = (text: string): string => `${[
       { type: "session", version: 3, id: "session-0", timestamp: "2026-01-01T00:00:00.000Z", cwd: projectCwd },
-      { type: "message", id: "user-0", parentId: null, timestamp: "2026-01-01T00:00:01.000Z", message: { role: "user", content: [{ type: "text", text }], timestamp: 1 } },
-      { type: "message", id: "assistant-0", parentId: "user-0", timestamp: "2026-01-01T00:00:02.000Z", message: { role: "assistant", content: [{ type: "text", text: "Done" }], timestamp: 2 } },
+      { type: "message", id: "user-0", parentId: null, timestamp: "2026-01-01T00:00:01.000Z", message: { role: "user", content: [{ type: "text", text }], timestamp: Date.parse("2026-01-01T00:00:01.000Z") } },
+      { type: "message", id: "assistant-0", parentId: "user-0", timestamp: "2026-01-01T00:00:02.000Z", message: { role: "assistant", content: [{ type: "text", text: "Done" }], timestamp: Date.parse("2026-01-01T00:00:02.000Z") } },
     ].map((record) => JSON.stringify(record)).join("\n")}\n`;
 
     const settings = await import(`../src/settings.js?cache=${Date.now()}-${Math.random()}`);
@@ -44,6 +44,8 @@ test("Pi session listing re-reads a session directory only when it changes", asy
     const initial = await pi.listPiSessions({ path: projectCwd });
     assert.equal(initial.length, 1);
     assert.equal(initial[0].title, "First");
+    assert.equal(initial[0].createdAt, "2026-01-01T00:00:00.000Z");
+    assert.equal(initial[0].updatedAt, "2026-01-01T00:00:02.000Z", "cold listing uses transcript activity, not file mtime");
 
     // Same byte length and same mtime, so the cached listing must survive.
     await writeFile(sessionFile, transcript("Secnd"));
@@ -58,6 +60,9 @@ test("Pi session listing re-reads a session directory only when it changes", asy
     const refreshed = await pi.listPiSessions({ path: projectCwd });
     assert.equal(refreshed.length, 1);
     assert.equal(refreshed[0].title, "Secnd");
+    assert.equal(refreshed[0].updatedAt, initial[0].updatedAt, "a metadata-only rewrite must not create unread activity");
+    const incremental = await pi.refreshPiSessions({ path: projectCwd }, refreshed, [sessionFile]);
+    assert.equal(incremental[0].updatedAt, refreshed[0].updatedAt, "cold and incremental listings agree");
   } finally {
     if (previousDataDir === undefined) delete process.env.PI_WEB_DATA_DIR;
     else process.env.PI_WEB_DATA_DIR = previousDataDir;

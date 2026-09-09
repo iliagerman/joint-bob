@@ -318,8 +318,10 @@ async function summarizeSession(sessionInfo: unknown): Promise<SessionSummary> {
     agentId: "pi",
     agentLabel: "Pi",
     title: titleFromSession(record),
-    createdAt: typeof record.created === "string" ? record.created : fileStat?.birthtime.toISOString(),
-    updatedAt: typeof record.modified === "string" ? record.modified : fileStat?.mtime.toISOString(),
+    // SessionManager returns Dates. Preserve transcript activity across cold listings,
+    // incremental refreshes, and synced copies whose filesystem times differ.
+    createdAt: record.created instanceof Date ? record.created.toISOString() : typeof record.created === "string" ? record.created : fileStat?.birthtime.toISOString(),
+    updatedAt: record.modified instanceof Date ? record.modified.toISOString() : typeof record.modified === "string" ? record.modified : fileStat?.mtime.toISOString(),
     firstMessage: typeof record.firstMessage === "string" ? record.firstMessage : undefined,
     parentSessionPath: typeof record.parentSessionPath === "string" ? record.parentSessionPath : undefined,
   };

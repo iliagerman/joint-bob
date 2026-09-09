@@ -1,5 +1,6 @@
 import { AGENT_RESOURCES_FOLDER_ID, agentResourcesRoot, reconcileAgentResources } from "../agent-resources.js";
 import { listRunningClaudeSessions } from "../claude-runtime.js";
+import { listRunningPiSessions } from "../pi-runtime.js";
 import { type ClusterPeer, dueMembershipDeliveries, getClusterMachineToken, getClusterMembership, getClusterNode, getClusterPeer, listClusterPeers, recordMembershipDelivered, recordMembershipFailure } from "../cluster.js";
 import { getConversationOwnership } from "../conversation-ownership.js";
 import { ensureConversationRecord } from "../conversation-records.js";
@@ -299,6 +300,16 @@ async function buildRuntimeLeaseSnapshot(localNodeId: string): Promise<RuntimeLe
       runId: hook.sessionId, updatedAt, expiresAt,
     });
   }
+  for (const terminal of listRunningPiSessions()) {
+    const key = `pi\n${terminal.sessionId}`;
+    if (entries.has(key)) continue;
+    const ownershipEpoch = await epochFor("pi", terminal.sessionId);
+    if (ownershipEpoch === null) continue;
+    entries.set(key, {
+      engine: "pi", sessionId: terminal.sessionId, ownerNodeId: localNodeId,
+      ownershipEpoch, runId: terminal.runId, updatedAt, expiresAt,
+    });
+  }
   return [...entries.values()];
 }
 
@@ -336,10 +347,15 @@ export async function pushRuntimeLeaseSnapshots(): Promise<void> {
   }
 }
 
-/** A crashed peer's leases die silently unless something sweeps them. */
+let runningPiSessionIds = "";
+
+/** Notify browsers of terminal lifecycle changes, including expired crash heartbeats. */
 export function sweepRuntimeLeases(): void {
   const expired = sweepExpiredRuntimeLeases(conversationRuntimeDatabase());
-  if (expired.length) broadcastSessionsChangedToAllProjects();
+  const current = [...new Set(listRunningPiSessions().map((session) => session.sessionId))].sort().join("\n");
+  const terminalChanged = current !== runningPiSessionIds;
+  runningPiSessionIds = current;
+  if (expired.length || terminalChanged) broadcastSessionsChangedToAllProjects();
 }
 
 export async function flushReplicationOutbox(): Promise<void> {
