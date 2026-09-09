@@ -396,7 +396,8 @@ test("the chat toolbar actions are visible on a wide screen and fold into the me
   ]);
   assert.ok(terminalBox && safeguardsBox, "desktop toolbar actions have layout boxes");
   assert.equal(safeguardsBox.y, terminalBox.y, "Safeguards aligns vertically with the other toolbar actions");
-  assert.equal(safeguardsBox.height, terminalBox.height, "Safeguards matches the other toolbar action height");
+  const terminalControlHeight = await page.getByTestId("chat-open-terminal-button").evaluate((button) => parseFloat(getComputedStyle(button).lineHeight));
+  assert.equal(safeguardsBox.height, terminalControlHeight, "Safeguards matches the control line, excluding the terminal shortcut badge");
   assert.equal(await page.getByTestId("chat-more-button").isVisible(), false, "the overflow summary stays hidden on desktop");
 
   await page.setViewportSize({ width: 430, height: 900 });
