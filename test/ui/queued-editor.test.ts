@@ -41,6 +41,11 @@ async function openEditor(): Promise<void> {
     // Capture the transport boundary. Cancel must never reach the server.
     window.queueCommands = [];
     state.socket = { readyState: WebSocket.OPEN, send: (raw) => window.queueCommands.push(JSON.parse(raw)) };
+    state.engine = "pi";
+    state.models = [
+      { provider: "openai-codex", id: "test-gpt", label: "Test GPT", thinkingLevels: ["off", "high"] },
+      { provider: "zai", id: "test-glm", label: "Test GLM", thinkingLevels: ["off", "high"] },
+    ];
     document.querySelector("#chatPanel").style.display = "flex";
     transcript.markMessageQueued(transcript.appendMessage("user", "Original\\n\\nAttached: notes.txt"), 71, "Original");
   })()`);
@@ -79,6 +84,7 @@ test("queued model and effort are local drafts until Save, and Cancel restores i
   await openEditor();
   const model = page.getByTestId("queued-message-model-button");
   await model.click();
+  await page.getByTestId("queued-message-harness-select").selectOption("claude");
   await page.getByTestId("model-option-claude-haiku").click();
   await page.getByTestId("queued-message-reasoning-select").selectOption("high");
   assert.deepEqual(await commands(), []);
@@ -87,10 +93,39 @@ test("queued model and effort are local drafts until Save, and Cancel restores i
   assert.equal(await model.innerText(), "Inherit conversation settings");
   assert.equal(await page.getByTestId("queued-message-reasoning-select").isVisible(), false);
   await model.click();
+  await page.getByTestId("queued-message-harness-select").selectOption("claude");
   await page.getByTestId("model-option-claude-haiku").click();
   await page.getByTestId("queued-message-reasoning-select").selectOption("high");
   await page.getByTestId("queued-message-save-button").click();
   assert.deepEqual(await commands(), [{ type: "editQueuedPrompt", queueId: 71, message: "Original", queueSettings: { provider: "claude", modelId: "haiku", reasoning: "high" }, queueRevision: 1 }]);
+});
+
+test("queued harness picker filters available models and saves a Pi choice without changing the conversation", async () => {
+  await openEditor();
+  await page.evaluate(async () => {
+    const { state } = await import("/app/state.js");
+    state.engine = "claude";
+    state.activeModelKey = "claude/sonnet";
+  });
+  await page.getByTestId("queued-message-model-button").click();
+  const harness = page.getByTestId("queued-message-harness-select");
+  assert.equal(await harness.inputValue(), "claude");
+  assert.equal(await page.getByTestId("model-option-openai-codex-test-gpt").count(), 0);
+  await harness.selectOption("pi");
+  assert.equal(await page.getByTestId("model-option-claude-haiku").count(), 0);
+  assert.equal(await page.getByTestId("model-option-zai-test-glm").isVisible(), true);
+  await page.getByTestId("model-option-openai-codex-test-gpt").click();
+  await page.getByTestId("queued-message-reasoning-select").selectOption("high");
+  await page.getByTestId("queued-message-model-button").click();
+  assert.equal(await harness.inputValue(), "pi", "reopen follows the queued choice, not the live harness");
+  await page.locator("#modelDialog").press("Escape");
+  assert.deepEqual(await commands(), []);
+  await page.getByTestId("queued-message-save-button").click();
+  assert.deepEqual(await commands(), [{ type: "editQueuedPrompt", queueId: 71, message: "Original", queueSettings: { provider: "openai-codex", modelId: "test-gpt", reasoning: "high" }, queueRevision: 1 }]);
+  assert.deepEqual(await page.evaluate(async () => {
+    const { state } = await import("/app/state.js");
+    return [state.engine, state.activeModelKey];
+  }), ["claude", "claude/sonnet"]);
 });
 
 test("an unavailable saved model can be replaced with inheritance", async () => {

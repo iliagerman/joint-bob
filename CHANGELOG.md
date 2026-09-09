@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Queued messages can now select a different harness (Claude or Pi) from the conversation, with available models filtered by the selected harness.
+
 ## 1.13.1 — 2026-09-09
 
 - Fixed Claude conversations failing authentication checks when Claude was already logged in through the command line.

@@ -397,12 +397,14 @@ function queuedSettingsEditor(bubble) {
   const container = document.createElement("div");
   container.className = "queued-settings";
   const model = queuedButton("Inherit conversation settings", "queued-message-model-button");
+  model.title = "Choose harness and model";
+  model.setAttribute("aria-label", "Choose queued message harness and model");
   const reasoning = document.createElement("select");
   reasoning.dataset.testid = "queued-message-reasoning-select";
   reasoning.setAttribute("aria-label", "Queued message reasoning");
   let draft = null;
   const render = () => {
-    model.textContent = draft ? `${draft.provider}/${draft.modelId}` : "Inherit conversation settings";
+    model.textContent = draft ? `${draft.provider === "claude" ? "Claude" : "Pi"} · ${draft.provider}/${draft.modelId}` : "Inherit conversation settings";
     reasoning.hidden = !draft;
     reasoning.replaceChildren();
     if (!draft) return;

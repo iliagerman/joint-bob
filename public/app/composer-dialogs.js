@@ -43,7 +43,7 @@ let modelShortcuts = [];
 let queuedModelSelection = null;
 
 export function openQueuedModelPicker(activeKey, onSelect) {
-  queuedModelSelection = { activeKey, onSelect };
+  queuedModelSelection = { activeKey, onSelect, harness: activeKey === "/" ? state.engine : activeKey.startsWith("claude/") ? "claude" : "pi" };
   renderModelDialog();
   elements.modelDialog.showModal();
 }
@@ -57,13 +57,36 @@ export function queuedReasoningLevels(provider, modelId) {
 
 function renderQueuedModels() {
   const selection = queuedModelSelection;
-  const models = [{ provider: "", id: "", label: "Inherit conversation settings" }, ...CLAUDE_MODEL_OPTIONS.map((model) => ({ ...model, provider: "claude" })), ...state.models];
-  elements.modelDialogTitle.textContent = "Queued message model";
+  const harnessLabel = document.createElement("label");
+  harnessLabel.textContent = "Harness ";
+  const harness = document.createElement("select");
+  harness.dataset.testid = "queued-message-harness-select";
+  for (const option of state.harnesses) harness.add(new Option(option.label, option.id));
+  harness.value = selection.harness;
+  harness.addEventListener("change", () => {
+    selection.harness = harness.value;
+    renderModelDialog();
+    elements.modelDialogList.querySelector("select").focus();
+  });
+  harnessLabel.append(harness);
+  elements.modelDialogList.append(harnessLabel);
+  const available = selection.harness === "claude"
+    ? CLAUDE_MODEL_OPTIONS.map((model) => ({ ...model, provider: "claude" }))
+    : state.models;
+  const models = [{ provider: "", id: "", label: "Inherit conversation settings" }, ...available];
+  elements.modelDialogTitle.textContent = "Queued message harness and model";
+  elements.modelDialogList.classList.toggle("claude", selection.harness === "claude");
   for (const model of models) elements.modelDialogList.append(modelOptionButton({
     key: `${model.provider}/${model.id}`, label: model.label,
     active: selection.activeKey === `${model.provider}/${model.id}`,
     onSelect: () => selection.onSelect(model.provider ? model : null),
   }));
+  if (!available.length) {
+    const empty = document.createElement("span");
+    empty.className = "model-shortcuts-empty";
+    empty.textContent = "No configured models for this harness";
+    elements.modelDialogList.append(empty);
+  }
 }
 
 elements.modelDialog.addEventListener("close", () => { queuedModelSelection = null; });
