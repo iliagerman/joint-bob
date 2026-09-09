@@ -40,12 +40,15 @@ test("runtime settings drive Claude session discovery and execution", async () =
     await writeFile(outsidePath, "");
     await assert.rejects(claude.loadClaudeMessages(`claude:${outsidePath}`), /outside Claude projects/);
 
+    const { preflightQueuedClaude } = await import("../src/queued-preflight.js");
     const markerPath = path.join(root, "claude-config-marker");
     const executablePath = path.join(root, "claude-fixture.mjs");
     await writeFile(executablePath, `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
 writeFileSync(${JSON.stringify(markerPath)}, process.env.CLAUDE_CONFIG_DIR || "");
-console.log(JSON.stringify({ type: "system", subtype: "init", session_id: "fixture-session" }));
+console.log(JSON.stringify(process.argv[2] === "auth"
+  ? { loggedIn: true }
+  : { type: "system", subtype: "init", session_id: "fixture-session" }));
 `, { mode: 0o755 });
     settings.updateSettings({
       pi: { executable: "pi", configPath: piConfigRoot, sessionPath: piSessionRoot },
@@ -57,6 +60,8 @@ console.log(JSON.stringify({ type: "system", subtype: "init", session_id: "fixtu
     const result = await run.done;
     assert.equal(result.ok, true);
     assert.equal(await readFile(markerPath, "utf8"), configRoot);
+    await preflightQueuedClaude(projectCwd, { CLAUDE_CONFIG_DIR: path.join(root, "inherited-config") });
+    assert.equal(await readFile(markerPath, "utf8"), configRoot, "custom runtime config wins over inherited config in preflight");
 
     settings.updateSettings({
       pi: { executable: "pi", configPath: piConfigRoot, sessionPath: piSessionRoot },
@@ -66,6 +71,11 @@ console.log(JSON.stringify({ type: "system", subtype: "init", session_id: "fixtu
     const defaultConfigRun = claude.runClaudePrompt({ cwd: projectCwd, prompt: "hello", onEvent: () => {} });
     assert.equal((await defaultConfigRun.done).ok, true);
     assert.equal(await readFile(markerPath, "utf8"), "");
+    await preflightQueuedClaude(projectCwd, { CLAUDE_CONFIG_DIR: undefined });
+    assert.equal(await readFile(markerPath, "utf8"), "", "preflight must not force the default config directory and change Claude auth lookup");
+    const inheritedConfig = path.join(root, "inherited-config");
+    await preflightQueuedClaude(projectCwd, { CLAUDE_CONFIG_DIR: inheritedConfig });
+    assert.equal(await readFile(markerPath, "utf8"), inheritedConfig, "default runtime config preserves inherited Claude config");
 
     await Promise.all([mkdir(piConfigRoot, { recursive: true }), mkdir(piSessionRoot, { recursive: true }), mkdir(configRoot, { recursive: true }), mkdir(sessionRoot, { recursive: true })]);
     const validInput = {

@@ -62,7 +62,7 @@ function blockText(content: unknown): string {
     .join("\n");
 }
 
-function claudeConfigPath(): string | undefined {
+export function claudeConfigPath(): string | undefined {
   const configPath = getSettings().claude.configPath;
   const defaultPath = path.join(os.homedir(), ".claude");
   return configPath && path.resolve(configPath) !== defaultPath ? configPath : undefined;

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Claude preflight checks now properly respect the configured Claude config path setting.
+
 ## 1.13.0 — 2026-09-09
 
 - Installer now prevents concurrent installations with OS-level locking and safely restores the previous version if updates fail, without reinstalling dependencies.
