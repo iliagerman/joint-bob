@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.13.1 — 2026-09-09
 
-- Claude preflight checks now properly respect the configured Claude config path setting.
+- Fixed Claude conversations failing authentication checks when Claude was already logged in through the command line.
 
 ## 1.13.0 — 2026-09-09
 
