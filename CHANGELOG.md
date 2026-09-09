@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.14.0 — 2026-09-09
 
 - Queued messages can now select a different harness (Claude or Pi) from the conversation, with available models filtered by the selected harness.
 
