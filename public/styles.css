@@ -1653,10 +1653,25 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   button.icon-button[data-shortcut-hint] { flex-direction: column; flex-wrap: nowrap; width: auto; min-width: 36px; min-height: 50px; padding: 4px 2px; gap: 3px; }
   .project-actions { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 2px; }
   .project-actions button.icon-button[data-shortcut-hint] { min-width: 0; width: 100%; min-height: 58px; padding-inline: 0; }
-  .chat-toolbar button[data-shortcut-hint] { flex-direction: column; flex-wrap: nowrap; padding: 5px 10px; }
-  .chat-more-actions > button { min-height: 70px; }
+  /* The toolbar reads as two straight lines: a control line of selects and action
+     labels, and a badge line under it. Every item is bottom-anchored and sized off
+     the same two variables, so both lines run flat across the bar. */
+  .chat-toolbar { --control-line: 32px; --badge-line: 26px; align-items: end; }
+  .chat-model-control, .chat-mode-control { align-self: end; }
+  .chat-toolbar button[data-shortcut-hint] {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    gap: 4px;
+    min-height: 0;
+    /* The transparent block borders would push the badge off the badge line. */
+    border-block: 0;
+    padding: 0 10px;
+    line-height: var(--control-line);
+  }
+  /* An action without a shortcut carries no badge, so it takes the badge row as margin. */
+  .chat-more-actions > button:not([data-shortcut-hint]) { min-height: var(--control-line); margin-bottom: calc(var(--badge-line) + 4px); }
   .chat-control > .shortcut-hint { justify-self: center; }
-  .chat-toolbar .shortcut-hint { min-height: 24px; }
+  .chat-toolbar .shortcut-hint { height: var(--badge-line); }
   .new-chat-row button[data-shortcut-hint] { padding: 6px 8px; }
   .new-chat-row button[data-shortcut-hint]::before { margin-right: 0; }
   .new-chat-row .shortcut-hint { flex-basis: 100%; }

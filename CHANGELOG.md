@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Chat toolbar controls, action labels, and shortcut badges now line up on shared rows.
+
 ## 1.12.2 — 2026-09-08
 
 - Escape now closes the recent conversations dialog.

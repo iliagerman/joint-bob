@@ -176,6 +176,51 @@ test("the project title keeps collapse while its action row sits above search", 
   assert.equal(cut, false, "the app name and subtitle fit their row");
 });
 
+test("the chat toolbar keeps its controls and shortcut badges on shared lines", async () => {
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+  await page.locator("#sessionList .session-card", { hasText: "Thread-Based Agent Builder" }).click();
+  await page.locator("#modelButton:enabled").waitFor();
+  // Wide enough that the toolbar keeps every control on one row, so alignment is unambiguous.
+  await page.setViewportSize({ width: 1800, height: 900 });
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+
+  const layout = await page.evaluate(() => {
+    const bar = document.querySelector("#chatToolbar")!;
+    return {
+      badges: [...bar.querySelectorAll(".shortcut-hint")]
+        .map((badge) => badge.getBoundingClientRect())
+        .filter((box) => box.height > 0)
+        .map((box) => Math.round(box.bottom * 10) / 10),
+      controls: ["#chatNodeSelect", "#chatHarnessSelect", "#modelButton", "#reasoningLevelSelect"]
+        .map((selector) => bar.querySelector(selector)!.getBoundingClientRect())
+        .map((box) => Math.round((box.top + box.bottom) / 2 * 10) / 10),
+      // The action buttons carry their label as bare text, so the text run itself is measured.
+      actions: ["#safeguardsButton", "#openTerminalButton", "#notifyButton", "#addToCanvasButton", "#renameSessionButton"]
+        .map((selector) => [...bar.querySelector(selector)!.childNodes]
+          .find((child) => child.nodeType === Node.TEXT_NODE && child.textContent!.trim()))
+        .map((text) => {
+          if (!text) return null;
+          const range = document.createRange();
+          range.selectNode(text);
+          const box = range.getBoundingClientRect();
+          return Math.round((box.top + box.bottom) / 2 * 10) / 10;
+        }),
+    };
+  });
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  assert.ok(layout.badges.length >= 7, `every toolbar control shows its badge, saw ${layout.badges.length}`);
+  const badgeLine = layout.badges[0];
+  assert.ok(layout.badges.every((bottom) => Math.abs(bottom - badgeLine) <= 1),
+    `shortcut badges share one line, got ${JSON.stringify(layout.badges)}`);
+  const controlLine = layout.controls[0];
+  assert.ok(layout.controls.every((middle) => Math.abs(middle - controlLine) <= 1),
+    `selects and the model button share one line, got ${JSON.stringify(layout.controls)}`);
+  assert.ok(layout.actions.every((middle) => middle !== null && Math.abs(middle - controlLine) <= 2),
+    `action labels sit on the control line (${controlLine}), got ${JSON.stringify(layout.actions)}`);
+});
+
 test("chat shortcuts focus selectors and open actions without touching safeguards", async () => {
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
   await page.locator("#sessionList .session-card", { hasText: "Thread-Based Agent Builder" }).click();
