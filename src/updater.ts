@@ -253,7 +253,12 @@ export function installLocalRelease(release: ReleaseInfo, options: { fromFleetRu
   const logDir = path.join(dataDir, "logs");
   mkdirSync(logDir, { recursive: true, mode: 0o700 });
   const logFd = openSync(path.join(logDir, `self-update-${job.id}.log`), "a");
-  const child = spawn(process.execPath, [path.join(rootDir, "scripts", "self-update.mjs")], {
+  // A detached process group still belongs to joint-bob.service's cgroup.
+  // A user scope survives systemd stopping that service during installation.
+  const helper = [process.execPath, path.join(rootDir, "scripts", "self-update.mjs")];
+  const executable = process.platform === "linux" ? "systemd-run" : helper[0];
+  const args = process.platform === "linux" ? ["--user", "--scope", "--quiet", `--unit=joint-bob-update-${job.id}`, ...helper] : helper.slice(1);
+  const child = spawn(executable, args, {
     cwd: rootDir,
     env: {
       ...process.env,
@@ -271,6 +276,11 @@ export function installLocalRelease(release: ReleaseInfo, options: { fromFleetRu
   });
   child.on("error", (error) => {
     updateJobState(job.id, "failed", `Updater helper failed to start: ${error.message}`);
+  });
+  child.on("exit", (code, signal) => {
+    if (code !== 0 && activeUpdateJob()?.id === job.id) {
+      updateJobState(job.id, "failed", `Updater helper exited with ${signal ?? code}`);
+    }
   });
   child.unref();
   return job;

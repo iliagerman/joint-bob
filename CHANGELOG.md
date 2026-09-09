@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Installer now prevents concurrent installations with OS-level locking and safely restores the previous version if updates fail, without reinstalling dependencies.
 - Pi coding agent sessions now show their running state and are excluded from the review queue while active.
 - Conversation action buttons now stay aligned inside the card when sub-agent tasks extend below it.
 - Chat toolbar controls, action labels, and shortcut badges now line up on shared rows.

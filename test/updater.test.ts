@@ -108,9 +108,9 @@ test("a failed swap restores the old files and restarts their service", async ()
     await mkdir(path.join(packageDir, "bin"), { recursive: true });
     await mkdir(path.join(packageDir, "scripts"), { recursive: true });
     await writeFile(path.join(installDir, "sentinel"), "old installation");
-    await writeFile(path.join(installDir, "scripts", "install-service.sh"), `printf restored > "${restarted}"\n`);
+    await writeFile(path.join(installDir, "scripts", "install-service.sh"), "exit 99\n");
     await copyFile("bin/joint-bob.mjs", path.join(packageDir, "bin", "joint-bob.mjs"));
-    await writeFile(path.join(packageDir, "scripts", "install-service.sh"), `printf attempted > "${attempted}"\nexit 1\n`);
+    await writeFile(path.join(packageDir, "scripts", "install-service.sh"), `[ "$1" = --build-only ] && exit 0\n[ "$1" = --restart-only ] && { printf restored > "${restarted}"; exit 0; }\nprintf attempted > "${attempted}"\nexit 1\n`);
 
     const result = spawnSync(process.execPath, [path.join(packageDir, "bin", "joint-bob.mjs"), "install"], {
       env: { ...process.env, JOINT_BOB_INSTALL_DIR: installDir },

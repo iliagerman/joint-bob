@@ -143,6 +143,95 @@ for (const operation of ["compact", "reload"] as const) {
   });
 }
 
+for (const stage of ["turn", "preflight"] as const) {
+  test(`update fence stops an existing drain after awaiting ${stage}`, async (context) => {
+    const opened = openChat(baseUrl, fixture.cookie, fixture.projectId, "new");
+    sockets.push(opened.socket);
+    await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "ready"));
+    const sessionId = String(opened.messages.find((frame) => frame.type === "ready")!.sessionId);
+    const { sharedSessions, flags } = await import("../src/server/state.js");
+    const shared = [...sharedSessions.values()].find((shared) => shared.handle.session.sessionId === sessionId)!;
+    const { promptQueueIsDraining } = await import("../src/server/chat.js");
+    const { listQueuedPrompts, clearQueuedPrompts } = await import("../src/prompt-queue.js");
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const prompt = context.mock.method(shared.handle.session, "prompt", async () => { if (stage === "turn") { entered(); await gate; } });
+    if (stage === "preflight") {
+      const runtime = shared.handle.session.modelRuntime;
+      const auth = runtime.getAuth.bind(runtime);
+      context.mock.method(runtime, "getAuth", async (model: Parameters<typeof auth>[0]) => { entered(); await gate; return auth(model); });
+    }
+    const log = process.env.JOINT_BOB_TEST_ENGINE_LOG;
+    delete process.env.JOINT_BOB_TEST_ENGINE_LOG;
+    try {
+      opened.socket.send(JSON.stringify({ type: "prompt", message: "first" }));
+      await started;
+      if (stage === "turn") opened.socket.send(JSON.stringify({ type: "prompt", message: "must remain queued" }));
+      await waitFor(opened.messages, () => opened.messages.filter((frame) => frame.type === "userMessage" && frame.queued).length === (stage === "turn" ? 2 : 1));
+      flags.updatePreparing = true;
+      release();
+      await waitFor(opened.messages, () => !promptQueueIsDraining(`${fixture.projectId}:${sessionId}`));
+      assert.equal(prompt.mock.callCount(), stage === "turn" ? 1 : 0, "no new turn may start behind the update fence");
+      assert.equal(listQueuedPrompts(`${fixture.projectId}:${sessionId}`).length, 1, "undispatched prompt stays durable for restart");
+    } finally {
+      release(); flags.updatePreparing = false; process.env.JOINT_BOB_TEST_ENGINE_LOG = log;
+      clearQueuedPrompts(`${fixture.projectId}:${sessionId}`);
+    }
+  });
+}
+
+test("update fence cancels Claude dispatch held in transcript localization", async (context) => {
+  const opened = openChat(baseUrl, fixture.cookie, fixture.projectId, "claude:new");
+  sockets.push(opened.socket);
+  await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "ready"));
+  const sessionId = String(opened.messages.find((frame) => frame.type === "ready")!.sessionId);
+  const { chatConnections, promptQueueIsDraining } = await import("../src/server/chat.js");
+  const connection = [...chatConnections].find((candidate) => candidate.claude.sessionId === sessionId)!;
+  const { claudeSessionFilePath } = await import("../src/claude-service.js");
+  const localPath = claudeSessionFilePath(connection.cwd, sessionId);
+  await mkdir(path.dirname(localPath), { recursive: true });
+  await writeFile(localPath, "");
+  connection.claude.filePath = path.join(root, "foreign", `${sessionId}.jsonl`);
+  let release!: () => void, entered!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  const access = fs.access;
+  const mocked = context.mock.method(fs, "access", async (...args: Parameters<typeof access>) => {
+    if (args[0] === localPath) { entered(); await gate; }
+    return access(...args);
+  });
+  syncBuiltinESMExports();
+  const { flags } = await import("../src/server/state.js");
+  const { listQueuedPrompts, clearQueuedPrompts } = await import("../src/prompt-queue.js");
+  try {
+    opened.socket.send(JSON.stringify({ type: "prompt", message: "must not start after preparation" }));
+    await started;
+    flags.updatePreparing = true; release();
+    await waitFor(opened.messages, () => !promptQueueIsDraining(`${fixture.projectId}:${sessionId}`));
+    assert.equal(opened.messages.some((frame) => frame.type === "promptStarted"), false, "localization await must not cross the update fence");
+    assert.equal(listQueuedPrompts(`${fixture.projectId}:${sessionId}`)[0].dispatchState, "pending");
+  } finally {
+    release(); flags.updatePreparing = false; mocked.mock.restore(); syncBuiltinESMExports();
+    clearQueuedPrompts(`${fixture.projectId}:${sessionId}`);
+  }
+});
+
+test("Claude queue resumes after compaction completes", async () => {
+  const opened = openChat(baseUrl, fixture.cookie, fixture.projectId, "claude:new");
+  sockets.push(opened.socket);
+  await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "ready"));
+  await rm(path.join(root, "hold", "claude.release"), { force: true });
+  try {
+    opened.socket.send(JSON.stringify({ type: "compact" }));
+    await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "status" && (frame.status as { isCompacting: boolean }).isCompacting));
+    opened.socket.send(JSON.stringify({ type: "prompt", message: "after compact" }));
+    await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "userMessage" && frame.queued));
+    assert.equal(opened.messages.some((frame) => frame.type === "promptStarted"), false);
+  } finally { await writeFile(path.join(root, "hold", "claude.release"), ""); }
+  await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "promptStarted"), 1500);
+});
+
 test("Pi queued authenticated override replaces an unauthenticated current model", async (context) => {
   const opened = openChat(baseUrl, fixture.cookie, fixture.projectId, "new");
   sockets.push(opened.socket);

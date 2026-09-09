@@ -20,7 +20,10 @@ app.post("/api/update/prepare", async (_request, response, next) => {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const recoveryCount = await prepareForUpdate();
     response.json({ ready: true, recoveryCount });
-  } catch (error) { next(error); }
+  } catch (error) {
+    if (error instanceof UpdateRefusalError) { sendError(response, 409, error.message); return; }
+    next(error);
+  }
 });
 
 const updateStatusResponse = (response: Response): void => {

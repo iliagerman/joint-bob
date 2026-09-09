@@ -774,3 +774,32 @@ test("a stale two-phase claim by the local node heals when the conversation open
   assert.equal(healed?.status, "owned", "the stale claim healed to owned");
   assert.equal(healed?.epoch, 2, "healing bumps the epoch");
 });
+
+test("both prepared nodes become writable and resume replication after restart", { timeout: 60_000 }, async () => {
+  const nodes = [nodeA, nodeB];
+  const sessions = [sessionA, sessionB];
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index];
+    const { token } = (await api<{ token: string }>(node, sessions[index], "GET", "/cluster/invite")).body;
+    const prepared = await fetch(`${node.url}/api/update/prepare`, {
+      method: "POST", headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(prepared.status, 200);
+    const health = await fetch(`${node.url}/api/health`);
+    assert.equal(health.status, 503, `${node.key} must not claim health while blocking writes`);
+    assert.equal((await health.json()).status, "updating");
+    assert.equal((await api(node, sessions[index], "POST", "/update/install", {})).status, 503);
+  }
+  await Promise.all(servers.map(stopDevNode));
+  servers = await Promise.all(nodes.map((node) => startDevNode(environment, node)));
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index];
+    const response = await api(node, sessions[index], "POST", "/update/install", {});
+    assert.equal(response.status, 409, `${node.key} must reach validation rather than the stale update fence`);
+    const { token } = (await api<{ token: string }>(nodes[1 - index], sessions[1 - index], "GET", "/cluster/invite")).body;
+    const replication = await fetch(`${node.url}/api/cluster/events`, {
+      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ events: [] }),
+    });
+    assert.equal(replication.status, 200, `${node.key} accepts authenticated replication after recovery`);
+  }
+});

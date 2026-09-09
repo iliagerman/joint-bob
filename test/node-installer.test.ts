@@ -120,7 +120,7 @@ test("service installation prepares bundled tools before service mutation", asyn
   assert.ok(prerequisiteIndex > npmIndex);
   assert.ok(installer.lastIndexOf("install-syncthing.sh") > npmIndex);
   for (const laterStep of ["systemctl --user restart joint-bob.service", "launchctl bootstrap"]) {
-    assert.ok(prerequisiteIndex < installer.indexOf(laterStep), `${laterStep} must follow prerequisite validation`);
+    assert.ok(prerequisiteIndex < installer.lastIndexOf(laterStep), `${laterStep} must follow prerequisite validation`);
   }
 });
 
@@ -162,11 +162,10 @@ test("remote upgrades preserve rollback and migrate native service names", async
   const healthIndex = installer.indexOf('curl -fsS "http://127.0.0.1:${PORT_VALUE}/api/health"');
   const oldUnitRemoval = installer.indexOf('rm -f "${HOME}/.config/systemd/user/pi-mobile-web.service"');
 
-  assert.match(bootstrap, /install_swapped=false/);
-  assert.match(bootstrap, /install_succeeded=false/);
+  assert.match(bootstrap, /node "\$\{verified_source\}\/bin\/joint-bob\.mjs" install/);
   assert.match(bootstrap, /trap 'exit 130' INT/);
   assert.match(bootstrap, /trap 'exit 143' TERM/);
-  assert.match(bootstrap, /mv "\$\{backup\}" "\$\{INSTALL_DIR\}"/);
+  assert.match(bootstrap, /wait "\$\{installer_pid\}"/);
   assert.match(installer, /mv "\$\{LEGACY_STATE_DIR\}" "\$\{STATE_DIR\}"/);
   assert.match(installer, /systemctl --user stop pi-mobile-web\.service/);
   assert.match(installer, /cp -R "\$\{legacy_dropins\}" "\$\{joint_dropins\}"/);

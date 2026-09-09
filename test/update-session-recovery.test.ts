@@ -66,8 +66,8 @@ test("installer coordinates update preparation before native restart", async () 
   const build = installer.indexOf('"${NPM_BIN}" run build');
   assert.ok(prepare >= 0);
   assert.ok(build >= 0 && build < prepare);
-  assert.ok(prepare < installer.indexOf("systemctl --user restart joint-bob.service"));
-  assert.ok(prepare < installer.indexOf("launchctl bootstrap"));
+  assert.ok(prepare < installer.indexOf("systemctl --user restart joint-bob.service", prepare));
+  assert.ok(prepare < installer.indexOf("launchctl bootstrap", prepare));
   assert.match(installer, /Authorization: Bearer/);
   assert.match(installer, /--import tsx/);
   assert.match(installer, /src\/cluster\.ts/);
@@ -80,5 +80,5 @@ test("browser warns during update and refreshes cached shell", async () => {
   const [app, worker] = await Promise.all([appSource(), readFile("public/sw.js", "utf8")]);
   assert.match(app, /payload\.type === "updatePreparing"/);
   assert.match(app, /Updating\.\.\. Work will resume automatically\./);
-  assert.match(worker, /joint-bob-v152/);
+  assert.match(worker, /joint-bob-v153/);
 });

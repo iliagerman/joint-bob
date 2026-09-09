@@ -367,6 +367,7 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
   if (connection.claude.filePath && path.resolve(connection.claude.filePath) !== path.resolve(localTranscript)) {
     connection.claude.filePath = await ensureLocalClaudeTranscript(connection.cwd, connection.claude.sessionId);
   }
+  if (flags.updatePreparing) throw new Error("Server update in progress");
   if (showUserMessage) send(connection.socket, { type: "userMessage", text: displayText });
   // Buffer every turn event so a browser that reconnects mid-turn can replay it.
   connection.claude.liveEvents = [];
@@ -444,6 +445,7 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
     if (process.env.NODE_ENV === "test" && process.env.JOINT_BOB_TEST_ENGINE_LOG) markStarted();
     let result = await runStubbedClaudePrompt(connection, fullPrompt, onEvent);
     if (!result) {
+      if (flags.updatePreparing) throw new Error("Server update in progress");
       const run = runClaudePrompt({
         cwd: connection.cwd,
         projectId: connection.project.id,
@@ -638,7 +640,7 @@ export async function drainClaudePromptQueue(connection: ChatConnection): Promis
 
 async function drainClaudePrompts(connection: ChatConnection): Promise<void> {
   for (;;) {
-    if (queueEngineBusy(connection)) return;
+    if (flags.updatePreparing || queueEngineBusy(connection)) return;
     const queued = listQueuedPrompts(claudeQueueKey(connection))[0];
     if (!queued) return;
     if (queued.dispatchState === "starting") throw new Error("Previous queued dispatch outcome is uncertain; edit or cancel before retrying");
@@ -655,6 +657,7 @@ async function drainClaudePrompts(connection: ChatConnection): Promise<void> {
     await preflightQueueEngine(connection, connection.engine);
     await requireQueueOwner(connection);
     const current = listQueuedPrompts(claudeQueueKey(connection))[0];
+    if (flags.updatePreparing) return;
     if (!current || current.id !== queued.id || current.revision !== queued.revision) continue;
     if (!beginQueuedPrompt(queued.id, queued.revision)) continue;
     const onStarted = () => {
@@ -767,6 +770,7 @@ async function handleClaudeCommand(connection: ChatConnection, payload: SocketPa
     } finally {
       connection.claude.compacting = false;
       sendClaudeStatus(connection);
+      resumePromptQueue(connection);
     }
     send(connection.socket, { type: "sessionsChanged" });
     return;

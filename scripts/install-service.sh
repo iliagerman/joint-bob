@@ -2,6 +2,16 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+mode="${1:-}"
+case "${mode}" in
+  --build-only|--activate-only|--restart-only) ;;
+  "")
+    runtime_bin="$("${REPO_ROOT}/scripts/install-node-runtime.sh")"
+    if [ -n "${runtime_bin}" ]; then export PATH="${runtime_bin}:${PATH}"; fi
+    exec node "${REPO_ROOT}/bin/joint-bob.mjs" install
+    ;;
+  *) echo "Unknown installer mode: ${mode}" >&2; exit 2 ;;
+esac
 LEGACY_STATE_DIR="${HOME}/.pi-mobile-web"
 DEFAULT_STATE_DIR="${HOME}/.joint-bob"
 STATE_DIR="${JOINT_BOB_DATA_DIR:-${PI_WEB_DATA_DIR:-${DEFAULT_STATE_DIR}}}"
@@ -13,6 +23,26 @@ if [ -f "${STATE_DIR}/env" ]; then
   # shellcheck disable=SC1090
   source "${STATE_DIR}/env"
   set +a
+fi
+if [ "${mode}" = --restart-only ]; then
+  case "$(uname -s)" in
+    Linux)
+      export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+      export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${XDG_RUNTIME_DIR}/bus}"
+      exec systemctl --user restart joint-bob.service
+      ;;
+    Darwin)
+      launchctl bootout "gui/$(id -u)/com.joint-bob.node" >/dev/null 2>&1 || true
+      launchd_loaded=false
+      for _ in {1..5}; do
+        if launchctl bootstrap "gui/$(id -u)" "${HOME}/Library/LaunchAgents/com.joint-bob.node.plist"; then launchd_loaded=true; break; fi
+        sleep 1
+      done
+      [ "${launchd_loaded}" = true ] || { echo "Could not load com.joint-bob.node" >&2; exit 1; }
+      exec launchctl kickstart -k "gui/$(id -u)/com.joint-bob.node"
+      ;;
+    *) echo "Unsupported operating system" >&2; exit 1 ;;
+  esac
 fi
 PORT_VALUE="${PORT:-8787}"
 LOG_DIR="${STATE_DIR}/logs"
@@ -39,13 +69,16 @@ NPM_BIN="$(command -v npm)" || { echo "npm is required after runtime setup" >&2;
 "${NODE_BIN}" --version >/dev/null
 "${NPM_BIN}" --version >/dev/null
 cd "${REPO_ROOT}"
-"${NPM_BIN}" ci
-"${NPM_BIN}" run build
+if [ "${mode}" = --build-only ]; then
+  "${NPM_BIN}" ci
+  "${NPM_BIN}" run build
+fi
 package_bin="${REPO_ROOT}/node_modules/.bin"
 syncthing_bin="$("${REPO_ROOT}/scripts/install-syncthing.sh")"
 export PATH="${package_bin}:${syncthing_bin}:${PATH}"
 "${REPO_ROOT}/scripts/check-prerequisites.sh"
 SERVICE_PATH="$("${REPO_ROOT}/scripts/build-service-path.sh" "${NODE_BIN}" "${NPM_BIN}")"
+[ "${mode}" != --build-only ] || exit 0
 
 mkdir -p "${STATE_DIR}" "${LOG_DIR}"
 chmod 700 "${STATE_DIR}" "${LOG_DIR}"
@@ -71,11 +104,11 @@ NODE
 
 prepare_update() {
   [ -e "${STATE_DIR}/node.db" ] || return 0
-  curl -fsS "http://127.0.0.1:${PORT_VALUE}/api/health" >/dev/null 2>&1 || return 0
+  curl -sS --connect-timeout 5 --max-time 10 "http://127.0.0.1:${PORT_VALUE}/api/health" >/dev/null 2>&1 || return 0
   local response_file machine_token status body
   response_file="$(mktemp "${STATE_DIR}/update-prepare.XXXXXX")"
   machine_token="$("${NODE_BIN}" --import tsx --input-type=module -e 'import { pathToFileURL } from "node:url"; const { getClusterMachineToken } = await import(pathToFileURL(process.argv[1]).href); console.log(await getClusterMachineToken());' "${REPO_ROOT}/src/cluster.ts")"
-  status="$(curl -sS -o "${response_file}" -w '%{http_code}' -X POST "http://127.0.0.1:${PORT_VALUE}/api/update/prepare" -H "Authorization: Bearer ${machine_token}" -H "Content-Type: application/json")" || { rm -f "${response_file}"; echo "Could not prepare running service for update" >&2; exit 1; }
+  status="$(curl -sS --connect-timeout 5 --max-time 120 -o "${response_file}" -w '%{http_code}' -X POST "http://127.0.0.1:${PORT_VALUE}/api/update/prepare" -H "Authorization: Bearer ${machine_token}" -H "Content-Type: application/json")" || { rm -f "${response_file}"; echo "Could not prepare running service for update" >&2; exit 1; }
   body="$(cat "${response_file}")"
   rm -f "${response_file}"
   # Pre-update releases reject this unknown protected route before Express can return 404.
@@ -126,7 +159,7 @@ esac
 
 service_healthy=false
 for _ in {1..120}; do
-  if health_response="$(curl -fsS "http://127.0.0.1:${PORT_VALUE}/api/health")" && HEALTH_RESPONSE="${health_response}" EXPECTED_RELEASE="${EXPECTED_RELEASE}" "${NODE_BIN}" -e '
+  if health_response="$(curl -fsS "http://127.0.0.1:${PORT_VALUE}/api/health" --connect-timeout 5 --max-time 5)" && HEALTH_RESPONSE="${health_response}" EXPECTED_RELEASE="${EXPECTED_RELEASE}" "${NODE_BIN}" -e '
     const health = JSON.parse(process.env.HEALTH_RESPONSE);
     if (health.status !== "ok" || health.release !== process.env.EXPECTED_RELEASE) process.exit(1);
   '; then

@@ -10,7 +10,7 @@ Want an AI coding agent to perform the installation? Give it [agents_readme.md](
 
 - macOS or Linux with `launchd` or user `systemd`
 - An Intel/AMD 64-bit or ARM64 machine
-- `curl`, `tar`, and internet access during installation
+- `curl`, `tar`, `perl` for OS-level installer locking, and internet access during installation
 - A non-root user account
 - Pi and Claude accounts if you want to use both agents
 - Tailscale or another private HTTPS network for multi-node operation
@@ -41,6 +41,8 @@ curl -fsSL https://raw.githubusercontent.com/iliagerman/joint-bob/main/scripts/i
 ```
 
 The installer downloads the latest GitHub release, verifies its SHA-256 checksum, installs dependencies, starts Syncthing, and creates a native user service.
+
+It also registers a node-local Pi extension to report terminal activity to the app. After upgrading, run `/reload` in existing Pi terminals or restart them to load it. Active turns, including long-running tools and automatic retries, stay out of pending reviews until Pi settles. If a terminal crashes, its running heartbeat expires after 30 seconds. Terminals started with extensions disabled cannot report their activity.
 
 When installation finishes:
 
@@ -81,7 +83,7 @@ Run the same installation command again:
 curl -fsSL https://raw.githubusercontent.com/iliagerman/joint-bob/main/scripts/install.sh | bash
 ```
 
-The installer preserves projects, credentials, settings, tasks, cluster identity, and other state. It restores the previous installed copy if the replacement fails. Existing `~/.pi-mobile-web` state migrates automatically.
+The installer preserves projects, credentials, settings, tasks, cluster identity, and other state. It builds the replacement in a staging directory before swapping files. Manual installs, push deployments, and self-updates share an OS lock; a competing install fails rather than modifying the same files. A failed activation restores and restarts the previous installed copy without reinstalling its dependencies. Existing `~/.pi-mobile-web` state migrates automatically.
 
 A node can also update itself. Open **Settings > Updates** to check the newest GitHub release, install it on this node, or enable automatic updates for this node. On a cluster, **Update all nodes** rolls the same release out one node at a time, this node last, and stops at the first failure. Updates download the checksum-verified release archive, swap the installation with rollback, restart the node's service, and resume interrupted work automatically. The first release that includes this system must still be installed manually on every node.
 
@@ -97,6 +99,8 @@ A node can also update itself. Open **Settings > Updates** to check the newest G
 Updates are only available on an installed node. A development checkout reports `development checkout`, disables the controls, and answers the update endpoints with `409`.
 
 Progress and failures appear in the same panel; each node also keeps its own update history in `~/.joint-bob/node.db`.
+
+While an update blocks writes, `/api/health` returns HTTP `503` with `status: "updating"`, not `ok`. If saving recovery records fails, preparation releases the write block without stopping agents. Once records are saved, a two-minute watchdog bounds both agent shutdown and waiting for the installer to restart the service. If that deadline expires, the server exits; systemd or launchd restarts it and the normal recovery path resumes interrupted work. A development server without a service manager must be restarted manually. Further updates are refused until pending recovery finishes, so another attempt cannot overwrite unfinished recovery records. Linux self-updates run in a separate systemd user scope so restarting the node cannot kill its installer.
 
 ## Install on EC2 or another remote Linux host
 

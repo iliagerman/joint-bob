@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
 SOURCE_DIR="$(cd "${SCRIPT_DIR}/.." 2>/dev/null && pwd || true)"
 
 if [ -f "${SOURCE_DIR}/package.json" ]; then
+  export JOINT_BOB_INSTALL_DIR="${INSTALL_DIR}"
   exec "${SOURCE_DIR}/scripts/install-service.sh"
 fi
 
@@ -27,19 +28,15 @@ command -v tar >/dev/null 2>&1 || { echo "tar is required" >&2; exit 1; }
 install_parent="$(dirname "${INSTALL_DIR}")"
 mkdir -p "${install_parent}"
 staging="$(mktemp -d "${install_parent}/.joint-bob-install.XXXXXX")"
-backup="${staging}/previous-install"
-had_existing_install=false
-install_swapped=false
-install_succeeded=false
-
+installer_pid=""
 cleanup() {
   local status=$?
-  if [ "${install_swapped}" = true ] && [ "${install_succeeded}" != true ]; then
-    if [ "${had_existing_install}" != true ] || [ -e "${backup}" ]; then rm -rf "${INSTALL_DIR}"; fi
-    if [ -e "${backup}" ]; then mv "${backup}" "${INSTALL_DIR}"; fi
+  trap '' INT TERM
+  if [ -n "${installer_pid}" ]; then
+    kill -TERM "${installer_pid}" 2>/dev/null || true
+    wait "${installer_pid}" || true
   fi
-  rm -rf "${backup}" "${staging}"
-  trap - EXIT INT TERM
+  rm -rf "${staging}" || echo "Could not remove installer staging: ${staging}" >&2
   exit "${status}"
 }
 trap cleanup EXIT
@@ -75,26 +72,15 @@ if [ -e "${INSTALL_DIR}" ]; then
     echo "Refusing to replace unrecognized installation: ${INSTALL_DIR}" >&2
     exit 1
   fi
-  had_existing_install=true
-  install_swapped=true
-  mv "${INSTALL_DIR}" "${backup}"
 fi
-mv "${verified_source}" "${INSTALL_DIR}"
-install_swapped=true
-if [ -n "${REF}" ]; then printf 'commit=%s\narchive_sha256=%s\n' "${REF}" "${expected_sha256}" > "${INSTALL_DIR}/.joint-bob-release"; fi
-
-if "${INSTALL_DIR}/scripts/install-service.sh"; then
-  install_succeeded=true
-  exit 0
-fi
-install_status=$?
-echo "New installation failed; restoring previous installation." >&2
-rm -rf "${INSTALL_DIR}"
-if [ -e "${backup}" ]; then
-  mv "${backup}" "${INSTALL_DIR}"
-  install_swapped=false
-  "${INSTALL_DIR}/scripts/install-service.sh" || echo "Failed to restore previous installation and service." >&2
-else
-  install_swapped=false
-fi
+[ -f "${verified_source}/bin/joint-bob.mjs" ] || { echo "Archive is missing the transactional installer" >&2; exit 1; }
+runtime_bin="$(bash "${verified_source}/scripts/install-node-runtime.sh")"
+if [ -n "${runtime_bin}" ]; then export PATH="${runtime_bin}:${PATH}"; fi
+export JOINT_BOB_INSTALL_DIR="${INSTALL_DIR}"
+if [ -n "${REF}" ]; then export JOINT_BOB_RELEASE_COMMIT="${REF}"; fi
+node "${verified_source}/bin/joint-bob.mjs" install &
+installer_pid=$!
+install_status=0
+wait "${installer_pid}" || install_status=$?
+installer_pid=""
 exit "${install_status}"

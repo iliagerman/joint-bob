@@ -41,8 +41,11 @@ test("remote upgrade restores the prior release when interrupted", async () => {
     await chmod(path.join(installDir, "scripts", "install-service.sh"), 0o755);
 
     await mkdir(path.join(releaseDir, "scripts"), { recursive: true });
+    await mkdir(path.join(releaseDir, "bin"));
+    await cp("bin/joint-bob.mjs", path.join(releaseDir, "bin/joint-bob.mjs"));
+    await writeFile(path.join(releaseDir, "scripts/install-node-runtime.sh"), "#!/bin/bash\nexit 0\n");
     await writeFile(path.join(releaseDir, "package.json"), "{}\n");
-    await writeFile(path.join(releaseDir, "scripts", "install-service.sh"), "#!/usr/bin/env bash\nprintf 'started\\n' > \"${INSTALLER_MARKER}\"\nsleep 30\n");
+    await writeFile(path.join(releaseDir, "scripts", "install-service.sh"), '#!/usr/bin/env bash\n[ "$1" = --build-only ] && exit 0\n[ "$1" = --restart-only ] && { echo restarted > "$INSTALLER_MARKER.restarted"; exit 0; }\nprintf "started\\n" > "$INSTALLER_MARKER"\nsleep 30\n');
     await chmod(path.join(releaseDir, "scripts", "install-service.sh"), 0o755);
     await execFileAsync("tar", ["-czf", archive, "-C", archiveRoot, "release"]);
 
@@ -75,6 +78,7 @@ test("remote upgrade restores the prior release when interrupted", async () => {
     const result = await completion;
 
     assert.notEqual(result.code, 0);
+    assert.equal(await readFile(`${marker}.restarted`, "utf8"), "restarted\n");
     assert.equal(result.signal, null);
     assert.equal(await readFile(path.join(installDir, ".master-bob-release"), "utf8"), "old release\n");
     assert.equal(await readFile(path.join(installDir, "old-release.txt"), "utf8"), "old release\n");

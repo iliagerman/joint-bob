@@ -39,6 +39,10 @@ app.get("/api/health", (_request, response) => {
   // The semantic version is what the user sees; the commit stays for diagnostics.
   const version = appVersion();
   const release = process.env.JOINT_BOB_RELEASE ?? process.env.MASTER_BOB_RELEASE ?? "development";
+  if (flags.updatePreparing) {
+    response.set("Retry-After", "5").status(503).json({ status: "updating", version, release });
+    return;
+  }
   if (!flags.startupReady) {
     response.status(503).json({ status: "starting", version, release });
     return;

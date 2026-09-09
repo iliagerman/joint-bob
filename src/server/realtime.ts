@@ -9,13 +9,16 @@ import { createPiSession, getSessionStatus, reloadPiSkills, sessionIsBusy } from
 import { listPushSubscriberUserIds, notifyConversationReview } from "../push.js";
 import { type ReplicationBatch, replicationInvalidations } from "../replication.js";
 import { getProject } from "../store.js";
-import { saveUpdateRecoveries, type UpdateRecoveryRecord } from "../update-recovery.js";
+import { listPendingUpdateRecoveries, saveUpdateRecoveries, type UpdateRecoveryRecord } from "../update-recovery.js";
+import { UpdateRefusalError } from "../updater.js";
 import { resumeSharedPromptQueue, sendClaudeStatus, subscribeSharedSession } from "./chat.js";
 import { listProjectSessionsWithReviewState } from "./sessions-helpers.js";
 import { activeClaudeConnections, claudeClients, flags, idleSessionTimeoutMs, localWriteGraceMs, type PiSessionHandle, server, type SharedPiSession, sharedSessions, watchClients, webSocketServer } from "./state.js";
 import { claudeTaskRuns, piTaskRuns } from "./task-runs.js";
 
+let updateRestartTimer: NodeJS.Timeout | undefined;
 server.on("close", () => {
+  clearTimeout(updateRestartTimer);
   for (const session of new Set(sharedSessions.values())) disposeSharedSession(session);
 });
 
@@ -327,8 +330,25 @@ async function performUpdatePreparation(): Promise<number> {
   flags.updatePreparing = true;
   broadcastUpdatePreparing();
   await new Promise((resolve) => setTimeout(resolve, 500));
-  const records = activeUpdateRecoveries();
-  await saveUpdateRecoveries(records);
+  let records: UpdateRecoveryRecord[];
+  try {
+    if ((await listPendingUpdateRecoveries()).length) throw new UpdateRefusalError("Interrupted work is still recovering; wait before updating again");
+    records = activeUpdateRecoveries();
+    await saveUpdateRecoveries(records);
+  } catch (error) {
+    // No work has been stopped yet. Release the fence and let clients reconnect.
+    flags.updatePreparing = false;
+    flags.updatePreparation = null;
+    for (const client of webSocketServer.clients) client.close(1012, "Update preparation failed; reconnecting");
+    throw error;
+  }
+  // From here work may be partially stopped. Restart, rather than merely lifting
+  // the fence, so native Restart/KeepAlive replays the durable recovery records.
+  updateRestartTimer = setTimeout(() => {
+    console.error("Server update timed out after 120 seconds; restarting to recover interrupted work");
+    process.exit(1);
+  }, 120_000);
+  updateRestartTimer.unref();
   for (const shared of new Set(sharedSessions.values())) shared.handle.session.clearQueue();
   // Only the in-memory copy is dropped: the rows outlive the restart and drain
   // when a client comes back to the conversation.
