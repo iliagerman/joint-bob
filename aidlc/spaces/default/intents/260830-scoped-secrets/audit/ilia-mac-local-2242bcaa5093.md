@@ -1782,3 +1782,93 @@
 **Reason**: other
 
 ---
+
+## Session Start
+**Timestamp**: 2026-09-09T11:40:35Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-09T11:40:38Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-09-09T11:40:52Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-09T11:41:03Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-09T11:41:05Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-09-09T11:41:26Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Workflow Parked
+**Timestamp**: 2026-09-09T12:06:03Z
+**Event**: WORKFLOW_PARKED
+**Stage**: observability-setup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-09T16:49:46Z
+**Event**: HUMAN_TURN
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-09-09T16:50:25Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**: 
+**Agent ID**: a0b475345f930e533
+**Message**: commit this
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-09T16:53:56Z
+**Event**: HUMAN_TURN
+
+---
+
+## Subagent Completed
+**Timestamp**: 2026-09-09T16:54:13Z
+**Event**: SUBAGENT_COMPLETED
+**Agent Type**: 
+**Agent ID**: ae9bf8f537350f3f1
+**Message**: commit this
+
+---
+
+## Session Resume
+**Timestamp**: 2026-09-09T17:26:10Z
+**Event**: SESSION_RESUMED
+**Source**: resume
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-09T17:26:12Z
+**Event**: HUMAN_TURN
+
+---
