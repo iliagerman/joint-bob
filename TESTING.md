@@ -20,8 +20,9 @@ npm run test:file test/canvas-ui.test.ts
 ```
 
 Always go through `npm run test:file`. It carries `--import ./test/setup.mjs`,
-which points `HOME` and `PI_WEB_DATA_DIR` at a throwaway directory before any
-test code loads. The shared data-directory resolver also detects Node's test
+which points `HOME` and `PI_WEB_DATA_DIR` at a throwaway directory and sets
+`JOINT_BOB_BIND_HOST=127.0.0.1` before any test code loads. Disposable servers
+bind only to loopback, not the machine's external network interfaces. The shared data-directory resolver also detects Node's test
 runner. A bare `node --test test/<file>.test.ts` gets its own temporary data
 directory, and a test process aimed at `~/.joint-bob` fails before opening
 SQLite. This second boundary prevents a missed setup import from writing

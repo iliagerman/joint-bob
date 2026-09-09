@@ -67,7 +67,7 @@ async function startNode(root: string, name: string, syncthing: SyncthingServer)
   child.stderr.on("data", (chunk) => { output += chunk; });
   for (let attempt = 0; attempt < 1200; attempt += 1) {
     if (child.exitCode !== null) throw new Error(`${name} exited during startup (${child.exitCode})\n${output}`);
-    const match = output.match(/listening on http:\/\/0\.0\.0\.0:(\d+)/);
+    const match = output.match(/listening on http:\/\/127\.0\.0\.1:(\d+)/);
     if (match) {
       const node = { baseUrl: `http://127.0.0.1:${match[1]}`, child, homeDir, dataDir, output: () => output };
       try {

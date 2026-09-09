@@ -30,7 +30,7 @@ test("an authenticated request waits out a database write lock instead of dying"
     let base = "";
     for (let attempt = 0; attempt < 1_200 && !base; attempt += 1) {
       assert.equal(child.exitCode, null, `server exited during startup\n${output}`);
-      const match = output.match(/listening on http:\/\/0\.0\.0\.0:(\d+)/);
+      const match = output.match(/listening on http:\/\/127\.0\.0\.1:(\d+)/);
       if (match && (await fetch(`http://127.0.0.1:${match[1]}/api/health`)).ok) base = `http://127.0.0.1:${match[1]}`;
       else await new Promise((resolve) => setTimeout(resolve, 50));
     }

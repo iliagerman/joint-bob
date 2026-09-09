@@ -35,7 +35,7 @@ async function startNode(root: string, name: string, port = 0): Promise<NodeProc
   child.stderr.on("data", (chunk) => { output += chunk.toString(); });
   for (let attempt = 0; attempt < 1200; attempt += 1) {
     if (child.exitCode !== null) throw new Error(`${name} exited during startup (${child.exitCode})\n${output}`);
-    const portMatch = output.match(/listening on http:\/\/0\.0\.0\.0:(\d+)/);
+    const portMatch = output.match(/listening on http:\/\/127\.0\.0\.1:(\d+)/);
     if (portMatch) {
       const node = { baseUrl: `http://127.0.0.1:${portMatch[1]}`, dataDir, child, output: () => output };
       try {

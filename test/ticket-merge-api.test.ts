@@ -44,7 +44,7 @@ async function startNode(root: string, syncthingUrl: string): Promise<StartedNod
   child.stdout?.on("data", (chunk) => { output += chunk; });
   child.stderr?.on("data", (chunk) => { output += chunk; });
   for (let attempt = 0; attempt < 1200; attempt += 1) {
-    const match = output.match(/listening on http:\/\/0\.0\.0\.0:(\d+)/);
+    const match = output.match(/listening on http:\/\/127\.0\.0\.1:(\d+)/);
     if (match && (await fetch(`http://127.0.0.1:${match[1]}/api/health`)).ok) return { baseUrl: `http://127.0.0.1:${match[1]}`, child, homeDir, output: () => output };
     if (child.exitCode !== null) throw new Error(output);
     await new Promise((resolve) => setTimeout(resolve, 50));
