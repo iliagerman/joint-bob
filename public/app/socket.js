@@ -283,16 +283,24 @@ function handleSocketPayload(payload, scrollOnReady = false) {
     finalizeAssistantBubble();
     state.spinOffSourceTaskId = null;
     const bubble = appendMessage("user", payload.text);
-    if (payload.queued) markMessageQueued(bubble, payload.queueId, payload.editableText);
+    if (payload.queued) markMessageQueued(bubble, payload.queueId, payload.editableText, payload.settings, payload.revision);
     state.thinkingBubble = null;
     return;
   }
   // Prompts typed while the agent was busy live on the conversation, not on this
   // socket, so a reload or a reconnect gets them back instead of losing them.
   if (payload.type === "queuedPrompts") {
-    for (const prompt of payload.prompts || []) {
-      if (elements.messages.querySelector(`[data-queue-id="${prompt.id}"]`)) continue;
-      markMessageQueued(appendMessage("user", prompt.text), prompt.id, prompt.editableText);
+    const retained = new Set(payload.prompts.map((prompt) => prompt.id));
+    for (const bubble of elements.messages.querySelectorAll("[data-queue-id]")) {
+      if (!retained.has(bubble.dataset.queueId)) removeQueuedMessage(bubble.dataset.queueId);
+    }
+    for (const prompt of payload.prompts) {
+      const existing = elements.messages.querySelector(`[data-queue-id="${prompt.id}"]`);
+      if (existing) {
+        if (Number(existing.dataset.queueRevision) !== prompt.revision) updateQueuedMessage(prompt.id, prompt.text, prompt.editableText, prompt.settings, prompt.revision);
+        continue;
+      }
+      markMessageQueued(appendMessage("user", prompt.text), prompt.id, prompt.editableText, prompt.settings, prompt.revision);
     }
     return;
   }
@@ -301,7 +309,7 @@ function handleSocketPayload(payload, scrollOnReady = false) {
     return;
   }
   if (payload.type === "queuedPromptEdited") {
-    updateQueuedMessage(payload.queueId, payload.text, payload.editableText);
+    updateQueuedMessage(payload.queueId, payload.text, payload.editableText, payload.settings, payload.revision);
     return;
   }
   if (payload.type === "queuedPromptCancelled") {

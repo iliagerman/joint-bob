@@ -10,7 +10,7 @@ import { listPushSubscriberUserIds, notifyConversationReview } from "../push.js"
 import { type ReplicationBatch, replicationInvalidations } from "../replication.js";
 import { getProject } from "../store.js";
 import { saveUpdateRecoveries, type UpdateRecoveryRecord } from "../update-recovery.js";
-import { sendClaudeStatus, subscribeSharedSession } from "./chat.js";
+import { resumeSharedPromptQueue, sendClaudeStatus, subscribeSharedSession } from "./chat.js";
 import { listProjectSessionsWithReviewState } from "./sessions-helpers.js";
 import { activeClaudeConnections, claudeClients, flags, idleSessionTimeoutMs, localWriteGraceMs, type PiSessionHandle, server, type SharedPiSession, sharedSessions, watchClients, webSocketServer } from "./state.js";
 import { claudeTaskRuns, piTaskRuns } from "./task-runs.js";
@@ -71,7 +71,10 @@ export async function reloadSharedSkills(): Promise<{ reloaded: number; skipped:
       broadcastStatus(shared); broadcastTools(shared); reloaded += 1;
     } catch (error) {
       failed.push({ sessionId: shared.handle.session.sessionId, error: error instanceof Error ? error.message : String(error) });
-    } finally { if (!shared.clients.size) scheduleIdleDispose(shared); }
+    } finally {
+      resumeSharedPromptQueue(shared);
+      if (!shared.clients.size) scheduleIdleDispose(shared);
+    }
   }
   return { reloaded, skipped, failed };
 }

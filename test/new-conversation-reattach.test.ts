@@ -47,6 +47,7 @@ test("a Claude draft reconnects with its original session id before its first pr
     const executable = path.join(root, "fake-claude.mjs");
     await writeFile(executable, `#!/usr/bin/env node
 import { appendFile } from 'node:fs/promises';
+if (process.argv[2] === 'auth') { console.log(JSON.stringify({ loggedIn: true })); process.exit(0); }
 let prompt = ''; for await (const chunk of process.stdin) prompt += chunk;
 await appendFile(process.env.JOINT_BOB_FAKE_CALLS, JSON.stringify(process.argv.slice(2)) + '\\n');
 const i = process.argv.indexOf('--session-id');

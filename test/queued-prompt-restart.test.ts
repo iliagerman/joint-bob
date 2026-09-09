@@ -25,7 +25,7 @@ test("a queued prompt survives a node crash and runs when the node comes back", 
     socket = opened.socket;
     await waitFor(opened.messages, () => opened.messages.some((message) => message.type === "ready"));
     socket.send(JSON.stringify({ type: "prompt", message: "first" }));
-    await waitFor(opened.messages, () => opened.messages.some((message) => message.type === "sessionFile"));
+    await waitFor(opened.messages, () => opened.messages.some((message) => message.type === "sessionFile") && opened.messages.some((message) => message.type === "promptStarted"));
     const sessionFile = String(opened.messages.find((message) => message.type === "sessionFile")!.sessionFile);
     socket.send(JSON.stringify({ type: "prompt", message: "second" }));
     await waitFor(opened.messages, () => opened.messages.some((message) => message.type === "userMessage" && message.queued === true && message.text === "second"));
@@ -74,13 +74,14 @@ test("a prompt queued before the conversation has an id survives a crash under i
     socket.send(JSON.stringify({ type: "prompt", message: "first" }));
     await waitFor(opened.messages, () => opened.messages.some((message) => message.type === "agent_start"));
 
-    // The conversation still has no id, so this queues under the placeholder key.
+    // Claude has not reported its final id, so this queues under the provisional key.
     socket.send(JSON.stringify({ type: "prompt", message: "second" }));
-    await waitFor(opened.messages, () => opened.messages.some((message) => message.type === "userMessage" && message.queued === true));
+    await waitFor(opened.messages, () => opened.messages.some((message) => message.type === "userMessage" && message.queued === true && message.text === "second"));
     assert.equal(opened.messages.some((message) => message.type === "sessionFile"), false, "the conversation has no id yet");
 
     await writeFile(path.join(root, "init-gate"), "");
-    await waitFor(opened.messages, () => opened.messages.some((message) => message.type === "sessionFile"));
+    // Init only identifies the process. Wait for turn acceptance before crashing it.
+    await waitFor(opened.messages, () => opened.messages.some((message) => message.type === "sessionFile") && opened.messages.some((message) => message.type === "promptStarted"));
     const sessionFile = String(opened.messages.find((message) => message.type === "sessionFile")!.sessionFile);
     assert.match(sessionFile, /8f21c0de-4b77-4a15-9c33-7e5d0a2b6f10/, "the conversation adopted the id Claude reported");
 

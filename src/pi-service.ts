@@ -253,7 +253,18 @@ export async function listAvailableModels(): Promise<ModelSummary[]> {
       return `${left.provider}/${left.id}`.localeCompare(`${right.provider}/${right.id}`);
     })
     .map((model) => summarizeModel(model))
-    .filter((model): model is ModelSummary => Boolean(model));
+    .filter((model): model is ModelSummary => Boolean(model))
+    .map((model) => ({ ...model, thinkingLevels: modelThinkingLevels(model.provider, model.id) }));
+}
+
+export function modelThinkingLevels(provider: string, modelId: string): string[] {
+  const model = modelRuntime.getModel(provider, modelId);
+  if (!model) throw new Error(`Model not found: ${provider}/${modelId}`);
+  if (!model.reasoning) return ["off"];
+  return ["off", "minimal", "low", "medium", "high", "xhigh", "max"].filter((level) => {
+    const mapped = model.thinkingLevelMap?.[level as keyof NonNullable<typeof model.thinkingLevelMap>];
+    return mapped !== null && (!["xhigh", "max"].includes(level) || mapped !== undefined);
+  });
 }
 
 export async function setSessionModel(session: AgentSession, provider: string, modelId: string): Promise<ModelSummary> {

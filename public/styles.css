@@ -1098,7 +1098,10 @@ select.chat-toolbar-control {
 .queued-controls button, .queued-editor button { min-height: 26px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--muted); font-size: 11px; }
 .queued-controls button:hover, .queued-controls button:focus-visible, .queued-editor button:hover, .queued-editor button:focus-visible { border-color: var(--line-strong); color: var(--text); }
 .queued-editor { display: grid; grid-template-columns: 1fr auto auto; gap: 7px; margin-top: 8px; }
-.queued-editor[hidden] { display: none; }
+.queued-editor[hidden], .queued-controls[hidden] { display: none; }
+.queued-editor-hints { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }
+.queued-settings { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 7px; }
+.queued-settings select { max-width: 100%; }
 .queued-editor textarea { grid-column: 1 / -1; width: min(520px, 70vw); min-height: 80px; resize: vertical; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--panel); color: var(--text); font: inherit; }
 .queued-editor button:first-of-type { grid-column: 2; }
 .message.assistant { align-self: flex-start; width: 100%; max-width: 100%; padding: 12px 15px; border-color: var(--line); background: var(--panel); }

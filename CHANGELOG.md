@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Chat toolbar controls, action labels, and shortcut badges now line up on shared rows.
+- Queued messages can now use different models and reasoning levels; settings persist across reconnections.
 
 ## 1.12.2 — 2026-09-08
 

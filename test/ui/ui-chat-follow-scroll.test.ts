@@ -218,6 +218,7 @@ test("scrolling away releases follow until the reader returns to the bottom", as
 async function installFakeClaude(): Promise<string> {
   const fake = path.join(root, "fake-claude.mjs");
   await writeFile(fake, `#!/usr/bin/env node
+if (process.argv[2] === 'auth') { console.log(JSON.stringify({ loggedIn: true })); process.exit(0); }
 await new Promise((resolve) => process.stdin.on('end', resolve).resume());
 const args = process.argv.slice(2);
 const supplied = args.indexOf('--session-id');

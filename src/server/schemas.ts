@@ -1,4 +1,5 @@
 import path from "node:path";
+import { queuedSettingsSchema } from "../prompt-queue.js";
 import { z } from "zod";
 import { canonicalCanvasKeyToken } from "../canvas-keys.js";
 import { listHarnesses } from "../harnesses.js";
@@ -101,7 +102,7 @@ const replicationEventSchema = z.object({
   originNodeId: z.string().uuid(),
   entityType: z.string().min(1).max(80),
   entityKey: z.string().min(1).max(300),
-  operation: z.enum(["upsert", "delete"]),
+  operation: z.enum(["upsert", "delete", "settings"]),
   payload: z.unknown(),
   createdAt: z.string().datetime(),
 });
@@ -466,7 +467,9 @@ export const userPreferencesSchema = z.object({
 export const socketMessageSchema = z.object({
   type: z.string().max(40),
   message: z.string().max(100_000).optional(),
-  queueId: z.number().int().positive().optional(),
+  queueId: z.string().uuid().optional(),
+  queueRevision: z.number().int().positive().optional(),
+  queueSettings: queuedSettingsSchema.nullable().optional(),
   name: z.string().trim().max(120).optional(),
   provider: z.string().max(80).optional(),
   modelId: z.string().max(200).optional(),

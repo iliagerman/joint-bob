@@ -1,3 +1,5 @@
+import { preflightQueuedClaude } from "../queued-preflight.js";
+import { queuedAttachments } from "../queued-attachments.js";
 import { randomUUID } from "node:crypto";
 import { access, appendFile, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -6,11 +8,11 @@ import { z } from "zod";
 import { agentRunDescriptor } from "../agent-run-monitor.js";
 import { appendLiveEvent, buildHandoffContext, type ClaudeRunResult, claudeSessionFilePath, ensureLocalClaudeTranscript, runClaudePrompt } from "../claude-service.js";
 import { getClusterNode } from "../cluster.js";
-import { ensureConversationRecord, getConversationRecord } from "../conversation-records.js";
+import { ensureConversationRecord, getConversationRecord, listConversationSegments } from "../conversation-records.js";
 import { conversationTranscriptPayload } from "../conversation-segments.js";
 import { listHarnessSessions } from "../harnesses.js";
-import { createPiSession, eventPayload, getSessionStatus, listAvailableModels, reloadPiAuth, sessionIsBusy, setSessionModel, simplifyMessages } from "../pi-service.js";
-import { cancelQueuedPrompt, claimQueuedPrompt, editQueuedPrompt, enqueuePrompt, rekeyQueuedPrompts, type QueuedPrompt } from "../prompt-queue.js";
+import { createPiSession, eventPayload, getSessionStatus, listAvailableModels, modelThinkingLevels, reloadPiAuth, sessionIsBusy, setSessionModel, simplifyMessages } from "../pi-service.js";
+import { beginQueuedPrompt, resetQueuedPromptAttempt, cancelQueuedPrompt, claimQueuedPrompt, editQueuedPrompt, enqueuePrompt, listQueuedPrompts, logicalQueueKey, readQueueSettings, recordQueueSettings, rekeyQueuedPrompts, type QueuedPrompt, type QueuedSettings } from "../prompt-queue.js";
 import { agentCredentialContext, agentEnvironment, persistConversationSecretAccounts } from "../secrets.js";
 import { conversationBelongsToDoneTask } from "./cluster-helpers.js";
 import { getProject, listProjects } from "../store.js";
@@ -125,8 +127,10 @@ function editedQueuedPrompt(queued: QueuedPrompt, message: string): { promptText
   return { promptText: [message, promptSuffix].filter(Boolean).join("\n\n"), displayText: [message, displaySuffix].filter(Boolean).join("\n\n") };
 }
 
-async function removeQueuedPromptAttachments(queued: QueuedPrompt): Promise<void> {
-  for (const attachmentPath of queued.attachmentPaths) {
+async function removeQueuedPromptAttachments(connection: ChatConnection, queued: QueuedPrompt): Promise<void> {
+  for (const original of queued.attachmentPaths) {
+    if (path.basename(path.dirname(original)) !== ".joint-bob-attachments") throw new Error("Queued attachment path is invalid");
+    const attachmentPath = path.join(connection.cwd, ".joint-bob-attachments", path.basename(original));
     try { await unlink(attachmentPath); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   }
@@ -303,7 +307,8 @@ export function claudeConnectionKey(projectId: string, sessionId: string | null)
 
 /** Where this conversation's pending prompts are stored. */
 export function claudeQueueKey(connection: ChatConnection): string {
-  return claudeConnectionKey(connection.project.id, connection.claude.sessionId);
+  const sessionId = connection.engine === "claude" ? connection.claude.sessionId : connection.shared!.handle.session.sessionId;
+  return logicalQueueKey(claudeConnectionKey(connection.project.id, sessionId));
 }
 
 export function claudeRunKey(projectId: string, sessionPath: string): string {
@@ -350,7 +355,7 @@ async function runStubbedClaudePrompt(connection: ChatConnection, promptText: st
   return { ok: true, sessionId: connection.claude.sessionId, sawOutput: true, assistantText: "stubbed response", tools: ["Bash", "Read", "Edit"] };
 }
 
-async function runClaudeTurn(connection: ChatConnection, promptText: string, displayText: string, showUserMessage = true): Promise<void> {
+async function runClaudeTurn(connection: ChatConnection, promptText: string, displayText: string, showUserMessage = true, onStarted?: () => void): Promise<void> {
   if (connection.claude.child) throw new Error("Claude is still working — stop it first or wait");
   if (!connection.claude.sessionId) throw new Error("Conversation has no ownership identity");
   await requireLocalConversationOwner("claude", connection.claude.sessionId);
@@ -363,7 +368,6 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
     connection.claude.filePath = await ensureLocalClaudeTranscript(connection.cwd, connection.claude.sessionId);
   }
   if (showUserMessage) send(connection.socket, { type: "userMessage", text: displayText });
-  pushTranscript(connection, "user", promptText);
   // Buffer every turn event so a browser that reconnects mid-turn can replay it.
   connection.claude.liveEvents = [];
   const onEvent = (payload: Record<string, unknown>): void => {
@@ -372,6 +376,7 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
       sendClaudeStatus(connection);
       return;
     }
+    if (["textDelta", "thinkingDelta", "toolStart", "toolEnd"].includes(String(payload.type))) markStarted();
     appendLiveEvent(connection.claude.liveEvents, payload);
     send(connection.socket, payload);
   };
@@ -379,7 +384,14 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
   const basePrompt = connection.handoffContext ? `${connection.handoffContext}${promptText}` : promptText;
   const conversationScope = { engine: "claude" as const, ...(connection.claude.sessionId ? { sessionId: connection.claude.sessionId } : {}), accountIds: connection.secretAccountIds };
   const fullPrompt = connection.claude.filePath ? basePrompt : [agentCredentialContext(connection.project.id, conversationScope), basePrompt].filter(Boolean).join("\n\n");
-  connection.handoffContext = null;
+  let accepted = false;
+  const markStarted = () => {
+    if (accepted) return;
+    accepted = true;
+    pushTranscript(connection, "user", promptText);
+    connection.handoffContext = null;
+    onStarted?.();
+  };
 
   const runningKeys = new Set<string>();
   const markClaudeRunning = (sessionFilePath: string): void => {
@@ -429,6 +441,7 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
     tools: connection.claude.enabledTools ?? undefined,
   };
   try {
+    if (process.env.NODE_ENV === "test" && process.env.JOINT_BOB_TEST_ENGINE_LOG) markStarted();
     let result = await runStubbedClaudePrompt(connection, fullPrompt, onEvent);
     if (!result) {
       const run = runClaudePrompt({
@@ -448,6 +461,7 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
     }
 
     if (!result.ok && !result.sawOutput) throw new Error("Claude turn failed before producing output");
+    markStarted();
 
     connection.claude.child = null;
     connection.claude.lastRunEndedAt = Date.now();
@@ -470,7 +484,143 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
   scheduleReviewNotifications(connection.project.id);
 }
 
+export const chatConnections = new Set<ChatConnection>();
 const drainingClaudeQueues = new Set<string>();
+const startingQueuedPrompts = new Set<string>();
+const queueMutations = new Map<string, Promise<void>>();
+
+async function mutatePromptQueue(connection: ChatConnection, payload: SocketPayload): Promise<void> {
+  const key = claudeQueueKey(connection);
+  const previous = queueMutations.get(key) ?? Promise.resolve();
+  const apply = async () => { await requireQueueOwner(connection); await handleClaudeCommand(connection, payload); };
+  const pending = previous.then(apply, apply);
+  queueMutations.set(key, pending);
+  try { await pending; }
+  finally { if (queueMutations.get(key) === pending) queueMutations.delete(key); }
+}
+
+export function promptQueueIsDraining(queueKey: string): boolean {
+  const key = logicalQueueKey(queueKey);
+  return drainingClaudeQueues.has(key) || queueMutations.has(key);
+}
+
+function queueEngineBusy(connection: ChatConnection): boolean {
+  if (connection.engine === "claude") return Boolean(connection.claude.child || activeClaudeConnections.has(claudeConnectionKey(connection.project.id, connection.claude.sessionId)));
+  return Boolean(connection.shared && (connection.shared.turnInFlight || sessionIsBusy(connection.shared.handle)));
+}
+
+function sendQueueEvent(connection: ChatConnection, payload: Record<string, unknown>): void {
+  const key = claudeQueueKey(connection);
+  const sockets = new Set([connection.socket]);
+  for (const client of chatConnections) if (claudeQueueKey(client) === key) sockets.add(client.socket);
+  for (const socket of sockets) send(socket, payload);
+}
+
+export function restoreClaudeQueueSettings(connection: ChatConnection): void {
+  if (connection.claude.child) return;
+  const settings = readQueueSettings(claudeQueueKey(connection));
+  if (settings?.provider !== "claude") return;
+  connection.claude.model = settings.modelId;
+  connection.claude.effort = settings.reasoning === "default" ? null : settings.reasoning;
+}
+
+function currentQueueSettings(connection: ChatConnection): QueuedSettings | null {
+  if (connection.engine === "claude") return { provider: "claude", modelId: connection.claude.model!, reasoning: (connection.claude.effort ?? "default") as QueuedSettings["reasoning"] };
+  const session = connection.shared!.handle.session;
+  return session.model ? { provider: session.model.provider, modelId: session.model.id, reasoning: session.thinkingLevel } : null;
+}
+
+function persistQueueSettings(connection: ChatConnection): void {
+  const settings = currentQueueSettings(connection);
+  if (settings) recordQueueSettings(claudeQueueKey(connection), settings);
+}
+
+export function refreshPromptQueue(connection: ChatConnection): void {
+  const prompts = listQueuedPrompts(claudeQueueKey(connection)).filter((prompt) => prompt.dispatchState !== "starting" || !startingQueuedPrompts.has(prompt.id));
+  connection.claude.promptQueue = prompts.map((prompt) => ({ ...prompt, acknowledged: true }));
+  sendQueueEvent(connection, { type: "queuedPrompts", prompts: prompts.map(({ id, displayText, messageText, settings, revision }) => ({ id, text: displayText, editableText: messageText, settings, revision })) });
+  sendQueueEvent(connection, { type: "queueUpdate", pending: prompts.length });
+}
+
+async function requireQueueOwner(connection: ChatConnection): Promise<void> {
+  const sessionId = connection.engine === "claude" ? connection.claude.sessionId : connection.shared!.handle.session.sessionId;
+  if (!sessionId) throw new Error("Conversation has no ownership identity");
+  await requireLocalConversationOwner(connection.engine, sessionId);
+  const record = await getConversationRecord(connection.project.id, connection.engine, sessionId);
+  const segments = await listConversationSegments(connection.project.id, record?.conversationId ?? sessionId);
+  const latest = segments.at(-1);
+  if (latest && (latest.sessionId !== sessionId || latest.engine !== connection.engine)) throw new Error("Conversation engine changed; reconnect before editing the queue");
+}
+
+async function validateQueuedSettings(settings: QueuedSettings | null): Promise<void> {
+  if (!settings) return;
+  if (settings.provider === "claude") {
+    if (!CLAUDE_MODELS.includes(settings.modelId)) throw new Error("Unknown Claude model");
+    return;
+  }
+  if (!modelThinkingLevels(settings.provider, settings.modelId).includes(settings.reasoning)) throw new Error(`Thinking level unavailable for model: ${settings.reasoning}`);
+  await reloadPiAuth();
+  const available = await listAvailableModels();
+  if (!available.some((model) => model.provider === settings.provider && model.id === settings.modelId)) throw new Error(`Model or authentication unavailable: ${settings.provider}/${settings.modelId}`);
+}
+
+async function preflightQueueEngine(connection: ChatConnection, target: ChatEngine): Promise<void> {
+  if (process.env.NODE_ENV === "test" && process.env.JOINT_BOB_TEST_ENGINE_LOG) return;
+  if (target === "claude") {
+    await preflightQueuedClaude(connection.cwd, agentEnvironment(connection.project.id, { engine: "claude", accountIds: connection.secretAccountIds, ...(connection.claude.sessionId ? { sessionId: connection.claude.sessionId } : {}) }));
+    return;
+  }
+  if (connection.engine !== "pi") return;
+  const session = connection.shared!.handle.session;
+  if (!session.model || !await session.modelRuntime.getAuth(session.model)) throw new Error("Pi model authentication unavailable on this node");
+}
+
+async function applyQueuedSettings(connection: ChatConnection, settings: QueuedSettings | null): Promise<void> {
+  if (!settings) return;
+  await validateQueuedSettings(settings);
+  await switchEngine(connection, settings.provider === "claude" ? "claude" : "pi");
+  if (connection.engine === "claude") {
+    connection.claude.model = settings.modelId;
+    connection.claude.effort = settings.reasoning === "default" ? null : settings.reasoning as ClaudeChatState["effort"];
+    sendClaudeStatus(connection);
+    return;
+  }
+  const session = connection.shared!.handle.session;
+  await setSessionModel(session, settings.provider, settings.modelId);
+  const level = settings.reasoning as Parameters<typeof session.setThinkingLevel>[0];
+  if (!session.getAvailableThinkingLevels().includes(level)) throw new Error(`Thinking level unavailable for model: ${level}`);
+  session.setThinkingLevel(level);
+  sendStatus(connection.socket, connection.shared!.handle);
+}
+
+async function runQueuedPiTurn(connection: ChatConnection, attachments: Awaited<ReturnType<typeof queuedAttachments>>, onStarted: () => void): Promise<void> {
+  const shared = connection.shared!;
+  const text = connection.handoffContext ? `${connection.handoffContext}${attachments.text}` : attachments.text;
+  const markStarted = () => { connection.handoffContext = null; onStarted(); };
+  shared.turnInFlight += 1;
+  broadcastToProject(connection.project.id, { type: "sessionsChanged" });
+  const unsubscribe = shared.handle.session.subscribe((event) => { if (event.type === "agent_start") markStarted(); });
+  try {
+    if (process.env.NODE_ENV === "test" && process.env.JOINT_BOB_TEST_ENGINE_LOG) markStarted();
+    if (!await runStubbedPiPrompt(shared, text)) await shared.handle.session.prompt(text, { images: attachments.images });
+    markStarted();
+  } finally {
+    unsubscribe();
+    shared.turnInFlight -= 1;
+    broadcastToProject(connection.project.id, { type: "sessionsChanged" });
+    sendStatus(connection.socket, shared.handle);
+  }
+}
+
+function resumePromptQueue(connection: ChatConnection): void {
+  void drainClaudePromptQueue(connection).catch((error) => send(connection.socket, { type: "error", error: error instanceof Error ? error.message : String(error) }));
+}
+
+export function resumeSharedPromptQueue(shared: SharedPiSession): void {
+  for (const connection of chatConnections) {
+    if (connection.shared === shared) resumePromptQueue(connection);
+  }
+}
 
 export async function drainClaudePromptQueue(connection: ChatConnection): Promise<void> {
   if (flags.updatePreparing) return;
@@ -487,44 +637,70 @@ export async function drainClaudePromptQueue(connection: ChatConnection): Promis
 }
 
 async function drainClaudePrompts(connection: ChatConnection): Promise<void> {
-  while (!connection.claude.child && connection.claude.promptQueue.length) {
-    const queued = connection.claude.promptQueue.shift()!;
-    // Handing it to the agent ends its pending life: the transcript records it
-    // from here, so a replay must not offer it a second time.
-    if (!claimQueuedPrompt(queued.id)) continue;
-    send(connection.socket, { type: "queueUpdate", pending: connection.claude.promptQueue.length });
-    send(connection.socket, { type: "promptStarted", queueId: queued.id });
-    await runClaudeTurn(connection, queued.promptText, queued.displayText, !queued.acknowledged);
+  for (;;) {
+    if (queueEngineBusy(connection)) return;
+    const queued = listQueuedPrompts(claudeQueueKey(connection))[0];
+    if (!queued) return;
+    if (queued.dispatchState === "starting") throw new Error("Previous queued dispatch outcome is uncertain; edit or cancel before retrying");
+    startingQueuedPrompts.add(queued.id);
+    try {
+    await assertConversationWritable(connection);
+    await requireQueueOwner(connection);
+    const attachments = await queuedAttachments(connection.cwd, queued);
+    const target = queued.settings ? queued.settings.provider === "claude" ? "claude" : "pi" : connection.engine;
+    // Claude must be available before switching engines. Pi auth belongs to the
+    // selected model, so check it only after applying the queued override.
+    if (target === "claude") await preflightQueueEngine(connection, target);
+    await applyQueuedSettings(connection, queued.settings);
+    await preflightQueueEngine(connection, connection.engine);
+    await requireQueueOwner(connection);
+    const current = listQueuedPrompts(claudeQueueKey(connection))[0];
+    if (!current || current.id !== queued.id || current.revision !== queued.revision) continue;
+    if (!beginQueuedPrompt(queued.id, queued.revision)) continue;
+    const onStarted = () => {
+      if (!claimQueuedPrompt(queued.id, currentQueueSettings(connection))) return;
+      sendQueueEvent(connection, { type: "promptStarted", queueId: queued.id });
+      refreshPromptQueue(connection);
+    };
+    if (connection.engine === "claude") await runClaudeTurn(connection, attachments.text, queued.displayText, false, onStarted);
+    else await runQueuedPiTurn(connection, attachments, onStarted);
+    } catch (error) {
+      if (resetQueuedPromptAttempt(queued.id)) refreshPromptQueue(connection);
+      throw error;
+    } finally { startingQueuedPrompts.delete(queued.id); }
   }
 }
 
 async function handleClaudeCommand(connection: ChatConnection, payload: SocketPayload): Promise<void> {
+  if (["editQueuedPrompt", "cancelQueuedPrompt"].includes(payload.type) && payload.queueRevision === undefined) throw new Error("Queued prompt revision missing; reload the conversation");
+  if (payload.queueId && startingQueuedPrompts.has(payload.queueId)) throw new Error("Queued prompt is starting; wait for dispatch");
   if (payload.type === "abort") {
     connection.claude.child?.kill("SIGTERM");
     return;
   }
   if (payload.type === "cancelQueuedPrompt") {
     if (!payload.queueId) throw new Error("Missing queued prompt ID");
-    const index = connection.claude.promptQueue.findIndex((prompt) => prompt.id === payload.queueId);
-    if (index < 0) throw new Error("Queued prompt has already started");
-    const cancelled = cancelQueuedPrompt(claudeQueueKey(connection), payload.queueId);
+    if (!listQueuedPrompts(claudeQueueKey(connection)).some((prompt) => prompt.id === payload.queueId)) throw new Error("Queued prompt has already started");
+    const cancelled = cancelQueuedPrompt(claudeQueueKey(connection), payload.queueId, payload.queueRevision);
     if (!cancelled) throw new Error("Queued prompt has already started");
-    connection.claude.promptQueue.splice(index, 1);
-    await removeQueuedPromptAttachments(cancelled);
-    send(connection.socket, { type: "queuedPromptCancelled", queueId: payload.queueId });
-    send(connection.socket, { type: "queueUpdate", pending: connection.claude.promptQueue.length });
+    await removeQueuedPromptAttachments(connection, cancelled);
+    sendQueueEvent(connection, { type: "queuedPromptCancelled", queueId: payload.queueId });
+    refreshPromptQueue(connection);
+    resumePromptQueue(connection);
     return;
   }
   if (payload.type === "editQueuedPrompt") {
     if (!payload.queueId) throw new Error("Missing queued prompt ID");
     const message = payload.message?.trim();
     if (!message) throw new Error("Queued prompt cannot be empty");
-    const queued = connection.claude.promptQueue.find((prompt) => prompt.id === payload.queueId);
+    const queued = listQueuedPrompts(claudeQueueKey(connection)).find((prompt) => prompt.id === payload.queueId);
     if (!queued) throw new Error("Queued prompt has already started");
     const edited = editedQueuedPrompt(queued, message);
-    if (!editQueuedPrompt(claudeQueueKey(connection), payload.queueId, edited.promptText, edited.displayText, message)) throw new Error("Queued prompt has already started");
-    Object.assign(queued, edited, { messageText: message });
-    send(connection.socket, { type: "queuedPromptEdited", queueId: payload.queueId, text: edited.displayText, editableText: message });
+    await validateQueuedSettings(payload.queueSettings ?? null);
+    if (!editQueuedPrompt(claudeQueueKey(connection), payload.queueId, edited.promptText, edited.displayText, message, payload.queueSettings, payload.queueRevision)) throw new Error("Queued prompt changed or already started; reopen the editor");
+    sendQueueEvent(connection, { type: "queuedPromptEdited", queueId: payload.queueId, text: edited.displayText, editableText: message, settings: payload.queueSettings === undefined ? queued.settings : payload.queueSettings, revision: queued.revision + 1 });
+    refreshPromptQueue(connection);
+    resumePromptQueue(connection);
     return;
   }
   if (payload.type === "prompt") {
@@ -538,24 +714,26 @@ async function handleClaudeCommand(connection: ChatConnection, payload: SocketPa
     const promptSuffix = promptTextWithAttachments("", imageAttachments, fileAttachments);
     const displaySuffix = promptDisplayText("", imageAttachments.map((image) => image.name), fileAttachments.map((file) => file.name));
     const attachmentPaths = [...imageAttachments, ...fileAttachments].map((attachment) => attachment.path);
-    const acknowledged = Boolean(connection.claude.child || connection.claude.promptQueue.length);
-    const stored = enqueuePrompt(claudeQueueKey(connection), promptText, displayText, { messageText, promptSuffix, displaySuffix, attachmentPaths });
-    if (acknowledged) send(connection.socket, { type: "userMessage", text: displayText, editableText: messageText, queued: true, queueId: stored.id });
-    connection.claude.promptQueue.push({ ...stored, acknowledged });
-    send(connection.socket, { type: "queueUpdate", pending: connection.claude.promptQueue.length });
-    await drainClaudePromptQueue(connection);
+    await validateQueuedSettings(payload.queueSettings ?? null);
+    const images = imageAttachments.map((image, index) => ({ path: image.path, mimeType: payload.images![index].mimeType }));
+    const stored = enqueuePrompt(claudeQueueKey(connection), promptText, displayText, { messageText, promptSuffix, displaySuffix, attachmentPaths, images, settings: payload.queueSettings });
+    sendQueueEvent(connection, { type: "userMessage", text: displayText, editableText: messageText, queued: true, queueId: stored.id, settings: stored.settings, revision: stored.revision });
+    refreshPromptQueue(connection);
+    resumePromptQueue(connection);
     return;
   }
   if (connection.claude.child) throw new Error(`Cannot ${payload.type} while Claude is working`);
   if (payload.type === "setModel") {
     if (!payload.modelId || !CLAUDE_MODELS.includes(payload.modelId)) throw new Error(`Claude model must be one of: ${CLAUDE_MODELS.join(", ")}`);
     connection.claude.model = payload.modelId;
+    persistQueueSettings(connection);
     sendClaudeStatus(connection);
     return;
   }
   if (payload.type === "setEffort") {
     if (!payload.effort) throw new Error("Missing effort level");
     connection.claude.effort = payload.effort === "default" ? null : payload.effort;
+    persistQueueSettings(connection);
     sendClaudeStatus(connection);
     return;
   }
@@ -620,15 +798,8 @@ async function logicalConversationTranscript(connection: ChatConnection): Promis
     ? connection.claude.transcript
     : connection.shared ? simplifyMessages(connection.shared.handle.session.messages as unknown[]) : [];
   if (!sessionId) return active;
-  try {
-    // The payload's messages are exactly the earlier segments: the active one is
-    // excluded by identity and the active messages are supplied separately.
-    const payload = await conversationTranscriptPayload(connection.project.id, engine, sessionId, await listHarnessSessions(connection.project), []);
-    return [...payload.messages, ...active];
-  } catch (error) {
-    console.warn("Could not load earlier segments for handoff", error);
-    return active;
-  }
+  const payload = await conversationTranscriptPayload(connection.project.id, engine, sessionId, await listHarnessSessions(connection.project), []);
+  return [...payload.messages, ...active];
 }
 
 async function switchEngine(connection: ChatConnection, engine: ChatEngine): Promise<void> {
@@ -640,14 +811,14 @@ async function switchEngine(connection: ChatConnection, engine: ChatEngine): Pro
   const transcript = await logicalConversationTranscript(connection);
 
   if (engine === "claude") {
+    const sessionId = randomUUID();
+    await claimConversationLocally("claude", sessionId, local.id);
+    await ensureConversationRecord(connection.project.id, "claude", sessionId, local.id, connection.taskId ?? undefined, lineage ? { conversationId: lineage.conversationId, segmentIndex: lineage.segmentIndex + 1 } : undefined);
     if (connection.shared) {
       connection.shared.clients.delete(connection.socket);
       scheduleIdleDispose(connection.shared);
       connection.shared = null;
     }
-    const sessionId = randomUUID();
-    await claimConversationLocally("claude", sessionId, local.id);
-    await ensureConversationRecord(connection.project.id, "claude", sessionId, local.id, connection.taskId ?? undefined, lineage ? { conversationId: lineage.conversationId, segmentIndex: lineage.segmentIndex + 1 } : undefined);
     broadcastToProject(connection.project.id, { type: "sessionsChanged" });
     connection.engine = "claude";
     connection.claude = emptyClaudeState(sessionId);
@@ -658,15 +829,14 @@ async function switchEngine(connection: ChatConnection, engine: ChatEngine): Pro
     return;
   }
 
-  connection.claude.child?.kill("SIGTERM");
-  activeClaudeConnections.delete(claudeConnectionKey(connection.project.id, connection.claude.sessionId));
-  claudeClients.delete(connection.socket);
-  connection.handoffContext = transcript.length ? buildHandoffContext(transcript) : null;
   const sessionId = randomUUID();
+  const sharedSession = await getSharedSession(connection.project.id, connection.cwd, undefined, sessionId, connection.secretAccountIds);
   await claimConversationLocally("pi", sessionId, local.id);
   await ensureConversationRecord(connection.project.id, "pi", sessionId, local.id, connection.taskId ?? undefined, lineage ? { conversationId: lineage.conversationId, segmentIndex: lineage.segmentIndex + 1 } : undefined);
   broadcastToProject(connection.project.id, { type: "sessionsChanged" });
-  const sharedSession = await getSharedSession(connection.project.id, connection.cwd, undefined, sessionId, connection.secretAccountIds);
+  activeClaudeConnections.delete(claudeConnectionKey(connection.project.id, connection.claude.sessionId));
+  claudeClients.delete(connection.socket);
+  connection.handoffContext = transcript.length ? buildHandoffContext(transcript) : null;
   sharedSession.clients.add(connection.socket);
   connection.shared = sharedSession;
   connection.engine = "pi";
@@ -688,7 +858,11 @@ export async function handleChatMessage(connection: ChatConnection, raw: Buffer)
 
   if (payload.type === "setEngine") {
     if (!payload.engine) throw new Error("Missing engine");
+    await requireQueueOwner(connection);
+    if (queueEngineBusy(connection) || drainingClaudeQueues.has(claudeQueueKey(connection))) throw new Error("Wait for the current turn before switching engines");
     await switchEngine(connection, payload.engine);
+    refreshPromptQueue(connection);
+    resumePromptQueue(connection);
     return;
   }
 
@@ -696,6 +870,10 @@ export async function handleChatMessage(connection: ChatConnection, raw: Buffer)
     const sessionId = connection.engine === "claude" ? connection.claude.sessionId : connection.shared?.handle.session.sessionId;
     if (!sessionId) throw new Error("Conversation has no ownership identity");
     await requireLocalConversationOwner(connection.engine, sessionId);
+  }
+  if (["prompt", "editQueuedPrompt", "cancelQueuedPrompt"].includes(payload.type)) {
+    await mutatePromptQueue(connection, payload);
+    return;
   }
   if (connection.engine === "claude") {
     await handleClaudeCommand(connection, payload);
@@ -797,9 +975,12 @@ async function handlePiCommand(connection: ChatConnection, shared: SharedPiSessi
     if (sessionIsBusy(handle)) throw new Error("Wait for the Pi session to finish before compacting");
     const compaction = handle.session.compact(payload.message?.trim() || undefined);
     broadcastStatus(shared);
-    await compaction;
+    try { await compaction; }
+    finally {
+      broadcastStatus(shared);
+      resumePromptQueue(connection);
+    }
     send(socket, { type: "sessionsChanged" });
-    broadcastStatus(shared);
     return;
   }
 

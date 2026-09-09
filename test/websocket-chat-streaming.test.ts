@@ -26,6 +26,7 @@ async function fakeClaude(root: string): Promise<string> {
   const executable = path.join(root, "fake-claude.mjs");
   await writeFile(executable, `#!/usr/bin/env node
 import { appendFile } from 'node:fs/promises';
+if (process.argv[2] === 'auth') { console.log(JSON.stringify({ loggedIn: true })); process.exit(0); }
 let prompt = '';
 for await (const chunk of process.stdin) prompt += chunk;
 await appendFile(process.env.JOINT_BOB_FAKE_INVOCATIONS, prompt.trim() + '\\n');
@@ -88,13 +89,13 @@ test("Claude WebSocket streams before finalization and executes queued prompts o
     socket.send(JSON.stringify({ type: "prompt", message: "second" }));
     await waitFor(messages, () => messages.some((message) => message.type === "userMessage" && message.text === "second" && message.queued === true));
     const second = messages.find((message) => message.type === "userMessage" && message.text === "second");
-    socket.send(JSON.stringify({ type: "editQueuedPrompt", queueId: second?.queueId, message: "second, edited" }));
+    socket.send(JSON.stringify({ type: "editQueuedPrompt", queueId: second?.queueId, queueRevision: second?.revision, message: "second, edited" }));
     await waitFor(messages, () => messages.some((message) => message.type === "queuedPromptEdited" && message.queueId === second?.queueId));
 
     socket.send(JSON.stringify({ type: "prompt", message: "cancel me" }));
     await waitFor(messages, () => messages.some((message) => message.type === "userMessage" && message.text === "cancel me" && message.queued === true));
     const cancelled = messages.find((message) => message.type === "userMessage" && message.text === "cancel me");
-    socket.send(JSON.stringify({ type: "cancelQueuedPrompt", queueId: cancelled?.queueId }));
+    socket.send(JSON.stringify({ type: "cancelQueuedPrompt", queueId: cancelled?.queueId, queueRevision: cancelled?.revision }));
     await waitFor(messages, () => messages.some((message) => message.type === "queuedPromptCancelled" && message.queueId === cancelled?.queueId));
 
     socket.send(JSON.stringify({ type: "setEffort", effort: "high" }));

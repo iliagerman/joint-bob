@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { applyQueuedPromptEvent } from "./prompt-queue.js";
 import { promises as fs } from "node:fs";
 import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
@@ -88,7 +89,7 @@ export function replicationEventProjectId(event: ReplicationEvent): string | und
   const payload = event.payload as Record<string, unknown> | null | undefined;
   if (!payload || typeof payload !== "object") return undefined;
   if (event.entityType === "name.override") return payload.scope === "projects" && typeof payload.key === "string" ? payload.key : undefined;
-  if (!["task", "project.lock", "conversation.record", "canvas.shortcut", "user.pin", "user.recent", "conversation.review"].includes(event.entityType)) return undefined;
+  if (!["task", "project.lock", "conversation.record", "conversation.queue", "canvas.shortcut", "user.pin", "user.recent", "conversation.review"].includes(event.entityType)) return undefined;
   return typeof payload.projectId === "string" && payload.projectId ? payload.projectId : undefined;
 }
 
@@ -121,7 +122,7 @@ export function replicationInvalidations(events: ReplicationEvent[]): Replicatio
   const entityTypes = new Set(events.map((event) => event.entityType));
   const invalidations = new Set<ReplicationInvalidation>();
   if (entityTypes.has("name.override") || entityTypes.has("project.lock")) invalidations.add("projectsChanged");
-  if (["name.override", "task", "conversation.ownership", "conversation.record", "conversation.review"].some((type) => entityTypes.has(type))) invalidations.add("sessionsChanged");
+  if (["name.override", "task", "conversation.ownership", "conversation.record", "conversation.queue", "conversation.review"].some((type) => entityTypes.has(type))) invalidations.add("sessionsChanged");
   if (entityTypes.has("task")) invalidations.add("tasksChanged");
   if (entityTypes.has("canvas.shortcut")) invalidations.add("shortcutsChanged");
   if (entityTypes.has("user.pin")) invalidations.add("pinsChanged");
@@ -231,6 +232,7 @@ const REPLICATION_APPLIERS: Record<string, ReplicationApplier> = {
   task: applyTaskEvent,
   "conversation.ownership": applyConversationOwnershipEvent,
   "conversation.record": applyConversationRecordEvent,
+  "conversation.queue": applyQueuedPromptEvent,
   "conversation.review": applyConversationReviewEvent,
   "canvas.shortcut": applyCanvasShortcutEvent,
   "user.pin": applyUserPinEvent,

@@ -1,3 +1,4 @@
+import { openQueuedModelPicker, queuedReasoningLevels } from "./composer-dialogs.js";
 import { renderMarkdown } from "../markdown.js";
 import { elements } from "./elements.js";
 import { menuIcon } from "./icons.js";
@@ -392,21 +393,37 @@ function queuedEditableText(text) {
   return text.startsWith("Attached: ") ? "" : text;
 }
 
-export function markMessageQueued(bubble, queueId, editableText = null) {
-  bubble.classList.add("queued");
-  bubble.dataset.queueId = String(queueId);
-  if (typeof editableText === "string") bubble.dataset.queuedEditableText = editableText;
-  bubble.dataset.testid = `queued-message-${queueId}`;
+function queuedSettingsEditor(bubble) {
+  const container = document.createElement("div");
+  container.className = "queued-settings";
+  const model = queuedButton("Inherit conversation settings", "queued-message-model-button");
+  const reasoning = document.createElement("select");
+  reasoning.dataset.testid = "queued-message-reasoning-select";
+  reasoning.setAttribute("aria-label", "Queued message reasoning");
+  let draft = null;
+  const render = () => {
+    model.textContent = draft ? `${draft.provider}/${draft.modelId}` : "Inherit conversation settings";
+    reasoning.hidden = !draft;
+    reasoning.replaceChildren();
+    if (!draft) return;
+    const levels = queuedReasoningLevels(draft.provider, draft.modelId);
+    reasoning.disabled = levels === null;
+    if (levels === null) {
+      model.textContent += " (unavailable on this node)";
+      reasoning.add(new Option(draft.reasoning, draft.reasoning));
+    } else for (const level of levels) reasoning.add(new Option(level, level));
+    reasoning.value = draft.reasoning;
+  };
+  model.addEventListener("click", () => openQueuedModelPicker(draft ? `${draft.provider}/${draft.modelId}` : "/", (selected) => {
+    draft = selected ? { provider: selected.provider, modelId: selected.id, reasoning: queuedReasoningLevels(selected.provider, selected.id)[0] } : null;
+    render();
+  }));
+  reasoning.addEventListener("change", () => { draft.reasoning = reasoning.value; });
+  container.append(model, reasoning);
+  return { container, reset: () => { draft = JSON.parse(bubble.dataset.queueSettings); render(); }, value: () => draft };
+}
 
-  const footer = document.createElement("div");
-  footer.className = "queued-controls";
-  const badge = document.createElement("span");
-  badge.className = "queued-badge";
-  badge.textContent = "Queued";
-  const edit = queuedButton("Edit", "queued-message-edit-button");
-  const cancel = queuedButton("Cancel", "queued-message-cancel-button");
-  footer.append(badge, edit, cancel);
-
+function queuedEditor(bubble, queueId, footer, edit) {
   const editor = document.createElement("div");
   editor.className = "queued-editor";
   editor.hidden = true;
@@ -414,10 +431,17 @@ export function markMessageQueued(bubble, queueId, editableText = null) {
   input.dataset.testid = "queued-message-edit-input";
   input.setAttribute("aria-label", "Edit queued message");
   const save = queuedButton("Save", "queued-message-save-button");
-  const discard = queuedButton("Keep", "queued-message-edit-cancel-button");
-  editor.append(input, save, discard);
+  const discard = queuedButton("Cancel", "queued-message-edit-cancel-button");
+  const hints = document.createElement("small");
+  hints.className = "queued-editor-hints";
+  hints.textContent = "Cmd/Ctrl+Enter to save · Escape to cancel";
+  save.setAttribute("aria-keyshortcuts", "Meta+Enter Control+Enter");
+  discard.setAttribute("aria-keyshortcuts", "Escape");
+  const settings = queuedSettingsEditor(bubble);
+  editor.append(input, settings.container, hints, save, discard);
 
   edit.addEventListener("click", () => {
+    settings.reset();
     input.value = bubble.dataset.queuedEditableText ?? queuedEditableText(bubble._raw);
     footer.hidden = true;
     editor.hidden = false;
@@ -427,24 +451,52 @@ export function markMessageQueued(bubble, queueId, editableText = null) {
   discard.addEventListener("click", () => {
     editor.hidden = true;
     footer.hidden = false;
+    edit.focus();
+  });
+  editor.addEventListener("keydown", (event) => {
+    if (event.isComposing || event.repeat) return;
+    if (event.key !== "Escape" && !(event.key === "Enter" && (event.metaKey || event.ctrlKey))) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === "Escape") discard.click();
+    else save.click();
   });
   save.addEventListener("click", () => {
     const message = input.value.trim();
     if (!message) { toast("Queued message cannot be empty"); return; }
-    sendQueuedPromptAction({ type: "editQueuedPrompt", queueId, message });
+    sendQueuedPromptAction({ type: "editQueuedPrompt", queueId, message, queueSettings: settings.value(), queueRevision: Number(bubble.dataset.queueRevision) });
   });
-  cancel.addEventListener("click", () => {
-    sendQueuedPromptAction({ type: "cancelQueuedPrompt", queueId });
-  });
+  return editor;
+}
 
-  bubble.append(footer, editor);
+export function markMessageQueued(bubble, queueId, editableText = null, settings = null, revision = 1) {
+  bubble.dataset.queueSettings = JSON.stringify(settings);
+  bubble.dataset.queueRevision = String(revision);
+  bubble.classList.add("queued");
+  bubble.dataset.queueId = String(queueId);
+  if (typeof editableText === "string") bubble.dataset.queuedEditableText = editableText;
+  bubble.dataset.testid = `queued-message-${queueId}`;
+  const footer = document.createElement("div");
+  footer.className = "queued-controls";
+  const badge = document.createElement("span");
+  badge.className = "queued-badge";
+  badge.textContent = "Queued";
+  const edit = queuedButton("Edit", "queued-message-edit-button");
+  const cancel = queuedButton("Cancel", "queued-message-cancel-button");
+  footer.append(badge, edit, cancel);
+  cancel.addEventListener("click", () => {
+    sendQueuedPromptAction({ type: "cancelQueuedPrompt", queueId, queueRevision: Number(bubble.dataset.queueRevision) });
+  });
+  bubble.append(footer, queuedEditor(bubble, queueId, footer, edit));
   return bubble;
 }
 
-export function updateQueuedMessage(queueId, text, editableText) {
+export function updateQueuedMessage(queueId, text, editableText, settings = null, revision = 1) {
   const bubble = elements.messages.querySelector(`[data-queue-id="${queueId}"]`);
   if (!bubble) return;
   renderBubbleContent(bubble, text, true);
+  bubble.dataset.queueSettings = JSON.stringify(settings);
+  bubble.dataset.queueRevision = String(revision);
   bubble.dataset.queuedEditableText = editableText;
   bubble.querySelector(".queued-editor").hidden = true;
   bubble.querySelector(".queued-controls").hidden = false;

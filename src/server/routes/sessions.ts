@@ -4,17 +4,18 @@ import path from "node:path";
 import { z } from "zod";
 import type { AuthSession } from "../../auth.js";
 import { type ClusterPeer, getClusterMachineToken, getClusterNode, getClusterPeer, listClusterPeers } from "../../cluster.js";
-import { beginConversationRecovery, type ConversationEngine, type ConversationOwnership, finishConversationRecovery, getConversationOwnership, type OwnershipApplyResult, sameConversationOwnership, takeConversationOwnership } from "../../conversation-ownership.js";
-import { deleteConversationRecord } from "../../conversation-records.js";
+import { beginConversationRecovery, compareAndSetConversationOwnership, type ConversationEngine, type ConversationOwnership, finishConversationRecovery, getConversationOwnership, type OwnershipApplyResult, sameConversationOwnership, takeConversationOwnership } from "../../conversation-ownership.js";
+import { deleteConversationRecord, getConversationRecord } from "../../conversation-records.js";
 import { markConversationReviewed, markConversationsReviewed } from "../../conversation-reviews.js";
 import { listHarnessSessions } from "../../harnesses.js";
-import { receiveReplicationBatch } from "../../replication.js";
+import { queuedPromptSnapshot } from "../../prompt-queue.js";
+import { receiveReplicationBatch, type ReplicationEvent } from "../../replication.js";
 import { capturePiRecoverySnapshot, recoverPiSessionDirectory, resolveLocalSessionPath } from "../../session-paths.js";
 import { getProject, touchProject } from "../../store.js";
 import { listTasks } from "../../tasks.js";
 import type { ProjectRecord, SessionSummary } from "../../types.js";
 import { TaskWorktreeError } from "../../worktrees.js";
-import { claudeConnectionKey } from "../chat.js";
+import { claudeConnectionKey, promptQueueIsDraining } from "../chat.js";
 import { conversationBelongsToDoneTask } from "../cluster-helpers.js";
 import { sendError } from "../http-auth.js";
 import { assertProjectEditable, projectsWithSharedNames } from "../projects.js";
@@ -135,6 +136,54 @@ async function assertDraftTakeoverReady(project: ProjectRecord, matching: Sessio
   if (!presence.found || presence.hasTranscript) throw new TaskWorktreeError("Wait for the conversation transcript to synchronize to this node before taking ownership");
 }
 
+app.post("/api/cluster/sessions/queue-transfer", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const payload = z.object({ projectId: z.string().min(1), engine: registeredHarnessIdSchema, sessionId: z.string().min(1) }).parse(request.body);
+    const project = await getProject(payload.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    const listed = await listHarnessSessions(project);
+    if (!listed.some((session) => session.id === payload.sessionId && session.harnessId === payload.engine)) throw new Error("Queue conversation is not the active segment in this project");
+    const local = await getClusterNode();
+    const destination = response.locals.machineNodeId as string;
+    const current = await getConversationOwnership(payload.engine, payload.sessionId);
+    if (!current || current.ownerNodeId !== local.id || !["owned", "transferring", "conflict"].includes(current.status)) throw new Error("Queue transfer requires its current owner");
+    if (current.status === "transferring" && current.transferToNodeId !== destination) throw new Error("Conversation is transferring to another node");
+    const record = await getConversationRecord(project.id, payload.engine, payload.sessionId);
+    const key = `${project.id}:${record?.conversationId ?? payload.sessionId}`;
+    if (promptQueueIsDraining(key)) throw new Error("Wait for the current queue dispatch to finish before transferring");
+    const fenced = { ...current, status: "transferring" as const, transferToNodeId: destination };
+    const result = await compareAndSetConversationOwnership(current, fenced, local.id);
+    if (!result.accepted) throw new Error("Conversation owner changed during queue transfer");
+    if (promptQueueIsDraining(key)) throw new Error("Queue dispatch is settling; retry transfer");
+    response.json({ events: [ownershipEvent(fenced, local.id), ...queuedPromptSnapshot(key)] });
+  } catch (error) { next(error); }
+});
+
+async function synchronizeQueueBeforeTakeover(projectId: string, engine: ConversationEngine, sessionId: string, localId: string, peers: ClusterPeer[]): Promise<void> {
+  const current = await getConversationOwnership(engine, sessionId);
+  if (current?.ownerNodeId === localId && current.status === "owned") return;
+  for (const peer of peers) {
+    const url = new URL("/api/cluster/sessions/ownership", peer.url);
+    url.searchParams.set("engine", engine); url.searchParams.set("sessionId", sessionId);
+    const reply = await fetch(url, { headers: { Authorization: `Bearer ${await getClusterMachineToken()}` }, signal: AbortSignal.timeout(5_000) });
+    if (!reply.ok) throw new TaskWorktreeError("Cannot verify queue ownership on peer");
+    const remote = z.object({ ownership: ownershipSchema.nullable() }).parse(await reply.json()).ownership;
+    if (remote) await receiveReplicationBatch({ events: [ownershipEvent(remote, peer.id)] });
+  }
+  const previous = await getConversationOwnership(engine, sessionId);
+  if (!previous || previous.ownerNodeId === localId) return;
+  const source = peers.find((peer) => peer.id === previous.ownerNodeId);
+  if (!source) throw new TaskWorktreeError("Queue owner is unavailable; cannot safely transfer pending prompts");
+  const response = await fetch(`${source.url}/api/cluster/sessions/queue-transfer`, {
+    method: "POST", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ projectId, engine, sessionId }), signal: AbortSignal.timeout(5_000),
+  });
+  if (!response.ok) throw new TaskWorktreeError("Queue transfer was not acknowledged by its owner; wait for dispatch to finish and retry");
+  const snapshot = await response.json() as { events: ReplicationEvent[] };
+  await receiveReplicationBatch(snapshot);
+}
+
 async function takeLocalSessionOwnership(project: ProjectRecord, payload: z.infer<typeof routedSessionTakeOwnershipSchema>): Promise<{ sessionPath: string; ownership: ConversationOwnership; pendingPeerIds: string[] }> {
   const [local, sessions, peers] = await Promise.all([getClusterNode(), listHarnessSessions(project), listClusterPeers()]);
   if (payload.peerId !== local.id) throw new Error("Takeover destination is not this node");
@@ -144,6 +193,7 @@ async function takeLocalSessionOwnership(project: ProjectRecord, payload: z.infe
   const engine: ConversationEngine = matching.harnessId;
   const sessionId = matching.id;
   if (conversationIsActive(project.id, engine, sessionId, matching.path)) throw new TaskWorktreeError("Wait for the current turn to finish before taking ownership");
+  await synchronizeQueueBeforeTakeover(project.id, engine, sessionId, local.id, peers);
   const ownership = await takeConversationOwnership(engine, sessionId, local.id);
   const settled = await Promise.allSettled(peers.map((peer) => applyOwnershipToPeer(peer, ownership, local.id)));
   const pendingPeerIds: string[] = [];

@@ -40,6 +40,33 @@ export function syncModelButton() {
 
 /** Rows 1-10 carry a digit shortcut, in the order this render lists them. */
 let modelShortcuts = [];
+let queuedModelSelection = null;
+
+export function openQueuedModelPicker(activeKey, onSelect) {
+  queuedModelSelection = { activeKey, onSelect };
+  renderModelDialog();
+  elements.modelDialog.showModal();
+}
+
+export function queuedReasoningLevels(provider, modelId) {
+  if (provider === "claude") return ["default", "low", "medium", "high", "xhigh", "max"];
+  const model = state.models.find((candidate) => candidate.provider === provider && candidate.id === modelId);
+  if (!model) return null;
+  return model.thinkingLevels;
+}
+
+function renderQueuedModels() {
+  const selection = queuedModelSelection;
+  const models = [{ provider: "", id: "", label: "Inherit conversation settings" }, ...CLAUDE_MODEL_OPTIONS.map((model) => ({ ...model, provider: "claude" })), ...state.models];
+  elements.modelDialogTitle.textContent = "Queued message model";
+  for (const model of models) elements.modelDialogList.append(modelOptionButton({
+    key: `${model.provider}/${model.id}`, label: model.label,
+    active: selection.activeKey === `${model.provider}/${model.id}`,
+    onSelect: () => selection.onSelect(model.provider ? model : null),
+  }));
+}
+
+elements.modelDialog.addEventListener("close", () => { queuedModelSelection = null; });
 
 function modelOptionButton({ key, label, active, onSelect }) {
   const option = document.createElement("button");
@@ -238,6 +265,7 @@ function openToolsDialog() {
 }
 
 function openModelDialog() {
+  queuedModelSelection = null;
   renderModelDialog();
   elements.modelDialog.showModal();
 }
@@ -408,6 +436,7 @@ function renderModelDialog() {
   elements.modelDialogList.classList.toggle("claude", isClaude);
   elements.modelDialogList.replaceChildren();
   modelShortcuts = [];
+  if (queuedModelSelection) { renderQueuedModels(); return; }
   if (isClaude) {
     for (const option of CLAUDE_MODEL_OPTIONS) {
       elements.modelDialogList.append(

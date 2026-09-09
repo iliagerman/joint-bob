@@ -230,11 +230,36 @@ function rekeyProjectNames(db: DatabaseSync, aliasId: string, projectId: string)
   else db.prepare("INSERT INTO name_override_tombstones (scope, key, updated_at, origin_node_id) VALUES ('projects', ?, ?, ?)").run(projectId, winner.updated_at, winner.origin_node_id);
 }
 
+function rekeyProjectQueue(db: DatabaseSync, aliasId: string, projectId: string): void {
+  if (!tableExists(db, "queued_prompts")) return;
+  const prefixLength = aliasId.length + 1;
+  for (const table of ["queued_prompts", "queued_prompt_tombstones"]) {
+    db.prepare(`UPDATE ${table} SET queue_key = ? || substr(queue_key, ?)
+      WHERE substr(queue_key, 1, ?) = ?`).run(projectId, prefixLength, prefixLength, `${aliasId}:`);
+  }
+  for (const table of ["queued_prompt_sequences", "queued_prompt_settings"]) {
+    const rows = db.prepare(`SELECT * FROM ${table} WHERE substr(queue_key, 1, ?) = ?`).all(prefixLength, `${aliasId}:`);
+    for (const row of rows) {
+      const key = projectId + String(row.queue_key).slice(aliasId.length);
+      if (table === "queued_prompt_sequences") {
+        db.prepare(`INSERT INTO queued_prompt_sequences VALUES (?, ?) ON CONFLICT(queue_key)
+          DO UPDATE SET sequence = MAX(sequence, excluded.sequence)`).run(key, row.sequence);
+      } else {
+        db.prepare(`INSERT INTO queued_prompt_settings VALUES (?, ?, ?) ON CONFLICT(queue_key)
+          DO UPDATE SET sequence = excluded.sequence, settings = excluded.settings
+          WHERE excluded.sequence > sequence`).run(key, row.sequence, row.settings);
+      }
+    }
+    db.prepare(`DELETE FROM ${table} WHERE substr(queue_key, 1, ?) = ?`).run(prefixLength, `${aliasId}:`);
+  }
+}
+
 function rekeyProjectState(db: DatabaseSync, aliasId: string, projectId: string): void {
   rekeyTasks(db, aliasId, projectId);
   rekeyTaskHandoffs(db, aliasId, projectId);
   rekeyProjectNames(db, aliasId, projectId);
   rekeySecretAssignments(db, aliasId, projectId);
+  rekeyProjectQueue(db, aliasId, projectId);
 }
 
 function saveProjectAlias(db: DatabaseSync, aliasId: string, projectId: string): void {

@@ -246,14 +246,20 @@ async function exercisePiOwnership(
   ]);
   for (const socket of sockets.splice(0)) socket.terminate();
   await stopNode(children.pop()!);
-  const reclaim = await machinePost(source, "/api/cluster/sessions/take-ownership", {
-    projectId: source.projectId, peerId: source.id, sessionId, sessionPath: transcriptPath,
-  });
+  const request = { projectId: source.projectId, peerId: source.id, sessionId, sessionPath: transcriptPath };
+  const offlineReclaim = await machinePost(source, "/api/cluster/sessions/take-ownership", request);
+  assert.equal(offlineReclaim.status, 500, "cannot take an offline owner's queue without its fenced snapshot");
+  children.push(await startNode(destination, home, invocationLog, holdDir));
+  const reclaim = await machinePost(source, "/api/cluster/sessions/take-ownership", request);
   assert.equal(reclaim.status, 200, JSON.stringify(reclaim.body));
   const ownership = reclaim.body.ownership as Record<string, unknown>;
   assert.equal(ownership.ownerNodeId, source.id);
   assert.equal(ownership.epoch, 3);
-  assert.deepEqual(reclaim.body.pendingPeerIds, [destination.id]);
+  assert.deepEqual(reclaim.body.pendingPeerIds, []);
+  await stopNode(children.pop()!);
+  const retry = await machinePost(source, "/api/cluster/sessions/take-ownership", request);
+  assert.equal(retry.status, 200, JSON.stringify(retry.body));
+  assert.deepEqual(retry.body.pendingPeerIds, [destination.id]);
   const sourceTakeoverSocket = await openConversation(source, source.projectId, transcriptPath);
   sockets.push(sourceTakeoverSocket);
   assert.equal((await prompt(sourceTakeoverSocket, "source takeover write")).type, "textDelta");

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import WebSocket from "ws";
 import { sessionCookieName, sessionForId } from "../auth.js";
-import { claudeRunIdFromSessionPath, claudeSessionContextUsage, loadClaudeMessages } from "../claude-service.js";
+import { buildHandoffContext, claudeRunIdFromSessionPath, claudeSessionContextUsage, loadClaudeMessages } from "../claude-service.js";
 import { getClusterMachineToken, getClusterNode, getClusterPeer } from "../cluster.js";
 import { type ConversationEngine, ConversationOwnershipError, getConversationOwnership } from "../conversation-ownership.js";
 import { ensureConversationRecord, getConversationRecord, parseConversationDraftPath } from "../conversation-records.js";
@@ -17,7 +17,7 @@ import { listTasks } from "../tasks.js";
 import { attachTerminalSession } from "../terminal-session.js";
 import type { SessionSummary } from "../types.js";
 import { webSocketCloseReason } from "../websocket.js";
-import { claudeConnectionKey, claudeQueueKey, claudeRunKey, claudeStatus, drainClaudePromptQueue, emptyClaudeState, getSharedSession, handleChatMessage, proxySocket, sessionWatcher } from "./chat.js";
+import { chatConnections, refreshPromptQueue, restoreClaudeQueueSettings, claudeConnectionKey, claudeQueueKey, claudeRunKey, claudeStatus, drainClaudePromptQueue, emptyClaudeState, getSharedSession, handleChatMessage, proxySocket, sessionWatcher } from "./chat.js";
 import { conversationBelongsToDoneTask, taskConversationIdentity } from "./cluster-helpers.js";
 import { machineTokenMatches } from "./http-auth.js";
 import { broadcastToProject, chatErrorMessage, parseSessionPath, scheduleIdleDispose, send, sendStatus } from "./realtime.js";
@@ -324,8 +324,10 @@ webSocketServer.on("connection", async (socket, request) => {
         }
       }
     }
+    restoreClaudeQueueSettings(connection);
     claudeClients.set(socket, connection);
     const transcript = await conversationTranscriptPayload(project.id, "claude", connection.claude.sessionId, listedSessions, connection.claude.transcript);
+    if (sessionRequest.draft && transcript.segments.length > 1) connection.handoffContext = buildHandoffContext(transcript.messages);
     send(socket, {
       type: "ready",
       project,
@@ -346,11 +348,7 @@ webSocketServer.on("connection", async (socket, request) => {
     // The queue belongs to the conversation, not to the socket that typed into
     // it, so a reconnect sees what is still pending and a node that restarted
     // with prompts on disk picks them up here.
-    if (!connection.claude.promptQueue.length) {
-      connection.claude.promptQueue = listQueuedPrompts(claudeQueueKey(connection)).map((prompt) => ({ ...prompt, acknowledged: true }));
-    }
-    send(socket, { type: "queuedPrompts", prompts: connection.claude.promptQueue.map(({ id, displayText, messageText }) => ({ id, text: displayText, editableText: messageText })) });
-    if (!foreignOwner) void drainClaudePromptQueue(connection).catch((error) => send(socket, { type: "error", error: chatErrorMessage(error) }));
+    refreshPromptQueue(connection);
   } else {
     let sharedSession: SharedPiSession;
     try {
@@ -365,6 +363,7 @@ webSocketServer.on("connection", async (socket, request) => {
     connection.shared = sharedSession;
     sharedSession.clients.add(socket);
     const transcript = await conversationTranscriptPayload(project.id, "pi", sharedSession.handle.session.sessionId, listedSessions, simplifyMessages(sharedSession.handle.session.messages as unknown[]));
+    if (sessionRequest.draft && transcript.segments.length > 1) connection.handoffContext = buildHandoffContext(transcript.messages);
     send(socket, {
       type: "ready",
       project,
@@ -381,6 +380,10 @@ webSocketServer.on("connection", async (socket, request) => {
     });
   }
 
+  chatConnections.add(connection);
+  refreshPromptQueue(connection);
+  if (!foreignOwner && !conversationReadOnly) void drainClaudePromptQueue(connection).catch((error) => send(socket, { type: "error", error: chatErrorMessage(error) }));
+
   socket.on("message", async (raw) => {
     try {
       await handleChatMessage(connection, raw as Buffer);
@@ -395,6 +398,7 @@ webSocketServer.on("connection", async (socket, request) => {
   });
 
   socket.on("close", () => {
+    chatConnections.delete(connection);
     if (connection.shared) {
       connection.shared.clients.delete(socket);
       scheduleIdleDispose(connection.shared);

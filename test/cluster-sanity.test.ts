@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -484,6 +484,93 @@ test("a node opens new conversations while its peer is down, and the claim repli
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   assert.fail("the claim did not replicate to node B after it returned");
+});
+
+test("queue-transfer refuses a machine peer whose grant excludes the project", async () => {
+  const project = nodeA.projects[0];
+  const token = (await api<{ token: string }>(nodeB, sessionB, "GET", "/cluster/invite")).body.token;
+  const db = new DatabaseSync(path.join(nodeA.dataDir, "node.db"));
+  db.exec("PRAGMA busy_timeout = 5000;");
+  assert.equal(db.prepare("SELECT 1 FROM cluster_project_grants WHERE node_id = ?").get(nodeB.nodeId), undefined);
+  try {
+    db.prepare("INSERT INTO cluster_project_grants VALUES (?, ?, ?, ?)").run(nodeB.nodeId, "[]", new Date().toISOString(), nodeA.nodeId);
+    const response = await fetch(`${nodeA.url}/api/cluster/sessions/queue-transfer`, {
+      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId: project.id, engine: "claude", sessionId: "not-a-session" }),
+    });
+    assert.equal(response.status, 403, await response.clone().text());
+    assert.deepEqual(await response.json(), { error: "Project is not shared with this node" });
+  } finally {
+    db.prepare("DELETE FROM cluster_project_grants WHERE node_id = ?").run(nodeB.nodeId);
+    db.close();
+  }
+});
+
+async function queueTransferFixture() {
+  const projectA = nodeA.projects.find((project) => project.name === "Joint Bob")!;
+  const projectB = nodeB.projects.find((project) => project.name === "Joint Bob")!;
+  const settingsA = (await api<Record<string, unknown>>(nodeA, sessionA, "GET", "/settings")).body;
+  const settingsB = (await api<Record<string, unknown>>(nodeB, sessionB, "GET", "/settings")).body;
+  const fake = path.join(root, "queue-claude.mjs");
+  const log = path.join(root, "queue-dispatch.log");
+  await writeFile(fake, `#!/usr/bin/env node\nimport { appendFile } from 'node:fs/promises';\nif (process.argv[2] === 'auth') { console.log(JSON.stringify({ loggedIn: true })); process.exit(0); }\nlet text = ''; for await (const chunk of process.stdin) text += chunk;\nawait appendFile(${JSON.stringify(log)}, JSON.stringify({ text, args: process.argv.slice(2) }) + '\\n');\nconsole.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'done' }] } }));\nconsole.log(JSON.stringify({ type: 'result', is_error: false }));\n`);
+  await chmod(fake, 0o755);
+  await api(nodeA, sessionA, "PUT", "/settings", { ...settingsA, claude: { ...(settingsA.claude as object), executable: path.join(root, "missing-queue-claude") } });
+  await api(nodeB, sessionB, "PUT", "/settings", { ...settingsB, claude: { ...(settingsB.claude as object), executable: fake } });
+  const listed = (await api<{ sessions: SessionView[] }>(nodeA, sessionA, "GET", `/projects/${projectA.id}/sessions`)).body.sessions;
+  const conversation = listed.find((session) => session.harnessId === "claude")!;
+  const opened = await openConversationSocket(nodeA, sessionA, projectA.id, conversation.path);
+  const messages: Array<Record<string, unknown>> = [];
+  opened.socket.on("message", (raw) => messages.push(JSON.parse(raw.toString())));
+  return { projectA, projectB, settingsA, settingsB, conversation, opened, messages, log };
+}
+
+async function waitForQueueFrame(messages: Array<Record<string, unknown>>, predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 20_000;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error(`Queue frame timeout: ${JSON.stringify(messages)}`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
+test("queue takeover retries a lost fenced response, copies pending settings and tombstones, and dispatches only on destination", async () => {
+  const fixture = await queueTransferFixture();
+  const { projectA, projectB, settingsA, settingsB, conversation, opened, messages, log } = fixture;
+  let destination: Awaited<ReturnType<typeof openConversationSocket>> | undefined;
+  try {
+    opened.socket.send(JSON.stringify({ type: "prompt", message: "cancelled before transfer" }));
+    await waitForQueueFrame(messages, () => messages.some((frame) => frame.type === "error"));
+    const cancelledId = messages.find((frame) => frame.type === "userMessage")!.queueId;
+    opened.socket.send(JSON.stringify({ type: "cancelQueuedPrompt", queueId: cancelledId, queueRevision: 1 }));
+    await waitForQueueFrame(messages, () => messages.some((frame) => frame.type === "queuedPromptCancelled"));
+    opened.socket.send(JSON.stringify({ type: "prompt", message: "run on destination", queueSettings: { provider: "claude", modelId: "haiku", reasoning: "high" } }));
+    await waitForQueueFrame(messages, () => messages.filter((frame) => frame.type === "error").length === 2);
+    const token = (await api<{ token: string }>(nodeB, sessionB, "GET", "/cluster/invite")).body.token;
+    const fenced = await fetch(`${nodeA.url}/api/cluster/sessions/queue-transfer`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ projectId: projectA.id, engine: "claude", sessionId: conversation.id }) });
+    assert.equal(fenced.status, 200, await fenced.clone().text());
+    assert.equal(readOwnershipRow(nodeA, "claude", conversation.id)!.status, "transferring");
+    // Discard the response, as if the network failed after the source fenced.
+    const takeover = await api(nodeB, sessionB, "POST", `/projects/${projectB.id}/sessions/take-ownership`, { peerId: nodeB.nodeId, sessionId: conversation.id, sessionPath: conversation.path });
+    assert.equal(takeover.status, 200, JSON.stringify(takeover.body));
+    const db = new DatabaseSync(path.join(nodeB.dataDir, "node.db"));
+    try {
+      assert.ok(db.prepare("SELECT 1 FROM queued_prompt_tombstones WHERE id = ?").get(String(cancelledId)));
+      const pending = db.prepare("SELECT prompt FROM queued_prompts WHERE queue_key = ?").all(`${projectB.id}:${conversation.id}`) as { prompt: string }[];
+      assert.deepEqual(pending.map((row) => JSON.parse(row.prompt).settings), [{ provider: "claude", modelId: "haiku", reasoning: "high" }]);
+    } finally { db.close(); }
+    destination = await openConversationSocket(nodeB, sessionB, projectB.id, conversation.path);
+    const frames: Array<Record<string, unknown>> = [];
+    destination.socket.on("message", (raw) => frames.push(JSON.parse(raw.toString())));
+    await waitForQueueFrame(frames, () => frames.some((frame) => frame.type === "agent_end"));
+    const calls = (await readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+    assert.deepEqual(calls.map((call) => call.text), ["run on destination"]);
+    assert.ok(calls[0].args.includes("haiku") && calls[0].args.includes("high"));
+    assert.equal(readOwnershipRow(nodeA, "claude", conversation.id)!.owner_node_id, nodeB.nodeId);
+  } finally {
+    opened.socket.close(); destination?.socket.close();
+    await api(nodeA, sessionA, "PUT", "/settings", settingsA);
+    await api(nodeB, sessionB, "PUT", "/settings", settingsB);
+  }
 });
 
 interface ReadyFrame { ownership: { nodeId: string; status: string } | null }

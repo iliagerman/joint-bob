@@ -52,6 +52,7 @@ export async function gatedClaude(root: string): Promise<string> {
   await writeFile(executable, `#!/usr/bin/env node
 import { access, appendFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
+if (process.argv[2] === 'auth') { console.log(JSON.stringify({ loggedIn: true })); process.exit(0); }
 let prompt = '';
 for await (const chunk of process.stdin) prompt += chunk;
 const text = prompt.trim();
@@ -81,6 +82,7 @@ const transcript = path.join(directory, sessionId + '.jsonl');
 const timestamp = new Date().toISOString();
 const record = (type, message) => JSON.stringify({ type, sessionId, cwd: process.cwd(), timestamp, message }) + '\\n';
 await appendFile(transcript, record('user', { role: 'user', content: text }));
+console.log(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: 'working' } } }));
 await waitFor(process.env.JOINT_BOB_FAKE_GATE + '.' + text);
 await appendFile(transcript, record('assistant', { role: 'assistant', content: [{ type: 'text', text }] }));
 console.log(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text } } }));
