@@ -18,7 +18,7 @@ test("conversation rows put every action behind one overflow menu", async () => 
 
   // The row carries the pin quick action plus one overflow menu button.
   assert.match(app, /menuButton\.dataset\.testid = "session-menu-button"/);
-  assert.match(app, /row\.append\(button, pinToggle, menuButton\);/);
+  assert.match(app, /rowMain\.append\(button, pinToggle, menuButton\);/);
   assert.match(app, /function openRowMenu\(anchor, items, anchorSelector = null\)/);
 
   // Colour, rename and remove all live inside the menu; pinning and

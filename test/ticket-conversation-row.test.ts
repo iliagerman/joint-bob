@@ -46,7 +46,7 @@ test("the ticket mark is a quick button into the ticket, not just a label", asyn
 
   // The row wires it in as the outermost lane, left of the pin and the overflow menu.
   const render = functionBody(app, "function renderSessions() {");
-  assert.match(render, /row\.append\(button, ticketRowButton\(ticketTask\), pinToggle, menuButton\)/);
+  assert.match(render, /rowMain\.append\(button, ticketRowButton\(ticketTask\), pinToggle, menuButton\)/);
 });
 
 test("the ticket glyph is the board's own glyph, so both read as the same object", async () => {

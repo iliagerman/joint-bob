@@ -567,6 +567,9 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
 
 /* ---- Lists ---- */
 .list-row { position: relative; min-width: 0; }
+/* The action lanes are positioned against this wrapper, not the whole row, so an
+   agent run list under the card never pulls them below the card. */
+.list-row-main { position: relative; min-width: 0; }
 .list-row[data-session-depth="1"] { margin-left: 18px; }
 .list-row[data-session-depth="1"]::before {
   content: "";

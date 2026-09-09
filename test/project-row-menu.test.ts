@@ -38,7 +38,9 @@ test("both lists show their row menu button at all times", async () => {
   ]);
 
   // Conversations and projects build the identical row: card, pin, menu button.
-  assert.equal(app.match(/row\.append\(button, pinToggle, menuButton\);/g)?.length, 2);
+  // Conversations nest theirs in the action wrapper so agent run lines stay clear of it.
+  assert.equal(app.match(/ row\.append\(button, pinToggle, menuButton\);/g)?.length, 1);
+  assert.equal(app.match(/rowMain\.append\(button, pinToggle, menuButton\);/g)?.length, 1);
 
   // Nothing is revealed on hover or on selection any more, so that machinery is gone...
   assert.doesNotMatch(styles, /:is\(:hover, :focus-within\) \.row-action-button/);

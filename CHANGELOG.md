@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Conversation action buttons now stay aligned inside the card when sub-agent tasks extend below it.
 - Chat toolbar controls, action labels, and shortcut badges now line up on shared rows.
 - Queued messages can now use different models and reasoning levels; settings persist across reconnections.
 

@@ -67,7 +67,8 @@ test("every conversation and project row carries the same pin quick action", asy
   // Pinning is one tap on the row in both lists, and both build the identical button.
   assert.match(app, /function sessionPinToggle\(session\)/);
   assert.match(app, /function projectPinToggle\(project\)/);
-  assert.equal(app.match(/row\.append\(button, pinToggle, menuButton\);/g)?.length, 2);
+  assert.equal(app.match(/ row\.append\(button, pinToggle, menuButton\);/g)?.length, 1);
+  assert.equal(app.match(/rowMain\.append\(button, pinToggle, menuButton\);/g)?.length, 1);
   // ...so neither overflow menu offers pinning any more.
   assert.doesNotMatch(app, /testid: "session-unpin-button"/);
 

@@ -130,9 +130,15 @@ export function renderSessions() {
       });
     }
 
-    if (ticketTask) row.append(button, ticketRowButton(ticketTask), pinToggle, menuButton);
-    else row.append(button, pinToggle, menuButton);
-    if (childToggle) row.append(childToggle);
+    // Sub-agent task lines below the card make the row taller than the card, so the
+    // action lanes hang off a wrapper that ends where the card does — otherwise they
+    // centre on the whole row and slide out past the card's border.
+    const rowMain = document.createElement("div");
+    rowMain.className = "list-row-main";
+    if (ticketTask) rowMain.append(button, ticketRowButton(ticketTask), pinToggle, menuButton);
+    else rowMain.append(button, pinToggle, menuButton);
+    if (childToggle) rowMain.append(childToggle);
+    row.append(rowMain);
     if (session.agentRuns?.length) {
       const runs = document.createElement("div");
       runs.className = "agent-run-list";
