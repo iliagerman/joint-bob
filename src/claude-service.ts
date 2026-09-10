@@ -428,6 +428,7 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
   const settings = getSettings().claude;
   const configPath = claudeConfigPath();
   const child = spawn(settings.executable || "claude", args, {
+    detached: process.platform !== "win32",
     cwd: options.cwd,
     env: { ...process.env, ...options.env, ...(configPath ? { CLAUDE_CONFIG_DIR: configPath } : {}) },
     stdio: ["pipe", "pipe", "pipe"],

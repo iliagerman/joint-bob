@@ -40,7 +40,7 @@ async function marker(file: string) {
 test("failed activation restores files and restarts without reinstalling dependencies", async () => {
   const f = await fixture();
   try {
-    await writeFile(path.join(f.source, "scripts/install-service.sh"), '#!/bin/bash\n[ "$1" = --restart-only ] && { echo "$1" >> "$LOG"; exit 0; }\n[ "$1" = --build-only ] && exit 0\nexit 7\n');
+    await writeFile(path.join(f.source, "scripts/install-service.sh"), '#!/bin/bash\n[ "$1" = --restart-only ] && { echo "$1" >> "$LOG"; exit 0; }\n[[ "$1" = --build-only || "$1" = --prepare-only ]] && exit 0\nexit 7\n');
     assert.notEqual(await install(f).done, 0);
     assert.equal(await readFile(path.join(f.app, "old"), "utf8"), "old");
     assert.equal(await readFile(f.env.LOG, "utf8"), "--restart-only\n");
@@ -50,7 +50,7 @@ test("failed activation restores files and restarts without reinstalling depende
 test("TERM during activation restores prior files and service", async () => {
   const f = await fixture();
   try {
-    await writeFile(path.join(f.source, "scripts/install-service.sh"), '#!/bin/bash\n[ "$1" = --restart-only ] && { echo "$1" >> "$LOG"; exit 0; }\n[ "$1" = --build-only ] && exit 0\necho ready > "$LOG.ready"\nsleep 30\n');
+    await writeFile(path.join(f.source, "scripts/install-service.sh"), '#!/bin/bash\n[ "$1" = --restart-only ] && { echo "$1" >> "$LOG"; exit 0; }\n[[ "$1" = --build-only || "$1" = --prepare-only ]] && exit 0\necho ready > "$LOG.ready"\nsleep 30\n');
     const run = install(f);
     await marker(`${f.env.LOG}.ready`);
     run.child.kill("SIGTERM");
@@ -88,6 +88,16 @@ test("missing Perl fails explicitly before replacing files", async () => {
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });
 
+test("refused preparation never swaps files or restarts the running service", async () => {
+  const f = await fixture();
+  try {
+    await writeFile(path.join(f.source, "scripts/install-service.sh"), '#!/bin/bash\necho "$1" >> "$LOG"\n[ "$1" = --build-only ] && exit 0\n[ "$1" = --prepare-only ] && { cat "$JOINT_BOB_INSTALL_DIR/old" >> "$LOG"; exit 9; }\nexit 7\n');
+    assert.notEqual(await install(f).done, 0);
+    assert.equal(await readFile(path.join(f.app, "old"), "utf8"), "old");
+    assert.equal(await readFile(f.env.LOG, "utf8"), "--build-only\n--prepare-only\nold");
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
 test("failed build leaves the running installation untouched", async () => {
   const f = await fixture();
   try {
@@ -106,7 +116,7 @@ test("cleanup errors cannot prevent atomic rollback or restart", async () => {
 const rm = fs.rmSync;
 fs.rmSync = (p, opts) => { if (String(p) === process.env.JOINT_BOB_INSTALL_DIR || String(p).includes('.failed-')) throw new Error('injected cleanup failure'); return rm(p, opts); };
 syncBuiltinESMExports();`);
-    await writeFile(path.join(f.source, "scripts/install-service.sh"), '#!/bin/bash\n[ "$1" = --build-only ] && exit 0\n[ "$1" = --restart-only ] && { echo restarted > "$LOG"; exit 0; }\nexit 7\n');
+    await writeFile(path.join(f.source, "scripts/install-service.sh"), '#!/bin/bash\n[[ "$1" = --build-only || "$1" = --prepare-only ]] && exit 0\n[ "$1" = --restart-only ] && { echo restarted > "$LOG"; exit 0; }\nexit 7\n');
     const result = await execFileAsync(process.execPath, [path.join(f.source, "bin/joint-bob.mjs"), "install"], {
       env: { ...f.env, NODE_OPTIONS: `--import=${fault}` },
     }).catch((error: Error & { stderr: string }) => error);
@@ -119,7 +129,7 @@ syncBuiltinESMExports();`);
 test("failed rollback restart retains candidate dependencies", async () => {
   const f = await fixture();
   try {
-    await writeFile(path.join(f.source, "scripts/install-service.sh"), '#!/bin/bash\nif [ "$1" = --build-only ]; then mkdir node_modules; echo live-dependency > node_modules/live; exit 0; fi\nexit 7\n');
+    await writeFile(path.join(f.source, "scripts/install-service.sh"), '#!/bin/bash\nif [ "$1" = --build-only ]; then mkdir node_modules; echo live-dependency > node_modules/live; exit 0; fi\n[ "$1" = --prepare-only ] && exit 0\nexit 7\n');
     assert.notEqual(await install(f).done, 0);
     assert.equal(await readFile(path.join(f.app, "old"), "utf8"), "old");
     const candidates = (await readdir(f.root)).filter((entry) => entry.startsWith("app.failed-"));

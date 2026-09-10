@@ -4,7 +4,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 mode="${1:-}"
 case "${mode}" in
-  --build-only|--activate-only|--restart-only) ;;
+  --build-only|--prepare-only|--activate-only|--restart-only) ;;
   "")
     runtime_bin="$("${REPO_ROOT}/scripts/install-node-runtime.sh")"
     if [ -n "${runtime_bin}" ]; then export PATH="${runtime_bin}:${PATH}"; fi
@@ -108,18 +108,20 @@ prepare_update() {
   local response_file machine_token status body
   response_file="$(mktemp "${STATE_DIR}/update-prepare.XXXXXX")"
   machine_token="$("${NODE_BIN}" --import tsx --input-type=module -e 'import { pathToFileURL } from "node:url"; const { getClusterMachineToken } = await import(pathToFileURL(process.argv[1]).href); console.log(await getClusterMachineToken());' "${REPO_ROOT}/src/cluster.ts")"
-  status="$(curl -sS --connect-timeout 5 --max-time 120 -o "${response_file}" -w '%{http_code}' -X POST "http://127.0.0.1:${PORT_VALUE}/api/update/prepare" -H "Authorization: Bearer ${machine_token}" -H "Content-Type: application/json")" || { rm -f "${response_file}"; echo "Could not prepare running service for update" >&2; exit 1; }
+  # Server stop deadline is 60s; leave time for its explicit refusal to arrive.
+  status="$(curl -sS --connect-timeout 5 --max-time 90 -o "${response_file}" -w '%{http_code}' -X POST "http://127.0.0.1:${PORT_VALUE}/api/update/prepare" -H "Authorization: Bearer ${machine_token}" -H "Content-Type: application/json")" || { echo "Could not prepare running service for update; no restart attempted. Response: $(cat "${response_file}")" >&2; rm -f "${response_file}"; exit 1; }
   body="$(cat "${response_file}")"
   rm -f "${response_file}"
   # Pre-update releases reject this unknown protected route before Express can return 404.
   if [ "${status}" = 404 ] || [ "${status}" = 401 ]; then return 0; fi
-  [ "${status}" = 200 ] || { echo "Service update preparation failed (${status})" >&2; exit 1; }
+  [ "${status}" = 200 ] || { echo "Service update preparation failed (${status}): ${body}" >&2; exit 1; }
   local recovery_count
   recovery_count="$(UPDATE_RESPONSE="${body}" "${NODE_BIN}" -e 'const result = JSON.parse(process.env.UPDATE_RESPONSE); if (result.ready !== true) process.exit(1); process.stdout.write(String(result.recoveryCount));')" || { echo "Service update preparation returned invalid response" >&2; exit 1; }
   echo "Prepared ${recovery_count} session(s) for update."
 }
 
 prepare_update
+[ "${mode}" != --prepare-only ] || exit 0
 service_platform="$(uname -s)"
 previous_main_pid=""
 case "${service_platform}" in

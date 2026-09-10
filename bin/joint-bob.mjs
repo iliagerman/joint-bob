@@ -50,6 +50,9 @@ async function replaceInstallation(installDir) {
     }
     const build = await execute("bash", [path.join(staging, "scripts/install-service.sh"), "--build-only"], staging, true);
     if (build !== 0 || interrupted) throw new Error(`Installation build failed with status ${build}`);
+    // Refusal must leave both the files and the running service untouched.
+    const prepared = await execute("bash", [path.join(staging, "scripts/install-service.sh"), "--prepare-only"], staging, true);
+    if (prepared !== 0 || interrupted) throw new Error(`Update preparation failed with status ${prepared}`);
     if (existsSync(installDir)) renameSync(installDir, backup);
     swapped = true;
     renameSync(staging, installDir);

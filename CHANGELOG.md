@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Bounded agent shutdown during updates and refused unsafe restarts without replacing the running installation or losing recovery records.
+
 ## 1.16.0 — 2026-09-10
 
 - Added an Ubuntu browser executor for conversations across the cluster, with localhost traffic routed to the app's node.
