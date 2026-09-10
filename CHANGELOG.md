@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.15.0 — 2026-09-10
 
 - Added a running conversations button to the mobile conversations list and chat toolbar for quicker access to active sessions.
 
