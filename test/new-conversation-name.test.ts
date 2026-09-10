@@ -19,8 +19,8 @@ test("creating a conversation asks for a name before it opens", async () => {
   for (const id of ["newSessionNameDialog", "newSessionNameForm", "newSessionNameInput", "newSessionNodeSelect", "cancelNewSessionNameButton"]) {
     assert.match(app, new RegExp(`${id}: document\\.querySelector\\("#${id}"\\)`));
   }
-  assert.match(app, /elements\.newSessionButton\.addEventListener\("click", \(\) => openNewSessionNameDialog\(null, "New Pi conversation"\)\);/);
-  assert.match(app, /elements\.newClaudeSessionButton\.addEventListener\("click", \(\) => openNewSessionNameDialog\("claude:new", "New Claude conversation"\)\);/);
+  assert.match(app, /elements\.newSessionButton\.addEventListener\("click", \(\) => openNewSessionNameDialog\(null, "New Pi conversation"\)\.catch/);
+  assert.match(app, /elements\.newClaudeSessionButton\.addEventListener\("click", \(\) => openNewSessionNameDialog\("claude:new", "New Claude conversation"\)\.catch/);
   assert.match(app, /elements\.cancelNewSessionNameButton\.addEventListener\("click", \(\) => elements\.newSessionNameDialog\.close\(\)\);/);
 
   const openDialog = app.slice(app.indexOf("function openNewSessionNameDialog("));
@@ -47,9 +47,10 @@ test("the picked name is displayed right away and saved once the transcript exis
   assert.match(submit, /openSession\(draft\.sessionPath, title \|\| draft\.defaultTitle\);/);
   assert.match(submit, /if \(!node \|\| !node\.online \|\| !node\.mapped\)/);
   assert.match(submit, /state\.activeNodeId = node\.id;/);
-  assert.match(submit, /state\.activeSessionId = crypto\.randomUUID\(\);/);
-  assert.match(submit, /addOptimisticSession\(state\.activeSessionId, draft\.sessionPath, title \|\| draft\.defaultTitle, color\);/);
-  assert.ok(submit.indexOf("state.activeSessionId = crypto.randomUUID();") < submit.indexOf("openSession(draft.sessionPath"));
+  assert.match(submit, /const sessionId = crypto\.randomUUID\(\);/);
+  assert.match(submit, /state\.activeSessionId = sessionId;/);
+  assert.match(submit, /addOptimisticSession\(sessionId, draft\.sessionPath, title \|\| draft\.defaultTitle, color, label\);/);
+  assert.ok(submit.indexOf("state.activeSessionId = sessionId;") < submit.indexOf("openSession(draft.sessionPath"));
   assert.match(submit, /openSession\(draft\.sessionPath, title \|\| draft\.defaultTitle\);/);
   assert.match(submit, /state\.pendingSessionTitle = title \|\| null;/);
 

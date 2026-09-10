@@ -43,6 +43,27 @@ after(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
+test("conversation classification replicates to a peer and can be cleared there", async () => {
+  const projectA = nodeA.projects[0];
+  const projectB = nodeB.projects.find((project) => project.name === projectA.name)!;
+  const listed = await api<{ sessions: SessionView[] }>(nodeA, sessionA, "GET", `/projects/${projectA.id}/sessions`);
+  const target = listed.body.sessions[0];
+  const payload = { sessionId: target.id, engine: target.harnessId, classification: "Custom investigation" };
+  assert.equal((await api(nodeA, sessionA, "PUT", `/projects/${projectA.id}/sessions/classification`, payload)).status, 200);
+  const waitForLabel = async (node: SeededNode, auth: SignedIn, projectId: string, expected: string | undefined) => {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const result = await api<{ sessions: Array<SessionView & { classification?: string }> }>(node, auth, "GET", `/projects/${projectId}/sessions`);
+      const found = result.body.sessions.find((session) => session.id === target.id);
+      if (found && found.classification === expected) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.fail(`Classification ${String(expected)} did not replicate`);
+  };
+  await waitForLabel(nodeB, sessionB, projectB.id, payload.classification);
+  assert.equal((await api(nodeB, sessionB, "PUT", `/projects/${projectB.id}/sessions/classification`, { ...payload, classification: null })).status, 200);
+  await waitForLabel(nodeA, sessionA, projectA.id, undefined);
+});
+
 // This verifies peer discovery from the harness's shared managed fixture, not Syncthing transport.
 test("published external skills are discovered by a peer from the shared managed fixture", async () => {
   const source = path.join(root, "external-skills", "cluster-skill");

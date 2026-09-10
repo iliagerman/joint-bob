@@ -94,6 +94,8 @@ export const state = {
   activeConversationId: null,
   conversationSegments: null,
   chatFilter: "all",
+  classificationFilter: "",
+  conversationLabels: [],
   watchSocket: null,
   watchProjectId: null,
   watchNeedsRefresh: false,

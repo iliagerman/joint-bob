@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added conversation labels to tag discussions with predefined or custom classifications, and a filter to show conversations by label.
+
 ## 1.16.1 — 2026-09-10
 
 - Fixed updates hanging while agents stopped, including Claude processes that had already exited or ignored termination.

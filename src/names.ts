@@ -18,7 +18,7 @@ interface NameStore {
   sessions: Record<string, NameEntry>;
 }
 
-type OverrideScope = "projects" | "sessions" | "session_colors";
+type OverrideScope = "projects" | "sessions" | "session_colors" | "session_classifications";
 
 const dataDir = resolveDataDirectory();
 const databasePath = path.join(dataDir, "node.db");
@@ -163,6 +163,14 @@ export async function projectNameOverrides(): Promise<Record<string, string>> {
 
 export async function sessionTitleOverrides(): Promise<Record<string, string>> {
   return entries("sessions");
+}
+
+export async function sessionClassificationOverrides(): Promise<Record<string, string>> {
+  return entries("session_classifications");
+}
+
+export async function setSessionClassification(conversationId: string, classification: string | null): Promise<void> {
+  await setEntry("session_classifications", conversationId, classification ?? "");
 }
 
 export async function sessionColorOverrides(): Promise<Record<string, ProjectColor>> {

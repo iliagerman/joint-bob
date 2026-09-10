@@ -3,6 +3,7 @@ import { queuedSettingsSchema } from "../prompt-queue.js";
 import { z } from "zod";
 import { canonicalCanvasKeyToken } from "../canvas-keys.js";
 import { listHarnesses } from "../harnesses.js";
+import { classificationSchema, conversationLabelsSchema } from "../conversation-labels.js";
 import { CANVAS_MAX_ROW_HEIGHT, CANVAS_MIN_ROW_HEIGHT, canvasRowGeometryIsLegal } from "../preferences.js";
 import { isHarnessId, PROJECT_COLORS } from "../types.js";
 import { canonicalClusterUrl, isClusterOriginUrl } from "./http-auth.js";
@@ -193,6 +194,11 @@ export const sessionTitleSchema = z.object({
   engine: registeredHarnessIdSchema,
   title: z.string().trim().max(200),
 });
+export const sessionClassificationSchema = z.object({
+  sessionId: z.string().trim().min(1).max(240),
+  engine: registeredHarnessIdSchema,
+  classification: classificationSchema.nullable(),
+}).strict();
 export const sessionColorSchema = z.object({
   sessionId: z.string().min(1),
   engine: registeredHarnessIdSchema,
@@ -310,6 +316,7 @@ export const settingsSchema = z.object({
     workRootPath: z.string().max(1000).optional(),
   }).optional(),
   resources: resourcePathsSchema.optional(),
+  conversationLabels: conversationLabelsSchema.optional(),
 });
 export const auditQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional().default(100),

@@ -2,7 +2,7 @@ import path from "node:path";
 import { getClusterNode, listClusterPeers } from "../../cluster.js";
 import { listHarnessCommands } from "../../commands.js";
 import { ensureManagedHome, managedProjectPath } from "../../managed-home.js";
-import { setProjectName, setSessionColor, setSessionTitle } from "../../names.js";
+import { setProjectName, setSessionClassification, setSessionColor, setSessionTitle } from "../../names.js";
 import { importProjectDirectory, ProjectDirectoryImportError } from "../../project-directory-import.js";
 import { setProjectLock } from "../../project-locks.js";
 import { getScopedResourcePaths, getSettings } from "../../settings.js";
@@ -15,7 +15,7 @@ import { conversationBelongsToDoneTask, fetchPeerInventory, mappedPathInsideHome
 import { sendError } from "../http-auth.js";
 import { assertProjectEditable, notifyPeersOfProjectInventory, projectsWithSharedNames, projectView, relocateProjectWorkspace } from "../projects.js";
 import { broadcastToAllClients, broadcastToProject } from "../realtime.js";
-import { projectListQuerySchema, projectLockSchema, projectPathMappingSchema, projectSchema, projectUpdateSchema, registeredHarnessIdSchema, sessionColorSchema, sessionTitleSchema } from "../schemas.js";
+import { projectListQuerySchema, projectLockSchema, projectPathMappingSchema, projectSchema, projectUpdateSchema, registeredHarnessIdSchema, sessionClassificationSchema, sessionColorSchema, sessionTitleSchema } from "../schemas.js";
 import { app } from "../state.js";
 import { projectHasMergeReservation } from "../task-runs.js";
 
@@ -180,6 +180,27 @@ app.put("/api/projects/:projectId/sessions/title", async (request, response, nex
     // No conversation-list lookup: a conversation named at creation has no
     // transcript on disk yet, and the list is where that name matters most.
     await setSessionTitle(payload.sessionId, payload.title);
+    broadcastToProject(project.id, { type: "sessionsChanged" });
+    response.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put("/api/projects/:projectId/sessions/classification", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project) {
+      sendError(response, 404, "Project not found");
+      return;
+    }
+    const payload = sessionClassificationSchema.parse(request.body);
+    if (await conversationBelongsToDoneTask(project.id, payload.engine, payload.sessionId)) {
+      sendError(response, 409, "Done ticket conversations are read-only");
+      return;
+    }
+    // Like titles, classification can be saved before the first transcript exists.
+    await setSessionClassification(payload.sessionId, payload.classification);
     broadcastToProject(project.id, { type: "sessionsChanged" });
     response.json({ ok: true });
   } catch (error) {

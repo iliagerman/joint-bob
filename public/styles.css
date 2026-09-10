@@ -484,6 +484,8 @@ input::placeholder, textarea::placeholder { color: color-mix(in srgb, var(--mute
 textarea:focus, input:focus, select:focus { border-color: var(--line-strong); box-shadow: 0 0 0 3px var(--focus-ring); }
 
 .conversation-search { margin-top: 8px; }
+.classification-filter { margin: 8px 12px 2px; font-size: 12px; }
+.classification-filter select { min-width: 0; width: 100%; }
 .chat-filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 3px; margin: 8px 12px 2px; }
 .chat-filters button {
   display: inline-flex;
@@ -552,6 +554,18 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
   font: 600 9.5px/1 var(--mono);
   font-style: normal;
   letter-spacing: 0.04em;
+}
+.session-classification {
+  display: inline-block;
+  max-width: 100%;
+  margin-left: 6px;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--muted);
+  font: 500 11px/1.4 var(--mono);
+  vertical-align: middle;
+  overflow-wrap: anywhere;
 }
 .project-sync-status-synced { color: var(--live); }
 .project-sync-status-syncing { color: var(--accent); }

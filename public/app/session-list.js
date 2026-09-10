@@ -15,6 +15,19 @@ import { confirmAction, formatDate, toast } from "./shell.js";
 import { closeSocket, refreshSessionsQuietly } from "./socket.js";
 import { state } from "./state.js";
 
+function renderClassificationFilter() {
+  const selected = state.classificationFilter;
+  const labels = new Set([...state.conversationLabels, ...state.sessions.map((session) => session.classification).filter(Boolean)]);
+  // Keep a selected retired label visible until the user clears it or changes project.
+  if (selected.startsWith("label:")) labels.add(selected.slice(6));
+  elements.classificationFilter.replaceChildren(
+    new Option("All labels", ""),
+    new Option("Unclassified", "unclassified"),
+    ...[...labels].sort((left, right) => left.localeCompare(right)).map((label) => new Option(label, `label:${label}`)),
+  );
+  elements.classificationFilter.value = selected;
+}
+
 export function renderSessions() {
   syncRecentSessionActivity();
   keepListScroll(elements.sessionList);
@@ -31,6 +44,7 @@ export function renderSessions() {
   elements.chatProjectName.title = project?.name || "";
   elements.newSessionButton.disabled = !project || !state.sessionNodes.length;
   elements.newClaudeSessionButton.disabled = !project || !state.sessionNodes.length;
+  renderClassificationFilter();
   updateChatFilterCounts();
   elements.markAllReviewedButton.disabled = !project || !reviewableSessions().length;
 
@@ -46,7 +60,7 @@ export function renderSessions() {
   if (sessions.length === 0) {
     const empty = document.createElement("p");
     empty.className = "muted";
-    empty.textContent = normalizedQuery(elements.sessionSearchInput.value || "")
+    empty.textContent = state.classificationFilter || normalizedQuery(elements.sessionSearchInput.value || "")
       ? "No matching conversations."
       : `No ${state.chatFilter} conversations.`;
     elements.sessionList.append(empty);
@@ -83,6 +97,13 @@ export function renderSessions() {
     agent.setAttribute("aria-label", session.agentLabel);
     agent.append(agentMark);
     meta.append(" ", agent);
+    if (session.classification) {
+      const classification = document.createElement("span");
+      classification.className = "session-classification";
+      classification.dataset.testid = "session-classification";
+      classification.textContent = session.classification;
+      sessionName.append(classification);
+    }
     button.append(sessionName, meta);
     const chatState = sessionChatState(session);
     const badge = document.createElement("em");
@@ -285,3 +306,7 @@ for (const button of elements.chatFilters.querySelectorAll("button[data-filter]"
   });
 }
 elements.sessionSearchInput.addEventListener("input", () => renderSessions());
+elements.classificationFilter.addEventListener("change", () => {
+  state.classificationFilter = elements.classificationFilter.value;
+  renderSessions();
+});
