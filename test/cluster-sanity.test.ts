@@ -8,6 +8,7 @@ import { type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { appendFile, chmod, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
+import { createServer } from "node:http";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test, { after, before } from "node:test";
@@ -381,6 +382,100 @@ test("a conversation continues on the other node through takeover", async () => 
   };
   await untilOwnedBy(nodeB, sessionB);
   await untilOwnedBy(nodeA, sessionA);
+});
+
+test("offline takeover survives an unresponsive owner and claimant restart, then fences the returning owner", { timeout: 90_000 }, async () => {
+  const project = nodeA.projects.find((candidate) => candidate.name === "Infra Scripts")!;
+  const twin = nodeB.projects.find((candidate) => candidate.name === project.name)!;
+  const listed = await api<{ sessions: SessionView[] }>(nodeA, sessionA, "GET", `/projects/${project.id}/sessions`);
+  const target = listed.body.sessions.find((row) => row.harnessId === "pi")!;
+  await api(nodeB, sessionB, "GET", `/projects/${twin.id}/sessions`);
+  seedOwnershipRow(nodeA, "pi", target.id, nodeB.nodeId, "owned", null);
+  seedOwnershipRow(nodeB, "pi", target.id, nodeB.nodeId, "owned", null);
+  const transcript = await readFile(target.path, "utf8");
+  await stopDevNode(servers[1]);
+  // A powered-off host can silently drop packets, rather than refuse a connection.
+  const blackhole = createServer(() => {});
+  await new Promise<void>((resolve) => blackhole.listen(Number(new URL(nodeB.url).port), "127.0.0.1", resolve));
+  try {
+    const response = await fetch(`${nodeA.url}/api/projects/${project.id}/sessions/take-ownership`, {
+      method: "POST", headers: { Cookie: sessionA.cookie, "x-csrf-token": sessionA.csrfToken, "Content-Type": "application/json" },
+      body: JSON.stringify({ peerId: nodeA.nodeId, sessionId: target.id, sessionPath: target.path }),
+      signal: AbortSignal.timeout(8_000),
+    });
+    const result = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(result));
+    assert.deepEqual(result.pendingPeerIds, [nodeB.nodeId]);
+    assert.equal(result.ownership.ownerNodeId, nodeA.nodeId);
+    assert.equal(result.ownership.epoch, 2);
+    assert.equal(await readFile(target.path, "utf8"), transcript, "takeover must not rewrite the transcript");
+
+    await stopDevNode(servers[0]);
+    servers[0] = await startDevNode(environment, nodeA);
+    sessionA = await signIn(environment, nodeA);
+    assert.deepEqual({ ...readOwnershipRow(nodeA, "pi", target.id) }, { owner_node_id: nodeA.nodeId, epoch: 2, status: "owned" });
+  } finally {
+    blackhole.closeAllConnections();
+    await new Promise<void>((resolve) => blackhole.close(() => resolve()));
+    servers[1] = await startDevNode(environment, nodeB);
+    sessionB = await signIn(environment, nodeB);
+  }
+  const deadline = Date.now() + 30_000;
+  while (readOwnershipRow(nodeB, "pi", target.id)?.owner_node_id !== nodeA.nodeId && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.deepEqual({ ...readOwnershipRow(nodeB, "pi", target.id) }, { owner_node_id: nodeA.nodeId, epoch: 2, status: "owned" });
+  const opened = await openConversationSocket(nodeB, sessionB, twin.id, target.path);
+  try {
+    assert.equal((opened.ready as unknown as ReadyFrame).ownership?.nodeId, nodeA.nodeId, "returning owner must be locked");
+  } finally { opened.socket.close(); }
+});
+
+test("takeover honors a live queue refusal but survives a connection lost during queue transfer", { timeout: 60_000 }, async () => {
+  const project = nodeA.projects.find((candidate) => candidate.name === "Infra Scripts")!;
+  const twin = nodeB.projects.find((candidate) => candidate.name === project.name)!;
+  const listed = await api<{ sessions: SessionView[] }>(nodeA, sessionA, "GET", `/projects/${project.id}/sessions`);
+  const target = listed.body.sessions.find((row) => row.harnessId === "claude")!;
+  await api(nodeB, sessionB, "GET", `/projects/${twin.id}/sessions`);
+  seedOwnershipRow(nodeA, "claude", target.id, nodeB.nodeId, "owned", null);
+  seedOwnershipRow(nodeB, "claude", target.id, nodeB.nodeId, "owned", null);
+  await stopDevNode(servers[1]);
+  let failure: "refuse" | "disconnect" | "partial" = "refuse";
+  const peer = createServer((request, response) => {
+    response.setHeader("Content-Type", "application/json");
+    if (request.url?.startsWith("/api/cluster/sessions/ownership?")) {
+      response.end(JSON.stringify({ ownership: { engine: "claude", sessionId: target.id, ownerNodeId: nodeB.nodeId, epoch: 1, status: "owned", transferToNodeId: null } }));
+    } else if (request.url === "/api/cluster/sessions/queue-transfer" && failure === "disconnect") {
+      request.socket.destroy();
+    } else if (request.url === "/api/cluster/sessions/queue-transfer" && failure === "partial") {
+      response.writeHead(200);
+      response.write('{"events":');
+      setTimeout(() => request.socket.destroy(), 20);
+    } else {
+      response.statusCode = 503;
+      response.end(JSON.stringify({ events: [], error: "Queue dispatch is still running" }));
+    }
+  });
+  await new Promise<void>((resolve) => peer.listen(Number(new URL(nodeB.url).port), "127.0.0.1", resolve));
+  try {
+    const takeover = () => api(nodeA, sessionA, "POST", `/projects/${project.id}/sessions/take-ownership`, { peerId: nodeA.nodeId, sessionId: target.id, sessionPath: target.path });
+    const refused = await takeover();
+    assert.notEqual(refused.status, 200, "a live refusal must not become an offline takeover");
+    assert.equal(readOwnershipRow(nodeA, "claude", target.id)?.owner_node_id, nodeB.nodeId);
+    for (const mode of ["disconnect", "partial"] as const) {
+      failure = mode;
+      seedOwnershipRow(nodeA, "claude", target.id, nodeB.nodeId, "owned", null);
+      const taken = await takeover();
+      assert.equal(taken.status, 200, `${mode}: ${JSON.stringify(taken.body)}`);
+      assert.equal(readOwnershipRow(nodeA, "claude", target.id)?.owner_node_id, nodeA.nodeId);
+      assert.deepEqual((taken.body as { pendingPeerIds: string[] }).pendingPeerIds, [nodeB.nodeId]);
+    }
+  } finally {
+    peer.closeAllConnections();
+    await new Promise<void>((resolve) => peer.close(() => resolve()));
+    servers[1] = await startDevNode(environment, nodeB);
+    sessionB = await signIn(environment, nodeB);
+  }
 });
 
 test("taking over an empty conversation succeeds when its owner also has no transcript", async () => {

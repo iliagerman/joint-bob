@@ -14,6 +14,7 @@ test("runClaudePrompt restricts tools and reports the session tool list", async 
     await writeFile(fakeClaude, [
       "#!/bin/sh",
       `printf '%s\\n' "$@" > ${JSON.stringify(argsFile)}`,
+      "cat >/dev/null",
       `echo '{"type":"system","subtype":"init","session_id":"11111111-1111-4111-8111-111111111111","tools":["Bash","Read","Edit"]}'`,
       `echo '{"type":"result","subtype":"success"}'`,
       "",

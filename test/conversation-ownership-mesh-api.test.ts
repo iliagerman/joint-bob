@@ -73,8 +73,11 @@ function startNode(node: NodeFixture, home: string, invocationLog: string, holdD
       env: { ...process.env, PORT: String(node.port), NODE_ENV: "test", HOME: home, JOINT_BOB_DATA_DIR: node.dataDir, JOINT_BOB_TEST_ENGINE_LOG: invocationLog, JOINT_BOB_TEST_ENGINE_HOLD_DIR: holdDir },
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const timeout = setTimeout(() => reject(new Error("Server startup timed out")), 10_000);
-    child.once("exit", (status) => reject(new Error(`Server exited during startup: ${status}`)));
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error("Server startup timed out"));
+    }, 30_000);
+    child.once("exit", (status) => { clearTimeout(timeout); reject(new Error(`Server exited during startup: ${status}`)); });
     child.stdout!.on("data", (chunk) => {
       if (!String(chunk).includes("Joint Bob listening")) return;
       clearTimeout(timeout);
@@ -248,7 +251,9 @@ async function exercisePiOwnership(
   await stopNode(children.pop()!);
   const request = { projectId: source.projectId, peerId: source.id, sessionId, sessionPath: transcriptPath };
   const offlineReclaim = await machinePost(source, "/api/cluster/sessions/take-ownership", request);
-  assert.equal(offlineReclaim.status, 500, "cannot take an offline owner's queue without its fenced snapshot");
+  assert.equal(offlineReclaim.status, 200, JSON.stringify(offlineReclaim.body));
+  assert.equal((offlineReclaim.body.ownership as Record<string, unknown>).ownerNodeId, source.id);
+  assert.deepEqual(offlineReclaim.body.pendingPeerIds, [destination.id]);
   children.push(await startNode(destination, home, invocationLog, holdDir));
   const reclaim = await machinePost(source, "/api/cluster/sessions/take-ownership", request);
   assert.equal(reclaim.status, 200, JSON.stringify(reclaim.body));
@@ -298,7 +303,8 @@ test("two real servers fence a second writer and preserve takeover across an off
       initializeNode(path.join(root, "destination-data"), home, projectPath, sessionRoot, await freePort()),
     ]);
     await Promise.all([pairNode(source, destination, home), pairNode(destination, source, home)]);
-    children.push(await startNode(source, home, invocationLog, holdDir), await startNode(destination, home, invocationLog, holdDir));
+    children.push(await startNode(source, home, invocationLog, holdDir));
+    children.push(await startNode(destination, home, invocationLog, holdDir));
     await exerciseClaudeOwnership(source, destination, claudePath, invocationLog, holdDir, sockets);
     await exercisePiOwnership(source, destination, "mesh-session", transcriptPath, invocationLog, home, sessionRoot, holdDir, children, sockets);
   } finally {

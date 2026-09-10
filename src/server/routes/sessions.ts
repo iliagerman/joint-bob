@@ -160,28 +160,52 @@ app.post("/api/cluster/sessions/queue-transfer", async (request, response, next)
   } catch (error) { next(error); }
 });
 
-async function synchronizeQueueBeforeTakeover(projectId: string, engine: ConversationEngine, sessionId: string, localId: string, peers: ClusterPeer[]): Promise<void> {
+function peerIsUnreachable(error: unknown): boolean {
+  return error instanceof TypeError || error instanceof DOMException && ["TimeoutError", "AbortError"].includes(error.name);
+}
+
+async function synchronizeQueueBeforeTakeover(projectId: string, engine: ConversationEngine, sessionId: string, localId: string, peers: ClusterPeer[]): Promise<Set<string>> {
+  const unavailable = new Set<string>();
   const current = await getConversationOwnership(engine, sessionId);
-  if (current?.ownerNodeId === localId && current.status === "owned") return;
-  for (const peer of peers) {
+  if (current?.ownerNodeId === localId && current.status === "owned") return unavailable;
+  const token = await getClusterMachineToken();
+  await Promise.all(peers.map(async (peer) => {
     const url = new URL("/api/cluster/sessions/ownership", peer.url);
     url.searchParams.set("engine", engine); url.searchParams.set("sessionId", sessionId);
-    const reply = await fetch(url, { headers: { Authorization: `Bearer ${await getClusterMachineToken()}` }, signal: AbortSignal.timeout(5_000) });
-    if (!reply.ok) throw new TaskWorktreeError("Cannot verify queue ownership on peer");
-    const remote = z.object({ ownership: ownershipSchema.nullable() }).parse(await reply.json()).ownership;
+    let body: unknown;
+    try {
+      const reply = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(3_000) });
+      if (!reply.ok) throw new TaskWorktreeError("Cannot verify queue ownership on peer");
+      body = await reply.json();
+    } catch (error) {
+      if (!peerIsUnreachable(error)) throw error;
+      unavailable.add(peer.id);
+      return;
+    }
+    const remote = z.object({ ownership: ownershipSchema.nullable() }).parse(body).ownership;
     if (remote) await receiveReplicationBatch({ events: [ownershipEvent(remote, peer.id)] });
-  }
+  }));
   const previous = await getConversationOwnership(engine, sessionId);
-  if (!previous || previous.ownerNodeId === localId) return;
+  if (!previous || previous.ownerNodeId === localId) return unavailable;
   const source = peers.find((peer) => peer.id === previous.ownerNodeId);
-  if (!source) throw new TaskWorktreeError("Queue owner is unavailable; cannot safely transfer pending prompts");
-  const response = await fetch(`${source.url}/api/cluster/sessions/queue-transfer`, {
-    method: "POST", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ projectId, engine, sessionId }), signal: AbortSignal.timeout(5_000),
-  });
-  if (!response.ok) throw new TaskWorktreeError("Queue transfer was not acknowledged by its owner; wait for dispatch to finish and retry");
-  const snapshot = await response.json() as { events: ReplicationEvent[] };
+  // Offline takeover uses the last replicated queue. The higher ownership epoch
+  // and its durable outbox event fence the old owner when it reconnects.
+  if (!source || unavailable.has(source.id)) return unavailable;
+  let snapshot: { events: ReplicationEvent[] };
+  try {
+    const response = await fetch(`${source.url}/api/cluster/sessions/queue-transfer`, {
+      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId, engine, sessionId }), signal: AbortSignal.timeout(3_000),
+    });
+    if (!response.ok) throw new TaskWorktreeError("Queue transfer was not acknowledged by its owner; wait for dispatch to finish and retry");
+    snapshot = await response.json() as { events: ReplicationEvent[] };
+  } catch (error) {
+    if (!peerIsUnreachable(error)) throw error;
+    unavailable.add(source.id);
+    return unavailable;
+  }
   await receiveReplicationBatch(snapshot);
+  return unavailable;
 }
 
 async function takeLocalSessionOwnership(project: ProjectRecord, payload: z.infer<typeof routedSessionTakeOwnershipSchema>): Promise<{ sessionPath: string; ownership: ConversationOwnership; pendingPeerIds: string[] }> {
@@ -193,14 +217,15 @@ async function takeLocalSessionOwnership(project: ProjectRecord, payload: z.infe
   const engine: ConversationEngine = matching.harnessId;
   const sessionId = matching.id;
   if (conversationIsActive(project.id, engine, sessionId, matching.path)) throw new TaskWorktreeError("Wait for the current turn to finish before taking ownership");
-  await synchronizeQueueBeforeTakeover(project.id, engine, sessionId, local.id, peers);
+  const unavailable = await synchronizeQueueBeforeTakeover(project.id, engine, sessionId, local.id, peers);
   const ownership = await takeConversationOwnership(engine, sessionId, local.id);
-  const settled = await Promise.allSettled(peers.map((peer) => applyOwnershipToPeer(peer, ownership, local.id)));
-  const pendingPeerIds: string[] = [];
+  const reachable = peers.filter((peer) => !unavailable.has(peer.id));
+  const settled = await Promise.allSettled(reachable.map((peer) => applyOwnershipToPeer(peer, ownership, local.id)));
+  const pendingPeerIds = [...unavailable];
   for (const [index, result] of settled.entries()) {
     if (result.status === "rejected") {
       const error = result.reason;
-      if (error instanceof TypeError || error instanceof DOMException && error.name === "TimeoutError") { pendingPeerIds.push(peers[index].id); continue; }
+      if (peerIsUnreachable(error)) { pendingPeerIds.push(reachable[index].id); continue; }
       throw error;
     }
     if (!result.value.accepted || !sameConversationOwnership(result.value.current ?? undefined, ownership)) {
