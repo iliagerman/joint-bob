@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.17.1 — 2026-09-10
 
 - Attached credentials now refresh automatically before each message, so changes to secret accounts, rotations, and removals take effect on the next message without restarting the conversation.
 
