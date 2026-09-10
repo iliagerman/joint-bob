@@ -3,9 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.16.0 — 2026-09-10
 
-- Added conversation browsers on designated Ubuntu nodes, letting agents and users browse the web and interact with web applications with live video, keyboard input, mouse control, and dialog support. Saved logins persist between runs.
+- Added an Ubuntu browser executor for conversations across the cluster, with localhost traffic routed to the app's node.
+- Added live browser viewing and manual control, tabs, popups, uploads, and downloads. Closing a viewer leaves its browser running.
+- Added encrypted saved-login snapshots while keeping each conversation's cookies and storage separate.
+- Kept the same browser when switching between Pi and Claude, and added browser CLI access to interactive, automated, and recovered agent runs.
+- Kept Escape inside full-screen terminal programs instead of closing the embedded terminal.
 
 ## 1.15.0 — 2026-09-10
 
