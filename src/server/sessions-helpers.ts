@@ -23,8 +23,8 @@ import { taskConfig, taskCwd, taskPhase } from "./task-runs.js";
  */
 export async function listProjectSessionsWithReviewState(project: ProjectRecord, userId: string, username: string): Promise<SessionSummary[]> {
   const tasks = await listTasks(project.id);
-  const pinnedSessionPaths = getUserPreferences(userId).pinnedSessionPaths;
-  const pinnedSessionIds = listUserPins(username).conversations
+  const pinnedSessionPaths = userId ? getUserPreferences(userId).pinnedSessionPaths : [];
+  const pinnedSessionIds = (username ? listUserPins(username).conversations : [])
     .filter((pin) => pin.projectId === project.id)
     .map((pin) => `${pin.engine}:${pin.sessionId}`);
   const sessions = await listHarnessSessions({
@@ -74,7 +74,8 @@ export async function listProjectSessionsWithReviewState(project: ProjectRecord,
       sessionId: session.id,
     };
   });
-  const reviewStates = syncConversationReviewStates(userId, username, project.id, listedSessions.filter((session) => !session.readOnly));
+  // Internal snapshots do not belong to a viewer and must not create review records.
+  const reviewStates = userId ? syncConversationReviewStates(userId, username, project.id, listedSessions.filter((session) => !session.readOnly)) : new Map();
   const ownership = await Promise.all(listedSessions.map((session) => getConversationOwnership(session.path.startsWith("claude:") || session.path.startsWith("draft:claude:") ? "claude" : "pi", session.id)));
   return listedSessions.map((session, index) => {
     const { engine: _engine, sessionId: _sessionId, ...summary } = session;

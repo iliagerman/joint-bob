@@ -39,13 +39,18 @@ const prompt = [
   diff,
 ].join("\n");
 
+// Git exports index/repository routing variables to hooks. Claude's startup
+// hooks may use other repositories; never let them overwrite this commit's index.
+const claudeEnv = { ...process.env };
+for (const name of git("rev-parse", "--local-env-vars").trim().split("\n")) delete claudeEnv[name];
+
 const claude = spawnSync("claude", [
   "-p", prompt,
   "--no-session-persistence",
   "--model", "haiku",
   "--permission-mode", "acceptEdits",
   "--allowedTools", "Read Edit",
-], { stdio: ["ignore", "inherit", "inherit"] });
+], { env: claudeEnv, stdio: ["ignore", "inherit", "inherit"] });
 
 if (claude.error || claude.status !== 0) {
   console.error("pre-commit: Claude could not add the Unreleased changelog entry.");

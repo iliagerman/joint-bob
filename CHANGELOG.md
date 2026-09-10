@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fork a conversation's history and settings into an independent conversation from the session menu.
+
 ## 1.14.1 — 2026-09-10
 
 - Fixed conversation ownership takeover timing out when another node is offline. Ownership is saved locally and replicated when the node reconnects.

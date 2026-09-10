@@ -18,6 +18,7 @@ import { TaskWorktreeError } from "../../worktrees.js";
 import { claudeConnectionKey, promptQueueIsDraining } from "../chat.js";
 import { conversationBelongsToDoneTask } from "../cluster-helpers.js";
 import { sendError } from "../http-auth.js";
+import { ConversationForkError, forkLocalConversation } from "../conversation-fork.js";
 import { assertProjectEditable, projectsWithSharedNames } from "../projects.js";
 import { broadcastToProject } from "../realtime.js";
 import { ownershipSchema, registeredHarnessIdSchema, routedSessionTakeOwnershipSchema, sessionDeleteSchema, sessionRecoverySchema, sessionReviewedSchema, sessionsReviewedSchema, sessionTakeOwnershipSchema } from "../schemas.js";
@@ -35,6 +36,53 @@ app.get("/api/projects/:projectId/sessions", async (request, response, next) => 
     const authSession = response.locals.authSession as AuthSession;
     response.json({ sessions: await listProjectSessionsWithReviewState(project, authSession.userId, authSession.username) });
   } catch (error) {
+    next(error);
+  }
+});
+
+const sessionForkSchema = z.object({ engine: registeredHarnessIdSchema, sessionId: z.string().min(1).max(240) }).strict();
+
+app.post("/api/projects/:projectId/sessions/fork", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    const payload = sessionForkSchema.parse(request.body);
+    const local = await getClusterNode();
+    const ownership = await getConversationOwnership(payload.engine, payload.sessionId);
+    if (ownership && ownership.ownerNodeId !== local.id) {
+      const peer = await getClusterPeer(ownership.ownerNodeId);
+      if (!peer) throw new ConversationForkError(409, "Conversation owner is unavailable");
+      let routed: globalThis.Response;
+      try {
+        routed = await fetch(`${peer.url}/api/cluster/sessions/fork`, {
+          method: "POST", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ ...payload, projectId: project.id }), signal: AbortSignal.timeout(30_000),
+        });
+      } catch { throw new ConversationForkError(409, "Conversation owner is unavailable; fork was not confirmed"); }
+      response.status(routed.status).json(await routed.json());
+      if (routed.ok) broadcastToProject(project.id, { type: "sessionsChanged" });
+      return;
+    }
+    const session = await forkLocalConversation(project, payload.engine, payload.sessionId);
+    broadcastToProject(project.id, { type: "sessionsChanged" });
+    response.status(201).json({ session });
+  } catch (error) {
+    if (error instanceof ConversationForkError) { sendError(response, error.status, error.message); return; }
+    next(error);
+  }
+});
+
+app.post("/api/cluster/sessions/fork", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const payload = sessionForkSchema.extend({ projectId: z.string().min(1) }).parse(request.body);
+    const project = await getProject(payload.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    const session = await forkLocalConversation(project, payload.engine, payload.sessionId);
+    broadcastToProject(project.id, { type: "sessionsChanged" });
+    response.status(201).json({ session });
+  } catch (error) {
+    if (error instanceof ConversationForkError) { sendError(response, error.status, error.message); return; }
     next(error);
   }
 });

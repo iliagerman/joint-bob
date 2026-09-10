@@ -43,6 +43,35 @@ after(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
+test("fork on a peer runs on the source owner and rejects its running session", { timeout: 45_000 }, async () => {
+  const project = nodeA.projects[0];
+  const listed = await api<{ sessions: SessionView[] }>(nodeA, sessionA, "GET", `/projects/${project.id}/sessions`);
+  const source = listed.body.sessions.find((row) => row.harnessId === "pi")!;
+  const takeover = await api(nodeA, sessionA, "POST", `/projects/${project.id}/sessions/take-ownership`, { peerId: nodeA.nodeId, sessionId: source.id, sessionPath: source.path });
+  assert.equal(takeover.status, 200);
+  const requestFork = () => fetch(`${nodeB.url}/api/projects/${project.id}/sessions/fork`, {
+    method: "POST", headers: { Cookie: sessionB.cookie, "x-csrf-token": sessionB.csrfToken, "Content-Type": "application/json" },
+    body: JSON.stringify({ engine: "pi", sessionId: source.id }),
+  });
+  const db = openPiRuntimeDatabase(nodeA.dataDir);
+  const runtime = { sessionId: source.id, transcriptPath: source.path, runId: randomUUID() };
+  try {
+    publishPiRuntime(db, runtime, true);
+    const busy = await requestFork();
+    assert.equal(busy.status, 409, "peer must ask owner, not copy a locally idle transcript");
+    publishPiRuntime(db, runtime, false);
+    const response = await requestFork();
+    assert.equal(response.status, 201);
+    const { session: copy } = await response.json() as { session: SessionView };
+    assert.equal(copy.executionNodeId, nodeA.nodeId);
+    assert.notEqual(copy.id, source.id);
+    assert.notEqual(copy.path, source.path);
+    assert.ok((await readFile(copy.path, "utf8")).includes(source.id + "-0"), "fork includes source history");
+    const onOwner = await api<{ sessions: SessionView[] }>(nodeA, sessionA, "GET", `/projects/${project.id}/sessions`);
+    assert.ok(onOwner.body.sessions.some((row) => row.id === copy.id && row.title.startsWith("[F] ")));
+  } finally { publishPiRuntime(db, runtime, false); db.close(); }
+});
+
 // This verifies peer discovery from the harness's shared managed fixture, not Syncthing transport.
 test("published external skills are discovered by a peer from the shared managed fixture", async () => {
   const source = path.join(root, "external-skills", "cluster-skill");

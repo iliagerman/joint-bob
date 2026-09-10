@@ -85,15 +85,26 @@ async function listedClaudeSessionIds(node: NodeFixture, home: string): Promise<
   return JSON.parse(output) as string[];
 }
 
-function startNode(node: NodeFixture, home: string, invocationLog: string, holdDir: string): Promise<ChildProcess> {
+function startNode(node: NodeFixture, home: string, invocationLog: string, holdDir: string, children: ChildProcess[]): Promise<ChildProcess> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["--import", "tsx", "src/server.ts"], {
       cwd: process.cwd(),
       env: { ...process.env, PORT: String(node.port), NODE_ENV: "test", HOME: home, JOINT_BOB_DATA_DIR: node.dataDir, JOINT_BOB_TEST_ENGINE_LOG: invocationLog, JOINT_BOB_TEST_ENGINE_HOLD_DIR: holdDir },
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const timeout = setTimeout(() => reject(new Error("Server startup timed out")), 15_000);
-    child.once("exit", (status) => reject(new Error(`Server exited during startup: ${status}`)));
+    // Track immediately: a later startup failure must not leak this server.
+    children.push(child);
+    let stderr = "";
+    child.stderr!.on("data", (chunk) => { stderr = (stderr + chunk).slice(-4000); });
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(new Error(`Server startup timed out: ${stderr}`));
+    }, 60_000);
+    child.once("error", (error) => { clearTimeout(timeout); reject(error); });
+    child.once("exit", (status) => {
+      clearTimeout(timeout);
+      reject(new Error(`Server exited during startup: ${status}: ${stderr}`));
+    });
     child.stdout!.on("data", (chunk) => {
       if (!String(chunk).includes("Joint Bob listening")) return;
       clearTimeout(timeout);
@@ -103,8 +114,12 @@ function startNode(node: NodeFixture, home: string, invocationLog: string, holdD
 }
 
 async function stopNode(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null) return;
-  await new Promise<void>((resolve) => { child.once("exit", () => resolve()); child.kill("SIGTERM"); });
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  await new Promise<void>((resolve) => {
+    const timeout = setTimeout(() => child.kill("SIGKILL"), 5_000);
+    child.once("exit", () => { clearTimeout(timeout); resolve(); });
+    child.kill("SIGTERM");
+  });
 }
 
 /** Claims are local-first, so a test that needs a peer-owned conversation applies the
@@ -203,7 +218,8 @@ test("a Claude conversation is claimed from a node whose checkout sits elsewhere
       initializeNode(path.join(root, "node-b-data"), home, projectB, projectA, await freePort()),
     ]);
     await Promise.all([pairNode(nodeA, nodeB, home), pairNode(nodeB, nodeA, home)]);
-    children.push(await startNode(nodeA, home, invocationLog, holdDir), await startNode(nodeB, home, invocationLog, holdDir));
+    await startNode(nodeA, home, invocationLog, holdDir, children);
+    await startNode(nodeB, home, invocationLog, holdDir, children);
 
     await seedConversationOwnership([nodeA, nodeB], "claude", sessionId, nodeA);
 
@@ -247,7 +263,7 @@ test("a Claude conversation is claimed from a node whose checkout sits elsewhere
 
     // FR1.4 — ownership survives a restart of the claiming node.
     await stopNode(children.pop()!);
-    children.push(await startNode(nodeB, home, invocationLog, holdDir));
+    await startNode(nodeB, home, invocationLog, holdDir, children);
     const persisted = await machineGet(nodeB, `/api/cluster/sessions/ownership?engine=claude&sessionId=${encodeURIComponent(sessionId)}`);
     assert.equal(persisted.status, 200);
     assert.deepEqual(persisted.body.ownership, offlineOwnership);

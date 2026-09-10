@@ -212,6 +212,14 @@ function sessionMenuItems(session, sessionActive) {
       testid: "session-add-to-canvas-button",
       onSelect: () => addSessionToCanvas(session),
     },
+    {
+      label: "Fork conversation",
+      icon: "copy",
+      testid: "session-fork-button",
+      disabled: Boolean(session.running),
+      title: session.running ? "Wait for this conversation to finish running" : "Copy history and settings into an independent conversation",
+      onSelect: () => forkSessionFromRow(session).catch((error) => toast(error.message)),
+    },
     ...(readOnly ? [] : [
       {
         label: "Colour",
@@ -248,6 +256,23 @@ export function addSessionToCanvas(session) {
     return;
   }
   setMobileView("canvas");
+}
+
+async function forkSessionFromRow(session) {
+  const projectId = state.activeProjectId;
+  const body = await api(`/api/projects/${encodeURIComponent(projectId)}/sessions/fork`, {
+    method: "POST",
+    body: JSON.stringify({ engine: sessionEngine(session), sessionId: session.id }),
+  });
+  if (state.activeProjectId !== projectId) { toast("Conversation forked"); return; }
+  // A remote fork may arrive before its replicated record or transcript does.
+  state.sessions = [body.session, ...state.sessions.filter((candidate) => candidate.id !== body.session.id)];
+  elements.sessionSearchInput.value = "";
+  state.chatFilter = "all";
+  for (const chip of elements.chatFilters.querySelectorAll("button[data-filter]")) chip.classList.toggle("active", chip.dataset.filter === "all");
+  renderSessions();
+  openListedSession(body.session);
+  toast("Conversation forked");
 }
 
 async function removeSessionFromRow(session, sessionActive) {

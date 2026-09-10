@@ -363,7 +363,9 @@ webSocketServer.on("connection", async (socket, request) => {
     connection.shared = sharedSession;
     sharedSession.clients.add(socket);
     const transcript = await conversationTranscriptPayload(project.id, "pi", sharedSession.handle.session.sessionId, listedSessions, simplifyMessages(sharedSession.handle.session.messages as unknown[]));
-    if (sessionRequest.draft && transcript.segments.length > 1) connection.handoffContext = buildHandoffContext(transcript.messages);
+    // A fork can materialize an empty Pi segment to preserve its model/tools.
+    // It still needs the preceding harness history on its first prompt.
+    if ((sessionRequest.draft || sharedSession.handle.session.messages.length === 0) && transcript.segments.length > 1) connection.handoffContext = buildHandoffContext(transcript.messages);
     send(socket, {
       type: "ready",
       project,

@@ -524,10 +524,17 @@ export function restoreClaudeQueueSettings(connection: ChatConnection): void {
   if (settings?.provider !== "claude") return;
   connection.claude.model = settings.modelId;
   connection.claude.effort = settings.reasoning === "default" ? null : settings.reasoning;
+  if (settings.claudeTools) {
+    connection.claude.availableTools = [...settings.claudeTools.available];
+    connection.claude.enabledTools = settings.claudeTools.enabled ? [...settings.claudeTools.enabled] : null;
+  }
 }
 
 function currentQueueSettings(connection: ChatConnection): QueuedSettings | null {
-  if (connection.engine === "claude") return { provider: "claude", modelId: connection.claude.model!, reasoning: (connection.claude.effort ?? "default") as QueuedSettings["reasoning"] };
+  if (connection.engine === "claude") return {
+    provider: "claude", modelId: connection.claude.model!, reasoning: (connection.claude.effort ?? "default") as QueuedSettings["reasoning"],
+    ...(connection.claude.enabledTools !== null ? { claudeTools: { available: connection.claude.availableTools, enabled: connection.claude.enabledTools } } : {}),
+  };
   const session = connection.shared!.handle.session;
   return session.model ? { provider: session.model.provider, modelId: session.model.id, reasoning: session.thinkingLevel } : null;
 }
@@ -584,6 +591,10 @@ async function applyQueuedSettings(connection: ChatConnection, settings: QueuedS
   if (connection.engine === "claude") {
     connection.claude.model = settings.modelId;
     connection.claude.effort = settings.reasoning === "default" ? null : settings.reasoning as ClaudeChatState["effort"];
+    if (settings.claudeTools) {
+      connection.claude.availableTools = [...settings.claudeTools.available];
+      connection.claude.enabledTools = settings.claudeTools.enabled ? [...settings.claudeTools.enabled] : null;
+    }
     sendClaudeStatus(connection);
     return;
   }
@@ -755,6 +766,7 @@ async function handleClaudeCommand(connection: ChatConnection, payload: SocketPa
     const unknown = payload.toolNames.find((name) => !available.has(name));
     if (unknown) throw new Error(`Unknown tool: ${unknown}`);
     connection.claude.enabledTools = payload.toolNames;
+    persistQueueSettings(connection);
     send(connection.socket, { type: "tools", supported: true, tools: claudeTools(connection) });
     return;
   }

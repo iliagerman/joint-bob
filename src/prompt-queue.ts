@@ -9,6 +9,7 @@ import { enqueueReplicationEvent, ensureReplicationSchema, resolveProjectAlias, 
 export const queuedSettingsSchema = z.object({
   provider: z.string().min(1).max(80), modelId: z.string().min(1).max(200),
   reasoning: z.enum(["default", "off", "minimal", "low", "medium", "high", "xhigh", "max"]),
+  claudeTools: z.object({ available: z.array(z.string()), enabled: z.array(z.string()).nullable() }).strict().optional(),
 }).strict().superRefine((value, context) => {
   const invalid = value.provider === "claude" ? ["off", "minimal"].includes(value.reasoning) : value.reasoning === "default";
   if (invalid) context.addIssue({ code: z.ZodIssueCode.custom, message: "Reasoning level does not belong to the selected engine" });

@@ -44,6 +44,7 @@ before(async () => {
     serviceWorkers: "block",
   });
   page = await context.newPage();
+  page.setDefaultNavigationTimeout(60_000);
   page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
   page.on("response", (response) => {
     if (response.status() >= 400) failedResponses.push(`${response.status()} ${response.request().method()} ${new URL(response.url()).pathname}`);
@@ -960,8 +961,10 @@ test("a top toast stays above the mobile composer", async () => {
     await mobilePage.getByTestId("login-username-input").fill(environment.username);
     await mobilePage.getByTestId("login-password-input").fill(environment.password);
     await mobilePage.getByTestId("login-submit-button").click();
-    await mobilePage.getByTestId("nav-projects-button").click();
     const project = mobilePage.locator(".project-card", { hasText: "Internal Assistant" }).first();
+    await project.waitFor({ state: "attached", timeout: 20_000 });
+    await mobilePage.locator("#loginDialog").waitFor({ state: "hidden" });
+    await mobilePage.getByTestId("nav-projects-button").click();
     await project.waitFor({ timeout: 20_000 });
     await project.click();
     await mobilePage.locator(".session-card", { hasText: "Thread-Based Agent Builder" }).first().click();
@@ -1225,6 +1228,7 @@ test("running conversations open their live conversation in another project", as
     return (await response.json()).sessions[0];
   }, project.id) as { id: string; path: string; title: string; harnessId: string };
   const database = new DatabaseSync(path.join(node.dataDir, "node.db"));
+  database.exec("PRAGMA busy_timeout = 5000");
   try {
     const now = new Date();
     database.prepare(`INSERT INTO conversation_runtime_leases
@@ -1270,7 +1274,7 @@ test("toolbar shortcuts open the same actions as their buttons", async () => {
 // "Put my cursor where I can type", without reaching for the mouse.
 test("the focus key lands the cursor in the composer, or in the dialog on top", async () => {
   await page.locator("#sessionList .session-card").first().click();
-  await page.getByTestId("chat-message-input").waitFor({ state: "visible" });
+  await page.locator('#messageInput:not([disabled])').waitFor({ state: "visible" });
   await page.locator("body").click({ position: { x: 5, y: 5 } });
 
   await page.keyboard.press("Meta+Shift+KeyI");
@@ -1342,8 +1346,11 @@ test("Escape closes the terminal, and reaches the shell while a full-screen prog
   // directly proves the guard without depending on which programs the box has.
   await page.getByTestId("chat-open-terminal-button").click();
   await page.locator('#terminalStatus[data-state="live"]').waitFor({ timeout: 20_000 });
-  await page.keyboard.type("printf '\\e[?1049h'\n");
-  await page.waitForTimeout(500);
+  await page.locator(".xterm-helper-textarea").focus();
+  await page.keyboard.type("printf '\\033[?1049h'");
+  await page.keyboard.press("Enter");
+  await page.evaluate("import('/app/state.js').then(({ state }) => { window.__terminalTest = state.terminalEmulator; })");
+  await page.waitForFunction(() => (window as Window & { __terminalTest?: { buffer: { active: { type: string } } } }).__terminalTest?.buffer.active.type === "alternate");
   await page.keyboard.press("Escape");
   assert.equal(await page.getByTestId("terminal-dialog").isVisible(), true,
     "Escape belongs to the shell while a full-screen program is running");

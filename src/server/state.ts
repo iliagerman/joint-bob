@@ -115,6 +115,7 @@ export const machineRoutes = new Set([
   "PUT /cluster/project-file-content",
   "POST /cluster/sync/share",
   "DELETE /cluster/sessions/delete",
+  "POST /cluster/sessions/fork",
   "POST /cluster/sessions/take-ownership",
   "POST /cluster/sessions/queue-transfer",
   "GET /cluster/sessions/transcript-presence",

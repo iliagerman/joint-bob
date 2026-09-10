@@ -137,6 +137,7 @@ test("a staged application commit gets an Unreleased changelog entry", async () 
     await writeFile(path.join(bin, "claude"), [
       "#!/bin/sh",
       "printf '%s\\n' \"$@\" > claude-args",
+      'if [ -n "${GIT_INDEX_FILE:-}" ]; then echo "inherited Git index" >&2; exit 17; fi;',
       "awk 'BEGIN { added=0 } /^## / && !added { print \"## Unreleased\\n\\n- Changed the server port\\n\"; added=1 } { print }' CHANGELOG.md > CHANGELOG.tmp",
       "mv CHANGELOG.tmp CHANGELOG.md",
     ].join("\n"), { mode: 0o755 });
@@ -144,7 +145,7 @@ test("a staged application commit gets an Unreleased changelog entry", async () 
     const result = spawnSync(process.execPath, [entryWriter], {
       cwd: root,
       encoding: "utf8",
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, GIT_INDEX_FILE: path.join(root, ".git", "index") },
     });
 
     assert.equal(result.status, 0, result.stderr);
