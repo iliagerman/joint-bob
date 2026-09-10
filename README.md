@@ -372,7 +372,13 @@ just update             # both nodes
 
 Each deployment creates a mode-`0600` SQLite backup before replacing an installed copy and verifies the reported release. Deployment logs are written to `~/.joint-bob/logs/push-deploy.log`.
 
-For staged application changes, the `pre-commit` hook asks Claude Haiku to add an entry under `## Unreleased`. On a push to `main`, the `pre-push` hook reviews the pushed commit range, writes release notes, bumps the version, and stops the first push so the release files can be committed. The next push waits for the remote to confirm the exact commit, then deploys it. Pushes without application changes do not deploy.
+For staged application changes, the `pre-commit` hook asks Claude Haiku to add an entry under `## Unreleased`. On a push to `main`, the `pre-push` hook reviews the pushed commit range, writes release notes, bumps the version, and stops the first push so the release files can be committed. The next push waits for the remote to confirm the exact commit, then deploys it. Pushes without application changes do not deploy through the local hook.
+
+Every push to `main` also runs the GitHub **Release** workflow. For a version not yet published, it runs typecheck, tests, and build, then tags that exact commit as `v<version>` and publishes `joint-bob.tar.gz` with its SHA-256 checksum. **Settings > Updates** can discover the release once those assets are published. Creating a release does not force an installation; nodes update through Settings or their automatic-update preference.
+
+The version and release notes must already be committed in `package.json` and `CHANGELOG.md`. A docs-only push with an already-published version is a no-op; changed application code without a version bump fails instead of silently skipping a release. Runs for the same version are serialized and never retarget an existing tag. Different versions can finish independently without an older version replacing the newest release. Manual `v*` tag pushes remain supported, and the workflow's **Run workflow** action retries an interrupted release from its original ref.
+
+GitHub releases do not require npm publishing credentials. npm publication is opt-in through the Actions repository variable `NPM_PUBLISH_ENABLED=true`, after configuring npm trusted publishing for this repository's `release.yml` workflow. An npm publishing failure does not remove the GitHub release or prevent nodes from finding it; retry npm publication separately after fixing its credentials.
 
 ## EC2 smoke test
 

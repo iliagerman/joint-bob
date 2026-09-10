@@ -2,16 +2,39 @@ name: Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
 jobs:
-  release:
+  version:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+      - name: Read release version
+        id: version
+        run: |
+          node scripts/prepare-release.mjs --metadata-only
+
+  release:
+    needs: version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    concurrency:
+      group: release-${{ needs.version.outputs.tag }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -19,21 +42,21 @@ jobs:
           node-version: 22.23.2
           registry-url: https://registry.npmjs.org
       - name: Validate release version
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          version=$(node -p "require('./package.json').version")
-          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
-            echo "Tag ${GITHUB_REF_NAME} does not match package.json version ${version}" >&2
-            exit 1
-          fi
-          if ! grep -qE "^## ${version}([[:space:]]|$)" CHANGELOG.md; then
-            echo "CHANGELOG.md has no section for ${version}" >&2
-            exit 1
-          fi
+          node scripts/prepare-release.mjs
       - run: npm ci
+        if: steps.release.outputs.publish == 'true'
       - run: npm run typecheck
+        if: steps.release.outputs.publish == 'true'
       - run: npm test
+        if: steps.release.outputs.publish == 'true'
       - run: npm run build
+        if: steps.release.outputs.publish == 'true'
       - name: Pack and smoke test
+        if: steps.release.outputs.publish == 'true'
         run: |
           printf 'commit=%s\n' "$GITHUB_SHA" > .joint-bob-release
           package=$(npm pack --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s)[0].filename))')
@@ -42,8 +65,20 @@ jobs:
           tar -xOf joint-bob.tar.gz package/.joint-bob-release | grep -qx "commit=$GITHUB_SHA"
           sha256sum joint-bob.tar.gz > joint-bob.tar.gz.sha256
       - uses: softprops/action-gh-release@v2
+        if: steps.release.outputs.publish == 'true'
         with:
+          tag_name: ${{ steps.release.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Joint Bob ${{ steps.release.outputs.tag }}
+          draft: false
+          prerelease: false
+          make_latest: legacy
+          generate_release_notes: true
           files: |
             joint-bob.tar.gz
             joint-bob.tar.gz.sha256
-      - run: npm publish --provenance --access public
+      - name: Publish to npm when configured
+        if: steps.release.outputs.publish == 'true' && vars.NPM_PUBLISH_ENABLED == 'true'
+        run: |
+          npm install --global npm@11
+          npm publish --provenance --access public

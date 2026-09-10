@@ -261,14 +261,11 @@ test("the detached helper fails the job and installs nothing on a checksum misma
   }
 });
 
-test("the release workflow refuses tags that do not match package.json and the changelog", async () => {
+test("the release workflow produces checksums and packages the self-update helper", async () => {
   const [workflow, manifest] = await Promise.all([
     readFile(".github/workflows/release.yml", "utf8"),
     readFile("package.json", "utf8"),
   ]);
-  assert.match(workflow, /GITHUB_REF_NAME/);
-  assert.match(workflow, /v\$\{version\}/);
-  assert.match(workflow, /CHANGELOG\.md has no section/);
   assert.match(workflow, /sha256sum joint-bob\.tar\.gz/);
   assert.ok(JSON.parse(manifest).files.includes("scripts"), "the packaged CLI ships the self-update helper");
 });
