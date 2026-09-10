@@ -3,9 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.16.1 — 2026-09-10
 
-- Bounded agent shutdown during updates and refused unsafe restarts without replacing the running installation or losing recovery records.
+- Fixed updates hanging while agents stopped, including Claude processes that had already exited or ignored termination.
+- Refused updates when tools could not be confirmed stopped, preserving interrupted work for recovery without restarting over live tools.
+- Kept the running installation untouched when update preparation failed and showed the server's reason in installer logs.
 
 ## 1.16.0 — 2026-09-10
 
