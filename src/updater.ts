@@ -379,6 +379,10 @@ async function executeFleetRun(run: FleetRun, release: ReleaseInfo): Promise<voi
   for (const entry of run.entries) {
     entry.state = "updating";
     try {
+      if (entry.local && appVersion() === release.version) {
+        entry.state = "succeeded";
+        continue;
+      }
       if (entry.local) {
         // The coordinator's own update restarts this process, so it runs last, directly,
         // and nothing after it is observable: the versions table tells the rest.
@@ -428,7 +432,7 @@ export async function startFleetUpdate(): Promise<FleetRun> {
   if (active) throw new UpdateRefusalError(`An update to ${active.targetVersion} is already ${active.state} on this node`);
   const { release } = await checkForLatestRelease(true);
   if (!release) throw new ReleaseFeedError("No release is available from the update feed");
-  if (compareVersions(release.version, appVersion()) <= 0) throw new UpdateRefusalError(`Version ${release.version} is not newer than ${appVersion()}`);
+  if (compareVersions(release.version, appVersion()) < 0) throw new UpdateRefusalError(`Version ${release.version} is older than ${appVersion()}`);
   const [local, peers] = await Promise.all([getClusterNode(), listClusterPeers()]);
   if (peers.some((peer) => !peer.url)) throw new UpdateRefusalError("Every cluster node needs a configured URL before a fleet update");
   const run: FleetRun = {

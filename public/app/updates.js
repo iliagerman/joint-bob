@@ -15,16 +15,15 @@ function maybeStartPolling(status) {
   const busy = status.activeJob || status.fleet?.state === "running";
   if (!busy || pollTimer) return;
   pollTimer = setInterval(() => {
-    if (!elements.settingsDialog.open || elements.settingsForm.dataset.tab !== "updates") {
-      stopPolling();
-      return;
-    }
     // A node restarting mid-update refuses connections for a while; keep polling
     // so the panel picks up the moment the new version answers, and stop once the
-    // work reaches a terminal state instead of ticking until the dialog closes.
+    // work reaches a terminal state, even if Settings is closed.
     void refreshUpdateStatus()
       .then((latest) => {
-        if (!latest.activeJob && latest.fleet?.state !== "running") stopPolling();
+        if (latest.currentVersion !== status.currentVersion) {
+          stopPolling();
+          location.reload();
+        } else if (!latest.activeJob && latest.fleet?.state !== "running") stopPolling();
       })
       .catch(() => undefined);
   }, 4000);
@@ -138,13 +137,16 @@ function renderControls(status) {
   elements.updatesInstallButton.disabled = !installable;
   elements.updatesInstallButton.textContent = status.activeJob ? `Updating to ${status.activeJob.targetVersion}…` : `Update this node${status.latest.release ? ` to ${status.latest.release.version}` : ""}`;
   elements.updatesAutoInput.disabled = !status.supported;
-  elements.updatesInstallAllButton.disabled = !installable;
+  const peerUpdateAvailable = status.latest.release && inventoryCache?.remote.some((entry) =>
+    entry.reachable && entry.inventory?.updates?.supported && versionIsBehind(entry.inventory.version, status.latest.release.version));
+  elements.updatesInstallAllButton.disabled = !status.supported || !status.latest.release || (!status.updateAvailable && !peerUpdateAvailable) || Boolean(status.activeJob) || fleetBusy;
   elements.updatesInstallAllButton.textContent = fleetBusy ? `Updating cluster to ${status.fleet.target}…` : "Update all nodes";
   elements.updatesAutoInput.checked = status.autoUpdate;
 }
 
 async function refreshUpdateStatus() {
   const status = await api("/api/update/status");
+  if (pollTimer) await reloadInventory();
   renderVersionLine(status);
   renderStateLine(status);
   renderControls(status);
@@ -162,7 +164,6 @@ async function reloadInventory() {
 }
 
 export async function loadUpdatesPanel(inventory) {
-  stopPolling();
   inventoryCache = inventory;
   if (!inventoryCache) await reloadInventory();
   await refreshUpdateStatus();
@@ -175,6 +176,8 @@ elements.updatesCheckButton.addEventListener("click", () => {
       renderVersionLine(status);
       renderStateLine(status);
       renderControls(status);
+      renderNodeList(status, inventoryCache);
+      maybeStartPolling(status);
       toast(status.latest.release ? `Latest release is ${status.latest.release.version}` : "No release found");
     })
     .catch((error) => toast(error.message))
@@ -203,6 +206,7 @@ elements.updatesInstallButton.addEventListener("click", async () => {
   api("/api/update/install", { method: "POST", body: JSON.stringify({}) })
     .then((result) => {
       toast(`Updating to ${result.job.targetVersion}; this page reconnects when the node restarts`);
+      renderControls(result.status);
       maybeStartPolling(result.status);
     })
     .catch((error) => toast(error.message));
@@ -224,5 +228,3 @@ elements.updatesInstallAllButton.addEventListener("click", async () => {
     })
     .catch((error) => toast(error.message));
 });
-
-elements.settingsDialog.addEventListener("close", stopPolling);

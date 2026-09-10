@@ -629,6 +629,53 @@ test("a canvas shortcut assigned on one node reaches the same account on the oth
   await untilShortcuts(nodeB, sessionB, (rows) => rows.length === 0, "node B still holds the released binding");
 });
 
+test("an up-to-date coordinator updates an older peer without reinstalling itself", { timeout: 60_000 }, async () => {
+  const version = JSON.parse(await readFile("package.json", "utf8")).version;
+  let peerVersion = "0.0.1";
+  let installs = 0;
+  const feed = createServer((request, response) => {
+    response.setHeader("Content-Type", "application/json");
+    if (request.url === "/releases/latest") {
+      response.end(JSON.stringify({ tag_name: `v${version}`, draft: false, prerelease: false, assets: [
+        { name: "joint-bob.tar.gz", browser_download_url: "https://example.invalid/release.tar.gz" },
+        { name: "joint-bob.tar.gz.sha256", browser_download_url: "https://example.invalid/release.tar.gz.sha256" },
+      ] }));
+    } else if (request.url === "/api/health") response.end(JSON.stringify({ version: peerVersion }));
+    else if (request.url === "/api/cluster/update/install") {
+      installs++;
+      peerVersion = version;
+      response.end(JSON.stringify({ accepted: true }));
+    } else { response.statusCode = 404; response.end("{}"); }
+  });
+  await stopDevNode(servers[1]);
+  await stopDevNode(servers[0]);
+  await new Promise<void>((resolve) => feed.listen(Number(new URL(nodeB.url).port), "127.0.0.1", resolve));
+  try {
+    servers[0] = await startDevNode(environment, nodeA, { JOINT_BOB_RELEASE: "a".repeat(40), JOINT_BOB_RELEASE_API: nodeB.url });
+    sessionA = await signIn(environment, nodeA);
+    const result = await api<{ state: string; error?: string }>(nodeA, sessionA, "POST", "/update/install-all");
+    assert.equal(result.status, 202, `current coordinator must accept fleet update: ${JSON.stringify(result.body)}`);
+    let state = result.body.state;
+    for (let attempt = 0; state === "running" && attempt < 100; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      state = (await api<{ state: string }>(nodeA, sessionA, "GET", "/update/install-all")).body.state;
+    }
+    assert.equal(state, "succeeded", "skip coordinator install when already on target");
+    assert.equal(installs, 1, "older peer receives one install request");
+    const status = await api<{ activeJob: unknown; recentJobs: unknown[] }>(nodeA, sessionA, "GET", "/update/status");
+    assert.equal(status.body.activeJob, null);
+    assert.equal(status.body.recentJobs.length, 0, "coordinator must not spawn an installer");
+  } finally {
+    await stopDevNode(servers[0]);
+    feed.closeAllConnections();
+    await new Promise<void>((resolve) => feed.close(() => resolve()));
+    servers[0] = await startDevNode(environment, nodeA);
+    servers[1] = await startDevNode(environment, nodeB);
+    sessionA = await signIn(environment, nodeA);
+    sessionB = await signIn(environment, nodeB);
+  }
+});
+
 test("cluster inventory reports each node's version and a peer update needs machine auth", async () => {
   const manifest = JSON.parse(await readFile("package.json", "utf8"));
   interface InventoryEntry { peerId: string; reachable: boolean; inventory?: { version: string; updates?: { supported: boolean; activeJob: unknown } } }

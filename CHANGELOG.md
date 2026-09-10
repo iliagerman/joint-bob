@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed updates panel to enable peer updates when the current node is already at the latest version, and auto-reload the page when the local node restarts after an update.
+
 ## 1.17.1 — 2026-09-10
 
 - Attached credentials now refresh automatically before each message, so changes to secret accounts, rotations, and removals take effect on the next message without restarting the conversation.
