@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
-import { appendLiveEvent, buildHandoffContext, type ClaudeRunHandle, claudeSessionFilePath, loadClaudeMessages, runClaudePrompt } from "../claude-service.js";
+import { appendLiveEvent, buildHandoffContext, type ClaudeRunHandle, claudeSessionFilePath, loadClaudeMessages, runClaudeConversationPrompt } from "../claude-service.js";
 import { getClusterNode } from "../cluster.js";
 import { ensureConversationRecord } from "../conversation-records.js";
 import { listHarnessSessions } from "../harnesses.js";
@@ -164,7 +164,7 @@ export async function startMergeRun(project: ProjectRecord, task: TaskRecord): P
       const resumeSessionId = claimed.sessionPath?.startsWith("claude:") ? path.basename(claimed.sessionPath.replace(/^claude:/, ""), ".jsonl") : undefined;
       const sessionId = resumeSessionId ?? randomUUID();
       await claimConversationLocally("claude", sessionId, local.id);
-      const run = runClaudePrompt({ cwd, prompt, projectId: project.id, env: agentEnvironment(project.id, { engine: "claude", sessionId }), resumeSessionId, sessionId: resumeSessionId ? undefined : sessionId, onEvent: () => undefined });
+      const run = await runClaudeConversationPrompt({ cwd, prompt, projectId: project.id, env: agentEnvironment(project.id, { engine: "claude", sessionId }), resumeSessionId, sessionId: resumeSessionId ? undefined : sessionId, onEvent: () => undefined });
       claudeTaskRuns.set(task.id, { child: run.child, projectId: project.id, taskId: claimed.id, leaseToken, phase: "review", cwd, sessionId, sessionPath: claimed.sessionPath ?? `claude:${claudeSessionFilePath(cwd, sessionId)}`, model: null, effort: null, kind: "merge" });
       run.done
         .then(async () => {
@@ -348,7 +348,7 @@ export async function startTaskRun(project: ProjectRecord, task: TaskRecord, req
       const sessionId = resumeSessionId ?? randomUUID();
       await claimConversationLocally("claude", sessionId, local.id);
       const claudePrompt = resumeSessionId ? prompt : [agentCredentialContext(project.id, { engine: "claude", sessionId }), prompt].filter(Boolean).join("\n\n");
-      const run = runClaudePrompt({
+      const run = await runClaudeConversationPrompt({
         cwd,
         prompt: claudePrompt,
         projectId: project.id,
@@ -441,7 +441,7 @@ async function runRecoveredClaudePrompt(record: UpdateRecoveryRecord, entry: Rec
     if (entry.connection) send(entry.connection.socket, payload);
   };
   onEvent({ type: "agent_start" });
-  const run = runClaudePrompt({
+  const run = await runClaudeConversationPrompt({
     cwd: record.cwd, projectId: record.projectId, prompt, resumeSessionId: record.sessionId,
     model: state.model ?? undefined, effort: state.effort ?? undefined,
     env: agentEnvironment(record.projectId, { engine: "claude", sessionId: record.sessionId }), onEvent,

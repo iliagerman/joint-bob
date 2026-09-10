@@ -15,6 +15,7 @@
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <script src="/boot.js"></script>
     <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/browser.css" />
     <link rel="stylesheet" href="/vendor/codemirror/lib/codemirror.css" />
     <link rel="stylesheet" href="/vendor/codemirror/addon/dialog/dialog.css" />
     <link rel="stylesheet" href="/vendor/xterm/xterm.css" />
@@ -207,6 +208,7 @@
             <div class="chat-more-actions">
               <button class="ghost compact safeguards-button" id="safeguardsButton" type="button" aria-pressed="true" title="Safe Guard checks are active for this Pi session" disabled data-testid="chat-safeguards-button">Safeguards on</button>
               <button class="ghost compact" id="openTerminalButton" data-shortcut-hint="terminal" type="button" disabled data-testid="chat-open-terminal-button">Terminal</button>
+              <button class="ghost compact" id="openBrowserButton" type="button" disabled aria-expanded="false" aria-controls="browserPanel" title="Open an existing conversation before starting its browser" data-testid="chat-open-browser-button">Browser</button>
               <button class="ghost compact" id="notifyButton" data-shortcut-hint="notify" type="button" aria-pressed="false" title="Notify when a conversation needs review" data-testid="chat-notify-button">Notify</button>
               <button class="ghost compact" id="addToCanvasButton" data-shortcut-hint="addToCanvas" type="button" disabled data-testid="chat-add-to-canvas-button">Add to canvas</button>
               <button class="ghost compact" id="renameSessionButton" data-shortcut-hint="rename" type="button" disabled data-testid="chat-rename-button">Rename</button>
@@ -485,6 +487,16 @@
         </section>
 
         <section class="settings-panel" id="settingsPanel-cluster" role="tabpanel" aria-labelledby="settingsTab-cluster" tabindex="0" hidden>
+          <fieldset class="phase-settings">
+            <legend>Browser executor</legend>
+            <p>Run conversation browsers on a designated Ubuntu node. Other operating systems cannot execute browsers. Keep credentials in Settings → Secrets.</p>
+            <label>Ubuntu executor<select id="browserExecutorSelect" data-testid="browser-executor-select" disabled><option value="">Check status to load nodes</option></select></label>
+            <div class="github-group-actions">
+              <button class="ghost" type="button" id="browserExecutorCheck" data-testid="browser-executor-check">Check status</button>
+              <button class="ghost" type="button" id="browserExecutorSave" data-testid="browser-executor-save" disabled>Save browser executor</button>
+            </div>
+            <p class="settings-hint" id="browserExecutorStatus" data-testid="browser-executor-status" role="status">Browser status has not been checked.</p>
+          </fieldset>
           <p>Every cluster member can create a one-time link. Paste it into the new node to join.</p>
           <fieldset class="phase-settings">
             <legend>Cluster nodes</legend>

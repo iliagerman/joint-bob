@@ -15,6 +15,8 @@ import {
   type AgentSessionEvent,
 } from "@earendil-works/pi-coding-agent";
 import { agentCredentialContext, agentEnvironment, type SecretConversation } from "./secrets.js";
+import { browserAgentEnvironment, browserAgentInstructions } from "./browser-agent.js";
+import { getConversationRecord } from "./conversation-records.js";
 import { stripHandoffEnvelope } from "./claude-service.js";
 import { discoverPiSessionDirectory, sessionCwds, type SessionProjectPaths } from "./session-paths.js";
 import { getScopedResourcePaths, getSettings } from "./settings.js";
@@ -33,6 +35,8 @@ interface PiSessionOptions {
   projectId: string;
   sessionPath?: string;
   sessionId?: string;
+  /** Known logical identity when a live switch has not persisted the new segment yet. */
+  conversationId?: string;
   safeguardsEnabled?: boolean;
   /** Conversation-scoped secret accounts, resolved once at spawn like every other tier. */
   conversation?: SecretConversation;
@@ -490,8 +494,15 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
     ? SessionManager.open(options.sessionPath, piSessionPath(), options.cwd)
     : SessionManager.create(options.cwd, piSessionPath(), options.sessionId ? { id: options.sessionId } : undefined);
   const safeguardsEnabled = options.safeguardsEnabled ?? sessionSafeguardsEnabled(sessionManager);
+  const browserConversationId = options.conversationId
+    ?? (await getConversationRecord(options.projectId, "pi", sessionManager.getSessionId()))?.conversationId
+    ?? sessionManager.getSessionId();
+  const environment = {
+    ...agentEnvironment(options.projectId, options.conversation),
+    ...browserAgentEnvironment(options.projectId, "pi", browserConversationId),
+  };
   const bashTool = createBashTool(options.cwd, {
-    spawnHook: (context) => ({ ...context, env: { ...context.env, ...agentEnvironment(options.projectId, options.conversation) } }),
+    spawnHook: (context) => ({ ...context, env: { ...context.env, ...environment } }),
   });
   const agentDir = getAgentDir();
   const settingsManager = SettingsManager.create(options.cwd, agentDir);
@@ -507,19 +518,16 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
     skillsOverride: skillsOverride(options.cwd, options.projectId, agentDir),
     additionalPromptTemplatePaths: resources.prompts,
     additionalThemePaths: resources.themes,
-    ...(commonInstructions.length || credentialContext
-      ? {
-          agentsFilesOverride: (current) => ({
-            agentsFiles: [
-              ...current.agentsFiles,
-              ...commonInstructions,
-              ...(credentialContext
-                ? [{ path: "/virtual/JOINT_BOB_CREDENTIALS.md", content: credentialContext }]
-                : []),
-            ],
-          }),
-        }
-      : {}),
+    agentsFilesOverride: (current) => ({
+      agentsFiles: [
+        ...current.agentsFiles,
+        ...commonInstructions,
+        ...(credentialContext
+          ? [{ path: "/virtual/JOINT_BOB_CREDENTIALS.md", content: credentialContext }]
+          : []),
+        { path: "/virtual/JOINT_BOB_BROWSER.md", content: browserAgentInstructions },
+      ],
+    }),
     ...(!safeguardsEnabled ? { extensionsOverride: (base) => ({ ...base, extensions: base.extensions.filter((extension) => !isPermissionSafeguardExtension(extension.resolvedPath)) }) } : {}),
   });
   await resourceLoader.reload();

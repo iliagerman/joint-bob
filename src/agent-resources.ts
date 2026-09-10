@@ -632,9 +632,9 @@ function generatedResourcePlugin(paths: AgentResourcePaths, configured?: ScopedR
   return target;
 }
 
-function generatedInstructionFile(paths: AgentResourcePaths, configured?: ScopedResourcePaths): string {
+function generatedInstructionFile(paths: AgentResourcePaths, configured?: ScopedResourcePaths, extraInstructions?: string): string {
   const additional = configuredPaths(configured, "rules");
-  if (!additional.length) return paths.commonInstructionsFile;
+  if (!additional.length && !extraInstructions) return paths.commonInstructionsFile;
   const files: string[] = [];
   const visit = (source: string): void => {
     if (!existsSync(source)) return;
@@ -643,13 +643,13 @@ function generatedInstructionFile(paths: AgentResourcePaths, configured?: Scoped
   };
   if (existsSync(paths.commonInstructionsFile)) files.push(paths.commonInstructionsFile);
   for (const source of additional) visit(source);
-  const content = files.sort().map((file) => readFileSync(file, "utf8")).join("\n");
+  const content = [...files.sort().map((file) => readFileSync(file, "utf8")), ...(extraInstructions ? [extraInstructions] : [])].join("\n");
   const filePath = path.join(dataDirectory(), "runtime", "resource-instructions", `${createHash("sha256").update(content).digest("hex")}.md`);
   if (!existsSync(filePath)) { mkdirSync(path.dirname(filePath), { recursive: true }); writeFileSync(filePath, content); }
   return filePath;
 }
 
-export function claudeAgentResourceArgs(root?: string, configured?: ScopedResourcePaths): string[] {
+export function claudeAgentResourceArgs(root?: string, configured?: ScopedResourcePaths, extraInstructions?: string): string[] {
   const paths = agentResourcePaths(root);
   const installed = installedUserPluginNames();
   const args: string[] = [];
@@ -661,7 +661,7 @@ export function claudeAgentResourceArgs(root?: string, configured?: ScopedResour
   const generated = generatedResourcePlugin(paths, configured);
   if (generated) args.push("--plugin-dir", generated);
   if (existsSync(paths.mcpConfig)) args.push("--mcp-config", paths.mcpConfig);
-  const instructions = generatedInstructionFile(paths, configured);
+  const instructions = generatedInstructionFile(paths, configured, extraInstructions);
   if (existsSync(instructions)) args.push("--append-system-prompt-file", instructions);
   return args;
 }

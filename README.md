@@ -227,6 +227,47 @@ Secret accounts hold named environment variables encrypted with the node key. At
 
 Secret accounts stay node-local unless you explicitly replicate one. Use **Settings > Secrets > Sync to nodes** to send an account through encrypted cluster replication. Workspace attachments follow the account when the destination has the same workspace. Secrets never use filesystem synchronization.
 
+## Conversation browsers
+
+One designated **Ubuntu** node runs browsers for the cluster. Agents and apps may run on other nodes, including Macs. Mac browser executors are not supported yet. No desktop or monitor is required on the Ubuntu executor.
+
+Install Google Chrome or Chromium on that node. Alternatively, install the pinned Playwright browser and Ubuntu libraries from the installed app, as the user that runs the service:
+
+```bash
+cd ~/.local/share/joint-bob/app
+./node_modules/.bin/playwright-core install --with-deps chromium
+```
+
+Installing system libraries may request sudo. For an existing browser in a nonstandard location, set `JOINT_BOB_BROWSER_EXECUTABLE=/absolute/path/to/chrome` in that node's `~/.joint-bob/env` and restart its service. Settings checks installed executables; starting a browser reports missing libraries or launch errors. It never downloads software silently.
+
+1. Open **Settings → Cluster → Browser executor**, check status, select the Ubuntu node, and save.
+2. Open a conversation and choose **Browser**. Choose a saved login or start a fresh browser.
+3. Watch beside the conversation or choose **Open in tab**. **Take control** pauses agent browser input. **Resume agent** hands it back.
+4. **Close viewer** leaves the browser running. **End browser** explicitly closes that conversation's browser tabs. Closing a viewer while under human control leaves the agent paused.
+
+After signing in again, the same user can resume control. From another node or login identity, **Take over control** explicitly replaces the previous human controller. Inputs from that older controller are then rejected. The same logical conversation keeps its browser when switching between Pi and Claude.
+
+Tabs, popups, JavaScript dialogs, keyboard input, scrolling, file uploads, downloads, and saved logins appear in the viewer. Uploads support up to 25 files and 20 MiB total per operation. Agents can also upload directories through the CLI. Click the remote file input before selecting files in the viewer. Tab moves focus out of the remote image; use Send Tab to send it to the remote page. Mouse dragging, IME composition, and OS-native authentication prompts are not supported.
+
+Browser `localhost` traffic travels through an authenticated cluster WebSocket to the app's node, preserving addresses, cookies, and development-server ports. Public websites use the executor's network connection. HTTP, HTTPS, and WebSocket connections use the same routing; the tunnel does not bypass certificate checks, OAuth callback registration, or provider login restrictions. Private non-loopback addresses must be reachable from the executor. HTTPS reverse proxies must support WebSocket upgrades, as for chat. There is no fallback to another browser node when the executor is offline.
+
+Each conversation has separate cookies and storage. After logging in, use **Save login** to store an encrypted project-scoped snapshot on the executor. Existing Settings → Secrets accounts still supply agent credentials; the CLI can fill an attached environment variable without printing its value. Profiles, session metadata, and download records stay in the executor's local SQLite database. Downloaded and staged files stay under its `~/.joint-bob/browser` directory, outside project synchronization. Deleting a saved login does not log out an already-running browser.
+
+New Pi sessions and subsequent Claude runs receive the browser CLI automatically:
+
+```bash
+node "$JOINT_BOB_BROWSER_CLI" start http://localhost:3000
+node "$JOINT_BOB_BROWSER_CLI" snapshot
+node "$JOINT_BOB_BROWSER_CLI" click 'role=button[name=Submit]'
+node "$JOINT_BOB_BROWSER_CLI" fill-secret 'label=Password' APP_PASSWORD --origin https://example.com
+node "$JOINT_BOB_BROWSER_CLI" screenshot /tmp/browser-check.png
+node "$JOINT_BOB_BROWSER_CLI" close
+```
+
+Browser tokens authorize only the issuing conversation. Existing Pi sessions must be reopened to receive the new tool instructions. Agents use the CLI rather than launch their own local browser. Arbitrary repository test suites do not automatically redirect their own Playwright launches; adapt them to the provided browser commands. Agent assertions can use `evaluate` and inspect its result.
+
+Changing the executor requires paired nodes online and running browser sessions ended. Profiles and downloads do not migrate to the new executor. Viewer disconnection is supported; executor restart is different. Restarting the service interrupts browser sessions, which must be explicitly restarted, optionally with a saved login. It cannot resume a half-completed browser action. Saved snapshots include cookies, local storage, and IndexedDB, not sessionStorage, passkeys, or OS authentication state.
+
 ## Service management
 
 Linux:

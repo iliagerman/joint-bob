@@ -58,6 +58,19 @@ test("published external skills are discovered by a peer from the shared managed
   assert.ok(second.body.skills.some((skill) => skill.name === "cluster-skill" && skill.description === "second"));
 });
 
+test("browser executor configuration converges from a paired node without launching Chrome", async () => {
+  const token = (await api<{ token: string }>(nodeA, sessionA, "GET", "/cluster/invite")).body.token;
+  const config = { executorNodeId: null, originNodeId: nodeA.nodeId, updatedAt: new Date().toISOString() };
+  const delivered = await fetch(`${nodeB.url}/api/cluster/browser/config`, {
+    method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(config),
+  });
+  assert.equal(delivered.status, 200);
+  const pulled = await api<{ config: typeof config; nodes: Array<{ id: string }> }>(nodeA, sessionA, "GET", "/browser/status");
+  assert.equal(pulled.status, 200);
+  assert.deepEqual(pulled.body.config, config);
+  assert.deepEqual(pulled.body.nodes.map((node) => node.id).sort(), [nodeA.nodeId, nodeB.nodeId].sort());
+});
+
 test("both nodes serve the same seeded projects to their own signed-in session", async () => {
   const [projectsA, projectsB] = await Promise.all([
     api<{ projects: Array<{ name: string }> }>(nodeA, sessionA, "GET", "/projects"),

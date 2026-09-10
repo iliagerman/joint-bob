@@ -112,6 +112,7 @@ test("mobile lists and conversations fit Running beside Recents and open the glo
   await page.keyboard.press("Escape");
 
   const database = new DatabaseSync(path.join(node.dataDir, "node.db"));
+  database.exec("PRAGMA busy_timeout = 5000");
   try {
     const now = new Date();
     database.prepare(`INSERT INTO conversation_runtime_leases

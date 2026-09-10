@@ -19,7 +19,8 @@ import type { SessionSummary } from "../types.js";
 import { webSocketCloseReason } from "../websocket.js";
 import { chatConnections, refreshPromptQueue, restoreClaudeQueueSettings, claudeConnectionKey, claudeQueueKey, claudeRunKey, claudeStatus, drainClaudePromptQueue, emptyClaudeState, getSharedSession, handleChatMessage, proxySocket, sessionWatcher } from "./chat.js";
 import { conversationBelongsToDoneTask, taskConversationIdentity } from "./cluster-helpers.js";
-import { machineTokenMatches } from "./http-auth.js";
+import { machineCredentialNodeId, machineTokenMatches } from "./http-auth.js";
+import { attachBrowserTunnel, attachBrowserViewer } from "./browser.js";
 import { broadcastToProject, chatErrorMessage, parseSessionPath, scheduleIdleDispose, send, sendStatus } from "./realtime.js";
 import { socketSecretAccountIdsSchema, socketTaskIdSchema } from "./schemas.js";
 import { describeConversationOwner, type ForeignConversationOwner, openConversationOwnership } from "./sessions-helpers.js";
@@ -40,7 +41,10 @@ webSocketServer.on("connection", async (socket, request) => {
   const host = request.headers.host;
   const authorization = typeof request.headers.authorization === "string" ? request.headers.authorization : "";
   const machineBearer = /^Bearer\s+(.+)$/i.exec(authorization)?.[1];
-  const machineAuthenticated = Boolean(machineBearer && machineTokenMatches(machineBearer, await getClusterMachineToken()));
+  const url = new URL(request.url ?? "/", `http://${host || "localhost"}`);
+  const browserMode = url.searchParams.get("mode");
+  const browserMachineId = machineBearer && (browserMode === "browser" || browserMode === "browserTunnel") ? await machineCredentialNodeId(machineBearer) : undefined;
+  const machineAuthenticated = Boolean(browserMachineId || (machineBearer && machineTokenMatches(machineBearer, await getClusterMachineToken())));
   const origin = request.headers.origin;
   const cookiePrefix = `${sessionCookieName}=`;
   const session = sessionForId(request.headers.cookie?.split(";").map((entry) => entry.trim()).find((entry) => entry.startsWith(cookiePrefix))?.slice(cookiePrefix.length));
@@ -55,7 +59,13 @@ webSocketServer.on("connection", async (socket, request) => {
     return;
   }
 
-  const url = new URL(request.url ?? "/", `http://${host || "localhost"}`);
+  if (browserMode === "browserTunnel") { await attachBrowserTunnel(socket, url, browserMachineId); return; }
+  if (browserMode === "browser") {
+    const controllerId = browserMachineId ? url.searchParams.get("controllerId") : session?.userId;
+    if (!controllerId || controllerId.length > 500) { socket.close(1008, "Browser controller identity required"); return; }
+    await attachBrowserViewer(socket, url, { kind: "human", id: browserMachineId ? controllerId : `${(await getClusterNode()).id}:${controllerId}` }, browserMachineId);
+    return;
+  }
   const projectId = url.searchParams.get("projectId") ?? "";
   const project = await getProject(projectId);
   if (!project) {

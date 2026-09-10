@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added conversation browsers on designated Ubuntu nodes, letting agents and users browse the web and interact with web applications with live video, keyboard input, mouse control, and dialog support. Saved logins persist between runs.
+
 ## 1.15.0 — 2026-09-10
 
 - Added a running conversations button to the mobile conversations list and chat toolbar for quicker access to active sessions.

@@ -12,6 +12,7 @@ import { discoverMissingPeerProjects } from "./server/cluster-helpers.js";
 import { flushMembershipOutbox, flushReplicationOutbox, flushSecretCredentialOutbox, initializeStartupReadiness, pushRuntimeLeaseSnapshots, reconcileManagedAgentResources, reconcileTaskConversationRecords, reconcileTaskHandoffs, reconcileTicketWorkspaceSync, sweepRuntimeLeases } from "./server/maintenance.js";
 import { reconcileUpdateJobs, startUpdateScheduler } from "./updater.js";
 import { flags, port, server } from "./server/state.js";
+import { closeBrowserRuntime } from "./server/browser.js";
 import { recoverPendingUpdateRuns } from "./server/task-runs.js";
 import "./server/schemas.js";
 import "./server/http-auth.js";
@@ -28,6 +29,7 @@ import "./server/routes/cluster.js";
 import "./server/routes/cluster-tasks.js";
 import "./server/routes/platform.js";
 import "./server/routes/secrets.js";
+import "./server/routes/browser.js";
 import "./server/routes/projects.js";
 import "./server/routes/sessions.js";
 import "./server/routes/tasks.js";
@@ -37,6 +39,16 @@ import "./server/routes/updates.js";
 export { app, createApp, server } from "./server/state.js";
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  // Playwright installs signal handlers of its own. Explicitly finish node shutdown
+  // after closing Chrome rather than leaving the HTTP server alive after SIGTERM.
+  let stopping = false;
+  for (const signal of ["SIGTERM", "SIGINT"] as const) process.once(signal, () => {
+    if (stopping) return;
+    stopping = true;
+    server.close();
+    const timeout = setTimeout(() => process.exit(0), 8000); timeout.unref();
+    void closeBrowserRuntime().catch(error => console.warn("Browser shutdown failed", error)).finally(() => process.exit(0));
+  });
   flags.startupReady = false;
   flags.startupError = undefined;
   // Interrupted merge transactions roll back before the node accepts any traffic

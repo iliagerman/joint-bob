@@ -1,4 +1,5 @@
 import { api, savePreferencesInBackground } from "./api.js";
+import { syncBrowserButton } from "./browser.js";
 import { clearThinkingBubble } from "./chat-transcript.js";
 import { changeReasoningLevel, hideCommandAutocomplete, PI_MODEL_PROVIDERS, renderCommandAutocomplete, renderReasoningOptions, renderToolsDialog, syncModelButton } from "./composer-dialogs.js";
 import { elements } from "./elements.js";
@@ -109,6 +110,7 @@ function syncSelectOptions(select, options) {
 }
 
 export function renderChatSessionControls() {
+  syncBrowserButton();
   syncSelectOptions(elements.chatNodeSelect, state.sessionNodes.map((node) => ({
     value: node.id,
     label: `${node.name}${node.local ? " · local" : ""}${!node.online ? " · offline" : !node.mapped ? " · map required" : ""}`,

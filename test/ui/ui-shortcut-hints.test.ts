@@ -141,7 +141,7 @@ test("a saved chord retitles the badges without a reload", async () => {
   assert.equal(await hint("recent-sessions-open-button").innerText(), "\u2318K");
 });
 
-test("the board icon sits between running and settings, and the conversations header drops both board and running", async () => {
+test("the board icon sits between running and settings, and the desktop conversations header hides both board and running", async () => {
   const order = await page.locator("#projectsPanel .project-actions button[data-testid]")
     .evaluateAll((nodes) => nodes.map((element) => element.getAttribute("data-testid")));
   assert.deepEqual(order, [
@@ -154,8 +154,8 @@ test("the board icon sits between running and settings, and the conversations he
   ]);
   assert.equal(await page.locator("#chatsPanel [data-testid='chats-open-board-button']").count(), 0,
     "the conversations header no longer carries a board button");
-  assert.equal(await page.locator("#chatsPanel [data-testid='chats-running-conversations-open-button']").count(), 0,
-    "the conversations header no longer carries a running button");
+  assert.equal(await page.locator("#chatsPanel [data-testid='chats-running-conversations-open-button']").isVisible(), false,
+    "the desktop conversations header hides the mobile running button");
   assert.equal(await hint("projects-open-board-button").innerText(), "\u2318\u21e7B",
     "the board advertises its keyboard shortcut");
 });
