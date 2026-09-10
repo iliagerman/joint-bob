@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Attached credentials now refresh automatically before each message, so changes to secret accounts, rotations, and removals take effect on the next message without restarting the conversation.
+
 ## 1.17.0 — 2026-09-10
 
 - Added conversation labels to tag discussions with predefined or custom classifications, and a filter to show conversations by label.

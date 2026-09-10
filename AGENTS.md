@@ -63,7 +63,7 @@ Every deployment is a version. `package.json` holds the semantic version; `CHANG
 
 One model: a secret account holds named environment variables, encrypted at rest with the node's key. Attach an account to a **workspace**, a **project**, or a **conversation**; resolution merges those three in that order and the most specific scope wins per variable name. A `github`-provider account holds exactly one `GH_TOKEN`, from which `GITHUB_TOKEN`, `PI_GITHUB_TOKEN`, `GIT_ASKPASS` and `GIT_TERMINAL_PROMPT` are derived. There is no separate GitHub credential system, and nothing in the resolution path is special-cased by provider.
 
-An agent's environment is composed once, at spawn. Changing an attachment on a running conversation is saved but takes effect the next time it runs.
+Refresh attached secrets and credential context before processing each message, including queued messages. Attachment changes, rotations, and removals apply to the next message without recreating the conversation. Keep the current message's credential snapshot unchanged while it runs.
 
 ## PWA cache
 

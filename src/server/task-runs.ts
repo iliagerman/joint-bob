@@ -164,7 +164,8 @@ export async function startMergeRun(project: ProjectRecord, task: TaskRecord): P
       const resumeSessionId = claimed.sessionPath?.startsWith("claude:") ? path.basename(claimed.sessionPath.replace(/^claude:/, ""), ".jsonl") : undefined;
       const sessionId = resumeSessionId ?? randomUUID();
       await claimConversationLocally("claude", sessionId, local.id);
-      const run = await runClaudeConversationPrompt({ cwd, prompt, projectId: project.id, env: agentEnvironment(project.id, { engine: "claude", sessionId }), resumeSessionId, sessionId: resumeSessionId ? undefined : sessionId, onEvent: () => undefined });
+      const systemInstructions = agentCredentialContext(project.id, { engine: "claude", sessionId });
+      const run = await runClaudeConversationPrompt({ cwd, prompt, systemInstructions, projectId: project.id, env: agentEnvironment(project.id, { engine: "claude", sessionId }), resumeSessionId, sessionId: resumeSessionId ? undefined : sessionId, onEvent: () => undefined });
       claudeTaskRuns.set(task.id, { child: run.child, projectId: project.id, taskId: claimed.id, leaseToken, phase: "review", cwd, sessionId, sessionPath: claimed.sessionPath ?? `claude:${claudeSessionFilePath(cwd, sessionId)}`, model: null, effort: null, kind: "merge" });
       run.done
         .then(async () => {
@@ -347,10 +348,10 @@ export async function startTaskRun(project: ProjectRecord, task: TaskRecord, req
       const resumeSessionId = task.sessionPath?.startsWith("claude:") ? path.basename(task.sessionPath.replace(/^claude:/, ""), ".jsonl") : undefined;
       const sessionId = resumeSessionId ?? randomUUID();
       await claimConversationLocally("claude", sessionId, local.id);
-      const claudePrompt = resumeSessionId ? prompt : [agentCredentialContext(project.id, { engine: "claude", sessionId }), prompt].filter(Boolean).join("\n\n");
       const run = await runClaudeConversationPrompt({
         cwd,
-        prompt: claudePrompt,
+        prompt,
+        systemInstructions: agentCredentialContext(project.id, { engine: "claude", sessionId }),
         projectId: project.id,
         env: agentEnvironment(project.id, { engine: "claude", sessionId }),
         resumeSessionId,
@@ -442,7 +443,9 @@ async function runRecoveredClaudePrompt(record: UpdateRecoveryRecord, entry: Rec
   };
   onEvent({ type: "agent_start" });
   const run = await runClaudeConversationPrompt({
-    cwd: record.cwd, projectId: record.projectId, prompt, resumeSessionId: record.sessionId,
+    cwd: record.cwd, projectId: record.projectId, prompt,
+    systemInstructions: agentCredentialContext(record.projectId, { engine: "claude", sessionId: record.sessionId }),
+    resumeSessionId: record.sessionId,
     model: state.model ?? undefined, effort: state.effort ?? undefined,
     env: agentEnvironment(record.projectId, { engine: "claude", sessionId: record.sessionId }), onEvent,
   });

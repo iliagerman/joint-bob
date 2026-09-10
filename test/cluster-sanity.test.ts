@@ -728,7 +728,7 @@ async function queueTransferFixture() {
   const settingsB = (await api<Record<string, unknown>>(nodeB, sessionB, "GET", "/settings")).body;
   const fake = path.join(root, "queue-claude.mjs");
   const log = path.join(root, "queue-dispatch.log");
-  await writeFile(fake, `#!/usr/bin/env node\nimport { appendFile } from 'node:fs/promises';\nif (process.argv[2] === 'auth') { console.log(JSON.stringify({ loggedIn: true })); process.exit(0); }\nlet text = ''; for await (const chunk of process.stdin) text += chunk;\nawait appendFile(${JSON.stringify(log)}, JSON.stringify({ text, args: process.argv.slice(2) }) + '\\n');\nconsole.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'done' }] } }));\nconsole.log(JSON.stringify({ type: 'result', is_error: false }));\n`);
+  await writeFile(fake, `#!/usr/bin/env node\nimport { appendFile, readFile } from 'node:fs/promises';\nif (process.argv[2] === 'auth') { console.log(JSON.stringify({ loggedIn: true })); process.exit(0); }\nlet text = ''; for await (const chunk of process.stdin) text += chunk;\nawait appendFile(${JSON.stringify(log)}, JSON.stringify({ text, args: process.argv.slice(2), instructions: await readFile(process.argv[process.argv.indexOf('--append-system-prompt-file') + 1], 'utf8') }) + '\\n');\nconsole.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'done' }] } }));\nconsole.log(JSON.stringify({ type: 'result', is_error: false }));\n`);
   await chmod(fake, 0o755);
   await api(nodeA, sessionA, "PUT", "/settings", { ...settingsA, claude: { ...(settingsA.claude as object), executable: path.join(root, "missing-queue-claude") } });
   await api(nodeB, sessionB, "PUT", "/settings", { ...settingsB, claude: { ...(settingsB.claude as object), executable: fake } });
@@ -779,6 +779,7 @@ test("queue takeover retries a lost fenced response, copies pending settings and
     await waitForQueueFrame(frames, () => frames.some((frame) => frame.type === "agent_end"));
     const calls = (await readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
     assert.deepEqual(calls.map((call) => call.text), ["run on destination"]);
+    assert.match(calls[0].instructions, /Shared workspace secret/);
     assert.ok(calls[0].args.includes("haiku") && calls[0].args.includes("high"));
     assert.equal(readOwnershipRow(nodeA, "claude", conversation.id)!.owner_node_id, nodeB.nodeId);
   } finally {

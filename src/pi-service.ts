@@ -14,7 +14,7 @@ import {
   type Skill,
   type AgentSessionEvent,
 } from "@earendil-works/pi-coding-agent";
-import { agentCredentialContext, agentEnvironment, type SecretConversation } from "./secrets.js";
+import { agentCredentialContext, agentEnvironment, persistConversationSecretAccounts, type SecretConversation } from "./secrets.js";
 import { browserAgentEnvironment, browserAgentInstructions } from "./browser-agent.js";
 import { getConversationRecord } from "./conversation-records.js";
 import { stripHandoffEnvelope } from "./claude-service.js";
@@ -38,7 +38,7 @@ interface PiSessionOptions {
   /** Known logical identity when a live switch has not persisted the new segment yet. */
   conversationId?: string;
   safeguardsEnabled?: boolean;
-  /** Conversation-scoped secret accounts, resolved once at spawn like every other tier. */
+  /** Initial conversation selection; subsequent messages resolve persisted attachments. */
   conversation?: SecretConversation;
 }
 
@@ -488,6 +488,26 @@ export function sessionToolSelection(sessionManager: SessionManager): string[] |
   return enabledTools;
 }
 
+function bindPiCredentials(session: AgentSession, projectId: string, conversation: SecretConversation, updateEnvironment: (environment: NodeJS.ProcessEnv) => void): () => void {
+  let refresh = true;
+  let credentialContext = "";
+  // Raw agent events also cover queued follow-ups and steering, before their model call.
+  const unsubscribe = session.agent.subscribe((event) => {
+    if (event.type === "message_start" && event.message.role === "user") refresh = true;
+  });
+  const stream = session.agent.streamFunction;
+  session.agent.streamFunction = (model, context, options) => {
+    if (refresh) {
+      const environment = agentEnvironment(projectId, conversation);
+      credentialContext = agentCredentialContext(projectId, conversation);
+      updateEnvironment(environment);
+      refresh = false;
+    }
+    return stream(model, { ...context, systemPrompt: [context.systemPrompt, credentialContext].filter(Boolean).join("\n\n") }, options);
+  };
+  return unsubscribe;
+}
+
 export async function createPiSession(options: PiSessionOptions): Promise<PiSessionHandle> {
   await reloadPiAuth();
   const sessionManager = options.sessionPath
@@ -497,16 +517,15 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
   const browserConversationId = options.conversationId
     ?? (await getConversationRecord(options.projectId, "pi", sessionManager.getSessionId()))?.conversationId
     ?? sessionManager.getSessionId();
-  const environment = {
-    ...agentEnvironment(options.projectId, options.conversation),
-    ...browserAgentEnvironment(options.projectId, "pi", browserConversationId),
-  };
+  const browserEnvironment = browserAgentEnvironment(options.projectId, "pi", browserConversationId);
+  const conversation = { engine: "pi" as const, sessionId: sessionManager.getSessionId() };
+  await persistConversationSecretAccounts("pi", conversation.sessionId, options.conversation?.accountIds ?? []);
+  let environment = agentEnvironment(options.projectId, conversation);
   const bashTool = createBashTool(options.cwd, {
-    spawnHook: (context) => ({ ...context, env: { ...context.env, ...environment } }),
+    spawnHook: (context) => ({ ...context, env: { ...context.env, ...environment, ...browserEnvironment } }),
   });
   const agentDir = getAgentDir();
   const settingsManager = SettingsManager.create(options.cwd, agentDir);
-  const credentialContext = agentCredentialContext(options.projectId, options.conversation);
   const configured = getScopedResourcePaths(options.projectId);
   const commonInstructions = await commonAgentInstructionFiles(undefined, [...configured.global.rules, ...configured.project.rules]);
   const resources = piAgentResourcePaths(undefined, configured);
@@ -522,9 +541,6 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
       agentsFiles: [
         ...current.agentsFiles,
         ...commonInstructions,
-        ...(credentialContext
-          ? [{ path: "/virtual/JOINT_BOB_CREDENTIALS.md", content: credentialContext }]
-          : []),
         { path: "/virtual/JOINT_BOB_BROWSER.md", content: browserAgentInstructions },
       ],
     }),
@@ -541,6 +557,7 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
     resourceLoader,
   });
   const session = result.session;
+  const unsubscribeCredentials = bindPiCredentials(session, options.projectId, conversation, (current) => { environment = current; });
   if (isSupersededGlm(session.model)) {
     const model = modelRuntime.getModel("zai", "glm-5.3");
     if (model) await session.setModel(model);
@@ -561,7 +578,7 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
   return {
     session,
     safeguardsEnabled,
-    dispose: () => session.dispose(),
+    dispose: () => { unsubscribeCredentials(); session.dispose(); },
   };
 }
 
