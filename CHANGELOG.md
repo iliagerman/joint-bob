@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.19.1 — 2026-09-11
 
-- Conversations reported as running by peer nodes now correctly display their running status in the session list, even without local agent records.
+- Fixed conversations staying marked as Running after work finished on another node, even when no agent dashboard was available.
 
 ## 1.19.0 — 2026-09-11
 
