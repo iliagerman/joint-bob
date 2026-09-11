@@ -3,10 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.18.0 — 2026-09-11
 
-- Fork a conversation's history and settings into an independent conversation from the session menu.
-- Added a live browser for conversations running on a designated Ubuntu executor, with manual control, file uploads and downloads, and saved logins.
+- Conversations can now be forked from the session menu with history, settings, and labels preserved. Independent copies have an `[F]` name prefix.
 
 ## 1.17.2 — 2026-09-10
 
