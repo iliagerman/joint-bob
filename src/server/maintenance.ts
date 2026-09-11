@@ -1,3 +1,4 @@
+import { agentWorkActive, listConversationWork, refreshConversationWork } from "../conversation-work.js";
 import { AGENT_RESOURCES_FOLDER_ID, agentResourcesRoot, reconcileAgentResources } from "../agent-resources.js";
 import { listRunningClaudeSessions } from "../claude-runtime.js";
 import { listRunningPiSessions } from "../pi-runtime.js";
@@ -16,7 +17,7 @@ import { listTasks, listUnfinishedOutgoingTaskHandoffs } from "../tasks.js";
 import type { HarnessId } from "../types.js";
 import { claudeRunKey } from "./chat.js";
 import { fetchPeerInventory } from "./cluster-helpers.js";
-import { broadcastSessionsChangedToAllProjects } from "./realtime.js";
+import { broadcastSessionsChangedToAllProjects, scheduleReviewNotifications } from "./realtime.js";
 import { replicationReceiptSchema } from "./schemas.js";
 import { claudeClients, configuredTicketWorkspacePeers, flags, recoveredClaudeChats, runningClaudeSessionPaths, sharedSessions } from "./state.js";
 import { reconcileOutgoingTaskHandoff } from "./task-handoff.js";
@@ -236,7 +237,11 @@ export async function replicateSecretAccount(account: SecretAccount, actorId: st
 /** A peer's current conversation running set. See conversation-runtime.ts for the lease rules. */
 const RUNTIME_LEASE_TTL_MS = 15_000;
 
-async function buildRuntimeLeaseSnapshot(localNodeId: string): Promise<RuntimeLeaseInput[]> {
+export async function buildRuntimeLeaseSnapshot(localNodeId: string): Promise<RuntimeLeaseInput[]> {
+  if (await refreshConversationWork()) {
+    broadcastSessionsChangedToAllProjects();
+    for (const project of await listProjects()) scheduleReviewNotifications(project.id);
+  }
   const now = new Date();
   const updatedAt = now.toISOString();
   const expiresAt = new Date(now.getTime() + RUNTIME_LEASE_TTL_MS).toISOString();
@@ -249,7 +254,12 @@ async function buildRuntimeLeaseSnapshot(localNodeId: string): Promise<RuntimeLe
     return ownership?.epoch ?? 1;
   };
   for (const shared of new Set(sharedSessions.values())) {
-    const runningAgentRun = [...shared.agentRuns.values()].find((run) => run.summary.status === "running");
+    const work = listConversationWork("pi", shared.handle.session.sessionId);
+    for (const tracked of work) {
+      const run = shared.agentRuns.get(tracked.summary.runId);
+      if (run) run.summary = tracked.summary;
+    }
+    const runningAgentRun = [...shared.agentRuns.values()].find((run) => agentWorkActive(run.summary));
     if (!shared.handle.session.isStreaming && shared.turnInFlight === 0 && !runningAgentRun) continue;
     const sessionId = shared.handle.session.sessionId;
     const key = `pi\n${sessionId}`;
@@ -260,6 +270,15 @@ async function buildRuntimeLeaseSnapshot(localNodeId: string): Promise<RuntimeLe
       engine: "pi", sessionId, ownerNodeId: localNodeId,
       ownershipEpoch,
       runId: runningAgentRun?.descriptor.runId ?? sessionId, updatedAt, expiresAt,
+    });
+  }
+  for (const work of listConversationWork()) {
+    if (!agentWorkActive(work.summary)) continue;
+    const ownershipEpoch = await epochFor(work.engine, work.sessionId);
+    if (ownershipEpoch === null) continue;
+    entries.set(`${work.engine}\n${work.sessionId}`, {
+      engine: work.engine, sessionId: work.sessionId, ownerNodeId: localNodeId,
+      ownershipEpoch, runId: work.summary.runId, updatedAt, expiresAt,
     });
   }
   for (const connection of claudeClients.values()) {
@@ -321,10 +340,10 @@ export async function pushRuntimeLeaseSnapshots(): Promise<void> {
   if (runtimeLeasePushInProgress) return;
   runtimeLeasePushInProgress = true;
   try {
-    const peers = await listClusterPeers();
-    if (!peers.length) return;
     const local = await getClusterNode();
     const leases = await buildRuntimeLeaseSnapshot(local.id);
+    const peers = await listClusterPeers();
+    if (!peers.length) return;
     const generatedAt = leases.length ? leases[0].updatedAt : new Date().toISOString();
     // One slow peer must not delay the others past the lease TTL.
     await Promise.all(peers.map(async (peer) => {

@@ -15,18 +15,28 @@ function sessionCookie(response: Response): string {
 
 function nextMessage(socket: WebSocket): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
-    socket.once("message", (raw) => resolve(JSON.parse(raw.toString()) as Record<string, unknown>));
-    socket.once("error", reject);
+    const timer = setTimeout(() => reject(new Error(`Terminal message timed out for ${socket.url}`)), 10_000);
+    socket.once("message", (raw) => { clearTimeout(timer); resolve(JSON.parse(raw.toString()) as Record<string, unknown>); });
+    socket.once("error", (error) => { clearTimeout(timer); reject(error); });
   });
 }
 
-async function outputUntil(socket: WebSocket, expected: string[]): Promise<string> {
-  let output = "";
-  for (let count = 0; count < 20 && !expected.every((value) => output.includes(value)); count += 1) {
-    const payload = await nextMessage(socket);
-    if (payload.type === "terminalOutput") output += String(payload.data ?? "");
-  }
-  return output;
+function outputUntil(socket: WebSocket, expected: string[], input: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let output = "";
+    const cleanup = (): void => { clearTimeout(timer); socket.off("message", onMessage); socket.off("error", onError); };
+    const onError = (error: Error): void => { cleanup(); reject(error); };
+    const onMessage = (raw: WebSocket.RawData): void => {
+      const payload = JSON.parse(raw.toString()) as Record<string, unknown>;
+      if (payload.type === "terminalOutput") output += String(payload.data ?? "");
+      if (expected.every((value) => output.includes(value))) { cleanup(); resolve(output); }
+    };
+    const timer = setTimeout(() => onError(new Error("Terminal output timed out")), 10_000);
+    // One listener for the whole command: multiple frames can arrive in one socket read.
+    socket.on("message", onMessage);
+    socket.once("error", onError);
+    socket.send(JSON.stringify({ type: "terminalInput", data: input }));
+  });
 }
 
 test("embedded terminal runs in the project directory or proxies to the selected peer", async () => {
@@ -80,8 +90,7 @@ test("embedded terminal runs in the project directory or proxies to the selected
     socket = new WebSocket(terminalUrl, { origin: baseUrl, headers: { Cookie: cookie } });
 
     assert.deepEqual(await nextMessage(socket), { type: "terminalReady", cwd: projectPath, nodeId: local.id });
-    socket.send(JSON.stringify({ type: "terminalInput", data: "printf terminal-ok; pwd\n" }));
-    const output = await outputUntil(socket, ["terminal-ok", projectPath]);
+    const output = await outputUntil(socket, ["terminal-ok", projectPath], "printf terminal-ok; pwd\n");
     assert.match(output, /terminal-ok/);
     assert.match(output, new RegExp(projectPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     socket.close();

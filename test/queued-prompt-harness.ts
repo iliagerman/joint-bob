@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { waitForDevNode } from "./dev-nodes.js";
 import { type ChildProcess, spawn } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import type { Server } from "node:http";
@@ -118,21 +119,7 @@ export async function spawnNode(root: string, port: number, extraEnv: Record<str
     env: { ...process.env, ...environment(root), PORT: String(port), JOINT_BOB_INSECURE_COOKIE: "1", ...extraEnv },
     stdio: ["ignore", "pipe", "pipe"],
   });
-  // Keep what the node printed, so a startup failure names its cause.
-  let output = "";
-  child.stderr!.on("data", (chunk) => { output += String(chunk); });
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`Node startup timed out\n${output}`)), 60_000);
-    child.once("exit", (status) => reject(new Error(`Node exited during startup: ${status}\n${output}`)));
-    child.stdout!.on("data", (chunk) => {
-      output += String(chunk);
-      if (!String(chunk).includes("Joint Bob listening")) return;
-      clearTimeout(timer);
-      resolve();
-    });
-  });
-  child.removeAllListeners("exit");
-  return child;
+  return waitForDevNode(child, "queued prompt", `http://127.0.0.1:${port}`);
 }
 
 export async function killNode(child: ChildProcess | undefined): Promise<void> {

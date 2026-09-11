@@ -93,6 +93,41 @@ test("conversation classification replicates to a peer and can be cleared there"
   await waitForLabel(nodeA, sessionA, projectA.id, undefined);
 });
 
+test("background children keep both nodes running after parent completion for every built-in harness", { timeout: 60_000 }, async () => {
+  const project = nodeA.projects[0];
+  const db = new DatabaseSync(path.join(nodeA.dataDir, "node.db"));
+  try {
+    for (const engine of ["pi", "claude"]) {
+      const listed = await api<{ sessions: SessionView[] }>(nodeA, sessionA, "GET", `/projects/${project.id}/sessions`);
+      const parent = listed.body.sessions.find((row) => row.harnessId === engine)!;
+      assert.ok(parent);
+      assert.equal((await api(nodeA, sessionA, "POST", `/projects/${project.id}/sessions/take-ownership`, { peerId: nodeA.nodeId, sessionId: parent.id, sessionPath: parent.path })).status, 200);
+      const work = { engine, sessionId: parent.id, summary: { runId: "cluster-child", status: "running", tasks: [] } };
+      db.prepare("INSERT OR REPLACE INTO conversation_work VALUES (?, ?, ?, ?)").run(engine, parent.id, work.summary.runId, JSON.stringify(work));
+      const waitFor = async (node: SeededNode, auth: SignedIn, expected: boolean) => {
+        const deadline = Date.now() + 20_000;
+        while (Date.now() < deadline) {
+          const response = await api<{ sessions: Array<SessionView & { running: boolean; reviewState: string }> }>(node, auth, "GET", `/projects/${project.id}/sessions`);
+          const row = response.body.sessions.find((row) => row.id === parent.id);
+          if (row?.running === expected) {
+            if (expected) assert.equal(row.reviewState, "running");
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        assert.fail(`${engine} on ${node.key} never became running=${expected}`);
+      };
+      await waitFor(nodeA, sessionA, true);
+      await waitFor(nodeB, sessionB, true);
+      work.summary.status = "succeeded";
+      db.prepare("UPDATE conversation_work SET payload = ? WHERE engine = ? AND session_id = ? AND run_id = ?").run(JSON.stringify(work), engine, parent.id, work.summary.runId);
+      await waitFor(nodeA, sessionA, false);
+      await waitFor(nodeB, sessionB, false);
+      db.prepare("DELETE FROM conversation_work WHERE engine = ? AND session_id = ? AND run_id = ?").run(engine, parent.id, work.summary.runId);
+    }
+  } finally { db.close(); }
+});
+
 // This verifies peer discovery from the harness's shared managed fixture, not Syncthing transport.
 test("published external skills are discovered by a peer from the shared managed fixture", async () => {
   const source = path.join(root, "external-skills", "cluster-skill");

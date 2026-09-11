@@ -16,7 +16,9 @@ test("runClaudePrompt restricts tools and reports the session tool list", async 
       `printf '%s\\n' "$@" > ${JSON.stringify(argsFile)}`,
       "cat >/dev/null",
       `echo '{"type":"system","subtype":"init","session_id":"11111111-1111-4111-8111-111111111111","tools":["Bash","Read","Edit"]}'`,
+      `echo '{"type":"system","subtype":"task_started","task_id":"background-child","description":"Background agent","task_type":"local_agent"}'`,
       `echo '{"type":"result","subtype":"success"}'`,
+      `echo '{"type":"system","subtype":"task_notification","task_id":"background-child","status":"completed"}'`,
       "",
     ].join("\n"), "utf8");
     await chmod(fakeClaude, 0o755);
@@ -71,11 +73,16 @@ test("runClaudePrompt restricts tools and reports the session tool list", async 
     settings.updateProjectResourcePaths(projectId, { skills: [projectSkills], prompts: [projectPrompts], rules: [projectRules], plugins: [projectPlugins] });
     const { runClaudePrompt } = await import(`../src/claude-service.ts?claude-tools=${Date.now()}-${Math.random()}`);
 
-    const run = runClaudePrompt({ cwd: root, projectId, prompt: "list files", tools: ["Bash", "Read"], onEvent: () => {} });
+    const { conversationWorkActive } = await import("../src/conversation-work.js");
+    const childActivity: boolean[] = [];
+    const run = runClaudePrompt({ cwd: root, projectId, prompt: "list files", tools: ["Bash", "Read"], onEvent: (event) => {
+      if (event.type === "conversationWorkChanged") childActivity.push(conversationWorkActive("claude", "11111111-1111-4111-8111-111111111111"));
+    } });
     const result = await run.done;
 
     assert.equal(result.ok, true);
     assert.deepEqual(result.tools, ["Bash", "Read", "Edit"]);
+    assert.deepEqual(childActivity, [true, false], "native Claude task events update shared child activity even after parent result");
     const args = (await readFile(argsFile, "utf8")).split("\n");
     const toolsIndex = args.indexOf("--tools");
     assert.ok(toolsIndex >= 0, `expected --tools in claude args: ${JSON.stringify(args)}`);

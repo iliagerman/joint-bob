@@ -1,3 +1,4 @@
+import { agentWorkActive, conversationWorkActive } from "../conversation-work.js";
 import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
 import { usernameForUser } from "../auth.js";
@@ -133,11 +134,17 @@ function disposeSharedSession(session: SharedPiSession): void {
   }
 }
 
+function hasActivePiWork(session: SharedPiSession): boolean {
+  return session.handle.session.isStreaming || session.turnInFlight > 0
+    || conversationWorkActive("pi", session.handle.session.sessionId)
+    || [...session.agentRuns.values()].some((run) => agentWorkActive(run.summary));
+}
+
 export function scheduleIdleDispose(session: SharedPiSession): void {
   clearIdleTimer(session);
   if (session.handle.session.isStreaming) return;
   session.idleTimer = setTimeout(() => {
-    if (session.clients.size || session.handle.session.isStreaming) {
+    if (session.clients.size || hasActivePiWork(session)) {
       scheduleIdleDispose(session);
       return;
     }
@@ -205,7 +212,7 @@ function invalidateExternallyChangedSessions(projectId: string, changedFiles: st
     const sessionFile = session.handle.session.sessionFile;
     if (!sessionFile) continue;
     if (changedFiles.length && !changedFiles.includes(sessionFile)) continue;
-    if (session.handle.session.isStreaming) continue;
+    if (hasActivePiWork(session)) continue;
     if (Date.now() - session.lastLocalEventAt < localWriteGraceMs) continue;
     const clients = [...session.clients];
     disposeSharedSession(session);

@@ -56,7 +56,7 @@
     "prepack": "npm run build",
     "start": "npm run build && node dist/server.js",
     "serve:https": "bash scripts/serve-https.sh",
-    "test": "node --import ./test/setup.mjs --import tsx --test --test-concurrency=4 test/*.test.ts",
+    "test": "node --import ./test/setup.mjs --import tsx --test --test-concurrency=2 test/*.test.ts",
     "test:file": "node --import ./test/setup.mjs --import tsx --test",
     "test:ui": "node --import ./test/setup.mjs --import tsx --test --test-concurrency=1 test/ui/*.test.ts",
     "test:all": "npm test && npm run test:ui",

@@ -25,7 +25,9 @@ function waitFor(messages: Array<Record<string, unknown>>, predicate: () => bool
 // session id it remembered) must get a protocol close, not an unhandled
 // "Conversation record was deleted" rejection that kills the node — which then
 // crash-loops, because the browser reconnects straight back into it.
-test("reopening a deleted conversation closes the socket instead of killing the node", { timeout: 20_000 }, async () => {
+// Include server import and credential setup in the budget, not just the bounded
+// WebSocket handshake below. Those startup costs grow under parallel test load.
+test("reopening a deleted conversation closes the socket instead of killing the node", { timeout: 90_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-deleted-record-"));
   const homeDir = path.join(root, "home");
   await mkdir(homeDir, { recursive: true });

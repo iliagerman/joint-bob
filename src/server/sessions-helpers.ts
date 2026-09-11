@@ -1,4 +1,4 @@
-import { refreshAgentRun } from "../agent-run-monitor.js";
+import { applyConversationWork, listConversationWork, refreshConversationWork } from "../conversation-work.js";
 import { isClaudeSessionRunning } from "../claude-runtime.js";
 import { getClusterNode, getClusterPeer } from "../cluster.js";
 import { claimConversationOwnership, type ConversationEngine, type ConversationOwnership, ConversationOwnershipError, type ConversationOwnershipStatus, getConversationOwnership, healStaleLocalClaim } from "../conversation-ownership.js";
@@ -34,14 +34,15 @@ export async function listProjectSessionsWithReviewState(project: ProjectRecord,
   const tasksBySessionPath = new Map(tasks.filter((task) => task.sessionPath).map((task) => [task.sessionPath, task]));
   const tasksById = new Map(tasks.map((task) => [task.id, task]));
   const projectSharedSessions = [...new Set(sharedSessions.values())].filter((shared) => shared.projectId === project.id);
-  await Promise.all(projectSharedSessions.map(async (shared) => {
-    for (const run of shared.agentRuns.values()) {
-      try { run.summary = await refreshAgentRun(run.descriptor); }
-      catch (error) { console.warn(`Could not refresh agent run ${run.descriptor.runId}`, error); }
+  await refreshConversationWork();
+  for (const shared of projectSharedSessions) {
+    for (const work of listConversationWork("pi", shared.handle.session.sessionId)) {
+      const run = shared.agentRuns.get(work.summary.runId);
+      if (run) run.summary = work.summary;
     }
-  }));
+  }
   const runningPiSessions = new Set(listRunningPiSessions().map((session) => session.sessionId));
-  const listedSessions = sessions.map((session) => {
+  const listedSessions = applyConversationWork(sessions.map((session) => {
     const task = (session.taskId ? tasksById.get(session.taskId) : undefined) ?? tasksBySessionPath.get(session.path);
     const shared = sharedSessions.get(sessionKey(task ? taskCwd(project, task) : project.path, session.path))
       ?? projectSharedSessions.find((candidate) => candidate.handle.session.sessionId === session.id);
@@ -73,7 +74,7 @@ export async function listProjectSessionsWithReviewState(project: ProjectRecord,
       engine: session.harnessId,
       sessionId: session.id,
     };
-  });
+  }));
   // Internal snapshots do not belong to a viewer and must not create review records.
   const reviewStates = userId ? syncConversationReviewStates(userId, username, project.id, listedSessions.filter((session) => !session.readOnly)) : new Map();
   const ownership = await Promise.all(listedSessions.map((session) => getConversationOwnership(session.path.startsWith("claude:") || session.path.startsWith("draft:claude:") ? "claude" : "pi", session.id)));

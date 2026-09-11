@@ -1,3 +1,4 @@
+import { recordConversationWork } from "./conversation-work.js";
 import { randomUUID } from "node:crypto";
 import type { Stats } from "node:fs";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -521,6 +522,16 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
       if (Array.isArray(record.tools)) state.tools = record.tools.filter((name): name is string => typeof name === "string");
       if (state.sessionId) options.onSessionId?.(state.sessionId);
       return;
+    }
+    if (record.type === "system" && typeof record.task_id === "string" && state.sessionId) {
+      const status = record.subtype === "task_started" || record.subtype === "task_progress" ? "running"
+        : record.subtype === "task_notification" ? ({ completed: "succeeded", failed: "failed", stopped: "cancelled" } as const)[String(record.status) as "completed" | "failed" | "stopped"] : undefined;
+      if (status) {
+        recordConversationWork({ engine: "claude", sessionId: state.sessionId, summary: {
+          runId: record.task_id, status, tasks: [{ name: String(record.description ?? "Background task"), role: "worker", status }],
+        } });
+        options.onEvent({ type: "conversationWorkChanged" });
+      }
     }
     if (record.type === "stream_event") {
       handleStreamEvent(record);

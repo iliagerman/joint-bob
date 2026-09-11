@@ -1,3 +1,4 @@
+import { recordConversationWork } from "../conversation-work.js";
 import { preflightQueuedClaude } from "../queued-preflight.js";
 import { queuedAttachments } from "../queued-attachments.js";
 import { randomUUID } from "node:crypto";
@@ -41,6 +42,7 @@ export function subscribeSharedSession(session: SharedPiSession): () => void {
     const run = agentRunDescriptor(event);
     if (run && !session.agentRuns.has(run.runId)) {
       session.agentRuns.set(run.runId, { descriptor: run, summary: run.summary });
+      recordConversationWork({ engine: "pi", sessionId: handle.session.sessionId, descriptor: run, summary: run.summary });
       broadcastToProject(session.projectId, { type: "sessionsChanged" });
     }
     // New sessions get their file lazily; register the file-keyed entry as soon
@@ -370,6 +372,11 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
   // Buffer every turn event so a browser that reconnects mid-turn can replay it.
   connection.claude.liveEvents = [];
   const onEvent = (payload: Record<string, unknown>): void => {
+    if (payload.type === "conversationWorkChanged") {
+      broadcastToProject(connection.project.id, { type: "sessionsChanged" });
+      scheduleReviewNotifications(connection.project.id);
+      return;
+    }
     if (payload.type === "contextUsage") {
       connection.claude.contextUsage = payload.usage as ContextUsage;
       sendClaudeStatus(connection);

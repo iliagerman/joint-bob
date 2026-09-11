@@ -76,19 +76,71 @@ export function startDevNode(environment: DevEnvironment, node: SeededNode, extr
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const timeout = setTimeout(() => reject(new Error(`Node ${node.key} startup timed out`)), 30_000);
-    child.once("exit", (status) => reject(new Error(`Node ${node.key} exited during startup: ${status}`)));
-    child.stdout!.on("data", (chunk) => {
-      if (!String(chunk).includes("Joint Bob listening")) return;
+    waitForDevNode(child, node.key, node.url).then(resolve, reject);
+  });
+}
+
+export function waitForDevNode(child: ChildProcess, label: string, url?: string): Promise<ChildProcess> {
+  return new Promise((resolve, reject) => {
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    let checkingHealth = false;
+    const cleanup = (): void => {
+      settled = true;
       clearTimeout(timeout);
+      child.off("error", onError);
+      child.off("exit", onExit);
+      child.stdout!.off("data", onOutput);
+    };
+    const onError = (error: Error): void => { cleanup(); reject(error); };
+    const onExit = (status: number | null): void => {
+      cleanup();
+      reject(new Error(`Node ${label} exited during startup: ${status}: ${stderr}`));
+    };
+    const finish = (): void => {
+      if (settled) return;
+      cleanup();
+      // Keep draining both pipes so a noisy server cannot block on backpressure.
+      child.stdout!.resume();
       resolve(child);
-    });
+    };
+    const checkHealth = async (): Promise<void> => {
+      while (!settled) {
+        try {
+          const response = await fetch(`${url}/api/health`, { signal: AbortSignal.timeout(1_000) });
+          await response.body?.cancel();
+          if (response.ok) { finish(); return; }
+        } catch { /* Listening is not readiness; initialization may still be running. */ }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    };
+    const onOutput = (chunk: Buffer): void => {
+      stdout = (stdout + String(chunk)).slice(-1024);
+      if (!stdout.includes("Joint Bob listening") || checkingHealth) return;
+      checkingHealth = true;
+      if (url) void checkHealth();
+      else finish();
+    };
+    const timeout = setTimeout(() => {
+      cleanup();
+      child.kill("SIGKILL");
+      reject(new Error(`Node ${label} startup timed out: ${stderr}`));
+    }, 60_000);
+    child.stderr!.on("data", (chunk) => { stderr = (stderr + String(chunk)).slice(-4000); });
+    child.once("error", onError);
+    child.once("exit", onExit);
+    child.stdout!.on("data", onOutput);
   });
 }
 
 export async function stopDevNode(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null) return;
-  await new Promise<void>((resolve) => { child.once("exit", () => resolve()); child.kill("SIGTERM"); });
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  await new Promise<void>((resolve) => {
+    const timeout = setTimeout(() => child.kill("SIGKILL"), 5_000);
+    child.once("exit", () => { clearTimeout(timeout); resolve(); });
+    child.kill("SIGTERM");
+  });
 }
 
 export async function signIn(environment: DevEnvironment, node: SeededNode): Promise<SignedIn> {
