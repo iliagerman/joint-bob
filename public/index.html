@@ -15,6 +15,7 @@
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <script src="/boot.js"></script>
     <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/browser.css" />
     <link rel="stylesheet" href="/vendor/codemirror/lib/codemirror.css" />
     <link rel="stylesheet" href="/vendor/codemirror/addon/dialog/dialog.css" />
     <link rel="stylesheet" href="/vendor/xterm/xterm.css" />
@@ -86,6 +87,7 @@
           <button class="ghost icon-button" id="chatsRecentSessionsButton" type="button" data-recent-sessions-open aria-label="Recent conversations" title="Recent conversations" data-shortcut-hint="recents" data-testid="chats-recent-sessions-open-button">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" /><path d="M3 4v4h4" /><path d="M12 7.5V12l3.2 1.9" /></svg>
           </button>
+          <button class="ghost icon-button chats-running-button" type="button" data-running-conversations-open aria-label="Running conversations" title="Running conversations" data-testid="chats-running-conversations-open-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5.5 10 6.5L8 18.5z"/></svg></button>
           <button class="ghost icon-button collapse-button" id="collapseChatsButton" data-shortcut-hint="toggleChats" type="button" aria-label="Collapse conversations panel" title="Collapse conversations panel" data-testid="chats-panel-collapse-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 6 8.5 12l6 6"/></svg></button>
         </header>
         <div class="list-loading" id="sessionsLoading" role="progressbar" aria-label="Loading conversations" data-testid="session-list-loading-bar" hidden><span></span></div>
@@ -108,6 +110,12 @@
           <button type="button" data-filter="review" data-testid="chats-filter-review-button" title="Needs review"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 13h4l1.6 2.5h4.8L16 13h4"/><path d="M4 13 6.4 5.6A2 2 0 0 1 8.3 4.2h7.4a2 2 0 0 1 1.9 1.4L20 13v4.3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg><span class="sr-only">Needs review</span><span data-filter-count="review">0</span></button>
           <button type="button" data-filter="done" data-testid="chats-filter-done-button" title="Reviewed"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 2.7 2.7L16.5 9"/></svg><span class="sr-only">Reviewed</span><span data-filter-count="done">0</span></button>
         </div>
+        <label class="classification-filter" for="conversationClassificationFilter">Classification
+          <select id="conversationClassificationFilter" data-testid="conversation-classification-filter">
+            <option value="">All labels</option>
+            <option value="unclassified">Unclassified</option>
+          </select>
+        </label>
         <div class="panel-scroll session-list" id="sessionList"></div>
         <div class="panel-rail">
           <button class="ghost icon-button" id="expandChatsButton" data-shortcut-hint="toggleChats" type="button" aria-label="Expand conversations panel" title="Expand conversations panel" data-testid="chats-panel-expand-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 6l6 6-6 6"/></svg></button>
@@ -200,11 +208,13 @@
             <select id="reasoningLevelSelect" class="chat-toolbar-control" aria-labelledby="chatModeLabel" data-testid="chat-reasoning-select"></select>
           </label>
           <button class="ghost icon-button chat-recents-button" id="chatRecentSessionsButton" type="button" aria-label="Recent conversations" title="Recent conversations" data-recent-sessions-open data-shortcut-hint="recents" data-testid="chat-recent-sessions-open-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" /><path d="M3 4v4h4" /><path d="M12 7.5V12l3.2 1.9" /></svg></button>
+          <button class="ghost icon-button chat-running-button" type="button" aria-label="Running conversations" title="Running conversations" data-running-conversations-open data-testid="chat-running-conversations-open-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5.5 10 6.5L8 18.5z"/></svg></button>
           <details class="chat-more" id="chatMoreMenu">
             <summary class="ghost icon-button" aria-label="More chat actions" title="More chat actions" data-testid="chat-more-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7" fill="currentColor" /><circle cx="12" cy="12" r="1.7" fill="currentColor" /><circle cx="19" cy="12" r="1.7" fill="currentColor" /></svg></summary>
             <div class="chat-more-actions">
               <button class="ghost compact safeguards-button" id="safeguardsButton" type="button" aria-pressed="true" title="Safe Guard checks are active for this Pi session" disabled data-testid="chat-safeguards-button">Safeguards on</button>
               <button class="ghost compact" id="openTerminalButton" data-shortcut-hint="terminal" type="button" disabled data-testid="chat-open-terminal-button">Terminal</button>
+              <button class="ghost compact" id="openBrowserButton" type="button" disabled aria-expanded="false" aria-controls="browserPanel" title="Open an existing conversation before starting its browser" data-testid="chat-open-browser-button">Browser</button>
               <button class="ghost compact" id="notifyButton" data-shortcut-hint="notify" type="button" aria-pressed="false" title="Notify when a conversation needs review" data-testid="chat-notify-button">Notify</button>
               <button class="ghost compact" id="addToCanvasButton" data-shortcut-hint="addToCanvas" type="button" disabled data-testid="chat-add-to-canvas-button">Add to canvas</button>
               <button class="ghost compact" id="renameSessionButton" data-shortcut-hint="rename" type="button" disabled data-testid="chat-rename-button">Rename</button>
@@ -328,6 +338,8 @@
         <label for="canvasSessionSearch">Search conversations
           <input id="canvasSessionSearch" type="search" autocomplete="off" data-testid="canvas-session-search" />
         </label>
+        <div id="canvasClassification" class="field-group"></div>
+        <p class="settings-hint">Classification applies only when starting a new conversation.</p>
         <label for="canvasSplitPosition">Place the new pane
           <select id="canvasSplitPosition" data-testid="canvas-split-position">
             <option value="right" selected>Right of target</option>
@@ -421,6 +433,7 @@
         <div class="settings-tabs settings-tabs--sidebar" role="tablist" aria-orientation="vertical" aria-label="Settings sections">
           <button class="settings-tab" type="button" data-settings-tab="account" role="tab" id="settingsTab-account" aria-controls="settingsPanel-account" aria-selected="true" data-testid="settings-tab-account">Account</button>
           <button class="settings-tab" type="button" data-settings-tab="notifications" role="tab" id="settingsTab-notifications" aria-controls="settingsPanel-notifications" aria-selected="false" tabindex="-1" data-testid="settings-tab-notifications">Notifications</button>
+          <button class="settings-tab" type="button" data-settings-tab="labels" role="tab" id="settingsTab-labels" aria-controls="settingsPanel-labels" aria-selected="false" tabindex="-1" data-testid="settings-tab-labels">Labels</button>
           <button class="settings-tab" type="button" data-settings-tab="secrets" role="tab" id="settingsTab-secrets" aria-controls="settingsPanel-secrets" aria-selected="false" tabindex="-1" data-testid="settings-tab-secrets">Secrets</button>
           <button class="settings-tab" type="button" data-settings-tab="cluster" role="tab" id="settingsTab-cluster" aria-controls="settingsPanel-cluster" aria-selected="false" tabindex="-1" data-testid="settings-tab-cluster">Cluster</button>
           <button class="settings-tab" type="button" data-settings-tab="workspaces" role="tab" id="settingsTab-workspaces" aria-controls="settingsPanel-workspaces" aria-selected="false" tabindex="-1" data-testid="settings-tab-workspaces">Workspaces</button>
@@ -470,6 +483,13 @@
           <button class="ghost compact" id="previewSoundButton" type="button" data-testid="notifications-sound-preview-button">Preview sound</button>
         </section>
 
+        <section class="settings-panel" id="settingsPanel-labels" role="tabpanel" aria-labelledby="settingsTab-labels" tabindex="0" hidden>
+          <label>Predefined conversation labels
+            <textarea id="settingsConversationLabels" rows="8" data-testid="settings-conversation-labels" aria-describedby="settingsLabelsHint"></textarea>
+          </label>
+          <p class="settings-hint" id="settingsLabelsHint">One label per line, up to 50 labels of 80 characters each. These choices are node-local. Other always allows free text. Changing this list does not change existing conversation classifications.</p>
+        </section>
+
         <section class="settings-panel" id="settingsPanel-secrets" role="tabpanel" aria-labelledby="settingsTab-secrets" tabindex="0" hidden>
           <p>Named AWS, Google, GitHub, and custom accounts are encrypted and stay on this node unless you mark one to replicate. Attach them to a workspace, a project, or a single conversation.</p>
           <div class="settings-subtabs" role="group" aria-label="Secret types" id="secretTypeTabs">
@@ -483,6 +503,16 @@
         </section>
 
         <section class="settings-panel" id="settingsPanel-cluster" role="tabpanel" aria-labelledby="settingsTab-cluster" tabindex="0" hidden>
+          <fieldset class="phase-settings">
+            <legend>Browser executor</legend>
+            <p>Run conversation browsers on a designated Ubuntu node. Other operating systems cannot execute browsers. Keep credentials in Settings → Secrets.</p>
+            <label>Ubuntu executor<select id="browserExecutorSelect" data-testid="browser-executor-select" disabled><option value="">Check status to load nodes</option></select></label>
+            <div class="github-group-actions">
+              <button class="ghost" type="button" id="browserExecutorCheck" data-testid="browser-executor-check">Check status</button>
+              <button class="ghost" type="button" id="browserExecutorSave" data-testid="browser-executor-save" disabled>Save browser executor</button>
+            </div>
+            <p class="settings-hint" id="browserExecutorStatus" data-testid="browser-executor-status" role="status">Browser status has not been checked.</p>
+          </fieldset>
           <p>Every cluster member can create a one-time link. Paste it into the new node to join.</p>
           <fieldset class="phase-settings">
             <legend>Cluster nodes</legend>
@@ -918,6 +948,7 @@
           Runs on
           <select id="newSessionNodeSelect" data-testid="new-session-node-select"></select>
         </label>
+        <div id="newSessionClassification" class="field-group"></div>
         <div class="field-group">
           <span class="field-label">Colour</span>
           <div class="color-swatches" id="newSessionColorSwatches" role="radiogroup" aria-label="Conversation colour" data-testid="new-session-color-swatches"></div>

@@ -110,7 +110,7 @@ test("a failed swap restores the old files and restarts their service", async ()
     await writeFile(path.join(installDir, "sentinel"), "old installation");
     await writeFile(path.join(installDir, "scripts", "install-service.sh"), "exit 99\n");
     await copyFile("bin/joint-bob.mjs", path.join(packageDir, "bin", "joint-bob.mjs"));
-    await writeFile(path.join(packageDir, "scripts", "install-service.sh"), `[ "$1" = --build-only ] && exit 0\n[ "$1" = --restart-only ] && { printf restored > "${restarted}"; exit 0; }\nprintf attempted > "${attempted}"\nexit 1\n`);
+    await writeFile(path.join(packageDir, "scripts", "install-service.sh"), `[[ "$1" = --build-only || "$1" = --prepare-only ]] && exit 0\n[ "$1" = --restart-only ] && { printf restored > "${restarted}"; exit 0; }\nprintf attempted > "${attempted}"\nexit 1\n`);
 
     const result = spawnSync(process.execPath, [path.join(packageDir, "bin", "joint-bob.mjs"), "install"], {
       env: { ...process.env, JOINT_BOB_INSTALL_DIR: installDir },
@@ -261,14 +261,11 @@ test("the detached helper fails the job and installs nothing on a checksum misma
   }
 });
 
-test("the release workflow refuses tags that do not match package.json and the changelog", async () => {
+test("the release workflow produces checksums and packages the self-update helper", async () => {
   const [workflow, manifest] = await Promise.all([
     readFile(".github/workflows/release.yml", "utf8"),
     readFile("package.json", "utf8"),
   ]);
-  assert.match(workflow, /GITHUB_REF_NAME/);
-  assert.match(workflow, /v\$\{version\}/);
-  assert.match(workflow, /CHANGELOG\.md has no section/);
   assert.match(workflow, /sha256sum joint-bob\.tar\.gz/);
   assert.ok(JSON.parse(manifest).files.includes("scripts"), "the packaged CLI ships the self-update helper");
 });

@@ -11,7 +11,7 @@ import { getClusterNode } from "../cluster.js";
 import { getConversationOwnership, type ConversationEngine } from "../conversation-ownership.js";
 import { conversationDraftPath, deleteConversationRecord, ensureConversationRecord } from "../conversation-records.js";
 import { listHarnessSessions } from "../harnesses.js";
-import { setSessionColor, setSessionTitle } from "../names.js";
+import { setSessionClassification, setSessionColor, setSessionTitle } from "../names.js";
 import { sessionIsBusy } from "../pi-service.js";
 import { readQueueSettings, recordQueueSettings } from "../prompt-queue.js";
 import { conversationScopeId, getScopeSecretAccounts, setScopeSecretAccounts } from "../secrets.js";
@@ -135,6 +135,7 @@ export async function forkLocalConversation(project: ProjectRecord, engine: Conv
     }
     await setSessionTitle(conversationId, title);
     if (source.color) await setSessionColor(conversationId, source.color);
+    if (source.classification) await setSessionClassification(conversationId, source.classification);
     if (settings) recordQueueSettings(`${project.id}:${conversationId}`, settings);
     for (const [index, copy] of copies.entries()) {
       await claimConversationLocally(copy.engine, copy.sessionId, local.id);

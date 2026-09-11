@@ -1,0 +1,22 @@
+import assert from "node:assert/strict";
+import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { claudeAgentResourceArgs } from "../src/agent-resources.js";
+import { browserAgentInstructions } from "../src/browser-agent.js";
+
+test("Claude browser instructions append to configured system instructions without changing user input", async () => {
+  const root=await mkdtemp(path.join(os.tmpdir(),"browser-claude-system-"));
+  try {
+    await mkdir(path.join(root,"runtime"));await writeFile(path.join(root,"runtime/common-instructions.md"),"Keep existing project instructions.");
+    const args=claudeAgentResourceArgs(root,undefined,browserAgentInstructions);
+    assert.equal(args.filter(value=>value==="--append-system-prompt-file").length,1);
+    const content=await readFile(args[args.indexOf("--append-system-prompt-file")+1],"utf8");
+    assert.ok(content.includes("Keep existing project instructions."));
+    assert.ok(content.includes(browserAgentInstructions));
+    assert.ok(!args.includes("--append-system-prompt"),"Use one combined system file, never conflicting CLI flags");
+    const plain=claudeAgentResourceArgs(root);
+    assert.equal(await readFile(plain[plain.indexOf("--append-system-prompt-file")+1],"utf8"),"Keep existing project instructions.");
+  } finally { await rm(root,{recursive:true,force:true}); }
+});

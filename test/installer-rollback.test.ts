@@ -45,7 +45,7 @@ test("remote upgrade restores the prior release when interrupted", async () => {
     await cp("bin/joint-bob.mjs", path.join(releaseDir, "bin/joint-bob.mjs"));
     await writeFile(path.join(releaseDir, "scripts/install-node-runtime.sh"), "#!/bin/bash\nexit 0\n");
     await writeFile(path.join(releaseDir, "package.json"), "{}\n");
-    await writeFile(path.join(releaseDir, "scripts", "install-service.sh"), '#!/usr/bin/env bash\n[ "$1" = --build-only ] && exit 0\n[ "$1" = --restart-only ] && { echo restarted > "$INSTALLER_MARKER.restarted"; exit 0; }\nprintf "started\\n" > "$INSTALLER_MARKER"\nsleep 30\n');
+    await writeFile(path.join(releaseDir, "scripts", "install-service.sh"), '#!/usr/bin/env bash\n[[ "$1" = --build-only || "$1" = --prepare-only ]] && exit 0\n[ "$1" = --restart-only ] && { echo restarted > "$INSTALLER_MARKER.restarted"; exit 0; }\nprintf "started\\n" > "$INSTALLER_MARKER"\nsleep 30\n');
     await chmod(path.join(releaseDir, "scripts", "install-service.sh"), 0o755);
     await execFileAsync("tar", ["-czf", archive, "-C", archiveRoot, "release"]);
 

@@ -149,6 +149,9 @@ elements.openTerminalButton.addEventListener("click", () => {
 elements.clearTerminalButton.addEventListener("click", () => { state.terminalEmulator?.clear(); });
 elements.closeTerminalButton.addEventListener("click", () => elements.terminalDialog.close());
 elements.terminalDialog.addEventListener("close", closeTerminalSocket);
+elements.terminalDialog.addEventListener("cancel", (event) => {
+  if (state.terminalEmulator?.buffer.active.type === "alternate") event.preventDefault();
+});
 /**
  * Escape closes the terminal - except while a full-screen program is running in it.
  * vim, less and htop draw on the alternate screen buffer and Escape is one of their

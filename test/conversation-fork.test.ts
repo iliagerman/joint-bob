@@ -113,6 +113,8 @@ for (const engine of ["pi", "claude"] as const) {
     }
     await api(node, auth, "PUT", `/projects/${node.projects[0].id}/sessions/title`, { engine, sessionId: source.id, title: "Source name" });
     await api(node, auth, "PUT", `/projects/${node.projects[0].id}/sessions/color`, { engine, sessionId: source.id, color: "blue" });
+    const classified = await api(node, auth, "PUT", `/projects/${node.projects[0].id}/sessions/classification`, { engine, sessionId: source.id, classification: "Investigation" });
+    assert.equal(classified.status, 200);
     const account = await api<{ account: { id: string } }>(node, auth, "POST", "/secrets/accounts", { label: `Fork ${engine}`, provider: "custom", variables: [{ name: "FORK_TEST", kind: "value", value: "test-only" }] });
     assert.equal(account.status, 201);
     await api(node, auth, "PUT", `/secrets/scopes/conversation/${engine}:${source.id}`, { accountIds: [account.body.account.id] });
@@ -124,6 +126,7 @@ for (const engine of ["pi", "claude"] as const) {
     assert.notEqual(copy.path, source.path);
     assert.equal(copy.title, "[F] Source name");
     assert.equal(copy.color, "blue");
+    assert.equal(copy.classification, "Investigation");
     assert.equal(copy.taskId, undefined);
     assert.equal(copy.parentSessionPath, undefined);
     assert.equal(copy.executionNodeId, node.nodeId);

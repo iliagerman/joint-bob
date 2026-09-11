@@ -1,4 +1,5 @@
 import { api, savePreferencesInBackground } from "./api.js";
+import { loadBrowserExecutorSettings } from "./browser.js";
 import { fillShortcutSettings } from "./shortcut-settings.js";
 import { loadSkills } from "./composer-dialogs.js";
 import { showSignedOut } from "./auth.js";
@@ -8,6 +9,7 @@ import { elements } from "./elements.js";
 import { loadSecretAccounts } from "./secrets.js";
 import { confirmAction, syncNotifyButton, toast } from "./shell.js";
 import { state } from "./state.js";
+import { renderSessions } from "./session-list.js";
 import { loadWorkspaces } from "./workspaces.js";
 
 /** Compares two "major.minor.patch" strings; anything else never counts as newer. */
@@ -77,6 +79,7 @@ function selectSettingsTab(name) {
     tab.tabIndex = selected ? 0 : -1;
   }
   for (const panel of elements.settingsPanels) panel.hidden = panel.id !== `settingsPanel-${name}`;
+  if (name === "cluster") void loadBrowserExecutorSettings();
 }
 
 let runtimeDefaults;
@@ -134,6 +137,7 @@ export async function openSettings(tab = "account") {
   elements.settingsRestartMessage.hidden = true;
   elements.settingsRestartMessage.textContent = "";
   elements.settingsProjectHome.value = settings.projects.homePath;
+  document.querySelector("#settingsConversationLabels").value = settings.conversationLabels.join("\n");
   fillRuntimeFields(settings.runtimeOverrides);
   renderRuntimeDefaults(defaults);
   elements.settingsRuntimeStatus.textContent = "";
@@ -159,8 +163,11 @@ async function saveSettings(event) {
       syncthing: { endpoint: state.syncthingEndpoint },
       projects: { homePath: elements.settingsProjectHome.value.trim() },
       resources: resourceFieldsValue(globalResourceFields),
+      conversationLabels: document.querySelector("#settingsConversationLabels").value.split("\n").map((label) => label.trim()).filter(Boolean),
     }),
   });
+  state.conversationLabels = saved.conversationLabels;
+  renderSessions();
   const restartRequired = [
     ...(saved.restartRequired.pi ? ["Pi configuration"] : []),
     ...(saved.restartRequired.claude ? ["Claude configuration"] : []),

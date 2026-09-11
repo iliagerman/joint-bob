@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f2f2f0" />
+    <title>Browser · Joint Bob</title>
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/browser.css" />
+    <script type="module" src="/app/browser-viewer.js"></script>
+  </head>
+  <body class="browser-only">
+    <main class="panel browser-standalone" data-browser-standalone aria-label="Conversation browser">Loading browser viewer…</main>
+    <dialog id="browserConfirm" aria-labelledby="browserConfirmTitle">
+      <form method="dialog">
+        <h2 id="browserConfirmTitle"></h2><p></p>
+        <div class="browser-toolbar">
+          <button class="ghost" value="cancel" data-testid="browser-confirm-cancel">Cancel</button>
+          <button class="primary" value="confirm" data-testid="browser-confirm-accept">Confirm</button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>

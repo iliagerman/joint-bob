@@ -5,6 +5,7 @@ import { type AuthSession, sessionCookieName, sessionForId } from "../auth.js";
 import { type ClusterPeer, getClusterMachineToken, getClusterNode, listClusterPeers } from "../cluster.js";
 import { clusterMembershipMemberSchema } from "./schemas.js";
 import { machineRoutes } from "./state.js";
+import { browserAgentIdentity } from "../browser-agent.js";
 
 export function sendError(response: Response, statusCode: number, message: string): void {
   response.status(statusCode).json({ error: message });
@@ -88,7 +89,7 @@ export function requestCookie(request: Request, name: string): string | undefine
   return request.header("cookie")?.split(";").map((entry) => entry.trim()).find((entry) => entry.startsWith(prefix))?.slice(prefix.length);
 }
 
-async function machineCredentialNodeId(token: string): Promise<string | undefined> {
+export async function machineCredentialNodeId(token: string): Promise<string | undefined> {
   const [local, localToken, peers] = await Promise.all([getClusterNode(), getClusterMachineToken(), listClusterPeers()]);
   if (machineTokenMatches(token, localToken)) return local.id;
   return peers.find((peer) => machineTokenMatches(token, peer.token))?.id;
@@ -96,6 +97,10 @@ async function machineCredentialNodeId(token: string): Promise<string | undefine
 
 export async function requireHttpAuth(request: Request, response: Response, next: NextFunction): Promise<void> {
   const token = bearerToken(request);
+  if (request.path === "/browser/agent" && request.method === "POST" && token) {
+    const identity = browserAgentIdentity(token);
+    if (identity) { response.locals.browserAgent = identity; next(); return; }
+  }
   const machineNodeId = machineRoutes.has(`${request.method} ${request.path}`) && token
     ? await machineCredentialNodeId(token)
     : undefined;
@@ -119,7 +124,7 @@ export async function requireHttpAuth(request: Request, response: Response, next
 }
 
 export function requireCsrf(request: Request, response: Response, next: NextFunction): void {
-  if (["GET", "HEAD", "OPTIONS"].includes(request.method) || response.locals.machineAuth) {
+  if (["GET", "HEAD", "OPTIONS"].includes(request.method) || response.locals.machineAuth || response.locals.browserAgent) {
     next();
     return;
   }

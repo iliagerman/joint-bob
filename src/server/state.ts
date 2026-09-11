@@ -102,6 +102,11 @@ export interface ChatConnection {
 export const port = Number(process.env.PORT ?? 8790);
 export const machineRoutes = new Set([
   "GET /cluster/node",
+  "GET /cluster/browser/status",
+  "POST /cluster/browser/config",
+  "POST /cluster/browser/select",
+  "POST /cluster/browser/operation",
+  "POST /cluster/browser/download",
   "GET /cluster/local-inventory",
   "POST /cluster/peers/accept",
   "POST /cluster/membership/sync",

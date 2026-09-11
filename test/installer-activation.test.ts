@@ -32,7 +32,7 @@ async function fixture(root: string) {
     curl: `if [[ "$*" == *api/update/prepare* ]]; then
   echo prepare >> "$LOG"
   while [ "$1" != -o ]; do shift; done
-  printf '{"ready":true,"recoveryCount":0}' > "$2"
+  if [ "$PREPARE_STATUS" = 200 ]; then printf '{"ready":true,"recoveryCount":0}' > "$2"; else printf '{"error":"Interrupted work is still recovering; wait before updating again"}' > "$2"; fi
   printf '%s' "$PREPARE_STATUS"
 elif [ -e "$LOG.restarted" ]; then
   echo '{"status":"ok","release":"development"}'
@@ -56,7 +56,7 @@ for (const platform of ["Linux", "Darwin"]) {
           env: { ...f.env, TEST_PLATFORM: platform, PREPARE_STATUS: status }, timeout: 10_000,
         });
         if (status === "200") await activation;
-        else await assert.rejects(activation, /Service update preparation failed \(503\)/);
+        else await assert.rejects(activation, /Service update preparation failed \(503\).*Interrupted work is still recovering/);
         const commands = (await readFile(f.env.LOG, "utf8")).trim().split("\n");
         const prepare = commands.indexOf("prepare");
         assert.ok(prepare >= 0, "activation must prepare even when health returns 503");

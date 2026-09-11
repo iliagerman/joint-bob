@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises";
 import path from "node:path";
-import { sessionColorOverrides, sessionTitleOverrides } from "./names.js";
+import { sessionClassificationOverrides, sessionColorOverrides, sessionTitleOverrides } from "./names.js";
 import { conversationDraftPath, listConversationRecords } from "./conversation-records.js";
 import { listDiscoveredHarnesses, resolveHarnessForSessionPath } from "./harnesses/registry.js";
 import type { HarnessAdapter, HarnessProject } from "./harnesses/contract.js";
@@ -185,9 +185,10 @@ export function orderSessionFamilies(sessions: SessionSummary[]): SessionSummary
 
 /** Lists every registered harness through the shared catalog, then applies Joint Bob metadata. */
 export async function listHarnessSessions(project: HarnessProject, pinnedSessionPaths: string[] = [], pinnedSessionIds: string[] = []): Promise<SessionSummary[]> {
-  const [overrides, colors, sessions, records] = await Promise.all([
+  const [overrides, colors, classifications, sessions, records] = await Promise.all([
     sessionTitleOverrides(),
     sessionColorOverrides(),
+    sessionClassificationOverrides(),
     sessionCatalog.list(project),
     listConversationRecords(project.id),
   ]);
@@ -252,6 +253,7 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
       // segment's own title may be derived from the handoff envelope.
       title: overrides[conversationId] ?? (segments.length > 1 ? firstLive?.title ?? face.title : face.title),
       ...(colors[conversationId] ? { color: colors[conversationId] } : {}),
+      ...(classifications[conversationId] ? { classification: classifications[conversationId] } : {}),
       ...(createdAt ? { createdAt } : {}),
     };
   }).sort((left, right) => (right.updatedAt ?? right.createdAt ?? "").localeCompare(left.updatedAt ?? left.createdAt ?? ""));

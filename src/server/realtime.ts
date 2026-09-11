@@ -263,28 +263,49 @@ export function handleSessionChange(projectId: string, changedFiles: string[]): 
   reloadClaudeClients(projectId, changedFiles).catch((error) => console.warn("Claude reload failed", error));
 }
 
-async function abortPiForUpdate(session: SharedPiSession): Promise<void> {
+export async function abortPiForUpdate(session: SharedPiSession): Promise<void> {
   const agent = session.handle.session;
   agent.abortRetry();
   agent.abortCompaction();
   agent.abortBranchSummary();
   agent.abortBash();
-  await agent.abort();
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([agent.abort(), new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(updateStopFailure("Pi")), 60_000);
+    })]);
+  } finally { clearTimeout(timer); }
 }
 
-async function terminateClaudeForUpdate(child: ClaudeRunHandle["child"]): Promise<void> {
-  if (child.exitCode !== null) return;
-  await new Promise<void>((resolve, reject) => {
-    const cleanup = (): void => {
-      child.off("close", onClose);
-      child.off("error", onError);
-    };
-    const onClose = (): void => { cleanup(); resolve(); };
-    const onError = (error: Error): void => { cleanup(); reject(error); };
-    child.once("close", onClose);
-    child.once("error", onError);
-    child.kill("SIGTERM");
-  });
+function updateStopFailure(engine: string): UpdateRefusalError {
+  return new UpdateRefusalError(`${engine} did not stop within 60 seconds. Update refused; recovery records retained. Verify tools have stopped before restarting the service.`);
+}
+
+function signalClaudeGroup(pid: number, signal: NodeJS.Signals | 0): boolean {
+  try { process.kill(-pid, signal); return true; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+    throw error;
+  }
+}
+
+export async function terminateClaudeForUpdate(child: ClaudeRunHandle["child"]): Promise<void> {
+  if (!child.pid || process.platform === "win32") throw new UpdateRefusalError("Cannot verify Claude process group shutdown on this platform");
+  const exited = (): boolean => child.exitCode !== null || child.signalCode !== null;
+  // Claude runs in its own POSIX group. A dead leader is not proof its tools stopped.
+  if (exited() && !signalClaudeGroup(child.pid, 0)) return;
+  signalClaudeGroup(child.pid, "SIGTERM");
+  const started = Date.now();
+  let escalated = false;
+  while (!exited() || signalClaudeGroup(child.pid, 0)) {
+    const elapsed = Date.now() - started;
+    if (elapsed >= 60_000) throw updateStopFailure("Claude");
+    if (!escalated && elapsed >= 10_000) {
+      signalClaudeGroup(child.pid, "SIGKILL");
+      escalated = true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
 }
 
 function updateRecoveryRecord(values: Omit<UpdateRecoveryRecord, "id" | "createdAt">): UpdateRecoveryRecord {
@@ -342,13 +363,8 @@ async function performUpdatePreparation(): Promise<number> {
     for (const client of webSocketServer.clients) client.close(1012, "Update preparation failed; reconnecting");
     throw error;
   }
-  // From here work may be partially stopped. Restart, rather than merely lifting
-  // the fence, so native Restart/KeepAlive replays the durable recovery records.
-  updateRestartTimer = setTimeout(() => {
-    console.error("Server update timed out after 120 seconds; restarting to recover interrupted work");
-    process.exit(1);
-  }, 120_000);
-  updateRestartTimer.unref();
+  // From here work may be partially stopped. Keep the fence and recovery records
+  // on failure; restarting before tools stop could replay work over live writers.
   for (const shared of new Set(sharedSessions.values())) shared.handle.session.clearQueue();
   // Only the in-memory copy is dropped: the rows outlive the restart and drain
   // when a client comes back to the conversation.
@@ -357,5 +373,12 @@ async function performUpdatePreparation(): Promise<number> {
   const children = [...activeClaudeConnections.values()].map((connection) => connection.claude.child).filter((child): child is ClaudeRunHandle["child"] => Boolean(child));
   const claude = [...new Set([...children, ...[...claudeTaskRuns.values()].map((run) => run.child)])].map(terminateClaudeForUpdate);
   await Promise.all([...pi, ...claude]);
+  // Only stopped work can be safely replayed if the installer disappears.
+  // This deadline starts AFTER stopping, separate from the installer's HTTP deadline.
+  updateRestartTimer = setTimeout(() => {
+    console.error("Prepared update was not activated after 180 seconds; restarting to recover interrupted work");
+    process.exit(1);
+  }, 180_000);
+  updateRestartTimer.unref();
   return records.length;
 }

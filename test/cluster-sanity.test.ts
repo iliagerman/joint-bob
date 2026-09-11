@@ -72,6 +72,27 @@ test("fork on a peer runs on the source owner and rejects its running session", 
   } finally { publishPiRuntime(db, runtime, false); db.close(); }
 });
 
+test("conversation classification replicates to a peer and can be cleared there", async () => {
+  const projectA = nodeA.projects[0];
+  const projectB = nodeB.projects.find((project) => project.name === projectA.name)!;
+  const listed = await api<{ sessions: SessionView[] }>(nodeA, sessionA, "GET", `/projects/${projectA.id}/sessions`);
+  const target = listed.body.sessions[0];
+  const payload = { sessionId: target.id, engine: target.harnessId, classification: "Custom investigation" };
+  assert.equal((await api(nodeA, sessionA, "PUT", `/projects/${projectA.id}/sessions/classification`, payload)).status, 200);
+  const waitForLabel = async (node: SeededNode, auth: SignedIn, projectId: string, expected: string | undefined) => {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const result = await api<{ sessions: Array<SessionView & { classification?: string }> }>(node, auth, "GET", `/projects/${projectId}/sessions`);
+      const found = result.body.sessions.find((session) => session.id === target.id);
+      if (found && found.classification === expected) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.fail(`Classification ${String(expected)} did not replicate`);
+  };
+  await waitForLabel(nodeB, sessionB, projectB.id, payload.classification);
+  assert.equal((await api(nodeB, sessionB, "PUT", `/projects/${projectB.id}/sessions/classification`, { ...payload, classification: null })).status, 200);
+  await waitForLabel(nodeA, sessionA, projectA.id, undefined);
+});
+
 // This verifies peer discovery from the harness's shared managed fixture, not Syncthing transport.
 test("published external skills are discovered by a peer from the shared managed fixture", async () => {
   const source = path.join(root, "external-skills", "cluster-skill");
@@ -85,6 +106,19 @@ test("published external skills are discovered by a peer from the shared managed
   assert.equal((await api(nodeA, sessionA, "POST", "/settings/skills/sync", { paths: [source] })).status, 200);
   const second = await api<{ skills: Array<{ name: string; description: string }> }>(nodeB, sessionB, "GET", `/projects/${project.id}/skills`);
   assert.ok(second.body.skills.some((skill) => skill.name === "cluster-skill" && skill.description === "second"));
+});
+
+test("browser executor configuration converges from a paired node without launching Chrome", async () => {
+  const token = (await api<{ token: string }>(nodeA, sessionA, "GET", "/cluster/invite")).body.token;
+  const config = { executorNodeId: null, originNodeId: nodeA.nodeId, updatedAt: new Date().toISOString() };
+  const delivered = await fetch(`${nodeB.url}/api/cluster/browser/config`, {
+    method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(config),
+  });
+  assert.equal(delivered.status, 200);
+  const pulled = await api<{ config: typeof config; nodes: Array<{ id: string }> }>(nodeA, sessionA, "GET", "/browser/status");
+  assert.equal(pulled.status, 200);
+  assert.deepEqual(pulled.body.config, config);
+  assert.deepEqual(pulled.body.nodes.map((node) => node.id).sort(), [nodeA.nodeId, nodeB.nodeId].sort());
 });
 
 test("both nodes serve the same seeded projects to their own signed-in session", async () => {
@@ -624,6 +658,53 @@ test("a canvas shortcut assigned on one node reaches the same account on the oth
   await untilShortcuts(nodeB, sessionB, (rows) => rows.length === 0, "node B still holds the released binding");
 });
 
+test("an up-to-date coordinator updates an older peer without reinstalling itself", { timeout: 60_000 }, async () => {
+  const version = JSON.parse(await readFile("package.json", "utf8")).version;
+  let peerVersion = "0.0.1";
+  let installs = 0;
+  const feed = createServer((request, response) => {
+    response.setHeader("Content-Type", "application/json");
+    if (request.url === "/releases/latest") {
+      response.end(JSON.stringify({ tag_name: `v${version}`, draft: false, prerelease: false, assets: [
+        { name: "joint-bob.tar.gz", browser_download_url: "https://example.invalid/release.tar.gz" },
+        { name: "joint-bob.tar.gz.sha256", browser_download_url: "https://example.invalid/release.tar.gz.sha256" },
+      ] }));
+    } else if (request.url === "/api/health") response.end(JSON.stringify({ version: peerVersion }));
+    else if (request.url === "/api/cluster/update/install") {
+      installs++;
+      peerVersion = version;
+      response.end(JSON.stringify({ accepted: true }));
+    } else { response.statusCode = 404; response.end("{}"); }
+  });
+  await stopDevNode(servers[1]);
+  await stopDevNode(servers[0]);
+  await new Promise<void>((resolve) => feed.listen(Number(new URL(nodeB.url).port), "127.0.0.1", resolve));
+  try {
+    servers[0] = await startDevNode(environment, nodeA, { JOINT_BOB_RELEASE: "a".repeat(40), JOINT_BOB_RELEASE_API: nodeB.url });
+    sessionA = await signIn(environment, nodeA);
+    const result = await api<{ state: string; error?: string }>(nodeA, sessionA, "POST", "/update/install-all");
+    assert.equal(result.status, 202, `current coordinator must accept fleet update: ${JSON.stringify(result.body)}`);
+    let state = result.body.state;
+    for (let attempt = 0; state === "running" && attempt < 100; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      state = (await api<{ state: string }>(nodeA, sessionA, "GET", "/update/install-all")).body.state;
+    }
+    assert.equal(state, "succeeded", "skip coordinator install when already on target");
+    assert.equal(installs, 1, "older peer receives one install request");
+    const status = await api<{ activeJob: unknown; recentJobs: unknown[] }>(nodeA, sessionA, "GET", "/update/status");
+    assert.equal(status.body.activeJob, null);
+    assert.equal(status.body.recentJobs.length, 0, "coordinator must not spawn an installer");
+  } finally {
+    await stopDevNode(servers[0]);
+    feed.closeAllConnections();
+    await new Promise<void>((resolve) => feed.close(() => resolve()));
+    servers[0] = await startDevNode(environment, nodeA);
+    servers[1] = await startDevNode(environment, nodeB);
+    sessionA = await signIn(environment, nodeA);
+    sessionB = await signIn(environment, nodeB);
+  }
+});
+
 test("cluster inventory reports each node's version and a peer update needs machine auth", async () => {
   const manifest = JSON.parse(await readFile("package.json", "utf8"));
   interface InventoryEntry { peerId: string; reachable: boolean; inventory?: { version: string; updates?: { supported: boolean; activeJob: unknown } } }
@@ -723,7 +804,7 @@ async function queueTransferFixture() {
   const settingsB = (await api<Record<string, unknown>>(nodeB, sessionB, "GET", "/settings")).body;
   const fake = path.join(root, "queue-claude.mjs");
   const log = path.join(root, "queue-dispatch.log");
-  await writeFile(fake, `#!/usr/bin/env node\nimport { appendFile } from 'node:fs/promises';\nif (process.argv[2] === 'auth') { console.log(JSON.stringify({ loggedIn: true })); process.exit(0); }\nlet text = ''; for await (const chunk of process.stdin) text += chunk;\nawait appendFile(${JSON.stringify(log)}, JSON.stringify({ text, args: process.argv.slice(2) }) + '\\n');\nconsole.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'done' }] } }));\nconsole.log(JSON.stringify({ type: 'result', is_error: false }));\n`);
+  await writeFile(fake, `#!/usr/bin/env node\nimport { appendFile, readFile } from 'node:fs/promises';\nif (process.argv[2] === 'auth') { console.log(JSON.stringify({ loggedIn: true })); process.exit(0); }\nlet text = ''; for await (const chunk of process.stdin) text += chunk;\nawait appendFile(${JSON.stringify(log)}, JSON.stringify({ text, args: process.argv.slice(2), instructions: await readFile(process.argv[process.argv.indexOf('--append-system-prompt-file') + 1], 'utf8') }) + '\\n');\nconsole.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'done' }] } }));\nconsole.log(JSON.stringify({ type: 'result', is_error: false }));\n`);
   await chmod(fake, 0o755);
   await api(nodeA, sessionA, "PUT", "/settings", { ...settingsA, claude: { ...(settingsA.claude as object), executable: path.join(root, "missing-queue-claude") } });
   await api(nodeB, sessionB, "PUT", "/settings", { ...settingsB, claude: { ...(settingsB.claude as object), executable: fake } });
@@ -774,6 +855,7 @@ test("queue takeover retries a lost fenced response, copies pending settings and
     await waitForQueueFrame(frames, () => frames.some((frame) => frame.type === "agent_end"));
     const calls = (await readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
     assert.deepEqual(calls.map((call) => call.text), ["run on destination"]);
+    assert.match(calls[0].instructions, /Shared workspace secret/);
     assert.ok(calls[0].args.includes("haiku") && calls[0].args.includes("high"));
     assert.equal(readOwnershipRow(nodeA, "claude", conversation.id)!.owner_node_id, nodeB.nodeId);
   } finally {

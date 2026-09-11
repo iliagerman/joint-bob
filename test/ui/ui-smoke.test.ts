@@ -28,6 +28,12 @@ let page: Page;
 const consoleErrors: string[] = [];
 const failedResponses: string[] = [];
 
+function openFixtureDatabase(): DatabaseSync {
+  const database = new DatabaseSync(path.join(node.dataDir, "node.db"));
+  database.exec("PRAGMA busy_timeout = 5000");
+  return database;
+}
+
 before(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-ui-"));
   environment = await seedDevEnvironment(root, 1);
@@ -137,7 +143,7 @@ test("harness settings show per-harness tabs and restore node defaults", async (
   const restartMessage = page.locator("#settingsRestartMessage");
   await restartMessage.waitFor({ state: "visible" });
   assert.match(await restartMessage.innerText(), /restart required/i);
-  const database = new DatabaseSync(path.join(node.dataDir, "node.db"));
+  const database = openFixtureDatabase();
   try {
     const rows = database.prepare("SELECT key, value FROM node_settings WHERE key IN ('pi.executable', 'pi.configPath', 'pi.sessionPath', 'claude.executable', 'claude.configPath', 'claude.sessionPath')").all() as Array<{ key: string; value: string }>;
     assert.ok(rows.filter((row) => row.key.startsWith("pi.")).every((row) => row.value === ""), "Pi reset saves blank Pi overrides");
@@ -229,7 +235,7 @@ test("the updates tab shows this node's version and keeps controls honest on a c
 test("Settings loads persisted conversation shortcuts before canvas activation", async () => {
   const sessionId = "settings-before-canvas";
   const now = new Date().toISOString();
-  const database = new DatabaseSync(path.join(node.dataDir, "node.db"));
+  const database = openFixtureDatabase();
   database.prepare("INSERT INTO canvas_shortcuts (username, binding, project_id, engine, session_id, updated_at, origin_node_id) VALUES (?, '1', ?, 'pi', ?, ?, ?)")
     .run(environment.username, node.projects[0].id, sessionId, now, node.nodeId);
   database.close();
@@ -247,7 +253,7 @@ test("Settings loads persisted conversation shortcuts before canvas activation",
     await page.getByTestId("canvas-keymap-status").filter({ hasText: /already belongs to a conversation/ }).waitFor();
   } finally {
     if (await page.getByTestId("settings-dialog").isVisible()) await page.getByTestId("settings-cancel-button").click();
-    const cleanup = new DatabaseSync(path.join(node.dataDir, "node.db"));
+    const cleanup = openFixtureDatabase();
     cleanup.prepare("DELETE FROM canvas_shortcuts WHERE username = ? AND binding = '1'").run(environment.username);
     cleanup.close();
   }
@@ -448,7 +454,7 @@ test("a phone reloads conversations missed while its watch socket was disconnect
     await mobilePage.locator("#chatsLiveDot").waitFor({ state: "hidden" });
 
     const now = new Date().toISOString();
-    const database = new DatabaseSync(path.join(node.dataDir, "node.db"));
+    const database = openFixtureDatabase();
     database.prepare("INSERT INTO conversation_records (project_id, engine, session_id, created_at, updated_at, origin_node_id) VALUES (?, 'claude', ?, ?, ?, ?)")
       .run(project.id, sessionId, now, now, node.nodeId);
     database.prepare("INSERT INTO name_overrides (scope, key, name, updated_at, origin_node_id) VALUES ('sessions', ?, ?, ?, ?)")
@@ -461,7 +467,7 @@ test("a phone reloads conversations missed while its watch socket was disconnect
     await mobilePage.locator(".session-card", { hasText: title }).waitFor({ timeout: 10_000 });
   } finally {
     await mobileContext.close();
-    const database = new DatabaseSync(path.join(node.dataDir, "node.db"));
+    const database = openFixtureDatabase();
     database.prepare("DELETE FROM conversation_records WHERE project_id = ? AND engine = 'claude' AND session_id = ?").run(project.id, sessionId);
     database.prepare("DELETE FROM name_overrides WHERE scope = 'sessions' AND key = ?").run(sessionId);
     database.close();
@@ -476,6 +482,7 @@ test("the canvas picker lists conversations at a readable height", async () => {
   // The project with the most conversations, because the rows only used to
   // collapse once the list overflowed its own maximum height.
   await page.selectOption("#canvasProjectSelect", { label: "Internal Assistant" });
+  await page.waitForFunction(() => document.querySelector("#canvasPickerStatus")?.textContent === "");
   await page.locator(".canvas-session-option", { hasText: "Thread-Based Agent Builder" }).waitFor({ timeout: 20_000 });
 
   assert.deepEqual(await page.locator(".canvas-session-option .list-shortcut-index").allTextContents(),
@@ -644,7 +651,8 @@ test("split chords open the picker from the active canvas pane and really split 
   assert.equal(await option.locator(".list-shortcut-index").textContent(), "1", "filtered results renumber");
   await option.focus();
   await page.keyboard.press("1");
-  await page.locator(".canvas-pane", { hasText: "Short one" }).waitFor({ timeout: 20_000 });
+  const addedPane = page.locator(".canvas-pane", { hasText: "Short one" });
+  await addedPane.locator("iframe").contentFrame().locator("#messageInput:not(:disabled)").waitFor({ timeout: 20_000 });
   assert.equal(await page.locator(".canvas-pane").count(), panesBefore + 1, "the split chord put a new pane on the screen");
   assert.ok((await page.locator(".canvas-resize").count()) >= 1, "the split chord left a resize handle between the panes");
 
@@ -1002,7 +1010,7 @@ test("opening a conversation that is waiting for review updates the badge at onc
   // This test covers browser redraw, not transcript parsing. Move the disposable
   // review watermark behind known activity so the real endpoint reports one review.
   const transcript = path.join(environment.home, ".pi", "sessions", "thread-notifications-naming.jsonl");
-  const reviewDatabase = new DatabaseSync(path.join(node.dataDir, "node.db"));
+  const reviewDatabase = openFixtureDatabase();
   const updated = reviewDatabase.prepare("UPDATE conversation_review_states SET reviewed_at = '1970-01-01T00:00:00.000Z' WHERE session_path = ?").run(transcript);
   reviewDatabase.close();
   assert.equal(updated.changes, 1, "the review baseline exists for the seeded conversation");
@@ -1227,8 +1235,7 @@ test("running conversations open their live conversation in another project", as
     const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/sessions`);
     return (await response.json()).sessions[0];
   }, project.id) as { id: string; path: string; title: string; harnessId: string };
-  const database = new DatabaseSync(path.join(node.dataDir, "node.db"));
-  database.exec("PRAGMA busy_timeout = 5000");
+  const database = openFixtureDatabase();
   try {
     const now = new Date();
     database.prepare(`INSERT INTO conversation_runtime_leases
@@ -1274,7 +1281,7 @@ test("toolbar shortcuts open the same actions as their buttons", async () => {
 // "Put my cursor where I can type", without reaching for the mouse.
 test("the focus key lands the cursor in the composer, or in the dialog on top", async () => {
   await page.locator("#sessionList .session-card").first().click();
-  await page.locator('#messageInput:not([disabled])').waitFor({ state: "visible" });
+  await page.locator('#messageInput:not(:disabled)').waitFor({ state: "visible" });
   await page.locator("body").click({ position: { x: 5, y: 5 } });
 
   await page.keyboard.press("Meta+Shift+KeyI");
@@ -1346,11 +1353,13 @@ test("Escape closes the terminal, and reaches the shell while a full-screen prog
   // directly proves the guard without depending on which programs the box has.
   await page.getByTestId("chat-open-terminal-button").click();
   await page.locator('#terminalStatus[data-state="live"]').waitFor({ timeout: 20_000 });
-  await page.locator(".xterm-helper-textarea").focus();
+  await page.getByTestId("terminal-dialog").locator(".xterm-helper-textarea").focus();
   await page.keyboard.type("printf '\\033[?1049h'");
   await page.keyboard.press("Enter");
-  await page.evaluate("import('/app/state.js').then(({ state }) => { window.__terminalTest = state.terminalEmulator; })");
-  await page.waitForFunction(() => (window as Window & { __terminalTest?: { buffer: { active: { type: string } } } }).__terminalTest?.buffer.active.type === "alternate");
+  await page.waitForFunction(async (modulePath) => {
+    const { state } = await import(modulePath);
+    return state.terminalEmulator?.buffer.active.type === "alternate";
+  }, "/app/state.js");
   await page.keyboard.press("Escape");
   assert.equal(await page.getByTestId("terminal-dialog").isVisible(), true,
     "Escape belongs to the shell while a full-screen program is running");
@@ -1360,6 +1369,6 @@ test("Escape closes the terminal, and reaches the shell while a full-screen prog
 });
 
 test("the journey produced no console errors and no failed requests", () => {
-  assert.deepEqual(consoleErrors, [], "no console errors");
+  assert.deepEqual(consoleErrors, [], `no console errors; failed requests: ${JSON.stringify(failedResponses)}`);
   assert.deepEqual(failedResponses, [], "no 4xx or 5xx responses");
 });

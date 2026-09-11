@@ -6,6 +6,37 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Fork a conversation's history and settings into an independent conversation from the session menu.
+- Added a live browser for conversations running on a designated Ubuntu executor, with manual control, file uploads and downloads, and saved logins.
+
+## 1.17.2 — 2026-09-10
+
+- Fixed updates panel to enable peer updates when the current node is already at the latest version, and auto-reload the page when the local node restarts after an update.
+
+## 1.17.1 — 2026-09-10
+
+- Attached credentials now refresh automatically before each message, so changes to secret accounts, rotations, and removals take effect on the next message without restarting the conversation.
+
+## 1.17.0 — 2026-09-10
+
+- Added conversation labels to tag discussions with predefined or custom classifications, and a filter to show conversations by label.
+
+## 1.16.1 — 2026-09-10
+
+- Fixed updates hanging while agents stopped, including Claude processes that had already exited or ignored termination.
+- Refused updates when tools could not be confirmed stopped, preserving interrupted work for recovery without restarting over live tools.
+- Kept the running installation untouched when update preparation failed and showed the server's reason in installer logs.
+
+## 1.16.0 — 2026-09-10
+
+- Added an Ubuntu browser executor for conversations across the cluster, with localhost traffic routed to the app's node.
+- Added live browser viewing and manual control, tabs, popups, uploads, and downloads. Closing a viewer leaves its browser running.
+- Added encrypted saved-login snapshots while keeping each conversation's cookies and storage separate.
+- Kept the same browser when switching between Pi and Claude, and added browser CLI access to interactive, automated, and recovered agent runs.
+- Kept Escape inside full-screen terminal programs instead of closing the embedded terminal.
+
+## 1.15.0 — 2026-09-10
+
+- Added a running conversations button to the mobile conversations list and chat toolbar for quicker access to active sessions.
 
 ## 1.14.1 — 2026-09-10
 

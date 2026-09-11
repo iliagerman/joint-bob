@@ -7,6 +7,8 @@ import path from "node:path";
 import { claudeProjectDir, claudeProjectDirs, isSyncConflictPath, sessionCwds, type SessionProjectPaths } from "./session-paths.js";
 import { getScopedResourcePaths, getSettings } from "./settings.js";
 import { claudeAgentResourceArgs } from "./agent-resources.js";
+import { browserAgentEnvironment, browserAgentInstructions } from "./browser-agent.js";
+import { getConversationRecord } from "./conversation-records.js";
 import type { ChatMessage, ContextUsage, SessionSummary } from "./types.js";
 
 // Runs one Claude Code turn in print mode and maps its stream-json output to
@@ -40,6 +42,8 @@ export interface ClaudeRunOptions {
   /** Built-in tools Claude may use this turn; omitted means the CLI default set. */
   tools?: string[];
   env?: NodeJS.ProcessEnv;
+  /** Added to the system instruction file, never prepended to user input or slash commands. */
+  systemInstructions?: string;
   onEvent: (payload: UnknownRecord) => void;
   // Fires as soon as Claude reports its session id, so callers can mark the
   // conversation running before the turn finishes.
@@ -392,6 +396,18 @@ export function stripHandoffEnvelope(text: string): string {
   return separator === -1 ? text : text.slice(separator + "\n---\n".length);
 }
 
+/** Every conversation spawn gets the same browser bridge, including tasks and recovery. */
+export async function runClaudeConversationPrompt(options: ClaudeRunOptions & { projectId: string }): Promise<ClaudeRunHandle> {
+  const sessionId = options.resumeSessionId ?? options.sessionId;
+  if (!sessionId) throw new Error("Claude conversation spawn requires a session identity");
+  const record = await getConversationRecord(options.projectId, "claude", sessionId);
+  return runClaudePrompt({
+    ...options,
+    env: { ...options.env, ...browserAgentEnvironment(options.projectId, "claude", record?.conversationId ?? sessionId) },
+    systemInstructions: [options.systemInstructions, browserAgentInstructions].filter(Boolean).join("\n\n"),
+  });
+}
+
 export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
   const args = [
     "-p",
@@ -407,11 +423,12 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
   if (options.model) args.push("--model", options.model);
   if (options.effort) args.push("--effort", options.effort);
   if (options.tools) args.push("--tools", options.tools.join(","));
-  args.push(...claudeAgentResourceArgs(undefined, getScopedResourcePaths(options.projectId)));
+  args.push(...claudeAgentResourceArgs(undefined, getScopedResourcePaths(options.projectId), options.systemInstructions));
 
   const settings = getSettings().claude;
   const configPath = claudeConfigPath();
   const child = spawn(settings.executable || "claude", args, {
+    detached: process.platform !== "win32",
     cwd: options.cwd,
     env: { ...process.env, ...options.env, ...(configPath ? { CLAUDE_CONFIG_DIR: configPath } : {}) },
     stdio: ["pipe", "pipe", "pipe"],

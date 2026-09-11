@@ -5,6 +5,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { appendAuditEvent, ensureAuditSchema } from "./audit.js";
 import { resolveDataDirectory } from "./data-directory.js";
+import { conversationLabelsSchema, DEFAULT_CONVERSATION_LABELS } from "./conversation-labels.js";
 import { defaultManagedHome } from "./managed-home.js";
 
 export interface RuntimeSettings {
@@ -29,6 +30,7 @@ export interface SettingsInput {
   syncthing: SyncthingSettings;
   projects?: { homePath?: string; rootPath?: string; personalRootPath?: string; workRootPath?: string };
   resources?: ResourcePaths;
+  conversationLabels?: string[];
 }
 
 export interface SettingsResponse {
@@ -38,6 +40,7 @@ export interface SettingsResponse {
   syncthing: { endpoint: string; apiKeyConfigured: boolean };
   projects: { homePath: string };
   resources: ResourcePaths;
+  conversationLabels: string[];
   restartRequired: { pi: boolean; claude: boolean };
 }
 
@@ -225,6 +228,7 @@ export function getSettings(): SettingsResponse {
     },
     projects: { homePath: value("projects.homePath", defaultManagedHome()) },
     resources: readResourcePaths("resources."),
+    conversationLabels: conversationLabelsSchema.parse(JSON.parse(value("conversationLabels", JSON.stringify(DEFAULT_CONVERSATION_LABELS)))),
     restartRequired: { pi: false, claude: false },
   };
 }
@@ -301,6 +305,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
   const previous = getSettings();
   const homePath = input.projects?.homePath ?? previous.projects.homePath;
   const resources = input.resources ? normalizeResourcePaths(input.resources) : previous.resources;
+  const conversationLabels = conversationLabelsSchema.parse(input.conversationLabels ?? previous.conversationLabels);
   if (!homePath.trim() || !path.isAbsolute(homePath)) throw new Error("Joint Bob home folder must be absolute");
   db.exec("BEGIN");
   try {
@@ -311,6 +316,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
     }
     save(db, "syncthing.endpoint", input.syncthing.endpoint);
     save(db, "projects.homePath", path.resolve(homePath));
+    save(db, "conversationLabels", JSON.stringify(conversationLabels));
     for (const type of RESOURCE_TYPES) save(db, `resources.${type}`, JSON.stringify(resources[type]));
     if (input.syncthing.apiKey !== undefined) {
       if (input.syncthing.apiKey) save(db, "syncthing.apiKey", input.syncthing.apiKey, true);
@@ -328,6 +334,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
         syncthingChanged: previous.syncthing.endpoint !== settings.syncthing.endpoint || previous.syncthing.apiKeyConfigured !== settings.syncthing.apiKeyConfigured,
         projectHomeChanged: previous.projects.homePath !== settings.projects.homePath,
         resourcesChanged: JSON.stringify(previous.resources) !== JSON.stringify(settings.resources),
+        conversationLabelsChanged: JSON.stringify(previous.conversationLabels) !== JSON.stringify(settings.conversationLabels),
         apiKeyConfigured: settings.syncthing.apiKeyConfigured,
       },
     });

@@ -326,7 +326,7 @@ export function agentEnvironment(projectId: string, conversation?: SecretConvers
 
 /** Writes the accounts the new-conversation dialog picked, once the engine has reported the
     session id they belong to. Changing this on a running conversation is saved but does not
-    restart the process: the environment was composed once, at spawn (FR9.5). */
+    restart a running turn: updated attachments are resolved before the next message. */
 export async function persistConversationSecretAccounts(engine: ConversationEngineId, sessionId: string, accountIds: string[]): Promise<void> {
   if (!accountIds.length) return;
   await setScopeSecretAccounts("conversation", conversationScopeId(engine, sessionId), accountIds);
@@ -342,8 +342,8 @@ const providerHints: Record<SecretProvider, string> = {
 
 export function agentCredentialContext(project: string, conversation?: SecretConversation): string {
   const accounts = resolved(project, conversation);
-  if (!accounts.length) return "";
-  const lines = ["## Available secret accounts", "These credentials are already exported into your shell. Use the matching CLI directly and never ask the user for the values, which stay hidden from you."];
+  if (!accounts.length) return "## Available secret accounts\nNo secret accounts are attached for this message. This replaces any earlier account list.";
+  const lines = ["## Available secret accounts", "This is the current account list for this message, replacing any earlier list. These credentials are already exported into your shell. Use the matching CLI directly and never ask the user for the values, which stay hidden from you."];
   for (const { row, scope } of accounts) {
     const variables = storedVariables(row).map((item) => `${item.name}${item.kind === "file" ? " (secret file path)" : ""}`).join(", ");
     lines.push(`- ${row.provider} ${JSON.stringify(row.label)} (${scope}): ${variables} - ${providerHints[row.provider]}`);

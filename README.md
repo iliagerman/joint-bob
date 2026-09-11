@@ -227,6 +227,47 @@ Secret accounts hold named environment variables encrypted with the node key. At
 
 Secret accounts stay node-local unless you explicitly replicate one. Use **Settings > Secrets > Sync to nodes** to send an account through encrypted cluster replication. Workspace attachments follow the account when the destination has the same workspace. Secrets never use filesystem synchronization.
 
+## Conversation browsers
+
+One designated **Ubuntu** node runs browsers for the cluster. Agents and apps may run on other nodes, including Macs. Mac browser executors are not supported yet. No desktop or monitor is required on the Ubuntu executor.
+
+Install Google Chrome or Chromium on that node. Alternatively, install the pinned Playwright browser and Ubuntu libraries from the installed app, as the user that runs the service:
+
+```bash
+cd ~/.local/share/joint-bob/app
+./node_modules/.bin/playwright-core install --with-deps chromium
+```
+
+Installing system libraries may request sudo. For an existing browser in a nonstandard location, set `JOINT_BOB_BROWSER_EXECUTABLE=/absolute/path/to/chrome` in that node's `~/.joint-bob/env` and restart its service. Settings checks installed executables; starting a browser reports missing libraries or launch errors. It never downloads software silently.
+
+1. Open **Settings → Cluster → Browser executor**, check status, select the Ubuntu node, and save.
+2. Open a conversation and choose **Browser**. Choose a saved login or start a fresh browser.
+3. Watch beside the conversation or choose **Open in tab**. **Take control** pauses agent browser input. **Resume agent** hands it back.
+4. **Close viewer** leaves the browser running. **End browser** explicitly closes that conversation's browser tabs. Closing a viewer while under human control leaves the agent paused.
+
+After signing in again, the same user can resume control. From another node or login identity, **Take over control** explicitly replaces the previous human controller. Inputs from that older controller are then rejected. The same logical conversation keeps its browser when switching between Pi and Claude.
+
+Tabs, popups, JavaScript dialogs, keyboard input, scrolling, file uploads, downloads, and saved logins appear in the viewer. Uploads support up to 25 files and 20 MiB total per operation. Agents can also upload directories through the CLI. Click the remote file input before selecting files in the viewer. Tab moves focus out of the remote image; use Send Tab to send it to the remote page. Mouse dragging, IME composition, and OS-native authentication prompts are not supported.
+
+Browser `localhost` traffic travels through an authenticated cluster WebSocket to the app's node, preserving addresses, cookies, and development-server ports. Public websites use the executor's network connection. HTTP, HTTPS, and WebSocket connections use the same routing; the tunnel does not bypass certificate checks, OAuth callback registration, or provider login restrictions. Private non-loopback addresses must be reachable from the executor. HTTPS reverse proxies must support WebSocket upgrades, as for chat. There is no fallback to another browser node when the executor is offline.
+
+Each conversation has separate cookies and storage. After logging in, use **Save login** to store an encrypted project-scoped snapshot on the executor. Existing Settings → Secrets accounts still supply agent credentials; the CLI can fill an attached environment variable without printing its value. Profiles, session metadata, and download records stay in the executor's local SQLite database. Downloaded and staged files stay under its `~/.joint-bob/browser` directory, outside project synchronization. Deleting a saved login does not log out an already-running browser.
+
+New Pi sessions and subsequent Claude runs receive the browser CLI automatically:
+
+```bash
+node "$JOINT_BOB_BROWSER_CLI" start http://localhost:3000
+node "$JOINT_BOB_BROWSER_CLI" snapshot
+node "$JOINT_BOB_BROWSER_CLI" click 'role=button[name=Submit]'
+node "$JOINT_BOB_BROWSER_CLI" fill-secret 'label=Password' APP_PASSWORD --origin https://example.com
+node "$JOINT_BOB_BROWSER_CLI" screenshot /tmp/browser-check.png
+node "$JOINT_BOB_BROWSER_CLI" close
+```
+
+Browser tokens authorize only the issuing conversation. Existing Pi sessions must be reopened to receive the new tool instructions. Agents use the CLI rather than launch their own local browser. Arbitrary repository test suites do not automatically redirect their own Playwright launches; adapt them to the provided browser commands. Agent assertions can use `evaluate` and inspect its result.
+
+Changing the executor requires paired nodes online and running browser sessions ended. Profiles and downloads do not migrate to the new executor. Viewer disconnection is supported; executor restart is different. Restarting the service interrupts browser sessions, which must be explicitly restarted, optionally with a saved login. It cannot resume a half-completed browser action. Saved snapshots include cookies, local storage, and IndexedDB, not sessionStorage, passkeys, or OS authentication state.
+
 ## Service management
 
 Linux:
@@ -372,7 +413,13 @@ just update             # both nodes
 
 Each deployment creates a mode-`0600` SQLite backup before replacing an installed copy and verifies the reported release. Deployment logs are written to `~/.joint-bob/logs/push-deploy.log`.
 
-For staged application changes, the `pre-commit` hook asks Claude Haiku to add an entry under `## Unreleased`. On a push to `main`, the `pre-push` hook reviews the pushed commit range, writes release notes, bumps the version, and stops the first push so the release files can be committed. The next push waits for the remote to confirm the exact commit, then deploys it. Pushes without application changes do not deploy.
+For staged application changes, the `pre-commit` hook asks Claude Haiku to add an entry under `## Unreleased`. On a push to `main`, the `pre-push` hook reviews the pushed commit range, writes release notes, bumps the version, and stops the first push so the release files can be committed. The next push waits for the remote to confirm the exact commit, then deploys it. Pushes without application changes do not deploy through the local hook.
+
+Every push to `main` also runs the GitHub **Release** workflow. For a version not yet published, it runs typecheck, tests, and build, then tags that exact commit as `v<version>` and publishes `joint-bob.tar.gz` with its SHA-256 checksum. **Settings > Updates** can discover the release once those assets are published. Creating a release does not force an installation; nodes update through Settings or their automatic-update preference.
+
+The version and release notes must already be committed in `package.json` and `CHANGELOG.md`. A docs-only push with an already-published version is a no-op; changed application code without a version bump fails instead of silently skipping a release. Runs for the same version are serialized and never retarget an existing tag. Different versions can finish independently without an older version replacing the newest release. Manual `v*` tag pushes remain supported, and the workflow's **Run workflow** action retries an interrupted release from its original ref.
+
+GitHub releases do not require npm publishing credentials. npm publication is opt-in through the Actions repository variable `NPM_PUBLISH_ENABLED=true`, after configuring npm trusted publishing for this repository's `release.yml` workflow. An npm publishing failure does not remove the GitHub release or prevent nodes from finding it; retry npm publication separately after fixing its credentials.
 
 ## EC2 smoke test
 

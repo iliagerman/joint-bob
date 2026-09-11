@@ -71,6 +71,8 @@ class FakeElement {
   remove() { this.parentNode?.removeChild(this); }
   setAttribute(name, value) { this[`attr:${name}`] = value; }
   getBoundingClientRect() { return { left: 0, right: 400, width: 400, height: 300 }; }
+  setCustomValidity() {}
+  reportValidity() { return true; }
   setPointerCapture() {}
   releasePointerCapture() {}
   scrollIntoView() { this.scrolledIntoView = true; }
@@ -86,7 +88,7 @@ const document = {
   createElement: (tag) => new FakeElement(tag),
   querySelector: (selector) => registry.get(selector) || null,
 };
-for (const selector of ["#canvasRoot", "#canvasPageTabs", "#canvasPageMoveLeftButton", "#canvasPageMoveRightButton", "#canvasPageAddButton", "#canvasPageDeleteButton", "#canvasConversationDialog", "#canvasProjectSelect", "#canvasSessionSearch", "#canvasSplitPosition", "#canvasSessionOptions", "#canvasPickerStatus", "#canvasPickerCancelButton", "#canvasAddButton", "#canvasOrganizeButton", "#canvasShortcutBar", "#canvasShortcutDialog", "#canvasShortcutSubject", "#canvasShortcutKey", "#canvasShortcutStatus", "#canvasShortcutRemoveButton", "#canvasShortcutSaveButton", "#canvasShortcutChordLabel", "#canvasFinderButton", "#canvasFinderDialog", "#canvasFinderInput", "#canvasFinderResults", "#canvasFinderStatus", "#canvasKeymapButton", "#canvasKeymapDialog", "#canvasKeymapStatus", "#canvasKeymapSaveButton", "#canvasKeymapResetButton", "#canvasKeymapModifier-meta", "#canvasKeymapModifier-ctrl", "#canvasKeymapModifier-alt", "#canvasKeymapModifier-shift", "#canvasKeymapCommand-recentPane", "#canvasKeymapCommand-focusPane", "#canvasKeymapCommand-paneSearch", "#canvasKeymapCommand-toggleView", "#canvasProjectFilter", "#canvasArrangeSelect"]) {
+for (const selector of ["#canvasClassification", "#canvasRoot", "#canvasPageTabs", "#canvasPageMoveLeftButton", "#canvasPageMoveRightButton", "#canvasPageAddButton", "#canvasPageDeleteButton", "#canvasConversationDialog", "#canvasProjectSelect", "#canvasSessionSearch", "#canvasSplitPosition", "#canvasSessionOptions", "#canvasPickerStatus", "#canvasPickerCancelButton", "#canvasAddButton", "#canvasOrganizeButton", "#canvasShortcutBar", "#canvasShortcutDialog", "#canvasShortcutSubject", "#canvasShortcutKey", "#canvasShortcutStatus", "#canvasShortcutRemoveButton", "#canvasShortcutSaveButton", "#canvasShortcutChordLabel", "#canvasFinderButton", "#canvasFinderDialog", "#canvasFinderInput", "#canvasFinderResults", "#canvasFinderStatus", "#canvasKeymapButton", "#canvasKeymapDialog", "#canvasKeymapStatus", "#canvasKeymapSaveButton", "#canvasKeymapResetButton", "#canvasKeymapModifier-meta", "#canvasKeymapModifier-ctrl", "#canvasKeymapModifier-alt", "#canvasKeymapModifier-shift", "#canvasKeymapCommand-recentPane", "#canvasKeymapCommand-focusPane", "#canvasKeymapCommand-paneSearch", "#canvasKeymapCommand-toggleView", "#canvasProjectFilter", "#canvasArrangeSelect"]) {
   registry.set(selector, new FakeElement(selector.slice(1)));
 }
 const windowListeners = new Map<string, (event: unknown) => void>();
@@ -118,6 +120,7 @@ let focusInputResult = false;
 let failSessions = false;
 let storedShortcuts = [];
 const apiCalls = [];
+const classifications = [];
 const viewToggles = [];
 let confirmClose = false;
 const confirmations = [];
@@ -137,11 +140,16 @@ const controller = createConversationCanvas({
       if (options.method === "DELETE") storedShortcuts = storedShortcuts.filter((entry) => entry.binding !== last);
       return { shortcuts: storedShortcuts };
     }
+    if (path.endsWith("/sessions/classification")) {
+      classifications.push(JSON.parse(options.body));
+      return { ok: true };
+    }
     if (path.includes("/sessions")) {
       if (failSessions) throw new Error("Temporary metadata failure");
       return { sessions };
     }
     if (path.includes("/harnesses")) return { harnesses };
+    if (path === "/api/settings") return { conversationLabels: ["Research", "Bug", "Feature", "POC"] };
     return {};
   },
   getProjects: () => [{ id: "p-one", name: "Project One" }],
@@ -379,12 +387,14 @@ test("the picker opens a pane on a brand-new conversation", async () => {
   assert.ok(start, "the picker offers a brand-new conversation per agent");
   assert.ok(options.children.some((child) => child.dataset.testid === "canvas-start-conversation-claude"));
 
+  registry.get("#canvasClassification").children[0].children[0].value = "Bug";
   start.dispatch("click");
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(registry.get("#canvasConversationDialog").open, false);
   const draft = listCanvasPanes(saved.at(-1)).find((pane) => pane.sessionPath.startsWith("draft:pi:"));
   assert.ok(draft, "the new pane owns a draft path no other pane can collide with");
   assert.equal(draft.sessionPath, `draft:pi:${draft.sessionId}`);
+  assert.deepEqual(classifications.at(-1), { sessionId: draft.sessionId, engine: "pi", classification: "Bug" }, "canvas saves the classification under the new conversation identity");
 
   const frames = [];
   walk2(registry.get("#canvasRoot"), frames);

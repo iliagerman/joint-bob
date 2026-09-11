@@ -25,7 +25,7 @@ export interface ReplicationEvent {
 export interface ReplicationBatch { events: ReplicationEvent[]; }
 export type ReplicationInvalidation = "projectsChanged" | "sessionsChanged" | "tasksChanged" | "shortcutsChanged" | "pinsChanged" | "recentsChanged";
 interface OutboxRow { event_id: string; origin_node_id: string; entity_type: string; entity_key: string; operation: string; payload: string; created_at: string; }
-interface NamePayload { scope: "projects" | "sessions" | "session_colors"; key: string; name: string | null; updatedAt: string; originNodeId: string; }
+interface NamePayload { scope: "projects" | "sessions" | "session_colors" | "session_classifications"; key: string; name: string | null; updatedAt: string; originNodeId: string; }
 interface ProjectLockPayload { projectId: string; lock: { nodeId: string; nodeName: string; lockedAt: string } | null; updatedAt: string; originNodeId: string; }
 interface TaskPayload { projectId: string; task: TaskRecord | null; originNodeId: string; updatedAt?: string; }
 
@@ -139,7 +139,8 @@ export function resolveProjectAlias(db: DatabaseSync, projectId: string): string
 function namePayload(event: ReplicationEvent): NamePayload {
   if (event.entityType !== "name.override" || !["upsert", "delete"].includes(event.operation)) throw new Error("Unsupported replication event");
   const value = event.payload as Partial<NamePayload>;
-  if (!value || typeof value !== "object" || Array.isArray(value) || !["projects", "sessions", "session_colors"].includes(value.scope ?? "") || typeof value.key !== "string" || typeof value.updatedAt !== "string" || typeof value.originNodeId !== "string" || !(typeof value.name === "string" || value.name === null) || (event.operation === "upsert") !== (typeof value.name === "string") || event.entityKey !== `${value.scope}:${value.key}`) throw new Error("Malformed name replication payload");
+  if (!value || typeof value !== "object" || Array.isArray(value) || !["projects", "sessions", "session_colors", "session_classifications"].includes(value.scope ?? "") || typeof value.key !== "string" || typeof value.updatedAt !== "string" || typeof value.originNodeId !== "string" || !(typeof value.name === "string" || value.name === null) || (event.operation === "upsert") !== (typeof value.name === "string") || event.entityKey !== `${value.scope}:${value.key}`) throw new Error("Malformed name replication payload");
+  if (value.scope === "session_classifications" && typeof value.name === "string" && (!value.name.trim() || value.name.length > 80)) throw new Error("Malformed name replication payload");
   if (value.scope === "session_colors" && typeof value.name === "string" && !projectColors.has(value.name)) throw new Error("Malformed name replication payload");
   return value as NamePayload;
 }

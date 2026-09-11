@@ -24,6 +24,8 @@ import {
 import { CHAT_SHORTCUT_CONTROLS, runChatShortcut } from "./app/chat-shortcuts.js";
 import { attachDigitShortcuts, isRowSelectorQuery, LIST_SHORTCUT_LIMIT, shortcutIndexBadge } from "./app/list-shortcuts.js";
 
+import { classificationPicker } from "./app/classification.js";
+
 const CANVAS_GRID_UNITS = 1000;
 
 export function createConversationCanvas({ api, getProjects, saveLayout, showMessage, toggleView, confirmAction, openShortcutSettings, openSpotlight, openPendingReviews, openRecentSessions, openRunningConversations, openSettings, focusInput, appCommands = {} }) {
@@ -33,6 +35,10 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
   const searchInput = document.querySelector("#canvasSessionSearch");
   const positionSelect = document.querySelector("#canvasSplitPosition");
   const optionsList = document.querySelector("#canvasSessionOptions");
+  const classification = classificationPicker(document.querySelector("#canvasClassification"), "canvas");
+  let classificationReady = false;
+  let creatingDraft = false;
+  let classificationGeneration = 0;
   const pickerStatus = document.querySelector("#canvasPickerStatus");
   const organizeButton = document.querySelector("#canvasOrganizeButton");
   const projectFilter = document.querySelector("#canvasProjectFilter");
@@ -960,6 +966,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     }
     option.addEventListener("click", onChoose);
     optionsList.append(option);
+    return option;
   }
 
   function renderPickerOptions() {
@@ -971,7 +978,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
       for (const harness of harnesses) {
         const title = `Start a new ${harness.label} conversation`;
         if (!title.toLowerCase().includes(query)) continue;
-        pickerOption(title, "Opens an empty conversation in the new pane", `canvas-start-conversation-${harness.id}`, () => chooseDraft(harness));
+        pickerOption(title, "Opens an empty conversation in the new pane", `canvas-start-conversation-${harness.id}`, () => chooseDraft(harness)).disabled = !classificationReady;
       }
     }
     const sessions = pickerSessions.filter((session) => !sessionTaken(session, projectId));
@@ -1011,13 +1018,28 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
 
   // The canvas mints the conversation id here; the pane document creates the
   // conversation under it, so the pane resolves to the real session once it lists.
-  function chooseDraft(harness) {
-    const sessionId = crypto.randomUUID();
-    addChosenPane({
-      kind: "pane", id: crypto.randomUUID(),
-      projectId: projectSelect.value, sessionPath: `draft:${harness.id}:${sessionId}`,
-      sessionId, executionNodeId: null,
-    });
+  async function chooseDraft(harness) {
+    if (creatingDraft || !classificationReady) return;
+    creatingDraft = true;
+    const generation = classificationGeneration;
+    try {
+      const label = classification.value();
+      const sessionId = crypto.randomUUID();
+      const projectId = projectSelect.value;
+      if (label) await api(`/api/projects/${encodeURIComponent(projectId)}/sessions/classification`, {
+        method: "PUT", body: JSON.stringify({ sessionId, engine: harness.id, classification: label }),
+      });
+      if (!dialog.open || generation !== classificationGeneration || projectId !== projectSelect.value) return;
+      addChosenPane({
+        kind: "pane", id: crypto.randomUUID(),
+        projectId, sessionPath: `draft:${harness.id}:${sessionId}`,
+        sessionId, executionNodeId: null,
+      });
+    } catch (error) {
+      pickerStatus.textContent = error.message;
+    } finally {
+      creatingDraft = false;
+    }
   }
 
   function addChosenPane(pane) {
@@ -1040,6 +1062,15 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
   function openPicker(targetPaneId = null, replaceId = null, placement = null) {
     pickerTargetPaneId = targetPaneId;
     replacePaneId = replaceId;
+    classificationReady = false;
+    classification.reset(null);
+    const generation = ++classificationGeneration;
+    void api("/api/settings").then((settings) => {
+      if (generation !== classificationGeneration) return;
+      classification.reset(settings.conversationLabels);
+      classificationReady = true;
+      renderPickerOptions();
+    }).catch((error) => { pickerStatus.textContent = error.message; });
     if (placement) positionSelect.value = placement;
     searchInput.value = "";
     pickerStatus.textContent = "";

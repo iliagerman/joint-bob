@@ -111,9 +111,15 @@ export function sessionChatState(session) {
   return "done";
 }
 
+function matchesClassification(session) {
+  const value = session.classification ? `label:${session.classification}` : "unclassified";
+  return !state.classificationFilter || state.classificationFilter === value;
+}
+
 export function updateChatFilterCounts() {
-  const counts = { all: state.sessions.length, active: 0, review: 0, done: 0 };
-  for (const session of state.sessions) counts[sessionChatState(session)] += 1;
+  const sessions = state.sessions.filter(matchesClassification);
+  const counts = { all: sessions.length, active: 0, review: 0, done: 0 };
+  for (const session of sessions) counts[sessionChatState(session)] += 1;
   for (const count of elements.chatFilters.querySelectorAll("[data-filter-count]")) {
     count.textContent = counts[count.dataset.filterCount];
   }
@@ -122,6 +128,7 @@ export function updateChatFilterCounts() {
 export function filteredSessions() {
   const query = normalizedQuery(elements.sessionSearchInput.value || "");
   return state.sessions.filter((session) => {
+    if (!matchesClassification(session)) return false;
     const searchableText = `${shortSessionTitle(session)}\n${session.firstMessage || ""}\n${session.path || ""}`.toLowerCase();
     if (query && !searchableText.includes(query)) return false;
     return state.chatFilter === "all" || sessionChatState(session) === state.chatFilter;

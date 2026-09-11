@@ -74,11 +74,11 @@ test("an abandoned prepared update restarts through the service manager with rec
   const preparation = prepareForUpdate();
   context.mock.timers.tick(500);
   assert.equal(await preparation, 1);
-  context.mock.timers.tick(119_999);
+  context.mock.timers.tick(179_999);
   assert.equal(exit.mock.callCount(), 0);
   context.mock.timers.tick(1);
   assert.deepEqual(exit.mock.calls.map((call) => call.arguments), [[1]], "native Restart/KeepAlive must be triggered");
-  assert.match(String(warnings.mock.calls[0]?.arguments[0]), /update.*timed out/i);
+  assert.match(String(warnings.mock.calls[0]?.arguments[0]), /update was not activated/i);
   assert.equal(flags.updatePreparing, true, "never allow new work to race partially stopped agents");
   const records = await listPendingUpdateRecoveries();
   assert.equal(records.length, 1);
@@ -97,7 +97,7 @@ test("another update cannot replace work still waiting for recovery", async () =
   assert.deepEqual((await listPendingUpdateRecoveries()).map((record) => record.id), ["awaiting-recovery"]);
 });
 
-test("a stuck agent abort is bounded by the same update watchdog", async (context) => {
+test("a stuck agent abort refuses the update without restarting over live tools", async (context) => {
   context.mock.timers.enable({ apis: ["setTimeout"] });
   const exit = context.mock.method(process, "exit", () => undefined as never);
   context.mock.method(console, "error", () => {});
@@ -109,8 +109,12 @@ test("a stuck agent abort is bounded by the same update watchdog", async (contex
   const preparation = prepareForUpdate();
   context.mock.timers.tick(500);
   await abortStarted;
-  context.mock.timers.tick(120_000);
-  assert.equal(exit.mock.callCount(), 1, "a non-exiting agent must not leave preparation hanging forever");
+  const refused = assert.rejects(preparation, /Pi did not stop within 60 seconds/);
+  context.mock.timers.tick(60_000);
+  await refused;
+  context.mock.timers.tick(300_000);
+  assert.equal(exit.mock.callCount(), 0, "a non-exiting agent must not be replayed over live tools");
+  assert.equal(flags.updatePreparing, true);
+  assert.equal((await listPendingUpdateRecoveries()).length, 1);
   finishAbort();
-  await preparation;
 });

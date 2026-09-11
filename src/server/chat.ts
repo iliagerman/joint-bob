@@ -6,7 +6,7 @@ import path from "node:path";
 import WebSocket from "ws";
 import { z } from "zod";
 import { agentRunDescriptor } from "../agent-run-monitor.js";
-import { appendLiveEvent, buildHandoffContext, type ClaudeRunResult, claudeSessionFilePath, ensureLocalClaudeTranscript, runClaudePrompt } from "../claude-service.js";
+import { appendLiveEvent, buildHandoffContext, type ClaudeRunResult, claudeSessionFilePath, ensureLocalClaudeTranscript, runClaudeConversationPrompt } from "../claude-service.js";
 import { getClusterNode } from "../cluster.js";
 import { ensureConversationRecord, getConversationRecord, listConversationSegments } from "../conversation-records.js";
 import { conversationTranscriptPayload } from "../conversation-segments.js";
@@ -64,7 +64,7 @@ export function subscribeSharedSession(session: SharedPiSession): () => void {
   });
 }
 
-export async function getSharedSession(projectId: string, cwd: string, sessionPath: string | undefined, sessionId?: string, secretAccountIds: string[] = []): Promise<SharedPiSession> {
+export async function getSharedSession(projectId: string, cwd: string, sessionPath: string | undefined, sessionId?: string, secretAccountIds: string[] = [], conversationId?: string): Promise<SharedPiSession> {
   if (sessionPath) {
     const existing = sharedSessions.get(sessionKey(cwd, sessionPath));
     if (existing) {
@@ -73,9 +73,7 @@ export async function getSharedSession(projectId: string, cwd: string, sessionPa
     }
   }
 
-  const handle = await createPiSession({ cwd, projectId, sessionPath, sessionId, conversation: { engine: "pi", ...(sessionId ? { sessionId } : {}), accountIds: secretAccountIds } });
-  // The id the engine settled on is the one the attachments belong to (FR9.4).
-  await persistConversationSecretAccounts("pi", handle.session.sessionId, secretAccountIds);
+  const handle = await createPiSession({ cwd, projectId, sessionPath, sessionId, conversationId, conversation: { engine: "pi", ...(sessionId ? { sessionId } : {}), accountIds: secretAccountIds } });
   const key = sessionKey(cwd, sessionPath ?? handle.session.sessionFile ?? `new:${Date.now()}:${Math.random()}`);
   const session: SharedPiSession = {
     handle,
@@ -383,8 +381,9 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
   };
   onEvent({ type: "agent_start" });
   const basePrompt = connection.handoffContext ? `${connection.handoffContext}${promptText}` : promptText;
-  const conversationScope = { engine: "claude" as const, ...(connection.claude.sessionId ? { sessionId: connection.claude.sessionId } : {}), accountIds: connection.secretAccountIds };
-  const fullPrompt = connection.claude.filePath ? basePrompt : [agentCredentialContext(connection.project.id, conversationScope), basePrompt].filter(Boolean).join("\n\n");
+  const initialAccountIds = connection.claude.filePath ? [] : connection.secretAccountIds;
+  const conversationScope = { engine: "claude" as const, sessionId: connection.claude.sessionId, accountIds: initialAccountIds };
+  const credentialContext = agentCredentialContext(connection.project.id, conversationScope);
   let accepted = false;
   const markStarted = () => {
     if (accepted) return;
@@ -431,7 +430,7 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
     markClaudeRunning(claudeSessionFilePath(connection.cwd, sessionId));
     adoptSessionId(sessionId);
     // The attachments belong to the id the engine settled on, not the one guessed at connect.
-    persistConversationSecretAccounts("claude", sessionId, connection.secretAccountIds)
+    persistConversationSecretAccounts("claude", sessionId, initialAccountIds)
       .catch((error) => console.warn("Could not save conversation secret accounts", error));
   };
   if (connection.claude.filePath) markClaudeRunning(connection.claude.filePath);
@@ -443,13 +442,14 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
   };
   try {
     if (process.env.NODE_ENV === "test" && process.env.JOINT_BOB_TEST_ENGINE_LOG) markStarted();
-    let result = await runStubbedClaudePrompt(connection, fullPrompt, onEvent);
+    let result = await runStubbedClaudePrompt(connection, basePrompt, onEvent);
     if (!result) {
       if (flags.updatePreparing) throw new Error("Server update in progress");
-      const run = runClaudePrompt({
+      const run = await runClaudeConversationPrompt({
         cwd: connection.cwd,
         projectId: connection.project.id,
-        prompt: fullPrompt,
+        prompt: basePrompt,
+        systemInstructions: credentialContext,
         env: agentEnvironment(connection.project.id, conversationScope),
         resumeSessionId: connection.claude.filePath ? connection.claude.sessionId ?? undefined : undefined,
         sessionId: connection.claude.filePath ? undefined : connection.claude.sessionId ?? undefined,
@@ -846,7 +846,7 @@ async function switchEngine(connection: ChatConnection, engine: ChatEngine): Pro
   }
 
   const sessionId = randomUUID();
-  const sharedSession = await getSharedSession(connection.project.id, connection.cwd, undefined, sessionId, connection.secretAccountIds);
+  const sharedSession = await getSharedSession(connection.project.id, connection.cwd, undefined, sessionId, connection.secretAccountIds, lineage?.conversationId);
   await claimConversationLocally("pi", sessionId, local.id);
   await ensureConversationRecord(connection.project.id, "pi", sessionId, local.id, connection.taskId ?? undefined, lineage ? { conversationId: lineage.conversationId, segmentIndex: lineage.segmentIndex + 1 } : undefined);
   broadcastToProject(connection.project.id, { type: "sessionsChanged" });

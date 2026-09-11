@@ -48,6 +48,10 @@ export async function loadProjects() {
     setListLoading("projects", false);
   }
   void loadHarnesses().catch((error) => console.warn("Could not load harnesses", error));
+  void api("/api/settings").then((settings) => {
+    state.conversationLabels = settings.conversationLabels;
+    renderSessions();
+  }).catch((error) => console.warn("Could not load conversation labels", error));
 
   if (state.initialProjectId) state.activeProjectId = state.initialProjectId;
   if (state.initialSessionPath) state.activeSessionPath = state.initialSessionPath;
@@ -117,6 +121,7 @@ async function startCanvasPaneConversation() {
 }
 
 export async function selectProject(projectId, shouldRender = true, preserveSession = false) {
+  if (state.activeProjectId !== projectId) state.classificationFilter = "";
   state.activeProjectId = projectId;
   state.skills = [];
   state.skillsLoading = false;
