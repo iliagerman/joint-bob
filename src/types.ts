@@ -80,6 +80,7 @@ export interface AgentRunSummary {
 }
 
 export interface SessionSummary {
+  cronTaskId?: string;
   id: string;
   path: string;
   color?: ProjectColor;

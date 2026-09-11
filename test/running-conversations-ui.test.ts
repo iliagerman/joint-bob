@@ -15,7 +15,7 @@ test("the running conversations dialog refreshes and opens verified live session
   assert.match(app, /openListedSession\(session\)/);
   assert.match(app, /That conversation is no longer running/);
   assert.match(app, /"\.\/app\/running\.js"/);
-  assert.match(worker, /joint-bob-v161/);
+  assert.match(worker, /joint-bob-v162/);
   assert.match(worker, /"\/app\/running\.js"/);
   const rule = styles.match(/\.running-conversations-list\s*\{[^}]*\}/);
   assert.ok(rule, "Missing running conversations list CSS");

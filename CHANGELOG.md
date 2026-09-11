@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Scheduled tasks allow conversations to run on a recurring basis with hourly, daily, or weekly intervals and timezone support, choosing whether each run creates a fresh conversation or appends to an existing one.
+
 ## 1.18.1 — 2026-09-11
 
 - Parent conversations now stay marked as running and prevent premature cleanup while background child agents are still working, whether spawned from Pi's multi-agent orchestration or Claude's native task system.

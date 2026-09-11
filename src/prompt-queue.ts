@@ -16,12 +16,12 @@ export const queuedSettingsSchema = z.object({
 });
 export type QueuedSettings = z.infer<typeof queuedSettingsSchema>;
 const promptSchema = z.object({
-  id: z.string().uuid(), dispatchState: z.enum(["pending", "starting"]).default("pending"), promptText: z.string(), displayText: z.string(),
+  id: z.string().uuid(), requestId: z.string().uuid().optional(), dispatchState: z.enum(["pending", "starting"]).default("pending"), promptText: z.string(), displayText: z.string(),
   messageText: z.string().nullable(), promptSuffix: z.string().nullable(), displaySuffix: z.string().nullable(),
   attachmentPaths: z.array(z.string()), images: z.array(z.object({ path: z.string(), mimeType: z.string().min(1) }).strict()).default([]), settings: queuedSettingsSchema.nullable(), revision: z.number().int().positive(),
 });
 export type QueuedPrompt = z.infer<typeof promptSchema>;
-interface Metadata { messageText: string; promptSuffix: string; displaySuffix: string; attachmentPaths: string[]; images?: Array<{ path: string; mimeType: string }>; settings?: QueuedSettings | null }
+interface Metadata { requestId?: string; messageText: string; promptSuffix: string; displaySuffix: string; attachmentPaths: string[]; images?: Array<{ path: string; mimeType: string }>; settings?: QueuedSettings | null }
 interface Row { id: string; queue_key: string; prompt: string; created_at: string; sequence: number; revision: number; origin_node_id: string }
 const eventSchema = z.object({ projectId: z.string().min(1), conversationId: z.string().min(1), id: z.string().uuid(), prompt: promptSchema.nullable(), createdAt: z.string(), sequence: z.number().int().positive(), revision: z.number().int().positive(), activeSettings: queuedSettingsSchema.optional() });
 let database: DatabaseSync | undefined;

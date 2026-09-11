@@ -1,4 +1,5 @@
 import { api, savePreferencesInBackground } from "./api.js";
+import { openScheduledTasks } from "./cron.js";
 import { clearAttachments } from "./attachments.js";
 import { renderChatSessionControls, setComposerEnabled } from "./chat-controls.js";
 import { clearChat } from "./chat-transcript.js";
@@ -242,6 +243,7 @@ function sessionMenuItems(session, sessionActive) {
       onSelect: () => forkSessionFromRow(session).catch((error) => toast(error.message)),
     },
     ...(readOnly ? [] : [
+      { label: "Scheduled tasks", icon: "refresh", testid: "session-cron-button", onSelect: () => openScheduledTasks(state.activeProjectId, session).catch(error => toast(error.message)) },
       {
         label: "Colour",
         icon: "sliders",

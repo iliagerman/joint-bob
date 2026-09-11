@@ -197,6 +197,7 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
   for (const session of sessions) {
     const record = recordsBySession.get(`${session.harnessId}:${session.id}`);
     if (record?.taskId && !session.taskId) session.taskId = record.taskId;
+    if (record?.cronTaskId) session.cronTaskId = record.cronTaskId;
   }
   for (const record of records) {
     if (transcriptKeys.has(`${record.engine}:${record.sessionId}`)) continue;
@@ -213,6 +214,7 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
       updatedAt: record.updatedAt,
       draft: true,
       ...(record.taskId ? { taskId: record.taskId } : {}),
+      ...(record.cronTaskId ? { cronTaskId: record.cronTaskId } : {}),
     });
   }
   const seen = new Set<string>();
@@ -248,6 +250,7 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
     return {
       ...face,
       conversationId,
+      ...(segments.some(({ session }) => session.cronTaskId) ? { cronTaskId: segments.find(({ session }) => session.cronTaskId)!.session.cronTaskId } : {}),
       ...(segmentViews ? { segments: segmentViews } : {}),
       // A switched conversation keeps the title of its first real segment; a fresh
       // segment's own title may be derived from the handoff envelope.

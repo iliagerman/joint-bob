@@ -43,6 +43,34 @@ after(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
+test("scheduled conversation waits for the remote active run and can be paused without stealing ownership", { timeout: 30000 }, async () => {
+  const project = nodeA.projects[0];
+  const listed = await api<{ sessions: SessionView[] }>(nodeA, sessionA, "GET", `/projects/${project.id}/sessions`);
+  const source = listed.body.sessions.find(session => session.harnessId === "pi")!;
+  assert.equal((await api(nodeA, sessionA, "POST", `/projects/${project.id}/sessions/take-ownership`, { sessionPath: source.path, sessionId: source.id, peerId: nodeA.nodeId })).status, 200);
+  const runtimeDb = openPiRuntimeDatabase(nodeA.dataDir);
+  const db = new DatabaseSync(path.join(nodeB.dataDir, "node.db"));
+  const runtime = { sessionId: source.id, transcriptPath: source.path, runId: randomUUID() };
+  const input = { projectId: project.id, name: "Wait for active run", prompt: "Continue", ownerNodeId: nodeB.nodeId, engine: "pi", sessionId: source.id, enabled: true, schedule: { frequency: "hourly", minute: 0, hour: 9, weekday: 1, timezone: "UTC" } };
+  try {
+    publishPiRuntime(runtimeDb, runtime, true);
+    const created = await api<{ task: { id: string } }>(nodeA, sessionA, "POST", "/cron", { nodeId: nodeB.nodeId, command: { action: "create", input } });
+    assert.equal(created.status, 200, JSON.stringify(created.body));
+    const id = created.body.task.id;
+    db.prepare("UPDATE cron_tasks SET next_run = ? WHERE id = ?").run(Date.now(), id);
+    const deadline = Date.now() + 15000;
+    while (!db.prepare("SELECT 1 FROM cron_runs WHERE task_id = ?").get(id) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    assert.equal(db.prepare("SELECT status FROM cron_runs WHERE task_id = ?").get(id)?.status, "waiting", "must wait, not fail or dispatch while remote agent is active");
+    assert.equal(db.prepare("SELECT owner_node_id FROM conversation_ownership WHERE session_id = ?").get(source.id)?.owner_node_id, nodeA.nodeId);
+    const paused = await api(nodeA, sessionA, "POST", "/cron", { nodeId: nodeB.nodeId, command: { action: "update", id, input: { ...input, enabled: false } } });
+    assert.equal(paused.status, 200, JSON.stringify(paused.body));
+    while (db.prepare("SELECT status FROM cron_runs WHERE task_id = ?").get(id)?.status === "waiting" && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(db.prepare("SELECT status FROM cron_runs WHERE task_id = ?").get(id)?.status, "failed");
+    assert.equal((await api(nodeA, sessionA, "POST", "/cron", { nodeId: nodeB.nodeId, command: { action: "delete", id } })).status, 200);
+  } finally { publishPiRuntime(runtimeDb, runtime, false); runtimeDb.close(); db.close(); }
+});
+
 test("fork on a peer runs on the source owner and rejects its running session", { timeout: 45_000 }, async () => {
   const project = nodeA.projects[0];
   const listed = await api<{ sessions: SessionView[] }>(nodeA, sessionA, "GET", `/projects/${project.id}/sessions`);

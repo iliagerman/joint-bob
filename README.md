@@ -213,6 +213,16 @@ Ticket agents work in the synchronized `<home>/tickets` folder. Handoff waits fo
 
 Existing Git-backed tickets keep their worktree and merge behavior. New tickets do not create a branch and do not show **Merge to main**.
 
+## Scheduled tasks
+
+Open **Scheduled tasks** from a project menu, conversation row menu, or the conversation's More menu. Choose a name, prompt, hourly/daily/weekly schedule, timezone, and execution node. Project tasks choose Pi or Claude and create a fresh conversation each run with that agent's normal project settings and inherited workspace/project credentials. Conversation tasks queue the prompt in the existing conversation, retaining its settings and credentials.
+
+Only the execution owner stores and dispatches the schedule. Management requests route there; changing owner pauses the source before moving the task and its recent history. Conversation ownership transfers through the normal ownership protocol after active work finishes. Transfer requires reachable peers and a conversation available on the destination. Ticket conversations must use the ticket ownership workflow instead.
+
+Use Pause/Resume, Edit, Delete, and History in the dialog. The **Cron** conversation filter uses persisted provenance, not editable labels. Missed offline runs are skipped without replay, and runs of one task never overlap. Daily and weekly schedules skip nonexistent DST times and run once at repeated DST times. Errors and interrupted dispatches pause the task for review; inspect the last result before resuming. Pausing does not abort an already running agent.
+
+Schedules and run history stay in the execution node's SQLite database. They do not use Syncthing. Deleting a schedule leaves its conversations intact.
+
 ## Skills and resources
 
 In **Settings > Resources**, enter absolute global skill paths such as `/Users/alice/my-skills`, then save settings. **Sync local skills** explicitly publishes complete skill directories to `<Joint Bob home>/.agent-resources/shared/skills`; it does not watch local folders. Sync again after every local edit. Sources remain untouched, matching shared skills are backed up under `<node data>/agent-resources-backups/<operation>/` and replaced, and removing a source does not delete its shared copy.

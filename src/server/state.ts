@@ -101,6 +101,7 @@ export interface ChatConnection {
 
 export const port = Number(process.env.PORT ?? 8790);
 export const machineRoutes = new Set([
+  "POST /cluster/cron",
   "GET /cluster/node",
   "GET /cluster/browser/status",
   "POST /cluster/browser/config",

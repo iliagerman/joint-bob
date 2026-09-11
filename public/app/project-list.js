@@ -1,4 +1,5 @@
 import { api, savePreferencesInBackground } from "./api.js";
+import { openScheduledTasks } from "./cron.js";
 import { elements } from "./elements.js";
 import { filteredProjects } from "./layout.js";
 import { loadProjects, refreshProjectsQuietly, selectProject } from "./project-selection.js";
@@ -189,6 +190,7 @@ function projectPinToggle(project) {
 /** Seven inline buttons crowded the row off the screen; they all live in the menu now. */
 function projectMenuItems(project) {
   return [
+    { label: "Scheduled tasks", icon: "refresh", testid: "project-cron-button", onSelect: () => openScheduledTasks(project.id).catch(error => toast(error.message)) },
     {
       label: "Edit project",
       icon: "pencil",

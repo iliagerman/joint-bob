@@ -475,6 +475,7 @@ export const socketMessageSchema = z.object({
   type: z.string().max(40),
   message: z.string().max(100_000).optional(),
   queueId: z.string().uuid().optional(),
+  requestId: z.string().uuid().optional(),
   queueRevision: z.number().int().positive().optional(),
   queueSettings: queuedSettingsSchema.nullable().optional(),
   name: z.string().trim().max(120).optional(),

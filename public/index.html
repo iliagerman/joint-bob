@@ -105,6 +105,7 @@
           <input id="sessionSearchInput" type="search" autocomplete="off" placeholder="Search conversations" data-testid="conversation-list-search-input" />
         </label>
         <div class="chat-filters" id="chatFilters" role="group" aria-label="Filter conversations">
+          <button type="button" data-filter="cron" data-testid="chats-filter-cron-button" title="Scheduled conversations">Cron <span data-filter-count="cron">0</span></button>
           <button type="button" class="active" data-filter="all" data-testid="chats-filter-all-button" title="All conversations"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="7" cy="7" r="2.5"/><circle cx="17" cy="7" r="2.5"/><circle cx="7" cy="17" r="2.5"/><circle cx="17" cy="17" r="2.5"/></svg><span class="sr-only">All</span><span data-filter-count="all">0</span></button>
           <button type="button" data-filter="active" data-testid="chats-filter-active-button" title="Running"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5.5 18 12 8 18.5z"/></svg><span class="sr-only">Running</span><span data-filter-count="active">0</span></button>
           <button type="button" data-filter="review" data-testid="chats-filter-review-button" title="Needs review"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 13h4l1.6 2.5h4.8L16 13h4"/><path d="M4 13 6.4 5.6A2 2 0 0 1 8.3 4.2h7.4a2 2 0 0 1 1.9 1.4L20 13v4.3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg><span class="sr-only">Needs review</span><span data-filter-count="review">0</span></button>
@@ -218,6 +219,7 @@
               <button class="ghost compact" id="notifyButton" data-shortcut-hint="notify" type="button" aria-pressed="false" title="Notify when a conversation needs review" data-testid="chat-notify-button">Notify</button>
               <button class="ghost compact" id="addToCanvasButton" data-shortcut-hint="addToCanvas" type="button" disabled data-testid="chat-add-to-canvas-button">Add to canvas</button>
               <button class="ghost compact" id="renameSessionButton" data-shortcut-hint="rename" type="button" disabled data-testid="chat-rename-button">Rename</button>
+              <button class="ghost compact" id="chatCronButton" type="button" data-testid="chat-cron-button">Scheduled tasks</button>
               <button class="ghost compact" id="installAppButton" type="button" hidden data-testid="chat-install-button">Install</button>
             </div>
           </details>
@@ -1248,6 +1250,29 @@
     </dialog>
 
     <!-- One shared row menu. It lives in the top layer, so the scrolling lists cannot clip it. -->
+    <dialog id="cronDialog" class="cron-dialog" aria-labelledby="cronHeading" data-testid="cron-dialog">
+      <h2 id="cronHeading">Scheduled tasks</h2>
+      <p id="cronContext" class="muted"></p>
+      <p id="cronError" role="alert"></p>
+      <div id="cronList" data-testid="cron-list"></div>
+      <button id="cronNew" type="button" data-testid="cron-new">New scheduled task</button>
+      <form id="cronForm" data-testid="cron-form" hidden>
+        <label>Name<input name="name" required maxlength="120" data-testid="cron-name"></label>
+        <label>Prompt<textarea name="prompt" required maxlength="100000" rows="4" data-testid="cron-prompt"></textarea></label>
+        <label>Repeat<select name="frequency" data-testid="cron-frequency"><option value="hourly">Hourly</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
+        <label id="cronTimeLabel">Time<input name="time" type="time" value="09:00" required data-testid="cron-time"></label>
+        <label id="cronMinuteLabel">Minute of each hour<input name="minute" type="number" min="0" max="59" value="0" required data-testid="cron-minute"></label>
+        <label id="cronWeekdayLabel">Day<select name="weekday" data-testid="cron-weekday"><option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option></select></label>
+        <label>Timezone<input name="timezone" list="cronTimezones" required data-testid="cron-timezone"></label>
+        <datalist id="cronTimezones"></datalist>
+        <label>Execution / owner node<select name="ownerNodeId" required data-testid="cron-owner"></select></label>
+        <label id="cronEngineLabel">Agent<select name="engine" data-testid="cron-engine"><option value="pi">Pi</option><option value="claude">Claude</option></select></label>
+        <label class="checkbox-row"><input name="enabled" type="checkbox" checked data-testid="cron-enabled">Enabled</label>
+        <p class="muted">Missed offline runs are skipped. Runs never overlap. Errors pause the task for review.</p>
+        <div class="dialog-actions"><button type="submit" data-testid="cron-save">Save</button><button id="cronCancel" type="button" class="ghost" data-testid="cron-cancel">Cancel edit</button></div>
+      </form>
+      <div class="dialog-actions"><button id="cronRefresh" type="button" class="ghost" data-testid="cron-refresh">Refresh results</button><button id="cronClose" type="button" data-testid="cron-close">Close</button></div>
+    </dialog>
     <div class="row-menu" id="rowMenu" popover="auto" aria-label="Conversation actions" data-testid="session-row-menu"></div>
 
     <script src="/vendor/codemirror/lib/codemirror.js"></script>

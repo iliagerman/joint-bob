@@ -4,6 +4,13 @@
 
 [hidden] { display: none !important; }
 
+.cron-dialog { width: min(640px, calc(100vw - 32px)); max-height: 90dvh; overflow: auto; }
+.cron-dialog form { display: grid; gap: 12px; margin-block: 16px; }
+.cron-dialog label:not(.checkbox-row) { display: grid; gap: 4px; }
+.cron-task { padding-block: 12px; border-bottom: 1px solid var(--border); }
+.cron-task p, .cron-task pre, #cronError { white-space: pre-wrap; overflow-wrap: anywhere; }
+#cronError { color: var(--danger); }
+
 :root {
   color-scheme: light;
   --bg: #e8e8e6;

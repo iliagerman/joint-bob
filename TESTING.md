@@ -115,6 +115,20 @@ a conversation on the other node through ownership takeover. Extend it when you
 touch replication, ownership, or anything else that only means something with
 two nodes.
 
+### Scheduled-task browser test
+
+When operating inside Joint Bob with its designated browser executor, run:
+
+```bash
+npm run test:file test/ui/ui-cron-cli.test.ts
+```
+
+This test uses `JOINT_BOB_BROWSER_CLI`, never launches a local browser, and fails
+if the executor is unavailable. It seeds a disposable node, exercises project
+and conversation task menus, schedule editing, pause/resume, history, deletion,
+and immediate/persisted Cron filtering. The existing `npm run test:ui` suite
+launches local Chrome and must not be used in executor-only sessions.
+
 ## Writing a test that is worth having
 
 **Prove it fails.** Break the code the test covers, run the test, and confirm it

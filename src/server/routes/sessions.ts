@@ -199,7 +199,7 @@ app.post("/api/cluster/sessions/queue-transfer", async (request, response, next)
     if (current.status === "transferring" && current.transferToNodeId !== destination) throw new Error("Conversation is transferring to another node");
     const record = await getConversationRecord(project.id, payload.engine, payload.sessionId);
     const key = `${project.id}:${record?.conversationId ?? payload.sessionId}`;
-    if (promptQueueIsDraining(key)) throw new Error("Wait for the current queue dispatch to finish before transferring");
+    if (promptQueueIsDraining(key) || (await listProjectSessionsWithReviewState(project, "", "")).some(session => session.id === payload.sessionId && session.running)) throw new Error("Wait for the current queue dispatch to finish before transferring");
     const fenced = { ...current, status: "transferring" as const, transferToNodeId: destination };
     const result = await compareAndSetConversationOwnership(current, fenced, local.id);
     if (!result.accepted) throw new Error("Conversation owner changed during queue transfer");
@@ -212,7 +212,7 @@ function peerIsUnreachable(error: unknown): boolean {
   return error instanceof TypeError || error instanceof DOMException && ["TimeoutError", "AbortError"].includes(error.name);
 }
 
-async function synchronizeQueueBeforeTakeover(projectId: string, engine: ConversationEngine, sessionId: string, localId: string, peers: ClusterPeer[]): Promise<Set<string>> {
+async function synchronizeQueueBeforeTakeover(projectId: string, engine: ConversationEngine, sessionId: string, localId: string, peers: ClusterPeer[], requireOnline = false): Promise<Set<string>> {
   const unavailable = new Set<string>();
   const current = await getConversationOwnership(engine, sessionId);
   if (current?.ownerNodeId === localId && current.status === "owned") return unavailable;
@@ -233,7 +233,9 @@ async function synchronizeQueueBeforeTakeover(projectId: string, engine: Convers
     const remote = z.object({ ownership: ownershipSchema.nullable() }).parse(body).ownership;
     if (remote) await receiveReplicationBatch({ events: [ownershipEvent(remote, peer.id)] });
   }));
+  if (requireOnline && unavailable.size) throw new TaskWorktreeError("Scheduled ownership transfer requires all peers online");
   const previous = await getConversationOwnership(engine, sessionId);
+  if (requireOnline && previous && previous.ownerNodeId !== localId && !peers.some(peer => peer.id === previous.ownerNodeId)) throw new TaskWorktreeError("Conversation owner is unavailable");
   if (!previous || previous.ownerNodeId === localId) return unavailable;
   const source = peers.find((peer) => peer.id === previous.ownerNodeId);
   // Offline takeover uses the last replicated queue. The higher ownership epoch
@@ -249,6 +251,7 @@ async function synchronizeQueueBeforeTakeover(projectId: string, engine: Convers
     snapshot = await response.json() as { events: ReplicationEvent[] };
   } catch (error) {
     if (!peerIsUnreachable(error)) throw error;
+    if (requireOnline) throw new TaskWorktreeError("Conversation owner became unavailable during transfer");
     unavailable.add(source.id);
     return unavailable;
   }
@@ -256,7 +259,7 @@ async function synchronizeQueueBeforeTakeover(projectId: string, engine: Convers
   return unavailable;
 }
 
-async function takeLocalSessionOwnership(project: ProjectRecord, payload: z.infer<typeof routedSessionTakeOwnershipSchema>): Promise<{ sessionPath: string; ownership: ConversationOwnership; pendingPeerIds: string[] }> {
+export async function takeLocalSessionOwnership(project: ProjectRecord, payload: z.infer<typeof routedSessionTakeOwnershipSchema>, requireOnline = false): Promise<{ sessionPath: string; ownership: ConversationOwnership; pendingPeerIds: string[] }> {
   const [local, sessions, peers] = await Promise.all([getClusterNode(), listHarnessSessions(project), listClusterPeers()]);
   if (payload.peerId !== local.id) throw new Error("Takeover destination is not this node");
   const matching = payload.sessionId ? sessions.find((session) => session.id === payload.sessionId) : sessions.find((session) => session.path === payload.sessionPath);
@@ -265,7 +268,7 @@ async function takeLocalSessionOwnership(project: ProjectRecord, payload: z.infe
   const engine: ConversationEngine = matching.harnessId;
   const sessionId = matching.id;
   if (conversationIsActive(project.id, engine, sessionId, matching.path)) throw new TaskWorktreeError("Wait for the current turn to finish before taking ownership");
-  const unavailable = await synchronizeQueueBeforeTakeover(project.id, engine, sessionId, local.id, peers);
+  const unavailable = await synchronizeQueueBeforeTakeover(project.id, engine, sessionId, local.id, peers, requireOnline);
   const ownership = await takeConversationOwnership(engine, sessionId, local.id);
   const reachable = peers.filter((peer) => !unavailable.has(peer.id));
   const settled = await Promise.allSettled(reachable.map((peer) => applyOwnershipToPeer(peer, ownership, local.id)));

@@ -118,7 +118,7 @@ function matchesClassification(session) {
 
 export function updateChatFilterCounts() {
   const sessions = state.sessions.filter(matchesClassification);
-  const counts = { all: sessions.length, active: 0, review: 0, done: 0 };
+  const counts = { all: sessions.length, active: 0, review: 0, done: 0, cron: sessions.filter(session => session.cronTaskId).length };
   for (const session of sessions) counts[sessionChatState(session)] += 1;
   for (const count of elements.chatFilters.querySelectorAll("[data-filter-count]")) {
     count.textContent = counts[count.dataset.filterCount];
@@ -131,7 +131,7 @@ export function filteredSessions() {
     if (!matchesClassification(session)) return false;
     const searchableText = `${shortSessionTitle(session)}\n${session.firstMessage || ""}\n${session.path || ""}`.toLowerCase();
     if (query && !searchableText.includes(query)) return false;
-    return state.chatFilter === "all" || sessionChatState(session) === state.chatFilter;
+    return state.chatFilter === "all" || (state.chatFilter === "cron" ? Boolean(session.cronTaskId) : sessionChatState(session) === state.chatFilter);
   });
 }
 

@@ -32,6 +32,8 @@ import "./server/routes/secrets.js";
 import "./server/routes/browser.js";
 import "./server/routes/projects.js";
 import "./server/routes/sessions.js";
+import { startCronScheduler } from "./server/cron.js";
+import "./server/routes/cron.js";
 import "./server/routes/tasks.js";
 import "./server/routes/project-files.js";
 import "./server/routes/search.js";
@@ -82,6 +84,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     console.log(`Joint Bob listening on http://${bindHost}:${listeningPort}`);
     reconcileUpdateJobs();
     startUpdateScheduler();
+    void startCronScheduler().catch(error => console.error("Scheduled task recovery failed; scheduler not started", error));
     initializeStartupReadiness()
       .then(async () => { await recoverPendingUpdateRuns(); await reconcileTicketWorkspaceSync(); await reconcileTaskConversationRecords(); })
       .catch((error) => console.warn("Ticket workspace sync failed", error));

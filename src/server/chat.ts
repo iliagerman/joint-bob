@@ -2,6 +2,7 @@ import { recordConversationWork } from "../conversation-work.js";
 import { preflightQueuedClaude } from "../queued-preflight.js";
 import { queuedAttachments } from "../queued-attachments.js";
 import { randomUUID } from "node:crypto";
+import { getProjectLock } from "../project-locks.js";
 import { access, appendFile, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import WebSocket from "ws";
@@ -246,6 +247,8 @@ async function conversationTask(connection: ChatConnection): Promise<TaskRecord 
 }
 
 async function assertConversationWritable(connection: ChatConnection): Promise<void> {
+  const lock = await getProjectLock(connection.project.id);
+  if (lock && lock.nodeId !== (await getClusterNode()).id) throw new Error(`Project is locked by ${lock.nodeName}`);
   if (connection.readOnly) throw new Error("This conversation is read-only");
   if ((await conversationTask(connection))?.status === "done") throw new Error("Done ticket conversations are read-only");
   // A switched conversation opened without its ticket still belongs to it: the
@@ -483,6 +486,7 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
     if (result.assistantText) pushTranscript(connection, "assistant", result.assistantText);
     send(connection.socket, { type: "agent_end" });
     sendClaudeStatus(connection);
+    if (!result.ok) throw new Error("Claude turn failed");
   } finally {
     connection.claude.child = null;
     if (activeClaudeConnections.get(activeKey) === connection) activeClaudeConnections.delete(activeKey);
@@ -623,6 +627,8 @@ async function runQueuedPiTurn(connection: ChatConnection, attachments: Awaited<
   try {
     if (process.env.NODE_ENV === "test" && process.env.JOINT_BOB_TEST_ENGINE_LOG) markStarted();
     if (!await runStubbedPiPrompt(shared, text)) await shared.handle.session.prompt(text, { images: attachments.images });
+    const last = shared.handle.session.messages.at(-1);
+    if (last?.role === "assistant" && (last.stopReason === "error" || last.stopReason === "aborted")) throw new Error(last.errorMessage || `Pi turn ${last.stopReason}`);
     markStarted();
   } finally {
     unsubscribe();
@@ -685,7 +691,9 @@ async function drainClaudePrompts(connection: ChatConnection): Promise<void> {
     };
     if (connection.engine === "claude") await runClaudeTurn(connection, attachments.text, queued.displayText, false, onStarted);
     else await runQueuedPiTurn(connection, attachments, onStarted);
+    sendQueueEvent(connection, { type: "promptCompleted", queueId: queued.id });
     } catch (error) {
+      sendQueueEvent(connection, { type: "promptFailed", queueId: queued.id, error: error instanceof Error ? error.message : String(error) });
       if (resetQueuedPromptAttempt(queued.id)) refreshPromptQueue(connection);
       throw error;
     } finally { startingQueuedPrompts.delete(queued.id); }
@@ -737,8 +745,8 @@ async function handleClaudeCommand(connection: ChatConnection, payload: SocketPa
     const attachmentPaths = [...imageAttachments, ...fileAttachments].map((attachment) => attachment.path);
     await validateQueuedSettings(payload.queueSettings ?? null);
     const images = imageAttachments.map((image, index) => ({ path: image.path, mimeType: payload.images![index].mimeType }));
-    const stored = enqueuePrompt(claudeQueueKey(connection), promptText, displayText, { messageText, promptSuffix, displaySuffix, attachmentPaths, images, settings: payload.queueSettings });
-    sendQueueEvent(connection, { type: "userMessage", text: displayText, editableText: messageText, queued: true, queueId: stored.id, settings: stored.settings, revision: stored.revision });
+    const stored = enqueuePrompt(claudeQueueKey(connection), promptText, displayText, { requestId: payload.requestId, messageText, promptSuffix, displaySuffix, attachmentPaths, images, settings: payload.queueSettings });
+    sendQueueEvent(connection, { type: "userMessage", text: displayText, editableText: messageText, queued: true, queueId: stored.id, requestId: payload.requestId, settings: stored.settings, revision: stored.revision });
     refreshPromptQueue(connection);
     resumePromptQueue(connection);
     return;
