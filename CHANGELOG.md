@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Conversations reported as running by peer nodes now correctly display their running status in the session list, even without local agent records.
+
 ## 1.19.0 — 2026-09-11
 
 - Added hourly, daily, and weekly scheduled prompts with timezone and execution-node selection. Project schedules create fresh conversations; conversation schedules append after automatically transferring ownership when idle.

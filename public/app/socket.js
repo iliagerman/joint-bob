@@ -417,7 +417,8 @@ function scheduleAgentRunPoll() {
   if (state.agentRunPollTimer) clearTimeout(state.agentRunPollTimer);
   state.agentRunPollTimer = null;
   const hasActiveRun = state.sessions.some((session) =>
-    session.agentRuns?.some((run) => ["queued", "running"].includes(run.status)));
+    session.running || session.reviewState === "running"
+    || session.agentRuns?.some((run) => ["queued", "running"].includes(run.status)));
   if (!state.activeProjectId || !hasActiveRun) return;
   state.agentRunPollTimer = setTimeout(() => {
     state.agentRunPollTimer = null;
