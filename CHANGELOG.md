@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.19.0 — 2026-09-11
 
-- Scheduled tasks allow conversations to run on a recurring basis with hourly, daily, or weekly intervals and timezone support, choosing whether each run creates a fresh conversation or appends to an existing one.
+- Added hourly, daily, and weekly scheduled prompts with timezone and execution-node selection. Project schedules create fresh conversations; conversation schedules append after automatically transferring ownership when idle.
+- Added scheduled-task management and a dedicated Cron conversation filter, with run history, pause/resume, and safeguards against duplicate or overlapping runs.
 
 ## 1.18.1 — 2026-09-11
 
