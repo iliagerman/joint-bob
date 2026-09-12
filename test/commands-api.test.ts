@@ -33,6 +33,7 @@ test("Pi commands come from the same resource loader used by Pi sessions", async
     assert.ok(commands.some((command) => command.kind === "builtin" && command.invocation === "/model "));
     assert.ok(commands.some((command) => command.kind === "builtin" && command.invocation === "/skills "));
     assert.ok(commands.some((command) => command.kind === "builtin" && command.invocation === "/help "));
+    assert.ok(commands.some((command) => command.kind === "builtin" && command.invocation === "/reload "));
     assert.ok(commands.every((command) => command.invocation !== "/goal "));
     assert.ok(commands.every((command) => command.invocation !== "/skill "));
     const configured = { global: { skills: [path.join(root, "global-skills")], prompts: [path.join(root, "global-prompts")], rules: [], plugins: [] }, project: { skills: [path.join(root, "project-skills")], prompts: [path.join(root, "project-prompts")], rules: [], plugins: [] } };

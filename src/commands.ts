@@ -38,6 +38,10 @@ const BUILTIN_COMMANDS = [
   { name: "compact", description: "Compact conversation context" },
 ] as const;
 
+const PI_BUILTIN_COMMANDS = [
+  { name: "reload", description: "Reload Pi configuration and resources" },
+] as const;
+
 const CLAUDE_BUILTIN_COMMANDS = [
   { name: "goal", description: "Set a completion condition" },
 ] as const;
@@ -49,7 +53,7 @@ function commandScope(scope: string): HarnessCommand["scope"] {
 function builtinCommands(harness: HarnessId): HarnessCommand[] {
   const commands = harness === "claude"
     ? [...BUILTIN_COMMANDS, ...CLAUDE_BUILTIN_COMMANDS]
-    : BUILTIN_COMMANDS;
+    : [...BUILTIN_COMMANDS, ...PI_BUILTIN_COMMANDS];
   return commands.map((command) => ({
     harness,
     ...command,

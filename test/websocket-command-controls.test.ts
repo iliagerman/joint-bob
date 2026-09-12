@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import type { Server } from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -94,6 +94,13 @@ test("Pi tool commands list and change active tools over the chat WebSocket", as
 
     socket.send(JSON.stringify({ type: "setTools", toolNames: ["missing-tool"] }));
     await waitFor(messages, () => messages.some((message) => message.type === "error" && message.error === "Unknown tool: missing-tool"));
+
+    await mkdir(path.join(projectPath, ".pi", "prompts"), { recursive: true });
+    await writeFile(path.join(projectPath, ".pi", "prompts", "reloaded.md"), "Reloaded prompt", "utf8");
+    socket.send(JSON.stringify({ type: "prompt", message: "/reload" }));
+    await waitFor(messages, () => messages.some((message) => message.type === "status" && (message.status as { promptTemplates?: string[] })?.promptTemplates?.includes("reloaded")));
+    assert.equal(messages.some((message) => message.type === "userMessage" && message.text === "/reload"), false);
+    assert.equal(messages.some((message) => message.type === "error" && /API key|model/i.test(String(message.error))), false);
   } finally {
     socket?.terminate();
     if (server?.listening) await new Promise<void>((resolve) => server!.close(() => resolve()));

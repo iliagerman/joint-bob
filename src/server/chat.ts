@@ -14,7 +14,7 @@ import { getClusterNode } from "../cluster.js";
 import { ensureConversationRecord, getConversationRecord, listConversationSegments } from "../conversation-records.js";
 import { conversationTranscriptPayload } from "../conversation-segments.js";
 import { listHarnessSessions } from "../harnesses.js";
-import { createPiSession, eventPayload, getSessionStatus, listAvailableModels, modelThinkingLevels, reloadPiAuth, sessionIsBusy, setSessionModel, simplifyMessages } from "../pi-service.js";
+import { createPiSession, eventPayload, getSessionStatus, listAvailableModels, modelThinkingLevels, reloadPiAuth, reloadPiSkills, sessionIsBusy, setSessionModel, simplifyMessages } from "../pi-service.js";
 import { beginQueuedPrompt, resetQueuedPromptAttempt, cancelQueuedPrompt, claimQueuedPrompt, editQueuedPrompt, enqueuePrompt, listQueuedPrompts, logicalQueueKey, readQueueSettings, recordQueueSettings, rekeyQueuedPrompts, type QueuedPrompt, type QueuedSettings } from "../prompt-queue.js";
 import { agentCredentialContext, agentEnvironment, persistConversationSecretAccounts } from "../secrets.js";
 import { conversationBelongsToDoneTask } from "./cluster-helpers.js";
@@ -903,6 +903,18 @@ export async function handleChatMessage(connection: ChatConnection, raw: Buffer)
     const sessionId = connection.engine === "claude" ? connection.claude.sessionId : connection.shared?.handle.session.sessionId;
     if (!sessionId) throw new Error("Conversation has no ownership identity");
     await requireLocalConversationOwner(connection.engine, sessionId);
+  }
+  if (connection.engine === "pi" && payload.type === "prompt" && payload.message?.trim() === "/reload" && !payload.images?.length && !payload.files?.length) {
+    const shared = connection.shared;
+    if (!shared) throw new Error("No active Pi session");
+    try {
+      await reloadPiSkills(shared.handle);
+      broadcastStatus(shared);
+      broadcastTools(shared);
+    } finally {
+      resumePromptQueue(connection);
+    }
+    return;
   }
   if (["prompt", "editQueuedPrompt", "cancelQueuedPrompt"].includes(payload.type)) {
     await mutatePromptQueue(connection, payload);
