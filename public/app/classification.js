@@ -22,6 +22,11 @@ export function classificationPicker(container, prefix) {
   select.addEventListener("change", sync);
   other.addEventListener("input", () => other.setCustomValidity(""));
   return {
+    /** The wizard has to reveal the step holding this field before the browser can
+        point at it, so it asks first rather than validating blind. */
+    needsOther() {
+      return select.value === "__other__" && !other.value.trim();
+    },
     reset(labels, current = null) {
       select.disabled = !labels;
       select.replaceChildren(new Option(labels ? "Unclassified" : "Loading labels…", ""), ...(labels || []).map((name) => new Option(name, name)), new Option("Other…", "__other__"));

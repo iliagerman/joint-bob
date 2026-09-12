@@ -1582,6 +1582,27 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 .choice-option-label { color: var(--text); font-size: 13px; font-weight: 550; overflow-wrap: anywhere; }
 .choice-option-hint { color: var(--muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; padding-top: 2px; }
+
+/* The new-conversation dialog walks three steps; only one panel is mounted at a time,
+   so the card keeps one height and the keyboard has one field order to follow. */
+.wizard-card { min-height: 340px; }
+.wizard-steps { display: flex; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.wizard-steps li { flex: 1; }
+.wizard-step {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.wizard-step:hover { color: var(--text); }
+.wizard-step.done { color: var(--text); }
+.wizard-step.active { border-color: var(--accent); color: var(--accent); }
+.wizard-panel { display: grid; gap: 12px; align-content: start; }
+
 .handoff-progress-card progress { width: 100%; accent-color: var(--accent); }
 #handoffProgressStatus { min-height: 2.8em; white-space: pre-line; }
 

@@ -953,32 +953,46 @@
     </dialog>
 
     <dialog id="newSessionNameDialog" data-testid="new-session-name-dialog">
-      <form method="dialog" class="dialog-card" id="newSessionNameForm">
+      <form method="dialog" class="dialog-card wizard-card" id="newSessionNameForm" novalidate>
         <div>
-          <span class="eyebrow">Conversation name</span>
-          <h2>Name this conversation</h2>
-          <p>The name shows in your conversation list from now on. Leave it blank to keep the automatic title.</p>
+          <span class="eyebrow">New conversation</span>
+          <h2 id="newSessionStepTitle">Name this conversation</h2>
+          <p id="newSessionStepHint">The name shows in your conversation list from now on. Leave it blank to keep the automatic title.</p>
         </div>
-        <label>
-          Name
-          <input id="newSessionNameInput" name="name" autocomplete="off" placeholder="Feature review" data-testid="new-session-name-input" />
-        </label>
-        <label>
-          Runs on
-          <select id="newSessionNodeSelect" data-testid="new-session-node-select"></select>
-        </label>
-        <div id="newSessionClassification" class="field-group"></div>
-        <div class="field-group">
-          <span class="field-label">Colour</span>
-          <div class="color-swatches" id="newSessionColorSwatches" role="radiogroup" aria-label="Conversation colour" data-testid="new-session-color-swatches"></div>
-        </div>
-        <div class="field-group">
-          <span class="field-label">Secret accounts</span>
-          <p class="muted compact-copy">These override the project's and the workspace's accounts for this conversation only. They apply from its first turn.</p>
-          <div class="secret-scope-list" id="newSessionSecretList" data-testid="conversation-secrets-list"></div>
-        </div>
+        <ol class="wizard-steps" id="newSessionStepList" data-testid="new-session-steps">
+          <li><button type="button" class="wizard-step" data-step="1" data-testid="new-session-step-1">1 · Name</button></li>
+          <li><button type="button" class="wizard-step" data-step="2" data-testid="new-session-step-2">2 · Classify</button></li>
+          <li><button type="button" class="wizard-step" data-step="3" data-testid="new-session-step-3">3 · Node</button></li>
+        </ol>
+        <section class="wizard-panel" data-step="1" data-testid="new-session-panel-1">
+          <label>
+            Name
+            <input id="newSessionNameInput" name="name" autocomplete="off" placeholder="Feature review" data-testid="new-session-name-input" />
+          </label>
+          <div class="field-group">
+            <span class="field-label">Colour</span>
+            <div class="color-swatches" id="newSessionColorSwatches" role="radiogroup" aria-label="Conversation colour" data-testid="new-session-color-swatches"></div>
+          </div>
+        </section>
+        <section class="wizard-panel" data-step="2" data-testid="new-session-panel-2" hidden>
+          <div id="newSessionClassification" class="field-group"></div>
+        </section>
+        <section class="wizard-panel" data-step="3" data-testid="new-session-panel-3" hidden>
+          <label>
+            Runs on
+            <select id="newSessionNodeSelect" data-testid="new-session-node-select"></select>
+          </label>
+          <div class="field-group">
+            <span class="field-label">Secret accounts</span>
+            <p class="muted compact-copy">These override the project's and the workspace's accounts for this conversation only. They apply from its first turn.</p>
+            <div class="secret-scope-list" id="newSessionSecretList" data-testid="conversation-secrets-list"></div>
+          </div>
+        </section>
+        <p class="muted compact-copy" data-testid="new-session-keyboard-hint">Enter moves to the next step · ⌘/Ctrl + Enter starts now · Esc cancels</p>
         <div class="dialog-actions">
           <button class="ghost" value="cancel" type="button" id="cancelNewSessionNameButton" data-testid="new-session-name-cancel-button">Cancel</button>
+          <button class="ghost" type="button" id="newSessionBackButton" data-testid="new-session-back-button">Back</button>
+          <button class="ghost" type="button" id="newSessionNextButton" data-testid="new-session-next-button">Next</button>
           <button class="primary" value="default" type="submit" data-testid="new-session-name-start-button">Start conversation</button>
         </div>
       </form>

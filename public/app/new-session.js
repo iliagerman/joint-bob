@@ -38,6 +38,47 @@ function renderNewSessionSecrets() {
   }
 }
 
+/** The dialog is a three-step wizard so a conversation is set up one decision at a
+    time, and every step is reachable from the keyboard alone: Enter walks forward,
+    Cmd/Ctrl+Enter starts straight away with whatever has been chosen so far. */
+const WIZARD_STEPS = [
+  {
+    title: "Name this conversation",
+    hint: "The name shows in your conversation list from now on. Leave it blank to keep the automatic title.",
+    focus: () => elements.newSessionNameInput,
+  },
+  {
+    title: "Classify this conversation",
+    hint: "A label groups the conversation in the list and in the filters. Skip it to leave it unclassified.",
+    focus: () => elements.newSessionNameForm.querySelector('[data-testid="new-session-classification-select"]'),
+  },
+  {
+    title: "Choose where it runs",
+    hint: "The node runs the conversation, and its secret accounts are composed into the environment at spawn.",
+    focus: () => elements.newSessionNodeSelect,
+  },
+];
+let wizardStep = 1;
+
+function showWizardStep(step) {
+  wizardStep = Math.min(Math.max(step, 1), WIZARD_STEPS.length);
+  const current = WIZARD_STEPS[wizardStep - 1];
+  elements.newSessionStepTitle.textContent = current.title;
+  elements.newSessionStepHint.textContent = current.hint;
+  for (const panel of elements.newSessionNameForm.querySelectorAll(".wizard-panel")) {
+    panel.hidden = Number(panel.dataset.step) !== wizardStep;
+  }
+  for (const marker of elements.newSessionStepList.querySelectorAll(".wizard-step")) {
+    const step = Number(marker.dataset.step);
+    marker.classList.toggle("active", step === wizardStep);
+    marker.classList.toggle("done", step < wizardStep);
+    marker.setAttribute("aria-current", step === wizardStep ? "step" : "false");
+  }
+  elements.newSessionBackButton.disabled = wizardStep === 1;
+  elements.newSessionNextButton.disabled = wizardStep === WIZARD_STEPS.length;
+  current.focus()?.focus();
+}
+
 export function addOptimisticSession(sessionId, sessionPath, title, color, classification = null) {
   const newSessionPath = sessionPath || "new";
   const harness = state.harnesses.find((candidate) => candidate.newSessionPath === newSessionPath);
@@ -80,6 +121,7 @@ async function openNewSessionNameDialog(sessionPath, defaultTitle, sourceTaskId 
   elements.newSessionSecretList.replaceChildren();
   loadSecretAccounts().then(renderNewSessionSecrets).catch((error) => toast(error.message));
   elements.newSessionNameDialog.showModal();
+  showWizardStep(1);
 }
 elements.handoffProgressCancelButton.addEventListener("click", cancelHandoffWait);
 elements.handoffProgressDialog.addEventListener("cancel", (event) => {
@@ -96,6 +138,19 @@ elements.doneConversationContinueButton.addEventListener("click", () => {
   openNewSessionNameDialog(harness.newSessionPath, `Follow-up: ${task.title}`, task.id).catch((error) => toast(error.message));
 });
 elements.cancelNewSessionNameButton.addEventListener("click", () => elements.newSessionNameDialog.close());
+elements.newSessionBackButton.addEventListener("click", () => showWizardStep(wizardStep - 1));
+elements.newSessionNextButton.addEventListener("click", () => showWizardStep(wizardStep + 1));
+for (const marker of elements.newSessionStepList.querySelectorAll(".wizard-step")) {
+  marker.addEventListener("click", () => showWizardStep(Number(marker.dataset.step)));
+}
+// Enter walks the wizard forward; only the last step, or Cmd/Ctrl+Enter, submits it.
+elements.newSessionNameForm.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" || event.isComposing) return;
+  if (event.target instanceof HTMLButtonElement) return;
+  if (event.metaKey || event.ctrlKey || wizardStep === WIZARD_STEPS.length) return;
+  event.preventDefault();
+  showWizardStep(wizardStep + 1);
+});
 elements.newSessionNameForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const draft = state.newSessionDraft;
@@ -107,6 +162,7 @@ elements.newSessionNameForm.addEventListener("submit", async (event) => {
   if (submit.disabled) return;
   submit.disabled = true;
   try {
+    if (classification.needsOther()) showWizardStep(2);
     const label = classification.value();
     const sessionId = crypto.randomUUID();
     const projectId = state.activeProjectId;

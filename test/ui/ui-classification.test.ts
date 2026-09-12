@@ -32,7 +32,12 @@ test("new Pi and Claude conversations keep predefined and free-text classificati
     for (const [engine, selection, label] of [["pi", "Support", "Support"], ["claude", "__other__", "Investigation <custom>"]]) {
       await page.getByTestId(engine === "pi" ? "session-create-button" : "session-create-claude-button").click();
       await page.getByTestId("new-session-name-input").fill(`${engine} classified conversation`);
+      // Enter walks the wizard from the name step to the classification step, no mouse.
+      await page.keyboard.press("Enter");
+      await page.getByTestId("new-session-panel-2").waitFor({ state: "visible" });
       const select = page.getByTestId("new-session-classification-select");
+      assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("data-testid")), "new-session-classification-select",
+        "the step hands the cursor to its own first control");
       await select.selectOption(selection);
       assert.deepEqual(await select.locator("option").allTextContents(), ["Unclassified", "Research", "Bug", "Feature", "POC", "Support", "Other…"]);
       if (selection === "__other__") {
@@ -75,6 +80,8 @@ test("new Pi and Claude conversations keep predefined and free-text classificati
     await page.keyboard.press("Meta+Shift+V");
     await page.getByTestId("session-create-button").click();
     await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByTestId("new-session-next-button").click();
+    await page.getByTestId("new-session-panel-2").waitFor({ state: "visible" });
     await page.getByTestId("new-session-classification-select").selectOption("__other__");
     await page.getByTestId("new-session-classification-other").fill("Mobile label");
     const box = await page.getByTestId("new-session-classification-other").boundingBox();
