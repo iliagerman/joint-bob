@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.22.1 — 2026-09-12
 
 - Sub-agent run lines now start folded away by default when conversations fan out to multiple agents, keeping the conversation visible and uncovering them only when you click the toggle.
 
