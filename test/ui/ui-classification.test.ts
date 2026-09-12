@@ -3,8 +3,17 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { chromium, type Browser } from "playwright-core";
+import { chromium, type Browser, type Page } from "playwright-core";
 import { seedDevEnvironment, startDevNode, stopDevNode } from "../dev-nodes.js";
+
+async function assertHorizontalStepper(page: Page): Promise<void> {
+  const markers = await page.locator("#newSessionStepList .wizard-step").evaluateAll((steps) => steps.map((step) => {
+    const box = step.getBoundingClientRect();
+    return { left: box.left, top: box.top };
+  }));
+  assert.ok(markers.every((marker) => marker.top === markers[0].top), `new-conversation steps share one horizontal row: ${JSON.stringify(markers)}`);
+  assert.ok(markers.every((marker, index) => index === 0 || marker.left > markers[index - 1].left), `new-conversation steps run left to right: ${JSON.stringify(markers)}`);
+}
 
 test("new Pi and Claude conversations keep predefined and free-text classifications", { timeout: 240_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-labels-ui-"));
@@ -31,6 +40,8 @@ test("new Pi and Claude conversations keep predefined and free-text classificati
     await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
     for (const [engine, selection, label] of [["pi", "Support", "Support"], ["claude", "__other__", "Investigation <custom>"]]) {
       await page.getByTestId(engine === "pi" ? "session-create-button" : "session-create-claude-button").click();
+      await page.getByTestId("new-session-name-dialog").waitFor({ state: "visible" });
+      await assertHorizontalStepper(page);
       await page.getByTestId("new-session-name-input").fill(`${engine} classified conversation`);
       // Enter walks the wizard from the name step to the classification step, no mouse.
       await page.keyboard.press("Enter");
@@ -80,6 +91,7 @@ test("new Pi and Claude conversations keep predefined and free-text classificati
     await page.keyboard.press("Meta+Shift+V");
     await page.getByTestId("session-create-button").click();
     await page.setViewportSize({ width: 390, height: 844 });
+    await assertHorizontalStepper(page);
     await page.getByTestId("new-session-next-button").click();
     await page.getByTestId("new-session-panel-2").waitFor({ state: "visible" });
     await page.getByTestId("new-session-classification-select").selectOption("__other__");

@@ -49,7 +49,7 @@ test("the conversation list renders child lineage", async () => {
   assert.match(app, /for \(const \{ session, depth, childCount \} of rows\)/);
   assert.match(styles, /\.list-row\[data-session-depth="1"\]/);
   assert.match(styles, /\.list-row\[data-session-depth="1"\] \.session-card/);
-  assert.match(serviceWorker, /joint-bob-v168/);
+  assert.match(serviceWorker, /joint-bob-v169/);
 });
 
 test("sub-agent children collapse under their parent and skip review tracking", async () => {

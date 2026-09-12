@@ -1601,8 +1601,8 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 /* The new-conversation dialog walks three steps; only one panel is mounted at a time,
    so the card keeps one height and the keyboard has one field order to follow. */
 .wizard-card { min-height: 340px; }
-.wizard-steps { display: flex; gap: 6px; margin: 0; padding: 0; list-style: none; }
-.wizard-steps li { flex: 1; }
+.wizard-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin: 0; padding: 0; list-style: none; }
+.wizard-steps li { min-width: 0; }
 .wizard-step {
   width: 100%;
   padding: 5px 8px;
