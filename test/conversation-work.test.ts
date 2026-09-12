@@ -47,13 +47,17 @@ test("dashboard tracking survives handle loss and observer failure until explici
 });
 
 for (const engine of ["pi", "claude", "future-harness"]) {
-  test(`${engine}: parent completion cannot trigger review before all children finish`, () => {
+  test(`${engine}: parent completion cannot trigger review before all children finish`, t => {
+    t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
     const sessionId = `work-${engine}`;
     const session = { path: sessionId, engine, sessionId, running: false };
     const observe = () => syncConversationReviewStates("work-user", "work-user", engine, [session]).get(sessionId);
     observe();
-    const child = (runId: string, status: "queued" | "running" | "succeeded" | "failed" | "cancelled") =>
+    const child = (runId: string, status: "queued" | "running" | "succeeded" | "failed" | "cancelled") => {
+      // Child events happen after the initial reviewed watermark, not in its millisecond.
+      t.mock.timers.tick(1);
       recordConversationWork({ engine, sessionId, summary: { runId, status, tasks: [] } });
+    };
     child("one", "running");
     child("two", "queued");
     assert.equal(observe(), "running", "finished parent must remain running while its children work");
