@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Queued messages now stay visually below active replies until they're sent, maintaining proper message order in the transcript.
+- Browser viewer now remains open when expanding side panels for projects or conversations.
 
 ## 1.22.2 — 2026-09-12
 

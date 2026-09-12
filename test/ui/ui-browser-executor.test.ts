@@ -349,6 +349,32 @@ test("browser viewer UI", { timeout: 180_000 }, async (t) => {
         assert.equal(await f.page.locator("#settingsDialog").isVisible(), true);
       } finally { await f.page.close(); }
     });
+    await t.test("expanding side panels leaves the browser viewer open", async () => {
+      const f = await setup();
+      try {
+        await openConversation(f.page);
+        await f.page.getByTestId("browser-close-viewer").click();
+        await f.page.getByTestId("projects-panel-collapse-button").click();
+        await f.page.getByTestId("chats-panel-collapse-button").click();
+        await f.page.keyboard.press("Control+Alt+B");
+        await f.page.locator("#browserPanel").waitFor();
+
+        await f.page.getByTestId("projects-panel-expand-button").click();
+        assert.equal(await f.page.locator("#browserPanel").count(), 1, "expanding projects must not close browser viewer");
+        assert.equal(await f.page.locator("#projectsPanel .panel-bar").isVisible(), true);
+
+        await f.page.getByTestId("chats-panel-expand-button").click();
+        assert.equal(await f.page.locator("#browserPanel").count(), 1, "expanding conversations must not close browser viewer");
+        assert.equal(await f.page.locator("#chatsPanel .panel-bar").isVisible(), true);
+      } finally {
+        await f.page.evaluate(async () => {
+          const { setPanelCollapsed } = await import("/app/layout.js" as string);
+          setPanelCollapsed("projects", false);
+          setPanelCollapsed("chats", false);
+        });
+        await f.page.close();
+      }
+    });
     await t.test("viewer reconnects by conversation, scales input, gates control, and closes without ending", async () => {
       const f = await setup();
       try {

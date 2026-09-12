@@ -46,12 +46,10 @@ function openBrowser() {
   panel.querySelector('[data-testid="browser-close-viewer"]').focus();
 }
 elements.openBrowserButton.addEventListener("click", openBrowser);
-// Opening navigation gives its space back without ending the remote browser.
 function hideForNavigation() {
   if (viewer?.session?.owner === "human") toast("Viewer hidden. Browser remains under human control; reopen it to resume the agent.", 8000);
   closeViewer();
 }
-for (const button of [elements.expandProjectsButton, elements.expandChatsButton]) button.addEventListener("click", () => { if (viewer) hideForNavigation(); });
 new MutationObserver(() => {
   if (viewer && (document.body.classList.contains("view-board") || document.body.classList.contains("view-canvas"))) hideForNavigation();
 }).observe(document.body, { attributes: true, attributeFilter: ["class"] });
