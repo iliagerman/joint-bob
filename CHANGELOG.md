@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.24.0 — 2026-09-12
 
-- Markdown now properly displays right-to-left languages like Hebrew and Arabic with correct text direction and bidirectional text layout.
+- Added WhatsApp browser triage skill for managing groups.
+- Fixed markdown rendering to support right-to-left languages like Hebrew and Arabic.
 
 ## 1.23.1 — 2026-09-12
 
