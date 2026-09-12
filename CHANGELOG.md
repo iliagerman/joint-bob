@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.24.4 — 2026-09-12
 
-- Reorganized browser controls into a compact layout with collapsible machine settings, and added a direct way to reopen closed profiles.
+- Moved Stop browser into the viewer header, separate from Close viewer. Account and profile controls now align, machine settings collapse, and closed profiles have a Reopen browser button.
 
 ## 1.24.3 — 2026-09-12
 
