@@ -4,9 +4,11 @@ export const CHAT_SHORTCUT_CONTROLS = {
   selectModel: "modelButton",
   selectThinking: "reasoningLevelSelect",
   terminal: "openTerminalButton",
+  browser: "openBrowserButton",
   notify: "notifyButton",
   addToCanvas: "addToCanvasButton",
   rename: "renameSessionButton",
+  scheduledTasks: "chatCronButton",
 };
 
 export function runChatShortcut(command) {

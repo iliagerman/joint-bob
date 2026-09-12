@@ -5,8 +5,8 @@ import { changeReasoningLevel, hideCommandAutocomplete, PI_MODEL_PROVIDERS, rend
 import { elements } from "./elements.js";
 import { syncChatTitleFromSessions } from "./layout.js";
 import { renderSessions } from "./session-list.js";
-import { confirmAction, toast } from "./shell.js";
-import { openSession, socketOpen } from "./socket.js";
+import { toast } from "./shell.js";
+import { openSession } from "./socket.js";
 import { shared, state } from "./state.js";
 import { activeChatSession, continueTaskOnNode } from "./terminal.js";
 
@@ -27,7 +27,6 @@ export function setComposerEnabled(enabled) {
   // Putting a conversation on the canvas reads it; a lock must not hide the action.
   elements.addToCanvasButton.disabled = !enabled;
   if (!allowed) hideCommandAutocomplete();
-  syncSafeguardsButton();
 }
 
 export function renderConversationLock() {
@@ -50,18 +49,6 @@ export function renderConversationLock() {
   elements.conversationLockTakeButton.hidden = !takeable;
   elements.conversationLockTakeButton.disabled = !takeable || shared.ownershipTaking || Boolean(shared.ownershipWait);
   elements.conversationLockTakeButton.title = takeable ? `Move ownership to this node from ${lock.nodeName}` : "";
-}
-
-export function syncSafeguardsButton() {
-  const isPi = state.engine === "pi";
-  elements.safeguardsButton.hidden = !isPi;
-  elements.safeguardsButton.setAttribute("aria-pressed", state.safeguardsEnabled ? "true" : "false");
-  elements.safeguardsButton.textContent = state.safeguardsEnabled ? "Safeguards on" : "Unsafe mode";
-  elements.safeguardsButton.classList.toggle("unsafe", !state.safeguardsEnabled);
-  elements.safeguardsButton.title = state.safeguardsEnabled
-    ? "Safe Guard checks are active for this Pi session"
-    : "Unsafe mode: Safe Guard checks are disabled for this Pi session";
-  elements.safeguardsButton.disabled = !isPi || elements.messageInput.disabled || state.sessionBusy;
 }
 
 export function sendSocket(payload) {
@@ -141,7 +128,6 @@ export function syncEngineUI() {
   renderChatSessionControls();
   renderReasoningOptions();
   syncModelButton();
-  syncSafeguardsButton();
 }
 
 function syncReasoningControls(status) {
@@ -171,7 +157,6 @@ export function updateStatus(status) {
   if (!status) return;
   if (!status.isStreaming) clearThinkingBubble();
   state.sessionBusy = Boolean(status.isStreaming || status.isBashRunning || status.isCompacting || status.isRetrying);
-  if (typeof status.safeguardsEnabled === "boolean") state.safeguardsEnabled = status.safeguardsEnabled;
   elements.abortButton.disabled = !status.isStreaming && !status.isBashRunning && !status.isCompacting && !status.isRetrying;
   if (status.sessionName) syncChatTitleFromSessions(status.sessionName);
   state.activeModelKey = status.model ? `${status.model.provider}/${status.model.id}` : "";
@@ -179,7 +164,6 @@ export function updateStatus(status) {
   syncReasoningControls(status);
   syncContextUsage(status.contextUsage);
   syncModelButton();
-  syncSafeguardsButton();
   if (elements.toolsDialog.open) renderToolsDialog();
 }
 
@@ -263,26 +247,3 @@ elements.chatHarnessSelect.addEventListener("change", () => {
   }
 });
 elements.reasoningLevelSelect.addEventListener("change", changeReasoningLevel);
-elements.safeguardsButton.addEventListener("click", async () => {
-  if (!socketOpen()) {
-    toast("Conversation is not connected yet");
-    return;
-  }
-  const safeguardsEnabled = !state.safeguardsEnabled;
-  if (state.safeguardsEnabled) {
-    const confirmed = await confirmAction({
-      eyebrow: "Safe Guard",
-      title: "Disable Safe Guard checks?",
-      message: "Dangerous shell commands and protected-path writes can run without Safe Guard checks. Application security and Git branch restrictions remain active.",
-      confirmLabel: "Disable Safe Guard",
-      destructive: true,
-    });
-    if (!confirmed) return;
-  }
-  if (!sendSocket({ type: "setSafeguards", safeguardsEnabled })) {
-    toast("Conversation is not connected yet");
-    return;
-  }
-  state.sessionBusy = true;
-  syncSafeguardsButton();
-});

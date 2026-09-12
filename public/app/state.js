@@ -84,7 +84,6 @@ export const state = {
   projectAutofilledPath: null,
   syncthingEndpoint: "",
   engine: "pi",
-  safeguardsEnabled: true,
   sessionBusy: false,
   harnesses: [],
   sessionNodes: [],

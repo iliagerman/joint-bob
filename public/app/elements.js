@@ -37,7 +37,6 @@ export const elements = {
   contextUsageText: document.querySelector("#contextUsageText"),
   modelButton: document.querySelector("#modelButton"),
   modelButtonName: document.querySelector("#modelButtonName"),
-  safeguardsButton: document.querySelector("#safeguardsButton"),
   openTerminalButton: document.querySelector("#openTerminalButton"),
   openBrowserButton: document.querySelector("#openBrowserButton"),
   terminalDialog: document.querySelector("#terminalDialog"),

@@ -1,6 +1,6 @@
 import { api, loadPins, savePreferencesInBackground } from "./api.js";
 import { clearAttachments } from "./attachments.js";
-import { renderChatSessionControls, renderConversationLock, sendSocket, setComposerEnabled, setModels, syncEngineUI, syncSafeguardsButton, updateStatus } from "./chat-controls.js";
+import { renderChatSessionControls, renderConversationLock, sendSocket, setComposerEnabled, setModels, syncEngineUI, updateStatus } from "./chat-controls.js";
 import { appendMessage, appendToolMessage, clearChat, clearQueuedMark, clearThinkingBubble, finalizeAssistantBubble, finishTurnTimer, markMessageQueued, removeQueuedMessage, renderBubbleContent, requestPinChat, rerenderChatTranscript, restoreChatScrollTop, showChatEmptyState, startDurationTicker, startHarnessSegment, updateQueuedMessage, updateToolMessage } from "./chat-transcript.js";
 import { rememberDraft, restoreDraft, setActiveSessionPath } from "./composer.js";
 import { renderToolsDialog } from "./composer-dialogs.js";
@@ -374,14 +374,12 @@ function handleSocketPayload(payload, scrollOnReady = false) {
     state.lastTurnStartedAt = Date.now();
     state.sessionBusy = true;
     startDurationTicker();
-    syncSafeguardsButton();
   }
   if (payload.type === "agent_end") {
     clearThinkingBubble();
     finalizeAssistantBubble();
     setStatus("Connected", true);
     state.sessionBusy = false;
-    syncSafeguardsButton();
     if (state.lastTurnStartedAt) {
       finishTurnTimer();
       maybeNotifyTurnComplete().catch((error) => console.warn("Notification failed", error));

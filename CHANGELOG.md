@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Keyboard shortcuts now control browser (Ctrl+Alt+B) and scheduled tasks (Ctrl+Alt+S) from the chat toolbar.
+
 ## 1.20.1 — 2026-09-12
 
 - Automated test suites can now launch native Chrome and Playwright instances when using isolated test environments and synthetic test accounts.

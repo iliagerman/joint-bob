@@ -94,8 +94,16 @@ test("every command has a default chord, and the defaults never collide", () => 
   }
   const ids = Object.values(defaults).map(chordId);
   assert.equal(new Set(ids).size, ids.length, "no two defaults share one chord");
+  assert.deepEqual(defaults.browser, ["ctrl", "alt", "B"]);
+  assert.deepEqual(defaults.scheduledTasks, ["ctrl", "alt", "S"]);
   assert.deepEqual(defaults.splitRight, ["ctrl", "SPACE", "\\"]);
   assert.deepEqual(defaults.splitBelow, ["ctrl", "SPACE", "-"]);
+});
+
+test("new command defaults never steal an existing custom binding", () => {
+  const keymap = normalizeCanvasKeymap({ version: 3, base: ["meta", "shift"], commands: { notify: ["ctrl", "alt", "B"] } });
+  assert.deepEqual(keymap.commands.notify, ["ctrl", "alt", "B"]);
+  assert.equal(keymap.commands.browser, null);
 });
 
 test("a direct shortcut and a sequence using it as a prefix cannot coexist", () => {

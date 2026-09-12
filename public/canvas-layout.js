@@ -186,7 +186,7 @@ export const CANVAS_KEYMAP_COMMANDS = [
   "nextPage", "prevPage", "focusLeft", "focusRight", "focusUp", "focusDown",
   "page1", "page2", "page3", "page4", "page5", "page6", "page7", "page8", "page9",
   "toggleProjects", "toggleChats", "board", "newProject", "newPiChat", "newClaudeChat",
-  "runsOn", "selectAgent", "selectModel", "selectThinking", "terminal", "notify", "addToCanvas", "rename",
+  "runsOn", "selectAgent", "selectModel", "selectThinking", "terminal", "notify", "addToCanvas", "rename", "browser", "scheduledTasks",
 ];
 export const DEFAULT_CANVAS_KEYMAP = {
   version: 3,
@@ -211,9 +211,11 @@ export const DEFAULT_CANVAS_KEYMAP = {
     selectModel: ["ctrl", "alt", "M"],
     selectThinking: ["ctrl", "alt", "T"],
     terminal: ["ctrl", "alt", "X"],
+    browser: ["ctrl", "alt", "B"],
     notify: ["ctrl", "alt", "Y"],
     addToCanvas: ["ctrl", "alt", "V"],
     rename: ["ctrl", "alt", "R"],
+    scheduledTasks: ["ctrl", "alt", "S"],
     paneSearch: ["meta", "shift", "F"],
     recentPane: ["meta", "shift", "E"],
     focusPane: ["meta", "shift", "G"],

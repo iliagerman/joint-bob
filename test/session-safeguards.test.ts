@@ -58,7 +58,7 @@ test("unsafe mode removes only the permission safeguard extension", () => {
   assert.equal(isPermissionSafeguardExtension("/Users/test/.pi/agent/extensions/block-new-git-branches.ts"), false);
 });
 
-test("chat exposes an accessible session safeguard control and socket contract", async () => {
+test("session safeguard socket contract stays available without a chat indicator", async () => {
   const [html, app, server, types] = await Promise.all([
     readFile("public/index.html", "utf8"),
     appSource(),
@@ -66,9 +66,8 @@ test("chat exposes an accessible session safeguard control and socket contract",
     readFile("src/types.ts", "utf8"),
   ]);
 
-  assert.match(html, /id="safeguardsButton"[^>]*aria-pressed="true"[^>]*data-testid="chat-safeguards-button"/);
-  assert.match(app, /type: "setSafeguards", safeguardsEnabled/);
-  assert.match(app, /Dangerous shell commands and protected-path writes/);
+  assert.doesNotMatch(html, /safeguardsButton|chat-safeguards-button|Safeguards on|Unsafe mode/);
+  assert.doesNotMatch(app, /elements\.safeguardsButton|syncSafeguardsButton|type: "setSafeguards"/);
   assert.match(server, /payload\.type === "setSafeguards"/);
   const safeguardAppend = "appendCustomEntry(\"joint-bob:safeguards\", { enabled });";
   assert.match(server, /appendCustomEntry\("joint-bob:safeguards", \{ enabled \}\)/);

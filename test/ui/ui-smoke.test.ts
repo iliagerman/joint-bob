@@ -390,21 +390,20 @@ test("the selected project and conversation stay highlighted in their sidebars",
 // The toolbar's overflow actions live in a <details> that desktop flattens into
 // the row with `display: contents`. Current browsers hide a closed <details>'s
 // content through `::details-content`, which made Terminal, Notify, Rename
-// and Safeguards vanish on wide screens while still occupying
+// and Browser vanish on wide screens while still occupying
 // layout. Only a real browser sees that.
 test("the chat toolbar actions are visible on a wide screen and fold into the menu on a phone", async () => {
-  const ids = ["chat-open-terminal-button", "chat-notify-button", "chat-rename-button", "chat-safeguards-button"];
+  const ids = ["chat-open-terminal-button", "chat-open-browser-button", "chat-notify-button", "chat-rename-button", "chat-cron-button"];
   for (const id of ids) {
     assert.equal(await page.getByTestId(id).isVisible(), true, `${id} is visible in the desktop toolbar`);
   }
-  const [terminalBox, safeguardsBox] = await Promise.all([
+  const [terminalBox, browserBox] = await Promise.all([
     page.getByTestId("chat-open-terminal-button").boundingBox(),
-    page.getByTestId("chat-safeguards-button").boundingBox(),
+    page.getByTestId("chat-open-browser-button").boundingBox(),
   ]);
-  assert.ok(terminalBox && safeguardsBox, "desktop toolbar actions have layout boxes");
-  assert.equal(safeguardsBox.y, terminalBox.y, "Safeguards aligns vertically with the other toolbar actions");
-  const terminalControlHeight = await page.getByTestId("chat-open-terminal-button").evaluate((button) => parseFloat(getComputedStyle(button).lineHeight));
-  assert.equal(safeguardsBox.height, terminalControlHeight, "Safeguards matches the control line, excluding the terminal shortcut badge");
+  assert.ok(terminalBox && browserBox, "desktop toolbar actions have layout boxes");
+  assert.equal(browserBox.y, terminalBox.y, "Browser aligns vertically with the other toolbar actions");
+  assert.equal(browserBox.height, terminalBox.height, "Browser and Terminal reserve the same shortcut badge row");
   assert.equal(await page.getByTestId("chat-more-button").isVisible(), false, "the overflow summary stays hidden on desktop");
 
   await page.setViewportSize({ width: 430, height: 900 });
@@ -1273,7 +1272,7 @@ test("toolbar shortcuts open the same actions as their buttons", async () => {
   for (const [key, button] of [["N", "session-create-button"], ["C", "session-create-claude-button"]]) {
     await page.locator(`[data-testid="${button}"]:enabled`).waitFor();
     await page.keyboard.press(`Meta+Alt+${key}`);
-    assert.equal(await page.getByTestId("new-session-name-dialog").isVisible(), true, `${key} opens the conversation form`);
+    await page.getByTestId("new-session-name-dialog").waitFor({ state: "visible" });
     await page.keyboard.press("Escape");
   }
 });

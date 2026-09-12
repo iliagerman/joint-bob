@@ -84,13 +84,13 @@ test("canvas shares the top toolbar with larger icons and readable shortcut badg
   assert.ok(rows.every((top) => top === rows[0]), "all six toolbar buttons fit on one row");
 });
 
-test("chat controls advertise shortcuts except safeguards", async () => {
-  for (const id of ["chat-node-select", "chat-harness-select", "chat-model-button", "chat-reasoning-select", "chat-open-terminal-button", "chat-notify-button", "chat-add-to-canvas-button", "chat-rename-button"]) {
+test("chat controls advertise shortcuts", async () => {
+  for (const id of ["chat-node-select", "chat-harness-select", "chat-model-button", "chat-reasoning-select", "chat-open-terminal-button", "chat-open-browser-button", "chat-notify-button", "chat-add-to-canvas-button", "chat-rename-button", "chat-cron-button"]) {
     const control = page.getByTestId(id);
     const host = await control.evaluate((element) => element.closest("[data-shortcut-hint]")?.getAttribute("data-shortcut-hint"));
     assert.ok(host, `${id} needs a shortcut hint`);
   }
-  assert.equal(await page.getByTestId("chat-safeguards-button").getAttribute("data-shortcut-hint"), null);
+  assert.equal(await page.getByTestId("chat-safeguards-button").count(), 0);
 });
 
 test("Escape closes recent conversations even with a search query", async () => {
@@ -141,7 +141,7 @@ test("a saved chord retitles the badges without a reload", async () => {
   assert.equal(await hint("recent-sessions-open-button").innerText(), "\u2318K");
 });
 
-test("the board icon sits between running and settings, and the desktop conversations header hides both board and running", async () => {
+test("the board icon sits between running and settings, and the conversations header drops both board and running", async () => {
   const order = await page.locator("#projectsPanel .project-actions button[data-testid]")
     .evaluateAll((nodes) => nodes.map((element) => element.getAttribute("data-testid")));
   assert.deepEqual(order, [
@@ -154,8 +154,8 @@ test("the board icon sits between running and settings, and the desktop conversa
   ]);
   assert.equal(await page.locator("#chatsPanel [data-testid='chats-open-board-button']").count(), 0,
     "the conversations header no longer carries a board button");
-  assert.equal(await page.locator("#chatsPanel [data-testid='chats-running-conversations-open-button']").isVisible(), false,
-    "the desktop conversations header hides the mobile running button");
+  assert.equal(await page.locator("#chatsPanel [data-testid='chats-running-conversations-open-button']").count(), 0,
+    "the conversations header no longer carries a running button");
   assert.equal(await hint("projects-open-board-button").innerText(), "\u2318\u21e7B",
     "the board advertises its keyboard shortcut");
 });
@@ -195,7 +195,7 @@ test("the chat toolbar keeps its controls and shortcut badges on shared lines", 
         .map((selector) => bar.querySelector(selector)!.getBoundingClientRect())
         .map((box) => Math.round((box.top + box.bottom) / 2 * 10) / 10),
       // The action buttons carry their label as bare text, so the text run itself is measured.
-      actions: ["#safeguardsButton", "#openTerminalButton", "#notifyButton", "#addToCanvasButton", "#renameSessionButton"]
+      actions: ["#openTerminalButton", "#openBrowserButton", "#notifyButton", "#addToCanvasButton", "#renameSessionButton", "#chatCronButton"]
         .map((selector) => [...bar.querySelector(selector)!.childNodes]
           .find((child) => child.nodeType === Node.TEXT_NODE && child.textContent!.trim()))
         .map((text) => {
@@ -221,11 +221,10 @@ test("the chat toolbar keeps its controls and shortcut badges on shared lines", 
     `action labels sit on the control line (${controlLine}), got ${JSON.stringify(layout.actions)}`);
 });
 
-test("chat shortcuts focus selectors and open actions without touching safeguards", async () => {
+test("chat shortcuts focus selectors and open actions", async () => {
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
   await page.locator("#sessionList .session-card", { hasText: "Thread-Based Agent Builder" }).click();
   await page.locator("#modelButton:enabled").waitFor();
-  const safeguards = await page.getByTestId("chat-safeguards-button").getAttribute("aria-pressed");
   for (const [key, id] of [["N", "chatNodeSelect"], ["A", "chatHarnessSelect"], ["T", "reasoningLevelSelect"]]) {
     await page.keyboard.press(`Control+Alt+${key}`);
     assert.equal(await page.evaluate(() => document.activeElement?.id), id, `${key} focuses ${id}`);
@@ -237,11 +236,19 @@ test("chat shortcuts focus selectors and open actions without touching safeguard
     else await page.keyboard.press("Escape");
     await page.getByTestId(target!).waitFor({ state: "hidden" });
   }
+  await page.route(/\/api\/browser\/(?:sessions|profiles)\?/, (route) => route.fulfill({
+    json: route.request().url().includes("/profiles?") ? { profiles: [] } : { sessions: [] },
+  }));
+  await page.keyboard.press("Control+Alt+B");
+  await page.locator("#browserPanel").waitFor();
+  await page.getByTestId("browser-close-viewer").click();
+  await page.keyboard.press("Control+Alt+S");
+  await page.getByTestId("cron-dialog").waitFor();
+  await page.getByTestId("cron-close").click();
   await page.context().grantPermissions(["notifications"]);
   const before = await page.getByTestId("chat-notify-button").getAttribute("aria-pressed");
   await page.keyboard.press("Control+Alt+Y");
   await page.locator(`#notifyButton[aria-pressed="${before === "true" ? "false" : "true"}"]`).waitFor();
-  assert.equal(await page.getByTestId("chat-safeguards-button").getAttribute("aria-pressed"), safeguards);
   await page.keyboard.press("Control+Alt+V");
   await page.locator("#canvasPanel").waitFor();
   const frame = page.locator(".canvas-pane:visible iframe").first().contentFrame();

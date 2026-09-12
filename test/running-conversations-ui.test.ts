@@ -3,6 +3,13 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { appSource } from "./source.js";
 
+test("running conversations are reachable only from projects", async () => {
+  const html = await readFile("public/index.html", "utf8");
+  assert.equal((html.match(/data-running-conversations-open/g) || []).length, 1);
+  assert.match(html, /data-testid="running-conversations-open-button"/);
+  assert.doesNotMatch(html, /data-testid="(?:chats|chat)-running-conversations-open-button"/);
+});
+
 test("the running conversations dialog refreshes and opens verified live sessions", async () => {
   const [html, app, styles, worker] = await Promise.all([
     readFile("public/index.html", "utf8"), appSource(), readFile("public/styles.css", "utf8"), readFile("public/sw.js", "utf8"),
@@ -15,7 +22,7 @@ test("the running conversations dialog refreshes and opens verified live session
   assert.match(app, /openListedSession\(session\)/);
   assert.match(app, /That conversation is no longer running/);
   assert.match(app, /"\.\/app\/running\.js"/);
-  assert.match(worker, /joint-bob-v164/);
+  assert.match(worker, /joint-bob-v165/);
   assert.match(worker, /"\/app\/running\.js"/);
   const rule = styles.match(/\.running-conversations-list\s*\{[^}]*\}/);
   assert.ok(rule, "Missing running conversations list CSS");
