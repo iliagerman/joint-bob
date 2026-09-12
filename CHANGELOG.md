@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.22.2 — 2026-09-12
 
 - Fixed new conversation wizard steps to display in a consistent horizontal layout.
 
