@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Reorganized browser controls into a compact layout with collapsible machine settings, and added a direct way to reopen closed profiles.
+
 ## 1.24.3 — 2026-09-12
 
 - Added `/reload` command for Pi to refresh skill definitions and prompt templates without restarting the conversation.

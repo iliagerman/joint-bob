@@ -310,7 +310,7 @@ test("browser viewer UI", { timeout: 180_000 }, async (t) => {
     await page.goto(node.url);
     try { await page.locator("#projectList").getByText("Internal Assistant", { exact: true }).click(); }
     catch (error) { console.error("browser-ui boot:", await page.locator("body").innerText()); throw error; }
-    return { page, commands, starts, sessions, queries, requests, sendState, sendFrame, delayConfig: (gate: Promise<void>) => { configGate = gate; }, delayProfiles: (gate: Promise<void>) => { profileGate = gate; }, disconnect: () => socket?.close(), connections: () => connections, offline: () => { unavailable = true; } };
+    return { page, commands, starts, sessions, queries, requests, sendState, sendFrame, setDefault: (id: string) => { defaultNodeId = id; }, delayConfig: (gate: Promise<void>) => { configGate = gate; }, delayProfiles: (gate: Promise<void>) => { profileGate = gate; }, disconnect: () => socket?.close(), connections: () => connections, offline: () => { unavailable = true; } };
   }
   async function openConversation(page: Page, title = "Short one") {
     await page.locator("#sessionList .list-row").filter({ has: page.locator("strong", { hasText: title }) }).first().click();
@@ -320,6 +320,71 @@ test("browser viewer UI", { timeout: 180_000 }, async (t) => {
     await page.getByTestId("chat-open-browser-button").click();
   }
   try {
+    for (const configured of [true, false]) await t.test(`empty viewer explains setup with machine configured=${configured}`, async () => {
+      const f = await setup();
+      try {
+        if (!configured) f.setDefault("");
+        await openConversation(f.page);
+        await f.page.getByTestId("browser-session-status").filter({ hasText: "No browser selected" }).waitFor();
+        const hint = await f.page.locator('[data-part="frame-hint"]').innerText();
+        assert.match(hint, configured ? /Choose a project profile/ : /Choose a browser machine in Machine settings/);
+        assert.equal(await f.page.getByTestId("browser-end").isDisabled(), true);
+        assert.equal(await f.page.getByTestId("browser-start").isDisabled(), !configured);
+      } finally { await f.page.close(); }
+    });
+    for (const width of [1600, 390]) await t.test(`compact viewer geometry at ${width}px`, async () => {
+      const f = await setup();
+      try {
+        await openConversation(f.page); await f.page.getByTestId("browser-start").click();
+        await f.page.getByTestId("browser-screen").waitFor();
+        const link = await f.page.getByTestId("browser-open-tab").getAttribute("href");
+        await f.page.goto(`${node.url}${link}`);
+        await f.page.setViewportSize({ width, height: 1000 });
+        await f.page.getByTestId("browser-screen").waitFor();
+        await f.page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        const heading = (await f.page.locator(".browser-heading").boundingBox())!;
+        const stop = (await f.page.getByTestId("browser-end").boundingBox())!;
+        assert.ok(stop.y >= heading.y && stop.y + stop.height <= heading.y + heading.height, "Stop browser must stay in the header, not below the page");
+        assert.equal(await f.page.getByTestId("browser-end").innerText(), "Stop browser");
+        assert.equal(await f.page.getByTestId("browser-conversation-node").isVisible(), false, "Advanced machine overrides start collapsed");
+        assert.equal(await f.page.getByTestId("browser-profile-label").isVisible(), false, "Profile management starts collapsed");
+        assert.equal(await f.page.getByTestId("browser-session-select").isVisible(), true);
+        const profile = (await f.page.getByTestId("browser-profile-select").boundingBox())!;
+        const start = (await f.page.getByTestId("browser-start").boundingBox())!;
+        assert.ok(Math.abs(profile.y + profile.height - start.y - start.height) < 2, "Profile and Start align on one compact row");
+        const stage = (await f.page.locator(".browser-stage").boundingBox())!;
+        assert.ok(stage.y < 500 && stage.height >= 350, `Browser stage must dominate: ${JSON.stringify(stage)}`);
+        assert.ok(await f.page.locator(".browser-body").evaluate(el => el.scrollWidth <= el.clientWidth), "No internal horizontal overflow");
+        await f.page.screenshot({ path: path.resolve(`tmp/restyle-${width}.png`) });
+        await f.page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
+        await f.page.screenshot({ path: path.resolve(`tmp/restyle-${width}-dark.png`), animations: "disabled" });
+      } finally { await f.page.close(); }
+    });
+    await t.test("closed viewer hides input and reopens selected account on its owner", async () => {
+      const f = await setup();
+      try {
+        await openConversation(f.page); await f.page.getByTestId("browser-start").click();
+        await f.page.getByTestId("browser-screen").waitFor();
+        const original = { ...f.sessions[0] };
+        f.sessions[0].state = "closed"; f.sessions[0].restoreOnRestart = false;
+        f.setDefault(executorId); f.sendState();
+        // Discover the closed account at its actual owner, with a different inherited default.
+        await f.page.getByTestId("browser-reconnect").click();
+        await f.page.getByTestId("browser-session-select").selectOption(original.id);
+        await f.page.getByTestId("browser-session-status").filter({ hasText: "closed" }).waitFor();
+        assert.equal(await f.page.getByTestId("browser-url").isVisible(), false, "Closed browser must hide navigation");
+        assert.equal(await f.page.getByTestId("browser-send-tab").isVisible(), false, "Closed browser must hide keyboard input");
+        assert.equal(await f.page.getByTestId("browser-take-control").isVisible(), false);
+        assert.equal(await f.page.getByTestId("browser-reconnect").isEnabled(), true);
+        await f.page.screenshot({ path: path.resolve("tmp/restyle-closed.png") });
+        await f.page.getByRole("button", { name: "Reopen browser", exact: true }).click();
+        await f.page.getByTestId("browser-screen").waitFor();
+        assert.equal(f.sessions.at(-1).nodeId, original.nodeId);
+        assert.deepEqual(f.starts[1], { projectId: original.projectId, conversationId: original.conversationId, engine: original.engine, appNodeId: original.appNodeId, profileId: original.profileId });
+        assert.equal(await f.page.getByTestId("browser-start-node").inputValue(), "");
+        assert.equal(await f.page.getByTestId("browser-conversation-node").inputValue(), "");
+      } finally { await f.page.close(); }
+    });
     await t.test("Settings shows Mac and Ubuntu choices and reports offline errors", async () => {
       const f = await setup();
       try {
@@ -428,6 +493,7 @@ test("browser viewer UI", { timeout: 180_000 }, async (t) => {
         const download = new URL((await f.page.getByTestId("browser-download").getAttribute("href"))!, node.url);
         assert.match(download.pathname, /browser-1\/downloads\/download-1$/);
         assert.equal(download.searchParams.get("nodeId"), identity.appNodeId);
+        await f.page.getByTestId("browser-profiles-toggle").click();
         await f.page.getByTestId("browser-profile-label").fill("Saved login");
         await f.page.getByTestId("browser-save-profile").click();
         await f.page.getByTestId("browser-profiles-list").getByText("Saved login · Persistent", { exact: false }).waitFor();
@@ -451,6 +517,7 @@ test("browser viewer UI", { timeout: 180_000 }, async (t) => {
         await f.page.getByTestId("confirm-accept-button").click();
         await f.page.getByTestId("browser-session-status").filter({ hasText: "closed" }).waitFor();
         assert.equal(f.commands.filter((c) => c.action === "close").length, 1);
+        await f.page.getByTestId("browser-profiles-toggle").click();
         await f.page.getByTestId("browser-delete-profile").last().click();
         await f.page.getByTestId("confirm-accept-button").click();
         await f.page.getByTestId("browser-profiles-list").getByText("Saved login · Persistent", { exact: false }).waitFor({ state: "detached" });
@@ -504,6 +571,7 @@ test("browser viewer UI", { timeout: 180_000 }, async (t) => {
         await f.page.getByTestId("browser-screen").waitFor();
         assert.match(await f.page.getByTestId("browser-session-status").innerText(), /Mac laptop/);
         f.delayProfiles(new Promise(resolve => { release = resolve; }));
+        await f.page.getByTestId("browser-machines-toggle").click();
         await f.page.getByTestId("browser-start-node").selectOption(executorId);
         await f.page.waitForFunction(() => (document.querySelector('[data-testid="browser-start-node"]') as HTMLSelectElement).disabled);
         assert.equal(await f.page.getByTestId("browser-conversation-node").isDisabled(), true);

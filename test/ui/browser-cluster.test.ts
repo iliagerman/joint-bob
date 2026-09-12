@@ -67,6 +67,7 @@ test("conversation browser runs independently of its agent node and stays pinned
     const cleared = await api(a, auth, 'PUT', '/browser/config', { executorNodeId: null });
     assert.equal(cleared.status, 200, JSON.stringify(cleared.body));
     await viewer.getByTestId('browser-reconnect').click();
+    await viewer.getByTestId('browser-machines-toggle').click();
     await viewer.getByTestId('browser-machine-status').filter({hasText:'Not configured'}).waitFor();
     assert.match(await viewer.getByTestId('browser-session-status').innerText(), new RegExp(b.name));
     await viewer.getByTestId('browser-take-control').click();await viewer.getByTestId('browser-control-status').filter({hasText:'Human control'}).waitFor();

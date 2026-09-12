@@ -87,6 +87,24 @@ test("account picker changes only viewer, fences stale sockets and decoded frame
   } finally { f.viewer.dispose(); }
 });
 
+test("closed account reopens its profile on its owner without changing live identity or defaults", async () => {
+  const f = await fixture();
+  try {
+    f.sessions[1].engine = "claude";
+    f.sessions[1].state = "closed";
+    f.get("session-select").value = "s1"; await f.get("session-select").handlers.change();
+    assert.equal(f.get("reopen").hidden, false);
+    assert.equal(typeof f.get("reopen").handlers.click, "function", "Closed account needs an explicit Reopen browser action");
+    await f.get("reopen").handlers.click(); await settle();
+    const start = f.requests.find(r => r.method === "POST");
+    assert.equal(start.url.searchParams.get("nodeId"), "linux");
+    assert.deepEqual(start.body, { projectId: "project", conversationId: "conversation", engine: "pi", appNodeId: "owner", profileId: "p1" });
+    assert.equal(f.requests.some(r => r.method === "PUT"), false);
+    assert.equal(f.get("start-node").value, "");
+    assert.equal(f.get("profile-select").value, "");
+  } finally { f.viewer.dispose(); }
+});
+
 test("named profiles validate and start explicitly; persistence and failed restore are visible", async () => {
   const f = await fixture();
   try {
