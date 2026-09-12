@@ -54,6 +54,7 @@ function fileLink(path, resolveFileUrl, child) {
   if (!href) return child;
   const anchor = document.createElement("a");
   anchor.className = "file-link";
+  anchor.dir = "ltr";
   anchor.dataset.testid = "chat-file-link";
   anchor.dataset.filePath = path;
   anchor.href = href;
@@ -102,6 +103,7 @@ function urlNodes(text, resolveFileUrl) {
     anchor.href = href;
     anchor.target = "_blank";
     anchor.rel = "noopener noreferrer";
+    anchor.dir = "ltr";
     anchor.dataset.testid = "chat-auto-link";
     anchor.textContent = raw;
     nodes.push(anchor);
@@ -129,6 +131,7 @@ function inlineNodes(text, resolveFileUrl) {
     const groups = match.groups;
     if (groups.code !== undefined) {
       const code = document.createElement("code");
+      code.dir = "ltr";
       const codeText = groups.codeText.replace(/\n+$/, "");
       code.textContent = codeText;
       nodes.push(isFilePath(codeText) ? fileLink(codeText, resolveFileUrl, code) : code);
@@ -205,6 +208,7 @@ function startsBlock(line) {
 
 function renderParagraph(text, resolveFileUrl) {
   const paragraph = document.createElement("p");
+  paragraph.dir = "auto";
   const lines = text.split("\n");
   lines.forEach((line, index) => {
     appendInline(paragraph, line, resolveFileUrl);
@@ -216,6 +220,7 @@ function renderParagraph(text, resolveFileUrl) {
 export function buildCodeBlock(language, code) {
   const wrapper = document.createElement("div");
   wrapper.className = "code-block";
+  wrapper.dir = "ltr";
 
   const bar = document.createElement("div");
   bar.className = "code-block-bar";
@@ -262,6 +267,7 @@ function buildTable(headerLine, rows, resolveFileUrl) {
   const headRow = document.createElement("tr");
   for (const cell of splitTableRow(headerLine)) {
     const th = document.createElement("th");
+    th.dir = "auto";
     appendInline(th, cell, resolveFileUrl);
     headRow.append(th);
   }
@@ -272,6 +278,7 @@ function buildTable(headerLine, rows, resolveFileUrl) {
     const tr = document.createElement("tr");
     for (const cell of splitTableRow(row)) {
       const td = document.createElement("td");
+      td.dir = "auto";
       appendInline(td, cell, resolveFileUrl);
       tr.append(td);
     }
@@ -314,6 +321,7 @@ function buildList(lines, baseIndent, resolveFileUrl) {
     const itemIndent = indentWidth(match[1]);
     if (itemIndent < baseIndent) break;
     const li = document.createElement("li");
+    li.dir = "auto";
     appendInline(li, match[3], resolveFileUrl);
     i += 1;
     const childLines = [];
@@ -383,6 +391,7 @@ function nextBlock(ctx) {
     ctx.i += 1;
     const level = Math.min(heading[1].length, 6);
     const h = document.createElement(`h${level}`);
+    h.dir = "auto";
     appendInline(h, heading[2].trim(), ctx.resolveFileUrl);
     return h;
   }
@@ -464,6 +473,7 @@ function renderMarkdownInto(root, source, resolveFileUrl) {
 }
 
 export function renderMarkdown(container, source, options = {}) {
+  container.dir = "auto";
   container.replaceChildren();
   renderMarkdownInto(container, source, options.resolveFileUrl);
 }

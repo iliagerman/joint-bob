@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Markdown now properly displays right-to-left languages like Hebrew and Arabic with correct text direction and bidirectional text layout.
+
 ## 1.23.1 — 2026-09-12
 
 - Terminal now recovers gracefully when opened after a service worker update, loading dependencies on demand.
