@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Browsers now run on any cluster machine independent of where the agent executes. Profiles automatically save login data across restarts, and conversations can run multiple profiles with separate cookies.
 - Fixed forked conversations sometimes appearing as drafts when discovered during transcript refresh.
 
 ## 1.21.0 — 2026-09-12

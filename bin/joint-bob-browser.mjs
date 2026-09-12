@@ -5,10 +5,11 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { parseArgs } from "node:util";
 
 const token = process.env.JOINT_BOB_BROWSER_TOKEN;
 const endpoint = process.env.JOINT_BOB_BROWSER_URL;
-const usage = "Usage: start [url] [--profile ID] | status | tabs | profiles | snapshot | screenshot PATH | click SELECTOR | fill SELECTOR TEXT | fill-secret SELECTOR ENV_NAME --origin URL | upload SELECTOR FILE... | download ID PATH | navigate URL | evaluate EXPRESSION | command JSON | close | save-login LABEL";
+const usage = "Usage: start [url] [--profile ID | --name LABEL] [--node UUID] | status | tabs | profiles | snapshot | screenshot PATH | click SELECTOR | fill SELECTOR TEXT | fill-secret SELECTOR ENV_NAME --origin URL | upload SELECTOR FILE... | download ID PATH | navigate URL | evaluate EXPRESSION | command JSON | close | save-login LABEL. Account commands accept --profile ID; required when multiple profiles run. Use -- before positional values beginning with --.";
 const uploadLimit = 20 * 1024 * 1024;
 let sensitiveValue;
 
@@ -46,7 +47,7 @@ async function request(body, raw = false, sensitive = false) {
       body: JSON.stringify(body),
     });
   } catch {
-    throw new Error("Browser bridge unreachable or timed out; check the app node and designated executor. No local fallback.");
+    throw new Error("Browser bridge unreachable or timed out; check the local Joint Bob service on the agent's execution machine.");
   }
   if (!response.ok) {
     if (sensitive) {
@@ -64,10 +65,11 @@ async function request(body, raw = false, sensitive = false) {
   catch { throw new Error("Invalid or oversized JSON response from browser bridge"); }
 }
 
-function currentSession(status) {
-  const running = status.sessions?.filter((session) => session.state === "running");
-  if (!running?.length) throw new Error("No running browser; use start first");
-  if (running.length !== 1) throw new Error("Ambiguous running browser; inspect status");
+function currentSession(status, profileId) {
+  if (!profileId && status.unavailableNodes?.length) throw new Error("Browser attachment discovery incomplete. Specify --profile ID for a known account or reconnect the missing machine.");
+  const running = status.sessions?.filter((session) => session.state === "running" && (!profileId || session.profileId === profileId));
+  if (!running?.length) throw new Error("No running browser for this profile; use start first");
+  if (running.length !== 1) throw new Error("Multiple browser profiles are running. Specify --profile ID.");
   return running[0];
 }
 
@@ -113,29 +115,31 @@ async function save(output, source) {
 }
 
 async function main() {
-  const [verb, ...args] = process.argv.slice(2);
+  const [verb, ...input] = process.argv.slice(2);
+  const { positionals: args, values } = parseArgs({ args: input, allowPositionals: true, options: {
+    profile: { type: "string" }, ...(verb === "start" ? { name: { type: "string" }, node: { type: "string" } } : {}),
+    ...(verb === "fill-secret" ? { origin: { type: "string" } } : {}),
+  } });
+  const profileId = values.profile;
+  if (profileId !== undefined && (!profileId || ["status", "profiles"].includes(verb))) throw new Error(usage);
+  const target = profileId === undefined ? {} : { profileId };
   const arity = (n) => { if (args.length !== n) throw new Error(usage); };
-  const command = (value, sensitive = false) => request({ operation: "command", command: value }, false, sensitive);
+  const command = (value) => request({ operation: "command", command: value, ...target });
   let result;
   switch (verb) {
     case "start": {
-      const remaining = [...args];
-      const profileIndex = remaining.indexOf("--profile");
-      let profileId;
-      if (profileIndex !== -1) {
-        profileId = remaining[profileIndex + 1];
-        if (!profileId || profileId.startsWith("--")) throw new Error(usage);
-        remaining.splice(profileIndex, 2);
-      }
-      if (remaining.length > 1 || remaining.some((value) => value.startsWith("--"))) throw new Error(usage);
-      result = await request({ operation: "start", ...(remaining[0] ? { url: remaining[0] } : {}), ...(profileId ? { profileId } : {}) });
+      const profileName = values.name?.trim();
+      const nodeId = values.node;
+      if (nodeId !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(nodeId)) throw new Error("--node requires a machine UUID from browser status");
+      if (args.length > 1 || (values.name !== undefined && (!profileName || profileName.length > 80 || profileId))) throw new Error(usage);
+      result = await request({ operation: "start", ...(args[0] ? { url: args[0] } : {}), ...target, ...(profileName ? { profileName } : {}), ...(nodeId ? { nodeId } : {}) });
       break;
     }
     case "status": case "profiles":
       arity(0); result = await request({ operation: verb }); break;
     case "tabs": {
       arity(0);
-      const session = currentSession(await request({ operation: "status" }));
+      const session = currentSession(await request({ operation: "status" }), profileId);
       result = { tabs: session.tabs, activePageId: session.activePageId }; break;
     }
     case "snapshot": case "close":
@@ -148,28 +152,30 @@ async function main() {
     case "fill":
       arity(2); result = await command({ action: "fill", selector: args[0], text: args[1] }); break;
     case "fill-secret": {
-      arity(4);
-      if (args[2] !== "--origin") throw new Error(usage);
+      arity(2);
+      if (!values.origin) throw new Error(usage);
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(args[1]) || args[1].startsWith("JOINT_BOB_BROWSER_")) throw new Error("Use an attached credential environment variable name");
       sensitiveValue = process.env[args[1]];
       if (sensitiveValue === undefined) throw new Error("Attached credential environment variable is not set");
       let expected;
-      try { expected = new URL(args[3]); } catch { throw new Error("--origin requires an absolute HTTP(S) URL"); }
+      try { expected = new URL(values.origin); } catch { throw new Error("--origin requires an absolute HTTP(S) URL"); }
       if (!["http:", "https:"].includes(expected.protocol) || expected.username || expected.password) throw new Error("--origin requires an HTTP(S) origin without credentials");
-      const session = currentSession(await request({ operation: "status" }));
+      const session = currentSession(await request({ operation: "status" }), profileId);
       if (session.owner !== "agent") throw new Error("Manual takeover pauses agent commands; wait for the user to resume");
       const page = session.tabs?.find((tab) => tab.id === session.activePageId);
       let origin;
       try { origin = new URL(page?.url).origin; } catch { /* Missing or opaque page cannot receive credentials. */ }
       if (origin !== expected.origin) throw new Error("Secret fill refused: current active page origin does not match --origin");
-      result = await command({ action: "fill", selector: args[0], text: sensitiveValue, expectedOrigin: expected.origin }, true); break;
+      result = await request({ operation: "command", profileId: session.profileId, command: {
+        action: "fill", selector: args[0], text: sensitiveValue, expectedOrigin: expected.origin, expectedPageId: session.activePageId,
+      } }, false, true); break;
     }
     case "upload":
       if (args.length < 2) throw new Error(usage);
       result = await command({ action: "upload", selector: args[0], files: await uploadFiles(args.slice(1)) }); break;
     case "download": {
       arity(2);
-      const response = await request({ operation: "download", downloadId: args[0] }, true);
+      const response = await request({ operation: "download", downloadId: args[0], ...target }, true);
       await save(args[1], response.body); return;
     }
     case "screenshot": {

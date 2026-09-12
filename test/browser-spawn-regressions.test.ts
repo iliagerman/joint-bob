@@ -5,7 +5,7 @@ import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test, { after, before } from "node:test";
-import { chromium, type Browser } from "playwright-core";
+import { chromium, type BrowserContext } from "playwright-core";
 import WebSocket from "ws";
 import { browserAgentIdentity, browserAgentInstructions } from "../src/browser-agent.js";
 import { BrowserRuntime } from "../src/browser-runtime.js";
@@ -69,27 +69,23 @@ async function projectFixture() {
 
 // Stub only Chrome's transport. Identity, browser reuse/control, switch handling,
 // Pi session creation and the bash subprocess all run through production code.
-function fakeBrowser(): Browser {
-  const browser = new EventEmitter();
-  return Object.assign(browser, {
-    newContext: async () => {
-      const context = new EventEmitter();
-      return Object.assign(context, {
-        setDefaultTimeout() {}, setDefaultNavigationTimeout() {},
-        newPage: async () => {
-          const page = Object.assign(new EventEmitter(), { url: () => "about:blank", title: async () => "Existing tab" });
-          context.emit("page", page);
-          return page;
-        },
-        close: async () => { context.emit("close"); },
-      });
+function fakeContext(): BrowserContext {
+  const context = new EventEmitter();
+  return Object.assign(context, {
+    pages: () => [],
+    setDefaultTimeout() {}, setDefaultNavigationTimeout() {},
+    newPage: async () => {
+      const page = Object.assign(new EventEmitter(), { url: () => "about:blank", title: async () => "Existing tab" });
+      context.emit("page", page);
+      return page;
     },
-    close: async () => {},
-  }) as unknown as Browser;
+    close: async () => { context.emit("close"); },
+  }) as unknown as BrowserContext;
 }
 
 test("live Claude to Pi and Pi to Claude to Pi switches keep the existing human-paused browser", async (t) => {
-  t.mock.method(chromium, "launch", async () => fakeBrowser());
+  t.mock.method(chromium, "launch", async () => { throw new Error("Ephemeral browser launch forbidden in this test"); });
+  t.mock.method(chromium, "launchPersistentContext", async () => fakeContext());
   const project = await projectFixture();
   const local = await getClusterNode();
   const originalId = randomUUID();
@@ -98,7 +94,7 @@ test("live Claude to Pi and Pi to Claude to Pi switches keep the existing human-
   const connection: ChatConnection = { socket, project, taskId: null, cwd: project.path, engine: "claude", shared: null, claude: chat.emptyClaudeState(originalId), handoffContext: null, secretAccountIds: [] };
   const { claimConversationLocally } = await import("../src/server/sessions-helpers.js");
   await claimConversationLocally("claude", originalId, local.id);
-  const runtime = new BrowserRuntime({ proxyFor: async () => ({ server: "http://127.0.0.1:1", close: async () => {} }), capability: async () => ({ supported: true, available: true, executable: process.execPath, reason: null }) });
+  const runtime = new BrowserRuntime({ capability: async () => ({ supported: true, available: true, executable: process.execPath, reason: null }) });
   try {
     const existing = await runtime.create({ projectId: project.id, engine: "claude", conversationId: originalId, appNodeId: local.id });
     await runtime.execute(existing.id, { action: "takeControl" }, { kind: "human", id: "fixture-human" });

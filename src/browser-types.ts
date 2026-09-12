@@ -14,7 +14,8 @@ export const browserStartSchema = browserIdentitySchema.extend({
   appNodeId: z.string().uuid(),
   url: browserWebUrlSchema.optional(),
   profileId: z.string().uuid().optional(),
-});
+  profileName: z.string().trim().min(1).max(80).optional(),
+}).refine(value => !(value.profileId && value.profileName), "Choose a profile ID or a new profile name, not both");
 export type BrowserStart = z.infer<typeof browserStartSchema>;
 export interface BrowserSessionRecord extends BrowserStart {
   id: string;
@@ -22,11 +23,15 @@ export interface BrowserSessionRecord extends BrowserStart {
   createdAt: string;
   updatedAt: string;
   error?: string;
+  restoreOnRestart?: boolean;
 }
 export interface BrowserTab { id: string; url: string; title: string; }
+export interface BrowserConfiguration { executorNodeId: string | null; originNodeId: string; updatedAt: string; }
 export interface BrowserSessionView extends BrowserSessionRecord {
+  nodeId: string;
   tabs: BrowserTab[];
   activePageId: string | null;
+  profileLabel?: string;
   owner: "agent" | "human";
   /** Viewer-specific; absent on node-wide metadata responses. */
   canControl?: boolean;
@@ -35,8 +40,7 @@ export interface BrowserSessionView extends BrowserSessionRecord {
   dialog: { id: string; pageId: string; type: string; message: string; defaultValue: string } | null;
   downloads: Array<{ id: string; name: string; ready: boolean; error?: string }>;
 }
-export interface BrowserProfile { id: string; projectId: string; label: string; createdAt: string; updatedAt: string; }
-export interface BrowserConfiguration { executorNodeId: string | null; updatedAt: string; originNodeId: string; }
+export interface BrowserProfile { id: string; projectId: string; label: string; createdAt: string; updatedAt: string; persistent?: boolean; }
 export interface BrowserCapability { supported: boolean; available: boolean; executable: string | null; reason: string | null; }
 
 const text = z.string().max(100_000);

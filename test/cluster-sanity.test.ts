@@ -170,17 +170,31 @@ test("published external skills are discovered by a peer from the shared managed
   assert.ok(second.body.skills.some((skill) => skill.name === "cluster-skill" && skill.description === "second"));
 });
 
-test("browser executor configuration converges from a paired node without launching Chrome", async () => {
-  const token = (await api<{ token: string }>(nodeA, sessionA, "GET", "/cluster/invite")).body.token;
-  const config = { executorNodeId: null, originNodeId: nodeA.nodeId, updatedAt: new Date().toISOString() };
-  const delivered = await fetch(`${nodeB.url}/api/cluster/browser/config`, {
-    method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(config),
-  });
-  assert.equal(delivered.status, 200);
-  const pulled = await api<{ config: typeof config; nodes: Array<{ id: string }> }>(nodeA, sessionA, "GET", "/browser/status");
-  assert.equal(pulled.status, 200);
-  assert.deepEqual(pulled.body.config, config);
-  assert.deepEqual(pulled.body.nodes.map((node) => node.id).sort(), [nodeA.nodeId, nodeB.nodeId].sort());
+test("conversation browser discovery aggregates history with each physical owner", async () => {
+  const conversationId = randomUUID(), ids = [randomUUID(), randomUUID()];
+  for (const [index, node] of [nodeA, nodeB].entries()) {
+    const status = await api<{ node: { id: string } }>(node, [sessionA, sessionB][index], "GET", "/browser/status");
+    assert.equal(status.status, 200);
+    assert.equal(status.body.node.id, node.nodeId);
+    const db = new DatabaseSync(path.join(node.dataDir, "node.db"));
+    try {
+      db.exec("PRAGMA busy_timeout=5000");
+      db.prepare("INSERT INTO browser_sessions(id,projectId,engine,conversationId,appNodeId,state,createdAt,updatedAt) VALUES (?,?,?,?,?,'closed',?,?)")
+        .run(ids[index], node.projects[0].id, "pi", conversationId, node.nodeId, new Date().toISOString(), new Date().toISOString());
+    } finally { db.close(); }
+  }
+  for (const [index, node] of [nodeA, nodeB].entries()) {
+    const query = new URLSearchParams({ projectId: node.projects[0].id, conversationId, engine: "pi" });
+    const result = await api<{ sessions: Array<{ id: string; appNodeId: string; nodeId: string }>; unavailableNodes: unknown[] }>(node, [sessionA, sessionB][index], "GET", `/browser/sessions?${query}`);
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body.sessions.map(session => session.id).sort(), [...ids].sort());
+    assert.deepEqual(result.body.unavailableNodes, []);
+    for (const session of result.body.sessions) {
+      const owner = [nodeA, nodeB][ids.indexOf(session.id)].nodeId;
+      assert.equal(session.nodeId, owner);
+      assert.equal(session.appNodeId, owner);
+    }
+  }
 });
 
 test("both nodes serve the same seeded projects to their own signed-in session", async () => {

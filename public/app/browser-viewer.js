@@ -1,12 +1,23 @@
 // Shared by the conversation panel and the browser-only page. No app imports:
 // a browser tab must not boot the conversation app or its sockets.
-export function createBrowserViewer(root, { api, identity, sessionId, confirm: confirmAction, onClose }) {
+export function createBrowserViewer(root, { api: request, identity, sessionId, nodeId, confirm: confirmAction, onClose }) {
   let session = null, socket = null, disposed = false, retry = 0, retryTimer, connectionTimer;
   let framePending = null, drawing = false, frameVersion = 0, frameSize = null;
-  let busy = false, connected = false, loaded = false, profiles = [];
+  let sessionVersion = 0;
+  let busy = false, connected = false, loaded = false, profiles = [], sessions = [];
   let uploading = false, uploadTarget = null;
-  const query = new URLSearchParams(identity || {});
-  query.delete("appNodeId");
+  let nodes = [], configuration = null, preference = null, profilesNodeId = null, profilesReady = false;
+  function browserUrl(path, ownerId) {
+    if (!ownerId) throw new Error("Browser machine is not configured. Choose a machine first.");
+    const url = new URL(path, location.href);
+    url.searchParams.set("nodeId", ownerId);
+    return `${url.pathname}${url.search}`;
+  }
+  const api = request;
+  const sessionApi = (path, options) => api(browserUrl(path, session.nodeId), options);
+  const machineName = (id) => nodes.find((node) => node.id === id)?.name || id || "Not configured";
+  const startNodeId = () => get("start-node").value || preference?.effectiveNodeId;
+  const preferenceUrl = () => `/api/browser/preferences?${new URLSearchParams({ projectId: identity.projectId, engine: identity.engine, conversationId: identity.conversationId })}`;
   root.classList.add("browser-viewer");
   // Static markup only; page content and other dynamic values use textContent.
   root.replaceChildren(document.createRange().createContextualFragment(`
@@ -18,8 +29,15 @@ export function createBrowserViewer(root, { api, identity, sessionId, confirm: c
     <div class="browser-body">
       <p class="browser-notice" data-testid="browser-session-status" role="status">Finding this conversation's browser…</p>
       <p class="browser-error" data-testid="browser-error" role="alert" hidden></p>
+      <p class="browser-error" data-testid="browser-discovery-status" role="status" hidden></p>
+      <label class="browser-account-picker">Conversation machine<select data-testid="browser-conversation-node" aria-label="Conversation machine"></select></label>
+      <p class="browser-hint" data-testid="browser-machine-status"></p>
+      <label class="browser-account-picker">Viewing account<select data-testid="browser-session-select" aria-label="Viewing account"></select></label>
+      <p class="browser-hint">Switching accounts changes only this viewer. With multiple accounts, tell the agent which profile ID to use.</p>
       <div class="browser-start-row" data-part="start">
-        <label>Saved login<select data-testid="browser-profile-select"><option value="">Fresh browser</option></select></label>
+        <label class="browser-machine-picker">Start on machine<select data-testid="browser-start-node" aria-label="Start on machine"></select></label>
+        <label>Project profile<select data-testid="browser-profile-select"><option value="">Conversation default</option></select></label>
+        <label data-part="profile-name" hidden>New profile name<input data-testid="browser-profile-name" maxlength="80" placeholder="e.g. Work account" /></label>
         <button class="primary" type="button" data-testid="browser-start" disabled>Start browser</button>
       </div>
       <div class="browser-toolbar">
@@ -59,9 +77,9 @@ export function createBrowserViewer(root, { api, identity, sessionId, confirm: c
       </section>
       <p class="browser-hint" role="status" data-testid="browser-upload-status"></p>
       <details class="browser-details" data-testid="browser-downloads-details"><summary data-testid="browser-downloads-toggle">Downloads</summary><ul data-testid="browser-downloads-list"></ul></details>
-      <details class="browser-details" open data-testid="browser-profiles-details"><summary data-testid="browser-profiles-toggle">Saved logins for this project</summary>
-        <p class="browser-hint">Save cookies and browser storage after signing in. Keep credentials in Settings → Secrets.</p>
-        <form class="browser-profile-form" data-part="profile-form"><input aria-label="Saved login label" placeholder="Login name" maxlength="80" required data-testid="browser-profile-label" /><button class="ghost compact" type="submit" data-testid="browser-save-profile">Save login</button></form>
+      <details class="browser-details" open data-testid="browser-profiles-details"><summary data-testid="browser-profiles-toggle">Browser profiles for this project</summary>
+        <p class="browser-hint">Cookies and browser data are saved automatically on this node. Sign in here; no separate Secrets account is required. Opening a profile here attaches all its signed-in websites to this conversation. Keep sensitive accounts in separate profiles. For WhatsApp, take control and scan the QR code with your phone to link this browser. Profiles are not synced to other nodes. Browser data is not app-encrypted; use FileVault or LUKS for disk protection.</p>
+        <form class="browser-profile-form" data-part="profile-form"><input aria-label="Current profile name" placeholder="Rename current profile" maxlength="80" required data-testid="browser-profile-label" /><button class="ghost compact" type="submit" data-testid="browser-save-profile">Rename profile</button></form>
         <ul data-testid="browser-profiles-list"></ul>
       </details>
       <footer class="browser-footer"><p class="browser-hint">Closing this viewer leaves the browser running.</p><button class="ghost compact danger" type="button" data-testid="browser-end">End browser</button></footer>
@@ -83,30 +101,42 @@ export function createBrowserViewer(root, { api, identity, sessionId, confirm: c
   }
   function updateLink() {
     const params = new URLSearchParams(identity || {});
-    if (session) params.set("browserSessionId", session.id);
+    if (session || sessionId) params.set("browserSessionId", session?.id || sessionId);
+    if (session?.nodeId || nodeId) params.set("nodeId", session?.nodeId || nodeId);
     params.set("theme", document.documentElement.dataset.theme || "light");
     get("open-tab").href = `/browser.html?${params}`;
   }
   function controls() {
-    get("start").disabled = !loaded || busy || running() || !identity?.conversationId || !identity?.appNodeId;
+    get("start").disabled = !loaded || !profilesReady || busy || !identity?.conversationId || !identity?.appNodeId || !nodes.some((node) => node.id === startNodeId() && node.available && node.reachable);
+    get("conversation-node").disabled = get("start-node").disabled = busy || !preference;
+    get("session-select").disabled = busy || !sessions.length;
+    get("profile-select").disabled = get("profile-name").disabled = busy;
+    get("start").textContent = running() ? "Open profile" : "Start browser";
     for (const element of part("navigation").querySelectorAll("button,input")) element.disabled = !canInput();
     for (const name of ["send-tab", "send-shift-tab", "dialog-input", "dialog-accept", "dialog-dismiss", "save-profile", "profile-label"]) get(name).disabled = !canInput();
     get("upload").disabled = !canInput() || uploading || !session?.fileChooserRequest;
     get("take-control").disabled = !running() || !connected || busy || (human() && session.canControl === true);
     get("take-control").textContent = human() ? session.canControl === true ? "You have control" : "Take over control" : "Take control";
     get("resume-agent").disabled = !human() || session.canControl === false || !connected || busy;
-    get("end").disabled = !running() || busy;
-    get("reconnect").disabled = busy || (loaded && !running());
+    get("end").disabled = (!running() && !session?.restoreOnRestart) || busy;
+    get("reconnect").disabled = busy;
     screen.setAttribute("aria-disabled", String(!canInput()));
     root.dataset.control = human() ? "human" : "agent";
   }
   function render() {
     updateLink();
+    let restartStatus = "";
+    if (session?.restoreOnRestart) {
+      restartStatus = running() ? "Restores automatically after a service restart; sites reopen at their origins, actions are not replayed."
+        : session.error ? "Restore stopped; no automatic retry. Reconnect to check status or start this profile again."
+        : "Waiting for automatic restore after restart.";
+    }
     get("session-status").textContent = session
-      ? `Browser ${session.state}${session.error ? `: ${session.error}` : ""}`
+      ? `${session.profileLabel || "Browser"} · ${machineName(session.nodeId)} · Browser ${session.state}${session.error ? `: ${session.error}` : ""}${restartStatus ? ` · ${restartStatus}` : ""}`
       : !loaded ? busy ? "Loading browser session…" : "Browser session has not loaded. Reconnect viewer to retry."
-      : "No running browser for this conversation. Choose a saved login or start fresh.";
-    part("start").hidden = running();
+      : "No browser selected. Choose an account or start a project profile.";
+    get("session-select").replaceChildren(...sessions.map((item) => new Option(`${item.profileLabel || item.profileId || "Browser"} · ${machineName(item.nodeId)} · ${item.state}`, item.id)));
+    get("session-select").value = session?.id || "";
     get("control-status").textContent = human() ? "Human control · agent paused" : "Agent control";
     part("control-hint").textContent = human()
       ? session.canControl === false
@@ -141,7 +171,7 @@ export function createBrowserViewer(root, { api, identity, sessionId, confirm: c
       const item = document.createElement("li");
       if (download.ready) {
         const link = document.createElement("a"); link.textContent = download.name;
-        link.href = `${endpoint()}/downloads/${encodeURIComponent(download.id)}`;
+        link.href = browserUrl(`${endpoint()}/downloads/${encodeURIComponent(download.id)}`, session.nodeId);
         link.dataset.testid = "browser-download"; link.download = download.name; item.append(link);
       } else item.textContent = `${download.name}: ${download.error || "Downloading…"}`;
       return item;
@@ -150,34 +180,75 @@ export function createBrowserViewer(root, { api, identity, sessionId, confirm: c
     controls();
   }
   function acceptSession(next) {
-    if (disposed || !next || (session && next.id !== session.id)) return;
+    if (disposed || !next || (session && (next.id !== session.id || next.nodeId !== session.nodeId))) return;
+    sessionVersion++;
     if (next.activePageId !== session?.activePageId) {
       frameVersion++; framePending = null; frameSize = null; screen.hidden = true;
       part("frame-hint").hidden = false; part("frame-hint").textContent = "Waiting for this tab's live image…";
     }
     if (next.canControl === undefined && session?.canControl !== undefined) next = { ...next, canControl: session.canControl };
     session = next;
+    const index = sessions.findIndex((item) => item.id === next.id);
+    if (index < 0) sessions.push(next); else sessions[index] = next;
+    const { projectId, engine, conversationId, appNodeId } = session;
+    identity = { projectId, engine, conversationId, appNodeId, ...identity };
     if (!running()) { stopSocket(); get("connection-status").textContent = "Not connected"; screen.hidden = true; part("frame-hint").hidden = false; part("frame-hint").textContent = `Browser ${session.state}. Start a new browser when ready.`; }
     render();
   }
+  function renderMachines() {
+    for (const [name, label, inherited, selected] of [
+      ["conversation-node", "Use Settings default", configuration.executorNodeId, preference.nodeId || ""],
+      ["start-node", "Use conversation setting", preference.effectiveNodeId, get("start-node").value],
+    ]) {
+      const options = nodes.map((node) => {
+        const option = new Option(`${node.name}${node.available && node.reachable ? "" : ` · ${node.reason || "Unavailable"}`}`, node.id);
+        option.disabled = !node.available || !node.reachable;
+        return option;
+      });
+      if (selected && !nodes.some((node) => node.id === selected)) {
+        const option = new Option(`${selected} · Unavailable`, selected); option.disabled = true; options.push(option);
+      }
+      get(name).replaceChildren(new Option(`${label} · ${machineName(inherited)}`, ""), ...options);
+      get(name).value = selected;
+    }
+    get("machine-status").textContent = `New browsers use ${machineName(startNodeId())}. Existing accounts stay on their own machines.`;
+  }
+  get("conversation-node").addEventListener("change", () => operation(async () => {
+    try {
+      preference = await api(preferenceUrl(), { method: "PUT", body: JSON.stringify({ nodeId: get("conversation-node").value || null }) });
+    } finally { if (!disposed) renderMachines(); }
+    await loadProfiles();
+  }));
+  get("start-node").addEventListener("change", () => operation(async () => {
+    renderMachines(); await loadProfiles();
+  }));
   async function loadProfiles() {
     const projectId = identity?.projectId || session?.projectId;
     if (!projectId) return;
-    const result = await api(`/api/browser/profiles?${new URLSearchParams({ projectId })}`);
-    if (disposed) return;
-    profiles = result.profiles || [];
+    const ownerId = startNodeId();
+    profilesNodeId = ownerId; profilesReady = false;
+    profiles = []; get("profile-select").value = ""; part("profile-name").hidden = true;
+    get("profiles-list").replaceChildren();
+    get("profile-select").replaceChildren(new Option("Conversation default", ""), new Option("New named profile…", "new"));
+    if (!ownerId) return;
+    const result = await api(browserUrl(`/api/browser/profiles?${new URLSearchParams({ projectId })}`, ownerId));
+    if (disposed || profilesNodeId !== ownerId) return;
+    profiles = result.profiles; profilesReady = true;
     const selected = get("profile-select").value;
-    get("profile-select").replaceChildren(new Option("Fresh browser", ""), ...profiles.map((profile) => new Option(profile.label, profile.id)));
-    get("profile-select").value = profiles.some((profile) => profile.id === selected) ? selected : "";
+    get("profile-select").replaceChildren(new Option("Conversation default", ""), new Option("New named profile…", "new"), ...profiles.map((profile) => new Option(`${profile.label} · ${profile.persistent ? "Persistent" : "Legacy import"}`, profile.id)));
+    get("profile-select").value = selected === "new" || profiles.some((profile) => profile.id === selected) ? selected : "";
     get("profiles-list").replaceChildren(...profiles.map((profile) => {
-      const item = document.createElement("li"), label = document.createElement("span"); label.textContent = profile.label;
+      const item = document.createElement("li"), label = document.createElement("span"); label.textContent = `${profile.label} · ${profile.persistent ? "Persistent" : "Legacy import on next start"} · ${profile.id}`;
       const remove = button("Delete", "delete-profile", async () => {
-        if (!await confirmAction({ title: "Delete saved login?", message: `Delete “${profile.label}”? Running browsers are unchanged.`, confirmLabel: "Delete login", destructive: true })) return;
-        await operation(async () => { await api(`/api/browser/profiles/${encodeURIComponent(profile.id)}?${new URLSearchParams({ projectId })}`, { method: "DELETE" }); await loadProfiles(); });
+        if (!await confirmAction({ title: "Delete browser profile?", message: `Permanently delete “${profile.label}” and its cookies and browser data from this project on this node? End all sessions using it first. Running or restore-pending profiles cannot be deleted.`, confirmLabel: "Delete profile", destructive: true })) return;
+        await operation(async () => {
+          if (startNodeId() !== ownerId) throw new Error("Start machine changed. Choose Delete again on the intended machine.");
+          await api(browserUrl(`/api/browser/profiles/${encodeURIComponent(profile.id)}?${new URLSearchParams({ projectId })}`, ownerId), { method: "DELETE" }); await loadProfiles();
+        });
       });
-      remove.setAttribute("aria-label", `Delete saved login ${profile.label}`); item.append(label, remove); return item;
+      remove.setAttribute("aria-label", `Delete browser profile ${profile.label}`); item.append(label, remove); return item;
     }));
-    if (!profiles.length) get("profiles-list").textContent = "No saved logins for this project.";
+    if (!profiles.length) get("profiles-list").textContent = "No browser profiles for this project yet.";
   }
   async function operation(work) {
     if (busy || disposed) return;
@@ -186,9 +257,10 @@ export function createBrowserViewer(root, { api, identity, sessionId, confirm: c
     finally { busy = false; if (!disposed) render(); }
   }
   async function command(value) {
-    if (!running()) return;
-    const body = await api(`${endpoint()}/command`, { method: "POST", body: JSON.stringify(value) });
-    acceptSession(body.session);
+    if (!running() && !(value.action === "close" && session?.restoreOnRestart)) return;
+    const version = sessionVersion;
+    const body = await sessionApi(`${endpoint()}/command`, { method: "POST", body: JSON.stringify(value) });
+    if (version === sessionVersion) acceptSession(body.session);
   }
   function sendInput(command) {
     if (!canInput()) return;
@@ -210,7 +282,7 @@ export function createBrowserViewer(root, { api, identity, sessionId, confirm: c
     if (disposed || !running()) return;
     get("connection-status").textContent = "Connecting…"; controls();
     const url = new URL("/ws", location.href); url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    url.search = new URLSearchParams({ mode: "browser", browserSessionId: session.id }).toString();
+    url.search = new URLSearchParams({ mode: "browser", browserSessionId: session.id, nodeId: session.nodeId }).toString();
     const ws = new WebSocket(url); socket = ws;
     connectionTimer = setTimeout(() => { if (socket === ws && !connected) ws.close(); }, 10000);
     ws.addEventListener("message", (event) => {
@@ -252,36 +324,95 @@ export function createBrowserViewer(root, { api, identity, sessionId, confirm: c
     image.onerror = () => { drawing = false; if (!disposed) error("Could not decode browser image."); drawFrame(); };
     image.src = `data:image/jpeg;base64,${frame.data}`;
   }
+  function selectSession(next) {
+    stopSocket(); frameVersion++; framePending = null; frameSize = null;
+    get("upload-status").textContent = ""; error();
+    screen.hidden = true; part("frame-hint").hidden = false;
+    part("frame-hint").textContent = "Waiting for this account's live image…";
+    sessionVersion++; session = null; acceptSession(next); retry = 0; render(); connect();
+  }
+  async function loadBrowserSessions() {
+    const query = new URLSearchParams(identity);
+    query.delete("appNodeId");
+    const result = await api(`/api/browser/sessions?${query}`);
+    if (!disposed) {
+      sessions = result.sessions;
+      // Exact GET and streamed state outrank aggregate discovery snapshots.
+      if (session) {
+        const index = sessions.findIndex((item) => item.id === session.id && item.nodeId === session.nodeId);
+        if (index < 0) sessions.push(session); else sessions[index] = session;
+      }
+      const unavailable = result.unavailableNodes || [];
+      get("discovery-status").hidden = !unavailable.length;
+      get("discovery-status").textContent = unavailable.length
+        ? `Some accounts could not be checked: ${unavailable.map((node) => `${machineName(node.nodeId)}: ${node.reason}`).join("; ")}. Reconnect to retry.` : "";
+    }
+  }
   async function refresh() {
     loaded = false;
     await operation(async () => {
-      if (sessionId || session) {
-        const result = await api(`/api/browser/sessions/${encodeURIComponent(session?.id || sessionId)}`);
-        acceptSession(result.session);
-      } else {
-        const result = await api(`/api/browser/sessions?${query}`);
-        acceptSession(result.sessions.find((candidate) => candidate.state === "running") || result.sessions[0]);
+      const failures = [];
+      if (session || sessionId) {
+        const version = sessionVersion;
+        const path = `/api/browser/sessions/${encodeURIComponent(session?.id || sessionId)}`;
+        const ownerId = session?.nodeId || nodeId;
+        try {
+          const result = await api(ownerId ? browserUrl(path, ownerId) : path);
+          if (disposed) return;
+          if (version === sessionVersion) acceptSession(result.session);
+          retry = 0; connect();
+        } catch (failure) { failures.push(failure.message); }
       }
-      loaded = true; retry = 0; connect();
-      await loadProfiles();
+      if (identity?.projectId && identity?.engine && identity?.conversationId) {
+        try {
+          const status = await api("/api/browser/status");
+          if (disposed) return;
+          configuration = status.config; nodes = status.nodes;
+          preference = await api(preferenceUrl());
+          if (disposed) return;
+          renderMachines();
+        } catch (failure) { failures.push(failure.message); }
+        try { await loadBrowserSessions(); } catch (failure) { failures.push(failure.message); }
+        if (disposed) return;
+        loaded = true;
+        if (!session && !sessionId) selectSession(sessions.find((candidate) => candidate.state === "running") || sessions[0]);
+        try { await loadProfiles(); } catch (failure) { failures.push(failure.message); }
+      }
+      if (!disposed) error(failures.join(" "));
     });
   }
   get("start").addEventListener("click", () => operation(async () => {
-    if (!identity?.conversationId || !identity?.appNodeId || !loaded || running()) return;
+    if (!identity?.conversationId || !identity?.appNodeId || !loaded) return;
     const profileId = get("profile-select").value;
-    const result = await api("/api/browser/sessions", { method: "POST", body: JSON.stringify({ ...identity, ...(profileId ? { profileId } : {}) }) });
-    session = null; acceptSession(result.session); retry = 0; connect();
+    const profileName = get("profile-name").value.trim();
+    if (profileId === "new" && (!profileName || profileName.length > 80)) throw new Error("Profile name must be 1 to 80 characters.");
+    const explicitNodeId = profileId && profileId !== "new" ? profilesNodeId : get("start-node").value;
+    const result = await api(explicitNodeId ? browserUrl("/api/browser/sessions", explicitNodeId) : "/api/browser/sessions", { method: "POST", body: JSON.stringify({ ...identity, ...(profileId === "new" ? { profileName } : profileId ? { profileId } : {}) }) });
+    if (disposed) return;
+    selectSession(result.session); await loadProfiles();
+  }));
+  get("profile-select").addEventListener("change", () => { part("profile-name").hidden = get("profile-select").value !== "new"; });
+  get("session-select").addEventListener("change", () => operation(async () => {
+    const id = get("session-select").value;
+    const selected = sessions.find((candidate) => candidate.id === id);
+    const result = await api(browserUrl(`/api/browser/sessions/${encodeURIComponent(id)}`, selected.nodeId));
+    if (!disposed) selectSession(result.session);
   }));
   get("reconnect").addEventListener("click", refresh);
   get("take-control").addEventListener("click", async () => {
-    const force = human();
+    const id = session.id, force = human();
     if (force && !await confirmAction({ title: "Take over browser control?", message: "Replaces the current human controller, including a closed or signed-out viewer. The agent stays paused.", confirmLabel: "Take over control" })) return;
-    await operation(() => command({ action: "takeControl", ...(force ? { force: true } : {}) }));
+    await operation(() => {
+      if (session.id !== id) throw new Error("Viewed account changed. Choose Take control again for the account you want.");
+      return command({ action: "takeControl", ...(force ? { force: true } : {}) });
+    });
   });
   get("resume-agent").addEventListener("click", () => operation(() => command({ action: "resumeAgent" })));
   get("end").addEventListener("click", async () => {
-    if (await confirmAction({ title: "End this browser?", message: "Takes control and closes every browser tab for this conversation. Save any login you want to keep first. This is different from closing the viewer.", confirmLabel: "End browser", destructive: true })) await operation(async () => {
-      await command({ action: "takeControl", force: true });
+    const id = session.id;
+    if (await confirmAction({ title: "End this browser?", message: `Takes control and closes only the selected account, ${session?.profileLabel || "this browser"}. Its cookies and browser data stay saved, but it will not restart automatically. Other accounts stay running. Closing the viewer does not end an account.`, confirmLabel: "End browser", destructive: true })) await operation(async () => {
+      if (session.id !== id) throw new Error("Viewed account changed. Choose End again for the account you want to close.");
+      if (running()) await command({ action: "takeControl", force: true });
       await command({ action: "close" });
     });
   });
@@ -317,6 +448,7 @@ export function createBrowserViewer(root, { api, identity, sessionId, confirm: c
       if (disposed || !canInput() || !target || current?.sessionId !== target.sessionId || current?.id !== target.id || current?.pageId !== target.pageId) throw new Error("File chooser request changed. Selected files were discarded; choose files again.");
     };
     // Uploads must not hold the viewer's busy lock: dialogs and End preempt them.
+    const accountId = session.id;
     uploading = true; error(); controls();
     void (async () => {
       checkTarget();
@@ -327,9 +459,9 @@ export function createBrowserViewer(root, { api, identity, sessionId, confirm: c
       })));
       checkTarget();
       await command({ action: "upload", requestId: target.id, expectedPageId: target.pageId, files: encoded });
-      if (!disposed) get("upload-status").textContent = "Uploaded files.";
+      if (!disposed && session?.id === accountId) get("upload-status").textContent = "Uploaded files.";
     })().catch(failure => {
-      if (!disposed) { error(failure.message); get("upload-status").textContent = "Selected files discarded."; }
+      if (!disposed && session?.id === accountId) { error(failure.message); get("upload-status").textContent = "Selected files discarded."; }
     }).finally(() => { uploading = false; if (!disposed) controls(); });
   });
   function click(event, button) {
@@ -395,8 +527,9 @@ if (standalone) {
   request("/api/auth/status").then((auth) => {
     if (!auth.authenticated) throw new Error("Sign in to Joint Bob in another tab, then reload this viewer.");
     csrfToken = auth.csrfToken;
-    const identity = Object.fromEntries(["projectId", "engine", "conversationId", "appNodeId"].map((key) => [key, params.get(key)]));
-    const viewer = createBrowserViewer(standalone, { api: request, identity, sessionId: params.get("browserSessionId"), confirm, onClose: () => { standalone.replaceChildren(); const message = document.createElement("p"); message.className = "browser-notice"; message.textContent = "Viewer closed. Browser session is still running. You can close this tab or reload to reconnect."; standalone.append(message); } });
+    const identity = Object.fromEntries(["projectId", "engine", "conversationId", "appNodeId"].filter((key) => params.has(key)).map((key) => [key, params.get(key)]));
+
+    const viewer = createBrowserViewer(standalone, { api: request, identity, sessionId: params.get("browserSessionId"), nodeId: params.get("nodeId"), confirm, onClose: () => { standalone.replaceChildren(); const message = document.createElement("p"); message.className = "browser-notice"; message.textContent = "Viewer closed. Browser session is still running. You can close this tab or reload to reconnect."; standalone.append(message); } });
     window.addEventListener("pagehide", () => viewer.dispose(), { once: true });
   }).catch((error) => { standalone.textContent = error.message; });
 }

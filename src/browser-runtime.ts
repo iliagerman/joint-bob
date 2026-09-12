@@ -1,31 +1,29 @@
 import { constants } from "node:fs";
-import { access, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { chromium, type Browser, type BrowserContext, type Page, type CDPSession, type Dialog, type FileChooser, type Locator } from "playwright-core";
+import { chromium, type BrowserContext, type Page, type CDPSession, type Dialog, type FileChooser, type Locator } from "playwright-core";
 import { WebSocket } from "ws";
 import { resolveDataDirectory } from "./data-directory.js";
-import { BrowserStore } from "./browser-store.js";
+import { getClusterNode } from "./cluster.js";
+import { BrowserStore, type RecoveryState } from "./browser-store.js";
+import { prepareProfile, profileDirectory } from "./browser-profile-files.js";
 import { browserCommandSchema, browserStartSchema, type BrowserActor, type BrowserCapability, type BrowserCommand, type BrowserProfile, type BrowserSessionView, type BrowserStart } from "./browser-types.js";
 
 interface DetectionOptions {
   platform?: string;
-  osRelease?: string;
   executable?: string;
   candidates?: string[];
 }
 
-/** Detection never downloads a browser or treats an Ubuntu derivative as Ubuntu. */
+/** Detect installed browsers on this node; never download a browser. */
 export async function browserCapability(options: DetectionOptions = {}): Promise<BrowserCapability> {
   const unavailable = (supported: boolean, reason: string): BrowserCapability => ({ supported, available: false, executable: null, reason });
-  if ((options.platform ?? process.platform) !== "linux") return unavailable(false, "Browser executor requires Ubuntu. Select an Ubuntu executor node.");
-  const release = options.osRelease ?? await readFile("/etc/os-release", "utf8").catch(() => "");
-  if (!/^ID=(?:ubuntu|"ubuntu"|'ubuntu')\s*$/m.test(release)) return unavailable(false, "Browser executor requires Ubuntu, not another Linux distribution. Select an Ubuntu executor node.");
   const override = options.executable ?? process.env.JOINT_BOB_BROWSER_EXECUTABLE;
-  if (override && !path.isAbsolute(override)) return unavailable(true, "JOINT_BOB_BROWSER_EXECUTABLE must be an absolute executable path on this Ubuntu node.");
-  const candidates = options.candidates ?? await installedCandidates();
-  for (const executable of override ? [override] : candidates) {
+  if (override && !path.isAbsolute(override)) return unavailable(true, "JOINT_BOB_BROWSER_EXECUTABLE must be an absolute executable path on this node.");
+  const candidates = override ? [override] : options.candidates ?? await installedCandidates(options.platform ?? process.platform);
+  for (const executable of candidates) {
     try {
       if (!(await stat(executable)).isFile()) continue;
       await access(executable, constants.X_OK);
@@ -33,12 +31,17 @@ export async function browserCapability(options: DetectionOptions = {}): Promise
     } catch { /* Try other installed locations, never install. */ }
   }
   return unavailable(true, override
-    ? `Browser executable unavailable: ${override}. Install Chrome and set JOINT_BOB_BROWSER_EXECUTABLE to its absolute executable path.`
-    : "Chrome is not installed on this Ubuntu executor. Install Google Chrome or Playwright Chromium, or set JOINT_BOB_BROWSER_EXECUTABLE to an installed absolute executable path.");
+    ? `Browser executable unavailable on this node: ${override}. Install Chrome and set JOINT_BOB_BROWSER_EXECUTABLE to its absolute executable path.`
+    : "Chrome is not installed on this node. Install Google Chrome or Playwright Chromium, or set JOINT_BOB_BROWSER_EXECUTABLE to an installed absolute executable path.");
 }
 
-async function installedCandidates(): Promise<string[]> {
+async function installedCandidates(platform: string): Promise<string[]> {
   const candidates = ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/opt/google/chrome/chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser", "/snap/bin/chromium", chromium.executablePath()];
+  if (platform === "darwin") {
+    for (const directory of ["/Applications", path.join(os.homedir(), "Applications")]) {
+      candidates.unshift(path.join(directory, "Google Chrome.app/Contents/MacOS/Google Chrome"), path.join(directory, "Chromium.app/Contents/MacOS/Chromium"));
+    }
+  }
   const cache = process.env.PLAYWRIGHT_BROWSERS_PATH || path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "ms-playwright");
   for (const name of (await readdir(cache).catch(() => [] as string[])).sort().reverse()) {
     if (!/^chromium(?:_headless_shell)?-\d+$/.test(name)) continue;
@@ -63,11 +66,11 @@ export function validateBrowserUploads(files: Array<{ name: string; data: string
   });
 }
 
-type Proxy = { server: string; close: () => Promise<void> };
 interface LiveSession {
   id: string;
+  profileId: string;
+  restoring: boolean;
   context: BrowserContext;
-  proxy: Proxy;
   pages: Map<string, Page>;
   activePageId: string | null;
   human: string | null;
@@ -82,8 +85,10 @@ interface LiveSession {
   cdp?: CDPSession;
   streamGeneration: number;
   stopped: boolean;
+  stopSignal: AbortController;
   stopping?: Promise<void>;
 }
+const profileLeases = new Set<string>();
 const readOnly = new Set(["snapshot", "screenshot", "wait"]);
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 
@@ -92,83 +97,177 @@ export class BrowserRuntime {
   private readonly sessions = new Map<string, LiveSession>();
   private readonly viewerActors = new WeakMap<WebSocket, BrowserActor>();
   private readonly root = path.join(resolveDataDirectory(), "browser");
-  private browser?: Promise<Browser>;
+  private initialization?: Promise<void>;
+  private readonly recoveries = new Map<string, Promise<void>>();
+  private readonly cancelledRecoveries = new Set<string>();
   private creates: Promise<unknown> = Promise.resolve();
   private closed = false;
   private closing?: Promise<void>;
 
-  constructor(private readonly options: { proxyFor: (start: BrowserStart) => Promise<Proxy>; capability?: () => Promise<BrowserCapability> }) {
-    this.store.interruptRunning();
+  constructor(private readonly options: { capability?: () => Promise<BrowserCapability> } = {}) {}
+
+  ready(): Promise<void> {
+    return this.initialization ??= this.restore();
+  }
+
+  private async restore(): Promise<void> {
+    const pending = this.store.list().filter(row => row.restoreOnRestart && row.profileId && !profileLeases.has(profileDirectory(row.profileId)));
+    this.store.interruptRunning([...profileLeases].map(directory => path.basename(directory)));
+    for (const row of pending) {
+      const job = (async () => {
+        try {
+          const profile = this.store.profile(row.profileId!, row.projectId);
+          if (!profile.persistent) throw new Error("Legacy browser profile requires explicit start");
+          await this.launchSession(row, row.id, this.store.recovery(row.id));
+        } catch (error) {
+          if (!this.cancelledRecoveries.has(row.id)) this.store.finish(row.id, "interrupted", `Browser restore failed: ${message(error)}`, true);
+        }
+      })().finally(() => this.recoveries.delete(row.id));
+      this.recoveries.set(row.id, job);
+    }
+    await Promise.all(this.recoveries.values());
   }
 
   create(input: BrowserStart): Promise<BrowserSessionView> {
     const start = browserStartSchema.parse(input);
-    const job = this.creates.then(() => this.createSession(start));
+    const job = this.creates.then(() => { void this.ready(); return this.createSession(start); });
     this.creates = job.catch(() => {});
     return job;
   }
 
   private async createSession(start: BrowserStart): Promise<BrowserSessionView> {
-    if (this.closed) throw new Error("Browser executor is closed");
-    const existing = this.store.list(start).find(row => row.state === "running");
-    if (existing) {
-      if (existing.appNodeId !== start.appNodeId || existing.profileId !== start.profileId) throw new Error("Browser session conflict: app node or profile differs from the running conversation");
-      return this.get(existing.id);
+    if (this.closed) throw new Error("Browser runtime on this node is closed");
+    const associated = this.store.list(start);
+    if (!start.profileId && !start.profileName) {
+      const ids = [...new Set(associated.map(row => row.profileId).filter((id): id is string => Boolean(id)).filter(id => this.store.profiles(start.projectId).some(profile => profile.id === id)))];
+      if (ids.length > 1) throw new Error("Multiple browser profiles associated; supply explicit profileId");
+      start = { ...start, profileId: ids[0] };
     }
-    const capability = await (this.options.capability ?? browserCapability)();
-    if (!capability.supported || !capability.available || !capability.executable) throw new Error(capability.reason || "Browser executor unavailable");
-    const storageState = start.profileId ? this.store.profileState(start.profileId, start.projectId) as Awaited<ReturnType<BrowserContext["storageState"]>> : undefined;
-    const browser = await this.getBrowser(capability.executable);
-    const proxy = await this.options.proxyFor(start);
+    if (start.profileId) {
+      this.store.profile(start.profileId, start.projectId);
+      const existing = associated.find(row => row.state === "running" && row.profileId === start.profileId);
+      if (existing) return this.view(existing.id);
+      const pending = associated.find(row => row.restoreOnRestart && row.profileId === start.profileId);
+      if (pending) {
+        if (this.recoveries.has(pending.id)) return this.view(pending.id);
+        return this.launchSession(start, pending.id, this.store.recovery(pending.id));
+      }
+      this.store.assertProfileUnused(start.profileId, start.projectId);
+    } else {
+      const capability = await (this.options.capability ?? browserCapability)();
+      if (!capability.supported || !capability.available || !capability.executable) throw new Error(capability.reason || "Browser unavailable on this node");
+      const labels = new Set(this.store.profiles(start.projectId).map(profile => profile.label));
+      let label = "Default";
+      for (let n = 2; labels.has(label); n++) label = `Default ${n}`;
+      start = { ...start, profileId: this.store.createProfile(start.projectId, start.profileName ?? label).id };
+    }
+    return this.launchSession(start);
+  }
+
+  private async launchSession(start: BrowserStart, restoreId?: string, recovery?: RecoveryState): Promise<BrowserSessionView> {
+    const profile = this.store.profile(start.profileId!, start.projectId);
+    const lease = profileDirectory(profile.id);
+    if (profileLeases.has(lease)) throw new Error("Browser profile already in use");
+    profileLeases.add(lease);
     let context: BrowserContext | undefined;
     let session: LiveSession | undefined;
+    let id = restoreId;
     try {
-      context = await browser.newContext({ proxy: { server: proxy.server, bypass: "<-loopback>" }, viewport: { width: 1100, height: 740 }, acceptDownloads: true, storageState });
+      // Reserve in SQLite before yielding to native launch or filesystem I/O.
+      if (!id) id = this.store.create(start).id;
+      const capability = await (this.options.capability ?? browserCapability)();
+      if (!capability.supported || !capability.available || !capability.executable) throw new Error(capability.reason || "Browser unavailable on this node");
+      const directory = await prepareProfile(profile.id);
+      if (this.closed || (restoreId && this.cancelledRecoveries.has(restoreId))) throw new Error("Browser start cancelled");
+      // server.ts owns TERM/INT shutdown. A second Playwright close force-kills Chrome before cookies flush.
+      context = await chromium.launchPersistentContext(directory, { executablePath: capability.executable, headless: true, handleSIGTERM: false, handleSIGINT: false, args: ["--window-size=1100,740"], viewport: { width: 1100, height: 740 }, acceptDownloads: true });
+      if (this.closed || (restoreId && this.cancelledRecoveries.has(restoreId))) throw new Error("Browser start cancelled");
+      if (!profile.persistent) {
+        try { await context.setStorageState(this.store.profileState(profile.id, start.projectId) as Parameters<BrowserContext["setStorageState"]>[0]); }
+        catch { throw new Error("Browser profile import failed"); }
+        if (this.closed || (restoreId && this.cancelledRecoveries.has(restoreId))) throw new Error("Browser start cancelled");
+        this.store.markPersistent(profile.id, start.projectId);
+      }
       context.setDefaultTimeout(10000);
       context.setDefaultNavigationTimeout(20000);
-      const row = this.store.create(start);
-      session = { id: row.id, context, proxy, pages: new Map(), activePageId: null, human: null, chooser: null, dialog: null, downloads: [], transfers: new Set(), viewers: new Set(), errors: [], queue: Promise.resolve(), streamGeneration: 0, stopped: false };
+      const row = this.store.get(id);
+      this.store.resume(id);
+      session = { id: row.id, profileId: profile.id, restoring: true, context, pages: new Map(), activePageId: null, human: recovery ? recovery.human : null, chooser: null, dialog: null, downloads: [], transfers: new Set(), viewers: new Set(), errors: [], queue: Promise.resolve(), streamGeneration: 0, stopped: false, stopSignal: new AbortController() };
       this.sessions.set(row.id, session);
       const live = session;
       context.on("page", page => this.addPage(live, page));
-      context.on("close", () => { if (!live.stopped) void this.stop(live, "interrupted", "Browser context stopped unexpectedly. Explicitly restart the session."); });
-      const page = await context.newPage();
-      if (start.url) await page.goto(start.url, { waitUntil: "domcontentloaded" });
-      return this.get(row.id);
+      context.on("close", () => { if (!live.stopped) void this.stop(live, "interrupted", "Browser context stopped unexpectedly. Explicitly restart the session.", true); });
+      await Promise.race([
+        this.openSessionPages(session, start.url, recovery),
+        new Promise<void>(resolve => session!.stopSignal.signal.addEventListener("abort", () => resolve(), { once: true })),
+      ]);
+      if (session.stopped) { await session.stopping; return this.view(row.id); }
+      session.restoring = false;
+      this.checkpoint(session);
+      return this.view(row.id);
     } catch (error) {
-      if (session) await this.stop(session, "interrupted", message(error));
-      else { await context?.close().catch(() => {}); await proxy.close().catch(() => {}); }
-      throw new Error(`Browser start failed on this executor: ${message(error)}`);
+      if (session) await this.stop(session, "interrupted", message(error), Boolean(restoreId));
+      else {
+        await context?.close().catch(() => {});
+        if (id) this.store.finish(id, this.cancelledRecoveries.has(id) ? "closed" : "interrupted", message(error), Boolean(restoreId) && !this.cancelledRecoveries.has(id));
+      }
+      profileLeases.delete(lease);
+      throw new Error(`Browser start failed on this node: ${message(error)}`);
     }
   }
 
-  private async getBrowser(executablePath: string): Promise<Browser> {
-    if (!this.browser) {
-      this.browser = chromium.launch({ executablePath, headless: true, args: ["--window-size=1100,740"] }).then(browser => {
-        browser.on("disconnected", () => {
-          this.browser = undefined;
-          for (const session of this.sessions.values()) if (!session.stopped) void this.stop(session, "interrupted", "Chrome disconnected. Explicitly restart the session.");
-        });
-        return browser;
-      }).catch(error => { this.browser = undefined; throw new Error(`Unable to start Chrome on this executor: ${message(error)}`); });
+  private async openSessionPages(session: LiveSession, url?: string, recovery?: RecoveryState): Promise<void> {
+    // Keep a replacement tab alive before closing Chromium's startup tabs.
+    // Never reuse or navigate startup action URLs.
+    const startupPages = [...session.context.pages()];
+    const urls = recovery ? recovery.origins : [url ?? "about:blank"];
+    for (const target of urls.length ? urls : ["about:blank"]) {
+      if (session.stopped) return;
+      const page = await session.context.newPage();
+      if (session.stopped) return;
+      if (target !== "about:blank") await page.goto(target, { waitUntil: "domcontentloaded" });
     }
-    return this.browser;
+    if (session.stopped) return;
+    for (const page of startupPages) {
+      if (session.stopped) return;
+      await page.close();
+    }
+    if (session.stopped) return;
+    if (recovery) session.activePageId = [...session.pages.keys()][recovery.activeIndex] ?? null;
   }
 
   async list(identity?: { projectId?: string; engine?: string; conversationId?: string }): Promise<BrowserSessionView[]> {
-    return Promise.all(this.store.list(identity).map(row => this.get(row.id)));
+    void this.ready();
+    return Promise.all(this.store.list(identity).map(row => this.view(row.id)));
   }
 
   async get(id: string): Promise<BrowserSessionView> {
-    const row = this.store.get(id);
-    const live = this.sessions.get(id);
-    return { ...row, tabs: live ? await Promise.all([...live.pages].map(async ([id, page]) => ({ id, url: page.url(), title: await page.title().catch(() => page.url()) }))) : [], activePageId: live?.activePageId ?? null, owner: live?.human ? "human" : "agent", fileChooser: Boolean(live?.chooser), fileChooserRequest: live?.chooser ? { id: live.chooser.id, pageId: live.chooser.pageId } : null, dialog: live?.dialog ? { id: live.dialog.id, pageId: live.dialog.pageId, type: live.dialog.dialog.type(), message: live.dialog.dialog.message(), defaultValue: live.dialog.dialog.defaultValue() } : null, downloads: this.store.downloads(id) };
+    void this.ready();
+    return this.view(id);
   }
 
-  async profiles(projectId: string): Promise<BrowserProfile[]> { return this.store.profiles(projectId); }
-  async deleteProfile(id: string, projectId: string): Promise<void> { this.store.deleteProfile(id, projectId); }
+  private async view(id: string): Promise<BrowserSessionView> {
+    const row = this.store.get(id);
+    const live = this.sessions.get(id);
+    const profileLabel = row.profileId ? this.store.profiles(row.projectId).find(profile => profile.id === row.profileId)?.label : undefined;
+    return { ...row, nodeId: (await getClusterNode()).id, profileLabel, tabs: live ? await Promise.all([...live.pages].map(async ([id, page]) => ({ id, url: page.url(), title: live.restoring ? page.url() : await page.title().catch(() => page.url()) }))) : [], activePageId: live?.activePageId ?? null, owner: (live ? live.human : row.restoreOnRestart && this.store.recoveryHuman(id)) ? "human" : "agent", fileChooser: Boolean(live?.chooser), fileChooserRequest: live?.chooser ? { id: live.chooser.id, pageId: live.chooser.pageId } : null, dialog: live?.dialog ? { id: live.dialog.id, pageId: live.dialog.pageId, type: live.dialog.dialog.type(), message: live.dialog.dialog.message(), defaultValue: live.dialog.dialog.defaultValue() } : null, downloads: this.store.downloads(id) };
+  }
+
+  async profiles(projectId: string): Promise<BrowserProfile[]> { void this.ready(); return this.store.profiles(projectId); }
+  async deleteProfile(id: string, projectId: string): Promise<void> {
+    void this.ready();
+    const job = this.creates.then(async () => {
+      this.store.assertProfileUnused(id, projectId);
+      if (profileLeases.has(profileDirectory(id))) throw new Error("Browser profile in use");
+      await rm(profileDirectory(id), { recursive: true, force: true });
+      this.store.deleteProfile(id, projectId);
+    });
+    this.creates = job.catch(() => {});
+    return job;
+  }
 
   async download(id: string, downloadId: string): Promise<{ path: string; name: string }> {
+    void this.ready();
     this.store.get(id);
     const download = this.store.downloads(id).find(item => item.id === downloadId);
     if (!download?.ready) throw new Error(download?.error || "Browser download not found or not ready");
@@ -178,10 +277,14 @@ export class BrowserRuntime {
   }
 
   execute(id: string, input: BrowserCommand, actor: BrowserActor): Promise<unknown> {
+    // Admission stays synchronous, including while other profiles recover.
+    void this.ready();
     let command: BrowserCommand;
     let session: LiveSession;
     try {
       command = browserCommandSchema.parse(input);
+      if (actor.kind === "human" && (!actor.id || actor.id.length > 500)) throw new Error("Authenticated human actor ID must contain 1..500 characters");
+      if (command.action === "close" && !this.sessions.has(id)) return this.endRecovery(id, actor);
       session = this.live(id);
       if (command.action === "dialog" || command.action === "upload") {
         this.authorize(session, command, actor);
@@ -206,6 +309,7 @@ export class BrowserRuntime {
         if (command.action === "takeControl" && actor.kind === "human") session.human = actor.id;
         return this.run(session, command, actor).finally(() => this.broadcastState(session));
       }
+      if (session.restoring) throw new Error("Browser profile is still restoring; retry when ready");
     } catch (error) { return Promise.reject(error); }
     const job = session.queue.then(async () => {
       this.live(id);
@@ -226,6 +330,22 @@ export class BrowserRuntime {
     });
     session.queue = job.catch(() => {});
     return job;
+  }
+
+  private async endRecovery(id: string, actor: BrowserActor): Promise<BrowserSessionView> {
+    const row = this.store.get(id);
+    const recovery = this.recoveries.get(id);
+    if (row.state !== "interrupted" || !row.restoreOnRestart || !row.profileId || (profileLeases.has(profileDirectory(row.profileId)) && !recovery)) throw new Error("Browser session is not an inactive recovery");
+    if (actor.kind === "human") {
+      if (!actor.id) throw new Error("Authenticated human required to end browser recovery");
+    } else if (this.store.recovery(id).human) throw new Error("Browser is under human control; agent input paused");
+    this.cancelledRecoveries.add(id);
+    // Hold the SQLite lease while a native launch or close is still in flight.
+    if (recovery) this.store.resume(id);
+    this.store.setRestoreIntent(id, false);
+    await recovery;
+    this.store.finish(id, "closed");
+    return this.view(id);
   }
 
   private authorize(session: LiveSession, command: BrowserCommand, actor: BrowserActor): void {
@@ -269,7 +389,7 @@ export class BrowserRuntime {
         return this.get(session.id);
       case "resumeAgent": session.human = null; return this.get(session.id);
       case "close": await this.stop(session, "closed"); return this.get(session.id);
-      case "saveProfile": return this.store.saveProfile(this.store.get(session.id).projectId, command.label, await session.context.storageState({ indexedDB: true }));
+      case "saveProfile": return this.store.renameProfile(session.profileId, this.store.get(session.id).projectId, command.label);
       case "newTab": { const page = await session.context.newPage(); if (command.url) await page.goto(command.url, { waitUntil: "domcontentloaded" }); return this.get(session.id); }
       case "selectTab": {
         if (!session.pages.has(command.pageId)) throw new Error("Browser tab not found");
@@ -277,7 +397,9 @@ export class BrowserRuntime {
       }
       case "closeTab": {
         const page = session.pages.get(command.pageId); if (!page) throw new Error("Browser tab not found");
-        await page.close(); return this.get(session.id);
+        if (session.pages.size === 1) await this.stop(session, "closed");
+        else await page.close();
+        return this.get(session.id);
       }
       case "dialog": {
         const pending = session.dialog;
@@ -400,12 +522,15 @@ export class BrowserRuntime {
       if (session.chooser?.page === page) session.chooser = null;
       if (session.dialog?.page === page) session.dialog = null;
       if (session.activePageId === id) { session.activePageId = session.pages.keys().next().value ?? null; this.restartStream(session); }
-      this.broadcastState(session);
+      // A crashed context closes its pages before emitting context.close. Do
+      // not replace the recovery snapshot with a shrinking shutdown tab list.
+      this.publishState(session);
     });
     this.restartStream(session); this.broadcastState(session);
   }
 
   async attachViewer(id: string, ws: WebSocket, actor: BrowserActor): Promise<void> {
+    void this.ready();
     const session = this.live(id);
     session.viewers.add(ws);
     this.viewerActors.set(ws, actor);
@@ -433,9 +558,28 @@ export class BrowserRuntime {
     if (ws.readyState === WebSocket.OPEN && ws.bufferedAmount < 1024 * 1024) ws.send(JSON.stringify(value), () => {});
   }
 
+  private checkpoint(session: LiveSession): void {
+    if (session.stopped) return;
+    if (session.restoring) {
+      this.store.checkpoint(session.id, { ...this.store.recovery(session.id), human: session.human });
+      return;
+    }
+    if (!session.pages.size) return;
+    const origins = [...session.pages.values()].slice(0, 100).map(page => {
+      const url = new URL(page.url());
+      return ["http:", "https:"].includes(url.protocol) ? url.origin : "about:blank";
+    });
+    this.store.checkpoint(session.id, { origins, activeIndex: Math.min(99, [...session.pages.keys()].indexOf(session.activePageId!)), human: session.human });
+  }
+
   private broadcastState(session: LiveSession): void {
+    this.checkpoint(session);
+    this.publishState(session);
+  }
+
+  private publishState(session: LiveSession): void {
     if (!session.viewers.size) return;
-    void this.get(session.id).then(view => { for (const ws of session.viewers) this.send(ws, { type: "browserState", session: view }); }).catch(() => {});
+    void this.view(session.id).then(view => { for (const ws of session.viewers) this.send(ws, { type: "browserState", session: view }); }).catch(() => {});
   }
 
   private restartStream(session: LiveSession): void {
@@ -459,37 +603,50 @@ export class BrowserRuntime {
     })().catch(error => { if (!session.stopped && generation === session.streamGeneration) for (const ws of session.viewers) this.send(ws, { type: "browserError", error: message(error) }); });
   }
 
-  private stop(session: LiveSession, state: "closed" | "interrupted", error?: string): Promise<void> {
+  private stop(session: LiveSession, state: "closed" | "interrupted", error?: string, restoreOnRestart = false): Promise<void> {
     if (session.stopping) return session.stopping;
+    if (state === "closed") this.cancelledRecoveries.add(session.id);
+    this.checkpoint(session);
     session.stopped = true;
+    session.stopSignal.abort();
     return session.stopping = (async () => {
-      this.store.finish(session.id, state, error);
+      this.store.setRestoreIntent(session.id, restoreOnRestart);
       this.restartStream(session);
       await session.context.close().catch(() => {});
-      await Promise.all(session.transfers);
-      await session.proxy.close().catch(() => {});
-      await rm(path.join(this.root, session.id, "staging"), { recursive: true, force: true });
-      session.pages.clear(); session.activePageId = null; session.chooser = null; session.dialog = null;
-      const view = await this.get(session.id);
-      for (const ws of session.viewers) {
-        this.send(ws, { type: "browserState", session: view });
-        ws.close(1000, "Browser session ended");
-      }
-      session.viewers.clear(); session.errors.length = 0; session.downloads.length = 0;
-      session.queue = Promise.resolve();
-      this.sessions.delete(session.id);
+      try {
+        this.store.finish(session.id, state, error, restoreOnRestart);
+        await Promise.all(session.transfers);
+        await rm(path.join(this.root, session.id, "staging"), { recursive: true, force: true });
+      } finally { await this.releaseSession(session); }
     })();
+  }
+
+  private async releaseSession(session: LiveSession): Promise<void> {
+    session.pages.clear(); session.activePageId = null; session.chooser = null; session.dialog = null;
+    profileLeases.delete(profileDirectory(session.profileId));
+    session.queue = Promise.resolve();
+    this.sessions.delete(session.id);
+    try {
+      const view = await this.view(session.id);
+      for (const ws of session.viewers) this.send(ws, { type: "browserState", session: view });
+    } finally {
+      for (const ws of session.viewers) ws.close(1000, "Browser session ended");
+      session.viewers.clear(); session.errors.length = 0; session.downloads.length = 0;
+    }
   }
 
   close(): Promise<void> {
     if (this.closing) return this.closing;
     this.closed = true;
     return this.closing = (async () => {
+      const stopping = Promise.allSettled([...this.sessions.values()].map(session => this.stop(session, "interrupted", "Browser runtime stopped; profile will restore on restart.", true)));
+      await this.initialization;
       await this.creates;
-      await Promise.all([...this.sessions.values()].map(session => this.stop(session, "interrupted", "Browser executor stopped. Explicitly restart the session.")));
-      for (const session of this.sessions.values()) for (const ws of session.viewers) ws.close(1001, "Browser executor stopped");
-      await (await this.browser?.catch(() => undefined))?.close();
+      const stopped = await stopping;
+      for (const session of this.sessions.values()) for (const ws of session.viewers) ws.close(1001, "Browser runtime on this node stopped");
       this.store.close();
+      const errors = stopped.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+      if (errors.length) throw new AggregateError(errors, "Browser shutdown failed");
     })();
   }
 }

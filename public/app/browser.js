@@ -14,7 +14,7 @@ function browserIdentity() {
   return { projectId: state.activeProjectId, engine: state.engine, conversationId, appNodeId };
 }
 function identityKey(identity) {
-  return identity ? JSON.stringify([identity.projectId, identity.engine, identity.conversationId]) : null;
+  return identity ? JSON.stringify([identity.projectId, identity.engine, identity.conversationId, identity.appNodeId]) : null;
 }
 function closeViewer() {
   viewer?.dispose(); viewer = null; viewerKey = null;
@@ -58,40 +58,41 @@ new MutationObserver(() => {
 window.addEventListener("pagehide", closeViewer);
 
 let statusLoading = false;
-export async function loadBrowserExecutorSettings() {
+export async function loadBrowserStatus() {
   if (statusLoading) return;
-  const select = document.querySelector("#browserExecutorSelect");
-  const status = document.querySelector("#browserExecutorStatus");
-  const save = document.querySelector("#browserExecutorSave");
-  statusLoading = true; select.disabled = save.disabled = true;
-  status.textContent = "Checking browser executors…";
+  const status = document.querySelector("#browserStatus");
+  const check = document.querySelector("#browserStatusCheck");
+  statusLoading = true; check.disabled = true;
+  const select = document.querySelector("#settingsBrowserExecutor");
+  select.disabled = true;
+  status.textContent = "Checking browser machines…";
   try {
-    const result = await api("/api/browser/status");
-    select.replaceChildren(new Option("No browser executor", ""), ...result.nodes.map((node) => {
-      const option = new Option(`${node.name} · ${node.available ? "Ready" : node.reason || "Unavailable"}`, node.id);
-      option.disabled = !node.supported;
+    const { config, nodes } = await api("/api/browser/status");
+    const options = nodes.map((node) => {
+      const option = new Option(`${node.name}${node.available && node.reachable ? "" : ` · ${node.reason || "Unavailable"}`}`, node.id);
+      option.disabled = !node.available || !node.reachable;
       return option;
-    }));
-    const configured = result.config.executorNodeId;
-    if (configured && !result.nodes.some((node) => node.id === configured)) {
-      const missing = new Option("Configured node unavailable", configured); missing.disabled = true; select.append(missing);
+    });
+    if (config.executorNodeId && !nodes.some((node) => node.id === config.executorNodeId)) {
+      const option = new Option(`${config.executorNodeId} · Unavailable`, config.executorNodeId); option.disabled = true; options.push(option);
     }
-    select.value = configured || "";
-    const node = result.nodes.find((node) => node.id === configured);
-    status.textContent = configured
-      ? node?.available ? `Ready on ${node.name}. ${node.executable || ""}` : `Executor unavailable: ${node?.reason || "node not found"}. Existing browser sessions are unchanged.`
-      : "Select an Ubuntu node to run browsers. No executor configured.";
-    select.disabled = save.disabled = false;
+    select.replaceChildren(new Option("Not configured", ""), ...options);
+    select.value = config.executorNodeId || ""; select.disabled = false;
+    status.textContent = nodes.map((node) => `${node.name}: ${node.available && node.reachable ? "Ready" : node.reason || "Unavailable"}. ${node.runningCount} running.`).join(" ");
   } catch (error) { status.textContent = `Browser status unavailable: ${error.message}. Try Check status again.`; }
-  finally { statusLoading = false; }
+  finally { statusLoading = false; check.disabled = false; }
 }
-document.querySelector("#browserExecutorCheck").addEventListener("click", loadBrowserExecutorSettings);
-document.querySelector("#browserExecutorSave").addEventListener("click", async () => {
-  const save = document.querySelector("#browserExecutorSave"), select = document.querySelector("#browserExecutorSelect"), status = document.querySelector("#browserExecutorStatus");
-  save.disabled = select.disabled = true;
+document.querySelector("#browserStatusCheck").addEventListener("click", loadBrowserStatus);
+document.querySelector("#settingsBrowserExecutor").addEventListener("change", async (event) => {
+  if (statusLoading) return;
+  statusLoading = true;
+  const select = event.currentTarget;
+  select.disabled = true;
+  document.querySelector("#browserStatusCheck").disabled = true;
   try {
     await api("/api/browser/config", { method: "PUT", body: JSON.stringify({ executorNodeId: select.value || null }) });
-    status.textContent = "Browser executor saved. Existing browser sessions are unchanged.";
-  } catch (error) { status.textContent = `Could not save browser executor: ${error.message}`; }
-  finally { save.disabled = select.disabled = false; }
+    toast("Default browser machine saved. Existing accounts are unchanged.");
+  } catch (error) { toast(error.message); }
+  finally { statusLoading = false; }
+  await loadBrowserStatus();
 });

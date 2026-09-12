@@ -27,16 +27,8 @@ test("pending browser requests never redirect approval or files", { timeout: 120
   });
   server.listen(0, "127.0.0.1"); await once(server, "listening");
   const url = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}`;
-  const proxy = http.createServer((req, res) => {
-    const upstream = http.request(req.url!, { method: req.method, headers: req.headers }, response => {
-      res.writeHead(response.statusCode!, response.headers); response.pipe(res);
-    });
-    upstream.on("error", () => { res.writeHead(502); res.end(); }); req.pipe(upstream);
-  });
-  proxy.listen(0, "127.0.0.1"); await once(proxy, "listening");
   const runtime = new BrowserRuntime({
     capability: async () => ({ supported: true, available: true, executable: process.env.CHROME_PATH || chromium.executablePath(), reason: null }),
-    proxyFor: async () => ({ server: `http://127.0.0.1:${(proxy.address() as import("node:net").AddressInfo).port}`, close: async () => {} }),
   });
   async function fixture() {
     const view = await runtime.create({ projectId: randomUUID(), conversationId: randomUUID(), engine: "pi", appNodeId: randomUUID(), url });
@@ -243,6 +235,6 @@ test("pending browser requests never redirect approval or files", { timeout: 120
       } finally { await f.close(); }
     });
   } finally {
-    await runtime.close(); proxy.closeAllConnections(); proxy.close(); server.closeAllConnections(); server.close();
+    await runtime.close(); server.closeAllConnections(); server.close();
   }
 });

@@ -137,7 +137,8 @@ export function waitForDevNode(child: ChildProcess, label: string, url?: string)
 export async function stopDevNode(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
   await new Promise<void>((resolve) => {
-    const timeout = setTimeout(() => child.kill("SIGKILL"), 5_000);
+    // The app allows eight seconds to flush native browser profiles on shutdown.
+    const timeout = setTimeout(() => child.kill("SIGKILL"), 10_000);
     child.once("exit", () => { clearTimeout(timeout); resolve(); });
     child.kill("SIGTERM");
   });

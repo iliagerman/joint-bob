@@ -20,6 +20,9 @@ test("Claude browser instructions append to configured system instructions witho
       assert.ok(content.includes(boundary), `Claude browser instructions must retain: ${boundary}`);
     }
     assert.ok(!content.includes("All web browsing and browser testing must"), "Claude must not receive the contradictory blanket test ban");
+    assert.ok(content.includes("explicit start --node ID > conversation override > Settings default"), "Claude must receive browser machine precedence");
+    assert.ok(content.includes("Browser localhost refers to the selected browser machine"), "Remote browser localhost is not the agent host");
+    assert.ok(content.includes("Existing sessions and profiles remain pinned"), "Changing defaults must not move signed-in accounts");
     assert.ok(!args.includes("--append-system-prompt"),"Use one combined system file, never conflicting CLI flags");
     const plain=claudeAgentResourceArgs(root);
     assert.equal(await readFile(plain[plain.indexOf("--append-system-prompt-file")+1],"utf8"),"Keep existing project instructions.");

@@ -12,7 +12,7 @@ import { discoverMissingPeerProjects } from "./server/cluster-helpers.js";
 import { flushMembershipOutbox, flushReplicationOutbox, flushSecretCredentialOutbox, initializeStartupReadiness, pushRuntimeLeaseSnapshots, reconcileManagedAgentResources, reconcileTaskConversationRecords, reconcileTaskHandoffs, reconcileTicketWorkspaceSync, sweepRuntimeLeases } from "./server/maintenance.js";
 import { reconcileUpdateJobs, startUpdateScheduler } from "./updater.js";
 import { flags, port, server } from "./server/state.js";
-import { closeBrowserRuntime } from "./server/browser.js";
+import { browserRuntime, closeBrowserRuntime } from "./server/browser.js";
 import { recoverPendingUpdateRuns } from "./server/task-runs.js";
 import "./server/schemas.js";
 import "./server/http-auth.js";
@@ -82,6 +82,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const address = server.address();
     const listeningPort = typeof address === "object" && address ? address.port : port;
     console.log(`Joint Bob listening on http://${bindHost}:${listeningPort}`);
+    void browserRuntime().ready().catch(error => console.warn("Browser profile recovery failed", error));
     reconcileUpdateJobs();
     startUpdateScheduler();
     void startCronScheduler().catch(error => console.error("Scheduled task recovery failed; scheduler not started", error));

@@ -103,9 +103,9 @@ export const port = Number(process.env.PORT ?? 8790);
 export const machineRoutes = new Set([
   "POST /cluster/cron",
   "GET /cluster/node",
-  "GET /cluster/browser/status",
+  "POST /cluster/browser/status",
   "POST /cluster/browser/config",
-  "POST /cluster/browser/select",
+  "POST /cluster/browser/preferences",
   "POST /cluster/browser/operation",
   "POST /cluster/browser/download",
   "GET /cluster/local-inventory",

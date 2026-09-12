@@ -7,33 +7,14 @@ import test from "node:test";
 import { getClusterNode } from "../src/cluster.js";
 import { addProject, registerProjectAliases } from "../src/store.js";
 import { BrowserStore } from "../src/browser-store.js";
-import { browserRuntime, closeBrowserRuntime, localBrowserOperation, configureBrowserExecutor } from "../src/server/browser.js";
-import { applyBrowserConfiguration } from "../src/browser-configuration.js";
-import type { BrowserSessionView, BrowserProfile, BrowserStart } from "../src/browser-types.js";
+import { browserRuntime, closeBrowserRuntime, localBrowserOperation } from "../src/server/browser.js";
+import type { BrowserSessionView, BrowserProfile } from "../src/browser-types.js";
 
-test("executor cannot change while browser startup is still in flight", async (t) => {
-  const folder=path.join(os.homedir(),"browser-start-race");await mkdir(folder,{recursive:true});
-  const project=await addProject("Browser start race",folder,{writeInstructions:false});
-  const node=await getClusterNode();applyBrowserConfiguration({executorNodeId:node.id,originNodeId:node.id,updatedAt:new Date().toISOString()});
-  const runtime=browserRuntime(),store=new BrowserStore();
-  let started!:()=>void,release!:()=>void;
-  const entered=new Promise<void>(resolve=>{started=resolve});
-  const gate=new Promise<void>(resolve=>{release=resolve});
-  t.mock.method(runtime,"create",async (input:BrowserStart)=>{started();await gate;return runtime.get(store.create(input).id);});
-  const pending=localBrowserOperation({operation:"start",args:{projectId:project.id,engine:"pi",conversationId:randomUUID(),appNodeId:node.id}},{kind:"agent"});
-  try {
-    await entered;
-    await assert.rejects(configureBrowserExecutor(null),/running browser|starting browser/i);
-  } finally {
-    release();await pending.catch(()=>{});t.mock.restoreAll();store.close();await closeBrowserRuntime();
-  }
-});
-
-test("executor resolves project aliases before listing sessions or saved login profiles", async () => {
+test("local browser resolves project aliases before listing sessions or saved login profiles", async () => {
   const folder=path.join(os.homedir(),"browser-alias-project");await mkdir(folder,{recursive:true});
   const project=await addProject("Browser alias",folder,{writeInstructions:false});
   const alias=`alias-${randomUUID()}`;await registerProjectAliases(project.id,[alias]);
-  const node=await getClusterNode();applyBrowserConfiguration({executorNodeId:node.id,originNodeId:node.id,updatedAt:new Date().toISOString()});
+  const node=await getClusterNode();
   browserRuntime();const store=new BrowserStore();
   try {
     const session=store.create({projectId:project.id,engine:"pi",conversationId:randomUUID(),appNodeId:node.id});
@@ -43,4 +24,22 @@ test("executor resolves project aliases before listing sessions or saved login p
     const profiles=await localBrowserOperation({operation:"profiles",args:{projectId:alias}},{kind:"agent"}) as {profiles:BrowserProfile[]};
     assert.equal(profiles.profiles[0]?.id,profile.id);
   } finally {store.close();await closeBrowserRuntime();}
+});
+
+test("legacy central-runner history stays on the node holding its browser data", async () => {
+  const folder = path.join(os.homedir(), "browser-legacy-owner");
+  await mkdir(folder, { recursive: true });
+  const project = await addProject("Legacy browser", folder, { writeInstructions: false });
+  const local = await getClusterNode();
+  browserRuntime(); const store = new BrowserStore();
+  try {
+    const record = store.create({ projectId: project.id, engine: "pi", conversationId: randomUUID(), appNodeId: randomUUID() });
+    store.finish(record.id, "interrupted");
+    const fetched = await localBrowserOperation({ operation: "get", args: { id: record.id } }, { kind: "agent" }) as { session: BrowserSessionView };
+    const listed = await localBrowserOperation({ operation: "list", args: { projectId: project.id } }, { kind: "agent" }) as { sessions: BrowserSessionView[] };
+    assert.equal(fetched.session.nodeId, local.id, "viewers must follow the physical owner, not the old app node");
+    assert.equal(listed.sessions[0].nodeId, local.id);
+    assert.equal(fetched.session.appNodeId, record.appNodeId);
+    assert.equal(store.get(record.id).appNodeId, record.appNodeId, "historical provenance stays intact in storage");
+  } finally { store.close(); await closeBrowserRuntime(); }
 });

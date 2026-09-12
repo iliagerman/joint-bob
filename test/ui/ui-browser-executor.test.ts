@@ -1,14 +1,216 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { runInNewContext } from "node:vm";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { chromium, type Page, type WebSocketRoute } from "playwright-core";
 import { seedDevEnvironment, signIn, startDevNode, stopDevNode } from "../dev-nodes.js";
 
+test("Settings lists paired browser machines and saves the independent default", async () => {
+  const source = await readFile("public/app/browser.js", "utf8");
+  const status = { textContent: "" };
+  const check = { disabled: false, addEventListener() {} };
+  const select = { value: "", disabled: false, children: [] as any[], handlers: {} as Record<string, Function>,
+    replaceChildren(...children: any[]) { this.children = children; }, addEventListener(name: string, handler: Function) { this.handlers[name] = handler; } };
+  const requests: { url: string; body: any }[] = [];
+  const state: { activeNodeId: string | null } = { activeNodeId: "owner" };
+  let saveGate: Promise<void> | undefined;
+  let result: any = { config: { executorNodeId: "mac" }, nodes: [
+    { id: "mac", name: "Mac laptop", available: true, reachable: true, runningCount: 2 },
+    { id: "linux", name: "Ubuntu", available: true, reachable: true, runningCount: 0 },
+    { id: "offline", name: "Offline", available: false, reachable: false, reason: "Unreachable", runningCount: 0 },
+  ] };
+  const context = runInNewContext(`${source.replace(/^import .*;\n/gm, "").replace(/export /g, "")}\n({ load: loadBrowserStatus })`, {
+    URLSearchParams,
+    api: async (url: string, options: any = {}) => { requests.push({ url, body: options.body && JSON.parse(options.body) }); if (url === "/api/browser/config") { await saveGate; result.config.executorNodeId = JSON.parse(options.body).executorNodeId; } if (result instanceof Error) throw result; return result; },
+    Option: class { disabled = false; constructor(public label: string, public value: string) {} }, toast() {},
+    document: { querySelector: (selector: string) => selector === "#browserStatus" ? status : selector === "#browserStatusCheck" ? check : select, body: {} },
+    state, elements: { openBrowserButton: check, expandProjectsButton: check, expandChatsButton: check },
+    MutationObserver: class { observe() {} }, window: { addEventListener() {} },
+  });
+  await context.load();
+  assert.equal(requests[0].url, "/api/browser/status");
+  assert.match(status.textContent, /Mac laptop: Ready/);
+  assert.match(status.textContent, /2 running/);
+  assert.equal(select.value, "mac");
+  assert.equal(select.children.find(option => option.value === "linux").disabled, false);
+  assert.equal(select.children.find(option => option.value === "offline").disabled, true);
+  select.value = "linux"; await select.handlers.change({ currentTarget: select });
+  assert.deepEqual(requests.find(request => request.url === "/api/browser/config")!.body, { executorNodeId: "linux" });
+  let release!: () => void;
+  saveGate = new Promise(resolve => { release = resolve; });
+  select.value = "mac";
+  const saving = select.handlers.change({ currentTarget: select });
+  try {
+    const count = requests.length;
+    await context.load();
+    assert.equal(requests.length, count, "Tab re-entry must not load stale Settings during save");
+    assert.equal(select.disabled, true);
+    assert.equal(check.disabled, true);
+    assert.equal(select.value, "mac");
+  } finally { release(); await saving; }
+  assert.equal(select.value, "mac");
+  assert.equal(select.disabled, false);
+  state.activeNodeId = null;
+  await context.load();
+  assert.equal(requests.at(-1)!.url, "/api/browser/status");
+  result = new Error("Node offline");
+  await context.load();
+  assert.match(status.textContent, /Node offline/);
+  assert.equal(check.disabled, false);
+});
+
+test("local browser identity closes viewer when owner node changes", async () => {
+  const source = await readFile("public/app/browser.js", "utf8");
+  let disposed = 0;
+  const button = { addEventListener() {}, setAttribute() {} };
+  const state = { activeProjectId: "project", engine: "pi", activeConversationId: "conversation", activeNodeId: "one" };
+  const context = runInNewContext(`${source.replace(/^import .*;\n/gm, "").replace(/export /g, "")}\nviewer = { dispose() { recordDispose(); } }; viewerKey = identityKey(browserIdentity()); ({ syncBrowserButton })`, {
+    state, recordDispose: () => disposed++, elements: { openBrowserButton: button, expandProjectsButton: button, expandChatsButton: button },
+    document: { querySelector: () => button, body: { classList: { remove() {} } } },
+    MutationObserver: class { observe() {} }, window: { addEventListener() {} },
+  });
+  context.syncBrowserButton(); assert.equal(disposed, 0);
+  state.activeNodeId = "two";
+  context.syncBrowserButton(); assert.equal(disposed, 1);
+});
+
+test("local browser viewer routes HTTP, downloads and WebSocket to owner", async () => {
+  const source = await readFile("public/app/browser-viewer.js", "utf8");
+  const nodes = new Map<string, any>();
+  function element() {
+    return { dataset: {}, value: "", hidden: false, children: [] as any[], handlers: {} as Record<string, Function>,
+      classList: { add() {} }, setAttribute() {}, querySelectorAll: () => [],
+      append(...children: any[]) { this.children.push(...children); },
+      replaceChildren(...children: any[]) { this.children = children; },
+      addEventListener(name: string, handler: Function) { this.handlers[name] = handler; },
+    };
+  }
+  const root = { ...element(), querySelector(selector: string) { if (!nodes.has(selector)) nodes.set(selector, element()); return nodes.get(selector); } };
+  const get = (name: string) => root.querySelector(`[data-testid="browser-${name}"]`);
+  const requests: URL[] = [], sockets: any[] = [];
+  const session = { id: "session", state: "running", owner: "human", canControl: true, projectId: "project", engine: "pi", conversationId: "conversation", appNodeId: "owner node", nodeId: "browser node", activePageId: "page", tabs: [], downloads: [{ id: "download", name: "file.txt", ready: true }] };
+  class Socket {
+    handlers: Record<string, Function> = {};
+    constructor(public url: URL) { sockets.push(this); }
+    addEventListener(name: string, handler: Function) { this.handlers[name] = handler; }
+    close() {}
+  }
+  const { createBrowserViewer } = runInNewContext(`${source.replace(/export /g, "")}\n({ createBrowserViewer })`, {
+    URL, URLSearchParams, location: { href: "https://app.example/browser.html", protocol: "https:" },
+    document: { querySelector: () => null, documentElement: { dataset: {} }, createElement: element, createRange: () => ({ createContextualFragment: () => ({}) }) },
+    Option: class { constructor(public label: string, public value: string) {} }, WebSocket: Socket,
+    setTimeout: () => 1, clearTimeout() {},
+  });
+  const identity = { projectId: "project", engine: "pi", conversationId: "conversation", appNodeId: "owner node" };
+  const viewer = createBrowserViewer(root, { identity, confirm: async () => true, api: async (path: string) => {
+    const url = new URL(path, "https://app.example"); requests.push(url);
+    if (url.pathname === "/api/browser/status") return { config: { executorNodeId: session.nodeId }, nodes: [{ id: session.nodeId, name: "Mac", reachable: true, available: true }] };
+    if (url.pathname === "/api/browser/preferences") return { nodeId: null, effectiveNodeId: session.nodeId };
+    if (url.pathname === "/api/browser/profiles") return { profiles: [{ id: "profile", label: "Login" }] };
+    if (url.pathname === "/api/browser/sessions") return { sessions: [session], session };
+    return { session };
+  } });
+  const settle = () => new Promise(resolve => setImmediate(resolve));
+  await settle();
+  assert.equal(requests.length, 4);
+  assert.equal(sockets[0].url.searchParams.get("nodeId"), session.nodeId);
+  assert.equal(sockets[0].url.searchParams.get("mode"), "browser");
+  const link = new URL(get("open-tab").href, "https://app.example");
+  assert.equal(link.searchParams.get("appNodeId"), identity.appNodeId);
+  const download = new URL(get("downloads-list").children[0].children[0].href, "https://app.example");
+  assert.equal(download.searchParams.get("nodeId"), session.nodeId);
+  sockets[0].handlers.message({ data: JSON.stringify({ type: "browserState", session }) });
+  await get("resume-agent").handlers.click(); await settle();
+  await get("profiles-list").children[0].children[1].handlers.click(); await settle();
+  await get("reconnect").handlers.click(); await settle();
+  session.state = "closed";
+  sockets.at(-1).handlers.message({ data: JSON.stringify({ type: "browserState", session }) });
+  await get("start").handlers.click(); await settle();
+  assert.ok(requests.some(url => url.pathname.endsWith("/command")));
+  assert.ok(requests.some(url => url.pathname.endsWith("/profiles/profile")));
+  assert.ok(requests.some(url => url.pathname.endsWith("/sessions/session")));
+  for (const url of requests.filter(url => /\/sessions\/|\/profiles/.test(url.pathname))) assert.equal(url.searchParams.get("nodeId"), session.nodeId, url.href);
+  viewer.dispose();
+});
+
+async function standaloneViewer(search: string, appNodeId: string) {
+  const source = await readFile("public/app/browser-viewer.js", "utf8");
+  const nodes = new Map<string, any>(), requests: { url: URL; options: any }[] = [], sockets: any[] = [];
+  function element() {
+    return { dataset: {}, value: "", hidden: false, children: [] as any[], handlers: {} as Record<string, Function>,
+      classList: { add() {} }, setAttribute() {}, querySelectorAll: () => [],
+      append(...children: any[]) { this.children.push(...children); },
+      replaceChildren(...children: any[]) { this.children = children; },
+      addEventListener(name: string, handler: Function) { this.handlers[name] = handler; },
+    };
+  }
+  const root = { ...element(), querySelector(selector: string) { if (!nodes.has(selector)) nodes.set(selector, element()); return nodes.get(selector); } };
+  const get = (name: string) => root.querySelector(`[data-testid="browser-${name}"]`);
+  const session = { id: "session", projectId: "project", engine: "pi", conversationId: "conversation", appNodeId, nodeId: "browser-node",
+    state: "running", owner: "agent", activePageId: "page", tabs: [], downloads: [{ id: "download", name: "file.txt", ready: true }] };
+  const windowHandlers: Record<string, Function> = {};
+  class Socket {
+    handlers: Record<string, Function> = {};
+    constructor(public url: URL) { sockets.push(this); }
+    addEventListener(name: string, handler: Function) { this.handlers[name] = handler; }
+    close() {}
+  }
+  runInNewContext(source.replace(/export /g, ""), {
+    URL, URLSearchParams, location: new URL(`https://app.example/browser.html?${search}`),
+    document: { querySelector: (selector: string) => selector === "[data-browser-standalone]" ? root : null,
+      documentElement: { dataset: {} }, createElement: element, createRange: () => ({ createContextualFragment: () => ({}) }) },
+    window: { addEventListener(name: string, handler: Function) { windowHandlers[name] = handler; } },
+    Option: class { constructor(public label: string, public value: string) {} }, WebSocket: Socket,
+    setTimeout: () => 1, clearTimeout() {},
+    fetch: async (path: string, options: any) => {
+      const url = new URL(path, "https://app.example"); requests.push({ url, options });
+      const body = url.pathname === "/api/auth/status" ? { authenticated: true, csrfToken: "csrf" }
+        : url.pathname === "/api/browser/status" ? { config: { executorNodeId: session.nodeId }, nodes: [{ id: session.nodeId, name: "Ubuntu", available: true, reachable: true }] }
+        : url.pathname === "/api/browser/preferences" ? { nodeId: null, effectiveNodeId: session.nodeId }
+        : url.pathname === "/api/browser/profiles" ? { profiles: [] } : { session: { ...session }, sessions: [{ ...session }] };
+      return { ok: true, status: 200, json: async () => body };
+    },
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  return { get, session, requests, sockets, dispose: () => windowHandlers.pagehide() };
+}
+
+for (const nodeId of [null, "22222222-2222-4222-8222-222222222222"]) {
+  test(`local browser standalone ${nodeId ? "explicit remote nodeId" : "session-ID-only"} routes and restarts`, async () => {
+    const appNodeId = nodeId || "11111111-1111-4111-8111-111111111111";
+    const params = new URLSearchParams(nodeId ? { browserSessionId: "session", projectId: "project", engine: "pi", conversationId: "conversation", appNodeId } : { browserSessionId: "session" });
+    if (nodeId) params.set("nodeId", nodeId);
+    const f = await standaloneViewer(params.toString(), appNodeId);
+    try {
+      const first = f.requests[1].url;
+      assert.equal(first.pathname, "/api/browser/sessions/session");
+      assert.equal(first.searchParams.get("nodeId"), nodeId, "Legacy exact lookup resolves physical owner before scoped discovery");
+      assert.equal(f.sockets[0].url.searchParams.get("nodeId"), f.session.nodeId);
+      const download = new URL(f.get("downloads-list").children[0].children[0].href, "https://app.example");
+      assert.equal(download.searchParams.get("nodeId"), f.session.nodeId);
+      const link = new URL(f.get("open-tab").href, "https://app.example");
+      assert.equal(link.searchParams.get("appNodeId"), appNodeId);
+      assert.equal(link.searchParams.get("nodeId"), f.session.nodeId, "physical owner stays separate from appNodeId");
+      f.session.state = "closed";
+      f.sockets[0].handlers.message({ data: JSON.stringify({ type: "browserState", session: f.session }) });
+      assert.equal(f.get("start").disabled, false, "loaded metadata must enable restart without conversation URL parameters");
+      f.session.state = "running";
+      await f.get("start").handlers.click();
+      const start = f.requests.find(request => request.options.method === "POST")!;
+      assert.equal(start.url.pathname, "/api/browser/sessions");
+      assert.deepEqual(JSON.parse(start.options.body), { projectId: "project", engine: "pi", conversationId: "conversation", appNodeId });
+      assert.equal(start.options.headers["X-CSRF-Token"], "csrf");
+      assert.equal(start.url.searchParams.has("nodeId"), false, "inherited starts resolve server-side");
+      assert.equal(f.sockets.at(-1).url.searchParams.get("nodeId"), f.session.nodeId);
+    } finally { f.dispose(); }
+  });
+}
+
 // Only the new browser API is stubbed. Authentication, app state, conversation
 // selection and rendering run against the real isolated dev node.
-test("browser executor UI", { timeout: 180_000 }, async (t) => {
+test("browser viewer UI", { timeout: 180_000 }, async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-ui-"));
   const environment = await seedDevEnvironment(root, 1);
   const node = environment.nodes[0];
@@ -26,22 +228,25 @@ test("browser executor UI", { timeout: 180_000 }, async (t) => {
     page.on("pageerror", (error) => { pageErrors.push(error.message); console.error("browser-ui page error:", error.message); });
     page.on("console", (message) => { if (message.type() === "error") console.error("browser-ui console:", message.text()); });
     page.on("requestfailed", (request) => console.error("browser-ui request failed:", request.url(), request.failure()));
-    const commands: any[] = [], starts: any[] = [], saves: any[] = [], queries: URL[] = [];
+    const commands: any[] = [], starts: any[] = [], queries: URL[] = [], requests: URL[] = [];
+    let defaultNodeId = node.nodeId, conversationNodeId: string | null = null;
+    let profileGate: Promise<void> | undefined, configGate: Promise<void> | undefined;
     const sessions: any[] = [];
-    let profiles = [{ id: profileId, projectId: "unused", label: "Work login" }];
+    let profiles = [{ id: profileId, projectId: "unused", label: "Work login", persistent: true, nodeId: node.nodeId }];
     let socket: WebSocketRoute | undefined;
+    let viewedSessionId: string;
     let connections = 0, unavailable = false;
     const frame = await page.evaluate(() => {
       const canvas = document.createElement("canvas"); canvas.width = 1200; canvas.height = 800;
       const ctx = canvas.getContext("2d")!; ctx.fillStyle = "#eee"; ctx.fillRect(0, 0, 1200, 800);
-      ctx.fillStyle = "#17191b"; ctx.font = "32px sans-serif"; ctx.fillText("Remote Ubuntu browser", 80, 120);
+      ctx.fillStyle = "#17191b"; ctx.font = "32px sans-serif"; ctx.fillText("Owner node browser", 80, 120);
       return canvas.toDataURL("image/jpeg").split(",")[1];
     });
-    function sendState() { if (socket && sessions.length) socket.send(JSON.stringify({ type: "browserState", session: sessions.at(-1) })); }
+    function sendState() { const session = sessions.find(item => item.id === viewedSessionId); if (socket && session) socket.send(JSON.stringify({ type: "browserState", session })); }
     function sendFrame(id = pageId, data = frame) { socket?.send(JSON.stringify({ type: "browserFrame", pageId: id, data, width: 1200, height: 800 })); }
-    function apply(command: any) {
+    function apply(command: any, id = viewedSessionId) {
       commands.push(command);
-      const session = sessions.at(-1);
+      const session = sessions.find(item => item.id === id);
       if (command.action === "takeControl") session.owner = "human";
       if (command.action === "resumeAgent") session.owner = "agent";
       if (command.action === "close") session.state = "closed";
@@ -49,43 +254,55 @@ test("browser executor UI", { timeout: 180_000 }, async (t) => {
       if (command.action === "upload") session.fileChooser = false;
       if (command.action === "newTab") { session.tabs.push({ id: profileId, url: "about:blank", title: "Popup" }); session.activePageId = profileId; }
       if (command.action === "selectTab") session.activePageId = command.pageId;
-      if (command.action === "saveProfile") profiles.push({ id: executorId, projectId: session.projectId, label: command.label });
+      if (command.action === "saveProfile") { profiles.find(profile => profile.id === session.profileId)!.label = command.label; session.profileLabel = command.label; }
       sendState();
       return session;
     }
     await page.route("**/api/browser/**", async (route) => {
       const request = route.request(), url = new URL(request.url());
+      requests.push(url);
+      if (/\/sessions\//.test(url.pathname) && (url.searchParams.has("nodeId") || request.method() !== "GET")) assert.equal(url.searchParams.get("nodeId"), sessions.find(session => session.id === url.pathname.split("/")[4]).nodeId, url.href);
       const method = request.method();
       const body = request.postDataJSON();
       let result: any;
       if (url.pathname === "/api/browser/status") {
-        if (unavailable) return route.fulfill({ status: 503, json: { error: "Executor is offline" } });
-        result = { config: { executorNodeId: null }, nodes: [
-          { id: executorId, name: "Ubuntu worker", supported: true, available: true, executable: "/usr/bin/chromium", reason: null },
-          { id: profileId, name: "Mac laptop", supported: false, available: false, executable: null, reason: "Ubuntu required" },
-          { id: pageId, name: "Offline Ubuntu", supported: true, available: false, executable: null, reason: "Node offline" },
-        ] };
-      } else if (url.pathname === "/api/browser/config") {
-        saves.push({ body, csrf: request.headers()["x-csrf-token"] }); result = { config: body };
-      } else if (url.pathname === "/api/browser/profiles") result = { profiles };
+        if (unavailable) return route.fulfill({ status: 503, json: { error: "Node offline" } });
+        result = { config: { executorNodeId: defaultNodeId }, nodes: [{ id: node.nodeId, name: "Mac laptop", available: true, reachable: true, runningCount: sessions.length }, { id: executorId, name: "Ubuntu", available: true, reachable: true, runningCount: 0 }] };
+      } else if (url.pathname === "/api/browser/preferences") {
+        if (method === "PUT") conversationNodeId = body.nodeId;
+        result = { nodeId: conversationNodeId, effectiveNodeId: conversationNodeId || defaultNodeId };
+      } else if (url.pathname === "/api/browser/config") { if (configGate) await configGate; defaultNodeId = body.executorNodeId; result = { executorNodeId: defaultNodeId }; }
+      else if (url.pathname === "/api/browser/profiles") {
+        if (profileGate) await profileGate;
+        result = { profiles: profiles.filter(profile => profile.nodeId === url.searchParams.get("nodeId")) };
+      }
       else if (url.pathname.startsWith("/api/browser/profiles/") && method === "DELETE") {
-        profiles = profiles.filter((profile) => profile.id !== url.pathname.split("/").at(-1)); result = {};
+        const id = url.pathname.split("/").at(-1);
+        if (sessions.some(session => session.profileId === id && session.state === "running")) return route.fulfill({ status: 409, json: { error: "Profile is in use" } });
+        profiles = profiles.filter((profile) => profile.id !== id); result = {};
       } else if (url.pathname === "/api/browser/sessions" && method === "GET") {
         queries.push(url); result = { sessions: sessions.filter((session) => session.conversationId === url.searchParams.get("conversationId")) };
       } else if (url.pathname === "/api/browser/sessions" && method === "POST") {
         starts.push(body);
-        const session = { ...body, id: `browser-${sessions.length + 1}`, state: "running", owner: "agent", activePageId: pageId,
+        const ownerNodeId = url.searchParams.get("nodeId") || conversationNodeId || defaultNodeId;
+        const profile = body.profileId ? profiles.find(profile => profile.id === body.profileId)!
+          : { id: `profile-${sessions.length + 1}`, projectId: body.projectId, label: body.profileName || "Default", persistent: true, nodeId: ownerNodeId };
+        if (!body.profileId) profiles.push(profile);
+        const session = { ...body, nodeId: ownerNodeId, profileId: profile.id, profileLabel: profile.label, restoreOnRestart: true, id: `browser-${sessions.length + 1}`, state: "running", owner: "agent", activePageId: pageId,
           tabs: [{ id: pageId, title: "Example", url: "https://example.com" }], downloads: [], fileChooser: false, dialog: null };
         sessions.push(session); result = { session };
       } else if (url.pathname.endsWith("/command")) {
-        if (body.action === "close" && sessions.at(-1).owner !== "human") return route.fulfill({ status: 409, json: { error: "Take control before browser input" } });
-        result = { result: {}, session: apply(body) };
+        const id = url.pathname.split("/").at(-2);
+        if (body.action === "close" && sessions.find(session => session.id === id).owner !== "human") return route.fulfill({ status: 409, json: { error: "Take control before browser input" } });
+        result = { result: {}, session: apply(body, id) };
       }
       else result = { session: sessions.find((session) => session.id === url.pathname.split("/").at(-1)) };
       return route.fulfill({ json: result });
     });
     await page.routeWebSocket(/\/ws\?mode=browser/, (ws) => {
-      socket = ws; connections++; sendState(); sendFrame();
+      const params = new URL(ws.url()).searchParams;
+      assert.equal(params.get("nodeId"), sessions.find(session => session.id === params.get("browserSessionId")).nodeId);
+      socket = ws; viewedSessionId = new URL(ws.url()).searchParams.get("browserSessionId")!; connections++; sendState(); sendFrame();
       ws.onMessage((message) => apply(JSON.parse(String(message)).command));
     });
     const login = await signIn(environment, node);
@@ -93,7 +310,7 @@ test("browser executor UI", { timeout: 180_000 }, async (t) => {
     await page.goto(node.url);
     try { await page.locator("#projectList").getByText("Internal Assistant", { exact: true }).click(); }
     catch (error) { console.error("browser-ui boot:", await page.locator("body").innerText()); throw error; }
-    return { page, commands, starts, saves, sessions, queries, sendState, sendFrame, disconnect: () => socket?.close(), connections: () => connections, offline: () => { unavailable = true; } };
+    return { page, commands, starts, sessions, queries, requests, sendState, sendFrame, delayConfig: (gate: Promise<void>) => { configGate = gate; }, delayProfiles: (gate: Promise<void>) => { profileGate = gate; }, disconnect: () => socket?.close(), connections: () => connections, offline: () => { unavailable = true; } };
   }
   async function openConversation(page: Page, title = "Short one") {
     await page.locator("#sessionList .list-row").filter({ has: page.locator("strong", { hasText: title }) }).first().click();
@@ -103,29 +320,32 @@ test("browser executor UI", { timeout: 180_000 }, async (t) => {
     await page.getByTestId("chat-open-browser-button").click();
   }
   try {
-    await t.test("Ubuntu-only executor selection saves with CSRF and recovers from offline status", async () => {
+    await t.test("Settings shows Mac and Ubuntu choices and reports offline errors", async () => {
       const f = await setup();
       try {
         await f.page.getByTestId("settings-open-button").click();
         await f.page.getByTestId("settings-tab-cluster").click();
-        const select = f.page.getByTestId("browser-executor-select");
-        assert.equal(await select.count(), 1, "Cluster settings need a browser executor selector");
-        await select.locator("option").filter({ hasText: "Ubuntu worker" }).waitFor({ state: "attached" });
-        assert.equal(await select.locator(`option[value="${profileId}"]`).evaluate((option: HTMLOptionElement) => option.disabled), true);
-        await select.selectOption(executorId);
-        await f.page.getByTestId("browser-executor-save").click();
-        await f.page.getByTestId("browser-executor-status").filter({ hasText: "saved" }).waitFor();
-        assert.equal(f.saves[0].body.executorNodeId, executorId);
-        assert.ok(f.saves[0].csrf, "settings write must carry login CSRF token");
-        await select.selectOption("");
-        await Promise.all([
-          f.page.waitForResponse((response) => response.url().endsWith("/api/browser/config") && response.request().postDataJSON().executorNodeId === null),
-          f.page.getByTestId("browser-executor-save").click(),
-        ]);
-        assert.equal(f.saves.at(-1).body.executorNodeId, null);
+        await f.page.getByTestId("browser-status").filter({ hasText: "Mac laptop: Ready" }).waitFor();
+        const select = f.page.getByTestId("settings-browser-executor");
+        assert.deepEqual(await select.locator("option").allTextContents(), ["Not configured", "Mac laptop", "Ubuntu"]);
+        let release!: () => void;
+        f.delayConfig(new Promise(resolve => { release = resolve; }));
+        try {
+          const saving = f.page.waitForRequest(request => new URL(request.url()).pathname === "/api/browser/config");
+          await select.selectOption(executorId); await saving;
+          const statusRequests = f.requests.filter(url => url.pathname === "/api/browser/status").length;
+          await f.page.getByTestId("settings-tab-account").click();
+          await f.page.getByTestId("settings-tab-cluster").click();
+          assert.equal(await select.isDisabled(), true, "Tab re-entry must retain save lock");
+          assert.equal(await select.inputValue(), executorId);
+          assert.equal(f.requests.filter(url => url.pathname === "/api/browser/status").length, statusRequests);
+        } finally { release(); }
+        await f.page.getByText("Default browser machine saved. Existing accounts are unchanged.", { exact: true }).waitFor();
+        await f.page.waitForFunction(() => !(document.querySelector("#settingsBrowserExecutor") as HTMLSelectElement).disabled);
+        assert.equal(await select.inputValue(), executorId);
         f.offline();
-        await f.page.getByTestId("browser-executor-check").click();
-        await f.page.getByTestId("browser-executor-status").filter({ hasText: "Executor is offline" }).waitFor();
+        await f.page.getByTestId("browser-status-check").click();
+        await f.page.getByTestId("browser-status").filter({ hasText: "Node offline" }).waitFor();
         assert.equal(await f.page.locator("#settingsDialog").isVisible(), true);
       } finally { await f.page.close(); }
     });
@@ -179,13 +399,16 @@ test("browser executor UI", { timeout: 180_000 }, async (t) => {
         await f.page.getByTestId("browser-upload").setInputFiles({ name: "sample.txt", mimeType: "text/plain", buffer: Buffer.from("hello") });
         await f.page.getByTestId("browser-upload-status").filter({ hasText: "Uploaded" }).waitFor();
         assert.ok(f.commands.some((c) => c.action === "upload" && c.files[0].data === "aGVsbG8=" && c.expectedPageId === pageId && c.requestId === profileId));
-        assert.match((await f.page.getByTestId("browser-download").getAttribute("href"))!, /browser-1\/downloads\/download-1$/);
+        const download = new URL((await f.page.getByTestId("browser-download").getAttribute("href"))!, node.url);
+        assert.match(download.pathname, /browser-1\/downloads\/download-1$/);
+        assert.equal(download.searchParams.get("nodeId"), identity.appNodeId);
         await f.page.getByTestId("browser-profile-label").fill("Saved login");
         await f.page.getByTestId("browser-save-profile").click();
-        await f.page.getByTestId("browser-profiles-list").getByText("Saved login", { exact: true }).waitFor();
+        await f.page.getByTestId("browser-profiles-list").getByText("Saved login · Persistent", { exact: false }).waitFor();
         await f.page.getByTestId("browser-delete-profile").last().click();
         await f.page.getByTestId("confirm-accept-button").click();
-        await f.page.getByTestId("browser-profiles-list").getByText("Saved login", { exact: true }).waitFor({ state: "detached" });
+        await f.page.getByTestId("browser-error").filter({ hasText: "Profile is in use" }).waitFor();
+        assert.equal(await f.page.getByTestId("browser-profiles-list").getByText("Saved login · Persistent", { exact: false }).count(), 1);
         await f.page.getByTestId("browser-close-viewer").click();
         await f.page.getByTestId("confirm-accept-button").click();
         assert.equal(f.commands.filter((c) => c.action === "close").length, 0, "Close viewer must leave session running");
@@ -202,6 +425,9 @@ test("browser executor UI", { timeout: 180_000 }, async (t) => {
         await f.page.getByTestId("confirm-accept-button").click();
         await f.page.getByTestId("browser-session-status").filter({ hasText: "closed" }).waitFor();
         assert.equal(f.commands.filter((c) => c.action === "close").length, 1);
+        await f.page.getByTestId("browser-delete-profile").last().click();
+        await f.page.getByTestId("confirm-accept-button").click();
+        await f.page.getByTestId("browser-profiles-list").getByText("Saved login · Persistent", { exact: false }).waitFor({ state: "detached" });
         await f.page.getByTestId("browser-close-viewer").click();
         await openConversation(f.page, "[Claude] Makor deployment information");
         await f.page.getByTestId("browser-start").click();
@@ -211,6 +437,77 @@ test("browser executor UI", { timeout: 180_000 }, async (t) => {
         assert.equal(f.starts[1].engine, "claude");
         assert.equal(f.queries.at(-1)!.searchParams.get("conversationId"), f.starts[1].conversationId);
       } finally { await f.page.close(); }
+    });
+    await t.test("two accounts stay running while viewer switches and End closes only selected account", async () => {
+      const f = await setup();
+      try {
+        await openConversation(f.page);
+        await f.page.getByTestId("browser-profile-select").selectOption(profileId);
+        await f.page.getByTestId("browser-start").click();
+        await f.page.getByTestId("browser-screen").waitFor();
+        await f.page.getByTestId("browser-profile-select").selectOption("new");
+        await f.page.getByTestId("browser-profile-name").fill("Personal");
+        await f.page.getByTestId("browser-start").click();
+        await f.page.getByTestId("browser-session-status").filter({ hasText: "Personal" }).waitFor();
+        assert.equal(f.starts[1].profileName, "Personal");
+        assert.equal(f.starts[1].conversationId, f.starts[0].conversationId);
+        assert.deepEqual(f.sessions.map(session => session.state), ["running", "running"]);
+        const before = f.commands.length;
+        await f.page.getByTestId("browser-session-select").selectOption("browser-1");
+        await f.page.getByTestId("browser-session-status").filter({ hasText: "Work login" }).waitFor();
+        assert.equal(f.commands.length, before, "viewer selection sends no agent command");
+        assert.match(await f.page.getByTestId("browser-session-status").innerText(), /automatically.*restart/);
+        await f.page.getByTestId("browser-end").click();
+        await f.page.getByTestId("confirm-accept-button").click();
+        await f.page.getByTestId("browser-session-status").filter({ hasText: "closed" }).waitFor();
+        assert.deepEqual(f.sessions.map(session => session.state), ["closed", "running"]);
+        await f.page.getByTestId("browser-session-select").selectOption("browser-2");
+        await f.page.getByTestId("browser-screen").waitFor();
+        await f.page.setViewportSize({ width: 390, height: 844 });
+        await f.page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        assert.ok(await f.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      } finally { await f.page.close(); }
+    });
+    await t.test("machine changes fence profile loads and leave accounts pinned to their owners", async () => {
+      const f = await setup();
+      let release!: () => void;
+      try {
+        await openConversation(f.page);
+        await f.page.getByTestId("browser-profile-select").selectOption(profileId);
+        await f.page.getByTestId("browser-start").click();
+        await f.page.getByTestId("browser-screen").waitFor();
+        assert.match(await f.page.getByTestId("browser-session-status").innerText(), /Mac laptop/);
+        f.delayProfiles(new Promise(resolve => { release = resolve; }));
+        await f.page.getByTestId("browser-start-node").selectOption(executorId);
+        await f.page.waitForFunction(() => (document.querySelector('[data-testid="browser-start-node"]') as HTMLSelectElement).disabled);
+        assert.equal(await f.page.getByTestId("browser-conversation-node").isDisabled(), true);
+        assert.equal(await f.page.getByTestId("browser-start").isDisabled(), true);
+        assert.equal(await f.page.getByTestId("browser-profile-select").inputValue(), "", "Old machine's profile selection must be cleared before loading");
+        release();
+        await f.page.waitForFunction(() => !(document.querySelector('[data-testid="browser-start-node"]') as HTMLSelectElement).disabled);
+        assert.deepEqual(await f.page.getByTestId("browser-profile-select").locator("option").allTextContents(), ["Conversation default", "New named profile…"]);
+        await f.page.getByTestId("browser-profile-select").selectOption("new");
+        await f.page.getByTestId("browser-profile-name").fill("Ubuntu account");
+        await f.page.getByTestId("browser-start").click();
+        await f.page.getByTestId("browser-session-status").filter({ hasText: "Ubuntu account" }).waitFor();
+        assert.deepEqual(f.sessions.map(session => session.nodeId), [node.nodeId, executorId]);
+        await f.page.getByTestId("browser-conversation-node").selectOption(executorId);
+        await f.page.getByTestId("browser-start-node").selectOption("");
+        assert.match(await f.page.getByTestId("browser-start-node").locator("option").first().innerText(), /Use conversation setting · Ubuntu/);
+        await f.page.getByTestId("browser-session-select").selectOption("browser-1");
+        await f.page.getByTestId("browser-session-status").filter({ hasText: "Work login" }).waitFor();
+        assert.match(await f.page.getByTestId("browser-session-status").innerText(), /Mac laptop/);
+        assert.equal(new URL((await f.page.getByTestId("browser-open-tab").getAttribute("href"))!, node.url).searchParams.get("nodeId"), node.nodeId);
+        await f.page.getByTestId("browser-end").click(); await f.page.getByTestId("confirm-accept-button").click();
+        await f.page.getByTestId("browser-session-status").filter({ hasText: "closed" }).waitFor();
+        assert.deepEqual(f.sessions.map(session => session.state), ["closed", "running"]);
+        assert.ok(f.requests.filter(url => url.pathname.endsWith("/command")).every(url => url.searchParams.get("nodeId") === node.nodeId));
+        await f.page.setViewportSize({ width: 390, height: 844 });
+        await f.page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        assert.ok(await f.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Machine selectors must fit mobile viewer");
+        assert.ok((await f.page.getByTestId("browser-start-node").boundingBox())!.width > 300, "Inherited machine labels need a full mobile row, not a clipped half-width select");
+        await f.page.screenshot({ path: path.resolve("tmp/machine-ui-mobile.png") });
+      } finally { release?.(); await f.page.close(); }
     });
     await t.test("dialog response uses the displayed request page, not the active image", async () => {
       const f = await setup();
@@ -236,6 +533,7 @@ test("browser executor UI", { timeout: 180_000 }, async (t) => {
         f.sessions[0].fileChooserRequest = { id: executorId, pageId };
         f.sendState();
         await f.page.getByTestId("browser-upload").waitFor();
+        await f.page.waitForFunction(() => !(document.querySelector('[data-testid="browser-upload"]') as HTMLInputElement).disabled);
         await f.page.evaluate(() => {
           const read = FileReader.prototype.readAsDataURL;
           FileReader.prototype.readAsDataURL = function(file) { (window as any).finishFileRead = () => read.call(this, file); };
@@ -280,6 +578,7 @@ test("browser executor UI", { timeout: 180_000 }, async (t) => {
         f.sessions[0].fileChooser = true;
         f.sessions[0].fileChooserRequest = { id: executorId, pageId }; f.sendState();
         await f.page.getByTestId("browser-upload").waitFor();
+        await f.page.waitForFunction(() => !(document.querySelector('[data-testid="browser-upload"]') as HTMLInputElement).disabled);
         await f.page.evaluate(() => { FileReader.prototype.readAsDataURL = function() { (window as any).readingFile = true; }; });
         await f.page.getByTestId("browser-upload").setInputFiles({ name: "private.txt", mimeType: "text/plain", buffer: Buffer.from("private bytes") });
         await f.page.waitForFunction(() => (window as any).readingFile);
@@ -298,8 +597,8 @@ test("browser executor UI", { timeout: 180_000 }, async (t) => {
       const f = await setup();
       try {
         const projectId = node.projects.find((project) => project.name === "Internal Assistant")!.id;
-        f.sessions.push({ id: "browser-dedicated", projectId, conversationId: "conversation-dedicated", engine: "pi", appNodeId: node.nodeId, state: "running", owner: "agent", activePageId: pageId, tabs: [{ id: pageId, title: "Example", url: "https://example.com" }], dialog: null, fileChooser: false, downloads: [] });
-        await f.page.goto(`${node.url}/browser.html?${new URLSearchParams({ projectId, engine: "pi", conversationId: "conversation-dedicated", appNodeId: node.nodeId, browserSessionId: "browser-dedicated", theme: "dark" })}`);
+        f.sessions.push({ id: "browser-dedicated", projectId, conversationId: "conversation-dedicated", engine: "pi", appNodeId: node.nodeId, nodeId: node.nodeId, state: "running", owner: "agent", activePageId: pageId, tabs: [{ id: pageId, title: "Example", url: "https://example.com" }], dialog: null, fileChooser: false, downloads: [] });
+        await f.page.goto(`${node.url}/browser.html?${new URLSearchParams({ browserSessionId: "browser-dedicated", theme: "dark" })}`);
         await f.page.getByTestId("browser-screen").waitFor({ timeout: 5000 });
         assert.equal(await f.page.locator("#messages").count(), 0, "browser-only page must not boot conversation UI");
         assert.equal(await f.page.locator("html").getAttribute("data-theme"), "dark");

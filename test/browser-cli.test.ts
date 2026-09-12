@@ -75,6 +75,69 @@ test("CLI maps explicit start and browser commands without caller-selected ident
   assert.deepEqual(f.requests.at(-1), { operation: "status" });
 });
 
+test("CLI binds each account operation to its explicit profile", async (t) => {
+  const f = await fixture(t);
+  const cases: Array<[string[], unknown]> = [
+    [["start", "https://web.whatsapp.com", "--name", "WhatsApp personal"], { operation: "start", url: "https://web.whatsapp.com", profileName: "WhatsApp personal" }],
+    [["click", "#message", "--profile", "work"], { operation: "command", profileId: "work", command: { action: "clickElement", selector: "#message" } }],
+    [["evaluate", "--profile", "personal", "document.title"], { operation: "command", profileId: "personal", command: { action: "evaluate", expression: "document.title" } }],
+    [["close", "--profile", "work"], { operation: "command", profileId: "work", command: { action: "close" } }],
+    [["fill", "--profile", "work", "--", "#text", "--profile"], { operation: "command", profileId: "work", command: { action: "fill", selector: "#text", text: "--profile" } }],
+  ];
+  for (const [args, expected] of cases) {
+    const result = await f.run(args);
+    assert.equal(result.code, 0, result.stderr);
+    assert.deepEqual(f.requests.at(-1), expected);
+  }
+  const personal = { ...session, id: "personal-session", profileId: "personal" };
+  const work = { ...session, id: "work-session", profileId: "work", tabs: [{ id: "page", url: "https://work.example", title: "Work" }] };
+  f.respond(body => body.operation === "status" ? { body: { sessions: [personal, work] } } : { body: { result: { ok: true } } });
+  assert.notEqual((await f.run(["tabs"])).code, 0, "Never guess an account when several are running");
+  const tabs = await f.run(["tabs", "--profile", "work"]);
+  assert.equal(tabs.code, 0, tabs.stderr);
+  assert.deepEqual(JSON.parse(tabs.stdout).tabs, work.tabs);
+  const filled = await f.run(["fill-secret", "#password", "FIXTURE_PASSWORD", "--origin", "https://login.example", "--profile", "personal"]);
+  assert.equal(filled.code, 0, filled.stderr);
+  assert.equal(f.requests.at(-1)!.profileId, "personal");
+  const count = f.requests.length;
+  for (const args of [["start", "--name", "New", "--profile", "work"], ["start", "--name", " "], ["click", "#x", "--profile"], ["start", "--name", "x".repeat(81)]]) {
+    assert.notEqual((await f.run(args)).code, 0);
+  }
+  assert.equal(f.requests.length, count, "Invalid profile options must fail before a request");
+});
+
+test("CLI refuses to infer an account from incomplete cross-node discovery", async t => {
+  const f = await fixture(t);
+  f.respond(body => body.operation === "status" ? { body: {
+    sessions: [{ ...session, profileId: "personal" }],
+    unavailableNodes: [{ nodeId: "offline-node", reason: "Browser node is unreachable" }],
+  } } : { body: { result: { ok: true } } });
+  for (const args of [["tabs"], ["fill-secret", "#password", "FIXTURE_PASSWORD", "--origin", "https://login.example"]]) {
+    const result = await f.run(args);
+    assert.notEqual(result.code, 0, "Partial discovery cannot prove this is the only account");
+    assert.match(result.stderr, /discovery incomplete/i);
+    assert.equal(f.requests.at(-1)!.operation, "status", "Never send a secret to an inferred account");
+  }
+  const explicit = await f.run(["tabs", "--profile", "personal"]);
+  assert.equal(explicit.code, 0, explicit.stderr);
+});
+
+test("CLI start selects a browser machine without retargeting account commands", async t => {
+  const f = await fixture(t);
+  const nodeId = "11111111-1111-4111-8111-111111111111";
+  const result = await f.run(["start", "https://web.whatsapp.com", "--node", nodeId, "--name", "Personal WhatsApp"]);
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(f.requests.at(-1), { operation: "start", url: "https://web.whatsapp.com", nodeId, profileName: "Personal WhatsApp" });
+  const reopened = await f.run(["start", "--profile", "personal", "--node", nodeId]);
+  assert.equal(reopened.code, 0, reopened.stderr);
+  assert.deepEqual(f.requests.at(-1), { operation: "start", profileId: "personal", nodeId });
+  const count = f.requests.length;
+  for (const args of [["start", "--node", ""], ["start", "--node", "homeserver"], ["start", "--node"], ["status", "--node", nodeId], ["close", "--node", nodeId], ["click", "#send", "--node", nodeId]]) {
+    assert.notEqual((await f.run(args)).code, 0, `Reject invalid or unsafe node override: ${args.join(" ")}`);
+  }
+  assert.equal(f.requests.length, count, "Reject before any server mutation");
+});
+
 test("CLI errors are useful, nonzero, bounded and redact authentication", async (t) => {
   const f = await fixture(t);
   for (const args of [[], ["wat"], ["fill", "#name"], ["command", "{"], ["command", "null"], ["screenshot"], ["start", "--profile"], ["status", "extra"]]) {
@@ -84,7 +147,7 @@ test("CLI errors are useful, nonzero, bounded and redact authentication", async 
   const missing = await f.run(["status"], { JOINT_BOB_BROWSER_TOKEN: "" });
   assert.notEqual(missing.code, 0);
   assert.match(missing.stderr, /environment|token|conversation/i);
-  for (const error of ["Browser startup disabled", "Designated executor offline", "Manual takeover pauses agent commands", "No running browser; use start first"]) {
+  for (const error of ["No browser executable available", "Local browser unavailable", "Manual takeover pauses agent commands", "No running browser; use start first"]) {
     f.respond(() => ({ status: 409, body: { error: `${error}: ${token}` } }));
     const result = await f.run(["snapshot"]);
     assert.notEqual(result.code, 0);
@@ -104,6 +167,8 @@ test("CLI errors are useful, nonzero, bounded and redact authentication", async 
   const offline = await f.run(["status"], { JOINT_BOB_BROWSER_URL: "http://127.0.0.1:1/api/browser/agent" });
   assert.notEqual(offline.code, 0);
   assert.match(offline.stderr, /unreachable|connect|offline/i);
+  assert.match(offline.stderr, /local Joint Bob service/);
+  assert.doesNotMatch(offline.stderr, /designated executor|fallback/i);
 });
 
 test("fill-secret verifies active origin, refuses takeover/missing browser, and never prints secret responses", async (t) => {
@@ -119,7 +184,7 @@ test("fill-secret verifies active origin, refuses takeover/missing browser, and 
   f.respond((body) => body.operation === "status" ? { body: { sessions: [session] } } : { body: { result: { echo: secret, token } } });
   const filled = await f.run(args);
   assert.equal(filled.code, 0, filled.stderr);
-  assert.deepEqual(f.requests.at(-1), { operation: "command", command: { action: "fill", selector: "#password", text: secret, expectedOrigin: "https://login.example" } });
+  assert.deepEqual(f.requests.at(-1), { operation: "command", command: { action: "fill", selector: "#password", text: secret, expectedOrigin: "https://login.example", expectedPageId: "page" } });
   assert.deepEqual(JSON.parse(filled.stdout), { ok: true });
   assert.ok(!filled.stdout.includes("fixture-password"));
   f.respond((body) => body.operation === "status" ? { body: { sessions: [session] } } : { status: 500, body: { error: secret } });
@@ -130,6 +195,23 @@ test("fill-secret verifies active origin, refuses takeover/missing browser, and 
   assert.notEqual((await f.run(args, { FIXTURE_PASSWORD: undefined })).code, 0);
   assert.equal(f.requests.length, count);
   assert.notEqual((await f.run(["fill-secret", "#password", "FIXTURE_PASSWORD"])).code, 0);
+});
+
+test("fill-secret cannot follow a replacement account at the same origin", async t => {
+  const f = await fixture(t);
+  const original = { ...session, profileId: "personal", activePageId: "personal-page", tabs: [{ id: "personal-page", url: "https://login.example/form", title: "Personal" }] };
+  f.respond(body => {
+    if (body.operation === "status") return { body: { sessions: [original] } };
+    // Personal ended after status; Work is now the sole account at the same origin.
+    return body.profileId === "personal"
+      ? { status: 404, body: { error: "Original profile is no longer running" } }
+      : { body: { result: { target: "work" } } };
+  });
+  const result = await f.run(["fill-secret", "#password", "FIXTURE_PASSWORD", "--origin", "https://login.example"]);
+  assert.notEqual(result.code, 0, "Never fill the replacement account merely because its origin matches");
+  assert.equal(f.requests.at(-1)!.profileId, "personal");
+  assert.equal(f.requests.at(-1)!.command.expectedPageId, "personal-page");
+  assert.ok(!result.stderr.includes("fixture-password"));
 });
 
 test("CLI uploads files and directories as base64 and rejects cumulative oversize before sending", async (t) => {

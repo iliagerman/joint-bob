@@ -12,7 +12,7 @@ const agent = { kind: "agent" } as const;
 const human = { kind: "human", id: "alice" } as const;
 const other = { kind: "human", id: "bob" } as const;
 
-test("real browser isolates contexts, enforces ownership, streams popups, retains uploads and restores encrypted profiles", { timeout: 120000 }, async () => {
+test("real browser isolates profiles, enforces ownership, streams popups, retains uploads and restores native logins", { timeout: 120000 }, async () => {
   let longStarted = false;
   const server = http.createServer((req, res) => {
     if (req.url === "/long-started") { longStarted = true; res.end("started"); return; }
@@ -22,20 +22,8 @@ test("real browser isolates contexts, enforces ownership, streams popups, retain
   });
   server.listen(0, "127.0.0.1"); await once(server, "listening");
   const url = `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`;
-  const proxy = http.createServer((req, res) => {
-    const target = new URL(req.url!);
-    const upstream = http.request(target, { method: req.method, headers: req.headers }, response => { res.writeHead(response.statusCode!, response.headers); response.pipe(res); });
-    upstream.on("error", () => { res.writeHead(502); res.end(); }); req.pipe(upstream);
-  });
-  proxy.on("connect", (req, socket, head) => {
-    const [host, port] = req.url!.split(":");
-    const upstream = net.connect(Number(port), host, () => { socket.write("HTTP/1.1 200 Connection Established\r\n\r\n"); upstream.write(head); upstream.pipe(socket); socket.pipe(upstream); });
-    upstream.on("error", () => socket.destroy()); socket.on("error", () => upstream.destroy()); socket.on("close", () => upstream.destroy());
-  });
-  proxy.listen(0, "127.0.0.1"); await once(proxy, "listening");
   const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" }); await once(wss, "listening");
-  const options = { proxyFor: async () => ({ server: `http://127.0.0.1:${(proxy.address() as net.AddressInfo).port}`, close: async () => {} }) };
-  let runtime = new BrowserRuntime(options);
+  let runtime = new BrowserRuntime();
   const start = { projectId: randomUUID(), engine: "pi" as const, conversationId: randomUUID(), appNodeId: randomUUID(), url };
   let viewer: WebSocket | undefined;
   try {
@@ -46,7 +34,9 @@ test("real browser isolates contexts, enforces ownership, streams popups, retain
     assert.equal(switched.id, a.id, "Harness switches must keep the same logical conversation browser");
     assert.equal(switched.owner, "human");
     await runtime.execute(a.id, { action: "resumeAgent" }, human);
-    await assert.rejects(runtime.create({ ...start, appNodeId: randomUUID() }), /conflict/i);
+    const moved = await runtime.create({ ...start, appNodeId: randomUUID(), profileId: a.profileId });
+    assert.equal(moved.id, a.id, "Moving the agent keeps the same real browser and account");
+    assert.equal(moved.nodeId, a.nodeId, "Browser physical owner stays pinned");
     const b = await runtime.create({ ...start, conversationId: randomUUID() });
     const execute = (command: any, actor: any = agent) => runtime.execute(a.id, command, actor);
     await assert.rejects(execute({ action: "fill", selector: "label=Name", text: "never disclose", expectedOrigin: "https://wrong-origin.test" }), /origin/i);
@@ -108,21 +98,24 @@ test("real browser isolates contexts, enforces ownership, streams popups, retain
     const download = (await runtime.get(a.id)).downloads[0];
     assert.equal(await readFile((await runtime.download(a.id, download.id)).path, "utf8"), "download-proof");
     await assert.rejects(runtime.download(b.id, download.id), /download/i);
-    await execute({ action: "evaluate", expression: "localStorage.setItem('login','saved-login'); document.cookie='login=cookie-proof; path=/'" });
+    await execute({ action: "evaluate", expression: "localStorage.setItem('login','saved-login'); document.cookie='login=cookie-proof; path=/; Max-Age=3600'" });
     const profile = await execute({ action: "saveProfile", label: "Saved login" }) as any;
     assert.equal(await runtime.execute(b.id, { action: "evaluate", expression: "localStorage.getItem('login')" }, agent), null);
     await assert.rejects(runtime.create({ ...start, projectId: "wrong", conversationId: randomUUID(), profileId: profile.id }), /profile/i);
     await execute({ action: "close" });
     assert.equal((runtime as unknown as { sessions: Map<string, unknown> }).sessions.has(a.id), false, "Ended browser must release its live context and retained command results");
     assert.equal((await runtime.get(b.id)).state, "running");
-    await runtime.close(); runtime = new BrowserRuntime(options);
-    assert.equal((await runtime.get(b.id)).state, "interrupted");
+    await runtime.close(); runtime = new BrowserRuntime();
+    await runtime.ready();
+    assert.equal((await runtime.get(b.id)).state, "running", "Running native profiles restore automatically on restart");
     assert.equal(await readFile((await runtime.download(a.id, download.id)).path, "utf8"), "download-proof");
     const restored = await runtime.create({ ...start, profileId: profile.id });
     assert.equal(await runtime.execute(restored.id, { action: "evaluate", expression: "localStorage.getItem('login')" }, agent), "saved-login");
     const blank = await runtime.create({ ...start, conversationId: randomUUID() });
     assert.equal(await runtime.execute(blank.id, { action: "evaluate", expression: "document.cookie" }, agent), "");
     assert.match(String(await runtime.execute(restored.id, { action: "evaluate", expression: "document.cookie" }, agent)), /cookie-proof/);
+    await assert.rejects(runtime.deleteProfile(profile.id, start.projectId), /in use/i);
+    await runtime.execute(restored.id, { action: "close" }, agent);
     await runtime.deleteProfile(profile.id, start.projectId);
     const pending = runtime.execute(blank.id, { action: "evaluate", expression: `fetch('${url}/long-started').then(() => new Promise(() => {}))` }, agent).catch(() => undefined);
     await waitFor(() => longStarted);
@@ -135,7 +128,7 @@ test("real browser isolates contexts, enforces ownership, streams popups, retain
     assert.equal((await runtime.get(blank.id)).state, "closed");
   } finally {
     viewer?.terminate(); for (const socket of wss.clients) socket.terminate();
-    await runtime.close(); wss.close(); proxy.closeAllConnections(); proxy.close(); server.closeAllConnections(); server.close();
+    await runtime.close(); wss.close(); server.closeAllConnections(); server.close();
   }
 });
 

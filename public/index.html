@@ -503,14 +503,13 @@
 
         <section class="settings-panel" id="settingsPanel-cluster" role="tabpanel" aria-labelledby="settingsTab-cluster" tabindex="0" hidden>
           <fieldset class="phase-settings">
-            <legend>Browser executor</legend>
-            <p>Run conversation browsers on a designated Ubuntu node. Other operating systems cannot execute browsers. Keep credentials in Settings → Secrets.</p>
-            <label>Ubuntu executor<select id="browserExecutorSelect" data-testid="browser-executor-select" disabled><option value="">Check status to load nodes</option></select></label>
+            <legend>Browser machines</legend>
+            <p>Choose the default machine for new browsers, independent of where the agent runs. Conversations and individual starts can override it. Existing accounts stay on their original machines. Browsers are never installed automatically.</p>
+            <label>Default browser machine<select id="settingsBrowserExecutor" data-testid="settings-browser-executor" disabled><option value="">Not configured</option></select></label>
             <div class="github-group-actions">
-              <button class="ghost" type="button" id="browserExecutorCheck" data-testid="browser-executor-check">Check status</button>
-              <button class="ghost" type="button" id="browserExecutorSave" data-testid="browser-executor-save" disabled>Save browser executor</button>
+              <button class="ghost" type="button" id="browserStatusCheck" data-testid="browser-status-check">Check status</button>
             </div>
-            <p class="settings-hint" id="browserExecutorStatus" data-testid="browser-executor-status" role="status">Browser status has not been checked.</p>
+            <p class="settings-hint" id="browserStatus" data-testid="browser-status" role="status">Browser status has not been checked.</p>
           </fieldset>
           <p>Every cluster member can create a one-time link. Paste it into the new node to join.</p>
           <fieldset class="phase-settings">

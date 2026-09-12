@@ -1,5 +1,5 @@
 import { api, savePreferencesInBackground } from "./api.js";
-import { loadBrowserExecutorSettings } from "./browser.js";
+import { loadBrowserStatus } from "./browser.js";
 import { fillShortcutSettings } from "./shortcut-settings.js";
 import { loadSkills } from "./composer-dialogs.js";
 import { showSignedOut } from "./auth.js";
@@ -79,7 +79,7 @@ function selectSettingsTab(name) {
     tab.tabIndex = selected ? 0 : -1;
   }
   for (const panel of elements.settingsPanels) panel.hidden = panel.id !== `settingsPanel-${name}`;
-  if (name === "cluster") void loadBrowserExecutorSettings();
+  if (name === "cluster") void loadBrowserStatus();
 }
 
 let runtimeDefaults;
