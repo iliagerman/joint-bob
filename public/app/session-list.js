@@ -163,7 +163,7 @@ export function renderSessions() {
     row.append(rowMain);
     if (session.agentRuns?.length) {
       const tasks = session.agentRuns.flatMap((run) => run.tasks);
-      const collapsed = state.collapsedAgentRuns.has(session.path);
+      const collapsed = !state.expandedAgentRuns.has(session.path);
       row.append(agentRunToggle(session, tasks, collapsed));
       if (!collapsed) row.append(agentRunList(tasks));
     }
@@ -172,7 +172,7 @@ export function renderSessions() {
 }
 
 /** A conversation fanning out to several sub-agents buries the rows under it, so the
-    run lines fold away behind one summary the reader can reopen. */
+    run lines start folded behind one summary and open only when the reader asks. */
 function agentRunToggle(session, tasks, collapsed) {
   const running = tasks.filter((task) => task.status === "running").length;
   const failed = tasks.filter((task) => task.status === "failed").length;
@@ -187,8 +187,8 @@ function agentRunToggle(session, tasks, collapsed) {
   toggle.textContent = `${collapsed ? "▸" : "▾"} ${parts.join(" · ")}`;
   toggle.addEventListener("click", (event) => {
     event.stopPropagation();
-    if (collapsed) state.collapsedAgentRuns.delete(session.path);
-    else state.collapsedAgentRuns.add(session.path);
+    if (collapsed) state.expandedAgentRuns.add(session.path);
+    else state.expandedAgentRuns.delete(session.path);
     renderSessions();
   });
   return toggle;

@@ -67,8 +67,8 @@ export const state = {
   agentRunPollTimer: null,
   // Parent conversation paths whose sub-agent children are shown; collapsed by default.
   expandedSessionParents: new Set(),
-  // Conversation paths whose sub-agent run lines are folded away; expanded by default.
-  collapsedAgentRuns: new Set(),
+  // Conversation paths whose sub-agent run lines are opened; folded away by default.
+  expandedAgentRuns: new Set(),
   projectSyncTimer: null,
   tasks: [],
   editingTaskId: null,

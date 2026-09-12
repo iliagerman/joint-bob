@@ -27,11 +27,23 @@ test("conversation actions stay inside the card when sub-agent tasks extend the 
     await page.getByTestId("login-password-input").fill(environment.password);
     await page.getByTestId("login-submit-button").click();
     await page.getByText("Internal Assistant", { exact: true }).click();
-    const found = page.locator("#sessionList .list-row").filter({ has: page.getByTestId("agent-run-task") }).first();
+    const found = page.locator("#sessionList .list-row").filter({ has: page.getByTestId("agent-run-toggle") }).first();
     await found.waitFor();
-    // Collapsing drops the task lines, so the row is addressed by its own path from here on.
+    // The task lines come and go, so the row is addressed by its own path from here on.
     const row = page.locator(`#sessionList .list-row[data-session-path="${await found.getAttribute("data-session-path")}"]`);
-    assert.equal(await row.getByTestId("agent-run-task").count(), 5);
+
+    // Five sub-agents would bury the rows under this conversation, so the run lines
+    // start folded behind their summary and the reader opens them deliberately.
+    const toggle = row.getByTestId("agent-run-toggle");
+    assert.equal(await toggle.textContent(), "\u25b8 5 sub-agent steps \u00b7 5 running");
+    assert.equal(await toggle.getAttribute("aria-expanded"), "false");
+    assert.equal(await row.getByTestId("agent-run-task").count(), 0, "sub-agent lines start hidden");
+    const foldedHeight = await row.evaluate((element) => element.getBoundingClientRect().height);
+
+    await toggle.click();
+    await row.getByTestId("agent-run-task").first().waitFor();
+    assert.equal(await row.getByTestId("agent-run-task").count(), 5, "opening shows every sub-agent line");
+    assert.equal(await toggle.textContent(), "\u25be 5 sub-agent steps \u00b7 5 running");
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     const geometry = await row.evaluate((element) => {
       const card = element.querySelector(".session-card")!.getBoundingClientRect();
@@ -47,21 +59,12 @@ test("conversation actions stay inside the card when sub-agent tasks extend the 
       assert.ok(action.top >= geometry.top && action.bottom <= geometry.bottom,
         `${action.name} spans ${action.top}..${action.bottom}, outside card ${geometry.top}..${geometry.bottom}`);
     }
+    assert.ok(geometry.rowHeight > foldedHeight + 50, `opened row ${geometry.rowHeight} must be far taller than folded ${foldedHeight}`);
 
-    // A conversation fanning out to five sub-agents buries the rows under it, so the
-    // run lines fold away behind their summary and come back on the same button.
-    const toggle = row.getByTestId("agent-run-toggle");
-    assert.equal(await toggle.textContent(), "▾ 5 sub-agent steps · 5 running");
+    // The same button folds them away again.
     await toggle.click();
     await row.getByTestId("agent-run-task").first().waitFor({ state: "detached" });
-    assert.equal(await row.getByTestId("agent-run-task").count(), 0, "collapsing hides every sub-agent line");
-    assert.equal(await toggle.getAttribute("aria-expanded"), "false");
-    const collapsedHeight = await row.evaluate((element) => element.getBoundingClientRect().height);
-    assert.ok(collapsedHeight < geometry.rowHeight - 50, `collapsed row ${collapsedHeight} must be far shorter than ${geometry.rowHeight}`);
-
-    await toggle.click();
-    await row.getByTestId("agent-run-task").first().waitFor();
-    assert.equal(await row.getByTestId("agent-run-task").count(), 5, "reopening brings every sub-agent line back");
+    assert.equal(await row.getByTestId("agent-run-task").count(), 0, "folding hides every sub-agent line");
   } finally {
     await browser.close();
     await stopDevNode(server);

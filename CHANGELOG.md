@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Sub-agent run lines now start folded away by default when conversations fan out to multiple agents, keeping the conversation visible and uncovering them only when you click the toggle.
+
 ## 1.22.0 — 2026-09-12
 
 - Added a default browser machine in Settings, with conversation and browser-session overrides independent of where the agent runs.
