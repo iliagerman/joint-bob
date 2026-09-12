@@ -1272,8 +1272,11 @@ test("toolbar shortcuts open the same actions as their buttons", async () => {
   for (const [key, button] of [["N", "session-create-button"], ["C", "session-create-claude-button"]]) {
     await page.locator(`[data-testid="${button}"]:enabled`).waitFor();
     await page.keyboard.press(`Meta+Alt+${key}`);
+    // Opening the form first loads conversation labels from /api/settings.
     await page.getByTestId("new-session-name-dialog").waitFor({ state: "visible" });
+    assert.equal(await page.getByTestId("new-session-name-dialog").isVisible(), true, `${key} opens the conversation form`);
     await page.keyboard.press("Escape");
+    await page.getByTestId("new-session-name-dialog").waitFor({ state: "hidden" });
   }
 });
 

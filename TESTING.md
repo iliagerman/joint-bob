@@ -115,19 +115,23 @@ a conversation on the other node through ownership takeover. Extend it when you
 touch replication, ownership, or anything else that only means something with
 two nodes.
 
-### Scheduled-task browser test
-
-When operating inside Joint Bob with its designated browser executor, run:
+### Scheduled tasks, conversation settings, and updates
 
 ```bash
-npm run test:file test/ui/ui-cron-cli.test.ts
+npm run test:file -- test/ui/ui-cron.test.ts test/ui/ui-conversation-settings.test.ts test/ui/ui-updates.test.ts
 ```
 
-This test uses `JOINT_BOB_BROWSER_CLI`, never launches a local browser, and fails
-if the executor is unavailable. It seeds a disposable node, exercises project
-and conversation task menus, schedule editing, pause/resume, history, deletion,
-and immediate/persisted Cron filtering. Native tests launch their own Chrome;
-they are not automatically redirected through this CLI.
+These UI journeys launch fresh native Chrome against disposable seeded nodes.
+They test the candidate's frontend, not the installed production browser service.
+They preserve coverage of project/conversation schedules, editing, pause/resume,
+history, deletion, Cron filtering, conversation classifications, harness defaults,
+and update controls. No production browser token or existing login profile is used.
+
+`test/ui/browser-cluster.test.ts` exercises the candidate browser bridge, agent
+commands, viewer, uploads, and downloads across two isolated nodes.
+`test/ui/browser-machine-lifecycle.test.ts` covers machine-selection precedence,
+multiple profiles, and actual browser-owner server stop/restart. Both use synthetic
+fixture credentials and native profiles inside the disposable test directories.
 
 ### Agent browser permissions
 
