@@ -62,11 +62,12 @@ export class HarnessSessionCatalog<TAdapters extends readonly HarnessAdapter[]> 
       if (!adapter) return;
       const ownedFiles = changedFiles.filter(adapter.paths.ownsTranscript);
       if (changedFiles.length && !ownedFiles.length) return;
-      const previous = await entry.sessions;
-      entry.sessions = adapter.sessions.refresh(entry.project, previous, ownedFiles);
-      entry.snapshot = transcriptSnapshot(adapter, entry.project);
       try {
-        await Promise.all([entry.sessions, entry.snapshot]);
+        const [previous, current, sessions] = await Promise.all([entry.snapshot, transcriptSnapshot(adapter, entry.project), entry.sessions]);
+        const files = [...new Set([...ownedFiles, ...changedTranscriptFiles(previous, current)])];
+        entry.sessions = adapter.sessions.refresh(entry.project, sessions, files);
+        entry.snapshot = Promise.resolve(current);
+        await entry.sessions;
       } catch (error) {
         this.entries.delete(key);
         throw error;

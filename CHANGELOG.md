@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed forked conversations sometimes appearing as drafts when discovered during transcript refresh.
+
 ## 1.21.0 — 2026-09-12
 
 - New conversation setup is now a step-by-step wizard: name first, then optionally classify, then choose the node. Keyboard navigation lets you use Enter to walk forward and Cmd/Ctrl+Enter to start immediately.
