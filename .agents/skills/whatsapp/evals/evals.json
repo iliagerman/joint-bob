@@ -1,0 +1,29 @@
+{
+  "skill_name": "whatsapp",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Read the latest 20 messages from my neighborhood WhatsApp group and tell me what needs action.",
+      "expected_output": "Uses the pinned Homeserver profile, waits for exact search and header readiness, summarizes actionable updates, and reports message coverage, incomplete sync, or unseen media.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "List WhatsApp groups active in the last 14 days so I can choose which ones matter.",
+      "expected_output": "Runs active-groups with a 14-day window and returns a numbered, deduplicated list with activity dates.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "These active-group numbers matter to me: 2 and 7. Remember both as normal priority, then show what a fresh WhatsApp triage would check.",
+      "expected_output": "Resolves numbers against the current inventory, asks for confirmation when needed, writes exact names to important-groups.md with a 24-hour default window, and reads them on subsequent triage.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "Reply yes to the latest question in my neighborhood WhatsApp group.",
+      "expected_output": "Reads the relevant chat but requests explicit confirmation for the exact outgoing message before sending it.",
+      "files": []
+    }
+  ]
+}
