@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.20.2 — 2026-09-12
 
 - Keyboard shortcuts now control browser (Ctrl+Alt+B) and scheduled tasks (Ctrl+Alt+S) from the chat toolbar.
 
