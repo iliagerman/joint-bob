@@ -50,11 +50,6 @@ function ensureTerminalEmulator() {
       cursor: terminalCssColor("--accent", "#37cfab"),
       cursorAccent: terminalCssColor("--code-bg", "#08090b"),
       selectionBackground: "#37cfab55",
-      // Left to itself xterm derives these from the foreground and paints a pale
-      // bar across the dark frame.
-      scrollbarSliderBackground: "#ffffff1f",
-      scrollbarSliderHoverBackground: "#ffffff33",
-      scrollbarSliderActiveBackground: "#ffffff4d",
     },
   });
   // The addon's UMD bundle assigns its whole module namespace to window.FitAddon,

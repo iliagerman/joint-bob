@@ -49,6 +49,12 @@ test("chat exposes an embedded terminal on the selected project and node", async
   assert.doesNotMatch(server, /app\.post\("\/api\/cluster\/projects\/terminal"/);
 });
 
+test("the vendored terminal bundle stays compatible with Safari", async () => {
+  const xterm = await readFile("public/vendor/xterm/xterm.js", "utf8");
+
+  assert.doesNotMatch(xterm, /\?\?=|&&=|\bWeakRef\b/);
+});
+
 test("the security policy leaves room for the styles xterm writes at runtime", async () => {
   const server = await serverSource();
   const policy = server.match(/"Content-Security-Policy", `([^`]+)`/)?.[1] ?? "";
