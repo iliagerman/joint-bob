@@ -33,5 +33,19 @@
     "dirName": "260830-scoped-secrets",
     "scope": "express",
     "status": "in-flight"
+  },
+  {
+    "uuid": "01a089b6-3e01-7fec-bcce-717f3f139e3e",
+    "slug": "fork-conversation",
+    "dirName": "260910-fork-conversation",
+    "scope": "feature",
+    "status": "in-flight"
+  },
+  {
+    "uuid": "01a08ff7-171d-7133-82e9-73b0c0318d39",
+    "slug": "subagent-lifecycle-track",
+    "dirName": "260911-subagent-lifecycle-track",
+    "scope": "bugfix",
+    "status": "in-flight"
   }
 ]

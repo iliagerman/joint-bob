@@ -1872,3 +1872,82 @@
 **Event**: HUMAN_TURN
 
 ---
+
+## Session End
+**Timestamp**: 2026-09-09T17:26:57Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Error Logged
+**Timestamp**: 2026-09-09T17:29:37Z
+**Event**: ERROR_LOGGED
+**Tool**: aidlc-utility
+**Command**: aidlc-utility --status
+**Error**: Unknown command "undefined". Run `aidlc-utility help` for what this tool can do.\n\nAvailable commands: help, version, status, doctor, intent-create, intent, space, space-create, codekb-path, codekb-scope-diff, detect, select-plugins, plugin-list, plugin-sync, recompose, scope-change, config-change, config-get, config-list, set-status, detect-scope, resolve-env-scope, scope-table, stage-table, upgrade\nCommon options: [--project-dir <path>] [--scope <scope>] [--json]
+
+---
+
+## Error Logged
+**Timestamp**: 2026-09-09T17:30:15Z
+**Event**: ERROR_LOGGED
+**Tool**: aidlc-state
+**Command**: aidlc-state park
+**Error**: Direct aidlc-state.ts park is blocked: workflow lifecycle transitions are engine-owned. Use aidlc-orchestrate.ts report --stage <slug> --result <awaiting-approval|approved|rejected|revised|completed|skipped>; use aidlc-orchestrate.ts park to park, and next/jump for routing changes.
+
+---
+
+## Workflow Parked
+**Timestamp**: 2026-09-09T17:30:27Z
+**Event**: WORKFLOW_PARKED
+**Stage**: observability-setup
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-09T18:09:27Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-09T18:09:30Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-09-09T18:09:48Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Session Start
+**Timestamp**: 2026-09-09T18:09:57Z
+**Event**: SESSION_STARTED
+**Source**: startup
+
+---
+
+## Human Turn
+**Timestamp**: 2026-09-09T18:09:59Z
+**Event**: HUMAN_TURN
+
+---
+
+## Session End
+**Timestamp**: 2026-09-09T18:10:21Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---
+
+## Session End
+**Timestamp**: 2026-09-10T20:12:34Z
+**Event**: SESSION_ENDED
+**Reason**: clear
+
+---
