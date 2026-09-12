@@ -213,6 +213,14 @@ Ticket agents work in the synchronized `<home>/tickets` folder. Handoff waits fo
 
 Existing Git-backed tickets keep their worktree and merge behavior. New tickets do not create a branch and do not show **Merge to main**.
 
+## Conversation settings
+
+Use a conversation's row menu to change its **Classification**, including after it starts. Choose a configured label, **Other** for custom text, or **Unclassified** to clear it. Labels sync between paired nodes. Configure the available labels in **Settings > Labels**.
+
+New conversations use the model and thinking defaults in **Settings > Harnesses**, not the last conversation's choices. Pi defaults to `openai-codex/gpt-5.6-sol` with medium thinking; Claude defaults to `claude-opus-5` with medium effort. Each harness declares these defaults beside its adapter in `src/harnesses/`. Settings overrides are node-local and apply to new conversations without a restart. Existing conversations and forks retain their saved choices.
+
+**Fork conversation** works while the original is running. The fork gets an independent copy of completed history, excluding an unfinished tool exchange and queued work. The original keeps running; later output does not appear in the fork. A request from another node snapshots history on the original's owner.
+
 ## Scheduled tasks
 
 Open **Scheduled tasks** from a project menu, conversation row menu, or the conversation's More menu. Choose a name, prompt, hourly/daily/weekly schedule, timezone, and execution node. Project tasks choose Pi or Claude and create a fresh conversation each run with that agent's normal project settings and inherited workspace/project credentials. Conversation tasks queue the prompt in the existing conversation, retaining its settings and credentials.
@@ -324,6 +332,7 @@ export default defineHarness({
   id: "kiro",
   label: "Kiro",
   order: 30,
+  defaults: { provider: "provider-id", modelId: "model-id", thinkingLevel: "medium" },
   paths: {
     newSession: "kiro:new",
     ownsSession: (sessionPath) => sessionPath.startsWith("kiro:"),
@@ -343,6 +352,7 @@ The adapter fields have these jobs:
 - `id` is a lowercase identifier matching `[a-z][a-z0-9-]*`.
 - `label` is the name shown in the UI.
 - `order` controls display and discovery order. It is optional.
+- `defaults` declares the provider, model, and thinking level for new conversations.
 - `paths.newSession` is the path used for a new conversation.
 - `paths.ownsSession` must claim only this adapter's session paths. Every path must have exactly one owner.
 - `paths.ownsTranscript` limits refreshes to this adapter's transcript files.

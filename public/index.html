@@ -940,6 +940,21 @@
       </form>
     </dialog>
 
+    <dialog id="conversationClassificationDialog" data-testid="conversation-classification-dialog" aria-labelledby="conversationClassificationTitle">
+      <form class="dialog-card" id="conversationClassificationForm">
+        <div>
+          <span class="eyebrow">Conversation settings</span>
+          <h2 id="conversationClassificationTitle">Classify conversation</h2>
+          <p>The classification syncs to your other nodes. Choose Unclassified to clear it.</p>
+        </div>
+        <div id="conversationClassificationFields" class="field-group"></div>
+        <div class="dialog-actions">
+          <button class="ghost" type="button" id="cancelConversationClassificationButton" data-testid="conversation-classification-cancel-button">Cancel</button>
+          <button class="primary" type="submit" id="saveConversationClassificationButton" data-testid="conversation-classification-save-button">Save classification</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="newSessionNameDialog" data-testid="new-session-name-dialog">
       <form method="dialog" class="dialog-card" id="newSessionNameForm">
         <div>

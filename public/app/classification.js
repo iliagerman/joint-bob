@@ -22,10 +22,12 @@ export function classificationPicker(container, prefix) {
   select.addEventListener("change", sync);
   other.addEventListener("input", () => other.setCustomValidity(""));
   return {
-    reset(labels) {
+    reset(labels, current = null) {
       select.disabled = !labels;
       select.replaceChildren(new Option(labels ? "Unclassified" : "Loading labels…", ""), ...(labels || []).map((name) => new Option(name, name)), new Option("Other…", "__other__"));
-      other.value = "";
+      const custom = current && !labels.includes(current);
+      select.value = custom ? "__other__" : current || "";
+      other.value = custom ? current : "";
       sync();
     },
     value() {

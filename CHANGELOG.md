@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Conversation classifications can now be changed from the conversation's row menu, syncing across paired nodes even after the conversation starts.
 - Added per-harness conversation defaults in Settings to configure the model and thinking level for new Pi and Claude conversations.
 - Forking a conversation now works while it is running, creating an independent copy from the completed history without stopping the source.
 

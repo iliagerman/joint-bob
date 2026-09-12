@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { sendSocket } from "./chat-controls.js";
+import { classificationPicker } from "./classification.js";
 import { elements } from "./elements.js";
 import { loadProjects } from "./project-selection.js";
 import { PROJECT_COLORS } from "./session-rows.js";
@@ -9,6 +10,40 @@ import { refreshSessionsQuietly } from "./socket.js";
 import { shared, state } from "./state.js";
 
 let projectPendingRename = null;
+let pendingClassification = null;
+const classification = classificationPicker(elements.conversationClassificationFields, "conversation");
+
+export async function openConversationClassificationDialog(session) {
+  const projectId = state.activeProjectId;
+  const settings = await api("/api/settings");
+  if (state.activeProjectId !== projectId) return;
+  pendingClassification = { projectId, sessionId: session.conversationId || session.id, engine: sessionEngine(session) };
+  classification.reset(settings.conversationLabels, session.classification || null);
+  elements.conversationClassificationDialog.showModal();
+}
+
+elements.cancelConversationClassificationButton.addEventListener("click", () => elements.conversationClassificationDialog.close());
+elements.conversationClassificationForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const submit = elements.saveConversationClassificationButton;
+  if (submit.disabled) return;
+  submit.disabled = true;
+  const target = pendingClassification;
+  try {
+    const { projectId, sessionId, engine } = target;
+    await api(`/api/projects/${encodeURIComponent(projectId)}/sessions/classification`, {
+      method: "PUT",
+      body: JSON.stringify({ sessionId, engine, classification: classification.value() }),
+    });
+    if (pendingClassification === target) elements.conversationClassificationDialog.close();
+    if (state.activeProjectId === projectId) await refreshSessionsQuietly();
+    toast("Conversation classification saved");
+  } catch (error) {
+    toast(error.message, 8000);
+  } finally {
+    submit.disabled = false;
+  }
+});
 
 /** Project and conversation pickers use one fixed palette. */
 function renderColorSwatches(selected, container, testid) {

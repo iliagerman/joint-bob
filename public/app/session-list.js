@@ -10,7 +10,7 @@ import { keepListScroll, renderProjects } from "./project-list.js";
 import { syncRecentSessionActivity } from "./recents.js";
 import { openListedSession, reviewableSessions } from "./reviews.js";
 import { openRowMenu, pinButton, refreshRowMenuAnchor } from "./row-menu.js";
-import { openConversationColorDialog, openRenameDialog, sessionEngine } from "./session-identity.js";
+import { openConversationClassificationDialog, openConversationColorDialog, openRenameDialog, sessionEngine } from "./session-identity.js";
 import { isSessionPinned, nestedSessionRows, sessionTicketTask, ticketBadge, ticketRowButton, togglePinnedSession } from "./session-rows.js";
 import { confirmAction, formatDate, toast } from "./shell.js";
 import { closeSocket, refreshSessionsQuietly } from "./socket.js";
@@ -243,6 +243,12 @@ function sessionMenuItems(session, sessionActive) {
     },
     ...(readOnly ? [] : [
       { label: "Scheduled tasks", icon: "refresh", testid: "session-cron-button", onSelect: () => openScheduledTasks(state.activeProjectId, session).catch(error => toast(error.message)) },
+      {
+        label: "Classification",
+        icon: "sliders",
+        testid: "session-classification-button",
+        onSelect: () => openConversationClassificationDialog(session).catch((error) => toast(error.message)),
+      },
       {
         label: "Colour",
         icon: "sliders",

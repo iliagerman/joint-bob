@@ -45,7 +45,7 @@ test("a conversation owned by another node replaces the composer with a take-own
 
   assert.match(styles, /\.conversation-lock \{/);
   assert.match(styles, /\.conversation-lock\[hidden\] \{ display: none; \}/);
-  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v163";/);
+  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v164";/);
 });
 
 test("the take-ownership controls are engine-neutral, so a Claude conversation can be claimed", async () => {
