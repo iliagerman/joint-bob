@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Automated test suites can now launch native Chrome and Playwright instances when using isolated test environments and synthetic test accounts.
+
 ## 1.20.0 — 2026-09-12
 
 - Conversation classifications can now be changed from the conversation's row menu, syncing across paired nodes even after the conversation starts.

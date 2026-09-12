@@ -126,8 +126,21 @@ npm run test:file test/ui/ui-cron-cli.test.ts
 This test uses `JOINT_BOB_BROWSER_CLI`, never launches a local browser, and fails
 if the executor is unavailable. It seeds a disposable node, exercises project
 and conversation task menus, schedule editing, pause/resume, history, deletion,
-and immediate/persisted Cron filtering. The existing `npm run test:ui` suite
-launches local Chrome and must not be used in executor-only sessions.
+and immediate/persisted Cron filtering. Native tests launch their own Chrome;
+they are not automatically redirected through this CLI.
+
+### Agent browser permissions
+
+The generated browser instructions allow this project's documented native browser
+tests when they use disposable HOME/data directories, synthetic test accounts,
+loopback fixtures, and cleanup of test-owned browsers. Read and verify the test
+setup before running it. Real credentials, production data, existing user/browser
+profiles, and manual/live-site browsing are outside this exception. Ordinary
+browsing and real-account sign-in still require the designated executor.
+
+Existing agent sessions may retain the older executor-only instruction. After
+updating Joint Bob, open a fresh agent session to load the exception; a source edit
+or README change does not override instructions already loaded into a session.
 
 ## Writing a test that is worth having
 

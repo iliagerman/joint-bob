@@ -71,7 +71,13 @@ test("Pi new and resumed sessions receive browser instructions and one stable me
   for (const sessionPath of [undefined, resumed]) {
     const handle = await createPiSession({ cwd, projectId: project.id, sessionPath });
     try {
-      assert.ok(handle.session.agent.state.systemPrompt.includes(browserAgentInstructions));
+      const instructions = handle.session.agent.state.systemPrompt;
+      assert.ok(instructions.includes(browserAgentInstructions));
+      assert.ok(instructions.includes("Repository test exception:"), "Pi must receive the isolated native browser test exception");
+      for (const boundary of ["disposable HOME/data directories", "synthetic test accounts", "loopback fixture servers", "Never use real credentials", "Manual takeover pauses agent commands"]) {
+        assert.ok(instructions.includes(boundary), `Pi browser instructions must retain: ${boundary}`);
+      }
+      assert.ok(!instructions.includes("All web browsing and browser testing must"), "Pi must not receive the contradictory blanket test ban");
       const bash = handle.session.agent.state.tools.find((tool) => tool.name === "bash")!;
       const execute = async () => {
         const result = await bash.execute("bridge-test", { command: `node -e 'console.log(JSON.stringify({token:process.env.JOINT_BOB_BROWSER_TOKEN,secret:process.env.BRIDGE_FIXTURE}))'` });

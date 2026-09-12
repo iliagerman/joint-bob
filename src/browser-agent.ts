@@ -51,9 +51,11 @@ export function browserAgentIdentity(token: string): BrowserAgentIdentity | unde
 
 export const browserAgentInstructions = `# Joint Bob browser
 
-All web browsing and browser testing must use the designated browser executor through:
+Ordinary website browsing, real-account sign-in, and live-site checks must use the designated browser executor through:
 node "$JOINT_BOB_BROWSER_CLI" <command>
-Never launch local Chrome, Playwright browsers, or another browser tool. If startup is disabled or the designated executor is offline, report the error and stop. There is no local fallback. This controls browser pages, not an OS desktop.
+For those activities, do not launch local Chrome, Playwright browsers, or another browser tool. If executor startup is disabled or the designated executor is offline, report the error and stop. There is no local fallback for those activities. This controls browser pages, not an OS desktop.
+
+Repository test exception: Native Chrome/Playwright launches are allowed only for this project's automated tests run through its documented, isolated test harness. Read TESTING.md first. Verify disposable HOME/data directories, synthetic test accounts, loopback fixture servers, and cleanup of test-owned browsers. Never use real credentials, production data, existing user/browser profiles, or this exception for manual/live-site browsing or to bypass human takeover. Executor-specific tests still use the supplied CLI. If isolation cannot be verified, stop.
 
 Start explicitly with start [url] [--profile ID]. Commands target this conversation's running browser; do not supply another project or session identity. Use status, tabs, profiles, navigate URL, snapshot, click SELECTOR, fill SELECTOR TEXT, evaluate EXPRESSION, close, or save-login LABEL. Use command '{"action":"..."}' for other browser commands. Run interactive test assertions through evaluate and read the returned results; do not claim tests passed without checking them. Manual takeover pauses agent commands. Wait for the user to resume agent control; do not override takeover.
 

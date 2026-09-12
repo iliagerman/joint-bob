@@ -282,7 +282,7 @@ node "$JOINT_BOB_BROWSER_CLI" screenshot /tmp/browser-check.png
 node "$JOINT_BOB_BROWSER_CLI" close
 ```
 
-Browser tokens authorize only the issuing conversation. Existing Pi sessions must be reopened to receive the new tool instructions. Agents use the CLI rather than launch their own local browser. Arbitrary repository test suites do not automatically redirect their own Playwright launches; adapt them to the provided browser commands. Agent assertions can use `evaluate` and inspect its result.
+Browser tokens authorize only the issuing conversation. Existing Pi sessions must be reopened to receive new tool instructions. Ordinary browsing and real-account sign-in stay on the CLI. Joint Bob's documented automated browser tests may launch native Chrome/Playwright only with disposable HOME/data directories, synthetic test accounts, loopback fixtures, and cleanup of test-owned browsers. They must not use real credentials, production data, or existing user/browser profiles. This exception does not permit manual/live-site browsing or bypass human takeover. Executor-specific tests still use the provided CLI. See `TESTING.md`; do not infer this exception for arbitrary repository scripts. Agent assertions can use `evaluate` and inspect its result.
 
 Changing the executor requires paired nodes online and running browser sessions ended. Profiles and downloads do not migrate to the new executor. Viewer disconnection is supported; executor restart is different. Restarting the service interrupts browser sessions, which must be explicitly restarted, optionally with a saved login. It cannot resume a half-completed browser action. Saved snapshots include cookies, local storage, and IndexedDB, not sessionStorage, passkeys, or OS authentication state.
 
