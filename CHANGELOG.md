@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Terminal now recovers gracefully when opened after a service worker update, loading dependencies on demand.
+
 ## 1.23.0 — 2026-09-12
 
 - Refreshed app cache to ensure latest assets load on next browser visit.

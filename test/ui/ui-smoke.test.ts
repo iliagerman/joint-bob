@@ -1078,8 +1078,12 @@ test("the terminal fills its frame without overflowing it", async () => {
   // earlier test created, which would never render a message.
   await page.locator("#sessionList .session-card", { hasText: "Thread-Based Agent Builder" }).first().click();
   await page.locator(".message").first().waitFor({ timeout: 20_000 });
+  // A service-worker upgrade can briefly pair the new terminal module with an
+  // older page that did not load xterm. Opening the terminal must recover.
+  await page.evaluate(() => { delete window.Terminal; delete window.FitAddon; });
   await page.getByTestId("chat-open-terminal-button").click();
   await page.getByTestId("terminal-dialog").waitFor({ state: "visible", timeout: 20_000 });
+  assert.deepEqual(await page.evaluate(() => [typeof window.Terminal, typeof window.FitAddon?.FitAddon]), ["function", "function"]);
   // The shell has to answer before the emulator holds a real screen to measure.
   await page.locator('#terminalStatus[data-state="live"]').waitFor({ timeout: 20_000 });
   await page.keyboard.type("echo terminal-fit\n");

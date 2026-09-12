@@ -19,6 +19,21 @@ function terminalCssColor(name, fallback) {
 // tofu boxes; the browser falls through to the plain mono stack when none exist.
 const TERMINAL_FONT = '"MesloLGS NF", "JetBrainsMono Nerd Font", "FiraCode Nerd Font", "Hack Nerd Font", "SauceCodePro Nerd Font", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace';
 
+function loadTerminalScript(src) {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = src;
+    script.addEventListener("load", resolve, { once: true });
+    script.addEventListener("error", () => reject(new Error(`Could not load ${src}`)), { once: true });
+    document.head.append(script);
+  });
+}
+
+async function ensureTerminalDependencies() {
+  if (typeof window.Terminal !== "function") await loadTerminalScript("/vendor/xterm/xterm.js");
+  if (typeof window.FitAddon?.FitAddon !== "function") await loadTerminalScript("/vendor/xterm/addon-fit.js");
+}
+
 function ensureTerminalEmulator() {
   if (state.terminalEmulator) return state.terminalEmulator;
   const emulator = new window.Terminal({
@@ -95,8 +110,9 @@ function terminalWebsocketUrl() {
   return url;
 }
 
-function openProjectTerminal() {
+async function openProjectTerminal() {
   if (!state.activeProjectId || !state.activeNodeId) throw new Error("Select a project and execution node first");
+  await ensureTerminalDependencies();
   const node = state.sessionNodes.find((candidate) => candidate.id === state.activeNodeId);
   closeTerminalSocket();
   setTerminalStatus("connecting", `Connecting to ${node?.name || "node"}...`);
@@ -142,8 +158,8 @@ export async function continueTaskOnNode(task, destination) {
   openSession(body.task.sessionPath, task.title, false, true);
   return true;
 }
-elements.openTerminalButton.addEventListener("click", () => {
-  try { openProjectTerminal(); }
+elements.openTerminalButton.addEventListener("click", async () => {
+  try { await openProjectTerminal(); }
   catch (error) { toast(error.message, 8000); }
 });
 elements.clearTerminalButton.addEventListener("click", () => { state.terminalEmulator?.clear(); });
