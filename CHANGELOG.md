@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed classification filter width to stay within its panel and auto-focused message input when opening drafts.
+
 ## 1.24.1 — 2026-09-12
 
 - Restored terminal functionality in Safari.

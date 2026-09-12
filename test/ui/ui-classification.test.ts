@@ -23,7 +23,7 @@ test("new Pi and Claude conversations keep predefined and free-text classificati
   let browser: Browser | undefined;
   try {
     browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL ?? "chrome", headless: true });
-    const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, serviceWorkers: "block" });
+    const page = await browser.newPage({ viewport: { width: 1920, height: 900 }, serviceWorkers: "block" });
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto(node.url);
@@ -38,6 +38,10 @@ test("new Pi and Claude conversations keep predefined and free-text classificati
     await page.locator("#settingsDialog").waitFor({ state: "hidden" });
     await page.reload();
     await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+    const filterBox = await page.getByTestId("conversation-classification-filter").boundingBox();
+    const chatsBox = await page.locator("#chatsPanel").boundingBox();
+    assert.ok(filterBox && chatsBox && filterBox.width <= 280 && filterBox.x >= chatsBox.x && filterBox.x + filterBox.width <= chatsBox.x + chatsBox.width,
+      `classification filter stays compact and inside its panel: ${JSON.stringify({ filterBox, chatsBox })}`);
     for (const [engine, selection, label] of [["pi", "Support", "Support"], ["claude", "__other__", "Investigation <custom>"]]) {
       await page.getByTestId(engine === "pi" ? "session-create-button" : "session-create-claude-button").click();
       await page.getByTestId("new-session-name-dialog").waitFor({ state: "visible" });
@@ -68,6 +72,9 @@ test("new Pi and Claude conversations keep predefined and free-text classificati
       await page.getByTestId("new-session-name-start-button").click();
       const badge = page.locator("#sessionList").getByTestId("session-classification").filter({ hasText: label });
       await titleSaved;
+      await page.getByTestId("chat-message-input").and(page.locator(":enabled")).waitFor();
+      assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("data-testid")), "chat-message-input",
+        "creating a conversation puts the cursor in the composer");
       await badge.waitFor();
       assert.equal(await badge.textContent(), label);
       await page.reload();
@@ -88,6 +95,7 @@ test("new Pi and Claude conversations keep predefined and free-text classificati
       const { sessions } = await response.json();
       return sessions.some((session: { id: string; classification?: string }) => session.id === sessionId && session.classification === "Support");
     }, { projectId: node.projects[0].id, sessionId: payload.sessionId });
+    await page.locator("#canvasPanel").click({ position: { x: 4, y: 4 } });
     await page.keyboard.press("Meta+Shift+V");
     await page.getByTestId("session-create-button").click();
     await page.setViewportSize({ width: 390, height: 844 });

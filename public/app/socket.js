@@ -188,6 +188,7 @@ function handleSocketPayload(payload, scrollOnReady = false) {
       if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: payload.executionNodeId });
     }
     setComposerEnabled(true);
+    if (openingDraft) elements.messageInput.focus();
     renderConversationLock();
     state.activeSessionId = payload.sessionId || state.activeSessionId;
     state.activeConversationId = payload.conversationId || payload.sessionId || null;
