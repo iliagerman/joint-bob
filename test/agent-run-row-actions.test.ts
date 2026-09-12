@@ -13,6 +13,7 @@ test("sub-agent task lines do not drag the row action buttons off the conversati
   assert.match(app, /rowMain\.append\(button, pinToggle, menuButton\)/);
   assert.match(app, /if \(childToggle\) rowMain\.append\(childToggle\)/);
   assert.match(app, /row\.append\(rowMain\)/);
-  assert.match(app, /row\.append\(runs\)/);
+  assert.match(app, /row\.append\(agentRunToggle\(session, tasks, collapsed\)\)/);
+  assert.match(app, /if \(!collapsed\) row\.append\(agentRunList\(tasks\)\)/);
   assert.match(styles, /\.list-row-main \{[^}]*position: relative/);
 });

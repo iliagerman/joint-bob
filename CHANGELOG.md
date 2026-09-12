@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - New conversation setup is now a step-by-step wizard: name first, then optionally classify, then choose the node. Keyboard navigation lets you use Enter to walk forward and Cmd/Ctrl+Enter to start immediately.
+- Sub-agent task lines can now be collapsed behind a toggle button when conversations fan out to multiple agents, keeping action buttons visible and reducing visual clutter.
 
 ## 1.20.3 — 2026-09-12
 

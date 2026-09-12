@@ -162,44 +162,72 @@ export function renderSessions() {
     if (childToggle) rowMain.append(childToggle);
     row.append(rowMain);
     if (session.agentRuns?.length) {
-      const runs = document.createElement("div");
-      runs.className = "agent-run-list";
-      for (const run of session.agentRuns) {
-        for (const task of run.tasks) {
-          const taskElement = document.createElement("div");
-          taskElement.className = `agent-run-task agent-run-task-${task.status}`;
-          taskElement.dataset.testid = "agent-run-task";
-          taskElement.dataset.role = task.role;
-          taskElement.dataset.status = task.status;
-          taskElement.textContent = `${task.name} · ${task.role} · ${task.status}`;
-          if (task.task) taskElement.title = task.task;
-          runs.append(taskElement);
-          const reason = agentRunTaskReason(task);
-          if (reason) {
-            const reasonElement = document.createElement("p");
-            reasonElement.className = "agent-run-task-reason";
-            reasonElement.dataset.testid = "agent-run-task-reason";
-            reasonElement.textContent = reason;
-            reasonElement.title = reason;
-            runs.append(reasonElement);
-          }
-          if (task.finalOutput) {
-            const output = document.createElement("details");
-            output.className = "agent-run-task-output";
-            const summaryElement = document.createElement("summary");
-            summaryElement.textContent = `${task.name} output`;
-            summaryElement.dataset.testid = "agent-run-task-output-toggle";
-            const body = document.createElement("pre");
-            body.textContent = task.finalOutput;
-            output.append(summaryElement, body);
-            runs.append(output);
-          }
-        }
-      }
-      row.append(runs);
+      const tasks = session.agentRuns.flatMap((run) => run.tasks);
+      const collapsed = state.collapsedAgentRuns.has(session.path);
+      row.append(agentRunToggle(session, tasks, collapsed));
+      if (!collapsed) row.append(agentRunList(tasks));
     }
     elements.sessionList.append(row);
   }
+}
+
+/** A conversation fanning out to several sub-agents buries the rows under it, so the
+    run lines fold away behind one summary the reader can reopen. */
+function agentRunToggle(session, tasks, collapsed) {
+  const running = tasks.filter((task) => task.status === "running").length;
+  const failed = tasks.filter((task) => task.status === "failed").length;
+  const parts = [`${tasks.length} sub-agent step${tasks.length === 1 ? "" : "s"}`];
+  if (running) parts.push(`${running} running`);
+  if (failed) parts.push(`${failed} failed`);
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = `agent-run-toggle${failed ? " has-failed" : ""}`;
+  toggle.dataset.testid = "agent-run-toggle";
+  toggle.setAttribute("aria-expanded", String(!collapsed));
+  toggle.textContent = `${collapsed ? "▸" : "▾"} ${parts.join(" · ")}`;
+  toggle.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (collapsed) state.collapsedAgentRuns.delete(session.path);
+    else state.collapsedAgentRuns.add(session.path);
+    renderSessions();
+  });
+  return toggle;
+}
+
+function agentRunList(tasks) {
+  const runs = document.createElement("div");
+  runs.className = "agent-run-list";
+  for (const task of tasks) {
+    const taskElement = document.createElement("div");
+    taskElement.className = `agent-run-task agent-run-task-${task.status}`;
+    taskElement.dataset.testid = "agent-run-task";
+    taskElement.dataset.role = task.role;
+    taskElement.dataset.status = task.status;
+    taskElement.textContent = `${task.name} · ${task.role} · ${task.status}`;
+    if (task.task) taskElement.title = task.task;
+    runs.append(taskElement);
+    const reason = agentRunTaskReason(task);
+    if (reason) {
+      const reasonElement = document.createElement("p");
+      reasonElement.className = "agent-run-task-reason";
+      reasonElement.dataset.testid = "agent-run-task-reason";
+      reasonElement.textContent = reason;
+      reasonElement.title = reason;
+      runs.append(reasonElement);
+    }
+    if (task.finalOutput) {
+      const output = document.createElement("details");
+      output.className = "agent-run-task-output";
+      const summaryElement = document.createElement("summary");
+      summaryElement.textContent = `${task.name} output`;
+      summaryElement.dataset.testid = "agent-run-task-output-toggle";
+      const body = document.createElement("pre");
+      body.textContent = task.finalOutput;
+      output.append(summaryElement, body);
+      runs.append(output);
+    }
+  }
+  return runs;
 }
 
 /** A failed task with no explanation is the worst outcome, so say the dashboard stayed silent

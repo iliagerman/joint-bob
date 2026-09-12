@@ -642,6 +642,21 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
 }
 .project-card span { font-family: var(--mono); font-size: 10px; }
 
+.agent-run-toggle {
+  grid-column: 1 / -1;
+  justify-self: start;
+  margin: 0 8px 2px 18px;
+  padding: 1px 5px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  cursor: pointer;
+}
+.agent-run-toggle:hover { color: var(--text); }
+.agent-run-toggle.has-failed { color: var(--danger); }
 .agent-run-list { grid-column: 1 / -1; display: grid; gap: 2px; margin: 0 8px 5px 18px; padding-left: 9px; border-left: 1px solid var(--line); }
 .agent-run-task { color: var(--muted); font-family: var(--mono); font-size: 10px; line-height: 1.35; }
 .agent-run-task-running, .agent-run-task-succeeded { color: var(--accent); }
