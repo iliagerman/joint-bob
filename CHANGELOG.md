@@ -3,9 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.22.0 — 2026-09-12
 
-- Browsers now run on any cluster machine independent of where the agent executes. Profiles automatically save login data across restarts, and conversations can run multiple profiles with separate cookies.
+- Added a default browser machine in Settings, with conversation and browser-session overrides independent of where the agent runs.
+- Added persistent Chrome profiles on macOS and Ubuntu, multiple accounts per conversation, and preserved human control across service restarts. Sites can still expire logins.
+- Moved browser login data into native profiles on their owner machine. Joint Bob does not encrypt these files; use disk encryption to protect them.
 - Fixed forked conversations sometimes appearing as drafts when discovered during transcript refresh.
 
 ## 1.21.0 — 2026-09-12
