@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Refreshed app cache to ensure latest assets load on next browser visit.
 - Conversation list now provides direct access to running work without leaving the chats panel.
 - Queued messages now stay visually below active replies until they're sent, maintaining proper message order in the transcript.
 - Browser viewer now remains open when expanding side panels for projects or conversations.
