@@ -54,6 +54,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
     });
     assert.equal(checked.status, 200);
     assert.equal((await checked.json()).pi.configPath.ok, false, "missing config folder is reported");
+    const conversationDefaults = { pi: { provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "low" }, claude: { provider: "claude", modelId: "sonnet", thinkingLevel: "high" } };
     const saved = await fetch(`${node.baseUrl}/api/settings`, {
       method: "PUT",
       headers,
@@ -61,12 +62,14 @@ test("settings API persists runtime and Syncthing choices without returning secr
         pi: { executable: "/usr/local/bin/pi", ...piRuntime },
         claude: { executable: "/usr/local/bin/claude", ...claudeRuntime },
         syncthing: { endpoint: "http://127.0.0.1:8384", apiKey: "secret-api-key" },
+        conversationDefaults,
         projects: { homePath: path.join(root, "JointBob") },
         resources: { skills: [path.join(root, "skills"), path.join(root, "skills")], prompts: [path.join(root, "prompts")], rules: [path.join(root, "rules")], plugins: [path.join(root, "plugins")] },
       }),
     });
     assert.equal(saved.status, 200);
     assert.deepEqual(await saved.json(), {
+      conversationDefaults,
       pi: { executable: "/usr/local/bin/pi", ...piRuntime },
       claude: { executable: "/usr/local/bin/claude", ...claudeRuntime },
       runtimeOverrides: {
@@ -83,6 +86,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
     const read = await fetch(`${node.baseUrl}/api/settings`, { headers });
     assert.equal(read.status, 200);
     assert.deepEqual(await read.json(), {
+      conversationDefaults,
       pi: { executable: "/usr/local/bin/pi", ...piRuntime },
       claude: { executable: "/usr/local/bin/claude", ...claudeRuntime },
       runtimeOverrides: {

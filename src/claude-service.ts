@@ -39,7 +39,7 @@ export interface ClaudeRunOptions {
   resumeSessionId?: string;
   sessionId?: string;
   model?: string;
-  effort?: string;
+  effort?: string | null;
   /** Built-in tools Claude may use this turn; omitted means the CLI default set. */
   tools?: string[];
   env?: NodeJS.ProcessEnv;
@@ -402,8 +402,11 @@ export async function runClaudeConversationPrompt(options: ClaudeRunOptions & { 
   const sessionId = options.resumeSessionId ?? options.sessionId;
   if (!sessionId) throw new Error("Claude conversation spawn requires a session identity");
   const record = await getConversationRecord(options.projectId, "claude", sessionId);
+  const defaults = getSettings().conversationDefaults.claude;
   return runClaudePrompt({
     ...options,
+    model: options.model === undefined && !options.resumeSessionId ? defaults.modelId : options.model,
+    effort: options.effort === undefined && !options.resumeSessionId ? defaults.thinkingLevel : options.effort,
     env: { ...options.env, ...browserAgentEnvironment(options.projectId, "claude", record?.conversationId ?? sessionId) },
     systemInstructions: [options.systemInstructions, browserAgentInstructions].filter(Boolean).join("\n\n"),
   });

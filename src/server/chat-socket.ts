@@ -302,7 +302,7 @@ webSocketServer.on("connection", async (socket, request) => {
   const conversationReadOnly = sessionReadOnly || task?.status === "done" || await conversationBelongsToDoneTask(project.id, sessionRequest.engine, ownershipSessionId);
   let connection: ChatConnection = {
     socket, project, taskId: task?.id ?? null, cwd, engine: "pi", shared: null,
-    claude: emptyClaudeState(ownershipSessionId), handoffContext: spinOffContext, secretAccountIds, readOnly: sessionReadOnly,
+    claude: emptyClaudeState(ownershipSessionId, !sessionRequest.sessionPath), handoffContext: spinOffContext, secretAccountIds, readOnly: sessionReadOnly,
   };
 
   if (sessionRequest.engine === "claude") {

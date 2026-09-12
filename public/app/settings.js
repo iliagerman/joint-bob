@@ -139,6 +139,12 @@ export async function openSettings(tab = "account") {
   elements.settingsProjectHome.value = settings.projects.homePath;
   document.querySelector("#settingsConversationLabels").value = settings.conversationLabels.join("\n");
   fillRuntimeFields(settings.runtimeOverrides);
+  document.querySelector("#settingsPiDefaultProvider").value = settings.conversationDefaults.pi.provider;
+  for (const harness of ["pi", "claude"]) {
+    const prefix = harness === "pi" ? "Pi" : "Claude";
+    document.querySelector(`#settings${prefix}DefaultModel`).value = settings.conversationDefaults[harness].modelId;
+    document.querySelector(`#settings${prefix}DefaultThinking`).value = settings.conversationDefaults[harness].thinkingLevel;
+  }
   renderRuntimeDefaults(defaults);
   elements.settingsRuntimeStatus.textContent = "";
   elements.settingsSkillsStatus.textContent = "";
@@ -160,6 +166,14 @@ async function saveSettings(event) {
     body: JSON.stringify({
       pi: runtime.pi,
       claude: runtime.claude,
+      conversationDefaults: Object.fromEntries(["pi", "claude"].map((harness) => {
+        const prefix = harness === "pi" ? "Pi" : "Claude";
+        return [harness, {
+          provider: harness === "pi" ? document.querySelector("#settingsPiDefaultProvider").value.trim() : "claude",
+          modelId: document.querySelector(`#settings${prefix}DefaultModel`).value.trim(),
+          thinkingLevel: document.querySelector(`#settings${prefix}DefaultThinking`).value,
+        }];
+      })),
       syncthing: { endpoint: state.syncthingEndpoint },
       projects: { homePath: elements.settingsProjectHome.value.trim() },
       resources: resourceFieldsValue(globalResourceFields),

@@ -8,6 +8,7 @@ export interface HarnessAdapter<TId extends HarnessId = HarnessId> {
   id: TId;
   label: string;
   order?: number;
+  defaults: import("./defaults.js").ConversationDefault;
   paths: {
     newSession: string;
     ownsSession: (sessionPath: string) => boolean;

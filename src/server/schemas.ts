@@ -1,4 +1,5 @@
 import path from "node:path";
+import { conversationDefaultsSchema } from "../harnesses/defaults.js";
 import { queuedSettingsSchema } from "../prompt-queue.js";
 import { z } from "zod";
 import { canonicalCanvasKeyToken } from "../canvas-keys.js";
@@ -306,6 +307,7 @@ export const runtimeSettingsSchema = z.object({
 export const runtimeCheckSchema = z.object({ pi: runtimeSettingsSchema, claude: runtimeSettingsSchema }).strict();
 export const resourcePathsSchema = z.object({ skills: z.array(absolutePathSchema).max(20), prompts: z.array(absolutePathSchema).max(20), rules: z.array(absolutePathSchema).max(20), plugins: z.array(absolutePathSchema).max(20) }).strict();
 export const settingsSchema = z.object({
+  conversationDefaults: conversationDefaultsSchema.optional(),
   pi: runtimeSettingsSchema,
   claude: runtimeSettingsSchema,
   syncthing: z.object({ endpoint: z.string().max(500), apiKey: z.string().max(500).nullable().optional() }),

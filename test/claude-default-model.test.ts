@@ -10,10 +10,9 @@ test("a fresh Claude session defaults to a real, selectable model", async () => 
     appSource(),
   ]);
 
-  const emptyStart = server.indexOf("function emptyClaudeState(");
-  const emptyEnd = server.indexOf("\n}", emptyStart);
-  assert.ok(emptyStart >= 0 && emptyEnd >= 0, "Missing emptyClaudeState");
-  assert.match(server.slice(emptyStart, emptyEnd), /model: CLAUDE_DEFAULT_MODEL\b/);
+  const { emptyClaudeState } = await import("../src/server/chat.js");
+  assert.equal(emptyClaudeState().model, "claude-opus-5");
+  assert.equal(emptyClaudeState().effort, "medium");
   assert.match(server, /const CLAUDE_DEFAULT_MODEL = "claude-opus-5";/);
   assert.doesNotMatch(server, /"Claude Code"/);
 

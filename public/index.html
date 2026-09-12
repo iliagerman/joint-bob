@@ -601,6 +601,9 @@
           </div>
           <div id="harnessPanel-pi" role="tabpanel" aria-labelledby="harnessTab-pi" data-harness-panel="pi">
             <output class="engine-defaults" id="settingsPiDefaults" data-testid="settings-pi-defaults"></output>
+            <label>New conversation provider<input id="settingsPiDefaultProvider" data-testid="settings-pi-default-provider" maxlength="200" required /></label>
+            <label>New conversation model<input id="settingsPiDefaultModel" data-testid="settings-pi-default-model" maxlength="300" required /></label>
+            <label>New conversation thinking<select id="settingsPiDefaultThinking" data-testid="settings-pi-default-thinking"><option>off</option><option>minimal</option><option>low</option><option>medium</option><option>high</option><option>xhigh</option><option>max</option></select></label>
             <fieldset class="phase-settings">
               <legend>Pi path overrides</legend>
               <label>Executable<input id="settingsPiExecutable" autocomplete="off" data-testid="settings-pi-executable-input" /></label>
@@ -611,6 +614,8 @@
           </div>
           <div id="harnessPanel-claude" role="tabpanel" aria-labelledby="harnessTab-claude" data-harness-panel="claude" hidden>
             <output class="engine-defaults" id="settingsClaudeDefaults" data-testid="settings-claude-defaults"></output>
+            <label>New conversation model<input id="settingsClaudeDefaultModel" data-testid="settings-claude-default-model" maxlength="300" required /></label>
+            <label>New conversation thinking<select id="settingsClaudeDefaultThinking" data-testid="settings-claude-default-thinking"><option>low</option><option>medium</option><option>high</option><option>xhigh</option><option>max</option></select></label>
             <fieldset class="phase-settings">
               <legend>Claude path overrides</legend>
               <label>Executable<input id="settingsClaudeExecutable" autocomplete="off" data-testid="settings-claude-executable-input" /></label>

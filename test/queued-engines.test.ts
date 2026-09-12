@@ -27,6 +27,8 @@ before(async () => {
   } } }));
   const settings = await import("../src/settings.js");
   settings.updateSettings({ pi: { executable: "", configPath: path.join(root, "pi"), sessionPath: path.join(root, "pi", "sessions") }, claude: { executable: "", configPath: path.join(root, "claude"), sessionPath: path.join(root, "claude", "projects") }, syncthing: { endpoint: "" } });
+  const defaults = settings.getSettings();
+  settings.updateSettings({ ...defaults, conversationDefaults: { ...defaults.conversationDefaults, pi: { provider: "zai", modelId: "queue-reasoner", thinkingLevel: "medium" } } });
   const started = await startServer();
   server = started.server;
   baseUrl = started.baseUrl;

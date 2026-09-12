@@ -1,3 +1,4 @@
+import { getSettings } from "../settings.js";
 import { recordConversationWork } from "../conversation-work.js";
 import { preflightQueuedClaude } from "../queued-preflight.js";
 import { queuedAttachments } from "../queued-attachments.js";
@@ -296,8 +297,9 @@ export function sendClaudeStatus(connection: ChatConnection): void {
   send(connection.socket, { type: "status", status: claudeStatus(connection) });
 }
 
-export function emptyClaudeState(sessionId: string | null = null): ClaudeChatState {
-  return { sessionId, sessionName: null, filePath: null, child: null, promptQueue: [], transcript: [], lastRunEndedAt: 0, model: CLAUDE_DEFAULT_MODEL, effort: null, availableTools: [], enabledTools: null, compacting: false, liveEvents: [], contextUsage: null };
+export function emptyClaudeState(sessionId: string | null = null, isNew = true): ClaudeChatState {
+  const defaults = isNew ? getSettings().conversationDefaults.claude : { modelId: CLAUDE_DEFAULT_MODEL, thinkingLevel: null };
+  return { sessionId, sessionName: null, filePath: null, child: null, promptQueue: [], transcript: [], lastRunEndedAt: 0, model: defaults.modelId, effort: defaults.thinkingLevel, availableTools: [], enabledTools: null, compacting: false, liveEvents: [], contextUsage: null };
 }
 
 function pushTranscript(connection: ChatConnection, role: string, text: string): void {
@@ -447,7 +449,7 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
 
   const runOptions = {
     model: connection.claude.model ?? undefined,
-    effort: connection.claude.effort ?? undefined,
+    effort: connection.claude.effort,
     tools: connection.claude.enabledTools ?? undefined,
   };
   try {

@@ -8,6 +8,9 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 process.env.ANTHROPIC_API_KEY = "test-model-key";
 for (const name of ["GH_TOKEN", "GITHUB_TOKEN", "PI_GITHUB_TOKEN", "JOINT_BOB_BROWSER_CLI", "JOINT_BOB_BROWSER_URL"]) delete process.env[name];
 const { addProject } = await import("../src/store.js");
+const { getSettings, updateSettings } = await import("../src/settings.js");
+const settings = getSettings();
+updateSettings({ ...settings, conversationDefaults: { ...settings.conversationDefaults, pi: { provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "medium" } } });
 const { createPiSession, reloadPiSkills } = await import("../src/pi-service.js");
 const secrets = await import("../src/secrets.js");
 

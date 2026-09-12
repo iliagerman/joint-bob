@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added per-harness conversation defaults in Settings to configure the model and thinking level for new Pi and Claude conversations.
+
 ## 1.19.1 — 2026-09-11
 
 - Fixed conversations staying marked as Running after work finished on another node, even when no agent dashboard was available.

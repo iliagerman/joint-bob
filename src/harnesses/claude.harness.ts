@@ -1,4 +1,5 @@
 import path from "node:path";
+import { claudeConversationDefault } from "./claude.defaults.js";
 import { claudeProjectsRoot, claudeSessionFiles, listClaudeSessions, loadClaudeMessages, refreshClaudeSessions } from "../claude-service.js";
 import { defineHarness } from "./contract.js";
 
@@ -11,6 +12,7 @@ export default defineHarness({
   id: "claude",
   label: "Claude",
   order: 20,
+  defaults: claudeConversationDefault,
   paths: {
     newSession: "claude:new",
     ownsSession: (sessionPath) => sessionPath.startsWith("claude:") || sessionPath.startsWith("draft:claude:"),

@@ -1,4 +1,5 @@
 import os from "node:os";
+import { piConversationDefault } from "./pi.defaults.js";
 import path from "node:path";
 import { createPiSession, listPiSessions, piSessionFiles, refreshPiSessions, simplifyMessages } from "../pi-service.js";
 import { getSettings } from "../settings.js";
@@ -22,6 +23,7 @@ export default defineHarness({
   id: "pi",
   label: "Pi",
   order: 10,
+  defaults: piConversationDefault,
   paths: {
     newSession: "new",
     ownsSession: (sessionPath) => sessionPath === "new" || sessionPath.startsWith("draft:pi:") || !hasHarnessPrefix(sessionPath),

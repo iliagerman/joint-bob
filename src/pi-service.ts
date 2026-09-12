@@ -547,8 +547,25 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
     ...(!safeguardsEnabled ? { extensionsOverride: (base) => ({ ...base, extensions: base.extensions.filter((extension) => !isPermissionSafeguardExtension(extension.resolvedPath)) }) } : {}),
   });
   await resourceLoader.reload();
+  const defaults = getSettings().conversationDefaults.pi;
+  let model = options.sessionPath ? undefined : modelRuntime.getModel(defaults.provider, defaults.modelId);
+  let thinkingLevel: AgentSession["thinkingLevel"] | undefined = options.sessionPath ? undefined : defaults.thinkingLevel;
+  if (!options.sessionPath && !model) throw new Error(`Model not found: ${defaults.provider}/${defaults.modelId}`);
+  const saved = sessionManager.buildSessionContext();
+  // The SDK only restores settings itself when the transcript contains messages.
+  if (options.sessionPath && saved.messages.length === 0) {
+    if (saved.model) {
+      model = modelRuntime.getModel(saved.model.provider, saved.model.modelId);
+      if (!model) throw new Error(`Model not found: ${saved.model.provider}/${saved.model.modelId}`);
+    }
+    if (sessionManager.getBranch().some((entry) => entry.type === "thinking_level_change")) {
+      thinkingLevel = saved.thinkingLevel as AgentSession["thinkingLevel"];
+    }
+  }
   const result = await createAgentSession({
     cwd: options.cwd,
+    model,
+    thinkingLevel,
     sessionManager,
     modelRuntime,
     customTools: [bashTool],
@@ -558,13 +575,6 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
   });
   const session = result.session;
   const unsubscribeCredentials = bindPiCredentials(session, options.projectId, conversation, (current) => { environment = current; });
-  if (isSupersededGlm(session.model)) {
-    const model = modelRuntime.getModel("zai", "glm-5.3");
-    if (model) await session.setModel(model);
-  } else if (isDeprecatedDefault(session.model)) {
-    const model = preferredModel(modelRuntime.getAvailableSnapshot());
-    if (model) await session.setModel(model);
-  }
 
   if ("bindExtensions" in session && typeof session.bindExtensions === "function") {
     await session.bindExtensions({});

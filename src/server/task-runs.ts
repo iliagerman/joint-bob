@@ -472,11 +472,11 @@ async function recoverChat(record: UpdateRecoveryRecord): Promise<void> {
     return;
   }
   const key = claudeRunKey(record.projectId, record.sessionPath);
-  const claude = emptyClaudeState(record.sessionId);
+  const claude = emptyClaudeState(record.sessionId, false);
   claude.filePath = path.resolve(record.sessionPath.replace(/^claude:/, ""));
   claude.transcript = await loadClaudeMessages(record.sessionPath);
-  if (record.model) claude.model = record.model;
-  if (record.effort) claude.effort = record.effort;
+  claude.model = record.model;
+  claude.effort = record.effort;
   const recovered: RecoveredClaudeChat = { claude, connection: null };
   recoveredClaudeChats.set(key, recovered);
   runningClaudeSessionPaths.add(key);
