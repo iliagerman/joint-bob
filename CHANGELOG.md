@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Queued messages now stay visually below active replies until they're sent, maintaining proper message order in the transcript.
+
 ## 1.22.2 — 2026-09-12
 
 - Fixed new conversation wizard steps to display in a consistent horizontal layout.

@@ -64,6 +64,19 @@ test("queued editor labels Save and Cancel and shows shortcut hints", async () =
   assert.match(await page.locator(".queued-editor").innerText(), /Escape/);
 });
 
+test("queued messages stay below replies until they become active", async () => {
+  await openEditor();
+  await page.evaluate(async () => (await import("/app/chat-transcript.js")).appendMessage("assistant", "Current reply"));
+  assert.deepEqual(await page.locator(".message").evaluateAll((messages) => messages.map((message) => message._raw)), ["Current reply", "Original\n\nAttached: notes.txt"]);
+
+  await page.evaluate(async () => {
+    const transcript = await import("/app/chat-transcript.js");
+    transcript.clearQueuedMark(71);
+    transcript.appendMessage("assistant", "Queued reply");
+  });
+  assert.deepEqual(await page.locator(".message").evaluateAll((messages) => messages.map((message) => message._raw)), ["Current reply", "Original\n\nAttached: notes.txt", "Queued reply"]);
+});
+
 test("Cancel and Escape discard drafts locally and restore saved text on reopen", async () => {
   for (const action of ["click", "Escape"]) {
     await openEditor();

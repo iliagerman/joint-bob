@@ -129,6 +129,11 @@ function messageHost() {
   return currentSegment ?? elements.messages;
 }
 
+function appendBeforeQueuedMessages(node) {
+  const host = messageHost();
+  host.insertBefore(node, host.querySelector(":scope > .message.queued"));
+}
+
 function prettyText(text) {
   const normalized = `${text || ""}`;
   const trimmed = normalized.trim();
@@ -364,7 +369,7 @@ export function appendMessage(role, text, timestamped = true) {
   bubble.append(content);
   if (timestamped && (role === "user" || role === "assistant")) bubble.append(messageTimestamp());
   renderBubbleContent(bubble, text, true);
-  messageHost().append(bubble);
+  appendBeforeQueuedMessages(bubble);
   if (isMarkdown) appendCopyButton(bubble);
   requestPinChat();
   return bubble;
@@ -490,6 +495,9 @@ export function markMessageQueued(bubble, queueId, editableText = null, settings
     sendQueuedPromptAction({ type: "cancelQueuedPrompt", queueId, queueRevision: Number(bubble.dataset.queueRevision) });
   });
   bubble.append(footer, queuedEditor(bubble, queueId, footer, edit));
+  const actions = bubble.nextElementSibling?.classList.contains("message-actions") ? bubble.nextElementSibling : null;
+  bubble.parentElement.append(bubble);
+  if (actions) bubble.parentElement.append(actions);
   return bubble;
 }
 
@@ -549,7 +557,7 @@ export function appendToolMessage(toolName, toolCallId, startedAt = Date.now()) 
   const content = document.createElement("pre");
   content.className = "message-content";
   bubble.append(summary, content);
-  messageHost().append(bubble);
+  appendBeforeQueuedMessages(bubble);
   requestPinChat();
   return bubble;
 }
