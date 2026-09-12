@@ -923,6 +923,7 @@ select.chat-toolbar-control {
 #chatHarnessSelect { max-width: min(24vw, 120px); }
 .chat-model-control, .chat-mode-control { align-self: stretch; }
 #chatsRecentSessionsButton, #chatRecentSessionsButton { display: none; }
+#chatsRunningConversationsButton { display: none; }
 .chat-toolbar-icon { width: 17px; height: 17px; flex: none; }
 .chat-recents-button, .chat-more > summary {
   min-height: 32px;
@@ -1759,6 +1760,7 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   input, select { padding: 10px 13px; }
   .install-banner { bottom: 16px; }
   #chatsRecentSessionsButton, #chatRecentSessionsButton { display: none !important; }
+  #chatsRunningConversationsButton { display: none !important; }
 }
 
 @media (max-width: 1023px) {
@@ -1776,6 +1778,7 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   .chat-session-controls > .chat-control[for="chatHarnessSelect"] { grid-column: 2 / 4; }
   #chatModeControl { display: grid; }
   #chatsRecentSessionsButton { display: inline-grid; }
+  #chatsRunningConversationsButton { display: inline-grid; }
   #chatRecentSessionsButton { display: inline-flex; }
   .chat-model-control { grid-column: 1; grid-row: 2; min-width: 0; }
   .chat-mode-control { grid-column: 2; grid-row: 2; min-width: 0; }

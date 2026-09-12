@@ -3,11 +3,12 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { appSource } from "./source.js";
 
-test("running conversations are reachable only from projects", async () => {
+test("running conversations are reachable from projects and the conversation list", async () => {
   const html = await readFile("public/index.html", "utf8");
-  assert.equal((html.match(/data-running-conversations-open/g) || []).length, 1);
+  assert.equal((html.match(/data-running-conversations-open/g) || []).length, 2);
   assert.match(html, /data-testid="running-conversations-open-button"/);
-  assert.doesNotMatch(html, /data-testid="(?:chats|chat)-running-conversations-open-button"/);
+  assert.match(html, /data-testid="chats-running-conversations-open-button"/);
+  assert.doesNotMatch(html, /data-testid="chat-running-conversations-open-button"/);
 });
 
 test("the running conversations dialog refreshes and opens verified live sessions", async () => {

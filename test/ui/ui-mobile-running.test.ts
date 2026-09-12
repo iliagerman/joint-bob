@@ -7,7 +7,7 @@ import test from "node:test";
 import { chromium, type Browser } from "playwright-core";
 import { seedDevEnvironment, signIn, startDevNode, stopDevNode } from "../dev-nodes.js";
 
-test("running conversations stay in the projects pane on mobile", { timeout: 120_000 }, async (t) => {
+test("mobile conversations expose running work and keep the current chat globally reachable", { timeout: 120_000 }, async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-mobile-running-"));
   let server: ChildProcess | undefined;
   let browser: Browser | undefined;
@@ -29,8 +29,19 @@ test("running conversations stay in the projects pane on mobile", { timeout: 120
   await page.locator(".project-card").first().waitFor();
 
   assert.equal(await page.getByTestId("running-conversations-open-button").isVisible(), true);
-  assert.equal(await page.getByTestId("chats-running-conversations-open-button").count(), 0);
-  assert.equal(await page.getByTestId("chat-running-conversations-open-button").count(), 0);
-  await page.getByTestId("running-conversations-open-button").click();
+  assert.equal(await page.getByTestId("nav-chat-button").isVisible(), true);
+
+  await page.locator(".project-card").first().click();
+  const runningButton = page.getByTestId("chats-running-conversations-open-button");
+  await runningButton.waitFor();
+  await runningButton.click();
   await page.getByTestId("running-conversations-dialog").getByText("No conversations are running.").waitFor();
+  await page.getByTestId("running-conversations-close-button").click();
+
+  const conversation = page.locator("#sessionList .session-card").first();
+  const title = await conversation.locator("strong").first().textContent();
+  await conversation.click();
+  await page.getByTestId("nav-projects-button").click();
+  await page.getByTestId("nav-chat-button").click();
+  await page.locator("#sessionTitle").getByText(title!, { exact: true }).waitFor();
 });
