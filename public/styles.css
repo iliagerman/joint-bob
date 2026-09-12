@@ -493,7 +493,7 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
 .conversation-search { margin-top: 8px; }
 .classification-filter { margin: 8px 12px 2px; font-size: 12px; }
 .classification-filter select { min-width: 0; width: 100%; }
-.chat-filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 3px; margin: 8px 12px 2px; }
+.chat-filters { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 3px; margin: 8px 12px 2px; }
 .chat-filters button {
   display: inline-flex;
   align-items: center;
