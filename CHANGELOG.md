@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.24.1 — 2026-09-12
 
-- Updated terminal emulator to use system scrollbar styling instead of custom colors.
+- Restored terminal functionality in Safari.
 
 ## 1.24.0 — 2026-09-12
 
