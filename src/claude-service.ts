@@ -1,5 +1,6 @@
 import { recordConversationWork } from "./conversation-work.js";
 import { randomUUID } from "node:crypto";
+import { parseCompletedJsonl } from "./jsonl.js";
 import type { Stats } from "node:fs";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { access, copyFile, mkdir, readdir, readFile, rename, stat } from "node:fs/promises";
@@ -251,7 +252,7 @@ function newestEventTime(records: UnknownRecord[]): string {
 async function claudeSessionFacts(filePath: string, fileStat: Stats): Promise<ClaudeSessionFacts> {
   const cached = claudeSessionFactsCache.get(filePath);
   if (cached && cached.mtimeMs === fileStat.mtimeMs && cached.size === fileStat.size) return cached;
-  const records = (await readFile(filePath, "utf8")).split("\n").filter(Boolean).map((line) => JSON.parse(line) as UnknownRecord);
+  const records = parseCompletedJsonl(await readFile(filePath, "utf8")) as UnknownRecord[];
   let customTitle = "";
   let aiTitle = "";
   let prompt = "";

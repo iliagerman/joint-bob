@@ -71,7 +71,7 @@ test("scheduled conversation waits for the remote active run and can be paused w
   } finally { publishPiRuntime(runtimeDb, runtime, false); runtimeDb.close(); db.close(); }
 });
 
-test("fork on a peer runs on the source owner and rejects its running session", { timeout: 45_000 }, async () => {
+test("fork on a peer snapshots its running source on the owner without stopping it", { timeout: 45_000 }, async () => {
   const project = nodeA.projects[0];
   const listed = await api<{ sessions: SessionView[] }>(nodeA, sessionA, "GET", `/projects/${project.id}/sessions`);
   const source = listed.body.sessions.find((row) => row.harnessId === "pi")!;
@@ -85,9 +85,6 @@ test("fork on a peer runs on the source owner and rejects its running session", 
   const runtime = { sessionId: source.id, transcriptPath: source.path, runId: randomUUID() };
   try {
     publishPiRuntime(db, runtime, true);
-    const busy = await requestFork();
-    assert.equal(busy.status, 409, "peer must ask owner, not copy a locally idle transcript");
-    publishPiRuntime(db, runtime, false);
     const response = await requestFork();
     assert.equal(response.status, 201);
     const { session: copy } = await response.json() as { session: SessionView };
@@ -97,6 +94,8 @@ test("fork on a peer runs on the source owner and rejects its running session", 
     assert.ok((await readFile(copy.path, "utf8")).includes(source.id + "-0"), "fork includes source history");
     const onOwner = await api<{ sessions: SessionView[] }>(nodeA, sessionA, "GET", `/projects/${project.id}/sessions`);
     assert.ok(onOwner.body.sessions.some((row) => row.id === copy.id && row.title.startsWith("[F] ")));
+    assert.equal(onOwner.body.sessions.find((row) => row.id === source.id)?.running, true, "remote fork must not stop its source");
+    assert.equal(onOwner.body.sessions.find((row) => row.id === copy.id)?.running, false, "fork must not inherit running work");
   } finally { publishPiRuntime(db, runtime, false); db.close(); }
 });
 

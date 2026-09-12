@@ -238,8 +238,7 @@ function sessionMenuItems(session, sessionActive) {
       label: "Fork conversation",
       icon: "copy",
       testid: "session-fork-button",
-      disabled: Boolean(session.running),
-      title: session.running ? "Wait for this conversation to finish running" : "Copy history and settings into an independent conversation",
+      title: "Copy history and settings into an independent conversation",
       onSelect: () => forkSessionFromRow(session).catch((error) => toast(error.message)),
     },
     ...(readOnly ? [] : [

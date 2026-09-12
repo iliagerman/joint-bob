@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { parseCompletedJsonl } from "./jsonl.js";
 import { readFile, readdir, stat } from "node:fs/promises";
 import path, { basename } from "node:path";
 import {
@@ -417,7 +418,7 @@ function piMessageActivity(record: UnknownRecord): string | undefined {
 async function summarizePiTranscript(filePath: string, project: SessionProjectPaths): Promise<SessionSummary | null> {
   let records: UnknownRecord[];
   try {
-    records = (await readFile(filePath, "utf8")).split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line) as UnknownRecord);
+    records = parseCompletedJsonl(await readFile(filePath, "utf8")) as UnknownRecord[];
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
