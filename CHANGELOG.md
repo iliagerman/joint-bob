@@ -6,6 +6,8 @@ Every deployment is a version. The newest section must always match the
 ## 1.20.2 — 2026-09-12
 
 - Keyboard shortcuts now control browser (Ctrl+Alt+B) and scheduled tasks (Ctrl+Alt+S) from the chat toolbar.
+- Running conversations now have one entry point in the Projects pane instead of duplicate buttons in conversation views.
+- Removed the Safeguards on/off indicator from the chat toolbar.
 
 ## 1.20.1 — 2026-09-12
 
