@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.23.0 — 2026-09-12
 
 - Refreshed app cache to ensure latest assets load on next browser visit.
 - Conversation list now provides direct access to running work without leaving the chats panel.
