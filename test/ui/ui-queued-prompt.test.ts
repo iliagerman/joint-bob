@@ -5,7 +5,7 @@
 // Run with `npm run test:ui`.
 import assert from "node:assert/strict";
 import { type ChildProcess } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test, { after, before } from "node:test";
@@ -27,6 +27,29 @@ let page: Page;
  * prompt can be typed while the first turn is genuinely still running. */
 function releaseTurn(prompt: string): Promise<void> {
   return writeFile(`${path.join(root, "gate")}.${prompt}`, "");
+}
+
+async function invocationLines(): Promise<string[]> {
+  try {
+    const contents = (await readFile(path.join(root, "invocations.log"), "utf8")).trim();
+    return contents ? contents.split("\n") : [];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+async function waitForFirstInvocation(): Promise<void> {
+  const deadline = Date.now() + 20_000;
+  for (;;) {
+    const seen = await invocationLines();
+    if (seen.length) {
+      assert.equal(seen[0], "hold the line", "the first fake CLI turn receives the first prompt");
+      return;
+    }
+    if (Date.now() >= deadline) assert.fail(`first fake CLI invocation did not start; invocations=${JSON.stringify(seen)}`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
 }
 
 async function openConversation(): Promise<void> {
@@ -77,6 +100,18 @@ test("queued prompts can be edited, reordered, merged, reloaded, and deleted", a
   await page.getByTestId("chat-message-input").fill("hold the line");
   await page.keyboard.press("Enter");
   await page.locator(".message.user", { hasText: "hold the line" }).first().waitFor({ timeout: 20_000 });
+  try {
+    await Promise.all([
+      page.locator(".message.user:not(.queued)", { hasText: "hold the line" }).first().waitFor({ timeout: 20_000 }),
+      waitForFirstInvocation(),
+    ]);
+  } catch (error) {
+    const [invocations, toolErrors] = await Promise.all([
+      invocationLines(),
+      page.locator(".message.tool").allTextContents(),
+    ]);
+    throw new Error(`First turn did not start: ${error instanceof Error ? error.message : String(error)}; invocations=${JSON.stringify(invocations)}; toolErrors=${JSON.stringify(toolErrors.slice(-10))}`);
+  }
 
   await page.getByTestId("chat-message-input").fill("and this one waits");
   await page.keyboard.press("Enter");

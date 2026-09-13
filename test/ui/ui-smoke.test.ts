@@ -16,7 +16,7 @@ import test, { after, before } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
-import { seedDevEnvironment, startDevNode, stopDevNode, type DevEnvironment, type SeededNode } from "../dev-nodes.js";
+import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode } from "../dev-nodes.js";
 
 let root: string;
 let environment: DevEnvironment;
@@ -122,6 +122,14 @@ test("other toolbar actions advertise their shortcuts", async () => {
 });
 
 test("harness settings show per-harness tabs and restore node defaults", async () => {
+  const session = await signIn(environment, node);
+  const originalResponse = await api<Record<string, unknown>>(node, session, "GET", "/settings");
+  assert.equal(originalResponse.status, 200, "the original settings snapshot loads");
+  const originalSettings = originalResponse.body as Record<string, unknown> & { pi: { configPath: string; sessionPath: string } };
+  assert.ok(originalSettings.pi.configPath.startsWith(`${environment.home}${path.sep}`), "seeded Pi config stays under the fixture home");
+  assert.ok(originalSettings.pi.sessionPath.startsWith(`${environment.home}${path.sep}`), "seeded Pi sessions stay under the fixture home");
+
+  try {
   await page.getByTestId("settings-open-button").click();
   await page.getByTestId("settings-tab-engines").click();
   const claudePanel = page.locator("[data-harness-panel='claude']");
@@ -157,6 +165,18 @@ test("harness settings show per-harness tabs and restore node defaults", async (
   await page.getByTestId("settings-tab-engines").click();
   assert.equal(await piExecutable.inputValue(), "", "blank overrides keep the effective node default");
   await page.getByTestId("settings-cancel-button").click();
+  } finally {
+    if (await page.getByTestId("settings-dialog").isVisible()) {
+      await page.getByTestId("settings-cancel-button").click();
+      await page.getByTestId("settings-dialog").waitFor({ state: "hidden" });
+    }
+    const restored = await api<Record<string, unknown>>(node, session, "PUT", "/settings", originalSettings);
+    assert.equal(restored.status, 200, "the original settings snapshot restores");
+    const verified = await api<{ pi: { configPath: string; sessionPath: string } }>(node, session, "GET", "/settings");
+    assert.equal(verified.status, 200, "the restored settings reload");
+    assert.equal(verified.body.pi.configPath, originalSettings.pi.configPath, "the seeded Pi config path is restored");
+    assert.equal(verified.body.pi.sessionPath, originalSettings.pi.sessionPath, "the seeded Pi session path is restored");
+  }
 });
 
 test("settings sub-tabs, shortcut search, and the account panel stay focused", async () => {
