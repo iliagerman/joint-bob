@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { parseCompletedJsonl } from "./jsonl.js";
-import { readFile, readdir, stat } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path, { basename } from "node:path";
 import {
   createAgentSession,
@@ -366,17 +367,46 @@ async function sessionDirectorySnapshot(directory: string): Promise<{ names: str
   }
 }
 
-async function listSessionsForDirectory(cwd: string, sessionDirectory: string | undefined): Promise<unknown[]> {
+async function recentSessionPaths(directory: string, names: string[], historyDays: number, includedSessionPaths: string[], includedSessionIds: string[]): Promise<string[]> {
+  const cutoff = Date.now() - historyDays * 24 * 60 * 60 * 1000;
+  const included = new Set(includedSessionPaths.map((filePath) => path.resolve(filePath)));
+  const includedIds = new Set(includedSessionIds);
+  const selected = await Promise.all(names.map(async (name) => {
+    const filePath = path.resolve(directory, name);
+    if (included.has(filePath) || includedIds.has(`pi:${path.basename(filePath, ".jsonl")}`)) return filePath;
+    try { return (await stat(filePath)).mtimeMs >= cutoff ? filePath : null; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
+  }));
+  return selected.filter((filePath): filePath is string => filePath !== null);
+}
+
+async function listSelectedPiSessions(cwd: string, filePaths: string[]): Promise<unknown[]> {
+  const directory = await mkdtemp(path.join(tmpdir(), "joint-bob-session-list-"));
+  const originals = new Map<string, string>();
+  try {
+    await Promise.all(filePaths.map(async (filePath, index) => {
+      const linked = path.join(directory, `${index}-${path.basename(filePath)}`);
+      await symlink(filePath, linked);
+      originals.set(path.resolve(linked), filePath);
+    }));
+    const sessions = await SessionManager.list(cwd, directory) as unknown[];
+    return sessions.map((session) => ({ ...asRecord(session), path: originals.get(path.resolve(String(asRecord(session).path))) }));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+async function listSessionsForDirectory(cwd: string, sessionDirectory: string | undefined, historyDays: number, includedSessionPaths: string[], includedSessionIds: string[]): Promise<unknown[]> {
   if (!sessionDirectory) return await SessionManager.list(cwd, sessionDirectory) as unknown[];
-  const key = JSON.stringify([cwd, sessionDirectory]);
+  const key = JSON.stringify([cwd, sessionDirectory, historyDays, includedSessionPaths, includedSessionIds]);
   const snapshot = await sessionDirectorySnapshot(sessionDirectory);
   const cached = piSessionListCache.get(key);
   if (cached && cached.fingerprint === snapshot.fingerprint) return cached.sessions;
-  const availablePaths = await discoverPiSessionDirectory(sessionDirectory, snapshot.names, cwd);
-  const sessions = (await SessionManager.list(cwd, sessionDirectory) as unknown[])
+  const candidates = historyDays ? await recentSessionPaths(sessionDirectory, snapshot.names, historyDays, includedSessionPaths, includedSessionIds) : snapshot.names.map((name) => path.join(sessionDirectory, name));
+  const availablePaths = await discoverPiSessionDirectory(sessionDirectory, candidates.map((filePath) => path.basename(filePath)), cwd);
+  const sessions = historyDays ? await listSelectedPiSessions(cwd, [...availablePaths]) : (await SessionManager.list(cwd, sessionDirectory) as unknown[])
     .filter((session) => availablePaths.has(path.resolve(String(asRecord(session).path))));
-  const names = [...availablePaths].map((filePath) => path.basename(filePath));
-  piSessionListCache.set(key, { fingerprint: await fingerprintNames(sessionDirectory, names), sessions });
+  piSessionListCache.set(key, { fingerprint: snapshot.fingerprint, sessions });
   return sessions;
 }
 
@@ -389,10 +419,10 @@ export async function piSessionFiles(project: SessionProjectPaths): Promise<stri
   return [...new Set(groups.flat().map((filePath) => path.resolve(filePath)))];
 }
 
-async function sessionsForCwd(cwd: string): Promise<unknown[]> {
+async function sessionsForCwd(cwd: string, historyDays: number, includedSessionPaths: string[], includedSessionIds: string[]): Promise<unknown[]> {
   const results = await Promise.all(piSessionDirectories(cwd).map(async (sessionDirectory) => {
     try {
-      return await listSessionsForDirectory(cwd, sessionDirectory);
+      return await listSessionsForDirectory(cwd, sessionDirectory, historyDays, includedSessionPaths, includedSessionIds);
     } catch (error) {
       console.warn(`Could not list Pi sessions for ${cwd}`, error);
       return [];
@@ -401,8 +431,8 @@ async function sessionsForCwd(cwd: string): Promise<unknown[]> {
   return results.flat();
 }
 
-export async function listPiSessions(project: SessionProjectPaths): Promise<SessionSummary[]> {
-  const sessions = (await Promise.all(sessionCwds(project).map(sessionsForCwd))).flat();
+export async function listPiSessions(project: SessionProjectPaths & { historyDays?: number; includedSessionPaths?: string[]; includedSessionIds?: string[] }): Promise<SessionSummary[]> {
+  const sessions = (await Promise.all(sessionCwds(project).map((cwd) => sessionsForCwd(cwd, project.historyDays ?? 0, project.includedSessionPaths ?? [], project.includedSessionIds ?? [])))).flat();
   const unique = [...new Map(sessions.map((session) => [String(asRecord(session).path), session])).values()];
   return Promise.all(unique.map(summarizeSession));
 }
@@ -450,11 +480,19 @@ async function summarizePiTranscript(filePath: string, project: SessionProjectPa
   };
 }
 
-export async function refreshPiSessions(project: SessionProjectPaths, previous: SessionSummary[], changedFiles: string[]): Promise<SessionSummary[]> {
+export async function refreshPiSessions(project: SessionProjectPaths & { historyDays?: number; includedSessionPaths?: string[]; includedSessionIds?: string[] }, previous: SessionSummary[], changedFiles: string[]): Promise<SessionSummary[]> {
   if (!changedFiles.length) return listPiSessions(project);
   const changed = new Set(changedFiles.map((filePath) => path.resolve(filePath)));
   const retained = previous.filter((session) => !changed.has(path.resolve(session.path)));
-  const refreshed = await Promise.all([...changed].map((filePath) => summarizePiTranscript(filePath, project)));
+  const included = new Set((project.includedSessionPaths ?? []).map((filePath) => path.resolve(filePath)));
+  const includedIds = new Set(project.includedSessionIds ?? []);
+  const cutoff = project.historyDays ? Date.now() - project.historyDays * 86_400_000 : 0;
+  const selected = cutoff ? (await Promise.all([...changed].map(async (filePath) => {
+    if (included.has(filePath) || includedIds.has(`pi:${path.basename(filePath, ".jsonl")}`)) return filePath;
+    try { return (await stat(filePath)).mtimeMs >= cutoff ? filePath : null; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
+  }))).filter((filePath): filePath is string => filePath !== null) : [...changed];
+  const refreshed = await Promise.all(selected.map((filePath) => summarizePiTranscript(filePath, project)));
   return [...retained, ...refreshed.filter((session): session is SessionSummary => Boolean(session))];
 }
 

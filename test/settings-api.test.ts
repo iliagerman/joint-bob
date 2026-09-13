@@ -63,6 +63,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
         claude: { executable: "/usr/local/bin/claude", ...claudeRuntime },
         syncthing: { endpoint: "http://127.0.0.1:8384", apiKey: "secret-api-key" },
         conversationDefaults,
+        conversationHistoryDays: 90,
         projects: { homePath: path.join(root, "JointBob") },
         resources: { skills: [path.join(root, "skills"), path.join(root, "skills")], prompts: [path.join(root, "prompts")], rules: [path.join(root, "rules")], plugins: [path.join(root, "plugins")] },
       }),
@@ -80,6 +81,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
       projects: { homePath: path.join(root, "JointBob") },
       resources: { skills: [path.join(root, "skills")], prompts: [path.join(root, "prompts")], rules: [path.join(root, "rules")], plugins: [path.join(root, "plugins")] },
       conversationLabels: ["Research", "Bug", "Feature", "POC"],
+      conversationHistoryDays: 90,
       restartRequired: { pi: true, claude: true },
     });
 
@@ -97,6 +99,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
       projects: { homePath: path.join(root, "JointBob") },
       resources: { skills: [path.join(root, "skills")], prompts: [path.join(root, "prompts")], rules: [path.join(root, "rules")], plugins: [path.join(root, "plugins")] },
       conversationLabels: ["Research", "Bug", "Feature", "POC"],
+      conversationHistoryDays: 90,
       restartRequired: { pi: false, claude: false },
     });
 

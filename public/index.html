@@ -450,6 +450,14 @@
             <button class="ghost" id="themeToggleButton" type="button" aria-label="Switch to dark theme" title="Switch to dark theme" data-testid="settings-theme-toggle-button">☾ Switch to dark theme</button>
           </fieldset>
           <fieldset class="phase-settings">
+            <legend>Conversation history</legend>
+            <label>Load conversation summaries from the last
+              <input id="settingsConversationHistoryDays" type="number" min="1" max="3650" step="1" required data-testid="settings-conversation-history-days" />
+              days
+            </label>
+            <p class="settings-hint">Older transcripts stay on disk and load only when opened from a pin, recent item, canvas pane, or direct link.</p>
+          </fieldset>
+          <fieldset class="phase-settings">
             <legend>Account</legend>
             <p>Signed in as <output id="settingsUsername" data-testid="settings-username"></output>.</p>
             <div class="account-password-fields">

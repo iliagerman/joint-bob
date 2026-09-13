@@ -13,22 +13,15 @@ interface CatalogEntry {
   project: HarnessProject;
   harnessId: HarnessId;
   sessions: Promise<SessionSummary[]>;
-  snapshot: Promise<Map<string, string>>;
+  fingerprints: Promise<Map<string, string>>;
 }
 
-function projectCacheKey(project: HarnessProject, harnessId: HarnessId): string {
-  const paths = [project.path, project.macPath, ...(project.locations ?? []).map((location) => location.path), ...(project.additionalPaths ?? [])]
-    .filter((value): value is string => Boolean(value))
-    .map((value) => path.resolve(value));
-  return `${project.id}:${harnessId}:${JSON.stringify([...new Set(paths)].sort())}`;
-}
-
-async function transcriptSnapshot(adapter: HarnessAdapter, project: HarnessProject): Promise<Map<string, string>> {
-  const files = await adapter.sessions.files(project);
-  const entries = await Promise.all(files.map(async (filePath): Promise<[string, string] | null> => {
+async function sessionFingerprints(sessions: SessionSummary[]): Promise<Map<string, string>> {
+  const entries = await Promise.all(sessions.filter((session) => !session.draft).map(async (session): Promise<[string, string] | null> => {
+    const filePath = path.resolve(session.path.replace(/^claude:/, ""));
     try {
       const info = await stat(filePath);
-      return [path.resolve(filePath), `${info.mtimeMs}:${info.size}`];
+      return [filePath, `${info.mtimeMs}:${info.size}`];
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw error;
@@ -37,9 +30,18 @@ async function transcriptSnapshot(adapter: HarnessAdapter, project: HarnessProje
   return new Map(entries.filter((entry): entry is [string, string] => entry !== null));
 }
 
-function changedTranscriptFiles(previous: Map<string, string>, current: Map<string, string>): string[] {
+function changedSessionFiles(previous: Map<string, string>, current: Map<string, string>): string[] {
   const files = new Set([...previous.keys(), ...current.keys()]);
   return [...files].filter((filePath) => previous.get(filePath) !== current.get(filePath));
+}
+
+function projectCacheKey(project: HarnessProject, harnessId: HarnessId): string {
+  const paths = [project.path, project.macPath, ...(project.locations ?? []).map((location) => location.path), ...(project.additionalPaths ?? [])]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => path.resolve(value));
+  const includedPaths = [...new Set(project.includedSessionPaths ?? [])].sort();
+  const includedIds = [...new Set(project.includedSessionIds ?? [])].sort();
+  return `${project.id}:${harnessId}:${project.historyDays ?? 0}:${JSON.stringify([...new Set(paths)].sort())}:${JSON.stringify(includedPaths)}:${JSON.stringify(includedIds)}`;
 }
 
 export class HarnessSessionCatalog<TAdapters extends readonly HarnessAdapter[]> {
@@ -63,10 +65,8 @@ export class HarnessSessionCatalog<TAdapters extends readonly HarnessAdapter[]> 
       const ownedFiles = changedFiles.filter(adapter.paths.ownsTranscript);
       if (changedFiles.length && !ownedFiles.length) return;
       try {
-        const [previous, current, sessions] = await Promise.all([entry.snapshot, transcriptSnapshot(adapter, entry.project), entry.sessions]);
-        const files = [...new Set([...ownedFiles, ...changedTranscriptFiles(previous, current)])];
-        entry.sessions = adapter.sessions.refresh(entry.project, sessions, files);
-        entry.snapshot = Promise.resolve(current);
+        entry.sessions = entry.sessions.then((sessions) => adapter.sessions.refresh(entry.project, sessions, ownedFiles));
+        entry.fingerprints = entry.sessions.then(sessionFingerprints);
         await entry.sessions;
       } catch (error) {
         this.entries.delete(key);
@@ -84,22 +84,21 @@ export class HarnessSessionCatalog<TAdapters extends readonly HarnessAdapter[]> 
     const key = projectCacheKey(project, adapter.id);
     const cached = this.entries.get(key);
     if (cached) {
-      const [previous, current, sessions] = await Promise.all([cached.snapshot, transcriptSnapshot(adapter, project), cached.sessions]);
-      const changedFiles = changedTranscriptFiles(previous, current);
+      const [sessions, previous] = await Promise.all([cached.sessions, cached.fingerprints]);
+      const current = await sessionFingerprints(sessions);
+      const changedFiles = changedSessionFiles(previous, current);
       if (!changedFiles.length) return sessions;
       cached.sessions = adapter.sessions.refresh(project, sessions, changedFiles);
-      cached.snapshot = Promise.resolve(current);
-      try {
-        return await cached.sessions;
-      } catch (error) {
-        this.entries.delete(key);
-        throw error;
-      }
+      cached.fingerprints = cached.sessions.then(sessionFingerprints);
+      return cached.sessions;
+    }
+    for (const [cachedKey, entry] of this.entries) {
+      if (entry.project.id === project.id && entry.harnessId === adapter.id) this.entries.delete(cachedKey);
     }
     const sessions = adapter.sessions.list(project);
-    const snapshot = transcriptSnapshot(adapter, project);
-    this.entries.set(key, { project, harnessId: adapter.id, sessions, snapshot });
-    Promise.all([sessions, snapshot]).catch(() => this.entries.delete(key));
+    const fingerprints = sessions.then(sessionFingerprints);
+    this.entries.set(key, { project, harnessId: adapter.id, sessions, fingerprints });
+    Promise.all([sessions, fingerprints]).catch(() => this.entries.delete(key));
     return sessions;
   }
 }
@@ -194,14 +193,18 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
     listConversationRecords(project.id),
   ]);
   const transcriptKeys = new Set(sessions.map((session) => `${session.harnessId}:${session.id}`));
+  const pinnedPaths = new Set(pinnedSessionPaths);
+  const pinnedIds = new Set(pinnedSessionIds);
   const recordsBySession = new Map(records.map((record) => [`${record.engine}:${record.sessionId}`, record]));
   for (const session of sessions) {
     const record = recordsBySession.get(`${session.harnessId}:${session.id}`);
     if (record?.taskId && !session.taskId) session.taskId = record.taskId;
     if (record?.cronTaskId) session.cronTaskId = record.cronTaskId;
   }
+  const historyCutoff = project.historyDays ? Date.now() - project.historyDays * 86_400_000 : 0;
   for (const record of records) {
     if (transcriptKeys.has(`${record.engine}:${record.sessionId}`)) continue;
+    if (historyCutoff && Date.parse(record.updatedAt) < historyCutoff && !pinnedIds.has(`${record.engine}:${record.sessionId}`)) continue;
     const adapter = adapters.find((candidate) => candidate.id === record.engine);
     if (!adapter) throw new Error(`No harness registered for conversation engine: ${record.engine}`);
     sessions.push({
@@ -219,8 +222,6 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
     });
   }
   const seen = new Set<string>();
-  const pinnedPaths = new Set(pinnedSessionPaths);
-  const pinnedIds = new Set(pinnedSessionIds);
   const isPinned = (session: SessionSummary): boolean => pinnedPaths.has(session.path)
     || pinnedIds.has(`${session.harnessId}:${session.id}`)
     // A switched conversation is one pinning unit: its logical id, any legacy

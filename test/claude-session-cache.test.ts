@@ -53,6 +53,13 @@ test("Claude session listing re-reads a transcript only when it changes", async 
     assert.equal(refreshed.length, 1);
     assert.equal(refreshed[0].title, "[Claude] Secnd");
     assert.equal(refreshed[0].firstMessage, "Secnd");
+
+    await utimes(transcriptPath, stamp, stamp);
+    assert.deepEqual(await claude.listClaudeSessions({ path: projectCwd, historyDays: 1 }), [], "old transcripts stay out of the catalog");
+    const included = await claude.listClaudeSessions({ path: projectCwd, historyDays: 1, includedSessionPaths: [`claude:${transcriptPath}`] });
+    assert.equal(included[0].path, `claude:${transcriptPath}`, "a directly referenced old transcript remains discoverable");
+    assert.equal((await claude.listClaudeSessions({ path: projectCwd, historyDays: 1, includedSessionIds: ["claude:session-one"] })).length, 1, "a pinned old transcript remains discoverable");
+    assert.equal((await claude.loadClaudeMessages(`claude:${transcriptPath}`))[0].text, "Secnd", "an old transcript still loads directly");
   } finally {
     if (previousDataDir === undefined) delete process.env.PI_WEB_DATA_DIR;
     else process.env.PI_WEB_DATA_DIR = previousDataDir;

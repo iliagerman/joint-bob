@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added conversation history window setting to limit summaries to recent days; older transcripts stay accessible by pin or direct link.
+
 ## 1.26.0 — 2026-09-13
 
 - Queued messages can now be reordered and merged before sending.

@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { claudeProjectsRoot } from "./claude-service.js";
 import { canonicalPiTranscriptName, claudeProjectDirs, sessionCwds, type SessionProjectPaths } from "./session-paths.js";
+import { getSettings } from "./settings.js";
 import type { ProjectRecord } from "./types.js";
 
 // Debounced fs.watch over the session directories (Pi + Claude) of each
@@ -20,14 +21,18 @@ interface WatchedProject {
   debounceTimer: NodeJS.Timeout | null;
 }
 
+function piSessionRoot(): string {
+  return getSettings().pi.sessionPath || path.join(os.homedir(), ".pi/agent/sessions");
+}
+
 function piSessionDir(cwd: string): string {
   const resolved = path.resolve(cwd);
   const safePath = `--${resolved.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
-  return path.join(os.homedir(), ".pi/agent/sessions", safePath);
+  return path.join(piSessionRoot(), safePath);
 }
 
 function flatPiSessionDir(): string {
-  return path.join(os.homedir(), ".pi/agent/sessions");
+  return piSessionRoot();
 }
 
 export function sessionWatchDirs(project: SessionProjectPaths): string[] {
@@ -37,6 +42,7 @@ export function sessionWatchDirs(project: SessionProjectPaths): string[] {
 export class SessionWatcher {
   private projects = new Map<string, WatchedProject>();
   private flatWatcher: FSWatcher | null = null;
+  private flatWatcherDir = "";
   private rescanTimer: NodeJS.Timeout;
 
   constructor(private listener: SessionChangeListener) {
@@ -65,6 +71,7 @@ export class SessionWatcher {
     clearInterval(this.rescanTimer);
     this.flatWatcher?.close();
     this.flatWatcher = null;
+    this.flatWatcherDir = "";
     for (const project of this.projects.values()) {
       if (project.debounceTimer) clearTimeout(project.debounceTimer);
       for (const watcher of project.dirWatchers.values()) watcher.close();
@@ -98,8 +105,11 @@ export class SessionWatcher {
   }
 
   private watchFlatDir(): void {
-    if (this.flatWatcher) return;
     const dir = flatPiSessionDir();
+    if (this.flatWatcher && this.flatWatcherDir === dir) return;
+    this.flatWatcher?.close();
+    this.flatWatcher = null;
+    this.flatWatcherDir = "";
     try {
       const watcher = watch(dir, (_eventType, fileName) => {
         for (const projectId of this.projects.keys()) this.handleEvent(projectId, dir, fileName);
@@ -110,6 +120,7 @@ export class SessionWatcher {
         if (this.flatWatcher === watcher) this.flatWatcher = null;
       });
       this.flatWatcher = watcher;
+      this.flatWatcherDir = dir;
     } catch {
       // Directory does not exist yet (e.g. no flat sessions created); rescan picks it up later.
     }

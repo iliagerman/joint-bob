@@ -59,13 +59,15 @@ test("conversation records provide drafts until a transcript replaces them", asy
     const { updateSettings } = await import("../src/settings.js");
     const sessionPath = path.join(root, "sessions");
     updateSettings({ pi: { executable: "", configPath: path.join(root, "pi"), sessionPath }, claude: { executable: "", configPath: path.join(root, "claude"), sessionPath: path.join(root, "claude", "projects") }, syncthing: { endpoint: "" }, projects: { homePath: path.join(root, "home") } });
-    const { listHarnessSessions } = await import("../src/harnesses.js");
+    const { listHarnessSessions, refreshHarnessSessions } = await import("../src/harnesses.js");
     assert.equal((await listHarnessSessions(project)).filter((session) => session.id === id).length, 1);
     const draft = (await listHarnessSessions(project)).find((session) => session.path === `draft:pi:${id}`);
     assert.equal(draft?.taskId, "ticket-1");
 
     await mkdir(sessionPath, { recursive: true });
-    await writeFile(path.join(sessionPath, `${id}.jsonl`), `${JSON.stringify({ type: "session", version: 3, id, timestamp: "2026-01-01T00:00:00.000Z", cwd: project.path })}\n${JSON.stringify({ type: "message", id: "message", parentId: null, timestamp: "2026-01-01T00:00:01.000Z", message: { role: "user", content: [{ type: "text", text: "hello" }], timestamp: 1 } })}\n`);
+    const transcriptPath = path.join(sessionPath, `${id}.jsonl`);
+    await writeFile(transcriptPath, `${JSON.stringify({ type: "session", version: 3, id, timestamp: "2026-01-01T00:00:00.000Z", cwd: project.path })}\n${JSON.stringify({ type: "message", id: "message", parentId: null, timestamp: "2026-01-01T00:00:01.000Z", message: { role: "user", content: [{ type: "text", text: "hello" }], timestamp: 1 } })}\n`);
+    await refreshHarnessSessions(project.id, [transcriptPath]);
     const merged = (await listHarnessSessions(project)).filter((session) => session.id === id);
     assert.equal(merged.length, 1);
     assert.equal(merged[0].draft, undefined);

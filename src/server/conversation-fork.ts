@@ -8,7 +8,7 @@ import { claudeSessionFilePath } from "../claude-service.js";
 import { getClusterNode } from "../cluster.js";
 import { getConversationOwnership, type ConversationEngine } from "../conversation-ownership.js";
 import { conversationDraftPath, deleteConversationRecord, ensureConversationRecord } from "../conversation-records.js";
-import { listHarnessSessions } from "../harnesses.js";
+import { listHarnessSessions, refreshHarnessSessions } from "../harnesses.js";
 import { setSessionClassification, setSessionColor, setSessionTitle } from "../names.js";
 import { readQueueSettings, recordQueueSettings } from "../prompt-queue.js";
 import { conversationScopeId, getScopeSecretAccounts, setScopeSecretAccounts } from "../secrets.js";
@@ -176,6 +176,7 @@ export async function forkLocalConversation(project: ProjectRecord, engine: Conv
       await ensureConversationRecord(project.id, copy.engine, copy.sessionId, local.id, undefined, copies.length > 1 ? { conversationId, segmentIndex: index } : undefined);
     }
     const face = copies.at(-1)!;
+    await refreshHarnessSessions(project.id, files.map((file) => file.destination));
     const listed = (await listHarnessSessions(project)).find((session) => session.id === face.sessionId);
     if (!listed) throw new ConversationForkError(409, "Fork transcript could not be listed");
     return { ...listed, executionNodeId: local.id };

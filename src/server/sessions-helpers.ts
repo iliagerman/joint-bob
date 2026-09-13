@@ -8,6 +8,8 @@ import { listHarnessSessions } from "../harnesses.js";
 import { getSessionStatus } from "../pi-service.js";
 import { listRunningPiSessions } from "../pi-runtime.js";
 import { getUserPreferences } from "../preferences.js";
+import { listUserRecentSessions } from "../recent-sessions.js";
+import { getSettings } from "../settings.js";
 import { listTasks } from "../tasks.js";
 import type { ProjectRecord, SessionSummary } from "../types.js";
 import { listUserPins } from "../user-pins.js";
@@ -21,16 +23,22 @@ import { taskConfig, taskCwd, taskPhase } from "./task-runs.js";
  * see the same running detection and the same persisted review watermarks. Running is
  * local runtime state or a live lease replicated from the node executing the turn.
  */
-export async function listProjectSessionsWithReviewState(project: ProjectRecord, userId: string, username: string): Promise<SessionSummary[]> {
+export async function listProjectSessionsWithReviewState(project: ProjectRecord, userId: string, username: string, historyDays = getSettings().conversationHistoryDays): Promise<SessionSummary[]> {
   const tasks = await listTasks(project.id);
   const pinnedSessionPaths = userId ? getUserPreferences(userId).pinnedSessionPaths : [];
   const pinnedSessionIds = (username ? listUserPins(username).conversations : [])
     .filter((pin) => pin.projectId === project.id)
     .map((pin) => `${pin.engine}:${pin.sessionId}`);
+  const recents = username ? listUserRecentSessions(username).filter((recent) => recent.projectId === project.id) : [];
+  const includedSessionPaths = [...pinnedSessionPaths, ...recents.map((recent) => recent.sessionPath)];
+  const includedSessionIds = [...pinnedSessionIds, ...recents.map((recent) => `${recent.engine}:${recent.sessionId}`)];
   const sessions = await listHarnessSessions({
     ...project,
     additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []),
-  }, pinnedSessionPaths, pinnedSessionIds);
+    historyDays,
+    includedSessionPaths,
+    includedSessionIds,
+  }, includedSessionPaths, includedSessionIds);
   const tasksBySessionPath = new Map(tasks.filter((task) => task.sessionPath).map((task) => [task.sessionPath, task]));
   const tasksById = new Map(tasks.map((task) => [task.id, task]));
   const projectSharedSessions = [...new Set(sharedSessions.values())].filter((shared) => shared.projectId === project.id);

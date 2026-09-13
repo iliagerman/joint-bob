@@ -5,7 +5,7 @@ import { listAuditEvents } from "../../audit.js";
 import type { AuthSession } from "../../auth.js";
 import { clearCanvasShortcut, listCanvasShortcuts, releaseCanvasShortcuts, setCanvasShortcut } from "../../canvas-shortcuts.js";
 import { getClusterNode } from "../../cluster.js";
-import { harnessForSessionPath, listHarnessSessions } from "../../harnesses.js";
+import { clearHarnessSessionCache, harnessForSessionPath, listHarnessSessions } from "../../harnesses.js";
 import { ensureManagedHome } from "../../managed-home.js";
 import { getUserPreferences, normalizeCanvasKeymapPreference, normalizeCanvasLayoutPreference, readLegacyRecentSessions, type RecentSession, updateUserPreferences, type UserPreferences } from "../../preferences.js";
 import { listUserRecentSessions, migrateLegacyRecentSessions, removeUserRecentSession, setUserRecentSession, type SyncedRecentSession } from "../../recent-sessions.js";
@@ -292,6 +292,7 @@ app.put("/api/settings", async (request, response, next) => {
     await assertManagedHomeChangeAllowed(homePath);
     await ensureManagedHome(homePath, (await listWorkspaces()).map((workspace) => workspace.id));
     const settings = updateSettings(payload, session.userId);
+    clearHarnessSessionCache();
     resetSyncthingConnection();
     response.json(settings);
   } catch (error) {

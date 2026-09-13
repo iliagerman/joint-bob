@@ -29,6 +29,7 @@ test("partial watcher refresh does not cache an atomic fork as a draft", async (
   await rename(`${forkPath}.tmp`, forkPath);
   await refreshHarnessSessions(project.id, [sourcePath]);
   await ensureConversationRecord(project.id, "claude", forkId, "fixture-node");
+  await refreshHarnessSessions(project.id, [forkPath]);
   const cached = (await listHarnessSessions(project)).find((session) => session.id === forkId)!;
   assert.equal(await readFile(forkPath, "utf8"), contents);
   clearHarnessSessionCache(project.id);
@@ -38,7 +39,7 @@ test("partial watcher refresh does not cache an atomic fork as a draft", async (
   assert.notEqual(cached.draft, true);
 });
 
-test("concurrent list discovers a file published while watcher summaries are pending", async (t) => {
+test("cached lists rely on watcher paths instead of rescanning transcript roots", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "joint-bob-catalog-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const project = { id: randomUUID(), name: "Catalog overlap", path: directory };
@@ -49,13 +50,13 @@ test("concurrent list discovers a file published while watcher summaries are pen
   });
   const started = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
   t.after(() => release.resolve());
-  let refreshCount = 0;
+  let refreshCount = 0, listCount = 0;
   const adapter = defineHarness({
     id: "pi", label: "Pi",
     paths: { newSession: "new", ownsSession: () => true, ownsTranscript: (filePath) => filePath.startsWith(`${directory}/`) },
     sessions: {
       files: async () => readdirSync(directory).map((file) => path.join(directory, file)),
-      list: async () => [summary(sourcePath)],
+      list: async () => { listCount += 1; return [summary(sourcePath)]; },
       refresh: async (_project, previous, files) => {
         const changed = new Set(files);
         const sessions = [...previous.filter((session) => !changed.has(session.path)), ...files.map(summary)];
@@ -78,6 +79,9 @@ test("concurrent list discovers a file published while watcher summaries are pen
   const listing = catalog.list(project);
   release.resolve();
   await refreshing;
-  assert.deepEqual((await listing).map((session) => session.path).sort(), [sourcePath, forkPath].sort());
+  assert.deepEqual((await listing).map((session) => session.path), [sourcePath]);
+  assert.deepEqual((await catalog.list(project)).map((session) => session.path), [sourcePath]);
+  assert.equal(listCount, 1, "cached reads do not scan again");
+  await catalog.refresh(project.id, [forkPath]);
   assert.deepEqual((await catalog.list(project)).map((session) => session.path).sort(), [sourcePath, forkPath].sort());
 });

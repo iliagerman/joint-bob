@@ -34,6 +34,7 @@ export interface SettingsInput {
   projects?: { homePath?: string; rootPath?: string; personalRootPath?: string; workRootPath?: string };
   resources?: ResourcePaths;
   conversationLabels?: string[];
+  conversationHistoryDays?: number;
   conversationDefaults?: { pi: { provider: string; modelId: string; thinkingLevel: string }; claude: { provider: string; modelId: string; thinkingLevel: string } };
 }
 
@@ -45,6 +46,7 @@ export interface SettingsResponse {
   projects: { homePath: string };
   resources: ResourcePaths;
   conversationLabels: string[];
+  conversationHistoryDays: number;
   conversationDefaults: ReturnType<typeof conversationDefaultsSchema.parse>;
   restartRequired: { pi: boolean; claude: boolean };
 }
@@ -235,6 +237,7 @@ export function getSettings(): SettingsResponse {
     projects: { homePath: value("projects.homePath", defaultManagedHome()) },
     resources: readResourcePaths("resources."),
     conversationLabels: conversationLabelsSchema.parse(JSON.parse(value("conversationLabels", JSON.stringify(DEFAULT_CONVERSATION_LABELS)))),
+    conversationHistoryDays: Number(value("conversationHistoryDays", "30")),
     restartRequired: { pi: false, claude: false },
   };
 }
@@ -312,6 +315,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
   const homePath = input.projects?.homePath ?? previous.projects.homePath;
   const resources = input.resources ? normalizeResourcePaths(input.resources) : previous.resources;
   const conversationLabels = conversationLabelsSchema.parse(input.conversationLabels ?? previous.conversationLabels);
+  const conversationHistoryDays = input.conversationHistoryDays ?? previous.conversationHistoryDays;
   const conversationDefaults = conversationDefaultsSchema.parse(input.conversationDefaults ?? previous.conversationDefaults);
   if (!homePath.trim() || !path.isAbsolute(homePath)) throw new Error("Joint Bob home folder must be absolute");
   db.exec("BEGIN");
@@ -324,6 +328,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
     save(db, "syncthing.endpoint", input.syncthing.endpoint);
     save(db, "projects.homePath", path.resolve(homePath));
     save(db, "conversationLabels", JSON.stringify(conversationLabels));
+    save(db, "conversationHistoryDays", String(conversationHistoryDays));
     save(db, "conversationDefaults", JSON.stringify(conversationDefaults));
     for (const type of RESOURCE_TYPES) save(db, `resources.${type}`, JSON.stringify(resources[type]));
     if (input.syncthing.apiKey !== undefined) {
@@ -344,6 +349,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
         resourcesChanged: JSON.stringify(previous.resources) !== JSON.stringify(settings.resources),
         conversationDefaultsChanged: JSON.stringify(previous.conversationDefaults) !== JSON.stringify(settings.conversationDefaults),
         conversationLabelsChanged: JSON.stringify(previous.conversationLabels) !== JSON.stringify(settings.conversationLabels),
+        conversationHistoryDaysChanged: previous.conversationHistoryDays !== settings.conversationHistoryDays,
         apiKeyConfigured: settings.syncthing.apiKeyConfigured,
       },
     });

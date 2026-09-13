@@ -320,8 +320,22 @@ export async function claudeSessionFiles(project: SessionProjectPaths): Promise<
   return [...new Set(groups.flat().map((filePath) => path.resolve(filePath)))];
 }
 
-export async function listClaudeSessions(project: SessionProjectPaths): Promise<SessionSummary[]> {
+async function claudeFilesInHistory(project: SessionProjectPaths & { historyDays?: number; includedSessionPaths?: string[]; includedSessionIds?: string[] }): Promise<string[]> {
   const files = await claudeSessionFiles(project);
+  if (!project.historyDays) return files;
+  const cutoff = Date.now() - project.historyDays * 86_400_000;
+  const included = new Set((project.includedSessionPaths ?? []).map((sessionPath) => path.resolve(sessionPath.replace(/^claude:/, ""))));
+  const includedIds = new Set(project.includedSessionIds ?? []);
+  const selected = await mapWithConcurrency(files, CLAUDE_LIST_CONCURRENCY, async (filePath) => {
+    if (included.has(filePath) || includedIds.has(`claude:${path.basename(filePath, ".jsonl")}`)) return filePath;
+    try { return (await stat(filePath)).mtimeMs >= cutoff ? filePath : null; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
+  });
+  return selected.filter((filePath): filePath is string => filePath !== null);
+}
+
+export async function listClaudeSessions(project: SessionProjectPaths & { historyDays?: number; includedSessionPaths?: string[]; includedSessionIds?: string[] }): Promise<SessionSummary[]> {
+  const files = await claudeFilesInHistory(project);
   const summaries = await mapWithConcurrency(files, CLAUDE_LIST_CONCURRENCY, (filePath) => summarizeClaudeTranscript(project, filePath));
   // A conversation claimed from another node exists under that node's encoded
   // directory as well as this node's, so the same transcript is read twice.
@@ -332,11 +346,19 @@ export async function listClaudeSessions(project: SessionProjectPaths): Promise<
   return [...byId.values()];
 }
 
-export async function refreshClaudeSessions(project: SessionProjectPaths, previous: SessionSummary[], changedFiles: string[]): Promise<SessionSummary[]> {
+export async function refreshClaudeSessions(project: SessionProjectPaths & { historyDays?: number; includedSessionPaths?: string[]; includedSessionIds?: string[] }, previous: SessionSummary[], changedFiles: string[]): Promise<SessionSummary[]> {
   if (!changedFiles.length) return listClaudeSessions(project);
   const changed = new Set(changedFiles.map((filePath) => path.resolve(filePath)));
   const retained = previous.filter((session) => !changed.has(path.resolve(session.path.replace(/^claude:/, ""))));
-  const refreshed = await Promise.all([...changed].map((filePath) => summarizeClaudeTranscript(project, filePath)));
+  const included = new Set((project.includedSessionPaths ?? []).map((sessionPath) => path.resolve(sessionPath.replace(/^claude:/, ""))));
+  const includedIds = new Set(project.includedSessionIds ?? []);
+  const cutoff = project.historyDays ? Date.now() - project.historyDays * 86_400_000 : 0;
+  const selected = cutoff ? (await Promise.all([...changed].map(async (filePath) => {
+    if (included.has(filePath) || includedIds.has(`claude:${path.basename(filePath, ".jsonl")}`)) return filePath;
+    try { return (await stat(filePath)).mtimeMs >= cutoff ? filePath : null; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
+  }))).filter((filePath): filePath is string => filePath !== null) : [...changed];
+  const refreshed = await Promise.all(selected.map((filePath) => summarizeClaudeTranscript(project, filePath)));
   const byId = new Map(retained.map((session) => [session.id, session]));
   for (const session of refreshed) if (session) byId.set(session.id, session);
   return [...byId.values()];

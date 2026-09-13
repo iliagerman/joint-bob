@@ -10,6 +10,7 @@ import { loadSecretAccounts } from "./secrets.js";
 import { confirmAction, syncNotifyButton, toast } from "./shell.js";
 import { state } from "./state.js";
 import { renderSessions } from "./session-list.js";
+import { refreshSessionsQuietly } from "./socket.js";
 import { loadWorkspaces } from "./workspaces.js";
 
 /** Compares two "major.minor.patch" strings; anything else never counts as newer. */
@@ -138,6 +139,7 @@ export async function openSettings(tab = "account") {
   elements.settingsRestartMessage.textContent = "";
   elements.settingsProjectHome.value = settings.projects.homePath;
   document.querySelector("#settingsConversationLabels").value = settings.conversationLabels.join("\n");
+  document.querySelector("#settingsConversationHistoryDays").value = settings.conversationHistoryDays;
   fillRuntimeFields(settings.runtimeOverrides);
   document.querySelector("#settingsPiDefaultProvider").value = settings.conversationDefaults.pi.provider;
   for (const harness of ["pi", "claude"]) {
@@ -178,10 +180,12 @@ async function saveSettings(event) {
       projects: { homePath: elements.settingsProjectHome.value.trim() },
       resources: resourceFieldsValue(globalResourceFields),
       conversationLabels: document.querySelector("#settingsConversationLabels").value.split("\n").map((label) => label.trim()).filter(Boolean),
+      conversationHistoryDays: Number(document.querySelector("#settingsConversationHistoryDays").value),
     }),
   });
   state.conversationLabels = saved.conversationLabels;
-  renderSessions();
+  if (state.activeProjectId) await refreshSessionsQuietly();
+  else renderSessions();
   const restartRequired = [
     ...(saved.restartRequired.pi ? ["Pi configuration"] : []),
     ...(saved.restartRequired.claude ? ["Claude configuration"] : []),

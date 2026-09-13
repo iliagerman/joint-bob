@@ -13,7 +13,7 @@ import { appendLiveEvent, buildHandoffContext, type ClaudeRunResult, claudeSessi
 import { getClusterNode } from "../cluster.js";
 import { ensureConversationRecord, getConversationRecord, listConversationSegments } from "../conversation-records.js";
 import { conversationTranscriptPayload } from "../conversation-segments.js";
-import { listHarnessSessions } from "../harnesses.js";
+import { listHarnessSessions, refreshHarnessSessions } from "../harnesses.js";
 import { createPiSession, eventPayload, getSessionStatus, listAvailableModels, modelThinkingLevels, reloadPiAuth, reloadPiSkills, sessionIsBusy, setSessionModel, simplifyMessages } from "../pi-service.js";
 import { beginQueuedPrompt, resetQueuedPromptAttempt, cancelQueuedPrompt, claimQueuedPrompt, editQueuedPrompt, enqueuePrompt, listQueuedPrompts, logicalQueueKey, mergeQueuedPrompts, readQueueSettings, recordQueueSettings, rekeyQueuedPrompts, swapQueuedPrompts, type QueuedPrompt, type QueuedSettings } from "../prompt-queue.js";
 import { agentCredentialContext, agentEnvironment, persistConversationSecretAccounts } from "../secrets.js";
@@ -515,6 +515,7 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
     connection.claude.liveEvents = [];
     for (const key of runningKeys) runningClaudeSessionPaths.delete(key);
   }
+  if (connection.claude.filePath) await refreshHarnessSessions(connection.project.id, [connection.claude.filePath]);
   broadcastToProject(connection.project.id, { type: "sessionsChanged" });
   scheduleReviewNotifications(connection.project.id);
 }
@@ -1024,6 +1025,7 @@ async function handlePiCommand(connection: ChatConnection, shared: SharedPiSessi
       if (!await runStubbedPiPrompt(shared, promptText)) await handle.session.prompt(promptText, options);
     } finally {
       shared.turnInFlight -= 1;
+      if (handle.session.sessionFile) await refreshHarnessSessions(connection.project.id, [handle.session.sessionFile]);
       broadcastToProject(connection.project.id, { type: "sessionsChanged" });
     }
     send(socket, { type: "sessionsChanged" });

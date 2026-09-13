@@ -63,6 +63,13 @@ test("Pi session listing re-reads a session directory only when it changes", asy
     assert.equal(refreshed[0].updatedAt, initial[0].updatedAt, "a metadata-only rewrite must not create unread activity");
     const incremental = await pi.refreshPiSessions({ path: projectCwd }, refreshed, [sessionFile]);
     assert.equal(incremental[0].updatedAt, refreshed[0].updatedAt, "cold and incremental listings agree");
+
+    await utimes(sessionFile, stamp, stamp);
+    assert.deepEqual(await pi.listPiSessions({ path: projectCwd, historyDays: 1 }), [], "old transcripts stay out of the catalog");
+    const included = await pi.listPiSessions({ path: projectCwd, historyDays: 1, includedSessionPaths: [sessionFile] });
+    assert.equal(included[0].path, sessionFile, "a directly referenced old transcript remains discoverable");
+    assert.equal((await pi.listPiSessions({ path: projectCwd, historyDays: 1, includedSessionIds: ["pi:session-0"] })).length, 1, "a pinned old transcript remains discoverable");
+    assert.equal((await pi.loadPiMessages(sessionFile))[0].text, "Secnd", "an old transcript still loads directly");
   } finally {
     if (previousDataDir === undefined) delete process.env.PI_WEB_DATA_DIR;
     else process.env.PI_WEB_DATA_DIR = previousDataDir;

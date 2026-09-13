@@ -2,6 +2,9 @@ import type { ChatMessage, HarnessId, ProjectRecord, SessionSummary } from "../t
 
 export interface HarnessProject extends ProjectRecord {
   additionalPaths?: string[];
+  historyDays?: number;
+  includedSessionPaths?: string[];
+  includedSessionIds?: string[];
 }
 
 export interface HarnessAdapter<TId extends HarnessId = HarnessId> {

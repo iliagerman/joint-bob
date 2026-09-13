@@ -319,6 +319,7 @@ export const settingsSchema = z.object({
   }).optional(),
   resources: resourcePathsSchema.optional(),
   conversationLabels: conversationLabelsSchema.optional(),
+  conversationHistoryDays: z.number().int().min(1).max(3650).optional(),
 });
 export const auditQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional().default(100),
