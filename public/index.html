@@ -1317,7 +1317,9 @@
           <label>Timezone<input name="timezone" list="cronTimezones" required autocomplete="off" data-testid="cron-timezone"></label>
           <datalist id="cronTimezones"></datalist>
           <label>Execution node<select name="ownerNodeId" required data-testid="cron-owner"></select></label>
-          <label id="cronEngineLabel">Agent<select name="engine" data-testid="cron-engine"><option value="pi">Pi</option><option value="claude">Claude</option></select></label>
+          <label id="cronEngineLabel">Harness<select name="engine" required data-testid="cron-engine"></select></label>
+          <label>Model<select name="model" data-testid="cron-model"></select></label>
+          <label id="cronReasoningLabel">Thinking level<select name="reasoning" data-testid="cron-reasoning"></select></label>
           <label class="checkbox-row"><input name="enabled" type="checkbox" checked data-testid="cron-enabled">Enabled</label>
           <p class="cron-help">Missed offline runs are skipped. Runs never overlap. Errors pause the task for review.</p>
           <div class="dialog-actions"><button id="cronCancel" type="button" class="ghost" data-testid="cron-cancel">Cancel</button><button class="primary" type="submit" data-testid="cron-save">Save task</button></div>

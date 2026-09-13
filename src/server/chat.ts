@@ -1002,7 +1002,8 @@ async function handlePiCommand(connection: ChatConnection, shared: SharedPiSessi
       promptText = `${connection.handoffContext}${promptText}`;
       connection.handoffContext = null;
     }
-    send(socket, { type: "userMessage", text: promptDisplayText(payload.message ?? "", imageAttachments.map((image) => image.name), fileAttachments.map((file) => file.name)), attachments: messageAttachments(imageAttachments, fileAttachments) });
+    const scheduled = payload.requestId ? { queued: true, queueId: payload.requestId, requestId: payload.requestId } : {};
+    send(socket, { type: "userMessage", text: promptDisplayText(payload.message ?? "", imageAttachments.map((image) => image.name), fileAttachments.map((file) => file.name)), attachments: messageAttachments(imageAttachments, fileAttachments), ...scheduled });
     const options = {
       ...(handle.session.isStreaming ? { streamingBehavior: "followUp" as const } : {}),
       ...(payload.images?.length
@@ -1022,7 +1023,12 @@ async function handlePiCommand(connection: ChatConnection, shared: SharedPiSessi
     shared.turnInFlight += 1;
     broadcastToProject(connection.project.id, { type: "sessionsChanged" });
     try {
+      if (payload.requestId) send(socket, { type: "promptStarted", queueId: payload.requestId });
       if (!await runStubbedPiPrompt(shared, promptText)) await handle.session.prompt(promptText, options);
+      if (payload.requestId) send(socket, { type: "promptCompleted", queueId: payload.requestId });
+    } catch (error) {
+      if (payload.requestId) send(socket, { type: "promptFailed", queueId: payload.requestId, error: error instanceof Error ? error.message : String(error) });
+      throw error;
     } finally {
       shared.turnInFlight -= 1;
       if (handle.session.sessionFile) await refreshHarnessSessions(connection.project.id, [handle.session.sessionFile]);

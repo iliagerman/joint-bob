@@ -8,12 +8,24 @@ import { resolveDataDirectory } from "./data-directory.js";
 const timezoneSchema = z.string().min(1).max(100).refine(value => {
   try { new Intl.DateTimeFormat("en", { timeZone: value }); return true; } catch { return false; }
 }, "Unknown timezone");
+const cronModelSchema = z.object({
+  provider: z.string().trim().min(1).max(80),
+  modelId: z.string().trim().min(1).max(200),
+  reasoning: z.enum(["default", "off", "minimal", "low", "medium", "high", "xhigh", "max"]),
+}).strict();
 export const cronInputSchema = z.object({
   projectId: z.string().min(1).max(240), name: z.string().trim().min(1).max(120),
   prompt: z.string().trim().min(1).max(100000), ownerNodeId: z.string().uuid(),
-  engine: z.enum(["pi", "claude"]), sessionId: z.string().min(1).max(240).nullable(), enabled: z.boolean(),
+  engine: z.enum(["pi", "claude"]), model: cronModelSchema.nullable().optional(),
+  sessionId: z.string().min(1).max(240).nullable(), enabled: z.boolean(),
   schedule: z.object({ frequency: z.enum(["hourly", "daily", "weekly"]), hour: z.number().int().min(0).max(23), minute: z.number().int().min(0).max(59), weekday: z.number().int().min(0).max(6), timezone: timezoneSchema }).strict(),
-}).strict();
+}).strict().superRefine((input, context) => {
+  if (!input.model) return;
+  const invalid = input.engine === "claude"
+    ? input.model.provider !== "claude" || ["off", "minimal"].includes(input.model.reasoning)
+    : input.model.provider === "claude" || input.model.reasoning === "default";
+  if (invalid) context.addIssue({ code: z.ZodIssueCode.custom, path: ["model"], message: "Model settings do not belong to the selected harness" });
+});
 export type CronInput = z.infer<typeof cronInputSchema>;
 export const cronRunSchema = z.object({ id: z.string().uuid(), taskId: z.string().uuid(), dueAt: z.number().int(), status: z.enum(["waiting", "running", "succeeded", "failed"]), error: z.string().nullable(), sessionId: z.string().nullable(), finishedAt: z.number().int().nullable() }).strict();
 export type CronRun = z.infer<typeof cronRunSchema>;

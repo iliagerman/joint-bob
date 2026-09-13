@@ -27,18 +27,21 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
     const form = document.querySelector("#cronForm"), f = form.elements;
     f.name.value = "Project browser cron"; f.prompt.value = "Scheduled project prompt";
     f.frequency.value = "weekly"; f.frequency.dispatchEvent(new Event("change", { bubbles: true }));
-    f.timezone.value = "UTC"; f.enabled.checked = false;
+    f.engine.value = "claude"; f.engine.dispatchEvent(new Event("change", { bubbles: true }));
+    f.model.value = "claude|sonnet"; f.model.dispatchEvent(new Event("change", { bubbles: true }));
+    f.reasoning.value = "high"; f.timezone.value = "UTC"; f.enabled.checked = false;
     if (document.querySelector("#cronWeekdayLabel").hidden || document.querySelector("#cronTimeLabel").hidden || !document.querySelector("#cronMinuteLabel").hidden) throw Error("Weekly controls incorrect");
-    if (document.querySelector("#cronEngineLabel").hidden) throw Error("Project task needs an agent selector");
+    if (f.engine.disabled || f.model.value !== "claude|sonnet" || f.reasoning.value !== "high") throw Error("Project execution settings unavailable");
     form.requestSubmit(); return true;
   })()`), true);
-  await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("Project browser cron") && document.querySelector("#cronList").textContent.includes("New conversation") && document.querySelector("#cronList").textContent.includes("Paused"));
+  await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("Project browser cron") && document.querySelector("#cronList").textContent.includes("New conversation") && document.querySelector("#cronList").textContent.includes("sonnet") && document.querySelector("#cronList").textContent.includes("high") && document.querySelector("#cronList").textContent.includes("Paused"));
   assert.equal(await page.getByTestId("cron-run").isVisible(), true, "Paused schedules need a Run now action");
   await page.locator('[data-testid="cron-edit"]').click();
   assert.equal(await page.getByTestId("cron-form").isVisible(), true, "Edit schedule should open the editor");
   assert.equal(await page.evaluate(`(() => {
     const form = document.querySelector("#cronForm"), f = form.elements;
     if (f.frequency.value !== "weekly" || f.timezone.value !== "UTC" || f.enabled.checked) throw Error("Saved schedule not restored");
+    if (f.engine.value !== "claude" || f.model.value !== "claude|sonnet" || f.reasoning.value !== "high") throw Error("Saved execution settings not restored");
     f.name.value = "Edited project cron"; f.frequency.value = "daily";
     f.frequency.dispatchEvent(new Event("change", { bubbles: true }));
     if (!document.querySelector("#cronWeekdayLabel").hidden) throw Error("Daily schedule shows weekday");
@@ -61,7 +64,9 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
   await page.locator("#cronNew").click();
   assert.equal(await page.evaluate(`(() => {
     const form = document.querySelector("#cronForm"), f = form.elements;
-    if (!document.querySelector("#cronEngineLabel").hidden) throw Error("Conversation should inherit its agent");
+    if (!f.engine.disabled || f.engine.value !== "pi") throw Error("Conversation harness should be visible and fixed");
+    if (!f.model.options.length || !f.reasoning.options.length) throw Error("Conversation execution settings unavailable");
+    if (f.model.options.length === 1 && !f.reasoning.disabled) throw Error("Default model should inherit its reasoning level");
     f.name.value = "Conversation browser cron"; f.prompt.value = "Scheduled append";
     f.timezone.value = "UTC"; f.enabled.checked = false;
     form.requestSubmit(); return true;

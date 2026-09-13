@@ -485,7 +485,7 @@ export const socketMessageSchema = z.object({
   name: z.string().trim().max(120).optional(),
   provider: z.string().max(80).optional(),
   modelId: z.string().max(200).optional(),
-  level: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).optional(),
+  level: z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
   engine: registeredHarnessIdSchema.optional(),
   effort: z.enum(["default", "low", "medium", "high", "xhigh", "max"]).optional(),
   images: z.array(imageAttachmentSchema).max(4).optional(),

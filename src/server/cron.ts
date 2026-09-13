@@ -68,6 +68,7 @@ export async function queuedCronPrompt(task: CronTask, run: CronRun, sessionId: 
   await new Promise<void>((resolve, reject) => {
     const socket = new WebSocket(url, { headers: { Authorization: `Bearer ${token}` } });
     let queueId: string | undefined;
+    let configuration: "waiting" | "model" | "reasoning" | "prompt" = "waiting";
     let settled = false;
     const finish = (error?: Error) => {
       if (settled) return;
@@ -77,14 +78,26 @@ export async function queuedCronPrompt(task: CronTask, run: CronRun, sessionId: 
         reject(error);
       } else resolve();
     };
-    const timer = setTimeout(() => finish(new Error("Scheduled conversation did not become ready")), 30000);
+    const timer = setTimeout(() => finish(new Error("Scheduled conversation did not start within 30 seconds")), 30000);
     socket.on("error", finish);
     socket.on("close", (_code, reason) => finish(new Error(`Scheduled connection closed before completion: ${reason}`)));
     socket.on("message", raw => {
       const event = JSON.parse(raw.toString());
       if (event.type === "ready") {
-        clearTimeout(timer);
         if (event.ownership || event.readOnly) { finish(new Error("Scheduled conversation is not writable on this node")); return; }
+        if (!task.model) {
+          configuration = "prompt";
+          socket.send(JSON.stringify({ type: "prompt", message: task.prompt, requestId: run.id }));
+        } else {
+          configuration = "model";
+          socket.send(JSON.stringify({ type: "setModel", provider: task.model.provider, modelId: task.model.modelId }));
+        }
+      }
+      if (event.type === "status" && task.model && configuration === "model" && event.status?.model?.provider === task.model.provider && event.status.model.id === task.model.modelId) {
+        configuration = "reasoning";
+        socket.send(JSON.stringify(task.engine === "claude" ? { type: "setEffort", effort: task.model.reasoning } : { type: "setThinking", level: task.model.reasoning }));
+      } else if (event.type === "status" && task.model && configuration === "reasoning" && event.status?.thinkingLevel === task.model.reasoning) {
+        configuration = "prompt";
         socket.send(JSON.stringify({ type: "prompt", message: task.prompt, requestId: run.id }));
       }
       if (event.type === "userMessage" && event.queued && event.requestId === run.id) queueId = event.queueId;

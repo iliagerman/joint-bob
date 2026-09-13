@@ -27,6 +27,9 @@ test("cron validates schedule and required user input", async () => {
     assert.equal(cronInputSchema.safeParse({ ...input(), ...invalid }).success, false);
   }
   assert.equal(cronInputSchema.safeParse(input()).success, true);
+  assert.equal(cronInputSchema.safeParse({ ...input(), engine: "pi", model: { provider: "openai-codex", modelId: "gpt-5.6-sol", reasoning: "high" } }).success, true);
+  assert.equal(cronInputSchema.safeParse({ ...input(), engine: "claude", model: { provider: "claude", modelId: "sonnet", reasoning: "high" } }).success, true);
+  assert.equal(cronInputSchema.safeParse({ ...input(), engine: "claude", model: { provider: "openai-codex", modelId: "gpt-5.6-sol", reasoning: "high" } }).success, false);
 });
 
 test("SQLite claims are owner-only, unique, non-overlapping and survive reopen; offline runs skip", async () => {
