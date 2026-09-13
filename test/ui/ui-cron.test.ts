@@ -13,6 +13,15 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
   await page.locator('[aria-label="Actions for Internal Assistant"]').click();
   await page.locator('[data-testid="project-cron-button"]').click();
   await page.waitForFunction(() => document.querySelector("#cronDialog").open && document.querySelector("#cronForm").elements.ownerNodeId.options.length > 0);
+  const desktopDialog = await page.evaluate(() => {
+    const card = document.querySelector("#cronDialog > .dialog-card");
+    if (!card) return null;
+    const rect = card.getBoundingClientRect();
+    return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, background: getComputedStyle(card).backgroundColor };
+  });
+  assert.ok(desktopDialog, "Scheduled tasks should use the standard dialog card");
+  assert.ok(desktopDialog.left >= 12 && desktopDialog.right <= 1428 && desktopDialog.top >= 12 && desktopDialog.bottom <= 888, `Desktop dialog escaped viewport: ${JSON.stringify(desktopDialog)}`);
+  assert.notEqual(desktopDialog.background, "rgba(0, 0, 0, 0)", "Scheduled tasks dialog needs an opaque app surface");
   await page.locator("#cronNew").click();
   assert.equal(await page.evaluate(`(() => {
     const form = document.querySelector("#cronForm"), f = form.elements;
@@ -23,7 +32,7 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
     if (document.querySelector("#cronEngineLabel").hidden) throw Error("Project task needs an agent selector");
     form.requestSubmit(); return true;
   })()`), true);
-  await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("Project browser cron · New conversationPaused"));
+  await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("Project browser cron") && document.querySelector("#cronList").textContent.includes("New conversation") && document.querySelector("#cronList").textContent.includes("Paused"));
   await page.locator('[data-testid="cron-edit"]').click();
   assert.equal(await page.evaluate(`(() => {
     const form = document.querySelector("#cronForm"), f = form.elements;
@@ -35,7 +44,7 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
   })()`), true);
   await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("Edited project cron"));
   await page.locator('[data-testid="cron-toggle"]').click();
-  await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("Next:"));
+  await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("Next run"));
   await page.locator('[data-testid="cron-toggle"]').click();
   await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("Paused"));
   await page.locator('[data-testid="cron-history"]').click();
@@ -55,7 +64,7 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
     f.timezone.value = "UTC"; f.enabled.checked = false;
     form.requestSubmit(); return true;
   })()`), true);
-  await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("Conversation browser cron · Existing conversationPaused"));
+  await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("Conversation browser cron") && document.querySelector("#cronList").textContent.includes("Existing conversation") && document.querySelector("#cronList").textContent.includes("Paused"));
   await page.locator("#cronClose").click();
   await page.locator('[data-testid="chats-filter-cron-button"]').click();
   await page.waitForFunction(() => document.querySelectorAll("#sessionList .list-row").length === 1 && document.querySelector("#sessionList .list-row").textContent.includes("Short one"));
@@ -69,4 +78,33 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
   await page.locator("#confirmAcceptButton").click();
   await page.waitForFunction(() => document.querySelectorAll("#cronList .cron-task").length === 1);
   assert.equal(await page.evaluate('document.querySelector("#cronList").textContent.includes("Conversation browser cron") && !document.querySelector("#cronList").textContent.includes("Edited project cron")'), true);
+
+  await page.setViewportSize({ width: 390, height: 500 });
+  const mobileTask = await page.evaluate(() => {
+    const card = document.querySelector("#cronDialog > .dialog-card");
+    const task = document.querySelector("#cronList .cron-task");
+    const actions = [...document.querySelectorAll("#cronList .cron-task-actions button")];
+    if (!card || !task || actions.length !== 4) return null;
+    const cardRect = card.getBoundingClientRect();
+    const taskRect = task.getBoundingClientRect();
+    return { withinCard: taskRect.left >= cardRect.left && taskRect.right <= cardRect.right, actionHeights: actions.map(button => button.getBoundingClientRect().height) };
+  });
+  assert.ok(mobileTask?.withinCard, `Mobile scheduled task escaped its card: ${JSON.stringify(mobileTask)}`);
+  assert.ok(mobileTask.actionHeights.every(height => height >= 40), `Mobile task actions need touch targets: ${JSON.stringify(mobileTask.actionHeights)}`);
+
+  await page.getByTestId("cron-edit").click();
+  const mobileDialog = await page.evaluate(() => {
+    const card = document.querySelector("#cronDialog > .dialog-card");
+    const form = document.querySelector("#cronForm");
+    if (!card || !form) return null;
+    const rect = card.getBoundingClientRect();
+    const style = getComputedStyle(card);
+    return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, overflowY: style.overflowY, scrolls: card.scrollHeight > card.clientHeight };
+  });
+  assert.ok(mobileDialog, "Mobile schedule editor should keep the standard dialog card");
+  assert.ok(mobileDialog.left >= 8 && mobileDialog.right <= 382 && mobileDialog.top >= 8 && mobileDialog.bottom <= 492, `Mobile dialog escaped viewport: ${JSON.stringify(mobileDialog)}`);
+  assert.equal(mobileDialog.overflowY, "auto");
+  assert.equal(mobileDialog.scrolls, true, "Long schedule editor should scroll inside the dialog");
+  await page.getByTestId("cron-save").scrollIntoViewIfNeeded();
+  assert.equal(await page.getByTestId("cron-save").isVisible(), true, "Save action should remain reachable on a short mobile viewport");
 });

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Redesigned scheduled tasks dialog with improved layout, visual hierarchy, and mobile responsiveness.
+
 ## 1.24.4 — 2026-09-12
 
 - Moved Stop browser into the viewer header, separate from Close viewer. Account and profile controls now align, machine settings collapse, and closed profiles have a Reopen browser button.

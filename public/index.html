@@ -1280,29 +1280,42 @@
       </form>
     </dialog>
 
-    <!-- One shared row menu. It lives in the top layer, so the scrolling lists cannot clip it. -->
-    <dialog id="cronDialog" class="cron-dialog" aria-labelledby="cronHeading" data-testid="cron-dialog">
-      <h2 id="cronHeading">Scheduled tasks</h2>
-      <p id="cronContext" class="muted"></p>
-      <p id="cronError" role="alert"></p>
-      <div id="cronList" data-testid="cron-list"></div>
-      <button id="cronNew" type="button" data-testid="cron-new">New scheduled task</button>
-      <form id="cronForm" data-testid="cron-form" hidden>
-        <label>Name<input name="name" required maxlength="120" data-testid="cron-name"></label>
-        <label>Prompt<textarea name="prompt" required maxlength="100000" rows="4" data-testid="cron-prompt"></textarea></label>
-        <label>Repeat<select name="frequency" data-testid="cron-frequency"><option value="hourly">Hourly</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
-        <label id="cronTimeLabel">Time<input name="time" type="time" value="09:00" required data-testid="cron-time"></label>
-        <label id="cronMinuteLabel">Minute of each hour<input name="minute" type="number" min="0" max="59" value="0" required data-testid="cron-minute"></label>
-        <label id="cronWeekdayLabel">Day<select name="weekday" data-testid="cron-weekday"><option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option></select></label>
-        <label>Timezone<input name="timezone" list="cronTimezones" required data-testid="cron-timezone"></label>
-        <datalist id="cronTimezones"></datalist>
-        <label>Execution / owner node<select name="ownerNodeId" required data-testid="cron-owner"></select></label>
-        <label id="cronEngineLabel">Agent<select name="engine" data-testid="cron-engine"><option value="pi">Pi</option><option value="claude">Claude</option></select></label>
-        <label class="checkbox-row"><input name="enabled" type="checkbox" checked data-testid="cron-enabled">Enabled</label>
-        <p class="muted">Missed offline runs are skipped. Runs never overlap. Errors pause the task for review.</p>
-        <div class="dialog-actions"><button type="submit" data-testid="cron-save">Save</button><button id="cronCancel" type="button" class="ghost" data-testid="cron-cancel">Cancel edit</button></div>
-      </form>
-      <div class="dialog-actions"><button id="cronRefresh" type="button" class="ghost" data-testid="cron-refresh">Refresh results</button><button id="cronClose" type="button" data-testid="cron-close">Close</button></div>
+    <!-- Scheduled tasks use the same bounded, scrolling card as every other app dialog. -->
+    <dialog id="cronDialog" aria-labelledby="cronHeading" data-testid="cron-dialog">
+      <section class="dialog-card cron-card">
+        <div class="dialog-heading" tabindex="-1">
+          <span class="eyebrow">Automation</span>
+          <h2 id="cronHeading">Scheduled tasks</h2>
+          <p id="cronContext"></p>
+        </div>
+        <p id="cronError" role="alert"></p>
+        <div id="cronListView">
+          <div id="cronList" class="cron-list" data-testid="cron-list"></div>
+          <button id="cronNew" class="primary" type="button" data-testid="cron-new">New scheduled task</button>
+        </div>
+        <form id="cronForm" data-testid="cron-form" hidden>
+          <div class="cron-form-heading">
+            <span class="eyebrow">Schedule details</span>
+            <h3 id="cronFormTitle">New scheduled task</h3>
+          </div>
+          <label>Name<input name="name" required maxlength="120" autocomplete="off" data-testid="cron-name"></label>
+          <label>Prompt<textarea name="prompt" required maxlength="100000" rows="4" data-testid="cron-prompt"></textarea></label>
+          <div class="cron-schedule-grid">
+            <label>Repeat<select name="frequency" data-testid="cron-frequency"><option value="hourly">Hourly</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
+            <label id="cronTimeLabel">Time<input name="time" type="time" value="09:00" required data-testid="cron-time"></label>
+            <label id="cronMinuteLabel">Minute of each hour<input name="minute" type="number" inputmode="numeric" min="0" max="59" value="0" required data-testid="cron-minute"></label>
+            <label id="cronWeekdayLabel">Day<select name="weekday" data-testid="cron-weekday"><option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option></select></label>
+          </div>
+          <label>Timezone<input name="timezone" list="cronTimezones" required autocomplete="off" data-testid="cron-timezone"></label>
+          <datalist id="cronTimezones"></datalist>
+          <label>Execution node<select name="ownerNodeId" required data-testid="cron-owner"></select></label>
+          <label id="cronEngineLabel">Agent<select name="engine" data-testid="cron-engine"><option value="pi">Pi</option><option value="claude">Claude</option></select></label>
+          <label class="checkbox-row"><input name="enabled" type="checkbox" checked data-testid="cron-enabled">Enabled</label>
+          <p class="cron-help">Missed offline runs are skipped. Runs never overlap. Errors pause the task for review.</p>
+          <div class="dialog-actions"><button id="cronCancel" type="button" class="ghost" data-testid="cron-cancel">Cancel</button><button class="primary" type="submit" data-testid="cron-save">Save task</button></div>
+        </form>
+        <div id="cronFooter" class="dialog-actions"><button id="cronRefresh" type="button" class="ghost" data-testid="cron-refresh">Refresh</button><button id="cronClose" class="primary" type="button" data-testid="cron-close">Close</button></div>
+      </section>
     </dialog>
     <div class="row-menu" id="rowMenu" popover="auto" aria-label="Conversation actions" data-testid="session-row-menu"></div>
 

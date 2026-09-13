@@ -4,13 +4,6 @@
 
 [hidden] { display: none !important; }
 
-.cron-dialog { width: min(640px, calc(100vw - 32px)); max-height: 90dvh; overflow: auto; }
-.cron-dialog form { display: grid; gap: 12px; margin-block: 16px; }
-.cron-dialog label:not(.checkbox-row) { display: grid; gap: 4px; }
-.cron-task { padding-block: 12px; border-bottom: 1px solid var(--border); }
-.cron-task p, .cron-task pre, #cronError { white-space: pre-wrap; overflow-wrap: anywhere; }
-#cronError { color: var(--danger); }
-
 :root {
   color-scheme: light;
   --bg: #e8e8e6;
@@ -1326,6 +1319,39 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
   box-shadow: var(--shadow);
 }
 .dialog-card > * { min-width: 0; }
+
+.cron-card { width: min(680px, calc(100vw - 24px)); }
+#cronError:empty { display: none; }
+#cronError { margin: 0; color: var(--danger); white-space: pre-wrap; overflow-wrap: anywhere; }
+#cronListView, #cronForm { display: grid; gap: 14px; min-width: 0; }
+.cron-list { display: grid; gap: 10px; }
+.cron-empty { padding: 18px; border: 1px dashed var(--line-strong); border-radius: var(--radius-ctl); text-align: center; }
+.cron-task { display: grid; gap: 12px; min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
+.cron-task-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; min-width: 0; }
+.cron-task-heading strong { min-width: 0; font-size: 14px; overflow-wrap: anywhere; }
+.cron-task-kind { flex: 0 0 auto; padding: 3px 7px; border-radius: 999px; background: var(--field); color: var(--muted); font: 600 9.5px/1.4 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; }
+.cron-task-details { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; margin: 0; }
+.cron-task-details dt { color: var(--muted); font: 600 10px/1.5 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
+.cron-task-details dd { min-width: 0; margin: 0; color: var(--text); font-size: 12px; overflow-wrap: anywhere; }
+.cron-task-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-left: -8px; }
+.cron-task-history { max-height: 180px; margin: 0; padding: 10px; overflow: auto; border-radius: 8px; background: var(--code-bg); color: var(--code-text); font: 11px/1.55 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.cron-form-heading { display: grid; gap: 3px; padding-bottom: 2px; }
+.cron-form-heading h3 { margin: 0; color: var(--text); font-size: 15px; }
+.cron-schedule-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.cron-help { margin: 0 !important; padding: 10px 12px; border-radius: 8px; background: var(--field); }
+#cronNew { justify-self: start; }
+
+@media (max-width: 520px) {
+  .cron-card { width: calc(100vw - 16px); max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); padding: 16px; }
+  .cron-task-heading { display: grid; justify-items: start; gap: 7px; }
+  .cron-task-kind { white-space: normal; }
+  .cron-schedule-grid { grid-template-columns: minmax(0, 1fr); }
+  .cron-task-actions { margin-left: 0; }
+  .cron-task-actions .ghost { min-height: 40px; padding-inline: 10px; }
+  #cronNew { width: 100%; }
+  #cronFooter > button { flex: 1 1 0; }
+}
+
 /* Wide enough to read a transcript in; the chat host owns its own scroll so the
    card itself never grows past the viewport. */
 .task-dialog-card { width: min(760px, calc(100vw - 24px)); }
