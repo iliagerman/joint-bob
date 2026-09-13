@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.25.1 — 2026-09-13
 
-- Scheduled tasks now have a Run now button for immediate execution, with clearer messaging for tasks paused after a system restart.
+- Restored pause, resume, and Run now controls for scheduled tasks.
 
 ## 1.25.0 — 2026-09-13
 
