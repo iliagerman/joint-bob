@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Scheduled tasks now have a Run now button for immediate execution, with clearer messaging for tasks paused after a system restart.
+
 ## 1.25.0 — 2026-09-13
 
 - Messages with image attachments now display as expandable thumbnails in the chat transcript.

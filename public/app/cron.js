@@ -68,7 +68,9 @@ async function refreshTasks() {
 
     const actions = document.createElement("div");
     actions.className = "cron-task-actions";
-    actions.append(action("Edit", "cron-edit", () => editTask(task)), action(task.enabled ? "Pause" : "Resume", "cron-toggle", async () => {
+    actions.append(action("Edit schedule", "cron-edit", () => editTask(task)), action("Run now", "cron-run", async () => {
+      await command(task.ownerNodeId, { action: "run", id: task.id }); await refreshTasks();
+    }), action(task.enabled ? "Pause schedule" : "Resume schedule", "cron-toggle", async () => {
       await command(task.ownerNodeId, { action: "update", id: task.id, input: { ...inputOf(task), enabled: !task.enabled } }); await refreshTasks();
     }), action("History", "cron-history", async () => {
       const body = await command(task.ownerNodeId, { action: "history", id: task.id });
@@ -83,7 +85,14 @@ async function refreshTasks() {
       if (!await confirmAction({ title: `Delete ${task.name}?`, message: "Run history is retained. Conversations are not deleted.", confirmLabel: "Delete", destructive: true })) return;
       await command(task.ownerNodeId, { action: "delete", id: task.id }); await refreshTasks();
     }));
-    row.append(heading, details, actions);
+    row.append(heading, details);
+    if (!task.enabled && task.lastRun?.error?.includes("outcome uncertain")) {
+      const notice = document.createElement("p");
+      notice.className = "cron-help";
+      notice.textContent = "Paused after a node restart to prevent a duplicate run. Edit it, resume the schedule, or run it now when safe.";
+      row.append(notice);
+    }
+    row.append(actions);
     list.append(row);
   }
 }
@@ -92,7 +101,7 @@ function action(label, testid, callback) {
   button.type = "button"; button.className = "ghost compact"; button.textContent = label; button.dataset.testid = testid;
   button.addEventListener("click", async () => {
     button.disabled = true;
-    try { await callback(); } catch (error) { errorText.textContent = error.message; }
+    try { await callback(); } catch (error) { errorText.textContent = error.message; toast(error.message); }
     finally { button.disabled = false; }
   });
   return button;
@@ -101,6 +110,7 @@ function showList() {
   form.hidden = true;
   listView.hidden = false;
   footer.hidden = false;
+  dialog.querySelector(".cron-card").scrollTo(0, 0);
 }
 function editTask(task) {
   editing = task;
@@ -109,6 +119,7 @@ function editTask(task) {
   listView.hidden = true;
   footer.hidden = true;
   document.querySelector("#cronFormTitle").textContent = task ? "Edit scheduled task" : "New scheduled task";
+  dialog.querySelector(".cron-card").scrollTo(0, 0);
   field("timezone").value = task ? task.schedule.timezone : Intl.DateTimeFormat().resolvedOptions().timeZone;
   for (const name of ["name", "prompt", "ownerNodeId", "engine"]) if (task) field(name).value = task[name];
   if (task) {

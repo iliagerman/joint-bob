@@ -14,6 +14,7 @@ const commandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("create"), input: cronInputSchema }).strict(),
   z.object({ action: z.literal("install"), id: z.string().uuid(), input: cronInputSchema, runs: z.array(cronRunSchema).max(100) }).strict(),
   z.object({ action: z.literal("update"), id: z.string().uuid(), input: cronInputSchema }).strict(),
+  z.object({ action: z.literal("run"), id: z.string().uuid() }).strict(),
   z.object({ action: z.literal("delete"), id: z.string().uuid() }).strict(),
   z.object({ action: z.literal("history"), id: z.string().uuid() }).strict(),
 ]);
@@ -50,6 +51,7 @@ async function manageCron(command: Command): Promise<unknown> {
   }
   if (command.action === "ready") return { ready: await cronConversationReady(command.projectId, command.sessionId, command.engine) };
   if (command.action === "history") return { runs: store.history(command.id) };
+  if (command.action === "run") return { task: store.runNow(command.id) };
   if (command.action === "delete") { store.delete(command.id); return { ok: true }; }
   const project = await getProject(command.input.projectId);
   if (!project) throw new Error("Project is not mapped on the execution node");

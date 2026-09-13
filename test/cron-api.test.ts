@@ -45,9 +45,16 @@ test("scheduler restart pauses uncertain dispatch, skips offline occurrences, an
     const interrupted = await readTask(created.body.task.id);
     assert.equal(interrupted.enabled, false);
     assert.match(interrupted.lastRun!.error!, /outcome uncertain/);
+    const edited = await api<{ task: CronTask }>(node, auth, "POST", "/cron", { nodeId: node.nodeId, command: { action: "update", id: interrupted.id, input: { ...input, name: "Recovered report", enabled: false } } });
+    assert.equal(edited.status, 200, JSON.stringify(edited.body));
+    assert.equal(edited.body.task.name, "Recovered report", "a recovered paused task must remain editable");
     await until(async () => (await readTask(offline.body.task.id)).nextRun > Date.now());
     assert.equal((await readTask(offline.body.task.id)).lastRun, null, "restart must skip even a just-missed offline occurrence");
     assert.deepEqual((await readFile(log, "utf8")).trim().split("\n"), [`claude:${node.nodeId}`], "restart must not replay the uncertain turn");
+    const resumed = await api<{ task: CronTask }>(node, auth, "POST", "/cron", { nodeId: node.nodeId, command: { action: "run", id: interrupted.id } });
+    assert.equal(resumed.status, 200, JSON.stringify(resumed.body));
+    assert.equal(resumed.body.task.enabled, true, "running a recovered paused task must resume its schedule");
+    assert.ok(resumed.body.task.nextRun <= Date.now(), "running a recovered task should make it immediately due");
   } finally { await Promise.all(children.map(stopDevNode)); await rm(root, { recursive: true, force: true }); }
 });
 

@@ -33,7 +33,9 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
     form.requestSubmit(); return true;
   })()`), true);
   await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("Project browser cron") && document.querySelector("#cronList").textContent.includes("New conversation") && document.querySelector("#cronList").textContent.includes("Paused"));
+  assert.equal(await page.getByTestId("cron-run").isVisible(), true, "Paused schedules need a Run now action");
   await page.locator('[data-testid="cron-edit"]').click();
+  assert.equal(await page.getByTestId("cron-form").isVisible(), true, "Edit schedule should open the editor");
   assert.equal(await page.evaluate(`(() => {
     const form = document.querySelector("#cronForm"), f = form.elements;
     if (f.frequency.value !== "weekly" || f.timezone.value !== "UTC" || f.enabled.checked) throw Error("Saved schedule not restored");
@@ -84,7 +86,7 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
     const card = document.querySelector("#cronDialog > .dialog-card");
     const task = document.querySelector("#cronList .cron-task");
     const actions = [...document.querySelectorAll("#cronList .cron-task-actions button")];
-    if (!card || !task || actions.length !== 4) return null;
+    if (!card || !task || actions.length !== 5) return null;
     const cardRect = card.getBoundingClientRect();
     const taskRect = task.getBoundingClientRect();
     return { withinCard: taskRect.left >= cardRect.left && taskRect.right <= cardRect.right, actionHeights: actions.map(button => button.getBoundingClientRect().height) };

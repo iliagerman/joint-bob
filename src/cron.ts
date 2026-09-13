@@ -77,6 +77,14 @@ export class CronStore {
     this.db.prepare("UPDATE cron_tasks SET input = ?, next_run = ? WHERE id = ?").run(JSON.stringify(data), next, id);
     return this.get(id)!;
   }
+  runNow(id: string, now = Date.now()): CronTask {
+    const task = this.get(id);
+    if (!task) throw new Error("Scheduled task not found");
+    if (this.active(id)) throw new Error("The scheduled task is already running");
+    const { id: _id, nextRun: _nextRun, lastRun: _lastRun, ...input } = task;
+    this.db.prepare("UPDATE cron_tasks SET input = ?, next_run = ? WHERE id = ?").run(JSON.stringify({ ...input, enabled: true }), now, id);
+    return this.get(id)!;
+  }
   delete(id: string): void {
     if (this.active(id)) throw new Error("Wait for the scheduled run to finish before deleting");
     this.db.prepare("DELETE FROM cron_tasks WHERE id = ?").run(id);
