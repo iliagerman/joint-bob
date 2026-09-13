@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.26.0 — 2026-09-13
 
-- Queued messages can now be reordered before sending and merged together into a single prompt.
+- Queued messages can now be reordered and merged before sending.
 
 ## 1.25.1 — 2026-09-13
 
