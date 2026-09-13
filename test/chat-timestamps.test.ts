@@ -21,7 +21,7 @@ test("live chat messages carry the clock time they arrived", async () => {
   assert.match(stamp, /data-testid|dataset\.testid = "message-timestamp"/);
 
   const append = functionSource(app, "appendMessage");
-  assert.match(append, /function appendMessage\(role, text, timestamped = true\)/);
+  assert.match(append, /function appendMessage\(role, text, timestamped = true, attachments = \[\]\)/);
   assert.match(append, /timestamped && \(role === "user" \|\| role === "assistant"\)/);
 
   // A replayed transcript has no recorded times, so it must not be stamped with "now".
