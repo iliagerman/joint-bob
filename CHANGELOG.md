@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.28.0 — 2026-09-13
 
 - Scheduled tasks can now specify which model and reasoning level to use when running.
 
