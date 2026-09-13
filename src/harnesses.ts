@@ -57,6 +57,16 @@ export class HarnessSessionCatalog<TAdapters extends readonly HarnessAdapter[]> 
     return groups.flat();
   }
 
+  async find(project: HarnessProject, harnessId: HarnessId, sessionPath: string, sessionId: string): Promise<SessionSummary | undefined> {
+    const adapter = this.adapters.find((candidate) => candidate.id === harnessId);
+    if (!adapter) throw new Error(`No harness registered for conversation engine: ${harnessId}`);
+    const prefix = `${harnessId}:`;
+    const transcriptPath = path.resolve(sessionPath.startsWith(prefix) ? sessionPath.slice(prefix.length) : sessionPath);
+    if (!adapter.paths.ownsTranscript(transcriptPath)) return undefined;
+    const sessions = await adapter.sessions.refresh(project, [], [transcriptPath]);
+    return sessions.find((session) => session.id === sessionId);
+  }
+
   async refresh(projectId: string, changedFiles: string[]): Promise<void> {
     const entries = [...this.entries.entries()].filter(([, entry]) => entry.project.id === projectId);
     await Promise.all(entries.map(async ([key, entry]) => {
@@ -138,6 +148,10 @@ export function harnessSyncFolderForSessionPath(sessionPath: string): HarnessSyn
 
 export function refreshHarnessSessions(projectId: string, changedFiles: string[]): Promise<void> {
   return sessionCatalog.refresh(projectId, changedFiles);
+}
+
+export function findHarnessSession(project: HarnessProject, harnessId: HarnessId, sessionPath: string, sessionId: string): Promise<SessionSummary | undefined> {
+  return sessionCatalog.find(project, harnessId, sessionPath, sessionId);
 }
 
 export function clearHarnessSessionCache(projectId?: string): void {

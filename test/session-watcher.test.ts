@@ -16,14 +16,14 @@ function project(id: string, projectPath: string): ProjectRecord {
   };
 }
 
-function waitForCallbacks(callbacks: Map<string, string[]>, expectedPath: string): Promise<void> {
+function waitForCallback(callbacks: Map<string, string[]>, projectId: string, expectedPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       clearInterval(interval);
-      reject(new Error("timed out waiting for flat session notifications"));
+      reject(new Error("timed out waiting for flat session notification"));
     }, 4_000);
     const interval = setInterval(() => {
-      if (callbacks.size === 2 && [...callbacks.values()].every((files) => files.length === 1 && files[0] === expectedPath)) {
+      if (callbacks.get(projectId)?.[0] === expectedPath) {
         clearTimeout(timeout);
         clearInterval(interval);
         resolve();
@@ -69,7 +69,7 @@ test("shared flat Pi session watcher does not keep the process alive", async () 
   }
 });
 
-test("shared flat Pi session watcher notifies every project", async () => {
+test("shared flat Pi session watcher notifies only the transcript project", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "session-watcher-"));
   const previousHome = process.env.HOME;
   const flatRoot = path.join(home, ".pi/agent/sessions");
@@ -89,14 +89,15 @@ test("shared flat Pi session watcher notifies every project", async () => {
     watcher.ensureProject(project("b", path.join(home, "project-b")));
 
     const transcript = path.join(flatRoot, "flat-session.jsonl");
-    await writeFile(transcript, "{\"type\":\"session\"}\n");
-    await waitForCallbacks(callbacks, transcript);
+    await writeFile(transcript, `${JSON.stringify({ type: "session", cwd: path.join(home, "project-a") })}\n`);
+    await waitForCallback(callbacks, "a", transcript);
+    await new Promise((resolve) => setTimeout(resolve, 900));
     assert.deepEqual(callbacks.get("a"), [transcript]);
-    assert.deepEqual(callbacks.get("b"), [transcript]);
+    assert.equal(callbacks.has("b"), false, "unrelated projects do not reparse the transcript");
 
     await writeFile(path.join(flatRoot, "ignored.txt"), "ignored\n");
     await new Promise((resolve) => setTimeout(resolve, 900));
-    assert.equal(callbackCount, 2);
+    assert.equal(callbackCount, 1);
   } finally {
     watcher?.close();
     if (previousHome === undefined) delete process.env.HOME;

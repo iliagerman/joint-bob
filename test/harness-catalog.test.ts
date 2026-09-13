@@ -39,6 +39,32 @@ test("partial watcher refresh does not cache an atomic fork as a draft", async (
   assert.notEqual(cached.draft, true);
 });
 
+test("direct lookup reads only the selected transcript", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "joint-bob-direct-session-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const project = { id: randomUUID(), name: "Direct session", path: directory };
+  const selectedPath = path.join(directory, "selected.jsonl");
+  let listCount = 0, refreshCount = 0;
+  const selected: SessionSummary = {
+    id: "selected", path: selectedPath, harnessId: "pi", agentId: "pi", agentLabel: "Pi", title: "Selected",
+  };
+  const adapter = defineHarness({
+    id: "pi", label: "Pi",
+    paths: { newSession: "new", ownsSession: () => true, ownsTranscript: (filePath) => filePath === selectedPath },
+    sessions: {
+      files: async () => [selectedPath],
+      list: async () => { listCount += 1; return [selected]; },
+      refresh: async (_project, previous, files) => { refreshCount += 1; assert.deepEqual(previous, []); assert.deepEqual(files, [selectedPath]); return [selected]; },
+      loadMessages: async () => [],
+    },
+  });
+  const catalog = new HarnessSessionCatalog([adapter]);
+  assert.equal((await catalog.find(project, "pi", selectedPath, "selected"))?.id, "selected");
+  assert.equal(await catalog.find(project, "pi", selectedPath, "other"), undefined);
+  assert.equal(refreshCount, 2);
+  assert.equal(listCount, 0, "direct lookup must not scan the transcript catalog");
+});
+
 test("cached lists rely on watcher paths instead of rescanning transcript roots", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "joint-bob-catalog-"));
   t.after(() => rm(directory, { recursive: true, force: true }));

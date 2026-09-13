@@ -7,7 +7,7 @@ import { getClusterMachineToken, getClusterNode, getClusterPeer } from "../clust
 import { type ConversationEngine, ConversationOwnershipError, getConversationOwnership } from "../conversation-ownership.js";
 import { ensureConversationRecord, getConversationRecord, parseConversationDraftPath } from "../conversation-records.js";
 import { conversationTranscriptPayload } from "../conversation-segments.js";
-import { listHarnessSessions } from "../harnesses.js";
+import { findHarnessSession, listHarnessSessions } from "../harnesses.js";
 import { getSessionStatus, simplifyMessages } from "../pi-service.js";
 import { getProjectLock } from "../project-locks.js";
 import { listQueuedPrompts } from "../prompt-queue.js";
@@ -15,7 +15,7 @@ import { resolveLocalSessionPath } from "../session-paths.js";
 import { getProject } from "../store.js";
 import { listTasks } from "../tasks.js";
 import { attachTerminalSession } from "../terminal-session.js";
-import type { SessionSummary } from "../types.js";
+import type { ProjectRecord, SessionSummary } from "../types.js";
 import { webSocketCloseReason } from "../websocket.js";
 import { chatConnections, refreshPromptQueue, restoreClaudeQueueSettings, claudeConnectionKey, claudeQueueKey, claudeRunKey, claudeStatus, drainClaudePromptQueue, emptyClaudeState, getSharedSession, handleChatMessage, proxySocket, sessionWatcher } from "./chat.js";
 import { conversationBelongsToDoneTask, taskConversationIdentity } from "./cluster-helpers.js";
@@ -35,6 +35,14 @@ function describeSessionRequest(rawSessionPath: string | null) {
     engine: (draft?.engine ?? (rawSessionPath?.startsWith("claude:") ? "claude" : "pi")) as ConversationEngine,
     sessionPath: draft ? undefined : parseSessionPath(rawSessionPath),
   };
+}
+
+async function directSessionForOpen(project: ProjectRecord, sessionPath: string, sessionId: string): Promise<SessionSummary | undefined> {
+  const request = describeSessionRequest(sessionPath);
+  if (!request.sessionPath || request.draft) return undefined;
+  const record = await getConversationRecord(project.id, request.engine, sessionId);
+  if (record?.conversationId) return undefined;
+  return findHarnessSession(project, request.engine, sessionPath, sessionId);
 }
 
 webSocketServer.on("connection", async (socket, request) => {
@@ -193,8 +201,9 @@ webSocketServer.on("connection", async (socket, request) => {
   // Chosen in the new-conversation dialog; a conversation has no id yet at this point, so the
   // accounts travel with the connection until the engine reports one (FR9.4).
   const secretAccountIds = socketSecretAccountIdsSchema.parse((url.searchParams.get("secretAccountIds") ?? "").split(",").filter(Boolean));
-  if (requestedSessionId && rawSessionPath !== "watch") {
-    listedSessions = await listHarnessSessions(sessionSearchProject);
+  if (requestedSessionId && rawSessionPath && rawSessionPath !== "watch") {
+    const direct = await directSessionForOpen(sessionSearchProject, rawSessionPath, requestedSessionId);
+    listedSessions = direct ? [direct] : await listHarnessSessions(sessionSearchProject);
     if (task?.sessionPath && taskIdentity?.sessionId === requestedSessionId) rawSessionPath = resolveLocalSessionPath(task.sessionPath).path;
     else {
       const matching = listedSessions.find((candidate) => candidate.id === requestedSessionId);

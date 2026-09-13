@@ -1,4 +1,5 @@
 import { watch, type FSWatcher } from "node:fs";
+import { open, type FileHandle } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { claudeProjectsRoot } from "./claude-service.js";
@@ -35,6 +36,23 @@ function flatPiSessionDir(): string {
   return piSessionRoot();
 }
 
+async function transcriptCwd(filePath: string): Promise<string | null> {
+  let file: FileHandle | undefined;
+  try {
+    file = await open(filePath, "r");
+    const buffer = Buffer.alloc(64 * 1024);
+    const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+    const lineEnd = buffer.subarray(0, bytesRead).indexOf(10);
+    if (lineEnd < 0) return null;
+    const header = JSON.parse(buffer.toString("utf8", 0, lineEnd)) as { type?: unknown; cwd?: unknown };
+    return header.type === "session" && typeof header.cwd === "string" ? path.resolve(header.cwd) : null;
+  } catch {
+    return null;
+  } finally {
+    await file?.close();
+  }
+}
+
 export function sessionWatchDirs(project: SessionProjectPaths): string[] {
   return [...new Set([...sessionCwds(project).map(piSessionDir), ...claudeProjectDirs(project, claudeProjectsRoot())])];
 }
@@ -53,7 +71,7 @@ export class SessionWatcher {
 
   ensureProject(project: ProjectRecord): void {
     const watched = this.projects.get(project.id);
-    const paths = { path: project.path, macPath: project.macPath };
+    const paths = { path: project.path, macPath: project.macPath, locations: project.locations, additionalPaths: "additionalPaths" in project ? project.additionalPaths as string[] | undefined : undefined };
     if (watched) watched.paths = paths;
     else this.projects.set(project.id, { paths, dirWatchers: new Map(), pendingFiles: new Set(), debounceTimer: null });
     this.watchDirs(project.id);
@@ -111,9 +129,7 @@ export class SessionWatcher {
     this.flatWatcher = null;
     this.flatWatcherDir = "";
     try {
-      const watcher = watch(dir, (_eventType, fileName) => {
-        for (const projectId of this.projects.keys()) this.handleEvent(projectId, dir, fileName);
-      });
+      const watcher = watch(dir, (_eventType, fileName) => void this.handleFlatEvent(dir, fileName));
       watcher.unref();
       watcher.on("error", () => {
         watcher.close();
@@ -129,6 +145,16 @@ export class SessionWatcher {
   private rescan(): void {
     this.watchFlatDir();
     for (const projectId of this.projects.keys()) this.watchDirs(projectId);
+  }
+
+  private async handleFlatEvent(dir: string, fileName: string | Buffer | null): Promise<void> {
+    const name = typeof fileName === "string" ? fileName : Buffer.isBuffer(fileName) ? fileName.toString() : "";
+    if (!name.endsWith(".jsonl")) return;
+    const filePath = path.join(dir, canonicalPiTranscriptName(name));
+    const cwd = await transcriptCwd(filePath);
+    for (const [projectId, project] of this.projects) {
+      if (!cwd || sessionCwds(project.paths).includes(cwd)) this.handleEvent(projectId, dir, fileName);
+    }
   }
 
   private handleEvent(projectId: string, dir: string, fileName: string | Buffer | null): void {
