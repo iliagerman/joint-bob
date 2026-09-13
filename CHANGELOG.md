@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.29.0 — 2026-09-13
 
-- Added browser monitoring: install checkers and create monitors tied to signed-in browser sessions, running on a configurable schedule with checkpoint-aware deduplication and full run history.
+- Added an Automations dialog for read-only browser monitors, with previews, activity history, and check intervals starting at 10 seconds.
+- Added account-checked browser reassignment and automatic pauses for human control. Checks cover the configured visible target; AI replies and mail/chat connectors are not included.
 
 ## 1.28.0 — 2026-09-13
 
