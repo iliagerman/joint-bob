@@ -10,6 +10,9 @@ import { getClusterNode } from "./cluster.js";
 import { BrowserStore, type RecoveryState } from "./browser-store.js";
 import { prepareProfile, profileDirectory } from "./browser-profile-files.js";
 import { browserCommandSchema, browserStartSchema, type BrowserActor, type BrowserCapability, type BrowserCommand, type BrowserProfile, type BrowserSessionView, type BrowserStart } from "./browser-types.js";
+import { createMonitorReadExpression, normalizeMonitorRead, type MonitorReadInput } from "./browser-monitor-checkers.js";
+import { BrowserMonitorCheckError } from "./browser-monitor-scheduler.js";
+import type { MonitorCheckResult } from "./browser-monitor-types.js";
 
 interface DetectionOptions {
   platform?: string;
@@ -64,6 +67,15 @@ export function validateBrowserUploads(files: Array<{ name: string; data: string
     if (bytes > 20 * 1024 * 1024) throw new Error("Uploads exceed cumulative 20 MiB limit");
     return { name: file.name, buffer };
   });
+}
+
+export interface BrowserMonitorReadGrant {
+  sessionId: string;
+  projectId: string;
+  conversationId: string;
+  profileId: string;
+  pageId: string;
+  assertValid: () => void | Promise<void>;
 }
 
 interface LiveSession {
@@ -330,6 +342,37 @@ export class BrowserRuntime {
     });
     session.queue = job.catch(() => {});
     return job;
+  }
+
+  inspectMonitor(grant: BrowserMonitorReadGrant, input: MonitorReadInput): Promise<MonitorCheckResult> {
+    void this.ready();
+    let expression: string;
+    let session: LiveSession;
+    try {
+      expression = createMonitorReadExpression(input);
+      session = this.sessions.get(grant.sessionId) as LiveSession;
+      if (!session || session.stopped) throw new BrowserMonitorCheckError("browser-stopped", "Browser session is not running");
+    } catch (error) { return Promise.reject(error); }
+    const job = session.queue.then(async () => {
+      await grant.assertValid();
+      this.assertMonitorTarget(grant, session);
+      const value = await this.page(session).evaluate(expression);
+      await grant.assertValid();
+      this.assertMonitorTarget(grant, session);
+      return normalizeMonitorRead(input, value);
+    });
+    session.queue = job.catch(() => {});
+    return job;
+  }
+
+  private assertMonitorTarget(grant: BrowserMonitorReadGrant, session: LiveSession): void {
+    if (this.sessions.get(grant.sessionId) !== session || session.stopped) throw new BrowserMonitorCheckError("browser-stopped", "Browser session is not running");
+    const record = this.store.get(grant.sessionId);
+    if (record.projectId !== grant.projectId || record.conversationId !== grant.conversationId || record.profileId !== grant.profileId || session.profileId !== grant.profileId) throw new BrowserMonitorCheckError("wrong-account", "Browser session identity does not match monitor grant");
+    if (session.activePageId !== grant.pageId || !session.pages.has(grant.pageId)) throw new BrowserMonitorCheckError("target-missing", "Browser tab changed");
+    if (session.human) throw new BrowserMonitorCheckError("paused-by-human", "Browser is under human control");
+    if (session.restoring) throw new BrowserMonitorCheckError("incompatible", "Browser profile is still restoring");
+    if (session.dialog || session.chooser) throw new BrowserMonitorCheckError("incompatible", "Browser has a pending prompt");
   }
 
   private async endRecovery(id: string, actor: BrowserActor): Promise<BrowserSessionView> {

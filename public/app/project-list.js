@@ -1,5 +1,6 @@
 import { api, savePreferencesInBackground } from "./api.js";
 import { openScheduledTasks } from "./cron.js";
+import { openAutomations } from "./automations.js";
 import { elements } from "./elements.js";
 import { filteredProjects } from "./layout.js";
 import { loadProjects, refreshProjectsQuietly, selectProject } from "./project-selection.js";
@@ -191,6 +192,7 @@ function projectPinToggle(project) {
 function projectMenuItems(project) {
   return [
     { label: "Scheduled tasks", icon: "refresh", testid: "project-cron-button", onSelect: () => openScheduledTasks(project.id).catch(error => toast(error.message)) },
+    { label: "Automations", icon: "refresh", testid: "project-automations-button", onSelect: () => openAutomations(project.id).catch(error => toast(error.message)) },
     {
       label: "Edit project",
       icon: "pencil",

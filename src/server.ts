@@ -13,6 +13,7 @@ import { flushMembershipOutbox, flushReplicationOutbox, flushSecretCredentialOut
 import { reconcileUpdateJobs, startUpdateScheduler } from "./updater.js";
 import { flags, port, server } from "./server/state.js";
 import { browserRuntime, closeBrowserRuntime } from "./server/browser.js";
+import { startBrowserMonitors, stopBrowserMonitors } from "./server/browser-monitors.js";
 import { recoverPendingUpdateRuns } from "./server/task-runs.js";
 import "./server/schemas.js";
 import "./server/http-auth.js";
@@ -30,6 +31,7 @@ import "./server/routes/cluster-tasks.js";
 import "./server/routes/platform.js";
 import "./server/routes/secrets.js";
 import "./server/routes/browser.js";
+import "./server/routes/browser-monitors.js";
 import "./server/routes/projects.js";
 import "./server/routes/sessions.js";
 import { startCronScheduler } from "./server/cron.js";
@@ -49,6 +51,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     stopping = true;
     server.close();
     const timeout = setTimeout(() => process.exit(0), 8000); timeout.unref();
+    stopBrowserMonitors();
     void closeBrowserRuntime().catch(error => console.warn("Browser shutdown failed", error)).finally(() => process.exit(0));
   });
   flags.startupReady = false;
@@ -86,6 +89,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     reconcileUpdateJobs();
     startUpdateScheduler();
     void startCronScheduler().catch(error => console.error("Scheduled task recovery failed; scheduler not started", error));
+    void startBrowserMonitors().catch(error => console.error("Browser monitor startup failed", error));
     initializeStartupReadiness()
       .then(async () => { await recoverPendingUpdateRuns(); await reconcileTicketWorkspaceSync(); await reconcileTaskConversationRecords(); })
       .catch((error) => console.warn("Ticket workspace sync failed", error));

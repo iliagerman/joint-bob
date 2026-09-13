@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added browser monitoring: install checkers and create monitors tied to signed-in browser sessions, running on a configurable schedule with checkpoint-aware deduplication and full run history.
+
 ## 1.28.0 — 2026-09-13
 
 - Scheduled tasks can now specify which model and reasoning level to use when running.

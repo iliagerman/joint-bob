@@ -1352,6 +1352,36 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 .cron-help { margin: 0 !important; padding: 10px 12px; border-radius: 8px; background: var(--field); }
 #cronNew { justify-self: start; }
 
+.automation-card { width: min(900px, calc(100vw - 24px)); }
+#automationError { margin: 0; color: var(--danger); white-space: pre-wrap; overflow-wrap: anywhere; }
+#automationError:empty { display: none; }
+.automation-list, .automation-form { display: grid; gap: 14px; min-width: 0; }
+.automation-monitor { display: grid; gap: 12px; min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
+.automation-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; min-width: 0; }
+.automation-heading strong { min-width: 0; overflow-wrap: anywhere; }
+.automation-status { flex: 0 0 auto; padding: 3px 7px; border-radius: 999px; background: var(--field); color: var(--muted); font: 600 10px/1.4 var(--mono); }
+.automation-monitor-details { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; margin: 0; }
+.automation-monitor-details dt { color: var(--muted); font: 600 10px/1.5 var(--mono); letter-spacing: .05em; text-transform: uppercase; }
+.automation-monitor-details dd { min-width: 0; margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+.automation-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+.automation-live { display: inline-flex; align-items: center; text-decoration: none; }
+.automation-live:not([href]) { color: var(--muted); cursor: not-allowed; }
+.automation-details { max-height: 240px; padding: 12px; overflow: auto; border-radius: var(--radius-ctl); background: var(--field); font: 11px/1.55 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.automation-form h3 { margin: 0; }
+.automation-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.automation-help, .automation-owner-help { margin: 0 !important; padding: 10px 12px; border-radius: 8px; background: var(--field); overflow-wrap: anywhere; }
+.automation-empty { padding: 18px; border: 1px dashed var(--line-strong); border-radius: var(--radius-ctl); text-align: center; }
+.automation-footer { flex-wrap: wrap; }
+
+@media (max-width: 600px) {
+  .automation-card { width: calc(100vw - 16px); max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); padding: 16px; }
+  .automation-form-grid { grid-template-columns: minmax(0, 1fr); }
+  .automation-heading { display: grid; justify-items: start; }
+  .automation-card :is(button, .automation-live) { min-height: 40px; }
+  .automation-actions, .automation-footer, .automation-form .dialog-actions { flex-wrap: wrap; }
+  .automation-actions > *, .automation-footer > * { flex: 1 1 auto; }
+}
+
 @media (max-width: 520px) {
   .cron-card { width: calc(100vw - 16px); max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); padding: 16px; }
   .cron-task-heading { display: grid; justify-items: start; gap: 7px; }

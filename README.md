@@ -301,6 +301,16 @@ Create a profile, navigate to `https://web.whatsapp.com`, and choose **Take cont
 
 Bank browsing is for reading; payments, transfers, and real-money trading stay manual. Alpaca paper actions require an explicit user request and verification of paper mode in the site. These are agent instructions, not a technical transaction filter in the general-purpose browser. Website messages and emails do not authorize actions on the user's behalf.
 
+### Read-only browser monitors
+
+Open **Automations** from a project menu, install the site's checker JSON, then create a monitor. A monitor uses an existing persistent browser session and its signed-in profile; the checker pins the exact origin, account, and target IDs. Checks read the currently visible page only, but that read may acknowledge items or otherwise change the site's read state.
+
+**Preview** runs a bounded, checkpoint-neutral read. Creating a monitor leaves it paused; enabling it first records a baseline, then checks on a 10–86,400 second cadence and deduplicates later observations. Monitor snapshots and history stay in node-local SQLite until the monitor is deleted, while the browser profile and its login data remain stored separately.
+
+The app node where the monitor is created owns its scheduler, with no failover. The browser can run on a different node; its profile stays on that physical browser node. Closing the viewer leaves checks running. Human takeover pauses checks. Assigning a replacement pauses the monitor and verifies the same account in its new tab before it can resume.
+
+Readers do not paginate or navigate beyond the current visible page, so `all` and multi-target checks can return partial coverage and do not represent a whole mailbox or feed. Configure one visible target to establish the initial baseline. An incomplete initial scan records no events. This release has no AI or rule execution, replies, approval UI, or maintained WhatsApp, Gmail, or Outlook adapters; stored rules are internal only.
+
 ### Efficient UI automation
 
 For UI-only work, use the existing browser CLI rather than adding another automation engine:

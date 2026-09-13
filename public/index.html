@@ -1288,6 +1288,57 @@
       </form>
     </dialog>
 
+    <dialog id="automationsDialog" aria-labelledby="automationHeading" data-testid="automation-dialog">
+      <section class="dialog-card automation-card">
+        <div class="dialog-heading" tabindex="-1">
+          <span class="eyebrow">Browser monitoring</span>
+          <h2 id="automationHeading">Automations</h2>
+          <p>Project-scoped, read-only monitors use an installed immutable checker and an existing signed-in browser tab.</p>
+        </div>
+        <p id="automationError" role="alert"></p>
+        <div id="automationList" class="automation-list"></div>
+        <section id="automationDetails" class="automation-details" data-testid="automation-details" hidden></section>
+
+        <form id="automationCheckerForm" class="automation-form" hidden>
+          <h3>Install checker version</h3>
+          <label>Checker JSON<textarea id="automation-checker-json" required maxlength="32768" rows="10" data-testid="automation-checker-json"></textarea></label>
+          <p class="automation-help">JSON selectors only. Versions are immutable; installing a checker does not enable a monitor.</p>
+          <div class="dialog-actions"><button id="automation-checker-cancel" class="ghost" type="button" data-testid="automation-checker-cancel">Cancel</button><button id="automation-checker-save" class="primary" type="submit" data-testid="automation-checker-save">Install checker</button></div>
+        </form>
+
+        <form id="automationMonitorForm" class="automation-form" hidden>
+          <h3 id="automationMonitorFormHeading">New monitor</h3>
+          <div class="automation-form-grid">
+            <label>Name<input id="automation-name" name="name" required maxlength="120" autocomplete="off" data-testid="automation-name"></label>
+            <label>Checker<select id="automation-checker" name="checker" required data-testid="automation-checker"></select></label>
+            <label>Browser session<select id="automation-session" name="session" required data-testid="automation-session"></select></label>
+            <label>Source origin<input id="automation-origin" name="origin" required maxlength="2048" data-testid="automation-origin"></label>
+            <label>Verified account ID<input id="automation-account" name="account" required maxlength="320" data-testid="automation-account"></label>
+            <label>Interval (seconds)<input id="automation-interval" name="interval" type="number" required min="10" max="86400" step="1" value="30" data-testid="automation-interval"></label>
+          </div>
+          <label>Target IDs<textarea id="automation-targets" name="targets" maxlength="64200" rows="4" data-testid="automation-targets"></textarea></label>
+          <p class="automation-help">One ID per line. Empty requests all targets, but a current-page checker can still report Partial coverage.</p>
+          <label class="checkbox-row"><input id="automation-read-ack" name="readAcknowledged" type="checkbox" data-testid="automation-read-ack">Authorize reading visible content from the chosen account; previews may show message text. This does not grant sending or navigation.</label>
+          <p class="automation-owner-help">The scheduler owner is separate from the browser machine. Minimum interval: 10 seconds.</p>
+          <div class="dialog-actions"><button id="automation-cancel" class="ghost" type="button" data-testid="automation-cancel">Cancel</button><button id="automation-save" class="primary" type="submit" data-testid="automation-save">Save monitor</button></div>
+        </form>
+
+        <form id="automationBindingForm" class="automation-form" hidden>
+          <h3>Assign compatible replacement</h3>
+          <label>Browser session<select id="automation-rebind-session" name="session" required data-testid="automation-rebind-session"></select></label>
+          <p class="automation-help">The same account is verified first. Rebinding pauses the monitor and keeps history; it does not migrate a login.</p>
+          <div class="dialog-actions"><button id="automation-rebind-cancel" class="ghost" type="button" data-testid="automation-rebind-cancel">Cancel</button><button id="automation-rebind-save" class="primary" type="submit" data-testid="automation-rebind-save">Assign replacement</button></div>
+        </form>
+
+        <footer id="automationFooter" class="dialog-actions automation-footer">
+          <button id="automation-new" class="primary" type="button" data-testid="automation-new" disabled>New monitor</button>
+          <button id="automation-install-checker" class="ghost" type="button" data-testid="automation-install-checker">Install checker</button>
+          <button id="automation-refresh" class="ghost" type="button" data-testid="automation-refresh">Refresh</button>
+          <button id="automation-close" class="ghost" type="button" data-testid="automation-close">Close</button>
+        </footer>
+      </section>
+    </dialog>
+
     <!-- Scheduled tasks use the same bounded, scrolling card as every other app dialog. -->
     <dialog id="cronDialog" aria-labelledby="cronHeading" data-testid="cron-dialog">
       <section class="dialog-card cron-card">
