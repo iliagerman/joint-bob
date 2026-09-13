@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.27.0 — 2026-09-13
 
-- Added conversation history window setting to limit summaries to recent days; older transcripts stay accessible by pin or direct link.
+- Conversation lists now skip old transcript summaries, reducing startup and refresh work on nodes with large histories.
+- Settings now controls the history window in days; pinned, recent, and directly opened older conversations remain available.
 
 ## 1.26.0 — 2026-09-13
 
