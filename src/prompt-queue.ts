@@ -23,6 +23,7 @@ const promptSchema = z.object({
 export type QueuedPrompt = z.infer<typeof promptSchema>;
 interface Metadata { requestId?: string; messageText: string; promptSuffix: string; displaySuffix: string; attachmentPaths: string[]; images?: Array<{ path: string; mimeType: string }>; settings?: QueuedSettings | null }
 interface Row { id: string; queue_key: string; prompt: string; created_at: string; sequence: number; revision: number; origin_node_id: string }
+export interface QueuedPromptRef { id: string; revision: number }
 const eventSchema = z.object({ projectId: z.string().min(1), conversationId: z.string().min(1), id: z.string().uuid(), prompt: promptSchema.nullable(), createdAt: z.string(), sequence: z.number().int().positive(), revision: z.number().int().positive(), activeSettings: queuedSettingsSchema.optional() });
 let database: DatabaseSync | undefined;
 
@@ -105,7 +106,7 @@ function nextSequence(db: DatabaseSync, key: string): number {
 function insert(db: DatabaseSync, row: Row): void {
   db.prepare("INSERT INTO queued_prompt_sequences VALUES (?, ?) ON CONFLICT(queue_key) DO UPDATE SET sequence = MAX(sequence, excluded.sequence)").run(row.queue_key, row.sequence);
   db.prepare(`INSERT INTO queued_prompts VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
-    queue_key = excluded.queue_key, prompt = excluded.prompt, revision = excluded.revision, origin_node_id = excluded.origin_node_id`)
+    queue_key = excluded.queue_key, prompt = excluded.prompt, created_at = excluded.created_at, sequence = excluded.sequence, revision = excluded.revision, origin_node_id = excluded.origin_node_id`)
     .run(row.id, row.queue_key, row.prompt, row.created_at, row.sequence, row.revision, row.origin_node_id);
 }
 
@@ -205,6 +206,59 @@ export function editQueuedPrompt(queueKey: string, id: string, promptText: strin
     insert(db, updated);
     publish(db, updated, prompt);
     return true;
+  });
+}
+
+export function swapQueuedPrompts(queueKey: string, refs: QueuedPromptRef[]): boolean {
+  if (refs.length !== 2) return false;
+  const db = queueDatabase();
+  const key = logicalQueueKey(queueKey);
+  return transaction(db, () => {
+    const rows = refs.map(({ id }) => db.prepare("SELECT * FROM queued_prompts WHERE queue_key = ? AND id = ?").get(key, id) as unknown as Row | undefined);
+    if (refs[0].id === refs[1].id || rows.some((row, index) => !row || row.revision !== refs[index].revision)) return false;
+    const [first, second] = rows as [Row, Row];
+    const prompts = rows.map((row) => promptSchema.parse(JSON.parse(row!.prompt)));
+    if (prompts.some((prompt) => prompt.dispatchState !== "pending")) return false;
+    for (const [row, sequence, previous] of [[first, second.sequence, prompts[0]], [second, first.sequence, prompts[1]]] as const) {
+      const prompt = { ...previous, revision: row.revision + 1 };
+      const updated = { ...row, sequence, prompt: JSON.stringify(prompt), revision: prompt.revision, origin_node_id: origin(db) };
+      insert(db, updated);
+      publish(db, updated, prompt);
+    }
+    return true;
+  });
+}
+
+export function mergeQueuedPrompts(queueKey: string, refs: QueuedPromptRef[]): QueuedPrompt | null {
+  if (refs.length < 2 || new Set(refs.map(({ id }) => id)).size !== refs.length) return null;
+  const db = queueDatabase();
+  const key = logicalQueueKey(queueKey);
+  return transaction(db, () => {
+    const expected = new Map(refs.map(({ id, revision }) => [id, revision]));
+    const rows = db.prepare(`SELECT * FROM queued_prompts WHERE queue_key = ? AND id IN (${refs.map(() => "?").join(",")}) ORDER BY sequence, id`).all(key, ...refs.map(({ id }) => id)) as unknown as Row[];
+    if (rows.length !== refs.length || rows.some((row) => row.revision !== expected.get(row.id))) return null;
+    const prompts = rows.map((row) => promptSchema.parse(JSON.parse(row.prompt)));
+    if (prompts.some((prompt) => prompt.dispatchState !== "pending")) return null;
+    const modern = prompts.every((prompt) => prompt.messageText !== null);
+    const join = (values: Array<string | null>): string => values.filter((value): value is string => Boolean(value)).join("\n\n");
+    const messageText = modern ? join(prompts.map((prompt) => prompt.messageText)) : null;
+    const promptSuffix = modern ? join(prompts.map((prompt) => prompt.promptSuffix)) : null;
+    const displaySuffix = modern ? join(prompts.map((prompt) => prompt.displaySuffix)) : null;
+    const first = prompts[0];
+    const prompt = promptSchema.parse({
+      ...first,
+      promptText: modern ? join([messageText, promptSuffix]) : join(prompts.map((item) => item.promptText)),
+      displayText: modern ? join([messageText, displaySuffix]) : join(prompts.map((item) => item.displayText)),
+      messageText, promptSuffix, displaySuffix,
+      attachmentPaths: prompts.flatMap((item) => item.attachmentPaths),
+      images: prompts.flatMap((item) => item.images),
+      revision: rows[0].revision + 1,
+    });
+    for (const row of rows.slice(1)) remove(db, row);
+    const updated = { ...rows[0], prompt: JSON.stringify(prompt), revision: prompt.revision, origin_node_id: origin(db) };
+    insert(db, updated);
+    publish(db, updated, prompt);
+    return prompt;
   });
 }
 

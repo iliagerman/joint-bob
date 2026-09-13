@@ -131,7 +131,7 @@ function messageHost() {
 
 function appendBeforeQueuedMessages(node) {
   const host = messageHost();
-  host.insertBefore(node, host.querySelector(":scope > .message.queued"));
+  host.insertBefore(node, host.querySelector(":scope > .queued-batch-controls, :scope > .message.queued"));
 }
 
 function prettyText(text) {
@@ -471,6 +471,53 @@ function queuedEditableText(text) {
   return text.startsWith("Attached: ") ? "" : text;
 }
 
+function queuedMessages() {
+  return [...elements.messages.querySelectorAll(".message.queued[data-queue-id]")];
+}
+
+function queuedRef(bubble) {
+  return { id: bubble.dataset.queueId, revision: Number(bubble.dataset.queueRevision) };
+}
+
+function refreshQueuedControls() {
+  elements.messages.querySelectorAll(".queued-batch-controls").forEach((toolbar) => toolbar.remove());
+  const queued = queuedMessages();
+  for (const [index, bubble] of queued.entries()) {
+    bubble.querySelector('[data-testid="queued-message-move-earlier-button"]').disabled = index === 0;
+    bubble.querySelector('[data-testid="queued-message-move-later-button"]').disabled = index === queued.length - 1;
+  }
+  if (queued.length < 2) return;
+  const selected = queued.filter((bubble) => bubble.querySelector('[data-testid="queued-message-merge-checkbox"]').checked);
+  const toolbar = document.createElement("div");
+  toolbar.className = "queued-batch-controls";
+  const status = document.createElement("span");
+  status.textContent = `${queued.length} queued`;
+  const merge = queuedButton(selected.length > 1 ? `Merge selected (${selected.length})` : "Merge selected", "queued-message-merge-button");
+  merge.disabled = selected.length < 2;
+  merge.addEventListener("click", () => sendQueuedPromptAction({ type: "mergeQueuedPrompts", queueItems: selected.map(queuedRef) }));
+  toolbar.append(status, merge);
+  queued[0].parentElement.insertBefore(toolbar, queued[0]);
+}
+
+function swapQueuedMessage(bubble, offset) {
+  const queued = queuedMessages();
+  const index = queued.indexOf(bubble);
+  const other = queued[index + offset];
+  if (other) sendQueuedPromptAction({ type: "swapQueuedPrompts", queueItems: [queuedRef(bubble), queuedRef(other)] });
+}
+
+export function syncQueuedMessageOrder(queueIds) {
+  const queued = new Map(queuedMessages().map((bubble) => [bubble.dataset.queueId, bubble]));
+  for (const queueId of queueIds) {
+    const bubble = queued.get(String(queueId));
+    if (!bubble) continue;
+    const actions = bubble.nextElementSibling?.classList.contains("message-actions") ? bubble.nextElementSibling : null;
+    bubble.parentElement.append(bubble);
+    if (actions) bubble.parentElement.append(actions);
+  }
+  refreshQueuedControls();
+}
+
 function queuedSettingsEditor(bubble) {
   const container = document.createElement("div");
   container.className = "queued-settings";
@@ -561,9 +608,21 @@ export function markMessageQueued(bubble, queueId, editableText = null, settings
   const badge = document.createElement("span");
   badge.className = "queued-badge";
   badge.textContent = "Queued";
+  const selectLabel = document.createElement("label");
+  selectLabel.className = "queued-select";
+  const select = document.createElement("input");
+  select.type = "checkbox";
+  select.dataset.testid = "queued-message-merge-checkbox";
+  select.setAttribute("aria-label", "Select queued message for merge");
+  selectLabel.append(select, " Select");
+  const earlier = queuedButton("Earlier", "queued-message-move-earlier-button");
+  const later = queuedButton("Later", "queued-message-move-later-button");
   const edit = queuedButton("Edit", "queued-message-edit-button");
-  const cancel = queuedButton("Cancel", "queued-message-cancel-button");
-  footer.append(badge, edit, cancel);
+  const cancel = queuedButton("Delete", "queued-message-cancel-button");
+  footer.append(badge, selectLabel, earlier, later, edit, cancel);
+  select.addEventListener("change", refreshQueuedControls);
+  earlier.addEventListener("click", () => swapQueuedMessage(bubble, -1));
+  later.addEventListener("click", () => swapQueuedMessage(bubble, 1));
   cancel.addEventListener("click", () => {
     sendQueuedPromptAction({ type: "cancelQueuedPrompt", queueId, queueRevision: Number(bubble.dataset.queueRevision) });
   });
@@ -571,6 +630,7 @@ export function markMessageQueued(bubble, queueId, editableText = null, settings
   const actions = bubble.nextElementSibling?.classList.contains("message-actions") ? bubble.nextElementSibling : null;
   bubble.parentElement.append(bubble);
   if (actions) bubble.parentElement.append(actions);
+  refreshQueuedControls();
   return bubble;
 }
 
@@ -590,6 +650,7 @@ export function removeQueuedMessage(queueId) {
   if (!bubble) return;
   if (bubble.nextElementSibling?.classList.contains("message-actions")) bubble.nextElementSibling.remove();
   bubble.remove();
+  refreshQueuedControls();
 }
 
 export function clearQueuedMark(queueId) {
@@ -600,6 +661,7 @@ export function clearQueuedMark(queueId) {
   delete bubble.dataset.queuedEditableText;
   bubble.querySelector(".queued-controls")?.remove();
   bubble.querySelector(".queued-editor")?.remove();
+  refreshQueuedControls();
 }
 
 // startedAt is 0 for a replayed transcript entry: it already finished, at a

@@ -479,6 +479,7 @@ export const socketMessageSchema = z.object({
   queueId: z.string().uuid().optional(),
   requestId: z.string().uuid().optional(),
   queueRevision: z.number().int().positive().optional(),
+  queueItems: z.array(z.object({ id: z.string().uuid(), revision: z.number().int().positive() }).strict()).min(2).max(100).optional(),
   queueSettings: queuedSettingsSchema.nullable().optional(),
   name: z.string().trim().max(120).optional(),
   provider: z.string().max(80).optional(),

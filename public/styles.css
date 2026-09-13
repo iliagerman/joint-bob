@@ -1131,10 +1131,13 @@ select.chat-toolbar-control {
    reload, so it must read as pending rather than as an ordinary sent message. */
 .message.user.queued { background: var(--field); border-style: dashed; border-color: var(--line-strong); }
 .message.user.queued .message-content { opacity: 0.72; }
-.queued-controls { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 7px; }
+.queued-batch-controls { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 12px 0 6px; padding: 7px 9px; border: 1px dashed var(--line-strong); border-radius: 7px; color: var(--muted); font-family: var(--mono); font-size: 11px; }
+.queued-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 7px; }
 .queued-badge { margin-right: auto; color: var(--muted); font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; }
-.queued-controls button, .queued-editor button { min-height: 26px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--muted); font-size: 11px; }
-.queued-controls button:hover, .queued-controls button:focus-visible, .queued-editor button:hover, .queued-editor button:focus-visible { border-color: var(--line-strong); color: var(--text); }
+.queued-select { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 11px; }
+.queued-controls button, .queued-editor button, .queued-batch-controls button { min-height: 26px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--muted); font-size: 11px; }
+.queued-controls button:hover, .queued-controls button:focus-visible, .queued-editor button:hover, .queued-editor button:focus-visible, .queued-batch-controls button:hover, .queued-batch-controls button:focus-visible { border-color: var(--line-strong); color: var(--text); }
+.queued-controls button:disabled, .queued-batch-controls button:disabled { opacity: 0.4; cursor: not-allowed; }
 .queued-editor { display: grid; grid-template-columns: 1fr auto auto; gap: 7px; margin-top: 8px; }
 .queued-editor[hidden], .queued-controls[hidden] { display: none; }
 .queued-editor-hints { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }

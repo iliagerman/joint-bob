@@ -56,12 +56,39 @@ async function commands(): Promise<unknown[]> {
   return page.evaluate(() => window.queueCommands);
 }
 
+async function openQueue(): Promise<void> {
+  await openEditor();
+  await page.getByTestId("queued-message-edit-cancel-button").click();
+  await page.evaluate(async () => {
+    const transcript = await import("/app/chat-transcript.js");
+    transcript.markMessageQueued(transcript.appendMessage("user", "Second"), 72, "Second", null, 2);
+    transcript.markMessageQueued(transcript.appendMessage("user", "Third"), 73, "Third", null, 3);
+  });
+}
+
 test("queued editor labels Save and Cancel and shows shortcut hints", async () => {
   await openEditor();
   assert.match(await page.getByTestId("queued-message-save-button").innerText(), /^Save/);
   assert.match(await page.getByTestId("queued-message-edit-cancel-button").innerText(), /^Cancel/);
   assert.match(await page.locator(".queued-editor").innerText(), /Cmd\/Ctrl\+Enter/);
   assert.match(await page.locator(".queued-editor").innerText(), /Escape/);
+});
+
+test("queued messages can swap positions and merge any selection", async () => {
+  await openQueue();
+  const queuedText = () => page.locator(".message.user.queued").evaluateAll((messages) => messages.map((message) => message._raw));
+  assert.deepEqual(await queuedText(), ["Original\n\nAttached: notes.txt", "Second", "Third"]);
+
+  await page.getByTestId("queued-message-move-later-button").first().click();
+  assert.deepEqual(await commands(), [{ type: "swapQueuedPrompts", queueItems: [{ id: "71", revision: 1 }, { id: "72", revision: 2 }] }]);
+  await page.evaluate(async () => (await import("/app/chat-transcript.js")).syncQueuedMessageOrder(["72", "71", "73"]));
+  assert.deepEqual(await queuedText(), ["Second", "Original\n\nAttached: notes.txt", "Third"]);
+
+  const queued = page.locator(".message.user.queued");
+  await queued.nth(0).getByTestId("queued-message-merge-checkbox").check();
+  await queued.nth(2).getByTestId("queued-message-merge-checkbox").check();
+  await page.getByTestId("queued-message-merge-button").click();
+  assert.deepEqual((await commands()).at(-1), { type: "mergeQueuedPrompts", queueItems: [{ id: "72", revision: 2 }, { id: "73", revision: 3 }] });
 });
 
 test("queued messages stay below replies until they become active", async () => {

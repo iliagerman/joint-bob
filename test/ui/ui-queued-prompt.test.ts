@@ -66,13 +66,13 @@ before(async () => {
 }, { timeout: 120_000 });
 
 after(async () => {
-  await Promise.all(["hold the line", "and this one waits", "edited while waiting"].map((prompt) => releaseTurn(prompt).catch(() => undefined)));
+  await Promise.all(["hold the line", "and this one waits", "edited while waiting", "second queued", "third queued", "edited while waiting\n\nthird queued"].map((prompt) => releaseTurn(prompt).catch(() => undefined)));
   if (browser) await browser.close();
   if (server) await stopDevNode(server);
   if (root) await rm(root, { recursive: true, force: true });
 });
 
-test("a queued prompt can be edited, survives reload, and can be cancelled", async () => {
+test("queued prompts can be edited, reordered, merged, reloaded, and deleted", async () => {
   await openConversation();
   await page.getByTestId("chat-message-input").fill("hold the line");
   await page.keyboard.press("Enter");
@@ -87,7 +87,22 @@ test("a queued prompt can be edited, survives reload, and can be cancelled", asy
   await queued.getByTestId("queued-message-edit-button").click();
   await queued.getByTestId("queued-message-edit-input").fill("edited while waiting");
   await queued.getByTestId("queued-message-save-button").click();
-  await page.locator(".message.user.queued", { hasText: "edited while waiting" }).waitFor();
+  const edited = page.locator(".message.user.queued", { hasText: "edited while waiting" });
+  await edited.waitFor();
+
+  for (const message of ["second queued", "third queued"]) {
+    await page.getByTestId("chat-message-input").fill(message);
+    await page.keyboard.press("Enter");
+    await page.locator(".message.user.queued", { hasText: message }).waitFor();
+  }
+  await edited.getByTestId("queued-message-move-later-button").click();
+  await page.locator(".message.user.queued").nth(1).getByText("edited while waiting").waitFor();
+  await edited.getByTestId("queued-message-merge-checkbox").check();
+  await page.locator(".message.user.queued", { hasText: "third queued" }).getByTestId("queued-message-merge-checkbox").check();
+  await page.getByTestId("queued-message-merge-button").click();
+  const merged = page.locator(".message.user.queued", { hasText: "edited while waiting" });
+  await merged.getByText("third queued").waitFor();
+  assert.deepEqual(await page.locator(".message.user.queued").evaluateAll((messages) => messages.map((message) => message._raw)), ["second queued", "edited while waiting\n\nthird queued"]);
 
   // The app reopens the conversation it was last in, so the reload lands back
   // in this chat without walking the project list again.
@@ -99,7 +114,8 @@ test("a queued prompt can be edited, survives reload, and can be cancelled", asy
   // was holding, so it is still there and still reads as pending.
   const restored = page.locator(".message.user.queued", { hasText: "edited while waiting" });
   await restored.first().waitFor({ timeout: 20_000 });
-  assert.equal(await restored.count(), 1, "the edited queued prompt is shown exactly once");
+  assert.equal(await restored.count(), 1, "the merged queued prompt is shown exactly once");
+  assert.match(await restored.innerText(), /third queued/);
 
   await restored.getByTestId("queued-message-cancel-button").click();
   await restored.waitFor({ state: "detached" });

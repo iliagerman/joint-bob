@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Queued messages can now be reordered before sending and merged together into a single prompt.
+
 ## 1.25.1 — 2026-09-13
 
 - Restored pause, resume, and Run now controls for scheduled tasks.

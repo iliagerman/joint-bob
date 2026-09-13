@@ -15,7 +15,7 @@ import { ensureConversationRecord, getConversationRecord, listConversationSegmen
 import { conversationTranscriptPayload } from "../conversation-segments.js";
 import { listHarnessSessions } from "../harnesses.js";
 import { createPiSession, eventPayload, getSessionStatus, listAvailableModels, modelThinkingLevels, reloadPiAuth, reloadPiSkills, sessionIsBusy, setSessionModel, simplifyMessages } from "../pi-service.js";
-import { beginQueuedPrompt, resetQueuedPromptAttempt, cancelQueuedPrompt, claimQueuedPrompt, editQueuedPrompt, enqueuePrompt, listQueuedPrompts, logicalQueueKey, readQueueSettings, recordQueueSettings, rekeyQueuedPrompts, type QueuedPrompt, type QueuedSettings } from "../prompt-queue.js";
+import { beginQueuedPrompt, resetQueuedPromptAttempt, cancelQueuedPrompt, claimQueuedPrompt, editQueuedPrompt, enqueuePrompt, listQueuedPrompts, logicalQueueKey, mergeQueuedPrompts, readQueueSettings, recordQueueSettings, rekeyQueuedPrompts, swapQueuedPrompts, type QueuedPrompt, type QueuedSettings } from "../prompt-queue.js";
 import { agentCredentialContext, agentEnvironment, persistConversationSecretAccounts } from "../secrets.js";
 import { conversationBelongsToDoneTask } from "./cluster-helpers.js";
 import { getProject, listProjects } from "../store.js";
@@ -724,7 +724,7 @@ async function drainClaudePrompts(connection: ChatConnection): Promise<void> {
 
 async function handleClaudeCommand(connection: ChatConnection, payload: SocketPayload): Promise<void> {
   if (["editQueuedPrompt", "cancelQueuedPrompt"].includes(payload.type) && payload.queueRevision === undefined) throw new Error("Queued prompt revision missing; reload the conversation");
-  if (payload.queueId && startingQueuedPrompts.has(payload.queueId)) throw new Error("Queued prompt is starting; wait for dispatch");
+  if ((payload.queueId && startingQueuedPrompts.has(payload.queueId)) || payload.queueItems?.some(({ id }) => startingQueuedPrompts.has(id))) throw new Error("Queued prompt is starting; wait for dispatch");
   if (payload.type === "abort") {
     connection.claude.child?.kill("SIGTERM");
     return;
@@ -750,6 +750,20 @@ async function handleClaudeCommand(connection: ChatConnection, payload: SocketPa
     await validateQueuedSettings(payload.queueSettings ?? null);
     if (!editQueuedPrompt(claudeQueueKey(connection), payload.queueId, edited.promptText, edited.displayText, message, payload.queueSettings, payload.queueRevision)) throw new Error("Queued prompt changed or already started; reopen the editor");
     sendQueueEvent(connection, { type: "queuedPromptEdited", queueId: payload.queueId, text: edited.displayText, editableText: message, settings: payload.queueSettings === undefined ? queued.settings : payload.queueSettings, revision: queued.revision + 1 });
+    refreshPromptQueue(connection);
+    resumePromptQueue(connection);
+    return;
+  }
+  if (payload.type === "swapQueuedPrompts") {
+    if (!payload.queueItems || payload.queueItems.length !== 2) throw new Error("Choose two queued prompts to swap");
+    if (!swapQueuedPrompts(claudeQueueKey(connection), payload.queueItems)) throw new Error("Queued prompts changed or already started; reload the conversation");
+    refreshPromptQueue(connection);
+    resumePromptQueue(connection);
+    return;
+  }
+  if (payload.type === "mergeQueuedPrompts") {
+    if (!payload.queueItems) throw new Error("Choose queued prompts to merge");
+    if (!mergeQueuedPrompts(claudeQueueKey(connection), payload.queueItems)) throw new Error("Queued prompts changed or already started; reload the conversation");
     refreshPromptQueue(connection);
     resumePromptQueue(connection);
     return;
@@ -936,7 +950,7 @@ export async function handleChatMessage(connection: ChatConnection, raw: Buffer)
     }
     return;
   }
-  if (["prompt", "editQueuedPrompt", "cancelQueuedPrompt"].includes(payload.type)) {
+  if (["prompt", "editQueuedPrompt", "cancelQueuedPrompt", "swapQueuedPrompts", "mergeQueuedPrompts"].includes(payload.type)) {
     await mutatePromptQueue(connection, payload);
     return;
   }

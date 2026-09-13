@@ -5,7 +5,7 @@ import { importProject, registerProjectAliases } from "../src/store.js";
 import { receiveReplicationBatch } from "../src/replication.js";
 import { queuedPromptSnapshot, readQueueSettings } from "../src/prompt-queue.js";
 import { getClusterNode } from "../src/cluster.js";
-import { enqueuePrompt, listQueuedPrompts, editQueuedPrompt, cancelQueuedPrompt } from "../src/prompt-queue.js";
+import { enqueuePrompt, listQueuedPrompts, editQueuedPrompt, cancelQueuedPrompt, mergeQueuedPrompts, swapQueuedPrompts } from "../src/prompt-queue.js";
 
 test("late project aliases rekey replicated pending rows, tombstones and sequence state", async () => {
   await getClusterNode();
@@ -43,6 +43,35 @@ test("same-millisecond prompts retain insertion order", async (context) => {
   const expected = Array.from({ length: 40 }, (_, index) => String(index));
   for (const text of expected) enqueuePrompt("project:fifo", text, text, { messageText: text, promptSuffix: "", displaySuffix: "", attachmentPaths: [] });
   assert.deepEqual(listQueuedPrompts("project:fifo").map((prompt) => prompt.messageText), expected);
+});
+
+test("queued prompts can swap positions and reject stale swaps", async () => {
+  await getClusterNode();
+  const key = `project:${randomUUID()}`;
+  const first = enqueuePrompt(key, "first", "first", { messageText: "first", promptSuffix: "", displaySuffix: "", attachmentPaths: [] });
+  const second = enqueuePrompt(key, "second", "second", { messageText: "second", promptSuffix: "", displaySuffix: "", attachmentPaths: [] });
+  const third = enqueuePrompt(key, "third", "third", { messageText: "third", promptSuffix: "", displaySuffix: "", attachmentPaths: [] });
+
+  assert.equal(swapQueuedPrompts(key, [{ id: first.id, revision: first.revision }, { id: third.id, revision: third.revision }]), true);
+  assert.deepEqual(listQueuedPrompts(key).map((prompt) => prompt.messageText), ["third", "second", "first"]);
+  assert.equal(swapQueuedPrompts(key, [{ id: first.id, revision: first.revision }, { id: second.id, revision: second.revision }]), false);
+});
+
+test("selected queued prompts merge in queue order with attachments and first settings", async () => {
+  await getClusterNode();
+  const key = `project:${randomUUID()}`;
+  const settings = { provider: "claude", modelId: "haiku", reasoning: "high" as const };
+  const first = enqueuePrompt(key, "one\n\nFile attachments:\n- one.txt: /tmp/one.txt", "one\n\nAttached: one.txt", { messageText: "one", promptSuffix: "File attachments:\n- one.txt: /tmp/one.txt", displaySuffix: "Attached: one.txt", attachmentPaths: ["/tmp/one.txt"], settings });
+  const middle = enqueuePrompt(key, "middle", "middle", { messageText: "middle", promptSuffix: "", displaySuffix: "", attachmentPaths: [] });
+  const last = enqueuePrompt(key, "three\n\nImage attachments:\n- three.png: /tmp/three.png", "three\n\nAttached: three.png", { messageText: "three", promptSuffix: "Image attachments:\n- three.png: /tmp/three.png", displaySuffix: "Attached: three.png", attachmentPaths: ["/tmp/three.png"], images: [{ path: "/tmp/three.png", mimeType: "image/png" }] });
+
+  const merged = mergeQueuedPrompts(key, [{ id: last.id, revision: last.revision }, { id: first.id, revision: first.revision }]);
+  assert.equal(merged?.messageText, "one\n\nthree");
+  assert.equal(merged?.promptText, "one\n\nthree\n\nFile attachments:\n- one.txt: /tmp/one.txt\n\nImage attachments:\n- three.png: /tmp/three.png");
+  assert.deepEqual(merged?.attachmentPaths, ["/tmp/one.txt", "/tmp/three.png"]);
+  assert.deepEqual(merged?.settings, settings);
+  assert.deepEqual(listQueuedPrompts(key).map((prompt) => prompt.messageText), ["one\n\nthree", "middle"]);
+  assert.equal(mergeQueuedPrompts(key, [{ id: middle.id, revision: middle.revision }, { id: last.id, revision: last.revision }]), null);
 });
 
 test("queued settings use globally unique IDs, persist and reject stale edits", async () => {
