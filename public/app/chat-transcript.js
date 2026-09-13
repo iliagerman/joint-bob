@@ -356,10 +356,82 @@ function appendCopyButton(bubble) {
   bubble.after(actions);
 }
 
+function transcriptMessagePresentation(text, suppliedAttachments) {
+  if (suppliedAttachments.length) return { text, attachments: suppliedAttachments };
+  const indexes = ["Image attachments:\n", "File attachments:\n"]
+    .map((marker) => text.indexOf(marker)).filter((index) => index >= 0);
+  if (!indexes.length) return { text, attachments: [] };
+  const attachmentIndex = Math.min(...indexes);
+  const attachments = [];
+  let kind = null;
+  for (const line of text.slice(attachmentIndex).split("\n")) {
+    if (line === "Image attachments:") { kind = "image"; continue; }
+    if (line === "File attachments:") { kind = "file"; continue; }
+    const match = kind && /^- (.+): ((?:\/|[A-Za-z]:[\\/]).+)$/.exec(line);
+    if (match) attachments.push({ kind, name: match[1], path: match[2] });
+  }
+  if (!attachments.length) return { text, attachments: [] };
+  const body = text.slice(0, attachmentIndex).trim();
+  const displayText = [body, `Attached: ${attachments.map((attachment) => attachment.name).join(", ")}`].filter(Boolean).join("\n\n");
+  return { text: displayText, attachments };
+}
+
+function imageViewer() {
+  let dialog = document.querySelector("[data-testid='message-image-viewer']");
+  if (dialog) return dialog;
+  dialog = document.createElement("dialog");
+  dialog.className = "message-image-viewer";
+  dialog.dataset.testid = "message-image-viewer";
+  dialog.setAttribute("aria-label", "Image preview");
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "message-image-viewer-close";
+  close.dataset.testid = "message-image-viewer-close-button";
+  close.setAttribute("aria-label", "Close image");
+  close.textContent = "×";
+  close.addEventListener("click", () => dialog.close());
+  const image = document.createElement("img");
+  dialog.append(close, image);
+  dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
+  document.body.append(dialog);
+  return dialog;
+}
+
+function appendMessageAttachments(bubble, attachments) {
+  const images = attachments.filter((attachment) => attachment.kind === "image");
+  if (!images.length) return;
+  const gallery = document.createElement("div");
+  gallery.className = "message-image-gallery";
+  for (const attachment of images) {
+    const src = projectFileUrl(attachment.path);
+    if (!src) continue;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "message-image-thumbnail";
+    button.dataset.testid = "message-image-thumbnail";
+    button.setAttribute("aria-label", `Expand ${attachment.name}`);
+    const image = document.createElement("img");
+    image.src = src;
+    image.alt = attachment.name;
+    image.loading = "lazy";
+    button.append(image);
+    button.addEventListener("click", () => {
+      const viewer = imageViewer();
+      const expanded = viewer.querySelector("img");
+      expanded.src = src;
+      expanded.alt = attachment.name;
+      viewer.showModal();
+    });
+    gallery.append(button);
+  }
+  if (gallery.childElementCount) bubble.append(gallery);
+}
+
 // A replayed transcript carries no recorded times, so it opts out of the stamp
 // rather than labelling week-old messages with the moment they were re-rendered.
-export function appendMessage(role, text, timestamped = true) {
+export function appendMessage(role, text, timestamped = true, attachments = []) {
   elements.messages.querySelector(".empty-state")?.remove();
+  const presentation = role === "user" ? transcriptMessagePresentation(text, attachments) : { text, attachments: [] };
   const bubble = document.createElement("article");
   bubble.className = `message ${role}`;
   bubble.dataset.role = role;
@@ -367,8 +439,9 @@ export function appendMessage(role, text, timestamped = true) {
   const content = document.createElement(isMarkdown ? "div" : "pre");
   content.className = `message-content${isMarkdown ? " md" : ""}`;
   bubble.append(content);
+  appendMessageAttachments(bubble, presentation.attachments);
   if (timestamped && (role === "user" || role === "assistant")) bubble.append(messageTimestamp());
-  renderBubbleContent(bubble, text, true);
+  renderBubbleContent(bubble, presentation.text, true);
   appendBeforeQueuedMessages(bubble);
   if (isMarkdown) appendCopyButton(bubble);
   requestPinChat();

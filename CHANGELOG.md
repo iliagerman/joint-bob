@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Messages with image attachments now display as expandable thumbnails in the chat transcript.
+
 ## 1.24.5 — 2026-09-13
 
 - Fixed the schedule dialog layout with improved visual hierarchy and mobile responsiveness.

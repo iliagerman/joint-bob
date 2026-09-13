@@ -283,7 +283,7 @@ function handleSocketPayload(payload, scrollOnReady = false) {
   if (payload.type === "userMessage") {
     finalizeAssistantBubble();
     state.spinOffSourceTaskId = null;
-    const bubble = appendMessage("user", payload.text);
+    const bubble = appendMessage("user", payload.text, true, payload.attachments);
     if (payload.queued) markMessageQueued(bubble, payload.queueId, payload.editableText, payload.settings, payload.revision);
     state.thinkingBubble = null;
     return;
@@ -301,7 +301,7 @@ function handleSocketPayload(payload, scrollOnReady = false) {
         if (Number(existing.dataset.queueRevision) !== prompt.revision) updateQueuedMessage(prompt.id, prompt.text, prompt.editableText, prompt.settings, prompt.revision);
         continue;
       }
-      markMessageQueued(appendMessage("user", prompt.text), prompt.id, prompt.editableText, prompt.settings, prompt.revision);
+      markMessageQueued(appendMessage("user", prompt.text, true, prompt.attachments), prompt.id, prompt.editableText, prompt.settings, prompt.revision);
     }
     return;
   }

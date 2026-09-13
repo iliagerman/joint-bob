@@ -114,6 +114,26 @@ function promptDisplayText(message: string, imageNames: string[], fileNames: str
   return body ? `${body}\n\n${suffix}` : suffix;
 }
 
+function messageAttachments(imageAttachments: Array<{ name: string; path: string }>, fileAttachments: Array<{ name: string; path: string }>) {
+  return [
+    ...imageAttachments.map((attachment) => ({ ...attachment, kind: "image" as const })),
+    ...fileAttachments.map((attachment) => ({ ...attachment, kind: "file" as const })),
+  ];
+}
+
+function queuedMessageAttachments(prompt: QueuedPrompt) {
+  const imagePaths = new Set(prompt.images.map((image) => image.path));
+  return prompt.attachmentPaths.map((attachmentPath) => {
+    const line = prompt.promptText.split("\n").find((candidate) => candidate.startsWith("- ") && candidate.endsWith(`: ${attachmentPath}`));
+    if (!line) throw new Error("Queued attachment label is missing");
+    return {
+      kind: imagePaths.has(attachmentPath) ? "image" as const : "file" as const,
+      name: line.slice(2, -attachmentPath.length - 2),
+      path: attachmentPath,
+    };
+  });
+}
+
 function editedQueuedPrompt(queued: QueuedPrompt, message: string): { promptText: string; displayText: string } {
   if (queued.messageText !== null) {
     return {
@@ -560,7 +580,7 @@ function persistQueueSettings(connection: ChatConnection): void {
 export function refreshPromptQueue(connection: ChatConnection): void {
   const prompts = listQueuedPrompts(claudeQueueKey(connection)).filter((prompt) => prompt.dispatchState !== "starting" || !startingQueuedPrompts.has(prompt.id));
   connection.claude.promptQueue = prompts.map((prompt) => ({ ...prompt, acknowledged: true }));
-  sendQueueEvent(connection, { type: "queuedPrompts", prompts: prompts.map(({ id, displayText, messageText, settings, revision }) => ({ id, text: displayText, editableText: messageText, settings, revision })) });
+  sendQueueEvent(connection, { type: "queuedPrompts", prompts: prompts.map((prompt) => ({ id: prompt.id, text: prompt.displayText, editableText: prompt.messageText, settings: prompt.settings, revision: prompt.revision, attachments: queuedMessageAttachments(prompt) })) });
   sendQueueEvent(connection, { type: "queueUpdate", pending: prompts.length });
 }
 
@@ -748,7 +768,7 @@ async function handleClaudeCommand(connection: ChatConnection, payload: SocketPa
     await validateQueuedSettings(payload.queueSettings ?? null);
     const images = imageAttachments.map((image, index) => ({ path: image.path, mimeType: payload.images![index].mimeType }));
     const stored = enqueuePrompt(claudeQueueKey(connection), promptText, displayText, { requestId: payload.requestId, messageText, promptSuffix, displaySuffix, attachmentPaths, images, settings: payload.queueSettings });
-    sendQueueEvent(connection, { type: "userMessage", text: displayText, editableText: messageText, queued: true, queueId: stored.id, requestId: payload.requestId, settings: stored.settings, revision: stored.revision });
+    sendQueueEvent(connection, { type: "userMessage", text: displayText, attachments: messageAttachments(imageAttachments, fileAttachments), editableText: messageText, queued: true, queueId: stored.id, requestId: payload.requestId, settings: stored.settings, revision: stored.revision });
     refreshPromptQueue(connection);
     resumePromptQueue(connection);
     return;
@@ -967,7 +987,7 @@ async function handlePiCommand(connection: ChatConnection, shared: SharedPiSessi
       promptText = `${connection.handoffContext}${promptText}`;
       connection.handoffContext = null;
     }
-    send(socket, { type: "userMessage", text: promptDisplayText(payload.message ?? "", imageAttachments.map((image) => image.name), fileAttachments.map((file) => file.name)) });
+    send(socket, { type: "userMessage", text: promptDisplayText(payload.message ?? "", imageAttachments.map((image) => image.name), fileAttachments.map((file) => file.name)), attachments: messageAttachments(imageAttachments, fileAttachments) });
     const options = {
       ...(handle.session.isStreaming ? { streamingBehavior: "followUp" as const } : {}),
       ...(payload.images?.length

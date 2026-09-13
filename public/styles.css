@@ -136,7 +136,7 @@ h2 { font-size: 17px; line-height: 1.25; }
   background: #141618;
 }
 .app-boot-inner { display: grid; justify-items: center; }
-.app-boot-mark { width: 112px; height: 112px; filter: drop-shadow(0 18px 28px rgba(20, 22, 24, 0.18)); }
+.app-boot-mark { width: 192px; height: 192px; filter: drop-shadow(0 18px 28px rgba(20, 22, 24, 0.18)); }
 .boot-tile { fill: #141618; }
 .boot-smoke {
   stroke: #37cfab;
@@ -1119,6 +1119,14 @@ select.chat-toolbar-control {
   border-color: color-mix(in srgb, var(--accent) 24%, transparent);
 }
 .message.user .message-content.md code { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.message-image-gallery { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; margin-top: 9px; }
+.message-image-thumbnail { width: 112px; height: 84px; min-height: 84px; padding: 0; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 9px; background: var(--panel); cursor: zoom-in; }
+.message-image-thumbnail:hover, .message-image-thumbnail:focus-visible { border-color: var(--accent); }
+.message-image-thumbnail img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.message-image-viewer { width: auto; max-width: calc(100vw - 24px); height: auto; max-height: calc(100dvh - 24px); padding: 0; overflow: visible; border: 0; border-radius: 12px; background: transparent; box-shadow: none; }
+.message-image-viewer::backdrop { background: rgb(8 9 11 / 82%); backdrop-filter: blur(8px); }
+.message-image-viewer img { display: block; max-width: calc(100vw - 24px); max-height: calc(100dvh - 24px); border-radius: 12px; object-fit: contain; box-shadow: 0 18px 60px rgb(0 0 0 / 50%); }
+.message-image-viewer-close { position: absolute; top: -12px; right: -12px; z-index: 1; display: grid; place-items: center; width: 34px; min-width: 34px; height: 34px; min-height: 34px; padding: 0; border: 1px solid rgb(255 255 255 / 28%); border-radius: 999px; background: #17191d; color: #fff; font-size: 23px; line-height: 1; }
 /* Sent, but not yet handed to the agent. It stays on the conversation across a
    reload, so it must read as pending rather than as an ordinary sent message. */
 .message.user.queued { background: var(--field); border-style: dashed; border-color: var(--line-strong); }
