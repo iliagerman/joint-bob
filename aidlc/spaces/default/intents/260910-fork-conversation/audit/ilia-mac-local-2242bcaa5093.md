@@ -33,3 +33,10 @@
 **Stage**: intent-capture
 
 ---
+
+## Session End
+**Timestamp**: 2026-09-14T16:19:34Z
+**Event**: SESSION_ENDED
+**Reason**: other
+
+---

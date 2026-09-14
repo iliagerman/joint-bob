@@ -286,6 +286,27 @@ export const pushSubscribeSchema = z.object({
 export const pushUnsubscribeSchema = z.object({
   endpoint: z.string().url(),
 });
+const pushSubscriptionEventSchema = z.object({
+  id: z.string().uuid(),
+  entityKey: z.string().regex(/^[0-9a-f]{64}$/),
+  operation: z.enum(["upsert", "delete"]),
+  value: z.union([
+    z.object({
+      userId: z.string().min(1).max(128),
+      projectId: z.string().min(1).max(300),
+      sessionPath: z.string().min(1).max(2000),
+      title: z.string().max(200),
+      subscription: pushSubscriptionSchema,
+      vapidPublicKey: z.string().min(1).max(200),
+      vapidPrivateKey: z.string().min(1).max(200),
+    }),
+    z.object({ endpoint: z.string().min(1).max(2000) }),
+  ]),
+  updatedAt: z.string().datetime(),
+  originNodeId: z.string().max(64),
+  createdAt: z.string().datetime(),
+});
+export const pushSubscriptionBatchSchema = z.object({ events: z.array(pushSubscriptionEventSchema).max(100) });
 export const sessionReviewedSchema = z.object({
   sessionPath: z.string().trim().min(1).max(2000),
   updatedAt: z.string().datetime(),

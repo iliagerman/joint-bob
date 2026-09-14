@@ -112,10 +112,8 @@ for (const engine of ["pi", "claude"] as const) {
       await live.wait((message) => message.type === "agent_end");
       live.socket.send(JSON.stringify({ type: "setTools", toolNames: ["Read"] }));
       await live.wait((message) => message.type === "tools" && message.tools?.some((tool: any) => tool.name === "Bash" && !tool.active));
-      live.socket.send(JSON.stringify({ type: "setModel", modelId: "sonnet" }));
-      await live.wait((message) => message.type === "status" && message.status?.model?.id === "sonnet");
-      live.socket.send(JSON.stringify({ type: "setEffort", effort: "high" }));
-      await live.wait((message) => message.type === "status" && message.status?.thinkingLevel === "high");
+      live.socket.send(JSON.stringify({ type: "setModel", modelId: "sonnet", level: "high" }));
+      await live.wait((message) => message.type === "status" && message.status?.model?.id === "sonnet" && message.status?.thinkingLevel === "high");
     }
     await api(node, auth, "PUT", `/projects/${node.projects[0].id}/sessions/title`, { engine, sessionId: source.id, title: "Source name" });
     await api(node, auth, "PUT", `/projects/${node.projects[0].id}/sessions/color`, { engine, sessionId: source.id, color: "blue" });

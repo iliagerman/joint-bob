@@ -5,6 +5,7 @@ import { listHarnessSyncFolders } from "../../harnesses.js";
 import { applyRuntimeLeaseSnapshot, conversationRuntimeDatabase, type RuntimeLeaseInput } from "../../conversation-runtime.js";
 import { receiveReplicationBatch, type ReplicationBatch } from "../../replication.js";
 import { receiveSecretCredentialEvents, type SecretCredentialEvent } from "../../secret-replication.js";
+import { type PushSubscriptionEvent, receivePushSubscriptionEvents } from "../../push.js";
 import { getSettings } from "../../settings.js";
 import { canonicalProjectId, getProject, listProjects, projectAliasIds, updateProjectSyncFolderId } from "../../store.js";
 import { removeSyncthingDevices, syncthingDeviceId, syncthingFolderIdForPath } from "../../syncthing.js";
@@ -19,7 +20,7 @@ import { assertTaskFilesReady, projectWithLocalLocation, publicClusterPeer, sync
 import { canonicalClusterUrl, parseClusterInvitationLink, prospectiveClusterNode, sendError } from "../http-auth.js";
 import { flushMembershipOutbox } from "../maintenance.js";
 import { broadcastReplicationInvalidations, broadcastSessionsChangedToAllProjects, broadcastToProject } from "../realtime.js";
-import { clusterInvitationCreateSchema, clusterInvitationRedemptionSchema, clusterJoinSchema, clusterMembershipLeaveSchema, clusterMembershipMemberSchema, clusterMembershipSnapshotSchema, clusterNodeSchema, clusterPeerSchema, preparedTaskSchema, replicationBatchSchema, runtimeSnapshotSchema, secretCredentialBatchSchema, taskEligibilitySchema, taskHandoffActionSchema, taskHandoffStatusSchema } from "../schemas.js";
+import { clusterInvitationCreateSchema, clusterInvitationRedemptionSchema, clusterJoinSchema, clusterMembershipLeaveSchema, clusterMembershipMemberSchema, clusterMembershipSnapshotSchema, clusterNodeSchema, clusterPeerSchema, preparedTaskSchema, pushSubscriptionBatchSchema, replicationBatchSchema, runtimeSnapshotSchema, secretCredentialBatchSchema, taskEligibilitySchema, taskHandoffActionSchema, taskHandoffStatusSchema } from "../schemas.js";
 import { app } from "../state.js";
 
 app.post("/api/cluster/invitations", async (request, response, next) => {
@@ -446,6 +447,14 @@ app.post("/api/cluster/secrets/events", async (request, response, next) => {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const payload = secretCredentialBatchSchema.parse(request.body);
     response.json({ received: await receiveSecretCredentialEvents(payload.events as SecretCredentialEvent[]) });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/cluster/push/events", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const payload = pushSubscriptionBatchSchema.parse(request.body);
+    response.json({ received: await receivePushSubscriptionEvents(payload.events as PushSubscriptionEvent[]) });
   } catch (error) { next(error); }
 });
 

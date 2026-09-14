@@ -2,6 +2,7 @@ import type { AuthSession } from "../../auth.js";
 import { getHarnessRuntime, listHarnesses } from "../../harnesses.js";
 import { isHarnessId } from "../../types.js";
 import { deletePushSubscription, getVapidPublicKey, savePushSubscription } from "../../push.js";
+import { flushPushSubscriptionOutbox } from "../push-flush.js";
 import { pushSubscribeSchema, pushUnsubscribeSchema } from "../schemas.js";
 import { app } from "../state.js";
 
@@ -18,6 +19,7 @@ app.post("/api/push/subscribe", async (request, response, next) => {
     const payload = pushSubscribeSchema.parse(request.body);
     const authSession = response.locals.authSession as AuthSession;
     await savePushSubscription(payload.subscription, authSession.userId, payload.projectId, payload.sessionPath, payload.title || "Conversation");
+    flushPushSubscriptionOutbox().catch((error) => console.warn("Push subscription flush failed", error));
     response.status(204).send();
   } catch (error) {
     next(error);
@@ -28,6 +30,7 @@ app.post("/api/push/unsubscribe", async (request, response, next) => {
   try {
     const payload = pushUnsubscribeSchema.parse(request.body);
     await deletePushSubscription(payload.endpoint);
+    flushPushSubscriptionOutbox().catch((error) => console.warn("Push subscription flush failed", error));
     response.status(204).send();
   } catch (error) {
     next(error);

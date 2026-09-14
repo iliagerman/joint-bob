@@ -88,7 +88,7 @@ export async function queuedCronPrompt(task: CronTask, run: CronRun, sessionId: 
         if (event.ownership || event.readOnly) { finish(new Error("Scheduled conversation is not writable on this node")); return; }
         if (task.model) {
           configuration = "model";
-          socket.send(JSON.stringify({ type: "setModel", provider: task.model.provider, modelId: task.model.modelId }));
+          socket.send(JSON.stringify({ type: "setModel", provider: task.model.provider, modelId: task.model.modelId, ...(reasoning ? { level: reasoning } : {}) }));
         } else if (reasoning) {
           configuration = "reasoning";
           socket.send(JSON.stringify({ type: "setThinking", level: reasoning }));
@@ -97,14 +97,9 @@ export async function queuedCronPrompt(task: CronTask, run: CronRun, sessionId: 
           socket.send(JSON.stringify({ type: "prompt", message: task.prompt, requestId: run.id }));
         }
       }
-      if (event.type === "status" && task.model && configuration === "model" && event.status?.model?.provider === task.model.provider && event.status.model.id === task.model.modelId) {
-        if (reasoning) {
-          configuration = "reasoning";
-          socket.send(JSON.stringify({ type: "setThinking", level: reasoning }));
-        } else {
-          configuration = "prompt";
-          socket.send(JSON.stringify({ type: "prompt", message: task.prompt, requestId: run.id }));
-        }
+      if (event.type === "status" && task.model && configuration === "model" && event.status?.model?.provider === task.model.provider && event.status.model.id === task.model.modelId && (!reasoning || event.status.thinkingLevel === reasoning)) {
+        configuration = "prompt";
+        socket.send(JSON.stringify({ type: "prompt", message: task.prompt, requestId: run.id }));
       } else if (event.type === "status" && configuration === "reasoning" && event.status?.thinkingLevel === reasoning) {
         configuration = "prompt";
         socket.send(JSON.stringify({ type: "prompt", message: task.prompt, requestId: run.id }));

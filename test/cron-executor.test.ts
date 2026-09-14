@@ -28,8 +28,8 @@ test("scheduled executor applies its model and reasoning before prompting", asyn
     else nativeClearTimeout(timer);
   }) as typeof clearTimeout);
   const node = await getClusterNode(), sessionId = randomUUID();
-  await ensureConversationRecord("project", "claude", sessionId, node.id);
-  const task = cronStore().create({ projectId: "project", name: "Report", prompt: "Report", engine: "claude", model: { provider: "claude", modelId: "sonnet", reasoning: "high" }, sessionId, ownerNodeId: node.id, enabled: true, schedule: { frequency: "hourly", hour: 0, minute: 0, weekday: 0, timezone: "UTC" } });
+  await ensureConversationRecord("project", "pi", sessionId, node.id);
+  const task = cronStore().create({ projectId: "project", name: "Report", prompt: "Report", engine: "pi", model: { provider: "zai", modelId: "glm-5.3-flash", reasoning: "low" }, sessionId, ownerNodeId: node.id, enabled: true, schedule: { frequency: "hourly", hour: 0, minute: 0, weekday: 0, timezone: "UTC" } });
   const run = cronStore().claim(task.id, node.id, task.nextRun)!;
   const requests: unknown[] = [];
   endpoint.on("connection", socket => {
@@ -37,8 +37,7 @@ test("scheduled executor applies its model and reasoning before prompting", asyn
     socket.on("message", raw => {
       const request = JSON.parse(raw.toString());
       requests.push(request);
-      if (request.type === "setModel") socket.send(JSON.stringify({ type: "status", status: { model: { provider: "claude", id: "sonnet" }, thinkingLevel: "default" } }));
-      if (request.type === "setThinking") socket.send(JSON.stringify({ type: "status", status: { model: { provider: "claude", id: "sonnet" }, thinkingLevel: "high" } }));
+      if (request.type === "setModel") socket.send(JSON.stringify({ type: "status", status: { model: { provider: "zai", id: "glm-5.3-flash" }, thinkingLevel: "low" } }));
       if (request.type === "prompt") {
         const queueId = randomUUID();
         socket.send(JSON.stringify({ type: "userMessage", queued: true, requestId: run.id, queueId }));
@@ -53,8 +52,7 @@ test("scheduled executor applies its model and reasoning before prompting", asyn
   try {
     await queuedCronPrompt(task, run, sessionId);
     assert.deepEqual(requests, [
-      { type: "setModel", provider: "claude", modelId: "sonnet" },
-      { type: "setThinking", level: "high" },
+      { type: "setModel", provider: "zai", modelId: "glm-5.3-flash", level: "low" },
       { type: "prompt", message: "Report", requestId: run.id },
     ]);
   } finally {
