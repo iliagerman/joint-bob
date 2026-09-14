@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Scheduled tasks can now run at custom hourly intervals (every 2 hours, every 3 hours, etc.), and reasoning level can be configured independently of model selection.
+
 ## 1.29.4 — 2026-09-14
 
 - New conversations now appear in the session list promptly by reading only appended transcript data instead of re-parsing entire files.

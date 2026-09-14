@@ -8,23 +8,23 @@ import { resolveDataDirectory } from "./data-directory.js";
 const timezoneSchema = z.string().min(1).max(100).refine(value => {
   try { new Intl.DateTimeFormat("en", { timeZone: value }); return true; } catch { return false; }
 }, "Unknown timezone");
+const reasoningSchema = z.enum(["default", "off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 const cronModelSchema = z.object({
   provider: z.string().trim().min(1).max(80),
   modelId: z.string().trim().min(1).max(200),
-  reasoning: z.enum(["default", "off", "minimal", "low", "medium", "high", "xhigh", "max"]),
+  reasoning: reasoningSchema.optional(),
 }).strict();
 export const cronInputSchema = z.object({
   projectId: z.string().min(1).max(240), name: z.string().trim().min(1).max(120),
   prompt: z.string().trim().min(1).max(100000), ownerNodeId: z.string().uuid(),
-  engine: z.enum(["pi", "claude"]), model: cronModelSchema.nullable().optional(),
+  engine: z.enum(["pi", "claude"]), model: cronModelSchema.nullable().optional(), reasoning: reasoningSchema.optional(),
   sessionId: z.string().min(1).max(240).nullable(), enabled: z.boolean(),
-  schedule: z.object({ frequency: z.enum(["hourly", "daily", "weekly"]), hour: z.number().int().min(0).max(23), minute: z.number().int().min(0).max(59), weekday: z.number().int().min(0).max(6), timezone: timezoneSchema }).strict(),
+  schedule: z.object({ frequency: z.enum(["hourly", "daily", "weekly"]), intervalHours: z.number().int().min(1).max(168).optional(), hour: z.number().int().min(0).max(23), minute: z.number().int().min(0).max(59), weekday: z.number().int().min(0).max(6), timezone: timezoneSchema }).strict(),
 }).strict().superRefine((input, context) => {
-  if (!input.model) return;
-  const invalid = input.engine === "claude"
-    ? input.model.provider !== "claude" || ["off", "minimal"].includes(input.model.reasoning)
-    : input.model.provider === "claude" || input.model.reasoning === "default";
-  if (invalid) context.addIssue({ code: z.ZodIssueCode.custom, path: ["model"], message: "Model settings do not belong to the selected harness" });
+  const reasoning = input.reasoning ?? input.model?.reasoning;
+  const invalidModel = input.model && (input.engine === "claude" ? input.model.provider !== "claude" : input.model.provider === "claude");
+  const invalidReasoning = reasoning && (input.engine === "claude" ? ["off", "minimal"].includes(reasoning) : reasoning === "default");
+  if (invalidModel || invalidReasoning) context.addIssue({ code: z.ZodIssueCode.custom, path: ["model"], message: "Model settings do not belong to the selected harness" });
 });
 export type CronInput = z.infer<typeof cronInputSchema>;
 export const cronRunSchema = z.object({ id: z.string().uuid(), taskId: z.string().uuid(), dueAt: z.number().int(), status: z.enum(["waiting", "running", "succeeded", "failed"]), error: z.string().nullable(), sessionId: z.string().nullable(), finishedAt: z.number().int().nullable() }).strict();
@@ -40,7 +40,7 @@ export function nextCronRun(schedule: CronInput["schedule"], after: number): num
   for (let time = Math.floor(after / 60000) * 60000 + 60000; time <= after + 16 * 86400000; time += 60000) {
     const p = parts(time);
     if (Number(p.minute) !== schedule.minute) continue;
-    if (schedule.frequency === "hourly") return time;
+    if (schedule.frequency === "hourly" && Math.floor(time / 3600000) % (schedule.intervalHours ?? 1) === 0) return time;
     // A daily/weekly wall-clock occurrence runs once, even when DST repeats it.
     if (Number(p.hour) !== schedule.hour || todayPassed && date(p) === date(start)) continue;
     if (schedule.frequency === "daily" || ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(p.weekday) === schedule.weekday) return time;

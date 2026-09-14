@@ -13,6 +13,7 @@ test("easy schedules use timezone, skip DST gaps and do not repeat a daily fall-
   assert.equal(nextCronRun({ ...schedule, hour: 1, minute: 30 }, Date.parse("2026-11-01T05:30:00Z")), Date.parse("2026-11-02T06:30:00Z"));
   assert.equal(nextCronRun({ ...schedule, frequency: "weekly", timezone: "UTC" }, Date.parse("2026-03-03T10:00:00Z")), Date.parse("2026-03-09T09:15:00Z"));
   assert.equal(nextCronRun({ ...schedule, frequency: "hourly", timezone: "Asia/Kathmandu" }, Date.parse("2026-03-03T10:00:00Z")), Date.parse("2026-03-03T10:30:00Z"));
+  assert.equal(nextCronRun({ ...schedule, frequency: "hourly", intervalHours: 3, minute: 15, timezone: "UTC" }, Date.parse("2026-03-03T10:20:00Z")), Date.parse("2026-03-03T12:15:00Z"));
 });
 
 test("weekly schedules skip a DST gap even when the next valid week is more than nine days away", async () => {
@@ -28,6 +29,8 @@ test("cron validates schedule and required user input", async () => {
   }
   assert.equal(cronInputSchema.safeParse(input()).success, true);
   assert.equal(cronInputSchema.safeParse({ ...input(), engine: "pi", model: { provider: "openai-codex", modelId: "gpt-5.6-sol", reasoning: "high" } }).success, true);
+  assert.equal(cronInputSchema.safeParse({ ...input(), reasoning: "high" }).success, true);
+  assert.equal(cronInputSchema.safeParse({ ...input(), schedule: { ...input().schedule, intervalHours: 0 } }).success, false);
   assert.equal(cronInputSchema.safeParse({ ...input(), engine: "claude", model: { provider: "claude", modelId: "sonnet", reasoning: "high" } }).success, true);
   assert.equal(cronInputSchema.safeParse({ ...input(), engine: "claude", model: { provider: "openai-codex", modelId: "gpt-5.6-sol", reasoning: "high" } }).success, false);
 });

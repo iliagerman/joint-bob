@@ -67,6 +67,7 @@ export async function queuedCronPrompt(task: CronTask, run: CronRun, sessionId: 
   const queueKey = `${task.projectId}:${record!.conversationId ?? sessionId}`;
   await new Promise<void>((resolve, reject) => {
     const socket = new WebSocket(url, { headers: { Authorization: `Bearer ${token}` } });
+    const reasoning = task.reasoning ?? task.model?.reasoning;
     let queueId: string | undefined;
     let configuration: "waiting" | "model" | "reasoning" | "prompt" = "waiting";
     let settled = false;
@@ -85,22 +86,33 @@ export async function queuedCronPrompt(task: CronTask, run: CronRun, sessionId: 
       const event = JSON.parse(raw.toString());
       if (event.type === "ready") {
         if (event.ownership || event.readOnly) { finish(new Error("Scheduled conversation is not writable on this node")); return; }
-        if (!task.model) {
-          configuration = "prompt";
-          socket.send(JSON.stringify({ type: "prompt", message: task.prompt, requestId: run.id }));
-        } else {
+        if (task.model) {
           configuration = "model";
           socket.send(JSON.stringify({ type: "setModel", provider: task.model.provider, modelId: task.model.modelId }));
+        } else if (reasoning) {
+          configuration = "reasoning";
+          socket.send(JSON.stringify(task.engine === "claude" ? { type: "setEffort", effort: reasoning } : { type: "setThinking", level: reasoning }));
+        } else {
+          configuration = "prompt";
+          socket.send(JSON.stringify({ type: "prompt", message: task.prompt, requestId: run.id }));
         }
       }
       if (event.type === "status" && task.model && configuration === "model" && event.status?.model?.provider === task.model.provider && event.status.model.id === task.model.modelId) {
-        configuration = "reasoning";
-        socket.send(JSON.stringify(task.engine === "claude" ? { type: "setEffort", effort: task.model.reasoning } : { type: "setThinking", level: task.model.reasoning }));
-      } else if (event.type === "status" && task.model && configuration === "reasoning" && event.status?.thinkingLevel === task.model.reasoning) {
+        if (reasoning) {
+          configuration = "reasoning";
+          socket.send(JSON.stringify(task.engine === "claude" ? { type: "setEffort", effort: reasoning } : { type: "setThinking", level: reasoning }));
+        } else {
+          configuration = "prompt";
+          socket.send(JSON.stringify({ type: "prompt", message: task.prompt, requestId: run.id }));
+        }
+      } else if (event.type === "status" && configuration === "reasoning" && event.status?.thinkingLevel === reasoning) {
         configuration = "prompt";
         socket.send(JSON.stringify({ type: "prompt", message: task.prompt, requestId: run.id }));
       }
-      if (event.type === "userMessage" && event.queued && event.requestId === run.id) queueId = event.queueId;
+      if (event.type === "userMessage" && event.queued && event.requestId === run.id) {
+        queueId = event.queueId;
+        clearTimeout(timer);
+      }
       if (event.type === "promptStarted" && event.queueId === queueId) cronStore().started(run.id, sessionId);
       if (event.type === "promptCompleted" && event.queueId === queueId) finish();
       if (event.type === "queuedPromptCancelled" && event.queueId === queueId) finish(new Error("Scheduled prompt was cancelled"));

@@ -65,13 +65,13 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
   assert.equal(await page.evaluate(`(() => {
     const form = document.querySelector("#cronForm"), f = form.elements;
     if (!f.engine.disabled || f.engine.value !== "pi") throw Error("Conversation harness should be visible and fixed");
-    if (!f.model.options.length || !f.reasoning.options.length) throw Error("Conversation execution settings unavailable");
-    if (f.model.options.length === 1 && !f.reasoning.disabled) throw Error("Default model should inherit its reasoning level");
+    if (!f.model.options.length || f.reasoning.options.length < 2 || f.reasoning.disabled) throw Error("Conversation execution settings unavailable");
+    f.reasoning.value = "high"; f.intervalHours.value = "3";
     f.name.value = "Conversation browser cron"; f.prompt.value = "Scheduled append";
     f.timezone.value = "UTC"; f.enabled.checked = false;
     form.requestSubmit(); return true;
   })()`), true);
-  await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("Conversation browser cron") && document.querySelector("#cronList").textContent.includes("Existing conversation") && document.querySelector("#cronList").textContent.includes("Paused"));
+  await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("Conversation browser cron") && document.querySelector("#cronList").textContent.includes("Existing conversation") && document.querySelector("#cronList").textContent.includes("Every 3 hours") && document.querySelector("#cronList").textContent.includes("high") && document.querySelector("#cronList").textContent.includes("Paused"));
   await page.locator("#cronClose").click();
   await page.locator('[data-testid="chats-filter-cron-button"]').click();
   await page.waitForFunction(() => document.querySelectorAll("#sessionList .list-row").length === 1 && document.querySelector("#sessionList .list-row").textContent.includes("Short one"));

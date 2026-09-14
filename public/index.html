@@ -1362,7 +1362,8 @@
           <div class="cron-schedule-grid">
             <label>Repeat<select name="frequency" data-testid="cron-frequency"><option value="hourly">Hourly</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
             <label id="cronTimeLabel">Time<input name="time" type="time" value="09:00" required data-testid="cron-time"></label>
-            <label id="cronMinuteLabel">Minute of each hour<input name="minute" type="number" inputmode="numeric" min="0" max="59" value="0" required data-testid="cron-minute"></label>
+            <label id="cronIntervalLabel">Repeat every (hours)<input name="intervalHours" type="number" inputmode="numeric" min="1" max="168" value="1" required data-testid="cron-interval-hours"></label>
+            <label id="cronMinuteLabel">At minute<input name="minute" type="number" inputmode="numeric" min="0" max="59" value="0" required data-testid="cron-minute"></label>
             <label id="cronWeekdayLabel">Day<select name="weekday" data-testid="cron-weekday"><option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option></select></label>
           </div>
           <label>Timezone<input name="timezone" list="cronTimezones" required autocomplete="off" data-testid="cron-timezone"></label>

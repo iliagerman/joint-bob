@@ -13,6 +13,20 @@ test("scheduled executor applies its model and effort before prompting", async (
   const endpoint = new WebSocketServer({ host: "127.0.0.1", port: 0 });
   await once(endpoint, "listening");
   context.mock.method(server, "address", () => endpoint.address());
+  const nativeSetTimeout = globalThis.setTimeout, nativeClearTimeout = globalThis.clearTimeout;
+  const startupTimer = {} as NodeJS.Timeout;
+  let startupTimerActive = true, expireStartupTimer = () => undefined;
+  context.mock.method(globalThis, "setTimeout", ((callback: () => void, milliseconds?: number, ...args: unknown[]) => {
+    if (milliseconds === 30_000) {
+      expireStartupTimer = () => { if (startupTimerActive) callback(...args); };
+      return startupTimer;
+    }
+    return nativeSetTimeout(callback, milliseconds, ...args);
+  }) as typeof setTimeout);
+  context.mock.method(globalThis, "clearTimeout", ((timer: NodeJS.Timeout) => {
+    if (timer === startupTimer) startupTimerActive = false;
+    else nativeClearTimeout(timer);
+  }) as typeof clearTimeout);
   const node = await getClusterNode(), sessionId = randomUUID();
   await ensureConversationRecord("project", "claude", sessionId, node.id);
   const task = cronStore().create({ projectId: "project", name: "Report", prompt: "Report", engine: "claude", model: { provider: "claude", modelId: "sonnet", reasoning: "high" }, sessionId, ownerNodeId: node.id, enabled: true, schedule: { frequency: "hourly", hour: 0, minute: 0, weekday: 0, timezone: "UTC" } });
@@ -28,8 +42,11 @@ test("scheduled executor applies its model and effort before prompting", async (
       if (request.type === "prompt") {
         const queueId = randomUUID();
         socket.send(JSON.stringify({ type: "userMessage", queued: true, requestId: run.id, queueId }));
-        socket.send(JSON.stringify({ type: "promptStarted", queueId }));
-        socket.send(JSON.stringify({ type: "promptCompleted", queueId }));
+        nativeSetTimeout(() => {
+          expireStartupTimer();
+          socket.send(JSON.stringify({ type: "promptStarted", queueId }));
+          socket.send(JSON.stringify({ type: "promptCompleted", queueId }));
+        }, 50);
       }
     });
   });
@@ -46,18 +63,23 @@ test("scheduled executor applies its model and effort before prompting", async (
   }
 });
 
-test("scheduled executor settles a cancelled queued prompt instead of waiting forever", async (context) => {
+test("scheduled executor applies reasoning to the default model and settles cancellation", async (context) => {
   const endpoint = new WebSocketServer({ host: "127.0.0.1", port: 0 });
   await once(endpoint, "listening");
   context.mock.method(server, "address", () => endpoint.address());
   const node = await getClusterNode(), sessionId = randomUUID();
   await ensureConversationRecord("project", "claude", sessionId, node.id);
-  const task = cronStore().create({ projectId: "project", name: "Report", prompt: "Report", engine: "claude", sessionId, ownerNodeId: node.id, enabled: true, schedule: { frequency: "hourly", hour: 0, minute: 0, weekday: 0, timezone: "UTC" } });
+  const task = cronStore().create({ projectId: "project", name: "Report", prompt: "Report", engine: "claude", reasoning: "high", sessionId, ownerNodeId: node.id, enabled: true, schedule: { frequency: "hourly", hour: 0, minute: 0, weekday: 0, timezone: "UTC" } });
   const run = cronStore().claim(task.id, node.id, task.nextRun)!;
   endpoint.on("connection", socket => {
     socket.send(JSON.stringify({ type: "ready" }));
-    socket.once("message", raw => {
+    socket.on("message", raw => {
       const request = JSON.parse(raw.toString());
+      if (request.type === "setEffort") {
+        assert.equal(request.effort, "high");
+        socket.send(JSON.stringify({ type: "status", status: { thinkingLevel: "high" } }));
+        return;
+      }
       assert.equal(request.requestId, run.id);
       const queueId = randomUUID();
       socket.send(JSON.stringify({ type: "userMessage", queued: true, requestId: run.id, queueId }));

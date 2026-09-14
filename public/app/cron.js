@@ -67,7 +67,9 @@ async function refreshTasks() {
     const details = document.createElement("dl");
     details.className = "cron-task-details";
     const harness = availableHarnesses.find(candidate => candidate.id === task.engine);
-    const execution = [["Harness", harness?.label || task.engine], ["Model", task.model ? task.model.modelId : "Harness default"], [task.engine === "claude" ? "Effort" : "Thinking", task.model ? task.model.reasoning : "Harness default"]];
+    const reasoning = task.reasoning ?? task.model?.reasoning;
+    const repeat = task.schedule.frequency === "hourly" && (task.schedule.intervalHours ?? 1) > 1 ? `Every ${task.schedule.intervalHours} hours` : task.schedule.frequency;
+    const execution = [["Repeat", repeat], ["Harness", harness?.label || task.engine], ["Model", task.model ? task.model.modelId : "Harness default"], [task.engine === "claude" ? "Effort" : "Thinking", reasoning || "Harness default"]];
     const entries = task.enabled
       ? [["Next run", new Date(task.nextRun).toLocaleString(undefined, { timeZone: task.schedule.timezone })], ["Timezone", task.schedule.timezone], ...execution, ["Last run", last]]
       : [["Status", "Paused"], ["Timezone", task.schedule.timezone], ...execution, ["Last run", last]];
@@ -128,15 +130,17 @@ function modelsForHarness(engine) {
     ? CLAUDE_MODEL_OPTIONS.map(model => ({ ...model, provider: "claude", thinkingLevels: ["default", "low", "medium", "high", "xhigh", "max"] }))
     : availableModels;
 }
-function renderExecutionFields(modelKey = "") {
+function renderExecutionFields(modelKey = "", reasoning = field("reasoning").value) {
   const engine = field("engine").value;
   const models = modelsForHarness(engine);
   field("model").replaceChildren(new Option("Harness default", ""), ...models.map(model => new Option(model.label, `${model.provider}|${model.id}`)));
   if (modelKey && [...field("model").options].some(option => option.value === modelKey)) field("model").value = modelKey;
   const [provider, modelId] = field("model").value.split("|");
-  const levels = queuedReasoningLevels(provider, modelId) || models.find(model => model.provider === provider && model.id === modelId)?.thinkingLevels || [];
-  field("reasoning").replaceChildren(...(levels.length ? levels.map(level => new Option(level, level)) : [new Option("Harness default", "")]));
-  field("reasoning").disabled = !modelId;
+  const selectedLevels = queuedReasoningLevels(provider, modelId) || models.find(model => model.provider === provider && model.id === modelId)?.thinkingLevels;
+  const availableLevels = [...new Set(models.flatMap(model => model.thinkingLevels || []))];
+  const levels = selectedLevels?.length ? selectedLevels : availableLevels.length ? availableLevels : engine === "claude" ? ["low", "medium", "high", "xhigh", "max"] : ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+  field("reasoning").replaceChildren(new Option("Harness default", ""), ...levels.filter(level => level !== "default").map(level => new Option(level, level)));
+  if ([...field("reasoning").options].some(option => option.value === reasoning)) field("reasoning").value = reasoning;
   document.querySelector("#cronReasoningLabel").childNodes[0].nodeValue = engine === "claude" ? "Effort" : "Thinking level";
 }
 function editTask(task) {
@@ -150,12 +154,12 @@ function editTask(task) {
   field("timezone").value = task ? task.schedule.timezone : Intl.DateTimeFormat().resolvedOptions().timeZone;
   for (const name of ["name", "prompt", "ownerNodeId"]) if (task) field(name).value = task[name];
   field("engine").value = task ? task.engine : context.session ? context.session.harnessId : field("engine").value;
-  renderExecutionFields(task?.model ? `${task.model.provider}|${task.model.modelId}` : "");
-  if (task?.model) field("reasoning").value = task.model.reasoning;
+  renderExecutionFields(task?.model ? `${task.model.provider}|${task.model.modelId}` : "", task?.reasoning ?? task?.model?.reasoning ?? "");
   if (task) {
     field("enabled").checked = task.enabled;
     field("frequency").value = task.schedule.frequency;
     field("weekday").value = task.schedule.weekday;
+    field("intervalHours").value = task.schedule.intervalHours ?? 1;
     field("minute").value = task.schedule.minute;
     field("time").value = `${String(task.schedule.hour).padStart(2, "0")}:${String(task.schedule.minute).padStart(2, "0")}`;
   }
@@ -165,6 +169,7 @@ function editTask(task) {
 function showScheduleFields() {
   const hourly = field("frequency").value === "hourly";
   document.querySelector("#cronTimeLabel").hidden = hourly;
+  document.querySelector("#cronIntervalLabel").hidden = !hourly;
   document.querySelector("#cronMinuteLabel").hidden = !hourly;
   document.querySelector("#cronWeekdayLabel").hidden = field("frequency").value !== "weekly";
 }
@@ -179,9 +184,9 @@ form.addEventListener("submit", async event => {
     const input = {
       projectId: context.projectId, name: field("name").value, prompt: field("prompt").value,
       ownerNodeId: field("ownerNodeId").value, engine: field("engine").value,
-      model: modelId ? { provider, modelId, reasoning: field("reasoning").value } : null,
+      model: modelId ? { provider, modelId } : null, reasoning: field("reasoning").value || undefined,
       sessionId: editing ? editing.sessionId : context.session ? context.session.id : null, enabled: field("enabled").checked,
-      schedule: { frequency: field("frequency").value, hour, minute: field("frequency").value === "hourly" ? Number(field("minute").value) : minute, weekday: Number(field("weekday").value), timezone: field("timezone").value },
+      schedule: { frequency: field("frequency").value, intervalHours: field("frequency").value === "hourly" ? Number(field("intervalHours").value) : undefined, hour, minute: field("frequency").value === "hourly" ? Number(field("minute").value) : minute, weekday: Number(field("weekday").value), timezone: field("timezone").value },
     };
     await command(editing ? editing.ownerNodeId : input.ownerNodeId, editing ? { action: "update", id: editing.id, input } : { action: "create", input });
     showList(); await refreshTasks();
