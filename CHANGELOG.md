@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.31.7 — 2026-09-15
 
 - Scheduled Pi tasks now apply model and reasoning together, fixing GLM-5.3-Flash runs with low reasoning.
 - Push notification subscriptions now replicate across nodes, including expired endpoint cleanup.
