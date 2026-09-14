@@ -1,4 +1,5 @@
 import path from "node:path";
+import os from "node:os";
 import { sessionClassificationOverrides, sessionColorOverrides, sessionTitleOverrides } from "./names.js";
 import { conversationDraftPath, listConversationRecords } from "./conversation-records.js";
 import { listDiscoveredHarnesses, resolveHarnessForSessionPath } from "./harnesses/registry.js";
@@ -41,8 +42,16 @@ export class HarnessSessionCatalog<TAdapters extends readonly HarnessAdapter[]> 
     const adapter = this.adapters.find((candidate) => candidate.id === harnessId);
     if (!adapter) throw new Error(`No harness registered for conversation engine: ${harnessId}`);
     const prefix = `${harnessId}:`;
-    const transcriptPath = path.resolve(sessionPath.startsWith(prefix) ? sessionPath.slice(prefix.length) : sessionPath);
-    if (!adapter.paths.ownsTranscript(transcriptPath)) return undefined;
+    let transcriptPath = path.resolve(sessionPath.startsWith(prefix) ? sessionPath.slice(prefix.length) : sessionPath);
+    if (!adapter.paths.ownsTranscript(transcriptPath)) {
+      if (!adapter.paths.localize) return undefined;
+      // A peer or a saved recent supplies its own home path, not this node's.
+      try {
+        const localized = adapter.paths.localize(sessionPath, os.homedir());
+        transcriptPath = path.resolve(localized.startsWith(prefix) ? localized.slice(prefix.length) : localized);
+      } catch { return undefined; } // Reject untrusted paths outside the synchronized roots.
+      if (!adapter.paths.ownsTranscript(transcriptPath)) return undefined;
+    }
     const sessions = await adapter.sessions.refresh(project, [], [transcriptPath]);
     return sessions.find((session) => session.id === sessionId);
   }

@@ -7,7 +7,7 @@ import path from "node:path";
 import test from "node:test";
 import { claudeSessionFilePath } from "../src/claude-service.js";
 import { ensureConversationRecord } from "../src/conversation-records.js";
-import { HarnessSessionCatalog, clearHarnessSessionCache, defineHarness, listHarnessSessions, refreshHarnessSessions } from "../src/harnesses.js";
+import { HarnessSessionCatalog, clearHarnessSessionCache, defineHarness, listHarnesses, listHarnessSessions, refreshHarnessSessions } from "../src/harnesses.js";
 import type { SessionSummary } from "../src/types.js";
 
 test("partial watcher refresh does not cache an atomic fork as a draft", async (t) => {
@@ -64,6 +64,29 @@ test("direct lookup reads only the selected transcript", async (t) => {
   assert.equal(await catalog.find(project, "pi", selectedPath, "other"), undefined);
   assert.equal(refreshCount, 2);
   assert.equal(listCount, 0, "direct lookup must not scan the transcript catalog");
+});
+
+test("direct lookup resolves stale foreign paths without scanning either harness", async (t) => {
+  const project = { id: randomUUID(), name: "Foreign path", path: path.join(os.homedir(), randomUUID()) };
+  const sessionId = randomUUID();
+  const piPath = path.join(os.homedir(), ".pi/agent/sessions", `${sessionId}.jsonl`);
+  const claudePath = claudeSessionFilePath(project.path, sessionId);
+  await mkdir(path.dirname(piPath), { recursive: true });
+  await mkdir(path.dirname(claudePath), { recursive: true });
+  await writeFile(piPath, JSON.stringify({ type: "session", version: 3, id: sessionId, cwd: project.path, timestamp: new Date().toISOString() }) + "\n");
+  await writeFile(claudePath, JSON.stringify({ type: "user", sessionId, cwd: project.path, timestamp: new Date().toISOString(), message: { role: "user", content: "selected" } }) + "\n");
+  t.after(async () => { await rm(piPath); await rm(path.dirname(claudePath), { recursive: true, force: true }); });
+  const adapters = listHarnesses();
+  for (const adapter of adapters) t.mock.method(adapter.sessions, "list", async () => { assert.fail("opening one conversation must not list the catalog"); });
+  const catalog = new HarnessSessionCatalog(adapters);
+  for (const [engine, filePath] of [["pi", piPath], ["claude", claudePath]] as const) {
+    const foreignPath = filePath.replace(os.homedir(), "/home/retired-node");
+    const found = await catalog.find(project, engine, engine === "claude" ? `claude:${foreignPath}` : foreignPath, sessionId);
+    assert.equal(found?.path, engine === "claude" ? `claude:${filePath}` : filePath, `${engine} must replace the stale home with the local path`);
+    assert.equal(await catalog.find(project, engine, foreignPath, randomUUID()), undefined, "file identity must match the requested conversation");
+  }
+  assert.equal(await catalog.find(project, "pi", "/home/other/private.jsonl", sessionId), undefined);
+  assert.equal(await catalog.find({ ...project, path: "/another-project" }, "pi", piPath, sessionId), undefined, "path mapping must not bypass project membership");
 });
 
 test("cached lists and known-file refreshes do not rescan transcript roots", async () => {

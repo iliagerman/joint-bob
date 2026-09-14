@@ -1058,6 +1058,43 @@ test("a stale two-phase claim by the local node heals when the conversation open
   assert.equal(healed?.epoch, 2, "healing bumps the epoch");
 });
 
+test("cross-node opening replaces stale home paths without the fifty-conversation catalog limit", { timeout: 30_000 }, async () => {
+  const project = nodeA.projects.find((candidate) => candidate.name === "Internal Assistant")!;
+  const directory = path.join(environment.home, ".pi/sessions");
+  const sessionId = randomUUID();
+  const files: string[] = [];
+  let socket: WebSocket | undefined;
+  try {
+    for (let index = 0; index < 52; index += 1) {
+      const id = index === 0 ? sessionId : randomUUID();
+      const file = path.join(directory, `${id}.jsonl`);
+      files.push(file);
+      await writeFile(file, JSON.stringify({ type: "session", version: 3, id, cwd: project.path, timestamp: index === 0 ? "2000-01-01T00:00:00.000Z" : new Date().toISOString() }) + "\n");
+    }
+    const listed = await api<{ sessions: SessionView[] }>(nodeB, sessionB, "GET", `/projects/${project.id}/sessions`);
+    assert.equal(listed.body.sessions.length, 50, "the catalog limit must be reached for this regression");
+    assert.equal(listed.body.sessions.some((row) => row.id === sessionId), false, "the selected old conversation is outside the catalog window");
+    const url = new URL("/ws", nodeA.url);
+    url.protocol = "ws:";
+    url.search = new URLSearchParams({ projectId: project.id, sessionId, nodeId: nodeB.nodeId, sessionPath: files[0].replace(environment.home, "/home/retired-node") }).toString();
+    socket = new WebSocket(url, { headers: { Cookie: sessionA.cookie, Origin: nodeA.url } });
+    const connected = socket;
+    const ready = await new Promise<Record<string, unknown>>((resolve, reject) => {
+      const timer = setTimeout(() => { connected.terminate(); reject(new Error("cross-node conversation did not open")); }, 10_000);
+      connected.on("message", (raw) => {
+        const frame = JSON.parse(raw.toString()) as Record<string, unknown>;
+        if (frame.type === "ready") { clearTimeout(timer); resolve(frame); }
+        if (frame.type === "error") { clearTimeout(timer); reject(new Error(String(frame.error))); }
+      });
+      connected.once("close", (code, reason) => { clearTimeout(timer); reject(new Error(`cross-node open closed: ${code} ${reason}`)); });
+      connected.once("error", (error) => { clearTimeout(timer); reject(error); });
+    });
+    assert.equal(ready.sessionId, sessionId);
+    assert.equal(ready.sessionFile, files[0], "ready replaces the stale preference with the owner's local path");
+    assert.equal(ready.executionNodeId, nodeB.nodeId);
+  } finally { socket?.terminate(); await Promise.all(files.map((file) => rm(file, { force: true }))); }
+});
+
 test("both prepared nodes become writable and resume replication after restart", { timeout: 60_000 }, async () => {
   const nodes = [nodeA, nodeB];
   const sessions = [sessionA, sessionB];
