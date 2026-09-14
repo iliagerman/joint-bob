@@ -5,7 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## 1.29.3 — 2026-09-14
 
-- Agent dashboards now gracefully complete orphaned tasks after restarting instead of hanging indefinitely.
+- Conversations no longer stay marked running when a restarted agent dashboard has lost old runs. Those runs show failed tracking with completion unknown, preserving recorded output and finished task results. Temporary dashboard outages still retain running status.
 
 ## 1.29.2 — 2026-09-14
 
