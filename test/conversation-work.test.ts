@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createServer } from "node:http";
 import { agentRunDescriptor } from "../src/agent-run-monitor.js";
-import { applyConversationWork, conversationWorkActive, recordConversationWork, refreshConversationWork } from "../src/conversation-work.js";
+import { applyConversationWork, conversationWorkActive, recordConversationWork, refreshConversationWork, listConversationWork } from "../src/conversation-work.js";
 import type { SessionSummary } from "../src/types.js";
 import { syncConversationReviewStates } from "../src/conversation-reviews.js";
 
@@ -43,6 +43,36 @@ test("dashboard tracking survives handle loss and observer failure until explici
     await Promise.all([refreshConversationWork(), refreshConversationWork()]);
     assert.equal(requests, 1, "viewer and maintenance polls share one observation rather than racing stale snapshots");
     assert.equal(conversationWorkActive("future", "durable-parent"), false);
+  } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
+});
+
+test("a restarted dashboard retires orphaned runs without losing observed task results", async () => {
+  const server = createServer((_request, response) => response.end(JSON.stringify({ runs: [] })));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const descriptor = agentRunDescriptor({ type: "tool_execution_end", toolName: "multi_agent_run", result: { details: {
+      runId: "orphan", dashboardUrl: `http://127.0.0.1:${address.port}`, tasks: [{ agent: "default", role: "worker" }],
+    } } });
+    assert.ok(descriptor);
+    recordConversationWork({ engine: "pi", sessionId: "orphan-parent", descriptor, summary: {
+      runId: "orphan", status: "running", tasks: [
+        { name: "finished", role: "worker", status: "succeeded", finalOutput: "Delivered" },
+        { name: "lost", role: "worker", status: "running", finalOutput: "Partial work" },
+        { name: "waiting", role: "worker", status: "queued" },
+      ],
+    } });
+    assert.equal(conversationWorkActive("pi", "orphan-parent"), true);
+    await refreshConversationWork();
+    assert.equal(conversationWorkActive("pi", "orphan-parent"), false, "missing historical runs must not keep Init running forever");
+    const [work] = listConversationWork("pi", "orphan-parent");
+    assert.deepEqual(work.summary.tasks.map((task) => task.status), ["succeeded", "failed", "failed"]);
+    assert.equal(work.summary.tasks[0].finalOutput, "Delivered");
+    assert.equal(work.summary.tasks[1].finalOutput, "Partial work");
+    assert.match(work.summary.tasks[1].error!, /no longer tracks/);
+    const [session] = applyConversationWork([{ id: "orphan-parent", path: "orphan-parent", title: "Init", harnessId: "pi", agentId: "pi", agentLabel: "Pi", running: false }]);
+    assert.equal(session.running, false);
   } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
 });
 

@@ -23,7 +23,7 @@ export function agentWorkActive(run: AgentRunSummary): boolean {
     || run.tasks.some((task) => ["queued", "running"].includes(task.status));
 }
 
-/** Only explicit child lifecycle observations complete work. A parent turn ending does not. */
+/** Child lifecycle or confirmed loss of tracking ends work. A parent turn ending does not. */
 export function recordConversationWork(work: ConversationWork): void {
   database().prepare(`INSERT INTO conversation_work VALUES (?, ?, ?, ?)
     ON CONFLICT(engine, session_id, run_id) DO UPDATE SET payload = excluded.payload`)
@@ -53,7 +53,7 @@ async function refreshObservedWork(): Promise<boolean> {
   let changed = false;
   await Promise.all(listConversationWork().filter((work) => work.descriptor && agentWorkActive(work.summary)).map(async (work) => {
     try {
-      const summary = await refreshAgentRun(work.descriptor!);
+      const summary = await refreshAgentRun({ ...work.descriptor!, summary: work.summary });
       if (JSON.stringify(summary) === JSON.stringify(work.summary)) return;
       recordConversationWork({ ...work, summary });
       changed = true;

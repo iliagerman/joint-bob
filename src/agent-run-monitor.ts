@@ -81,8 +81,19 @@ export async function refreshAgentRun(descriptor: AgentRunDescriptor): Promise<A
   }
   const runs = Array.isArray(payload?.runs) ? payload.runs : undefined;
   if (!runs) throw new Error("Agent dashboard state is malformed");
-  const run = runs.map(record).find((candidate) => (text(candidate?.runId) ?? text(candidate?.id)) === descriptor.runId);
-  const parsed = run && summary(run);
-  if (!parsed) throw new Error(`Agent dashboard run ${descriptor.runId} was not found`);
+  const inventory = runs.map(record);
+  if (inventory.some((candidate) => !(text(candidate?.runId) ?? text(candidate?.id)))) throw new Error("Agent dashboard state is malformed");
+  const run = inventory.find((candidate) => (text(candidate?.runId) ?? text(candidate?.id)) === descriptor.runId);
+  // A reachable dashboard owns its full run inventory. After it restarts, old
+  // runs are no longer tracked; report lost tracking, never invented success.
+  if (!run) return {
+    ...descriptor.summary,
+    status: "failed",
+    tasks: descriptor.summary.tasks.map((task) => ["queued", "running"].includes(task.status)
+      ? { ...task, status: "failed", error: `Agent dashboard no longer tracks run ${descriptor.runId}; completion unknown` }
+      : task),
+  };
+  const parsed = summary(run);
+  if (!parsed) throw new Error(`Agent dashboard run ${descriptor.runId} is malformed`);
   return parsed;
 }

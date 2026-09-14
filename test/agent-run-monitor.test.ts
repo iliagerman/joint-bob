@@ -41,7 +41,13 @@ test("multi-agent descriptors queue tool-result tasks and refresh dashboard stat
     assert.equal(agentRunDescriptor({ ...event, result: { details: { ...event.result.details, dashboardUrl: "not a URL" } } }), undefined);
     assert.equal(agentRunDescriptor({ type: "tool_execution_end", toolName: "multi_agent_run", result: { details: { runId, dashboardUrl: `http://127.0.0.1:${port}`, tasks: [{ role: 1, agent: "default" }] } } }), undefined);
     response = { runs: [] };
-    await assert.rejects(refreshAgentRun(descriptor), /not found/);
+    const missing = await refreshAgentRun(descriptor);
+    assert.equal(missing.status, "failed");
+    assert.ok(missing.tasks.every((task) => task.status === "failed" && task.error?.includes("no longer tracks")));
+    response = { runs: [{ runId, status: "invalid", tasks: [] }] };
+    await assert.rejects(refreshAgentRun(descriptor), /malformed/);
+    response = { runs: [{}] };
+    await assert.rejects(refreshAgentRun(descriptor), /malformed/);
     response = { runs: "bad" };
     await assert.rejects(refreshAgentRun(descriptor), /malformed/);
   } finally {

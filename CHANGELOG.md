@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Agent dashboards now gracefully complete orphaned tasks after restarting instead of hanging indefinitely.
+
 ## 1.29.2 — 2026-09-14
 
 - Queued messages now start running correctly after stopping a turn with active queues.
