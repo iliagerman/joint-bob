@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.30.5 — 2026-09-14
 
-- Kiro now queries available models from the native CLI catalogue each time you start a conversation, so newly installed models appear without restarting the app.
+- Kiro model lists now refresh directly from the native CLI before the first message, without requiring a conversation or app restart.
 
 ## 1.30.4 — 2026-09-14
 
