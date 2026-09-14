@@ -30,8 +30,6 @@ type Connection = ReturnType<typeof createKiroConnection>;
 type DiscoveredModel = ModelSummary & { thinkingLevels: string[] };
 type CompactionTerminal = { type: "completed" } | { type: "failed"; error: string };
 
-let discoveredModels: DiscoveredModel[] | undefined;
-
 function object(value: unknown, label: string): JsonObject {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Invalid Kiro ACP ${label}`);
   return value as JsonObject;
@@ -52,6 +50,32 @@ function validate(settings: HarnessModelSettings): void {
 function runtimeSettings() {
   const configured = getSettings().runtimes.kiro;
   return configuredRuntime("kiro", configured);
+}
+
+async function discoverModels(): Promise<DiscoveredModel[]> {
+  const settings = runtimeSettings();
+  let stdout: string;
+  try {
+    ({ stdout } = await execute(settings.executable || "kiro-cli", ["chat", "--list-models", "--format", "json"], {
+      env: { ...process.env, KIRO_HOME: settings.configPath },
+      timeout: 5_000,
+      maxBuffer: 1024 * 1024,
+    }));
+  } catch (error) {
+    console.warn("Kiro model discovery unavailable", { code: (error as NodeJS.ErrnoException).code });
+    return [{ provider: "kiro", id: "default", label: "Kiro default", thinkingLevels: levels }];
+  }
+  const catalogue = object(JSON.parse(stdout), "model catalogue");
+  if (!Array.isArray(catalogue.models)) throw new Error("Invalid Kiro ACP model catalogue");
+  return catalogue.models.map((value) => {
+    const model = object(value, "catalogue model");
+    return {
+      provider: "kiro",
+      id: requiredString(model.model_id, "model ID"),
+      label: requiredString(model.model_name, "model name"),
+      thinkingLevels: levels,
+    };
+  });
 }
 
 class KiroSession implements HarnessSession {
@@ -320,7 +344,6 @@ class KiroSession implements HarnessSession {
     if (this.model.modelId !== "default" && this.model.modelId !== currentModelId) {
       throw new Error(`Kiro requested model ${this.model.modelId} but native session uses ${currentModelId}`);
     }
-    discoveredModels = captured;
     this.actualModel = { provider: current.provider, id: current.id, label: current.label };
     this.emit({ type: "models", harnessId: "kiro", models: captured.map((model) => ({ ...model, harnessId: "kiro" })) });
     this.emit({ type: "status", status: this.status() });
@@ -598,7 +621,7 @@ const runtime: HarnessRuntime = {
   },
 
   async models() {
-    return discoveredModels ?? [{ provider: "kiro", id: "default", label: "Kiro default", thinkingLevels: levels }];
+    return discoverModels();
   },
 
   async validateSettings(settings) {

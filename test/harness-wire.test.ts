@@ -14,6 +14,10 @@ import { addProject } from "../src/store.js";
 const fixtureSource = `#!/usr/bin/env node
 const readline = require("node:readline");
 if (process.argv.includes("--version") || process.argv.includes("whoami")) process.exit(0);
+if (JSON.stringify(process.argv.slice(2)) === JSON.stringify(["chat", "--list-models", "--format", "json"])) {
+  process.stdout.write(JSON.stringify({models:[{model_id:"fixture-model-current",model_name:"Fixture Current"},{model_id:"fixture-model-alternative",model_name:"Fixture Alternative"}],default_model:"fixture-model-current"}));
+  process.exit(0);
+}
 const send = value => process.stdout.write(JSON.stringify(value) + "\\n");
 const notify = update => send({jsonrpc:"2.0",method:"session/update",params:{sessionId:"fixture-native",update}});
 const metadata = () => send({jsonrpc:"2.0",method:"_kiro.dev/metadata",params:{sessionId:"fixture-native",contextUsagePercentage:42.5}});
