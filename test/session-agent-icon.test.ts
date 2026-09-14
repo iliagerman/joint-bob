@@ -22,7 +22,8 @@ test("the server names the agent that last drove each conversation", async () =>
   assert.match(types, /agentId: HarnessId;/);
   const listing = functionBody(server, "async function listProjectSessionsWithReviewState(");
   // A running task overrides the conversation's own harness, exactly as the label does.
-  assert.match(listing, /const agentId = config \? config\.engine : session\.harnessId;/);
+  assert.match(listing, /const agentId = config\?\.engine \?\? session\.harnessId;/);
+  assert.match(listing, /agentLabel: getHarness\(agentId\)\.label,/);
   assert.match(listing, /\n\s+agentId,/);
 });
 
@@ -106,6 +107,6 @@ test("the model picker names GPT with the OpenAI mark", async () => {
   ]);
 
   const dialog = functionBody(app, "function renderModelDialog() {");
-  assert.match(dialog, /brandIcon\("openai", "model-group-icon"\)/);
+  assert.match(dialog, /brandIcon\(presentation\.providerIcon, "model-group-icon"\)/);
   assert.match(styles, /\.model-group-icon \{/);
 });

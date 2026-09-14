@@ -9,7 +9,7 @@ import { cronStore } from "../src/cron.js";
 import { queuedCronPrompt } from "../src/server/cron.js";
 import { server } from "../src/server/state.js";
 
-test("scheduled executor applies its model and effort before prompting", async (context) => {
+test("scheduled executor applies its model and reasoning before prompting", async (context) => {
   const endpoint = new WebSocketServer({ host: "127.0.0.1", port: 0 });
   await once(endpoint, "listening");
   context.mock.method(server, "address", () => endpoint.address());
@@ -38,7 +38,7 @@ test("scheduled executor applies its model and effort before prompting", async (
       const request = JSON.parse(raw.toString());
       requests.push(request);
       if (request.type === "setModel") socket.send(JSON.stringify({ type: "status", status: { model: { provider: "claude", id: "sonnet" }, thinkingLevel: "default" } }));
-      if (request.type === "setEffort") socket.send(JSON.stringify({ type: "status", status: { model: { provider: "claude", id: "sonnet" }, thinkingLevel: "high" } }));
+      if (request.type === "setThinking") socket.send(JSON.stringify({ type: "status", status: { model: { provider: "claude", id: "sonnet" }, thinkingLevel: "high" } }));
       if (request.type === "prompt") {
         const queueId = randomUUID();
         socket.send(JSON.stringify({ type: "userMessage", queued: true, requestId: run.id, queueId }));
@@ -54,7 +54,7 @@ test("scheduled executor applies its model and effort before prompting", async (
     await queuedCronPrompt(task, run, sessionId);
     assert.deepEqual(requests, [
       { type: "setModel", provider: "claude", modelId: "sonnet" },
-      { type: "setEffort", effort: "high" },
+      { type: "setThinking", level: "high" },
       { type: "prompt", message: "Report", requestId: run.id },
     ]);
   } finally {
@@ -75,8 +75,8 @@ test("scheduled executor applies reasoning to the default model and settles canc
     socket.send(JSON.stringify({ type: "ready" }));
     socket.on("message", raw => {
       const request = JSON.parse(raw.toString());
-      if (request.type === "setEffort") {
-        assert.equal(request.effort, "high");
+      if (request.type === "setThinking") {
+        assert.equal(request.level, "high");
         socket.send(JSON.stringify({ type: "status", status: { thinkingLevel: "high" } }));
         return;
       }

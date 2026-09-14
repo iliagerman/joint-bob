@@ -49,6 +49,9 @@ test("settings tabs absorb notification, secret, and cluster configuration", asy
   assert.doesNotMatch(app, /projectsMenuButton|githubSettingsButton|clusterButton/);
   assert.match(html, /id="settingsPanel-account"[\s\S]*id="themeToggleButton"/);
   assert.match(app, /function selectSettingsTab/);
+  assert.match(html, /id="settingsConversationHistoryDays"[^>]*type="number"[^>]*min="1"[^>]*max="3650"[^>]*data-testid="settings-conversation-history-days"/);
+  assert.match(app, /querySelector\("#settingsConversationHistoryDays"\)\.value = settings\.conversationHistoryDays/);
+  assert.match(app, /conversationHistoryDays: Number\(document\.querySelector\("#settingsConversationHistoryDays"\)\.value\)/);
   assert.match(app, /ArrowRight|ArrowLeft/);
   // A vertical list is walked with Up/Down as well as Left/Right.
   assert.match(app, /ArrowDown/);
@@ -94,5 +97,5 @@ test("settings tabs absorb notification, secret, and cluster configuration", asy
 
   // Installed PWA clients must not keep the old shell.
   for (const id of ["settings-resource-skills-paths", "settings-resource-prompts-paths", "settings-resource-rules-paths", "settings-resource-plugins-paths", "project-resource-skills-paths", "project-resource-prompts-paths", "project-resource-rules-paths", "project-resource-plugins-paths"]) assert.match(html, new RegExp(`data-testid="${id}"`));
-  assert.match(serviceWorker, /joint-bob-v185/);
+  assert.match(serviceWorker, /joint-bob-v186/);
 });

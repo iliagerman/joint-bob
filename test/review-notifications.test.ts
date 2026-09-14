@@ -19,14 +19,18 @@ async function withDataDir(run: (dataDir: string) => Promise<void>): Promise<voi
   }
 }
 
-test("a conversation entering review is claimed for notification exactly once", async () => {
+test("review notifications default off and are claimed exactly once after enabling", async () => {
   await withDataDir(async () => {
     const reviews = await import(new URL(`../src/conversation-reviews.ts?claim=${Date.now()}`, import.meta.url).href);
 
     reviews.syncConversationReviewStates("user-a", "user-a-name", "project", [{ path: "session", engine: "pi" as const, sessionId: "session", updatedAt: "2026-01-01T00:00:00.000Z", running: false }]);
     const pending = reviews.syncConversationReviewStates("user-a", "user-a-name", "project", [{ path: "session", engine: "pi" as const, sessionId: "session", updatedAt: "2026-01-01T00:01:00.000Z", running: false }]);
     assert.equal(pending.get("session"), "needs_review");
+    assert.equal(reviews.conversationReviewNotificationsEnabled("user-a", "project", "session"), false);
+    assert.deepEqual(reviews.claimReviewNotifications("user-a", "project", ["session"]), []);
 
+    reviews.setConversationReviewNotifications("user-a", "project", "session", true);
+    assert.equal(reviews.conversationReviewNotificationsEnabled("user-a", "project", "session"), true);
     assert.deepEqual(reviews.claimReviewNotifications("user-a", "project", ["session"]), ["session"]);
     assert.deepEqual(reviews.claimReviewNotifications("user-a", "project", ["session"]), []);
   });
@@ -38,6 +42,7 @@ test("reviewing a conversation re-arms its next notification", async () => {
 
     reviews.syncConversationReviewStates("user-a", "user-a-name", "project", [{ path: "session", engine: "pi" as const, sessionId: "session", updatedAt: "2026-01-01T00:00:00.000Z", running: false }]);
     reviews.syncConversationReviewStates("user-a", "user-a-name", "project", [{ path: "session", engine: "pi" as const, sessionId: "session", updatedAt: "2026-01-01T00:01:00.000Z", running: false }]);
+    reviews.setConversationReviewNotifications("user-a", "project", "session", true);
     reviews.claimReviewNotifications("user-a", "project", ["session"]);
 
     reviews.markConversationReviewed("user-a", "user-a-name", "project", { path: "session", engine: "pi", sessionId: "session", updatedAt: "2026-01-01T00:01:00.000Z" }, "node-a");
@@ -53,6 +58,7 @@ test("a conversation that starts running again re-arms its next notification", a
 
     reviews.syncConversationReviewStates("user-a", "user-a-name", "project", [{ path: "session", engine: "pi" as const, sessionId: "session", updatedAt: "2026-01-01T00:00:00.000Z", running: false }]);
     reviews.syncConversationReviewStates("user-a", "user-a-name", "project", [{ path: "session", engine: "pi" as const, sessionId: "session", updatedAt: "2026-01-01T00:01:00.000Z", running: false }]);
+    reviews.setConversationReviewNotifications("user-a", "project", "session", true);
     reviews.claimReviewNotifications("user-a", "project", ["session"]);
 
     reviews.syncConversationReviewStates("user-a", "user-a-name", "project", [{ path: "session", engine: "pi" as const, sessionId: "session", updatedAt: "2026-01-01T00:02:00.000Z", running: true }]);
@@ -69,6 +75,7 @@ test("notification claims are per account", async () => {
     for (const userId of ["user-a", "user-b"]) {
       reviews.syncConversationReviewStates(userId, userId + "-name", "project", [{ path: "session", engine: "pi" as const, sessionId: "session", updatedAt: "2026-01-01T00:00:00.000Z", running: false }]);
       reviews.syncConversationReviewStates(userId, userId + "-name", "project", [{ path: "session", engine: "pi" as const, sessionId: "session", updatedAt: "2026-01-01T00:01:00.000Z", running: false }]);
+      reviews.setConversationReviewNotifications(userId, "project", "session", true);
     }
     reviews.claimReviewNotifications("user-a", "project", ["session"]);
 
@@ -98,11 +105,13 @@ test("the service worker notification vibrates so a phone announces a review", a
   const worker = await readFile(new URL("../public/sw.js", import.meta.url), "utf8");
 
   assert.match(worker, /vibrate:/);
-  assert.match(worker, /const CACHE_NAME = "joint-bob-v185";/);
+  assert.match(worker, /const CACHE_NAME = "joint-bob-v186";/);
 });
 
-test("the client subscribes for reviews across every project", async () => {
+test("the client subscribes devices globally but exposes per-conversation controls", async () => {
   const app = await appSource();
 
   assert.match(app, /projectId: "\*"/);
+  assert.match(app, /session-review-notifications-button/);
+  assert.match(app, /reviewNotificationsEnabled/);
 });

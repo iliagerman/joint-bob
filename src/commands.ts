@@ -1,19 +1,9 @@
-import {
-  DefaultResourceLoader,
-  getAgentDir,
-  SettingsManager,
-  type PromptTemplate,
-  type Skill,
-} from "@earendil-works/pi-coding-agent";
-import { readdir, readFile } from "node:fs/promises";
-import path from "node:path";
-import { defaultSkillRoots, listSkills, parseResourceFrontmatter, type SkillRoots, type SkillSummary } from "./skills.js";
-import { piAgentResourcePaths } from "./agent-resources.js";
-import { getSettings, type ScopedResourcePaths } from "./settings.js";
+import type { ScopedResourcePaths } from "./settings.js";
+import type { SkillRoots } from "./skills.js";
 import type { HarnessId } from "./types.js";
+import { listDiscoveredHarnesses } from "./harnesses/registry.js";
 
 export type HarnessCommandKind = "builtin" | "extension" | "prompt" | "skill";
-
 export interface HarnessCommand {
   harness: HarnessId;
   name: string;
@@ -22,7 +12,6 @@ export interface HarnessCommand {
   kind: HarnessCommandKind;
   scope?: "user" | "project";
 }
-
 export interface CommandDiscoveryOptions extends Partial<SkillRoots> {
   piAgentDir?: string;
   resourceRoot?: string;
@@ -30,7 +19,7 @@ export interface CommandDiscoveryOptions extends Partial<SkillRoots> {
   resourcePaths?: ScopedResourcePaths;
 }
 
-const BUILTIN_COMMANDS = [
+const UNIVERSAL_COMMANDS = [
   { name: "help", description: "Show available commands" },
   { name: "skills", description: "Browse installed skills" },
   { name: "model", description: "Choose the session model" },
@@ -38,155 +27,13 @@ const BUILTIN_COMMANDS = [
   { name: "compact", description: "Compact conversation context" },
 ] as const;
 
-const PI_BUILTIN_COMMANDS = [
-  { name: "reload", description: "Reload Pi configuration and resources" },
-] as const;
-
-const CLAUDE_BUILTIN_COMMANDS = [
-  { name: "goal", description: "Set a completion condition" },
-] as const;
-
-function commandScope(scope: string): HarnessCommand["scope"] {
-  return scope === "project" ? "project" : "user";
+export function builtinCommands(harness: HarnessId): HarnessCommand[] {
+  return UNIVERSAL_COMMANDS.map((command) => ({ harness, ...command, invocation: `/${command.name} `, kind: "builtin" }));
 }
 
-function builtinCommands(harness: HarnessId): HarnessCommand[] {
-  const commands = harness === "claude"
-    ? [...BUILTIN_COMMANDS, ...CLAUDE_BUILTIN_COMMANDS]
-    : [...BUILTIN_COMMANDS, ...PI_BUILTIN_COMMANDS];
-  return commands.map((command) => ({
-    harness,
-    ...command,
-    invocation: `/${command.name} `,
-    kind: "builtin",
-  }));
-}
-
-function piSkillCommand(skill: Skill): HarnessCommand {
-  return {
-    harness: "pi",
-    name: `skill:${skill.name}`,
-    description: skill.description,
-    invocation: `/skill:${skill.name} `,
-    kind: "skill",
-    scope: commandScope(skill.sourceInfo.scope),
-  };
-}
-
-function piPromptCommand(prompt: PromptTemplate): HarnessCommand {
-  return {
-    harness: "pi",
-    name: prompt.name,
-    description: prompt.description,
-    invocation: `/${prompt.name} `,
-    kind: "prompt",
-    scope: commandScope(prompt.sourceInfo.scope),
-  };
-}
-
-async function listPiCommands(projectPath: string, agentDir: string, resourceRoot?: string, resourcePaths?: ScopedResourcePaths): Promise<HarnessCommand[]> {
-  const settingsManager = SettingsManager.create(projectPath, agentDir);
-  const resources = piAgentResourcePaths(resourceRoot, resourcePaths);
-  const loader = new DefaultResourceLoader({
-    cwd: projectPath,
-    agentDir,
-    settingsManager,
-    additionalExtensionPaths: resources.extensions,
-    additionalSkillPaths: resources.skills,
-    additionalPromptTemplatePaths: resources.prompts,
-    additionalThemePaths: resources.themes,
-  });
-  await loader.reload();
-  const extensions = loader.getExtensions().extensions.flatMap((extension) =>
-    [...extension.commands.values()].map((command): HarnessCommand => ({
-      harness: "pi",
-      name: command.name,
-      description: command.description ?? "Extension command",
-      invocation: `/${command.name} `,
-      kind: "extension",
-      scope: commandScope(command.sourceInfo.scope),
-    })),
-  );
-  return [
-    ...builtinCommands("pi"),
-    ...extensions,
-    ...loader.getPrompts().prompts.map(piPromptCommand),
-    ...loader.getSkills().skills.map(piSkillCommand),
-  ];
-}
-
-function claudeSkillCommand(skill: SkillSummary): HarnessCommand {
-  return {
-    harness: "claude",
-    name: skill.name,
-    description: skill.description,
-    invocation: skill.invocation ?? `/${skill.name} `,
-    kind: "skill",
-    scope: skill.scope,
-  };
-}
-
-async function markdownCommand(filePath: string, scope: "user" | "project", invocation?: string): Promise<HarnessCommand | undefined> {
-  try {
-    const fields = parseResourceFrontmatter(await readFile(filePath, "utf8"));
-    const name = path.basename(filePath, ".md");
-    return { harness: "claude", name, description: fields.description ?? "", invocation: invocation ? `${invocation}${name} ` : `/${name} `, kind: "prompt", scope };
-  } catch {
-    return undefined;
-  }
-}
-
-async function markdownCommands(directory: string, scope: "user" | "project", invocation?: string): Promise<HarnessCommand[]> {
-  if (directory.endsWith(".md")) {
-    const command = await markdownCommand(directory, scope, invocation);
-    return command ? [command] : [];
-  }
-  let entries;
-  try {
-    entries = await readdir(directory, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-
-  const commands: HarnessCommand[] = [];
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
-    const command = await markdownCommand(path.join(directory, entry.name), scope, invocation);
-    if (command) commands.push(command);
-  }
-  return commands;
-}
-
-async function listClaudeCommands(projectPath: string, options: CommandDiscoveryOptions): Promise<HarnessCommand[]> {
-  const roots = { ...defaultSkillRoots(), ...options };
-  const config = options.claudeConfigPath ?? getSettings().claude.configPath;
-  const configured = options.resourcePaths;
-  const [global, skills, project, ...custom] = await Promise.all([
-    markdownCommands(path.join(config, "commands"), "user"),
-    listSkills(projectPath, { ...roots, global: configured?.global.skills ?? [], project: configured?.project.skills ?? [] }),
-    markdownCommands(path.join(projectPath, ".claude", "commands"), "project"),
-    ...(configured ? [...configured.global.prompts.map((root) => markdownCommands(root, "user", "/joint-bob-resources:")), ...configured.project.prompts.map((root) => markdownCommands(root, "project", "/joint-bob-resources:"))] : []),
-  ]);
-  return [
-    ...builtinCommands("claude"),
-    ...global,
-    ...skills.filter((skill) => skill.harness === "claude").map(claudeSkillCommand),
-    ...project,
-    ...custom.flat(),
-  ];
-}
-
-function uniqueCommands(commands: HarnessCommand[]): HarnessCommand[] {
-  return [...new Map(commands.map((command) => [command.invocation, command])).values()]
-    .sort((left, right) => left.name.localeCompare(right.name));
-}
-
-export async function listHarnessCommands(
-  projectPath: string,
-  harness: HarnessId,
-  options: CommandDiscoveryOptions = {},
-): Promise<HarnessCommand[]> {
-  if (harness === "claude") return uniqueCommands(await listClaudeCommands(projectPath, options));
-  const agentDir = options.piAgentDir || getSettings().pi.configPath || getAgentDir();
-  return uniqueCommands(await listPiCommands(projectPath, agentDir, options.resourceRoot, options.resourcePaths));
+export async function listHarnessCommands(projectPath: string, harness: HarnessId, options: CommandDiscoveryOptions = {}): Promise<HarnessCommand[]> {
+  const adapter = listDiscoveredHarnesses().find((candidate) => candidate.id === harness);
+  if (!adapter) throw new Error(`Unknown harness: ${harness}`);
+  const commands = adapter.resources ? await (await adapter.resources()).commands(projectPath, options) : builtinCommands(harness);
+  return [...new Map(commands.map((command) => [command.invocation, command])).values()].sort((left, right) => left.name.localeCompare(right.name));
 }

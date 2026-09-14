@@ -125,46 +125,48 @@ test("harness settings show per-harness tabs and restore node defaults", async (
   const session = await signIn(environment, node);
   const originalResponse = await api<Record<string, unknown>>(node, session, "GET", "/settings");
   assert.equal(originalResponse.status, 200, "the original settings snapshot loads");
-  const originalSettings = originalResponse.body as Record<string, unknown> & { pi: { configPath: string; sessionPath: string } };
+  const originalSettings = originalResponse.body as Record<string, unknown> & {
+    pi: { configPath: string; sessionPath: string };
+  };
   assert.ok(originalSettings.pi.configPath.startsWith(`${environment.home}${path.sep}`), "seeded Pi config stays under the fixture home");
   assert.ok(originalSettings.pi.sessionPath.startsWith(`${environment.home}${path.sep}`), "seeded Pi sessions stay under the fixture home");
 
   try {
-  await page.getByTestId("settings-open-button").click();
-  await page.getByTestId("settings-tab-engines").click();
-  const claudePanel = page.locator("[data-harness-panel='claude']");
-  const piPanel = page.locator("[data-harness-panel='pi']");
-  assert.equal(await piPanel.isVisible(), true, "the Pi tab shows first");
-  assert.equal(await claudePanel.isVisible(), false, "Claude waits behind its own tab");
-  assert.match(await page.getByTestId("settings-pi-defaults").innerText(), /Node defaults — executable:/);
-  await page.getByTestId("harness-tab-pi").focus();
-  await page.keyboard.press("ArrowRight");
-  assert.equal(await claudePanel.isVisible(), true, "Claude has its own defaults and fields");
-  assert.equal(await piPanel.isVisible(), false, "the Pi tab yields to Claude");
-  assert.match(await page.getByTestId("settings-claude-defaults").innerText(), /Node defaults — executable:/);
-  await page.getByTestId("harness-tab-pi").click();
-  const piExecutable = page.getByTestId("settings-pi-executable-input");
-  await piExecutable.fill("custom-pi");
-  await page.getByTestId("settings-use-pi-defaults-button").click();
-  await page.getByTestId("settings-runtime-status").getByText(/Pi executable: Blank \(uses node default\)/).waitFor();
-  await page.getByTestId("settings-save-button").click();
-  const restartMessage = page.locator("#settingsRestartMessage");
-  await restartMessage.waitFor({ state: "visible" });
-  assert.match(await restartMessage.innerText(), /restart required/i);
-  const database = openFixtureDatabase();
-  try {
-    const rows = database.prepare("SELECT key, value FROM node_settings WHERE key IN ('pi.executable', 'pi.configPath', 'pi.sessionPath', 'claude.executable', 'claude.configPath', 'claude.sessionPath')").all() as Array<{ key: string; value: string }>;
-    assert.ok(rows.filter((row) => row.key.startsWith("pi.")).every((row) => row.value === ""), "Pi reset saves blank Pi overrides");
-    assert.ok(rows.filter((row) => row.key.startsWith("claude.")).some((row) => row.value !== ""), "Pi reset leaves Claude overrides alone");
-  } finally {
-    database.close();
-  }
-  await page.getByTestId("settings-cancel-button").click();
-  await page.getByTestId("settings-dialog").waitFor({ state: "hidden" });
-  await page.getByTestId("settings-open-button").click();
-  await page.getByTestId("settings-tab-engines").click();
-  assert.equal(await piExecutable.inputValue(), "", "blank overrides keep the effective node default");
-  await page.getByTestId("settings-cancel-button").click();
+    await page.getByTestId("settings-open-button").click();
+    await page.getByTestId("settings-tab-engines").click();
+    const claudePanel = page.locator("[data-harness-panel='claude']");
+    const piPanel = page.locator("[data-harness-panel='pi']");
+    assert.equal(await piPanel.isVisible(), true, "the Pi tab shows first");
+    assert.equal(await claudePanel.isVisible(), false, "Claude waits behind its own tab");
+    assert.match(await page.getByTestId("settings-pi-defaults").innerText(), /Node defaults — executable:/);
+    await page.getByTestId("harness-tab-pi").focus();
+    await page.keyboard.press("ArrowRight");
+    assert.equal(await claudePanel.isVisible(), true, "Claude has its own defaults and fields");
+    assert.equal(await piPanel.isVisible(), false, "the Pi tab yields to Claude");
+    assert.match(await page.getByTestId("settings-claude-defaults").innerText(), /Node defaults — executable:/);
+    await page.getByTestId("harness-tab-pi").click();
+    const piExecutable = page.getByTestId("settings-pi-executable-input");
+    await piExecutable.fill("custom-pi");
+    await page.getByTestId("settings-use-pi-defaults-button").click();
+    await page.getByTestId("settings-runtime-status").getByText(/Pi executable: Blank \(uses node default\)/).waitFor();
+    await page.getByTestId("settings-save-button").click();
+    const restartMessage = page.locator("#settingsRestartMessage");
+    await restartMessage.waitFor({ state: "visible" });
+    assert.match(await restartMessage.innerText(), /restart required/i);
+    const database = openFixtureDatabase();
+    try {
+      const rows = database.prepare("SELECT key, value FROM node_settings WHERE key IN ('pi.executable', 'pi.configPath', 'pi.sessionPath', 'claude.executable', 'claude.configPath', 'claude.sessionPath')").all() as Array<{ key: string; value: string }>;
+      assert.ok(rows.filter((row) => row.key.startsWith("pi.")).every((row) => row.value === ""), "Pi reset saves blank Pi overrides");
+      assert.ok(rows.filter((row) => row.key.startsWith("claude.")).some((row) => row.value !== ""), "Pi reset leaves Claude overrides alone");
+    } finally {
+      database.close();
+    }
+    await page.getByTestId("settings-cancel-button").click();
+    await page.getByTestId("settings-dialog").waitFor({ state: "hidden" });
+    await page.getByTestId("settings-open-button").click();
+    await page.getByTestId("settings-tab-engines").click();
+    assert.equal(await piExecutable.inputValue(), "", "blank overrides keep the effective node default");
+    await page.getByTestId("settings-cancel-button").click();
   } finally {
     if (await page.getByTestId("settings-dialog").isVisible()) {
       await page.getByTestId("settings-cancel-button").click();
@@ -1386,9 +1388,28 @@ test("Escape closes the terminal, and reaches the shell while a full-screen prog
     const { state } = await import(modulePath);
     return state.terminalEmulator?.buffer.active.type === "alternate";
   }, "/app/state.js");
+  await page.evaluate(async (modulePath) => {
+    const { state } = await import(modulePath);
+    const socket = state.terminalSocket;
+    const originalSend = socket.send;
+    window.__terminalEscapeInputs = [];
+    window.__restoreTerminalSend = () => { socket.send = originalSend; };
+    socket.send = function(data) {
+      const payload = JSON.parse(data);
+      if (payload.type === "terminalInput") window.__terminalEscapeInputs.push(payload.data);
+      return originalSend.call(this, data);
+    };
+  }, "/app/state.js");
   await page.keyboard.press("Escape");
+  assert.deepEqual(await page.evaluate(() => window.__terminalEscapeInputs), ["\u001b"],
+    "Escape is sent to the shell exactly once");
   assert.equal(await page.getByTestId("terminal-dialog").isVisible(), true,
     "Escape belongs to the shell while a full-screen program is running");
+  await page.evaluate(() => {
+    window.__restoreTerminalSend();
+    delete window.__restoreTerminalSend;
+    delete window.__terminalEscapeInputs;
+  });
 
   await page.getByTestId("terminal-close-button").click();
   await page.getByTestId("terminal-dialog").waitFor({ state: "hidden" });

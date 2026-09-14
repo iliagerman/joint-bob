@@ -58,7 +58,8 @@ export async function seedDevEnvironment(root: string, nodeCount: 1 | 2): Promis
 
 export function startDevNode(environment: DevEnvironment, node: SeededNode, extraEnv: Record<string, string> = {}): Promise<ChildProcess> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ["--import", "tsx", "src/server.ts"], {
+    const installStub = Boolean(extraEnv.JOINT_BOB_TEST_ENGINE_LOG || process.env.JOINT_BOB_TEST_ENGINE_LOG);
+    const child = spawn(process.execPath, ["--import", "tsx", ...(installStub ? ["--import", "./test/stub-harness-bootstrap.ts"] : []), "src/server.ts"], {
       cwd: process.cwd(),
       env: {
         ...process.env,

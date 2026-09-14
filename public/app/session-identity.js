@@ -126,9 +126,8 @@ export async function saveSessionColor(sessionId, engine, color) {
 
 async function renameSession(sessionId, engine, title) {
   await saveSessionTitle(sessionId, engine, title);
-  // Pi keeps its own live session name, so mirror it while the socket is open. Only the
-  // open conversation has a socket, so a renamed row elsewhere just reloads the list.
-  if (sessionId === state.activeSessionId && engine === "pi" && title) {
+  // Only the open conversation has a socket, so a renamed row elsewhere just reloads the list.
+  if (sessionId === state.activeSessionId && title) {
     sendSocket({ type: "rename", name: title });
   }
   await refreshSessionsQuietly();
@@ -143,7 +142,11 @@ export function openRenameDialog(sessionId, engine, currentTitle) {
 }
 
 export function sessionEngine(session) {
-  return session.harnessId || (session.path.startsWith("claude:") || session.path.startsWith("draft:claude:") ? "claude" : "pi");
+  const prefixed = /^(?:draft:)?([^:]+):/.exec(session.path)?.[1];
+  const id = session.harnessId || prefixed || state.harnesses.find(({ newSessionPath }) => newSessionPath === "new")?.id;
+  if (!id) throw new Error(`Conversation harness is missing for ${session.path}`);
+  if (!state.harnesses.some((harness) => harness.id === id)) throw new Error(`Unknown conversation harness: ${id}`);
+  return id;
 }
 
 export function openConversationColorDialog(session) {

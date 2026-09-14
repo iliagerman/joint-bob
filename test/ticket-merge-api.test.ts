@@ -79,19 +79,24 @@ interface TaskFixture { project: { id: string; path: string }; task: { id: strin
 
 async function seededTicket(root: string, syncUrl: string, fileName: string, fileBody: string): Promise<TaskFixture> {
   const node = await startNode(root, syncUrl);
-  const headers = await session(node);
-  const homePath = path.join(node.homeDir, "JointBob");
-  await fetch(`${node.baseUrl}/api/settings`, { method: "PUT", headers, body: JSON.stringify({ pi: { executable: "", configPath: "", sessionPath: "" }, claude: { executable: "", configPath: "", sessionPath: "" }, syncthing: { endpoint: "" }, projects: { homePath } }) });
-  const created = await fetch(`${node.baseUrl}/api/projects`, { method: "POST", headers, body: JSON.stringify({ name: "Mergeable", type: "work", synced: true }) });
-  assert.equal(created.status, 201, node.output());
-  const project = (await jsonBody(created) as { project: { id: string; path: string } }).project;
-  await mkdir(project.path, { recursive: true });
-  await writeFile(path.join(project.path, fileName), fileBody);
-  const createdTask = await fetch(`${node.baseUrl}/api/projects/${project.id}/tasks`, { method: "POST", headers, body: JSON.stringify({ title: "Change file", description: "" }) });
-  if (createdTask.status !== 201) console.log("TASK CREATE BODY:", await createdTask.text(), "\nSERVER:\n", node.output());
-  assert.equal(createdTask.status, 201, node.output());
-  const task = (await jsonBody(createdTask) as { task: { id: string; worktreePath: string } }).task;
-  return { project, task, headers, node };
+  try {
+    const headers = await session(node);
+    const homePath = path.join(node.homeDir, "JointBob");
+    await fetch(`${node.baseUrl}/api/settings`, { method: "PUT", headers, body: JSON.stringify({ pi: { executable: "", configPath: "", sessionPath: "" }, claude: { executable: "", configPath: "", sessionPath: "" }, syncthing: { endpoint: "" }, projects: { homePath } }) });
+    const created = await fetch(`${node.baseUrl}/api/projects`, { method: "POST", headers, body: JSON.stringify({ name: "Mergeable", type: "work", synced: true }) });
+    assert.equal(created.status, 201, node.output());
+    const project = (await jsonBody(created) as { project: { id: string; path: string } }).project;
+    await mkdir(project.path, { recursive: true });
+    await writeFile(path.join(project.path, fileName), fileBody);
+    const createdTask = await fetch(`${node.baseUrl}/api/projects/${project.id}/tasks`, { method: "POST", headers, body: JSON.stringify({ title: "Change file", description: "" }) });
+    if (createdTask.status !== 201) console.log("TASK CREATE BODY:", await createdTask.text(), "\nSERVER:\n", node.output());
+    assert.equal(createdTask.status, 201, node.output());
+    const task = (await jsonBody(createdTask) as { task: { id: string; worktreePath: string } }).task;
+    return { project, task, headers, node };
+  } catch (error) {
+    await stopNode(node);
+    throw error;
+  }
 }
 
 test("a clean ticket merge applies workspace changes to the project", { timeout: 180_000 }, async () => {

@@ -39,10 +39,13 @@ test("conversation history window saves and reloads", async () => {
   const input = page.getByTestId("settings-conversation-history-days");
   await page.waitForFunction(() => (document.querySelector("#settingsConversationHistoryDays") as HTMLInputElement).value === "30");
   assert.equal(await input.inputValue(), "30");
-  await input.fill("90");
-  await page.getByTestId("settings-save-button").click();
-  await page.getByTestId("settings-dialog").waitFor({ state: "hidden" });
-  await page.getByTestId("settings-open-button").click();
-  await page.waitForFunction(() => (document.querySelector("#settingsConversationHistoryDays") as HTMLInputElement).value === "90");
-  assert.equal(await input.inputValue(), "90");
+  for (const value of ["45", "90"]) {
+    await input.fill(value);
+    await page.getByTestId("settings-save-button").click();
+    await page.getByTestId("settings-dialog").waitFor({ state: "hidden" });
+    await page.getByTestId("settings-open-button").click();
+    await page.waitForFunction((expected) => (document.querySelector("#settingsConversationHistoryDays") as HTMLInputElement).value === expected, value);
+    assert.equal(await input.inputValue(), value);
+  }
+  await page.getByTestId("settings-dialog").evaluate((dialog: HTMLDialogElement) => dialog.close());
 });

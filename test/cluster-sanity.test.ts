@@ -256,15 +256,15 @@ test("a replicated review survives a cold listing on the other node and new acti
   const target = (await list(nodeA, sessionA, projectA.id)).find((session) => session.harnessId === "pi")!;
   assert.ok(target);
   await list(nodeB, sessionB, projectB.id);
-  const waitState = async (node: SeededNode, auth: SignedIn, projectId: string, state: string) => {
+  const waitState = async (node: SeededNode, auth: SignedIn, projectId: string, state: string, minimumUpdatedAt?: string) => {
     const deadline = Date.now() + 15_000;
     let current: ReviewSession | undefined;
     do {
       current = (await list(node, auth, projectId)).find((session) => session.id === target.id);
-      if (current?.reviewState === state) return current;
+      if (current?.reviewState === state && (!minimumUpdatedAt || Date.parse(current.updatedAt) >= Date.parse(minimumUpdatedAt))) return current;
       await new Promise((resolve) => setTimeout(resolve, 100));
     } while (Date.now() < deadline);
-    assert.fail(`Expected ${state} on ${node.key}, got ${JSON.stringify(current)}`);
+    assert.fail(`Expected ${state} at ${minimumUpdatedAt ?? "any watermark"} on ${node.key}, got ${JSON.stringify(current)}`);
   };
   const activityTime = Date.now() + 1_000;
   const activityAt = new Date(activityTime).toISOString();
@@ -275,8 +275,8 @@ test("a replicated review survives a cold listing on the other node and new acti
     await utimes(target.path, syncedAt, syncedAt);
   };
   await appendActivity(activityAt);
-  const pending = await waitState(nodeA, sessionA, projectA.id, "needs_review");
-  await waitState(nodeB, sessionB, projectB.id, "needs_review");
+  const pending = await waitState(nodeA, sessionA, projectA.id, "needs_review", activityAt);
+  await waitState(nodeB, sessionB, projectB.id, "needs_review", activityAt);
   const reviewed = await fetch(`${nodeA.url}/api/projects/${projectA.id}/sessions/reviewed`, {
     method: "PUT",
     headers: { Cookie: sessionA.cookie, "x-csrf-token": sessionA.csrfToken, "Content-Type": "application/json" },
@@ -291,9 +291,10 @@ test("a replicated review survives a cold listing on the other node and new acti
   sessionB = await signIn(environment, nodeB);
   await waitState(nodeB, sessionB, projectB.id, "reviewed");
 
-  await appendActivity(new Date(activityTime + 2_000).toISOString());
-  await waitState(nodeA, sessionA, projectA.id, "needs_review");
-  await waitState(nodeB, sessionB, projectB.id, "needs_review");
+  const nextActivityAt = new Date(activityTime + 2_000).toISOString();
+  await appendActivity(nextActivityAt);
+  await waitState(nodeA, sessionA, projectA.id, "needs_review", nextActivityAt);
+  await waitState(nodeB, sessionB, projectB.id, "needs_review", nextActivityAt);
 });
 
 test("each node is paired with the other and holds its machine token", async () => {
@@ -880,7 +881,7 @@ async function queueTransferFixture() {
   const settingsB = (await api<Record<string, unknown>>(nodeB, sessionB, "GET", "/settings")).body;
   const fake = path.join(root, "queue-claude.mjs");
   const log = path.join(root, "queue-dispatch.log");
-  await writeFile(fake, `#!/usr/bin/env node\nimport { appendFile, readFile } from 'node:fs/promises';\nif (process.argv[2] === 'auth') { console.log(JSON.stringify({ loggedIn: true })); process.exit(0); }\nlet text = ''; for await (const chunk of process.stdin) text += chunk;\nawait appendFile(${JSON.stringify(log)}, JSON.stringify({ text, args: process.argv.slice(2), instructions: await readFile(process.argv[process.argv.indexOf('--append-system-prompt-file') + 1], 'utf8') }) + '\\n');\nconsole.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'done' }] } }));\nconsole.log(JSON.stringify({ type: 'result', is_error: false }));\n`);
+  await writeFile(fake, `#!/usr/bin/env node\nimport { appendFile, readFile } from 'node:fs/promises';\nif (process.argv[2] === '--version') { console.log('queue-claude fixture 1.0.0'); process.exit(0); }\nif (process.argv[2] === 'auth') { console.log(JSON.stringify({ loggedIn: true })); process.exit(0); }\nlet text = ''; for await (const chunk of process.stdin) text += chunk;\nawait appendFile(${JSON.stringify(log)}, JSON.stringify({ text, args: process.argv.slice(2), instructions: await readFile(process.argv[process.argv.indexOf('--append-system-prompt-file') + 1], 'utf8') }) + '\\n');\nconsole.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'done' }] } }));\nconsole.log(JSON.stringify({ type: 'result', is_error: false }));\n`);
   await chmod(fake, 0o755);
   await api(nodeA, sessionA, "PUT", "/settings", { ...settingsA, claude: { ...(settingsA.claude as object), executable: path.join(root, "missing-queue-claude") } });
   await api(nodeB, sessionB, "PUT", "/settings", { ...settingsB, claude: { ...(settingsB.claude as object), executable: fake } });

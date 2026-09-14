@@ -1,3 +1,4 @@
+import { harnessLabel } from "../harness-metadata.js";
 import { openQueuedModelPicker, queuedReasoningLevels } from "./composer-dialogs.js";
 import { renderMarkdown } from "../markdown.js";
 import { elements } from "./elements.js";
@@ -97,7 +98,7 @@ export function clearChat() {
 let currentSegment = null;
 
 function engineLabel(engine) {
-  return engine === "claude" ? "Claude" : "Pi";
+  return harnessLabel(state.harnesses, engine);
 }
 
 function appendSwitchNotice(engine) {
@@ -529,7 +530,10 @@ function queuedSettingsEditor(bubble) {
   reasoning.setAttribute("aria-label", "Queued message reasoning");
   let draft = null;
   const render = () => {
-    model.textContent = draft ? `${draft.provider === "claude" ? "Claude" : "Pi"} · ${draft.provider}/${draft.modelId}` : "Inherit conversation settings";
+    const harnessId = draft?.harnessId
+      || state.models.find((candidate) => candidate.provider === draft?.provider && candidate.id === draft?.modelId)?.harnessId
+      || state.harnesses.find((candidate) => candidate.fixedProvider === draft?.provider || candidate.configuration?.fixedProvider === draft?.provider)?.id;
+    model.textContent = draft ? `${harnessLabel(state.harnesses, harnessId || draft.provider)} · ${draft.provider}/${draft.modelId}` : "Inherit conversation settings";
     reasoning.hidden = !draft;
     reasoning.replaceChildren();
     if (!draft) return;
@@ -542,7 +546,7 @@ function queuedSettingsEditor(bubble) {
     reasoning.value = draft.reasoning;
   };
   model.addEventListener("click", () => openQueuedModelPicker(draft ? `${draft.provider}/${draft.modelId}` : "/", (selected) => {
-    draft = selected ? { provider: selected.provider, modelId: selected.id, reasoning: queuedReasoningLevels(selected.provider, selected.id)[0] } : null;
+    draft = selected ? { harnessId: selected.harnessId, provider: selected.provider, modelId: selected.id, reasoning: queuedReasoningLevels(selected.provider, selected.id)[0] } : null;
     render();
   }));
   reasoning.addEventListener("change", () => { draft.reasoning = reasoning.value; });

@@ -71,5 +71,7 @@ test("chat keeps node, harness, and session selectors visible", async () => {
   assert.match(app, /searchParams\.set\("nodeId"/);
   assert.match(app, /chatNodeSelect\.addEventListener\("change"/);
   const server = await serverSource();
-  assert.match(server, /disconnects must not cancel an in-flight turn/);
+  const closeHandler = /options\.socket\.on\("close", \(\) => \{([^}]*)\}\);/.exec(server)?.[1] ?? "";
+  assert.match(closeHandler, /detachHarnessClient\(connection\.shared, options\.socket\)/);
+  assert.doesNotMatch(closeHandler, /\.cancel\(|stopForUpdate/);
 });

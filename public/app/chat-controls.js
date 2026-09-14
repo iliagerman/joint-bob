@@ -1,7 +1,7 @@
 import { api, savePreferencesInBackground } from "./api.js";
 import { syncBrowserButton } from "./browser.js";
 import { clearThinkingBubble } from "./chat-transcript.js";
-import { changeReasoningLevel, hideCommandAutocomplete, PI_MODEL_PROVIDERS, renderCommandAutocomplete, renderReasoningOptions, renderToolsDialog, syncModelButton } from "./composer-dialogs.js";
+import { changeReasoningLevel, hideCommandAutocomplete, renderCommandAutocomplete, renderReasoningOptions, renderToolsDialog, syncModelButton } from "./composer-dialogs.js";
 import { elements } from "./elements.js";
 import { syncChatTitleFromSessions } from "./layout.js";
 import { renderSessions } from "./session-list.js";
@@ -107,7 +107,7 @@ export function renderChatSessionControls() {
   const activeTicket = state.activeTaskId ? state.tasks.find((task) => task.id === state.activeTaskId) : null;
   elements.chatNodeSelect.disabled = !state.activeProjectId || !state.sessionNodes.length || conversationIsReadOnly();
 
-  syncSelectOptions(elements.chatHarnessSelect, state.harnesses.map((harness) => ({ value: harness.id, label: harness.label })));
+  syncSelectOptions(elements.chatHarnessSelect, state.harnesses.filter(({ runtimeConfigured }) => runtimeConfigured).map((harness) => ({ value: harness.id, label: harness.label })));
   elements.chatHarnessSelect.value = state.engine;
   elements.chatHarnessSelect.disabled = !state.activeProjectId || !state.harnesses.length || conversationIsReadOnly();
 
@@ -131,14 +131,12 @@ export function syncEngineUI() {
 }
 
 function syncReasoningControls(status) {
-  state.thinkingLevel = status.thinkingLevel || (state.engine === "claude" ? "default" : "off");
-  Object.assign(state, { availableThinkingLevels: status.availableThinkingLevels || [] });
-  if (state.engine === "claude") state.claudeEffort = state.thinkingLevel;
+  state.thinkingLevel = status.thinkingLevel;
+  state.availableThinkingLevels = status.availableThinkingLevels;
   renderReasoningOptions();
 }
 
-// Both harnesses report the same {usedTokens, contextWindow, percent} reading, so
-// the gauge does not care which engine is driving the conversation.
+// Harnesses report a comparable percentage; providers include token counts only when known.
 function syncContextUsage(usage) {
   if (!usage) {
     elements.contextUsage.hidden = true;
@@ -150,7 +148,9 @@ function syncContextUsage(usage) {
   elements.contextUsage.classList.toggle("danger", percent >= 90);
   elements.contextUsageFill.style.width = `${percent}%`;
   elements.contextUsageText.textContent = `${percent}%`;
-  elements.contextUsage.title = `Context: ${usage.usedTokens.toLocaleString()} of ${usage.contextWindow.toLocaleString()} tokens (${percent}%)`;
+  elements.contextUsage.title = usage.usedTokens !== undefined && usage.contextWindow !== undefined
+    ? `Context: ${usage.usedTokens.toLocaleString()} of ${usage.contextWindow.toLocaleString()} tokens (${percent}%)`
+    : `Context: ${percent}% (token counts unavailable)`;
 }
 
 export function updateStatus(status) {
@@ -167,23 +167,26 @@ export function updateStatus(status) {
   if (elements.toolsDialog.open) renderToolsDialog();
 }
 
-function piUiModels(models) {
-  const ordered = [];
-  for (const { provider } of PI_MODEL_PROVIDERS) {
-    ordered.push(...models.filter((model) => model.provider === provider));
-  }
-  return ordered;
-}
-
-export function setModels(models) {
-  state.models = piUiModels(models);
+export function setModels(models, harnessId) {
+  state.models = harnessId
+    ? [...state.models.filter((model) => model.harnessId !== harnessId), ...models]
+    : models;
   syncModelButton();
 }
 
-export async function loadHarnesses() {
-  const body = await api("/api/harnesses");
-  state.harnesses = body.harnesses || [];
-  renderChatSessionControls();
+let harnessesRequest = null;
+
+export function loadHarnesses() {
+  if (harnessesRequest) return harnessesRequest;
+  harnessesRequest = (async () => {
+    const body = await api("/api/harnesses");
+    if (!Array.isArray(body.harnesses)) throw new Error("Harness metadata response is invalid");
+    state.harnesses = body.harnesses;
+    renderChatSessionControls();
+  })().finally(() => {
+    harnessesRequest = null;
+  });
+  return harnessesRequest;
 }
 
 export async function loadSessionNodes(projectId) {

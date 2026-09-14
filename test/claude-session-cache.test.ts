@@ -60,6 +60,17 @@ test("Claude session listing re-reads a transcript only when it changes", async 
     assert.equal(included[0].path, `claude:${transcriptPath}`, "a directly referenced old transcript remains discoverable");
     assert.equal((await claude.listClaudeSessions({ path: projectCwd, historyDays: 1, includedSessionIds: ["claude:session-one"] })).length, 1, "a pinned old transcript remains discoverable");
     assert.equal((await claude.loadClaudeMessages(`claude:${transcriptPath}`))[0].text, "Secnd", "an old transcript still loads directly");
+
+    const oldPath = path.join(projectDir, "old.jsonl");
+    const unreadOldPath = path.join(projectDir, "unread-old.jsonl");
+    await writeFile(oldPath, transcriptLine("Old conversation"));
+    await writeFile(unreadOldPath, "not json");
+    await utimes(oldPath, new Date("2020-01-01"), new Date("2020-01-01"));
+    await utimes(unreadOldPath, new Date("2020-01-01"), new Date("2020-01-01"));
+    await utimes(transcriptPath, new Date(), new Date());
+    const windowed = await claude.listClaudeSessions({ path: projectCwd, historyDays: 30 });
+    assert.deepEqual(windowed.map((session) => session.id), ["session-one"]);
+    assert.equal((await claude.loadClaudeMessages(`claude:${oldPath}`))[0].text, "Old conversation", "opening bypasses the summary window");
   } finally {
     if (previousDataDir === undefined) delete process.env.PI_WEB_DATA_DIR;
     else process.env.PI_WEB_DATA_DIR = previousDataDir;

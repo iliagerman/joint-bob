@@ -4,6 +4,8 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { resolveDataDirectory } from "./data-directory.js";
+import { listDiscoveredHarnesses } from "./harnesses/registry.js";
+import { isHarnessId } from "./types.js";
 
 const timezoneSchema = z.string().min(1).max(100).refine(value => {
   try { new Intl.DateTimeFormat("en", { timeZone: value }); return true; } catch { return false; }
@@ -17,14 +19,24 @@ const cronModelSchema = z.object({
 export const cronInputSchema = z.object({
   projectId: z.string().min(1).max(240), name: z.string().trim().min(1).max(120),
   prompt: z.string().trim().min(1).max(100000), ownerNodeId: z.string().uuid(),
-  engine: z.enum(["pi", "claude"]), model: cronModelSchema.nullable().optional(), reasoning: reasoningSchema.optional(),
+  engine: z.string().refine(isHarnessId, "Harness ID is invalid")
+    .refine(id => listDiscoveredHarnesses().some(adapter => adapter.id === id && adapter.runtime), "Harness is not registered on this node"),
+  model: cronModelSchema.nullable().optional(), reasoning: reasoningSchema.optional(),
   sessionId: z.string().min(1).max(240).nullable(), enabled: z.boolean(),
   schedule: z.object({ frequency: z.enum(["hourly", "daily", "weekly"]), intervalHours: z.number().int().min(1).max(168).optional(), hour: z.number().int().min(0).max(23), minute: z.number().int().min(0).max(59), weekday: z.number().int().min(0).max(6), timezone: timezoneSchema }).strict(),
 }).strict().superRefine((input, context) => {
+  const adapter = listDiscoveredHarnesses().find((candidate) => candidate.id === input.engine);
+  if (!adapter?.configuration) return;
   const reasoning = input.reasoning ?? input.model?.reasoning;
-  const invalidModel = input.model && (input.engine === "claude" ? input.model.provider !== "claude" : input.model.provider === "claude");
-  const invalidReasoning = reasoning && (input.engine === "claude" ? ["off", "minimal"].includes(reasoning) : reasoning === "default");
-  if (invalidModel || invalidReasoning) context.addIssue({ code: z.ZodIssueCode.custom, path: ["model"], message: "Model settings do not belong to the selected harness" });
+  const reservedProvider = input.model
+    ? listDiscoveredHarnesses().find((candidate) => candidate.id !== input.engine && candidate.configuration?.fixedProvider === input.model!.provider)
+    : undefined;
+  const fixedProvider = adapter.configuration.fixedProvider;
+  const providerMismatch = input.model
+    ? (fixedProvider ? input.model.provider !== fixedProvider : Boolean(reservedProvider))
+    : false;
+  const thinkingMismatch = reasoning !== undefined && !adapter.configuration.thinkingLevels.includes(reasoning as (typeof adapter.configuration.thinkingLevels)[number]);
+  if (providerMismatch || thinkingMismatch) context.addIssue({ code: z.ZodIssueCode.custom, path: ["model"], message: "Model settings do not belong to the selected harness" });
 });
 export type CronInput = z.infer<typeof cronInputSchema>;
 export const cronRunSchema = z.object({ id: z.string().uuid(), taskId: z.string().uuid(), dueAt: z.number().int(), status: z.enum(["waiting", "running", "succeeded", "failed"]), error: z.string().nullable(), sessionId: z.string().nullable(), finishedAt: z.number().int().nullable() }).strict();

@@ -110,7 +110,16 @@ test("the pending reviews endpoint groups conversations needing review across pr
     const later = new Date(Date.now() + 1000);
     await utimes(fixture.sessionFile, later, later);
 
-    const groups = await pending();
+    const deadline = Date.now() + 5_000;
+    let groups: Awaited<ReturnType<typeof pending>> = [];
+    do {
+      groups = await pending();
+      const group = groups.find((entry) => entry.projectId === fixture.projectId);
+      if (group?.sessions.some((session) => Date.parse(session.updatedAt) >= later.getTime())) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    } while (Date.now() < deadline);
+    const observedGroup = groups.find((entry) => entry.projectId === fixture.projectId);
+    assert.ok(observedGroup?.sessions.some((session) => Date.parse(session.updatedAt) >= later.getTime()), `Timed out waiting for pending review at ${later.toISOString()}; last response: ${JSON.stringify(groups)}`);
     assert.equal(groups.length, 1);
     assert.equal(groups[0].projectId, fixture.projectId);
     assert.equal(groups[0].projectName, "Review inbox");

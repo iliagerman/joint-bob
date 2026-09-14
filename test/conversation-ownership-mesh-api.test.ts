@@ -68,7 +68,7 @@ async function pairNode(local: NodeFixture, remote: NodeFixture, home: string): 
 
 function startNode(node: NodeFixture, home: string, invocationLog: string, holdDir: string): Promise<ChildProcess> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ["--import", "tsx", "src/server.ts"], {
+    const child = spawn(process.execPath, ["--import", "tsx", "--import", "./test/stub-harness-bootstrap.ts", "src/server.ts"], {
       cwd: process.cwd(),
       env: { ...process.env, PORT: String(node.port), NODE_ENV: "test", HOME: home, JOINT_BOB_DATA_DIR: node.dataDir, JOINT_BOB_TEST_ENGINE_LOG: invocationLog, JOINT_BOB_TEST_ENGINE_HOLD_DIR: holdDir },
       stdio: ["ignore", "pipe", "pipe"],

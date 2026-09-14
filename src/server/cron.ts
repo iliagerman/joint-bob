@@ -91,7 +91,7 @@ export async function queuedCronPrompt(task: CronTask, run: CronRun, sessionId: 
           socket.send(JSON.stringify({ type: "setModel", provider: task.model.provider, modelId: task.model.modelId }));
         } else if (reasoning) {
           configuration = "reasoning";
-          socket.send(JSON.stringify(task.engine === "claude" ? { type: "setEffort", effort: reasoning } : { type: "setThinking", level: reasoning }));
+          socket.send(JSON.stringify({ type: "setThinking", level: reasoning }));
         } else {
           configuration = "prompt";
           socket.send(JSON.stringify({ type: "prompt", message: task.prompt, requestId: run.id }));
@@ -100,7 +100,7 @@ export async function queuedCronPrompt(task: CronTask, run: CronRun, sessionId: 
       if (event.type === "status" && task.model && configuration === "model" && event.status?.model?.provider === task.model.provider && event.status.model.id === task.model.modelId) {
         if (reasoning) {
           configuration = "reasoning";
-          socket.send(JSON.stringify(task.engine === "claude" ? { type: "setEffort", effort: reasoning } : { type: "setThinking", level: reasoning }));
+          socket.send(JSON.stringify({ type: "setThinking", level: reasoning }));
         } else {
           configuration = "prompt";
           socket.send(JSON.stringify({ type: "prompt", message: task.prompt, requestId: run.id }));

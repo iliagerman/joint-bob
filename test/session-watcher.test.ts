@@ -4,7 +4,9 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { claudeProjectDir } from "../src/harnesses/claude/paths.js";
 import type { ProjectRecord } from "../src/types.js";
+import { SessionWatcher } from "../src/watcher.js";
 
 function project(id: string, projectPath: string): ProjectRecord {
   return {
@@ -16,11 +18,27 @@ function project(id: string, projectPath: string): ProjectRecord {
   };
 }
 
+function waitForCallbacks(callbacks: Map<string, string[]>, expectedFiles: string[], expectedProjects = 2): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      clearInterval(interval);
+      reject(new Error("timed out waiting for session notification"));
+    }, 4_000);
+    const interval = setInterval(() => {
+      if (callbacks.size === expectedProjects && [...callbacks.values()].every((files) => JSON.stringify(files) === JSON.stringify(expectedFiles))) {
+        clearTimeout(timeout);
+        clearInterval(interval);
+        resolve();
+      }
+    }, 10);
+  });
+}
+
 function waitForCallback(callbacks: Map<string, string[]>, projectId: string, expectedPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       clearInterval(interval);
-      reject(new Error("timed out waiting for flat session notification"));
+      reject(new Error("timed out waiting for project session notification"));
     }, 4_000);
     const interval = setInterval(() => {
       if (callbacks.get(projectId)?.[0] === expectedPath) {
@@ -69,6 +87,70 @@ test("shared flat Pi session watcher does not keep the process alive", async () 
   }
 });
 
+test("registering a newly created session root requests one full refresh", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "session-watcher-missing-"));
+  const previousHome = process.env.HOME;
+  const flatRoot = path.join(home, ".pi/agent/sessions");
+  let watcher: import("../src/watcher.js").SessionWatcher | undefined;
+
+  try {
+    process.env.HOME = home;
+    const { SessionWatcher } = await import(`../src/watcher.ts?missing=${Date.now()}`);
+    const callbacks = new Map<string, string[]>();
+    let callbackCount = 0;
+    watcher = new SessionWatcher((projectId, changedFiles) => {
+      callbackCount += 1;
+      callbacks.set(projectId, changedFiles);
+    });
+    watcher.ensureProject(project("missing", path.join(home, "project")));
+
+    await mkdir(flatRoot, { recursive: true });
+    await writeFile(path.join(flatRoot, "existing.jsonl"), "{\"type\":\"session\"}\n");
+    watcher.ensureProject(project("missing", path.join(home, "project")));
+    await writeFile(path.join(flatRoot, "coalesced.jsonl"), "{\"type\":\"session\"}\n");
+
+    await waitForCallbacks(callbacks, [], 1);
+    assert.equal(callbackCount, 1);
+  } finally {
+    watcher?.close();
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("Claude root watcher observes the first transcript in a new project directory", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "session-watcher-claude-first-"));
+  const previousHome = process.env.HOME;
+  const projectsRoot = path.join(home, ".claude/projects");
+  const projectPath = path.join(home, "project");
+  let watcher: SessionWatcher | undefined;
+
+  try {
+    process.env.HOME = home;
+    await mkdir(projectsRoot, { recursive: true });
+    const callbacks = new Map<string, string[]>();
+    watcher = new SessionWatcher((projectId, changedFiles) => callbacks.set(projectId, changedFiles));
+    watcher.ensureProject(project("claude-first", projectPath));
+
+    await waitForCallbacks(callbacks, [], 1);
+    callbacks.clear();
+
+    const transcriptDir = claudeProjectDir(projectPath, projectsRoot);
+    await mkdir(transcriptDir, { recursive: true });
+    const transcript = path.join(transcriptDir, "first.jsonl");
+    await writeFile(transcript, `${JSON.stringify({ type: "user", cwd: projectPath })}\n`);
+
+    await waitForCallback(callbacks, "claude-first", transcript);
+    assert.deepEqual(callbacks.get("claude-first"), [transcript]);
+  } finally {
+    watcher?.close();
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("shared flat Pi session watcher notifies only the transcript project", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "session-watcher-"));
   const previousHome = process.env.HOME;
@@ -87,6 +169,10 @@ test("shared flat Pi session watcher notifies only the transcript project", asyn
     });
     watcher.ensureProject(project("a", path.join(home, "project-a")));
     watcher.ensureProject(project("b", path.join(home, "project-b")));
+
+    await waitForCallbacks(callbacks, []);
+    callbacks.clear();
+    callbackCount = 0;
 
     const transcript = path.join(flatRoot, "flat-session.jsonl");
     await writeFile(transcript, `${JSON.stringify({ type: "session", cwd: path.join(home, "project-a") })}\n`);

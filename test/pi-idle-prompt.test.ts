@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { PiSession } from "../src/harnesses/pi/runtime.js";
 import { promptIdlePiSession, type PiSessionHandle } from "../src/pi-service.js";
 import { serverSource } from "./source.js";
 
@@ -7,26 +8,30 @@ import { serverSource } from "./source.js";
     exactly the way the SDK does while a turn is running. */
 function fakePiSession(startBusy: boolean, promptImpl?: (text: string) => Promise<void>) {
   const state = { streaming: startBusy };
-  const listeners = new Set<() => void>();
+  const listeners = new Set<(event: { type: string; messages?: unknown[] }) => void>();
   const prompts: string[] = [];
   const session = {
+    sessionId: "fake-pi-session",
+    messages: [] as unknown[],
     get isStreaming() { return state.streaming; },
     isBashRunning: false,
     isCompacting: false,
     isRetrying: false,
-    subscribe(listener: () => void) { listeners.add(listener); return () => listeners.delete(listener); },
+    subscribe(listener: (event: { type: string; messages?: unknown[] }) => void) { listeners.add(listener); return () => listeners.delete(listener); },
     async prompt(text: string) {
       if (state.streaming) throw new Error("Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.");
       prompts.push(text);
+      for (const listener of listeners) listener({ type: "agent_start" });
     },
+    dispose() {},
   };
   if (promptImpl) (session as { prompt: (text: string) => Promise<void> }).prompt = promptImpl;
   return {
-    handle: { session } as unknown as PiSessionHandle,
+    handle: { session, safeguardsEnabled: true, dispose() {} } as unknown as PiSessionHandle,
     prompts,
     startTurn() { state.streaming = true; },
-    endTurn() { state.streaming = false; for (const listener of listeners) listener(); },
-    emitWhileStreaming() { for (const listener of listeners) listener(); },
+    endTurn() { state.streaming = false; for (const listener of listeners) listener({ type: "agent_end", messages: session.messages }); },
+    emitWhileStreaming() { for (const listener of listeners) listener({ type: "agent_end", messages: session.messages }); },
   };
 }
 
@@ -70,7 +75,68 @@ test("failures other than a busy session surface to the task run", async () => {
   assert.deepEqual(fake.prompts, []);
 });
 
-test("the task runner routes its phase prompt through the idle wait", async () => {
+test("Pi adapter waits for an initial busy session before its actual prompt attempt", async () => {
+  const fake = fakePiSession(true);
+  const session = new PiSession({ cwd: "/tmp", projectId: "project", sessionId: "fake-pi-session" }, fake.handle as never);
+  let beforeStartCalls = 0;
+  let startedCalls = 0;
+  const outcome = session.prompt({
+    text: "next phase",
+    beforeStart: async () => { beforeStartCalls += 1; },
+    onStarted: () => { startedCalls += 1; },
+  }).then(() => undefined, (error: unknown) => error);
+
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.deepEqual(fake.prompts, []);
+    assert.equal(beforeStartCalls, 0, "caller fence ran before the Pi session became idle");
+  } finally {
+    fake.endTurn();
+  }
+
+  assert.equal(await outcome, undefined);
+  assert.equal(beforeStartCalls, 1);
+  assert.equal(startedCalls, 1);
+  session.dispose();
+});
+
+test("Pi adapter retries an SDK busy race and checks the caller fence per attempt", async () => {
+  let promptCalls = 0;
+  const fake = fakePiSession(false, async (text) => {
+    promptCalls += 1;
+    if (promptCalls === 1) {
+      fake.startTurn();
+      throw new Error("Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.");
+    }
+    fake.prompts.push(text);
+  });
+  const session = new PiSession({ cwd: "/tmp", projectId: "project", sessionId: "fake-pi-session" }, fake.handle as never);
+  let beforeStartCalls = 0;
+  let startedCalls = 0;
+  const outcome = session.prompt({
+    text: "next phase",
+    beforeStart: async () => { beforeStartCalls += 1; },
+    onStarted: () => { startedCalls += 1; },
+  }).then(() => undefined, (error: unknown) => error);
+
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(beforeStartCalls, 1);
+    assert.equal(promptCalls, 1);
+  } finally {
+    fake.endTurn();
+  }
+
+  assert.equal(await outcome, undefined);
+  assert.equal(beforeStartCalls, 2);
+  assert.equal(startedCalls, 1);
+  assert.deepEqual(fake.prompts, ["next phase"]);
+  session.dispose();
+});
+
+test("generic task dispatch uses HarnessSession.prompt and Pi keeps idle scheduling private", async () => {
   const source = await serverSource();
-  assert.match(source, /promptIdlePiSession\(shared\.handle, prompt\)/);
+  assert.doesNotMatch(source, /promptIdlePiSession/);
+  assert.match(source, /\.session\.prompt\(/);
+  assert.match(PiSession.prototype.prompt.toString(), /service\.promptIdlePiSession\(this\.handle/);
 });

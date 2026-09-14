@@ -47,7 +47,7 @@ export async function loadProjects() {
   } finally {
     setListLoading("projects", false);
   }
-  void loadHarnesses().catch((error) => console.warn("Could not load harnesses", error));
+  void loadHarnesses().catch((error) => toast(error.message, 8000));
   void api("/api/settings").then((settings) => {
     state.conversationLabels = settings.conversationLabels;
     renderSessions();
@@ -149,7 +149,10 @@ export async function selectProject(projectId, shouldRender = true, preserveSess
   void loadSessionNodes(projectId).catch((error) => toast(error.message, 8000));
   let body;
   try {
-    body = await api(`/api/projects/${encodeURIComponent(projectId)}/sessions`);
+    [body] = await Promise.all([
+      api(`/api/projects/${encodeURIComponent(projectId)}/sessions`),
+      state.harnesses.length ? undefined : loadHarnesses(),
+    ]);
   } finally {
     if (state.activeProjectId === projectId) setListLoading("sessions", false);
   }

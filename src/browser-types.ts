@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isHarnessId } from "./types.js";
 
 export const browserWebUrlSchema = z.string().url().max(8192).refine(value => {
   const url = new URL(value);
@@ -7,7 +8,7 @@ export const browserWebUrlSchema = z.string().url().max(8192).refine(value => {
 
 export const browserIdentitySchema = z.object({
   projectId: z.string().min(1).max(200),
-  engine: z.enum(["pi", "claude"]),
+  engine: z.string().refine(isHarnessId, "Invalid harness ID"),
   conversationId: z.string().min(1).max(200),
 });
 export const browserStartSchema = browserIdentitySchema.extend({

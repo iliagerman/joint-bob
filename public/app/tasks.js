@@ -1,9 +1,9 @@
 import { renderBoard } from "../board.js";
+import { harnessLabel } from "../harness-metadata.js";
 import { api } from "./api.js";
 import { addTaskAttachments, clearTaskAttachments, renderTaskAttachments } from "./attachments.js";
 import { renderChatSessionControls, renderConversationLock, setComposerEnabled } from "./chat-controls.js";
 import { requestPinChat } from "./chat-transcript.js";
-import { CLAUDE_MODEL_OPTIONS } from "./composer-dialogs.js";
 import { elements } from "./elements.js";
 import { selectedProject, setMobileView } from "./layout.js";
 import { openFileAction } from "./project-files.js";
@@ -43,6 +43,7 @@ export function renderBoardView() {
     onArchive: archiveTask,
     onDelete: deleteTaskFromCard,
     onSettings: openEditTaskDialog,
+    harnessLabel: (engine) => harnessLabel(state.harnesses, engine),
     onMenu: (anchor, items, task) => openRowMenu(anchor, items, `[data-task-id="${CSS.escape(task.id)}"] [data-testid="board-task-menu-button"]`),
   });
 }
@@ -96,19 +97,33 @@ function phaseSelectFor(phase) {
   }[phase];
 }
 
-function taskModelOptions(engine) {
-  if (engine === "claude") return CLAUDE_MODEL_OPTIONS.map((model) => ({ value: `claude||${model.id}|default`, label: model.label }));
-  return state.models.map((model) => ({ value: `pi|${model.provider}|${model.id}|default`, label: model.label }));
+function populateTaskEngines(selectedEngine = null) {
+  const executable = state.harnesses.filter((harness) => harness.runtimeConfigured);
+  elements.taskEngineInput.replaceChildren(...executable.map((harness) => new Option(harness.label, harness.id)));
+  if (selectedEngine && !executable.some(({ id }) => id === selectedEngine)) elements.taskEngineInput.add(new Option(harnessLabel(state.harnesses, selectedEngine), selectedEngine));
+  elements.taskEngineInput.value = selectedEngine || executable[0]?.id || "";
 }
 
-function defaultPhaseValue(phase, engine) {
-  if (engine === "claude") return phase === "review" ? "claude||sonnet|default" : "claude||claude-opus-5|default";
-  const firstPi = state.models[0];
-  return firstPi ? `pi|${firstPi.provider}|${firstPi.id}|default` : "";
+function taskModelOptions(engine) {
+  const harness = state.harnesses.find(({ id }) => id === engine);
+  return [
+    { value: `${engine}|||default`, label: "Use harness defaults" },
+    ...state.models.filter((model) => model.harnessId === engine).map((model) => ({
+      value: `${engine}|${model.provider}|${model.id}|${harness?.defaults?.thinkingLevel || model.thinkingLevels?.[0]}`,
+      label: model.label,
+    })),
+  ];
+}
+
+function defaultPhaseValue(engine) {
+  const harness = state.harnesses.find(({ id }) => id === engine);
+  const model = state.models.find((candidate) => candidate.harnessId === engine && candidate.id === harness?.defaults?.modelId)
+    || state.models.find((candidate) => candidate.harnessId === engine);
+  return model ? `${engine}|${model.provider}|${model.id}|${harness?.defaults?.thinkingLevel || model.thinkingLevels?.[0]}` : `${engine}|||default`;
 }
 
 function populatePhaseModelInputs(task = null) {
-  const engine = task?.engine || elements.taskEngineInput.value || "pi";
+  const engine = task?.engine || elements.taskEngineInput.value;
   const options = taskModelOptions(engine);
   for (const phase of ["planning", "in_progress", "review"]) {
     const select = phaseSelectFor(phase);
@@ -120,15 +135,21 @@ function populatePhaseModelInputs(task = null) {
       select.append(item);
     }
     const config = task?.phaseConfig?.[phase];
-    select.value = config?.engine === engine ? `${config.engine}|${config.provider || ""}|${config.modelId || ""}|${config.effort || "default"}` : defaultPhaseValue(phase, engine);
+    const configured = config?.engine === engine ? `${config.engine}|${config.provider || ""}|${config.modelId || ""}|${config.effort || "default"}` : defaultPhaseValue(engine);
+    if (configured && ![...select.options].some(({ value }) => value === configured)) select.add(new Option(`${config?.modelId || "Saved model"} (saved)`, configured));
+    select.value = configured;
     if (!select.value && select.options.length) select.selectedIndex = 0;
   }
 }
 
 function phaseConfigFromInputs() {
   const phaseConfig = {};
+  const inheritedEngine = elements.taskEngineInput.value;
+  if (!state.harnesses.some(({ id }) => id === inheritedEngine)) throw new Error("Selected harness is unavailable");
   for (const phase of ["planning", "in_progress", "review"]) {
-    const [engine, provider, modelId, effort] = phaseSelectFor(phase).value.split("|");
+    const value = phaseSelectFor(phase).value;
+    const [engine, provider, modelId, effort] = value ? value.split("|") : [inheritedEngine, "", "", "default"];
+    if (!state.harnesses.some(({ id }) => id === engine)) throw new Error("Selected harness is unavailable");
     phaseConfig[phase] = { engine, provider, modelId, effort };
   }
   return phaseConfig;
@@ -140,7 +161,7 @@ function openNewTaskDialog(status = "backlog") {
   elements.taskForm.reset();
   clearTaskAttachments();
   elements.taskStatusInput.value = status;
-  elements.taskEngineInput.value = "pi";
+  populateTaskEngines();
   elements.taskPlanModeInput.checked = status === "planning";
   elements.taskReviewModeInput.checked = false;
   populatePhaseModelInputs();
@@ -202,7 +223,7 @@ export function openEditTaskDialog(task) {
   state.taskAttachments = [...(task.attachments || [])];
   renderTaskAttachments();
   elements.taskStatusInput.value = task.status;
-  elements.taskEngineInput.value = task.engine || "pi";
+  populateTaskEngines(task.engine);
   elements.taskPlanModeInput.checked = Boolean(task.planMode);
   elements.taskReviewModeInput.checked = Boolean(task.reviewMode);
   populatePhaseModelInputs(task);
@@ -244,7 +265,7 @@ async function moveTask(task, nextStatus) {
     renderConversationLock();
     setComposerEnabled(socketOpen());
     if (nextStatus === "planning") toast(`Planning started for "${task.title}"`);
-    if (nextStatus === "in_progress") toast(`${task.engine === "claude" ? "Claude" : "Pi"} started working on "${task.title}"`);
+    if (nextStatus === "in_progress") toast(`${harnessLabel(state.harnesses, task.engine)} started working on "${task.title}"`);
   } catch (error) {
     toast(error.message);
   }

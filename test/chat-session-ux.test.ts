@@ -59,7 +59,9 @@ test("chat names its controls and continues conversations through takeover", asy
   assert.match(app, /dataset\.testid = "session-agent-label"/);
   assert.match(app, /session\.agentLabel/);
   assert.doesNotMatch(app, /session\.agentModel/);
-  assert.match(server, /\(!config \|\| config\.engine === "pi"\) && shared/);
+  assert.match(server, /async function dispatch\(connection: HarnessChatConnection, queued: QueuedPrompt\)[\s\S]*connection\.shared\.session\.preflight\(\)[\s\S]*connection\.shared\.session\.prompt\(/);
+  assert.match(server, /const shared = await openHarnessSession\(options\.engine, \{ projectId: options\.project\.id, cwd: options\.cwd, sessionId: options\.sessionId, sessionPath: options\.sessionPath, conversationId, accountIds: options\.accountIds \}\)/);
+  assert.match(server, /type: "ready"[\s\S]*conversationId,/);
 });
 
 test("ticket handoff waits visibly for Syncthing before its shared POST", async () => {

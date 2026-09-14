@@ -113,6 +113,7 @@ async function configureHarnessDefaults(page: Page) {
   assert.deepEqual(await page.evaluate('(async () => (await (await fetch("/api/settings")).json()).conversationDefaults)()'), {
     pi: { provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "low" },
     claude: { provider: "claude", modelId: "sonnet", thinkingLevel: "high" },
+    kiro: { provider: "kiro", modelId: "default", thinkingLevel: "medium" },
   });
 }
 
@@ -128,6 +129,37 @@ async function assertNewConversationDefaults(page: Page, engine: string, model: 
   const selectedModel = await page.evaluate(async () => (await import("/app/state.js")).state.activeModelKey);
   assert.equal(selectedModel, model, "new conversation uses the configured model");
 }
+
+test("conversation menus default review notifications off and persist their toggle", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await signInAndOpenProject(page, node.url, environment.username, environment.password);
+  const target = await page.evaluate(`(async () => {
+    const {state} = await import('/app/state.js');
+    const session = state.sessions.find((candidate) => !candidate.readOnly);
+    return {projectId: state.activeProjectId, path: session.path, enabled: session.reviewNotificationsEnabled};
+  })()`);
+  assert.equal(target.enabled, false, "review notifications default off");
+  await page.locator(`[data-session-path="${target.path}"] [data-testid="session-menu-button"]`).click();
+  await page.getByTestId("session-review-notifications-button").waitFor();
+  assert.equal(await page.getByTestId("session-review-notifications-button").innerText(), "Notify when ready for review");
+  await page.keyboard.press("Escape");
+
+  await page.evaluate(`(async ({projectId, path}) => {
+    const {api} = await import('/app/api.js');
+    await api('/api/projects/' + encodeURIComponent(projectId) + '/sessions/review-notifications', {
+      method: 'PUT', body: JSON.stringify({sessionPath: path, enabled: true}),
+    });
+  })(${JSON.stringify(target)})`);
+  await page.reload();
+  await page.locator(`[data-session-path="${target.path}"] [data-testid="session-menu-button"]`).waitFor();
+  await page.locator(`[data-session-path="${target.path}"] [data-testid="session-menu-button"]`).click();
+  const toggle = page.getByTestId("session-review-notifications-button");
+  assert.equal(await toggle.innerText(), "Stop review notifications");
+  await toggle.click();
+  await page.waitForFunction(async ({ path }) => (await import('/app/state.js')).state.sessions.find((session) => session.path === path)?.reviewNotificationsEnabled === false, target);
+  await page.locator(`[data-session-path="${target.path}"] [data-testid="session-menu-button"]`).click();
+  assert.equal(await page.getByTestId("session-review-notifications-button").innerText(), "Notify when ready for review");
+});
 
 test("Settings edit per-harness model and thinking defaults for new conversations", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);

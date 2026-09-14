@@ -110,7 +110,7 @@ const sessions = [
   { id: "s-two", path: "/tmp/two.jsonl", title: "Two", createdAt: "2026-02-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", firstMessage: "first two", harnessId: "claude", reviewState: "needs_review", running: false, executionNodeId: null },
   { id: "s-three", path: "/tmp/three.jsonl", title: "Three", createdAt: "2026-03-01T00:00:00.000Z", updatedAt: "2026-02-01T00:00:00.000Z", firstMessage: "first three", harnessId: "pi", reviewState: "reviewed", running: false, executionNodeId: null },
 ];
-const harnesses = [{ id: "pi", label: "Pi", newSessionPath: "new" }, { id: "claude", label: "Claude", newSessionPath: "claude:new" }];
+const harnesses = [{ id: "pi", label: "Pi", newSessionPath: "new", runtimeConfigured: true }, { id: "claude", label: "Claude", newSessionPath: "claude:new", runtimeConfigured: true }];
 const saved = [];
 const shortcutSettingsOpens = [];
 const spotlightOpens = [];

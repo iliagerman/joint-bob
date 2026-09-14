@@ -35,8 +35,7 @@ test("command autocomplete supports keyboard navigation and selection", async ()
 test("selecting a skill inserts the syntax expected by the active agent", async () => {
   const app = await appSource();
 
-  assert.match(app, /skillInvocation\(skill\)/);
-  assert.match(app, /`\/skill:\$\{skill\.name\} `/);
-  assert.match(app, /`\/\$\{skill\.name\} `/);
+  assert.match(app, /function skillInvocation\(skill\) \{\s*return skill\.invocation \|\| `\/\$\{skill\.name\} `;\s*\}/);
+  assert.match(app, /const invocation = skillInvocation\(skill\)/);
   assert.match(app, /setInputValue\(suggestion\.invocation\)/);
 });

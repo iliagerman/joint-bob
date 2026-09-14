@@ -5,16 +5,18 @@ import os from "node:os";
 import path from "node:path";
 import { once } from "node:events";
 import test from "node:test";
-import { abortPiForUpdate, terminateClaudeForUpdate, prepareForUpdate } from "../src/server/realtime.js";
-import { flags, sharedSessions, type SharedPiSession } from "../src/server/state.js";
+import { stopProcessGroup } from "../src/harnesses/process-lifecycle.js";
+import { prepareForUpdate } from "../src/server/realtime.js";
+import { harnessSessionKey, harnessSessions, type SharedHarnessSession } from "../src/server/harness-sessions.js";
+import { flags } from "../src/server/state.js";
+import { nativePiSessionFixture } from "./native-pi-session-fixture.js";
 import { completeUpdateRecovery, listPendingUpdateRecoveries, saveUpdateRecoveries } from "../src/update-recovery.js";
 
-function piSession(abort: () => Promise<void>): SharedPiSession {
-  return { projectId: "shutdown-test", cwd: "/tmp", handle: { session: {
-    sessionId: "shutdown-test", sessionFile: "/tmp/shutdown-test.jsonl", isStreaming: true,
-    abortRetry() {}, abortCompaction() {}, abortBranchSummary() {}, abortBash() {}, abort,
-    clearQueue() {}, getSteeringMessages: () => ["queued"], getFollowUpMessages: () => [],
-  } } } as unknown as SharedPiSession;
+function piSession(abort: () => Promise<void>): SharedHarnessSession {
+  return nativePiSessionFixture({
+    id: "shutdown-test", projectId: "shutdown-test", cwd: "/tmp",
+    file: "/tmp/shutdown-test.jsonl", busy: true, steering: ["queued"], abort,
+  }).shared;
 }
 
 const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
@@ -22,7 +24,7 @@ const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve
 test("Pi abort deadline refuses readiness instead of waiting forever", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   let outcome = "waiting";
-  const pending = abortPiForUpdate(piSession(() => new Promise(() => {})))
+  const pending = piSession(() => new Promise(() => {})).session.stopForUpdate()
     .then(() => { outcome = "ready"; }, (error) => { outcome = error.message; });
   t.mock.timers.tick(60_001);
   await flush();
@@ -40,7 +42,7 @@ test("already signaled Claude child does not wait for a past close event", async
   assert.equal(child.signalCode, "SIGTERM");
   let timer: NodeJS.Timeout;
   try {
-    await Promise.race([terminateClaudeForUpdate(child), new Promise((_, reject) => {
+    await Promise.race([stopProcessGroup(child, "Claude"), new Promise((_, reject) => {
       timer = setTimeout(() => reject(new Error("waited for a past close event")), 500);
     })]);
   } finally { clearTimeout(timer!); }
@@ -51,7 +53,7 @@ test("stubborn Claude process group is gone before readiness", { timeout: 20_000
   await once(child.stdout, "data");
   let timer: NodeJS.Timeout;
   try {
-    await Promise.race([terminateClaudeForUpdate(child), new Promise((_, reject) => {
+    await Promise.race([stopProcessGroup(child, "Claude"), new Promise((_, reject) => {
       timer = setTimeout(() => reject(new Error("stubborn process was not stopped")), 15_000);
     })]);
     assert.throws(() => process.kill(-child.pid!, 0), { code: "ESRCH" });
@@ -77,7 +79,7 @@ test("already exited Claude leader still stops its surviving tool group", { time
     await closed;
     assert.equal(child.signalCode, "SIGTERM");
     assert.equal(process.kill(-child.pid!, 0), true, "tool must outlive its leader for this regression");
-    await terminateClaudeForUpdate(child);
+    await stopProcessGroup(child, "Claude");
     assert.throws(() => process.kill(-child.pid!, 0), { code: "ESRCH" });
   } finally {
     try { process.kill(-child.pid!, "SIGKILL"); }
@@ -112,7 +114,7 @@ test("Claude stop refuses if the process group cannot be confirmed gone", async 
   const kill = t.mock.method(process, "kill", () => true);
   const child = { pid: 12345, exitCode: null, signalCode: "SIGTERM" } as ReturnType<typeof spawn>;
   let outcome = "waiting";
-  const pending = terminateClaudeForUpdate(child as Parameters<typeof terminateClaudeForUpdate>[0])
+  const pending = stopProcessGroup(child, "Claude")
     .then(() => { outcome = "ready"; }, (error) => { outcome = error.message; });
   t.mock.timers.tick(60_001);
   await flush();
@@ -138,7 +140,7 @@ test("pending recovery refuses preparation without discarding records", async ()
 test("failed Pi stop preserves recovery and fence without unsafe watchdog restart", async (t) => {
   const exit = t.mock.method(process, "exit", () => { throw new Error("unsafe watchdog restart"); });
   const shared = piSession(() => new Promise(() => {}));
-  sharedSessions.set("shutdown-test", shared);
+  harnessSessions.set(harnessSessionKey(shared.projectId, shared.engine, shared.session.id), shared);
   t.mock.timers.enable({ apis: ["setTimeout"] });
   let outcome = "waiting";
   const pending = prepareForUpdate().then(() => { outcome = "ready"; }, (error) => { outcome = error.message; });
@@ -157,7 +159,7 @@ test("failed Pi stop preserves recovery and fence without unsafe watchdog restar
     assert.equal(exit.mock.callCount(), 0);
     await assert.rejects(prepareForUpdate(), /Pi.*did not stop/);
   } finally {
-    sharedSessions.clear();
+    harnessSessions.clear();
     flags.updatePreparing = false;
     flags.updatePreparation = null;
     for (const record of await listPendingUpdateRecoveries()) await completeUpdateRecovery(record.id);

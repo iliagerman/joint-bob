@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { mapWithConcurrency } from "./concurrency.js";
 import { parseCompletedJsonl } from "./jsonl.js";
 import { mkdtemp, open, readFile, readdir, rm, stat, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -20,7 +21,8 @@ import { agentCredentialContext, agentEnvironment, persistConversationSecretAcco
 import { browserAgentEnvironment, browserAgentInstructions } from "./browser-agent.js";
 import { getConversationRecord } from "./conversation-records.js";
 import { stripHandoffEnvelope } from "./claude-service.js";
-import { discoverPiSessionDirectory, sessionCwds, type SessionProjectPaths } from "./session-paths.js";
+import { sessionCwds, type SessionProjectPaths } from "./harnesses/shared-paths.js";
+import { canonicalPiTranscriptName, piSessionIdFromFileName } from "./harnesses/pi/paths.js";
 import { getScopedResourcePaths, getSettings } from "./settings.js";
 import { agentResourcePaths, commonAgentInstructionFiles, piAgentResourcePaths } from "./agent-resources.js";
 import type { ChatMessage, ContextUsage, ModelSummary, SessionStatus, SessionSummary } from "./types.js";
@@ -45,6 +47,8 @@ interface PiSessionOptions {
 }
 
 type UnknownRecord = Record<string, unknown>;
+
+const PI_LIST_CONCURRENCY = 8;
 
 const initialPiSettings = getSettings().pi;
 if (initialPiSettings.configPath) process.env.PI_CODING_AGENT_DIR = initialPiSettings.configPath;
@@ -102,13 +106,6 @@ function textFromToolPayload(value: unknown): string {
 function roleFromMessage(message: unknown): string {
   const role = asRecord(message).role;
   return typeof role === "string" ? role : "assistant";
-}
-
-function titleFromSession(info: unknown): string {
-  const record = asRecord(info);
-  const firstMessage = typeof record.firstMessage === "string" ? record.firstMessage : "";
-  const name = typeof record.name === "string" ? record.name : "";
-  return name || firstMessage.slice(0, 80) || "Untitled Pi session";
 }
 
 function modelLabel(model: AvailableModel): string {
@@ -171,11 +168,12 @@ function skillsOverride(cwd: string, projectId: string, agentDir: string) {
     to completion before the phase is marked done, so unlike chat follow-ups the
     prompt is never queued behind user traffic: it waits for the turn in flight,
     and re-waits if a racing prompt steals the session in between. */
-export async function promptIdlePiSession(handle: PiSessionHandle, promptText: string): Promise<void> {
+export async function promptIdlePiSession(handle: PiSessionHandle, prompt: string | (() => Promise<void>)): Promise<void> {
+  const action = typeof prompt === "string" ? () => handle.session.prompt(prompt) : prompt;
   for (;;) {
     if (sessionIsBusy(handle)) await onceSessionIdle(handle);
     try {
-      await handle.session.prompt(promptText);
+      await action();
       return;
     } catch (error) {
       if (!(error instanceof Error) || !/already processing/i.test(error.message)) throw error;
@@ -286,10 +284,12 @@ export function simplifyMessages(messages: unknown[]): ChatMessage[] {
   return messages
     .map((message, index) => {
       const toolName = asRecord(message).toolName;
+      const role = roleFromMessage(message);
+      const rawText = textFromMessage(message);
       return {
         id: `${index}`,
-        role: roleFromMessage(message),
-        text: textFromMessage(message),
+        role,
+        text: role === "user" ? stripHandoffEnvelope(rawText) : rawText,
         toolName: typeof toolName === "string" ? toolName : undefined,
       };
     })
@@ -313,26 +313,6 @@ export async function loadPiMessages(sessionPath: string): Promise<ChatMessage[]
   return messages;
 }
 
-async function summarizeSession(sessionInfo: unknown): Promise<SessionSummary> {
-  const record = asRecord(sessionInfo);
-  const sessionPath = String(record.path ?? "");
-  const fileStat = sessionPath ? await stat(sessionPath) : undefined;
-  return {
-    id: String(record.id ?? record.path ?? randomUUID()),
-    path: sessionPath,
-    harnessId: "pi",
-    agentId: "pi",
-    agentLabel: "Pi",
-    title: titleFromSession(record),
-    // SessionManager returns Dates. Preserve transcript activity across cold listings,
-    // incremental refreshes, and synced copies whose filesystem times differ.
-    createdAt: record.created instanceof Date ? record.created.toISOString() : typeof record.created === "string" ? record.created : fileStat?.birthtime.toISOString(),
-    updatedAt: record.modified instanceof Date ? record.modified.toISOString() : typeof record.modified === "string" ? record.modified : fileStat?.mtime.toISOString(),
-    firstMessage: typeof record.firstMessage === "string" ? record.firstMessage : undefined,
-    parentSessionPath: typeof record.parentSessionPath === "string" ? record.parentSessionPath : undefined,
-  };
-}
-
 function piSessionDirectories(cwd: string): Array<string | undefined> {
   const root = piSessionPath();
   if (!root) return [undefined];
@@ -340,101 +320,39 @@ function piSessionDirectories(cwd: string): Array<string | undefined> {
   return [root, path.join(root, safeCwd)];
 }
 
-interface PiSessionListCacheEntry {
-  fingerprint: string;
-  sessions: unknown[];
-}
-
-const piSessionListCache = new Map<string, PiSessionListCacheEntry>();
-
-// Filesystem boundary: a session directory for a cwd that has never been used
-// does not exist, and a transcript can be removed between readdir and stat.
-// Both mean "no usable fingerprint", which forces a fresh listing.
-async function fingerprintNames(directory: string, names: string[]): Promise<string> {
-  const parts = await Promise.all(names.sort().map(async (name) => {
-    const info = await stat(path.join(directory, name));
-    return `${name}:${info.mtimeMs}:${info.size}`;
-  }));
-  return parts.join("|");
-}
-
-async function sessionDirectorySnapshot(directory: string): Promise<{ names: string[]; fingerprint: string }> {
-  try {
-    const names = (await readdir(directory)).filter((name) => name.endsWith(".jsonl"));
-    return { names, fingerprint: await fingerprintNames(directory, names) };
-  } catch {
-    return { names: [], fingerprint: "" };
-  }
-}
-
-async function recentSessionPaths(directory: string, names: string[], historyDays: number, includedSessionPaths: string[], includedSessionIds: string[]): Promise<string[]> {
-  const cutoff = Date.now() - historyDays * 24 * 60 * 60 * 1000;
-  const included = new Set(includedSessionPaths.map((filePath) => path.resolve(filePath)));
-  const includedIds = new Set(includedSessionIds);
-  const selected = await Promise.all(names.map(async (name) => {
-    const filePath = path.resolve(directory, name);
-    if (included.has(filePath) || includedIds.has(`pi:${path.basename(filePath, ".jsonl")}`)) return filePath;
-    try { return (await stat(filePath)).mtimeMs >= cutoff ? filePath : null; }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
-  }));
-  return selected.filter((filePath): filePath is string => filePath !== null);
-}
-
-async function listSelectedPiSessions(cwd: string, filePaths: string[]): Promise<unknown[]> {
-  const directory = await mkdtemp(path.join(tmpdir(), "joint-bob-session-list-"));
-  const originals = new Map<string, string>();
-  try {
-    await Promise.all(filePaths.map(async (filePath, index) => {
-      const linked = path.join(directory, `${index}-${path.basename(filePath)}`);
-      await symlink(filePath, linked);
-      originals.set(path.resolve(linked), filePath);
-    }));
-    const sessions = await SessionManager.list(cwd, directory) as unknown[];
-    return sessions.map((session) => ({ ...asRecord(session), path: originals.get(path.resolve(String(asRecord(session).path))) }));
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-}
-
-async function listSessionsForDirectory(cwd: string, sessionDirectory: string | undefined, historyDays: number, includedSessionPaths: string[], includedSessionIds: string[]): Promise<unknown[]> {
-  if (!sessionDirectory) return await SessionManager.list(cwd, sessionDirectory) as unknown[];
-  const key = JSON.stringify([cwd, sessionDirectory, historyDays, includedSessionPaths, includedSessionIds]);
-  const snapshot = await sessionDirectorySnapshot(sessionDirectory);
-  const cached = piSessionListCache.get(key);
-  if (cached && cached.fingerprint === snapshot.fingerprint) return cached.sessions;
-  const candidates = historyDays ? await recentSessionPaths(sessionDirectory, snapshot.names, historyDays, includedSessionPaths, includedSessionIds) : snapshot.names.map((name) => path.join(sessionDirectory, name));
-  const availablePaths = await discoverPiSessionDirectory(sessionDirectory, candidates.map((filePath) => path.basename(filePath)), cwd);
-  const sessions = historyDays ? await listSelectedPiSessions(cwd, [...availablePaths]) : (await SessionManager.list(cwd, sessionDirectory) as unknown[])
-    .filter((session) => availablePaths.has(path.resolve(String(asRecord(session).path))));
-  piSessionListCache.set(key, { fingerprint: snapshot.fingerprint, sessions });
-  return sessions;
-}
-
 export async function piSessionFiles(project: SessionProjectPaths): Promise<string[]> {
   const directories = sessionCwds(project).flatMap((cwd) => piSessionDirectories(cwd).map((directory) => directory ?? path.join(getAgentDir(), "sessions", `--${path.resolve(cwd).replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`)));
   const groups = await Promise.all([...new Set(directories)].map(async (directory) => {
-    try { return (await readdir(directory)).filter((name) => name.endsWith(".jsonl")).map((name) => path.join(directory, name)); }
-    catch { return []; }
+    try {
+      return (await readdir(directory))
+        .filter((name) => name.endsWith(".jsonl") && canonicalPiTranscriptName(name) === name)
+        .map((name) => path.join(directory, name));
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR") return [];
+      console.warn(`Could not list Pi sessions for ${directory}:`, error);
+      return [];
+    }
   }));
   return [...new Set(groups.flat().map((filePath) => path.resolve(filePath)))];
 }
 
-async function sessionsForCwd(cwd: string, historyDays: number, includedSessionPaths: string[], includedSessionIds: string[]): Promise<unknown[]> {
-  const results = await Promise.all(piSessionDirectories(cwd).map(async (sessionDirectory) => {
-    try {
-      return await listSessionsForDirectory(cwd, sessionDirectory, historyDays, includedSessionPaths, includedSessionIds);
-    } catch (error) {
-      console.warn(`Could not list Pi sessions for ${cwd}`, error);
-      return [];
-    }
-  }));
-  return results.flat();
+async function piFilesInHistory(project: SessionProjectPaths & { historyDays?: number; includedSessionPaths?: string[]; includedSessionIds?: string[] }, files: string[]): Promise<string[]> {
+  if (!project.historyDays) return files;
+  const cutoff = Date.now() - project.historyDays * 86_400_000;
+  const included = new Set((project.includedSessionPaths ?? []).map((filePath) => path.resolve(filePath)));
+  const includedIds = new Set(project.includedSessionIds ?? []);
+  const selected = await mapWithConcurrency(files, PI_LIST_CONCURRENCY, async (filePath) => {
+    if (included.has(filePath) || includedIds.has(`pi:${piSessionIdFromFileName(path.basename(filePath))}`)) return filePath;
+    try { return (await stat(filePath)).mtimeMs >= cutoff ? filePath : null; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
+  });
+  return selected.filter((filePath): filePath is string => filePath !== null);
 }
 
 export async function listPiSessions(project: SessionProjectPaths & { historyDays?: number; includedSessionPaths?: string[]; includedSessionIds?: string[] }): Promise<SessionSummary[]> {
-  const sessions = (await Promise.all(sessionCwds(project).map((cwd) => sessionsForCwd(cwd, project.historyDays ?? 0, project.includedSessionPaths ?? [], project.includedSessionIds ?? [])))).flat();
-  const unique = [...new Map(sessions.map((session) => [String(asRecord(session).path), session])).values()];
-  return Promise.all(unique.map(summarizeSession));
+  const summaries = await mapWithConcurrency(await piFilesInHistory(project, await piSessionFiles(project)), PI_LIST_CONCURRENCY, (filePath) => summarizePiTranscript(filePath, project));
+  return summaries.filter((session): session is SessionSummary => session !== null);
 }
 
 function piMessageActivity(record: UnknownRecord): string | undefined {
@@ -565,15 +483,8 @@ export async function refreshPiSessions(project: SessionProjectPaths & { history
   if (!changedFiles.length) return listPiSessions(project);
   const changed = new Set(changedFiles.map((filePath) => path.resolve(filePath)));
   const retained = previous.filter((session) => !changed.has(path.resolve(session.path)));
-  const included = new Set((project.includedSessionPaths ?? []).map((filePath) => path.resolve(filePath)));
-  const includedIds = new Set(project.includedSessionIds ?? []);
-  const cutoff = project.historyDays ? Date.now() - project.historyDays * 86_400_000 : 0;
-  const selected = cutoff ? (await Promise.all([...changed].map(async (filePath) => {
-    if (included.has(filePath) || includedIds.has(`pi:${path.basename(filePath, ".jsonl")}`)) return filePath;
-    try { return (await stat(filePath)).mtimeMs >= cutoff ? filePath : null; }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
-  }))).filter((filePath): filePath is string => filePath !== null) : [...changed];
-  const refreshed = await Promise.all(selected.map((filePath) => summarizePiTranscript(filePath, project)));
+  const selected = await piFilesInHistory(project, [...changed]);
+  const refreshed = await mapWithConcurrency(selected, PI_LIST_CONCURRENCY, (filePath) => summarizePiTranscript(filePath, project));
   return [...retained, ...refreshed.filter((session): session is SessionSummary => Boolean(session))];
 }
 

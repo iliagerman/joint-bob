@@ -214,7 +214,7 @@
             <div class="chat-more-actions">
               <button class="ghost compact" id="openTerminalButton" data-shortcut-hint="terminal" type="button" disabled data-testid="chat-open-terminal-button">Terminal</button>
               <button class="ghost compact" id="openBrowserButton" data-shortcut-hint="browser" type="button" disabled aria-expanded="false" aria-controls="browserPanel" title="Open an existing conversation before starting its browser" data-testid="chat-open-browser-button">Browser</button>
-              <button class="ghost compact" id="notifyButton" data-shortcut-hint="notify" type="button" aria-pressed="false" title="Notify when a conversation needs review" data-testid="chat-notify-button">Notify</button>
+              <button class="ghost compact" id="notifyButton" data-shortcut-hint="notify" type="button" aria-pressed="false" title="Notification device settings" data-testid="chat-notify-button">Notify</button>
               <button class="ghost compact" id="addToCanvasButton" data-shortcut-hint="addToCanvas" type="button" disabled data-testid="chat-add-to-canvas-button">Add to canvas</button>
               <button class="ghost compact" id="renameSessionButton" data-shortcut-hint="rename" type="button" disabled data-testid="chat-rename-button">Rename</button>
               <button class="ghost compact" id="chatCronButton" data-shortcut-hint="scheduledTasks" type="button" data-testid="chat-cron-button">Scheduled tasks</button>
@@ -478,7 +478,7 @@
         </section>
 
         <section class="settings-panel" id="settingsPanel-notifications" role="tabpanel" aria-labelledby="settingsTab-notifications" tabindex="0" hidden>
-          <p>Get a browser notification when a conversation needs review, in every project and on every node. Custom sounds play while Joint Bob is open; background notification sound follows your device settings.</p>
+          <p>Allow notifications on this device, then choose conversations from their menus. Notifications arrive even while Joint Bob is closed. Custom sounds play while Joint Bob is open; background notification sound follows your device settings.</p>
           <button class="ghost" id="notificationToggleButton" type="button" aria-pressed="false" data-testid="notifications-toggle-button">Enable browser notifications</button>
           <label>
             Completion sound
@@ -600,35 +600,8 @@
 
         <section class="settings-panel" id="settingsPanel-engines" role="tabpanel" aria-labelledby="settingsTab-engines" tabindex="0" hidden>
           <p>Harness paths are detected automatically for this node. Do not copy paths from another machine. Overrides are blank until you change them; a blank field uses the node default shown here.</p>
-          <div class="settings-subtabs" role="tablist" aria-label="Installed harnesses" id="harnessTabs">
-            <button class="settings-subtab" type="button" role="tab" id="harnessTab-pi" aria-controls="harnessPanel-pi" aria-selected="true" data-harness-tab="pi" data-testid="harness-tab-pi">Pi</button>
-            <button class="settings-subtab" type="button" role="tab" id="harnessTab-claude" aria-controls="harnessPanel-claude" aria-selected="false" data-harness-tab="claude" tabindex="-1" data-testid="harness-tab-claude">Claude</button>
-          </div>
-          <div id="harnessPanel-pi" role="tabpanel" aria-labelledby="harnessTab-pi" data-harness-panel="pi">
-            <output class="engine-defaults" id="settingsPiDefaults" data-testid="settings-pi-defaults"></output>
-            <label>New conversation provider<input id="settingsPiDefaultProvider" data-testid="settings-pi-default-provider" maxlength="200" required /></label>
-            <label>New conversation model<input id="settingsPiDefaultModel" data-testid="settings-pi-default-model" maxlength="300" required /></label>
-            <label>New conversation thinking<select id="settingsPiDefaultThinking" data-testid="settings-pi-default-thinking"><option>off</option><option>minimal</option><option>low</option><option>medium</option><option>high</option><option>xhigh</option><option>max</option></select></label>
-            <fieldset class="phase-settings">
-              <legend>Pi path overrides</legend>
-              <label>Executable<input id="settingsPiExecutable" autocomplete="off" data-testid="settings-pi-executable-input" /></label>
-              <label>Node-local config and auth path<input id="settingsPiConfigPath" autocomplete="off" data-testid="settings-pi-config-input" /></label>
-              <label>Synchronized transcript/session root<input id="settingsPiSessionPath" autocomplete="off" data-testid="settings-pi-session-input" /></label>
-              <button class="ghost" id="settingsUsePiDefaultsButton" type="button" data-testid="settings-use-pi-defaults-button">Use node defaults for Pi</button>
-            </fieldset>
-          </div>
-          <div id="harnessPanel-claude" role="tabpanel" aria-labelledby="harnessTab-claude" data-harness-panel="claude" hidden>
-            <output class="engine-defaults" id="settingsClaudeDefaults" data-testid="settings-claude-defaults"></output>
-            <label>New conversation model<input id="settingsClaudeDefaultModel" data-testid="settings-claude-default-model" maxlength="300" required /></label>
-            <label>New conversation thinking<select id="settingsClaudeDefaultThinking" data-testid="settings-claude-default-thinking"><option>low</option><option>medium</option><option>high</option><option>xhigh</option><option>max</option></select></label>
-            <fieldset class="phase-settings">
-              <legend>Claude path overrides</legend>
-              <label>Executable<input id="settingsClaudeExecutable" autocomplete="off" data-testid="settings-claude-executable-input" /></label>
-              <label>Node-local config and auth path<input id="settingsClaudeConfigPath" autocomplete="off" data-testid="settings-claude-config-input" /></label>
-              <label>Synchronized transcript/session root<input id="settingsClaudeSessionPath" autocomplete="off" data-testid="settings-claude-session-input" /></label>
-              <button class="ghost" id="settingsUseClaudeDefaultsButton" type="button" data-testid="settings-use-claude-defaults-button">Use node defaults for Claude</button>
-            </fieldset>
-          </div>
+          <div class="settings-subtabs" role="tablist" aria-label="Installed harnesses" id="harnessTabs"></div>
+          <div id="harnessPanels"></div>
           <div class="engine-actions"><button class="ghost" id="settingsCheckRuntimePathsButton" type="button" data-testid="settings-check-runtime-paths-button">Check paths</button></div>
           <p class="engine-readiness" id="settingsRuntimeStatus" role="status" aria-live="polite" data-testid="settings-runtime-status"></p>
         </section>
@@ -1187,10 +1160,7 @@
         </div>
         <label>
           Agent
-          <select id="taskEngineInput" name="engine" data-testid="task-form-engine-select">
-            <option value="pi">Pi</option>
-            <option value="claude">Claude</option>
-          </select>
+          <select id="taskEngineInput" name="engine" data-testid="task-form-engine-select"></select>
         </label>
         <label class="checkbox-row">
           <input id="taskPlanModeInput" name="planMode" type="checkbox" data-testid="task-form-plan-mode-input" />
@@ -1371,7 +1341,7 @@
           <label>Execution node<select name="ownerNodeId" required data-testid="cron-owner"></select></label>
           <label id="cronEngineLabel">Harness<select name="engine" required data-testid="cron-engine"></select></label>
           <label>Model<select name="model" data-testid="cron-model"></select></label>
-          <label id="cronReasoningLabel">Thinking level<select name="reasoning" data-testid="cron-reasoning"></select></label>
+          <label id="cronReasoningLabel">Reasoning<select name="reasoning" data-testid="cron-reasoning"></select></label>
           <label class="checkbox-row"><input name="enabled" type="checkbox" checked data-testid="cron-enabled">Enabled</label>
           <p class="cron-help">Missed offline runs are skipped. Runs never overlap. Errors pause the task for review.</p>
           <div class="dialog-actions"><button id="cronCancel" type="button" class="ghost" data-testid="cron-cancel">Cancel</button><button class="primary" type="submit" data-testid="cron-save">Save task</button></div>

@@ -25,6 +25,7 @@ export interface CanvasPanePreference {
   sessionPath: string;
   sessionId: string;
   executionNodeId: string | null;
+  harnessId?: HarnessId;
 }
 
 export interface CanvasRowPreference {
@@ -423,13 +424,13 @@ function validStoredCanvasNode(node: unknown, depth: number, ids: Set<string>, i
   if (typeof item.id !== "string" || !item.id || item.id.length > 200 || ids.has(item.id)) return null;
   ids.add(item.id);
   if (item.kind === "pane") {
-    if (typeof item.projectId !== "string" || !item.projectId || item.projectId.length > 120 || typeof item.sessionPath !== "string" || !item.sessionPath || item.sessionPath.length > 2000 || typeof item.sessionId !== "string" || !item.sessionId || item.sessionId.length > 200 || !(item.executionNodeId === null || typeof item.executionNodeId === "string" && item.executionNodeId.length <= 100)) return null;
+    if (typeof item.projectId !== "string" || !item.projectId || item.projectId.length > 120 || typeof item.sessionPath !== "string" || !item.sessionPath || item.sessionPath.length > 2000 || typeof item.sessionId !== "string" || !item.sessionId || item.sessionId.length > 200 || !(item.executionNodeId === null || typeof item.executionNodeId === "string" && item.executionNodeId.length <= 100) || (item.harnessId !== undefined && !isHarnessId(item.harnessId))) return null;
     const sessionPath = canonicalSessionPath(item.sessionPath);
     const identity = `${item.projectId}\0${item.sessionId}`;
     const pathIdentity = `${item.projectId}\0${sessionPath}`;
     if (identities.has(identity) || identities.has(pathIdentity)) return null;
     identities.add(identity); identities.add(pathIdentity);
-    return { kind: "pane", id: item.id, projectId: item.projectId, sessionPath, sessionId: item.sessionId, executionNodeId: item.executionNodeId as string | null };
+    return { kind: "pane", id: item.id, projectId: item.projectId, sessionPath, sessionId: item.sessionId, executionNodeId: item.executionNodeId as string | null, ...(item.harnessId === undefined ? {} : { harnessId: item.harnessId }) };
   }
   if (item.kind !== "split" || (item.axis !== "row" && item.axis !== "column") || typeof item.ratio !== "number" || !Number.isFinite(item.ratio) || item.ratio < .15 || item.ratio > .85) return null;
   const first = validStoredCanvasNode(item.first, depth + 1, ids, identities);
@@ -506,14 +507,15 @@ function parseCanvasLayout(value: string): CanvasLayoutPreference {
           || typeof item.projectId !== "string" || !item.projectId || item.projectId.length > 120
           || typeof item.sessionPath !== "string" || !item.sessionPath || item.sessionPath.length > 2000
           || typeof item.sessionId !== "string" || !item.sessionId || item.sessionId.length > 200
-          || !(item.executionNodeId === null || (typeof item.executionNodeId === "string" && item.executionNodeId.length <= 100))) return emptyCanvasLayout();
+          || !(item.executionNodeId === null || (typeof item.executionNodeId === "string" && item.executionNodeId.length <= 100))
+          || (item.harnessId !== undefined && !isHarnessId(item.harnessId))) return emptyCanvasLayout();
         const identity = `${item.projectId}\0${item.sessionId}`;
         const pathIdentity = `${item.projectId}\0${canonicalSessionPath(item.sessionPath)}`;
         if (sessionIdentities.has(identity) || pathIdentities.has(pathIdentity)) return emptyCanvasLayout();
         sessionIdentities.add(identity);
         pathIdentities.add(pathIdentity);
         paneIds.add(item.id);
-        panes.push({ kind: "pane", id: item.id, projectId: item.projectId, sessionPath: canonicalSessionPath(item.sessionPath), sessionId: item.sessionId, executionNodeId: item.executionNodeId });
+        panes.push({ kind: "pane", id: item.id, projectId: item.projectId, sessionPath: canonicalSessionPath(item.sessionPath), sessionId: item.sessionId, executionNodeId: item.executionNodeId, ...(item.harnessId === undefined ? {} : { harnessId: item.harnessId }) });
       }
       const weights = normalizedCanvasWeights(row.weights, panes.length);
       const height = layout.version === 3 || layout.version === 5 ? row.height ?? null : null;
@@ -541,7 +543,8 @@ export function migrateLegacyCanvasLayout(parsed: unknown): CanvasLayoutPreferen
     if (typeof candidate.projectId !== "string" || !candidate.projectId || candidate.projectId.length > 120
       || typeof candidate.sessionPath !== "string" || !candidate.sessionPath || candidate.sessionPath.length > 2000
       || typeof candidate.sessionId !== "string" || !candidate.sessionId || candidate.sessionId.length > 200
-      || !(candidate.executionNodeId === null || (typeof candidate.executionNodeId === "string" && candidate.executionNodeId.length <= 100))) return null;
+      || !(candidate.executionNodeId === null || (typeof candidate.executionNodeId === "string" && candidate.executionNodeId.length <= 100))
+      || (candidate.harnessId !== undefined && !isHarnessId(candidate.harnessId))) return null;
     const identity = `${candidate.projectId}\0${candidate.sessionId}`;
     const pathIdentity = `${candidate.projectId}\0${canonicalSessionPath(candidate.sessionPath)}`;
     if (sessionIdentities.has(identity) || pathIdentities.has(pathIdentity)) return null;
@@ -549,7 +552,7 @@ export function migrateLegacyCanvasLayout(parsed: unknown): CanvasLayoutPreferen
     sessionIdentities.add(identity);
     pathIdentities.add(pathIdentity);
     paneIds.add(candidate.id);
-    return { kind: "pane", id: candidate.id, projectId: candidate.projectId, sessionPath: canonicalSessionPath(candidate.sessionPath), sessionId: candidate.sessionId, executionNodeId: candidate.executionNodeId };
+    return { kind: "pane", id: candidate.id, projectId: candidate.projectId, sessionPath: canonicalSessionPath(candidate.sessionPath), sessionId: candidate.sessionId, executionNodeId: candidate.executionNodeId, ...(candidate.harnessId === undefined ? {} : { harnessId: candidate.harnessId }) };
   };
   const rows: CanvasRowPreference[] = [];
   let valid = true;

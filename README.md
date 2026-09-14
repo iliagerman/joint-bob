@@ -1,6 +1,6 @@
 # Joint Bob
 
-Joint Bob is a private web workspace for running Pi and Claude coding agents from a computer or phone. It can manage projects on one machine or synchronize projects and ticket workspaces across a small cluster with Syncthing.
+Joint Bob is a private web workspace for running Pi, Claude, and Kiro coding agents from a computer or phone. It can manage projects on one machine or synchronize projects and ticket workspaces across a small cluster with Syncthing.
 
 Joint Bob runs as your OS user. Application files live in `~/.local/share/joint-bob/app`, and node-local state lives in `~/.joint-bob`.
 
@@ -12,7 +12,7 @@ Want an AI coding agent to perform the installation? Give it [agents_readme.md](
 - An Intel/AMD 64-bit or ARM64 machine
 - `curl`, `tar`, `perl` for OS-level installer locking, and internet access during installation
 - A non-root user account
-- Pi and Claude accounts if you want to use both agents
+- Accounts for each of Pi, Claude, and Kiro that you want to use
 - Tailscale or another private HTTPS network for multi-node operation
 
 The installer provides pinned versions of Node.js, Pi, Claude Code, and Syncthing. You do not need to install them first. Syncthing requires no account. Tailscale is optional and has its own account and installation if you choose to use it.
@@ -64,6 +64,20 @@ ssh -L 8787:127.0.0.1:8787 <ssh-host>
 ```
 
 Then open `http://127.0.0.1:8787/` on your computer.
+
+### Kiro setup
+
+Kiro is not installed by the Joint Bob installer. Install the official Kiro CLI separately on every execution node, then authenticate it as the OS user that runs Joint Bob:
+
+```bash
+~/.local/bin/kiro-cli login
+```
+
+Repeat login on every node that will execute Kiro. In **Settings > Harnesses > Kiro**, configure the executable, configuration path, and session root for that node. `KIRO_HOME` defaults to `~/.kiro`; the session root defaults to `~/.kiro/sessions` and must be exactly `<configPath>/sessions`. Kiro's native CLI and ACP sessions live under `<configPath>/sessions/cli`. Joint Bob owns alias transcripts under `<configPath>/sessions/joint-bob`. The configured session root is synchronized, including both alias transcripts and native session state needed for resume. Authentication, configuration, and generated agent profiles remain node-local.
+
+Joint Bob generates a unique node-local Kiro agent profile for each conversation. Browser policy, environment guidance, and secret-account descriptions are injected into that profile, but secret values are supplied through the process environment and are not written into its instructions. An API key headless mode is not documented as a replacement for ACP authentication.
+
+Sessions created directly in the native Kiro CLI are not automatically imported yet. Joint Bob displays its own Kiro alias transcripts and keeps the corresponding native ACP state alongside them for resume. A Kiro fork copies completed context into a new independent native session; it does not reuse or share the source native session ID. Runtime models are discovered from authenticated new/load ACP sessions. Until that succeeds, the UI shows the `Kiro default` sentinel. Authenticated resume, cancellation, and cross-node smoke checks on two real machines remain required before Kiro should be called production-ready.
 
 ### Linux startup before login
 
@@ -183,12 +197,12 @@ Syncthing has no user accounts. Each node has a cryptographic device ID. Joint B
 Joint Bob and Syncthing have separate jobs:
 
 - Joint Bob's authenticated HTTPS API exchanges cluster membership, project inventory, task state, and other application events.
-- Syncthing transfers managed project files, the shared ticket-workspace tree, and dedicated Pi and Claude conversation-transcript folders.
+- Syncthing transfers managed project files, the shared ticket-workspace tree, and dedicated Pi, Claude, and Kiro conversation-transcript folders.
 - Each node keeps its own `~/.joint-bob/node.db`. Joint Bob never synchronizes the SQLite database as a file.
-- Pi and Claude configuration, authentication files, OAuth state, MCP authentication, and daemon control keys remain node-local. Joint Bob syncs transcript roots instead of the complete engine directories and pauses legacy `dot-pi` and `dot-claude` folders if they exist.
+- Pi, Claude, and Kiro configuration, authentication files, OAuth state, MCP authentication, and daemon control keys remain node-local. Joint Bob syncs transcript roots instead of complete engine directories and pauses legacy `dot-pi` and `dot-claude` folders if they exist.
 - Secret accounts remain node-local unless a user selects **Settings > Secrets > Sync to nodes**. That encrypted replication uses the Joint Bob cluster API, not Syncthing.
 
-Users still install Joint Bob on every node, create a local Joint Bob administrator on every node, configure mutually reachable private HTTPS origins, choose a Joint Bob home folder, and pair nodes with a one-time link. Pi and Claude authentication is separate and must be completed on every node that will run that engine. Tailscale authentication is required only when Tailscale provides the private network.
+Users still install Joint Bob on every node, create a local Joint Bob administrator on every node, configure mutually reachable private HTTPS origins, choose a Joint Bob home folder, and pair nodes with a one-time link. Pi, Claude, and Kiro authentication is separate and must be completed on every node that will run that engine. Tailscale authentication is required only when Tailscale provides the private network.
 
 ## Projects and ticket workspaces
 
@@ -217,13 +231,13 @@ Existing Git-backed tickets keep their worktree and merge behavior. New tickets 
 
 Use a conversation's row menu to change its **Classification**, including after it starts. Choose a configured label, **Other** for custom text, or **Unclassified** to clear it. Labels sync between paired nodes. Configure the available labels in **Settings > Labels**.
 
-New conversations use the model and thinking defaults in **Settings > Harnesses**, not the last conversation's choices. Pi defaults to `openai-codex/gpt-5.6-sol` with medium thinking; Claude defaults to `claude-opus-5` with medium effort. Each harness declares these defaults beside its adapter in `src/harnesses/`. Settings overrides are node-local and apply to new conversations without a restart. Existing conversations and forks retain their saved choices.
+New conversations use the model and thinking defaults in **Settings > Harnesses**, not the last conversation's choices. Pi defaults to `openai-codex/gpt-5.6-sol` with medium thinking; Claude defaults to `claude-opus-5` with medium effort; Kiro starts with the `default` model sentinel and medium effort until authenticated runtime discovery returns models. Each harness declares these defaults beside its adapter in `src/harnesses/`. Settings overrides are node-local and apply to new conversations without a restart. Existing conversations and forks retain their saved choices.
 
 **Fork conversation** works while the original is running. The fork gets an independent copy of completed history, excluding an unfinished tool exchange and queued work. The original keeps running; later output does not appear in the fork. A request from another node snapshots history on the original's owner.
 
 ## Scheduled tasks
 
-Open **Scheduled tasks** from a project menu, conversation row menu, or the conversation's More menu. Choose a name, prompt, hourly/daily/weekly schedule, timezone, and execution node. Project tasks choose Pi or Claude and create a fresh conversation each run with that agent's normal project settings and inherited workspace/project credentials. Conversation tasks queue the prompt in the existing conversation, retaining its settings and credentials.
+Open **Scheduled tasks** from a project menu, conversation row menu, or the conversation's More menu. Choose a name, prompt, hourly/daily/weekly schedule, timezone, and execution node. Project tasks choose Pi, Claude, or Kiro and create a fresh conversation each run with that agent's normal project settings and inherited workspace/project credentials. Conversation tasks queue the prompt in the existing conversation, retaining its settings and credentials.
 
 Only the execution owner stores and dispatches the schedule. Management requests route there; changing owner pauses the source before moving the task and its recent history. Conversation ownership transfers through the normal ownership protocol after active work finishes. Transfer requires reachable peers and a conversation available on the destination. Ticket conversations must use the ticket ownership workflow instead.
 
@@ -263,7 +277,7 @@ Installing system libraries may request sudo. For an existing browser in a nonst
 3. Watch beside the conversation or choose **Open in tab**. **Take control** pauses agent browser input. **Resume agent** hands it back.
 4. **Close viewer** leaves the browser running. **End browser** closes only the selected account's tabs; other accounts remain running. Closing a viewer while under human control leaves the agent paused.
 
-After signing in again, the same user can resume control. From another node or login identity, **Take over control** explicitly replaces the previous human controller. Inputs from that older controller are then rejected. The same logical conversation keeps its browser when switching between Pi and Claude.
+After signing in again, the same user can resume control. From another node or login identity, **Take over control** explicitly replaces the previous human controller. Inputs from that older controller are then rejected. The same logical conversation keeps its browser when switching among Pi, Claude, and Kiro.
 
 Tabs, popups, JavaScript dialogs, keyboard input, scrolling, file uploads, downloads, and saved logins appear in the viewer. Uploads support up to 25 files and 20 MiB total per operation. Agents can also upload directories through the CLI. Click the remote file input before selecting files in the viewer. Tab moves focus out of the remote image; use Send Tab to send it to the remote page. Mouse dragging, IME composition, and OS-native authentication prompts are not supported.
 
@@ -275,7 +289,7 @@ Profile metadata, recovery intent, and download records stay in node-local SQLit
 
 Deleting a profile removes its local browser data, but requires ending its running or restore-pending session first. To revoke a WhatsApp linked device, also unlink it from the phone. Removing local files is not a server-side account revocation.
 
-New Pi sessions and subsequent Claude runs receive the browser CLI automatically:
+New Pi sessions, subsequent Claude runs, and Kiro's generated conversation profiles receive the browser CLI automatically:
 
 ```bash
 node "$JOINT_BOB_BROWSER_CLI" start https://outlook.office.com/mail/ --name 'Work Outlook'
@@ -360,45 +374,19 @@ Development uses `http://localhost:8790` unless `PORT` is set. Production servic
 
 Joint Bob discovers harness adapters from its own `src/harnesses` directory at startup. Source runs load `*.harness.ts`; compiled builds load `*.harness.js`. The loader sorts adapters by `order`, then filename. It rejects malformed exports and duplicate IDs. The path resolver rejects a session path when no adapter owns it or several adapters claim it. Files outside the application directory are never loaded as adapters.
 
-Create `src/harnesses/<id>.harness.ts` with one default export. Use `src/harnesses/pi.harness.ts` and `src/harnesses/claude.harness.ts` as working examples. The function names in this outline stand for implementations defined earlier in the same file.
+Create `src/harnesses/<id>.harness.ts` with one default export. Use the complete working adapters `src/harnesses/pi.harness.ts`, `src/harnesses/claude.harness.ts`, and `src/harnesses/kiro.harness.ts` as references rather than copying a partial outline.
 
-```ts
-import { defineHarness } from "./contract.js";
+The contract in `src/harnesses/contract.ts` contains these exact fields:
 
-export default defineHarness({
-  id: "kiro",
-  label: "Kiro",
-  order: 30,
-  defaults: { provider: "provider-id", modelId: "model-id", thinkingLevel: "medium" },
-  paths: {
-    newSession: "kiro:new",
-    ownsSession: (sessionPath) => sessionPath.startsWith("kiro:"),
-    ownsTranscript: (filePath) => filePath.endsWith(".jsonl") && isKiroTranscript(filePath),
-  },
-  sessions: {
-    files: listKiroSessionFiles,
-    list: listKiroSessions,
-    refresh: refreshKiroSessions,
-    loadMessages: loadKiroMessages,
-  },
-});
-```
+- Adapter identity and defaults: `id`, `label`, optional `order`, and `defaults`.
+- Configuration and execution callbacks: optional `configuration`, `runtime`, `fork`, and `resources`.
+- Path ownership: `paths.newSession`, `paths.ownsSession`, `paths.ownsTranscript`, `paths.sessionId`, and optional `paths.localize`, `paths.transcriptFile`, and `paths.canonicalTranscript`.
+- Synchronization: `sync.transcriptRoot` and optional `sync.watchDirs`.
+- Session storage: `sessions.files`, `sessions.list`, `sessions.refresh`, `sessions.loadMessages`, and optional `sessions.recover`.
 
-The adapter fields have these jobs:
+`id` must match `[a-z][a-z0-9-]*`. Every session path must have exactly one owner. Keep path checks in the adapter, restrict transcript ownership to the harness's configured data directory, and do not load adapter code or configuration from `~/.joint-bob`.
 
-- `id` is a lowercase identifier matching `[a-z][a-z0-9-]*`.
-- `label` is the name shown in the UI.
-- `order` controls display and discovery order. It is optional.
-- `defaults` declares the provider, model, and thinking level for new conversations.
-- `paths.newSession` is the path used for a new conversation.
-- `paths.ownsSession` must claim only this adapter's session paths. Every path must have exactly one owner.
-- `paths.ownsTranscript` limits refreshes to this adapter's transcript files.
-- `sessions.files` returns transcript files for change detection.
-- `sessions.list` reads the project's sessions.
-- `sessions.refresh` updates a previous list after transcript files change.
-- `sessions.loadMessages` reads one transcript into Joint Bob chat messages.
-
-Keep path checks inside the adapter and restrict transcript ownership to the harness's known data directory. Do not read adapter code or configuration from `~/.joint-bob`.
+The generic server uses the discovered adapter's configuration, runtime, fork, resources, path, synchronization, and session callbacks; it does not branch on engine IDs. Harness-private implementations belong under `src/harnesses/<id>/`. Existing `src/pi-service.ts` and `src/claude-service.ts` remain native helpers reached through their adapters, not server dispatch points. A future adapter and its private modules are auto-discovered without central engine-list edits.
 
 Add registry and session tests in `test/harness-registry.test.ts`, then run:
 
@@ -407,8 +395,6 @@ npm run typecheck
 npm test
 npm run build
 ```
-
-This adapter contract currently covers discovery, session listing, refreshes, and transcript loading. Interactive prompts and task execution still use the built-in Pi and Claude runtimes. A new harness needs runtime integration in the server before users can run it.
 
 ### Disposable nodes with dummy data
 

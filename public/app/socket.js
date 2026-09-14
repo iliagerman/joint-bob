@@ -1,3 +1,4 @@
+import { harnessIdFromPath, harnessLabel } from "../harness-metadata.js";
 import { api, loadPins, savePreferencesInBackground } from "./api.js";
 import { clearAttachments } from "./attachments.js";
 import { renderChatSessionControls, renderConversationLock, sendSocket, setComposerEnabled, setModels, syncEngineUI, updateStatus } from "./chat-controls.js";
@@ -35,7 +36,7 @@ function scheduleReconnect(sessionPath, delay = 1500) {
   if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
   state.reconnectTimer = setTimeout(() => {
     state.reconnectTimer = null;
-    openSession(sessionPath, elements.sessionTitle.textContent || "Pi session", true, Boolean(state.activeTaskId));
+    openSession(sessionPath, elements.sessionTitle.textContent || "Conversation", true, Boolean(state.activeTaskId));
   }, delay);
 }
 
@@ -102,10 +103,10 @@ function websocketUrl(sessionPath) {
   return url.toString();
 }
 
-export function openSession(sessionPath, title = "New Pi conversation", preserveChat = false, preserveTask = false) {
+export function openSession(sessionPath, title = "New conversation", preserveChat = false, preserveTask = false) {
   rememberDraft();
   // Opening a conversation that already exists drops the picks made for a new one.
-  if (sessionPath && sessionPath !== "claude:new") {
+  if (sessionPath && !state.harnesses.some(({ newSessionPath }) => newSessionPath === sessionPath)) {
     state.newSessionSecretAccountIds = [];
     state.spinOffSourceTaskId = null;
   }
@@ -136,7 +137,7 @@ export function openSession(sessionPath, title = "New Pi conversation", preserve
   state.conversationLock = null;
   renderConversationLock();
   if (state.preferencesLoaded) savePreferencesInBackground({ activeSessionPath: state.activeSessionPath, activeSessionId: state.activeSessionId });
-  state.engine = state.activeSessionPath.startsWith("claude:") || state.activeSessionPath.startsWith("draft:claude:") ? "claude" : "pi";
+  state.engine = harnessIdFromPath(state.harnesses, state.activeSessionPath);
   elements.sessionTitle.textContent = title;
   renderSessions();
   // A reconnect reuses this function. Switching panels there would yank the user
@@ -179,10 +180,11 @@ function handleSocketPayload(payload, scrollOnReady = false) {
     return;
   }
   if (payload.type === "ready") {
-    const openingDraft = ["new", "claude:new"].includes(state.activeSessionPath);
+    const openingDraft = state.harnesses.some(({ newSessionPath }) => newSessionPath === state.activeSessionPath);
     state.conversationLock = payload.ownership ?? null;
     state.conversationReadOnly = payload.readOnly === true;
-    state.engine = payload.engine || "pi";
+    if (!payload.engine) throw new Error("Ready payload is missing its harness engine");
+    state.engine = payload.engine;
     if (payload.executionNodeId) {
       state.activeNodeId = payload.executionNodeId;
       if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: payload.executionNodeId });
@@ -220,8 +222,8 @@ function handleSocketPayload(payload, scrollOnReady = false) {
       : matchingSession
         ? shortSessionTitle(matchingSession)
         : openingDraft
-          ? `New ${state.engine === "claude" ? "Claude" : "Pi"} conversation`
-          : state.engine === "claude" ? "Claude conversation" : "Pi conversation";
+          ? `New ${harnessLabel(state.harnesses, state.engine)} conversation`
+          : `${harnessLabel(state.harnesses, state.engine)} conversation`;
     const resumeFromTop = rerenderChatTranscript(payload.messages, payload.segments);
     // A fresh open starts on the newest message; a reconnect re-render follows
     // if the reader was following and otherwise puts them back where they were.
@@ -233,7 +235,7 @@ function handleSocketPayload(payload, scrollOnReady = false) {
     }
     if (!payload.messages?.length) {
       const node = state.sessionNodes.find((candidate) => candidate.id === state.activeNodeId);
-      showChatEmptyState("Ready for your first message", `${state.engine === "claude" ? "Claude" : "Pi"} will run on ${node?.name || "the selected node"}. The conversation is created when you send.`);
+      showChatEmptyState("Ready for your first message", `${harnessLabel(state.harnesses, state.engine)} will run on ${node?.name || "the selected node"}. The conversation is created when you send.`);
     }
     renderChatSessionControls();
     updateStatus(payload.status);
@@ -249,13 +251,15 @@ function handleSocketPayload(payload, scrollOnReady = false) {
     return;
   }
   if (payload.type === "engineChanged") {
-    state.engine = payload.engine || "pi";
+    const oldEngine = state.engine;
+    if (!payload.engine) throw new Error("Harness change payload is missing its engine");
+    state.engine = payload.engine;
     state.activeSessionId = payload.sessionId || null;
     state.activeConversationId = payload.conversationId || state.activeConversationId;
-    if (payload.conversationId) state.conversationSegments = [...(state.conversationSegments || [{ engine: state.engine === "claude" ? "pi" : "claude" }]), { engine: state.engine }];
+    state.conversationSegments = payload.segments || [...(state.conversationSegments || [{ engine: oldEngine }]), { engine: state.engine }];
     syncEngineUI();
     startHarnessSegment(state.engine);
-    toast(state.engine === "claude" ? "Switched to Claude — context carries over on your next message" : "Switched to Pi — context carries over on your next message");
+    toast(`Switched to ${harnessLabel(state.harnesses, state.engine)} — context carries over on your next message`);
     return;
   }
   if (payload.type === "sessionFile") {
@@ -267,7 +271,7 @@ function handleSocketPayload(payload, scrollOnReady = false) {
     return;
   }
   if (payload.type === "models") {
-    setModels(payload.models || []);
+    setModels(payload.models || [], payload.harnessId);
     return;
   }
   if (payload.type === "tools") {
@@ -369,10 +373,10 @@ function handleSocketPayload(payload, scrollOnReady = false) {
   if (payload.type === "assistantError") {
     clearThinkingBubble();
     finalizeAssistantBubble();
-    appendMessage("tool", `${state.engine === "claude" ? "Claude" : "Pi"} error: ${payload.error}`);
+    appendMessage("tool", `${harnessLabel(state.harnesses, state.engine)} error: ${payload.error}`);
   }
   if (payload.type === "agent_start") {
-    setStatus(`${state.engine === "claude" ? "Claude" : "Pi"} is working`, true);
+    setStatus(`${harnessLabel(state.harnesses, state.engine)} is working`, true);
     state.lastTurnStartedAt = Date.now();
     state.sessionBusy = true;
     startDurationTicker();
@@ -401,7 +405,7 @@ function handleSocketPayload(payload, scrollOnReady = false) {
   if (payload.type === "sessionFileChanged") {
     // The session file changed on disk after synchronization. Reconnect so the
     // server loads the updated conversation; "ready" re-renders the messages.
-    openSession(state.activeSessionPath, elements.sessionTitle.textContent || "Pi session", true, Boolean(state.activeTaskId));
+    openSession(state.activeSessionPath, elements.sessionTitle.textContent || "Conversation", true, Boolean(state.activeTaskId));
     return;
   }
   if (payload.type === "error") {
@@ -464,7 +468,7 @@ export async function refreshSessionsQuietly() {
     if (newlyNeedsReview) playCompletionSound().catch((error) => console.warn("Completion sound failed", error));
     const activeNode = state.sessionNodes.find((node) => node.id === state.activeNodeId);
     const activeSessionExists = state.sessions.some((session) => state.activeSessionId ? session.id === state.activeSessionId : session.path === state.activeSessionPath);
-    if (activeNode?.local && state.activeSessionPath && !["new", "claude:new"].includes(state.activeSessionPath) && !socketOpen() && !activeSessionExists) {
+    if (activeNode?.local && state.activeSessionPath && !state.harnesses.some(({ newSessionPath }) => newSessionPath === state.activeSessionPath) && !socketOpen() && !activeSessionExists) {
       state.activeTaskId = null;
       closeSocket();
       clearChat();

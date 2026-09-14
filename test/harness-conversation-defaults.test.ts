@@ -50,18 +50,45 @@ test("new Pi sessions ignore last-used SDK model and thinking, and honor node ov
 });
 
 test("Settings persist per-harness defaults and reject invalid thinking", async () => {
-  const { emptyClaudeState } = await import("../src/server/chat.js");
+  const root = await mkdtemp(path.join(os.tmpdir(), "bob-claude-defaults-"));
+  const { getHarnessRuntime } = await import("../src/harnesses.js");
+  const runtime = await getHarnessRuntime("claude");
   const previous = getSettings();
   try {
     assert.equal(previous.conversationDefaults.claude.thinkingLevel, "medium");
-    assert.equal(emptyClaudeState().effort, "medium");
-    assert.equal(emptyClaudeState().model, "claude-opus-5");
-    const conversationDefaults = { pi: { provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "low" }, claude: { provider: "claude", modelId: "sonnet", thinkingLevel: "high" } };
-    updateSettings({ ...previous, conversationDefaults });
+    const initial = await runtime.open({ cwd: root, projectId: "defaults-project", sessionId: "00000000-0000-4000-8000-000000000002" });
+    try {
+      assert.deepEqual(initial.settings(), { provider: "claude", modelId: "claude-opus-5", reasoning: "medium" });
+    } finally { initial.dispose(); }
+
+    const conversationDefaults = {
+      pi: { provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "low" },
+      claude: { provider: "claude", modelId: "sonnet", thinkingLevel: "high" },
+      kiro: previous.conversationDefaults.kiro,
+    };
+    const sessionRoot = path.join(root, "claude-sessions");
+    updateSettings({ ...previous, claude: { ...previous.claude, sessionPath: sessionRoot }, conversationDefaults });
     assert.deepEqual(getSettings().conversationDefaults, conversationDefaults);
-    assert.equal(emptyClaudeState().effort, "high");
-    assert.equal(emptyClaudeState().model, "sonnet");
-    assert.equal(emptyClaudeState("existing-session", false).effort, null, "legacy restored sessions keep their original implicit effort");
+
+    const configured = await runtime.open({ cwd: root, projectId: "defaults-project", sessionId: "00000000-0000-4000-8000-000000000003" });
+    try {
+      assert.deepEqual(configured.settings(), { provider: "claude", modelId: "sonnet", reasoning: "high" });
+    } finally { configured.dispose(); }
+
+    await mkdir(sessionRoot, { recursive: true });
+    const sessionPath = path.join(sessionRoot, "existing-session.jsonl");
+    await writeFile(sessionPath, `${JSON.stringify({ type: "user", cwd: root, message: { role: "user", content: "Existing session" } })}\n`);
+    const restored = await runtime.open({ cwd: root, projectId: "defaults-project", sessionId: "existing-session", sessionPath: `claude:${sessionPath}` });
+    try {
+      assert.deepEqual(restored.settings(), { provider: "claude", modelId: "claude-opus-5", reasoning: "default" });
+    } finally {
+      restored.dispose();
+      await rm(sessionPath, { force: true });
+    }
+
     assert.throws(() => updateSettings({ ...previous, conversationDefaults: { ...conversationDefaults, pi: { ...conversationDefaults.pi, thinkingLevel: "nonsense" } } }), /thinkingLevel/);
-  } finally { updateSettings(previous); }
+  } finally {
+    updateSettings(previous);
+    await rm(root, { recursive: true, force: true });
+  }
 });

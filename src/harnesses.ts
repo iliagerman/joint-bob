@@ -1,9 +1,9 @@
-import { stat } from "node:fs/promises";
 import path from "node:path";
 import { sessionClassificationOverrides, sessionColorOverrides, sessionTitleOverrides } from "./names.js";
 import { conversationDraftPath, listConversationRecords } from "./conversation-records.js";
 import { listDiscoveredHarnesses, resolveHarnessForSessionPath } from "./harnesses/registry.js";
 import type { HarnessAdapter, HarnessProject } from "./harnesses/contract.js";
+import type { HarnessRuntime } from "./harnesses/runtime.js";
 import type { HarnessId, SessionSummary } from "./types.js";
 
 export { defineHarness } from "./harnesses/contract.js";
@@ -13,26 +13,6 @@ interface CatalogEntry {
   project: HarnessProject;
   harnessId: HarnessId;
   sessions: Promise<SessionSummary[]>;
-  fingerprints: Promise<Map<string, string>>;
-}
-
-async function sessionFingerprints(sessions: SessionSummary[]): Promise<Map<string, string>> {
-  const entries = await Promise.all(sessions.filter((session) => !session.draft).map(async (session): Promise<[string, string] | null> => {
-    const filePath = path.resolve(session.path.replace(/^claude:/, ""));
-    try {
-      const info = await stat(filePath);
-      return [filePath, `${info.mtimeMs}:${info.size}`];
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-      throw error;
-    }
-  }));
-  return new Map(entries.filter((entry): entry is [string, string] => entry !== null));
-}
-
-function changedSessionFiles(previous: Map<string, string>, current: Map<string, string>): string[] {
-  const files = new Set([...previous.keys(), ...current.keys()]);
-  return [...files].filter((filePath) => previous.get(filePath) !== current.get(filePath));
 }
 
 function projectCacheKey(project: HarnessProject, harnessId: HarnessId): string {
@@ -76,7 +56,6 @@ export class HarnessSessionCatalog<TAdapters extends readonly HarnessAdapter[]> 
       if (changedFiles.length && !ownedFiles.length) return;
       try {
         entry.sessions = entry.sessions.then((sessions) => adapter.sessions.refresh(entry.project, sessions, ownedFiles));
-        entry.fingerprints = entry.sessions.then(sessionFingerprints);
         await entry.sessions;
       } catch (error) {
         this.entries.delete(key);
@@ -93,22 +72,13 @@ export class HarnessSessionCatalog<TAdapters extends readonly HarnessAdapter[]> 
   private async listAdapter(adapter: HarnessAdapter, project: HarnessProject): Promise<SessionSummary[]> {
     const key = projectCacheKey(project, adapter.id);
     const cached = this.entries.get(key);
-    if (cached) {
-      const [sessions, previous] = await Promise.all([cached.sessions, cached.fingerprints]);
-      const current = await sessionFingerprints(sessions);
-      const changedFiles = changedSessionFiles(previous, current);
-      if (!changedFiles.length) return sessions;
-      cached.sessions = adapter.sessions.refresh(project, sessions, changedFiles);
-      cached.fingerprints = cached.sessions.then(sessionFingerprints);
-      return cached.sessions;
-    }
+    if (cached) return cached.sessions;
     for (const [cachedKey, entry] of this.entries) {
       if (entry.project.id === project.id && entry.harnessId === adapter.id) this.entries.delete(cachedKey);
     }
     const sessions = adapter.sessions.list(project);
-    const fingerprints = sessions.then(sessionFingerprints);
-    this.entries.set(key, { project, harnessId: adapter.id, sessions, fingerprints });
-    Promise.all([sessions, fingerprints]).catch(() => this.entries.delete(key));
+    this.entries.set(key, { project, harnessId: adapter.id, sessions });
+    sessions.catch(() => this.entries.delete(key));
     return sessions;
   }
 }
@@ -118,6 +88,38 @@ const sessionCatalog = new HarnessSessionCatalog(adapters);
 
 export function listHarnesses(): HarnessAdapter[] {
   return [...adapters];
+}
+
+export function getHarness(id: HarnessId): HarnessAdapter {
+  const adapter = adapters.find((candidate) => candidate.id === id);
+  if (!adapter) throw new Error(`No harness registered for conversation engine: ${id}`);
+  return adapter;
+}
+
+const runtimePromises = new Map<HarnessId, Promise<HarnessRuntime>>();
+
+export async function getHarnessRuntime(id: HarnessId): Promise<HarnessRuntime> {
+  const existing = runtimePromises.get(id);
+  if (existing) return existing;
+  const adapter = getHarness(id);
+  if (!adapter.runtime) throw new Error(`${adapter.label} does not support execution`);
+  const pending = adapter.runtime();
+  runtimePromises.set(id, pending);
+  try {
+    return await pending;
+  } catch (error) {
+    runtimePromises.delete(id);
+    throw error;
+  }
+}
+
+export function harnessForProvider(provider: string): HarnessAdapter {
+  const fixed = adapters.find((adapter) => adapter.configuration?.fixedProvider === provider);
+  if (fixed) return fixed;
+  const configurable = adapters.filter((adapter) => adapter.configuration && !adapter.configuration.fixedProvider);
+  if (configurable.length === 1) return configurable[0];
+  if (!configurable.length) throw new Error(`No harness registered for provider: ${provider}`);
+  throw new Error(`Provider matches multiple configurable harnesses: ${provider}`);
 }
 
 export interface HarnessSyncFolder {
@@ -199,26 +201,50 @@ export function orderSessionFamilies(sessions: SessionSummary[]): SessionSummary
 
 /** Lists every registered harness through the shared catalog, then applies Joint Bob metadata. */
 export async function listHarnessSessions(project: HarnessProject, pinnedSessionPaths: string[] = [], pinnedSessionIds: string[] = []): Promise<SessionSummary[]> {
-  const [overrides, colors, classifications, sessions, records] = await Promise.all([
+  const [overrides, colors, classifications, initialSessions, records] = await Promise.all([
     sessionTitleOverrides(),
     sessionColorOverrides(),
     sessionClassificationOverrides(),
     sessionCatalog.list(project),
     listConversationRecords(project.id),
   ]);
-  const transcriptKeys = new Set(sessions.map((session) => `${session.harnessId}:${session.id}`));
+  let sessions = initialSessions;
   const pinnedPaths = new Set(pinnedSessionPaths);
   const pinnedIds = new Set(pinnedSessionIds);
   const recordsBySession = new Map(records.map((record) => [`${record.engine}:${record.sessionId}`, record]));
+  const historyCutoff = project.historyDays ? Date.now() - project.historyDays * 24 * 60 * 60 * 1000 : 0;
+  const eligibleMissingRecords = (current: SessionSummary[]) => {
+    const transcriptKeys = new Set(current.map((session) => `${session.harnessId}:${session.id}`));
+    return records.filter((record) => !transcriptKeys.has(`${record.engine}:${record.sessionId}`)
+      && (!historyCutoff || Date.parse(record.updatedAt) >= historyCutoff || pinnedIds.has(`${record.engine}:${record.sessionId}`)));
+  };
+  const initialMissingRecords = eligibleMissingRecords(sessions);
+  const missingEngines = new Set(initialMissingRecords.map((record) => record.engine));
+  const filesByEngine = new Map(await Promise.all([...missingEngines].map(async (engine) => {
+    const adapter = adapters.find((candidate) => candidate.id === engine);
+    if (!adapter) throw new Error(`No harness registered for conversation engine: ${engine}`);
+    const filesBySessionId = new Map<string, string>();
+    for (const filePath of await adapter.sessions.files(project)) {
+      const sessionId = adapter.paths.sessionId(filePath) ?? adapter.paths.sessionId(`${adapter.id}:${filePath}`);
+      if (sessionId) filesBySessionId.set(sessionId, filePath);
+    }
+    return [engine, filesBySessionId] as const;
+  })));
+  const discovered = initialMissingRecords.flatMap((record) => {
+    const transcript = filesByEngine.get(record.engine)!.get(record.sessionId);
+    return transcript ? [transcript] : [];
+  });
+  if (discovered.length) {
+    await sessionCatalog.refresh(project.id, discovered);
+    sessions = await sessionCatalog.list(project);
+  }
   for (const session of sessions) {
     const record = recordsBySession.get(`${session.harnessId}:${session.id}`);
     if (record?.taskId && !session.taskId) session.taskId = record.taskId;
     if (record?.cronTaskId) session.cronTaskId = record.cronTaskId;
   }
-  const historyCutoff = project.historyDays ? Date.now() - project.historyDays * 86_400_000 : 0;
-  for (const record of records) {
-    if (transcriptKeys.has(`${record.engine}:${record.sessionId}`)) continue;
-    if (historyCutoff && Date.parse(record.updatedAt) < historyCutoff && !pinnedIds.has(`${record.engine}:${record.sessionId}`)) continue;
+  const missingRecords = eligibleMissingRecords(sessions);
+  for (const record of missingRecords) {
     const adapter = adapters.find((candidate) => candidate.id === record.engine);
     if (!adapter) throw new Error(`No harness registered for conversation engine: ${record.engine}`);
     sessions.push({

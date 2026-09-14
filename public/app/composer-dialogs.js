@@ -3,38 +3,20 @@ import { api } from "./api.js";
 import { sendSocket } from "./chat-controls.js";
 import { setInputValue } from "./composer.js";
 import { elements } from "./elements.js";
-import { brandIcon } from "./icons.js";
 import { attachDigitShortcuts, isRowSelectorQuery, LIST_SHORTCUT_LIMIT, shortcutIndexBadge } from "./list-shortcuts.js";
+import { brandIcon } from "./icons.js";
 import { normalizedQuery } from "./layout.js";
 import { toast } from "./shell.js";
 import { state } from "./state.js";
 
 // Opus is pinned to the explicit Opus 5 id so the CLI's "opus" alias cannot
 // drift to an older release.
-export const CLAUDE_MODEL_OPTIONS = [
-  { id: "fable", label: "Fable" },
-  { id: "claude-opus-5", label: "Opus 5" },
-  { id: "sonnet", label: "Sonnet" },
-  { id: "haiku", label: "Haiku 4.5" },
-];
-// Pi harness offers the GPT (openai-codex) and GLM (zai) models; Claude harness offers Fable/Opus/Sonnet.
-export const PI_MODEL_PROVIDERS = [
-  { provider: "openai-codex", groupLabel: "GPT (OpenAI Codex)" },
-  { provider: "zai", groupLabel: "GLM (Z.ai)" },
-];
+export const CLAUDE_MODEL_OPTIONS = [];
+export const PI_MODEL_PROVIDERS = [];
 
 export function syncModelButton() {
-  const isClaude = state.engine === "claude";
-  let label = "Model";
-  if (isClaude) {
-    const active = CLAUDE_MODEL_OPTIONS.find((option) => state.activeModelKey === `claude/${option.id}`);
-    label = active?.label || state.activeModelLabel || "Model";
-  } else {
-    const active = state.models.find((model) => `${model.provider}/${model.id}` === state.activeModelKey);
-    label = active?.label || state.activeModelLabel || "Model";
-  }
-  elements.modelButtonName.textContent = label;
-  elements.modelButton.classList.toggle("claude", isClaude);
+  const active = state.models.find((model) => `${model.provider}/${model.id}` === state.activeModelKey);
+  elements.modelButtonName.textContent = active?.label || state.activeModelLabel || "Model";
   if (elements.modelDialog.open) renderModelDialog();
 }
 
@@ -43,16 +25,17 @@ let modelShortcuts = [];
 let queuedModelSelection = null;
 
 export function openQueuedModelPicker(activeKey, onSelect) {
-  queuedModelSelection = { activeKey, onSelect, harness: activeKey === "/" ? state.engine : activeKey.startsWith("claude/") ? "claude" : "pi" };
+  const model = state.models.find((candidate) => `${candidate.provider}/${candidate.id}` === activeKey);
+  queuedModelSelection = { activeKey, onSelect, harness: model?.harnessId || state.engine };
   renderModelDialog();
   elements.modelDialog.showModal();
 }
 
 export function queuedReasoningLevels(provider, modelId) {
-  if (provider === "claude") return ["default", "low", "medium", "high", "xhigh", "max"];
   const model = state.models.find((candidate) => candidate.provider === provider && candidate.id === modelId);
   if (!model) return null;
-  return model.thinkingLevels;
+  const descriptor = state.harnesses.find(({ id }) => id === model.harnessId);
+  return model.thinkingLevels || descriptor?.configuration.thinkingLevels || null;
 }
 
 function renderQueuedModels() {
@@ -70,12 +53,9 @@ function renderQueuedModels() {
   });
   harnessLabel.append(harness);
   elements.modelDialogList.append(harnessLabel);
-  const available = selection.harness === "claude"
-    ? CLAUDE_MODEL_OPTIONS.map((model) => ({ ...model, provider: "claude" }))
-    : state.models;
+  const available = state.models.filter((model) => model.harnessId === selection.harness);
   const models = [{ provider: "", id: "", label: "Inherit conversation settings" }, ...available];
   elements.modelDialogTitle.textContent = "Queued message harness and model";
-  elements.modelDialogList.classList.toggle("claude", selection.harness === "claude");
   for (const model of models) elements.modelDialogList.append(modelOptionButton({
     key: `${model.provider}/${model.id}`, label: model.label,
     active: selection.activeKey === `${model.provider}/${model.id}`,
@@ -110,9 +90,8 @@ function modelOptionButton({ key, label, active, onSelect }) {
   return option;
 }
 
-/** Pi runs a skill as /skill:<name>; Claude runs it as a bare slash command. */
 function skillInvocation(skill) {
-  return skill.invocation || (skill.harness === "pi" ? `/skill:${skill.name} ` : `/${skill.name} `);
+  return skill.invocation || `/${skill.name} `;
 }
 
 /** Rows 1-10 carry a digit shortcut; a filtered list renumbers on every keystroke. */
@@ -266,9 +245,7 @@ export function renderToolsDialog() {
   if (!state.tools.length) {
     const empty = document.createElement("span");
     empty.className = "model-shortcuts-empty";
-    empty.textContent = state.engine === "claude"
-      ? "Claude reports its tools after the first turn of a conversation."
-      : "No tools are available for this session.";
+    empty.textContent = "Tools have not been reported for this session yet.";
     elements.toolsDialogList.append(empty);
     return;
   }
@@ -433,7 +410,7 @@ export function renderCommandAutocomplete() {
 
 export function renderReasoningOptions() {
   const hasLevels = state.availableThinkingLevels.length > 0;
-  elements.chatModeLabel.textContent = state.engine === "claude" ? "Effort" : "Thinking";
+  elements.chatModeLabel.textContent = "Reasoning";
   elements.reasoningLevelSelect.replaceChildren();
   for (const level of state.availableThinkingLevels) {
     const option = document.createElement("option");
@@ -447,62 +424,38 @@ export function renderReasoningOptions() {
 
 export function changeReasoningLevel(event) {
   const level = event.currentTarget.value;
-  const payload = state.engine === "claude"
-    ? { type: "setEffort", effort: level }
-    : { type: "setThinking", level };
-  if (!sendSocket(payload)) toast("Not connected");
+  if (!sendSocket({ type: "setThinking", level })) toast("Not connected");
+}
+
+function appendModel(model) {
+  elements.modelDialogList.append(modelOptionButton({
+    key: `${model.provider}/${model.id}`, label: model.label,
+    active: state.activeModelKey === `${model.provider}/${model.id}`,
+    onSelect: () => { if (!sendSocket({ type: "setModel", provider: model.provider, modelId: model.id })) toast("Not connected"); },
+  }));
 }
 
 function renderModelDialog() {
-  const isClaude = state.engine === "claude";
-  elements.modelDialogTitle.textContent = isClaude ? "Claude model" : "Pi model";
-  elements.modelDialogList.classList.toggle("claude", isClaude);
-  elements.modelDialogList.replaceChildren();
-  modelShortcuts = [];
+  const descriptor = state.harnesses.find(({ id }) => id === state.engine);
+  const models = state.models.filter((model) => model.harnessId === state.engine);
+  elements.modelDialogTitle.textContent = `${descriptor.label} model`;
+  elements.modelDialogList.replaceChildren(); modelShortcuts = [];
   if (queuedModelSelection) { renderQueuedModels(); return; }
-  if (isClaude) {
-    for (const option of CLAUDE_MODEL_OPTIONS) {
-      elements.modelDialogList.append(
-        modelOptionButton({
-          key: `claude/${option.id}`,
-          label: option.label,
-          active: state.activeModelKey === `claude/${option.id}`,
-          onSelect: () => {
-            if (!sendSocket({ type: "setModel", provider: "claude", modelId: option.id })) toast("Not connected");
-          },
-        }),
-      );
-    }
-    return;
+  if (!models.length) {
+    const empty = document.createElement("span"); empty.className = "model-shortcuts-empty"; empty.textContent = "No configured models"; elements.modelDialogList.append(empty); return;
   }
-  if (!state.models.length) {
-    const empty = document.createElement("span");
-    empty.className = "model-shortcuts-empty";
-    empty.textContent = "No configured models";
-    elements.modelDialogList.append(empty);
-    return;
-  }
-  for (const { provider, groupLabel } of PI_MODEL_PROVIDERS) {
-    const group = state.models.filter((model) => model.provider === provider);
-    if (!group.length) continue;
-    const heading = document.createElement("div");
-    heading.className = "model-dialog-group";
-    // Z.ai publishes no monochrome mark, so only GPT carries a logo here.
-    if (provider === "openai-codex") heading.append(brandIcon("openai", "model-group-icon"));
-    heading.append(document.createTextNode(groupLabel));
-    elements.modelDialogList.append(heading);
-    for (const model of group) {
-      elements.modelDialogList.append(
-        modelOptionButton({
-          key: `${model.provider}/${model.id}`,
-          label: model.label,
-          active: state.activeModelKey === `${model.provider}/${model.id}`,
-          onSelect: () => {
-            if (!sendSocket({ type: "setModel", provider: model.provider, modelId: model.id })) toast("Not connected");
-          },
-        }),
-      );
+  const providers = [...new Set(models.map(({ provider }) => provider))];
+  for (const provider of providers) {
+    const providerModels = models.filter((candidate) => candidate.provider === provider);
+    const presentation = providerModels[0];
+    if (providers.length > 1 || presentation.providerLabel || presentation.providerIcon) {
+      const heading = document.createElement("div");
+      heading.className = "model-dialog-group";
+      if (presentation.providerIcon) heading.append(brandIcon(presentation.providerIcon, "model-group-icon"));
+      heading.append(document.createTextNode(presentation.providerLabel || provider));
+      elements.modelDialogList.append(heading);
     }
+    for (const model of providerModels) appendModel(model);
   }
 }
 elements.skillsDialogSearchInput.addEventListener("input", () => renderSkillsDialog());

@@ -8,6 +8,7 @@ process.env.JOINT_BOB_BIND_HOST = "127.0.0.1";
 // Native-service launch settings must not leak into disposable test fixtures.
 delete process.env.JOINT_BOB_RELEASE;
 delete process.env.MASTER_BOB_RELEASE;
+delete process.env.JOINT_BOB_INSECURE_COOKIE;
 process.umask(0o022);
 if (process.platform !== "win32") process.env.SHELL = "/bin/sh";
 delete process.env.JOINT_BOB_DATA_DIR;

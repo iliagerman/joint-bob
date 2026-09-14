@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
-import os from "node:os";
 import path from "node:path";
 import test, { after, before } from "node:test";
 import { api, projectNamed, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, type SignedIn } from "./dev-nodes.js";
+import { temporaryRoot } from "./queued-prompt-harness.js";
 import type { ChildProcess } from "node:child_process";
 
 interface TicketAttachment {
@@ -46,12 +46,34 @@ async function startFakeSyncthing(): Promise<string> {
 }
 
 before(async () => {
-  root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-ticket-attachments-"));
+  root = await temporaryRoot("joint-bob-ticket-attachments-");
   environment = await seedDevEnvironment(root, 1);
   node = environment.nodes[0];
   capturePath = path.join(root, "claude-prompt.txt");
   const fakeClaude = path.join(root, "fake-claude.mjs");
-  await writeFile(fakeClaude, `#!/usr/bin/env node\nimport { writeFileSync } from "node:fs";\nlet prompt = "";\nfor await (const chunk of process.stdin) prompt += chunk;\nwriteFileSync(process.env.CAPTURE_PATH, prompt);\nconsole.log(JSON.stringify({ type: "system", subtype: "init", session_id: "11111111-1111-4111-8111-111111111111", tools: [] }));\nconsole.log(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "done" }] } }));\nconsole.log(JSON.stringify({ type: "result", is_error: false }));\n`);
+  await writeFile(fakeClaude, `#!/usr/bin/env node
+import { appendFile, mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+if (process.argv[2] === "auth") { console.log(JSON.stringify({ loggedIn: true })); process.exit(0); }
+let prompt = "";
+for await (const chunk of process.stdin) prompt += chunk;
+await writeFile(process.env.CAPTURE_PATH, prompt);
+const args = process.argv.slice(2);
+const supplied = args.indexOf("--session-id");
+const resumed = args.indexOf("--resume");
+const sessionId = supplied >= 0 ? args[supplied + 1] : args[resumed + 1];
+console.log(JSON.stringify({ type: "system", subtype: "init", session_id: sessionId, tools: [] }));
+const encoded = process.cwd().replace(/^\\//, "-").replace(/[\\s_.\\/]+/g, "-");
+const directory = path.join(process.env.CLAUDE_CONFIG_DIR, "projects", encoded);
+await mkdir(directory, { recursive: true });
+const transcript = path.join(directory, sessionId + ".jsonl");
+const timestamp = new Date().toISOString();
+const record = (type, message) => JSON.stringify({ type, sessionId, cwd: process.cwd(), timestamp, message }) + "\\n";
+await appendFile(transcript, record("user", { role: "user", content: prompt }));
+await appendFile(transcript, record("assistant", { role: "assistant", content: [{ type: "text", text: "done" }] }));
+console.log(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "done" }] } }));
+console.log(JSON.stringify({ type: "result", is_error: false }));
+`);
   await chmod(fakeClaude, 0o755);
   const syncthingUrl = await startFakeSyncthing();
   server = await startDevNode(environment, node, { PI_MOBILE_WEB_SYNCTHING_URL: syncthingUrl, PI_MOBILE_WEB_SYNCTHING_API_KEY: "test-key", CAPTURE_PATH: capturePath });

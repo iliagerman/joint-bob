@@ -48,13 +48,19 @@ test("settings API persists runtime and Syncthing choices without returning secr
     const claudeRuntime = { configPath: path.join(root, "claude-config"), sessionPath: path.join(root, "claude-sessions") };
     const defaults = await fetch(`${node.baseUrl}/api/settings/runtime-defaults`, { headers });
     assert.equal(defaults.status, 200);
+    const runtimeDefaults = await defaults.json() as Record<string, { executable: string; configPath: string; sessionPath: string }>;
+    const kiroRuntime = runtimeDefaults.kiro;
     const checked = await fetch(`${node.baseUrl}/api/settings/runtime-check`, {
       method: "POST", headers,
       body: JSON.stringify({ pi: { executable: "missing-pi", configPath: path.join(root, "missing"), sessionPath: path.join(root, "missing") }, claude: { executable: "claude", configPath: "", sessionPath: "" } }),
     });
     assert.equal(checked.status, 200);
     assert.equal((await checked.json()).pi.configPath.ok, false, "missing config folder is reported");
-    const conversationDefaults = { pi: { provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "low" }, claude: { provider: "claude", modelId: "sonnet", thinkingLevel: "high" } };
+    const conversationDefaults = {
+      pi: { provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "low" },
+      claude: { provider: "claude", modelId: "sonnet", thinkingLevel: "high" },
+      kiro: { provider: "kiro", modelId: "default", thinkingLevel: "medium" },
+    };
     const saved = await fetch(`${node.baseUrl}/api/settings`, {
       method: "PUT",
       headers,
@@ -63,44 +69,62 @@ test("settings API persists runtime and Syncthing choices without returning secr
         claude: { executable: "/usr/local/bin/claude", ...claudeRuntime },
         syncthing: { endpoint: "http://127.0.0.1:8384", apiKey: "secret-api-key" },
         conversationDefaults,
-        conversationHistoryDays: 90,
+        conversationHistoryDays: 45,
         projects: { homePath: path.join(root, "JointBob") },
         resources: { skills: [path.join(root, "skills"), path.join(root, "skills")], prompts: [path.join(root, "prompts")], rules: [path.join(root, "rules")], plugins: [path.join(root, "plugins")] },
       }),
     });
     assert.equal(saved.status, 200);
-    assert.deepEqual(await saved.json(), {
+    const savedText = await saved.text();
+    assert.doesNotMatch(savedText, /secret-api-key/);
+    assert.deepEqual(JSON.parse(savedText), {
       conversationDefaults,
+      conversationHistoryDays: 45,
       pi: { executable: "/usr/local/bin/pi", ...piRuntime },
       claude: { executable: "/usr/local/bin/claude", ...claudeRuntime },
+      kiro: kiroRuntime,
+      runtimes: {
+        pi: { executable: "/usr/local/bin/pi", ...piRuntime },
+        claude: { executable: "/usr/local/bin/claude", ...claudeRuntime },
+        kiro: kiroRuntime,
+      },
       runtimeOverrides: {
         pi: { executable: "/usr/local/bin/pi", ...piRuntime },
         claude: { executable: "/usr/local/bin/claude", ...claudeRuntime },
+        kiro: { executable: "", configPath: "", sessionPath: "" },
       },
       syncthing: { endpoint: "http://127.0.0.1:8384", apiKeyConfigured: true },
       projects: { homePath: path.join(root, "JointBob") },
       resources: { skills: [path.join(root, "skills")], prompts: [path.join(root, "prompts")], rules: [path.join(root, "rules")], plugins: [path.join(root, "plugins")] },
       conversationLabels: ["Research", "Bug", "Feature", "POC"],
-      conversationHistoryDays: 90,
-      restartRequired: { pi: true, claude: true },
+      restartRequired: { pi: true, claude: true, kiro: false },
     });
 
     const read = await fetch(`${node.baseUrl}/api/settings`, { headers });
     assert.equal(read.status, 200);
-    assert.deepEqual(await read.json(), {
+    const readText = await read.text();
+    assert.doesNotMatch(readText, /secret-api-key/);
+    assert.deepEqual(JSON.parse(readText), {
       conversationDefaults,
+      conversationHistoryDays: 45,
       pi: { executable: "/usr/local/bin/pi", ...piRuntime },
       claude: { executable: "/usr/local/bin/claude", ...claudeRuntime },
+      kiro: kiroRuntime,
+      runtimes: {
+        pi: { executable: "/usr/local/bin/pi", ...piRuntime },
+        claude: { executable: "/usr/local/bin/claude", ...claudeRuntime },
+        kiro: kiroRuntime,
+      },
       runtimeOverrides: {
         pi: { executable: "/usr/local/bin/pi", ...piRuntime },
         claude: { executable: "/usr/local/bin/claude", ...claudeRuntime },
+        kiro: { executable: "", configPath: "", sessionPath: "" },
       },
       syncthing: { endpoint: "http://127.0.0.1:8384", apiKeyConfigured: true },
       projects: { homePath: path.join(root, "JointBob") },
       resources: { skills: [path.join(root, "skills")], prompts: [path.join(root, "prompts")], rules: [path.join(root, "rules")], plugins: [path.join(root, "plugins")] },
       conversationLabels: ["Research", "Bug", "Feature", "POC"],
-      conversationHistoryDays: 90,
-      restartRequired: { pi: false, claude: false },
+      restartRequired: { pi: false, claude: false, kiro: false },
     });
 
     const preservedResources = await fetch(`${node.baseUrl}/api/settings`, {
@@ -114,7 +138,9 @@ test("settings API persists runtime and Syncthing choices without returning secr
       }),
     });
     assert.equal(preservedResources.status, 200);
-    assert.deepEqual((await preservedResources.json()).resources, { skills: [path.join(root, "skills")], prompts: [path.join(root, "prompts")], rules: [path.join(root, "rules")], plugins: [path.join(root, "plugins")] });
+    const preserved = await preservedResources.json();
+    assert.equal(preserved.conversationHistoryDays, 45);
+    assert.deepEqual(preserved.resources, { skills: [path.join(root, "skills")], prompts: [path.join(root, "prompts")], rules: [path.join(root, "rules")], plugins: [path.join(root, "plugins")] });
 
     const project = await fetch(`${node.baseUrl}/api/projects`, { method: "POST", headers, body: JSON.stringify({ name: "Resource project", path: path.join(root, "project") }) });
     const projectBody = await project.json() as { project: { id: string } };

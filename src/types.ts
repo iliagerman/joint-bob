@@ -106,6 +106,7 @@ export interface SessionSummary {
   taskId?: string;
   running?: boolean;
   reviewState?: "running" | "needs_review" | "reviewed";
+  reviewNotificationsEnabled?: boolean;
   draft?: boolean;
   /** Node owning conversation execution. */
   executionNodeId?: string;
@@ -187,13 +188,16 @@ export interface ModelSummary {
   provider: string;
   id: string;
   label: string;
+  providerLabel?: string;
+  providerIcon?: string;
 }
 
 /** How much of the model's context window the conversation currently occupies. */
 export interface ContextUsage {
-  usedTokens: number;
-  contextWindow: number;
-  /** Whole percent of the window in use, so every harness reports one comparable number. */
+  /** Token counts are either both present when reported by the provider, or both absent. */
+  usedTokens?: number;
+  contextWindow?: number;
+  /** Percent of the window in use, so every harness reports one comparable number. */
   percent: number;
 }
 

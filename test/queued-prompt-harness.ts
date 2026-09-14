@@ -61,17 +61,15 @@ await appendFile(process.env.JOINT_BOB_FAKE_INVOCATIONS, text + '\\n');
 const args = process.argv.slice(2);
 const supplied = args.indexOf('--session-id');
 const resumed = args.indexOf('--resume');
-// A first turn can come back under an id the server did not choose, which is
-// what makes the server re-key a conversation part-way through the turn.
-const sessionId = supplied >= 0 ? (process.env.JOINT_BOB_FAKE_REPORT_ID || args[supplied + 1]) : args[resumed + 1];
+// Native initialization reports the stable id supplied by the server.
+const sessionId = supplied >= 0 ? args[supplied + 1] : args[resumed + 1];
 const waitFor = async (file) => {
   const deadline = Date.now() + 20000;
   while (Date.now() < deadline) {
     try { await access(file); return; } catch { await new Promise((resolve) => setTimeout(resolve, 20)); }
   }
 };
-// Holding the init line back keeps the conversation without a real id, which is
-// where prompts queue under the placeholder key.
+// Holding the init line back simulates prompts queued before native initialization.
 if (process.env.JOINT_BOB_FAKE_INIT_GATE) await waitFor(process.env.JOINT_BOB_FAKE_INIT_GATE);
 console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: sessionId }));
 // Write the transcript the way the real CLI does, so the conversation is
@@ -103,6 +101,10 @@ export async function login(baseUrl: string, password: string): Promise<{ cookie
 }
 
 export async function startServer(): Promise<{ server: Server; baseUrl: string }> {
+  if (process.env.JOINT_BOB_TEST_ENGINE_LOG) {
+    const { installStubHarnessRuntimes } = await import("./stub-harness-runtime.js");
+    await installStubHarnessRuntimes();
+  }
   const module = await import(`../src/server.ts?queued=${Date.now()}-${Math.random()}`);
   const server = module.server as Server;
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

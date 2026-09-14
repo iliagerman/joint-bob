@@ -4,8 +4,9 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { resolveDataDirectory } from "./data-directory.js";
+import { isHarnessId, type HarnessId } from "./types.js";
 
-type BrowserAgentIdentity = { projectId: string; engine: "pi" | "claude"; conversationId: string };
+type BrowserAgentIdentity = { projectId: string; engine: HarnessId; conversationId: string };
 const lifetime = 30 * 24 * 60 * 60 * 1000;
 let database: DatabaseSync | undefined;
 
@@ -17,10 +18,11 @@ function db(): DatabaseSync {
     database.exec(`PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL;
       CREATE TABLE IF NOT EXISTS browser_agent_tokens (
         token_hash TEXT PRIMARY KEY, project_id TEXT NOT NULL,
-        engine TEXT NOT NULL CHECK (engine IN ('pi', 'claude')),
-        conversation_id TEXT NOT NULL, expires_at INTEGER NOT NULL
+        engine TEXT NOT NULL, conversation_id TEXT NOT NULL, expires_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS browser_agent_tokens_expiry ON browser_agent_tokens(expires_at);`);
+    const schema = database.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'browser_agent_tokens'").get() as { sql: string };
+    if (schema.sql.includes("engine IN ('pi', 'claude')")) database.exec(`BEGIN; ALTER TABLE browser_agent_tokens RENAME TO browser_agent_tokens_old; CREATE TABLE browser_agent_tokens (token_hash TEXT PRIMARY KEY, project_id TEXT NOT NULL, engine TEXT NOT NULL, conversation_id TEXT NOT NULL, expires_at INTEGER NOT NULL); INSERT INTO browser_agent_tokens SELECT token_hash, project_id, engine, conversation_id, expires_at FROM browser_agent_tokens_old; DROP TABLE browser_agent_tokens_old; CREATE INDEX browser_agent_tokens_expiry ON browser_agent_tokens(expires_at); COMMIT;`);
   }
   database.prepare("DELETE FROM browser_agent_tokens WHERE expires_at <= ?").run(Date.now());
   return database;
@@ -29,8 +31,9 @@ function db(): DatabaseSync {
 function hash(token: string): string { return createHash("sha256").update(token).digest("hex"); }
 
 /** Call once when composing an agent environment, not once per shell command. */
-export function browserAgentEnvironment(projectId: string, engine: "pi" | "claude", conversationId: string): NodeJS.ProcessEnv {
+export function browserAgentEnvironment(projectId: string, engine: HarnessId, conversationId: string): NodeJS.ProcessEnv {
   if (!projectId || !conversationId) throw new Error("Browser agent requires a project and conversation identity");
+  if (!isHarnessId(engine)) throw new Error("Browser agent requires a valid harness identity");
   const token = randomBytes(32).toString("hex");
   db().prepare("INSERT INTO browser_agent_tokens (token_hash, project_id, engine, conversation_id, expires_at) VALUES (?, ?, ?, ?, ?)")
     .run(hash(token), projectId, engine, conversationId, Date.now() + lifetime);

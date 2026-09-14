@@ -3,26 +3,25 @@ import test from "node:test";
 import { createServer } from "node:http";
 import { agentRunDescriptor } from "../src/agent-run-monitor.js";
 import { conversationWorkActive, recordConversationWork } from "../src/conversation-work.js";
-import { subscribeSharedSession } from "../src/server/chat.js";
 import { pushRuntimeLeaseSnapshots } from "../src/server/maintenance.js";
-import { clearIdleTimer, handleSessionChange, scheduleIdleDispose } from "../src/server/realtime.js";
-import { idleSessionTimeoutMs, sharedSessions, type SharedPiSession } from "../src/server/state.js";
+import {
+  harnessSessionKey,
+  harnessSessions,
+  refreshHarnessTranscripts,
+  sendHarnessStatus,
+} from "../src/server/harness-sessions.js";
+import { idleSessionTimeoutMs } from "../src/server/state.js";
+import { nativePiSessionFixture } from "./native-pi-session-fixture.js";
 
 test("Pi adapter persists launched child work before disposing its parent handle", () => {
-  let listener: (event: unknown) => void = () => {};
-  const session = {
-    projectId: "pi-child-test", clients: new Set(), agentRuns: new Map(),
-    handle: { session: { sessionId: "pi-adapter-parent", subscribe: (callback: typeof listener) => { listener = callback; return () => {}; } } },
-  } as unknown as SharedPiSession;
-  const unsubscribe = subscribeSharedSession(session);
+  const fixture = nativePiSessionFixture({ id: "pi-adapter-parent" });
   try {
-    listener({ type: "tool_execution_end", toolCallId: "tool", toolName: "multi_agent_run", result: { content: [], details: {
+    fixture.emitRaw({ type: "tool_execution_end", toolCallId: "tool", toolName: "multi_agent_run", result: { content: [], details: {
       runId: "adapter-child", dashboardUrl: "http://127.0.0.1:1", tasks: [],
     } } });
-    session.agentRuns.clear();
+    fixture.session.dispose();
     assert.equal(conversationWorkActive("pi", "pi-adapter-parent"), true);
   } finally {
-    unsubscribe();
     recordConversationWork({ engine: "pi", sessionId: "pi-adapter-parent", summary: { runId: "adapter-child", status: "cancelled", tasks: [] } });
   }
 });
@@ -46,42 +45,43 @@ test("background maintenance observes child completion even without viewers or c
 
 for (const status of ["queued", "running"] as const) {
   test(`transcript invalidation retains parent tracking for ${status} subagents`, () => {
+    const id = `subagent-transcript-${status}`;
     let disposed = false;
-    const session = {
-      projectId: "subagent-test", lastLocalEventAt: 0, clients: new Set(), turnInFlight: 0,
-      handle: { session: { sessionId: "subagent-test", isStreaming: false, sessionFile: "/tmp/subagent-test.jsonl" }, dispose: () => { disposed = true; } },
-      unsubscribe: () => {}, agentRuns: new Map([["run", { summary: { status, tasks: [] } }]]),
-    } as unknown as SharedPiSession;
-    sharedSessions.set("subagent-test", session);
+    const fixture = nativePiSessionFixture({ id, projectId: "subagent-test", file: `/tmp/${id}.jsonl`, dispose: () => { disposed = true; } });
+    const key = harnessSessionKey("subagent-test", "pi", id);
+    recordConversationWork({ engine: "pi", sessionId: id, summary: { runId: `run-${status}`, status, tasks: [] } });
+    harnessSessions.set(key, fixture.shared);
     try {
-      handleSessionChange("subagent-test", ["/tmp/subagent-test.jsonl"]);
+      refreshHarnessTranscripts("subagent-test", [`/tmp/${id}.jsonl`]);
       assert.equal(disposed, false, "file changes must not discard active subagent tracking");
-      assert.equal(sharedSessions.get("subagent-test"), session);
+      assert.equal(harnessSessions.get(key), fixture.shared);
     } finally {
-      sharedSessions.delete("subagent-test");
+      recordConversationWork({ engine: "pi", sessionId: id, summary: { runId: `run-${status}`, status: "cancelled", tasks: [] } });
+      harnessSessions.delete(key);
     }
   });
+
   test(`idle parent retains ${status} subagents until they finish`, (t) => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
-    let disposed = false;
-    const run = { summary: { status, tasks: [] } };
-    const session = {
-      clients: new Set(), idleTimer: null, turnInFlight: 0,
-      handle: { session: { sessionId: "subagent-test", isStreaming: false }, dispose: () => { disposed = true; } },
-      unsubscribe: () => {}, agentRuns: new Map([["run", run]]),
-    } as unknown as SharedPiSession;
-    sharedSessions.set("subagent-test", session);
+    const id = `subagent-idle-${status}`;
+    const dispose = t.mock.fn();
+    const fixture = nativePiSessionFixture({ id, projectId: "subagent-test", dispose });
+    const key = harnessSessionKey("subagent-test", "pi", id);
+    const runId = `idle-run-${status}`;
+    recordConversationWork({ engine: "pi", sessionId: id, summary: { runId, status, tasks: [] } });
+    harnessSessions.set(key, fixture.shared);
     try {
-      scheduleIdleDispose(session);
+      sendHarnessStatus(fixture.shared);
       t.mock.timers.tick(idleSessionTimeoutMs);
-      assert.equal(disposed, false, "idle cleanup must not lose live subagent tracking");
-      assert.equal(sharedSessions.get("subagent-test"), session);
-      session.agentRuns.get("run")!.summary.status = "succeeded";
+      assert.equal(dispose.mock.callCount(), 0, "idle cleanup must not lose live subagent tracking");
+      assert.equal(harnessSessions.get(key), fixture.shared);
+      recordConversationWork({ engine: "pi", sessionId: id, summary: { runId, status: "succeeded", tasks: [] } });
       t.mock.timers.tick(idleSessionTimeoutMs);
-      assert.equal(disposed, true, "completed subagents must not retain parent forever");
+      assert.equal(dispose.mock.callCount(), 1, "completed subagents must not retain parent forever");
     } finally {
-      clearIdleTimer(session);
-      sharedSessions.delete("subagent-test");
+      if (fixture.shared.idleTimer) clearTimeout(fixture.shared.idleTimer);
+      recordConversationWork({ engine: "pi", sessionId: id, summary: { runId, status: "cancelled", tasks: [] } });
+      harnessSessions.delete(key);
       t.mock.timers.reset();
     }
   });

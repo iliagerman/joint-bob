@@ -55,6 +55,7 @@ test("direct lookup reads only the selected transcript", async (t) => {
       files: async () => [selectedPath],
       list: async () => { listCount += 1; return [selected]; },
       refresh: async (_project, previous, files) => { refreshCount += 1; assert.deepEqual(previous, []); assert.deepEqual(files, [selectedPath]); return [selected]; },
+
       loadMessages: async () => [],
     },
   });
@@ -65,7 +66,30 @@ test("direct lookup reads only the selected transcript", async (t) => {
   assert.equal(listCount, 0, "direct lookup must not scan the transcript catalog");
 });
 
-test("cached lists rely on watcher paths instead of rescanning transcript roots", async (t) => {
+test("cached lists and known-file refreshes do not rescan transcript roots", async () => {
+  const project = { id: randomUUID(), name: "Cached catalog", path: "/tmp/cached-catalog" };
+  let scans = 0;
+  const adapter = defineHarness({
+    id: "pi", label: "Pi",
+    paths: { newSession: "new", ownsSession: () => true, ownsTranscript: () => true },
+    sessions: {
+      files: async () => { scans += 1; return ["/tmp/session.jsonl"]; },
+      list: async () => [{ id: "session", path: "/tmp/session.jsonl", harnessId: "pi", agentId: "pi", agentLabel: "Pi", title: "Session" }],
+      refresh: async (_project, previous) => previous,
+      loadMessages: async () => [],
+    },
+  });
+  const catalog = new HarnessSessionCatalog([adapter]);
+
+  await catalog.list(project);
+  await catalog.list(project);
+  await catalog.refresh(project.id, ["/tmp/session.jsonl"]);
+  await catalog.list(project);
+
+  assert.equal(scans, 0, "catalog reads never rescan transcript roots");
+});
+
+test("a watcher event published during refresh is applied incrementally", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "joint-bob-catalog-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const project = { id: randomUUID(), name: "Catalog overlap", path: directory };

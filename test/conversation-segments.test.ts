@@ -82,6 +82,10 @@ test("a harness switch keeps one conversation with embedded, ordered segments", 
     const piTranscriptPath = path.join(sessionRoot, `${piSessionId}.jsonl`);
     await writeFile(piTranscriptPath, piTranscript(piSessionId, projectPath));
 
+    if (process.env.JOINT_BOB_TEST_ENGINE_LOG) {
+      const { installStubHarnessRuntimes } = await import("./stub-harness-runtime.js");
+      await installStubHarnessRuntimes();
+    }
     const module = await import(`../src/server.ts?segments=${Date.now()}-${Math.random()}`);
     server = module.server;
     await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
@@ -111,7 +115,6 @@ test("a harness switch keeps one conversation with embedded, ordered segments", 
       const messages: Array<Record<string, unknown>> = [];
       socket.on("message", (raw) => messages.push(JSON.parse(raw.toString())));
       await waitFor(messages, () => messages.some((message) => message.type === "ready"));
-      console.log("DBG opened", sessionPath);
       return { socket, messages };
     };
     const openSocket = async (sessionPath: string): Promise<{ socket: WebSocket; messages: Array<Record<string, unknown>> }> => {
@@ -133,7 +136,7 @@ test("a harness switch keeps one conversation with embedded, ordered segments", 
     // One Pi turn, then switch to Claude and run one stubbed Claude turn.
     const pi = await openSocket(piTranscriptPath);
     pi.socket.send(JSON.stringify({ type: "prompt", message: "hello pi" }));
-    await waitFor(pi.messages, () => pi.messages.some((message) => message.type === "textDelta" && message.delta === "stubbed response"));
+    await waitFor(pi.messages, () => pi.messages.some((message) => message.type === "textDelta" && message.text === "stubbed response"));
     pi.socket.send(JSON.stringify({ type: "setEngine", engine: "claude" }));
     const engineChanged = await (async () => {
       await waitFor(pi.messages, () => pi.messages.some((message) => message.type === "engineChanged"));

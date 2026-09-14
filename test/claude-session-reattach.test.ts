@@ -42,20 +42,19 @@ test("live event buffer does not alias the caller payload", () => {
   assert.equal(buffer[0].text, "ab");
 });
 
-test("server reattaches a dropped socket to the in-flight claude turn", async () => {
+test("server reattaches a dropped socket through the shared harness lifecycle", async () => {
   const server = await serverSource();
 
-  // The live-run key is derived from the path, never from the summary id.
-  assert.match(server, /claudeRunIdFromSessionPath\(sessionRequest\.sessionPath\)/);
-  assert.doesNotMatch(server, /requestedClaudeId = requestedSessionId/);
+  // Shared sessions are keyed by project, harness, and stable runtime ID.
+  assert.match(server, /return JSON\.stringify\(\[projectId, engine, sessionId\]\);/);
+  assert.match(server, /liveEvents: HarnessEvent\[\];/);
 
   // In-flight turn events are buffered and replayed on reattach.
-  assert.match(server, /liveEvents: Record<string, unknown>\[\];/);
-  assert.match(server, /appendLiveEvent\(connection\.claude\.liveEvents, payload\)/);
-  assert.match(server, /for \(const event of connection\.claude\.liveEvents\) send\(socket, event\);/);
+  assert.match(server, /appendEvent\(shared\.liveEvents, event\)/);
+  assert.match(server, /for \(const event of shared\.liveEvents\) send\(options\.socket, event\);/);
 
-  // A new conversation is re-keyed as soon as Claude reports its real id.
-  assert.match(server, /const adoptSessionId = \(sessionId: string\): void =>/);
+  // A runtime cannot silently adopt an ID different from the requested stable ID.
+  assert.match(server, /if \(session\.id !== options\.sessionId\) throw new Error\(`Harness returned unexpected session ID: \$\{session\.id\}`\);/);
 });
 
 test("chat status wording follows the active engine", async () => {

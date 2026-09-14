@@ -10,6 +10,7 @@
 // iframe reloads and no draft or scroll position is lost.
 
 import { captureCanvasKeyInput } from "./app/key-capture.js";
+import { harnessLabel as metadataHarnessLabel } from "./harness-metadata.js";
 import {
   addCanvasPane, arrangeCanvasLayout, CANVAS_MAX_PAGES, canonicalCanvasKey, canvasKeyFromCode, chordFromEvent, chordId, chordLabel,
   conversationChord, conversationChordLabel, canvasPaneEngine, canvasPaneMoves, canvasPaneNeighbor,
@@ -133,7 +134,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
   // A pane the user opened on a brand-new conversation carries the draft path the
   // pane document will create the conversation under, so two of them never collide.
   const draftHarnessId = (sessionPath) => (sessionPath.startsWith("draft:") ? sessionPath.split(":")[1] : null);
-  const harnessLabel = (harnessId) => harnesses.find((candidate) => candidate.id === harnessId)?.label || "conversation";
+  const harnessLabel = (harnessId) => metadataHarnessLabel(harnesses, harnessId);
   const draftSession = (pane) => {
     const harnessId = draftHarnessId(pane.sessionPath);
     return {
@@ -204,7 +205,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
       : `Assign a keyboard shortcut to ${title}`);
     badge.addEventListener("click", () => openShortcutDialog(pane, title));
     bar.append(badge);
-    const context = `${String(session.firstMessage || "").slice(0, 90)} · ${session.harnessId === "claude" ? "Claude" : "Pi"} · ${statusLine(session)}`;
+    const context = `${String(session.firstMessage || "").slice(0, 90)} · ${harnessLabel(session.harnessId || canvasPaneEngine(pane, harnesses))} · ${statusLine(session)}`;
     bar.append(text("span", context, "canvas-pane-meta"));
     const action = (label, ariaLabel, run) => {
       const element = button(label);
@@ -397,7 +398,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
   }
 
   const shortcutIdentity = (target) => `${target.projectId}\0${target.engine}\0${target.sessionId}`;
-  const paneShortcutTarget = (pane) => ({ projectId: pane.projectId, engine: canvasPaneEngine(pane), sessionId: pane.sessionId });
+  const paneShortcutTarget = (pane) => ({ projectId: pane.projectId, engine: canvasPaneEngine(pane, harnesses), sessionId: pane.sessionId });
   const shortcutFor = (pane) => shortcuts.find((candidate) => shortcutIdentity(candidate) === shortcutIdentity(paneShortcutTarget(pane))) || null;
   const paneTitle = (pane) => paneTitles.get(paneIdentity(pane)) || pane.sessionPath;
 
@@ -745,7 +746,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
   function addSessionPane(projectId, session) {
     const pane = {
       kind: "pane", id: crypto.randomUUID(), projectId,
-      sessionPath: session.path, sessionId: session.id,
+      sessionPath: session.path, sessionId: session.id, harnessId: session.harnessId,
       executionNodeId: session.executionNodeId ?? null,
     };
     const target = activeCanvasPage(layout).focusedPaneId || listCanvasPagePanes(layout).at(-1)?.id || null;
@@ -975,7 +976,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     optionsList.replaceChildren();
     const projectId = projectSelect.value;
     if (projectId) {
-      for (const harness of harnesses) {
+      for (const harness of harnesses.filter(({ runtimeConfigured }) => runtimeConfigured)) {
         const title = `Start a new ${harness.label} conversation`;
         if (!title.toLowerCase().includes(query)) continue;
         pickerOption(title, "Opens an empty conversation in the new pane", `canvas-start-conversation-${harness.id}`, () => chooseDraft(harness)).disabled = !classificationReady;
@@ -1012,7 +1013,7 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
     addChosenPane({
       kind: "pane", id: crypto.randomUUID(),
       projectId: projectSelect.value, sessionPath: session.path,
-      sessionId: session.id, executionNodeId: session.executionNodeId ?? null,
+      sessionId: session.id, harnessId: session.harnessId, executionNodeId: session.executionNodeId ?? null,
     });
   }
 

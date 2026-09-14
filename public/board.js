@@ -264,8 +264,8 @@ function taskCard(task, handlers) {
   const title = document.createElement("strong");
   title.textContent = task.title;
   const engine = document.createElement("span");
-  engine.className = `task-engine engine-${task.engine || "pi"}`;
-  engine.textContent = task.engine === "claude" ? "Claude" : "Pi";
+  engine.className = `task-engine engine-${task.engine}`;
+  engine.textContent = task.agentLabel || handlers.harnessLabel?.(task.engine) || task.engine;
   titleRow.append(title, engine);
   if (task.planMode) {
     const plan = document.createElement("span");

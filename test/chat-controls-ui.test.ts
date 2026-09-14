@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { appSource } from "./source.js";
 
-test("the toolbar owns one Pi Thinking or Claude Effort control", async () => {
+test("the toolbar owns one shared Reasoning control", async () => {
   const [html, app] = await Promise.all([
     readFile("public/index.html", "utf8"),
     appSource(),
@@ -27,9 +27,9 @@ test("the toolbar owns one Pi Thinking or Claude Effort control", async () => {
   assert.ok(toolbar.indexOf('id="chatMoreMenu"') > toolbar.indexOf('id="chatRecentSessionsButton"'));
 
   assert.match(app, /chatModeLabel: document\.querySelector\("#chatModeLabel"\)/);
-  assert.match(app, /function renderReasoningOptions\(\)[\s\S]*chatModeLabel\.textContent = state\.engine === "claude" \? "Effort" : "Thinking"[\s\S]*reasoningLevelSelect\.replaceChildren\(\)/);
+  assert.match(app, /function renderReasoningOptions\(\)[\s\S]*chatModeLabel\.textContent = "Reasoning";\s*elements\.reasoningLevelSelect\.replaceChildren\(\);\s*for \(const level of state\.availableThinkingLevels\)/);
   assert.doesNotMatch(app, /mobileReasoningLevelSelect|modelDialogReasoning|modelButtonMode/);
-  assert.match(app, /function changeReasoningLevel\(event\)[\s\S]*event\.currentTarget\.value[\s\S]*setEffort[\s\S]*setThinking/);
+  assert.match(app, /function changeReasoningLevel\(event\) \{\s*const level = event\.currentTarget\.value;\s*if \(!sendSocket\(\{ type: "setThinking", level \}\)\) toast\("Not connected"\);\s*\}/);
   assert.equal([...app.matchAll(/elements\.reasoningLevelSelect\.addEventListener\("change", changeReasoningLevel\)/g)].length, 1);
 });
 
@@ -67,7 +67,7 @@ test("model buttons are name-only and mobile controls use fixed toolbar rows", a
   assert.match(styles, /\.chat-recents-button\s*\{[^}]*grid-column:\s*3;[^}]*grid-row:\s*2;/);
   assert.doesNotMatch(styles, /\.model-button-mode/);
   assert.doesNotMatch(styles, /\.chat-toolbar[^\{]*\{[^}]*overflow-x:\s*auto/);
-  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v185";/);
+  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v186";/);
 });
 
 test("the status light and Stop sit on the chat header's meta row", async () => {

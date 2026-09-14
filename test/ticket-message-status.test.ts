@@ -12,13 +12,17 @@ function functionBody(source: string, header: string): string {
 
 test("sending a message on a ticket in review moves it back to in progress", async () => {
   const server = await serverSource();
-  const resume = functionBody(server, "async function resumeReviewedTask(connection: ChatConnection)");
+  const resume = functionBody(server, "async function resumeReviewedTask(connection: HarnessChatConnection)");
+  const enqueue = functionBody(server, "async function enqueue(connection: HarnessChatConnection");
 
-  assert.match(server, /interface ChatConnection \{[\s\S]*taskId: string \| null;/);
+  assert.match(server, /export interface HarnessChatConnection \{[\s\S]*taskId: string \| null;/);
   assert.match(server, /socket, project, taskId: task\?\.id \?\? null, cwd/);
-  assert.match(resume, /task\.status !== "review"/);
+  assert.match(resume, /task\?\.status !== "review"/);
   assert.match(resume, /updateTask\(connection\.project\.id, task\.id, \{ status: "in_progress" \}\)/);
   assert.match(resume, /broadcastToProject\(connection\.project\.id, \{ type: "tasksChanged" \}\)/);
-  assert.match(functionBody(server, "async function handleClaudeCommand(connection: ChatConnection, payload: SocketPayload)"), /await resumeReviewedTask\(connection\)/);
-  assert.match(functionBody(server, "async function handlePiCommand(connection: ChatConnection, shared: SharedPiSession, payload: SocketPayload)"), /await resumeReviewedTask\(connection\)/);
+  const resumeCall = enqueue.indexOf("await resumeReviewedTask(connection)");
+  const queueCall = enqueue.indexOf("enqueuePrompt(");
+  assert.ok(resumeCall >= 0 && queueCall > resumeCall, "Review resumes once before the prompt is enqueued");
+  assert.equal([...enqueue.matchAll(/await resumeReviewedTask\(connection\)/g)].length, 1);
+  assert.doesNotMatch(server, /handleClaudeCommand|handlePiCommand/);
 });

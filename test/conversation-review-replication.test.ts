@@ -196,6 +196,7 @@ test("a remote review re-arms the account's next notification", async () => {
     const { receiveReplicationBatch } = await import("../src/replication.js?review-rearm=" + Date.now());
     const reviews = await import(`../src/conversation-reviews.ts?review-rearm-mod=${Date.now()}`);
     const session = { path: "session-g", engine: "pi" as const, sessionId: "session-g", running: false };
+    reviews.setConversationReviewNotifications("user-1", "project-1", session.path, true);
     const now = Date.now();
     const at = (offsetMs: number): string => new Date(now + offsetMs).toISOString();
 

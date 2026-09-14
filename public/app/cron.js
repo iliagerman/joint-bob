@@ -1,5 +1,5 @@
+import { harnessIdFromPath } from "../harness-metadata.js";
 import { api } from "./api.js";
-import { CLAUDE_MODEL_OPTIONS, queuedReasoningLevels } from "./composer-dialogs.js";
 import { state } from "./state.js";
 import { confirmAction, toast } from "./shell.js";
 
@@ -17,6 +17,7 @@ const inputOf = ({ id, nextRun, lastRun, ...input }) => input;
 const command = (nodeId, value) => api("/api/cron", { method: "POST", body: JSON.stringify({ nodeId, command: value }) });
 
 export async function openScheduledTasks(projectId, session = null) {
+  if (!state.harnesses.length) state.harnesses = (await api("/api/harnesses")).harnesses;
   context = { projectId, session };
   editing = null;
   showList();
@@ -69,7 +70,7 @@ async function refreshTasks() {
     const harness = availableHarnesses.find(candidate => candidate.id === task.engine);
     const reasoning = task.reasoning ?? task.model?.reasoning;
     const repeat = task.schedule.frequency === "hourly" && (task.schedule.intervalHours ?? 1) > 1 ? `Every ${task.schedule.intervalHours} hours` : task.schedule.frequency;
-    const execution = [["Repeat", repeat], ["Harness", harness?.label || task.engine], ["Model", task.model ? task.model.modelId : "Harness default"], [task.engine === "claude" ? "Effort" : "Thinking", reasoning || "Harness default"]];
+    const execution = [["Repeat", repeat], ["Harness", harness?.label || task.engine], ["Model", task.model ? task.model.modelId : "Harness default"], ["Reasoning", reasoning || "Harness default"]];
     const entries = task.enabled
       ? [["Next run", new Date(task.nextRun).toLocaleString(undefined, { timeZone: task.schedule.timezone })], ["Timezone", task.schedule.timezone], ...execution, ["Last run", last]]
       : [["Status", "Paused"], ["Timezone", task.schedule.timezone], ...execution, ["Last run", last]];
@@ -126,25 +127,31 @@ function showList() {
   dialog.querySelector(".cron-card").scrollTo(0, 0);
 }
 function modelsForHarness(engine) {
-  return engine === "claude"
-    ? CLAUDE_MODEL_OPTIONS.map(model => ({ ...model, provider: "claude", thinkingLevels: ["default", "low", "medium", "high", "xhigh", "max"] }))
-    : availableModels;
+  return availableModels.filter((model) => model.harnessId === engine);
 }
 function renderExecutionFields(modelKey = "", reasoning = field("reasoning").value) {
   const engine = field("engine").value;
   const models = modelsForHarness(engine);
-  field("model").replaceChildren(new Option("Harness default", ""), ...models.map(model => new Option(model.label, `${model.provider}|${model.id}`)));
-  if (modelKey && [...field("model").options].some(option => option.value === modelKey)) field("model").value = modelKey;
+  const options = [new Option("Harness default", ""), ...models.map(model => new Option(model.label, `${model.provider}|${model.id}`))];
+  if (modelKey && !options.some(option => option.value === modelKey)) options.push(new Option(`${modelKey.split("|")[1]} (unavailable)`, modelKey));
+  field("model").replaceChildren(...options);
+  if (modelKey) field("model").value = modelKey;
   const [provider, modelId] = field("model").value.split("|");
-  const selectedLevels = queuedReasoningLevels(provider, modelId) || models.find(model => model.provider === provider && model.id === modelId)?.thinkingLevels;
-  const availableLevels = [...new Set(models.flatMap(model => model.thinkingLevels || []))];
-  const levels = selectedLevels?.length ? selectedLevels : availableLevels.length ? availableLevels : engine === "claude" ? ["low", "medium", "high", "xhigh", "max"] : ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+  const selected = models.find(model => model.provider === provider && model.id === modelId);
+  const harness = availableHarnesses.find(candidate => candidate.id === engine);
+  const levels = [...(selected?.thinkingLevels || harness?.configuration?.thinkingLevels || [])];
+  if (modelKey && !selected && reasoning && !levels.includes(reasoning)) levels.push(reasoning);
   field("reasoning").replaceChildren(new Option("Harness default", ""), ...levels.filter(level => level !== "default").map(level => new Option(level, level)));
   if ([...field("reasoning").options].some(option => option.value === reasoning)) field("reasoning").value = reasoning;
-  document.querySelector("#cronReasoningLabel").childNodes[0].nodeValue = engine === "claude" ? "Effort" : "Thinking level";
+  document.querySelector("#cronReasoningLabel").childNodes[0].nodeValue = "Reasoning";
 }
 function editTask(task) {
   editing = task;
+  const selectedEngine = task?.engine || context.session?.harnessId || context.session?.engine
+    || (context.session ? harnessIdFromPath(state.harnesses, context.session.path) : null)
+    || state.harnesses.find((harness) => harness.runtimeConfigured)?.id;
+  field("engine").replaceChildren(...state.harnesses.filter((harness) => harness.runtimeConfigured).map((harness) => new Option(harness.label, harness.id)));
+  if (selectedEngine && !state.harnesses.some(({ id }) => id === selectedEngine)) field("engine").add(new Option(selectedEngine, selectedEngine));
   form.reset();
   form.hidden = false;
   listView.hidden = true;
@@ -153,7 +160,7 @@ function editTask(task) {
   dialog.querySelector(".cron-card").scrollTo(0, 0);
   field("timezone").value = task ? task.schedule.timezone : Intl.DateTimeFormat().resolvedOptions().timeZone;
   for (const name of ["name", "prompt", "ownerNodeId"]) if (task) field(name).value = task[name];
-  field("engine").value = task ? task.engine : context.session ? context.session.harnessId : field("engine").value;
+  field("engine").value = selectedEngine;
   renderExecutionFields(task?.model ? `${task.model.provider}|${task.model.modelId}` : "", task?.reasoning ?? task?.model?.reasoning ?? "");
   if (task) {
     field("enabled").checked = task.enabled;

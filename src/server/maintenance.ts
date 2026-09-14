@@ -1,12 +1,10 @@
 import { agentWorkActive, listConversationWork, refreshConversationWork } from "../conversation-work.js";
 import { AGENT_RESOURCES_FOLDER_ID, agentResourcesRoot, reconcileAgentResources } from "../agent-resources.js";
-import { listRunningClaudeSessions } from "../claude-runtime.js";
-import { listRunningPiSessions } from "../pi-runtime.js";
 import { type ClusterPeer, dueMembershipDeliveries, getClusterMachineToken, getClusterMembership, getClusterNode, getClusterPeer, listClusterPeers, recordMembershipDelivered, recordMembershipFailure } from "../cluster.js";
 import { getConversationOwnership } from "../conversation-ownership.js";
 import { ensureConversationRecord } from "../conversation-records.js";
 import { conversationRuntimeDatabase, type RuntimeLeaseInput, sweepExpiredRuntimeLeases } from "../conversation-runtime.js";
-import { harnessForSessionPath, listHarnessSyncFolders } from "../harnesses.js";
+import { getHarnessRuntime, harnessForSessionPath, listHarnesses, listHarnessSyncFolders } from "../harnesses.js";
 import { eventsForPeer, recordPeerFailure, recordPeerReceipt } from "../replication.js";
 import { enqueueSecretCredentialSync, recordSecretCredentialFailure, recordSecretCredentialReceipt, secretCredentialEventsForPeer } from "../secret-replication.js";
 import { listSecretAccounts, type SecretAccount } from "../secrets.js";
@@ -15,11 +13,11 @@ import { ensureAgentResourcesFolder, ensureConversationSyncFolders, ensureTicket
 import { TICKET_WORKSPACE_FOLDER_ID, ticketWorkspaceRoot } from "../task-workspaces.js";
 import { listTasks, listUnfinishedOutgoingTaskHandoffs } from "../tasks.js";
 import type { HarnessId } from "../types.js";
-import { claudeRunKey } from "./chat.js";
 import { fetchPeerInventory } from "./cluster-helpers.js";
 import { broadcastSessionsChangedToAllProjects, scheduleReviewNotifications } from "./realtime.js";
 import { replicationReceiptSchema } from "./schemas.js";
-import { claudeClients, configuredTicketWorkspacePeers, flags, recoveredClaudeChats, runningClaudeSessionPaths, sharedSessions } from "./state.js";
+import { harnessSessions, harnessSessionBusy } from "./harness-sessions.js";
+import { configuredTicketWorkspacePeers, flags } from "./state.js";
 import { reconcileOutgoingTaskHandoff } from "./task-handoff.js";
 
 /* Syncthing is often still binding its API port when the node boots beside it. A
@@ -253,24 +251,13 @@ export async function buildRuntimeLeaseSnapshot(localNodeId: string): Promise<Ru
     if (ownership && ownership.ownerNodeId !== localNodeId) return null;
     return ownership?.epoch ?? 1;
   };
-  for (const shared of new Set(sharedSessions.values())) {
-    const work = listConversationWork("pi", shared.handle.session.sessionId);
-    for (const tracked of work) {
-      const run = shared.agentRuns.get(tracked.summary.runId);
-      if (run) run.summary = tracked.summary;
-    }
-    const runningAgentRun = [...shared.agentRuns.values()].find((run) => agentWorkActive(run.summary));
-    if (!shared.handle.session.isStreaming && shared.turnInFlight === 0 && !runningAgentRun) continue;
-    const sessionId = shared.handle.session.sessionId;
-    const key = `pi\n${sessionId}`;
-    if (entries.has(key)) continue;
-    const ownershipEpoch = await epochFor("pi", sessionId);
+  for (const shared of harnessSessions.values()) {
+    if (!harnessSessionBusy(shared)) continue;
+    const sessionId = shared.session.id;
+    const key = `${shared.engine}\n${sessionId}`;
+    const ownershipEpoch = await epochFor(shared.engine, sessionId);
     if (ownershipEpoch === null) continue;
-    entries.set(key, {
-      engine: "pi", sessionId, ownerNodeId: localNodeId,
-      ownershipEpoch,
-      runId: runningAgentRun?.descriptor.runId ?? sessionId, updatedAt, expiresAt,
-    });
+    entries.set(key, { engine: shared.engine, sessionId, ownerNodeId: localNodeId, ownershipEpoch, runId: sessionId, updatedAt, expiresAt });
   }
   for (const work of listConversationWork()) {
     if (!agentWorkActive(work.summary)) continue;
@@ -281,58 +268,23 @@ export async function buildRuntimeLeaseSnapshot(localNodeId: string): Promise<Ru
       ownershipEpoch, runId: work.summary.runId, updatedAt, expiresAt,
     });
   }
-  for (const connection of claudeClients.values()) {
-    const claude = connection.claude;
-    if (!claude.sessionId) continue;
-    const runningKey = claudeRunKey(connection.project.id, `claude:${claude.filePath ?? ""}`);
-    if (!claude.child && !(claude.filePath && runningClaudeSessionPaths.has(runningKey))) continue;
-    const key = `claude\n${claude.sessionId}`;
-    if (entries.has(key)) continue;
-    const ownershipEpoch = await epochFor("claude", claude.sessionId);
-    if (ownershipEpoch === null) continue;
-    entries.set(key, {
-      engine: "claude", sessionId: claude.sessionId, ownerNodeId: localNodeId,
-      ownershipEpoch,
-      runId: claude.sessionId, updatedAt, expiresAt,
-    });
-  }
-  for (const recovered of recoveredClaudeChats.values()) {
-    if (!recovered.claude.sessionId) continue;
-    const key = `claude\n${recovered.claude.sessionId}`;
-    if (entries.has(key)) continue;
-    const ownershipEpoch = await epochFor("claude", recovered.claude.sessionId);
-    if (ownershipEpoch === null) continue;
-    entries.set(key, {
-      engine: "claude", sessionId: recovered.claude.sessionId, ownerNodeId: localNodeId,
-      ownershipEpoch,
-      runId: recovered.claude.sessionId, updatedAt, expiresAt,
-    });
-  }
-  for (const hook of listRunningClaudeSessions()) {
-    const key = `claude\n${hook.sessionId}`;
-    if (entries.has(key)) continue;
-    const ownershipEpoch = await epochFor("claude", hook.sessionId);
-    if (ownershipEpoch === null) continue;
-    entries.set(key, {
-      engine: "claude", sessionId: hook.sessionId, ownerNodeId: localNodeId,
-      ownershipEpoch,
-      runId: hook.sessionId, updatedAt, expiresAt,
-    });
-  }
-  for (const terminal of listRunningPiSessions()) {
-    const key = `pi\n${terminal.sessionId}`;
-    if (entries.has(key)) continue;
-    const ownershipEpoch = await epochFor("pi", terminal.sessionId);
-    if (ownershipEpoch === null) continue;
-    entries.set(key, {
-      engine: "pi", sessionId: terminal.sessionId, ownerNodeId: localNodeId,
-      ownershipEpoch, runId: terminal.runId, updatedAt, expiresAt,
-    });
+  for (const adapter of listHarnesses()) {
+    if (!adapter.runtime) continue;
+    const external = (await getHarnessRuntime(adapter.id)).externalRunning;
+    if (!external) continue;
+    for (const run of await external()) {
+      const key = `${adapter.id}\n${run.sessionId}`;
+      if (entries.has(key)) continue;
+      const ownershipEpoch = await epochFor(adapter.id, run.sessionId);
+      if (ownershipEpoch === null) continue;
+      entries.set(key, { engine: adapter.id, sessionId: run.sessionId, ownerNodeId: localNodeId, ownershipEpoch, runId: run.runId, updatedAt, expiresAt });
+    }
   }
   return [...entries.values()];
 }
 
 let runtimeLeasePushInProgress = false;
+let localRuntimeLeaseSignature = "[]";
 
 export async function pushRuntimeLeaseSnapshots(): Promise<void> {
   // Snapshots must be applied in generation order; a push still in flight when the
@@ -342,6 +294,14 @@ export async function pushRuntimeLeaseSnapshots(): Promise<void> {
   try {
     const local = await getClusterNode();
     const leases = await buildRuntimeLeaseSnapshot(local.id);
+    const signature = JSON.stringify(leases
+      .map(({ engine, sessionId, runId, ownershipEpoch }) => [engine, sessionId, runId, ownershipEpoch])
+      .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))));
+    if (signature !== localRuntimeLeaseSignature) {
+      localRuntimeLeaseSignature = signature;
+      broadcastSessionsChangedToAllProjects();
+      for (const project of await listProjects()) scheduleReviewNotifications(project.id);
+    }
     const peers = await listClusterPeers();
     if (!peers.length) return;
     const generatedAt = leases.length ? leases[0].updatedAt : new Date().toISOString();
@@ -366,15 +326,9 @@ export async function pushRuntimeLeaseSnapshots(): Promise<void> {
   }
 }
 
-let runningPiSessionIds = "";
-
-/** Notify browsers of terminal lifecycle changes, including expired crash heartbeats. */
+/** Notify browsers of expired crash heartbeats. */
 export function sweepRuntimeLeases(): void {
-  const expired = sweepExpiredRuntimeLeases(conversationRuntimeDatabase());
-  const current = [...new Set(listRunningPiSessions().map((session) => session.sessionId))].sort().join("\n");
-  const terminalChanged = current !== runningPiSessionIds;
-  runningPiSessionIds = current;
-  if (expired.length || terminalChanged) broadcastSessionsChangedToAllProjects();
+  if (sweepExpiredRuntimeLeases(conversationRuntimeDatabase()).length) broadcastSessionsChangedToAllProjects();
 }
 
 export async function flushReplicationOutbox(): Promise<void> {

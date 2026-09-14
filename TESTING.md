@@ -19,6 +19,15 @@ Run a single file while iterating:
 npm run test:file test/canvas-ui.test.ts
 ```
 
+Focused harness boundary checks:
+
+```bash
+npm run test:file -- test/harness-chat.test.ts test/harness-wire.test.ts test/harness-fork.test.ts test/harness-task-runtime.test.ts test/harness-observation.test.ts
+npm run test:file -- test/ui/ui-harness-settings.test.ts
+```
+
+The harness checks use synthetic Node ACP fixtures with a disposable `HOME` and no real credentials. They do not replace authenticated Kiro resume, cancellation, and cross-node smoke testing on two execution nodes.
+
 Always go through `npm run test:file`. It carries `--import ./test/setup.mjs`,
 which points `HOME` and `PI_WEB_DATA_DIR` at a throwaway directory and sets
 `JOINT_BOB_BIND_HOST=127.0.0.1` before any test code loads. Disposable servers

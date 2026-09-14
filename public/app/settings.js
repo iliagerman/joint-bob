@@ -84,53 +84,121 @@ function selectSettingsTab(name) {
 }
 
 let runtimeDefaults;
-// Harnesses whose overrides the user reset to the node defaults; saving stores blanks for
-// them so the node default keeps applying after the built-in paths move in a future build.
+let harnessDescriptors = [];
+let selectedHarnessId = null;
 const clearedHarnessesOnSave = new Set();
 const globalResourceFields = { skills: elements.settingsResourceSkillsPaths, prompts: elements.settingsResourcePromptsPaths, rules: elements.settingsResourceRulesPaths, plugins: elements.settingsResourcePluginsPaths };
-const runtimeFields = { pi: { executable: elements.settingsPiExecutable, configPath: elements.settingsPiConfigPath, sessionPath: elements.settingsPiSessionPath }, claude: { executable: elements.settingsClaudeExecutable, configPath: elements.settingsClaudeConfigPath, sessionPath: elements.settingsClaudeSessionPath } };
-const runtimeLabels = { pi: { executable: "Pi executable", configPath: "Pi config path", sessionPath: "Pi session path" }, claude: { executable: "Claude executable", configPath: "Claude config path", sessionPath: "Claude session path" } };
-const defaultsOutputs = { pi: elements.settingsPiDefaults, claude: elements.settingsClaudeDefaults };
+const runtimeFields = {};
+const runtimeLabels = {};
+const defaultsOutputs = {};
+const conversationFields = {};
 
-function runtimeFieldsValue() { return Object.fromEntries(Object.entries(runtimeFields).map(([engine, fields]) => [engine, Object.fromEntries(Object.entries(fields).map(([field, input]) => [field, input.value.trim()]))])); }
+function runtimeFieldsValue() { return Object.fromEntries(Object.entries(runtimeFields).map(([id, fields]) => [id, Object.fromEntries(Object.entries(fields).map(([field, input]) => [field, input.value.trim()]))])); }
 function blankHarnessPayload() { return { executable: "", configPath: "", sessionPath: "" }; }
-function fillRuntimeFields(values) { for (const [engine, fields] of Object.entries(runtimeFields)) for (const [field, input] of Object.entries(fields)) input.value = values[engine][field]; }
-function renderRuntimeDefaults(defaults) {
-  for (const [engine, output] of Object.entries(defaultsOutputs)) {
-    output.textContent = `Node defaults — executable: ${defaults[engine].executable}; config: ${defaults[engine].configPath}; sessions: ${defaults[engine].sessionPath}.`;
+function controlPrefix(id) { return id[0].toUpperCase() + id.slice(1); }
+function labeledControl(text, control) { const label = document.createElement("label"); label.append(text, control); return label; }
+function makeInput(id, testid) { const input = document.createElement("input"); input.id = id; input.dataset.testid = testid; input.autocomplete = "off"; return input; }
+
+function createConversationControls(descriptor, settings, prefix) {
+  const fields = {};
+  const defaults = settings.conversationDefaults[descriptor.id];
+  if (!descriptor.configuration.fixedProvider) {
+    fields.provider = makeInput(`settings${prefix}DefaultProvider`, `settings-${descriptor.id}-default-provider`);
+    fields.provider.maxLength = 200; fields.provider.required = true; fields.provider.value = defaults.provider;
   }
+  const model = makeInput(`settings${prefix}DefaultModel`, `settings-${descriptor.id}-default-model`);
+  model.maxLength = 300; model.required = true; model.value = defaults.modelId;
+  const thinking = document.createElement("select");
+  thinking.id = `settings${prefix}DefaultThinking`; thinking.dataset.testid = `settings-${descriptor.id}-default-thinking`;
+  for (const level of descriptor.configuration.thinkingLevels) thinking.add(new Option(level, level));
+  thinking.value = defaults.thinkingLevel;
+  return { fields: { ...fields, model, thinking }, controls: [fields.provider && labeledControl("New conversation provider", fields.provider), labeledControl("New conversation model", model), labeledControl("New conversation thinking", thinking)].filter(Boolean) };
 }
 
-/** Shows one harness's override fields and hides the other, like the outer settings tablist. */
-function selectHarnessTab(name) {
-  for (const tab of elements.harnessTabs) {
-    const selected = tab.dataset.harnessTab === name;
-    tab.setAttribute("aria-selected", selected ? "true" : "false");
-    tab.tabIndex = selected ? 0 : -1;
+function createRuntimeControls(descriptor, settings, defaults, prefix) {
+  const fields = {};
+  const fieldset = document.createElement("fieldset"); fieldset.className = "phase-settings";
+  const legend = document.createElement("legend"); legend.textContent = `${descriptor.label} path overrides`; fieldset.append(legend);
+  const definitions = [["executable", "Executable"], ["configPath", "Node-local config and auth path"], ["sessionPath", "Synchronized transcript/session root"]];
+  for (const [field, label] of definitions) {
+    const suffix = field === "configPath" ? "ConfigPath" : field === "sessionPath" ? "SessionPath" : "Executable";
+    const testSuffix = field === "configPath" ? "config" : field === "sessionPath" ? "session" : "executable";
+    fields[field] = makeInput(`settings${prefix}${suffix}`, `settings-${descriptor.id}-${testSuffix}-input`);
+    fields[field].value = settings.runtimeOverrides[descriptor.id][field];
+    fields[field].addEventListener("input", () => clearedHarnessesOnSave.delete(descriptor.id));
+    fieldset.append(labeledControl(label, fields[field]));
   }
+  const button = document.createElement("button"); button.className = "ghost"; button.type = "button";
+  button.id = `settingsUse${prefix}DefaultsButton`; button.dataset.testid = `settings-use-${descriptor.id}-defaults-button`; button.textContent = `Use node defaults for ${descriptor.label}`;
+  button.addEventListener("click", () => useHarnessDefaults(descriptor.id)); fieldset.append(button);
+  return { fields, fieldset };
+}
+
+function createHarnessPanel(descriptor, settings, defaults) {
+  const prefix = controlPrefix(descriptor.id);
+  const panel = document.createElement("div"); panel.id = `harnessPanel-${descriptor.id}`; panel.dataset.harnessPanel = descriptor.id;
+  panel.setAttribute("role", "tabpanel"); panel.setAttribute("aria-labelledby", `harnessTab-${descriptor.id}`);
+  const output = document.createElement("output"); output.className = "engine-defaults"; output.id = `settings${prefix}Defaults`; output.dataset.testid = `settings-${descriptor.id}-defaults`;
+  output.textContent = `Node defaults — executable: ${defaults[descriptor.id].executable}; config: ${defaults[descriptor.id].configPath}; sessions: ${defaults[descriptor.id].sessionPath}.`;
+  const conversation = createConversationControls(descriptor, settings, prefix);
+  const runtime = createRuntimeControls(descriptor, settings, defaults, prefix);
+  conversationFields[descriptor.id] = conversation.fields; runtimeFields[descriptor.id] = runtime.fields; defaultsOutputs[descriptor.id] = output;
+  runtimeLabels[descriptor.id] = { executable: `${descriptor.label} executable`, configPath: `${descriptor.label} config path`, sessionPath: `${descriptor.label} session path` };
+  panel.append(output, ...conversation.controls, runtime.fieldset); return panel;
+}
+
+function selectHarnessTab(name) {
+  selectedHarnessId = name;
+  const tabs = [...document.querySelectorAll("#harnessTabs [data-harness-tab]")];
+  for (const tab of tabs) { const selected = tab.dataset.harnessTab === name; tab.setAttribute("aria-selected", String(selected)); tab.tabIndex = selected ? 0 : -1; }
   for (const panel of document.querySelectorAll("[data-harness-panel]")) panel.hidden = panel.dataset.harnessPanel !== name;
 }
 
-function renderRuntimeReadiness(readiness) { elements.settingsRuntimeStatus.textContent = Object.entries(readiness).flatMap(([engine, fields]) => Object.entries(fields).map(([field, result]) => `${runtimeLabels[engine][field]}: ${result.message}`)).join(". "); }
-async function checkRuntimePaths() { const readiness = await api("/api/settings/runtime-check", { method: "POST", body: JSON.stringify(runtimeFieldsValue()) }); renderRuntimeReadiness(readiness); return readiness; }
-function useHarnessDefaults(harness) {
-  clearedHarnessesOnSave.add(harness);
-  for (const input of Object.values(runtimeFields[harness])) input.value = "";
-  checkRuntimePaths().catch((error) => toast(error.message));
+function bindHarnessTab(tab) {
+  tab.addEventListener("click", () => selectHarnessTab(tab.dataset.harnessTab));
+  tab.addEventListener("keydown", (event) => {
+    const step = ["ArrowRight", "ArrowDown"].includes(event.key) ? 1 : ["ArrowLeft", "ArrowUp"].includes(event.key) ? -1 : 0;
+    if (!step) return; event.preventDefault();
+    const tabs = [...document.querySelectorAll("#harnessTabs [data-harness-tab]")];
+    const next = tabs[(tabs.indexOf(tab) + step + tabs.length) % tabs.length]; selectHarnessTab(next.dataset.harnessTab); next.focus();
+  });
 }
-function invalidRuntimeOverrides(readiness, values) { return Object.entries(readiness).flatMap(([engine, fields]) => Object.entries(fields).filter(([field, result]) => !result.ok && values[engine][field] !== runtimeDefaults[engine][field]).map(([field]) => runtimeLabels[engine][field])); }
+
+function renderHarnessSettings(descriptors, settings, defaults) {
+  const previous = selectedHarnessId;
+  for (const map of [runtimeFields, runtimeLabels, defaultsOutputs, conversationFields]) for (const key of Object.keys(map)) delete map[key];
+  const tabs = document.querySelector("#harnessTabs"); const panels = document.querySelector("#harnessPanels"); tabs.replaceChildren(); panels.replaceChildren();
+  for (const descriptor of descriptors) {
+    const tab = document.createElement("button"); tab.className = "settings-subtab"; tab.type = "button"; tab.id = `harnessTab-${descriptor.id}`;
+    tab.dataset.harnessTab = descriptor.id; tab.dataset.testid = `harness-tab-${descriptor.id}`; tab.setAttribute("role", "tab"); tab.setAttribute("aria-controls", `harnessPanel-${descriptor.id}`); tab.textContent = descriptor.label;
+    bindHarnessTab(tab); tabs.append(tab); panels.append(createHarnessPanel(descriptor, settings, defaults));
+  }
+  selectHarnessTab(descriptors.some(({ id }) => id === previous) ? previous : descriptors.find(({ runtimeConfigured }) => runtimeConfigured)?.id || descriptors[0].id);
+}
+
+function conversationDefaultsValue() {
+  return Object.fromEntries(harnessDescriptors.map((descriptor) => {
+    const fields = conversationFields[descriptor.id];
+    return [descriptor.id, { provider: fields.provider ? fields.provider.value.trim() : descriptor.configuration.fixedProvider, modelId: fields.model.value.trim(), thinkingLevel: fields.thinking.value }];
+  }));
+}
+function renderRuntimeReadiness(readiness) { elements.settingsRuntimeStatus.textContent = Object.entries(readiness).flatMap(([id, fields]) => Object.entries(fields).map(([field, result]) => `${runtimeLabels[id][field]}: ${result.message}`)).join(". "); }
+async function checkRuntimePaths() { const readiness = await api("/api/settings/runtime-check", { method: "POST", body: JSON.stringify(runtimeFieldsValue()) }); renderRuntimeReadiness(readiness); return readiness; }
+function useHarnessDefaults(id) { clearedHarnessesOnSave.add(id); for (const input of Object.values(runtimeFields[id])) input.value = ""; checkRuntimePaths().catch((error) => toast(error.message)); }
+function invalidRuntimeOverrides(readiness, values) { return Object.entries(readiness).flatMap(([id, fields]) => Object.entries(fields).filter(([field, result]) => !result.ok && values[id][field] !== runtimeDefaults[id][field]).map(([field]) => runtimeLabels[id][field])); }
 export const projectResourceFields = { skills: elements.projectResourceSkillsPaths, prompts: elements.projectResourcePromptsPaths, rules: elements.projectResourceRulesPaths, plugins: elements.projectResourcePluginsPaths };
 export function fillResourceFields(fields, resources) { for (const [type, field] of Object.entries(fields)) field.value = (resources[type] || []).join("\n"); }
 export function resourceFieldsValue(fields) { return Object.fromEntries(Object.entries(fields).map(([type, field]) => [type, field.value.split("\n").map((line) => line.trim()).filter(Boolean)])); }
 
 export async function openSettings(tab = "account") {
-  const [settings, defaults] = await Promise.all([api("/api/settings"), api("/api/settings/runtime-defaults"), loadSecretAccounts(), loadChangelogPanel()]);
+  const [settings, defaults, harnessBody] = await Promise.all([api("/api/settings"), api("/api/settings/runtime-defaults"), api("/api/harnesses"), loadSecretAccounts(), loadChangelogPanel()]);
   runtimeDefaults = defaults;
+  harnessDescriptors = harnessBody.harnesses.filter(({ configuration }) => configuration);
   clearedHarnessesOnSave.clear();
   elements.settingsUsername.textContent = state.username;
   for (const input of [elements.settingsCurrentPassword, elements.settingsNewPassword, elements.settingsNewPasswordRepeat]) input.value = "";
   selectSettingsTab(tab);
-  selectHarnessTab("pi");
+  renderHarnessSettings(harnessDescriptors, settings, defaults);
   void fillShortcutSettings();
   const clusterInventory = await loadClusterPanel();
   await loadUpdatesPanel(clusterInventory);
@@ -140,14 +208,6 @@ export async function openSettings(tab = "account") {
   elements.settingsProjectHome.value = settings.projects.homePath;
   document.querySelector("#settingsConversationLabels").value = settings.conversationLabels.join("\n");
   document.querySelector("#settingsConversationHistoryDays").value = settings.conversationHistoryDays;
-  fillRuntimeFields(settings.runtimeOverrides);
-  document.querySelector("#settingsPiDefaultProvider").value = settings.conversationDefaults.pi.provider;
-  for (const harness of ["pi", "claude"]) {
-    const prefix = harness === "pi" ? "Pi" : "Claude";
-    document.querySelector(`#settings${prefix}DefaultModel`).value = settings.conversationDefaults[harness].modelId;
-    document.querySelector(`#settings${prefix}DefaultThinking`).value = settings.conversationDefaults[harness].thinkingLevel;
-  }
-  renderRuntimeDefaults(defaults);
   elements.settingsRuntimeStatus.textContent = "";
   elements.settingsSkillsStatus.textContent = "";
   fillResourceFields(globalResourceFields, settings.resources);
@@ -166,16 +226,8 @@ async function saveSettings(event) {
   const saved = await api("/api/settings", {
     method: "PUT",
     body: JSON.stringify({
-      pi: runtime.pi,
-      claude: runtime.claude,
-      conversationDefaults: Object.fromEntries(["pi", "claude"].map((harness) => {
-        const prefix = harness === "pi" ? "Pi" : "Claude";
-        return [harness, {
-          provider: harness === "pi" ? document.querySelector("#settingsPiDefaultProvider").value.trim() : "claude",
-          modelId: document.querySelector(`#settings${prefix}DefaultModel`).value.trim(),
-          thinkingLevel: document.querySelector(`#settings${prefix}DefaultThinking`).value,
-        }];
-      })),
+      runtimes: runtime,
+      conversationDefaults: conversationDefaultsValue(),
       syncthing: { endpoint: state.syncthingEndpoint },
       projects: { homePath: elements.settingsProjectHome.value.trim() },
       resources: resourceFieldsValue(globalResourceFields),
@@ -186,10 +238,7 @@ async function saveSettings(event) {
   state.conversationLabels = saved.conversationLabels;
   if (state.activeProjectId) await refreshSessionsQuietly();
   else renderSessions();
-  const restartRequired = [
-    ...(saved.restartRequired.pi ? ["Pi configuration"] : []),
-    ...(saved.restartRequired.claude ? ["Claude configuration"] : []),
-  ];
+  const restartRequired = harnessDescriptors.filter(({ id }) => saved.restartRequired[id]).map(({ label }) => `${label} configuration`);
   elements.settingsRestartMessage.hidden = restartRequired.length === 0;
   elements.settingsRestartMessage.textContent = restartRequired.length ? `Restart required for ${restartRequired.join(" and ")} changes.` : "";
   if (!restartRequired.length) elements.settingsDialog.close();
@@ -197,21 +246,6 @@ async function saveSettings(event) {
 }
 
 elements.settingsButton.addEventListener("click", () => openSettings().catch((error) => toast(error.message)));
-elements.settingsUsePiDefaultsButton.addEventListener("click", () => useHarnessDefaults("pi"));
-elements.settingsUseClaudeDefaultsButton.addEventListener("click", () => useHarnessDefaults("claude"));
-for (const [harness, fields] of Object.entries(runtimeFields)) for (const input of Object.values(fields)) input.addEventListener("input", () => clearedHarnessesOnSave.delete(harness));
-for (const tab of elements.harnessTabs) {
-  tab.addEventListener("click", () => selectHarnessTab(tab.dataset.harnessTab));
-  tab.addEventListener("keydown", (event) => {
-    const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
-    if (!step) return;
-    event.preventDefault();
-    const index = elements.harnessTabs.indexOf(tab);
-    const next = elements.harnessTabs[(index + step + elements.harnessTabs.length) % elements.harnessTabs.length];
-    selectHarnessTab(next.dataset.harnessTab);
-    next.focus();
-  });
-}
 async function runSkillOperation(operation) {
   const buttons = [elements.settingsSyncSkillsButton, elements.settingsReloadSkillsButton];
   for (const item of buttons) item.disabled = true;

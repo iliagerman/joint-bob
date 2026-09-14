@@ -76,6 +76,12 @@ function reviewDatabase(): DatabaseSync {
       notified INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (user_id, project_id, session_path)
     );
+    CREATE TABLE IF NOT EXISTS conversation_review_notification_preferences (
+      user_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      session_path TEXT NOT NULL,
+      PRIMARY KEY (user_id, project_id, session_path)
+    );
   `);
   const columns = database.prepare("PRAGMA table_info(conversation_review_states)").all() as unknown as ColumnRow[];
   if (!columns.some((column) => column.name === "notified")) {
@@ -300,13 +306,37 @@ export function applyConversationReviewEvent(db: DatabaseSync, event: Replicatio
  * conversation buzzes the phone once per review cycle no matter how often its transcript is rewritten
  * by a locally running agent or by one synchronized in from another node.
  */
+export function conversationReviewNotificationPaths(userId: string, projectId: string): Set<string> {
+  const rows = reviewDatabase().prepare(`
+    SELECT session_path FROM conversation_review_notification_preferences
+    WHERE user_id = ? AND project_id = ?
+  `).all(userId, projectId) as Array<{ session_path: string }>;
+  return new Set(rows.map((row) => row.session_path));
+}
+
+export function conversationReviewNotificationsEnabled(userId: string, projectId: string, sessionPath: string): boolean {
+  return conversationReviewNotificationPaths(userId, projectId).has(sessionPath);
+}
+
+export function setConversationReviewNotifications(userId: string, projectId: string, sessionPath: string, enabled: boolean): void {
+  const db = reviewDatabase();
+  if (!enabled) {
+    db.prepare("DELETE FROM conversation_review_notification_preferences WHERE user_id = ? AND project_id = ? AND session_path = ?").run(userId, projectId, sessionPath);
+    return;
+  }
+  db.prepare("INSERT OR IGNORE INTO conversation_review_notification_preferences (user_id, project_id, session_path) VALUES (?, ?, ?)").run(userId, projectId, sessionPath);
+}
+
 export function claimReviewNotifications(userId: string, projectId: string, sessionPaths: string[]): string[] {
   if (!sessionPaths.length) return [];
   const db = reviewDatabase();
   const select = db.prepare(`
-    SELECT session_path FROM conversation_review_states
-    WHERE user_id = ? AND project_id = ? AND session_path = ?
-      AND notified = 0 AND last_activity_at > reviewed_at
+    SELECT states.session_path FROM conversation_review_states states
+    JOIN conversation_review_notification_preferences preferences
+      ON preferences.user_id = states.user_id AND preferences.project_id = states.project_id
+        AND preferences.session_path = states.session_path
+    WHERE states.user_id = ? AND states.project_id = ? AND states.session_path = ?
+      AND states.notified = 0 AND states.last_activity_at > states.reviewed_at
   `);
   const claim = db.prepare(`
     UPDATE conversation_review_states SET notified = 1

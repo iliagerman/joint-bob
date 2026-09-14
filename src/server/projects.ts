@@ -11,8 +11,8 @@ import { ensureSyncthingFolder, syncthingFolderStatuses } from "../syncthing.js"
 import { listTasks } from "../tasks.js";
 import type { ProjectRecord, ProjectSyncStatus, ProjectView } from "../types.js";
 import { sessionWatcher } from "./chat.js";
-import { claudeClients, sharedSessions } from "./state.js";
-import { claudeTaskRuns, piTaskRuns, projectHasMergeReservation } from "./task-runs.js";
+import { harnessSessionBusy, harnessSessions } from "./harness-sessions.js";
+import { harnessTaskRuns, projectHasMergeReservation } from "./task-runs.js";
 
 function unavailableProjectStatus(message = "No Syncthing folder is configured"): ProjectSyncStatus {
   return { state: "unavailable", remainingFiles: 0, remainingBytes: 0, message };
@@ -57,15 +57,12 @@ async function assertProjectRelocationIdle(project: ProjectRecord): Promise<void
   if ((await listTasks(project.id)).some((task) => task.executionState === "running")) {
     throw new ProjectDirectoryImportError("Wait for this project's task to finish before changing its type");
   }
-  for (const session of new Set(sharedSessions.values())) {
-    if (session.projectId === project.id && (session.clients.size || session.handle.session.isStreaming)) {
-      throw new ProjectDirectoryImportError("Close or finish this project's Pi conversations before changing its type");
+  for (const session of harnessSessions.values()) {
+    if (session.projectId === project.id && (session.clients.size || harnessSessionBusy(session))) {
+      throw new ProjectDirectoryImportError("Close or finish this project's conversations before changing its type");
     }
   }
-  if ([...claudeClients.values()].some((client) => client.project.id === project.id)) {
-    throw new ProjectDirectoryImportError("Close this project's Claude conversations before changing its type");
-  }
-  if ([...piTaskRuns.values()].some((run) => run.projectId === project.id) || [...claudeTaskRuns.values()].some((run) => run.projectId === project.id)) {
+  if ([...harnessTaskRuns.values()].some((run) => run.projectId === project.id)) {
     throw new ProjectDirectoryImportError("Wait for this project's task run to finish before changing its workspace");
   }
   if ((await listTasks(project.id)).some((task) => task.mergeTx === "open")) {

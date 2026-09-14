@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import type { ChildProcess } from "node:child_process";
 import { rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import WebSocket from "ws";
 
@@ -46,6 +47,8 @@ test("a queued prompt survives a node crash and runs when the node comes back", 
 
     await writeFile(`${process.env.JOINT_BOB_FAKE_GATE}.second`, "");
     await waitForInvocations(["first", "second"]);
+    await waitFor(reopened.messages, () => reopened.messages.some((message) => message.type === "promptCompleted"));
+    assert.ok(reopened.messages.filter((message) => message.type === "textDelta").map((message) => message.text).join("").includes("second"));
   } finally {
     socket?.terminate();
     await killNode(node);
@@ -54,51 +57,64 @@ test("a queued prompt survives a node crash and runs when the node comes back", 
   }
 });
 
-test("a prompt queued before the conversation has an id survives a crash under its real id", async () => {
-  const root = await temporaryRoot("joint-bob-queue-rekey-");
+test("a prompt queued before native initialization survives a crash under its ready id", async () => {
+  const root = await temporaryRoot("joint-bob-queue-pre-init-");
   const previous = { ...process.env };
-  const rekeyEnv = { JOINT_BOB_FAKE_INIT_GATE: path.join(root, "init-gate"), JOINT_BOB_FAKE_REPORT_ID: "8f21c0de-4b77-4a15-9c33-7e5d0a2b6f10" };
-  Object.assign(process.env, environment(root), rekeyEnv);
+  const initEnv = { JOINT_BOB_FAKE_INIT_GATE: path.join(root, "init-gate") };
+  Object.assign(process.env, environment(root), initEnv);
   let node: ChildProcess | undefined;
   let socket: WebSocket | undefined;
   try {
     const executable = await gatedClaude(root);
     const port = await freePort();
     const baseUrl = `http://127.0.0.1:${port}`;
-    node = await spawnNode(root, port, rekeyEnv);
+    node = await spawnNode(root, port, initEnv);
     const fixture = await configure(baseUrl, root, executable);
 
     const opened = openChat(baseUrl, fixture.cookie, fixture.projectId, "claude:new");
     socket = opened.socket;
     await waitFor(opened.messages, () => opened.messages.some((message) => message.type === "ready"));
+    const readyId = opened.messages.find((message) => message.type === "ready")!.sessionId;
+    assert.equal(typeof readyId, "string");
+    assert.notEqual(readyId, "", "ready provides the conversation identity before native init");
+    assert.equal(opened.messages.some((message) => message.type === "sessionFile"), false, "native init has not reported a session file");
     socket.send(JSON.stringify({ type: "prompt", message: "first" }));
     await waitFor(opened.messages, () => opened.messages.some((message) => message.type === "agent_start"));
 
-    // Claude has not reported its final id, so this queues under the provisional key.
     socket.send(JSON.stringify({ type: "prompt", message: "second" }));
     await waitFor(opened.messages, () => opened.messages.some((message) => message.type === "userMessage" && message.queued === true && message.text === "second"));
-    assert.equal(opened.messages.some((message) => message.type === "sessionFile"), false, "the conversation has no id yet");
+    assert.equal(opened.messages.some((message) => message.type === "sessionFile"), false, "native init has not reported a session file");
+
+    const database = new DatabaseSync(path.join(root, "data", "node.db"));
+    const queueRows = database.prepare("SELECT queue_key FROM queued_prompts ORDER BY sequence").all() as Array<{ queue_key: string }>;
+    database.close();
+    assert.deepEqual(queueRows.map(({ queue_key }) => queue_key), [
+      `${fixture.projectId}:${readyId}`,
+      `${fixture.projectId}:${readyId}`,
+    ]);
 
     await writeFile(path.join(root, "init-gate"), "");
-    // Init only identifies the process. Wait for turn acceptance before crashing it.
     await waitFor(opened.messages, () => opened.messages.some((message) => message.type === "sessionFile") && opened.messages.some((message) => message.type === "promptStarted"));
     const sessionFile = String(opened.messages.find((message) => message.type === "sessionFile")!.sessionFile);
-    assert.match(sessionFile, /8f21c0de-4b77-4a15-9c33-7e5d0a2b6f10/, "the conversation adopted the id Claude reported");
+    assert.ok(sessionFile.includes(String(readyId)), "native init retains the ready conversation id");
 
     socket.terminate();
     await killNode(node);
     node = undefined;
 
     const restartPort = await freePort();
-    node = await spawnNode(root, restartPort, rekeyEnv);
+    node = await spawnNode(root, restartPort, initEnv);
     const { cookie } = await login(`http://127.0.0.1:${restartPort}`, "replacement-password");
     const reopened = openChat(`http://127.0.0.1:${restartPort}`, cookie, fixture.projectId, sessionFile);
     socket = reopened.socket;
-    await waitFor(reopened.messages, () => reopened.messages.some((message) => message.type === "queuedPrompts"));
+    await waitFor(reopened.messages, () => reopened.messages.some((message) => message.type === "ready") && reopened.messages.some((message) => message.type === "queuedPrompts"));
+    assert.equal(reopened.messages.find((message) => message.type === "ready")!.sessionId, readyId);
     assert.deepEqual(queuedTexts(reopened.messages), ["second"]);
 
     await writeFile(`${process.env.JOINT_BOB_FAKE_GATE}.second`, "");
     await waitForInvocations(["first", "second"]);
+    await waitFor(reopened.messages, () => reopened.messages.some((message) => message.type === "promptCompleted"));
+    assert.ok(reopened.messages.filter((message) => message.type === "textDelta").map((message) => message.text).join("").includes("second"));
   } finally {
     socket?.terminate();
     await killNode(node);

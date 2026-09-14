@@ -6,11 +6,12 @@ import { broadcastToProject } from "../realtime.js";
 import { getProject } from "../../store.js";
 import { cronConversationReady } from "../cron.js";
 import { sendError } from "../http-auth.js";
+import { registeredHarnessIdSchema } from "../schemas.js";
 import { app } from "../state.js";
 
 const commandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("list"), projectId: z.string().min(1) }).strict(),
-  z.object({ action: z.literal("ready"), projectId: z.string().min(1), sessionId: z.string().min(1), engine: z.enum(["pi", "claude"]) }).strict(),
+  z.object({ action: z.literal("ready"), projectId: z.string().min(1), sessionId: z.string().min(1), engine: registeredHarnessIdSchema }).strict(),
   z.object({ action: z.literal("create"), input: cronInputSchema }).strict(),
   z.object({ action: z.literal("install"), id: z.string().uuid(), input: cronInputSchema, runs: z.array(cronRunSchema).max(100) }).strict(),
   z.object({ action: z.literal("update"), id: z.string().uuid(), input: cronInputSchema }).strict(),

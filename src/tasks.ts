@@ -115,9 +115,33 @@ export async function taskDatabase(): Promise<DatabaseSync> {
   return databasePromise;
 }
 async function migrateLegacyTasks(projectId: string): Promise<void> {
-  const db = await taskDatabase(); if (db.prepare("SELECT project_id FROM task_migrations WHERE project_id = ?").get(projectId)) return;
-  let tasks: TaskRecord[] = []; try { tasks = (JSON.parse(await fs.readFile(path.join(legacyTasksDir, `${projectId}.json`), "utf8")) as { tasks?: TaskRecord[] }).tasks ?? []; } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-  const node = await getClusterNode(); db.exec("BEGIN IMMEDIATE"); try { const save = db.prepare(`INSERT OR IGNORE INTO tasks (id, project_id, title, description, status, engine, plan_mode, review_mode, phase_config, session_path, worktree_path, worktree_branch, merged_at, created_at, updated_at, current_node_id, lease_owner_node_id, lease_expires_at, execution_state, handoff_context, origin_node_id, merge_state, conflict_count, merge_warning, merge_tx, merge_digests, run_kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'idle', NULL, ?, ?, ?, ?, ?, ?, ?)`); const insertedTask = db.prepare("SELECT * FROM tasks WHERE project_id = ? AND id = ?"); for (const task of tasks) { const result = save.run(task.id, projectId, task.title, task.description, task.status, task.engine ?? "pi", task.planMode ? 1 : 0, task.reviewMode ? 1 : 0, JSON.stringify(task.phaseConfig ?? {}), task.sessionPath ?? null, task.worktreePath ?? null, task.worktreeBranch ?? null, task.mergedAt ?? null, task.createdAt, task.updatedAt, node.id, node.id, task.mergeState ?? "none", task.conflictCount ?? 0, task.mergeWarning ?? null, task.mergeTx ?? null, task.mergeDigests ? JSON.stringify(task.mergeDigests) : null, task.runKind ?? null); if (result.changes === 1) publishTask(db, projectId, rowToTask(insertedTask.get(projectId, task.id) as unknown as TaskRow)); } db.prepare("INSERT INTO task_migrations (project_id, migrated_at) VALUES (?, ?)").run(projectId, new Date().toISOString()); db.exec("COMMIT"); } catch (error) { db.exec("ROLLBACK"); throw error; }
+  const db = await taskDatabase();
+  if (db.prepare("SELECT project_id FROM task_migrations WHERE project_id = ?").get(projectId)) return;
+  let tasks: TaskRecord[] = [];
+  try {
+    tasks = (JSON.parse(await fs.readFile(path.join(legacyTasksDir, `${projectId}.json`), "utf8")) as { tasks?: TaskRecord[] }).tasks ?? [];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const node = await getClusterNode();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    if (db.prepare("SELECT project_id FROM task_migrations WHERE project_id = ?").get(projectId)) {
+      db.exec("COMMIT");
+      return;
+    }
+    const save = db.prepare(`INSERT OR IGNORE INTO tasks (id, project_id, title, description, status, engine, plan_mode, review_mode, phase_config, session_path, worktree_path, worktree_branch, merged_at, created_at, updated_at, current_node_id, lease_owner_node_id, lease_expires_at, execution_state, handoff_context, origin_node_id, merge_state, conflict_count, merge_warning, merge_tx, merge_digests, run_kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'idle', NULL, ?, ?, ?, ?, ?, ?, ?)`);
+    const insertedTask = db.prepare("SELECT * FROM tasks WHERE project_id = ? AND id = ?");
+    for (const task of tasks) {
+      const result = save.run(task.id, projectId, task.title, task.description, task.status, task.engine ?? "pi", task.planMode ? 1 : 0, task.reviewMode ? 1 : 0, JSON.stringify(task.phaseConfig ?? {}), task.sessionPath ?? null, task.worktreePath ?? null, task.worktreeBranch ?? null, task.mergedAt ?? null, task.createdAt, task.updatedAt, node.id, node.id, task.mergeState ?? "none", task.conflictCount ?? 0, task.mergeWarning ?? null, task.mergeTx ?? null, task.mergeDigests ? JSON.stringify(task.mergeDigests) : null, task.runKind ?? null);
+      if (result.changes === 1) publishTask(db, projectId, rowToTask(insertedTask.get(projectId, task.id) as unknown as TaskRow));
+    }
+    db.prepare("INSERT INTO task_migrations (project_id, migrated_at) VALUES (?, ?)").run(projectId, new Date().toISOString());
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 async function taskRows(projectId: string): Promise<TaskRow[]> { await migrateLegacyTasks(projectId); return (await taskDatabase()).prepare("SELECT * FROM tasks WHERE project_id = ? ORDER BY updated_at DESC").all(projectId) as unknown as TaskRow[]; }
 export async function listTasks(projectId: string): Promise<TaskRecord[]> { return (await taskRows(projectId)).map(rowToTask); }

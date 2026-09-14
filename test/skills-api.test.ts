@@ -150,6 +150,7 @@ test("shared skills override unmanaged copies and project skills override shared
     const skills = await listSkills(project, { piUser, claudeUser, shared });
     assert.deepEqual(skills.map((skill) => `${skill.harness}:${skill.description}`), [
       "claude:Claude project",
+      "kiro:Shared",
       "pi:Pi project",
     ]);
   } finally {
@@ -172,9 +173,7 @@ test("the skills dialog is searchable and inserts the harness-specific invocatio
   assert.match(app, /function openSkillsDialog\(\)/);
   assert.match(app, /function renderSkillsDialog\(\)/);
   assert.match(app, /\/skills`/);
-  // Pi takes the /skill:<name> form; Claude takes a bare slash command.
-  assert.match(app, /`\/skill:\$\{skill\.name\} `/);
-  assert.match(app, /`\/\$\{skill\.name\} `/);
+  assert.match(app, /skill\.invocation/);
 
   assert.match(styles, /\.skills-dialog-list \{/);
   assert.match(styles, /\.skill-option-description \{/);

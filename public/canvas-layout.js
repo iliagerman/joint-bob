@@ -1,3 +1,5 @@
+import { harnessIdFromPath } from "./harness-metadata.js";
+
 // Pure recursive canvas layout operations.
 export const CANVAS_MAX_PAGES = 9;
 export const CANVAS_MAX_PAGE_PANES = 8;
@@ -101,7 +103,7 @@ export function normalizeCanvasLayout(layout) {
   if (layout.version !== 6) throw new Error("Unknown canvas layout version");
   return layout;
 }
-export function canvasPaneEngine(pane) { return pane.sessionPath.startsWith("claude:") || pane.sessionPath.startsWith("draft:claude:") ? "claude" : "pi"; }
+export function canvasPaneEngine(pane, harnesses) { return pane.harnessId || pane.engine || harnessIdFromPath(harnesses, pane.sessionPath); }
 // ── Shortcut chords ─────────────────────────────────────────────────────────────
 // A shortcut is one chord or a two-stroke sequence, written as a flat token array in
 // canonical order: ["meta", "shift", "P"] or ["ctrl", "SPACE", "\\"]. Modifiers

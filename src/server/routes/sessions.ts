@@ -1,29 +1,29 @@
 import { randomUUID } from "node:crypto";
-import { lstat, readdir, unlink } from "node:fs/promises";
-import path from "node:path";
+import { lstat, unlink } from "node:fs/promises";
 import { z } from "zod";
 import type { AuthSession } from "../../auth.js";
 import { type ClusterPeer, getClusterMachineToken, getClusterNode, getClusterPeer, listClusterPeers } from "../../cluster.js";
 import { beginConversationRecovery, compareAndSetConversationOwnership, type ConversationEngine, type ConversationOwnership, finishConversationRecovery, getConversationOwnership, type OwnershipApplyResult, sameConversationOwnership, takeConversationOwnership } from "../../conversation-ownership.js";
 import { deleteConversationRecord, getConversationRecord } from "../../conversation-records.js";
-import { markConversationReviewed, markConversationsReviewed } from "../../conversation-reviews.js";
-import { listHarnessSessions } from "../../harnesses.js";
+import { markConversationReviewed, markConversationsReviewed, setConversationReviewNotifications } from "../../conversation-reviews.js";
+import { clearHarnessSessionCache, getHarness, listHarnessSessions } from "../../harnesses.js";
 import { queuedPromptSnapshot } from "../../prompt-queue.js";
 import { receiveReplicationBatch, type ReplicationEvent } from "../../replication.js";
-import { capturePiRecoverySnapshot, recoverPiSessionDirectory, resolveLocalSessionPath } from "../../session-paths.js";
+import { resolveLocalSessionPath } from "../../session-paths.js";
 import { getProject, touchProject } from "../../store.js";
 import { listTasks } from "../../tasks.js";
 import type { ProjectRecord, SessionSummary } from "../../types.js";
 import { TaskWorktreeError } from "../../worktrees.js";
-import { claudeConnectionKey, promptQueueIsDraining } from "../chat.js";
+import { promptQueueIsDraining } from "../chat.js";
 import { conversationBelongsToDoneTask } from "../cluster-helpers.js";
 import { sendError } from "../http-auth.js";
 import { ConversationForkError, forkLocalConversation } from "../conversation-fork.js";
 import { assertProjectEditable, projectsWithSharedNames } from "../projects.js";
-import { broadcastToProject } from "../realtime.js";
-import { ownershipSchema, registeredHarnessIdSchema, routedSessionTakeOwnershipSchema, sessionDeleteSchema, sessionRecoverySchema, sessionReviewedSchema, sessionsReviewedSchema, sessionTakeOwnershipSchema } from "../schemas.js";
+import { broadcastToProject, scheduleReviewNotifications, send } from "../realtime.js";
+import { disposeHarnessSession, findHarnessSession, harnessSessionBusy } from "../harness-sessions.js";
+import { ownershipSchema, registeredHarnessIdSchema, routedSessionTakeOwnershipSchema, sessionDeleteSchema, sessionRecoverySchema, sessionReviewedSchema, sessionReviewNotificationsSchema, sessionsReviewedSchema, sessionTakeOwnershipSchema } from "../schemas.js";
 import { listProjectSessionsWithReviewState, requireLocalConversationOwner } from "../sessions-helpers.js";
-import { activeClaudeConnections, app, sharedSessions } from "../state.js";
+import { app } from "../state.js";
 
 app.get("/api/projects/:projectId/sessions", async (request, response, next) => {
   try {
@@ -35,6 +35,26 @@ app.get("/api/projects/:projectId/sessions", async (request, response, next) => 
     await touchProject(project.id);
     const authSession = response.locals.authSession as AuthSession;
     response.json({ sessions: await listProjectSessionsWithReviewState(project, authSession.userId, authSession.username) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put("/api/projects/:projectId/sessions/review-notifications", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    const payload = sessionReviewNotificationsSchema.parse(request.body);
+    const authSession = response.locals.authSession as AuthSession;
+    const sessions = await listProjectSessionsWithReviewState(project, authSession.userId, authSession.username);
+    if (!sessions.some((session) => session.path === payload.sessionPath && !session.readOnly)) {
+      sendError(response, 404, "Conversation not found");
+      return;
+    }
+    setConversationReviewNotifications(authSession.userId, project.id, payload.sessionPath, payload.enabled);
+    broadcastToProject(project.id, { type: "sessionsChanged" });
+    if (payload.enabled) scheduleReviewNotifications(project.id);
+    response.json({ enabled: payload.enabled });
   } catch (error) {
     next(error);
   }
@@ -146,15 +166,13 @@ app.get("/api/cluster/sessions/transcript-presence", async (request, response, n
   } catch (error) { next(error); }
 });
 
-function conversationIsActive(projectId: string, engine: ConversationEngine, sessionId: string, sessionPath: string): boolean {
-  if (engine === "claude") return Boolean(activeClaudeConnections.get(claudeConnectionKey(projectId, sessionId))?.claude.child);
-  const active = [...new Set(sharedSessions.values())].find((session) => session.projectId === projectId && session.handle.session.sessionFile === sessionPath);
-  return Boolean(active?.handle.session.isStreaming);
+function conversationIsActive(projectId: string, engine: ConversationEngine, sessionId: string, _sessionPath: string): boolean {
+  const shared = findHarnessSession(projectId, engine, sessionId);
+  return Boolean(shared && harnessSessionBusy(shared));
 }
 
-function conversationSessionIsOpen(projectId: string, engine: ConversationEngine, sessionId: string, sessionPath: string): boolean {
-  if (engine === "claude") return activeClaudeConnections.has(claudeConnectionKey(projectId, sessionId));
-  return [...new Set(sharedSessions.values())].some((session) => session.projectId === projectId && session.handle.session.sessionFile === sessionPath);
+function conversationSessionIsOpen(projectId: string, engine: ConversationEngine, sessionId: string, _sessionPath: string): boolean {
+  return Boolean(findHarnessSession(projectId, engine, sessionId));
 }
 
 async function replicateExactOwnership(peers: ClusterPeer[], record: ConversationOwnership, originNodeId: string): Promise<void> {
@@ -440,17 +458,17 @@ app.post("/api/projects/:projectId/sessions/recover", async (request, response, 
     const payload = sessionRecoverySchema.parse(request.body);
     const local = await getClusterNode();
     const mapped = resolveLocalSessionPath(payload.sessionPath);
-    if (mapped.engine !== "pi") throw new Error("Only Pi transcripts support conflict recovery");
-    if (conversationSessionIsOpen(project.id, "pi", payload.sessionId, mapped.path)) throw new Error("Close the local conversation before recovery");
-    await requireLocalConversationOwner("pi", payload.sessionId);
+    if (payload.engine !== mapped.engine) throw new Error("Recovery engine does not match the transcript");
+    const adapter = getHarness(mapped.engine);
+    if (!adapter.sessions.recover) throw new Error(`${adapter.label} does not support transcript conflict recovery`);
+    if (conversationSessionIsOpen(project.id, payload.engine, payload.sessionId, mapped.path)) throw new Error("Close the local conversation before recovery");
+    await requireLocalConversationOwner(payload.engine, payload.sessionId);
     const peers = await listClusterPeers();
-    const fenced = await beginConversationRecovery("pi", payload.sessionId, local.id);
+    const fenced = await beginConversationRecovery(payload.engine, payload.sessionId, local.id);
     await replicateExactOwnership(peers, fenced, local.id);
-    if (conversationSessionIsOpen(project.id, "pi", payload.sessionId, mapped.path)) throw new Error("Conversation opened during recovery fencing");
-    const snapshot = await capturePiRecoverySnapshot(mapped.path);
-    const names = await readdir(path.dirname(mapped.path));
-    await recoverPiSessionDirectory(path.dirname(mapped.path), names, snapshot, project.path);
-    const owned = await finishConversationRecovery("pi", payload.sessionId, local.id);
+    if (conversationSessionIsOpen(project.id, payload.engine, payload.sessionId, mapped.path)) throw new Error("Conversation opened during recovery fencing");
+    await adapter.sessions.recover(mapped.path, project.path);
+    const owned = await finishConversationRecovery(payload.engine, payload.sessionId, local.id);
     await replicateExactOwnership(peers, owned, local.id);
     response.json({ ownership: owned, sessionPath: mapped.path });
   } catch (error) { next(error); }
@@ -468,7 +486,7 @@ async function deleteLocalConversation(project: ProjectRecord, engine: Conversat
     throw new ConversationDeleteError(409, "Done ticket conversations are read-only");
   }
   const sessions = await listHarnessSessions({ ...project, additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []) });
-  const session = sessions.find((candidate) => candidate.id === sessionId && (candidate.path.startsWith("draft:claude:") || candidate.path.startsWith("claude:") ? "claude" : "pi") === engine);
+  const session = sessions.find((candidate) => candidate.id === sessionId && candidate.harnessId === engine);
   if (!session) throw new ConversationDeleteError(404, "Session not found");
   await requireLocalConversationOwner(engine, sessionId);
   const local = await getClusterNode();
@@ -478,11 +496,19 @@ async function deleteLocalConversation(project: ProjectRecord, engine: Conversat
     ...(session.segments ?? []).filter((segment) => !(segment.sessionId === sessionId && segment.engine === engine)),
   ];
   for (const [index, target] of targets.entries()) {
+    const shared = findHarnessSession(project.id, target.engine, target.sessionId);
+    if (shared && harnessSessionBusy(shared)) throw new ConversationDeleteError(409, "Wait for the current turn to finish before deleting");
+    if (shared) {
+      for (const client of shared.clients) { send(client, { type: "sessionFileChanged" }); client.close(1008, "Conversation deleted"); }
+      disposeHarnessSession(shared);
+    }
     if (target.draft || target.path.startsWith("draft:")) {
       await deleteConversationRecord(project.id, target.engine, target.sessionId, local.id);
       continue;
     }
-    const filePath = target.path.startsWith("claude:") ? target.path.slice("claude:".length) : target.path;
+    const adapter = getHarness(target.engine);
+    if (!adapter.paths.transcriptFile) throw new ConversationDeleteError(400, `${adapter.label} does not expose transcript files`);
+    const filePath = adapter.paths.transcriptFile(target.path);
     try {
       const fileStats = await lstat(filePath);
       if (!fileStats.isFile() || fileStats.isSymbolicLink()) throw new ConversationDeleteError(400, "Session path is not a regular file");
@@ -497,6 +523,7 @@ async function deleteLocalConversation(project: ProjectRecord, engine: Conversat
     }
     await deleteConversationRecord(project.id, target.engine, target.sessionId, local.id);
   }
+  clearHarnessSessionCache(project.id);
   broadcastToProject(project.id, { type: "sessionsChanged" });
 }
 

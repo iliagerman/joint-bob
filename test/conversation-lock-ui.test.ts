@@ -45,7 +45,7 @@ test("a conversation owned by another node replaces the composer with a take-own
 
   assert.match(styles, /\.conversation-lock \{/);
   assert.match(styles, /\.conversation-lock\[hidden\] \{ display: none; \}/);
-  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v185";/);
+  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v186";/);
 });
 
 test("the take-ownership controls are engine-neutral, so a Claude conversation can be claimed", async () => {
@@ -109,10 +109,12 @@ test("the execution node reports foreign conversation ownership to the browser",
   // told about the other node instead of seeing an unlocked composer.
   assert.match(body, /ownership\.status === "conflict" && ownership\.ownerNodeId === localId[\s\S]*ownership\.transferToNodeId/);
 
-  assert.equal([...server.matchAll(/ownership: foreignOwner,/g)].length, 2, "Both engines must publish ownership in the ready payload");
-  assert.equal([...server.matchAll(/executionNodeId: local\.id,/g)].length, 2, "Both ready payloads identify their execution node");
+  assert.equal([...server.matchAll(/ownership: foreignOwner,/g)].length, 1, "The socket route passes foreign ownership to the shared chat attach");
+  assert.match(server, /attachHarnessChat\(\{[\s\S]*ownership: foreignOwner,/);
+  assert.equal([...server.matchAll(/ownership: options\.ownership,/g)].length, 1, "The shared attach sends one ready payload");
+  assert.match(server, /send\(options\.socket, \{ type: "ready"[\s\S]*ownership: options\.ownership, executionNodeId: local\.id,/);
   assert.match(app, /if \(payload\.executionNodeId\) \{\s*state\.activeNodeId = payload\.executionNodeId;/);
-  assert.match(server, /if \(error instanceof ConversationOwnershipError\)[\s\S]*send\(socket, \{ type: "ownership", ownership: await describeConversationOwner\(error\.ownership, local\.id\)/);
+  assert.match(server, /if \(error instanceof ConversationOwnershipError\) send\(options\.socket, \{ type: "ownership", ownership: await describeConversationOwner\(error\.ownership, local\.id\)/);
 });
 
 test("opening a conversation establishes its owner so the other node can see the lock", async () => {

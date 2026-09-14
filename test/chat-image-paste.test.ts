@@ -41,7 +41,7 @@ test("non-image files are uploaded as binary attachments", async () => {
   assert.match(client, /kind: "file"/);
   assert.match(client, /files: state\.attachments\.filter\(\(attachment\) => attachment\.kind === "file"\)/);
   assert.match(server, /files: z\.array\(fileAttachmentSchema\)/);
-  assert.match(server, /persistFileAttachments/);
+  assert.match(server, /function persistTaskAttachments[\s\S]*persistAttachments\(cwd, files\)[\s\S]*savedFiles\.map\(\(saved, index\) => \(\{[^}]*kind: "file" as const/);
   assert.match(server, /File attachments:\\n/);
   assert.doesNotMatch(client, /isTextAttachment/);
   assert.doesNotMatch(client, /is not supported yet/);

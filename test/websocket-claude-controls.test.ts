@@ -47,6 +47,10 @@ test("Claude tool and compact commands work over the chat WebSocket", async () =
       syncthing: { endpoint: "" },
     });
     const { claudeSessionFilePath } = await import(`../src/claude-service.ts?claude-controls=${Date.now()}-${Math.random()}`);
+    if (process.env.JOINT_BOB_TEST_ENGINE_LOG) {
+      const { installStubHarnessRuntimes } = await import("./stub-harness-runtime.js");
+      await installStubHarnessRuntimes();
+    }
     const module = await import(`../src/server.ts?claude-controls=${Date.now()}-${Math.random()}`);
     server = module.server;
     await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));

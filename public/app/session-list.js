@@ -12,7 +12,7 @@ import { openListedSession, reviewableSessions } from "./reviews.js";
 import { openRowMenu, pinButton, refreshRowMenuAnchor } from "./row-menu.js";
 import { openConversationClassificationDialog, openConversationColorDialog, openRenameDialog, sessionEngine } from "./session-identity.js";
 import { isSessionPinned, nestedSessionRows, sessionTicketTask, ticketBadge, ticketRowButton, togglePinnedSession } from "./session-rows.js";
-import { confirmAction, formatDate, toast } from "./shell.js";
+import { confirmAction, enableNotifications, formatDate, toast } from "./shell.js";
 import { closeSocket, refreshSessionsQuietly } from "./socket.js";
 import { state } from "./state.js";
 
@@ -253,7 +253,6 @@ function sessionPinToggle(session) {
 /** Every other row action lives in the overflow menu, so the row itself stays one tap target. */
 function sessionMenuItems(session, sessionActive) {
   const name = shortSessionTitle(session);
-  const isClaude = sessionEngine(session) === "claude";
   const readOnly = session.readOnly === true || sessionTicketTask(session)?.status === "done";
   return [
     {
@@ -270,6 +269,12 @@ function sessionMenuItems(session, sessionActive) {
       onSelect: () => forkSessionFromRow(session).catch((error) => toast(error.message)),
     },
     ...(readOnly ? [] : [
+      {
+        label: session.reviewNotificationsEnabled ? "Stop review notifications" : "Notify when ready for review",
+        icon: "sliders",
+        testid: "session-review-notifications-button",
+        onSelect: () => toggleSessionReviewNotifications(session).catch((error) => toast(error.message)),
+      },
       { label: "Scheduled tasks", icon: "refresh", testid: "session-cron-button", onSelect: () => openScheduledTasks(state.activeProjectId, session).catch(error => toast(error.message)) },
       {
         label: "Classification",
@@ -287,7 +292,7 @@ function sessionMenuItems(session, sessionActive) {
         label: "Rename",
         icon: "pencil",
         testid: "session-rename-button",
-        onSelect: () => openRenameDialog(session.conversationId || session.id, isClaude ? "claude" : "pi", name),
+        onSelect: () => openRenameDialog(session.conversationId || session.id, sessionEngine(session), name),
       },
       {
         label: "Remove",
@@ -329,6 +334,18 @@ async function forkSessionFromRow(session) {
   renderSessions();
   openListedSession(body.session);
   toast("Conversation forked");
+}
+
+async function toggleSessionReviewNotifications(session) {
+  const enabled = !session.reviewNotificationsEnabled;
+  if (enabled && !await enableNotifications()) return;
+  await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/review-notifications`, {
+    method: "PUT",
+    body: JSON.stringify({ sessionPath: session.path, enabled }),
+  });
+  session.reviewNotificationsEnabled = enabled;
+  renderSessions();
+  toast(enabled ? "Review notifications enabled" : "Review notifications disabled");
 }
 
 async function removeSessionFromRow(session, sessionActive) {

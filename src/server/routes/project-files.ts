@@ -270,7 +270,7 @@ async function assertProjectFileConversationOwner(project: ProjectRecord, sessio
   const session = (await listHarnessSessions(project)).find((candidate) => candidate.id === sessionId);
   if (!session) throw new ProjectFileError(409, "Conversation was not found on this node");
   try {
-    await requireLocalConversationOwner(session.path.startsWith("claude:") ? "claude" : "pi", session.id);
+    await requireLocalConversationOwner(session.harnessId, session.id);
   } catch (error) {
     if (error instanceof ConversationOwnershipError) throw new ProjectFileError(409, error.message);
     throw error;

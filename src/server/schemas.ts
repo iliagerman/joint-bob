@@ -4,10 +4,12 @@ import { queuedSettingsSchema } from "../prompt-queue.js";
 import { z } from "zod";
 import { canonicalCanvasKeyToken } from "../canvas-keys.js";
 import { listHarnesses } from "../harnesses.js";
+import { listDiscoveredHarnesses } from "../harnesses/registry.js";
 import { classificationSchema, conversationLabelsSchema } from "../conversation-labels.js";
 import { CANVAS_MAX_ROW_HEIGHT, CANVAS_MIN_ROW_HEIGHT, canvasRowGeometryIsLegal } from "../preferences.js";
 import { isHarnessId, PROJECT_COLORS } from "../types.js";
 import { canonicalClusterUrl, isClusterOriginUrl } from "./http-auth.js";
+import type { RuntimeSettings, SettingsInput } from "../settings.js";
 
 export const absolutePathSchema = z.string().trim().min(1).max(1000).refine(path.isAbsolute, "Path must be absolute");
 export const projectSchema = z.object({
@@ -145,7 +147,7 @@ export const ownershipSchema = z.object({
   engine: registeredHarnessIdSchema, sessionId: z.string().min(1).max(240), ownerNodeId: z.string().uuid(),
   epoch: z.number().int().positive(), status: z.enum(["claiming", "owned", "recovering", "transferring", "conflict"]), transferToNodeId: z.string().uuid().nullable(),
 });
-export const sessionRecoverySchema = z.object({ engine: z.literal("pi"), sessionId: z.string().min(1).max(240), sessionPath: z.string().min(1).max(2000) });
+export const sessionRecoverySchema = z.object({ engine: registeredHarnessIdSchema, sessionId: z.string().min(1).max(240), sessionPath: z.string().min(1).max(2000) });
   const secretCredentialEventSchema = z.object({
   id: z.string().uuid(),
   entityKey: z.string().uuid(),
@@ -291,6 +293,10 @@ export const sessionReviewedSchema = z.object({
 export const sessionsReviewedSchema = z.object({
   sessions: z.array(sessionReviewedSchema).min(1).max(500),
 }).strict();
+export const sessionReviewNotificationsSchema = z.object({
+  sessionPath: z.string().trim().min(1).max(2000),
+  enabled: z.boolean(),
+}).strict();
 export const loginSchema = z.object({
   username: z.string().trim().min(1).max(80),
   password: z.string().min(1).max(200),
@@ -304,12 +310,13 @@ export const runtimeSettingsSchema = z.object({
   configPath: z.string().max(1000),
   sessionPath: z.string().max(1000),
 }).strict();
-export const runtimeCheckSchema = z.object({ pi: runtimeSettingsSchema, claude: runtimeSettingsSchema }).strict();
+const runtimeSchemaShape = Object.fromEntries(listDiscoveredHarnesses().filter((adapter) => adapter.configuration).map((adapter) => [adapter.id, runtimeSettingsSchema.optional()]));
+const configuredRuntimeIds = new Set(Object.keys(runtimeSchemaShape));
+export const runtimeCheckSchema = z.object(runtimeSchemaShape).strict().refine((input) => Object.keys(input).length > 0, "Provide at least one runtime") as z.ZodType<Record<string, RuntimeSettings>>;
 export const resourcePathsSchema = z.object({ skills: z.array(absolutePathSchema).max(20), prompts: z.array(absolutePathSchema).max(20), rules: z.array(absolutePathSchema).max(20), plugins: z.array(absolutePathSchema).max(20) }).strict();
 export const settingsSchema = z.object({
   conversationDefaults: conversationDefaultsSchema.optional(),
-  pi: runtimeSettingsSchema,
-  claude: runtimeSettingsSchema,
+  runtimes: z.record(z.string(), runtimeSettingsSchema).optional().refine((runtimes) => !runtimes || Object.keys(runtimes).every((id) => configuredRuntimeIds.has(id)), "Runtime is not configured"),
   syncthing: z.object({ endpoint: z.string().max(500), apiKey: z.string().max(500).nullable().optional() }),
   projects: z.object({
     homePath: z.string().max(1000).optional(),
@@ -320,7 +327,7 @@ export const settingsSchema = z.object({
   resources: resourcePathsSchema.optional(),
   conversationLabels: conversationLabelsSchema.optional(),
   conversationHistoryDays: z.number().int().min(1).max(3650).optional(),
-});
+}).extend(runtimeSchemaShape) as unknown as z.ZodType<SettingsInput>;
 export const auditQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional().default(100),
 });
@@ -331,6 +338,7 @@ const canvasPanePreferenceSchema = z.object({
   sessionPath: z.string().trim().min(1).max(2000),
   sessionId: z.string().trim().min(1).max(200),
   executionNodeId: z.string().uuid().nullable(),
+  harnessId: z.string().refine(isHarnessId, "Harness ID is invalid").optional(),
 }).strict();
 const canvasRowPreferenceSchema = z.object({
   id: z.string().min(1).max(200),
@@ -485,7 +493,7 @@ export const socketMessageSchema = z.object({
   name: z.string().trim().max(120).optional(),
   provider: z.string().max(80).optional(),
   modelId: z.string().max(200).optional(),
-  level: z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
+  level: z.enum(["default", "off", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
   engine: registeredHarnessIdSchema.optional(),
   effort: z.enum(["default", "low", "medium", "high", "xhigh", "max"]).optional(),
   images: z.array(imageAttachmentSchema).max(4).optional(),

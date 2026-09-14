@@ -1,6 +1,7 @@
+import { harnessIdFromPath } from "../harness-metadata.js";
 import { api, savePreferencesInBackground } from "./api.js";
 import { classificationPicker } from "./classification.js";
-import { conversationTask } from "./chat-controls.js";
+import { conversationTask, loadHarnesses } from "./chat-controls.js";
 import { elements } from "./elements.js";
 import { loadSecretAccounts, providerBadge, secretAccounts } from "./secrets.js";
 import { rememberRecentSession } from "./recents.js";
@@ -12,8 +13,7 @@ import { cancelHandoffWait } from "./tasks.js";
 
 const classification = classificationPicker(document.querySelector("#newSessionClassification"), "new-session");
 
-/** The environment is composed once, at spawn, so the accounts have to be chosen before the
-    conversation starts rather than attached to it afterwards. */
+/** Initial node and account selection happens before the conversation starts. */
 function localSessionNode() {
   return state.sessionNodes.find((node) => node.local);
 }
@@ -104,7 +104,10 @@ export function addOptimisticSession(sessionId, sessionPath, title, color, class
 /** A conversation is named up front so the list shows the user's own label from the first turn. */
 async function openNewSessionNameDialog(sessionPath, defaultTitle, sourceTaskId = null) {
   const projectId = state.activeProjectId;
-  const settings = await api("/api/settings");
+  const [settings] = await Promise.all([
+    api("/api/settings"),
+    state.harnesses.length ? undefined : loadHarnesses(),
+  ]);
   if (state.activeProjectId !== projectId) return;
   classification.reset(settings.conversationLabels);
   state.newSessionDraft = { sessionPath, defaultTitle, sourceTaskId };
@@ -168,7 +171,7 @@ elements.newSessionNameForm.addEventListener("submit", async (event) => {
     const projectId = state.activeProjectId;
     if (label) await api(`/api/projects/${encodeURIComponent(projectId)}/sessions/classification`, {
       method: "PUT",
-      body: JSON.stringify({ sessionId, engine: draft.sessionPath === "claude:new" ? "claude" : "pi", classification: label }),
+      body: JSON.stringify({ sessionId, engine: harnessIdFromPath(state.harnesses, draft.sessionPath || "new"), classification: label }),
     });
     if (!elements.newSessionNameDialog.open || state.newSessionDraft !== draft || state.activeProjectId !== projectId) return;
     state.newSessionSecretAccountIds = [...elements.newSessionSecretList.querySelectorAll("input:checked")].map((input) => input.value);

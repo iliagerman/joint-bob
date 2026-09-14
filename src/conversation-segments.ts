@@ -1,6 +1,6 @@
-import { loadClaudeMessages } from "./claude-service.js";
 import { type ConversationRecord, getConversationRecord, listConversationSegments } from "./conversation-records.js";
-import { loadPiMessages } from "./pi-service.js";
+import { getHarness } from "./harnesses.js";
+import { getProject } from "./store.js";
 import type { ChatMessage, SessionSummary } from "./types.js";
 import type { ConversationEngine } from "./conversation-ownership.js";
 
@@ -48,12 +48,16 @@ export async function conversationTranscriptPayload(projectId: string, activeEng
  * (returning undefined skips the segment), so drafts and the live segment stay out.
  */
 export async function loadConversationSegments(projectId: string, conversationId: string, pathFor: (record: ConversationRecord) => string | undefined): Promise<ConversationSegmentView[]> {
+  const records = (await listConversationSegments(projectId, conversationId))
+    .map((record) => ({ record, sessionPath: pathFor(record) }))
+    .filter((entry): entry is { record: ConversationRecord; sessionPath: string } => Boolean(entry.sessionPath));
+  if (!records.length) return [];
+  const project = await getProject(projectId);
+  if (!project) throw new Error("Project not found");
   const segments: ConversationSegmentView[] = [];
-  for (const record of await listConversationSegments(projectId, conversationId)) {
-    const sessionPath = pathFor(record);
-    if (!sessionPath) continue;
+  for (const { record, sessionPath } of records) {
     try {
-      const messages = record.engine === "claude" ? await loadClaudeMessages(sessionPath) : await loadPiMessages(sessionPath);
+      const messages = await getHarness(record.engine).sessions.loadMessages(project, sessionPath);
       segments.push({ engine: record.engine, sessionId: record.sessionId, messages });
     } catch (error) {
       // A transcript that has not synchronized to this node yet is skipped, not fatal.

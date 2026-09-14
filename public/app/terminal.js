@@ -170,7 +170,14 @@ elements.terminalDialog.addEventListener("cancel", (event) => {
  */
 elements.terminalDialog.addEventListener("keydown", (event) => {
   if (event.key !== "Escape" || event.metaKey || event.ctrlKey || event.altKey) return;
-  if (state.terminalEmulator?.buffer.active.type === "alternate") return;
+  if (state.terminalEmulator?.buffer.active.type === "alternate") {
+    event.preventDefault();
+    event.stopPropagation();
+    if (state.terminalSocket?.readyState === WebSocket.OPEN) {
+      state.terminalSocket.send(JSON.stringify({ type: "terminalInput", data: "\u001b" }));
+    }
+    return;
+  }
   event.preventDefault();
   elements.terminalDialog.close();
 }, true);

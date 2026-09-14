@@ -4,7 +4,9 @@ import test, { after, afterEach, before } from "node:test";
 import { getClusterMachineToken } from "../src/cluster.js";
 import { server } from "../src/server.js";
 import { prepareForUpdate } from "../src/server/realtime.js";
-import { flags, sharedSessions, type SharedPiSession } from "../src/server/state.js";
+import { harnessSessionKey, harnessSessions, type SharedHarnessSession } from "../src/server/harness-sessions.js";
+import { flags } from "../src/server/state.js";
+import { nativePiSessionFixture } from "./native-pi-session-fixture.js";
 import { completeUpdateRecovery, listPendingUpdateRecoveries, saveUpdateRecoveries } from "../src/update-recovery.js";
 
 let url: string;
@@ -19,23 +21,22 @@ before(async () => {
 });
 afterEach(async () => {
   for (const record of await listPendingUpdateRecoveries()) await completeUpdateRecovery(record.id);
-  sharedSessions.clear();
+  harnessSessions.clear();
   flags.updatePreparing = false;
   flags.updatePreparation = null;
   server.emit("close");
 });
 after(async () => { server.close(); await once(server, "close"); });
 
-function activeSession(sessionPath: string, abort: () => Promise<void>): SharedPiSession {
-  return {
-    projectId: "project", cwd: "/tmp/project", clients: new Set(),
-    handle: { session: {
-      sessionId: "session", sessionFile: sessionPath, isStreaming: true,
-      getSteeringMessages: () => ["queued steering"], getFollowUpMessages: () => [],
-      clearQueue: () => {}, abortRetry: () => {}, abortCompaction: () => {},
-      abortBranchSummary: () => {}, abortBash: () => {}, abort,
-    } },
-  } as unknown as SharedPiSession;
+function activeSession(sessionPath: string, abort: () => Promise<void>): SharedHarnessSession {
+  return nativePiSessionFixture({
+    id: "session", projectId: "project", cwd: "/tmp/project", file: sessionPath,
+    busy: true, steering: ["queued steering"], abort,
+  }).shared;
+}
+
+function setActiveSession(shared: SharedHarnessSession): void {
+  harnessSessions.set(harnessSessionKey(shared.projectId, shared.engine, shared.session.id), shared);
 }
 
 function machinePost(endpoint: string): Promise<Response> {
@@ -56,13 +57,13 @@ test("update preparation reports unhealthy while it fences writes", async () => 
 });
 
 test("failed recovery capture removes the write fence and allows a fresh preparation", async () => {
-  sharedSessions.set("broken", activeSession("", async () => {}));
+  setActiveSession(activeSession("", async () => {}));
   await assert.rejects(prepareForUpdate(), /no durable session identity/);
   assert.equal(flags.updatePreparing, false, "failure before stopping work must not strand the server");
   assert.equal(flags.updatePreparation, null, "a rejected preparation must not be cached forever");
   const response = await machinePost("/cluster/update/install");
   assert.equal(response.status, 409, "the request reaches the development-checkout validation");
-  sharedSessions.clear();
+  harnessSessions.clear();
   assert.equal(await prepareForUpdate(), 0);
 });
 
@@ -70,7 +71,7 @@ test("an abandoned prepared update restarts through the service manager with rec
   context.mock.timers.enable({ apis: ["setTimeout"] });
   const exit = context.mock.method(process, "exit", () => undefined as never);
   const warnings = context.mock.method(console, "error", () => {});
-  sharedSessions.set("active", activeSession("/tmp/session.jsonl", async () => {}));
+  setActiveSession(activeSession("/tmp/session.jsonl", async () => {}));
   const preparation = prepareForUpdate();
   context.mock.timers.tick(500);
   assert.equal(await preparation, 1);
@@ -105,7 +106,7 @@ test("a stuck agent abort refuses the update without restarting over live tools"
   const abortStarted = new Promise<void>((resolve) => { enteredAbort = resolve; });
   let finishAbort!: () => void;
   const abortFinished = new Promise<void>((resolve) => { finishAbort = resolve; });
-  sharedSessions.set("active", activeSession("/tmp/session.jsonl", () => { enteredAbort(); return abortFinished; }));
+  setActiveSession(activeSession("/tmp/session.jsonl", () => { enteredAbort(); return abortFinished; }));
   const preparation = prepareForUpdate();
   context.mock.timers.tick(500);
   await abortStarted;

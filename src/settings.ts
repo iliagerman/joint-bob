@@ -1,14 +1,15 @@
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { accessSync, constants as fsConstants, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, constants as fsConstants, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import { appendAuditEvent, ensureAuditSchema } from "./audit.js";
+import { isDeepStrictEqual } from "node:util";
+import { appendAuditEvent } from "./audit.js";
 import { resolveDataDirectory } from "./data-directory.js";
 import { conversationLabelsSchema, DEFAULT_CONVERSATION_LABELS } from "./conversation-labels.js";
-import { conversationDefaultsSchema } from "./harnesses/defaults.js";
-import { piConversationDefault } from "./harnesses/pi.defaults.js";
-import { claudeConversationDefault } from "./harnesses/claude.defaults.js";
+import { conversationDefaultsSchema, type ConversationDefault } from "./harnesses/defaults.js";
+import { listDiscoveredHarnesses } from "./harnesses/registry.js";
+import { configuredRuntime, detectExecutable, runtimeOverrides } from "./harnesses/runtime-configuration.js";
+import type { HarnessAdapter } from "./harnesses/contract.js";
+import { decrypt, save, setting, settingsDatabase, value } from "./settings-store.js";
 import { defaultManagedHome } from "./managed-home.js";
 
 export interface RuntimeSettings {
@@ -28,107 +29,32 @@ export interface ResourcePaths { skills: string[]; prompts: string[]; rules: str
 export interface ScopedResourcePaths { global: ResourcePaths; project: ResourcePaths; }
 
 export interface SettingsInput {
-  pi: RuntimeSettings;
-  claude: RuntimeSettings;
+  pi?: RuntimeSettings;
+  claude?: RuntimeSettings;
+  runtimes?: Record<string, RuntimeSettings>;
   syncthing: SyncthingSettings;
   projects?: { homePath?: string; rootPath?: string; personalRootPath?: string; workRootPath?: string };
   resources?: ResourcePaths;
   conversationLabels?: string[];
   conversationHistoryDays?: number;
-  conversationDefaults?: { pi: { provider: string; modelId: string; thinkingLevel: string }; claude: { provider: string; modelId: string; thinkingLevel: string } };
+  conversationDefaults?: Record<string, ConversationDefault>;
 }
 
 export interface SettingsResponse {
-  pi: RuntimeSettings;
-  claude: RuntimeSettings;
-  runtimeOverrides: { pi: RuntimeSettings; claude: RuntimeSettings };
+  /** @deprecated Use runtimes.pi. */ pi: RuntimeSettings;
+  /** @deprecated Use runtimes.claude. */ claude: RuntimeSettings;
+  runtimes: Record<string, RuntimeSettings>;
+  runtimeOverrides: Record<string, RuntimeSettings>;
   syncthing: { endpoint: string; apiKeyConfigured: boolean };
   projects: { homePath: string };
   resources: ResourcePaths;
   conversationLabels: string[];
   conversationHistoryDays: number;
   conversationDefaults: ReturnType<typeof conversationDefaultsSchema.parse>;
-  restartRequired: { pi: boolean; claude: boolean };
+  restartRequired: Record<string, boolean>;
 }
 
 const dataDir = resolveDataDirectory();
-const databasePath = path.join(dataDir, "node.db");
-const keyPath = path.join(dataDir, "secret.key");
-let database: DatabaseSync | undefined;
-let encryptionKey: Buffer | undefined;
-
-function settingsDatabase(): DatabaseSync {
-  if (database) return database;
-  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
-  database = new DatabaseSync(databasePath);
-  database.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS node_settings (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL,
-      is_secret INTEGER NOT NULL DEFAULT 0,
-      updated_at TEXT NOT NULL
-    );
-  `);
-  const seed = database.prepare("INSERT OR IGNORE INTO node_settings (key, value, is_secret, updated_at) VALUES (?, ?, 0, ?)");
-  const now = new Date().toISOString();
-  seed.run("projects.homePath", defaultManagedHome(), now);
-  ensureAuditSchema(database);
-  return database;
-}
-
-function key(): Buffer {
-  if (encryptionKey) return encryptionKey;
-  const configured = process.env.JOINT_BOB_SECRET_KEY ?? process.env.MASTER_BOB_SECRET_KEY;
-  if (configured) {
-    encryptionKey = Buffer.from(configured, "base64");
-    if (encryptionKey.length !== 32) throw new Error("JOINT_BOB_SECRET_KEY must be a base64-encoded 32-byte key");
-    return encryptionKey;
-  }
-  try {
-    encryptionKey = Buffer.from(readFileSync(keyPath, "utf8").trim(), "base64");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    encryptionKey = randomBytes(32);
-    writeFileSync(keyPath, encryptionKey.toString("base64"), { mode: 0o600 });
-  }
-  if (encryptionKey.length !== 32) throw new Error("Joint Bob secret key is invalid");
-  return encryptionKey;
-}
-
-function encrypt(value: string): string {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", key(), iv);
-  const encrypted = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
-  return `${iv.toString("base64")}.${cipher.getAuthTag().toString("base64")}.${encrypted.toString("base64")}`;
-}
-
-function decrypt(value: string): string {
-  const [iv, tag, encrypted] = value.split(".");
-  if (!iv || !tag || !encrypted) throw new Error("Stored secret is invalid");
-  const decipher = createDecipheriv("aes-256-gcm", key(), Buffer.from(iv, "base64"));
-  decipher.setAuthTag(Buffer.from(tag, "base64"));
-  return Buffer.concat([decipher.update(Buffer.from(encrypted, "base64")), decipher.final()]).toString("utf8");
-}
-
-function setting(keyName: string): { value: string; isSecret: boolean } | undefined {
-  const row = settingsDatabase().prepare("SELECT value, is_secret FROM node_settings WHERE key = ?").get(keyName) as { value: string; is_secret: number } | undefined;
-  if (!row) return undefined;
-  return { value: row.value, isSecret: row.is_secret === 1 };
-}
-
-function value(keyName: string, fallback = ""): string {
-  const found = setting(keyName);
-  if (!found) return fallback;
-  return found.isSecret ? decrypt(found.value) : found.value;
-}
-
-function save(db: DatabaseSync, keyName: string, settingValue: string, isSecret = false): void {
-  db.prepare(`
-    INSERT INTO node_settings (key, value, is_secret, updated_at) VALUES (?, ?, ?, ?)
-    ON CONFLICT(key) DO UPDATE SET value = excluded.value, is_secret = excluded.is_secret, updated_at = excluded.updated_at
-  `).run(keyName, isSecret ? encrypt(settingValue) : settingValue, isSecret ? 1 : 0, new Date().toISOString());
-}
 
 function loopbackEndpoint(endpoint: string): boolean {
   if (!endpoint) return true;
@@ -142,44 +68,31 @@ function loopbackEndpoint(endpoint: string): boolean {
   }
 }
 
-function detectedExecutable(command: string): string {
-  for (const directory of (process.env.PATH ?? "").split(path.delimiter).filter(Boolean)) {
-    const candidate = path.join(directory, command);
-    try {
-      accessSync(candidate, fsConstants.X_OK);
-      return candidate;
-    } catch (error) {
-      if (!["EACCES", "ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
-    }
+type RuntimeAdapter = HarnessAdapter & { configuration: NonNullable<HarnessAdapter["configuration"]> };
+function runtimeAdapters(): RuntimeAdapter[] {
+  return listDiscoveredHarnesses().filter((adapter): adapter is RuntimeAdapter => Boolean(adapter.configuration));
+}
+function runtimeRecord(read: (adapter: RuntimeAdapter) => RuntimeSettings): Record<string, RuntimeSettings> {
+  return Object.fromEntries(runtimeAdapters().map((adapter) => [adapter.id, read(adapter)]));
+}
+
+function resolveRuntimeInput(
+  id: string,
+  canonical: RuntimeSettings | undefined,
+  legacy: RuntimeSettings | undefined,
+  previousResolved: RuntimeSettings,
+  previousOverride: RuntimeSettings,
+): RuntimeSettings {
+  if (canonical && legacy && !isDeepStrictEqual(canonical, legacy)) {
+    const canonicalChanged = !isDeepStrictEqual(canonical, previousResolved);
+    const legacyChanged = !isDeepStrictEqual(legacy, previousResolved);
+    if (canonicalChanged && legacyChanged) throw new Error(`Conflicting runtime settings for ${id}`);
+    if (legacyChanged) return legacy;
   }
-  return command;
+  return canonical ?? legacy ?? previousOverride;
 }
-
-function runtimeDefaults(prefix: "pi" | "claude"): RuntimeSettings {
-  const configPath = prefix === "pi" ? path.join(os.homedir(), ".pi", "agent") : path.join(os.homedir(), ".claude");
-  return { executable: detectedExecutable(prefix), configPath, sessionPath: path.join(configPath, prefix === "pi" ? "sessions" : "projects") };
-}
-
-export function getRuntimeDefaults(): { pi: RuntimeSettings; claude: RuntimeSettings } {
-  return { pi: runtimeDefaults("pi"), claude: runtimeDefaults("claude") };
-}
-
-function runtimeOverrides(prefix: "pi" | "claude"): RuntimeSettings {
-  return {
-    executable: value(`${prefix}.executable`),
-    configPath: value(`${prefix}.configPath`),
-    sessionPath: value(`${prefix}.sessionPath`),
-  };
-}
-
-function runtime(prefix: "pi" | "claude"): RuntimeSettings {
-  const defaults = runtimeDefaults(prefix);
-  const overrides = runtimeOverrides(prefix);
-  return {
-    executable: overrides.executable || defaults.executable,
-    configPath: overrides.configPath || defaults.configPath,
-    sessionPath: overrides.sessionPath || defaults.sessionPath,
-  };
+export function getRuntimeDefaults(): Record<string, RuntimeSettings> & { pi: RuntimeSettings; claude: RuntimeSettings } {
+  return runtimeRecord((adapter) => adapter.configuration.defaults(os.homedir())) as Record<string, RuntimeSettings> & { pi: RuntimeSettings; claude: RuntimeSettings };
 }
 
 export function syncthingApiKey(): string | undefined {
@@ -225,11 +138,13 @@ export function getScopedResourcePaths(projectId?: string): ScopedResourcePaths 
 }
 
 export function getSettings(): SettingsResponse {
+  const runtimes = runtimeRecord((adapter) => configuredRuntime(adapter.id, adapter.configuration.defaults(os.homedir())));
+  const defaults = Object.fromEntries(listDiscoveredHarnesses().map((adapter) => [adapter.id, adapter.defaults]));
   return {
-    conversationDefaults: conversationDefaultsSchema.parse(JSON.parse(value("conversationDefaults", JSON.stringify({ pi: piConversationDefault, claude: claudeConversationDefault })))),
-    pi: runtime("pi"),
-    claude: runtime("claude"),
-    runtimeOverrides: { pi: runtimeOverrides("pi"), claude: runtimeOverrides("claude") },
+    conversationDefaults: conversationDefaultsSchema.parse(JSON.parse(value("conversationDefaults", JSON.stringify(defaults)))),
+    ...runtimes,
+    runtimes,
+    runtimeOverrides: runtimeRecord((adapter) => runtimeOverrides(adapter.id)),
     syncthing: {
       endpoint: value("syncthing.endpoint"),
       apiKeyConfigured: Boolean(setting("syncthing.apiKey")),
@@ -238,8 +153,8 @@ export function getSettings(): SettingsResponse {
     resources: readResourcePaths("resources."),
     conversationLabels: conversationLabelsSchema.parse(JSON.parse(value("conversationLabels", JSON.stringify(DEFAULT_CONVERSATION_LABELS)))),
     conversationHistoryDays: Number(value("conversationHistoryDays", "30")),
-    restartRequired: { pi: false, claude: false },
-  };
+    restartRequired: Object.fromEntries(runtimeAdapters().map((adapter) => [adapter.id, false])),
+  } as SettingsResponse;
 }
 
 function isInside(parent: string, child: string): boolean {
@@ -252,7 +167,7 @@ function isTemporaryPath(candidate: string): boolean {
   return roots.some((root) => isInside(root, candidate));
 }
 
-function validateRuntimePath(label: "Pi" | "Claude", field: "config" | "session", input: string, defaultPath: string): void {
+function validateRuntimePath(label: string, field: "config" | "session", input: string, defaultPath: string): void {
   if (!input) return;
   if (!path.isAbsolute(input)) throw new Error(`${label} ${field} path must be blank or absolute`);
   const resolved = path.resolve(input);
@@ -260,15 +175,20 @@ function validateRuntimePath(label: "Pi" | "Claude", field: "config" | "session"
   if (/^\/(Users|home)\/[^/]+(?:\/|$)/.test(resolved) && !isInside(os.homedir(), resolved)) throw new Error(`${label} ${field} path must be under the current home directory`);
 }
 
-function validateRuntimeSettings(label: "Pi" | "Claude", settings: RuntimeSettings): void {
-  const defaults = runtimeDefaults(label === "Pi" ? "pi" : "claude");
-  validateRuntimePath(label, "config", settings.configPath, defaults.configPath);
-  validateRuntimePath(label, "session", settings.sessionPath, defaults.sessionPath);
-  if (settings.executable && (settings.executable.includes("/") || settings.executable.includes("\\")) && !path.isAbsolute(settings.executable)) throw new Error(`${label} executable must be a command name or absolute path`);
+function validateRuntimeSettings(adapter: RuntimeAdapter, settings: RuntimeSettings): void {
+  const defaults = adapter.configuration.defaults(os.homedir());
+  validateRuntimePath(adapter.label, "config", settings.configPath, defaults.configPath);
+  validateRuntimePath(adapter.label, "session", settings.sessionPath, defaults.sessionPath);
+  if (settings.executable && (settings.executable.includes("/") || settings.executable.includes("\\")) && !path.isAbsolute(settings.executable)) throw new Error(`${adapter.label} executable must be a command name or absolute path`);
 }
 
-function validateSessionRoots(pi: RuntimeSettings, claude: RuntimeSettings): void {
-  if (pi.sessionPath && claude.sessionPath && (isInside(pi.sessionPath, claude.sessionPath) || isInside(claude.sessionPath, pi.sessionPath))) throw new Error("Pi and Claude session paths must not overlap");
+function validateSessionRoots(runtimes: Record<string, RuntimeSettings>): void {
+  const entries = runtimeAdapters().map((adapter) => [adapter, runtimes[adapter.id]] as const);
+  for (let left = 0; left < entries.length; left += 1) for (let right = left + 1; right < entries.length; right += 1) {
+    const [leftAdapter, leftRuntime] = entries[left];
+    const [rightAdapter, rightRuntime] = entries[right];
+    if (leftRuntime.sessionPath && rightRuntime.sessionPath && (isInside(leftRuntime.sessionPath, rightRuntime.sessionPath) || isInside(rightRuntime.sessionPath, leftRuntime.sessionPath))) throw new Error(`${leftAdapter.label} and ${rightAdapter.label} session paths must not overlap`);
+  }
 }
 
 export interface RuntimeReadiness { executable: RuntimeFieldReadiness; configPath: RuntimeFieldReadiness; sessionPath: RuntimeFieldReadiness; }
@@ -290,7 +210,7 @@ function checkDirectory(value: string, writable: boolean): RuntimeFieldReadiness
 
 function checkExecutable(value: string): RuntimeFieldReadiness {
   if (!value) return { ok: true, message: "Blank (uses node default)" };
-  const executable = path.isAbsolute(value) ? value : detectedExecutable(value);
+  const executable = path.isAbsolute(value) ? value : detectExecutable(value);
   try { accessSync(executable, fsConstants.X_OK); return { ok: true, message: "Ready" }; } catch (error) {
     if (unavailable(error)) return { ok: false, message: "Executable is unavailable" };
     throw error;
@@ -301,17 +221,25 @@ function checkRuntime(settings: RuntimeSettings): RuntimeReadiness {
   return { executable: checkExecutable(settings.executable), configPath: checkDirectory(settings.configPath, false), sessionPath: checkDirectory(settings.sessionPath, true) };
 }
 
-export function checkRuntimeSettings(input: { pi: RuntimeSettings; claude: RuntimeSettings }): { pi: RuntimeReadiness; claude: RuntimeReadiness } {
-  return { pi: checkRuntime(input.pi), claude: checkRuntime(input.claude) };
+export function checkRuntimeSettings(input: Record<string, RuntimeSettings>): Record<string, RuntimeReadiness> & { pi: RuntimeReadiness; claude: RuntimeReadiness } {
+  const configuredIds = new Set(runtimeAdapters().map((adapter) => adapter.id));
+  for (const id of Object.keys(input)) if (!configuredIds.has(id)) throw new Error(`Unknown runtime: ${id}`);
+  return Object.fromEntries(Object.entries(input).map(([id, settings]) => [id, checkRuntime(settings)])) as Record<string, RuntimeReadiness> & { pi: RuntimeReadiness; claude: RuntimeReadiness };
 }
 
 export function updateSettings(input: SettingsInput, actorId?: string): SettingsResponse {
   if (!loopbackEndpoint(input.syncthing.endpoint)) throw new Error("Syncthing endpoint must use a loopback host");
-  validateRuntimeSettings("Pi", input.pi);
-  validateRuntimeSettings("Claude", input.claude);
-  validateSessionRoots(input.pi, input.claude);
-  const db = settingsDatabase();
   const previous = getSettings();
+  const suppliedRuntimes = runtimeRecord((adapter) => resolveRuntimeInput(
+    adapter.id,
+    input.runtimes?.[adapter.id],
+    (input as unknown as Record<string, RuntimeSettings | undefined>)[adapter.id],
+    previous.runtimes[adapter.id],
+    previous.runtimeOverrides[adapter.id],
+  ));
+  for (const adapter of runtimeAdapters()) validateRuntimeSettings(adapter, suppliedRuntimes[adapter.id]);
+  validateSessionRoots(suppliedRuntimes);
+  const db = settingsDatabase();
   const homePath = input.projects?.homePath ?? previous.projects.homePath;
   const resources = input.resources ? normalizeResourcePaths(input.resources) : previous.resources;
   const conversationLabels = conversationLabelsSchema.parse(input.conversationLabels ?? previous.conversationLabels);
@@ -320,10 +248,10 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
   if (!homePath.trim() || !path.isAbsolute(homePath)) throw new Error("Joint Bob home folder must be absolute");
   db.exec("BEGIN");
   try {
-    for (const [prefix, settings] of [["pi", input.pi], ["claude", input.claude]] as const) {
-      save(db, `${prefix}.executable`, settings.executable);
-      save(db, `${prefix}.configPath`, settings.configPath);
-      save(db, `${prefix}.sessionPath`, settings.sessionPath);
+    for (const [id, runtimeSettings] of Object.entries(suppliedRuntimes)) {
+      save(db, `${id}.executable`, runtimeSettings.executable);
+      save(db, `${id}.configPath`, runtimeSettings.configPath);
+      save(db, `${id}.sessionPath`, runtimeSettings.sessionPath);
     }
     save(db, "syncthing.endpoint", input.syncthing.endpoint);
     save(db, "projects.homePath", path.resolve(homePath));
@@ -342,8 +270,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
       actorId,
       entityType: "settings",
       details: {
-        piChanged: JSON.stringify(previous.pi) !== JSON.stringify(settings.pi),
-        claudeChanged: JSON.stringify(previous.claude) !== JSON.stringify(settings.claude),
+        runtimesChanged: JSON.stringify(runtimeAdapters().filter((adapter) => JSON.stringify(previous.runtimes[adapter.id]) !== JSON.stringify(settings.runtimes[adapter.id])).map((adapter) => adapter.id)),
         syncthingChanged: previous.syncthing.endpoint !== settings.syncthing.endpoint || previous.syncthing.apiKeyConfigured !== settings.syncthing.apiKeyConfigured,
         projectHomeChanged: previous.projects.homePath !== settings.projects.homePath,
         resourcesChanged: JSON.stringify(previous.resources) !== JSON.stringify(settings.resources),
@@ -356,10 +283,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
     db.exec("COMMIT");
     return {
       ...settings,
-      restartRequired: {
-        pi: previous.pi.configPath !== settings.pi.configPath,
-        claude: previous.claude.executable !== settings.claude.executable || previous.claude.configPath !== settings.claude.configPath,
-      },
+      restartRequired: Object.fromEntries(runtimeAdapters().map((adapter) => [adapter.id, adapter.configuration.restartFields.some((field) => previous.runtimes[adapter.id][field] !== settings.runtimes[adapter.id][field])])),
     };
   } catch (error) {
     db.exec("ROLLBACK");

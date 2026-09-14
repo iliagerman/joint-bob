@@ -50,10 +50,21 @@ test("preferences store v6 canvas layouts and reject invalid trees", async () =>
       { version: 6, pages: [{ id: "page-1", name: "Page 1", root: null, focusedPaneId: null, projectFilter: "" }], activePageId: "page-1" });
 
     const pane = (id: string, sessionId: string) => ({ kind: "pane" as const, id, projectId: "p", sessionPath: `/tmp/${sessionId}.jsonl`, sessionId, executionNodeId: null });
-    const stored = { version: 6 as const, activePageId: "page", pages: [{ id: "page", name: "Page", root: { kind: "split" as const, id: "split", axis: "row" as const, ratio: 0.4, first: pane("pane-a", "s-a"), second: pane("pane-b", "s-b") }, focusedPaneId: "pane-b", projectFilter: "" }] };
+    const stored = { version: 6 as const, activePageId: "page", pages: [{ id: "page", name: "Page", root: { kind: "split" as const, id: "split", axis: "row" as const, ratio: 0.4, first: { ...pane("pane-a", "s-a"), harnessId: "kiro" }, second: pane("pane-b", "s-b") }, focusedPaneId: "pane-b", projectFilter: "" }] };
     const saved = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ canvasLayout: stored }) });
     assert.equal(saved.status, 200);
     assert.deepEqual((await saved.json() as { canvasLayout: unknown }).canvasLayout, stored);
+
+    const roundTrip = await fetch(`${node.baseUrl}/api/preferences`, { headers: { Cookie: cookie } });
+    assert.equal(roundTrip.status, 200);
+    assert.deepEqual((await roundTrip.json() as { canvasLayout: unknown }).canvasLayout, stored);
+
+    const invalidHarness = structuredClone(stored);
+    invalidHarness.pages[0].root.first.harnessId = "Bad ID";
+    const rejectedHarness = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ canvasLayout: invalidHarness }) });
+    assert.equal(rejectedHarness.status, 400);
+    const afterRejectedHarness = await fetch(`${node.baseUrl}/api/preferences`, { headers: { Cookie: cookie } });
+    assert.deepEqual((await afterRejectedHarness.json() as { canvasLayout: unknown }).canvasLayout, stored);
 
     const keymap = { version: 3, base: ["meta", "shift"], commands: { splitRight: ["ctrl", "SPACE", "\\"], splitBelow: ["ctrl", "SPACE", "-"] } };
     const savedKeymap = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ canvasKeymap: keymap }) });
@@ -80,17 +91,19 @@ test("preferences store v6 canvas layouts and reject invalid trees", async () =>
       return { status: response.status, body: await response.json() as { canvasLayout?: { version?: number; pages?: Array<{ name?: string; root?: unknown; focusedPaneId?: string | null }> } } };
     };
     const legacyPane = (id: string, sessionId: string) => ({ kind: "pane" as const, id, projectId: "p", sessionPath: `/tmp/${sessionId}.jsonl`, sessionId, executionNodeId: null });
-    const weighted = await put({ version: 5, rows: [{ id: "row-a", height: null, weights: [0.25, 0.75], panes: [legacyPane("pane-a", "s-a"), legacyPane("pane-b", "s-b")] }], focusedPaneId: "pane-b" });
+    const weighted = await put({ version: 5, rows: [{ id: "row-a", height: null, weights: [0.25, 0.75], panes: [{ ...legacyPane("pane-a", "s-a"), harnessId: "kiro" }, legacyPane("pane-b", "s-b")] }], focusedPaneId: "pane-b" });
     assert.equal(weighted.status, 200);
     assert.equal(weighted.body.canvasLayout?.version, 6);
     assert.equal(weighted.body.canvasLayout?.pages?.length, 1);
     assert.equal((weighted.body.canvasLayout?.pages?.[0].root as { ratio?: number }).ratio, 0.25);
+    assert.equal((weighted.body.canvasLayout?.pages?.[0].root as { first?: { harnessId?: string } }).first?.harnessId, "kiro");
     assert.equal(weighted.body.canvasLayout?.pages?.[0].focusedPaneId, "pane-b");
 
     // A v1 split tree migrates unchanged onto its first page.
-    const legacyTree = await put({ version: 1, root: { kind: "split", id: "split", axis: "row", ratio: .3, first: legacyPane("legacy-a", "legacy-a"), second: legacyPane("legacy-b", "legacy-b") }, focusedPaneId: "legacy-a" });
+    const legacyTree = await put({ version: 1, root: { kind: "split", id: "split", axis: "row", ratio: .3, first: { ...legacyPane("legacy-a", "legacy-a"), harnessId: "kiro" }, second: legacyPane("legacy-b", "legacy-b") }, focusedPaneId: "legacy-a" });
     assert.equal(legacyTree.status, 200);
     assert.equal((legacyTree.body.canvasLayout?.pages?.[0].root as { ratio?: number }).ratio, .3);
+    assert.equal((legacyTree.body.canvasLayout?.pages?.[0].root as { first?: { harnessId?: string } }).first?.harnessId, "kiro");
     assert.equal(legacyTree.body.canvasLayout?.pages?.[0].focusedPaneId, "legacy-a");
 
     // Nine conversations no longer fit one page; they spread in reading order.

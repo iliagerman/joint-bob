@@ -4,10 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-// Listing re-reads a Pi session directory only when one of its transcripts
-// changes, so the session watcher's per-write re-list stops re-parsing every
-// historical transcript.
-test("Pi session listing re-reads a session directory only when it changes", async () => {
+// Listing re-reads a Pi transcript only when it changes and skips files outside
+// the configured history window, while direct transcript loading remains available.
+test("Pi session summaries are cached and old transcripts load only on demand", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-pi-cache-"));
   const previousDataDir = process.env.PI_WEB_DATA_DIR;
   process.env.PI_WEB_DATA_DIR = path.join(root, "data");
@@ -47,14 +46,14 @@ test("Pi session listing re-reads a session directory only when it changes", asy
     assert.equal(initial[0].createdAt, "2026-01-01T00:00:00.000Z");
     assert.equal(initial[0].updatedAt, "2026-01-01T00:00:02.000Z", "cold listing uses transcript activity, not file mtime");
 
-    // Same byte length and same mtime, so the cached listing must survive.
+    // Same byte length and mtime must not hide changed transcript contents.
     await writeFile(sessionFile, transcript("Secnd"));
     await utimes(sessionFile, stamp, stamp);
     const cached = await pi.listPiSessions({ path: projectCwd });
     assert.equal(cached.length, 1);
-    assert.equal(cached[0].title, "First");
+    assert.equal(cached[0].title, "Secnd");
 
-    // A newer mtime invalidates the directory, so it is listed again.
+    // A metadata-only mtime change does not change transcript activity.
     const newer = new Date(1700000060000);
     await utimes(sessionFile, newer, newer);
     const refreshed = await pi.listPiSessions({ path: projectCwd });
@@ -80,6 +79,16 @@ test("Pi session listing re-reads a session directory only when it changes", asy
     const cpuMs = (consumed.user + consumed.system) / 1_000;
     assert.equal(appended[0].title, "Appended title");
     assert.ok(cpuMs < 10, `append-only summary refresh used ${cpuMs.toFixed(1)}ms CPU`);
+    const oldPath = path.join(sessionDir, "old.jsonl");
+    const unreadOldPath = path.join(sessionDir, "unread-old.jsonl");
+    await writeFile(oldPath, transcript("Old conversation").replaceAll("session-0", "old"));
+    await writeFile(unreadOldPath, "not json");
+    await utimes(oldPath, new Date("2020-01-01"), new Date("2020-01-01"));
+    await utimes(unreadOldPath, new Date("2020-01-01"), new Date("2020-01-01"));
+    await utimes(sessionFile, new Date(), new Date());
+    const windowed = await pi.listPiSessions({ path: projectCwd, historyDays: 30 });
+    assert.deepEqual(windowed.map((session) => session.id), ["session-0"]);
+    assert.equal((await pi.loadPiMessages(oldPath))[0].text, "Old conversation", "opening bypasses the summary window");
   } finally {
     if (previousDataDir === undefined) delete process.env.PI_WEB_DATA_DIR;
     else process.env.PI_WEB_DATA_DIR = previousDataDir;

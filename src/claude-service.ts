@@ -1,4 +1,5 @@
 import { recordConversationWork } from "./conversation-work.js";
+import { mapWithConcurrency } from "./concurrency.js";
 import { randomUUID } from "node:crypto";
 import { parseCompletedJsonl } from "./jsonl.js";
 import type { Stats } from "node:fs";
@@ -6,12 +7,15 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { access, copyFile, mkdir, readdir, readFile, rename, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { claudeProjectDir, claudeProjectDirs, isSyncConflictPath, sessionCwds, type SessionProjectPaths } from "./session-paths.js";
+import { isSyncConflictPath, sessionCwds, type SessionProjectPaths } from "./harnesses/shared-paths.js";
+import { claudeProjectDir, claudeProjectDirs } from "./harnesses/claude/paths.js";
 import { getScopedResourcePaths, getSettings } from "./settings.js";
 import { claudeAgentResourceArgs } from "./agent-resources.js";
 import { browserAgentEnvironment, browserAgentInstructions } from "./browser-agent.js";
 import { getConversationRecord } from "./conversation-records.js";
 import type { ChatMessage, ContextUsage, SessionSummary } from "./types.js";
+import { stripHandoffEnvelope } from "./handoff-context.js";
+export { buildHandoffContext, stripHandoffEnvelope } from "./handoff-context.js";
 
 // Runs one Claude Code turn in print mode and maps its stream-json output to
 // the same WebSocket payloads the Pi engine emits, so the client renders both
@@ -209,20 +213,6 @@ const claudeSessionFactsCache = new Map<string, ClaudeSessionFacts>();
 // a time instead.
 const CLAUDE_LIST_CONCURRENCY = 8;
 
-async function mapWithConcurrency<T, R>(items: T[], limit: number, map: (item: T) => Promise<R>): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let next = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (next < items.length) {
-      const index = next;
-      next += 1;
-      results[index] = await map(items[index]);
-    }
-  });
-  await Promise.all(workers);
-  return results;
-}
-
 function cleanClaudeTitle(value: unknown): string {
   return typeof value === "string" ? value.trim().split("\n")[0].slice(0, 80) : "";
 }
@@ -320,8 +310,7 @@ export async function claudeSessionFiles(project: SessionProjectPaths): Promise<
   return [...new Set(groups.flat().map((filePath) => path.resolve(filePath)))];
 }
 
-async function claudeFilesInHistory(project: SessionProjectPaths & { historyDays?: number; includedSessionPaths?: string[]; includedSessionIds?: string[] }): Promise<string[]> {
-  const files = await claudeSessionFiles(project);
+async function claudeFilesInHistory(project: SessionProjectPaths & { historyDays?: number; includedSessionPaths?: string[]; includedSessionIds?: string[] }, files: string[]): Promise<string[]> {
   if (!project.historyDays) return files;
   const cutoff = Date.now() - project.historyDays * 86_400_000;
   const included = new Set((project.includedSessionPaths ?? []).map((sessionPath) => path.resolve(sessionPath.replace(/^claude:/, ""))));
@@ -335,7 +324,7 @@ async function claudeFilesInHistory(project: SessionProjectPaths & { historyDays
 }
 
 export async function listClaudeSessions(project: SessionProjectPaths & { historyDays?: number; includedSessionPaths?: string[]; includedSessionIds?: string[] }): Promise<SessionSummary[]> {
-  const files = await claudeFilesInHistory(project);
+  const files = await claudeFilesInHistory(project, await claudeSessionFiles(project));
   const summaries = await mapWithConcurrency(files, CLAUDE_LIST_CONCURRENCY, (filePath) => summarizeClaudeTranscript(project, filePath));
   // A conversation claimed from another node exists under that node's encoded
   // directory as well as this node's, so the same transcript is read twice.
@@ -350,15 +339,8 @@ export async function refreshClaudeSessions(project: SessionProjectPaths & { his
   if (!changedFiles.length) return listClaudeSessions(project);
   const changed = new Set(changedFiles.map((filePath) => path.resolve(filePath)));
   const retained = previous.filter((session) => !changed.has(path.resolve(session.path.replace(/^claude:/, ""))));
-  const included = new Set((project.includedSessionPaths ?? []).map((sessionPath) => path.resolve(sessionPath.replace(/^claude:/, ""))));
-  const includedIds = new Set(project.includedSessionIds ?? []);
-  const cutoff = project.historyDays ? Date.now() - project.historyDays * 86_400_000 : 0;
-  const selected = cutoff ? (await Promise.all([...changed].map(async (filePath) => {
-    if (included.has(filePath) || includedIds.has(`claude:${path.basename(filePath, ".jsonl")}`)) return filePath;
-    try { return (await stat(filePath)).mtimeMs >= cutoff ? filePath : null; }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
-  }))).filter((filePath): filePath is string => filePath !== null) : [...changed];
-  const refreshed = await Promise.all(selected.map((filePath) => summarizeClaudeTranscript(project, filePath)));
+  const selected = await claudeFilesInHistory(project, [...changed]);
+  const refreshed = await mapWithConcurrency(selected, CLAUDE_LIST_CONCURRENCY, (filePath) => summarizeClaudeTranscript(project, filePath));
   const byId = new Map(retained.map((session) => [session.id, session]));
   for (const session of refreshed) if (session) byId.set(session.id, session);
   return [...byId.values()];
@@ -393,31 +375,6 @@ export async function loadClaudeMessages(sessionPath: string): Promise<ChatMessa
       return { id: `${index}`, role: message.role === "user" ? "user" : "assistant", text: message.role === "user" ? stripHandoffEnvelope(text) : text };
     })
     .filter((message) => message.text.trim().length > 0);
-}
-
-export function buildHandoffContext(transcript: ChatMessage[]): string {
-  const lines = transcript.slice(-30).map((message) => `${message.role}: ${message.text}`);
-  const joined = lines.join("\n\n").slice(-8000);
-  return [
-    "Context handoff: you are continuing a conversation that was previously handled by another coding agent in this same project.",
-    "Recent transcript between the user and the previous agent:",
-    "",
-    joined,
-    "",
-    "Continue the work seamlessly. The user's next message follows.",
-    "---",
-    "",
-  ].join("\n");
-}
-
-const HANDOFF_ENVELOPE_PREFIX = "Context handoff:";
-
-/** The handoff envelope is transport, not dialogue; a reloaded transcript shows only the user's text. */
-export function stripHandoffEnvelope(text: string): string {
-  const start = text.startsWith(HANDOFF_ENVELOPE_PREFIX) ? 0 : text.indexOf(`\n${HANDOFF_ENVELOPE_PREFIX}`);
-  if (start === -1) return text;
-  const separator = text.indexOf("\n---\n", start);
-  return separator === -1 ? text : text.slice(separator + "\n---\n".length);
 }
 
 /** Every conversation spawn gets the same browser bridge, including tasks and recovery. */

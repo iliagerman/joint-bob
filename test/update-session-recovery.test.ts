@@ -32,31 +32,35 @@ test("update recovery records persist queues and stop failed records retrying", 
 });
 
 test("server prepares and recovers active sessions around service updates", async () => {
-  const server = await serverSource();
+  const [server, piRuntime, processLifecycle] = await Promise.all([
+    serverSource(),
+    readFile("src/harnesses/pi/runtime.ts", "utf8"),
+    readFile("src/harnesses/process-lifecycle.ts", "utf8"),
+  ]);
   assert.match(server, /"POST \/update\/prepare"/);
   assert.match(server, /app\.post\("\/api\/update\/prepare"/);
   assert.match(server, /updatePreparation: null as Promise<number> \| null,/);
-  assert.match(server, /child\.exitCode !== null/);
+  assert.match(processLifecycle, /child\.exitCode !== null \|\| child\.signalCode !== null/);
+  assert.match(processLifecycle, /signalGroup\(child\.pid, "SIGTERM"\)/);
   assert.match(server, /response\.status\(503\)\.json\(\{ error: "Server update in progress" \}\)/);
   assert.doesNotMatch(server, /catch \(error\) \{ updatePreparing = false; next\(error\); \}/);
   assert.match(server, /Updating\.\.\. Work will resume automatically\./);
-  assert.match(server, /getSteeringMessages\(\)/);
-  assert.match(server, /getFollowUpMessages\(\)/);
-  assert.match(server, /clearQueue\(\)/);
-  assert.match(server, /await .*\.abort\(\)/);
-  // Claude's queued prompts stay in the durable queue rather than being copied
-  // into the recovery record: two copies would run the prompt twice.
-  assert.doesNotMatch(server, /promptQueue\.map\(\(\{ promptText \}\) => promptText\)/);
-  assert.match(server, /listQueuedPrompts\(claudeQueueKey\(connection\)\)/);
-  assert.match(server, /SIGTERM/);
+  assert.match(piRuntime, /getSteeringMessages\(\)/);
+  assert.match(piRuntime, /getFollowUpMessages\(\)/);
+  assert.match(piRuntime, /this\.handle\.session\.clearQueue\(\)/);
+  assert.match(piRuntime, /await this\.handle\.session\.abort\(\)/);
+  assert.match(server, /queuedPrompts: shared\.session\.queuedPrompts\(\), settings/);
+  assert.match(server, /await saveUpdateRecoveries\(active\.map\(\(\{ record \}\) => record\)\)/);
+  assert.match(server, /await Promise\.all\(busySessions\.map\(\(\{ session \}\) => session\.stopForUpdate\(\)\)\)/);
+  // Durable chat prompts are not copied into recovery records, where they would run twice.
+  assert.doesNotMatch(server, /listQueuedPrompts\([^)]*\)\.map\(\(\{ promptText \}\) => promptText\)/);
   assert.match(server, /recoverPendingUpdateRuns\(\)/);
-  assert.match(server, /interface RecoveredClaudeChat\s*\{[\s\S]*claude: ClaudeChatState;[\s\S]*connection: ChatConnection \| null;/);
-  assert.match(server, /const recoveredClaudeChats = new Map<string, RecoveredClaudeChat>\(\);/);
-  assert.match(server, /async function runRecoveredClaudePrompt\([\s\S]*appendLiveEvent\(state\.liveEvents, payload\)[\s\S]*if \(entry\.connection\) send\(entry\.connection\.socket, payload\)/);
-  assert.match(server, /recoveredClaudeChats\.set\(key, recovered\);[\s\S]*runRecoveredClaudePrompt/);
-  assert.match(server, /let recovered = sessionRequest\.sessionPath \? recoveredClaudeChats\.get\(claudeRunKey\(project\.id, sessionRequest\.sessionPath\)\) : undefined;/);
-  assert.match(server, /if \(recovered\) \{[\s\S]*claude: recovered\.claude[\s\S]*recovered\.connection = connection;/);
-  assert.match(server, /recoveredClaudeChats\.delete\(key\);[\s\S]*await drainClaudePromptQueue\(recovered\.connection\);/);
+  assert.match(server, /async function recoverChat\(record: UpdateRecoveryRecord\)/);
+  assert.match(server, /const shared = await openHarnessSession\(record\.engine, \{ projectId: record\.projectId, cwd: record\.cwd, sessionId: record\.sessionId, sessionPath: record\.sessionPath, conversationId \}\)/);
+  assert.match(server, /for \(const event of shared\.liveEvents\) send\(options\.socket, event\)/);
+  assert.match(server, /for \(const prompt of \[updateContinuationPrompt, \.\.\.record\.queuedPrompts\]\) await shared\.session\.prompt/);
+  assert.match(server, /if \(connections\[0\]\) await drainHarnessPromptQueue\(connections\[0\]\)/);
+  assert.doesNotMatch(server, /RecoveredClaudeChat|recoveredClaudeChats|runRecoveredClaudePrompt|drainClaudePromptQueue/);
   assert.doesNotMatch(server, /Conversation is recovering after update/);
 });
 
@@ -80,5 +84,5 @@ test("browser warns during update and refreshes cached shell", async () => {
   const [app, worker] = await Promise.all([appSource(), readFile("public/sw.js", "utf8")]);
   assert.match(app, /payload\.type === "updatePreparing"/);
   assert.match(app, /Updating\.\.\. Work will resume automatically\./);
-  assert.match(worker, /joint-bob-v185/);
+  assert.match(worker, /joint-bob-v186/);
 });

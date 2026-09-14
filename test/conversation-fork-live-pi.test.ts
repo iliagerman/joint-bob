@@ -33,9 +33,10 @@ for (const state of ["unflushed", "parallel tools"] as const) {
     sockets.push(opened.socket);
     await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "ready"));
     const sessionId = String(opened.messages.find((frame) => frame.type === "ready")!.sessionId);
-    const { sharedSessions } = await import("../src/server/state.js");
-    const shared = [...sharedSessions.values()].find((shared) => shared.handle.session.sessionId === sessionId)!;
-    const manager = shared.handle.session.sessionManager;
+    const { harnessSessions } = await import("../src/server/harness-sessions.js");
+    const shared = [...harnessSessions.values()].find((candidate) => candidate.engine === "pi" && candidate.session.id === sessionId)!;
+    const handle = (shared.session as unknown as { handle: { session: { sessionManager: SessionManager } } }).handle;
+    const manager = handle.session.sessionManager;
     const user = manager.appendMessage({ role: "user", content: "completed in-memory user", timestamp: Date.now() });
     if (state === "parallel tools") {
       manager.appendMessage({ role: "user", content: "abandoned branch", timestamp: Date.now() });
@@ -68,7 +69,7 @@ for (const state of ["unflushed", "parallel tools"] as const) {
       assert.deepEqual(listQueuedPrompts(`${fixture.projectId}:${body.session.id}`), []);
       assert.equal(manager.getLeafId(), leaf);
       assert.equal(JSON.stringify(manager.getEntries()), before);
-      assert.equal([...sharedSessions.values()].some((candidate) => candidate.handle.session.sessionId === body.session.id), false);
+      assert.equal([...harnessSessions.values()].some((candidate) => candidate.engine === "pi" && candidate.session.id === body.session.id), false);
       const snapshot = await readFile(body.session.path, "utf8");
       if (state === "parallel tools") manager.appendMessage({ role: "toolResult", toolCallId: "second", toolName: "read", content: [{ type: "text", text: "second result" }], isError: false, timestamp: Date.now() });
       else manager.appendMessage({ role: "user", content: "source continues", timestamp: Date.now() });

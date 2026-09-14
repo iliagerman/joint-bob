@@ -102,14 +102,23 @@ test("session API persists automatic review transitions for the signed-in accoun
       assert.equal(response.status, 200);
       return (await response.json() as { sessions: Array<{ path: string; updatedAt: string; reviewState: string }> }).sessions[0];
     };
-    assert.equal((await list()).reviewState, "reviewed");
+    const waitForReview = async (reviewState: string, minimumUpdatedAt?: Date) => {
+      const deadline = Date.now() + 5_000;
+      let session: Awaited<ReturnType<typeof list>> | undefined;
+      do {
+        session = await list();
+        if (session?.reviewState === reviewState && (!minimumUpdatedAt || Date.parse(session.updatedAt) >= minimumUpdatedAt.getTime())) return session;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      } while (Date.now() < deadline);
+      assert.fail(`Timed out waiting for ${reviewState} at ${minimumUpdatedAt?.toISOString() ?? "any watermark"}; last session: ${JSON.stringify(session)}`);
+    };
+    await waitForReview("reviewed");
 
     const assistant = { type: "assistant", cwd: fixture.projectPath, message: { role: "assistant", content: [{ type: "text", text: "finished" }] } };
     await writeFile(fixture.sessionFile, `${JSON.stringify(firstRecord)}\n${JSON.stringify(assistant)}\n`);
     const future = new Date(Date.now() + 1000);
     await utimes(fixture.sessionFile, future, future);
-    const finished = await list();
-    assert.equal(finished.reviewState, "needs_review");
+    const finished = await waitForReview("needs_review", future);
 
     const reviewed = await fetch(`${node.baseUrl}/api/projects/${fixture.projectId}/sessions/reviewed`, {
       method: "PUT",
@@ -117,14 +126,13 @@ test("session API persists automatic review transitions for the signed-in accoun
       body: JSON.stringify({ sessionPath: finished.path, updatedAt: finished.updatedAt }),
     });
     assert.equal(reviewed.status, 204);
-    assert.equal((await list()).reviewState, "reviewed");
+    await waitForReview("reviewed", future);
 
     const followUp = { type: "assistant", cwd: fixture.projectPath, message: { role: "assistant", content: [{ type: "text", text: "more work" }] } };
     await writeFile(fixture.sessionFile, `${JSON.stringify(firstRecord)}\n${JSON.stringify(assistant)}\n${JSON.stringify(followUp)}\n`);
     const later = new Date(Date.now() + 2000);
     await utimes(fixture.sessionFile, later, later);
-    const clickSnapshot = await list();
-    assert.equal(clickSnapshot.reviewState, "needs_review");
+    const clickSnapshot = await waitForReview("needs_review", later);
 
     const afterClick = { type: "assistant", cwd: fixture.projectPath, message: { role: "assistant", content: [{ type: "text", text: "after click" }] } };
     await writeFile(fixture.sessionFile, `${JSON.stringify(firstRecord)}\n${JSON.stringify(assistant)}\n${JSON.stringify(followUp)}\n${JSON.stringify(afterClick)}\n`);
@@ -135,8 +143,7 @@ test("session API persists automatic review transitions for the signed-in accoun
       body: JSON.stringify({ sessions: [{ sessionPath: clickSnapshot.path, updatedAt: clickSnapshot.updatedAt }] }),
     });
     assert.equal(bulk.status, 204);
-    const pendingAfterClick = await list();
-    assert.equal(pendingAfterClick.reviewState, "needs_review");
+    const pendingAfterClick = await waitForReview("needs_review", newest);
 
     const missing = await fetch(`${node.baseUrl}/api/projects/${fixture.projectId}/sessions/reviewed-all`, {
       method: "PUT", headers,

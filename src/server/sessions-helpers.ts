@@ -1,21 +1,17 @@
 import { applyConversationWork, listConversationWork, refreshConversationWork } from "../conversation-work.js";
-import { isClaudeSessionRunning } from "../claude-runtime.js";
 import { getClusterNode, getClusterPeer } from "../cluster.js";
 import { claimConversationOwnership, type ConversationEngine, type ConversationOwnership, ConversationOwnershipError, type ConversationOwnershipStatus, getConversationOwnership, healStaleLocalClaim } from "../conversation-ownership.js";
-import { syncConversationReviewStates } from "../conversation-reviews.js";
+import { conversationReviewNotificationPaths, syncConversationReviewStates } from "../conversation-reviews.js";
 import { conversationLeaseRunning } from "../conversation-runtime.js";
-import { listHarnessSessions } from "../harnesses.js";
-import { getSessionStatus } from "../pi-service.js";
-import { listRunningPiSessions } from "../pi-runtime.js";
+import { getHarness, getHarnessRuntime, listHarnesses, listHarnessSessions } from "../harnesses.js";
 import { getUserPreferences } from "../preferences.js";
 import { listUserRecentSessions } from "../recent-sessions.js";
 import { getSettings } from "../settings.js";
 import { listTasks } from "../tasks.js";
 import type { ProjectRecord, SessionSummary } from "../types.js";
 import { listUserPins } from "../user-pins.js";
-import { claudeRunKey } from "./chat.js";
-import { sessionKey } from "./realtime.js";
-import { runningClaudeSessionPaths, sharedSessions } from "./state.js";
+import { sessionWatcher } from "./chat.js";
+import { findHarnessSession, harnessSessionBusy } from "./harness-sessions.js";
 import { taskConfig, taskCwd, taskPhase } from "./task-runs.js";
 
 /**
@@ -32,63 +28,58 @@ export async function listProjectSessionsWithReviewState(project: ProjectRecord,
   const recents = username ? listUserRecentSessions(username).filter((recent) => recent.projectId === project.id) : [];
   const includedSessionPaths = [...pinnedSessionPaths, ...recents.map((recent) => recent.sessionPath)];
   const includedSessionIds = [...pinnedSessionIds, ...recents.map((recent) => `${recent.engine}:${recent.sessionId}`)];
-  const sessions = await listHarnessSessions({
+  const searchProject = {
     ...project,
     additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []),
     historyDays,
     includedSessionPaths,
     includedSessionIds,
-  }, includedSessionPaths, includedSessionIds);
+  };
+  sessionWatcher.ensureProject(searchProject);
+  const sessions = await listHarnessSessions(searchProject, includedSessionPaths, includedSessionIds);
   const tasksBySessionPath = new Map(tasks.filter((task) => task.sessionPath).map((task) => [task.sessionPath, task]));
   const tasksById = new Map(tasks.map((task) => [task.id, task]));
-  const projectSharedSessions = [...new Set(sharedSessions.values())].filter((shared) => shared.projectId === project.id);
   await refreshConversationWork();
-  for (const shared of projectSharedSessions) {
-    for (const work of listConversationWork("pi", shared.handle.session.sessionId)) {
-      const run = shared.agentRuns.get(work.summary.runId);
-      if (run) run.summary = work.summary;
-    }
-  }
-  const runningPiSessions = new Set(listRunningPiSessions().map((session) => session.sessionId));
+  const externalRunning = new Map<string, Set<string>>();
+  await Promise.all(listHarnesses().map(async (adapter) => {
+    if (!adapter.runtime) return;
+    const runtime = await getHarnessRuntime(adapter.id);
+    if (!runtime.externalRunning) return;
+    externalRunning.set(adapter.id, new Set((await runtime.externalRunning()).map((run) => run.sessionId)));
+  }));
   const listedSessions = applyConversationWork(sessions.map((session) => {
     const task = (session.taskId ? tasksById.get(session.taskId) : undefined) ?? tasksBySessionPath.get(session.path);
-    const shared = sharedSessions.get(sessionKey(task ? taskCwd(project, task) : project.path, session.path))
-      ?? projectSharedSessions.find((candidate) => candidate.handle.session.sessionId === session.id);
+    const shared = findHarnessSession(project.id, session.harnessId, session.id);
     const config = task?.executionState === "running" ? taskConfig(task, taskPhase(task)) : undefined;
-    const agentLabel = config ? (config.engine === "pi" ? "Pi" : "Claude") : session.agentLabel;
-    const agentId = config ? config.engine : session.harnessId;
-    const livePiModel = (!config || config.engine === "pi") && shared
-      ? getSessionStatus(shared.handle.session, shared.handle.safeguardsEnabled).model?.label
-      : undefined;
-    const agentModel = config?.modelId || livePiModel;
+    const agentId = config?.engine ?? session.harnessId;
+    const liveModel = shared?.session.status().model?.label;
+    const agentModel = config?.modelId || liveModel;
+    const work = listConversationWork(session.harnessId, session.id);
     return {
       ...session,
       agentId,
-      agentLabel,
+      agentLabel: getHarness(agentId).label,
       ...(agentModel ? { agentModel } : {}),
       taskStatus: task?.status,
       taskId: task?.id,
-      agentRuns: shared ? [...shared.agentRuns.values()].map((run) => run.summary).sort((left, right) => left.runId.localeCompare(right.runId)) : undefined,
-      running: Boolean(
-        shared?.handle.session.isStreaming
-        || (shared?.turnInFlight ?? 0) > 0
-        || [...(shared?.agentRuns.values() ?? [])].some((run) => run.summary.status === "running")
-        || task?.executionState === "running"
-        || runningClaudeSessionPaths.has(claudeRunKey(project.id, session.path))
-        || (session.harnessId === "claude" && isClaudeSessionRunning(session.path))
-        || (session.harnessId === "pi" && runningPiSessions.has(session.id))
-        || conversationLeaseRunning(session.harnessId, session.id)
-      ),
+      agentRuns: work.length ? work.map((entry) => entry.summary).sort((left, right) => left.runId.localeCompare(right.runId)) : undefined,
+      running: Boolean(shared && harnessSessionBusy(shared) || task?.executionState === "running" || externalRunning.get(session.harnessId)?.has(session.id) || conversationLeaseRunning(session.harnessId, session.id) || work.some((entry) => entry.summary.status === "running")),
       engine: session.harnessId,
       sessionId: session.id,
     };
   }));
   // Internal snapshots do not belong to a viewer and must not create review records.
   const reviewStates = userId ? syncConversationReviewStates(userId, username, project.id, listedSessions.filter((session) => !session.readOnly)) : new Map();
-  const ownership = await Promise.all(listedSessions.map((session) => getConversationOwnership(session.path.startsWith("claude:") || session.path.startsWith("draft:claude:") ? "claude" : "pi", session.id)));
+  const ownership = await Promise.all(listedSessions.map((session) => getConversationOwnership(session.harnessId, session.id)));
+  const notificationPaths = userId ? conversationReviewNotificationPaths(userId, project.id) : new Set<string>();
   return listedSessions.map((session, index) => {
     const { engine: _engine, sessionId: _sessionId, ...summary } = session;
-    return { ...summary, reviewState: reviewStates.get(session.path), executionNodeId: ownership[index]?.ownerNodeId };
+    return {
+      ...summary,
+      reviewState: reviewStates.get(session.path),
+      reviewNotificationsEnabled: notificationPaths.has(session.path),
+      executionNodeId: ownership[index]?.ownerNodeId,
+    };
   });
 }
 

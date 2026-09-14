@@ -144,20 +144,20 @@ export function syncNotifyButton() {
   elements.notificationToggleButton.classList.toggle("active", enabled);
 }
 
-async function enableNotifications() {
+export async function enableNotifications() {
   if (!notificationsSupported()) {
     toast("Push notifications are not supported on this browser");
-    return;
+    return false;
   }
   if (Notification.permission !== "granted") {
     if (Notification.permission === "denied") {
       toast("Notifications are blocked. Enable them in your browser settings.");
-      return;
+      return false;
     }
     const permission = await Notification.requestPermission();
     if (permission !== "granted") {
       toast("Notification permission was not granted");
-      return;
+      return false;
     }
   }
   state.notificationsEnabled = true;
@@ -165,6 +165,7 @@ async function enableNotifications() {
 
   syncNotifyButton();
   await subscribeToPush();
+  return true;
 }
 
 // Conversations enter review in every project, not only the open one, so a device subscribes once

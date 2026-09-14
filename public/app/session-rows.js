@@ -1,4 +1,5 @@
 import { ticketGlyph } from "../board.js";
+import { harnessIdFromPath } from "../harness-metadata.js";
 import { api, savePreferencesInBackground } from "./api.js";
 import { renderProjects } from "./project-list.js";
 import { renderSessions } from "./session-list.js";
@@ -16,7 +17,7 @@ export function isProjectPinned(projectId) {
 function sessionPinEngine(session) {
   // The logical identity uses the FIRST segment's engine, which never changes,
   // so a pin survives later harness switches.
-  return session.segments?.[0]?.engine || session.engine || session.harnessId || ((session.sessionPath || session.path || "").startsWith("claude:") ? "claude" : "pi");
+  return session.segments?.[0]?.engine || session.engine || session.harnessId || harnessIdFromPath(state.harnesses, session.sessionPath || session.path);
 }
 
 function sessionPinIdentities(session) {

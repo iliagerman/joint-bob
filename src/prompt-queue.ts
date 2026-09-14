@@ -4,16 +4,16 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { resolveDataDirectory } from "./data-directory.js";
+import { isHarnessId } from "./types.js";
 import { enqueueReplicationEvent, ensureReplicationSchema, resolveProjectAlias, type ReplicationEvent } from "./replication.js";
 
 export const queuedSettingsSchema = z.object({
+  harnessId: z.string().refine(isHarnessId).optional(),
   provider: z.string().min(1).max(80), modelId: z.string().min(1).max(200),
   reasoning: z.enum(["default", "off", "minimal", "low", "medium", "high", "xhigh", "max"]),
+  enabledTools: z.array(z.string()).optional(),
   claudeTools: z.object({ available: z.array(z.string()), enabled: z.array(z.string()).nullable() }).strict().optional(),
-}).strict().superRefine((value, context) => {
-  const invalid = value.provider === "claude" ? ["off", "minimal"].includes(value.reasoning) : value.reasoning === "default";
-  if (invalid) context.addIssue({ code: z.ZodIssueCode.custom, message: "Reasoning level does not belong to the selected engine" });
-});
+}).strict();
 export type QueuedSettings = z.infer<typeof queuedSettingsSchema>;
 const promptSchema = z.object({
   id: z.string().uuid(), requestId: z.string().uuid().optional(), dispatchState: z.enum(["pending", "starting"]).default("pending"), promptText: z.string(), displayText: z.string(),

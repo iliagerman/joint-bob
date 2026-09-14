@@ -86,5 +86,7 @@ test("conversation UI exposes state counts, automatic review, notifications, and
   assert.match(app, /markAllSessionsReviewed/);
   assert.match(styles, /\.mark-all-reviewed-button/);
   assert.match(server, /sessions\/reviewed-all/);
-  assert.match(server, /runningClaudeSessionPaths/);
+  assert.match(server, /const shared = findHarnessSession\(project\.id, session\.harnessId, session\.id\);/);
+  assert.match(server, /const externalRunning = new Map<string, Set<string>>\(\);[\s\S]*runtime\.externalRunning\(\)/);
+  assert.match(server, /running: Boolean\(shared && harnessSessionBusy\(shared\)[\s\S]*externalRunning\.get\(session\.harnessId\)\?\.has\(session\.id\)/);
 });

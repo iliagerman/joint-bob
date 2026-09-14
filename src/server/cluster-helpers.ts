@@ -1,5 +1,4 @@
-import { constants as fsConstants } from "node:fs";
-import { access, lstat, realpath, stat } from "node:fs/promises";
+import { lstat, realpath, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
@@ -7,7 +6,7 @@ import type { NextFunction, Request, Response } from "express";
 import { type ClusterPeer, clusterProjectGrantFor, getClusterMachineToken, getClusterNode, listClusterPeers, markClusterPeerSeen } from "../cluster.js";
 import { listConversationRecords } from "../conversation-records.js";
 import type { ConversationEngine } from "../conversation-ownership.js";
-import { harnessForSessionPath, harnessSyncFolderForSessionPath } from "../harnesses.js";
+import { getHarness, getHarnessRuntime, harnessForSessionPath, harnessSyncFolderForSessionPath } from "../harnesses.js";
 import { managedProjectPath } from "../managed-home.js";
 import { resolveLocalSessionPath } from "../session-paths.js";
 import { getSettings } from "../settings.js";
@@ -20,7 +19,7 @@ import { validateTaskRepository } from "../worktrees.js";
 import { sessionWatcher } from "./chat.js";
 import { sendError } from "./http-auth.js";
 import { relocateProjectWorkspace } from "./projects.js";
-import { execFileAsync, flags } from "./state.js";
+import { flags } from "./state.js";
 
 interface PeerInventory {
   node: Awaited<ReturnType<typeof getClusterNode>>;
@@ -70,22 +69,7 @@ export function publicClusterPeer(peer: ClusterPeer): Omit<ClusterPeer, "token">
 }
 
 async function runtimeAvailable(engine: TaskRecord["engine"]): Promise<string[]> {
-  const settings = getSettings();
-  if (engine === "pi") {
-    if (settings.pi.configPath) {
-      try { await access(settings.pi.configPath); } catch { return ["Pi config path is not available on this node"]; }
-    }
-    return [];
-  }
-  const executable = settings.claude.executable || "claude";
-  try {
-    if (path.isAbsolute(executable)) await access(executable, fsConstants.X_OK);
-    else await execFileAsync("sh", ["-lc", "command -v -- \"$1\"", "sh", executable]);
-    if (settings.claude.configPath) await access(settings.claude.configPath);
-    return [];
-  } catch {
-    return [`Claude runtime ${executable} is not available on this node`];
-  }
+  return (await getHarnessRuntime(engine)).readiness(process.cwd());
 }
 
 export async function abortPeerTaskHandoff(peer: ClusterPeer, handoffId: string): Promise<boolean> {
@@ -101,14 +85,14 @@ export async function abortPeerTaskHandoff(peer: ClusterPeer, handoffId: string)
 
 async function assertTaskSessionReady(sessionPath: string, syncStatusChecked = false): Promise<void> {
   const session = resolveLocalSessionPath(sessionPath);
-  const label = session.engine === "claude" ? "Claude" : "Pi";
-  const filePath = session.engine === "claude" ? session.path.slice("claude:".length) : session.path;
+  const adapter = getHarness(session.engine);
+  if (!adapter.paths.transcriptFile) throw new Error(`${adapter.label} conversation is not synchronized on this node`);
   try {
     if (!syncStatusChecked) await assertSyncthingFolderReady(harnessSyncFolderForSessionPath(sessionPath).id, false);
-    const info = await lstat(filePath);
+    const info = await lstat(adapter.paths.transcriptFile(session.path));
     if (!info.isFile() || info.isSymbolicLink()) throw new Error("Conversation is not a regular file");
   } catch {
-    throw new Error(`${label} conversation is not synchronized on this node`);
+    throw new Error(`${adapter.label} conversation is not synchronized on this node`);
   }
 }
 

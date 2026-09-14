@@ -32,13 +32,13 @@ test("toasts are dismissible and busy-session errors linger for six seconds", as
   assert.match(styles, /\.toast-close \{[^}]*\}/);
 });
 
-test("a busy Pi session is reported in words the user can act on", async () => {
+test("a busy shared-agent session is reported in words the user can act on", async () => {
   const server = await serverSource();
 
   const helperStart = server.indexOf("function chatErrorMessage(");
   assert.ok(helperStart >= 0, "Missing chatErrorMessage");
   const helper = server.slice(helperStart, server.indexOf("\n}", helperStart));
   assert.match(helper, /already processing/i);
-  assert.match(helper, /Pi is still working on your previous message\. Wait for it to finish or press Stop, then send again\./);
-  assert.match(server, /const message = chatErrorMessage\(error\);/);
+  assert.match(helper, /Agent is still working on your previous message\. Wait for it to finish or press Stop, then send again\./);
+  assert.match(server, /\{ type: "error", error: chatErrorMessage\(error\) \}/);
 });

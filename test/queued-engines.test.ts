@@ -6,7 +6,10 @@ import { syncBuiltinESMExports } from "node:module";
 import test, { before, after } from "node:test";
 import type { Server } from "node:http";
 import type WebSocket from "ws";
+import type { HarnessSession } from "../src/harnesses/runtime.js";
 import { configure, environment, gatedClaude, openChat, startServer, stopServer, temporaryRoot, waitFor, type Fixture } from "./queued-prompt-harness.js";
+
+type TestPiSession = HarnessSession & { handle: { session: any } };
 
 let root: string;
 let previous: NodeJS.ProcessEnv;
@@ -70,26 +73,21 @@ test("stopping a Pi turn starts the next queued message", async (context) => {
   sockets.push(opened.socket);
   await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "ready"));
   const sessionId = String(opened.messages.find((frame) => frame.type === "ready")!.sessionId);
-  const { sharedSessions } = await import("../src/server/state.js");
-  const shared = [...sharedSessions.values()].find((candidate) => candidate.handle.session.sessionId === sessionId)!;
-  const session = shared.handle.session;
+  const { harnessSessions } = await import("../src/server/harness-sessions.js");
+  const shared = [...harnessSessions.values()].find((candidate) => candidate.session.id === sessionId)!;
+  const session = shared.session;
   let releaseFirst!: () => void;
-  let turnListener: Parameters<typeof session.subscribe>[0] | undefined;
   const firstTurn = new Promise<void>((resolve) => { releaseFirst = resolve; });
   let promptCount = 0;
-  context.mock.method(session, "subscribe", (listener: Parameters<typeof session.subscribe>[0]) => {
-    turnListener = listener;
-    return () => {};
-  });
-  context.mock.method(session, "prompt", async () => {
+  context.mock.method(session, "prompt", async (input) => {
     promptCount += 1;
-    turnListener?.({ type: "agent_start" } as Parameters<Parameters<typeof session.subscribe>[0]>[0]);
+    input.onStarted?.();
     if (promptCount === 1) {
       await firstTurn;
       throw new Error("Pi turn aborted");
     }
   });
-  context.mock.method(session, "abort", async () => { releaseFirst(); });
+  context.mock.method(session, "cancel", async () => { releaseFirst(); });
   const engineLog = process.env.JOINT_BOB_TEST_ENGINE_LOG;
   delete process.env.JOINT_BOB_TEST_ENGINE_LOG;
   try {
@@ -140,8 +138,8 @@ test("queue transfer fence includes an enqueue awaiting attachment persistence",
   try {
     opened.socket.send(JSON.stringify({ type: "prompt", message: "pending write", images: [{ name: "held.png", mimeType: "image/png", data: "aGVsbG8=" }] }));
     await persisting;
-    const { promptQueueIsDraining } = await import("../src/server/chat.js");
-    assert.equal(promptQueueIsDraining(`${fixture.projectId}:${sessionId}`), true, "transfer must reject an enqueue that can still commit after its snapshot");
+    const { harnessPromptQueueIsDraining } = await import("../src/server/harness-chat.js");
+    assert.equal(harnessPromptQueueIsDraining(`${fixture.projectId}:${sessionId}`), true, "transfer must reject an enqueue that can still commit after its snapshot");
   } finally { release(); mocked.mock.restore(); syncBuiltinESMExports(); }
   await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "promptStarted"));
 });
@@ -151,10 +149,11 @@ test("successful Pi extension commands without agent_start are consumed once", a
   sockets.push(opened.socket);
   await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "ready"));
   const sessionId = String(opened.messages.find((frame) => frame.type === "ready")!.sessionId);
-  const { sharedSessions } = await import("../src/server/state.js");
-  const shared = [...sharedSessions.values()].find((shared) => shared.handle.session.sessionId === sessionId)!;
+  const { harnessSessions } = await import("../src/server/harness-sessions.js");
+  const shared = [...harnessSessions.values()].find((candidate) => candidate.session.id === sessionId && candidate.engine === "pi")!;
+  const native = (shared.session as TestPiSession).handle.session;
   let calls = 0;
-  context.mock.method(shared.handle.session, "prompt", async () => { if (++calls > 1) throw new Error("extension repeated"); });
+  context.mock.method(native, "prompt", async () => { if (++calls > 1) throw new Error("extension repeated"); });
   const log = process.env.JOINT_BOB_TEST_ENGINE_LOG;
   delete process.env.JOINT_BOB_TEST_ENGINE_LOG;
   try {
@@ -173,28 +172,29 @@ for (const operation of ["compact", "reload"] as const) {
     sockets.push(opened.socket);
     await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "ready"));
     const sessionId = String(opened.messages.find((frame) => frame.type === "ready")!.sessionId);
-    const { sharedSessions } = await import("../src/server/state.js");
-    const shared = [...sharedSessions.values()].find((shared) => shared.handle.session.sessionId === sessionId)!;
+    const { harnessSessions } = await import("../src/server/harness-sessions.js");
+    const shared = [...harnessSessions.values()].find((candidate) => candidate.session.id === sessionId && candidate.engine === "pi")!;
+    const native = (shared.session as TestPiSession).handle.session;
     let release!: () => void;
     let entered!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const started = new Promise<void>((resolve) => { entered = resolve; });
     let busy = false;
-    if (operation === "compact") context.mock.getter(shared.handle.session, "isCompacting", () => busy);
-    context.mock.method(shared.handle.session, operation, async () => {
+    if (operation === "compact") context.mock.getter(native, "isCompacting", () => busy);
+    context.mock.method(native, operation, async () => {
       busy = true; entered();
       try { await gate; } finally { busy = false; }
     });
-    const { handleChatMessage, chatConnections, promptQueueIsDraining } = await import("../src/server/chat.js");
-    const connection = [...chatConnections].find((connection) => connection.shared === shared)!;
+    const { handleHarnessChatMessage, harnessChatConnections, harnessPromptQueueIsDraining } = await import("../src/server/harness-chat.js");
+    const connection = [...harnessChatConnections].find((candidate) => candidate.shared === shared)!;
     const completion = operation === "compact"
-      ? handleChatMessage(connection, Buffer.from(JSON.stringify({ type: "compact" })))
+      ? handleHarnessChatMessage(connection, Buffer.from(JSON.stringify({ type: "compact" })))
       : (await import("../src/server/realtime.js")).reloadSharedSkills();
     try {
       await started;
       opened.socket.send(JSON.stringify({ type: "prompt", message: `queued during ${operation}` }));
       await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "userMessage" && frame.queued));
-      await waitFor(opened.messages, () => !promptQueueIsDraining(`${fixture.projectId}:${sessionId}`));
+      await waitFor(opened.messages, () => !harnessPromptQueueIsDraining(`${fixture.projectId}:${sessionId}`));
       assert.equal(opened.messages.some((frame) => frame.type === "promptStarted"), false, "busy session must retain queue");
     } finally { release(); await completion; }
     await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "promptStarted"), 1500);
@@ -208,16 +208,18 @@ for (const stage of ["turn", "preflight"] as const) {
     sockets.push(opened.socket);
     await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "ready"));
     const sessionId = String(opened.messages.find((frame) => frame.type === "ready")!.sessionId);
-    const { sharedSessions, flags } = await import("../src/server/state.js");
-    const shared = [...sharedSessions.values()].find((shared) => shared.handle.session.sessionId === sessionId)!;
-    const { promptQueueIsDraining } = await import("../src/server/chat.js");
+    const { flags } = await import("../src/server/state.js");
+    const { harnessSessions } = await import("../src/server/harness-sessions.js");
+    const shared = [...harnessSessions.values()].find((candidate) => candidate.session.id === sessionId && candidate.engine === "pi")!;
+    const native = (shared.session as TestPiSession).handle.session;
+    const { harnessPromptQueueIsDraining } = await import("../src/server/harness-chat.js");
     const { listQueuedPrompts, clearQueuedPrompts } = await import("../src/prompt-queue.js");
     let release!: () => void, entered!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const started = new Promise<void>((resolve) => { entered = resolve; });
-    const prompt = context.mock.method(shared.handle.session, "prompt", async () => { if (stage === "turn") { entered(); await gate; } });
+    const prompt = context.mock.method(native, "prompt", async () => { if (stage === "turn") { entered(); await gate; } });
     if (stage === "preflight") {
-      const runtime = shared.handle.session.modelRuntime;
+      const runtime = native.modelRuntime;
       const auth = runtime.getAuth.bind(runtime);
       context.mock.method(runtime, "getAuth", async (model: Parameters<typeof auth>[0]) => { entered(); await gate; return auth(model); });
     }
@@ -230,7 +232,7 @@ for (const stage of ["turn", "preflight"] as const) {
       await waitFor(opened.messages, () => opened.messages.filter((frame) => frame.type === "userMessage" && frame.queued).length === (stage === "turn" ? 2 : 1));
       flags.updatePreparing = true;
       release();
-      await waitFor(opened.messages, () => !promptQueueIsDraining(`${fixture.projectId}:${sessionId}`));
+      await waitFor(opened.messages, () => !harnessPromptQueueIsDraining(`${fixture.projectId}:${sessionId}`));
       assert.equal(prompt.mock.callCount(), stage === "turn" ? 1 : 0, "no new turn may start behind the update fence");
       assert.equal(listQueuedPrompts(`${fixture.projectId}:${sessionId}`).length, 1, "undispatched prompt stays durable for restart");
     } finally {
@@ -245,13 +247,13 @@ test("update fence cancels Claude dispatch held in transcript localization", asy
   sockets.push(opened.socket);
   await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "ready"));
   const sessionId = String(opened.messages.find((frame) => frame.type === "ready")!.sessionId);
-  const { chatConnections, promptQueueIsDraining } = await import("../src/server/chat.js");
-  const connection = [...chatConnections].find((candidate) => candidate.claude.sessionId === sessionId)!;
+  const { harnessChatConnections, harnessPromptQueueIsDraining } = await import("../src/server/harness-chat.js");
+  const connection = [...harnessChatConnections].find((candidate) => candidate.shared.session.id === sessionId && candidate.engine === "claude")!;
   const { claudeSessionFilePath } = await import("../src/claude-service.js");
   const localPath = claudeSessionFilePath(connection.cwd, sessionId);
   await mkdir(path.dirname(localPath), { recursive: true });
   await writeFile(localPath, "");
-  connection.claude.filePath = path.join(root, "foreign", `${sessionId}.jsonl`);
+  (connection.shared.session as HarnessSession & { nativeFile: string }).nativeFile = path.join(root, "foreign", `${sessionId}.jsonl`);
   let release!: () => void, entered!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
   const started = new Promise<void>((resolve) => { entered = resolve; });
@@ -267,7 +269,7 @@ test("update fence cancels Claude dispatch held in transcript localization", asy
     opened.socket.send(JSON.stringify({ type: "prompt", message: "must not start after preparation" }));
     await started;
     flags.updatePreparing = true; release();
-    await waitFor(opened.messages, () => !promptQueueIsDraining(`${fixture.projectId}:${sessionId}`));
+    await waitFor(opened.messages, () => !harnessPromptQueueIsDraining(`${fixture.projectId}:${sessionId}`));
     assert.equal(opened.messages.some((frame) => frame.type === "promptStarted"), false, "localization await must not cross the update fence");
     assert.equal(listQueuedPrompts(`${fixture.projectId}:${sessionId}`)[0].dispatchState, "pending");
   } finally {
@@ -296,9 +298,9 @@ test("Pi queued authenticated override replaces an unauthenticated current model
   sockets.push(opened.socket);
   await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "ready"));
   const sessionId = String(opened.messages.find((frame) => frame.type === "ready")!.sessionId);
-  const { sharedSessions } = await import("../src/server/state.js");
-  const shared = [...sharedSessions.values()].find((shared) => shared.handle.session.sessionId === sessionId)!;
-  const session = shared.handle.session;
+  const { harnessSessions } = await import("../src/server/harness-sessions.js");
+  const shared = [...harnessSessions.values()].find((candidate) => candidate.session.id === sessionId && candidate.engine === "pi")!;
+  const session = (shared.session as TestPiSession).handle.session;
   let selected = { ...session.model!, id: "unavailable-current-model" };
   context.mock.getter(session, "model", () => selected);
   context.mock.method(session, "setModel", async (model: typeof selected) => { selected = model; });
@@ -360,10 +362,11 @@ test("Pi receives native image bytes and a pre-start SDK rejection retains the q
   sockets.push(opened.socket);
   await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "ready"));
   const sessionId = String(opened.messages.find((frame) => frame.type === "ready")!.sessionId);
-  const { sharedSessions } = await import("../src/server/state.js");
-  const shared = [...sharedSessions.values()].find((shared) => shared.handle.session.sessionId === sessionId)!;
+  const { harnessSessions } = await import("../src/server/harness-sessions.js");
+  const shared = [...harnessSessions.values()].find((candidate) => candidate.session.id === sessionId && candidate.engine === "pi")!;
+  const native = (shared.session as TestPiSession).handle.session;
   let delivered: unknown;
-  context.mock.method(shared.handle.session, "prompt", async (_text: string, options: unknown) => { delivered = options; throw new Error("SDK rejected before agent_start"); });
+  context.mock.method(native, "prompt", async (_text: string, options: unknown) => { delivered = options; throw new Error("SDK rejected before agent_start"); });
   const log = process.env.JOINT_BOB_TEST_ENGINE_LOG;
   delete process.env.JOINT_BOB_TEST_ENGINE_LOG;
   try {

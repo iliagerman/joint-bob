@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added Kiro as a third coding agent, with per-harness defaults and per-conversation review notifications.
+
 ## 1.29.5 — 2026-09-14
 
 - Scheduled tasks now wait safely in an active conversation, support custom hourly intervals, and allow thinking or effort selection with the harness-default model.

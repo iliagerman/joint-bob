@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import type { Server } from "node:http";
-import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import WebSocket from "ws";
+import { temporaryRoot } from "./queued-prompt-harness.js";
 
 function cookieFrom(response: Response): string {
   const cookie = response.headers.get("set-cookie");
@@ -25,7 +25,8 @@ function waitFor(messages: Array<Record<string, unknown>>, predicate: () => bool
 async function fakeClaude(root: string): Promise<string> {
   const executable = path.join(root, "fake-claude.mjs");
   await writeFile(executable, `#!/usr/bin/env node
-import { appendFile } from 'node:fs/promises';
+import { appendFile, mkdir } from 'node:fs/promises';
+import path from 'node:path';
 if (process.argv[2] === 'auth') { console.log(JSON.stringify({ loggedIn: true })); process.exit(0); }
 let prompt = '';
 for await (const chunk of process.stdin) prompt += chunk;
@@ -35,9 +36,18 @@ const supplied = args.indexOf('--session-id');
 const resumed = args.indexOf('--resume');
 const sessionId = supplied >= 0 ? args[supplied + 1] : args[resumed + 1];
 console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: sessionId }));
-console.log(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: prompt.trim() } } }));
+const encoded = process.cwd().replace(/^\\//, '-').replace(/[\\s_.\\/]+/g, '-');
+const directory = path.join(process.env.CLAUDE_CONFIG_DIR, 'projects', encoded);
+await mkdir(directory, { recursive: true });
+const transcript = path.join(directory, sessionId + '.jsonl');
+const timestamp = new Date().toISOString();
+const record = (type, message) => JSON.stringify({ type, sessionId, cwd: process.cwd(), timestamp, message }) + '\\n';
+const text = prompt.trim();
+await appendFile(transcript, record('user', { role: 'user', content: text }));
+console.log(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text } } }));
 await new Promise((resolve) => setTimeout(resolve, 500));
-console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: prompt.trim() }] } }));
+await appendFile(transcript, record('assistant', { role: 'assistant', content: [{ type: 'text', text }] }));
+console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } }));
 console.log(JSON.stringify({ type: 'result', is_error: false }));
 `);
   await chmod(executable, 0o755);
@@ -55,7 +65,7 @@ async function authenticate(baseUrl: string): Promise<{ cookie: string; headers:
 }
 
 test("Claude WebSocket streams before finalization and executes queued prompts once in FIFO order", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-streaming-ws-"));
+  const root = await temporaryRoot("joint-bob-streaming-ws-");
   const previous = { data: process.env.JOINT_BOB_DATA_DIR, user: process.env.MASTER_BOB_ADMIN_USERNAME, password: process.env.MASTER_BOB_INITIAL_PASSWORD, invocations: process.env.JOINT_BOB_FAKE_INVOCATIONS };
   process.env.JOINT_BOB_DATA_DIR = path.join(root, "data");
   process.env.MASTER_BOB_ADMIN_USERNAME = "admin";
