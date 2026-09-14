@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Handoff notifications now indicate when transcripts are truncated and where to find the full conversation history.
+
 ## 1.30.3 — 2026-09-14
 
 - Fixed Pi conversations from getting stuck in a reconnect loop.

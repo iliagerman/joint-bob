@@ -24,7 +24,8 @@ async function waitFor(messages: Array<Record<string, unknown>>, predicate: () =
 function piTranscript(sessionId: string, cwd: string): string {
   return [
     JSON.stringify({ type: "session", version: 3, id: sessionId, timestamp: "2026-01-01T00:00:00.000Z", cwd }),
-    JSON.stringify({ type: "message", id: "seed-1", parentId: null, timestamp: "2026-01-01T00:00:01.000Z", message: { role: "user", content: [{ type: "text", text: "seeded pi question" }], timestamp: Date.parse("2026-01-01T00:00:01.000Z") } }),
+    ...Array.from({ length: 29 }, (_, index) => JSON.stringify({ type: "message", id: `archive-${index}`, parentId: index ? `archive-${index - 1}` : null, timestamp: "2026-01-01T00:00:00.500Z", message: { role: "assistant", content: [{ type: "text", text: `archived message ${index}` }], timestamp: Date.parse("2026-01-01T00:00:00.500Z") } })),
+    JSON.stringify({ type: "message", id: "seed-1", parentId: "archive-28", timestamp: "2026-01-01T00:00:01.000Z", message: { role: "user", content: [{ type: "text", text: "seeded pi question" }], timestamp: Date.parse("2026-01-01T00:00:01.000Z") } }),
     JSON.stringify({ type: "message", id: "seed-2", parentId: "seed-1", timestamp: "2026-01-01T00:00:02.000Z", message: { role: "assistant", content: [{ type: "text", text: "seeded pi answer" }], timestamp: Date.parse("2026-01-01T00:00:02.000Z") } }),
   ].join("\n") + "\n";
 }
@@ -74,6 +75,12 @@ test("a harness switch keeps one conversation with embedded, ordered segments", 
     // The envelope must strip wherever it sits, including behind credential context.
     const { buildHandoffContext, stripHandoffEnvelope } = await import(`../src/claude-service.ts?segments-strip=${Date.now()}-${Math.random()}`);
     const envelope = buildHandoffContext([{ id: "0", role: "user", text: "earlier work" }]);
+    const longEnvelope = buildHandoffContext(
+      Array.from({ length: 31 }, (_, index) => ({ id: `${index}`, role: "user" as const, text: `message ${index}` })),
+      "claude:/tmp/full-transcript.jsonl",
+    );
+    assert.match(longEnvelope, /truncated to the last 30 of 31 messages/);
+    assert.match(longEnvelope, /Earlier messages are available at \/tmp\/full-transcript\.jsonl/);
     assert.equal(stripHandoffEnvelope(`${envelope}the actual message`), "the actual message");
     assert.equal(stripHandoffEnvelope(`You have secret accounts attached.\n\n${envelope}the actual message`), "the actual message", "credential context must not shield the envelope");
     assert.equal(stripHandoffEnvelope("plain user text"), "plain user text");
@@ -168,6 +175,9 @@ test("a harness switch keeps one conversation with embedded, ordered segments", 
     assert.equal(listed[0].conversationId, piSessionId);
     assert.equal(listed[0].draft, undefined, "the Claude segment has a transcript after its turn");
     assert.equal(listed[0].title, "seeded pi question", "a switched conversation keeps its first real title, not a handoff-envelope one");
+    const firstClaudeTranscript = await readFile(listed[0].path.replace(/^claude:/, ""), "utf8");
+    assert.match(firstClaudeTranscript, /truncated to the last 30 of 33 messages/);
+    assert.ok(firstClaudeTranscript.includes(`Earlier messages are available at ${piTranscriptPath}`));
 
     // Reopening the ORIGINAL Pi transcript still lands on the whole conversation.
     const reopened = await openSocket(piTranscriptPath);

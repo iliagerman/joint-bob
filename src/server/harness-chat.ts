@@ -220,7 +220,7 @@ async function switchHarness(connection: HarnessChatConnection, engine: HarnessI
   if (internal) old.turnInFlight -= 1;
   connection.engine = engine; connection.shared = shared;
   detachHarnessClient(old, connection.socket); attachHarnessClient(shared, connection.socket);
-  connection.handoffContext = buildHandoffContext(transcript.messages);
+  connection.handoffContext = buildHandoffContext(transcript.messages, old.session.file);
   const segments = await listConversationSegments(connection.project.id, connection.conversationId);
   send(connection.socket, { type: "engineChanged", engine, sessionId: id, conversationId: connection.conversationId, sessionFile: shared.session.file, segments });
   if (shared.session.file) send(connection.socket, { type: "sessionFile", sessionId: id, sessionFile: shared.session.file });
