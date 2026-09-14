@@ -46,8 +46,12 @@ test("pending browser requests never redirect approval or files", { timeout: 120
     return { dialog: await opened, result };
   }
   async function chooser(page: Page, selector: string) {
-    const opened = page.waitForEvent("filechooser");
-    await page.locator(selector).click(); await opened;
+    await page.bringToFront();
+    assert.equal(await page.evaluate(() => document.hasFocus()), true, "Native file chooser requires a foreground page");
+    await Promise.all([
+      page.waitForEvent("filechooser"),
+      page.locator(selector).click(),
+    ]);
   }
   try {
     for (const samePage of [false, true]) {
@@ -103,44 +107,47 @@ test("pending browser requests never redirect approval or files", { timeout: 120
       } finally { await f.close(); }
     });
     await t.test("agent implicit chooser is captured before queued work", async () => {
-      const f = await fixture(); const blocked = gate();
+      const f = await fixture(); const blocked = gate(); const entered = gate();
       try {
         await f.execute({ action: "resumeAgent" });
         await chooser(f.b, "#a");
-        f.live.queue = blocked.promise;
+        const prior = f.live.queue.run("interactive", () => { entered.resolve(); return blocked.promise; });
+        await entered.promise;
         const upload = f.execute({ action: "upload", files }, agent);
         const rejected = assert.rejects(upload, stale); void rejected.catch(() => {});
-        await chooser(f.b, "#b"); blocked.resolve(); await rejected;
+        await chooser(f.b, "#b"); blocked.resolve(); await Promise.all([prior, rejected]);
         assert.equal(await f.b.locator("#b").evaluate((input: HTMLInputElement) => input.files!.length), 0);
         await f.execute({ action: "upload", selector: "#a", files }, agent);
         assert.equal(await f.b.locator("#a").evaluate((input: HTMLInputElement) => input.files![0].text()), "private bytes");
       } finally { blocked.resolve(); await f.execute({ action: "takeControl" }); await f.close(); }
     });
     await t.test("legacy selector upload follows the preceding queued tab selection", async () => {
-      const f = await fixture(); const blocked = gate();
+      const f = await fixture(); const blocked = gate(); const entered = gate();
       try {
         await f.execute({ action: "resumeAgent" });
         const [aId, bId] = [...f.live.pages.keys()];
         await f.execute({ action: "selectTab", pageId: aId }, agent);
-        f.live.queue = blocked.promise;
+        const prior = f.live.queue.run("interactive", () => { entered.resolve(); return blocked.promise; });
+        await entered.promise;
         const select = f.execute({ action: "selectTab", pageId: bId }, agent);
         const upload = f.execute({ action: "upload", selector: "#a", files }, agent);
         void upload.catch(() => {});
-        blocked.resolve(); await select; await upload;
+        blocked.resolve(); await Promise.all([prior, select, upload]);
         assert.equal(await f.a.locator("#a").evaluate((input: HTMLInputElement) => input.files!.length), 0);
         assert.equal(await f.b.locator("#a").evaluate((input: HTMLInputElement) => input.files![0].text()), "private bytes");
       } finally { blocked.resolve(); await f.execute({ action: "takeControl" }); await f.close(); }
     });
     await t.test("legacy upload can wait for its preceding click to open the first chooser", async () => {
-      const f = await fixture(); const blocked = gate();
+      const f = await fixture(); const blocked = gate(); const entered = gate();
       try {
         await f.execute({ action: "resumeAgent" });
         assert.equal((await f.state()).fileChooser, false);
-        f.live.queue = blocked.promise;
+        const prior = f.live.queue.run("interactive", () => { entered.resolve(); return blocked.promise; });
+        await entered.promise;
         const click = f.execute({ action: "clickElement", selector: "#a" }, agent);
         const upload = f.execute({ action: "upload", files }, agent);
         void upload.catch(() => {});
-        blocked.resolve(); await click; await upload;
+        blocked.resolve(); await Promise.all([prior, click, upload]);
         assert.equal(await f.b.locator("#a").evaluate((input: HTMLInputElement) => input.files![0].text()), "private bytes");
       } finally { blocked.resolve(); await f.execute({ action: "takeControl" }); await f.close(); }
     });

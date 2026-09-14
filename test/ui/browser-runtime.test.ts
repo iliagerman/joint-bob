@@ -56,7 +56,8 @@ test("real browser isolates profiles, enforces ownership, streams popups, retain
     await execute({ action: "resumeAgent" }, human);
     const takeover = execute({ action: "takeControl" }, human);
     const queued = execute({ action: "fill", selector: "#name", text: "queued bad" });
-    await takeover; await assert.rejects(queued, /human control/i);
+    const rejected = assert.rejects(queued, /human control/i);
+    await Promise.all([takeover, rejected]);
     await execute({ action: "resumeAgent" }, human);
     assert.equal(await execute({ action: "evaluate", expression: "document.querySelector('#name').value" }), "agent value");
     const connection = once(wss, "connection");

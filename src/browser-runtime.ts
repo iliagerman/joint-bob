@@ -13,6 +13,7 @@ import { browserCommandSchema, browserStartSchema, type BrowserActor, type Brows
 import { createMonitorReadExpression, normalizeMonitorRead, type MonitorReadInput } from "./browser-monitor-checkers.js";
 import { BrowserMonitorCheckError } from "./browser-monitor-scheduler.js";
 import type { MonitorCheckResult } from "./browser-monitor-types.js";
+import { BrowserCommandQueue } from "./browser-command-queue.js";
 
 interface DetectionOptions {
   platform?: string;
@@ -93,7 +94,7 @@ interface LiveSession {
   transfers: Set<Promise<void>>;
   viewers: Set<WebSocket>;
   errors: string[];
-  queue: Promise<unknown>;
+  queue: BrowserCommandQueue;
   cdp?: CDPSession;
   streamGeneration: number;
   stopped: boolean;
@@ -204,7 +205,7 @@ export class BrowserRuntime {
       context.setDefaultNavigationTimeout(20000);
       const row = this.store.get(id);
       this.store.resume(id);
-      session = { id: row.id, profileId: profile.id, restoring: true, context, pages: new Map(), activePageId: null, human: recovery ? recovery.human : null, chooser: null, dialog: null, downloads: [], transfers: new Set(), viewers: new Set(), errors: [], queue: Promise.resolve(), streamGeneration: 0, stopped: false, stopSignal: new AbortController() };
+      session = { id: row.id, profileId: profile.id, restoring: true, context, pages: new Map(), activePageId: null, human: recovery ? recovery.human : null, chooser: null, dialog: null, downloads: [], transfers: new Set(), viewers: new Set(), errors: [], queue: new BrowserCommandQueue(), streamGeneration: 0, stopped: false, stopSignal: new AbortController() };
       this.sessions.set(row.id, session);
       const live = session;
       context.on("page", page => this.addPage(live, page));
@@ -323,7 +324,7 @@ export class BrowserRuntime {
       }
       if (session.restoring) throw new Error("Browser profile is still restoring; retry when ready");
     } catch (error) { return Promise.reject(error); }
-    const job = session.queue.then(async () => {
+    return session.queue.run("interactive", async () => {
       this.live(id);
       this.authorize(session, command, actor); // Recheck after queued work, not at enqueue time.
       if (command.action === "upload") {
@@ -340,8 +341,6 @@ export class BrowserRuntime {
         return await Promise.race([operation, dialog]);
       } finally { session.dialogSignal = undefined; this.broadcastState(session); }
     });
-    session.queue = job.catch(() => {});
-    return job;
   }
 
   inspectMonitor(grant: BrowserMonitorReadGrant, input: MonitorReadInput): Promise<MonitorCheckResult> {
@@ -353,7 +352,7 @@ export class BrowserRuntime {
       session = this.sessions.get(grant.sessionId) as LiveSession;
       if (!session || session.stopped) throw new BrowserMonitorCheckError("browser-stopped", "Browser session is not running");
     } catch (error) { return Promise.reject(error); }
-    const job = session.queue.then(async () => {
+    return session.queue.run("background", async () => {
       await grant.assertValid();
       this.assertMonitorTarget(grant, session);
       const value = await this.page(session).evaluate(expression);
@@ -361,8 +360,6 @@ export class BrowserRuntime {
       this.assertMonitorTarget(grant, session);
       return normalizeMonitorRead(input, value);
     });
-    session.queue = job.catch(() => {});
-    return job;
   }
 
   private assertMonitorTarget(grant: BrowserMonitorReadGrant, session: LiveSession): void {
@@ -651,6 +648,7 @@ export class BrowserRuntime {
     if (state === "closed") this.cancelledRecoveries.add(session.id);
     this.checkpoint(session);
     session.stopped = true;
+    session.queue.close(new Error("Browser session is not running. Explicitly restart it."));
     session.stopSignal.abort();
     return session.stopping = (async () => {
       this.store.setRestoreIntent(session.id, restoreOnRestart);
@@ -667,7 +665,6 @@ export class BrowserRuntime {
   private async releaseSession(session: LiveSession): Promise<void> {
     session.pages.clear(); session.activePageId = null; session.chooser = null; session.dialog = null;
     profileLeases.delete(profileDirectory(session.profileId));
-    session.queue = Promise.resolve();
     this.sessions.delete(session.id);
     try {
       const view = await this.view(session.id);

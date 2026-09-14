@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Interactive commands in the browser monitor now execute immediately without waiting for queued monitor operations to finish.
+
 ## 1.30.6 — 2026-09-14
 
 - Fixed app updates hanging indefinitely when sessions refuse to stop during shutdown.
