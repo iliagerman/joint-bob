@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.30.4 — 2026-09-14
 
 - Handoff notifications now indicate when transcripts are truncated and where to find the full conversation history.
 
