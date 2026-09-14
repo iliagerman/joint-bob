@@ -2,6 +2,7 @@
 // load, so they are imported here in the original registration order: the /api
 // auth gate in routes/core must run before every protected route, and the error
 // handler in routes/updates must come last.
+import { failUnobservedConversationWorkAfterRestart } from "./conversation-work.js";
 import { openMergeTransactionCount, recoverMergeTransactions } from "./merge-journal.js";
 import { getProject } from "./store.js";
 import { listTasks, updateTask } from "./tasks.js";
@@ -56,6 +57,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   });
   flags.startupReady = false;
   flags.startupError = undefined;
+  failUnobservedConversationWorkAfterRestart();
   // Interrupted merge transactions roll back before the node accepts any traffic
   // (TICKET-MERGE-PLAN.md §8); committed ones reconcile their task records.
   const recoverMerges = async (): Promise<void> => {

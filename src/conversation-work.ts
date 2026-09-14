@@ -41,6 +41,29 @@ export function conversationWorkActive(engine: HarnessId, sessionId: string): bo
   return listConversationWork(engine, sessionId).some((work) => agentWorkActive(work.summary));
 }
 
+export function failUnobservedConversationWork(engine: HarnessId, sessionId: string, error: string): boolean {
+  let changed = false;
+  for (const work of listConversationWork(engine, sessionId)) {
+    if (work.descriptor || !agentWorkActive(work.summary)) continue;
+    recordConversationWork({ ...work, summary: {
+      ...work.summary,
+      status: "failed",
+      tasks: work.summary.tasks.map((task) => ["queued", "running"].includes(task.status) ? { ...task, status: "failed", error } : task),
+    } });
+    changed = true;
+  }
+  return changed;
+}
+
+export function failUnobservedConversationWorkAfterRestart(): number {
+  const sessions = new Set(listConversationWork().filter((work) => work.engine === "claude").map((work) => work.sessionId));
+  let failed = 0;
+  for (const sessionId of sessions) {
+    if (failUnobservedConversationWork("claude", sessionId, "Joint Bob restarted before reporting task completion")) failed += 1;
+  }
+  return failed;
+}
+
 let refreshInFlight: Promise<boolean> | undefined;
 
 /** Viewer requests and maintenance must not race and overwrite a newer observation. */

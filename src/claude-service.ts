@@ -1,4 +1,4 @@
-import { recordConversationWork } from "./conversation-work.js";
+import { failUnobservedConversationWork, recordConversationWork } from "./conversation-work.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { randomUUID } from "node:crypto";
 import { parseCompletedJsonl } from "./jsonl.js";
@@ -554,6 +554,9 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
     });
     child.on("close", (code) => {
       if (state.buffer) handleLine(state.buffer);
+      if (state.sessionId && failUnobservedConversationWork("claude", state.sessionId, "Claude process ended before reporting task completion")) {
+        options.onEvent({ type: "conversationWorkChanged" });
+      }
       if (code !== 0 && !state.sawOutput && state.stderr.trim()) {
         options.onEvent({ type: "assistantError", error: state.stderr.trim().slice(0, 2000) });
       }

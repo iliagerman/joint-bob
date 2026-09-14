@@ -19,6 +19,7 @@ test("runClaudePrompt restricts tools and reports the session tool list", async 
       `echo '{"type":"system","subtype":"task_started","task_id":"background-child","description":"Background agent","task_type":"local_agent"}'`,
       `echo '{"type":"result","subtype":"success"}'`,
       `echo '{"type":"system","subtype":"task_notification","task_id":"background-child","status":"completed"}'`,
+      `echo '{"type":"system","subtype":"task_started","task_id":"lost-child","description":"Lost background agent","task_type":"local_agent"}'`,
       "",
     ].join("\n"), "utf8");
     await chmod(fakeClaude, 0o755);
@@ -73,7 +74,7 @@ test("runClaudePrompt restricts tools and reports the session tool list", async 
     settings.updateProjectResourcePaths(projectId, { skills: [projectSkills], prompts: [projectPrompts], rules: [projectRules], plugins: [projectPlugins] });
     const { runClaudePrompt } = await import(`../src/claude-service.ts?claude-tools=${Date.now()}-${Math.random()}`);
 
-    const { conversationWorkActive } = await import("../src/conversation-work.js");
+    const { conversationWorkActive, listConversationWork } = await import("../src/conversation-work.js");
     const childActivity: boolean[] = [];
     const run = runClaudePrompt({ cwd: root, projectId, prompt: "list files", tools: ["Bash", "Read"], onEvent: (event) => {
       if (event.type === "conversationWorkChanged") childActivity.push(conversationWorkActive("claude", "11111111-1111-4111-8111-111111111111"));
@@ -82,7 +83,10 @@ test("runClaudePrompt restricts tools and reports the session tool list", async 
 
     assert.equal(result.ok, true);
     assert.deepEqual(result.tools, ["Bash", "Read", "Edit"]);
-    assert.deepEqual(childActivity, [true, false], "native Claude task events update shared child activity even after parent result");
+    assert.deepEqual(childActivity, [true, false, true, false], "native Claude task events update shared child activity and retire unfinished work when the process exits");
+    const lost = listConversationWork("claude", "11111111-1111-4111-8111-111111111111").find(({ summary }) => summary.runId === "lost-child");
+    assert.equal(lost?.summary.status, "failed");
+    assert.match(lost?.summary.tasks[0].error ?? "", /ended before reporting task completion/);
     const args = (await readFile(argsFile, "utf8")).split("\n");
     const toolsIndex = args.indexOf("--tools");
     assert.ok(toolsIndex >= 0, `expected --tools in claude args: ${JSON.stringify(args)}`);

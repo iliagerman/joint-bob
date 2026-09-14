@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createServer } from "node:http";
 import { agentRunDescriptor } from "../src/agent-run-monitor.js";
-import { applyConversationWork, conversationWorkActive, recordConversationWork, refreshConversationWork, listConversationWork } from "../src/conversation-work.js";
+import { applyConversationWork, conversationWorkActive, failUnobservedConversationWorkAfterRestart, recordConversationWork, refreshConversationWork, listConversationWork } from "../src/conversation-work.js";
 import type { SessionSummary } from "../src/types.js";
 import { syncConversationReviewStates } from "../src/conversation-reviews.js";
 
@@ -44,6 +44,17 @@ test("dashboard tracking survives handle loss and observer failure until explici
     assert.equal(requests, 1, "viewer and maintenance polls share one observation rather than racing stale snapshots");
     assert.equal(conversationWorkActive("future", "durable-parent"), false);
   } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
+});
+
+test("restart retires native child work that has no surviving observer", () => {
+  recordConversationWork({ engine: "claude", sessionId: "restart-parent", summary: {
+    runId: "native-child", status: "running", tasks: [{ name: "worker", role: "worker", status: "running" }],
+  } });
+  assert.equal(failUnobservedConversationWorkAfterRestart(), 1);
+  assert.equal(conversationWorkActive("claude", "restart-parent"), false);
+  const [work] = listConversationWork("claude", "restart-parent");
+  assert.equal(work.summary.status, "failed");
+  assert.match(work.summary.tasks[0].error ?? "", /restarted before reporting task completion/);
 });
 
 test("a restarted dashboard retires orphaned runs without losing observed task results", async () => {
