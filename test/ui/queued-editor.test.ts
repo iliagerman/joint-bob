@@ -76,6 +76,13 @@ test("queued editor labels Save and Cancel and shows shortcut hints", async () =
   assert.match(await page.locator(".queued-editor").innerText(), /Escape/);
 });
 
+test("Force start sends the selected queued message and its revision", async () => {
+  await openQueue();
+  const third = page.locator(".message.user.queued").nth(2);
+  await third.getByTestId("queued-message-force-start-button").click();
+  assert.deepEqual(await commands(), [{ type: "forceStartQueuedPrompt", queueId: 73, queueRevision: 3 }]);
+});
+
 test("queued messages can swap positions and merge any selection", async () => {
   await openQueue();
   const queuedText = () => page.locator(".message.user.queued").evaluateAll((messages) => messages.map((message) => message._raw));

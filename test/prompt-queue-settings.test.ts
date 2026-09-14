@@ -5,7 +5,7 @@ import { importProject, registerProjectAliases } from "../src/store.js";
 import { receiveReplicationBatch } from "../src/replication.js";
 import { queuedPromptSnapshot, readQueueSettings } from "../src/prompt-queue.js";
 import { getClusterNode } from "../src/cluster.js";
-import { enqueuePrompt, listQueuedPrompts, editQueuedPrompt, cancelQueuedPrompt, mergeQueuedPrompts, swapQueuedPrompts } from "../src/prompt-queue.js";
+import { enqueuePrompt, listQueuedPrompts, editQueuedPrompt, cancelQueuedPrompt, mergeQueuedPrompts, prioritizeQueuedPrompt, swapQueuedPrompts } from "../src/prompt-queue.js";
 
 test("late project aliases rekey replicated pending rows, tombstones and sequence state", async () => {
   await getClusterNode();
@@ -55,6 +55,18 @@ test("queued prompts can swap positions and reject stale swaps", async () => {
   assert.equal(swapQueuedPrompts(key, [{ id: first.id, revision: first.revision }, { id: third.id, revision: third.revision }]), true);
   assert.deepEqual(listQueuedPrompts(key).map((prompt) => prompt.messageText), ["third", "second", "first"]);
   assert.equal(swapQueuedPrompts(key, [{ id: first.id, revision: first.revision }, { id: second.id, revision: second.revision }]), false);
+});
+
+test("a queued prompt can move directly to the front", async () => {
+  await getClusterNode();
+  const key = `project:${randomUUID()}`;
+  const first = enqueuePrompt(key, "first", "first", { messageText: "first", promptSuffix: "", displaySuffix: "", attachmentPaths: [] });
+  enqueuePrompt(key, "second", "second", { messageText: "second", promptSuffix: "", displaySuffix: "", attachmentPaths: [] });
+  const third = enqueuePrompt(key, "third", "third", { messageText: "third", promptSuffix: "", displaySuffix: "", attachmentPaths: [] });
+
+  assert.equal(prioritizeQueuedPrompt(key, third.id, third.revision), true);
+  assert.deepEqual(listQueuedPrompts(key).map((prompt) => prompt.messageText), ["third", "first", "second"]);
+  assert.equal(prioritizeQueuedPrompt(key, first.id, first.revision), false, "stale revisions cannot reorder the queue");
 });
 
 test("selected queued prompts merge in queue order with attachments and first settings", async () => {

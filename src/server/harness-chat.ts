@@ -11,7 +11,7 @@ import type { HarnessModelSettings } from "../harnesses/runtime.js";
 import { setSessionTitle } from "../names.js";
 import { conversationScopeId, getScopeSecretAccounts } from "../secrets.js";
 import { getProjectLock } from "../project-locks.js";
-import { beginQueuedPrompt, cancelQueuedPrompt, claimQueuedPrompt, editQueuedPrompt, enqueuePrompt, listQueuedPrompts, mergeQueuedPrompts, queuedSettingsSchema, readQueueSettings, recordQueueSettings, resetQueuedPromptAttempt, swapQueuedPrompts, type QueuedPrompt, type QueuedSettings } from "../prompt-queue.js";
+import { beginQueuedPrompt, cancelQueuedPrompt, claimQueuedPrompt, editQueuedPrompt, enqueuePrompt, listQueuedPrompts, mergeQueuedPrompts, prioritizeQueuedPrompt, queuedSettingsSchema, readQueueSettings, recordQueueSettings, resetQueuedPromptAttempt, swapQueuedPrompts, type QueuedPrompt, type QueuedSettings } from "../prompt-queue.js";
 import { queuedAttachments } from "../queued-attachments.js";
 import type { HarnessId, ProjectRecord, SessionSummary, TaskAttachment } from "../types.js";
 import { listTasks, updateTask } from "../tasks.js";
@@ -38,6 +38,7 @@ export interface AttachOptions {
 export const harnessChatConnections = new Set<HarnessChatConnection>();
 const mutations = new Map<string, Promise<void>>();
 const drains = new Map<string, Promise<void>>();
+const pausedDrains = new Set<string>();
 const startingIds = new Set<string>();
 
 function queueKey(connection: HarnessChatConnection): string { return `${connection.project.id}:${connection.conversationId}`; }
@@ -179,7 +180,7 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
 
 async function drainLoop(connection: HarnessChatConnection): Promise<void> {
   for (;;) {
-    if (harnessSessionBusy(connection.shared)) return;
+    if (pausedDrains.has(queueKey(connection)) || harnessSessionBusy(connection.shared)) return;
     const next = listQueuedPrompts(queueKey(connection))[0];
     if (!next) return;
     await dispatch(connection, next);
@@ -232,6 +233,14 @@ async function models(connection: HarnessChatConnection): Promise<void> {
   send(connection.socket, { type: "models", models: groups.flat() });
 }
 
+async function cancelCurrentAndResumeQueue(connection: HarnessChatConnection): Promise<void> {
+  const draining = drains.get(queueKey(connection));
+  await connection.shared.session.cancel();
+  sendHarnessStatus(connection.shared);
+  const resume = () => drainHarnessPromptQueue(connection);
+  void (draining ?? Promise.resolve()).then(resume, resume).catch((error) => publish(connection, { type: "error", error: chatErrorMessage(error) }));
+}
+
 async function controls(connection: HarnessChatConnection, message: ReturnType<typeof socketMessageSchema.parse>): Promise<boolean> {
   if (message.type === "ping") { send(connection.socket, { type: "pong" }); return true; }
   if (message.type === "models") { await models(connection); return true; }
@@ -252,11 +261,7 @@ async function controls(connection: HarnessChatConnection, message: ReturnType<t
   await writable(connection);
   if (message.type === "setEngine") { if (!message.engine) throw new Error("Engine is required"); await switchHarness(connection, message.engine); return true; }
   if (message.type === "abort" || message.type === "stop") {
-    const draining = drains.get(queueKey(connection));
-    await connection.shared.session.cancel();
-    sendHarnessStatus(connection.shared);
-    const resume = () => drainHarnessPromptQueue(connection);
-    void (draining ?? Promise.resolve()).then(resume, resume).catch((error) => publish(connection, { type: "error", error: chatErrorMessage(error) }));
+    await cancelCurrentAndResumeQueue(connection);
     return true;
   }
   if (message.type === "setTools") { if (!message.toolNames) throw new Error("Tools are required"); await connection.shared.session.setTools(message.toolNames); recordQueueSettings(queueKey(connection), currentSettings(connection)); send(connection.socket, { type: "tools", tools: connection.shared.session.tools(), supported: true }); sendHarnessStatus(connection.shared); return true; }
@@ -285,6 +290,24 @@ async function controls(connection: HarnessChatConnection, message: ReturnType<t
 
 async function queueCommand(connection: HarnessChatConnection, message: ReturnType<typeof socketMessageSchema.parse>): Promise<void> {
   await writable(connection);
+  if (message.type === "forceStartQueuedPrompt") {
+    if (!message.queueId || !message.queueRevision || startingIds.has(message.queueId)) throw new Error("Queued prompt force start is incomplete");
+    const key = queueKey(connection);
+    if (!prioritizeQueuedPrompt(key, message.queueId, message.queueRevision)) throw new Error("Queued prompt changed; refresh and try again");
+    const draining = drains.get(key);
+    pausedDrains.add(key);
+    refreshHarnessPromptQueue(connection);
+    try {
+      await connection.shared.session.cancel();
+      if (draining) try { await draining; }
+      catch (error) { publish(connection, { type: "error", error: chatErrorMessage(error) }); }
+      sendHarnessStatus(connection.shared);
+    } finally {
+      pausedDrains.delete(key);
+      void drainHarnessPromptQueue(connection).catch((error) => publish(connection, { type: "error", error: chatErrorMessage(error) }));
+    }
+    return;
+  }
   if (message.type === "editQueuedPrompt") {
     if (!message.queueId || !message.queueRevision || message.message === undefined) throw new Error("Queued prompt edit is incomplete");
     const queued = listQueuedPrompts(queueKey(connection)).find(({ id }) => id === message.queueId);
@@ -313,7 +336,7 @@ export async function handleHarnessChatMessage(connection: HarnessChatConnection
     if (message.message === "/reload" && !(message.images?.length || message.files?.length)) { await writable(connection); try { await connection.shared.session.reload(); } finally { sendHarnessStatus(connection.shared); void drainHarnessPromptQueue(connection).catch((error) => publish(connection, { type: "error", error: chatErrorMessage(error) })); } send(connection.socket, { type: "tools", tools: connection.shared.session.tools(), supported: true }); return; }
     await serializeMutation(connection, () => enqueue(connection, message.message ?? "", message.images ?? [], message.files ?? [], message.requestId, message.queueSettings)); return;
   }
-  if (["editQueuedPrompt", "cancelQueuedPrompt", "swapQueuedPrompts", "mergeQueuedPrompts"].includes(message.type)) {
+  if (["forceStartQueuedPrompt", "editQueuedPrompt", "cancelQueuedPrompt", "swapQueuedPrompts", "mergeQueuedPrompts"].includes(message.type)) {
     await serializeMutation(connection, () => queueCommand(connection, message));
     return;
   }

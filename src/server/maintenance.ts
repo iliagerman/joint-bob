@@ -14,7 +14,7 @@ import { TICKET_WORKSPACE_FOLDER_ID, ticketWorkspaceRoot } from "../task-workspa
 import { listTasks, listUnfinishedOutgoingTaskHandoffs } from "../tasks.js";
 import type { HarnessId } from "../types.js";
 import { fetchPeerInventory } from "./cluster-helpers.js";
-import { broadcastSessionsChangedToAllProjects, scheduleReviewNotifications } from "./realtime.js";
+import { broadcastSessionsChangedToAllProjects, scheduleReviewNotifications, wakeQueuedConversations } from "./realtime.js";
 import { replicationReceiptSchema } from "./schemas.js";
 import { harnessSessions, harnessSessionBusy } from "./harness-sessions.js";
 import { configuredTicketWorkspacePeers, flags } from "./state.js";
@@ -238,6 +238,7 @@ const RUNTIME_LEASE_TTL_MS = 15_000;
 export async function buildRuntimeLeaseSnapshot(localNodeId: string): Promise<RuntimeLeaseInput[]> {
   if (await refreshConversationWork()) {
     broadcastSessionsChangedToAllProjects();
+    wakeQueuedConversations();
     for (const project of await listProjects()) scheduleReviewNotifications(project.id);
   }
   const now = new Date();

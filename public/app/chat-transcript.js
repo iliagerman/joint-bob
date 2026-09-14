@@ -619,11 +619,17 @@ export function markMessageQueued(bubble, queueId, editableText = null, settings
   select.dataset.testid = "queued-message-merge-checkbox";
   select.setAttribute("aria-label", "Select queued message for merge");
   selectLabel.append(select, " Select");
+  const forceStart = queuedButton("Force start", "queued-message-force-start-button");
+  forceStart.className = "queued-force-start";
+  forceStart.title = "Stop the current turn and start this message now";
   const earlier = queuedButton("Earlier", "queued-message-move-earlier-button");
   const later = queuedButton("Later", "queued-message-move-later-button");
   const edit = queuedButton("Edit", "queued-message-edit-button");
   const cancel = queuedButton("Delete", "queued-message-cancel-button");
-  footer.append(badge, selectLabel, earlier, later, edit, cancel);
+  footer.append(badge, forceStart, selectLabel, earlier, later, edit, cancel);
+  forceStart.addEventListener("click", () => {
+    sendQueuedPromptAction({ type: "forceStartQueuedPrompt", queueId, queueRevision: Number(bubble.dataset.queueRevision) });
+  });
   select.addEventListener("change", refreshQueuedControls);
   earlier.addEventListener("click", () => swapQueuedMessage(bubble, -1));
   later.addEventListener("click", () => swapQueuedMessage(bubble, 1));

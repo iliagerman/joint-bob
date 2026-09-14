@@ -62,6 +62,10 @@ export function broadcastToAllClients(payload: unknown): void {
   for (const socket of sockets) send(socket, payload);
 }
 export function broadcastSessionsChangedToAllProjects(): void { broadcastToAllClients({ type: "sessionsChanged" }); }
+export function wakeQueuedConversations(): void {
+  for (const connection of harnessChatConnections) void drainHarnessPromptQueue(connection)
+    .catch((error) => send(connection.socket, { type: "error", error: chatErrorMessage(error) }));
+}
 export function broadcastReplicationInvalidations(events: ReplicationBatch["events"]): void { for (const type of replicationInvalidations(events)) broadcastToAllClients({ type }); }
 
 const REVIEW_NOTIFICATION_QUIET_MS = 10_000;

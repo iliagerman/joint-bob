@@ -209,6 +209,29 @@ export function editQueuedPrompt(queueKey: string, id: string, promptText: strin
   });
 }
 
+export function prioritizeQueuedPrompt(queueKey: string, id: string, expectedRevision: number): boolean {
+  const db = queueDatabase();
+  const key = logicalQueueKey(queueKey);
+  return transaction(db, () => {
+    const rows = db.prepare("SELECT * FROM queued_prompts WHERE queue_key = ? ORDER BY sequence, id").all(key) as unknown as Row[];
+    const targetIndex = rows.findIndex((row) => row.id === id && row.revision === expectedRevision);
+    if (targetIndex < 0) return false;
+    const target = promptSchema.parse(JSON.parse(rows[targetIndex].prompt));
+    if (target.dispatchState !== "pending") return false;
+    if (targetIndex === 0) return true;
+    const sequences = rows.slice(0, targetIndex + 1).map((row) => row.sequence);
+    const reordered = [rows[targetIndex], ...rows.slice(0, targetIndex)];
+    for (const [index, row] of reordered.entries()) {
+      const prompt = promptSchema.parse(JSON.parse(row.prompt));
+      const updatedPrompt = { ...prompt, revision: row.revision + 1 };
+      const updated = { ...row, sequence: sequences[index], revision: updatedPrompt.revision, prompt: JSON.stringify(updatedPrompt), origin_node_id: origin(db) };
+      insert(db, updated);
+      publish(db, updated, updatedPrompt);
+    }
+    return true;
+  });
+}
+
 export function swapQueuedPrompts(queueKey: string, refs: QueuedPromptRef[]): boolean {
   if (refs.length !== 2) return false;
   const db = queueDatabase();

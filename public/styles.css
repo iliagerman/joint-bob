@@ -1137,6 +1137,8 @@ select.chat-toolbar-control {
 .queued-select { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 11px; }
 .queued-controls button, .queued-editor button, .queued-batch-controls button { min-height: 26px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--muted); font-size: 11px; }
 .queued-controls button:hover, .queued-controls button:focus-visible, .queued-editor button:hover, .queued-editor button:focus-visible, .queued-batch-controls button:hover, .queued-batch-controls button:focus-visible { border-color: var(--line-strong); color: var(--text); }
+.queued-controls .queued-force-start { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.queued-controls .queued-force-start:hover, .queued-controls .queued-force-start:focus-visible { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .queued-controls button:disabled, .queued-batch-controls button:disabled { opacity: 0.4; cursor: not-allowed; }
 .queued-editor { display: grid; grid-template-columns: 1fr auto auto; gap: 7px; margin-top: 8px; }
 .queued-editor[hidden], .queued-controls[hidden] { display: none; }

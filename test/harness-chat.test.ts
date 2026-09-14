@@ -17,6 +17,7 @@ if (process.argv.includes("--version") || process.argv.includes("whoami")) proce
 const send = value => process.stdout.write(JSON.stringify(value) + "\\n");
 const notify = update => send({jsonrpc:"2.0",method:"session/update",params:{sessionId:"native-fixed",update}});
 const rl = readline.createInterface({input:process.stdin});
+let blocker = null;
 rl.on("line", line => {
   const request = JSON.parse(line);
   if (request.method === "initialize") return send({jsonrpc:"2.0",id:request.id,result:{protocolVersion:1,agentCapabilities:{loadSession:true}}});
@@ -32,10 +33,16 @@ rl.on("line", line => {
     const watcher = fs.watch(process.cwd(), () => {
       if (!fs.existsSync(releasePath)) return;
       watcher.close();
+      blocker = null;
       complete();
     });
+    blocker = {id: request.id, watcher};
     return;
-
+  }
+  if (request.method === "session/cancel" && blocker) {
+    blocker.watcher.close();
+    send({jsonrpc:"2.0",id:blocker.id,result:{stopReason:"cancelled"}});
+    blocker = null;
   }
 });
 rl.on("close", () => process.exit(0));
@@ -112,6 +119,8 @@ test("websocket chat routes Kiro prompts through the generic harness runtime", a
     assert.equal(first.messages.filter((message) => message.type === "queuedPromptEdited").length, editedAcknowledgements);
     first.socket.send(JSON.stringify({ type: "cancelQueuedPrompt", queueId: cancelled.id, queueRevision: cancelled.revision }));
     await waitFor(first.messages, () => first.messages.some((message) => message.type === "queuedPromptCancelled" && message.queueId === cancelled.id));
+    first.socket.send(JSON.stringify({ type: "forceStartQueuedPrompt", queueId: editable.id, queueRevision: editable.revision + 1 }));
+    await waitFor(first.messages, () => first.messages.some((message) => message.type === "textDelta" && message.text === "revised"));
     await writeFile(releasePath, "release");
     await waitFor(first.messages, () => first.messages.filter((message) => message.type === "agent_end").length === 3);
     assert.ok(first.messages.some((message) => message.type === "textDelta" && message.text === "hello"));
@@ -130,6 +139,8 @@ test("websocket chat routes Kiro prompts through the generic harness runtime", a
     const transcript = resumedReady.messages as Array<{ role: string; text: string }>;
     assert.ok(transcript.some((message) => message.role === "user" && message.text === "hello"));
     assert.ok(transcript.some((message) => message.role === "assistant" && message.text === "hello"));
+    assert.ok(transcript.some((message) => message.role === "user" && message.text === "revised"));
+    assert.ok(transcript.some((message) => message.role === "assistant" && message.text === "revised"));
     const unknown = openChat(node.url, auth.cookie, project.id, "future:new");
     sockets.push(unknown.socket);
     const close = await new Promise<{ code: number }>((resolve) => unknown.socket.once("close", (code) => resolve({ code })));

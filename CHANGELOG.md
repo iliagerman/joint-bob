@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Queued prompts now have a "Force start" button to stop the current turn and run the selected message immediately.
+
 ## 1.31.3 — 2026-09-15
 
 - Pi conversations now ignore saved tools that aren't available on the current node when reconnecting.
