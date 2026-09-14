@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.29.4 — 2026-09-14
 
-- Improved session list performance by caching partial transcript reads, dramatically speeding session discovery for conversations with large histories.
+- New conversations now appear in the session list promptly by reading only appended transcript data instead of re-parsing entire files.
 
 ## 1.29.3 — 2026-09-14
 
