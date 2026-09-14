@@ -522,6 +522,7 @@ async function runClaudeTurn(connection: ChatConnection, promptText: string, dis
 
 export const chatConnections = new Set<ChatConnection>();
 const drainingClaudeQueues = new Set<string>();
+const queuesResumingAfterDrain = new Set<string>();
 const startingQueuedPrompts = new Set<string>();
 const queueMutations = new Map<string, Promise<void>>();
 
@@ -665,6 +666,15 @@ function resumePromptQueue(connection: ChatConnection): void {
   void drainClaudePromptQueue(connection).catch((error) => send(connection.socket, { type: "error", error: error instanceof Error ? error.message : String(error) }));
 }
 
+function resumePromptQueueAfterCurrentDrain(connection: ChatConnection): void {
+  const queueKey = claudeQueueKey(connection);
+  if (!drainingClaudeQueues.has(queueKey)) {
+    resumePromptQueue(connection);
+    return;
+  }
+  queuesResumingAfterDrain.add(queueKey);
+}
+
 export function resumeSharedPromptQueue(shared: SharedPiSession): void {
   for (const connection of chatConnections) {
     if (connection.shared === shared) resumePromptQueue(connection);
@@ -682,6 +692,7 @@ export async function drainClaudePromptQueue(connection: ChatConnection): Promis
     await drainClaudePrompts(connection);
   } finally {
     drainingClaudeQueues.delete(queueKey);
+    if (queuesResumingAfterDrain.delete(queueKey)) resumePromptQueue(connection);
   }
 }
 
@@ -727,6 +738,7 @@ async function handleClaudeCommand(connection: ChatConnection, payload: SocketPa
   if (["editQueuedPrompt", "cancelQueuedPrompt"].includes(payload.type) && payload.queueRevision === undefined) throw new Error("Queued prompt revision missing; reload the conversation");
   if ((payload.queueId && startingQueuedPrompts.has(payload.queueId)) || payload.queueItems?.some(({ id }) => startingQueuedPrompts.has(id))) throw new Error("Queued prompt is starting; wait for dispatch");
   if (payload.type === "abort") {
+    resumePromptQueueAfterCurrentDrain(connection);
     connection.claude.child?.kill("SIGTERM");
     return;
   }
@@ -1116,11 +1128,13 @@ async function handlePiCommand(connection: ChatConnection, shared: SharedPiSessi
   }
 
   if (payload.type === "abort") {
+    resumePromptQueueAfterCurrentDrain(connection);
     handle.session.abortRetry();
     handle.session.abortCompaction();
     handle.session.abortBranchSummary();
     handle.session.abortBash();
     await handle.session.abort();
+    resumePromptQueue(connection);
     sendStatus(socket, handle);
   }
 }

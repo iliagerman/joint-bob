@@ -65,6 +65,63 @@ test("Pi app queue dispatches Claude and Pi overrides FIFO, then inherits active
   assert.deepEqual(opened.messages.filter((frame) => frame.type === "error"), []);
 });
 
+test("stopping a Pi turn starts the next queued message", async (context) => {
+  const opened = openChat(baseUrl, fixture.cookie, fixture.projectId, "new");
+  sockets.push(opened.socket);
+  await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "ready"));
+  const sessionId = String(opened.messages.find((frame) => frame.type === "ready")!.sessionId);
+  const { sharedSessions } = await import("../src/server/state.js");
+  const shared = [...sharedSessions.values()].find((candidate) => candidate.handle.session.sessionId === sessionId)!;
+  const session = shared.handle.session;
+  let releaseFirst!: () => void;
+  let turnListener: Parameters<typeof session.subscribe>[0] | undefined;
+  const firstTurn = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  let promptCount = 0;
+  context.mock.method(session, "subscribe", (listener: Parameters<typeof session.subscribe>[0]) => {
+    turnListener = listener;
+    return () => {};
+  });
+  context.mock.method(session, "prompt", async () => {
+    promptCount += 1;
+    turnListener?.({ type: "agent_start" } as Parameters<Parameters<typeof session.subscribe>[0]>[0]);
+    if (promptCount === 1) {
+      await firstTurn;
+      throw new Error("Pi turn aborted");
+    }
+  });
+  context.mock.method(session, "abort", async () => { releaseFirst(); });
+  const engineLog = process.env.JOINT_BOB_TEST_ENGINE_LOG;
+  delete process.env.JOINT_BOB_TEST_ENGINE_LOG;
+  try {
+    opened.socket.send(JSON.stringify({ type: "prompt", message: "stop this" }));
+    await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "promptStarted"));
+    opened.socket.send(JSON.stringify({ type: "prompt", message: "run next" }));
+    await waitFor(opened.messages, () => opened.messages.filter((frame) => frame.type === "userMessage" && frame.queued).length === 2);
+    opened.socket.send(JSON.stringify({ type: "abort" }));
+    await waitFor(opened.messages, () => opened.messages.filter((frame) => frame.type === "promptStarted").length === 2, 1_500);
+    assert.equal(promptCount, 2);
+  } finally { releaseFirst(); process.env.JOINT_BOB_TEST_ENGINE_LOG = engineLog; }
+});
+
+test("stopping a Claude turn starts the next queued message", async () => {
+  const opened = openChat(baseUrl, fixture.cookie, fixture.projectId, "claude:new");
+  sockets.push(opened.socket);
+  await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "ready"));
+  const engineLog = process.env.JOINT_BOB_TEST_ENGINE_LOG;
+  const nextGate = `${process.env.JOINT_BOB_FAKE_GATE}.run after stop`;
+  delete process.env.JOINT_BOB_TEST_ENGINE_LOG;
+  try {
+    opened.socket.send(JSON.stringify({ type: "prompt", message: "stop claude" }));
+    await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "promptStarted"));
+    opened.socket.send(JSON.stringify({ type: "prompt", message: "run after stop" }));
+    await waitFor(opened.messages, () => opened.messages.filter((frame) => frame.type === "userMessage" && frame.queued).length === 2);
+    opened.socket.send(JSON.stringify({ type: "abort" }));
+    await waitFor(opened.messages, () => opened.messages.filter((frame) => frame.type === "promptStarted").length === 2, 3_000);
+    await writeFile(nextGate, "");
+    await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "promptCompleted"));
+  } finally { await writeFile(nextGate, ""); process.env.JOINT_BOB_TEST_ENGINE_LOG = engineLog; }
+});
+
 test("queue transfer fence includes an enqueue awaiting attachment persistence", async (context) => {
   const opened = openChat(baseUrl, fixture.cookie, fixture.projectId, "new");
   sockets.push(opened.socket);
