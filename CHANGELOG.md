@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Improved session list performance by caching partial transcript reads, dramatically speeding session discovery for conversations with large histories.
+
 ## 1.29.3 — 2026-09-14
 
 - Conversations no longer stay marked running when a restarted agent dashboard has lost old runs. Those runs show failed tracking with completion unknown, preserving recorded output and finished task results. Temporary dashboard outages still retain running status.

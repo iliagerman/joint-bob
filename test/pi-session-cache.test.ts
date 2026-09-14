@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -21,10 +21,10 @@ test("Pi session listing re-reads a session directory only when it changes", asy
     await mkdir(sessionDir, { recursive: true });
     const sessionFile = path.join(sessionDir, "session-0.jsonl");
 
-    const transcript = (text: string): string => `${[
+    const transcript = (text: string, assistantText = "Done"): string => `${[
       { type: "session", version: 3, id: "session-0", timestamp: "2026-01-01T00:00:00.000Z", cwd: projectCwd },
       { type: "message", id: "user-0", parentId: null, timestamp: "2026-01-01T00:00:01.000Z", message: { role: "user", content: [{ type: "text", text }], timestamp: Date.parse("2026-01-01T00:00:01.000Z") } },
-      { type: "message", id: "assistant-0", parentId: "user-0", timestamp: "2026-01-01T00:00:02.000Z", message: { role: "assistant", content: [{ type: "text", text: "Done" }], timestamp: Date.parse("2026-01-01T00:00:02.000Z") } },
+      { type: "message", id: "assistant-0", parentId: "user-0", timestamp: "2026-01-01T00:00:02.000Z", message: { role: "assistant", content: [{ type: "text", text: assistantText }], timestamp: Date.parse("2026-01-01T00:00:02.000Z") } },
     ].map((record) => JSON.stringify(record)).join("\n")}\n`;
 
     const settings = await import(`../src/settings.js?cache=${Date.now()}-${Math.random()}`);
@@ -70,6 +70,16 @@ test("Pi session listing re-reads a session directory only when it changes", asy
     assert.equal(included[0].path, sessionFile, "a directly referenced old transcript remains discoverable");
     assert.equal((await pi.listPiSessions({ path: projectCwd, historyDays: 1, includedSessionIds: ["pi:session-0"] })).length, 1, "a pinned old transcript remains discoverable");
     assert.equal((await pi.loadPiMessages(sessionFile))[0].text, "Secnd", "an old transcript still loads directly");
+
+    await writeFile(sessionFile, transcript("Large", "x".repeat(32 * 1024 * 1024)));
+    const large = await pi.refreshPiSessions({ path: projectCwd }, [], [sessionFile]);
+    await appendFile(sessionFile, JSON.stringify({ type: "session_info", name: "Appended title" }));
+    const usage = process.cpuUsage();
+    const appended = await pi.refreshPiSessions({ path: projectCwd }, large, [sessionFile]);
+    const consumed = process.cpuUsage(usage);
+    const cpuMs = (consumed.user + consumed.system) / 1_000;
+    assert.equal(appended[0].title, "Appended title");
+    assert.ok(cpuMs < 10, `append-only summary refresh used ${cpuMs.toFixed(1)}ms CPU`);
   } finally {
     if (previousDataDir === undefined) delete process.env.PI_WEB_DATA_DIR;
     else process.env.PI_WEB_DATA_DIR = previousDataDir;

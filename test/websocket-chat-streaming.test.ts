@@ -84,6 +84,8 @@ test("Claude WebSocket streams before finalization and executes queued prompts o
     const messages: Array<Record<string, unknown>> = [];
     socket.on("message", (raw) => messages.push(JSON.parse(raw.toString())));
     await waitFor(messages, () => messages.some((message) => message.type === "ready"));
+    await waitFor(messages, () => messages.some((message) => message.type === "sessionsChanged"));
+    assert.ok(messages.findIndex(({ type }) => type === "ready") < messages.findIndex(({ type }) => type === "sessionsChanged"), "new chat becomes ready before its sidebar invalidation");
     socket.send(JSON.stringify({ type: "prompt", message: "first" }));
     await waitFor(messages, () => messages.some((message) => message.type === "textDelta" && message.text === "first"));
     socket.send(JSON.stringify({ type: "prompt", message: "second" }));

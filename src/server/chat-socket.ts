@@ -151,7 +151,6 @@ webSocketServer.on("connection", async (socket, request) => {
       if (!requestedSessionId && ["new", "claude:new"].includes(rawSessionPathFromUrl ?? "")) {
         const sessionId = randomUUID();
         await ensureConversationRecord(project.id, routingEngine, sessionId, local.id);
-        broadcastToProject(project.id, { type: "sessionsChanged" });
         ownerUrl.searchParams.set("sessionId", sessionId);
       }
       ownerUrl.searchParams.delete("nodeId");
@@ -294,10 +293,10 @@ webSocketServer.on("connection", async (socket, request) => {
       console.warn("Conversation ownership claim failed on open", error);
     }
   }
-  if (!listedSession || listedSession.draft) {
+  const refreshSessionsAfterReady = !listedSession || listedSession.draft;
+  if (refreshSessionsAfterReady) {
     try {
       await ensureConversationRecord(project.id, sessionRequest.engine, ownershipSessionId, local.id);
-      broadcastToProject(project.id, { type: "sessionsChanged" });
     } catch (error) {
       // A browser still naming a conversation that was deleted (here or on a peer)
       // must get a close, not an unhandled rejection that kills the node.
@@ -402,6 +401,7 @@ webSocketServer.on("connection", async (socket, request) => {
   }
 
   chatConnections.add(connection);
+  if (refreshSessionsAfterReady) broadcastToProject(project.id, { type: "sessionsChanged" });
   refreshPromptQueue(connection);
   if (!foreignOwner && !conversationReadOnly) void drainClaudePromptQueue(connection).catch((error) => send(socket, { type: "error", error: chatErrorMessage(error) }));
 

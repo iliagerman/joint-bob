@@ -79,6 +79,8 @@ test("Pi tool commands list and change active tools over the chat WebSocket", as
     const messages: Array<Record<string, unknown>> = [];
     socket.on("message", (raw) => messages.push(JSON.parse(raw.toString())));
     await waitFor(messages, () => messages.some((message) => message.type === "ready"));
+    await waitFor(messages, () => messages.some((message) => message.type === "sessionsChanged"));
+    assert.ok(messages.findIndex(({ type }) => type === "ready") < messages.findIndex(({ type }) => type === "sessionsChanged"), "new Pi chat becomes ready before its sidebar invalidation");
 
     socket.send(JSON.stringify({ type: "tools" }));
     await waitFor(messages, () => messages.some((message) => message.type === "tools"));

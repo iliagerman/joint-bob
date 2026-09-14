@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { parseCompletedJsonl } from "./jsonl.js";
-import { mkdtemp, readFile, readdir, rm, stat, symlink } from "node:fs/promises";
+import { mkdtemp, open, readFile, readdir, rm, stat, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path, { basename } from "node:path";
 import {
@@ -445,38 +445,119 @@ function piMessageActivity(record: UnknownRecord): string | undefined {
   return typeof record.timestamp === "string" ? record.timestamp : undefined;
 }
 
-async function summarizePiTranscript(filePath: string, project: SessionProjectPaths): Promise<SessionSummary | null> {
-  let records: UnknownRecord[];
+interface PiTranscriptSummaryState {
+  identity: string;
+  size: number;
+  offset: number;
+  tail: Buffer;
+  id: string;
+  cwd: string;
+  name: string;
+  firstMessage: string;
+  createdAt: string;
+  updatedAt: string;
+  modifiedAt: string;
+  parentSessionPath?: string;
+}
+
+const PI_SUMMARY_TAIL_BYTES = 512;
+const piTranscriptSummaryCache = new Map<string, PiTranscriptSummaryState>();
+
+function applyPiSummaryRecords(state: PiTranscriptSummaryState, records: UnknownRecord[]): void {
+  for (const record of records) {
+    if (record.type === "session_info") state.name = typeof record.name === "string" ? record.name.trim() : "";
+    if (!state.firstMessage && record.type === "message" && asRecord(record.message).role === "user") state.firstMessage = textFromMessage(record.message).trim();
+    const activity = piMessageActivity(record);
+    if (activity && activity > state.updatedAt) state.updatedAt = activity;
+  }
+}
+
+async function readPiBytes(file: Awaited<ReturnType<typeof open>>, start: number, end: number): Promise<Buffer> {
+  const buffer = Buffer.allocUnsafe(end - start);
+  let total = 0;
+  while (total < buffer.length) {
+    const { bytesRead } = await file.read(buffer, total, buffer.length - total, start + total);
+    if (!bytesRead) break;
+    total += bytesRead;
+  }
+  return buffer.subarray(0, total);
+}
+
+function completedPiBytes(buffer: Buffer): number {
+  const lineEnd = buffer.lastIndexOf(10) + 1;
+  const tail = buffer.toString("utf8", lineEnd);
+  if (!tail.trim()) return lineEnd;
+  try { JSON.parse(tail); return buffer.length; }
+  catch (error) { if (error instanceof SyntaxError) return lineEnd; throw error; }
+}
+
+function newPiSummaryState(header: UnknownRecord, identity: string, birthtime: Date, mtime: Date): PiTranscriptSummaryState {
+  return {
+    identity, size: 0, offset: 0, tail: Buffer.alloc(0), id: header.id as string,
+    cwd: path.resolve(header.cwd as string), name: "", firstMessage: "",
+    createdAt: typeof header.timestamp === "string" ? header.timestamp : birthtime.toISOString(),
+    updatedAt: typeof header.timestamp === "string" ? header.timestamp : "",
+    modifiedAt: mtime.toISOString(),
+    ...(typeof header.parentSession === "string" ? { parentSessionPath: header.parentSession } : {}),
+  };
+}
+
+async function readPiSummaryState(filePath: string): Promise<PiTranscriptSummaryState | null> {
+  const resolved = path.resolve(filePath);
+  const file = await open(resolved, "r");
   try {
-    records = parseCompletedJsonl(await readFile(filePath, "utf8")) as UnknownRecord[];
+    const info = await file.stat();
+    const identity = `${info.dev}:${info.ino}:${info.birthtimeMs}`;
+    const cached = piTranscriptSummaryCache.get(resolved);
+    const appendCandidate = cached?.identity === identity && info.size >= cached.size;
+    const verificationStart = appendCandidate ? cached.offset - cached.tail.length : 0;
+    let buffer = await readPiBytes(file, verificationStart, info.size);
+    const appended = Boolean(appendCandidate && buffer.subarray(0, cached!.tail.length).equals(cached!.tail));
+    if (!appended && verificationStart) buffer = await readPiBytes(file, 0, info.size);
+    const prefixBytes = appended ? cached!.tail.length : 0;
+    const newBytes = buffer.subarray(prefixBytes);
+    const completeBytes = completedPiBytes(newBytes);
+    const records = completeBytes ? parseCompletedJsonl(newBytes.toString("utf8", 0, completeBytes)) as UnknownRecord[] : [];
+    const header = appended ? undefined : records.shift();
+    if (!appended && (header?.type !== "session" || typeof header.id !== "string" || typeof header.cwd !== "string")) return null;
+    const state = appended ? { ...cached! } : newPiSummaryState(header!, identity, info.birthtime, info.mtime);
+    const completedEnd = prefixBytes + completeBytes;
+    state.identity = identity;
+    state.size = (appended ? verificationStart : 0) + buffer.length;
+    state.offset = (appended ? state.offset : 0) + completeBytes;
+    state.modifiedAt = info.mtime.toISOString();
+    if (completeBytes) state.tail = Buffer.from(buffer.subarray(Math.max(0, completedEnd - PI_SUMMARY_TAIL_BYTES), completedEnd));
+    applyPiSummaryRecords(state, records);
+    piTranscriptSummaryCache.set(resolved, state);
+    return state;
+  } finally {
+    await file.close();
+  }
+}
+
+async function summarizePiTranscript(filePath: string, project: SessionProjectPaths): Promise<SessionSummary | null> {
+  let state: PiTranscriptSummaryState | null;
+  try {
+    state = await readPiSummaryState(filePath);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      piTranscriptSummaryCache.delete(path.resolve(filePath));
+      return null;
+    }
     throw error;
   }
-  const header = records[0];
-  const cwd = typeof header?.cwd === "string" ? path.resolve(header.cwd) : "";
-  if (header?.type !== "session" || typeof header.id !== "string" || !sessionCwds(project).includes(cwd)) return null;
-  let name = "";
-  let firstMessage = "";
-  let updatedAt = typeof header.timestamp === "string" ? header.timestamp : "";
-  for (const record of records.slice(1)) {
-    if (record.type === "session_info") name = typeof record.name === "string" ? record.name.trim() : "";
-    if (!firstMessage && record.type === "message" && asRecord(record.message).role === "user") firstMessage = textFromMessage(record.message).trim();
-    const activity = piMessageActivity(record);
-    if (activity && activity > updatedAt) updatedAt = activity;
-  }
-  const fileStat = await stat(filePath);
+  if (!state || !sessionCwds(project).includes(state.cwd)) return null;
   return {
-    id: header.id,
+    id: state.id,
     path: filePath,
     harnessId: "pi",
     agentId: "pi",
     agentLabel: "Pi",
-    title: name || firstMessage.slice(0, 80) || "Untitled Pi session",
-    createdAt: typeof header.timestamp === "string" ? header.timestamp : fileStat.birthtime.toISOString(),
-    updatedAt: updatedAt || fileStat.mtime.toISOString(),
-    firstMessage: firstMessage || undefined,
-    parentSessionPath: typeof header.parentSession === "string" ? header.parentSession : undefined,
+    title: state.name || state.firstMessage.slice(0, 80) || "Untitled Pi session",
+    createdAt: state.createdAt,
+    updatedAt: state.updatedAt || state.modifiedAt,
+    firstMessage: state.firstMessage || undefined,
+    parentSessionPath: state.parentSessionPath,
   };
 }
 
