@@ -142,7 +142,10 @@ export class PiSession implements HarnessSession {
       throw new Error("Pi reasoning level is not supported");
     }
     this.handle.session.setThinkingLevel(settings.reasoning as Parameters<typeof this.handle.session.setThinkingLevel>[0]);
-    if (settings.enabledTools !== undefined) await this.setTools(settings.enabledTools);
+    if (settings.enabledTools !== undefined) {
+      const available = new Set(this.handle.session.getAllTools().map((tool) => tool.name));
+      await this.setTools(settings.enabledTools.filter((name) => available.has(name)));
+    }
   }
 
   tools() {

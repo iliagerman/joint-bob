@@ -35,7 +35,7 @@ after(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-async function savedConversation(): Promise<{ id: string; file: string }> {
+async function savedConversation(queueTools = ["read", "bash"]): Promise<{ id: string; file: string }> {
   const id = randomUUID();
   const file = path.join(root, "pi", "sessions", `${id}.jsonl`);
   const timestamp = new Date().toISOString();
@@ -52,7 +52,7 @@ async function savedConversation(): Promise<{ id: string; file: string }> {
     ...records.map((record, index) => ({ ...record, id: `entry-${index}`, parentId: index ? `entry-${index - 1}` : null, timestamp })),
   ].map(record => JSON.stringify(record)).join("\n") + "\n");
   const { recordQueueSettings } = await import("../src/prompt-queue.js");
-  recordQueueSettings(`${fixture.projectId}:${id}`, { harnessId: "pi", provider: "anthropic", modelId: "claude-sonnet-4-5", reasoning: "low", enabledTools: ["read", "bash"] });
+  recordQueueSettings(`${fixture.projectId}:${id}`, { harnessId: "pi", provider: "anthropic", modelId: "claude-sonnet-4-5", reasoning: "low", enabledTools: queueTools });
   const { refreshHarnessSessions } = await import("../src/harnesses.js");
   await refreshHarnessSessions(fixture.projectId, [file]);
   await waitFor(watch.messages, () => watch.messages.some(({ type }) => type === "sessionsChanged"));
@@ -97,6 +97,13 @@ test("reopening a Pi conversation restores tools without appending rows or recon
     const { disposeHarnessSession } = await import("../src/server/harness-sessions.js");
     disposeHarnessSession(opened.shared);
   }
+});
+
+test("reopening a Pi conversation ignores saved tools unavailable on this node", async () => {
+  const { id, file } = await savedConversation(["read", "bash", "remote-only-tool"]);
+  const opened = await connect(file, id);
+  assert.deepEqual(new Set(opened.shared.session.settings().enabledTools), new Set(["read", "bash"]));
+  await disconnect(opened);
 });
 
 test("changed Pi tools register a local write while later external transcript edits still reload", async () => {
