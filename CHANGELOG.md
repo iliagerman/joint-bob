@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.29.5 — 2026-09-14
 
-- Scheduled tasks can now run at custom hourly intervals (every 2 hours, every 3 hours, etc.), and reasoning level can be configured independently of model selection.
+- Scheduled tasks now wait safely in an active conversation, support custom hourly intervals, and allow thinking or effort selection with the harness-default model.
 
 ## 1.29.4 — 2026-09-14
 
