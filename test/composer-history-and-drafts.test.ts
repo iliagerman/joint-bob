@@ -97,3 +97,16 @@ test("the loaded transcript seeds the prompt history so recall works after a rel
     "history must be seeded under the conversation's real session path",
   );
 });
+
+test("a reconnect does not wipe recall of a prompt that is still queued", async () => {
+  const app = await appSource();
+
+  // A queued prompt lives on the conversation, not in the transcript the `ready`
+  // payload carries, so re-seeding from that transcript would drop it from recall.
+  const seed = functionSource(app, "seedPromptHistory");
+  assert.match(seed, /if \(state\.promptHistory\.get\(key\)\?\.length\) return;/);
+  assert.ok(
+    seed.indexOf("state.promptHistory.get(key)?.length") < seed.indexOf("state.promptHistory.set(key"),
+    "the guard must run before the history is replaced",
+  );
+});

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed prompt recall dropping queued prompts when reconnecting to a conversation.
+
 ## 1.31.1 — 2026-09-14
 
 - Prompt recall now works after reloading the page or switching conversations.

@@ -103,9 +103,14 @@ function sessionHistory() {
  * transcript that just loaded is what the arrows walk. Replaying it here is what
  * makes recall work on an existing conversation instead of only on prompts typed
  * since the page opened.
+ *
+ * A conversation that already recalls something keeps what it has: a reconnect
+ * re-sends `ready`, and the transcript it carries is behind this tab, which still
+ * holds prompts that are queued rather than answered.
  */
 export function seedPromptHistory(messages) {
   const key = state.activeSessionPath || "new";
+  if (state.promptHistory.get(key)?.length) return;
   const prompts = [];
   for (const message of messages || []) {
     const text = typeof message.text === "string" ? message.text.trim() : "";
