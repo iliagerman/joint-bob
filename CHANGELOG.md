@@ -3,10 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.31.5 — 2026-09-14
 
-- Chat toolbar on mobile now carries a running conversations button for direct access to active work.
-- App cache refreshed to load the latest version on next browser visit.
+- Mobile chat toolbar now includes a button to access running conversations.
+- Fixed classification filter width to align with the search input above it.
 
 ## 1.31.4 — 2026-09-15
 
