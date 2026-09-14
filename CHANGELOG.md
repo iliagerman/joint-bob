@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.31.4 — 2026-09-15
 
 - Queued prompts now have a "Force start" button to stop the current turn and run the selected message immediately.
+- Queued prompts now resume correctly after app recovery or disconnections.
 
 ## 1.31.3 — 2026-09-15
 
