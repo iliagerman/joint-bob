@@ -157,8 +157,11 @@ export class PiSession implements HarnessSession {
     const available = new Set(this.handle.session.getAllTools().map((tool) => tool.name));
     const unknown = names.find((name) => !available.has(name));
     if (unknown) throw new Error(`Unknown tool: ${unknown}`);
+    const active = new Set(this.handle.session.getActiveToolNames());
+    if (active.size === names.length && names.every((name) => active.has(name))) return;
     this.handle.session.sessionManager.appendCustomEntry("joint-bob:tools", { enabledTools: names });
     this.handle.session.setActiveToolsByName(names);
+    for (const listener of this.listeners) listener({ type: "configuration" });
   }
 
   async compact(instructions?: string, beforeStart?: () => Promise<void>): Promise<void> {

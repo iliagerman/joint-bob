@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed Pi conversations from writing duplicate tool configuration entries when reopened.
+
 ## 1.30.2 — 2026-09-14
 
 - Enabled opening conversations from other execution nodes by resolving stale home directory paths to the local node's filesystem.
