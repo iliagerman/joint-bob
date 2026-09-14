@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 1.31.6 — 2026-09-15
+
+- Fixed lost Claude tasks that could accumulate in conversations and cause stale message references.
+
 ## 1.31.5 — 2026-09-14
 
 - Mobile chat toolbar now includes a button to access running conversations.
