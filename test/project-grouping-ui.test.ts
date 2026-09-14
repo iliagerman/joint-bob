@@ -30,7 +30,7 @@ test("the projects list is grouped by type and each group collapses", async () =
     assert.ok(styles.includes(selector));
   }
 
-  assert.match(serviceWorker, /joint-bob-v187/);
+  assert.match(serviceWorker, /joint-bob-v188/);
 });
 
 test("the branded boot screen releases before project discovery", async () => {

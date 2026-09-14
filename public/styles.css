@@ -484,7 +484,7 @@ input::placeholder, textarea::placeholder { color: color-mix(in srgb, var(--mute
 textarea:focus, input:focus, select:focus { border-color: var(--line-strong); box-shadow: 0 0 0 3px var(--focus-ring); }
 
 .conversation-search { margin-top: 8px; }
-.classification-filter { width: min(280px, calc(100% - 24px)); margin: 8px 12px 2px; font-size: 12px; }
+.classification-filter { display: block; width: auto; margin: 8px 12px 2px; font-size: 12px; }
 .classification-filter select { min-width: 0; width: 100%; }
 .chat-filters { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 3px; margin: 8px 12px 2px; }
 .chat-filters button {
@@ -1830,6 +1830,8 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   .install-banner { bottom: 16px; }
   #chatsRecentSessionsButton, #chatRecentSessionsButton { display: none !important; }
   #chatsRunningConversationsButton { display: none !important; }
+  /* The desktop header already carries a running-conversations button, so the chat toolbar drops its copy. */
+  #chatRunningConversationsButton { display: none !important; }
 }
 
 @media (max-width: 1023px) {
@@ -1852,6 +1854,7 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   .chat-model-control { grid-column: 1; grid-row: 2; min-width: 0; }
   .chat-mode-control { grid-column: 2; grid-row: 2; min-width: 0; }
   .chat-recents-button { grid-column: 3; grid-row: 2; }
+  #chatRunningConversationsButton { display: inline-flex; grid-column: 4; grid-row: 2; }
   .model-button { width: 100%; max-width: none; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .chat-more { grid-column: 4; grid-row: 1; position: relative; display: block; align-self: end; }
   .chat-more > summary { display: inline-flex; align-items: center; justify-content: center; list-style: none; cursor: pointer; }
