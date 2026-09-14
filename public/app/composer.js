@@ -98,6 +98,26 @@ function sessionHistory() {
   return state.promptHistory.get(key);
 }
 
+/**
+ * A reload or a conversation switch starts with an empty in-memory history, so the
+ * transcript that just loaded is what the arrows walk. Replaying it here is what
+ * makes recall work on an existing conversation instead of only on prompts typed
+ * since the page opened.
+ */
+export function seedPromptHistory(messages) {
+  const key = state.activeSessionPath || "new";
+  const prompts = [];
+  for (const message of messages || []) {
+    const text = typeof message.text === "string" ? message.text.trim() : "";
+    if (message.role !== "user" || !text) continue;
+    if (prompts[prompts.length - 1] === text) continue;
+    prompts.push(text);
+  }
+  state.promptHistory.set(key, prompts.slice(-100));
+  state.historyIndex = -1;
+  state.historyDraft = "";
+}
+
 function rememberPrompt(message) {
   const history = sessionHistory();
   if (history[history.length - 1] === message) return;

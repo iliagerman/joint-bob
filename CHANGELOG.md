@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Prompt recall now works after reloading the page or switching conversations.
+
 ## 1.31.0 — 2026-09-14
 
 - Interactive browser commands now run ahead of waiting monitor scans. Operations already running finish first.

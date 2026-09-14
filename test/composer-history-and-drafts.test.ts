@@ -79,3 +79,21 @@ test("an unsent draft stays with the conversation it was typed in", async () => 
   const submit = app.slice(app.indexOf('elements.composer.addEventListener("submit"'));
   assert.match(submit.slice(0, submit.indexOf("\n});")), /state\.drafts\.delete\(state\.activeSessionPath\)/);
 });
+
+test("the loaded transcript seeds the prompt history so recall works after a reload", async () => {
+  const app = await appSource();
+
+  const seed = functionSource(app, "seedPromptHistory");
+  // Only the reader's own prompts, newest last, capped like a live session.
+  assert.match(seed, /message\.role !== "user"/);
+  assert.match(seed, /state\.promptHistory\.set\(key, prompts\.slice\(-100\)\)/);
+  assert.match(seed, /state\.historyIndex = -1/);
+
+  // The transcript that arrives with a conversation is what the arrows walk.
+  assert.match(app, /seedPromptHistory\(payload\.messages\)/);
+  const ready = app.slice(app.indexOf('if (payload.type === "ready")'));
+  assert.ok(
+    ready.indexOf("setActiveSessionPath(payload.sessionFile)") < ready.indexOf("seedPromptHistory(payload.messages)"),
+    "history must be seeded under the conversation's real session path",
+  );
+});

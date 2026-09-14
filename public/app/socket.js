@@ -3,7 +3,7 @@ import { api, loadPins, savePreferencesInBackground } from "./api.js";
 import { clearAttachments } from "./attachments.js";
 import { renderChatSessionControls, renderConversationLock, sendSocket, setComposerEnabled, setModels, syncEngineUI, updateStatus } from "./chat-controls.js";
 import { appendMessage, appendToolMessage, clearChat, clearQueuedMark, clearThinkingBubble, finalizeAssistantBubble, finishTurnTimer, markMessageQueued, removeQueuedMessage, renderBubbleContent, requestPinChat, rerenderChatTranscript, restoreChatScrollTop, showChatEmptyState, startDurationTicker, startHarnessSegment, syncQueuedMessageOrder, updateQueuedMessage, updateToolMessage } from "./chat-transcript.js";
-import { rememberDraft, restoreDraft, setActiveSessionPath } from "./composer.js";
+import { rememberDraft, restoreDraft, seedPromptHistory, setActiveSessionPath } from "./composer.js";
 import { renderToolsDialog } from "./composer-dialogs.js";
 import { elements } from "./elements.js";
 import { setMobileView, shortSessionTitle, syncChatTitleFromSessions } from "./layout.js";
@@ -224,6 +224,7 @@ function handleSocketPayload(payload, scrollOnReady = false) {
         : openingDraft
           ? `New ${harnessLabel(state.harnesses, state.engine)} conversation`
           : `${harnessLabel(state.harnesses, state.engine)} conversation`;
+    seedPromptHistory(payload.messages);
     const resumeFromTop = rerenderChatTranscript(payload.messages, payload.segments);
     // A fresh open starts on the newest message; a reconnect re-render follows
     // if the reader was following and otherwise puts them back where they were.
