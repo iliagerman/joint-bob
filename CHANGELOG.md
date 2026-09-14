@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Update-recovered conversations now appear as running immediately while queued messages wait and resume afterward.
+
 ## 1.30.0 — 2026-09-14
 
 - Added Kiro CLI conversations alongside Pi and Claude, with streaming replies, tools, model controls, cancellation, compaction, and context-copy forks.

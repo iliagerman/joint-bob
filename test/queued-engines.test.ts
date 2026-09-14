@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { chmod, mkdir, rm, writeFile, readFile } from "node:fs/promises";
 import path from "node:path";
 import fs from "node:fs/promises";
@@ -142,6 +143,52 @@ test("queue transfer fence includes an enqueue awaiting attachment persistence",
     assert.equal(harnessPromptQueueIsDraining(`${fixture.projectId}:${sessionId}`), true, "transfer must reject an enqueue that can still commit after its snapshot");
   } finally { release(); mocked.mock.restore(); syncBuiltinESMExports(); }
   await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "promptStarted"));
+});
+
+test("Pi queue resumes after update recovery finishes", async (context) => {
+  const opened = openChat(baseUrl, fixture.cookie, fixture.projectId, "new");
+  sockets.push(opened.socket);
+  await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "ready"));
+  const sessionId = String(opened.messages.find((frame) => frame.type === "ready")!.sessionId);
+  const { harnessSessions } = await import("../src/server/harness-sessions.js");
+  const shared = [...harnessSessions.values()].find((candidate) => candidate.session.id === sessionId)!;
+  const sessionPath = shared.session.file!;
+  let release!: () => void;
+  let started!: () => void;
+  let promptCount = 0;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const recoveryStarted = new Promise<void>((resolve) => { started = resolve; });
+  context.mock.method(shared.session, "prompt", async (input) => {
+    promptCount += 1;
+    if (promptCount === 1) {
+      started();
+      await gate;
+      return;
+    }
+    input.onStarted?.();
+  });
+  const { saveUpdateRecoveries } = await import("../src/update-recovery.js");
+  const { recoverPendingUpdateRuns } = await import("../src/server/task-runs.js");
+  await saveUpdateRecoveries([{
+    id: randomUUID(), kind: "chat", engine: "pi", projectId: fixture.projectId,
+    cwd: path.join(root, "project"), sessionId, sessionPath, taskId: null, phase: null,
+    queuedPrompts: [], model: null, effort: null, createdAt: new Date().toISOString(),
+  }]);
+  const priorInvalidations = opened.messages.filter((frame) => frame.type === "sessionsChanged").length;
+  const recovery = recoverPendingUpdateRuns();
+  try {
+    await recoveryStarted;
+    await waitFor(opened.messages, () => opened.messages.filter((frame) => frame.type === "sessionsChanged").length > priorInvalidations);
+    const sessionsResponse = await fetch(`${baseUrl}/api/projects/${fixture.projectId}/sessions`, { headers: { Cookie: fixture.cookie } });
+    const sessionsBody = await sessionsResponse.json() as { sessions: Array<{ id: string; running: boolean }> };
+    assert.equal(sessionsBody.sessions.find((session) => session.id === sessionId)?.running, true, "update recovery must appear in the running list");
+    opened.socket.send(JSON.stringify({ type: "prompt", message: "after recovery" }));
+    await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "userMessage" && frame.queued));
+  } finally {
+    release();
+    await recovery;
+  }
+  await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "promptStarted"), 1_500);
 });
 
 test("successful Pi extension commands without agent_start are consumed once", async (context) => {

@@ -307,6 +307,7 @@ async function recoverChat(record: UpdateRecoveryRecord): Promise<void> {
   const conversationId = conversation?.conversationId ?? record.sessionId;
   const shared = await openHarnessSession(record.engine, { projectId: record.projectId, cwd: record.cwd, sessionId: record.sessionId, sessionPath: record.sessionPath, conversationId });
   shared.turnInFlight += 1;
+  broadcastToProject(record.projectId, { type: "sessionsChanged" });
   try {
     const legacySettings = !record.settings && (record.model !== null || record.effort !== null)
       ? { ...shared.session.settings(), ...(record.model !== null ? { modelId: record.model } : {}), ...(record.effort !== null ? { reasoning: record.effort } : {}) }
