@@ -1,9 +1,23 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 const testHome = mkdtempSync(path.join(os.tmpdir(), "joint-bob-test-runner-"));
 process.env.HOME = testHome;
+if (process.platform === "darwin" || process.platform === "linux") {
+  const testBin = path.join(testHome, "bin");
+  mkdirSync(testBin, { mode: 0o700 });
+  writeFileSync(path.join(testBin, "kiro-cli"), `#!${process.execPath}
+const expected = ["chat", "--list-models", "--format", "json"];
+const args = process.argv.slice(2);
+if (JSON.stringify(args) !== JSON.stringify(expected)) {
+  process.stderr.write(\`Unsupported kiro-cli fixture invocation: \${args.join(" ")}\\n\`);
+  process.exit(2);
+}
+process.stdout.write('{"models":[{"model_id":"default","model_name":"Kiro default"}]}\\n');
+`, { mode: 0o700 });
+  process.env.PATH = `${testBin}${path.delimiter}${process.env.PATH}`;
+}
 process.env.JOINT_BOB_BIND_HOST = "127.0.0.1";
 // Native-service launch settings must not leak into disposable test fixtures.
 delete process.env.JOINT_BOB_RELEASE;

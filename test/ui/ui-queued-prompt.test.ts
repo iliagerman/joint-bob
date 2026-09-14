@@ -157,4 +157,16 @@ test("queued prompts can be edited, reordered, merged, reloaded, and deleted", a
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.getByTestId("chat-message-input").waitFor({ timeout: 20_000 });
   assert.equal(await page.locator(".message.user.queued", { hasText: "edited while waiting" }).count(), 0, "the cancelled prompt stays gone");
+
+  await releaseTurn("second queued");
+  await releaseTurn("hold the line");
+  await Promise.all([
+    page.locator(".message.assistant").getByText("hold the line", { exact: true }).waitFor(),
+    page.locator(".message.assistant").getByText("second queued", { exact: true }).waitFor(),
+  ]);
+  await page.waitForFunction(() =>
+    (document.querySelector("#abortButton") as HTMLButtonElement).disabled
+    && document.querySelectorAll(".message.user.queued").length === 0,
+  );
+  assert.deepEqual(await invocationLines(), ["hold the line", "second queued"]);
 }, { timeout: 120_000 });
