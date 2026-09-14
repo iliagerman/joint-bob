@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { MonitorEvent } from "./browser-monitor-types.js";
 
@@ -23,11 +24,13 @@ export const browserMonitorRuleInputSchema = z.object({
   action: actionSchema, cooldownSeconds: z.number().int().min(60).max(86400), maxRepliesPerHour: z.number().int().min(1).max(60),
 }).strict().refine(input => input.action.type !== "ignore" || input.aiCondition === null, "Ignore rules cannot have an AI condition");
 export type BrowserMonitorRuleInput = z.infer<typeof browserMonitorRuleInputSchema>;
-export interface BrowserMonitorRuleRecord { id: string; monitorId: string; version: number; input: BrowserMonitorRuleInput; enabled: boolean; createdAt: number; updatedAt: number }
+export interface BrowserMonitorRuleRecord { id: string; monitorId: string; version: number; input: BrowserMonitorRuleInput; enabled: boolean; activatedAt: number | null; createdAt: number; updatedAt: number }
 
 function matches(event: MonitorEvent, rule: BrowserMonitorRuleRecord): boolean {
   const input = rule.input;
   if (rule.monitorId !== event.monitorId || !rule.enabled || rule.createdAt > event.observedAt) return false;
+  if (rule.activatedAt === null || event.observedAt < rule.activatedAt) return false;
+  if (event.occurredAt !== null && event.occurredAt <= rule.activatedAt) return false;
   if (input.targetIds.length && !input.targetIds.includes(event.targetId)) return false;
   if (input.senderIds.length && !input.senderIds.includes(event.senderId)) return false;
   if (input.excludedTargetIds.includes(event.targetId) || input.excludedSenderIds.includes(event.senderId)) return false;
@@ -37,6 +40,12 @@ function matches(event: MonitorEvent, rule: BrowserMonitorRuleRecord): boolean {
 
 function specificity(rule: BrowserMonitorRuleRecord): number {
   return Number(rule.input.targetIds.length > 0) * 2 + Number(rule.input.senderIds.length > 0);
+}
+
+export function browserMonitorRuleRevision(rules: readonly BrowserMonitorRuleRecord[]): string {
+  const authority = [...rules].sort((left, right) => left.id.localeCompare(right.id))
+    .map(rule => [rule.id, rule.version, rule.activatedAt]);
+  return createHash("sha256").update(JSON.stringify(authority)).digest("hex");
 }
 
 export function browserMonitorRuleCandidates(event: MonitorEvent, rules: readonly BrowserMonitorRuleRecord[]): BrowserMonitorRuleRecord[] {

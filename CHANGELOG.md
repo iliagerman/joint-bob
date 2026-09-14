@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Added reply drafting and approval workflows to browser monitors for reviewing AI-generated responses before sending.
 - Interactive commands in the browser monitor now execute immediately without waiting for queued monitor operations to finish.
 
 ## 1.30.6 — 2026-09-14

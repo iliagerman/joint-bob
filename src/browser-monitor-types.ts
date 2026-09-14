@@ -30,10 +30,28 @@ export const monitorItemSchema = z.object({
 export type MonitorItem = z.infer<typeof monitorItemSchema>;
 
 export const monitorCheckpointSchema = z.record(z.string().max(320), z.string().max(8192)).refine(value => Object.keys(value).length <= 500, "Checkpoint has too many keys").refine(value => Buffer.byteLength(JSON.stringify(value)) <= 65536, "Checkpoint is too large");
+export const monitorPartitionCoverageSchema = z.object({
+  targetId: boundedNonempty(320), cursor: z.string().min(1).max(8192).nullable(), complete: z.boolean(),
+  continuation: z.string().min(1).max(8192).nullable(), detail: z.string().max(2000),
+}).strict().superRefine((partition, context) => {
+  if (partition.complete && partition.continuation !== null) context.addIssue({ code: z.ZodIssueCode.custom, path: ["continuation"], message: "Complete partition cannot have a continuation" });
+});
+export const monitorCoverageSchema = z.object({
+  discoveryComplete: z.boolean(), partitions: z.array(monitorPartitionCoverageSchema).max(200),
+}).strict().refine(value => new Set(value.partitions.map(partition => partition.targetId)).size === value.partitions.length, "Partition target IDs must be unique")
+  .refine(value => Buffer.byteLength(JSON.stringify(value)) <= 65536, "Coverage is too large");
 export const monitorCheckResultSchema = z.object({
   accountId: boundedNonempty(320), items: z.array(monitorItemSchema).max(500), checkpoint: monitorCheckpointSchema,
-  complete: z.boolean(), detail: z.string().max(2000),
-}).strict();
+  complete: z.boolean(), detail: z.string().max(2000), coverage: monitorCoverageSchema.optional(),
+}).strict().superRefine((result, context) => {
+  if (!result.coverage) return;
+  const partitions = new Map(result.coverage.partitions.map(partition => [partition.targetId, partition]));
+  for (const item of result.items) if (!partitions.has(item.targetId)) context.addIssue({ code: z.ZodIssueCode.custom, path: ["items"], message: "Item target requires partition coverage" });
+  const complete = result.coverage.discoveryComplete && result.coverage.partitions.every(partition => partition.complete);
+  if (result.complete !== complete) context.addIssue({ code: z.ZodIssueCode.custom, path: ["complete"], message: "Result completeness contradicts coverage" });
+  const expected = Object.fromEntries(result.coverage.partitions.filter(partition => partition.complete && partition.cursor !== null).map(partition => [partition.targetId, partition.cursor]));
+  if (Object.keys(result.checkpoint).length !== Object.keys(expected).length || Object.entries(expected).some(([key, value]) => result.checkpoint[key] !== value)) context.addIssue({ code: z.ZodIssueCode.custom, path: ["checkpoint"], message: "Checkpoint must contain exactly complete partition cursors" });
+});
 export type MonitorCheckResult = z.infer<typeof monitorCheckResultSchema>;
 
 export type MonitorHealth = "paused" | "ready" | "partial" | "checking" | "needs-login" | "wrong-account" | "target-missing" | "incompatible" | "browser-stopped" | "paused-by-human" | "unavailable" | "error";
@@ -43,4 +61,5 @@ export interface MonitorRecord extends MonitorInput {
   createdAt: number; updatedAt: number;
 }
 export interface MonitorRun { id: string; monitorId: string; generation: number; dueAt: number; startedAt: number; finishedAt: number | null; status: "running" | "succeeded" | "failed" | "cancelled"; detail: string }
-export interface MonitorEvent extends MonitorItem { id: string; monitorId: string; observedAt: number; processed: boolean }
+export interface MonitorEvent extends MonitorItem { id: string; monitorId: string; observedAt: number; processed: boolean; reviewRequired?: boolean }
+export interface MonitorPartition { monitorId: string; targetId: string; baseline: boolean; cursor: string | null; continuation: string | null; complete: boolean; detail: string; lastCheckedAt: number }
