@@ -3,10 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.31.0 — 2026-09-14
 
-- Added reply drafting and approval workflows to browser monitors for reviewing AI-generated responses before sending.
-- Interactive commands in the browser monitor now execute immediately without waiting for queued monitor operations to finish.
+- Interactive browser commands now run ahead of waiting monitor scans. Operations already running finish first.
+- Browser monitors can retain separate scan progress for each conversation without advancing unfinished scans.
+- Added backend storage and APIs for reply batches, draft editing, and approval decisions. Automated drafting, sending, live messaging connectors, and the approvals interface are not available yet; approving a stored draft does not send it.
+- Rule activation excludes older messages, and rule or monitor changes invalidate pending draft authority. Previously enabled rules are paused during upgrade and require explicit reactivation.
 
 ## 1.30.6 — 2026-09-14
 
