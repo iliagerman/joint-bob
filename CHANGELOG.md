@@ -3,9 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.30.0 — 2026-09-14
 
-- Added Kiro as a third coding agent, with per-harness defaults and per-conversation review notifications.
+- Added Kiro CLI conversations alongside Pi and Claude, with streaming replies, tools, model controls, cancellation, compaction, and context-copy forks.
+- Added harness-specific defaults and configuration controls across conversations, tickets, and scheduled tasks.
+- Preserved queued messages and conversation context when switching harnesses or restarting the app.
+- Added per-conversation review notification preferences and harness-aware labels throughout the workspace.
+- Verified authenticated Kiro resume and streaming on macOS. Kiro must be installed and authenticated separately on each execution node; authenticated cross-node validation is still pending.
 
 ## 1.29.5 — 2026-09-14
 
