@@ -146,11 +146,14 @@ async function performUpdatePreparation(): Promise<number> {
     throw error;
   }
   const busySessions = [...harnessSessions.values()].filter(harnessSessionBusy);
-  await Promise.all(busySessions.map(({ session }) => session.stopForUpdate()));
+  // Start the recovery deadline before stopping sessions. A hung stop must not
+  // leave the node permanently fenced; the service manager restarts it and the
+  // node resumes from durable recovery records.
   updateRestartTimer = setTimeout(() => {
     console.error("Prepared update was not activated after 180 seconds; restarting to recover interrupted work");
     process.exit(1);
   }, 180_000);
   updateRestartTimer.unref();
+  await Promise.all(busySessions.map(({ session }) => session.stopForUpdate()));
   return active.length;
 }

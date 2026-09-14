@@ -137,8 +137,8 @@ test("pending recovery refuses preparation without discarding records", async ()
   }
 });
 
-test("failed Pi stop preserves recovery and fence without unsafe watchdog restart", async (t) => {
-  const exit = t.mock.method(process, "exit", () => { throw new Error("unsafe watchdog restart"); });
+test("failed Pi stop preserves recovery and forces a bounded service restart", async (t) => {
+  const exit = t.mock.method(process, "exit", () => undefined as never);
   const shared = piSession(() => new Promise(() => {}));
   harnessSessions.set(harnessSessionKey(shared.projectId, shared.engine, shared.session.id), shared);
   t.mock.timers.enable({ apis: ["setTimeout"] });
@@ -155,8 +155,8 @@ test("failed Pi stop preserves recovery and fence without unsafe watchdog restar
     const records = await listPendingUpdateRecoveries();
     assert.equal(records.length, 1);
     assert.deepEqual(records[0].queuedPrompts, ["queued"]);
-    t.mock.timers.tick(300_000);
-    assert.equal(exit.mock.callCount(), 0);
+    t.mock.timers.tick(180_000);
+    assert.deepEqual(exit.mock.calls.map((call) => call.arguments), [[1]], "service manager must kill remaining work and recover the fenced node");
     await assert.rejects(prepareForUpdate(), /Pi.*did not stop/);
   } finally {
     harnessSessions.clear();

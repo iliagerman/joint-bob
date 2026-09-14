@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed app updates hanging indefinitely when sessions refuse to stop during shutdown.
+
 ## 1.30.5 — 2026-09-14
 
 - Kiro model lists now refresh directly from the native CLI before the first message, without requiring a conversation or app restart.

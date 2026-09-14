@@ -98,7 +98,7 @@ test("another update cannot replace work still waiting for recovery", async () =
   assert.deepEqual((await listPendingUpdateRecoveries()).map((record) => record.id), ["awaiting-recovery"]);
 });
 
-test("a stuck agent abort refuses the update without restarting over live tools", async (context) => {
+test("a stuck agent abort triggers the bounded service restart", async (context) => {
   context.mock.timers.enable({ apis: ["setTimeout"] });
   const exit = context.mock.method(process, "exit", () => undefined as never);
   context.mock.method(console, "error", () => {});
@@ -113,8 +113,10 @@ test("a stuck agent abort refuses the update without restarting over live tools"
   const refused = assert.rejects(preparation, /Pi did not stop within 60 seconds/);
   context.mock.timers.tick(60_000);
   await refused;
-  context.mock.timers.tick(300_000);
-  assert.equal(exit.mock.callCount(), 0, "a non-exiting agent must not be replayed over live tools");
+  context.mock.timers.tick(119_999);
+  assert.equal(exit.mock.callCount(), 0);
+  context.mock.timers.tick(1);
+  assert.deepEqual(exit.mock.calls.map((call) => call.arguments), [[1]], "service manager must recover a node whose agent will not stop");
   assert.equal(flags.updatePreparing, true);
   assert.equal((await listPendingUpdateRecoveries()).length, 1);
   finishAbort();
