@@ -329,9 +329,9 @@ async function recoverChat(record: UpdateRecoveryRecord): Promise<void> {
     shared.turnInFlight -= 1;
     sendHarnessStatus(shared);
     broadcastToProject(record.projectId, { type: "sessionsChanged" });
+    const connection = [...harnessChatConnections].find((candidate) => candidate.shared === shared);
+    if (connection) void drainHarnessPromptQueue(connection).catch((error) => console.warn("Post-recovery queue failed", error));
   }
-  const connections = [...harnessChatConnections].filter((connection) => connection.shared === shared);
-  if (connections[0]) await drainHarnessPromptQueue(connections[0]);
 }
 
 async function recoverTask(record: UpdateRecoveryRecord): Promise<void> {
@@ -346,11 +346,11 @@ async function recoverTask(record: UpdateRecoveryRecord): Promise<void> {
 }
 
 export async function recoverPendingUpdateRuns(): Promise<void> {
-  for (const record of await listPendingUpdateRecoveries()) {
+  await Promise.all((await listPendingUpdateRecoveries()).map(async (record) => {
     try { if (record.kind === "chat") await recoverChat(record); else await recoverTask(record); }
     catch (error) {
       console.warn("Update recovery failed", error);
       await failUpdateRecovery(record.id, error instanceof Error ? error.message : "Update recovery failed");
     }
-  }
+  }));
 }

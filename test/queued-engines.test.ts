@@ -69,6 +69,49 @@ test("Pi app queue dispatches Claude and Pi overrides FIFO, then inherits active
   assert.deepEqual(opened.messages.filter((frame) => frame.type === "error"), []);
 });
 
+for (const failFirst of [false, true]) test(`update recovery starts every conversation independently and releases queues after ${failFirst ? "failure" : "success"}`, async (context) => {
+  const { harnessSessions } = await import("../src/server/harness-sessions.js");
+  const { saveUpdateRecoveries, listPendingUpdateRecoveries } = await import("../src/update-recovery.js");
+  const { recoverPendingUpdateRuns } = await import("../src/server/task-runs.js");
+  const release = Promise.withResolvers<void>();
+  const opened: ReturnType<typeof openChat>[] = [];
+  for (let index = 0; index < 2; index += 1) {
+    const chat = openChat(baseUrl, fixture.cookie, fixture.projectId, "new");
+    opened.push(chat);
+    sockets.push(chat.socket);
+    await waitFor(chat.messages, () => chat.messages.some((frame) => frame.type === "ready"));
+  }
+  const shared = opened.map((chat) => [...harnessSessions.values()].find((candidate) => candidate.session.id === chat.messages.find((frame) => frame.type === "ready")!.sessionId)!);
+  const calls: string[][] = [[], []];
+  shared.forEach((session, index) => context.mock.method(session.session, "prompt", async (input) => {
+    calls[index].push(input.text);
+    await release.promise;
+    if (failFirst && index === 0 && calls[index].length === 1) throw new Error("Fixture recovery failed");
+    input.onStarted?.();
+  }));
+  await saveUpdateRecoveries(shared.map((session) => ({
+    id: randomUUID(), kind: "chat", engine: "pi", projectId: fixture.projectId, cwd: session.cwd,
+    sessionId: session.session.id, sessionPath: session.session.file!, taskId: null, phase: null,
+    queuedPrompts: ["saved follow-up"], model: null, effort: null, createdAt: new Date().toISOString(),
+  })));
+  const recovering = recoverPendingUpdateRuns();
+  try {
+    await waitFor(opened[0].messages, () => calls.every((prompts) => prompts.length === 1), 1_500);
+    const response = await fetch(`${baseUrl}/api/projects/${fixture.projectId}/sessions`, { headers: { Cookie: fixture.cookie } });
+    const { sessions } = await response.json() as { sessions: Array<{ id: string; running: boolean }> };
+    for (const session of shared) assert.equal(sessions.find((row) => row.id === session.session.id)?.running, true, "recovery is running even between SDK streaming events");
+    opened[0].socket.send(JSON.stringify({ type: "prompt", message: "arrived during recovery" }));
+    await waitFor(opened[0].messages, () => opened[0].messages.some((frame) => frame.type === "userMessage" && frame.queued));
+    assert.equal(opened[0].messages.some((frame) => frame.type === "promptStarted"), false, "incoming prompt must not race recovery");
+    release.resolve();
+    await recovering;
+    await waitFor(opened[0].messages, () => opened[0].messages.some((frame) => frame.type === "promptCompleted"), 1_500);
+    assert.equal(calls[0].includes("saved follow-up"), !failFirst);
+    assert.equal(calls[1][1], "saved follow-up", "another conversation's failure must not cancel recovery");
+    assert.deepEqual(await listPendingUpdateRecoveries(), []);
+  } finally { release.resolve(); await recovering; }
+});
+
 test("stopping a Pi turn starts the next queued message", async (context) => {
   const opened = openChat(baseUrl, fixture.cookie, fixture.projectId, "new");
   sockets.push(opened.socket);

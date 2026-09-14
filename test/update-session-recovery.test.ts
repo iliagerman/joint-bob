@@ -59,7 +59,7 @@ test("server prepares and recovers active sessions around service updates", asyn
   assert.match(server, /const shared = await openHarnessSession\(record\.engine, \{ projectId: record\.projectId, cwd: record\.cwd, sessionId: record\.sessionId, sessionPath: record\.sessionPath, conversationId \}\)/);
   assert.match(server, /for \(const event of shared\.liveEvents\) send\(options\.socket, event\)/);
   assert.match(server, /for \(const prompt of \[updateContinuationPrompt, \.\.\.record\.queuedPrompts\]\) await shared\.session\.prompt/);
-  assert.match(server, /if \(connections\[0\]\) await drainHarnessPromptQueue\(connections\[0\]\)/);
+  // Queue resumption after successful and failed recovery is exercised over WebSocket in queued-engines.test.ts.
   assert.doesNotMatch(server, /RecoveredClaudeChat|recoveredClaudeChats|runRecoveredClaudePrompt|drainClaudePromptQueue/);
   assert.doesNotMatch(server, /Conversation is recovering after update/);
 });

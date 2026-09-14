@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Enabled opening conversations from other execution nodes by resolving stale home directory paths to the local node's filesystem.
+- Fixed update recovery to run conversations in parallel, preventing one failing conversation from blocking queue resumption in others.
 
 ## 1.30.1 — 2026-09-14
 
