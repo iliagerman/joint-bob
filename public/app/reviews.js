@@ -1,4 +1,5 @@
 import { api, savePreferencesInBackground } from "./api.js";
+import { loadSessionNodes } from "./chat-controls.js";
 import { elements } from "./elements.js";
 import { agentIcon, sessionAgentId } from "./icons.js";
 import { attachDigitShortcuts, LIST_SHORTCUT_LIMIT, shortcutIndexBadge } from "./list-shortcuts.js";
@@ -203,16 +204,41 @@ function openPendingReviewsDialog() {
     .catch((error) => toast(error.message));
 }
 
-export function openListedSession(session) {
+export async function openListedSession(session) {
   markSessionReviewed(session);
   rememberRecentSession(session);
+  const projectId = state.activeProjectId;
   state.activeSessionId = session.id;
   state.activeTaskId = session.taskId || null;
-  if (session.executionNodeId) {
-    state.activeNodeId = session.executionNodeId;
-    if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: session.executionNodeId });
+  const listedOwner = state.sessionNodes.find((node) => node.id === session.executionNodeId);
+  if (session.executionNodeId && !listedOwner?.local) {
+    try { await loadSessionNodes(projectId); }
+    catch (error) { toast(error.message, 8000); }
+    if (state.activeProjectId !== projectId || state.activeSessionId !== session.id) return;
   }
-  openSession(session.path, shortSessionTitle(session), false, Boolean(state.activeTaskId));
+  const owner = state.sessionNodes.find((node) => node.id === session.executionNodeId);
+  const local = !state.activeTaskId && owner && !owner.online
+    ? state.sessionNodes.find((node) => node.local && node.online && node.mapped)
+    : null;
+  const destinationId = local?.id || session.executionNodeId;
+  if (destinationId) {
+    state.activeNodeId = destinationId;
+    if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: destinationId });
+  }
+  const title = shortSessionTitle(session);
+  openSession(session.path, title, false, Boolean(state.activeTaskId));
+  if (!local) return;
+  try {
+    const result = await api(`/api/projects/${encodeURIComponent(projectId)}/sessions/take-ownership`, {
+      method: "POST", body: JSON.stringify({ peerId: local.id, sessionId: session.id, sessionPath: session.path, sessionName: title }),
+    });
+    if (state.activeProjectId !== projectId || state.activeSessionId !== session.id) return;
+    state.activeSessionId = null;
+    openSession(result.sessionPath, title);
+    toast(result.pendingPeerIds?.length ? "Switched to this node; offline nodes will update when they return" : "Switched to this node");
+  } catch (error) {
+    if (state.activeProjectId === projectId && state.activeSessionId === session.id) toast(error.message, 8000);
+  }
 }
 elements.markAllReviewedButton.addEventListener("click", () => { void markAllSessionsReviewed(); });
 

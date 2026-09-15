@@ -55,7 +55,8 @@ test("chat names its controls and continues conversations through takeover", asy
   assert.match(app, /sessions\/take-ownership/);
   assert.match(app, /New \$\{harness\.label\} conversation/);
   assert.match(app, /state\.activeTaskId = session\.taskId \|| null/);
-  assert.match(app, /openSession\(session\.path, shortSessionTitle\(session\), false, Boolean\(state\.activeTaskId\)\)/);
+  assert.match(app, /const local = !state\.activeTaskId && owner && !owner\.online/);
+  assert.match(app, /openSession\(session\.path, title, false, Boolean\(state\.activeTaskId\)\)/);
   assert.match(app, /dataset\.testid = "session-agent-label"/);
   assert.match(app, /session\.agentLabel/);
   assert.doesNotMatch(app, /session\.agentModel/);

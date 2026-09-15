@@ -148,3 +148,35 @@ test("an open remote conversation can switch locally and take ownership", async 
   await homeserverPage.locator("#conversationLock").waitFor({ state: "hidden", timeout: 30_000 });
   assert.equal(await homeserverPage.getByTestId("chat-message-input").isEnabled(), true, "the destination can continue the conversation after takeover");
 });
+
+test("opening a conversation owned by an offline node automatically takes it over locally", { timeout: 90_000 }, async () => {
+  const [mac, homeserver] = environment.nodes;
+  const homeserverPage = pages[1];
+  const sessionId = "thread-based-agent-builder";
+
+  // Seed the owner that will disappear. The test starts at the browser boundary,
+  // where this already-replicated ownership record is the precondition.
+  for (const node of environment.nodes) {
+    const database = new DatabaseSync(path.join(node.dataDir, "node.db"));
+    database.prepare("UPDATE conversation_ownership SET owner_node_id = ?, epoch = epoch + 1, status = 'owned', transfer_to_node_id = NULL WHERE session_id = ?").run(mac.nodeId, sessionId);
+    database.close();
+  }
+  await stopDevNode(servers[0]);
+  try {
+    // Reloading restores the last open conversation. Its owner is now unreachable,
+    // so opening it must pick this node and take ownership without a button click.
+    await homeserverPage.reload({ waitUntil: "domcontentloaded" });
+    await homeserverPage.locator(".project-card", { hasText: "Internal Assistant" }).first().waitFor({ timeout: 30_000 });
+    await homeserverPage.locator("#messages .message", { hasText: "We keep re-threading" }).waitFor({ timeout: 30_000 });
+    await homeserverPage.locator("#conversationLock").waitFor({ state: "hidden", timeout: 30_000 });
+    await homeserverPage.locator("#messageInput:not(:disabled)").waitFor({ timeout: 30_000 });
+    assert.equal(await homeserverPage.getByTestId("chat-node-select").inputValue(), homeserver.nodeId, "offline owner falls back to this node");
+    assert.equal(await homeserverPage.getByTestId("chat-message-input").isEnabled(), true, "local takeover makes the conversation writable");
+    const database = new DatabaseSync(path.join(homeserver.dataDir, "node.db"), { readOnly: true });
+    const owner = database.prepare("SELECT owner_node_id FROM conversation_ownership WHERE session_id = ?").get(sessionId) as { owner_node_id: string };
+    database.close();
+    assert.equal(owner.owner_node_id, homeserver.nodeId, "local node owns the conversation");
+  } finally {
+    servers[0] = await startDevNode(environment, mac);
+  }
+});
