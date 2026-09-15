@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.32.5 — 2026-09-15
 
-- Empty conversations now transfer ownership automatically when switching nodes instead of showing a take-ownership prompt.
+- Empty conversations now switch nodes silently instead of showing an ownership prompt.
 
 ## 1.32.4 — 2026-09-15
 
