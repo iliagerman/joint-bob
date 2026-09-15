@@ -3,9 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.32.6 — 2026-09-15
 
-- Conversations now keep their identity across agent switches, reopen correctly from Recents, bound large browser transcripts, and expose reload-safe client diagnostics in Settings.
+- Conversations now reopen correctly from Recents after switching between agents.
+- Conversations maintain their identity when switching agents mid-chat.
+- Large browser transcripts are now bounded to prevent memory bloat.
+- Settings now includes reload-safe client diagnostics for troubleshooting connection problems.
 
 ## 1.32.5 — 2026-09-15
 
