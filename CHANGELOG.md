@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Empty conversations now transfer ownership automatically when switching nodes instead of showing a take-ownership prompt.
+
 ## 1.32.4 — 2026-09-15
 
 - Scheduled task edits and pauses now apply on the next execution, keeping the current run uninterrupted.

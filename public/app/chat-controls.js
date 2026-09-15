@@ -3,7 +3,7 @@ import { syncBrowserButton } from "./browser.js";
 import { clearThinkingBubble } from "./chat-transcript.js";
 import { changeReasoningLevel, hideCommandAutocomplete, renderCommandAutocomplete, renderReasoningOptions, renderToolsDialog, syncModelButton } from "./composer-dialogs.js";
 import { elements } from "./elements.js";
-import { syncChatTitleFromSessions } from "./layout.js";
+import { shortSessionTitle, syncChatTitleFromSessions } from "./layout.js";
 import { renderSessions } from "./session-list.js";
 import { toast } from "./shell.js";
 import { openSession } from "./socket.js";
@@ -202,10 +202,11 @@ export async function loadSessionNodes(projectId) {
 }
 elements.chatNodeSelect.addEventListener("change", async () => {
   const destination = state.sessionNodes.find((node) => node.id === elements.chatNodeSelect.value);
+  if (!destination) { toast("Destination node was not found"); return; }
   const task = state.activeTaskId ? state.tasks.find((candidate) => candidate.id === state.activeTaskId) : null;
   if (state.activeTaskId) {
-    if (!task || !destination) {
-      toast(!task ? "Active ticket was not found" : "Destination node was not found");
+    if (!task) {
+      toast("Active ticket was not found");
       return;
     }
     const ownerId = task.currentNodeId;
@@ -223,12 +224,29 @@ elements.chatNodeSelect.addEventListener("change", async () => {
     }
     return;
   }
-  state.activeNodeId = elements.chatNodeSelect.value;
-  if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: state.activeNodeId });
-  if (!activeChatSession()) {
+  const session = activeChatSession();
+  if (!session) {
+    state.activeNodeId = elements.chatNodeSelect.value;
+    if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: state.activeNodeId });
     state.activeSessionId = null;
     return;
   }
+  if (session.draft) {
+    try {
+      const result = await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/take-ownership`, {
+        method: "POST", body: JSON.stringify({ peerId: destination.id, sessionId: session.id, sessionPath: session.path, sessionName: shortSessionTitle(session) }),
+      });
+      state.activeNodeId = destination.id;
+      if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: destination.id });
+      openSession(result.sessionPath, shortSessionTitle(session), false);
+    } catch (error) {
+      elements.chatNodeSelect.value = state.activeNodeId;
+      toast(error.message, 8000);
+    }
+    return;
+  }
+  state.activeNodeId = destination.id;
+  if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: destination.id });
   openSession(state.activeSessionPath, elements.sessionTitle.textContent || "Conversation", false);
 });
 elements.chatHarnessSelect.addEventListener("change", () => {

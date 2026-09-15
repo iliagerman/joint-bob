@@ -149,6 +149,26 @@ test("an open remote conversation can switch locally and take ownership", async 
   assert.equal(await homeserverPage.getByTestId("chat-message-input").isEnabled(), true, "the destination can continue the conversation after takeover");
 });
 
+test("switching an empty conversation moves ownership without prompting", async () => {
+  const [mac, homeserver] = environment.nodes;
+  const [macPage] = pages;
+  const title = `Empty node switch ${Date.now()}`;
+
+  await macPage.getByTestId("session-create-button").click();
+  await macPage.getByTestId("new-session-name-input").fill(title);
+  await macPage.getByTestId("new-session-name-start-button").click();
+  await macPage.getByText("Ready for your first message", { exact: true }).waitFor({ timeout: 30_000 });
+  const sessionPath = await macPage.locator(".list-row", { hasText: title }).getAttribute("data-session-path");
+  assert.ok(sessionPath?.startsWith("draft:pi:"), `new conversation stays a draft before its first message: ${sessionPath}`);
+  const sessionId = sessionPath.slice("draft:pi:".length);
+  await waitForOwner(sessionId, mac.nodeId);
+
+  await macPage.getByTestId("chat-node-select").selectOption(homeserver.nodeId);
+  await waitForOwner(sessionId, homeserver.nodeId);
+  await macPage.locator("#messageInput:not(:disabled)").waitFor({ timeout: 30_000 });
+  assert.equal(await macPage.getByTestId("conversation-lock-notice").isHidden(), true, "empty conversation never shows the ownership prompt");
+});
+
 test("opening a conversation owned by an offline node automatically takes it over locally", { timeout: 90_000 }, async () => {
   const [mac, homeserver] = environment.nodes;
   const homeserverPage = pages[1];
