@@ -28,9 +28,14 @@ async function fixture(confirm = async () => true, configuredNode: string | null
     addEventListener(name: string, handler: Function) { this.handlers[name] = handler; }
     close() {} send() {}
   }
+  const documentHandlers: Record<string, Function> = {};
   const { createBrowserViewer } = runInNewContext(`${source.replace(/export /g, "")}\n({ createBrowserViewer })`, {
     URL, URLSearchParams, location: new URL("https://app.example/browser.html"),
-    document: { querySelector: () => null, documentElement: { dataset: {} }, createElement: element, createRange: () => ({ createContextualFragment: () => ({}) }) },
+    document: {
+      querySelector: () => null, documentElement: { dataset: {} }, createElement: element, createRange: () => ({ createContextualFragment: () => ({}) }),
+      addEventListener(name: string, handler: Function) { documentHandlers[name] = handler; },
+      removeEventListener(name: string) { delete documentHandlers[name]; },
+    },
     Option: class { constructor(public label: string, public value: string) {} }, WebSocket: Socket,
     Image: class { constructor() { images.push(this); } },
     FileReader: class { result = "data:text/plain;base64,Zml4dHVyZQ=="; onload!: () => void; readAsDataURL() { this.onload(); } },
@@ -60,11 +65,24 @@ async function fixture(confirm = async () => true, configuredNode: string | null
   } });
   await settle();
   const state = (session: any, socket = sockets.at(-1)) => socket.handlers.message({ data: JSON.stringify({ type: "browserState", session }) });
-  return { get, root, viewer, requests, sockets, images, sessions, profiles, state, refuseDelete: () => { deleteError = true; },
+  return { get, root, viewer, requests, sockets, images, sessions, profiles, state, notifySessionsChanged: () => documentHandlers.browserSessionsChanged(), refuseDelete: () => { deleteError = true; },
     delayProfiles: (gate: Promise<void>) => { profileGate = gate; }, refuseProfiles: () => { profileError = true; },
     delayCommands: (gate: Promise<void>) => { commandGate = gate; },
     delayRefresh: (path: string, promise: Promise<void>) => { refreshGate = { path, promise }; } };
 }
+
+test("session discovery refresh adds an agent-created account without reloading the page", async () => {
+  const socketSource = await readFile("public/app/socket.js", "utf8");
+  assert.match(socketSource, /browserSessionsChanged: \(\) => document\.dispatchEvent\(new Event\("browserSessionsChanged"\)\)/);
+  const f = await fixture();
+  try {
+    const selected = f.viewer.session.id;
+    f.sessions.push({ ...f.sessions[0], id: "s2", profileId: "p2", profileLabel: "Agent-created" });
+    f.notifySessionsChanged(); await settle();
+    assert.equal(f.get("session-select").children.length, 3);
+    assert.equal(f.viewer.session.id, selected, "refreshing discovery must not switch the viewed account");
+  } finally { f.viewer.dispose(); }
+});
 
 test("account picker changes only viewer, fences stale sockets and decoded frames, ends selected account", async () => {
   const f = await fixture();

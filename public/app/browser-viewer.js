@@ -365,6 +365,11 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
         ? `Some accounts could not be checked: ${unavailable.map((node) => `${machineName(node.nodeId)}: ${node.reason}`).join("; ")}. Reconnect to retry.` : "";
     }
   }
+  function refreshSessionList() {
+    if (!loaded) return;
+    void operation(loadBrowserSessions);
+  }
+  document.addEventListener?.("browserSessionsChanged", refreshSessionList);
   async function refresh() {
     loaded = false;
     await operation(async () => {
@@ -519,7 +524,10 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     if (text.length > 100000) error("Paste is limited to 100,000 characters.");
     else if (text) sendInput({ action: "text", text });
   });
-  function dispose() { disposed = true; frameVersion++; framePending = null; stopSocket(); }
+  function dispose() {
+    disposed = true; frameVersion++; framePending = null; stopSocket();
+    document.removeEventListener?.("browserSessionsChanged", refreshSessionList);
+  }
   updateLink(); controls();
   if (!identity?.conversationId && !sessionId) {
     error("Open an existing conversation before starting its browser."); get("session-status").textContent = "No conversation selected.";

@@ -8,6 +8,7 @@ import { browserCapability, BrowserRuntime } from "../browser-runtime.js";
 import { browserCommandSchema, browserStartSchema, browserIdentitySchema, type BrowserActor, type BrowserSessionView } from "../browser-types.js";
 import { getProject } from "../store.js";
 import { clusterPeerMayAccessProject } from "./cluster-helpers.js";
+import { broadcastToProject } from "./realtime.js";
 
 export class BrowserRequestError extends Error { constructor(public status: number, message: string) { super(message); } }
 let runtime: BrowserRuntime | undefined;
@@ -143,7 +144,11 @@ export function requireCompleteDiscovery(discovery: BrowserDiscovery) {
 export async function browserOperation(input: BrowserOperation, actor: BrowserActor, nodeId?: string, identity?: z.infer<typeof browserIdentitySchema>): Promise<unknown> {
   const operation = browserOperationSchema.parse(input);
   if (operation.operation === "list" && !nodeId) return discoverBrowsers(operation, actor, identity);
-  if (operation.operation === "start") return startBrowser(operation, actor, nodeId, identity);
+  if (operation.operation === "start") {
+    const result = await startBrowser(operation, actor, nodeId, identity);
+    broadcastToProject(operation.args.projectId, { type: "browserSessionsChanged" });
+    return result;
+  }
   if (!nodeId && (operation.operation === "get" || operation.operation === "command")) nodeId = await browserSessionOwner(operation.args.id, actor, identity);
   if (!nodeId || idSchema.parse(nodeId) === (await getClusterNode()).id) return localBrowserOperation(operation, actor);
   return (await peerRequest(nodeId, "operation", { ...operation, actor, identity })).json();

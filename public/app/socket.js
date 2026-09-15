@@ -445,6 +445,7 @@ const INVALIDATION_HANDLERS = {
     refreshSessionsQuietly();
     schedulePendingReviewsRefresh();
   },
+  browserSessionsChanged: () => document.dispatchEvent(new Event("browserSessionsChanged")),
   projectsChanged: () => refreshProjectsQuietly(),
   pinsChanged: () => loadPins().catch((error) => console.warn(error)),
   recentsChanged: () => loadRecentSessions().catch((error) => console.warn(error)),

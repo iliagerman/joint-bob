@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Browser session list now updates automatically when new sessions are created, without requiring a page reload.
+
 ## 1.33.0 — 2026-09-16
 
 - Background tasks now run independently across conversation turns on installed Linux and macOS with automatic app lifecycle management.

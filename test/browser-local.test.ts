@@ -8,6 +8,7 @@ import { getClusterNode } from "../src/cluster.js";
 import { addProject } from "../src/store.js";
 import { BrowserStore } from "../src/browser-store.js";
 import { browserOperation, browserRuntime, browserStatus, closeBrowserRuntime, configureBrowserExecutor, localBrowserOperation } from "../src/server/browser.js";
+import { watchClients } from "../src/server/state.js";
 import type { BrowserSessionView, BrowserStart } from "../src/browser-types.js";
 
 test("browser status reports local machine alongside inherited configuration", async () => {
@@ -30,17 +31,22 @@ test("an agent requires configuration but explicit starts and default changes ig
     return runtime.get(store.create(input).id);
   });
   const args: BrowserStart = { projectId: project.id, engine: "pi", conversationId: randomUUID(), appNodeId: node.id };
+  const notifications: unknown[] = [];
+  const socket = { OPEN: 1, readyState: 1, send: (payload: string) => notifications.push(JSON.parse(payload)) };
+  watchClients.set(project.id, new Set([socket as never]));
   try {
     await assert.rejects(browserOperation({operation:"start",args},{kind:"agent"}),/Settings/);
+    assert.deepEqual(notifications, [], "failed starts must not invalidate browser session discovery");
     const result = await browserOperation({ operation: "start", args }, { kind: "agent" },node.id) as { session: BrowserSessionView };
     assert.equal(result.session.nodeId,node.id);
+    assert.deepEqual(notifications, [{ type: "browserSessionsChanged" }]);
     await configureBrowserExecutor(node.id);
     await configureBrowserExecutor(null);
     assert.equal((await runtime.get(result.session.id)).state,"running","Changing default must not close or move an active browser");
     assert.equal(result.session.appNodeId, node.id);
     assert.deepEqual(actual, args);
     await assert.rejects(localBrowserOperation({ operation: "start", args: { ...args, appNodeId: randomUUID() } }, { kind: "agent" }), /no longer paired/i);
-  } finally { t.mock.restoreAll(); store.close(); await closeBrowserRuntime(); }
+  } finally { watchClients.delete(project.id); t.mock.restoreAll(); store.close(); await closeBrowserRuntime(); }
 });
 
 test("reopening an attached profile does not require its former app node to remain paired", async t => {
