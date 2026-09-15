@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 import { appSource, serverSource } from "./source.js";
 
@@ -61,6 +61,7 @@ test("the mark uses each agent's own colour in both themes", async () => {
 
   assert.match(styles, /\.session-agent-icon\.pi \{[^}]*var\(--accent\)/);
   assert.match(styles, /\.session-agent-icon\.claude \{[^}]*var\(--claude\)/);
+  assert.match(styles, /\.session-agent-icon\.kiro \{[^}]*var\(--kiro\)/);
 });
 
 /**
@@ -71,12 +72,15 @@ test("every brand mark is the vendor's real logo", async () => {
   const app = await appSource();
 
   const brands = functionBody(app, "const brandIconPaths = {");
-  for (const brand of ["aws", "google", "github", "openai", "claude", "pi", "custom"]) {
+  for (const brand of ["aws", "google", "github", "openai", "claude", "pi", "kiro", "custom"]) {
     assert.match(brands, new RegExp(`\\n  ${brand}: \\[`), `brandIconPaths is missing ${brand}`);
   }
 
   // Verbatim opening runs of each published path, so a hand-drawn stand-in cannot pass.
-  assert.ok(brands.includes("M6.763 10.036c0 .296.032.535.088.71"), "AWS is not the published mark");
+  // The AWS path is hoisted so the aws and kiro entries share it.
+  assert.ok(app.includes("M6.763 10.036c0 .296.032.535.088.71"), "AWS is not the published mark");
+  assert.match(brands, /\n  aws: \[awsMark\]/);
+  assert.match(brands, /\n  kiro: \[awsMark\]/);
   assert.ok(brands.includes("M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133"), "Google is not the published mark");
   assert.ok(brands.includes("M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385"), "GitHub is not the published mark");
   assert.ok(brands.includes("M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108"), "OpenAI is not the published mark");
@@ -109,4 +113,24 @@ test("the model picker names GPT with the OpenAI mark", async () => {
   const dialog = functionBody(app, "function renderModelDialog() {");
   assert.match(dialog, /brandIcon\(presentation\.providerIcon, "model-group-icon"\)/);
   assert.match(styles, /\.model-group-icon \{/);
+});
+
+/**
+ * Every conversation row draws its harness's mark by id, and the builder throws on an id
+ * it does not know, so a harness without a mark takes the whole list down with it.
+ */
+test("every registered harness has a brand mark", async () => {
+  const modules = (await readdir("src/harnesses")).filter((name) => name.endsWith(".harness.ts"));
+  const [app, ...harnesses] = await Promise.all([
+    appSource(),
+    ...modules.map((name) => readFile(`src/harnesses/${name}`, "utf8")),
+  ]);
+  assert.ok(harnesses.length >= 3, "expected the pi, claude and kiro harness modules");
+
+  const brands = functionBody(app, "const brandIconPaths = {");
+  for (const harness of harnesses) {
+    const id = /\bid: "([^"]+)"/.exec(harness)?.[1];
+    assert.ok(id, "harness module has no id");
+    assert.match(brands, new RegExp(`\\n  ${id}: \\[`), `brandIconPaths is missing the ${id} harness`);
+  }
 });

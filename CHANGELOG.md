@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 1.32.2 — 2026-09-15
+
+- Fixed the conversation list failing to render when it contained a Kiro conversation; Kiro conversations now show their own mark and colour.
+
 ## 1.32.1 — 2026-09-15
 
 - Conversations now automatically transfer ownership to the local node when the owner goes offline.
