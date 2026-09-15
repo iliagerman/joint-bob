@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
 import { usernameForUser } from "../auth.js";
-import { claimReviewNotifications } from "../conversation-reviews.js";
+import { claimReviewNotifications, releaseReviewNotification } from "../conversation-reviews.js";
 import { listPushSubscriberUserIds, notifyConversationReview } from "../push.js";
 import { type ReplicationBatch, replicationInvalidations } from "../replication.js";
 import { refreshHarnessSessions } from "../harnesses.js";
@@ -82,7 +82,10 @@ async function notifyPendingReviews(projectId: string): Promise<void> {
     const pending = new Map(sessions.filter((session) => session.reviewState === "needs_review" && !session.running).map((session) => [session.path, session]));
     for (const sessionPath of claimReviewNotifications(userId, projectId, [...pending.keys()])) {
       const session = pending.get(sessionPath);
-      if (session) await notifyConversationReview(userId, projectId, sessionPath, session.title || project.name);
+      if (!session) continue;
+      // A claim is one shot. If no device was reached, give it back so the next sweep retries.
+      const delivered = await notifyConversationReview(userId, projectId, sessionPath, session.title || project.name);
+      if (!delivered) releaseReviewNotification(userId, projectId, sessionPath);
     }
   }
 }

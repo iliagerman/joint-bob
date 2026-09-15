@@ -533,7 +533,9 @@ export async function receivePushSubscriptionEvents(events: PushSubscriptionEven
   }
 }
 
-export async function notifyConversationReview(userId: string, projectId: string, sessionPath: string, title: string): Promise<void> {
+/** Reports whether at least one device was actually reached, so a caller that burned a
+    one-shot notification claim can hand it back instead of recording a silent failure as sent. */
+export async function notifyConversationReview(userId: string, projectId: string, sessionPath: string, title: string): Promise<boolean> {
   const keys = vapidKeys();
   const rows = pushDatabase().prepare(`
     SELECT subscription, vapid_public_key, vapid_private_key FROM push_session_subscriptions
@@ -541,7 +543,7 @@ export async function notifyConversationReview(userId: string, projectId: string
       AND (project_id = ? OR project_id = '*')
       AND (session_path = ? OR session_path = '*')
   `).all(userId, projectId, sessionPath) as unknown as SubscriptionRow[];
-  if (!rows.length) return;
+  if (!rows.length) return false;
 
   const payload = JSON.stringify({
     title: `${title || "Conversation"} needs review`,
@@ -559,15 +561,18 @@ export async function notifyConversationReview(userId: string, projectId: string
     },
   }));
   const deadEndpoints = new Set<string>();
-  await Promise.all(records.map(async ({ subscription, vapidDetails }) => {
+  const delivered = await Promise.all(records.map(async ({ subscription, vapidDetails }) => {
     try {
       await webpush.sendNotification(subscription, payload, { vapidDetails });
+      return true;
     } catch (error) {
       const statusCode = typeof error === "object" && error && "statusCode" in error ? Number(error.statusCode) : 0;
       if (statusCode === 404 || statusCode === 410) deadEndpoints.add(subscription.endpoint);
       else console.warn("Push notification failed", error);
+      return false;
     }
   }));
 
   for (const endpoint of deadEndpoints) await deletePushSubscription(endpoint);
+  return delivered.some(Boolean);
 }

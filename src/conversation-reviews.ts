@@ -327,6 +327,15 @@ export function setConversationReviewNotifications(userId: string, projectId: st
   db.prepare("INSERT OR IGNORE INTO conversation_review_notification_preferences (user_id, project_id, session_path) VALUES (?, ?, ?)").run(userId, projectId, sessionPath);
 }
 
+/** Hands a claim back when the send reached no device, so the next sweep retries instead of
+    recording a silent failure as a notification the user already received. */
+export function releaseReviewNotification(userId: string, projectId: string, sessionPath: string): void {
+  reviewDatabase().prepare(`
+    UPDATE conversation_review_states SET notified = 0
+    WHERE user_id = ? AND project_id = ? AND session_path = ?
+  `).run(userId, projectId, sessionPath);
+}
+
 export function claimReviewNotifications(userId: string, projectId: string, sessionPaths: string[]): string[] {
   if (!sessionPaths.length) return [];
   const db = reviewDatabase();
