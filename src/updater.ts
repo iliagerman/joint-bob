@@ -1,6 +1,7 @@
 // Node self-update: reads the GitHub release feed, records update state in the
 // node-local database, and hands the actual swap to the detached helper in
 // scripts/self-update.mjs, which survives the service restart it triggers.
+import { describeError } from "./error-description.js";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, openSync } from "node:fs";
@@ -94,13 +95,6 @@ export function validateReleasePayload(payload: unknown): ReleaseInfo {
     publishedAt: typeof release.published_at === "string" ? release.published_at : null,
     htmlUrl: typeof release.html_url === "string" ? release.html_url : null,
   };
-}
-
-/** "fetch failed" on its own says nothing; the cause chain carries the DNS or socket error. */
-function describeError(error: unknown): string {
-  const parts: string[] = [];
-  for (let current = error; current instanceof Error; current = current.cause) parts.push(current.message);
-  return parts.length ? parts.join(": ") : String(error);
 }
 
 async function fetchRelease(feedPath: string): Promise<ReleaseInfo> {

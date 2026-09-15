@@ -41,18 +41,42 @@ export function conversationWorkActive(engine: HarnessId, sessionId: string): bo
   return listConversationWork(engine, sessionId).some((work) => agentWorkActive(work.summary));
 }
 
+function failActiveTasks(summary: AgentRunSummary, error: string): AgentRunSummary {
+  return {
+    ...summary,
+    status: "failed",
+    tasks: summary.tasks.map((task) => ["queued", "running"].includes(task.status) ? { ...task, status: "failed", error } : task),
+  };
+}
+
 export function failUnobservedConversationWork(engine: HarnessId, sessionId: string, error: string): boolean {
   let changed = false;
   for (const work of listConversationWork(engine, sessionId)) {
     if (work.descriptor || !agentWorkActive(work.summary)) continue;
-    recordConversationWork({ ...work, summary: {
-      ...work.summary,
-      status: "failed",
-      tasks: work.summary.tasks.map((task) => ["queued", "running"].includes(task.status) ? { ...task, status: "failed", error } : task),
-    } });
+    recordConversationWork({ ...work, summary: failActiveTasks(work.summary, error) });
     changed = true;
   }
   return changed;
+}
+
+/**
+ * A dashboard lives inside the agent process that spawned it, so after a restart one
+ * that does not answer at all is gone for good: its runs would otherwise stay "running"
+ * forever and keep every viewer polling. A dashboard that answers keeps reporting its runs.
+ */
+export async function retireUnreachableConversationWorkAfterRestart(): Promise<number> {
+  let retired = 0;
+  await Promise.all(listConversationWork().filter((work) => work.descriptor && agentWorkActive(work.summary)).map(async (work) => {
+    let summary: AgentRunSummary;
+    try {
+      summary = await refreshAgentRun({ ...work.descriptor!, summary: work.summary });
+    } catch (error) {
+      summary = failActiveTasks(work.summary, `Joint Bob restarted and the run's dashboard is unreachable: ${error instanceof Error ? error.message : String(error)}`);
+      retired += 1;
+    }
+    recordConversationWork({ ...work, summary });
+  }));
+  return retired;
 }
 
 export function failUnobservedConversationWorkAfterRestart(): number {

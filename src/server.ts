@@ -2,7 +2,7 @@
 // load, so they are imported here in the original registration order: the /api
 // auth gate in routes/core must run before every protected route, and the error
 // handler in routes/updates must come last.
-import { failUnobservedConversationWorkAfterRestart } from "./conversation-work.js";
+import { failUnobservedConversationWorkAfterRestart, retireUnreachableConversationWorkAfterRestart } from "./conversation-work.js";
 import { openMergeTransactionCount, recoverMergeTransactions } from "./merge-journal.js";
 import { getProject } from "./store.js";
 import { listTasks, updateTask } from "./tasks.js";
@@ -82,6 +82,10 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     if (count > 0) console.log(`Recovering ${count} interrupted merge transaction(s) before accepting traffic`);
   }).catch(() => undefined);
   recoverMerges()
+    .then(async () => {
+      const retired = await retireUnreachableConversationWorkAfterRestart();
+      if (retired) console.log(`Retired ${retired} agent run(s) whose dashboard did not survive the restart`);
+    })
     .then(() => {
   const bindHost = process.env.JOINT_BOB_BIND_HOST || "0.0.0.0";
   server.listen(port, bindHost, () => {

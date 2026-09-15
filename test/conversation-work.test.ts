@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createServer } from "node:http";
 import { agentRunDescriptor } from "../src/agent-run-monitor.js";
-import { applyConversationWork, conversationWorkActive, failUnobservedConversationWorkAfterRestart, recordConversationWork, refreshConversationWork, listConversationWork } from "../src/conversation-work.js";
+import { applyConversationWork, conversationWorkActive, failUnobservedConversationWorkAfterRestart, recordConversationWork, refreshConversationWork, retireUnreachableConversationWorkAfterRestart, listConversationWork } from "../src/conversation-work.js";
 import type { SessionSummary } from "../src/types.js";
 import { syncConversationReviewStates } from "../src/conversation-reviews.js";
 
@@ -55,6 +55,50 @@ test("restart retires native child work that has no surviving observer", () => {
   const [work] = listConversationWork("claude", "restart-parent");
   assert.equal(work.summary.status, "failed");
   assert.match(work.summary.tasks[0].error ?? "", /restarted before reporting task completion/);
+});
+
+test("restart retires dashboard-tracked work whose dashboard is gone, keeping finished results", async () => {
+  // A dashboard lives inside the Pi process the restart ended; a port that was
+  // listening and is now closed is exactly what such a run leaves behind.
+  const closed = createServer();
+  await new Promise<void>((resolve) => closed.listen(0, "127.0.0.1", resolve));
+  const address = closed.address();
+  assert.ok(address && typeof address !== "string");
+  await new Promise<void>((resolve) => closed.close(() => resolve()));
+  const descriptor = agentRunDescriptor({ type: "tool_execution_end", toolName: "multi_agent_run", result: { details: {
+    runId: "gone", dashboardUrl: `http://127.0.0.1:${address.port}`, tasks: [{ agent: "default", role: "worker" }],
+  } } });
+  assert.ok(descriptor);
+  recordConversationWork({ engine: "pi", sessionId: "gone-parent", descriptor, summary: {
+    runId: "gone", status: "running", tasks: [
+      { name: "finished", role: "worker", status: "succeeded", finalOutput: "Delivered" },
+      { name: "lost", role: "worker", status: "queued" },
+    ],
+  } });
+  assert.equal(await retireUnreachableConversationWorkAfterRestart(), 1);
+  assert.equal(conversationWorkActive("pi", "gone-parent"), false, "a dead dashboard must not keep the conversation running forever");
+  const [work] = listConversationWork("pi", "gone-parent");
+  assert.equal(work.summary.status, "failed");
+  assert.deepEqual(work.summary.tasks.map((task) => task.status), ["succeeded", "failed"]);
+  assert.equal(work.summary.tasks[0].finalOutput, "Delivered");
+  assert.match(work.summary.tasks[1].error ?? "", /dashboard/);
+  assert.match(work.summary.tasks[1].error ?? "", /ECONNREFUSED/, "the recorded error names why the dashboard could not be reached");
+});
+
+test("restart keeps dashboard-tracked work whose dashboard still answers", async () => {
+  const server = createServer((_request, response) => response.end(JSON.stringify({ runs: [{ runId: "alive", status: "running", tasks: [] }] })));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const descriptor = agentRunDescriptor({ type: "tool_execution_end", toolName: "multi_agent_run", result: { details: {
+      runId: "alive", dashboardUrl: `http://127.0.0.1:${address.port}`, tasks: [],
+    } } });
+    assert.ok(descriptor);
+    recordConversationWork({ engine: "pi", sessionId: "alive-parent", descriptor, summary: descriptor.summary });
+    assert.equal(await retireUnreachableConversationWorkAfterRestart(), 0);
+    assert.equal(conversationWorkActive("pi", "alive-parent"), true);
+  } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
 });
 
 test("a restarted dashboard retires orphaned runs without losing observed task results", async () => {

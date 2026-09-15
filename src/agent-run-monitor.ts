@@ -1,3 +1,4 @@
+import { describeError } from "./error-description.js";
 import type { AgentRunSummary, AgentRunTaskSummary } from "./types.js";
 
 export interface AgentRunDescriptor { runId: string; stateUrl: string; summary: AgentRunSummary }
@@ -70,7 +71,7 @@ export async function refreshAgentRun(descriptor: AgentRunDescriptor): Promise<A
   try {
     response = await fetch(descriptor.stateUrl, { signal: AbortSignal.timeout(2_000) });
   } catch (error) {
-    throw new Error(`Agent dashboard request failed: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`Agent dashboard request failed: ${describeError(error)}`);
   }
   if (!response.ok) throw new Error(`Agent dashboard returned ${response.status}`);
   let payload: RecordValue | undefined;
