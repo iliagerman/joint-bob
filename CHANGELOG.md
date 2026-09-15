@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 1.32.7 — 2026-09-15
+
+- Phone push notifications now work across cluster nodes: the mesh route that replicates phone subscriptions between machines was rejecting peer credentials with 401, so subscriptions never left the node they were created on.
+
 ## 1.32.6 — 2026-09-15
 
 - Conversations now reopen correctly from Recents after switching between agents.

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createDecipheriv, createHash, randomUUID } from "node:crypto";
+import { createServer } from "node:http";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -217,5 +218,40 @@ test("malformed replication events are rejected before anything is written", asy
     };
     await assert.rejects(push.receivePushSubscriptionEvents([forged]), /entity key/i);
     assert.deepEqual(await push.listPushSubscriberUserIds("any-project"), []);
+  });
+});
+
+test("the cluster push events route accepts a peer machine token over HTTP", async () => {
+  await withDataDir(async () => {
+    // Untagged imports share the server's module graph, so the route and this
+    // test operate on the same database.
+    const { createApp } = await import(`../src/app.js?push-route-${Date.now()}`);
+    const { getClusterMachineToken } = await import("../src/cluster.js");
+    const push = await import("../src/push.js") as PushModule;
+    const server = createServer(createApp());
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Test server did not bind");
+      const base = `http://127.0.0.1:${address.port}`;
+      await push.savePushSubscription(subscription, "user-a", "*", "*", "Joint Bob");
+      const events = await push.pushSubscriptionEventsForPeer(randomUUID());
+      assert.equal(events.length, 1);
+
+      const unauthenticated = await fetch(`${base}/api/cluster/push/events`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ events }),
+      });
+      assert.equal(unauthenticated.status, 401);
+
+      const response = await fetch(`${base}/api/cluster/push/events`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${await getClusterMachineToken()}` },
+        body: JSON.stringify({ events }),
+      });
+      assert.equal(response.status, 200, await response.clone().text());
+      assert.deepEqual(await response.json(), { received: [events[0].id] });
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
   });
 });
