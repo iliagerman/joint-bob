@@ -84,7 +84,8 @@ test("ordinary node selection does not open a new conversation", async () => {
   const app = await appSource();
   const start = app.indexOf('elements.chatNodeSelect.addEventListener("change"');
   const handler = app.slice(start, app.indexOf('elements.chatHarnessSelect.addEventListener', start));
-  assert.match(handler, /if \(!activeChatSession\(\)\) \{\s*state\.activeSessionId = null;\s*return;/);
+  assert.match(handler, /const session = activeChatSession\(\);[\s\S]*if \(!session\) \{[\s\S]*state\.activeSessionId = null;[\s\S]*return;/);
+  assert.doesNotMatch(handler, /openSession\([^\n]*newSessionPath/);
 });
 
 test("removing a conversation uses its identity", async () => {

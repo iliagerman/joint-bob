@@ -1,4 +1,5 @@
 import { chordMatches, shortcutPrefix } from "../canvas-layout.js";
+import { sessionHasHarnessIdentity } from "../harness-metadata.js";
 import { api } from "./api.js";
 import { attachDigitShortcuts, isRowSelectorQuery, LIST_SHORTCUT_LIMIT, shortcutIndexBadge } from "./list-shortcuts.js";
 import { elements } from "./elements.js";
@@ -31,8 +32,10 @@ function recentSessionKey(entry) {
   return entry.engine && entry.sessionId ? `${entry.engine}:${entry.sessionId}` : transcriptKey(entry.sessionPath);
 }
 
-function sessionRecentKey(session) {
-  return session?.harnessId && session?.id ? `${session.harnessId}:${session.id}` : transcriptKey(session.path);
+function sessionMatchesRecent(session, entry) {
+  if (entry.engine && entry.sessionId) return sessionHasHarnessIdentity(session, entry.engine, entry.sessionId);
+  return [session.path, ...(session.segments || []).map((segment) => segment.path)]
+    .some((path) => path && transcriptKey(path) === transcriptKey(entry.sessionPath));
 }
 
 export async function loadRecentSessions() {
@@ -89,7 +92,7 @@ function applyRecentSessionActivity(sessionsByProject) {
   state.recentSessions = state.recentSessions.map((entry) => {
     const sessions = sessionsByProject.get(entry.projectId);
     if (!sessions) return entry;
-    const session = sessions.find((candidate) => sessionRecentKey(candidate) === recentSessionKey(entry));
+    const session = sessions.find((candidate) => sessionMatchesRecent(candidate, entry));
     const updatedAt = session?.updatedAt ?? session?.createdAt ?? null;
     if (!updatedAt || updatedAt === entry.updatedAt) return entry;
     const changed = { ...entry, updatedAt };
@@ -152,13 +155,13 @@ function forgetRecentSession(entry) {
 async function openRecentSession(entry) {
   elements.recentSessionsDialog.close();
   if (state.activeProjectId !== entry.projectId) await selectProject(entry.projectId);
-  const session = state.sessions.find((candidate) => sessionRecentKey(candidate) === recentSessionKey(entry));
+  const session = state.sessions.find((candidate) => sessionMatchesRecent(candidate, entry));
   if (!session) {
     forgetRecentSession(entry);
     toast("That conversation is no longer available");
     return;
   }
-  openListedSession(session);
+  await openListedSession(session);
 }
 
 /** Rows 1-10 carry a digit shortcut; the list is renumbered whenever the search narrows it. */

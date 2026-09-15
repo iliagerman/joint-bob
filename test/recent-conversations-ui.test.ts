@@ -238,9 +238,13 @@ test("the recents dialog shows one row per conversation, dated by its latest mes
   assert.match(render.slice(0, render.indexOf("\n}\n")), /mergeRecentSessions\(state\.recentSessions\)/);
   assert.match(app, /const byActivity = \[\.\.\.mergeRecentSessions\(state\.recentSessions\)\]\.sort\(/);
 
-  // Listing and opening match copies too, so a merged row still resolves to a live session.
+  // Listing and opening match every harness segment, so a recent stored before an
+  // agent switch still resolves to the listed logical conversation.
+  assert.match(app, /function sessionMatchesRecent\(session, entry\)/);
+  assert.match(app, /sessionHasHarnessIdentity\(session, entry\.engine, entry\.sessionId\)/);
   const apply = app.slice(app.indexOf("function applyRecentSessionActivity(sessionsByProject)"));
-  assert.match(apply.slice(0, apply.indexOf("\n}")), /sessionRecentKey\(candidate\) === recentSessionKey\(entry\)/);
+  assert.match(apply.slice(0, apply.indexOf("\n}")), /sessionMatchesRecent\(candidate, entry\)/);
   const open = app.slice(app.indexOf("async function openRecentSession(entry)"));
-  assert.match(open.slice(0, open.indexOf("\n}")), /sessionRecentKey\(candidate\) === recentSessionKey\(entry\)/);
+  assert.match(open.slice(0, open.indexOf("\n}")), /sessionMatchesRecent\(candidate, entry\)/);
+  assert.match(open.slice(0, open.indexOf("\n}")), /await openListedSession\(session\)/);
 });

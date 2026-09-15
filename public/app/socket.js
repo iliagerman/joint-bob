@@ -154,8 +154,9 @@ export function openSession(sessionPath, title = "New conversation", preserveCha
     setConnecting(false);
     startHeartbeat();
   });
-  socket.addEventListener("close", () => {
+  socket.addEventListener("close", (event) => {
     if (state.socket !== socket) return;
+    console.info("Conversation socket closed", { code: event.code, reason: event.reason || "none", engine: state.engine });
     stopHeartbeat();
     setStatus("Connecting…", false, true);
     setConnecting(true, "Connecting…");
@@ -225,6 +226,12 @@ function handleSocketPayload(payload, scrollOnReady = false) {
           ? `New ${harnessLabel(state.harnesses, state.engine)} conversation`
           : `${harnessLabel(state.harnesses, state.engine)} conversation`;
     seedPromptHistory(payload.messages);
+    console.info("Conversation transcript ready", {
+      engine: payload.engine,
+      messages: payload.messages?.length || 0,
+      characters: payload.messages?.reduce((total, message) => total + String(message.text || "").length, 0) || 0,
+      segments: payload.segments?.length || 1,
+    });
     const resumeFromTop = rerenderChatTranscript(payload.messages, payload.segments);
     // A fresh open starts on the newest message; a reconnect re-render follows
     // if the reader was following and otherwise puts them back where they were.
@@ -404,6 +411,7 @@ function handleSocketPayload(payload, scrollOnReady = false) {
     return;
   }
   if (payload.type === "sessionFileChanged") {
+    console.info("Conversation transcript changed on disk; reconnecting", { engine: state.engine });
     // The session file changed on disk after synchronization. Reconnect so the
     // server loads the updated conversation; "ready" re-renders the messages.
     openSession(state.activeSessionPath, elements.sessionTitle.textContent || "Conversation", true, Boolean(state.activeTaskId));

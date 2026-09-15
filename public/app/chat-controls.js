@@ -1,7 +1,7 @@
 import { api, savePreferencesInBackground } from "./api.js";
 import { syncBrowserButton } from "./browser.js";
 import { clearThinkingBubble } from "./chat-transcript.js";
-import { changeReasoningLevel, hideCommandAutocomplete, renderCommandAutocomplete, renderReasoningOptions, renderToolsDialog, syncModelButton } from "./composer-dialogs.js";
+import { changeReasoningLevel, hideCommandAutocomplete, renderReasoningOptions, renderToolsDialog, syncModelButton } from "./composer-dialogs.js";
 import { elements } from "./elements.js";
 import { shortSessionTitle, syncChatTitleFromSessions } from "./layout.js";
 import { renderSessions } from "./session-list.js";
@@ -252,19 +252,11 @@ elements.chatNodeSelect.addEventListener("change", async () => {
 elements.chatHarnessSelect.addEventListener("change", () => {
   const harness = state.harnesses.find((candidate) => candidate.id === elements.chatHarnessSelect.value);
   if (!harness || harness.id === state.engine) return;
-  state.activeTaskId = null;
-  state.engine = harness.id;
-  state.activeSessionPath = harness.newSessionPath;
-  state.activeSessionId = null;
-  if (state.preferencesLoaded) savePreferencesInBackground({ activeSessionPath: state.activeSessionPath, activeSessionId: null });
-  syncEngineUI();
-  state.commands = [];
-  state.commandsLoading = false;
-  state.commandsKey = null;
-  state.commandAutocompleteIndex = 0;
-  renderCommandAutocomplete();
+  // A harness switch continues this logical conversation. Keep its identity until
+  // the server confirms the new segment; a rejected switch must not become a draft.
+  elements.chatHarnessSelect.value = state.engine;
   if (!sendSocket({ type: "setEngine", engine: harness.id })) {
-    openSession(harness.newSessionPath, `New ${harness.label} conversation`);
+    toast("Conversation is not connected yet");
   }
 });
 elements.reasoningLevelSelect.addEventListener("change", changeReasoningLevel);

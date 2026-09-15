@@ -14,6 +14,7 @@
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <script src="/boot.js"></script>
+    <script src="/client-logs.js"></script>
     <link rel="stylesheet" href="/styles.css" />
     <link rel="stylesheet" href="/browser.css" />
     <link rel="stylesheet" href="/vendor/codemirror/lib/codemirror.css" />
@@ -442,6 +443,7 @@
           <button class="settings-tab" type="button" data-settings-tab="resources" role="tab" id="settingsTab-resources" aria-controls="settingsPanel-resources" aria-selected="false" tabindex="-1" data-testid="settings-tab-resources">Resources</button>
           <button class="settings-tab" type="button" data-settings-tab="shortcuts" role="tab" id="settingsTab-shortcuts" aria-controls="settingsPanel-shortcuts" aria-selected="false" tabindex="-1" data-testid="settings-tab-shortcuts">Shortcuts</button>
           <button class="settings-tab" type="button" data-settings-tab="updates" role="tab" id="settingsTab-updates" aria-controls="settingsPanel-updates" aria-selected="false" tabindex="-1" data-testid="settings-tab-updates">Updates</button>
+          <button class="settings-tab" type="button" data-settings-tab="logs" role="tab" id="settingsTab-logs" aria-controls="settingsPanel-logs" aria-selected="false" tabindex="-1" data-testid="settings-tab-logs">Client logs</button>
           <button class="settings-tab" type="button" data-settings-tab="changelog" role="tab" id="settingsTab-changelog" aria-controls="settingsPanel-changelog" aria-selected="false" tabindex="-1" data-testid="settings-tab-changelog">Changelog</button>
         </div>
 
@@ -690,6 +692,15 @@
             <div class="updates-node-list" id="updatesNodeList" data-testid="updates-node-list"></div>
             <button class="ghost" type="button" id="updatesInstallAllButton" data-testid="updates-install-all-button">Update all nodes</button>
           </fieldset>
+        </section>
+
+        <section class="settings-panel" id="settingsPanel-logs" role="tabpanel" aria-labelledby="settingsTab-logs" tabindex="0" hidden>
+          <p>Console output and uncaught browser errors from this tab. Logs survive page reloads, stay on this device, and clear when the tab closes.</p>
+          <pre class="client-log-output" id="settingsClientLogs" data-testid="settings-client-logs-output" tabindex="0">No client logs captured.</pre>
+          <div class="github-group-actions">
+            <button class="ghost" type="button" id="settingsClientLogsCopyButton" data-testid="settings-client-logs-copy-button">Copy logs</button>
+            <button class="ghost danger" type="button" id="settingsClientLogsClearButton" data-testid="settings-client-logs-clear-button">Clear logs</button>
+          </div>
         </section>
 
         <section class="settings-panel" id="settingsPanel-changelog" role="tabpanel" aria-labelledby="settingsTab-changelog" tabindex="0" hidden>

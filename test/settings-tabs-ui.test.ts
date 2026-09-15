@@ -13,7 +13,7 @@ test("settings tabs absorb notification, secret, and cluster configuration", asy
 
   // The tab strip is a real tablist so screen readers and arrow keys work.
   assert.match(html, /class="settings-tabs"[^>]*role="tablist"/);
-  for (const tab of ["account", "notifications", "secrets", "cluster", "workspaces", "engines", "resources"]) {
+  for (const tab of ["account", "notifications", "secrets", "cluster", "workspaces", "engines", "resources", "logs"]) {
     assert.match(html, new RegExp(`data-settings-tab="${tab}"[^>]*role="tab"`));
     assert.match(html, new RegExp(`id="settingsPanel-${tab}"[^>]*role="tabpanel"`));
   }
@@ -97,5 +97,5 @@ test("settings tabs absorb notification, secret, and cluster configuration", asy
 
   // Installed PWA clients must not keep the old shell.
   for (const id of ["settings-resource-skills-paths", "settings-resource-prompts-paths", "settings-resource-rules-paths", "settings-resource-plugins-paths", "project-resource-skills-paths", "project-resource-prompts-paths", "project-resource-rules-paths", "project-resource-plugins-paths"]) assert.match(html, new RegExp(`data-testid="${id}"`));
-  assert.match(serviceWorker, /joint-bob-v191/);
+  assert.match(serviceWorker, /joint-bob-v192/);
 });

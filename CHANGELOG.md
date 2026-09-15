@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Conversations now keep their identity across agent switches, reopen correctly from Recents, bound large browser transcripts, and expose reload-safe client diagnostics in Settings.
+
 ## 1.32.5 — 2026-09-15
 
 - Empty conversations now switch nodes silently instead of showing an ownership prompt.

@@ -20,3 +20,10 @@ export function harnessIdFromPath(harnesses, sessionPath) {
 export function harnessLabel(harnesses, id) {
   return harnesses.find((harness) => harness.id === id)?.label || id;
 }
+
+/** A listed logical conversation can be addressed through any harness segment it contains. */
+export function sessionHasHarnessIdentity(session, engine, sessionId) {
+  if (!engine || !sessionId) return false;
+  if ((session.harnessId || session.engine) === engine && (session.id || session.sessionId) === sessionId) return true;
+  return session.segments?.some((segment) => segment.engine === engine && segment.sessionId === sessionId) || false;
+}

@@ -10,6 +10,36 @@ export interface ConversationSegmentView {
   messages: ChatMessage[];
 }
 
+const TRANSCRIPT_MESSAGE_LIMIT = 500;
+const TRANSCRIPT_CHARACTER_LIMIT = 2_000_000;
+const TRANSCRIPT_MESSAGE_CHARACTER_LIMIT = 20_000;
+
+/** Keeps browser transcript payloads below mobile WebKit's memory-kill range. */
+export function boundTranscriptMessages<T extends ChatMessage & { segment?: number }>(messages: T[]): T[] {
+  const retained: T[] = [];
+  let characters = 0;
+  for (let index = messages.length - 1; index >= 0 && retained.length < TRANSCRIPT_MESSAGE_LIMIT; index -= 1) {
+    const message = messages[index];
+    const text = message.text.length > TRANSCRIPT_MESSAGE_CHARACTER_LIMIT
+      ? `… showing last ${TRANSCRIPT_MESSAGE_CHARACTER_LIMIT.toLocaleString("en-US")} characters …\n${message.text.slice(-TRANSCRIPT_MESSAGE_CHARACTER_LIMIT)}`
+      : message.text;
+    if (retained.length && characters + text.length > TRANSCRIPT_CHARACTER_LIMIT) break;
+    retained.push({ ...message, text });
+    characters += text.length;
+  }
+  retained.reverse();
+  const omitted = messages.length - retained.length;
+  if (!omitted) return retained;
+  const segment = retained[0]?.segment;
+  return [{
+    id: "transcript-trimmed",
+    role: "toolResult",
+    toolName: "Transcript trimmed",
+    text: `${omitted.toLocaleString("en-US")} earlier messages omitted from this browser view to keep it responsive. The transcript remains on disk.`,
+    ...(segment === undefined ? {} : { segment }),
+  } as T, ...retained];
+}
+
 /** One flat transcript where every message knows its segment, plus the segment engines in order. */
 export function flattenSegments(prior: ConversationSegmentView[], activeEngine: string, activeMessages: ChatMessage[]): { segments: Array<{ engine: string }>; messages: Array<ChatMessage & { segment: number }> } {
   return {
@@ -23,10 +53,10 @@ export function flattenSegments(prior: ConversationSegmentView[], activeEngine: 
 
 /** Builds the segmented transcript for an open conversation; single-segment chats stay plain. */
 export async function conversationTranscriptPayload(projectId: string, activeEngine: ConversationEngine, activeSessionId: string | null | undefined, listedSessions: SessionSummary[] | undefined, activeMessages: ChatMessage[]) {
-  if (!activeSessionId) return { messages: activeMessages, segments: [] as Array<{ engine: string }>, conversationId: undefined as string | undefined };
+  if (!activeSessionId) return { messages: boundTranscriptMessages(activeMessages), segments: [] as Array<{ engine: string }>, conversationId: undefined as string | undefined };
   const record = await getConversationRecord(projectId, activeEngine, activeSessionId);
   const conversationId = record?.conversationId ?? activeSessionId;
-  if (!record) return { messages: activeMessages, segments: [], conversationId };
+  if (!record) return { messages: boundTranscriptMessages(activeMessages), segments: [], conversationId };
   const prior = await loadConversationSegments(projectId, conversationId, (candidate) => {
     if (candidate.engine === activeEngine && candidate.sessionId === activeSessionId) return undefined;
     // A switched conversation lists only its newest segment, so older transcripts
@@ -38,8 +68,9 @@ export async function conversationTranscriptPayload(projectId: string, activeEng
     }
     return undefined;
   });
-  if (!prior.length) return { messages: activeMessages, segments: [], conversationId };
-  return { ...flattenSegments(prior, activeEngine, activeMessages), conversationId };
+  if (!prior.length) return { messages: boundTranscriptMessages(activeMessages), segments: [], conversationId };
+  const flattened = flattenSegments(prior, activeEngine, activeMessages);
+  return { ...flattened, messages: boundTranscriptMessages(flattened.messages), conversationId };
 }
 
 /**

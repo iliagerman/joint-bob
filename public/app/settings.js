@@ -71,6 +71,14 @@ export async function showWhatsNew(lastSeenVersion) {
   elements.whatsNewDialog.showModal();
 }
 
+function renderClientLogs() {
+  const entries = window.jointBobClientLogs?.entries() || [];
+  elements.settingsClientLogs.textContent = entries.join("\n") || "No client logs captured.";
+  elements.settingsClientLogsCopyButton.disabled = entries.length === 0;
+  elements.settingsClientLogsClearButton.disabled = entries.length === 0;
+  elements.settingsClientLogs.scrollTo(0, elements.settingsClientLogs.scrollHeight);
+}
+
 /** Shows one settings panel and hides the rest, keeping the tablist's roving tabindex correct. */
 function selectSettingsTab(name) {
   elements.settingsForm.dataset.tab = name;
@@ -81,6 +89,7 @@ function selectSettingsTab(name) {
   }
   for (const panel of elements.settingsPanels) panel.hidden = panel.id !== `settingsPanel-${name}`;
   if (name === "cluster") void loadBrowserStatus();
+  if (name === "logs") renderClientLogs();
 }
 
 let runtimeDefaults;
@@ -296,6 +305,16 @@ for (const tab of elements.settingsTabs) {
   });
 }
 elements.cancelSettingsButton.addEventListener("click", () => elements.settingsDialog.close());
+elements.settingsClientLogsCopyButton.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(window.jointBobClientLogs?.entries().join("\n") || "");
+    toast("Client logs copied");
+  } catch (error) { toast(error.message || "Could not copy client logs"); }
+});
+elements.settingsClientLogsClearButton.addEventListener("click", () => window.jointBobClientLogs?.clear());
+window.addEventListener("joint-bob-client-logs-changed", () => {
+  if (elements.settingsForm.dataset.tab === "logs") renderClientLogs();
+});
 elements.settingsLogoutButton.addEventListener("click", async () => {
   try {
     await api("/api/auth/logout", { method: "POST" });

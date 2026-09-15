@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { canvasPaneEngine } from "../public/canvas-layout.js";
-import { harnessIdFromPath, harnessLabel } from "../public/harness-metadata.js";
+import { harnessIdFromPath, harnessLabel, sessionHasHarnessIdentity } from "../public/harness-metadata.js";
 
 const harnesses = [
   { id: "pi", label: "Pi", newSessionPath: "new" },
@@ -19,4 +19,19 @@ test("harness metadata resolves every supported session path without native defa
   assert.equal(harnessLabel(harnesses, "late-adapter"), "late-adapter");
   assert.equal(canvasPaneEngine({ sessionPath: "draft:kiro:abc" }, harnesses), "kiro");
   assert.throws(() => harnessIdFromPath(harnesses.filter(({ newSessionPath }) => newSessionPath !== "new"), "/legacy/transcript.jsonl"), /resolve harness/);
+});
+
+test("a listed conversation matches each harness segment in its chain", () => {
+  const session = {
+    harnessId: "kiro",
+    id: "kiro-session",
+    segments: [
+      { engine: "pi", sessionId: "pi-session", path: "/pi.jsonl" },
+      { engine: "kiro", sessionId: "kiro-session", path: "/kiro.jsonl" },
+    ],
+  };
+
+  assert.equal(sessionHasHarnessIdentity(session, "kiro", "kiro-session"), true);
+  assert.equal(sessionHasHarnessIdentity(session, "pi", "pi-session"), true);
+  assert.equal(sessionHasHarnessIdentity(session, "claude", "other-session"), false);
 });

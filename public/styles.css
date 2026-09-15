@@ -1581,6 +1581,7 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 .project-type-add input { flex: 1; min-width: 0; }
 .project-type-add button { flex: 0 0 auto; }
 
+.client-log-output { min-height: 280px; margin: 0; padding: 12px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--field); color: var(--text); font-family: var(--mono); font-size: 11px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 .changelog-list { display: grid; gap: 12px; max-height: 46dvh; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
 .changelog-entry { padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
 .changelog-entry h3 { display: flex; align-items: baseline; gap: 8px; margin: 0; color: var(--text); font-family: var(--mono); font-size: 12px; font-weight: 600; }
