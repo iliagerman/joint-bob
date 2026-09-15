@@ -43,7 +43,7 @@ after(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
-test("scheduled conversation waits for the remote active run and can be paused without stealing ownership", { timeout: 30000 }, async () => {
+test("scheduled conversation keeps its active run isolated while edits apply to the next execution", { timeout: 45000 }, async () => {
   const project = nodeA.projects[0];
   const listed = await api<{ sessions: SessionView[] }>(nodeA, sessionA, "GET", `/projects/${project.id}/sessions`);
   const source = listed.body.sessions.find(session => session.harnessId === "pi")!;
@@ -63,10 +63,30 @@ test("scheduled conversation waits for the remote active run and can be paused w
     await new Promise(resolve => setTimeout(resolve, 1200));
     assert.equal(db.prepare("SELECT status FROM cron_runs WHERE task_id = ?").get(id)?.status, "waiting", "must wait, not fail or dispatch while remote agent is active");
     assert.equal(db.prepare("SELECT owner_node_id FROM conversation_ownership WHERE session_id = ?").get(source.id)?.owner_node_id, nodeA.nodeId);
-    const paused = await api(nodeA, sessionA, "POST", "/cron", { nodeId: nodeB.nodeId, command: { action: "update", id, input: { ...input, enabled: false } } });
-    assert.equal(paused.status, 200, JSON.stringify(paused.body));
-    while (db.prepare("SELECT status FROM cron_runs WHERE task_id = ?").get(id)?.status === "waiting" && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
-    assert.equal(db.prepare("SELECT status FROM cron_runs WHERE task_id = ?").get(id)?.status, "failed");
+    const nextInput = { ...input, name: "Updated while running", prompt: "Use this next time", enabled: false };
+    const edited = await api<{ task: { name: string; prompt: string; enabled: boolean } }>(nodeA, sessionA, "POST", "/cron", { nodeId: nodeB.nodeId, command: { action: "update", id, input: nextInput } });
+    assert.equal(edited.status, 200, JSON.stringify(edited.body));
+    assert.equal(edited.body.task.name, nextInput.name);
+    assert.equal(edited.body.task.prompt, nextInput.prompt);
+    assert.equal(edited.body.task.enabled, false);
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    assert.equal(db.prepare("SELECT status FROM cron_runs WHERE task_id = ?").get(id)?.status, "waiting", "editing or pausing must not interrupt the active run");
+    publishPiRuntime(runtimeDb, runtime, false);
+    const finishDeadline = Date.now() + 30000;
+    while (db.prepare("SELECT status FROM cron_runs WHERE task_id = ?").get(id)?.status === "waiting" && Date.now() < finishDeadline) await new Promise(resolve => setTimeout(resolve, 50));
+    const finishedRun = db.prepare("SELECT status, error FROM cron_runs WHERE task_id = ?").get(id) as { status: string; error: string | null };
+    assert.notEqual(finishedRun.status, "waiting", JSON.stringify(finishedRun));
+    assert.doesNotMatch(finishedRun.error ?? "", /paused while waiting/, "saved edits must not cancel the already claimed run");
+    const saved = await api<{ tasks: Array<{ id: string; name: string; prompt: string; enabled: boolean }> }>(nodeA, sessionA, "GET", `/projects/${project.id}/cron`);
+    const savedTask = saved.body.tasks.find(task => task.id === id)!;
+    assert.equal(savedTask.name, nextInput.name);
+    assert.equal(savedTask.prompt, nextInput.prompt);
+    assert.equal(savedTask.enabled, false);
+    publishPiRuntime(runtimeDb, runtime, true);
+    const resumed = await api<{ task: { enabled: boolean } }>(nodeA, sessionA, "POST", "/cron", { nodeId: nodeB.nodeId, command: { action: "update", id, input: { ...nextInput, enabled: true } } });
+    assert.equal(resumed.status, 200, JSON.stringify(resumed.body));
+    assert.equal(resumed.body.task.enabled, true, "a previous conversation run must not block edits or resume");
+    publishPiRuntime(runtimeDb, runtime, false);
     assert.equal((await api(nodeA, sessionA, "POST", "/cron", { nodeId: nodeB.nodeId, command: { action: "delete", id } })).status, 200);
   } finally { publishPiRuntime(runtimeDb, runtime, false); runtimeDb.close(); db.close(); }
 });

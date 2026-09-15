@@ -37,8 +37,6 @@ async function prepareConversation(task: CronTask): Promise<string> {
     return id;
   }
   for (;;) {
-    const current = cronStore().get(task.id);
-    if (!current?.enabled) throw new Error("Scheduled task paused while waiting");
     const ownership = await getConversationOwnership(task.engine, task.sessionId);
     let ready = await cronConversationReady(project.id, task.sessionId, task.engine);
     if (ownership && ownership.ownerNodeId !== local.id) {

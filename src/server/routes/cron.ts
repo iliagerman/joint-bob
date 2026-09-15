@@ -64,11 +64,7 @@ async function manageCron(command: Command): Promise<unknown> {
   }
   const previous = store.get(command.id);
   if (!previous) throw new Error("Scheduled task not found");
-  if (!previous.enabled && command.input.enabled && previous.lastRun?.sessionId && !await cronConversationReady(project.id, previous.lastRun.sessionId, previous.engine)) throw new Error("Previous scheduled conversation is still running");
-  if (store.active(command.id)) {
-    const { id, nextRun, lastRun, ...input } = previous;
-    if (JSON.stringify({ ...input, enabled: command.input.enabled }) !== JSON.stringify(command.input)) throw new Error("Wait for the scheduled run to finish before editing");
-  }
+  if (store.active(command.id) && command.input.ownerNodeId !== previous.ownerNodeId) throw new Error("Wait for the scheduled run to finish before changing its execution node");
   if (command.input.ownerNodeId === local.id) return savedTask(store.update(command.id, command.input));
   // Pause the source durably before creating the destination. If a network
   // response is lost, neither copy can dispatch; the error asks the user to reconcile.

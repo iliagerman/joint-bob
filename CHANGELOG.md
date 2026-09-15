@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Scheduled task edits and pauses now apply on the next execution, keeping the current run uninterrupted.
+
 ## 1.32.3 — 2026-09-15
 
 - Fixed conversations that kept refreshing forever after a restart because child agent runs whose dashboard had died were still counted as running. Such runs are now retired at startup, with the reason recorded on each task.

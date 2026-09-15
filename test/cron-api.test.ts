@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtemp, rm, readFile } from "node:fs/promises";
+import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -14,7 +14,10 @@ async function until(check: () => Promise<boolean>): Promise<void> {
 }
 function makeDue(directory: string, id: string): void {
   const db = new DatabaseSync(path.join(directory, "node.db"));
-  try { db.prepare("UPDATE cron_tasks SET next_run = ? WHERE id = ?").run(Date.now(), id); } finally { db.close(); }
+  try {
+    db.exec("PRAGMA busy_timeout = 5000");
+    db.prepare("UPDATE cron_tasks SET next_run = ? WHERE id = ?").run(Date.now(), id);
+  } finally { db.close(); }
 }
 
 test("scheduler restart pauses uncertain dispatch, skips offline occurrences, and never overlaps an active run", { timeout: 60000 }, async () => {
@@ -56,6 +59,41 @@ test("scheduler restart pauses uncertain dispatch, skips offline occurrences, an
     assert.equal(resumed.body.task.enabled, true, "running a recovered paused task must resume its schedule");
     assert.ok(resumed.body.task.nextRun <= Date.now(), "running a recovered task should make it immediately due");
   } finally { await Promise.all(children.map(stopDevNode)); await rm(root, { recursive: true, force: true }); }
+});
+
+test("different schedules run concurrently in isolated conversations that join project history", { timeout: 60000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "cron-parallel-"));
+  let child: ChildProcess | undefined;
+  try {
+    const environment = await seedDevEnvironment(root, 1), node = environment.nodes[0];
+    const log = path.join(root, "engine.log");
+    child = await startDevNode(environment, node, { JOINT_BOB_TEST_ENGINE_LOG: log, JOINT_BOB_TEST_ENGINE_HOLD_DIR: root });
+    const auth = await signIn(environment, node);
+    const base = { projectId: node.projects[0].id, prompt: "Parallel report", engine: "claude", sessionId: null, ownerNodeId: node.nodeId, enabled: true, schedule: { frequency: "hourly", hour: 9, minute: 0, weekday: 1, timezone: "UTC" } };
+    const tasks: CronTask[] = [];
+    for (const name of ["Parallel A", "Parallel B"]) {
+      const created = await api<{ task: CronTask }>(node, auth, "POST", "/cron", { nodeId: node.nodeId, command: { action: "create", input: { ...base, name } } });
+      assert.equal(created.status, 200, JSON.stringify(created.body));
+      tasks.push(created.body.task);
+    }
+    for (const task of tasks) makeDue(node.dataDir, task.id);
+    const readTasks = async () => (await api<{ tasks: CronTask[] }>(node, auth, "GET", `/projects/${base.projectId}/cron`)).body.tasks;
+    await until(async () => {
+      const listed = await readTasks();
+      return tasks.every(task => listed.find(candidate => candidate.id === task.id)?.lastRun?.status === "running");
+    });
+    assert.equal((await readFile(log, "utf8")).trim().split("\n").length, 2, "both isolated agents must start before either finishes");
+    await writeFile(path.join(root, "claude.release"), "");
+    await until(async () => {
+      const listed = await readTasks();
+      return tasks.every(task => listed.find(candidate => candidate.id === task.id)?.lastRun?.status === "succeeded");
+    });
+    const sessions = await api<{ sessions: Array<{ cronTaskId?: string }> }>(node, auth, "GET", `/projects/${base.projectId}/sessions`);
+    for (const task of tasks) assert.ok(sessions.body.sessions.some(session => session.cronTaskId === task.id), `${task.name} result missing from project history`);
+  } finally {
+    if (child) await stopDevNode(child);
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("cron API routes to execution owner, persists, runs fresh project conversations and appends through transferred ownership", { timeout: 180000 }, async () => {
