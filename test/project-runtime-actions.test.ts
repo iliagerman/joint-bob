@@ -18,13 +18,15 @@ test("project loading does not wait for runtime or peer status discovery", async
   assert.match(server, /Promise\.all\(\(await listClusterPeers\(\)\)\.map/);
 });
 
-test("harness selection becomes the draft used when execution node changes", async () => {
+test("harness selection keeps conversation identity until the server confirms the switch", async () => {
   const app = await appSource();
   const handler = app.match(/elements\.chatHarnessSelect\.addEventListener\("change", \(\) => \{([\s\S]*?)\n\}\);/)?.[1] ?? "";
 
-  assert.match(handler, /state\.engine = harness\.id/);
-  assert.match(handler, /state\.activeSessionPath = harness\.newSessionPath/);
-  assert.match(handler, /state\.activeSessionId = null/);
+  // A rejected switch must not become a draft: the client reverts the select and
+  // waits for the server to confirm the new segment instead of mutating state.
+  assert.doesNotMatch(handler, /state\.engine = harness\.id/);
+  assert.doesNotMatch(handler, /state\.activeSessionId = null/);
+  assert.match(handler, /elements\.chatHarnessSelect\.value = state\.engine/);
   assert.match(handler, /sendSocket\(\{ type: "setEngine", engine: harness\.id \}\)/);
 });
 
