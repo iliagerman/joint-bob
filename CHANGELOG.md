@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.31.9 — 2026-09-15
 
-- Scheduled tasks now recover gracefully when peer nodes become temporarily unavailable.
+- Scheduled tasks now run even when peer nodes are temporarily unavailable.
 
 ## 1.31.8 — 2026-09-15
 
