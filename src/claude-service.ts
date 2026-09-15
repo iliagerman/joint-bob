@@ -11,7 +11,7 @@ import { isSyncConflictPath, sessionCwds, type SessionProjectPaths } from "./har
 import { claudeProjectDir, claudeProjectDirs } from "./harnesses/claude/paths.js";
 import { getScopedResourcePaths, getSettings } from "./settings.js";
 import { claudeAgentResourceArgs } from "./agent-resources.js";
-import { browserAgentEnvironment, browserAgentInstructions } from "./browser-agent.js";
+import { agentCapabilityEnvironment, agentCapabilityInstructionFiles } from "./agent-capabilities.js";
 import { getConversationRecord } from "./conversation-records.js";
 import type { ChatMessage, ContextUsage, SessionSummary } from "./types.js";
 import { stripHandoffEnvelope } from "./handoff-context.js";
@@ -377,18 +377,19 @@ export async function loadClaudeMessages(sessionPath: string): Promise<ChatMessa
     .filter((message) => message.text.trim().length > 0);
 }
 
-/** Every conversation spawn gets the same browser bridge, including tasks and recovery. */
+/** Every conversation spawn gets the shared capabilities, including tasks and recovery. */
 export async function runClaudeConversationPrompt(options: ClaudeRunOptions & { projectId: string }): Promise<ClaudeRunHandle> {
   const sessionId = options.resumeSessionId ?? options.sessionId;
   if (!sessionId) throw new Error("Claude conversation spawn requires a session identity");
   const record = await getConversationRecord(options.projectId, "claude", sessionId);
   const defaults = getSettings().conversationDefaults.claude;
+  const conversationId = record?.conversationId ?? sessionId;
   return runClaudePrompt({
     ...options,
     model: options.model === undefined && !options.resumeSessionId ? defaults.modelId : options.model,
     effort: options.effort === undefined && !options.resumeSessionId ? defaults.thinkingLevel : options.effort,
-    env: { ...options.env, ...browserAgentEnvironment(options.projectId, "claude", record?.conversationId ?? sessionId) },
-    systemInstructions: [options.systemInstructions, browserAgentInstructions].filter(Boolean).join("\n\n"),
+    env: { ...options.env, ...agentCapabilityEnvironment(options.projectId, "claude", conversationId) },
+    systemInstructions: [options.systemInstructions, ...agentCapabilityInstructionFiles().map((file) => file.content)].filter(Boolean).join("\n\n"),
   });
 }
 

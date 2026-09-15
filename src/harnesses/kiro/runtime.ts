@@ -2,7 +2,7 @@ import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child
 import { access } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import { browserAgentEnvironment } from "../../browser-agent.js";
+import { agentCapabilityEnvironment } from "../../agent-capabilities.js";
 import { agentCredentialContext, agentEnvironment, persistConversationSecretAccounts } from "../../secrets.js";
 import { getSettings } from "../../settings.js";
 import { buildHandoffContext, stripHandoffEnvelope } from "../../handoff-context.js";
@@ -183,11 +183,11 @@ class KiroSession implements HarnessSession {
 
   private async environment(): Promise<NodeJS.ProcessEnv> {
     const conversation = { engine: "kiro" as const, sessionId: this.id };
-    const browserId = this.options.conversationId ?? this.id;
+    const logicalConversationId = this.options.conversationId ?? this.id;
     return {
       ...process.env,
       ...agentEnvironment(this.options.projectId, conversation),
-      ...browserAgentEnvironment(this.options.projectId, "kiro", browserId),
+      ...agentCapabilityEnvironment(this.options.projectId, "kiro", logicalConversationId),
       KIRO_HOME: runtimeSettings().configPath,
     };
   }

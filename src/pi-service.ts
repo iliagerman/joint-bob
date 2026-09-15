@@ -18,7 +18,7 @@ import {
   type AgentSessionEvent,
 } from "@earendil-works/pi-coding-agent";
 import { agentCredentialContext, agentEnvironment, persistConversationSecretAccounts, type SecretConversation } from "./secrets.js";
-import { browserAgentEnvironment, browserAgentInstructions } from "./browser-agent.js";
+import { agentCapabilityEnvironment, agentCapabilityInstructionFiles } from "./agent-capabilities.js";
 import { getConversationRecord } from "./conversation-records.js";
 import { stripHandoffEnvelope } from "./claude-service.js";
 import { sessionCwds, type SessionProjectPaths } from "./harnesses/shared-paths.js";
@@ -519,7 +519,7 @@ export function sessionToolSelection(sessionManager: SessionManager): string[] |
   return enabledTools;
 }
 
-function bindPiCredentials(session: AgentSession, projectId: string, conversation: SecretConversation, updateEnvironment: (environment: NodeJS.ProcessEnv) => void): () => void {
+function bindPiCredentials(session: AgentSession, projectId: string, conversation: SecretConversation, refreshEnvironment: () => void): () => void {
   let refresh = true;
   let credentialContext = "";
   // Raw agent events also cover queued follow-ups and steering, before their model call.
@@ -529,9 +529,8 @@ function bindPiCredentials(session: AgentSession, projectId: string, conversatio
   const stream = session.agent.streamFunction;
   session.agent.streamFunction = (model, context, options) => {
     if (refresh) {
-      const environment = agentEnvironment(projectId, conversation);
       credentialContext = agentCredentialContext(projectId, conversation);
-      updateEnvironment(environment);
+      refreshEnvironment();
       refresh = false;
     }
     return stream(model, { ...context, systemPrompt: [context.systemPrompt, credentialContext].filter(Boolean).join("\n\n") }, options);
@@ -545,15 +544,15 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
     ? SessionManager.open(options.sessionPath, piSessionPath(), options.cwd)
     : SessionManager.create(options.cwd, piSessionPath(), options.sessionId ? { id: options.sessionId } : undefined);
   const safeguardsEnabled = options.safeguardsEnabled ?? sessionSafeguardsEnabled(sessionManager);
-  const browserConversationId = options.conversationId
+  const logicalConversationId = options.conversationId
     ?? (await getConversationRecord(options.projectId, "pi", sessionManager.getSessionId()))?.conversationId
     ?? sessionManager.getSessionId();
-  const browserEnvironment = browserAgentEnvironment(options.projectId, "pi", browserConversationId);
+  let capabilityEnvironment = agentCapabilityEnvironment(options.projectId, "pi", logicalConversationId);
   const conversation = { engine: "pi" as const, sessionId: sessionManager.getSessionId() };
   await persistConversationSecretAccounts("pi", conversation.sessionId, options.conversation?.accountIds ?? []);
   let environment = agentEnvironment(options.projectId, conversation);
   const bashTool = createBashTool(options.cwd, {
-    spawnHook: (context) => ({ ...context, env: { ...context.env, ...environment, ...browserEnvironment } }),
+    spawnHook: (context) => ({ ...context, env: { ...context.env, ...environment, ...capabilityEnvironment } }),
   });
   const agentDir = getAgentDir();
   const settingsManager = SettingsManager.create(options.cwd, agentDir);
@@ -572,7 +571,7 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
       agentsFiles: [
         ...current.agentsFiles,
         ...commonInstructions,
-        { path: "/virtual/JOINT_BOB_BROWSER.md", content: browserAgentInstructions },
+        ...agentCapabilityInstructionFiles(),
       ],
     }),
     ...(!safeguardsEnabled ? { extensionsOverride: (base) => ({ ...base, extensions: base.extensions.filter((extension) => !isPermissionSafeguardExtension(extension.resolvedPath)) }) } : {}),
@@ -605,7 +604,10 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
     resourceLoader,
   });
   const session = result.session;
-  const unsubscribeCredentials = bindPiCredentials(session, options.projectId, conversation, (current) => { environment = current; });
+  const unsubscribeCredentials = bindPiCredentials(session, options.projectId, conversation, () => {
+    environment = agentEnvironment(options.projectId, conversation);
+    capabilityEnvironment = agentCapabilityEnvironment(options.projectId, "pi", logicalConversationId);
+  });
 
   if ("bindExtensions" in session && typeof session.bindExtensions === "function") {
     await session.bindExtensions({});

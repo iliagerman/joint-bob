@@ -4,7 +4,8 @@
 import { describeError } from "./error-description.js";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, openSync } from "node:fs";
+import { closeSync, mkdirSync, openSync } from "node:fs";
+import { supervisorRequest } from "../scripts/supervisor-client.mjs";
 import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -251,6 +252,22 @@ export function installLocalRelease(release: ReleaseInfo, options: { fromFleetRu
   const active = activeUpdateJob();
   if (active) throw new UpdateRefusalError(`An update to ${active.targetVersion} is already ${active.state}`);
   const job = insertJob(release.version);
+  const helperEnv = {
+    ...process.env,
+    JOINT_BOB_DATA_DIR: dataDir,
+    JOINT_BOB_RELEASE_API: releaseApiBase(),
+    JOINT_BOB_UPDATE_JOB_ID: job.id,
+    JOINT_BOB_UPDATE_TARGET: release.version,
+    JOINT_BOB_UPDATE_ARCHIVE_URL: release.archiveUrl,
+    JOINT_BOB_UPDATE_CHECKSUM_URL: release.checksumUrl,
+    JOINT_BOB_UPDATE_INSTALL_DIR: process.env.JOINT_BOB_INSTALL_ROOT ?? rootDir,
+    JOINT_BOB_UPDATE_PORT: process.env.PORT ?? "8787",
+  };
+  if (process.env.JOINT_BOB_INSTALL_ROOT) {
+    void supervisorRequest(dataDir, { action: "start", id: job.id, identity: "system:update", name: `Update ${release.version}`, executable: process.execPath,
+      args: [path.join(rootDir, "scripts/self-update.mjs")], cwd: rootDir, env: helperEnv }).catch(error => updateJobState(job.id, "failed", `Updater helper failed to start: ${error.message}`));
+    return job;
+  }
   const logDir = path.join(dataDir, "logs");
   mkdirSync(logDir, { recursive: true, mode: 0o700 });
   const logFd = openSync(path.join(logDir, `self-update-${job.id}.log`), "a");
@@ -261,17 +278,7 @@ export function installLocalRelease(release: ReleaseInfo, options: { fromFleetRu
   const args = process.platform === "linux" ? ["--user", "--scope", "--quiet", `--unit=joint-bob-update-${job.id}`, ...helper] : helper.slice(1);
   const child = spawn(executable, args, {
     cwd: rootDir,
-    env: {
-      ...process.env,
-      JOINT_BOB_DATA_DIR: dataDir,
-      JOINT_BOB_RELEASE_API: releaseApiBase(),
-      JOINT_BOB_UPDATE_JOB_ID: job.id,
-      JOINT_BOB_UPDATE_TARGET: release.version,
-      JOINT_BOB_UPDATE_ARCHIVE_URL: release.archiveUrl,
-      JOINT_BOB_UPDATE_CHECKSUM_URL: release.checksumUrl,
-      JOINT_BOB_UPDATE_INSTALL_DIR: rootDir,
-      JOINT_BOB_UPDATE_PORT: process.env.PORT ?? "8787",
-    },
+    env: helperEnv,
     detached: true,
     stdio: ["ignore", logFd, logFd],
   });
@@ -284,6 +291,7 @@ export function installLocalRelease(release: ReleaseInfo, options: { fromFleetRu
     }
   });
   child.unref();
+  closeSync(logFd);
   return job;
 }
 

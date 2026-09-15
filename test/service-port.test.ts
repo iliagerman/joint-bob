@@ -21,8 +21,8 @@ async function runRunner(port?: string): Promise<string> {
     await chmod(path.join(scripts, "run-node.sh"), 0o755);
     const portSetting = port ? `PORT=${port}\n` : "PI_CLAUDE_MCP_AUTOLOAD=off\n";
     await writeFile(path.join(state, "env"), `${portSetting}ANTHROPIC_BASE_URL=http://127.0.0.1:8788\nOPENAI_BASE_URL=http://127.0.0.1:8788/v1\n`);
-    await writeFile(path.join(bin, "npm"), "#!/usr/bin/env bash\nprintf 'PORT:%s\\nANTHROPIC_BASE_URL:%s\\nOPENAI_BASE_URL:%s\\n' \"${PORT}\" \"${ANTHROPIC_BASE_URL:-}\" \"${OPENAI_BASE_URL:-}\"\n");
-    await chmod(path.join(bin, "npm"), 0o755);
+    await writeFile(path.join(bin, "node"), "#!/usr/bin/env bash\nprintf 'PORT:%s\\nANTHROPIC_BASE_URL:%s\\nOPENAI_BASE_URL:%s\\n' \"${PORT}\" \"${ANTHROPIC_BASE_URL:-}\" \"${OPENAI_BASE_URL:-}\"\n");
+    await chmod(path.join(bin, "node"), 0o755);
     const { PORT: _port, ...environment } = process.env;
     const result = await execFileAsync("bash", [path.join(scripts, "run-node.sh")], {
       env: { ...environment, PATH: `${bin}:${environment.PATH}`, PI_WEB_DATA_DIR: state },

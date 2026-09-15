@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Background tasks now run independently across conversation turns on installed Linux and macOS with automatic app lifecycle management.
+
 ## 1.32.9 — 2026-09-15
 
 - Unblocked the release pipeline: a stale UI test still asserted the pre-1.32.6 agent-switch behavior and failed every release build since 1.32.5.

@@ -1,0 +1,33 @@
+import { cpSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
+import { assertSupervisorCompatible } from "./supervisor-release.mjs";
+import { supervisorRequest } from "./supervisor-client.mjs";
+
+export async function installSupervisedRelease({ sourceRoot, installRoot, dataDirectory, execute, isInterrupted }) {
+  const staging = `${installRoot}.staging-${process.pid}-${randomUUID()}`;
+  let published = false;
+  try {
+    cpSync(sourceRoot, staging, { recursive: true, filter: source => !["node_modules", "releases"].includes(path.basename(source)) });
+    const commit = process.env.JOINT_BOB_RELEASE_COMMIT;
+    if (commit) {
+      if (!/^[0-9a-f]{40}$/i.test(commit)) throw new Error("JOINT_BOB_RELEASE_COMMIT must be a 40-character Git commit");
+      writeFileSync(path.join(staging, ".joint-bob-release"), `commit=${commit}\n`);
+    }
+    const build = await execute("bash", [path.join(staging, "scripts/install-service.sh"), "--build-only"], staging, true);
+    if (build !== 0 || isInterrupted()) throw new Error(`Installation build failed with status ${build}`);
+    assertSupervisorCompatible(installRoot, staging);
+    await supervisorRequest(dataDirectory, { action: "status" });
+    const prepared = await execute("bash", [path.join(staging, "scripts/install-service.sh"), "--prepare-only"], staging, true);
+    if (prepared !== 0 || isInterrupted()) throw new Error(`Update preparation failed with status ${prepared}`);
+    mkdirSync(path.join(installRoot, "releases"), { recursive: true });
+    const releaseRoot = path.join(installRoot, "releases", randomUUID());
+    renameSync(staging, releaseRoot);
+    published = true;
+    await supervisorRequest(dataDirectory, { action: "activate-release", releaseRoot }, { timeoutMs: 150000 });
+    if (isInterrupted()) throw new Error("Installation completed after interruption");
+    console.log(`Activated Joint Bob release ${releaseRoot}`);
+  } finally {
+    if (!published && existsSync(staging)) rmSync(staging, { recursive: true, force: true });
+  }
+}

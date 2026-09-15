@@ -3,7 +3,7 @@ import { lstat, mkdir, readFile, readdir, realpath, rename, stat, writeFile } fr
 import os from "node:os";
 import path from "node:path";
 import { agentResourcePaths, commonAgentInstructionFiles } from "../../agent-resources.js";
-import { browserAgentInstructions } from "../../browser-agent.js";
+import { agentCapabilityInstructionFiles } from "../../agent-capabilities.js";
 import { agentCredentialContext } from "../../secrets.js";
 import { getScopedResourcePaths, getSettings } from "../../settings.js";
 import { builtinCommands, type CommandDiscoveryOptions, type HarnessCommand } from "../../commands.js";
@@ -176,7 +176,7 @@ export async function kiroAgentProfile(options: HarnessOpenOptions, credentialCo
   }
   const prompt = [
     ...instructions.map((item) => item.content),
-    browserAgentInstructions,
+    ...agentCapabilityInstructionFiles().map((file) => file.content),
     credentialContext ?? agentCredentialContext(options.projectId, { engine: "kiro", sessionId: options.sessionId }),
   ].filter(Boolean).join("\n\n");
   const profile = {

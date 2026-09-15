@@ -37,6 +37,17 @@ function cleanup(directory) {
 }
 
 async function replaceInstallation(installDir) {
+  if (existsSync(path.join(packageRoot, "scripts/supervisor-release.mjs"))) {
+    const { readInstallation } = await import("../scripts/supervisor-release.mjs");
+    const dataDirectory = path.resolve(process.env.JOINT_BOB_DATA_DIR ?? process.env.PI_WEB_DATA_DIR ?? path.join(os.homedir(), ".joint-bob"));
+    const installation = readInstallation(dataDirectory);
+    if (installation) {
+      if (realpathSync(installation.installRoot) !== installDir) throw new Error("Supervisor installation root does not match requested installation");
+      const { installSupervisedRelease } = await import("../scripts/supervisor-install.mjs");
+      await installSupervisedRelease({ sourceRoot: packageRoot, installRoot: installDir, dataDirectory, execute, isInterrupted: () => interrupted });
+      return;
+    }
+  }
   const staging = `${installDir}.staging-${process.pid}`;
   const backup = `${installDir}.backup-${process.pid}`;
   const failed = `${installDir}.failed-${process.pid}`;

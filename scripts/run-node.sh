@@ -33,4 +33,4 @@ else
   export MASTER_BOB_RELEASE=development
 fi
 cd "${REPO_ROOT}"
-exec npm start
+exec node "${REPO_ROOT}/scripts/supervisor-service.mjs" "${REPO_ROOT}" "${STATE_DIR}"
