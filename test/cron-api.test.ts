@@ -58,7 +58,7 @@ test("scheduler restart pauses uncertain dispatch, skips offline occurrences, an
   } finally { await Promise.all(children.map(stopDevNode)); await rm(root, { recursive: true, force: true }); }
 });
 
-test("cron API routes to execution owner, persists, runs fresh project conversations and appends through transferred ownership", { timeout: 120000 }, async () => {
+test("cron API routes to execution owner, persists, runs fresh project conversations and appends through transferred ownership", { timeout: 180000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "cron-cluster-"));
   const children: ChildProcess[] = [];
   try {
@@ -140,6 +140,19 @@ test("cron API routes to execution owner, persists, runs fresh project conversat
     const dbB = new DatabaseSync(path.join(b.dataDir, "node.db"));
     assert.equal(dbB.prepare("SELECT owner_node_id FROM conversation_ownership WHERE session_id = ?").get(existing.id)!.owner_node_id, b.nodeId);
     dbB.close();
+    const previousRunId = (await api<{ tasks: CronTask[] }>(b, authBInitial, "GET", `/projects/${projectId}/cron`)).body.tasks.find(task => task.id === conversation.body.task.id)!.lastRun!.id;
+    const peerDb = new DatabaseSync(path.join(b.dataDir, "node.db"));
+    peerDb.prepare("UPDATE cluster_peers SET url = 'http://127.0.0.1:1'").run();
+    peerDb.close();
+    makeDue(b.dataDir, conversation.body.task.id);
+    await until(async () => {
+      const run = (await api<{ tasks: CronTask[] }>(b, authBInitial, "GET", `/projects/${projectId}/cron`)).body.tasks.find(task => task.id === conversation.body.task.id)?.lastRun;
+      if (run?.status === "failed") throw new Error(JSON.stringify(run));
+      return run?.status === "succeeded" && run.id !== previousRunId;
+    });
+    const restorePeerDb = new DatabaseSync(path.join(b.dataDir, "node.db"));
+    restorePeerDb.prepare("UPDATE cluster_peers SET url = ? WHERE id = ?").run(a.url, a.nodeId);
+    restorePeerDb.close();
     const paused = await api<{ task: CronTask }>(a, auth, "POST", "/cron", { nodeId: b.nodeId, command: { action: "update", id, input: { ...input, enabled: false } } });
     assert.equal(paused.body.task.enabled, false);
     await stopDevNode(children.pop()!);
@@ -162,7 +175,7 @@ test("cron API routes to execution owner, persists, runs fresh project conversat
     assert.equal(failed!.lastRun!.status, "failed");
     assert.match(failed!.lastRun!.error!, /Project is locked/);
     assert.equal(failed!.enabled, false);
-    assert.equal((await readFile(log, "utf8")).trim().split("\n").length, 3, "a locked project must not start an agent");
+    assert.equal((await readFile(log, "utf8")).trim().split("\n").length, 4, "a locked project must not start an agent");
     await api(b, authB, "PUT", `/projects/${projectId}/lock`, { locked: false });
     await api(a, auth, "POST", "/cron", { nodeId: b.nodeId, command: { action: "delete", id: locked.body.task.id } });
     const moved = await api<{ task: CronTask }>(a, auth, "POST", "/cron", { nodeId: b.nodeId, command: { action: "update", id, input: { ...input, ownerNodeId: a.nodeId, enabled: false } } });

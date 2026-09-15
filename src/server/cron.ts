@@ -52,8 +52,7 @@ async function prepareConversation(task: CronTask): Promise<string> {
     if (ready) break;
     await delay(1000);
   }
-  const taken = await takeLocalSessionOwnership(project, { projectId: project.id, sessionId: task.sessionId, sessionPath: `draft:${task.engine}:${task.sessionId}`, peerId: local.id }, true);
-  if (taken.pendingPeerIds.length) throw new Error("Ownership transfer not acknowledged by all peers");
+  await takeLocalSessionOwnership(project, { projectId: project.id, sessionId: task.sessionId, sessionPath: `draft:${task.engine}:${task.sessionId}`, peerId: local.id });
   return task.sessionId;
 }
 
