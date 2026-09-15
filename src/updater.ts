@@ -96,6 +96,13 @@ export function validateReleasePayload(payload: unknown): ReleaseInfo {
   };
 }
 
+/** "fetch failed" on its own says nothing; the cause chain carries the DNS or socket error. */
+function describeError(error: unknown): string {
+  const parts: string[] = [];
+  for (let current = error; current instanceof Error; current = current.cause) parts.push(current.message);
+  return parts.length ? parts.join(": ") : String(error);
+}
+
 async function fetchRelease(feedPath: string): Promise<ReleaseInfo> {
   const response = await fetch(`${releaseApiBase()}/${feedPath}`, {
     headers: { Accept: "application/vnd.github+json", "User-Agent": "joint-bob-updater" },
@@ -171,7 +178,7 @@ export async function checkForLatestRelease(force: boolean): Promise<LatestCheck
     savePreferences({ latest_version: release.version, latest_json: JSON.stringify(release), latest_checked_at: new Date().toISOString(), latest_error: null });
     return { release, checkedAt: new Date().toISOString(), error: null };
   } catch (error) {
-    const message = error instanceof ReleaseFeedError ? error.message : "Release feed is unreachable";
+    const message = error instanceof ReleaseFeedError ? error.message : `Release feed is unreachable: ${describeError(error)}`;
     savePreferences({ latest_error: message, latest_checked_at: new Date().toISOString() });
     return { release: cachedLatestRelease(), checkedAt: new Date().toISOString(), error: message };
   }

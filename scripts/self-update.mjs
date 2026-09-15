@@ -27,8 +27,20 @@ export function parseChecksum(body) {
   return digest;
 }
 
+/** "fetch failed" on its own says nothing; the cause chain carries the DNS or socket error. */
+export function describeError(error) {
+  const parts = [];
+  for (let current = error; current instanceof Error; current = current.cause) parts.push(current.message);
+  return parts.length ? parts.join(": ") : String(error);
+}
+
 export async function downloadFile(url) {
-  const response = await fetch(url, { redirect: "follow", headers: { "User-Agent": "joint-bob-updater" }, signal: AbortSignal.timeout(600_000) });
+  let response;
+  try {
+    response = await fetch(url, { redirect: "follow", headers: { "User-Agent": "joint-bob-updater" }, signal: AbortSignal.timeout(600_000) });
+  } catch (error) {
+    throw new Error(`Could not download ${url}`, { cause: error });
+  }
   if (!response.ok) throw new Error(`Download failed: ${url} returned ${response.status}`);
   const declared = Number(response.headers.get("content-length") ?? 0);
   if (declared > MAX_ARCHIVE_BYTES) throw new Error("Download is larger than the update limit");
@@ -133,7 +145,7 @@ async function run() {
       rmSync(archivePath, { force: true });
     }
   } catch (error) {
-    fail(error instanceof Error ? error.message : "Update failed");
+    fail(describeError(error));
   }
 }
 

@@ -80,6 +80,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
     assert.deepEqual(JSON.parse(savedText), {
       conversationDefaults,
       conversationHistoryDays: 45,
+      autoCompactThreshold: 70,
       pi: { executable: "/usr/local/bin/pi", ...piRuntime },
       claude: { executable: "/usr/local/bin/claude", ...claudeRuntime },
       kiro: kiroRuntime,
@@ -107,6 +108,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
     assert.deepEqual(JSON.parse(readText), {
       conversationDefaults,
       conversationHistoryDays: 45,
+      autoCompactThreshold: 70,
       pi: { executable: "/usr/local/bin/pi", ...piRuntime },
       claude: { executable: "/usr/local/bin/claude", ...claudeRuntime },
       kiro: kiroRuntime,

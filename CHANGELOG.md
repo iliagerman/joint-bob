@@ -6,6 +6,8 @@ Every deployment is a version. The newest section must always match the
 ## 1.32.2 — 2026-09-15
 
 - Fixed the conversation list failing to render when it contained a Kiro conversation; Kiro conversations now show their own mark and colour.
+- Failed updates now record which file could not be downloaded and the underlying network error, instead of only "fetch failed".
+- Release checks that cannot reach GitHub now say why.
 
 ## 1.32.1 — 2026-09-15
 

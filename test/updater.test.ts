@@ -261,6 +261,55 @@ test("the detached helper fails the job and installs nothing on a checksum misma
   }
 });
 
+test("the detached helper records which download failed and why", async () => {
+  const { spawn } = await import("node:child_process");
+  const { DatabaseSync } = await import("node:sqlite");
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-self-update-download-"));
+  try {
+    const stateDir = path.join(root, "state");
+    await mkdir(stateDir, { recursive: true });
+    const db = new DatabaseSync(path.join(stateDir, "node.db"));
+    db.exec("CREATE TABLE update_jobs (id TEXT PRIMARY KEY, target_version TEXT NOT NULL, state TEXT NOT NULL, error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)");
+    const now = new Date().toISOString();
+    db.prepare("INSERT INTO update_jobs (id, target_version, state, error, created_at, updated_at) VALUES ('job-3', '9.9.9', 'downloading', NULL, ?, ?)").run(now, now);
+
+    // A port that was listening a moment ago and is now closed refuses the checksum
+    // download before the archive is tried. (fetch rejects reserved ports like 1 as
+    // "bad port" without ever connecting, which is not the failure an operator sees.)
+    const closed = createServer();
+    await new Promise<void>((resolve) => closed.listen(0, "127.0.0.1", resolve));
+    const deadPort = (closed.address() as { port: number }).port;
+    await new Promise<void>((resolve) => closed.close(() => resolve()));
+    const child = spawn(process.execPath, [path.join(process.cwd(), "scripts", "self-update.mjs")], {
+      env: {
+        ...process.env,
+        JOINT_BOB_DATA_DIR: stateDir,
+        JOINT_BOB_UPDATE_JOB_ID: "job-3",
+        JOINT_BOB_UPDATE_TARGET: "9.9.9",
+        JOINT_BOB_UPDATE_ARCHIVE_URL: `http://127.0.0.1:${deadPort}/joint-bob.tar.gz`,
+        JOINT_BOB_UPDATE_CHECKSUM_URL: `http://127.0.0.1:${deadPort}/joint-bob.tar.gz.sha256`,
+        JOINT_BOB_UPDATE_INSTALL_DIR: path.join(root, "install"),
+        JOINT_BOB_UPDATE_PORT: "1",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let helperOutput = "";
+    child.stdout!.on("data", (chunk) => { helperOutput += chunk; });
+    child.stderr!.on("data", (chunk) => { helperOutput += chunk; });
+    const status = await new Promise<number | null>((resolve) => child.on("close", resolve));
+    assert.notEqual(status, 0, `the helper exits nonzero when a download fails (${helperOutput})`);
+    const row = db.prepare("SELECT state, error FROM update_jobs WHERE id = 'job-3'").get() as { state: string; error: string | null };
+    assert.equal(row.state, "failed");
+    // A bare "fetch failed" tells the operator nothing; the URL and the socket error do.
+    assert.match(row.error ?? "", new RegExp(`Could not download http://127\\.0\\.0\\.1:${deadPort}/joint-bob\\.tar\\.gz\\.sha256`));
+    assert.match(row.error ?? "", /ECONNREFUSED/);
+    assert.match(helperOutput, /ECONNREFUSED/, "the helper log carries the same reason");
+    db.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("the release workflow produces checksums and packages the self-update helper", async () => {
   const [workflow, manifest] = await Promise.all([
     readFile(".github/workflows/release.yml", "utf8"),
@@ -359,6 +408,7 @@ test("a failed feed check keeps the last known release and records the error", a
     const bad = await updater.checkForLatestRelease(true);
     assert.equal(bad.release?.version, "9.9.9", "the last good release is kept");
     assert.match(bad.error ?? "", /unreachable|returned/);
+    assert.match(bad.error ?? "", /ECONNREFUSED/, "the recorded error names the underlying cause");
   } finally {
     await rm(dataDir, { recursive: true, force: true });
     delete process.env.JOINT_BOB_DATA_DIR;
