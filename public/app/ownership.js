@@ -65,6 +65,7 @@ async function takeLockedConversationOwnership() {
     state.activeNodeId = destination.id;
     state.activeSessionId = null;
     if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: destination.id, activeSessionId: null });
+    resetOwnershipWait();
     openSession(result.sessionPath, shortSessionTitle(session));
     toast(result.pendingPeerIds?.length ? "Ownership taken; offline nodes will update when they return" : "Ownership taken");
   } catch (error) { resetOwnershipWait(); throw error; }

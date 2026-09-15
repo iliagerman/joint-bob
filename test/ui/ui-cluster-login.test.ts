@@ -147,6 +147,10 @@ test("an open remote conversation can switch locally and take ownership", async 
   await takeButton.click();
   await homeserverPage.locator("#conversationLock").waitFor({ state: "hidden", timeout: 30_000 });
   assert.equal(await homeserverPage.getByTestId("chat-message-input").isEnabled(), true, "the destination can continue the conversation after takeover");
+
+  await nodeSelect.selectOption(mac.nodeId);
+  await takeButton.waitFor({ state: "visible", timeout: 30_000 });
+  assert.equal(await takeButton.isEnabled(), true, "a completed takeover does not leave the button disabled for the next node switch");
 });
 
 test("switching an empty conversation moves ownership without prompting", async () => {

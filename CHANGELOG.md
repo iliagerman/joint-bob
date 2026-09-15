@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- The "Take Ownership" button now resets properly when switching nodes after completing a conversation takeover.
+
 ## 1.32.7 — 2026-09-15
 
 - Phone push notifications now work across cluster nodes: the mesh route that replicates phone subscriptions between machines was rejecting peer credentials with 401, so subscriptions never left the node they were created on.
