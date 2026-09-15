@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.32.0 — 2026-09-15
 
 - Conversations now compact automatically between messages when context usage reaches a configured threshold on this node.
 
