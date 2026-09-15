@@ -7,10 +7,11 @@ import { getConversationRecord, ensureConversationRecord, listConversationSegmen
 import { ConversationOwnershipError } from "../conversation-ownership.js";
 import { buildHandoffContext } from "../handoff-context.js";
 import { getHarness, getHarnessRuntime, harnessForProvider, listHarnesses, listHarnessSessions } from "../harnesses.js";
-import type { HarnessModelSettings } from "../harnesses/runtime.js";
+import type { HarnessModelSettings, HarnessSession } from "../harnesses/runtime.js";
 import { setSessionTitle } from "../names.js";
 import { conversationScopeId, getScopeSecretAccounts } from "../secrets.js";
 import { getProjectLock } from "../project-locks.js";
+import { getSettings } from "../settings.js";
 import { beginQueuedPrompt, cancelQueuedPrompt, claimQueuedPrompt, editQueuedPrompt, enqueuePrompt, listQueuedPrompts, mergeQueuedPrompts, prioritizeQueuedPrompt, queuedSettingsSchema, readQueueSettings, recordQueueSettings, resetQueuedPromptAttempt, swapQueuedPrompts, type QueuedPrompt, type QueuedSettings } from "../prompt-queue.js";
 import { queuedAttachments } from "../queued-attachments.js";
 import type { HarnessId, ProjectRecord, SessionSummary, TaskAttachment } from "../types.js";
@@ -40,6 +41,24 @@ const mutations = new Map<string, Promise<void>>();
 const drains = new Map<string, Promise<void>>();
 const pausedDrains = new Set<string>();
 const startingIds = new Set<string>();
+const autoCompacted = new WeakSet<HarnessSession>();
+
+export function armAutoCompactAfterPrompt(session: HarnessSession): void { autoCompacted.delete(session); }
+
+/** Runs only from the queue's idle gap. Suppression prevents stale usage reported by
+ * a just-compacted harness from starting an endless compaction loop. */
+export async function autoCompactBetweenTurns(shared: SharedHarnessSession, threshold: number | null, beforeStart?: () => Promise<void>): Promise<boolean> {
+  const usage = shared.session.status().contextUsage;
+  if (threshold === null || !usage || usage.percent < threshold || shared.turnInFlight > 0 || shared.session.isBusy() || autoCompacted.has(shared.session)) return false;
+  shared.turnInFlight += 1;
+  try {
+    await shared.session.compact(undefined, beforeStart);
+    autoCompacted.add(shared.session);
+    return true;
+  } finally {
+    shared.turnInFlight -= 1;
+  }
+}
 
 function queueKey(connection: HarnessChatConnection): string { return `${connection.project.id}:${connection.conversationId}`; }
 function publish(connection: HarnessChatConnection, event: Record<string, unknown>): void {
@@ -157,6 +176,7 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
     let claimed = false;
     try {
       await connection.shared.session.prompt({ text: `${connection.handoffContext ?? ""}${attachments.text}`, images: attachments.images, beforeStart: () => writable(connection), onStarted: () => {
+        armAutoCompactAfterPrompt(connection.shared.session);
         if (claimed) return;
         claimed = claimQueuedPrompt(queued.id, currentSettings(connection));
         if (!claimed) throw new Error("Queued prompt was changed before start");
@@ -181,6 +201,7 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
 async function drainLoop(connection: HarnessChatConnection): Promise<void> {
   for (;;) {
     if (pausedDrains.has(queueKey(connection)) || harnessSessionBusy(connection.shared)) return;
+    if (await autoCompactBetweenTurns(connection.shared, getSettings().autoCompactThreshold, () => writable(connection))) sendHarnessStatus(connection.shared);
     const next = listQueuedPrompts(queueKey(connection))[0];
     if (!next) return;
     await dispatch(connection, next);
@@ -251,6 +272,7 @@ async function controls(connection: HarnessChatConnection, message: ReturnType<t
     try {
       await writable(connection);
       await connection.shared.session.compact(message.message, () => writable(connection));
+      autoCompacted.add(connection.shared.session);
     } finally {
       connection.shared.turnInFlight -= 1;
       sendHarnessStatus(connection.shared);

@@ -82,6 +82,30 @@ test("model picker renders provider presentation metadata", { timeout: 120_000 }
   assert.equal(await page.locator("#modelDialogList .model-dialog-group").innerText(), "GPT");
 });
 
+test("node settings configure or disable automatic context compaction", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await signIn(page, node.url, environment.username, environment.password);
+  await page.getByTestId("settings-open-button").click();
+  await page.locator("#settingsDialog[open]").waitFor();
+
+  const enabled = page.getByTestId("settings-auto-compact-enabled");
+  const threshold = page.getByTestId("settings-auto-compact-threshold");
+  assert.equal(await enabled.isChecked(), true);
+  assert.equal(await threshold.inputValue(), "70");
+  await threshold.fill("82");
+  await page.getByTestId("settings-save-button").click();
+  await page.locator("#settingsDialog[open]").waitFor({ state: "hidden" });
+  assert.equal(await page.evaluate(async () => (await (await fetch("/api/settings")).json()).autoCompactThreshold), 82);
+
+  await page.getByTestId("settings-open-button").click();
+  await page.locator("#settingsDialog[open]").waitFor();
+  await enabled.uncheck();
+  assert.equal(await threshold.isDisabled(), true);
+  await page.getByTestId("settings-save-button").click();
+  await page.locator("#settingsDialog[open]").waitFor({ state: "hidden" });
+  assert.equal(await page.evaluate(async () => (await (await fetch("/api/settings")).json()).autoCompactThreshold), null);
+});
+
 test("harness settings and model picker follow runtime metadata", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   await signIn(page, node.url, environment.username, environment.password);

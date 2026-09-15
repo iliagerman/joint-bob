@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Conversations now compact automatically between messages when context usage reaches a configured threshold on this node.
+
 ## 1.31.9 — 2026-09-15
 
 - Scheduled tasks now run even when peer nodes are temporarily unavailable.

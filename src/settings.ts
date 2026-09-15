@@ -37,6 +37,7 @@ export interface SettingsInput {
   resources?: ResourcePaths;
   conversationLabels?: string[];
   conversationHistoryDays?: number;
+  autoCompactThreshold?: number | null;
   conversationDefaults?: Record<string, ConversationDefault>;
 }
 
@@ -50,6 +51,7 @@ export interface SettingsResponse {
   resources: ResourcePaths;
   conversationLabels: string[];
   conversationHistoryDays: number;
+  autoCompactThreshold: number | null;
   conversationDefaults: ReturnType<typeof conversationDefaultsSchema.parse>;
   restartRequired: Record<string, boolean>;
 }
@@ -153,6 +155,7 @@ export function getSettings(): SettingsResponse {
     resources: readResourcePaths("resources."),
     conversationLabels: conversationLabelsSchema.parse(JSON.parse(value("conversationLabels", JSON.stringify(DEFAULT_CONVERSATION_LABELS)))),
     conversationHistoryDays: Number(value("conversationHistoryDays", "30")),
+    autoCompactThreshold: value("autoCompactThreshold", "70") === "disabled" ? null : Number(value("autoCompactThreshold", "70")),
     restartRequired: Object.fromEntries(runtimeAdapters().map((adapter) => [adapter.id, false])),
   } as SettingsResponse;
 }
@@ -244,6 +247,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
   const resources = input.resources ? normalizeResourcePaths(input.resources) : previous.resources;
   const conversationLabels = conversationLabelsSchema.parse(input.conversationLabels ?? previous.conversationLabels);
   const conversationHistoryDays = input.conversationHistoryDays ?? previous.conversationHistoryDays;
+  const autoCompactThreshold = input.autoCompactThreshold === undefined ? previous.autoCompactThreshold : input.autoCompactThreshold;
   const conversationDefaults = conversationDefaultsSchema.parse(input.conversationDefaults ?? previous.conversationDefaults);
   if (!homePath.trim() || !path.isAbsolute(homePath)) throw new Error("Joint Bob home folder must be absolute");
   db.exec("BEGIN");
@@ -257,6 +261,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
     save(db, "projects.homePath", path.resolve(homePath));
     save(db, "conversationLabels", JSON.stringify(conversationLabels));
     save(db, "conversationHistoryDays", String(conversationHistoryDays));
+    save(db, "autoCompactThreshold", autoCompactThreshold === null ? "disabled" : String(autoCompactThreshold));
     save(db, "conversationDefaults", JSON.stringify(conversationDefaults));
     for (const type of RESOURCE_TYPES) save(db, `resources.${type}`, JSON.stringify(resources[type]));
     if (input.syncthing.apiKey !== undefined) {
@@ -277,6 +282,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
         conversationDefaultsChanged: JSON.stringify(previous.conversationDefaults) !== JSON.stringify(settings.conversationDefaults),
         conversationLabelsChanged: JSON.stringify(previous.conversationLabels) !== JSON.stringify(settings.conversationLabels),
         conversationHistoryDaysChanged: previous.conversationHistoryDays !== settings.conversationHistoryDays,
+        autoCompactThresholdChanged: previous.autoCompactThreshold !== settings.autoCompactThreshold,
         apiKeyConfigured: settings.syncthing.apiKeyConfigured,
       },
     });

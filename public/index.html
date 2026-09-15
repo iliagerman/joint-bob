@@ -459,6 +459,18 @@
             <p class="settings-hint">Older transcripts stay on disk and load only when opened from a pin, recent item, canvas pane, or direct link.</p>
           </fieldset>
           <fieldset class="phase-settings">
+            <legend>Context compaction</legend>
+            <label class="checkbox-row">
+              <input id="settingsAutoCompactEnabled" type="checkbox" data-testid="settings-auto-compact-enabled" />
+              Compact conversations automatically between messages
+            </label>
+            <label>Compact when context reaches
+              <input id="settingsAutoCompactThreshold" type="number" min="1" max="100" step="1" required data-testid="settings-auto-compact-threshold" />
+              percent
+            </label>
+            <p class="settings-hint">This setting applies only to conversations running on this node. Disable it to compact manually.</p>
+          </fieldset>
+          <fieldset class="phase-settings">
             <legend>Account</legend>
             <p>Signed in as <output id="settingsUsername" data-testid="settings-username"></output>.</p>
             <div class="account-password-fields">

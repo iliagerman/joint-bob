@@ -208,6 +208,9 @@ export async function openSettings(tab = "account") {
   elements.settingsProjectHome.value = settings.projects.homePath;
   document.querySelector("#settingsConversationLabels").value = settings.conversationLabels.join("\n");
   document.querySelector("#settingsConversationHistoryDays").value = settings.conversationHistoryDays;
+  elements.settingsAutoCompactEnabled.checked = settings.autoCompactThreshold !== null;
+  elements.settingsAutoCompactThreshold.value = settings.autoCompactThreshold ?? 70;
+  elements.settingsAutoCompactThreshold.disabled = !elements.settingsAutoCompactEnabled.checked;
   elements.settingsRuntimeStatus.textContent = "";
   elements.settingsSkillsStatus.textContent = "";
   fillResourceFields(globalResourceFields, settings.resources);
@@ -233,6 +236,7 @@ async function saveSettings(event) {
       resources: resourceFieldsValue(globalResourceFields),
       conversationLabels: document.querySelector("#settingsConversationLabels").value.split("\n").map((label) => label.trim()).filter(Boolean),
       conversationHistoryDays: Number(document.querySelector("#settingsConversationHistoryDays").value),
+      autoCompactThreshold: elements.settingsAutoCompactEnabled.checked ? Number(elements.settingsAutoCompactThreshold.value) : null,
     }),
   });
   state.conversationLabels = saved.conversationLabels;
@@ -276,6 +280,7 @@ async function reloadSkills() {
 elements.settingsSyncSkillsButton.addEventListener("click", () => runSkillOperation(syncLocalSkills));
 elements.settingsReloadSkillsButton.addEventListener("click", () => runSkillOperation(reloadSkills));
 elements.settingsCheckRuntimePathsButton.addEventListener("click", () => checkRuntimePaths().catch((error) => toast(error.message)));
+elements.settingsAutoCompactEnabled.addEventListener("change", () => { elements.settingsAutoCompactThreshold.disabled = !elements.settingsAutoCompactEnabled.checked; });
 for (const tab of elements.settingsTabs) {
   tab.addEventListener("click", () => selectSettingsTab(tab.dataset.settingsTab));
   tab.addEventListener("keydown", (event) => {

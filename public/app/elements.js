@@ -125,6 +125,8 @@ export const elements = {
   whatsNewList: document.querySelector("#whatsNewList"),
   whatsNewVersion: document.querySelector("#whatsNewVersion"),
   settingsProjectHome: document.querySelector("#settingsProjectHome"),
+  settingsAutoCompactEnabled: document.querySelector("#settingsAutoCompactEnabled"),
+  settingsAutoCompactThreshold: document.querySelector("#settingsAutoCompactThreshold"),
   settingsResourceSkillsPaths: document.querySelector("#settingsResourceSkillsPaths"),
   settingsSyncSkillsButton: document.querySelector("#settingsSyncSkillsButton"),
   settingsReloadSkillsButton: document.querySelector("#settingsReloadSkillsButton"),
