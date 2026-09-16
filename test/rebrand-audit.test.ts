@@ -37,5 +37,8 @@ test("runtime-facing text and new paths use Joint Bob", async () => {
   assert.match(server, /\.joint-bob-attachments/);
   assert.match(worktrees, /\.joint-bob-worktrees/);
   assert.match(store, /joint-bob-\$\{slug/);
-  assert.match(push, /mailto:joint-bob@localhost/);
+  // Apple's push service rejects VAPID JWTs whose contact is a fake domain
+  // ("BadJwtToken"), so the subject must be a real, reachable URL.
+  assert.doesNotMatch(push, /mailto:joint-bob@localhost/);
+  assert.match(push, /https:\/\/github\.com\/iliagerman\/joint-bob/);
 });

@@ -330,12 +330,12 @@ function vapidKeys(): { publicKey: string; privateKey: string } {
 
 function configureWebPush(): void {
   const keys = vapidKeys();
-  webpush.setVapidDetails("mailto:joint-bob@localhost", keys.publicKey, keys.privateKey);
+  webpush.setVapidDetails("https://github.com/iliagerman/joint-bob", keys.publicKey, keys.privateKey);
 }
 
 export async function getVapidPublicKey(): Promise<string> {
   const keys = vapidKeys();
-  webpush.setVapidDetails("mailto:joint-bob@localhost", keys.publicKey, keys.privateKey);
+  webpush.setVapidDetails("https://github.com/iliagerman/joint-bob", keys.publicKey, keys.privateKey);
   return keys.publicKey;
 }
 
@@ -555,7 +555,7 @@ export async function notifyConversationReview(userId: string, projectId: string
   const records = rows.map((row) => ({
     subscription: JSON.parse(decrypt(row.subscription)) as PushSubscription,
     vapidDetails: {
-      subject: "mailto:joint-bob@localhost",
+      subject: "https://github.com/iliagerman/joint-bob",
       publicKey: row.vapid_public_key ?? keys.publicKey,
       privateKey: row.vapid_private_key ? decrypt(row.vapid_private_key) : keys.privateKey,
     },
