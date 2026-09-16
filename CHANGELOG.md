@@ -3,9 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.34.0 — 2026-09-16
 
-- Messages now show when they were recorded, user messages display delivery status with check marks, and unread agent replies carry a dot that clears when viewed—read status syncs across your devices.
+- Message timestamps display in your local time zone on every chat bubble.
+- Delivery receipts on your messages show when the agent has received them.
+- Read status syncs across your devices through your account settings.
 
 ## 1.33.2 — 2026-09-16
 
