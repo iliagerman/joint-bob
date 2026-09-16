@@ -86,7 +86,7 @@ test("header icons reveal the shortcut that opens them while the modifiers are h
     assert.equal(await hint("projects-open-canvas-button").innerText(), "V", "the canvas launch shows its key");
   });
   assert.equal(await hint("recent-sessions-open-button").isVisible(), false, "letting go hides the badges again");
-  assert.equal(await hint("recent-sessions-open-button").getAttribute("title"), "\u2303\u2325K", "the badge spells the whole chord on hover");
+  assert.equal(await hint("recent-sessions-open-button").getAttribute("title"), process.platform === "darwin" ? "\u2303\u2325K" : "Ctrl+Alt+K", "the badge spells the whole chord on hover");
 });
 
 test("canvas shares the top toolbar with larger icons and readable shortcut badges", async () => {

@@ -146,6 +146,7 @@ test("an open remote conversation can switch locally and take ownership", async 
   assert.equal(await takeButton.isVisible(), true, `local view offers takeover: ${JSON.stringify(takeoverState)}`);
   await takeButton.click();
   await homeserverPage.locator("#conversationLock").waitFor({ state: "hidden", timeout: 30_000 });
+  await homeserverPage.locator("#messageInput:not(:disabled)").waitFor();
   assert.equal(await homeserverPage.getByTestId("chat-message-input").isEnabled(), true, "the destination can continue the conversation after takeover");
 
   await nodeSelect.selectOption(mac.nodeId);
@@ -182,8 +183,12 @@ test("opening a conversation owned by an offline node automatically takes it ove
   // where this already-replicated ownership record is the precondition.
   for (const node of environment.nodes) {
     const database = new DatabaseSync(path.join(node.dataDir, "node.db"));
-    database.prepare("UPDATE conversation_ownership SET owner_node_id = ?, epoch = epoch + 1, status = 'owned', transfer_to_node_id = NULL WHERE session_id = ?").run(mac.nodeId, sessionId);
-    database.close();
+    try {
+      database.exec("PRAGMA busy_timeout = 5000");
+      database.prepare("UPDATE conversation_ownership SET owner_node_id = ?, epoch = epoch + 1, status = 'owned', transfer_to_node_id = NULL WHERE session_id = ?").run(mac.nodeId, sessionId);
+    } finally {
+      database.close();
+    }
   }
   await stopDevNode(servers[0]);
   try {

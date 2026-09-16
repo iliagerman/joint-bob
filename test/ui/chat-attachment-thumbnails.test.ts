@@ -53,6 +53,7 @@ test("live and loaded image attachments render as thumbnails and expand on click
   await thumbnails.last().waitFor();
   assert.equal(await thumbnails.count(), 2, "loaded and live messages both show their image");
   assert.equal(await thumbnails.first().getAttribute("aria-label"), "Expand example.png");
+  await thumbnails.first().locator("img").evaluate((image) => image.decode());
   assert.equal(await thumbnails.first().locator("img").evaluate((image) => image.complete && image.naturalWidth > 0), true, "thumbnail loads image bytes");
   assert.match(await page.locator(".message.user").first().innerText(), /Attached: example\.png/);
   assert.doesNotMatch(await page.locator(".message.user").first().innerText(), /Analyze them alongside/);

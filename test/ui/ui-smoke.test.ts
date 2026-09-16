@@ -1130,6 +1130,10 @@ test("the terminal fills its frame without overflowing it", async () => {
 // Every shortcut is edited in one place now: one row per command, each a recorder
 // that captures the modifiers you hold with the key.
 test("the Settings shortcuts tab edits every shortcut in one place", async () => {
+  const expectedModifiers = process.platform === "darwin"
+    ? { ctrl: "\u2303", ctrlAlt: "\u2303\u2325", metaShift: "\u2318\u21e7" }
+    : { ctrl: "Ctrl+", ctrlAlt: "Ctrl+Alt+", metaShift: "Win+Shift+" };
+
   // One fixed chord opens the panel from anywhere, already on the Shortcuts tab.
   await page.keyboard.press("Meta+Shift+Slash");
   await page.getByTestId("settings-dialog").waitFor({ state: "visible" });
@@ -1137,26 +1141,26 @@ test("the Settings shortcuts tab edits every shortcut in one place", async () =>
 
   const spotlight = page.getByTestId("canvas-keymap-spotlight-input");
   const paneSearch = page.getByTestId("canvas-keymap-pane-search-input");
-  assert.equal(await spotlight.inputValue(), "\u2303\u2325P", "the tab shows the chord that is in force");
-  assert.equal(await page.getByTestId("canvas-keymap-base-input").inputValue(), "\u2318\u21e7", "the conversation-key chord has its own recorder");
+  assert.equal(await spotlight.inputValue(), `${expectedModifiers.ctrlAlt}P`, "the tab shows the chord that is in force");
+  assert.equal(await page.getByTestId("canvas-keymap-base-input").inputValue(), `${expectedModifiers.metaShift}`, "the conversation-key chord has its own recorder");
   assert.ok(await page.getByTestId("canvas-keymap-leader").isVisible(), "the fixed shortcuts are listed too");
 
   // Holding modifiers with the key records one chord, exactly as held.
   await paneSearch.click();
   await page.keyboard.press("Control+BracketLeft");
-  assert.equal(await paneSearch.inputValue(), "\u2303[");
+  assert.equal(await paneSearch.inputValue(), `${expectedModifiers.ctrl}[`);
   // Refocusing ends sequence capture. A bare key then never replaces the shortcut.
   await spotlight.click();
   await paneSearch.click();
   await page.keyboard.press("Enter");
-  assert.equal(await paneSearch.inputValue(), "\u2303[", "a bare key does not replace a shortcut");
+  assert.equal(await paneSearch.inputValue(), `${expectedModifiers.ctrl}[`, "a bare key does not replace a shortcut");
   // A second stroke within the capture window creates a three-key sequence.
   await page.keyboard.press("Control+Space");
   await page.keyboard.press("Shift+Backslash");
-  assert.equal(await paneSearch.inputValue(), "\u2303Space \\");
+  assert.equal(await paneSearch.inputValue(), `${expectedModifiers.ctrl}Space \\`);
   // Enter under a modifier replaces it and reads as a symbol.
   await page.keyboard.press("Control+Enter");
-  assert.equal(await paneSearch.inputValue(), "\u2303\u23ce");
+  assert.equal(await paneSearch.inputValue(), `${expectedModifiers.ctrl}\u23ce`);
   // Backspace clears to unbind.
   await paneSearch.press("Backspace");
   assert.equal(await paneSearch.inputValue(), "");
@@ -1178,7 +1182,7 @@ test("the Settings shortcuts tab edits every shortcut in one place", async () =>
   await page.reload();
   await page.getByTestId("settings-open-button").click();
   await page.getByTestId("settings-tab-shortcuts").click();
-  assert.equal(await paneSearch.inputValue(), "\u2303[", "the saved chord survives a reload");
+  assert.equal(await paneSearch.inputValue(), `${expectedModifiers.ctrl}[`, "the saved chord survives a reload");
   // Put the defaults back so later tests type the shortcuts they expect.
   await page.getByTestId("canvas-keymap-reset-button").click();
   await page.getByTestId("canvas-keymap-save-button").click();

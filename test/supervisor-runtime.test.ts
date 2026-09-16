@@ -144,12 +144,13 @@ test("stop removes a SIGTERM-ignoring grandchild and records stopped", async () 
   let grandchildPid = 0;
   try {
     const pidFile = path.join(f.root, "grandchild");
-    await writeFile(path.join(f.root, "grand.mjs"), "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)");
-    await writeFile(path.join(f.root, "task.mjs"), `import{spawn}from'node:child_process';import fs from'node:fs';const c=spawn(process.execPath,[${JSON.stringify(path.join(f.root, "grand.mjs"))}],{stdio:'ignore'});fs.writeFileSync(${JSON.stringify(pidFile)},String(c.pid));process.on('SIGTERM',()=>process.exit(0));setInterval(()=>{},1000)`);
+    await writeFile(path.join(f.root, "grand.mjs"), `import fs from'node:fs';process.on('SIGTERM',()=>{});fs.writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>{},1000)`);
+    await writeFile(path.join(f.root, "task.mjs"), `import{spawn}from'node:child_process';spawn(process.execPath,[${JSON.stringify(path.join(f.root, "grand.mjs"))}],{stdio:'ignore'});process.on('SIGTERM',()=>process.exit(0));setInterval(()=>{},1000)`);
     await f.control(startRequest(f.root));
     await waitFor(async () => { try { grandchildPid = Number(await readFile(pidFile, "utf8")); return grandchildPid > 0; } catch { return false; } }, "grandchild did not start");
     await f.control({ action: "stop", id: UUID });
     await waitFor(async () => !(await processExists(grandchildPid)), "grandchild survived stop", 15000);
+    await waitFor(async () => (await f.control({ action: "task", id: UUID })).body.result.status === "stopped", "task stop was not persisted");
     assert.equal((await f.control({ action: "task", id: UUID })).body.result.status, "stopped");
   } finally {
     if (grandchildPid && await processExists(grandchildPid)) { try { process.kill(grandchildPid, "SIGKILL"); } catch {} }

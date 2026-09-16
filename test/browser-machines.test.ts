@@ -181,6 +181,7 @@ test("logical conversation preference and remote recovery commands survive engin
 test("preference replication and browser relay enforce project sharing", async () => {
   const [a,b]=env.nodes;
   const db=new DatabaseSync(path.join(b.dataDir,"node.db"));
+  db.exec("PRAGMA busy_timeout=5000");
   db.prepare("INSERT INTO cluster_project_grants VALUES (?,?,?,?)").run(a.nodeId,"[]",new Date().toISOString(),b.nodeId);
   try {
     const token=(await request(0,"GET","/cluster/invite")).body.token;

@@ -9,6 +9,8 @@ async function signIn(page: Page, url: string, username: string, password: strin
   await page.getByTestId("login-username-input").fill(username);
   await page.getByTestId("login-password-input").fill(password);
   await page.getByTestId("login-submit-button").click();
+  await page.locator("#loginDialog[open]").waitFor({ state: "hidden" });
+  await page.locator(".project-card").first().waitFor({ state: "visible" });
   await page.getByTestId("settings-open-button").waitFor();
 }
 
@@ -65,6 +67,7 @@ test("model picker renders provider presentation metadata", { timeout: 120_000 }
     modelButton.removeAttribute("disabled");
     modelButton.click();
   });
+  await page.locator("#modelDialog[open]").waitFor({ state: "visible" });
 
   const headings = page.locator("#modelDialogList .model-dialog-group");
   assert.deepEqual(await headings.allTextContents(), ["GPT", "Independent"]);
@@ -79,6 +82,7 @@ test("model picker renders provider presentation metadata", { timeout: 120_000 }
     modelButton.removeAttribute("disabled");
     modelButton.click();
   });
+  await page.locator("#modelDialog[open]").waitFor({ state: "visible" });
   assert.equal(await page.locator("#modelDialogList .model-dialog-group").innerText(), "GPT");
 });
 
@@ -152,7 +156,7 @@ test("harness settings and model picker follow runtime metadata", { timeout: 120
   assert.equal(await page.getByText("Pi GPT", { exact: true }).count(), 0);
   await page.locator("#modelDialog").evaluate((dialog: HTMLDialogElement) => dialog.close());
 
-  await page.getByRole("button", { name: /Internal Assistant \/private\// }).click();
+  await page.locator("#projectList .project-card").filter({ has: page.getByText("Internal Assistant", { exact: true }) }).click();
   await page.getByTestId("projects-open-board-button").click();
   await page.getByTestId("task-create-button").click();
   assert.deepEqual(await page.getByTestId("task-form-engine-select").locator("option").allTextContents(), ["Pi", "Claude", "Kiro"]);
@@ -200,7 +204,7 @@ test("listing-only harness metadata does not offer execution or break settings",
   assert.equal(await page.getByTestId("harness-tab-archive").count(), 0);
   await page.locator("#settingsDialog").evaluate((dialog: HTMLDialogElement) => dialog.close());
 
-  await page.getByRole("button", { name: /Internal Assistant \/private\// }).click();
+  await page.locator("#projectList .project-card").filter({ has: page.getByText("Internal Assistant", { exact: true }) }).click();
   assert.equal(await page.locator("#chatHarnessSelect option[value=archive]").count(), 0);
 
   await page.getByTestId("projects-open-board-button").click();

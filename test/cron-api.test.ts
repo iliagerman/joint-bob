@@ -29,7 +29,8 @@ test("scheduler restart pauses uncertain dispatch, skips offline occurrences, an
     const env = { JOINT_BOB_TEST_ENGINE_LOG: log, JOINT_BOB_TEST_ENGINE_HOLD_DIR: root };
     children.push(await startDevNode(environment, node, env));
     let auth = await signIn(environment, node);
-    const input = { projectId: node.projects[0].id, name: "Interrupted report", prompt: "Report", engine: "claude", sessionId: null, ownerNodeId: node.nodeId, enabled: true, schedule: { frequency: "hourly", hour: 9, minute: 0, weekday: 1, timezone: "UTC" } };
+    // Tests manually make tasks due; keep the natural hourly tick outside the test duration.
+    const input = { projectId: node.projects[0].id, name: "Interrupted report", prompt: "Report", engine: "claude", sessionId: null, ownerNodeId: node.nodeId, enabled: true, schedule: { frequency: "hourly", hour: 9, minute: (new Date().getUTCMinutes() + 30) % 60, weekday: 1, timezone: "UTC" } };
     const created = await api<{ task: CronTask }>(node, auth, "POST", "/cron", { nodeId: node.nodeId, command: { action: "create", input } });
     assert.equal(created.status, 200, JSON.stringify(created.body));
     const readTask = async (id: string) => (await api<{ tasks: CronTask[] }>(node, auth, "GET", `/projects/${input.projectId}/cron`)).body.tasks.find(task => task.id === id)!;
@@ -69,7 +70,7 @@ test("different schedules run concurrently in isolated conversations that join p
     const log = path.join(root, "engine.log");
     child = await startDevNode(environment, node, { JOINT_BOB_TEST_ENGINE_LOG: log, JOINT_BOB_TEST_ENGINE_HOLD_DIR: root });
     const auth = await signIn(environment, node);
-    const base = { projectId: node.projects[0].id, prompt: "Parallel report", engine: "claude", sessionId: null, ownerNodeId: node.nodeId, enabled: true, schedule: { frequency: "hourly", hour: 9, minute: 0, weekday: 1, timezone: "UTC" } };
+    const base = { projectId: node.projects[0].id, prompt: "Parallel report", engine: "claude", sessionId: null, ownerNodeId: node.nodeId, enabled: true, schedule: { frequency: "hourly", hour: 9, minute: (new Date().getUTCMinutes() + 30) % 60, weekday: 1, timezone: "UTC" } };
     const tasks: CronTask[] = [];
     for (const name of ["Parallel A", "Parallel B"]) {
       const created = await api<{ task: CronTask }>(node, auth, "POST", "/cron", { nodeId: node.nodeId, command: { action: "create", input: { ...base, name } } });
@@ -81,6 +82,14 @@ test("different schedules run concurrently in isolated conversations that join p
     await until(async () => {
       const listed = await readTasks();
       return tasks.every(task => listed.find(candidate => candidate.id === task.id)?.lastRun?.status === "running");
+    });
+    await until(async () => {
+      try {
+        return (await readFile(log, "utf8")).trim().split("\n").length >= 2;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+        throw error;
+      }
     });
     assert.equal((await readFile(log, "utf8")).trim().split("\n").length, 2, "both isolated agents must start before either finishes");
     await writeFile(path.join(root, "claude.release"), "");
@@ -106,7 +115,7 @@ test("cron API routes to execution owner, persists, runs fresh project conversat
     for (const node of [a, b]) children.push(await startDevNode(environment, node, { JOINT_BOB_TEST_ENGINE_LOG: log }));
     const auth = await signIn(environment, a);
     const projectId = a.projects[0].id;
-    const input = { projectId, name: "Scheduled report", prompt: "Give a report", engine: "claude", sessionId: null, ownerNodeId: b.nodeId, enabled: true, schedule: { frequency: "hourly", hour: 9, minute: 0, weekday: 1, timezone: "UTC" } };
+    const input = { projectId, name: "Scheduled report", prompt: "Give a report", engine: "claude", sessionId: null, ownerNodeId: b.nodeId, enabled: true, schedule: { frequency: "hourly", hour: 9, minute: (new Date().getUTCMinutes() + 30) % 60, weekday: 1, timezone: "UTC" } };
     const authBInitial = await signIn(environment, b);
     const listSessions = async (node: typeof a, session: typeof auth) => (await api<{ sessions: Array<{ id: string; harnessId: string; cronTaskId?: string }> }>(node, session, "GET", `/projects/${projectId}/sessions`)).body.sessions;
     const unscheduled = (await listSessions(b, authBInitial)).filter(session => session.harnessId === "pi").slice(0, 2);

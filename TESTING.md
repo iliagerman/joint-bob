@@ -103,6 +103,25 @@ the canvas picker, and it fails on any console error or any 4xx/5xx response.
 It lives outside the `test/*.test.ts` glob on purpose. It needs a Chrome binary,
 and a browser suite that silently skips itself reports success while testing
 nothing. `npm test` stays fast and browser-free; `npm run test:ui` is explicit.
+The browser must be installed externally; the repository does not download one.
+
+On Linux hosts where frequent Docker interface changes disrupt Chromium requests,
+the browser suite has an opt-in static-resource transport:
+
+```bash
+JOINT_BOB_TEST_STATIC_TRANSPORT=1 npm run test:ui
+```
+
+Use it with the existing Chrome selection environment when needed. It fetches
+only loopback HTTP(S) GET static subresources outside `/api/` and `/ws` through
+Playwright's real HTTP client and fulfills them with the actual fixture server
+response. Navigation documents remain on Chromium's native network path so the
+browser preserves the loopback origin's address-space classification. API reads
+and mutations, WebSockets, and external domains also remain on Chromium's network
+path. It retries one `ECONNRESET` for static GETs only, using the actual server
+bytes returned by the retry. It does not retry other failures or mutations,
+mock files or data, skip assertions, or affect tests when the environment
+variable is unset.
 
 Conventions that keep it stable:
 

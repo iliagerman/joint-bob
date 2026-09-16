@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import WebSocket from "ws";
+import { stopDevNode } from "./dev-nodes.js";
 
 /**
  * Two real nodes over one shared transcript filesystem (what Syncthing looks like
@@ -87,19 +88,26 @@ function startNode(node: NodeFixture, home: string, invocationLog: string, holdD
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const timeout = setTimeout(() => reject(new Error("Server startup timed out")), 15_000);
-    child.once("exit", (status) => reject(new Error(`Server exited during startup: ${status}`)));
+    let stderr = "";
+    child.stderr!.on("data", (chunk) => { stderr = (stderr + String(chunk)).slice(-8_000); });
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`Server startup timed out: ${stderr}`));
+    }, 15_000);
+    child.once("exit", (status) => {
+      clearTimeout(timeout);
+      reject(new Error(`Server exited during startup: ${status}: ${stderr}`));
+    });
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
     child.stdout!.on("data", (chunk) => {
       if (!String(chunk).includes("Joint Bob listening")) return;
       clearTimeout(timeout);
       resolve(child);
     });
   });
-}
-
-async function stopNode(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null) return;
-  await new Promise<void>((resolve) => { child.once("exit", () => resolve()); child.kill("SIGTERM"); });
 }
 
 async function browserLogin(node: NodeFixture, password: string): Promise<BrowserSession> {
@@ -268,7 +276,8 @@ test("running leases and review watermarks travel between two real nodes", { tim
       initializeNode(path.join(root, "server-data"), home, projectPath, sessionRoot, await freePort()),
     ]);
     await Promise.all([pairNode(mac, server, home), pairNode(server, mac, home)]);
-    children.push(await startNode(server, home, invocationLog, holdDir), await startNode(mac, home, invocationLog, holdDir));
+    children.push(await startNode(server, home, invocationLog, holdDir));
+    children.push(await startNode(mac, home, invocationLog, holdDir));
     const [macAuth, serverAuth] = await Promise.all([browserSession(mac), browserSession(server)]);
 
     // Phase 1: the homeserver executes, the Mac watches.
@@ -302,7 +311,7 @@ test("running leases and review watermarks travel between two real nodes", { tim
     await waitForSession(mac, macAuth, sessionId, (session) => session.reviewState === "reviewed");
 
     // Phase 3: review state survives a node restart.
-    await stopNode(children.pop()!);
+    await stopDevNode(children.pop()!);
     children.push(await startNode(mac, home, invocationLog, holdDir));
     const macAuthAfterRestart = await browserLogin(mac, "replacement-password");
     await waitForSession(mac, macAuthAfterRestart, sessionId, (session) => session.reviewState === "reviewed", 30_000);
@@ -322,7 +331,7 @@ test("running leases and review watermarks travel between two real nodes", { tim
     await waitForSession(mac, macAuth, sessionId, (session) => !session.running, 40_000);
   } finally {
     for (const socket of sockets) socket.close();
-    await Promise.all(children.map(stopNode));
+    await Promise.all(children.map(stopDevNode));
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -350,7 +359,8 @@ test("a Claude conversation's running and review states sync the same way", { ti
       initializeNode(path.join(root, "server-data"), home, projectPath, path.join(home, ".pi", "sessions"), await freePort()),
     ]);
     await Promise.all([pairNode(mac, server, home), pairNode(server, mac, home)]);
-    children.push(await startNode(server, home, invocationLog, holdDir), await startNode(mac, home, invocationLog, holdDir));
+    children.push(await startNode(server, home, invocationLog, holdDir));
+    children.push(await startNode(mac, home, invocationLog, holdDir));
     const [macAuth, serverAuth] = await Promise.all([browserSession(mac), browserSession(server)]);
 
     await seedConversationOwnership([mac, server], "claude", sessionId, server);
@@ -367,7 +377,7 @@ test("a Claude conversation's running and review states sync the same way", { ti
     await waitForSession(server, serverAuth, sessionId, (session) => session.reviewState === "reviewed");
   } finally {
     for (const socket of sockets) socket.close();
-    await Promise.all(children.map(stopNode));
+    await Promise.all(children.map(stopDevNode));
     await rm(root, { recursive: true, force: true });
   }
 });

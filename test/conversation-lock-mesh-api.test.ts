@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import WebSocket from "ws";
+import { stopDevNode } from "./dev-nodes.js";
 
 interface NodeFixture { dataDir: string; port: number; url: string; id: string; token: string; projectId: string }
 
@@ -66,19 +67,26 @@ function startNode(node: NodeFixture, home: string): Promise<ChildProcess> {
       env: { ...process.env, PORT: String(node.port), NODE_ENV: "test", HOME: home, JOINT_BOB_DATA_DIR: node.dataDir },
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const timeout = setTimeout(() => reject(new Error("Server startup timed out")), 15_000);
-    child.once("exit", (status) => reject(new Error(`Server exited during startup: ${status}`)));
+    let stderr = "";
+    child.stderr!.on("data", (chunk) => { stderr = (stderr + String(chunk)).slice(-8_000); });
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`Server startup timed out: ${stderr}`));
+    }, 15_000);
+    child.once("exit", (status) => {
+      clearTimeout(timeout);
+      reject(new Error(`Server exited during startup: ${status}: ${stderr}`));
+    });
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
     child.stdout!.on("data", (chunk) => {
       if (!String(chunk).includes("Joint Bob listening")) return;
       clearTimeout(timeout);
       resolve(child);
     });
   });
-}
-
-async function stopNode(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null) return;
-  await new Promise<void>((resolve) => { child.once("exit", () => resolve()); child.kill("SIGTERM"); });
 }
 
 // Resolves with the `ready` frame so the test can read the ownership the node published.
@@ -131,7 +139,8 @@ test("opening a never-prompted conversation claims it, and the second node is to
       initializeNode(path.join(root, "mac-data"), home, projectPath, sessionRoot, await freePort()),
     ]);
     await Promise.all([pairNode(homeserver, mac, home, "Mac"), pairNode(mac, homeserver, home, "Homeserver")]);
-    children.push(await startNode(homeserver, home), await startNode(mac, home));
+    children.push(await startNode(homeserver, home));
+    children.push(await startNode(mac, home));
 
     // Nobody has ever prompted this conversation, so opening it is what creates its owner.
     const first = await openConversation(homeserver, transcriptPath, sockets);
@@ -146,7 +155,7 @@ test("opening a never-prompted conversation claims it, and the second node is to
     assert.equal(reopened.ownership, null);
   } finally {
     for (const socket of sockets) socket.terminate();
-    await Promise.all(children.map(stopNode));
+    await Promise.all(children.map(stopDevNode));
     await rm(root, { recursive: true, force: true });
   }
 });

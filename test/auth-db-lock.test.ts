@@ -44,6 +44,7 @@ test("an authenticated request waits out a database write lock instead of dying"
     assert.equal((await fetch(`${base}/api/projects`, { headers })).status, 200);
 
     const db = new DatabaseSync(path.join(dataDir, "node.db"));
+    db.exec("PRAGMA busy_timeout=5000");
     db.exec("BEGIN IMMEDIATE");
     const pending = fetch(`${base}/api/projects`, { headers });
     await new Promise((resolve) => setTimeout(resolve, 300));

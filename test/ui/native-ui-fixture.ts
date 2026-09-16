@@ -7,8 +7,8 @@ import { chromium, type Browser } from "playwright-core";
 import { seedDevEnvironment, startDevNode, stopDevNode } from "../dev-nodes.js";
 
 // Repository UI tests only: synthetic accounts, loopback nodes, fresh Chrome context.
-export async function nativeUiFixture(t: TestContext) {
-  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "joint-bob-native-ui-")));
+export async function nativeUiFixture(t: TestContext, extraEnv: (root: string) => Record<string, string> = () => ({})) {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "jb-ui-")));
   let server: ChildProcess | undefined;
   let browser: Browser | undefined;
   t.after(async () => {
@@ -24,8 +24,12 @@ export async function nativeUiFixture(t: TestContext) {
   });
   const environment = await seedDevEnvironment(root, 1);
   const node = environment.nodes[0];
-  server = await startDevNode(environment, node);
-  browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL ?? "chrome", headless: true, env: { ...process.env, HOME: environment.home } });
+  server = await startDevNode(environment, node, extraEnv(root));
+  browser = await chromium.launch({
+    channel: process.env.CHROME_CHANNEL ?? "chrome",
+    headless: true,
+    env: { ...process.env, HOME: environment.home },
+  });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: "block" });
   context.setDefaultTimeout(20_000);
   const page = await context.newPage();

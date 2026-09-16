@@ -230,6 +230,7 @@ test("project browser monitor management journey", { timeout: 180_000 }, async (
     });
     assert.equal(monitor.baseline, true);
     assert.equal(monitor.enabled, false);
+    await card.locator(`[data-testid="automation-live-view"][href*="browserSessionId=${replacement.id}"]`).waitFor();
     const replacementHref = await card.getByTestId("automation-live-view").getAttribute("href");
     assert.ok(replacementHref?.includes(`browserSessionId=${replacement.id}`), replacementHref ?? "missing replacement live-view URL");
 
