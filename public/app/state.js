@@ -112,6 +112,8 @@ export const state = {
   activeTaskId: null,
   conversationLock: null,
   conversationReadOnly: false,
+  scheduledConversation: false,
+  scheduledAssistantText: "",
   socket: null,
   reconnectTimer: null,
   heartbeatTimer: null,

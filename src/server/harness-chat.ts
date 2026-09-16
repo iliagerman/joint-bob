@@ -18,7 +18,7 @@ import type { HarnessId, ProjectRecord, SessionSummary, TaskAttachment } from ".
 import { listTasks, updateTask } from "../tasks.js";
 import { persistTaskAttachments, promptTextWithAttachments } from "./chat.js";
 import { conversationBelongsToDoneTask } from "./cluster-helpers.js";
-import { conversationTranscriptPayload } from "../conversation-segments.js";
+import { conversationTranscriptPayload, scheduledReportMessages } from "../conversation-segments.js";
 import { socketMessageSchema } from "./schemas.js";
 import { claimConversationLocally, describeConversationOwner, type ForeignConversationOwner, requireLocalConversationOwner } from "./sessions-helpers.js";
 import { flags } from "./state.js";
@@ -376,8 +376,10 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
   attachHarnessClient(shared, options.socket); harnessChatConnections.add(connection);
   const transcript = await conversationTranscriptPayload(options.project.id, options.engine, shared.session.id, options.listedSessions, shared.session.messages);
   if (!shared.session.messages.length && transcript.segments.length > 1 && !connection.handoffContext) connection.handoffContext = buildHandoffContext(transcript.messages);
+  const scheduled = Boolean(record?.cronTaskId);
+  const browserMessages = scheduled ? scheduledReportMessages(transcript.messages, !harnessSessionBusy(shared)) : transcript.messages;
   const local = await getClusterNode();
-  send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: transcript.messages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
+  send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, scheduled, ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
   for (const event of shared.liveEvents) send(options.socket, event);
   refreshHarnessPromptQueue(connection);
   options.socket.on("message", (raw) => void handleHarnessChatMessage(connection, raw as Buffer).catch(async (error) => {

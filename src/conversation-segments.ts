@@ -40,6 +40,20 @@ export function boundTranscriptMessages<T extends ChatMessage & { segment?: numb
   } as T, ...retained];
 }
 
+/** Keeps one completed assistant report per turn for scheduled-conversation browser views. */
+export function scheduledReportMessages<T extends ChatMessage>(messages: T[], includeTrailingTurn = true): T[] {
+  const reports: T[] = [];
+  let latestAssistant: T | undefined;
+  for (const message of messages) {
+    if (message.role === "user") {
+      if (latestAssistant) reports.push(latestAssistant);
+      latestAssistant = undefined;
+    } else if (message.role === "assistant") latestAssistant = message;
+  }
+  if (includeTrailingTurn && latestAssistant) reports.push(latestAssistant);
+  return reports;
+}
+
 /** One flat transcript where every message knows its segment, plus the segment engines in order. */
 export function flattenSegments(prior: ConversationSegmentView[], activeEngine: string, activeMessages: ChatMessage[]): { segments: Array<{ engine: string }>; messages: Array<ChatMessage & { segment: number }> } {
   return {

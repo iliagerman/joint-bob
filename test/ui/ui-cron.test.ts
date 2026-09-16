@@ -75,6 +75,10 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
   await page.locator("#cronClose").click();
   await page.locator('[data-testid="chats-filter-cron-button"]').click();
   await page.waitForFunction(() => document.querySelectorAll("#sessionList .list-row").length === 1 && document.querySelector("#sessionList .list-row").textContent.includes("Short one"));
+  await page.locator("#sessionList .list-row", { hasText: "Short one" }).click();
+  await page.locator("#messages .message.assistant", { hasText: "Understood." }).waitFor();
+  assert.equal(await page.locator("#messages .message.user").count(), 0, "Scheduled trigger prompts should stay out of the browser transcript");
+  assert.deepEqual(await page.locator("#messages .message.assistant .message-content").allTextContents(), ["Understood."], "Scheduled transcripts should show only final reports");
   await page.goto(node.url);
   await page.waitForFunction(() => document.querySelector("[data-filter-count=cron]").textContent === "1");
   await page.locator('[aria-label="Actions for Internal Assistant"]').click();
