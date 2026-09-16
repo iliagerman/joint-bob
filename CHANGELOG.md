@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.36.1 — 2026-09-16
 
 - API responses now prevent browser cache retention, ensuring stale conversation data doesn't persist across sessions.
+- Syncthing no longer syncs per-clone metadata across cluster nodes, reducing churn on shared folders.
 
 ## 1.36.0 — 2026-09-16
 
