@@ -160,9 +160,9 @@ export const chordMatches = (chord, event) => Array.isArray(chord)
   && canvasKeyFromCode(event.code) === chord[chord.length - 1];
 /** A key that types no character needs a symbol a person can read on a badge. */
 export const canvasKeyLabel = (key) => ({ ENTER: "⏎", SPACE: "Space", ARROWLEFT: "←", ARROWRIGHT: "→", ARROWUP: "↑", ARROWDOWN: "↓" })[key] ?? (key || "");
-export function chordLabel(chord) {
+export function chordLabel(chord, mac = isMacPlatform()) {
   if (!Array.isArray(chord)) return "";
-  const symbols = isMacPlatform() ? MAC_MODIFIER_LABELS : OTHER_MODIFIER_LABELS;
+  const symbols = mac ? MAC_MODIFIER_LABELS : OTHER_MODIFIER_LABELS;
   const keys = chord.filter((token) => !MODIFIER_TOKENS.has(token));
   const first = CANVAS_MODIFIERS.filter((name) => chord.includes(name)).map((name) => symbols[name]).join("") + canvasKeyLabel(keys[0]);
   return [first, ...keys.slice(1).map(canvasKeyLabel)].join(" ");
@@ -190,7 +190,7 @@ export const shortcutFinalMatches = (shortcut, event) => Boolean(shortcutPrefix(
   && canvasKeyFromCode(event.code) === shortcut[shortcut.length - 1];
 /** The chord a conversation's own key fires on: the base modifiers plus that key. */
 export const conversationChord = (keymap, key) => normalizeChord([...keymap.base, key]);
-export const conversationChordLabel = (keymap, key) => chordLabel(conversationChord(keymap, key));
+export const conversationChordLabel = (keymap, key, mac = isMacPlatform()) => chordLabel(conversationChord(keymap, key), mac);
 
 /** Every command the keymap can bind, in collision-priority order: where a stored
  *  keymap hands one chord to two commands, the earlier command keeps it. The first

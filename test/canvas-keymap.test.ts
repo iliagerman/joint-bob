@@ -79,14 +79,19 @@ test("a chord answers an event only when every modifier and the key match exactl
 });
 
 test("the chord label draws the captured modifiers and a readable key", () => {
-  assert.equal(chordLabel(["meta", "shift", "P"]), "\u2318\u21e7P");
-  assert.equal(chordLabel(["ctrl", "\\"]), "\u2303\\");
-  assert.equal(chordLabel(["ctrl", "SPACE"]), "\u2303Space");
-  assert.equal(chordLabel(["ctrl", "SPACE", "\\"]), "\u2303Space \\");
-  assert.equal(chordLabel(["meta", "shift", "ARROWLEFT"]), "\u2318\u21e7\u2190");
-  assert.equal(chordLabel(["meta", "ENTER"]), "\u2318\u23ce");
-  assert.equal(chordLabel(["ctrl", "alt"]), "\u2303\u2325");
-  assert.equal(conversationChordLabel({ base: ["meta", "shift"] }, "4"), "\u2318\u21e74");
+  // The platform is passed in, so the label is the same on a Mac and on a Linux CI runner.
+  assert.equal(chordLabel(["meta", "shift", "P"], true), "\u2318\u21e7P");
+  assert.equal(chordLabel(["ctrl", "\\"], true), "\u2303\\");
+  assert.equal(chordLabel(["ctrl", "SPACE"], true), "\u2303Space");
+  assert.equal(chordLabel(["ctrl", "SPACE", "\\"], true), "\u2303Space \\");
+  assert.equal(chordLabel(["meta", "shift", "ARROWLEFT"], true), "\u2318\u21e7\u2190");
+  assert.equal(chordLabel(["meta", "ENTER"], true), "\u2318\u23ce");
+  assert.equal(chordLabel(["ctrl", "alt"], true), "\u2303\u2325");
+  assert.equal(conversationChordLabel({ base: ["meta", "shift"] }, "4", true), "\u2318\u21e74");
+  // Off a Mac the same chord spells its modifiers out.
+  assert.equal(chordLabel(["ctrl", "alt", "Y"], false), "Ctrl+Alt+Y");
+  assert.equal(chordLabel(["meta", "shift", "P"], false), "Win+Shift+P");
+  assert.equal(conversationChordLabel({ base: ["meta", "shift"] }, "4", false), "Win+Shift+4");
   // A button badge drops the modifiers and keeps only what makes the shortcut unique.
   assert.equal(chordKeyLabel(["ctrl", "alt", "Y"]), "Y");
   assert.equal(chordKeyLabel(["ctrl", "alt", "ARROWLEFT"]), "\u2190");
