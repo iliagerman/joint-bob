@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Tasks now preserve their local transcript pointers during cluster synchronization when the originating harness session hasn't changed.
 - Classification filter dropdown no longer overflows on small screens.
 
 ## 1.40.1 — 2026-09-16

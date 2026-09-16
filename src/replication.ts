@@ -14,6 +14,7 @@ import { applyConversationGoalEvent, ensureConversationGoalSchema } from "./conv
 import { applyUserPinEvent, ensureUserPinSchema } from "./user-pins.js";
 import { applyUserRecentSessionEvent, ensureUserRecentSessionSchema } from "./recent-sessions.js";
 import { isHarnessId, PROJECT_COLORS, type TaskRecord } from "./types.js";
+import { listDiscoveredHarnesses } from "./harnesses/registry.js";
 
 export interface ReplicationEvent {
   id: string;
@@ -30,6 +31,7 @@ interface OutboxRow { event_id: string; origin_node_id: string; entity_type: str
 interface NamePayload { scope: "projects" | "sessions" | "session_colors" | "session_classifications" | "session_done"; key: string; name: string | null; updatedAt: string; originNodeId: string; }
 interface ProjectLockPayload { projectId: string; lock: { nodeId: string; nodeName: string; lockedAt: string } | null; updatedAt: string; originNodeId: string; }
 interface TaskPayload { projectId: string; task: TaskRecord | null; originNodeId: string; updatedAt?: string; }
+type LocalTranscript = { root: string; sessionId: (pointer: string) => string | undefined };
 
 const projectColors = new Set<string>(PROJECT_COLORS);
 const dataDir = resolveDataDirectory();
@@ -200,7 +202,7 @@ function taskPayload(event: ReplicationEvent): TaskPayload {
   if (typeof task.title !== "string" || typeof task.description !== "string" || !taskAttachmentsAreValid(task) || !["backlog", "planning", "in_progress", "review", "done"].includes(task.status) || !isHarnessId(task.engine) || typeof task.planMode !== "boolean" || typeof task.reviewMode !== "boolean" || !["idle", "running", "handoff_pending", "failed"].includes(task.executionState) || typeof task.currentNodeId !== "string" || typeof task.createdAt !== "string") throw new Error("Malformed task replication payload");
   return payload as TaskPayload;
 }
-function applyTaskEvent(db: DatabaseSync, event: ReplicationEvent): boolean {
+function applyTaskEvent(db: DatabaseSync, event: ReplicationEvent, localTranscripts: ReadonlyMap<string, LocalTranscript> = new Map()): boolean {
   const payload = taskPayload(event); const projectId = resolveProjectAlias(db, payload.projectId); const task = payload.task; const id = task?.id ?? event.entityKey.slice(payload.projectId.length + 1); const updatedAt = task?.updatedAt ?? payload.updatedAt!;
   const memberTombstones = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'cluster_member_tombstones'").get();
   if (event.operation === "upsert" && memberTombstones && db.prepare("SELECT 1 FROM cluster_member_tombstones WHERE id = ?").get(task!.currentNodeId)) return true;
@@ -216,12 +218,26 @@ function applyTaskEvent(db: DatabaseSync, event: ReplicationEvent): boolean {
   if (event.operation === "delete") { db.prepare("DELETE FROM tasks WHERE project_id = ? AND id = ?").run(projectId, id); db.prepare("INSERT INTO task_tombstones (project_id, task_id, updated_at, origin_node_id) VALUES (?, ?, ?, ?) ON CONFLICT(project_id, task_id) DO UPDATE SET updated_at=excluded.updated_at, origin_node_id=excluded.origin_node_id").run(projectId, id, updatedAt, event.originNodeId); return true; }
   if (!task) throw new Error("Malformed task replication payload");
   const localNode = (db.prepare("SELECT id FROM cluster_node WHERE singleton = 1").get() as { id: string } | undefined)?.id;
-  const previous = db.prepare("SELECT attachments, worktree_path, worktree_branch, session_path, handoff_context FROM tasks WHERE project_id = ? AND id = ?").get(projectId, task.id) as { attachments: string | null; worktree_path: string | null; worktree_branch: string | null; session_path: string | null; handoff_context: string | null } | undefined;
+  const previous = db.prepare("SELECT attachments, engine, worktree_path, worktree_branch, session_path, handoff_context FROM tasks WHERE project_id = ? AND id = ?").get(projectId, task.id) as { attachments: string | null; engine: string; worktree_path: string | null; worktree_branch: string | null; session_path: string | null; handoff_context: string | null } | undefined;
   const attachments = task.attachments ?? (previous?.attachments ? JSON.parse(previous.attachments) as TaskRecord["attachments"] : []);
   const local = task.currentNodeId === localNode;
   const worktreePath = local && task.worktreePath === null ? previous?.worktree_path ?? null : task.worktreePath;
   const worktreeBranch = local && task.worktreeBranch === null ? previous?.worktree_branch ?? null : task.worktreeBranch;
-  const sessionPath = local && task.sessionPath === null ? previous?.session_path ?? null : task.sessionPath;
+  const transcript = localTranscripts.get(task.engine);
+  const previousPointer = previous?.session_path;
+  const incomingPointer = task.sessionPath;
+  const rawPrevious = typeof previousPointer === "string" && previousPointer.startsWith(`${task.engine}:`) ? previousPointer.slice(task.engine.length + 1) : previousPointer;
+  const relativePrevious = transcript && typeof rawPrevious === "string" && path.isAbsolute(rawPrevious) ? path.relative(transcript.root, rawPrevious) : undefined;
+  const previousSessionId = transcript && typeof previousPointer === "string" ? transcript.sessionId(previousPointer) : undefined;
+  const incomingSessionId = transcript && typeof incomingPointer === "string" ? transcript.sessionId(incomingPointer) : undefined;
+  const preserveLocalSession = previous?.engine === task.engine
+    && typeof relativePrevious === "string"
+    && relativePrevious !== ".."
+    && !relativePrevious.startsWith(`..${path.sep}`)
+    && !path.isAbsolute(relativePrevious)
+    && Boolean(previousSessionId)
+    && previousSessionId === incomingSessionId;
+  const sessionPath = preserveLocalSession ? previousPointer ?? null : local && incomingPointer === null ? previousPointer ?? null : incomingPointer;
   const handoffContext = local && task.handoffContext === null ? previous?.handoff_context ?? null : task.handoffContext;
   db.prepare(`INSERT INTO tasks (id, project_id, title, description, attachments, status, engine, plan_mode, review_mode, phase_config, session_path, worktree_path, worktree_branch, merged_at, created_at, updated_at, current_node_id, lease_owner_node_id, lease_expires_at, execution_state, handoff_context, origin_node_id, merge_state, conflict_count, merge_warning, merge_tx, merge_digests, run_kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET title=excluded.title, description=excluded.description, attachments=excluded.attachments, status=excluded.status, engine=excluded.engine, plan_mode=excluded.plan_mode, review_mode=excluded.review_mode, phase_config=excluded.phase_config, session_path=excluded.session_path, worktree_path=excluded.worktree_path, worktree_branch=excluded.worktree_branch, merged_at=excluded.merged_at, updated_at=excluded.updated_at, current_node_id=excluded.current_node_id, lease_owner_node_id=excluded.lease_owner_node_id, lease_expires_at=excluded.lease_expires_at, execution_state=excluded.execution_state, handoff_context=excluded.handoff_context, origin_node_id=excluded.origin_node_id, merge_state=excluded.merge_state, conflict_count=excluded.conflict_count, merge_warning=excluded.merge_warning, merge_tx=excluded.merge_tx, merge_digests=excluded.merge_digests, run_kind=excluded.run_kind`).run(task.id, projectId, task.title, task.description, JSON.stringify(attachments), task.status, task.engine, task.planMode ? 1 : 0, task.reviewMode ? 1 : 0, JSON.stringify(task.phaseConfig), sessionPath, local ? worktreePath : null, local ? worktreeBranch : null, task.mergedAt, task.createdAt, task.updatedAt, task.currentNodeId, task.leaseOwnerNodeId, task.leaseExpiresAt, task.executionState, local ? handoffContext : null, task.originNodeId, task.mergeState ?? "none", task.conflictCount ?? 0, task.mergeWarning ?? null, task.mergeTx ?? null, task.mergeDigests ? JSON.stringify(task.mergeDigests) : null, task.runKind ?? null);
   db.prepare("DELETE FROM task_tombstones WHERE project_id = ? AND task_id = ?").run(projectId, task.id);
@@ -252,6 +268,15 @@ export async function receiveReplicationBatch(batch: ReplicationBatch): Promise<
   // and initialising that connection while holding this transaction's write lock deadlocks.
   const localNode = (db.prepare("SELECT id FROM cluster_node WHERE singleton = 1").get() as { id: string } | undefined)?.id;
   const localGrant = localNode ? await clusterProjectGrantFor(localNode) : undefined;
+  const localTranscripts = new Map<string, LocalTranscript>();
+  if (batch.events.some((event) => event.entityType === "task" && event.operation === "upsert")) {
+    for (const adapter of listDiscoveredHarnesses()) {
+      localTranscripts.set(adapter.id, {
+        root: path.resolve(adapter.sync.transcriptRoot()),
+        sessionId: (pointer) => adapter.paths.ownsSession(pointer) ? adapter.paths.sessionId(pointer) : undefined,
+      });
+    }
+  }
   db.exec("BEGIN IMMEDIATE");
   try {
     const insert = db.prepare("INSERT OR IGNORE INTO replication_inbox (event_id, origin_node_id, received_at) VALUES (?, ?, ?)");
@@ -269,7 +294,7 @@ export async function receiveReplicationBatch(batch: ReplicationBatch): Promise<
       }
       const applier = REPLICATION_APPLIERS[event.entityType];
       if (!applier) throw new Error("Unsupported replication event");
-      const applied = applier(db, event) !== false;
+      const applied = (event.entityType === "task" ? applyTaskEvent(db, event, localTranscripts) : applier(db, event)) !== false;
       if (!applied) {
         remove.run(event.id);
         continue;

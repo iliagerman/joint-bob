@@ -5,8 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import type { TaskRecord } from "../src/types.js";
 
-test("SQLite name replication is atomic, idempotent, ordered, and retryable", async () => {
+test("SQLite name replication is atomic, idempotent, ordered, and retryable", async (t) => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "pi-mobile-web-replication-"));
   const previous = process.env.PI_WEB_DATA_DIR;
   process.env.PI_WEB_DATA_DIR = dataDir;
@@ -150,6 +151,61 @@ test("SQLite name replication is atomic, idempotent, ordered, and retryable", as
       assert.equal(replicated.execution_state, "idle");
       assert.equal(replicated.lease_owner_node_id, null);
     }
+
+    await t.test("task replication retains a configured local transcript pointer only for the same harness session", async () => {
+      const settings = await import(new URL(`../src/settings.ts?replication=${suffix}`, import.meta.url).href);
+      const previousSettings = settings.getSettings();
+      const transcriptRoot = path.join(dataDir, "configured-claude-sessions");
+      settings.updateSettings({ ...previousSettings, claude: { ...previousSettings.claude, sessionPath: transcriptRoot } });
+      try {
+        const taskId = "local-transcript-pointer";
+        const sessionId = randomUUID();
+        const localPointer = `claude:${path.join(transcriptRoot, "legacy", `${sessionId}.jsonl`)}`;
+        let sequence = 0;
+        const publish = async (changes: Partial<TaskRecord>) => {
+          sequence += 1;
+          const task = {
+            ...handoffTask,
+            id: taskId,
+            engine: "claude",
+            sessionPath: localPointer,
+            currentNodeId: taskOrigin,
+            title: `replicated-${sequence}`,
+            updatedAt: new Date(Date.parse("2026-04-10T00:00:00.000Z") + sequence).toISOString(),
+            ...changes,
+          };
+          await replication.receiveReplicationBatch({ events: [{
+            id: randomUUID(), originNodeId: taskOrigin, entityType: "task", entityKey: `project-atomic:${taskId}`, operation: "upsert",
+            payload: { projectId: "project-atomic", task, originNodeId: taskOrigin }, createdAt: task.updatedAt,
+          }] });
+          return db.prepare("SELECT title, current_node_id, session_path FROM tasks WHERE project_id = ? AND id = ?").get("project-atomic", taskId) as { title: string; current_node_id: string; session_path: string | null };
+        };
+
+        await publish({ currentNodeId: node.id });
+        const remoteNode = randomUUID();
+        const remotePointer = `claude:/remote/.claude/projects/ticket/${sessionId}.jsonl`;
+        let replicated = await publish({ title: "remote owner", currentNodeId: remoteNode, sessionPath: remotePointer });
+        assert.equal(replicated.title, "remote owner");
+        assert.equal(replicated.current_node_id, remoteNode);
+        assert.equal(replicated.session_path, localPointer);
+        replicated = await publish({ title: "newer remote owner", currentNodeId: remoteNode, sessionPath: remotePointer });
+        assert.equal(replicated.session_path, localPointer);
+
+        const differentPointer = `claude:/remote/.claude/projects/ticket/${randomUUID()}.jsonl`;
+        replicated = await publish({ sessionPath: differentPointer });
+        assert.equal(replicated.session_path, differentPointer);
+
+        db.prepare("UPDATE tasks SET session_path = ? WHERE project_id = ? AND id = ?").run(remotePointer, "project-atomic", taskId);
+        replicated = await publish({ sessionPath: localPointer });
+        assert.equal(replicated.session_path, localPointer);
+
+        const piPointer = `pi:${path.join(transcriptRoot, "legacy", `${sessionId}.jsonl`)}`;
+        replicated = await publish({ engine: "pi", sessionPath: piPointer });
+        assert.equal(replicated.session_path, piPointer);
+      } finally {
+        settings.updateSettings({ ...settings.getSettings(), claude: previousSettings.claude });
+      }
+    });
 
     const tombstonedOwner = randomUUID();
     await cluster.mergeClusterMembership({ members: [], removed: [{ id: tombstonedOwner, removedAt: "2026-05-01T00:00:00.000Z", originNodeId: node.id }] });
