@@ -95,6 +95,7 @@ test("shared capabilities reach Claude, Pi, and Kiro channels with one logical t
       assert.match(systemPrompt, /FIXTURE_CAPABILITY_TEXT/);
       assert.match(systemPrompt, /Joint Bob tasks/);
       assert.match(systemPrompt, /Joint Bob browser/);
+      assert.match(systemPrompt, /Joint Bob goals/);
       const bash = pi.session.agent.state.tools.find((tool: { name: string }) => tool.name === "bash");
       const result = await bash.execute("probe", { command: `${JSON.stringify(process.execPath)} -e 'console.log(JSON.stringify((${capabilityFlags.toString()})()))'` });
       const piFlags = JSON.parse((result.content[0] as { text: string }).text) as ReturnType<typeof capabilityFlags>;
@@ -106,14 +107,14 @@ test("shared capabilities reach Claude, Pi, and Kiro channels with one logical t
       const { kiroAgentProfile } = await import("../src/harnesses/kiro/resources.js");
       const profileName = await kiroAgentProfile({ cwd: root, projectId: project.id, sessionId: conversationId, conversationId }, "fixture credentials");
       const profile = JSON.parse(await readFile(path.join(configPath, "agents", `${profileName}.json`), "utf8")) as { prompt: string };
-      for (const marker of ["FIXTURE_CAPABILITY_TEXT", "Joint Bob tasks", "Joint Bob browser", "fixture credentials"]) assert.match(profile.prompt, new RegExp(marker));
+      for (const marker of ["FIXTURE_CAPABILITY_TEXT", "Joint Bob tasks", "Joint Bob browser", "Joint Bob goals", "fixture credentials"]) assert.match(profile.prompt, new RegExp(marker));
 
       const records = (await readFile(capture, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { flags?: ReturnType<typeof capabilityFlags>; instructions?: string });
       const adapterFlags = records.filter((record) => record.flags).map((record) => record.flags!);
       assert.ok(adapterFlags.length >= 3);
       for (const flags of adapterFlags) assert.deepEqual(flags, { taskCli: true, taskSocket: true, taskToken: true, browser: true, fixture: "yes" });
       const claudeInstructions = records.find((record) => record.instructions)?.instructions ?? "";
-      for (const marker of ["FIXTURE_CAPABILITY_TEXT", "Joint Bob tasks", "Joint Bob browser"]) assert.match(claudeInstructions, new RegExp(marker));
+      for (const marker of ["FIXTURE_CAPABILITY_TEXT", "Joint Bob tasks", "Joint Bob browser", "Joint Bob goals"]) assert.match(claudeInstructions, new RegExp(marker));
 
       const client = await import("../scripts/supervisor-client.mjs");
       const control = client.readSupervisorControl(state)!;

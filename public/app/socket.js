@@ -296,6 +296,10 @@ function handleSocketPayload(payload, scrollOnReady = false) {
     updateStatus(payload.status);
     return;
   }
+  if (payload.type === "bobGoal") {
+    if (payload.announce) toast(payload.message, 6000);
+    return;
+  }
   if (payload.type === "userMessage") {
     finalizeAssistantBubble();
     if (state.scheduledConversation) return;

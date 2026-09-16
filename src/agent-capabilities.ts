@@ -16,6 +16,18 @@ export interface AgentCapability {
   environment: (identity: AgentCapabilityIdentity) => NodeJS.ProcessEnv;
 }
 
+const goalInstructions = `# Joint Bob goals
+
+Joint Bob may run a conversation under an active goal. Goal turns begin with \`Joint Bob goal:\` or \`Continue the active Joint Bob goal:\`.
+
+Keep working through tool calls until the objective is complete. A progress update is not completion. Make reasonable implementation decisions without asking the user. Stop for user input only when blocked by missing required information, authorization, credentials, human takeover, or a risky irreversible decision.
+
+End the final assistant response with exactly one protocol line:
+- \`BOB_GOAL_COMPLETE\` only after the objective is complete and verification has passed.
+- \`BOB_GOAL_BLOCKED: <specific reason or question>\` only when work cannot continue without user action.
+
+Do not emit either protocol line in examples, progress updates, or unfinished work.`;
+
 const taskInstructions = `# Joint Bob tasks
 
 Use the local task supervisor for commands that must outlive this turn:
@@ -53,6 +65,11 @@ function taskEnvironment(identity: AgentCapabilityIdentity): NodeJS.ProcessEnv {
 }
 
 export const agentCapabilities: AgentCapability[] = [
+  {
+    id: "bob-goal",
+    instructions: { path: "/virtual/JOINT_BOB_GOALS.md", content: goalInstructions },
+    environment: () => ({}),
+  },
   {
     id: "browser",
     instructions: { path: "/virtual/JOINT_BOB_BROWSER.md", content: browserAgentInstructions },

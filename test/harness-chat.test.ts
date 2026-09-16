@@ -25,7 +25,10 @@ rl.on("line", line => {
   if (request.method === "session/load") return send({jsonrpc:"2.0",id:request.id,result:null});
   if (request.method === "session/prompt") {
     const text = request.params.prompt[0].text;
-    notify({sessionUpdate:"agent_message_chunk",content:{type:"text",text}});
+    const response = text.startsWith("Joint Bob goal:") ? "Progress update"
+      : text.startsWith("Continue the active Joint Bob goal") ? "Finished and tested.\\nBOB_GOAL_COMPLETE"
+      : text;
+    notify({sessionUpdate:"agent_message_chunk",content:{type:"text",text:response}});
     const complete = () => send({jsonrpc:"2.0",id:request.id,result:{stopReason:"end_turn"}});
     if (text !== "blocker") return setTimeout(complete, 100);
     const releasePath = path.join(process.cwd(), ".kiro-blocker-release");
@@ -141,6 +144,20 @@ test("websocket chat routes Kiro prompts through the generic harness runtime", a
     assert.ok(transcript.some((message) => message.role === "assistant" && message.text === "hello"));
     assert.ok(transcript.some((message) => message.role === "user" && message.text === "revised"));
     assert.ok(transcript.some((message) => message.role === "assistant" && message.text === "revised"));
+
+    resumed.socket.send(JSON.stringify({ type: "prompt", message: "/bob-goal finish goal integration" }));
+    await waitFor(resumed.messages, () => resumed.messages.some((message) => message.type === "bobGoal" && (message.goal as { status?: string })?.status === "active"));
+    await waitFor(resumed.messages, () => resumed.messages.some((message) => message.type === "bobGoal" && (message.goal as { status?: string })?.status === "completed"));
+    assert.equal(resumed.messages.filter((message) => message.type === "agent_end").length, 2, "an update must trigger one continuation before completion");
+    resumed.socket.send(JSON.stringify({ type: "prompt", message: "/bob-goal status" }));
+    await waitFor(resumed.messages, () => resumed.messages.filter((message) => message.type === "bobGoal").length >= 3);
+    const status = [...resumed.messages].reverse().find((message) => message.type === "bobGoal")!;
+    assert.match(String(status.message), /completed after 2 turns/i);
+    assert.equal(resumed.messages.some((message) => message.type === "userMessage" && message.text === "/bob-goal status"), false, "controller commands must not enter the harness queue");
+    resumed.socket.send(JSON.stringify({ type: "prompt", message: "/bob-goal cancel" }));
+    await waitFor(resumed.messages, () => resumed.messages.some((message) => message.type === "bobGoal" && (message.goal as { status?: string })?.status === "cancelled"));
+    assert.equal(resumed.messages.filter((message) => message.type === "agent_end").length, 2, "cancelling must not enter the harness");
+
     const unknown = openChat(node.url, auth.cookie, project.id, "future:new");
     sockets.push(unknown.socket);
     const close = await new Promise<{ code: number }>((resolve) => unknown.socket.once("close", (code) => resolve({ code })));

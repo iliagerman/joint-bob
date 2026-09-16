@@ -4,6 +4,7 @@ import path from "node:path";
 import WebSocket from "ws";
 import { getClusterNode } from "../cluster.js";
 import { getConversationRecord, ensureConversationRecord, listConversationSegments } from "../conversation-records.js";
+import { blockConversationGoal, cancelConversationGoal, getConversationGoal, goalPrompt, goalStatusMessage, parseBobGoalCommand, recordConversationGoalResponse, startConversationGoal, type ConversationGoal } from "../conversation-goals.js";
 import { ConversationOwnershipError } from "../conversation-ownership.js";
 import { buildHandoffContext } from "../handoff-context.js";
 import { getHarness, getHarnessRuntime, harnessForProvider, listHarnesses, listHarnessSessions } from "../harnesses.js";
@@ -63,6 +64,10 @@ export async function autoCompactBetweenTurns(shared: SharedHarnessSession, thre
 function queueKey(connection: HarnessChatConnection): string { return `${connection.project.id}:${connection.conversationId}`; }
 function publish(connection: HarnessChatConnection, event: Record<string, unknown>): void {
   for (const candidate of harnessChatConnections) if (queueKey(candidate) === queueKey(connection)) send(candidate.socket, event);
+}
+
+function publishGoal(connection: HarnessChatConnection, goal: ConversationGoal | undefined, announce = true): void {
+  publish(connection, { type: "bobGoal", goal: goal ?? null, message: goalStatusMessage(goal), announce });
 }
 
 function runtimeSettings(settings: QueuedSettings): HarnessModelSettings {
@@ -198,13 +203,42 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
   }
 }
 
+function latestAssistantText(session: HarnessSession): string | undefined {
+  return [...session.messages].reverse().find((message) => message.role === "assistant")?.text;
+}
+
+async function runGoalTurn(connection: HarnessChatConnection): Promise<boolean> {
+  const goal = await getConversationGoal(connection.project.id, connection.conversationId);
+  if (goal?.status !== "active") return false;
+  const local = await getClusterNode();
+  connection.shared.turnInFlight += 1;
+  try {
+    await writable(connection);
+    await connection.shared.session.preflight();
+    await connection.shared.session.prompt({ text: goalPrompt(goal), beforeStart: () => writable(connection) });
+    const assistantText = latestAssistantText(connection.shared.session);
+    if (assistantText === undefined) throw new Error("Goal turn ended without an assistant response");
+    const updated = await recordConversationGoalResponse(connection.project.id, connection.conversationId, goal.createdAt, assistantText, local.id);
+    publishGoal(connection, updated, updated?.status !== "active");
+    return true;
+  } catch (error) {
+    if (error instanceof ConversationOwnershipError) throw error;
+    const blocked = await blockConversationGoal(connection.project.id, connection.conversationId, goal.createdAt, `Harness turn failed: ${chatErrorMessage(error)}`, local.id);
+    publishGoal(connection, blocked, blocked?.status === "blocked");
+    throw error;
+  } finally {
+    connection.shared.turnInFlight -= 1;
+    sendHarnessStatus(connection.shared);
+  }
+}
+
 async function drainLoop(connection: HarnessChatConnection): Promise<void> {
   for (;;) {
     if (pausedDrains.has(queueKey(connection)) || harnessSessionBusy(connection.shared)) return;
     if (await autoCompactBetweenTurns(connection.shared, getSettings().autoCompactThreshold, () => writable(connection))) sendHarnessStatus(connection.shared);
     const next = listQueuedPrompts(queueKey(connection))[0];
-    if (!next) return;
-    await dispatch(connection, next);
+    if (next) { await dispatch(connection, next); continue; }
+    if (!await runGoalTurn(connection)) return;
   }
 }
 export function harnessPromptQueueIsDraining(key: string): boolean { return drains.has(key) || mutations.has(key); }
@@ -352,10 +386,34 @@ async function queueCommand(connection: HarnessChatConnection, message: ReturnTy
   void drainHarnessPromptQueue(connection).catch((error) => publish(connection, { type: "error", error: chatErrorMessage(error) }));
 }
 
+async function bobGoalCommand(connection: HarnessChatConnection, text: string, hasAttachments: boolean): Promise<void> {
+  const command = parseBobGoalCommand(text);
+  if (!command) throw new Error("Expected /bob-goal command");
+  if (hasAttachments) throw new Error("/bob-goal commands do not accept attachments");
+  if (command.action === "status") {
+    publishGoal(connection, await getConversationGoal(connection.project.id, connection.conversationId));
+    return;
+  }
+  await writable(connection);
+  const local = await getClusterNode();
+  if (command.action === "start") {
+    const goal = await startConversationGoal(connection.project.id, connection.conversationId, command.objective, local.id);
+    publish(connection, { type: "userMessage", text: `/bob-goal ${command.objective}` });
+    publishGoal(connection, goal);
+    void drainHarnessPromptQueue(connection).catch((error) => publish(connection, { type: "error", error: chatErrorMessage(error) }));
+    return;
+  }
+  publishGoal(connection, await cancelConversationGoal(connection.project.id, connection.conversationId, local.id));
+}
+
 export async function handleHarnessChatMessage(connection: HarnessChatConnection, raw: Buffer): Promise<void> {
   const message = socketMessageSchema.parse(JSON.parse(raw.toString()));
   if (message.type === "prompt") {
     if (message.message === "/reload" && !(message.images?.length || message.files?.length)) { await writable(connection); try { await connection.shared.session.reload(); } finally { sendHarnessStatus(connection.shared); void drainHarnessPromptQueue(connection).catch((error) => publish(connection, { type: "error", error: chatErrorMessage(error) })); } send(connection.socket, { type: "tools", tools: connection.shared.session.tools(), supported: true }); return; }
+    if (parseBobGoalCommand(message.message ?? "")) {
+      await serializeMutation(connection, () => bobGoalCommand(connection, message.message ?? "", Boolean(message.images?.length || message.files?.length)));
+      return;
+    }
     await serializeMutation(connection, () => enqueue(connection, message.message ?? "", message.images ?? [], message.files ?? [], message.requestId, message.queueSettings)); return;
   }
   if (["forceStartQueuedPrompt", "editQueuedPrompt", "cancelQueuedPrompt", "swapQueuedPrompts", "mergeQueuedPrompts"].includes(message.type)) {
@@ -378,8 +436,8 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
   if (!shared.session.messages.length && transcript.segments.length > 1 && !connection.handoffContext) connection.handoffContext = buildHandoffContext(transcript.messages);
   const scheduled = Boolean(record?.cronTaskId);
   const browserMessages = scheduled ? scheduledReportMessages(transcript.messages, !harnessSessionBusy(shared)) : transcript.messages;
-  const local = await getClusterNode();
-  send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, scheduled, ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
+  const [local, goal] = await Promise.all([getClusterNode(), getConversationGoal(options.project.id, conversationId)]);
+  send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, scheduled, bobGoal: goal ?? null, ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
   for (const event of shared.liveEvents) send(options.socket, event);
   refreshHarnessPromptQueue(connection);
   options.socket.on("message", (raw) => void handleHarnessChatMessage(connection, raw as Buffer).catch(async (error) => {

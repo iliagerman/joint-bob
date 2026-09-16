@@ -25,6 +25,7 @@ const UNIVERSAL_COMMANDS = [
   { name: "model", description: "Choose the session model" },
   { name: "tools", description: "Configure available tools" },
   { name: "compact", description: "Compact conversation context" },
+  { name: "bob-goal", description: "Run an objective to completion; arguments: <objective>, status, cancel" },
 ] as const;
 
 export function builtinCommands(harness: HarnessId): HarnessCommand[] {
@@ -34,6 +35,7 @@ export function builtinCommands(harness: HarnessId): HarnessCommand[] {
 export async function listHarnessCommands(projectPath: string, harness: HarnessId, options: CommandDiscoveryOptions = {}): Promise<HarnessCommand[]> {
   const adapter = listDiscoveredHarnesses().find((candidate) => candidate.id === harness);
   if (!adapter) throw new Error(`Unknown harness: ${harness}`);
-  const commands = adapter.resources ? await (await adapter.resources()).commands(projectPath, options) : builtinCommands(harness);
+  const discovered = adapter.resources ? await (await adapter.resources()).commands(projectPath, options) : [];
+  const commands = [...builtinCommands(harness), ...discovered];
   return [...new Map(commands.map((command) => [command.invocation, command])).values()].sort((left, right) => left.name.localeCompare(right.name));
 }

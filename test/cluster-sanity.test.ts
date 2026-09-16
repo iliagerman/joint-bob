@@ -119,6 +119,32 @@ test("fork on a peer snapshots its running source on the owner without stopping 
   } finally { publishPiRuntime(db, runtime, false); db.close(); }
 });
 
+test("active bob-goal state replicates to the peer", async () => {
+  const projectA = nodeA.projects[0];
+  const projectB = nodeB.projects.find((project) => project.name === projectA.name)!;
+  const conversationId = randomUUID();
+  const now = new Date().toISOString();
+  const goal = { projectId: projectA.id, conversationId, objective: "verify cross-node goals", status: "active", turns: 3, blocker: null, createdAt: now, updatedAt: now, originNodeId: nodeA.nodeId };
+  const db = new DatabaseSync(path.join(nodeA.dataDir, "node.db"));
+  try {
+    db.prepare("INSERT INTO replication_outbox (event_id, origin_node_id, entity_type, entity_key, operation, payload, created_at) VALUES (?, ?, ?, ?, 'upsert', ?, ?)")
+      .run(randomUUID(), nodeA.nodeId, "conversation.goal", `${projectA.id}:${conversationId}`, JSON.stringify(goal), now);
+  } finally { db.close(); }
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    const peer = new DatabaseSync(path.join(nodeB.dataDir, "node.db"));
+    try {
+      const replicated = peer.prepare("SELECT objective, status, turns FROM conversation_goals WHERE project_id = ? AND conversation_id = ?").get(projectB.id, conversationId) as { objective: string; status: string; turns: number } | undefined;
+      if (replicated) {
+        assert.deepEqual({ ...replicated }, { objective: goal.objective, status: "active", turns: 3 });
+        return;
+      }
+    } finally { peer.close(); }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.fail("bob-goal state did not replicate to node B");
+});
+
 test("conversation classification replicates to a peer and can be cleared there", async () => {
   const projectA = nodeA.projects[0];
   const projectB = nodeB.projects.find((project) => project.name === projectA.name)!;
