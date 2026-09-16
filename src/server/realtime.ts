@@ -2,9 +2,9 @@ import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
 import { usernameForUser } from "../auth.js";
 import { claimReviewNotifications, releaseReviewNotification } from "../conversation-reviews.js";
-import { listPushSubscriberUserIds, notifyConversationReview } from "../push.js";
+import { listPushSubscriberUserIds, notifyConversationReview, reviewNotificationBody } from "../push.js";
 import { type ReplicationBatch, replicationInvalidations } from "../replication.js";
-import { refreshHarnessSessions } from "../harnesses.js";
+import { getHarness, refreshHarnessSessions } from "../harnesses.js";
 import { getProject } from "../store.js";
 import { listPendingUpdateRecoveries, saveUpdateRecoveries, type UpdateRecoveryRecord } from "../update-recovery.js";
 import { UpdateRefusalError } from "../updater.js";
@@ -84,7 +84,9 @@ async function notifyPendingReviews(projectId: string): Promise<void> {
       const session = pending.get(sessionPath);
       if (!session) continue;
       // A claim is one shot. If no device was reached, give it back so the next sweep retries.
-      const delivered = await notifyConversationReview(userId, projectId, sessionPath, session.title || project.name);
+      // A broken or draft transcript must not block the push; it just loses its preview.
+      const messages = await getHarness(session.harnessId).sessions.loadMessages(project, sessionPath).catch(() => []);
+      const delivered = await notifyConversationReview(userId, projectId, sessionPath, session.title || project.name, reviewNotificationBody(messages));
       if (!delivered) releaseReviewNotification(userId, projectId, sessionPath);
     }
   }

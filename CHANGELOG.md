@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 1.34.3 — 2026-09-16
+
+- Review push notifications now show a short preview of the agent's last reply, so the lock screen says what the conversation is about instead of a generic "tap to open" line.
+
 ## 1.34.2 — 2026-09-16
 
 - Chat history now filters out internal Claude system messages that previously appeared in transcripts.

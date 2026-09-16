@@ -533,9 +533,24 @@ export async function receivePushSubscriptionEvents(events: PushSubscriptionEven
   }
 }
 
+const DEFAULT_REVIEW_BODY = "Tap to open the conversation and review the result.";
+const REVIEW_PREVIEW_MAX_CHARS = 140;
+
+/** The push body carries the tail of the agent's reply so the lock screen says what finished. */
+export function reviewNotificationBody(messages: Array<{ role: string; text: string }>): string {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message.role !== "assistant") continue;
+    const text = message.text.replace(/\s+/g, " ").trim();
+    if (!text) continue;
+    return text.length > REVIEW_PREVIEW_MAX_CHARS ? `${text.slice(0, REVIEW_PREVIEW_MAX_CHARS - 1)}…` : text;
+  }
+  return DEFAULT_REVIEW_BODY;
+}
+
 /** Reports whether at least one device was actually reached, so a caller that burned a
     one-shot notification claim can hand it back instead of recording a silent failure as sent. */
-export async function notifyConversationReview(userId: string, projectId: string, sessionPath: string, title: string): Promise<boolean> {
+export async function notifyConversationReview(userId: string, projectId: string, sessionPath: string, title: string, body: string = DEFAULT_REVIEW_BODY): Promise<boolean> {
   const keys = vapidKeys();
   const rows = pushDatabase().prepare(`
     SELECT subscription, vapid_public_key, vapid_private_key FROM push_session_subscriptions
@@ -547,7 +562,7 @@ export async function notifyConversationReview(userId: string, projectId: string
 
   const payload = JSON.stringify({
     title: `${title || "Conversation"} needs review`,
-    body: "Tap to open the conversation and review the result.",
+    body,
     url: `/?projectId=${encodeURIComponent(projectId)}&sessionPath=${encodeURIComponent(sessionPath)}`,
   });
   // A replicated subscription was created against its origin node's VAPID identity; the push
