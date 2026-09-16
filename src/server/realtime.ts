@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
 import { usernameForUser } from "../auth.js";
-import { claimReviewNotifications, releaseReviewNotification } from "../conversation-reviews.js";
+import { getClusterNode } from "../cluster.js";
+import { claimConversationNotification, conversationNotifications, finishConversationNotification, notificationConversationId } from "../conversation-notifications.js";
 import { listPushSubscriberUserIds, notifyConversationReview, reviewNotificationBody } from "../push.js";
 import { type ReplicationBatch, replicationInvalidations } from "../replication.js";
 import { getHarness, refreshHarnessSessions } from "../harnesses.js";
@@ -11,6 +12,7 @@ import { UpdateRefusalError } from "../updater.js";
 import { harnessChatConnections, drainHarnessPromptQueue } from "./harness-chat.js";
 import { disposeHarnessSession, harnessSessionBusy, harnessSessions, refreshHarnessTranscripts, sendHarnessStatus, type SharedHarnessSession } from "./harness-sessions.js";
 import { listProjectSessionsWithReviewState } from "./sessions-helpers.js";
+import { flushReplicationOutbox } from "./maintenance.js";
 import { flags, server, watchClients, webSocketServer } from "./state.js";
 import { harnessTaskRuns } from "./task-runs.js";
 
@@ -70,24 +72,31 @@ export function broadcastReplicationInvalidations(events: ReplicationBatch["even
 
 const REVIEW_NOTIFICATION_QUIET_MS = 10_000;
 const reviewNotificationTimers = new Map<string, NodeJS.Timeout>();
-async function notifyPendingReviews(projectId: string): Promise<void> {
+export async function notifyPendingReviews(projectId: string): Promise<void> {
   const userIds = await listPushSubscriberUserIds(projectId);
   if (!userIds.length) return;
   const project = await getProject(projectId);
   if (!project) return;
+  const local = await getClusterNode();
   for (const userId of userIds) {
     const username = usernameForUser(userId);
     if (!username) continue;
     const sessions = await listProjectSessionsWithReviewState(project, userId, username);
-    const pending = new Map(sessions.filter((session) => session.reviewState === "needs_review" && !session.running).map((session) => [session.path, session]));
-    for (const sessionPath of claimReviewNotifications(userId, projectId, [...pending.keys()])) {
-      const session = pending.get(sessionPath);
-      if (!session) continue;
-      // A claim is one shot. If no device was reached, give it back so the next sweep retries.
-      // A broken or draft transcript must not block the push; it just loses its preview.
-      const messages = await getHarness(session.harnessId).sessions.loadMessages(project, sessionPath).catch(() => []);
-      const delivered = await notifyConversationReview(userId, projectId, sessionPath, session.title || project.name, reviewNotificationBody(messages));
-      if (!delivered) releaseReviewNotification(userId, projectId, sessionPath);
+    const preferences = conversationNotifications(username, projectId);
+    for (const session of sessions.filter((candidate) => candidate.reviewState === "needs_review" && !candidate.running && candidate.updatedAt)) {
+      const conversationId = notificationConversationId(session);
+      const preference = preferences.get(conversationId);
+      if (!preference?.enabled) continue;
+      if (session.executionNodeId ? session.executionNodeId !== local.id : preference.originNodeId !== local.id) continue;
+      if (!claimConversationNotification(username, projectId, conversationId, session.updatedAt!)) continue;
+      let delivered = false;
+      try {
+        const messages = await getHarness(session.harnessId).sessions.loadMessages(project, session.path).catch(() => []);
+        delivered = await notifyConversationReview(userId, projectId, conversationId, session.title || project.name, reviewNotificationBody(messages));
+      } finally {
+        finishConversationNotification(username, projectId, conversationId, session.updatedAt!, delivered, local.id);
+        if (delivered) flushReplicationOutbox().catch((error) => console.warn("Notification delivery flush failed", error));
+      }
     }
   }
 }

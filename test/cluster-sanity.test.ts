@@ -1141,6 +1141,108 @@ test("cross-node opening replaces stale home paths without the fifty-conversatio
   } finally { socket?.terminate(); await Promise.all(files.map((file) => rm(file, { force: true }))); }
 });
 
+test("portable review notifications survive node takeover", { timeout: 120_000 }, async () => {
+  type PortableSession = SessionView & { updatedAt?: string; reviewState?: string; running?: boolean; ntfyEnabled?: boolean; reviewNotificationsEnabled?: boolean; draft?: boolean };
+  const projectA = nodeA.projects[0];
+  const projectB = nodeB.projects.find((project) => project.name === projectA.name)!;
+  const [settingsA, settingsB] = await Promise.all([
+    api<Record<string, unknown>>(nodeA, sessionA, "GET", "/settings"),
+    api<Record<string, unknown>>(nodeB, sessionB, "GET", "/settings"),
+  ]);
+  const dirA = path.join(root, "notification-a"), dirB = path.join(root, "notification-b");
+  await Promise.all([mkdir(dirA, { recursive: true }), mkdir(dirB, { recursive: true })]);
+  const savedA = settingsA.body, savedB = settingsB.body;
+  const withSessionPath = (saved: Record<string, unknown>, sessionPath: string) => ({ ...saved, pi: { ...(saved.pi as Record<string, unknown>), sessionPath } });
+  let mock: ReturnType<typeof createServer> | undefined;
+  try {
+    assert.equal((await api(nodeA, sessionA, "PUT", "/settings", withSessionPath(savedA, dirA))).status, 200);
+    assert.equal((await api(nodeB, sessionB, "PUT", "/settings", withSessionPath(savedB, dirB))).status, 200);
+    const id = randomUUID(), fileA = path.join(dirA, `${id}.jsonl`), fileB = path.join(dirB, `${id}.jsonl`);
+    const initial = new Date(Date.now() - 60_000).toISOString();
+    const fixture = (projectPath: string, activity: string) => [
+      { type: "session", version: 3, id, timestamp: initial, cwd: projectPath },
+      { type: "session_info", name: "Portable notification fixture", timestamp: initial },
+      { type: "message", id: `${id}-reply`, parentId: null, timestamp: activity, message: { role: "assistant", content: [{ type: "text", text: "Portable notification finished" }], timestamp: Date.parse(activity) } },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n";
+    await Promise.all([writeFile(fileA, fixture(projectA.path, initial)), writeFile(fileB, fixture(projectB.path, initial))]);
+    const listReady = async (node: SeededNode, auth: SignedIn, projectId: string, predicate: (row: PortableSession) => boolean, description: string) => {
+      const deadline = Date.now() + 30_000;
+      let found: PortableSession | undefined;
+      while (Date.now() < deadline) {
+        const result = await api<{ sessions: PortableSession[] }>(node, auth, "GET", `/projects/${projectId}/sessions`);
+        found = result.body.sessions.find((row) => row.id === id && !row.draft);
+        if (found && predicate(found)) return found;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      assert.fail(`${description}; last saw ${JSON.stringify(found)}`);
+    };
+    const [baselineA, baselineB] = await Promise.all([
+      listReady(nodeA, sessionA, projectA.id, () => true, "node A did not list fixture"),
+      listReady(nodeB, sessionB, projectB.id, () => true, "node B did not list fixture"),
+    ]);
+    assert.equal(baselineA.id, baselineB.id);
+    assert.notEqual(baselineA.path, baselineB.path);
+    const userIds = [nodeA, nodeB].map((node) => {
+      const db = new DatabaseSync(path.join(node.dataDir, "node.db"));
+      try { return (db.prepare("SELECT id FROM users WHERE username = ?").get(environment.username) as { id: string }).id; }
+      finally { db.close(); }
+    });
+    assert.notEqual(userIds[0], userIds[1]);
+    const received: Array<Record<string, unknown>> = [];
+    mock = createServer((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk: Buffer) => chunks.push(chunk));
+      request.on("end", () => { received.push(JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>); response.end("ok"); });
+    });
+    await new Promise<void>((resolve) => mock!.listen(0, "127.0.0.1", resolve));
+    const address = mock.address();
+    assert.ok(address && typeof address !== "string");
+    const service = await api<{ service: { id: string } }>(nodeA, sessionA, "POST", "/ntfy/services", { name: "Portable fixture", url: `http://127.0.0.1:${address.port}` });
+    assert.equal(service.status, 201);
+    const enabled = await api(nodeA, sessionA, "PUT", `/projects/${projectA.id}/sessions/ntfy`, { sessionPath: fileA, enabled: true, serviceId: service.body.service.id, topic: "portable" });
+    assert.equal(enabled.status, 200);
+    const reviewEnabled = await api(nodeA, sessionA, "PUT", `/projects/${projectA.id}/sessions/review-notifications`, { sessionPath: fileA, enabled: true });
+    assert.equal(reviewEnabled.status, 200);
+    await listReady(nodeB, sessionB, projectB.id, (row) => row.ntfyEnabled === true && row.reviewNotificationsEnabled === true, "notification flags did not replicate to node B");
+    assert.equal((await api(nodeB, sessionB, "POST", `/projects/${projectB.id}/sessions/take-ownership`, { peerId: nodeB.nodeId, sessionId: id, sessionPath: fileB })).status, 200);
+    const activity = new Date().toISOString();
+    await writeFile(fileB, fixture(projectB.path, activity));
+    await listReady(nodeB, sessionB, projectB.id, (row) => row.reviewState === "needs_review", "node B did not need review");
+    const notificationDeadline = Date.now() + 30_000;
+    while (received.length < 1 && Date.now() < notificationDeadline) await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(received.length, 1, `expected one notification, got ${received.length}`);
+    const body = received[0] as { message?: string; click?: string };
+    assert.equal(body.message, "Portable notification finished");
+    const click = new URL(body.click!);
+    assert.equal(click.searchParams.get("sessionId"), id);
+    assert.equal(click.searchParams.has("sessionPath"), false);
+    const deliveryDeadline = Date.now() + 30_000;
+    let delivered = false;
+    while (!delivered && Date.now() < deliveryDeadline) {
+      const db = new DatabaseSync(path.join(nodeA.dataDir, "node.db"));
+      try {
+        const exists = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'conversation_notification_deliveries'").get();
+        assert.ok(exists, "conversation_notification_deliveries table is missing");
+        delivered = Boolean(db.prepare("SELECT 1 FROM conversation_notification_deliveries WHERE username = ? COLLATE NOCASE AND conversation_id = ? AND delivered_at >= ?").get(environment.username, id, activity));
+      } finally { db.close(); }
+      if (!delivered) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.equal(delivered, true, "delivery watermark did not reach node A");
+    await writeFile(fileA, fixture(projectA.path, activity));
+    await listReady(nodeA, sessionA, projectA.id, (row) => row.reviewState === "needs_review" && row.updatedAt === activity, "node A did not observe duplicate activity");
+    assert.equal((await api(nodeA, sessionA, "POST", `/projects/${projectA.id}/sessions/take-ownership`, { peerId: nodeA.nodeId, sessionId: id, sessionPath: fileA })).status, 200);
+    await new Promise((resolve) => setTimeout(resolve, 12_000));
+    assert.equal(received.length, 1, "duplicate observation sent another notification");
+    assert.equal((await api(nodeB, sessionB, "PUT", `/projects/${projectB.id}/sessions/ntfy`, { sessionPath: fileB, enabled: false, serviceId: service.body.service.id, topic: "portable" })).status, 200);
+    await listReady(nodeA, sessionA, projectA.id, (row) => row.ntfyEnabled === false, "ntfy disable did not replicate");
+    assert.equal((await api(nodeB, sessionB, "PUT", `/projects/${projectB.id}/sessions/review-notifications`, { sessionPath: fileB, enabled: false })).status, 200);
+    await listReady(nodeA, sessionA, projectA.id, (row) => row.reviewNotificationsEnabled === false, "review notification disable did not replicate");
+  } finally {
+    await Promise.all([api(nodeA, sessionA, "PUT", "/settings", savedA), api(nodeB, sessionB, "PUT", "/settings", savedB)]);
+    if (mock) await new Promise<void>((resolve, reject) => mock!.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
 test("both prepared nodes become writable and resume replication after restart", { timeout: 60_000 }, async () => {
   const nodes = [nodeA, nodeB];
   const sessions = [sessionA, sessionB];

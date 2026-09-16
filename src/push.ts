@@ -1,10 +1,13 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { getClusterNode } from "./cluster.js";
+import { userIdForUsername, usernameForUser } from "./auth.js";
+import { resolveProjectAlias } from "./replication.js";
 import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import webpush, { type PushSubscription } from "web-push";
+import type { SessionSummary } from "./types.js";
 
 interface PushRecord {
   subscription: PushSubscription;
@@ -12,6 +15,7 @@ interface PushRecord {
   projectId: string;
   sessionPath: string;
   title: string;
+  username?: string;
 }
 
 interface PushStore {
@@ -28,6 +32,14 @@ interface SubscriptionRow {
   subscription: string;
   vapid_public_key: string | null;
   vapid_private_key: string | null;
+  user_id: string;
+  username: string | null;
+  project_id: string;
+  session_path: string;
+  subscription_key: string;
+  title: string;
+  updated_at: string;
+  origin_node_id: string;
 }
 
 interface VersionRow {
@@ -56,6 +68,7 @@ export interface PushSubscriptionUpsertValue {
   subscription: PushSubscription;
   vapidPublicKey: string;
   vapidPrivateKey: string;
+  username?: string;
 }
 
 export interface PushSubscriptionDeleteValue {
@@ -172,11 +185,12 @@ function saveSubscription(db: DatabaseSync, record: PushRecord, version = LEGACY
   }
   db.prepare(`
     INSERT INTO push_session_subscriptions
-      (subscription_key, endpoint_digest, user_id, project_id, session_path, title, subscription,
+      (subscription_key, endpoint_digest, user_id, username, project_id, session_path, title, subscription,
        updated_at, origin_node_id, vapid_public_key, vapid_private_key)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(subscription_key) DO UPDATE SET
       user_id = excluded.user_id,
+      username = excluded.username,
       title = excluded.title,
       subscription = excluded.subscription,
       updated_at = excluded.updated_at,
@@ -187,6 +201,7 @@ function saveSubscription(db: DatabaseSync, record: PushRecord, version = LEGACY
     subscriptionKey(record.subscription.endpoint, record.projectId, record.sessionPath),
     digest,
     record.userId,
+    record.username ?? null,
     record.projectId,
     record.sessionPath,
     record.title,
@@ -286,6 +301,7 @@ function pushDatabase(): DatabaseSync {
   const columns = database.prepare("PRAGMA table_info(push_session_subscriptions)").all() as unknown as ColumnRow[];
   const additions: Array<[string, string]> = [
     ["user_id", "TEXT NOT NULL DEFAULT ''"],
+    ["username", "TEXT"],
     ["updated_at", "TEXT NOT NULL DEFAULT ''"],
     ["origin_node_id", "TEXT NOT NULL DEFAULT ''"],
     ["vapid_public_key", "TEXT"],
@@ -340,24 +356,31 @@ export async function getVapidPublicKey(): Promise<string> {
   return keys.publicKey;
 }
 
-export async function savePushSubscription(subscription: PushSubscription, userId: string, projectId: string, sessionPath: string, title: string): Promise<void> {
+function nextEndpointTimestamp(db: DatabaseSync, digest: string): string {
+  const row = db.prepare(`SELECT MAX(updated_at) AS updated_at FROM (
+    SELECT updated_at FROM push_session_subscriptions WHERE endpoint_digest=?
+    UNION ALL SELECT updated_at FROM push_subscription_tombstones WHERE endpoint_digest=?)`).get(digest, digest) as { updated_at: string | null };
+  return new Date(Math.max(Date.now(), row.updated_at ? Date.parse(row.updated_at) + 1 : 0)).toISOString();
+}
+
+export async function savePushSubscription(subscription: PushSubscription, userId: string, projectId: string, sessionPath: string, title: string, username?: string): Promise<void> {
   configureWebPush();
   const keys = vapidKeys();
   const db = pushDatabase();
-  const updatedAt = new Date().toISOString();
   db.exec("BEGIN IMMEDIATE");
+  const updatedAt = nextEndpointTimestamp(db, endpointDigest(subscription.endpoint));
   try {
     // A device that re-subscribes after an unsubscribe is opting back in; the tombstone must
     // not keep beating its own newer upserts on peers.
     db.prepare("DELETE FROM push_subscription_tombstones WHERE endpoint_digest = ?").run(endpointDigest(subscription.endpoint));
-    saveSubscription(db, { subscription, userId, projectId, sessionPath, title }, {
+    saveSubscription(db, { subscription, userId, username, projectId, sessionPath, title }, {
       updatedAt, originNodeId: "", vapidPublicKey: keys.publicKey, vapidPrivateKeyEncrypted: encrypt(keys.privateKey),
     });
     insertSubscriptionEvent(db, {
       id: randomUUID(),
       entityKey: subscriptionKey(subscription.endpoint, projectId, sessionPath),
       operation: "upsert",
-      value: { userId, projectId, sessionPath, title, subscription, vapidPublicKey: keys.publicKey, vapidPrivateKey: keys.privateKey },
+      value: { userId, username, projectId, sessionPath, title, subscription, vapidPublicKey: keys.publicKey, vapidPrivateKey: keys.privateKey },
       updatedAt,
       originNodeId: "",
       createdAt: new Date().toISOString(),
@@ -374,19 +397,25 @@ export async function savePushSubscription(subscription: PushSubscription, userI
  * someone who actually asked for them.
  */
 export async function listPushSubscriberUserIds(projectId: string): Promise<string[]> {
-  const rows = pushDatabase().prepare(`
-    SELECT DISTINCT user_id FROM push_session_subscriptions
-    WHERE (project_id = ? OR project_id = '*') AND user_id <> ''
-  `).all(projectId) as unknown as UserRow[];
-  return rows.map((row) => row.user_id);
+  const db = pushDatabase();
+  const rows = db.prepare("SELECT DISTINCT user_id, username, project_id FROM push_session_subscriptions").all() as unknown as Array<UserRow & { username: string | null; project_id: string }>;
+  const usernames = new Set(rows.flatMap((row) => row.username ? [row.username.toLowerCase()] : []));
+  const resolvedUsers = new Map([...usernames].map((username) => [username, userIdForUsername(username)]));
+  const canonical = resolveProjectAlias(db, projectId);
+  const ids = rows.flatMap((row) => {
+    if (row.project_id !== "*" && resolveProjectAlias(db, row.project_id) !== canonical) return [];
+    if (row.username) return resolvedUsers.get(row.username.toLowerCase()) ? [resolvedUsers.get(row.username.toLowerCase())!] : [];
+    return row.user_id ? [row.user_id] : [];
+  });
+  return [...new Set(ids)];
 }
 
 export async function deletePushSubscription(endpoint: string): Promise<void> {
   configureWebPush();
   const db = pushDatabase();
   const digest = endpointDigest(endpoint);
-  const updatedAt = new Date().toISOString();
   db.exec("BEGIN IMMEDIATE");
+  const updatedAt = nextEndpointTimestamp(db, digest);
   try {
     const rows = db.prepare("SELECT subscription_key FROM push_session_subscriptions WHERE endpoint_digest = ?").all(digest) as unknown as Array<{ subscription_key: string }>;
     for (const row of rows) pruneSubscriptionEvents(db, row.subscription_key);
@@ -424,6 +453,7 @@ function validateSubscriptionEvent(event: PushSubscriptionEvent): void {
   const value = event.value as PushSubscriptionUpsertValue;
   if (!value || typeof value !== "object") throw new Error("Push subscription event needs a value");
   if (typeof value.userId !== "string" || !value.userId || value.userId.length > 128) throw new Error("Push subscription event user ID is invalid");
+  if (value.username !== undefined && (typeof value.username !== "string" || !value.username || value.username.length > 80)) throw new Error("Push subscription event username is invalid");
   if (typeof value.projectId !== "string" || !value.projectId || value.projectId.length > 300) throw new Error("Push subscription event project ID is invalid");
   if (typeof value.sessionPath !== "string" || !value.sessionPath || value.sessionPath.length > 2000) throw new Error("Push subscription event session path is invalid");
   if (typeof value.title !== "string" || value.title.length > 200) throw new Error("Push subscription event title is invalid");
@@ -450,9 +480,23 @@ function applySubscriptionUpsert(db: DatabaseSync, event: PushSubscriptionEvent)
   if (tombstone && compareVersion(incoming, tombstone) <= 0) return false;
   const current = db.prepare("SELECT updated_at, origin_node_id FROM push_session_subscriptions WHERE subscription_key = ?").get(event.entityKey) as VersionRow | undefined;
   if (current && compareVersion(incoming, current) <= 0) return false;
+  const isNtfy = value.subscription.endpoint.startsWith("ntfy+");
+  const endpointRows = isNtfy
+    ? db.prepare("SELECT * FROM push_session_subscriptions WHERE endpoint_digest=?").all(digest) as unknown as SubscriptionRow[]
+    : [];
+  if (endpointRows.some((row) => compareVersion(incoming, row) < 0)) return false;
   db.prepare("DELETE FROM push_subscription_tombstones WHERE endpoint_digest = ?").run(digest);
+  if (isNtfy) {
+    const canonical = resolveProjectAlias(db, value.projectId);
+    for (const row of endpointRows) {
+      const sameAccount = row.username && value.username ? row.username.toLowerCase() === value.username.toLowerCase() : !row.username && row.user_id === value.userId;
+      if (!sameAccount || resolveProjectAlias(db, row.project_id) !== canonical || row.subscription_key === event.entityKey) continue;
+      pruneSubscriptionEvents(db, row.subscription_key);
+      db.prepare("DELETE FROM push_session_subscriptions WHERE subscription_key=?").run(row.subscription_key);
+    }
+  }
   // Re-encrypted here with this node's own key, never stored under the sender's.
-  saveSubscription(db, { subscription: value.subscription, userId: value.userId, projectId: value.projectId, sessionPath: value.sessionPath, title: value.title }, {
+  saveSubscription(db, { subscription: value.subscription, userId: value.userId, username: value.username, projectId: value.projectId, sessionPath: value.sessionPath, title: value.title }, {
     updatedAt: event.updatedAt, originNodeId: event.originNodeId,
     vapidPublicKey: value.vapidPublicKey, vapidPrivateKeyEncrypted: encrypt(value.vapidPrivateKey),
   });
@@ -550,10 +594,57 @@ export function ntfySubscription(serviceUrl: string, topic: string, token: strin
   } as PushSubscription;
 }
 
-/** The conversation paths in this project that publish reviews to ntfy, for the session list. */
+function userProjectSubscriptions(db: DatabaseSync, userId: string, projectId: string, includeGlobal = false): SubscriptionRow[] {
+  const username = usernameForUser(userId) ?? null;
+  const rows = db.prepare("SELECT * FROM push_session_subscriptions WHERE username=? COLLATE NOCASE OR (username IS NULL AND user_id=?)")
+    .all(username, userId) as unknown as SubscriptionRow[];
+  const canonical = resolveProjectAlias(db, projectId);
+  return rows.filter((row) => includeGlobal && row.project_id === "*" || resolveProjectAlias(db, row.project_id) === canonical);
+}
+
+/** Migrates the legacy-named sessionPath wire field to stable logical conversation IDs. */
+export async function migratePushConversationSubscriptions(userId: string, username: string, projectId: string, sessions: SessionSummary[]): Promise<void> {
+  const db = pushDatabase();
+  const canonical = resolveProjectAlias(db, projectId);
+  if (usernameForUser(userId)?.toLowerCase() !== username.toLowerCase()) throw new Error("Push migration account does not match");
+  const rows = userProjectSubscriptions(db, userId, canonical, true);
+  const identities = new Map<string, string>();
+  for (const session of sessions) {
+    const id = session.conversationId || session.id;
+    identities.set(id, id); identities.set(session.path, id); identities.set(`draft:${session.harnessId}:${session.id}`, id);
+    for (const segment of session.segments ?? []) { identities.set(segment.path, id); identities.set(`draft:${segment.engine}:${segment.sessionId}`, id); }
+  }
+  for (const row of rows) {
+    if (row.project_id !== "*" && resolveProjectAlias(db, row.project_id) !== canonical) continue;
+    const target = row.session_path === "*" ? "*" : identities.get(row.session_path);
+    if (!target && row.username) continue;
+    if (row.username?.toLowerCase() === username.toLowerCase() && (!target || target === row.session_path)) continue;
+    migrateSubscriptionRow(db, row, username, target ?? row.session_path);
+  }
+}
+
+function migrateSubscriptionRow(db: DatabaseSync, row: SubscriptionRow, username: string, sessionPath: string): void {
+  const subscription = JSON.parse(decrypt(row.subscription)) as PushSubscription;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const updatedAt = nextEndpointTimestamp(db, endpointDigest(subscription.endpoint));
+    const destinationKey = subscriptionKey(subscription.endpoint, row.project_id, sessionPath);
+    const destination = db.prepare("SELECT updated_at,origin_node_id FROM push_session_subscriptions WHERE subscription_key=?").get(destinationKey) as VersionRow | undefined;
+    pruneSubscriptionEvents(db, row.subscription_key);
+    db.prepare("DELETE FROM push_session_subscriptions WHERE subscription_key=?").run(row.subscription_key);
+    if (destinationKey !== row.subscription_key && destination && compareVersion(destination, row) >= 0) { db.exec("COMMIT"); return; }
+    const privateKey = row.vapid_private_key ? decrypt(row.vapid_private_key) : vapidKeys().privateKey;
+    const publicKey = row.vapid_public_key ?? vapidKeys().publicKey;
+    saveSubscription(db, { subscription, userId: row.user_id, username, projectId: row.project_id, sessionPath, title: row.title }, { updatedAt, originNodeId: "", vapidPublicKey: publicKey, vapidPrivateKeyEncrypted: encrypt(privateKey) });
+    insertSubscriptionEvent(db, { id: randomUUID(), entityKey: destinationKey, operation: "upsert", value: { userId: row.user_id, username, projectId: row.project_id, sessionPath, title: row.title, subscription, vapidPublicKey: publicKey, vapidPrivateKey: privateKey }, updatedAt, originNodeId: "", createdAt: updatedAt });
+    db.exec("COMMIT");
+  } catch (error) { db.exec("ROLLBACK"); throw error; }
+}
+
+/** Stable conversation IDs in the legacy-named sessionPath field that publish reviews to ntfy. */
 export async function ntfySubscribedSessionPaths(userId: string, projectId: string): Promise<Set<string>> {
-  const rows = pushDatabase().prepare("SELECT session_path, subscription FROM push_session_subscriptions WHERE user_id = ? AND project_id = ?")
-    .all(userId, projectId) as unknown as Array<{ session_path: string; subscription: string }>;
+  const db = pushDatabase();
+  const rows = userProjectSubscriptions(db, userId, projectId);
   const paths = new Set<string>();
   for (const row of rows) {
     const subscription = JSON.parse(decrypt(row.subscription)) as PushSubscription;
@@ -563,8 +654,8 @@ export async function ntfySubscribedSessionPaths(userId: string, projectId: stri
 }
 
 export async function deleteNtfySubscriptions(userId: string, projectId: string, sessionPath: string): Promise<void> {
-  const rows = pushDatabase().prepare("SELECT subscription FROM push_session_subscriptions WHERE user_id = ? AND project_id = ? AND session_path = ?")
-    .all(userId, projectId, sessionPath) as unknown as Array<{ subscription: string }>;
+  const db = pushDatabase();
+  const rows = userProjectSubscriptions(db, userId, projectId).filter((row) => row.session_path === sessionPath);
   for (const row of rows) {
     const subscription = JSON.parse(decrypt(row.subscription)) as PushSubscription;
     if (subscription.endpoint.startsWith(NTFY_ENDPOINT_PREFIX)) await deletePushSubscription(subscription.endpoint);
@@ -610,16 +701,13 @@ export function reviewNotificationBody(messages: Array<{ role: string; text: str
     one-shot notification claim can hand it back instead of recording a silent failure as sent. */
 export async function notifyConversationReview(userId: string, projectId: string, sessionPath: string, title: string, body: string = DEFAULT_REVIEW_BODY): Promise<boolean> {
   const keys = vapidKeys();
-  const rows = pushDatabase().prepare(`
-    SELECT subscription, vapid_public_key, vapid_private_key FROM push_session_subscriptions
-    WHERE user_id = ?
-      AND (project_id = ? OR project_id = '*')
-      AND (session_path = ? OR session_path = '*')
-  `).all(userId, projectId, sessionPath) as unknown as SubscriptionRow[];
+  const db = pushDatabase();
+  const rows = userProjectSubscriptions(db, userId, projectId, true)
+    .filter((row) => row.session_path === sessionPath || row.session_path === "*");
   if (!rows.length) return false;
 
   const notificationTitle = `${title || "Conversation"} needs review`;
-  const conversationUrl = `/?projectId=${encodeURIComponent(projectId)}&sessionPath=${encodeURIComponent(sessionPath)}`;
+  const conversationUrl = `/?projectId=${encodeURIComponent(projectId)}&sessionId=${encodeURIComponent(sessionPath)}`;
   const payload = JSON.stringify({ title: notificationTitle, body, url: conversationUrl });
   // A replicated subscription was created against its origin node's VAPID identity; the push
   // service only accepts sends signed with that same key pair, so each row carries its own.

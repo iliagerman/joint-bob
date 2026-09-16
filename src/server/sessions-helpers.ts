@@ -1,11 +1,14 @@
 import { applyConversationWork, listConversationWork, refreshConversationWork } from "../conversation-work.js";
 import { getClusterNode, getClusterPeer } from "../cluster.js";
 import { claimConversationOwnership, type ConversationEngine, type ConversationOwnership, ConversationOwnershipError, type ConversationOwnershipStatus, getConversationOwnership, healStaleLocalClaim } from "../conversation-ownership.js";
-import { conversationReviewNotificationPaths, syncConversationReviewStates } from "../conversation-reviews.js";
+import { conversationReviewNotificationPaths, setConversationReviewNotifications, syncConversationReviewStates } from "../conversation-reviews.js";
+import { conversationNotifications, notificationConversationId, setConversationNotification } from "../conversation-notifications.js";
 import { conversationLeaseRunning } from "../conversation-runtime.js";
 import { getHarness, getHarnessRuntime, listHarnesses, listHarnessSessions } from "../harnesses.js";
 import { getUserPreferences } from "../preferences.js";
-import { ntfySubscribedSessionPaths } from "../push.js";
+import { migratePushConversationSubscriptions, ntfySubscribedSessionPaths } from "../push.js";
+import { flushReplicationOutbox } from "./maintenance.js";
+import { flushPushSubscriptionOutbox } from "./push-flush.js";
 import { listUserRecentSessions } from "../recent-sessions.js";
 import { getSettings } from "../settings.js";
 import { listTasks } from "../tasks.js";
@@ -20,6 +23,28 @@ import { taskConfig, taskCwd, taskPhase } from "./task-runs.js";
  * see the same running detection and the same persisted review watermarks. Running is
  * local runtime state or a live lease replicated from the node executing the turn.
  */
+async function migratePortableNotifications(userId: string, username: string, projectId: string, sessions: SessionSummary[]): Promise<Map<string, { enabled: boolean; originNodeId: string }>> {
+  await migratePushConversationSubscriptions(userId, username, projectId, sessions);
+  let notifications = conversationNotifications(username, projectId);
+  const legacyPaths = conversationReviewNotificationPaths(userId, projectId);
+  const matches = sessions.flatMap((session) => {
+    const paths = [session.path, `draft:${session.harnessId}:${session.id}`, ...(session.segments ?? []).flatMap((segment) => [segment.path, `draft:${segment.engine}:${segment.sessionId}`])];
+    return paths.filter((candidate) => legacyPaths.has(candidate)).map((legacyPath) => ({ session, legacyPath }));
+  });
+  if (matches.length) {
+    const local = await getClusterNode();
+    for (const { session, legacyPath } of matches) {
+      const id = notificationConversationId(session);
+      if (!notifications.has(id)) setConversationNotification(username, projectId, id, true, local.id);
+      setConversationReviewNotifications(userId, projectId, legacyPath, false);
+      notifications = conversationNotifications(username, projectId);
+    }
+  }
+  flushPushSubscriptionOutbox().catch((error) => console.warn("Push subscription flush failed", error));
+  flushReplicationOutbox().catch((error) => console.warn("Notification migration flush failed", error));
+  return notifications;
+}
+
 export async function listProjectSessionsWithReviewState(project: ProjectRecord, userId: string, username: string, historyDays = getSettings().conversationHistoryDays): Promise<SessionSummary[]> {
   const tasks = await listTasks(project.id);
   const pinnedSessionPaths = userId ? getUserPreferences(userId).pinnedSessionPaths : [];
@@ -72,15 +97,17 @@ export async function listProjectSessionsWithReviewState(project: ProjectRecord,
   // Internal snapshots do not belong to a viewer and must not create review records.
   const reviewStates = userId ? syncConversationReviewStates(userId, username, project.id, listedSessions.filter((session) => !session.readOnly)) : new Map();
   const ownership = await Promise.all(listedSessions.map((session) => getConversationOwnership(session.harnessId, session.id)));
-  const notificationPaths = userId ? conversationReviewNotificationPaths(userId, project.id) : new Set<string>();
+  const notifications = userId
+    ? await migratePortableNotifications(userId, username, project.id, listedSessions)
+    : new Map<string, { enabled: boolean; originNodeId: string }>();
   const ntfyPaths = userId ? await ntfySubscribedSessionPaths(userId, project.id) : new Set<string>();
   return listedSessions.map((session, index) => {
     const { engine: _engine, sessionId: _sessionId, ...summary } = session;
     return {
       ...summary,
       reviewState: reviewStates.get(session.path),
-      reviewNotificationsEnabled: notificationPaths.has(session.path),
-      ntfyEnabled: ntfyPaths.has(session.path),
+      reviewNotificationsEnabled: notifications.get(notificationConversationId(session))?.enabled === true,
+      ntfyEnabled: ntfyPaths.has(notificationConversationId(session)),
       executionNodeId: ownership[index]?.ownerNodeId,
     };
   });

@@ -8,6 +8,7 @@ import { clusterProjectGrantFor } from "./cluster.js";
 import { applyConversationOwnershipEvent, ensureConversationOwnershipSchema } from "./conversation-ownership.js";
 import { applyCanvasShortcutEvent, ensureCanvasShortcutSchema } from "./canvas-shortcuts.js";
 import { applyConversationReviewEvent, ensureConversationReviewReplicaSchema } from "./conversation-reviews.js";
+import { applyConversationNotificationDeliveredEvent, applyConversationNotificationEvent, ensureConversationNotificationSchema } from "./conversation-notifications.js";
 import { applyConversationRecordEvent, ensureConversationRecordSchema } from "./conversation-records.js";
 import { applyConversationGoalEvent, ensureConversationGoalSchema } from "./conversation-goals.js";
 import { applyUserPinEvent, ensureUserPinSchema } from "./user-pins.js";
@@ -72,7 +73,7 @@ function ensureProjectLockSchema(db: DatabaseSync): void {
 
 async function replicationDatabase(): Promise<DatabaseSync> {
   if (databasePromise) return databasePromise;
-  databasePromise = (async () => { await fs.mkdir(dataDir, { recursive: true, mode: 0o700 }); const db = new DatabaseSync(databasePath); db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;"); ensureReplicationSchema(db); ensureNameSchema(db); ensureTaskSchema(db); ensureProjectLockSchema(db); ensureConversationOwnershipSchema(db); ensureConversationRecordSchema(db); ensureConversationReviewReplicaSchema(db); ensureConversationGoalSchema(db); ensureCanvasShortcutSchema(db); ensureUserPinSchema(db); ensureUserRecentSessionSchema(db); return db; })();
+  databasePromise = (async () => { await fs.mkdir(dataDir, { recursive: true, mode: 0o700 }); const db = new DatabaseSync(databasePath); db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;"); ensureReplicationSchema(db); ensureNameSchema(db); ensureTaskSchema(db); ensureProjectLockSchema(db); ensureConversationOwnershipSchema(db); ensureConversationRecordSchema(db); ensureConversationReviewReplicaSchema(db); ensureConversationNotificationSchema(db); ensureConversationGoalSchema(db); ensureCanvasShortcutSchema(db); ensureUserPinSchema(db); ensureUserRecentSessionSchema(db); return db; })();
   return databasePromise;
 }
 
@@ -90,7 +91,7 @@ export function replicationEventProjectId(event: ReplicationEvent): string | und
   const payload = event.payload as Record<string, unknown> | null | undefined;
   if (!payload || typeof payload !== "object") return undefined;
   if (event.entityType === "name.override") return payload.scope === "projects" && typeof payload.key === "string" ? payload.key : undefined;
-  if (!["task", "project.lock", "conversation.record", "conversation.queue", "conversation.goal", "canvas.shortcut", "user.pin", "user.recent", "conversation.review"].includes(event.entityType)) return undefined;
+  if (!["task", "project.lock", "conversation.record", "conversation.queue", "conversation.goal", "canvas.shortcut", "user.pin", "user.recent", "conversation.review", "conversation.notification", "conversation.notification.delivered"].includes(event.entityType)) return undefined;
   return typeof payload.projectId === "string" && payload.projectId ? payload.projectId : undefined;
 }
 
@@ -123,7 +124,7 @@ export function replicationInvalidations(events: ReplicationEvent[]): Replicatio
   const entityTypes = new Set(events.map((event) => event.entityType));
   const invalidations = new Set<ReplicationInvalidation>();
   if (entityTypes.has("name.override") || entityTypes.has("project.lock")) invalidations.add("projectsChanged");
-  if (["name.override", "task", "conversation.ownership", "conversation.record", "conversation.queue", "conversation.goal", "conversation.review"].some((type) => entityTypes.has(type))) invalidations.add("sessionsChanged");
+  if (["name.override", "task", "conversation.ownership", "conversation.record", "conversation.queue", "conversation.goal", "conversation.review", "conversation.notification"].some((type) => entityTypes.has(type))) invalidations.add("sessionsChanged");
   if (entityTypes.has("task")) invalidations.add("tasksChanged");
   if (entityTypes.has("canvas.shortcut")) invalidations.add("shortcutsChanged");
   if (entityTypes.has("user.pin")) invalidations.add("pinsChanged");
@@ -237,6 +238,8 @@ const REPLICATION_APPLIERS: Record<string, ReplicationApplier> = {
   "conversation.record": applyConversationRecordEvent,
   "conversation.queue": applyQueuedPromptEvent,
   "conversation.review": applyConversationReviewEvent,
+  "conversation.notification": applyConversationNotificationEvent,
+  "conversation.notification.delivered": applyConversationNotificationDeliveredEvent,
   "conversation.goal": applyConversationGoalEvent,
   "canvas.shortcut": applyCanvasShortcutEvent,
   "user.pin": applyUserPinEvent,

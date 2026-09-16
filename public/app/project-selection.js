@@ -55,14 +55,22 @@ export async function loadProjects() {
 
   if (state.initialProjectId) state.activeProjectId = state.initialProjectId;
   if (state.initialSessionPath) state.activeSessionPath = state.initialSessionPath;
-  if (state.initialSessionId) state.activeSessionId = state.initialSessionId;
+  if (state.initialSessionId) {
+    state.activeSessionId = state.initialSessionId;
+    if (!state.initialSessionPath) state.activeSessionPath = null;
+  }
   if (state.initialNodeId) state.activeNodeId = state.initialNodeId;
 
   if (state.activeProjectId && !state.projects.some((project) => project.id === state.activeProjectId)) {
-    state.activeProjectId = null;
-    state.activeSessionPath = null;
-    state.activeSessionId = null;
-    if (state.preferencesLoaded) savePreferencesInBackground({ activeProjectId: null, activeSessionPath: null, activeSessionId: null });
+    if (state.initialProjectId) {
+      const resolved = await api(`/api/projects/${encodeURIComponent(state.initialProjectId)}`);
+      state.activeProjectId = resolved.project.id;
+    } else {
+      state.activeProjectId = null;
+      state.activeSessionPath = null;
+      state.activeSessionId = null;
+      if (state.preferencesLoaded) savePreferencesInBackground({ activeProjectId: null, activeSessionPath: null, activeSessionId: null });
+    }
   }
 
   renderProjects();
@@ -72,11 +80,11 @@ export async function loadProjects() {
     return;
   }
 
-  await selectProject(state.activeProjectId, false, !state.initialProjectId || Boolean(state.initialSessionPath));
+  await selectProject(state.activeProjectId, false, !state.initialProjectId || Boolean(state.initialSessionPath || state.initialSessionId));
   const activeSession = state.sessions.find((session) => session.path === state.activeSessionPath
     || session.segments?.some((segment) => segment.path === state.activeSessionPath)
-    || Boolean(state.activeSessionId && (session.id === state.activeSessionId || session.segments?.some((segment) => segment.sessionId === state.activeSessionId))));
-  if (state.activeSessionPath && activeSession) {
+    || Boolean(state.activeSessionId && (session.conversationId === state.activeSessionId || session.id === state.activeSessionId || session.segments?.some((segment) => segment.sessionId === state.activeSessionId))));
+  if ((state.activeSessionPath || state.activeSessionId) && activeSession) {
     openListedSession(activeSession);
     return;
   }

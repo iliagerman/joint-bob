@@ -20,7 +20,7 @@ app.post("/api/push/subscribe", async (request, response, next) => {
   try {
     const payload = pushSubscribeSchema.parse(request.body);
     const authSession = response.locals.authSession as AuthSession;
-    await savePushSubscription(payload.subscription, authSession.userId, payload.projectId, payload.sessionPath, payload.title || "Conversation");
+    await savePushSubscription(payload.subscription, authSession.userId, payload.projectId, payload.sessionPath, payload.title || "Conversation", authSession.username.toLowerCase());
     flushPushSubscriptionOutbox().catch((error) => console.warn("Push subscription flush failed", error));
     response.status(204).send();
   } catch (error) {

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Notification preferences for review alerts and ntfy publishing now follow conversations across cluster nodes when ownership transfers.
+
 ## 1.40.0 — 2026-09-16
 
 - Keyboard shortcut badges now appear only when you hold the command modifiers, overlaying the buttons rather than taking up toolbar space.

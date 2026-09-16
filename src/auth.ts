@@ -215,6 +215,10 @@ export function usernameForUser(userId: string): string | undefined {
   return (authDatabase().prepare("SELECT username FROM users WHERE id = ?").get(userId) as { username: string } | undefined)?.username;
 }
 
+export function userIdForUsername(username: string): string | undefined {
+  return (authDatabase().prepare("SELECT id FROM users WHERE username = ? COLLATE NOCASE").get(username) as { id: string } | undefined)?.id;
+}
+
 export function changePassword(session: AuthSession, currentPassword: string, newPassword: string): void {
   if (!validPassword(newPassword)) throw new Error("New password must be 16-200 characters");
   const row = authDatabase().prepare("SELECT * FROM users WHERE id = ?").get(session.userId) as UserRow | undefined;

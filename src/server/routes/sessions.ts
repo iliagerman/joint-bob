@@ -5,7 +5,8 @@ import type { AuthSession } from "../../auth.js";
 import { type ClusterPeer, getClusterMachineToken, getClusterNode, getClusterPeer, listClusterPeers } from "../../cluster.js";
 import { beginConversationRecovery, compareAndSetConversationOwnership, type ConversationEngine, type ConversationOwnership, finishConversationRecovery, getConversationOwnership, type OwnershipApplyResult, sameConversationOwnership, takeConversationOwnership } from "../../conversation-ownership.js";
 import { deleteConversationRecord, getConversationRecord } from "../../conversation-records.js";
-import { markConversationReviewed, markConversationsReviewed, setConversationReviewNotifications } from "../../conversation-reviews.js";
+import { markConversationReviewed, markConversationsReviewed } from "../../conversation-reviews.js";
+import { notificationConversationId, setConversationNotification } from "../../conversation-notifications.js";
 import { clearHarnessSessionCache, getHarness, listHarnessSessions } from "../../harnesses.js";
 import { getNtfyService } from "../../ntfy.js";
 import { deleteNtfySubscriptions, ntfySubscription, savePushSubscription } from "../../push.js";
@@ -19,6 +20,7 @@ import { TaskWorktreeError } from "../../worktrees.js";
 import { promptQueueIsDraining } from "../chat.js";
 import { conversationBelongsToDoneTask } from "../cluster-helpers.js";
 import { sendError } from "../http-auth.js";
+import { flushReplicationOutbox } from "../maintenance.js";
 import { flushPushSubscriptionOutbox } from "../push-flush.js";
 import { ConversationForkError, forkLocalConversation } from "../conversation-fork.js";
 import { assertProjectEditable, projectsWithSharedNames } from "../projects.js";
@@ -50,11 +52,14 @@ app.put("/api/projects/:projectId/sessions/review-notifications", async (request
     const payload = sessionReviewNotificationsSchema.parse(request.body);
     const authSession = response.locals.authSession as AuthSession;
     const sessions = await listProjectSessionsWithReviewState(project, authSession.userId, authSession.username);
-    if (!sessions.some((session) => session.path === payload.sessionPath && !session.readOnly)) {
+    const session = sessions.find((candidate) => (candidate.path === payload.sessionPath || candidate.segments?.some((segment) => segment.path === payload.sessionPath)) && !candidate.readOnly);
+    if (!session) {
       sendError(response, 404, "Conversation not found");
       return;
     }
-    setConversationReviewNotifications(authSession.userId, project.id, payload.sessionPath, payload.enabled);
+    const local = await getClusterNode();
+    setConversationNotification(authSession.username, project.id, notificationConversationId(session), payload.enabled, local.id);
+    flushReplicationOutbox().catch((error) => console.warn("Notification preference flush failed", error));
     broadcastToProject(project.id, { type: "sessionsChanged" });
     if (payload.enabled) scheduleReviewNotifications(project.id);
     response.json({ enabled: payload.enabled });
@@ -76,12 +81,16 @@ app.put("/api/projects/:projectId/sessions/ntfy", async (request, response, next
       if (!payload.serviceId || !payload.topic) { sendError(response, 400, "Enabling ntfy publishing needs a service and a topic"); return; }
       const service = getNtfyService(payload.serviceId);
       if (!service) { sendError(response, 404, "ntfy service not found"); return; }
-      await savePushSubscription(ntfySubscription(service.url, payload.topic, service.token, project.id, payload.sessionPath), authSession.userId, project.id, payload.sessionPath, session.title || project.name);
+      const conversationId = notificationConversationId(session);
+      await deleteNtfySubscriptions(authSession.userId, project.id, conversationId);
+      await savePushSubscription(ntfySubscription(service.url, payload.topic, service.token, project.id, conversationId), authSession.userId, project.id, conversationId, session.title || project.name, authSession.username.toLowerCase());
       // Publishing reviews is a review notification, so opting in implies the review preference.
-      setConversationReviewNotifications(authSession.userId, project.id, payload.sessionPath, true);
+      const local = await getClusterNode();
+      setConversationNotification(authSession.username, project.id, conversationId, true, local.id);
+      flushReplicationOutbox().catch((error) => console.warn("Notification preference flush failed", error));
       scheduleReviewNotifications(project.id);
     } else {
-      await deleteNtfySubscriptions(authSession.userId, project.id, payload.sessionPath);
+      await deleteNtfySubscriptions(authSession.userId, project.id, notificationConversationId(session));
     }
     flushPushSubscriptionOutbox().catch((error) => console.warn("Push subscription flush failed", error));
     broadcastToProject(project.id, { type: "sessionsChanged" });

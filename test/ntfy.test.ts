@@ -207,7 +207,7 @@ test("a conversation opts into ntfy publishing with a topic and can opt out agai
     assert.equal(sessions[0].reviewNotificationsEnabled, true, "publishing implies the review-notification preference");
 
     const db = new DatabaseSync(path.join(node.root, "data", "node.db"), { readOnly: true });
-    const row = db.prepare("SELECT COUNT(*) AS count FROM push_session_subscriptions WHERE project_id = ? AND session_path = ?").get(project.id, sessionPath) as { count: number };
+    const row = db.prepare("SELECT COUNT(*) AS count FROM push_session_subscriptions WHERE project_id = ? AND session_path = ?").get(project.id, sessions[0].conversationId || sessions[0].id) as { count: number };
     db.close();
     assert.equal(row.count, 1, "the ntfy target is stored as a replicated subscription row");
 
@@ -220,7 +220,7 @@ test("a conversation opts into ntfy publishing with a topic and can opt out agai
     sessions = await listSessions();
     assert.equal(sessions[0].ntfyEnabled, false);
     const after = new DatabaseSync(path.join(node.root, "data", "node.db"), { readOnly: true });
-    const remaining = after.prepare("SELECT COUNT(*) AS count FROM push_session_subscriptions WHERE project_id = ? AND session_path = ?").get(project.id, sessionPath) as { count: number };
+    const remaining = after.prepare("SELECT COUNT(*) AS count FROM push_session_subscriptions WHERE project_id = ? AND session_path = ?").get(project.id, sessions[0].conversationId || sessions[0].id) as { count: number };
     after.close();
     assert.equal(remaining.count, 0);
   }

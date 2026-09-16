@@ -67,7 +67,7 @@ test("a review notification publishes the preview to the conversation's ntfy top
       assert.equal(received[0].body.topic, "my-reviews");
       assert.equal(received[0].body.title, "My chat needs review");
       assert.equal(received[0].body.message, "All tests pass now.");
-      assert.equal(received[0].body.click, "https://node.example.test/?projectId=project-a&sessionPath=watch");
+      assert.equal(received[0].body.click, "https://node.example.test/?projectId=project-a&sessionId=watch");
     });
   });
 });

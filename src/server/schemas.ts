@@ -298,6 +298,7 @@ const pushSubscriptionEventSchema = z.object({
   value: z.union([
     z.object({
       userId: z.string().min(1).max(128),
+      username: z.string().min(1).max(80).optional(),
       projectId: z.string().min(1).max(300),
       sessionPath: z.string().min(1).max(2000),
       title: z.string().max(200),
