@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.34.1 — 2026-09-16
 
 - Scheduled conversations now display a streamlined transcript showing only the final report from each turn, hiding intermediate thinking and tool activity.
 
