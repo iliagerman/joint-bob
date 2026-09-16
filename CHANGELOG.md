@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.37.1 — 2026-09-16
 
-- Keyboard shortcut labels now display consistently in automated tests.
+- Keyboard shortcut labels now display consistently on all platforms.
 
 ## 1.37.0 — 2026-09-16
 
