@@ -168,6 +168,10 @@ function claudeMessageText(record: UnknownRecord): string {
   return blockText(asRecord(record.message).content);
 }
 
+function isClaudeLocalCommandMessage(text: string): boolean {
+  return /^<(?:local-command-[^>]+|command-(?:message|name|args))>/.test(text.trimStart());
+}
+
 // Claude Code runs every model in a 200k window, except the explicit 1M-context
 // variants the model id marks with a `[1m]` suffix.
 const CLAUDE_CONTEXT_WINDOW = 200_000;
@@ -221,7 +225,7 @@ function meaningfulClaudePrompt(record: UnknownRecord): string {
   let text = claudeMessageText(record).trim();
   if (text.startsWith("## Available secret accounts")) text = text.split("\n\n").slice(1).join("\n\n").trim();
   text = stripHandoffEnvelope(text).trim();
-  if (/^<(local-command-caveat|command-message|command-name|command-args)>/.test(text)) return "";
+  if (isClaudeLocalCommandMessage(text)) return "";
   return text.split("\n")[0].slice(0, 80);
 }
 
@@ -373,9 +377,10 @@ export async function loadClaudeMessages(sessionPath: string): Promise<ChatMessa
       const message = asRecord(record.message);
       const text = claudeMessageText(record);
       const timestamp = typeof record.timestamp === "string" ? record.timestamp : undefined;
-      return { id: `${index}`, role: message.role === "user" ? "user" : "assistant", text: message.role === "user" ? stripHandoffEnvelope(text) : text, ...(timestamp ? { timestamp } : {}) };
+      const role = message.role === "user" ? "user" : "assistant";
+      return { id: `${index}`, role, text: role === "user" ? stripHandoffEnvelope(text) : text, ...(timestamp ? { timestamp } : {}) };
     })
-    .filter((message) => message.text.trim().length > 0);
+    .filter((message) => message.text.trim().length > 0 && !(message.role === "user" && isClaudeLocalCommandMessage(message.text)));
 }
 
 /** Every conversation spawn gets the shared capabilities, including tasks and recovery. */

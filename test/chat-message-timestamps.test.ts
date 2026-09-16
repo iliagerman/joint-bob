@@ -27,9 +27,10 @@ test("Claude transcript messages carry their recorded timestamps", async () => {
       { type: "user", cwd: projectCwd, timestamp: "2026-09-14T08:30:00.000Z", message: { role: "user", content: [{ text: "Hello there" }] } },
       { type: "assistant", cwd: projectCwd, timestamp: "2026-09-14T08:31:05.000Z", message: { role: "assistant", content: [{ type: "text", text: "Hi back" }] } },
       { type: "user", cwd: projectCwd, message: { role: "user", content: [{ text: "No stamp on this line" }] } },
+      { type: "user", cwd: projectCwd, message: { role: "user", content: [{ text: "<local-command-caveat>Caveat</local-command-caveat>\n<command-name>/compact</command-name>\n<local-command-stdout>Compacted</local-command-stdout>" }] } },
     ].map((line) => JSON.stringify(line)).join("\n"));
     const messages = await claude.loadClaudeMessages(`claude:${transcript}`);
-    assert.equal(messages.length, 3, "all three fixture messages load");
+    assert.equal(messages.length, 3, "local command metadata stays out of the chat transcript");
     assert.equal(messages[0].timestamp, "2026-09-14T08:30:00.000Z", "user message keeps its recorded time");
     assert.equal(messages[1].timestamp, "2026-09-14T08:31:05.000Z", "assistant message keeps its recorded time");
     assert.equal(messages[2].timestamp, undefined, "a line without a timestamp stays unstamped");
