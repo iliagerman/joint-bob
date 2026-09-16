@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Agents can now send notifications to ntfy servers you've configured.
+
 ## 1.41.0 — 2026-09-16
 
 - Added a Tasks panel with live output, status, history, and stop controls across nodes. Finished tasks queue an automatic follow-up in their original conversation, even without an open browser.

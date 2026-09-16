@@ -7,6 +7,8 @@ import { sendError } from "../http-auth.js";
 import { flushPushSubscriptionOutbox } from "../push-flush.js";
 import { ntfyServiceSchema, pushSubscribeSchema, pushUnsubscribeSchema } from "../schemas.js";
 import { app } from "../state.js";
+import type { AgentCapabilityIdentity } from "../../agent-capabilities.js";
+import { NtfyRequestError, ntfyAgentRequest, ntfyAgentRequestSchema } from "../../ntfy-publish.js";
 
 app.get("/api/push/vapid-public-key", async (_request, response, next) => {
   try {
@@ -35,6 +37,17 @@ app.post("/api/push/unsubscribe", async (request, response, next) => {
     flushPushSubscriptionOutbox().catch((error) => console.warn("Push subscription flush failed", error));
     response.status(204).send();
   } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/ntfy/agent", async (request, response, next) => {
+  const identity = response.locals.ntfyAgent as AgentCapabilityIdentity | undefined;
+  if (!identity) { sendError(response, 401, "Unauthorized"); return; }
+  try {
+    response.json(await ntfyAgentRequest(identity, ntfyAgentRequestSchema.parse(request.body)));
+  } catch (error) {
+    if (error instanceof NtfyRequestError) { sendError(response, error.status, error.message); return; }
     next(error);
   }
 });

@@ -4,7 +4,7 @@
 // live node-to-node traffic, and continuing a conversation on the other
 // node through ownership takeover.
 import assert from "node:assert/strict";
-import { type ChildProcess } from "node:child_process";
+import { execFile, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { appendFile, chmod, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -12,12 +12,14 @@ import { createServer } from "node:http";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test, { after, before } from "node:test";
+import { promisify } from "node:util";
 import WebSocket from "ws";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, type SignedIn } from "./dev-nodes.js";
 import { openPiRuntimeDatabase, publishPiRuntime } from "../src/pi-runtime.js";
 import { startSupervisor } from "../scripts/joint-bob-supervisor.mjs";
 import { supervisorRequest } from "../scripts/supervisor-client.mjs";
 import { backgroundClusterFixture, closeBackgroundClusterFixture, startSyntheticTask } from "./background-tasks-fixture.js";
+
 
 interface PeerView { id: string; name: string; url: string; online: boolean; lastSeenAt?: string; tokenConfigured: boolean }
 interface InventoryView { node: { id: string }; projects: Array<{ project: { id: string; name: string }; aliases: string[] }> }
@@ -1228,7 +1230,55 @@ test("cross-node opening replaces stale home paths without the fifty-conversatio
   } finally { socket?.terminate(); await Promise.all(files.map((file) => rm(file, { force: true }))); }
 });
 
-test("portable review notifications survive node takeover", { timeout: 120_000 }, async () => {
+test("chat ntfy sends use the replicated conversation destination on another node", { timeout: 120_000 }, async () => {
+  type NtfySession = SessionView & { ntfyEnabled?: boolean; draft?: boolean };
+  const projectA = nodeA.projects[0], projectB = nodeB.projects.find(project => project.name === projectA.name)!;
+  const [settingsA, settingsB] = await Promise.all([api<Record<string, unknown>>(nodeA, sessionA, "GET", "/settings"), api<Record<string, unknown>>(nodeB, sessionB, "GET", "/settings")]);
+  const dirA = path.join(root, "chat-ntfy-a"), dirB = path.join(root, "chat-ntfy-b");
+  await Promise.all([mkdir(dirA, { recursive: true }), mkdir(dirB, { recursive: true })]);
+  const withPath = (saved: Record<string, unknown>, sessionPath: string) => ({ ...saved, pi: { ...(saved.pi as Record<string, unknown>), sessionPath } });
+  const id = randomUUID(), fileA = path.join(dirA, `${id}.jsonl`), fileB = path.join(dirB, `${id}.jsonl`);
+  const fixture = (cwd: string) => [{ type: "session", version: 3, id, cwd, timestamp: new Date().toISOString() }, { type: "message", id: `${id}-user`, parentId: null, timestamp: new Date().toISOString(), message: { role: "user", content: [{ type: "text", text: "fixture only" }] } }].map(value => JSON.stringify(value)).join("\n") + "\n";
+  let upstream: ReturnType<typeof createServer> | undefined; let serviceId = "";
+  try {
+    await Promise.all([api(nodeA, sessionA, "PUT", "/settings", withPath(settingsA.body, dirA)), api(nodeB, sessionB, "PUT", "/settings", withPath(settingsB.body, dirB))]);
+    await Promise.all([writeFile(fileA, fixture(projectA.path)), writeFile(fileB, fixture(projectB.path))]);
+    const waitFor = async (node: SeededNode, auth: SignedIn, projectId: string, enabled?: boolean): Promise<NtfySession> => {
+      const deadline = Date.now() + 30_000; let found: NtfySession | undefined;
+      while (Date.now() < deadline) { const listed = await api<{ sessions: NtfySession[] }>(node, auth, "GET", `/projects/${projectId}/sessions`); found = listed.body.sessions.find(row => row.id === id && !row.draft); if (found && (enabled === undefined || found.ntfyEnabled === enabled)) return found; await new Promise(resolve => setTimeout(resolve, 100)); }
+      assert.fail(`chat ntfy fixture unavailable: ${JSON.stringify(found)}`);
+    };
+    const [listedA, listedB] = await Promise.all([waitFor(nodeA, sessionA, projectA.id), waitFor(nodeB, sessionB, projectB.id)]);
+    assert.equal(listedA.id, listedB.id); assert.notEqual(listedA.path, listedB.path);
+    const received: Array<{ authorization?: string; body: Record<string, unknown> }> = [];
+    upstream = createServer((request, response) => { let raw = ""; request.setEncoding("utf8"); request.on("data", chunk => raw += chunk); request.on("end", () => { received.push({ authorization: request.headers.authorization, body: JSON.parse(raw) }); response.end("ok"); }); });
+    await new Promise<void>(resolve => upstream!.listen(0, "127.0.0.1", resolve)); const address = upstream.address(); assert.ok(address && typeof address !== "string");
+    const service = await api<{ service: { id: string } }>(nodeA, sessionA, "POST", "/ntfy/services", { name: "Cluster chat fixture", url: `http://127.0.0.1:${address.port}`, token: "cluster-ntfy-fixture" });
+    assert.equal(service.status, 201); serviceId = service.body.service.id;
+    assert.equal((await api(nodeA, sessionA, "PUT", `/projects/${projectA.id}/sessions/ntfy`, { sessionPath: fileA, enabled: true, serviceId, topic: "default-channel" })).status, 200);
+    await waitFor(nodeB, sessionB, projectB.id, true);
+    assert.equal((await api(nodeB, sessionB, "POST", `/projects/${projectB.id}/sessions/take-ownership`, { peerId: nodeB.nodeId, sessionId: id, sessionPath: fileB })).status, 200);
+    const code = `import { ntfyAgentEnvironment } from './src/ntfy-agent.ts'; console.log(JSON.stringify(ntfyAgentEnvironment(${JSON.stringify(projectB.id)}, 'pi', ${JSON.stringify(id)})));`;
+    const { stdout } = await promisify(execFile)(process.execPath, ["--import", "tsx", "--input-type=module", "-e", code], { env: { ...process.env, HOME: environment.home, JOINT_BOB_DATA_DIR: nodeB.dataDir, PI_WEB_DATA_DIR: nodeB.dataDir } });
+    const capability = JSON.parse(stdout) as Record<string, string>;
+    const status = await fetch(`${nodeB.url}/api/ntfy/agent`, { method: "POST", headers: { authorization: `Bearer ${capability.JOINT_BOB_NTFY_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ operation: "status" }) });
+    assert.equal(status.status, 200); assert.deepEqual(await status.json(), { services: [], defaultTopic: "default-channel", hasConversationTarget: true });
+    assert.deepEqual((await api<{ services: unknown[] }>(nodeB, sessionB, "GET", "/ntfy/services")).body.services, []);
+    const sent = await fetch(`${nodeB.url}/api/ntfy/agent`, { method: "POST", headers: { authorization: `Bearer ${capability.JOINT_BOB_NTFY_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ operation: "send", topic: "X-channel", message: "cluster manual publish" }) });
+    assert.equal(sent.status, 200); assert.deepEqual(await sent.json(), { ok: true, topic: "X-channel" });
+    const capture = received.find(entry => entry.body.message === "cluster manual publish"); assert.deepEqual(capture, { authorization: "Bearer cluster-ntfy-fixture", body: { topic: "X-channel", message: "cluster manual publish" } });
+  } finally {
+    if (serviceId) {
+      await api(nodeA, sessionA, "PUT", `/projects/${projectA.id}/sessions/ntfy`, { sessionPath: fileA, enabled: false, serviceId, topic: "default-channel" });
+      const deleted = await fetch(`${nodeA.url}/api/ntfy/services/${serviceId}`, { method: "DELETE", headers: { cookie: sessionA.cookie, "x-csrf-token": sessionA.csrfToken } });
+      assert.equal(deleted.status, 204);
+    }
+    await Promise.all([api(nodeA, sessionA, "PUT", "/settings", settingsA.body), api(nodeB, sessionB, "PUT", "/settings", settingsB.body)]);
+    if (upstream) { upstream.closeAllConnections(); await new Promise<void>(resolve => upstream!.close(() => resolve())); }
+  }
+});
+
+ test("portable review notifications survive node takeover", { timeout: 120_000 }, async () => {
   type PortableSession = SessionView & { updatedAt?: string; reviewState?: string; running?: boolean; ntfyEnabled?: boolean; reviewNotificationsEnabled?: boolean; draft?: boolean };
   const projectA = nodeA.projects[0];
   const projectB = nodeB.projects.find((project) => project.name === projectA.name)!;

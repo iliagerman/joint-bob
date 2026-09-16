@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { browserAgentEnvironment, browserAgentInstructions } from "./browser-agent.js";
 import { resolveDataDirectory } from "./data-directory.js";
 import { isHarnessId, type HarnessId } from "./types.js";
+import { ntfyAgentEnvironment, ntfyAgentInstructions } from "./ntfy-agent.js";
 import { mintTaskToken, readSupervisorControl } from "../scripts/supervisor-client.mjs";
 
 export interface AgentCapabilityIdentity {
@@ -79,6 +80,11 @@ export const agentCapabilities: AgentCapability[] = [
     id: "browser",
     instructions: { path: "/virtual/JOINT_BOB_BROWSER.md", content: browserAgentInstructions },
     environment: ({ projectId, engine, conversationId }) => browserAgentEnvironment(projectId, engine, conversationId),
+  },
+  {
+    id: "ntfy",
+    instructions: { path: "/virtual/JOINT_BOB_NTFY.md", content: ntfyAgentInstructions },
+    environment: ({ projectId, engine, conversationId }) => ntfyAgentEnvironment(projectId, engine, conversationId),
   },
   {
     id: "background-tasks",

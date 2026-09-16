@@ -584,6 +584,28 @@ export const NTFY_ENDPOINT_PREFIX = "ntfy+";
 /** Replicated subscription keys must be non-empty, so a tokenless service stores this sentinel. */
 const NTFY_NO_TOKEN = "-";
 
+export interface NtfyConversationTarget { url: string; topic: string; token: string }
+
+/** Returns only exact stable-conversation ntfy destinations, preserving credential differences. */
+export async function ntfyConversationTargets(projectId: string, conversationId: string): Promise<NtfyConversationTarget[]> {
+  const db = pushDatabase();
+  const canonical = resolveProjectAlias(db, projectId);
+  const rows = db.prepare("SELECT * FROM push_session_subscriptions WHERE session_path = ?").all(conversationId) as unknown as SubscriptionRow[];
+  const targets = rows.flatMap((row) => {
+    if (resolveProjectAlias(db, row.project_id) !== canonical) return [];
+    const subscription = JSON.parse(decrypt(row.subscription)) as PushSubscription;
+    if (!subscription.endpoint.startsWith(NTFY_ENDPOINT_PREFIX)) return [];
+    const target = new URL(subscription.endpoint.slice(NTFY_ENDPOINT_PREFIX.length));
+    target.hash = "";
+    const segments = target.pathname.split("/").filter(Boolean);
+    const topic = segments.pop();
+    if (!topic) throw new Error("Stored ntfy target has no topic");
+    target.pathname = segments.length ? `/${segments.join("/")}` : "";
+    return [{ url: target.href.replace(/\/$/, ""), topic: decodeURIComponent(topic), token: subscription.keys.auth === NTFY_NO_TOKEN ? "" : subscription.keys.auth }];
+  });
+  return [...new Map(targets.map((target) => [`${target.url}\0${target.topic}\0${target.token}`, target])).values()];
+}
+
 /** The fragment makes each conversation's endpoint unique, so opting one conversation out
     cannot tombstone another that publishes to the same topic. */
 export function ntfySubscription(serviceUrl: string, topic: string, token: string, projectId: string, sessionPath: string): PushSubscription {

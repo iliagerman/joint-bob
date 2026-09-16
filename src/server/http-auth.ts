@@ -7,6 +7,7 @@ import { clusterMembershipMemberSchema } from "./schemas.js";
 import { machineRoutes } from "./state.js";
 import { browserAgentIdentity } from "../browser-agent.js";
 import { backgroundTaskAgentIdentity } from "../background-task-agent.js";
+import { ntfyAgentIdentity } from "../ntfy-agent.js";
 
 export function sendError(response: Response, statusCode: number, message: string): void {
   response.status(statusCode).json({ error: message });
@@ -107,6 +108,10 @@ export async function requireHttpAuth(request: Request, response: Response, next
     const identity = backgroundTaskAgentIdentity(token);
     if (identity) { response.locals.taskAgent = identity; next(); return; }
   }
+  if (request.path === "/ntfy/agent" && request.method === "POST" && token) {
+    const identity = ntfyAgentIdentity(token);
+    if (identity) { response.locals.ntfyAgent = identity; next(); return; }
+  }
   const machineNodeId = machineRoutes.has(`${request.method} ${request.path}`) && token
     ? await machineCredentialNodeId(token)
     : undefined;
@@ -130,7 +135,7 @@ export async function requireHttpAuth(request: Request, response: Response, next
 }
 
 export function requireCsrf(request: Request, response: Response, next: NextFunction): void {
-  if (["GET", "HEAD", "OPTIONS"].includes(request.method) || response.locals.machineAuth || response.locals.browserAgent || response.locals.taskAgent) {
+  if (["GET", "HEAD", "OPTIONS"].includes(request.method) || response.locals.machineAuth || response.locals.browserAgent || response.locals.taskAgent || response.locals.ntfyAgent) {
     next();
     return;
   }
