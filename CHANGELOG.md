@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 1.37.0 — 2026-09-16
+
+- Review notifications can now also publish to ntfy. Define ntfy servers (URL plus optional access token, encrypted at rest) once in Settings → Notifications, then pick "Publish reviews to ntfy" from any conversation's menu and name a topic. The push carries the conversation title, the reply preview, and a tap-through link, and it works from whichever cluster node runs the conversation.
+
 ## 1.36.1 — 2026-09-16
 
 - API responses now prevent browser cache retention, ensuring stale conversation data doesn't persist across sessions.

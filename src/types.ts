@@ -107,6 +107,8 @@ export interface SessionSummary {
   running?: boolean;
   reviewState?: "running" | "needs_review" | "reviewed";
   reviewNotificationsEnabled?: boolean;
+  /** Review notifications also publish to an ntfy topic. */
+  ntfyEnabled?: boolean;
   draft?: boolean;
   /** Node owning conversation execution. */
   executionNodeId?: string;

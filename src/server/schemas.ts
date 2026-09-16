@@ -318,6 +318,18 @@ export const sessionReviewNotificationsSchema = z.object({
   sessionPath: z.string().trim().min(1).max(2000),
   enabled: z.boolean(),
 }).strict();
+export const ntfyServiceSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  url: z.string().url().max(500),
+  token: z.string().max(500).optional(),
+}).strict();
+export const sessionNtfySchema = z.object({
+  sessionPath: z.string().trim().min(1).max(2000),
+  enabled: z.boolean(),
+  serviceId: z.string().uuid().optional(),
+  // ntfy topic names: letters, digits, underscores and dashes.
+  topic: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional(),
+}).strict();
 export const loginSchema = z.object({
   username: z.string().trim().min(1).max(80),
   password: z.string().min(1).max(200),

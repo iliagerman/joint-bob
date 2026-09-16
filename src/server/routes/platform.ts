@@ -1,9 +1,11 @@
 import type { AuthSession } from "../../auth.js";
 import { getHarnessRuntime, listHarnesses } from "../../harnesses.js";
+import { addNtfyService, deleteNtfyService, listNtfyServices } from "../../ntfy.js";
 import { isHarnessId } from "../../types.js";
 import { deletePushSubscription, getVapidPublicKey, savePushSubscription } from "../../push.js";
+import { sendError } from "../http-auth.js";
 import { flushPushSubscriptionOutbox } from "../push-flush.js";
-import { pushSubscribeSchema, pushUnsubscribeSchema } from "../schemas.js";
+import { ntfyServiceSchema, pushSubscribeSchema, pushUnsubscribeSchema } from "../schemas.js";
 import { app } from "../state.js";
 
 app.get("/api/push/vapid-public-key", async (_request, response, next) => {
@@ -35,6 +37,27 @@ app.post("/api/push/unsubscribe", async (request, response, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+app.get("/api/ntfy/services", (_request, response) => {
+  response.json({ services: listNtfyServices() });
+});
+
+app.post("/api/ntfy/services", (request, response, next) => {
+  try {
+    const payload = ntfyServiceSchema.parse(request.body);
+    response.status(201).json({ service: addNtfyService(payload.name, payload.url, payload.token ?? "") });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/api/ntfy/services/:id", (request, response) => {
+  if (!deleteNtfyService(request.params.id)) {
+    sendError(response, 404, "ntfy service not found");
+    return;
+  }
+  response.status(204).send();
 });
 
 app.get("/api/harnesses", (_request, response) => {

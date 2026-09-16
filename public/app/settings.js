@@ -6,6 +6,7 @@ import { showSignedOut } from "./auth.js";
 import { loadClusterPanel } from "./cluster-panel.js";
 import { loadUpdatesPanel } from "./updates.js";
 import { elements } from "./elements.js";
+import { loadNtfyServicesPanel } from "./ntfy.js";
 import { loadSecretAccounts } from "./secrets.js";
 import { confirmAction, syncNotifyButton, toast } from "./shell.js";
 import { state } from "./state.js";
@@ -89,6 +90,7 @@ function selectSettingsTab(name) {
   }
   for (const panel of elements.settingsPanels) panel.hidden = panel.id !== `settingsPanel-${name}`;
   if (name === "cluster") void loadBrowserStatus();
+  if (name === "notifications") void loadNtfyServicesPanel();
   if (name === "logs") renderClientLogs();
 }
 

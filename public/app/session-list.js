@@ -6,6 +6,7 @@ import { clearChat } from "./chat-transcript.js";
 import { elements } from "./elements.js";
 import { agentIcon, sessionAgentId } from "./icons.js";
 import { filteredSessions, normalizedQuery, selectedProject, sessionChatState, setMobileView, shortSessionTitle, updateChatFilterCounts } from "./layout.js";
+import { toggleSessionNtfy } from "./ntfy.js";
 import { keepListScroll, renderProjects } from "./project-list.js";
 import { syncRecentSessionActivity } from "./recents.js";
 import { openListedSession, reviewableSessions } from "./reviews.js";
@@ -274,6 +275,12 @@ function sessionMenuItems(session, sessionActive) {
         icon: "sliders",
         testid: "session-review-notifications-button",
         onSelect: () => toggleSessionReviewNotifications(session).catch((error) => toast(error.message)),
+      },
+      {
+        label: session.ntfyEnabled ? "Stop ntfy publishing" : "Publish reviews to ntfy",
+        icon: "sliders",
+        testid: "session-ntfy-button",
+        onSelect: () => toggleSessionNtfy(session).catch((error) => toast(error.message)),
       },
       { label: "Scheduled tasks", icon: "refresh", testid: "session-cron-button", onSelect: () => openScheduledTasks(state.activeProjectId, session).catch(error => toast(error.message)) },
       {

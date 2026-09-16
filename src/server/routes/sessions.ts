@@ -7,6 +7,8 @@ import { beginConversationRecovery, compareAndSetConversationOwnership, type Con
 import { deleteConversationRecord, getConversationRecord } from "../../conversation-records.js";
 import { markConversationReviewed, markConversationsReviewed, setConversationReviewNotifications } from "../../conversation-reviews.js";
 import { clearHarnessSessionCache, getHarness, listHarnessSessions } from "../../harnesses.js";
+import { getNtfyService } from "../../ntfy.js";
+import { deleteNtfySubscriptions, ntfySubscription, savePushSubscription } from "../../push.js";
 import { queuedPromptSnapshot } from "../../prompt-queue.js";
 import { receiveReplicationBatch, type ReplicationEvent } from "../../replication.js";
 import { resolveLocalSessionPath } from "../../session-paths.js";
@@ -17,11 +19,12 @@ import { TaskWorktreeError } from "../../worktrees.js";
 import { promptQueueIsDraining } from "../chat.js";
 import { conversationBelongsToDoneTask } from "../cluster-helpers.js";
 import { sendError } from "../http-auth.js";
+import { flushPushSubscriptionOutbox } from "../push-flush.js";
 import { ConversationForkError, forkLocalConversation } from "../conversation-fork.js";
 import { assertProjectEditable, projectsWithSharedNames } from "../projects.js";
 import { broadcastToProject, scheduleReviewNotifications, send } from "../realtime.js";
 import { disposeHarnessSession, findHarnessSession, harnessSessionBusy } from "../harness-sessions.js";
-import { ownershipSchema, registeredHarnessIdSchema, routedSessionTakeOwnershipSchema, sessionDeleteSchema, sessionRecoverySchema, sessionReviewedSchema, sessionReviewNotificationsSchema, sessionsReviewedSchema, sessionTakeOwnershipSchema } from "../schemas.js";
+import { ownershipSchema, registeredHarnessIdSchema, routedSessionTakeOwnershipSchema, sessionDeleteSchema, sessionNtfySchema, sessionRecoverySchema, sessionReviewedSchema, sessionReviewNotificationsSchema, sessionsReviewedSchema, sessionTakeOwnershipSchema } from "../schemas.js";
 import { listProjectSessionsWithReviewState, requireLocalConversationOwner } from "../sessions-helpers.js";
 import { app } from "../state.js";
 
@@ -54,6 +57,34 @@ app.put("/api/projects/:projectId/sessions/review-notifications", async (request
     setConversationReviewNotifications(authSession.userId, project.id, payload.sessionPath, payload.enabled);
     broadcastToProject(project.id, { type: "sessionsChanged" });
     if (payload.enabled) scheduleReviewNotifications(project.id);
+    response.json({ enabled: payload.enabled });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put("/api/projects/:projectId/sessions/ntfy", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    const payload = sessionNtfySchema.parse(request.body);
+    const authSession = response.locals.authSession as AuthSession;
+    const sessions = await listProjectSessionsWithReviewState(project, authSession.userId, authSession.username);
+    const session = sessions.find((candidate) => candidate.path === payload.sessionPath && !candidate.readOnly);
+    if (!session) { sendError(response, 404, "Conversation not found"); return; }
+    if (payload.enabled) {
+      if (!payload.serviceId || !payload.topic) { sendError(response, 400, "Enabling ntfy publishing needs a service and a topic"); return; }
+      const service = getNtfyService(payload.serviceId);
+      if (!service) { sendError(response, 404, "ntfy service not found"); return; }
+      await savePushSubscription(ntfySubscription(service.url, payload.topic, service.token, project.id, payload.sessionPath), authSession.userId, project.id, payload.sessionPath, session.title || project.name);
+      // Publishing reviews is a review notification, so opting in implies the review preference.
+      setConversationReviewNotifications(authSession.userId, project.id, payload.sessionPath, true);
+      scheduleReviewNotifications(project.id);
+    } else {
+      await deleteNtfySubscriptions(authSession.userId, project.id, payload.sessionPath);
+    }
+    flushPushSubscriptionOutbox().catch((error) => console.warn("Push subscription flush failed", error));
+    broadcastToProject(project.id, { type: "sessionsChanged" });
     response.json({ enabled: payload.enabled });
   } catch (error) {
     next(error);

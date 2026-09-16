@@ -5,6 +5,7 @@ import { conversationReviewNotificationPaths, syncConversationReviewStates } fro
 import { conversationLeaseRunning } from "../conversation-runtime.js";
 import { getHarness, getHarnessRuntime, listHarnesses, listHarnessSessions } from "../harnesses.js";
 import { getUserPreferences } from "../preferences.js";
+import { ntfySubscribedSessionPaths } from "../push.js";
 import { listUserRecentSessions } from "../recent-sessions.js";
 import { getSettings } from "../settings.js";
 import { listTasks } from "../tasks.js";
@@ -72,12 +73,14 @@ export async function listProjectSessionsWithReviewState(project: ProjectRecord,
   const reviewStates = userId ? syncConversationReviewStates(userId, username, project.id, listedSessions.filter((session) => !session.readOnly)) : new Map();
   const ownership = await Promise.all(listedSessions.map((session) => getConversationOwnership(session.harnessId, session.id)));
   const notificationPaths = userId ? conversationReviewNotificationPaths(userId, project.id) : new Set<string>();
+  const ntfyPaths = userId ? await ntfySubscribedSessionPaths(userId, project.id) : new Set<string>();
   return listedSessions.map((session, index) => {
     const { engine: _engine, sessionId: _sessionId, ...summary } = session;
     return {
       ...summary,
       reviewState: reviewStates.get(session.path),
       reviewNotificationsEnabled: notificationPaths.has(session.path),
+      ntfyEnabled: ntfyPaths.has(session.path),
       executionNodeId: ownership[index]?.ownerNodeId,
     };
   });

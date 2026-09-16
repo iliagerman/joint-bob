@@ -1,5 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { getClusterNode } from "./cluster.js";
 import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -533,6 +534,63 @@ export async function receivePushSubscriptionEvents(events: PushSubscriptionEven
   }
 }
 
+/** An ntfy target rides the ordinary push-subscription tables and replication, marked by this
+    endpoint prefix. Peers running older builds accept the row and simply fail to send it. */
+export const NTFY_ENDPOINT_PREFIX = "ntfy+";
+/** Replicated subscription keys must be non-empty, so a tokenless service stores this sentinel. */
+const NTFY_NO_TOKEN = "-";
+
+/** The fragment makes each conversation's endpoint unique, so opting one conversation out
+    cannot tombstone another that publishes to the same topic. */
+export function ntfySubscription(serviceUrl: string, topic: string, token: string, projectId: string, sessionPath: string): PushSubscription {
+  const conversation = createHash("sha256").update(`${projectId}\0${sessionPath}`).digest("hex").slice(0, 16);
+  return {
+    endpoint: `${NTFY_ENDPOINT_PREFIX}${serviceUrl.replace(/\/+$/, "")}/${topic}#${conversation}`,
+    keys: { p256dh: "ntfy", auth: token || NTFY_NO_TOKEN },
+  } as PushSubscription;
+}
+
+/** The conversation paths in this project that publish reviews to ntfy, for the session list. */
+export async function ntfySubscribedSessionPaths(userId: string, projectId: string): Promise<Set<string>> {
+  const rows = pushDatabase().prepare("SELECT session_path, subscription FROM push_session_subscriptions WHERE user_id = ? AND project_id = ?")
+    .all(userId, projectId) as unknown as Array<{ session_path: string; subscription: string }>;
+  const paths = new Set<string>();
+  for (const row of rows) {
+    const subscription = JSON.parse(decrypt(row.subscription)) as PushSubscription;
+    if (subscription.endpoint.startsWith(NTFY_ENDPOINT_PREFIX)) paths.add(row.session_path);
+  }
+  return paths;
+}
+
+export async function deleteNtfySubscriptions(userId: string, projectId: string, sessionPath: string): Promise<void> {
+  const rows = pushDatabase().prepare("SELECT subscription FROM push_session_subscriptions WHERE user_id = ? AND project_id = ? AND session_path = ?")
+    .all(userId, projectId, sessionPath) as unknown as Array<{ subscription: string }>;
+  for (const row of rows) {
+    const subscription = JSON.parse(decrypt(row.subscription)) as PushSubscription;
+    if (subscription.endpoint.startsWith(NTFY_ENDPOINT_PREFIX)) await deletePushSubscription(subscription.endpoint);
+  }
+}
+
+/** Publishes over ntfy's JSON endpoint: POST to the server root with the topic in the body,
+    so titles and previews survive as UTF-8 where raw headers would not. */
+async function sendNtfyNotification(subscription: PushSubscription, title: string, message: string, click: string): Promise<boolean> {
+  const target = new URL(subscription.endpoint.slice(NTFY_ENDPOINT_PREFIX.length));
+  target.hash = "";
+  const segments = target.pathname.split("/").filter(Boolean);
+  const topic = segments.pop() ?? "";
+  target.pathname = `/${segments.join("/")}`;
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (subscription.keys.auth !== NTFY_NO_TOKEN) headers.Authorization = `Bearer ${subscription.keys.auth}`;
+  const response = await fetch(target, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ topic, title, message, ...(click ? { click } : {}) }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) console.warn(`ntfy publish to ${target.host} failed with status ${response.status}`);
+  return response.ok;
+}
+
 const DEFAULT_REVIEW_BODY = "Tap to open the conversation and review the result.";
 const REVIEW_PREVIEW_MAX_CHARS = 140;
 
@@ -560,11 +618,9 @@ export async function notifyConversationReview(userId: string, projectId: string
   `).all(userId, projectId, sessionPath) as unknown as SubscriptionRow[];
   if (!rows.length) return false;
 
-  const payload = JSON.stringify({
-    title: `${title || "Conversation"} needs review`,
-    body,
-    url: `/?projectId=${encodeURIComponent(projectId)}&sessionPath=${encodeURIComponent(sessionPath)}`,
-  });
+  const notificationTitle = `${title || "Conversation"} needs review`;
+  const conversationUrl = `/?projectId=${encodeURIComponent(projectId)}&sessionPath=${encodeURIComponent(sessionPath)}`;
+  const payload = JSON.stringify({ title: notificationTitle, body, url: conversationUrl });
   // A replicated subscription was created against its origin node's VAPID identity; the push
   // service only accepts sends signed with that same key pair, so each row carries its own.
   const records = rows.map((row) => ({
@@ -575,8 +631,21 @@ export async function notifyConversationReview(userId: string, projectId: string
       privateKey: row.vapid_private_key ? decrypt(row.vapid_private_key) : keys.privateKey,
     },
   }));
+  // The ntfy app opens links itself, so unlike the service worker it needs this node's
+  // absolute URL; without one the notification still arrives, just without a link.
+  const clusterUrl = records.some(({ subscription }) => subscription.endpoint.startsWith(NTFY_ENDPOINT_PREFIX))
+    ? (await getClusterNode()).url
+    : "";
   const deadEndpoints = new Set<string>();
   const delivered = await Promise.all(records.map(async ({ subscription, vapidDetails }) => {
+    if (subscription.endpoint.startsWith(NTFY_ENDPOINT_PREFIX)) {
+      try {
+        return await sendNtfyNotification(subscription, notificationTitle, body, clusterUrl ? `${clusterUrl}${conversationUrl}` : "");
+      } catch (error) {
+        console.warn("ntfy publish failed", error);
+        return false;
+      }
+    }
     try {
       await webpush.sendNotification(subscription, payload, { vapidDetails });
       return true;

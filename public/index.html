@@ -504,6 +504,21 @@
             </select>
           </label>
           <button class="ghost compact" id="previewSoundButton" type="button" data-testid="notifications-sound-preview-button">Preview sound</button>
+          <fieldset class="phase-settings">
+            <legend>ntfy services</legend>
+            <p class="settings-hint">Define ntfy servers once, then pick one per conversation from its menu. Tokens are encrypted and stay on this node; the chosen server and token travel with each conversation you enable.</p>
+            <ul id="ntfyServiceList" class="settings-list" data-testid="ntfy-service-list"></ul>
+            <label>Name
+              <input id="ntfyServiceNameInput" autocomplete="off" placeholder="Home server" data-testid="ntfy-service-name-input" />
+            </label>
+            <label>Server URL
+              <input id="ntfyServiceUrlInput" type="url" autocomplete="off" placeholder="https://ntfy.example.com" data-testid="ntfy-service-url-input" />
+            </label>
+            <label>Access token (optional)
+              <input id="ntfyServiceTokenInput" type="password" autocomplete="off" data-testid="ntfy-service-token-input" />
+            </label>
+            <button class="ghost" id="ntfyServiceAddButton" type="button" data-testid="ntfy-service-add-button">Add service</button>
+          </fieldset>
         </section>
 
         <section class="settings-panel" id="settingsPanel-labels" role="tabpanel" aria-labelledby="settingsTab-labels" tabindex="0" hidden>
@@ -953,6 +968,26 @@
         <div class="dialog-actions">
           <button class="ghost" type="button" id="cancelConversationClassificationButton" data-testid="conversation-classification-cancel-button">Cancel</button>
           <button class="primary" type="submit" id="saveConversationClassificationButton" data-testid="conversation-classification-save-button">Save classification</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="ntfyDialog" data-testid="ntfy-dialog" aria-labelledby="ntfyDialogTitle">
+      <form class="dialog-card" id="ntfyForm">
+        <div>
+          <span class="eyebrow">Conversation notifications</span>
+          <h2 id="ntfyDialogTitle">Publish reviews to ntfy</h2>
+          <p>When this conversation needs review, the notification is also published to the chosen ntfy topic.</p>
+        </div>
+        <label>Service
+          <select id="ntfyServiceSelect" data-testid="ntfy-service-select"></select>
+        </label>
+        <label>Topic
+          <input id="ntfyTopicInput" required autocomplete="off" pattern="[A-Za-z0-9_\-]{1,64}" placeholder="my-reviews" data-testid="ntfy-topic-input" />
+        </label>
+        <div class="dialog-actions">
+          <button class="ghost" type="button" id="cancelNtfyButton" data-testid="ntfy-cancel-button">Cancel</button>
+          <button class="primary" type="submit" id="saveNtfyButton" data-testid="ntfy-save-button">Publish to this topic</button>
         </div>
       </form>
     </dialog>
