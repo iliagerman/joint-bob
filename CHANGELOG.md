@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.39.0 — 2026-09-16
 
 - The open conversation now offers a "Conversation actions" button in the toolbar with the same menu as its row, so you can mark it done, set up ntfy publishing, or fork it without leaving the chat.
 
