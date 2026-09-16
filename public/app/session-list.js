@@ -76,7 +76,7 @@ export function renderSessions() {
     const ticketTask = sessionTicketTask(session);
     const row = document.createElement("div");
     const sessionActive = sessionIsActive(session);
-    row.className = `list-row${sessionActive ? " active" : ""}${sessionPinned ? " pinned" : ""}${ticketTask ? " has-ticket" : ""}${childCount ? " has-children" : ""}`;
+    row.className = `list-row${sessionActive ? " active" : ""}${sessionPinned ? " pinned" : ""}${session.doneAt ? " done" : ""}${ticketTask ? " has-ticket" : ""}${childCount ? " has-children" : ""}`;
     row.dataset.sessionDepth = String(depth);
     // The row menu is re-pointed at this row after a refresh replaces it.
     row.dataset.sessionPath = session.path;
@@ -117,6 +117,14 @@ export function renderSessions() {
     statusLabel.textContent = chatState === "active" ? "Running" : chatState === "review" ? "Needs review" : session.draft ? "Ready" : "Reviewed";
     badge.append(dot, statusLabel);
     meta.append(" ", badge);
+    if (session.doneAt) {
+      const doneBadge = document.createElement("em");
+      doneBadge.className = "session-done-badge";
+      doneBadge.dataset.testid = "session-done-badge";
+      doneBadge.title = `Marked done ${formatDate(session.doneAt)}`;
+      doneBadge.textContent = "Done";
+      meta.append(" ", doneBadge);
+    }
     if (ticketTask) meta.append(" ", ticketBadge(ticketTask));
     button.addEventListener("click", () => openListedSession(session));
 
@@ -269,6 +277,13 @@ function sessionMenuItems(session, sessionActive) {
       title: "Copy history and settings into an independent conversation",
       onSelect: () => forkSessionFromRow(session).catch((error) => toast(error.message)),
     },
+    {
+      label: session.doneAt ? "Mark not done" : "Mark done",
+      icon: "check",
+      testid: "session-done-button",
+      title: session.doneAt ? "Put it back in the active list" : "Hide it from the list until you ask for done conversations",
+      onSelect: () => toggleSessionDone(session).catch((error) => toast(error.message)),
+    },
     ...(readOnly ? [] : [
       {
         label: session.reviewNotificationsEnabled ? "Stop review notifications" : "Notify when ready for review",
@@ -343,6 +358,18 @@ async function forkSessionFromRow(session) {
   toast("Conversation forked");
 }
 
+/** Closing a conversation out is list housekeeping, so it works on read-only rows too. */
+async function toggleSessionDone(session) {
+  const done = !session.doneAt;
+  await api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/done`, {
+    method: "PUT",
+    body: JSON.stringify({ sessionId: session.conversationId || session.id, engine: sessionEngine(session), done }),
+  });
+  session.doneAt = done ? new Date().toISOString() : undefined;
+  renderSessions();
+  toast(done ? "Conversation marked done" : "Conversation reopened");
+}
+
 async function toggleSessionReviewNotifications(session) {
   const enabled = !session.reviewNotificationsEnabled;
   if (enabled && !await enableNotifications()) return;
@@ -390,6 +417,10 @@ for (const button of elements.chatFilters.querySelectorAll("button[data-filter]"
   });
 }
 elements.sessionSearchInput.addEventListener("input", () => renderSessions());
+elements.showDoneConversations.addEventListener("change", () => {
+  state.showDoneConversations = elements.showDoneConversations.checked;
+  renderSessions();
+});
 elements.classificationFilter.addEventListener("change", () => {
   state.classificationFilter = elements.classificationFilter.value;
   renderSessions();

@@ -2,7 +2,7 @@ import path from "node:path";
 import { getClusterNode, listClusterPeers } from "../../cluster.js";
 import { listHarnessCommands } from "../../commands.js";
 import { ensureManagedHome, managedProjectPath } from "../../managed-home.js";
-import { setProjectName, setSessionClassification, setSessionColor, setSessionTitle } from "../../names.js";
+import { setProjectName, setSessionClassification, setSessionColor, setSessionDone, setSessionTitle } from "../../names.js";
 import { importProjectDirectory, ProjectDirectoryImportError } from "../../project-directory-import.js";
 import { setProjectLock } from "../../project-locks.js";
 import { getScopedResourcePaths, getSettings } from "../../settings.js";
@@ -15,7 +15,7 @@ import { conversationBelongsToDoneTask, fetchPeerInventory, mappedPathInsideHome
 import { sendError } from "../http-auth.js";
 import { assertProjectEditable, notifyPeersOfProjectInventory, projectsWithSharedNames, projectView, relocateProjectWorkspace } from "../projects.js";
 import { broadcastToAllClients, broadcastToProject } from "../realtime.js";
-import { projectListQuerySchema, projectLockSchema, projectPathMappingSchema, projectSchema, projectUpdateSchema, registeredHarnessIdSchema, sessionClassificationSchema, sessionColorSchema, sessionTitleSchema } from "../schemas.js";
+import { projectListQuerySchema, projectLockSchema, projectPathMappingSchema, projectSchema, projectUpdateSchema, registeredHarnessIdSchema, sessionClassificationSchema, sessionColorSchema, sessionDoneSchema, sessionTitleSchema } from "../schemas.js";
 import { app } from "../state.js";
 import { projectHasMergeReservation } from "../task-runs.js";
 
@@ -201,6 +201,23 @@ app.put("/api/projects/:projectId/sessions/classification", async (request, resp
     }
     // Like titles, classification can be saved before the first transcript exists.
     await setSessionClassification(payload.sessionId, payload.classification);
+    broadcastToProject(project.id, { type: "sessionsChanged" });
+    response.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put("/api/projects/:projectId/sessions/done", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project) {
+      sendError(response, 404, "Project not found");
+      return;
+    }
+    const payload = sessionDoneSchema.parse(request.body);
+    // Like classification, a conversation can be closed out before its transcript exists.
+    await setSessionDone(payload.sessionId, payload.done);
     broadcastToProject(project.id, { type: "sessionsChanged" });
     response.json({ ok: true });
   } catch (error) {

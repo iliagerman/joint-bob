@@ -202,6 +202,11 @@ export const sessionClassificationSchema = z.object({
   engine: registeredHarnessIdSchema,
   classification: classificationSchema.nullable(),
 }).strict();
+export const sessionDoneSchema = z.object({
+  sessionId: z.string().trim().min(1).max(240),
+  engine: registeredHarnessIdSchema,
+  done: z.boolean(),
+}).strict();
 export const sessionColorSchema = z.object({
   sessionId: z.string().min(1),
   engine: registeredHarnessIdSchema,

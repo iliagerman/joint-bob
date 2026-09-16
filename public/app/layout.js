@@ -111,13 +111,23 @@ export function sessionChatState(session) {
   return "done";
 }
 
+/** A conversation the user closed out. Unrelated to the "done" status chip, which means reviewed. */
+function isDoneConversation(session) {
+  return Boolean(session.doneAt);
+}
+
+/** Done conversations are out of sight — and out of the counts — until the reader asks for them. */
+function isVisible(session) {
+  return state.showDoneConversations || !isDoneConversation(session);
+}
+
 function matchesClassification(session) {
   const value = session.classification ? `label:${session.classification}` : "unclassified";
   return !state.classificationFilter || state.classificationFilter === value;
 }
 
 export function updateChatFilterCounts() {
-  const sessions = state.sessions.filter(matchesClassification);
+  const sessions = state.sessions.filter((session) => matchesClassification(session) && isVisible(session));
   const counts = { all: sessions.length, active: 0, review: 0, done: 0, cron: sessions.filter(session => session.cronTaskId).length };
   for (const session of sessions) counts[sessionChatState(session)] += 1;
   for (const count of elements.chatFilters.querySelectorAll("[data-filter-count]")) {
@@ -128,7 +138,7 @@ export function updateChatFilterCounts() {
 export function filteredSessions() {
   const query = normalizedQuery(elements.sessionSearchInput.value || "");
   return state.sessions.filter((session) => {
-    if (!matchesClassification(session)) return false;
+    if (!matchesClassification(session) || !isVisible(session)) return false;
     const searchableText = `${shortSessionTitle(session)}\n${session.firstMessage || ""}\n${session.path || ""}`.toLowerCase();
     if (query && !searchableText.includes(query)) return false;
     return state.chatFilter === "all" || (state.chatFilter === "cron" ? Boolean(session.cronTaskId) : sessionChatState(session) === state.chatFilter);

@@ -293,6 +293,7 @@ export const elements = {
   taskReviewModelInput: document.querySelector("#taskReviewModelInput"),
   chatFilters: document.querySelector("#chatFilters"),
   classificationFilter: document.querySelector("#conversationClassificationFilter"),
+  showDoneConversations: document.querySelector("#showDoneConversations"),
   folderPickerDialog: document.querySelector("#folderPickerDialog"),
   folderPickerTitle: document.querySelector("#folderPickerTitle"),
   folderPickerParentButton: document.querySelector("#folderPickerParentButton"),

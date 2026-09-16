@@ -18,7 +18,7 @@ interface NameStore {
   sessions: Record<string, NameEntry>;
 }
 
-type OverrideScope = "projects" | "sessions" | "session_colors" | "session_classifications";
+type OverrideScope = "projects" | "sessions" | "session_colors" | "session_classifications" | "session_done";
 
 const dataDir = resolveDataDirectory();
 const databasePath = path.join(dataDir, "node.db");
@@ -171,6 +171,16 @@ export async function sessionClassificationOverrides(): Promise<Record<string, s
 
 export async function setSessionClassification(conversationId: string, classification: string | null): Promise<void> {
   await setEntry("session_classifications", conversationId, classification ?? "");
+}
+
+/** Conversations the user has closed out, mapped to when they marked them done. */
+export async function sessionDoneOverrides(): Promise<Record<string, string>> {
+  return entries("session_done");
+}
+
+/** Storing the moment it was marked keeps "done" a fact with a date, not a bare flag. */
+export async function setSessionDone(conversationId: string, done: boolean): Promise<void> {
+  await setEntry("session_done", conversationId, done ? new Date().toISOString() : "");
 }
 
 export async function sessionColorOverrides(): Promise<Record<string, ProjectColor>> {

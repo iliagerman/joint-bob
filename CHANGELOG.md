@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Conversations can now be marked done to hide them from the active list; a "Show done" toggle reveals them when needed.
+
 ## 1.37.1 — 2026-09-16
 
 - Keyboard shortcut labels now display consistently on all platforms.

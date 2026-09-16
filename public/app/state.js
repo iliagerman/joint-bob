@@ -99,6 +99,8 @@ export const state = {
   conversationSegments: null,
   chatFilter: "all",
   classificationFilter: "",
+  // Conversations the user has closed out are hidden until this is switched on.
+  showDoneConversations: false,
   conversationLabels: [],
   watchSocket: null,
   watchProjectId: null,

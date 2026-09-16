@@ -1,6 +1,6 @@
 import path from "node:path";
 import os from "node:os";
-import { sessionClassificationOverrides, sessionColorOverrides, sessionTitleOverrides } from "./names.js";
+import { sessionClassificationOverrides, sessionColorOverrides, sessionDoneOverrides, sessionTitleOverrides } from "./names.js";
 import { conversationDraftPath, listConversationRecords } from "./conversation-records.js";
 import { listDiscoveredHarnesses, resolveHarnessForSessionPath } from "./harnesses/registry.js";
 import type { HarnessAdapter, HarnessProject } from "./harnesses/contract.js";
@@ -210,10 +210,11 @@ export function orderSessionFamilies(sessions: SessionSummary[]): SessionSummary
 
 /** Lists every registered harness through the shared catalog, then applies Joint Bob metadata. */
 export async function listHarnessSessions(project: HarnessProject, pinnedSessionPaths: string[] = [], pinnedSessionIds: string[] = []): Promise<SessionSummary[]> {
-  const [overrides, colors, classifications, initialSessions, records] = await Promise.all([
+  const [overrides, colors, classifications, doneMarks, initialSessions, records] = await Promise.all([
     sessionTitleOverrides(),
     sessionColorOverrides(),
     sessionClassificationOverrides(),
+    sessionDoneOverrides(),
     sessionCatalog.list(project),
     listConversationRecords(project.id),
   ]);
@@ -308,12 +309,16 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
       title: overrides[conversationId] ?? (segments.length > 1 ? firstLive?.title ?? face.title : face.title),
       ...(colors[conversationId] ? { color: colors[conversationId] } : {}),
       ...(classifications[conversationId] ? { classification: classifications[conversationId] } : {}),
+      ...(doneMarks[conversationId] ? { doneAt: doneMarks[conversationId] } : {}),
       ...(createdAt ? { createdAt } : {}),
     };
   }).sort((left, right) => (right.updatedAt ?? right.createdAt ?? "").localeCompare(left.updatedAt ?? left.createdAt ?? ""));
 
+  // Closed-out conversations sink below the live ones so the 50-row cap spends its
+  // room on work that is still moving. Pins still outrank everything.
   return orderSessionFamilies([
     ...ordered.filter(isPinned),
-    ...ordered.filter((session) => !isPinned(session)),
+    ...ordered.filter((session) => !isPinned(session) && !session.doneAt),
+    ...ordered.filter((session) => !isPinned(session) && session.doneAt),
   ]).slice(0, 50);
 }

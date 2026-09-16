@@ -85,6 +85,8 @@ export interface SessionSummary {
   path: string;
   color?: ProjectColor;
   classification?: string;
+  /** When the user closed the conversation out; absent while it is still live. */
+  doneAt?: string;
   harnessId: HarnessId;
   /** The agent that last drove the conversation: its own harness, or a task engine that overrode it. */
   agentId: HarnessId;
