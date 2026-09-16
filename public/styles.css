@@ -1180,6 +1180,9 @@ select.chat-toolbar-control {
 .queued-controls .queued-force-start { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .queued-controls .queued-force-start:hover, .queued-controls .queued-force-start:focus-visible { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .queued-controls button:disabled, .queued-batch-controls button:disabled { opacity: 0.4; cursor: not-allowed; }
+.queued-force-spinner { display: inline-block; width: 9px; height: 9px; margin-right: 5px; border: 1.5px solid color-mix(in srgb, var(--accent) 35%, transparent); border-top-color: var(--accent); border-radius: 50%; vertical-align: -1px; animation: queued-force-spin 0.7s linear infinite; }
+@keyframes queued-force-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .queued-force-spinner { animation-duration: 2.4s; } }
 .queued-editor { display: grid; grid-template-columns: 1fr auto auto; gap: 7px; margin-top: 8px; }
 .queued-editor[hidden], .queued-controls[hidden] { display: none; }
 .queued-editor-hints { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }

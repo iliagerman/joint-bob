@@ -83,6 +83,24 @@ test("Force start sends the selected queued message and its revision", async () 
   assert.deepEqual(await commands(), [{ type: "forceStartQueuedPrompt", queueId: 73, queueRevision: 3 }]);
 });
 
+test("Force start disables itself with a spinner until the request resolves", async () => {
+  await openQueue();
+  const third = page.locator(".message.user.queued").nth(2);
+  const button = third.getByTestId("queued-message-force-start-button");
+  await button.click();
+  assert.equal(await button.isDisabled(), true);
+  assert.equal(await third.locator(".queued-force-spinner").count(), 1);
+
+  // A second click must not reach the server while the first one is in flight.
+  await button.click({ force: true });
+  assert.deepEqual(await commands(), [{ type: "forceStartQueuedPrompt", queueId: 73, queueRevision: 3 }]);
+
+  // A failed force start releases the button so the user can try again.
+  await page.evaluate(async () => (await import("/app/chat-transcript.js")).resetQueuedForceStart());
+  assert.equal(await button.isDisabled(), false);
+  assert.equal(await third.locator(".queued-force-spinner").count(), 0);
+});
+
 test("queued messages can swap positions and merge any selection", async () => {
   await openQueue();
   const queuedText = () => page.locator(".message.user.queued").evaluateAll((messages) => messages.map((message) => message._raw));

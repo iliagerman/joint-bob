@@ -567,6 +567,22 @@ function sendQueuedPromptAction(payload) {
   return true;
 }
 
+function forceSpinner() {
+  const spinner = document.createElement("span");
+  spinner.className = "queued-force-spinner";
+  spinner.setAttribute("aria-hidden", "true");
+  return spinner;
+}
+
+// A force start that never lands (the server rejected it) must not leave the
+// button stuck, so the error path releases every pending force start.
+export function resetQueuedForceStart() {
+  for (const button of elements.messages.querySelectorAll('[data-testid="queued-message-force-start-button"]')) {
+    button.disabled = false;
+    button.querySelector(".queued-force-spinner")?.remove();
+  }
+}
+
 function queuedButton(label, testId) {
   const button = document.createElement("button");
   button.type = "button";
@@ -737,7 +753,13 @@ export function markMessageQueued(bubble, queueId, editableText = null, settings
   const cancel = queuedButton("Delete", "queued-message-cancel-button");
   footer.append(badge, forceStart, selectLabel, earlier, later, edit, cancel);
   forceStart.addEventListener("click", () => {
-    sendQueuedPromptAction({ type: "forceStartQueuedPrompt", queueId, queueRevision: Number(bubble.dataset.queueRevision) });
+    if (forceStart.disabled) return;
+    if (!sendQueuedPromptAction({ type: "forceStartQueuedPrompt", queueId, queueRevision: Number(bubble.dataset.queueRevision) })) return;
+    // The force start cancels the running turn, which takes a moment. Hold the
+    // button until this message starts (the bubble loses its queued mark) or
+    // the server reports an error.
+    forceStart.disabled = true;
+    forceStart.prepend(forceSpinner());
   });
   select.addEventListener("change", refreshQueuedControls);
   earlier.addEventListener("click", () => swapQueuedMessage(bubble, -1));
