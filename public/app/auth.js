@@ -138,6 +138,7 @@ export async function initializeApplication() {
   state.activeNodeId = preferences.activeNodeId;
   state.pinnedProjectIds = preferences.pinnedProjectIds || [];
   state.pinnedSessionPaths = preferences.pinnedSessionPaths || [];
+  state.conversationLastRead = preferences.conversationLastRead || {};
   state.replicatedPinnedProjectIds = pins.projectIds || [];
   state.pinnedConversations = pins.conversations || [];
   state.recentSessions = recents.recentSessions || [];

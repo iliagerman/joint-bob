@@ -169,3 +169,54 @@ test("preferences store v6 canvas layouts and reject invalid trees", async () =>
     await rm(root, { recursive: true, force: true });
   }
 });
+
+// Runs against the same in-process stores as the canvas test above: the data
+// directory and admin password bind on first import, so this signs in with the
+// password that test established rather than pretending to be isolated.
+test("conversation read watermarks round-trip through preferences and reject bad shapes", async () => {
+  let node: Awaited<ReturnType<typeof listen>> | undefined;
+  try {
+    const app = await import(`../src/app.js?read-marks=${Date.now()}-${Math.random()}`);
+    node = await listen(app.createApp());
+
+    const login = await fetch(`${node.baseUrl}/api/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: "admin", password: "replacement-password" }) });
+    const cookie = sessionCookie(login);
+    const { csrfToken } = await login.json() as { csrfToken: string };
+    const headers = { Cookie: cookie, "X-CSRF-Token": csrfToken, "Content-Type": "application/json" };
+
+    const defaults = await fetch(`${node.baseUrl}/api/preferences`, { headers: { Cookie: cookie } });
+    assert.equal(defaults.status, 200);
+    assert.deepEqual((await defaults.json() as { conversationLastRead: unknown }).conversationLastRead, {}, "a fresh account has no read marks");
+
+    const marks = { "conversation-a": 1756544280000, "conversation-b": 1756544340000 };
+    const saved = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ conversationLastRead: marks }) });
+    assert.equal(saved.status, 200);
+    assert.deepEqual((await saved.json() as { conversationLastRead: unknown }).conversationLastRead, marks);
+
+    const roundTrip = await fetch(`${node.baseUrl}/api/preferences`, { headers: { Cookie: cookie } });
+    assert.deepEqual((await roundTrip.json() as { conversationLastRead: unknown }).conversationLastRead, marks, "read marks survive a reload");
+
+    for (const invalid of [
+      { "conversation-a": "not-a-number" },
+      { "conversation-a": -5 },
+      ["conversation-a"],
+      Object.fromEntries(Array.from({ length: 401 }, (_, index) => [`conversation-${index}`, index + 1])),
+    ]) {
+      const rejected = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ conversationLastRead: invalid }) });
+      assert.equal(rejected.status, 400, `rejects ${JSON.stringify(invalid).slice(0, 60)}`);
+    }
+    const afterRejected = await fetch(`${node.baseUrl}/api/preferences`, { headers: { Cookie: cookie } });
+    assert.deepEqual((await afterRejected.json() as { conversationLastRead: unknown }).conversationLastRead, marks, "rejected payloads change nothing");
+
+    // The stored map is bounded: the conversations read longest ago fall off first.
+    const oversized = Object.fromEntries(Array.from({ length: 350 }, (_, index) => [`conversation-${index}`, index + 1]));
+    const bounded = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ conversationLastRead: oversized }) });
+    assert.equal(bounded.status, 200);
+    const storedBounded = (await bounded.json() as { conversationLastRead: Record<string, number> }).conversationLastRead;
+    assert.equal(Object.keys(storedBounded).length, 300, "the map is capped");
+    assert.equal(storedBounded["conversation-0"], undefined, "the oldest mark fell off");
+    assert.equal(storedBounded["conversation-349"], 350, "the newest mark survives");
+  } finally {
+    if (node) await node.close();
+  }
+});

@@ -131,7 +131,7 @@ function applyRecord(session: KiroStoredSession, value: KiroRecord, index: numbe
     if ((value.role !== "user" && value.role !== "assistant") || typeof value.text !== "string") {
       throw new Error("Invalid Kiro message record");
     }
-    session.messages.push({ id: `${session.id}:${index}`, role: value.role, text: value.text });
+    session.messages.push({ id: `${session.id}:${index}`, role: value.role, text: value.text, timestamp: timestamp(value.timestamp) });
     return;
   }
   throw new Error(`Invalid Kiro transcript record type: ${String(value.type)}`);

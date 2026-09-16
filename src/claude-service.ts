@@ -372,7 +372,8 @@ export async function loadClaudeMessages(sessionPath: string): Promise<ChatMessa
       const record = JSON.parse(line) as UnknownRecord;
       const message = asRecord(record.message);
       const text = claudeMessageText(record);
-      return { id: `${index}`, role: message.role === "user" ? "user" : "assistant", text: message.role === "user" ? stripHandoffEnvelope(text) : text };
+      const timestamp = typeof record.timestamp === "string" ? record.timestamp : undefined;
+      return { id: `${index}`, role: message.role === "user" ? "user" : "assistant", text: message.role === "user" ? stripHandoffEnvelope(text) : text, ...(timestamp ? { timestamp } : {}) };
     })
     .filter((message) => message.text.trim().length > 0);
 }

@@ -182,6 +182,8 @@ export interface ChatMessage {
   text: string;
   // Present on tool roles so the client can label the collapsed tool bubble.
   toolName?: string;
+  /** ISO time the harness recorded for this message; absent when the transcript line carried none. */
+  timestamp?: string;
 }
 
 export interface ModelSummary {

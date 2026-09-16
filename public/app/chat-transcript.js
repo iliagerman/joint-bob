@@ -1,4 +1,5 @@
 import { harnessLabel } from "../harness-metadata.js";
+import { savePreferencesInBackground } from "./api.js";
 import { openQueuedModelPicker, queuedReasoningLevels } from "./composer-dialogs.js";
 import { renderMarkdown } from "../markdown.js";
 import { elements } from "./elements.js";
@@ -38,15 +39,101 @@ function formatDuration(ms) {
   return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
 }
 
-function messageTimestamp() {
+// toLocale* formats with the browser's own zone and locale, so the same
+// recorded instant reads correctly wherever the reader happens to be. A
+// message from another day names its date; another year names the year too.
+function formatMessageTime(date) {
+  const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const now = new Date();
+  if (date.toDateString() === now.toDateString()) return time;
+  const sameYear = date.getFullYear() === now.getFullYear();
+  return `${date.toLocaleDateString([], { month: "short", day: "numeric", ...(sameYear ? {} : { year: "numeric" }) })}, ${time}`;
+}
+
+function messageTimestamp(date) {
   const stamp = document.createElement("time");
   stamp.className = "message-time";
   stamp.dataset.testid = "message-timestamp";
-  const now = new Date();
-  stamp.dateTime = now.toISOString();
-  stamp.textContent = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  stamp.dateTime = date.toISOString();
+  stamp.textContent = formatMessageTime(date);
   return stamp;
 }
+
+// The check marks mirror a messenger: one check when the message left this
+// browser, two once the agent's turn actually consumed it.
+function messageReceipt(read) {
+  const receipt = document.createElement("span");
+  receipt.className = "message-receipt";
+  receipt.dataset.testid = "message-receipt";
+  setReceiptState(receipt, read);
+  return receipt;
+}
+
+function setReceiptState(receipt, read) {
+  receipt.dataset.read = String(read);
+  receipt.textContent = read ? "✓✓" : "✓";
+  receipt.title = read ? "Received by the agent" : "Sent";
+}
+
+/** An agent turn starting consumed every sent message that is not still waiting in the queue. */
+export function markUserMessagesRead() {
+  for (const receipt of elements.messages.querySelectorAll('.message.user:not(.queued) .message-receipt[data-read="false"]')) {
+    setReceiptState(receipt, true);
+  }
+}
+
+function unreadDot() {
+  const dot = document.createElement("span");
+  dot.className = "message-unread-dot";
+  dot.dataset.testid = "message-unread-dot";
+  dot.title = "New since you last read this conversation";
+  return dot;
+}
+
+// ---- Read state ----
+// Which assistant messages the reader has already seen, per conversation: a
+// watermark of the newest message time that was rendered while the reader
+// dwelled caught-up at the bottom of the chat. It lives in the account's
+// server-side preferences, so every signed-in device shares it.
+const READ_WATERMARKS_LIMIT = 300;
+const MARK_VIEWED_DWELL_MS = 2000;
+
+function lastReadAt(conversationId) {
+  return Number(state.conversationLastRead[conversationId]) || 0;
+}
+
+function saveLastReadAt(conversationId, at) {
+  const marks = { ...state.conversationLastRead, [conversationId]: at };
+  // Years of conversations must not grow the map without bound; read-longest-ago go first.
+  const ids = Object.keys(marks);
+  if (ids.length > READ_WATERMARKS_LIMIT) {
+    for (const id of ids.sort((a, b) => marks[a] - marks[b]).slice(0, ids.length - READ_WATERMARKS_LIMIT)) delete marks[id];
+  }
+  state.conversationLastRead = marks;
+  if (state.preferencesLoaded) savePreferencesInBackground({ conversationLastRead: marks });
+}
+
+let latestMessageAt = 0;
+let markViewedTimer = 0;
+
+function scheduleMarkViewed() {
+  if (markViewedTimer) clearTimeout(markViewedTimer);
+  markViewedTimer = setTimeout(markViewedIfCaughtUp, MARK_VIEWED_DWELL_MS);
+}
+
+// "Viewed" means the reader dwelled at the bottom of this conversation with
+// the tab visible: the watermark advances and the unread dots go away.
+function markViewedIfCaughtUp() {
+  markViewedTimer = 0;
+  if (document.hidden || !chatAtBottom()) return;
+  if (!latestMessageAt || !state.activeConversationId) return;
+  if (latestMessageAt > lastReadAt(state.activeConversationId)) saveLastReadAt(state.activeConversationId, latestMessageAt);
+  for (const dot of elements.messages.querySelectorAll(".message-unread-dot")) dot.remove();
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) scheduleMarkViewed();
+});
 
 // One shared tick drives every "still running" label. A timer per bubble would
 // outlive the bubble on a conversation switch and keep the tab awake for nothing.
@@ -91,6 +178,10 @@ export function clearChat() {
   state.thinkingBubble = null;
   state.toolBubbles.clear();
   currentSegment = null;
+  // A dwell begun on the conversation being left must not stamp the next one.
+  latestMessageAt = 0;
+  if (markViewedTimer) clearTimeout(markViewedTimer);
+  markViewedTimer = 0;
 }
 
 // Harness segments: after a switch, new bubbles render inside a tinted section
@@ -428,9 +519,13 @@ function appendMessageAttachments(bubble, attachments) {
   if (gallery.childElementCount) bubble.append(gallery);
 }
 
-// A replayed transcript carries no recorded times, so it opts out of the stamp
-// rather than labelling week-old messages with the moment they were re-rendered.
-export function appendMessage(role, text, timestamped = true, attachments = []) {
+// `timestamp` is true for a live message (stamped "now"), a Date for a
+// replayed message's recorded time, and false when the harness recorded no
+// time — undated beats labelling a week-old message with the render moment.
+// `read` is the known receipt state: a replayed user message already reached
+// the agent, and a replayed assistant message older than the watermark was
+// already seen.
+export function appendMessage(role, text, timestamp = true, attachments = [], read = false) {
   elements.messages.querySelector(".empty-state")?.remove();
   const presentation = role === "user" ? transcriptMessagePresentation(text, attachments) : { text, attachments: [] };
   const bubble = document.createElement("article");
@@ -441,7 +536,21 @@ export function appendMessage(role, text, timestamped = true, attachments = []) 
   content.className = `message-content${isMarkdown ? " md" : ""}`;
   bubble.append(content);
   appendMessageAttachments(bubble, presentation.attachments);
-  if (timestamped && (role === "user" || role === "assistant")) bubble.append(messageTimestamp());
+  if (role === "user" || role === "assistant") {
+    const at = timestamp === true ? new Date() : timestamp;
+    const meta = document.createElement("div");
+    meta.className = "message-meta";
+    if (at) {
+      meta.append(messageTimestamp(at));
+      latestMessageAt = Math.max(latestMessageAt, at.getTime());
+    }
+    if (role === "user") meta.append(messageReceipt(read));
+    // A live assistant message the reader is right there following is read on
+    // arrival; the dot only marks what appeared while they were away.
+    if (role === "assistant" && !read && !(timestamp === true && state.followChat && !document.hidden)) meta.append(unreadDot());
+    if (meta.childElementCount) bubble.append(meta);
+    scheduleMarkViewed();
+  }
   renderBubbleContent(bubble, presentation.text, true);
   appendBeforeQueuedMessages(bubble);
   if (isMarkdown) appendCopyButton(bubble);
@@ -667,6 +776,9 @@ export function clearQueuedMark(queueId) {
   const bubble = elements.messages.querySelector(`[data-queue-id="${queueId}"]`);
   if (!bubble) return;
   bubble.classList.remove("queued");
+  // Its turn is starting, so this prompt has reached the agent.
+  const receipt = bubble.querySelector(".message-receipt");
+  if (receipt) setReceiptState(receipt, true);
   delete bubble.dataset.queueId;
   delete bubble.dataset.queuedEditableText;
   bubble.querySelector(".queued-controls")?.remove();
@@ -731,7 +843,13 @@ function appendTranscript(messages, segments) {
       updateToolMessage(bubble, message.text, "Done");
       continue;
     }
-    appendMessage(message.role === "user" ? "user" : "assistant", message.text, false);
+    const at = message.timestamp ? new Date(message.timestamp) : null;
+    const recorded = at && Number.isFinite(at.getTime()) ? at : false;
+    const role = message.role === "user" ? "user" : "assistant";
+    // A replayed user message sits in the agent's own transcript, so the agent
+    // has it. An undated assistant message cannot be tracked and reads as seen.
+    const read = role === "user" || !recorded || recorded.getTime() <= lastReadAt(state.activeConversationId);
+    appendMessage(role, message.text, recorded, [], read);
   }
   // A freshly switched segment has no messages yet, but its seam still shows
   // where the conversation changed harness.
@@ -746,6 +864,7 @@ elements.messages.addEventListener("scroll", () => {
   // exact spot a pin landed is that settle event, not a reader scrolling away;
   // growth sites keep requesting pins, so follow simply continues.
   syncJumpButton();
+  scheduleMarkViewed();
   if (rerenderingChat) return;
   if (Math.abs(elements.messages.scrollTop - lastPinScrollTop) < 1) return;
   state.followChat = chatAtBottom();

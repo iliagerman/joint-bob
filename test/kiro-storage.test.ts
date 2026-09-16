@@ -44,6 +44,7 @@ test("Kiro alias transcript round trips stable identity, settings, title, and co
   assert.equal(first.nativeSessionId, "native-1");
   assert.deepEqual([first.modelId, first.reasoning, first.title], ["custom", "high", "Renamed"]);
   assert.deepEqual(first.messages.map(({ role, text }) => [role, text]), [["user", "hello"], ["assistant", "world"]]);
+  assert.deepEqual(first.messages.map(({ timestamp }) => timestamp), ["2025-01-01T00:00:04Z", "2025-01-01T00:00:05Z"], "messages keep their recorded times");
   assert.deepEqual(first.messages.map(({ id }) => id), second.messages.map(({ id }) => id));
   assert.match(await readFile(file, "utf8"), /joint-bob-kiro/);
 });

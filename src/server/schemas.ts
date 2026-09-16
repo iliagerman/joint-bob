@@ -503,6 +503,8 @@ export const userPreferencesSchema = z.object({
   lastSeenVersion: z.string().trim().regex(/^\d+\.\d+\.\d+$/).nullable().optional(),
   canvasLayout: canvasLayoutPreferenceSchema.optional(),
   canvasKeymap: canvasKeymapPreferenceSchema.optional(),
+  conversationLastRead: z.record(z.string().min(1).max(200), z.number().int().nonnegative())
+    .refine((marks) => Object.keys(marks).length <= 400, "Too many conversation read marks").optional(),
 }).strict();
 export const socketMessageSchema = z.object({
   type: z.string().max(40),

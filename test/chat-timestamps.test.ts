@@ -11,22 +11,82 @@ function functionSource(app: string, name: string): string {
   return app.slice(start, end);
 }
 
-test("live chat messages carry the clock time they arrived", async () => {
+test("chat messages carry a wall-clock stamp: live ones the arrival time, replayed ones their recorded time", async () => {
   const app = await appSource();
 
   const stamp = functionSource(app, "messageTimestamp");
   assert.match(stamp, /document\.createElement\("time"\)/);
   assert.match(stamp, /message-time/);
   assert.match(stamp, /dateTime = /);
-  assert.match(stamp, /data-testid|dataset\.testid = "message-timestamp"/);
+  assert.match(stamp, /dataset\.testid = "message-timestamp"/);
 
   const append = functionSource(app, "appendMessage");
-  assert.match(append, /function appendMessage\(role, text, timestamped = true, attachments = \[\]\)/);
-  assert.match(append, /timestamped && \(role === "user" \|\| role === "assistant"\)/);
+  assert.match(append, /function appendMessage\(role, text, timestamp = true, attachments = \[\], read = false\)/);
+  assert.match(append, /timestamp === true \? new Date\(\) : timestamp/);
 
-  // A replayed transcript has no recorded times, so it must not be stamped with "now".
+  // The transcript passes each message's recorded time through to the bubble,
+  // and a message the harness never stamped stays undated instead of being
+  // labelled with the moment it was re-rendered.
   const transcript = functionSource(app, "appendTranscript");
-  assert.match(transcript, /appendMessage\(message\.role === "user" \? "user" : "assistant", message\.text, false\)/);
+  assert.match(transcript, /new Date\(message\.timestamp\)/);
+  assert.match(transcript, /Number\.isFinite/);
+
+  // Formatting goes through toLocale*, so the browser's own time zone and
+  // locale decide what the reader sees, wherever they are.
+  const format = functionSource(app, "formatMessageTime");
+  assert.match(format, /toLocaleTimeString\(\[\], \{ hour: "2-digit", minute: "2-digit" \}\)/);
+  assert.match(format, /toLocaleDateString/);
+});
+
+test("user messages carry a delivery receipt that flips when the agent takes the turn", async () => {
+  const app = await appSource();
+
+  const receipt = functionSource(app, "messageReceipt");
+  assert.match(receipt, /message-receipt/);
+  const setState = functionSource(app, "setReceiptState");
+  assert.match(setState, /dataset\.read = String\(read\)/);
+  assert.match(setState, /"✓✓" : "✓"/);
+
+  // A replayed user message sits in the agent's own transcript, so it renders
+  // as already received.
+  const transcript = functionSource(app, "appendTranscript");
+  assert.match(transcript, /role === "user"/);
+
+  // The live flip: an agent turn starting consumes every sent message that is
+  // not still queued, and a queued prompt flips the moment its turn starts.
+  const mark = functionSource(app, "markUserMessagesRead");
+  assert.match(mark, /:not\(\.queued\)/);
+  assert.match(app, /payload\.type === "agent_start"[\s\S]{0,400}markUserMessagesRead\(\)/);
+  const clearMark = functionSource(app, "clearQueuedMark");
+  assert.match(clearMark, /setReceiptState\(/);
+});
+
+test("assistant messages the reader has not viewed carry an unread dot until they dwell at the bottom", async () => {
+  const app = await appSource();
+
+  assert.match(functionSource(app, "unreadDot"), /message-unread-dot/);
+
+  // "Viewed" requires the tab visible and the reader at the bottom; only then
+  // does the watermark advance and the dots clear.
+  const viewed = functionSource(app, "markViewedIfCaughtUp");
+  assert.match(viewed, /document\.hidden \|\| !chatAtBottom\(\)/);
+  assert.match(viewed, /saveLastReadAt\(/);
+  assert.match(viewed, /message-unread-dot/);
+
+  // The per-conversation watermark lives in the account's server-side
+  // preferences (shared across devices, no Web Storage) and cannot grow
+  // without bound.
+  assert.match(functionSource(app, "lastReadAt"), /state\.conversationLastRead/);
+  const save = functionSource(app, "saveLastReadAt");
+  assert.match(save, /READ_WATERMARKS_LIMIT/);
+  assert.match(save, /savePreferencesInBackground\(\{ conversationLastRead: marks \}\)/);
+});
+
+test("receipts and unread dots ship their styles", async () => {
+  const styles = await readFile("public/styles.css", "utf8");
+  assert.match(styles, /\.message-meta \{[^}]*display: flex/);
+  assert.match(styles, /\.message-receipt\[data-read="true"\] \{[^}]*var\(--accent\)/);
+  assert.match(styles, /\.message-unread-dot \{[^}]*var\(--danger\)/);
 });
 
 test("durations are formatted once and reused everywhere", async () => {

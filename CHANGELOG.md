@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Messages now show when they were recorded, user messages display delivery status with check marks, and unread agent replies carry a dot that clears when viewed—read status syncs across your devices.
+
 ## 1.33.2 — 2026-09-16
 
 - Push notifications now reach iPhones: Apple's push service rejected every send with 403 BadJwtToken because the VAPID contact was the fake address mailto:joint-bob@localhost. The contact is now the project's real URL.

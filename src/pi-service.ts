@@ -308,7 +308,8 @@ export async function loadPiMessages(sessionPath: string): Promise<ChatMessage[]
     if (role !== "user" && role !== "assistant" && role !== "toolCall" && role !== "toolResult") continue;
     const text = role === "user" ? stripHandoffEnvelope(textFromMessage(message)) : textFromMessage(message);
     const toolName = typeof message.toolName === "string" ? message.toolName : undefined;
-    if (text.trim().length > 0) messages.push({ id: `${index}`, role, text, ...(toolName ? { toolName } : {}) });
+    const timestamp = typeof record.timestamp === "string" ? record.timestamp : undefined;
+    if (text.trim().length > 0) messages.push({ id: `${index}`, role, text, ...(toolName ? { toolName } : {}), ...(timestamp ? { timestamp } : {}) });
   }
   return messages;
 }

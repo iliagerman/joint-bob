@@ -297,6 +297,8 @@ export interface UserPreferences {
   lastSeenVersion: string | null;
   canvasLayout: CanvasLayoutPreference;
   canvasKeymap: CanvasKeymapPreference;
+  /** Per conversation, the newest message time (epoch ms) the reader has viewed. */
+  conversationLastRead: Record<string, number>;
 }
 
 interface PreferenceRow {
@@ -317,6 +319,7 @@ interface PreferenceRow {
   last_seen_version: string | null;
   canvas_layout: string;
   canvas_keymap: string;
+  conversation_last_read: string;
 }
 
 const dataDir = resolveDataDirectory();
@@ -362,6 +365,7 @@ function preferencesDatabase(): DatabaseSync {
   if (!columns.some((column) => column.name === "last_seen_version")) database.exec("ALTER TABLE user_preferences ADD COLUMN last_seen_version TEXT");
   if (!columns.some((column) => column.name === "canvas_layout")) database.exec("ALTER TABLE user_preferences ADD COLUMN canvas_layout TEXT NOT NULL DEFAULT '{\"version\":1,\"root\":null,\"focusedPaneId\":null}'");
   if (!columns.some((column) => column.name === "canvas_keymap")) database.exec("ALTER TABLE user_preferences ADD COLUMN canvas_keymap TEXT NOT NULL DEFAULT '{\"modifiers\":[\"meta\",\"shift\"],\"recentPane\":\"E\",\"focusPane\":\"G\",\"paneSearch\":\"F\"}'");
+  if (!columns.some((column) => column.name === "conversation_last_read")) database.exec("ALTER TABLE user_preferences ADD COLUMN conversation_last_read TEXT NOT NULL DEFAULT '{}'");
   return database;
 }
 
@@ -380,6 +384,26 @@ function parseStringList(value: string): string[] {
     return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === "string") : [];
   } catch {
     return [];
+  }
+}
+
+/** The read map is bounded; the conversations read longest ago fall off first. */
+export const CONVERSATION_LAST_READ_LIMIT = 300;
+export function boundConversationLastRead(marks: Record<string, number>): Record<string, number> {
+  const ids = Object.keys(marks);
+  if (ids.length <= CONVERSATION_LAST_READ_LIMIT) return marks;
+  return Object.fromEntries(ids.sort((left, right) => marks[right] - marks[left]).slice(0, CONVERSATION_LAST_READ_LIMIT).map((id) => [id, marks[id]]));
+}
+
+/** Same hand-edited-row tolerance as parseStringList, for the read-watermark map. */
+function parseConversationLastRead(value: string): Record<string, number> {
+  try {
+    const parsed = JSON.parse(value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed).filter((entry): entry is [string, number] =>
+      typeof entry[1] === "number" && Number.isFinite(entry[1]) && entry[1] >= 0));
+  } catch {
+    return {};
   }
 }
 
@@ -615,6 +639,7 @@ function preferencesFromRow(row: PreferenceRow): UserPreferences {
     lastSeenVersion: row.last_seen_version,
     canvasLayout: parseCanvasLayout(row.canvas_layout),
     canvasKeymap: parseCanvasKeymap(row.canvas_keymap),
+    conversationLastRead: parseConversationLastRead(row.conversation_last_read),
   };
 }
 
@@ -623,7 +648,7 @@ function currentPreferences(userId: string): UserPreferences {
     SELECT theme, notifications_enabled, completion_sound, install_dismissed, mobile_view,
       active_project_id, active_session_path, active_session_id, active_node_id, legacy_migrated,
       pinned_project_ids, pinned_session_paths, projects_panel_collapsed, chats_panel_collapsed,
-      last_seen_version, canvas_layout, canvas_keymap
+      last_seen_version, canvas_layout, canvas_keymap, conversation_last_read
     FROM user_preferences WHERE user_id = ?
   `).get(userId) as unknown as PreferenceRow;
   return preferencesFromRow(row);
@@ -662,6 +687,7 @@ export function updateUserPreferences(userId: string, partial: Partial<UserPrefe
     ["lastSeenVersion", "last_seen_version", (value) => value as string | null],
     ["canvasLayout", "canvas_layout", (value) => JSON.stringify(value as CanvasLayoutPreference)],
     ["canvasKeymap", "canvas_keymap", (value) => JSON.stringify(value as CanvasKeymapPreference)],
+    ["conversationLastRead", "conversation_last_read", (value) => JSON.stringify(boundConversationLastRead(value as Record<string, number>))],
   ];
   for (const [property, column, serialize] of fields) {
     if (partial[property] === undefined) continue;
