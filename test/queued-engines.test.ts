@@ -145,6 +145,46 @@ test("stopping a Pi turn starts the next queued message", async (context) => {
   } finally { releaseFirst(); process.env.JOINT_BOB_TEST_ENGINE_LOG = engineLog; }
 });
 
+test("force starting a queued Pi prompt hides the canceled turn error", async (context) => {
+  const opened = openChat(baseUrl, fixture.cookie, fixture.projectId, "new");
+  sockets.push(opened.socket);
+  await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "ready"));
+  const sessionId = String(opened.messages.find((frame) => frame.type === "ready")!.sessionId);
+  const { harnessSessions } = await import("../src/server/harness-sessions.js");
+  const shared = [...harnessSessions.values()].find((candidate) => candidate.session.id === sessionId)!;
+  const firstTurn = Promise.withResolvers<void>();
+  const forcedTurn = Promise.withResolvers<void>();
+  const prompts: string[] = [];
+  context.mock.method(shared.session, "prompt", async (input) => {
+    prompts.push(input.text);
+    input.onStarted?.();
+    if (input.text === "current") {
+      await firstTurn.promise;
+      throw new Error("Turn prefix summarization failed: This operation was aborted");
+    }
+    if (input.text === "force me") await forcedTurn.promise;
+  });
+  context.mock.method(shared.session, "cancel", async () => firstTurn.resolve());
+  const engineLog = process.env.JOINT_BOB_TEST_ENGINE_LOG;
+  delete process.env.JOINT_BOB_TEST_ENGINE_LOG;
+  try {
+    opened.socket.send(JSON.stringify({ type: "prompt", message: "current" }));
+    await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "promptStarted"));
+    opened.socket.send(JSON.stringify({ type: "prompt", message: "later" }));
+    opened.socket.send(JSON.stringify({ type: "prompt", message: "force me" }));
+    await waitFor(opened.messages, () => opened.messages.filter((frame) => frame.type === "userMessage" && frame.queued).length === 3);
+    const forced = opened.messages.find((frame) => frame.type === "userMessage" && frame.text === "force me")!;
+    opened.socket.send(JSON.stringify({ type: "forceStartQueuedPrompt", queueId: forced.queueId, queueRevision: forced.revision }));
+    await waitFor(opened.messages, () => opened.messages.filter((frame) => frame.type === "promptStarted").length === 2, 1_500);
+    assert.deepEqual(prompts, ["current", "force me"]);
+    assert.deepEqual(opened.messages.filter((frame) => frame.type === "error"), []);
+  } finally {
+    firstTurn.resolve();
+    forcedTurn.resolve();
+    process.env.JOINT_BOB_TEST_ENGINE_LOG = engineLog;
+  }
+});
+
 test("stopping a Claude turn starts the next queued message", async () => {
   const opened = openChat(baseUrl, fixture.cookie, fixture.projectId, "claude:new");
   sockets.push(opened.socket);

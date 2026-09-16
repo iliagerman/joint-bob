@@ -205,8 +205,10 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
       // An automatic completion may have crossed the harness start boundary even
       // when transport failed before onStarted. Keep it fenced as uncertain.
       if (!claimed && !queued.systemEventId) resetQueuedPromptAttempt(queued.id);
-      publish(connection, { type: "promptFailed", queueId: queued.id, error: chatErrorMessage(error) });
-      throw error;
+      if (!pausedDrains.has(queueKey(connection))) {
+        publish(connection, { type: "promptFailed", queueId: queued.id, error: chatErrorMessage(error) });
+        throw error;
+      }
     } finally {
       startingIds.delete(queued.id);
     }

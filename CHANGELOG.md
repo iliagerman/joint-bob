@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Agents can now send notifications to ntfy servers you've configured.
+- Force-starting a queued prompt after canceling a turn no longer shows the canceled turn's error in the chat.
 
 ## 1.41.0 — 2026-09-16
 
