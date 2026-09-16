@@ -3,9 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.35.0 — 2026-09-16
 
-- Keyboard shortcut badges on buttons now show only the key that makes them unique, with the full chord appearing as a tooltip on hover, so the toolbar is cleaner and less cluttered.
+- Canvas shortcuts are now unified: every command uses Control+Option (Control+Alt on Windows/Linux) plus a unique key.
+- Button badges now show only the key that distinguishes each shortcut, keeping the toolbar cleaner.
+- Existing keymaps are automatically rebuilt to match the new unified shortcut scheme.
+- Toolbar and panel controls now display with button styling for improved visual clarity.
 
 ## 1.34.3 — 2026-09-16
 
