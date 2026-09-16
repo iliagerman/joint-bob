@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.42.1 — 2026-09-17
 
-- Force-start button for queued messages now shows a spinner while sending and prevents accidental double-clicks.
+- Force-start button now shows a spinner while sending and prevents accidental repeated clicks.
 
 ## 1.42.0 — 2026-09-16
 
