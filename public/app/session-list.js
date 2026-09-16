@@ -16,6 +16,7 @@ import { isSessionPinned, nestedSessionRows, sessionTicketTask, ticketBadge, tic
 import { confirmAction, enableNotifications, formatDate, toast } from "./shell.js";
 import { closeSocket, refreshSessionsQuietly } from "./socket.js";
 import { state } from "./state.js";
+import { activeChatSession } from "./terminal.js";
 
 function renderClassificationFilter() {
   const selected = state.classificationFilter;
@@ -326,6 +327,19 @@ function sessionMenuItems(session, sessionActive) {
     ]),
   ];
 }
+
+/**
+ * The open conversation gets the same menu its row gets, built from the same list,
+ * so the two can never drift apart. Desktop flattens the More menu into the toolbar,
+ * which leaves this button on screen to anchor the popup; mobile closes the More menu
+ * on the click, so the popup anchors to the More button that stays visible.
+ */
+elements.chatSessionMenuButton.addEventListener("click", () => {
+  const session = activeChatSession();
+  if (!session) { toast("Open a conversation first"); return; }
+  const anchor = elements.chatMoreMenu.open ? elements.chatMoreMenu.querySelector("summary") : elements.chatSessionMenuButton;
+  openRowMenu(anchor, sessionMenuItems(session, true));
+});
 
 /**
  * Puts an already-open conversation on the canvas from the conversation list or the

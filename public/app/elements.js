@@ -263,6 +263,7 @@ export const elements = {
   chatToolbar: document.querySelector("#chatToolbar"),
   chatMoreMenu: document.querySelector("#chatMoreMenu"),
   addToCanvasButton: document.querySelector("#addToCanvasButton"),
+  chatSessionMenuButton: document.querySelector("#chatSessionMenuButton"),
   chatNodeSelect: document.querySelector("#chatNodeSelect"),
   chatHarnessSelect: document.querySelector("#chatHarnessSelect"),
   newClaudeSessionButton: document.querySelector("#newClaudeSessionButton"),

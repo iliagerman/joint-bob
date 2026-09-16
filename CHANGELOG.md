@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- The open conversation now offers a "Conversation actions" button in the toolbar with the same menu as its row, so you can mark it done, set up ntfy publishing, or fork it without leaving the chat.
+
 ## 1.38.0 — 2026-09-16
 
 - Conversations can now be marked done to hide them from the active list; a "Show done" toggle reveals them when needed.
