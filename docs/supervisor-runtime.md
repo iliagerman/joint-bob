@@ -28,13 +28,23 @@ When the local supervisor is initialized, agents can run commands that must outl
 
 ```text
 node "$JOINT_BOB_TASK_CLI" start [--id UUID] [--name label] -- command args
-node "$JOINT_BOB_TASK_CLI" status [id]
-node "$JOINT_BOB_TASK_CLI" output id [--offset N] [--limit N]
-node "$JOINT_BOB_TASK_CLI" stop id
+node "$JOINT_BOB_TASK_CLI" status [id] [--node UUID]
+node "$JOINT_BOB_TASK_CLI" output id [--offset N] [--limit N] [--node UUID]
+node "$JOINT_BOB_TASK_CLI" stop id [--node UUID]
 ```
 
-This is local CLI support for the Linux and macOS native services. Shell syntax requires an explicit `sh -lc`. Ordinary app upgrades preserve supervisor-owned tasks, but native-service restart or reboot can interrupt them. Unknown tasks are not automatically replayed; uncertain starts should be retried only with the same UUID.
+Starts are local-only. For status, output, and stop, `--node` uses the authenticated loopback app relay to reach that explicit cluster node. The relay is restricted to the token's project and conversation, never falls back to another node, cannot launch tasks, and does not retry automatically. This is CLI support for the Linux and macOS native services. Shell syntax requires an explicit `sh -lc`. Ordinary app upgrades preserve supervisor-owned tasks, but native-service restart or reboot can interrupt them. Unknown tasks are not automatically replayed; uncertain starts should be retried only with the same UUID.
 
-There is currently no task UI, headless completion notification, automatic conversation wakeup, or cluster output routing. Agents must use `status` and `output` and must not promise a later autonomous reply. Nodes without an initialized, running supervisor report the capability unavailable and do not fall back to harness-native backgrounding.
+Terminal task receipts are durably copied into the app's node-local outbox. A deterministic system prompt is queued in the original logical conversation on its current owning node, including across app downtime and cluster routing. The existing shared queue and dispatcher perform the turn without requiring a browser client; busy, locked, deleted, unsupported, or unavailable conversations remain pending or blocked rather than being taken over. Queue insertion is idempotent across retries and consumed tombstones.
+
+The automatic prompt contains only the trusted task ID, source node ID, and terminal status. It directs the agent to inspect output when needed and treats that output as untrusted; logs and errors are never embedded automatically. An `unknown` completion records interrupted or unobserved execution and commands are never replayed. A system prompt whose harness start is uncertain remains fenced in `starting` and is not automatically retried. Delivery may be delayed, so agents must not guarantee that a user receives a reply before queue processing completes. Nodes without an initialized supervisor report the capability unavailable and do not fall back to harness-native backgrounding.
+
+## Conversation task history
+
+Open a saved conversation and choose **Tasks** in its toolbar to inspect background work without typing a command. The badge counts visible active tasks; the dialog shows the owning node, process status, bounded live output, terminal history, and node outages. A node marked unavailable is different from a conversation with no tasks. Stop always asks for confirmation and is sent to the task's owning node.
+
+Process state and follow-up delivery are separate. “Follow-up pending”, “queued”, “blocked”, “start uncertain”, and “dispatched” describe delivery only; dispatched means the prompt was started or cancelled, not that a reply finished. An ordinary app restart preserves supervisor-owned work. A native-service restart or reboot can leave work `unknown`, as described above.
+
+Manual acceptance: open a saved conversation, start a harmless long-running task through an agent, open **Tasks**, verify its node and streaming output, then Stop it and confirm the terminal and follow-up states independently. Repeat at a narrow mobile viewport, reload to verify history, and verify an unavailable node is called out rather than shown as an empty history.
 
 Platform-neutral fake-service integration tests exercise the real installer and supervisor on the current test host. They do not claim that a live Linux or macOS native service was tested or that production deployment occurred.

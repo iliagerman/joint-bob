@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
@@ -16,12 +16,13 @@ export const queuedSettingsSchema = z.object({
 }).strict();
 export type QueuedSettings = z.infer<typeof queuedSettingsSchema>;
 const promptSchema = z.object({
-  id: z.string().uuid(), requestId: z.string().uuid().optional(), dispatchState: z.enum(["pending", "starting"]).default("pending"), promptText: z.string(), displayText: z.string(),
+  id: z.string().uuid(), requestId: z.string().uuid().optional(), systemEventId: z.string().uuid().optional(), dispatchState: z.enum(["pending", "starting"]).default("pending"), promptText: z.string(), displayText: z.string(),
   messageText: z.string().nullable(), promptSuffix: z.string().nullable(), displaySuffix: z.string().nullable(),
   attachmentPaths: z.array(z.string()), images: z.array(z.object({ path: z.string(), mimeType: z.string().min(1) }).strict()).default([]), settings: queuedSettingsSchema.nullable(), revision: z.number().int().positive(),
 });
 export type QueuedPrompt = z.infer<typeof promptSchema>;
-interface Metadata { requestId?: string; messageText: string; promptSuffix: string; displaySuffix: string; attachmentPaths: string[]; images?: Array<{ path: string; mimeType: string }>; settings?: QueuedSettings | null }
+interface Metadata { requestId?: string; systemEventId?: string; messageText: string; promptSuffix: string; displaySuffix: string; attachmentPaths: string[]; images?: Array<{ path: string; mimeType: string }>; settings?: QueuedSettings | null }
+export type SystemPromptState = "pending" | "starting" | "consumed" | "missing";
 interface Row { id: string; queue_key: string; prompt: string; created_at: string; sequence: number; revision: number; origin_node_id: string }
 export interface QueuedPromptRef { id: string; revision: number }
 const eventSchema = z.object({ projectId: z.string().min(1), conversationId: z.string().min(1), id: z.string().uuid(), prompt: promptSchema.nullable(), createdAt: z.string(), sequence: z.number().int().positive(), revision: z.number().int().positive(), activeSettings: queuedSettingsSchema.optional() });
@@ -119,6 +120,60 @@ export function enqueuePrompt(queueKey: string, promptText: string, displayText:
     insert(db, row); publish(db, row, prompt);
   });
   return prompt;
+}
+
+export function enqueueSystemPrompt(queueKey: string, id: string, text: string): "queued" | "consumed" {
+  const db = queueDatabase();
+  const key = logicalQueueKey(queueKey);
+  return transaction(db, () => {
+    const tombstone = db.prepare("SELECT queue_key FROM queued_prompt_tombstones WHERE id = ?").get(id) as { queue_key: string } | undefined;
+    const existing = db.prepare("SELECT queue_key FROM queued_prompts WHERE id = ?").get(id) as { queue_key: string } | undefined;
+    const found = tombstone ?? existing;
+    if (found && found.queue_key !== key) throw new Error("System prompt id belongs to a different queue");
+    if (tombstone) return "consumed";
+    if (existing) return "queued";
+    const prompt = promptSchema.parse({ id, requestId: id, systemEventId: id, dispatchState: "pending", promptText: text, displayText: text, messageText: null, promptSuffix: null, displaySuffix: null, attachmentPaths: [], images: [], settings: null, revision: 1 });
+    const row: Row = { id, queue_key: key, prompt: JSON.stringify(prompt), created_at: new Date().toISOString(), sequence: nextSequence(db, key), revision: 1, origin_node_id: origin(db) };
+    insert(db, row);
+    publish(db, row, prompt);
+    return "queued";
+  });
+}
+
+export function systemPromptState(queueKey: string, id: string): SystemPromptState {
+  const db = queueDatabase();
+  const key = logicalQueueKey(queueKey);
+  const row = db.prepare("SELECT queue_key,prompt FROM queued_prompts WHERE id = ?").get(id) as { queue_key: string; prompt: string } | undefined;
+  if (row) {
+    if (row.queue_key !== key) throw new Error("System prompt id belongs to a different queue");
+    return promptSchema.parse(JSON.parse(row.prompt)).dispatchState;
+  }
+  const tombstone = db.prepare("SELECT queue_key FROM queued_prompt_tombstones WHERE id = ?").get(id) as { queue_key: string } | undefined;
+  if (tombstone) {
+    if (tombstone.queue_key !== key) throw new Error("System prompt id belongs to a different queue");
+    return "consumed";
+  }
+  return "missing";
+}
+
+export function listPendingSystemQueues(limit = 100): Array<{ queueKey: string; id: string }> {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new RangeError("Invalid system queue limit");
+  const file = path.join(resolveDataDirectory(), "node.db");
+  if (!database && !existsSync(file)) return [];
+  const db = database ?? new DatabaseSync(file, { readOnly: true });
+  const owned = db !== database;
+  try {
+    if (owned) db.exec("PRAGMA busy_timeout=5000");
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='queued_prompts'").get()) return [];
+    const rows = db.prepare(`SELECT queue_key,prompt FROM queued_prompts
+      WHERE json_extract(prompt,'$.systemEventId') IS NOT NULL
+        AND COALESCE(json_extract(prompt,'$.dispatchState'),'pending')='pending'
+      ORDER BY created_at,sequence,id LIMIT ?`).all(limit) as unknown as Array<{ queue_key: string; prompt: string }>;
+    return rows.map((row) => {
+      const prompt = promptSchema.parse(JSON.parse(row.prompt));
+      return { queueKey: row.queue_key, id: prompt.id };
+    });
+  } finally { if (owned) db.close(); }
 }
 
 export function listQueuedPrompts(queueKey: string): QueuedPrompt[] {

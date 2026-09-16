@@ -15,6 +15,7 @@ import { flushPushSubscriptionOutbox } from "./server/push-flush.js";
 import { reconcileUpdateJobs, startUpdateScheduler } from "./updater.js";
 import { flags, port, server } from "./server/state.js";
 import { browserRuntime, closeBrowserRuntime } from "./server/browser.js";
+import { closeBackgroundCompletions, pollBackgroundCompletions } from "./server/background-completions.js";
 import { startBrowserMonitors, stopBrowserMonitors } from "./server/browser-monitors.js";
 import { recoverPendingUpdateRuns } from "./server/task-runs.js";
 import "./server/schemas.js";
@@ -33,6 +34,8 @@ import "./server/routes/cluster-tasks.js";
 import "./server/routes/platform.js";
 import "./server/routes/secrets.js";
 import "./server/routes/browser.js";
+import "./server/routes/background-tasks.js";
+import "./server/routes/background-completions.js";
 import "./server/routes/browser-monitors.js";
 import "./server/routes/projects.js";
 import "./server/routes/sessions.js";
@@ -51,6 +54,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   for (const signal of ["SIGTERM", "SIGINT"] as const) process.once(signal, () => {
     if (stopping) return;
     stopping = true;
+    closeBackgroundCompletions();
     server.close();
     const timeout = setTimeout(() => process.exit(0), 8000); timeout.unref();
     stopBrowserMonitors();
@@ -107,6 +111,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     flushPushSubscriptionOutbox().catch((error) => console.warn("Push subscription flush failed", error));
     reconcileTaskHandoffs().catch((error) => console.warn("Task handoff reconciliation failed", error));
     discoverMissingPeerProjects().catch((error) => console.warn("Project discovery failed", error));
+    pollBackgroundCompletions().catch((error) => console.warn("Background completion poll failed", error));
     setInterval(() => discoverMissingPeerProjects().catch((error) => console.warn("Project discovery failed", error)), 10_000).unref();
     setInterval(() => reconcileManagedAgentResources().catch((error) => console.warn("Agent resource reconciliation failed", error)), 30_000).unref();
     setInterval(() => {
@@ -119,6 +124,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       flushSecretCredentialOutbox().catch((error) => console.warn("Secret credential flush failed", error));
       flushPushSubscriptionOutbox().catch((error) => console.warn("Push subscription flush failed", error));
       reconcileTaskHandoffs().catch((error) => console.warn("Task handoff reconciliation failed", error));
+      pollBackgroundCompletions().catch((error) => console.warn("Background completion poll failed", error));
     }, 2_000).unref();
   });
   })

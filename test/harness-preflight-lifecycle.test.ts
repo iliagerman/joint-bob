@@ -9,7 +9,7 @@ import { kiroSessionFilePath } from "../src/harnesses/kiro/storage.js";
 import type { HarnessEvent, HarnessSession } from "../src/harnesses/runtime.js";
 import { cancelQueuedPrompt, enqueuePrompt, listQueuedPrompts } from "../src/prompt-queue.js";
 import { addProject } from "../src/store.js";
-import { attachHarnessClient, disposeHarnessSession, harnessSessionKey, harnessSessions, openHarnessSession, refreshHarnessTranscripts } from "../src/server/harness-sessions.js";
+import { attachHarnessClient, detachHarnessClient, disposeHarnessSession, harnessSessionKey, harnessSessions, openHarnessSession, refreshHarnessTranscripts } from "../src/server/harness-sessions.js";
 import { drainHarnessPromptQueue, harnessChatConnections, type HarnessChatConnection } from "../src/server/harness-chat.js";
 import { claimConversationLocally } from "../src/server/sessions-helpers.js";
 
@@ -44,9 +44,8 @@ async function setup(context: test.TestContext, preflight: Promise<void>, onEnte
   await ensureConversationRecord(project.id, "kiro", id, local.id);
   await claimConversationLocally("kiro", id, local.id);
   const file = `kiro:${kiroSessionFilePath(id)}`;
-  const session = fakeHarnessSession(id, file, preflight, onEntered);
   const runtime = await getHarnessRuntime("kiro");
-  context.mock.method(runtime, "open", async () => session);
+  context.mock.method(runtime, "open", async () => fakeHarnessSession(id, file, preflight, onEntered));
   context.mock.method(runtime, "readiness", async () => []);
   const shared = await openHarnessSession("kiro", { projectId: project.id, cwd: project.path, sessionId: id, conversationId: id, accountIds: [] });
   const events: Array<Record<string, unknown>> = [];
@@ -60,10 +59,11 @@ async function setup(context: test.TestContext, preflight: Promise<void>, onEnte
 
 function cleanup(fixture: Awaited<ReturnType<typeof setup>>): void {
   harnessChatConnections.delete(fixture.connection);
-  fixture.shared.clients.delete(fixture.socket);
+  fixture.connection.shared.clients.delete(fixture.socket);
   const queued = listQueuedPrompts(`${fixture.project.id}:${fixture.id}`)[0];
   if (queued) cancelQueuedPrompt(`${fixture.project.id}:${fixture.id}`, queued.id, queued.revision);
-  if (harnessSessions.has(harnessSessionKey(fixture.project.id, "kiro", fixture.id)) && fixture.shared.turnInFlight === 0) disposeHarnessSession(fixture.shared);
+  const current = harnessSessions.get(harnessSessionKey(fixture.project.id, "kiro", fixture.id));
+  if (current && current.turnInFlight === 0) disposeHarnessSession(current);
 }
 
 test("preflight pins a shared session against transcript refresh", async (context) => {
@@ -82,6 +82,44 @@ test("preflight pins a shared session against transcript refresh", async (contex
     assert.equal(fixture.shared.turnInFlight, 0);
     assert.ok(fixture.events.some((event) => event.type === "promptCompleted"));
   } finally { gate.resolve(); cleanup(fixture); }
+});
+
+test("queued prompt rebinds after idle transcript invalidation", async (context) => {
+  const fixture = await setup(context, Promise.resolve(), () => {});
+  const old = fixture.shared;
+  try {
+    refreshHarnessTranscripts(fixture.project.id, [fixture.file.replace(/^kiro:/, "")]);
+    assert.ok(fixture.events.some((event) => event.type === "sessionFileChanged"));
+    assert.equal(harnessSessions.has(harnessSessionKey(fixture.project.id, "kiro", fixture.id)), false);
+
+    await drainHarnessPromptQueue(fixture.connection);
+    assert.equal(fixture.events.filter((event) => event.type === "textDelta" && event.text === "streamed").length, 1, "textDelta was not delivered exactly once");
+    assert.notEqual(fixture.connection.shared, old);
+    assert.equal(harnessSessions.get(harnessSessionKey(fixture.project.id, "kiro", fixture.id)), fixture.connection.shared);
+    assert.equal(fixture.events.filter((event) => event.type === "promptStarted").length, 1);
+    assert.equal(fixture.events.filter((event) => event.type === "promptCompleted").length, 1);
+    assert.equal(listQueuedPrompts(`${fixture.project.id}:${fixture.id}`).length, 0);
+    assert.equal(old.clients.has(fixture.socket), false);
+
+    detachHarnessClient(old, fixture.socket);
+    disposeHarnessSession(old);
+    assert.equal(old.idleTimer, null);
+    assert.equal(harnessSessions.get(harnessSessionKey(fixture.project.id, "kiro", fixture.id)), fixture.connection.shared);
+  } finally { cleanup(fixture); }
+});
+
+test("closed client is not attached when queued prompt rebinds", async (context) => {
+  const fixture = await setup(context, Promise.resolve(), () => {});
+  try {
+    refreshHarnessTranscripts(fixture.project.id, [fixture.file.replace(/^kiro:/, "")]);
+    const drain = drainHarnessPromptQueue(fixture.connection);
+    Object.defineProperty(fixture.socket, "readyState", { value: 3 });
+    await drain;
+
+    assert.equal(listQueuedPrompts(`${fixture.project.id}:${fixture.id}`).length, 0);
+    assert.equal(fixture.connection.shared.clients.size, 0);
+    assert.notEqual(fixture.connection.shared.idleTimer, null);
+  } finally { cleanup(fixture); }
 });
 
 test("rejected preflight releases its pin without starting the queued prompt", async (context) => {

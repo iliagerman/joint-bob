@@ -147,7 +147,8 @@ test("task capability reports unavailable without creating supervisor state", as
     assert.equal(environment.JOINT_BOB_TASK_SOCKET, undefined);
     assert.equal(environment.JOINT_BOB_TASK_TOKEN, undefined);
     const instructions = agentCapabilityInstructionFiles().map((file) => file.content).join("\n");
-    assert.match(instructions, /automatic conversation wakeup is not implemented/);
+    assert.match(instructions, /Completions enqueue an automatic follow-up/);
+    assert.doesNotMatch(instructions, /automatic conversation wakeup is not implemented/);
     assert.match(instructions, /unsupported node mode/);
     await assert.rejects(readFile(path.join(root, "supervisor.db")));
   } finally {

@@ -6,6 +6,7 @@ import { type ClusterPeer, getClusterMachineToken, getClusterNode, listClusterPe
 import { clusterMembershipMemberSchema } from "./schemas.js";
 import { machineRoutes } from "./state.js";
 import { browserAgentIdentity } from "../browser-agent.js";
+import { backgroundTaskAgentIdentity } from "../background-task-agent.js";
 
 export function sendError(response: Response, statusCode: number, message: string): void {
   response.status(statusCode).json({ error: message });
@@ -102,6 +103,10 @@ export async function requireHttpAuth(request: Request, response: Response, next
     const identity = browserAgentIdentity(token);
     if (identity) { response.locals.browserAgent = identity; next(); return; }
   }
+  if (request.path === "/background-tasks/agent" && request.method === "POST" && token) {
+    const identity = backgroundTaskAgentIdentity(token);
+    if (identity) { response.locals.taskAgent = identity; next(); return; }
+  }
   const machineNodeId = machineRoutes.has(`${request.method} ${request.path}`) && token
     ? await machineCredentialNodeId(token)
     : undefined;
@@ -125,7 +130,7 @@ export async function requireHttpAuth(request: Request, response: Response, next
 }
 
 export function requireCsrf(request: Request, response: Response, next: NextFunction): void {
-  if (["GET", "HEAD", "OPTIONS"].includes(request.method) || response.locals.machineAuth || response.locals.browserAgent) {
+  if (["GET", "HEAD", "OPTIONS"].includes(request.method) || response.locals.machineAuth || response.locals.browserAgent || response.locals.taskAgent) {
     next();
     return;
   }

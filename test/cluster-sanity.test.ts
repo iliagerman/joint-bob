@@ -15,6 +15,9 @@ import test, { after, before } from "node:test";
 import WebSocket from "ws";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, type SignedIn } from "./dev-nodes.js";
 import { openPiRuntimeDatabase, publishPiRuntime } from "../src/pi-runtime.js";
+import { startSupervisor } from "../scripts/joint-bob-supervisor.mjs";
+import { supervisorRequest } from "../scripts/supervisor-client.mjs";
+import { backgroundClusterFixture, closeBackgroundClusterFixture, startSyntheticTask } from "./background-tasks-fixture.js";
 
 interface PeerView { id: string; name: string; url: string; online: boolean; lastSeenAt?: string; tokenConfigured: boolean }
 interface InventoryView { node: { id: string }; projects: Array<{ project: { id: string; name: string }; aliases: string[] }> }
@@ -31,7 +34,7 @@ let sessionA: SignedIn;
 let sessionB: SignedIn;
 
 before(async () => {
-  root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-cluster-"));
+  root = await mkdtemp(path.join(os.tmpdir(), "jb-cluster-"));
   environment = await seedDevEnvironment(root, 2);
   [nodeA, nodeB] = environment.nodes;
   servers = await Promise.all(environment.nodes.map((node) => startDevNode(environment, node)));
@@ -53,6 +56,7 @@ test("scheduled conversation keeps its active run isolated while edits apply to 
   const runtime = { sessionId: source.id, transcriptPath: source.path, runId: randomUUID() };
   const input = { projectId: project.id, name: "Wait for active run", prompt: "Continue", ownerNodeId: nodeB.nodeId, engine: "pi", sessionId: source.id, enabled: true, schedule: { frequency: "hourly", minute: 0, hour: 9, weekday: 1, timezone: "UTC" } };
   try {
+    db.exec("PRAGMA busy_timeout=5000");
     publishPiRuntime(runtimeDb, runtime, true);
     const created = await api<{ task: { id: string } }>(nodeA, sessionA, "POST", "/cron", { nodeId: nodeB.nodeId, command: { action: "create", input } });
     assert.equal(created.status, 200, JSON.stringify(created.body));
@@ -127,6 +131,7 @@ test("active bob-goal state replicates to the peer", async () => {
   const goal = { projectId: projectA.id, conversationId, objective: "verify cross-node goals", status: "active", turns: 3, blocker: null, createdAt: now, updatedAt: now, originNodeId: nodeA.nodeId };
   const db = new DatabaseSync(path.join(nodeA.dataDir, "node.db"));
   try {
+    db.exec("PRAGMA busy_timeout=5000");
     db.prepare("INSERT INTO replication_outbox (event_id, origin_node_id, entity_type, entity_key, operation, payload, created_at) VALUES (?, ?, ?, ?, 'upsert', ?, ?)")
       .run(randomUUID(), nodeA.nodeId, "conversation.goal", `${projectA.id}:${conversationId}`, JSON.stringify(goal), now);
   } finally { db.close(); }
@@ -164,6 +169,88 @@ test("conversation classification replicates to a peer and can be cleared there"
   await waitForLabel(nodeB, sessionB, projectB.id, payload.classification);
   assert.equal((await api(nodeB, sessionB, "PUT", `/projects/${projectB.id}/sessions/classification`, { ...payload, classification: null })).status, 200);
   await waitForLabel(nodeA, sessionA, projectA.id, undefined);
+});
+
+test("background tasks route list, output, stop, offline, and grant denial across two nodes", { timeout: 60_000 }, async () => {
+  interface Runtime { close(): Promise<void> }
+  const runtimeA = await startSupervisor({
+    dataDirectory: nodeA.dataDir,
+    app: { executable: process.execPath, args: ["-e", "setInterval(()=>{},1000)"], cwd: root, env: { PATH: process.env.PATH ?? "" } },
+  }) as Runtime;
+  const runtimeB = await startSupervisor({
+    dataDirectory: nodeB.dataDir,
+    app: { executable: process.execPath, args: ["-e", "setInterval(()=>{},1000)"], cwd: root, env: { PATH: process.env.PATH ?? "" } },
+  }) as Runtime;
+  const projectA = nodeA.projects.find((project) => project.name === "Joint Bob")!;
+  const projectB = nodeB.projects.find((project) => project.name === "Joint Bob")!;
+  const conversationId = randomUUID();
+  const taskA = randomUUID();
+  const taskB = randomUUID();
+  const operation = (command: Record<string, unknown>) => api<Record<string, unknown>>(
+    nodeA,
+    sessionA,
+    "POST",
+    "/background-tasks/operation",
+    { nodeId: nodeB.nodeId, command: { projectId: projectA.id, conversationId, ...command } },
+  );
+  try {
+    await startSyntheticTask({ node: nodeA, root }, projectA.id, conversationId, taskA, true);
+    await startSyntheticTask({ node: nodeB, root }, projectB.id, conversationId, taskB, true);
+    const discovered = await api<{ tasks: Array<{ id: string; nodeId: string }> }>(
+      nodeA,
+      sessionA,
+      "GET",
+      `/background-tasks?projectId=${projectA.id}&conversationId=${conversationId}`,
+    );
+    assert.equal(discovered.status, 200, JSON.stringify(discovered.body));
+    assert.ok(discovered.body.tasks.some((task) => task.id === taskB && task.nodeId === nodeB.nodeId), "node A discovers node B's task");
+
+    let text = "";
+    for (let attempt = 0; attempt < 40 && !text.includes("safe-output"); attempt++) {
+      const output = await operation({ action: "output", id: taskB, offset: 0, limit: 64 });
+      assert.equal(output.status, 200, JSON.stringify(output.body));
+      text = Buffer.from(String(output.body.chunk ?? ""), "base64").toString();
+      if (!text.includes("safe-output")) await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.match(text, /safe-output/, "remote output comes from node B");
+    const stopped = await operation({ action: "stop", id: taskB });
+    assert.equal(stopped.status, 200, JSON.stringify(stopped.body));
+    assert.equal(stopped.body.id, taskB);
+    const stillHeld = await api<{ id: string; status: string }>(nodeA, sessionA, "POST", "/background-tasks/operation", {
+      nodeId: nodeA.nodeId,
+      command: { action: "get", projectId: projectA.id, conversationId, id: taskA },
+    });
+    assert.equal(stillHeld.body.status, "running", "stopping B must not fall back to A's task");
+
+    await stopDevNode(servers[1]);
+    const offlineList = await api<{ nodes: Array<{ nodeId: string; available: boolean }> }>(
+      nodeA,
+      sessionA,
+      "GET",
+      `/background-tasks?projectId=${projectA.id}&conversationId=${conversationId}`,
+    );
+    assert.equal(offlineList.status, 200);
+    assert.equal(offlineList.body.nodes.find((node) => node.nodeId === nodeB.nodeId)?.available, false);
+    assert.equal((await operation({ action: "get", id: taskB })).status, 503, "offline operation must not fall back locally");
+    servers[1] = await startDevNode(environment, nodeB);
+    sessionB = await signIn(environment, nodeB);
+
+    const grants = new DatabaseSync(path.join(nodeB.dataDir, "node.db"));
+    try {
+      grants.prepare("INSERT INTO cluster_project_grants VALUES (?, ?, ?, ?)").run(nodeA.nodeId, "[]", new Date().toISOString(), nodeB.nodeId);
+      const denied = await operation({ action: "get", id: taskB });
+      assert.equal(denied.status, 403, JSON.stringify(denied.body));
+      assert.equal(denied.body.error, "Project is not shared with this node");
+      const deniedDiscovery = await api(nodeA, sessionA, "GET", `/background-tasks?projectId=${projectA.id}&conversationId=${conversationId}`);
+      assert.equal(deniedDiscovery.status, 403, "permission denial must not become an empty successful discovery");
+    } finally {
+      grants.prepare("DELETE FROM cluster_project_grants WHERE node_id = ?").run(nodeA.nodeId);
+      grants.close();
+    }
+  } finally {
+    await runtimeA.close();
+    await runtimeB.close();
+  }
 });
 
 test("background children keep both nodes running after parent completion for every built-in harness", { timeout: 60_000 }, async () => {
@@ -1240,6 +1327,123 @@ test("portable review notifications survive node takeover", { timeout: 120_000 }
   } finally {
     await Promise.all([api(nodeA, sessionA, "PUT", "/settings", savedA), api(nodeB, sessionB, "PUT", "/settings", savedB)]);
     if (mock) await new Promise<void>((resolve, reject) => mock!.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("background completion follows its owner across nodes and downtime", { timeout: 90_000 }, async () => {
+  const fixture = await backgroundClusterFixture((fixtureRoot) => ({ JOINT_BOB_TEST_ENGINE_LOG: path.join(fixtureRoot, "completion-engine.log") }));
+  const [owner, source] = fixture.nodes;
+  const logPath = path.join(fixture.root, "completion-engine.log");
+  const env = { JOINT_BOB_TEST_ENGINE_LOG: logPath };
+  let opened: WebSocket | undefined;
+  const waitFor = async <T>(read: () => T | Promise<T>, ready: (value: T) => boolean, label: string): Promise<T> => {
+    let value!: T;
+    for (let attempt = 0; attempt < 300; attempt += 1) {
+      value = await read();
+      if (ready(value)) return value;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.fail(`Timed out waiting for ${label}: ${JSON.stringify(value)}`);
+  };
+  const readLog = async (): Promise<string[]> => {
+    try { return (await readFile(logPath, "utf8")).trim().split("\n").filter(Boolean); }
+    catch { return []; }
+  };
+  const occurrences = (text: string, marker: string): number => text.split(marker).length - 1;
+  try {
+    const authA = await signIn(fixture.environment, owner);
+    const authB = await signIn(fixture.environment, source);
+    const projectA = owner.projects.find((project) => project.name === "Internal Assistant")!;
+    const projectB = source.projects.find((project) => project.name === "Internal Assistant")!;
+    const listed = await api<{ sessions: SessionView[] }>(owner, authA, "GET", `/projects/${projectA.id}/sessions`);
+    const target = listed.body.sessions.find((session) => session.harnessId === "pi")!;
+    const connection = await openConversationSocket(owner, authA, projectA.id, target.path);
+    opened = connection.socket;
+    const conversationId = String(connection.ready.conversationId);
+    assert.ok(conversationId.length > 0, "ready supplies the logical conversation id");
+    opened.close(); opened = undefined;
+
+    await waitFor(async () => {
+      const response = await api<{ sessions: SessionView[] }>(source, authB, "GET", `/projects/${projectB.id}/sessions`);
+      return response.body.sessions.some((session) => session.id === target.id);
+    }, Boolean, "conversation replication to task node");
+    const now = new Date().toISOString();
+    const sourceDb = new DatabaseSync(path.join(source.dataDir, "node.db"));
+    try {
+      sourceDb.exec("PRAGMA busy_timeout = 5000;");
+      sourceDb.prepare("INSERT OR REPLACE INTO conversation_records (project_id, engine, session_id, created_at, updated_at, origin_node_id, conversation_id, segment_index) VALUES (?, 'pi', ?, ?, ?, ?, ?, 0)")
+        .run(projectB.id, target.id, now, now, owner.nodeId, conversationId);
+      const seeded = sourceDb.prepare("SELECT project_id,engine,session_id,origin_node_id,conversation_id,segment_index FROM conversation_records WHERE project_id=? AND conversation_id=?").get(projectB.id, conversationId) as Record<string, unknown>;
+      assert.deepEqual({ ...seeded }, { project_id: projectB.id, engine: "pi", session_id: target.id, origin_node_id: owner.nodeId, conversation_id: conversationId, segment_index: 0 });
+    } finally { sourceDb.close(); }
+    seedOwnershipRow(owner, "pi", target.id, owner.nodeId, "owned", null);
+    seedOwnershipRow(source, "pi", target.id, owner.nodeId, "owned", null);
+
+    const tokenB = (await api<{ token: string }>(source, authB, "GET", "/cluster/invite")).body.token;
+    const completionPost = (body: Record<string, string>) => fetch(`${owner.url}/api/cluster/background-completions`, {
+      method: "POST", headers: { Authorization: `Bearer ${tokenB}`, "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const first = randomUUID();
+    const firstBody = { projectId: projectB.id, conversationId, sourceNodeId: source.nodeId, taskId: first };
+    await startSyntheticTask({ node: source, root: fixture.root }, projectB.id, conversationId, first);
+    await waitFor(readLog, (lines) => lines.length === 1, "first owner follow-up");
+    let transcript = await waitFor(() => readFile(target.path, "utf8"), (text) => text.includes(first), "first completion transcript");
+    assert.equal(occurrences(transcript, first), 1);
+    assert.deepEqual(await readLog(), [`pi:${owner.nodeId}`], "follow-up runs only on current owner A");
+    const outbox = new DatabaseSync(path.join(source.dataDir, "node.db"), { readOnly: true });
+    try {
+      const row = await waitFor(
+        async () => outbox.prepare("SELECT target_node_id,delivery_state FROM background_completion_outbox WHERE task_id=?").get(first) as { target_node_id: string; delivery_state: string } | undefined,
+        (value) => value?.delivery_state === "queued" && value?.target_node_id === owner.nodeId,
+        "source durable completion acknowledgement",
+      );
+      assert.deepEqual({ ...row }, { target_node_id: owner.nodeId, delivery_state: "queued" });
+    } finally { outbox.close(); }
+
+    const duplicate = await completionPost(firstBody);
+    assert.equal(duplicate.status, 200, await duplicate.clone().text());
+    const receipt = await duplicate.json() as { queued: boolean; promptId: string };
+    assert.equal(receipt.queued, true);
+    const repeated = await completionPost(firstBody);
+    assert.equal(repeated.status, 200, await repeated.clone().text());
+    assert.equal((await repeated.json() as { promptId: string }).promptId, receipt.promptId, "duplicate ACK keeps a stable prompt id");
+
+    const forged = await completionPost({ ...firstBody, sourceNodeId: owner.nodeId });
+    assert.equal(forged.status, 403, "machine token cannot forge its source node identity");
+    const grants = new DatabaseSync(path.join(owner.dataDir, "node.db"));
+    try {
+      grants.prepare("INSERT INTO cluster_project_grants VALUES (?, ?, ?, ?)").run(source.nodeId, "[]", new Date().toISOString(), owner.nodeId);
+      assert.equal((await completionPost(firstBody)).status, 403, "completion source must have access to the destination project");
+    } finally {
+      grants.prepare("DELETE FROM cluster_project_grants WHERE node_id = ?").run(source.nodeId);
+      grants.close();
+    }
+
+    await stopDevNode(fixture.servers[0]);
+    const second = randomUUID();
+    await startSyntheticTask({ node: source, root: fixture.root }, projectB.id, conversationId, second);
+    await waitFor(() => supervisorRequest<{ status: string }>(source.dataDir, { action: "task", id: second }), (task) => task.status === "completed", "task completion while owner is down");
+    assert.equal((await readLog()).length, 1, "stopped owner cannot run the follow-up");
+    fixture.servers[0] = await startDevNode(fixture.environment, owner, env);
+    transcript = await waitFor(() => readFile(target.path, "utf8"), (text) => text.includes(second), "delivery after owner restart");
+    await waitFor(readLog, (lines) => lines.length === 2, "second owner follow-up");
+    assert.equal(occurrences(transcript, first), 1);
+    assert.equal(occurrences(transcript, second), 1);
+
+    const postRestartDuplicate = await completionPost(firstBody);
+    assert.equal(postRestartDuplicate.status, 200, await postRestartDuplicate.clone().text());
+    assert.equal((await postRestartDuplicate.json() as { promptId: string }).promptId, receipt.promptId);
+    const sentinel = randomUUID();
+    await startSyntheticTask({ node: source, root: fixture.root }, projectB.id, conversationId, sentinel);
+    transcript = await waitFor(() => readFile(target.path, "utf8"), (text) => text.includes(sentinel), "scheduler sentinel after duplicate retry");
+    const lines = await waitFor(readLog, (value) => value.length === 3, "sentinel owner follow-up");
+    assert.deepEqual(lines, Array(3).fill(`pi:${owner.nodeId}`), "no follow-up may execute on source B");
+    assert.equal(occurrences(transcript, first), 1, "first completion remains exactly once through retries and restart");
+    assert.equal(occurrences(transcript, second), 1);
+    assert.equal(occurrences(transcript, sentinel), 1);
+  } finally {
+    opened?.terminate();
+    await closeBackgroundClusterFixture(fixture);
   }
 });
 

@@ -215,6 +215,7 @@
           </label>
           <button class="ghost icon-button chat-recents-button" id="chatRecentSessionsButton" type="button" aria-label="Recent conversations" title="Recent conversations" data-recent-sessions-open data-shortcut-hint="recents" data-testid="chat-recent-sessions-open-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" /><path d="M3 4v4h4" /><path d="M12 7.5V12l3.2 1.9" /></svg></button>
           <button class="ghost icon-button chat-recents-button chat-running-button" id="chatRunningConversationsButton" type="button" data-running-conversations-open aria-label="Running conversations" title="Running conversations" data-shortcut-hint="runningConversations" data-testid="chat-running-conversations-open-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5.5 10 6.5L8 18.5z"/></svg></button>
+          <button class="ghost compact background-tasks-trigger" id="backgroundTasksButton" type="button" aria-controls="backgroundTasksDialog" aria-haspopup="dialog" aria-label="Background tasks" data-testid="background-tasks-open">Tasks <span class="background-tasks-badge" id="backgroundTasksBadge" hidden></span></button>
           <details class="chat-more" id="chatMoreMenu">
             <summary class="ghost icon-button" aria-label="More chat actions" title="More chat actions" data-testid="chat-more-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7" fill="currentColor" /><circle cx="12" cy="12" r="1.7" fill="currentColor" /><circle cx="19" cy="12" r="1.7" fill="currentColor" /></svg></summary>
             <div class="chat-more-actions">
@@ -1278,6 +1279,19 @@
     </dialog>
 
     <!-- The app's own confirm box. Replaces window.confirm so every prompt is themed and testable. -->
+    <dialog id="backgroundTasksDialog" class="background-tasks-dialog" data-testid="background-tasks-dialog" aria-labelledby="backgroundTasksTitle">
+      <div class="dialog-card">
+        <header class="background-tasks-header"><div><span class="eyebrow">Conversation</span><h2 id="backgroundTasksTitle">Background tasks</h2></div><button class="ghost icon-button" id="backgroundTasksClose" type="button" aria-label="Close background tasks" data-testid="background-tasks-close">×</button></header>
+        <div id="backgroundTasksSummary" role="status" aria-live="polite"></div>
+        <div id="backgroundTasksNodes" class="background-tasks-nodes"></div>
+        <div class="background-tasks-grid">
+          <section class="background-tasks-list" id="backgroundTasksList" aria-label="Task history"></section>
+          <section class="background-tasks-details" id="backgroundTasksDetails" aria-label="Task details"><p>Select a task to inspect its output.</p><pre id="backgroundTasksOutput" tabindex="0" data-testid="background-task-output"></pre></section>
+        </div>
+        <footer class="background-tasks-footer"><button class="ghost compact" id="backgroundTasksRefresh" type="button" aria-label="Refresh background tasks" data-testid="background-tasks-refresh">Refresh</button></footer>
+      </div>
+    </dialog>
+
     <dialog id="confirmDialog" data-testid="confirm-dialog">
       <form method="dialog" class="dialog-card confirm-card">
         <div class="dialog-heading" tabindex="-1">

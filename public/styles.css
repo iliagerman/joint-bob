@@ -2735,3 +2735,26 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .running-conversations-list .session-card { position: relative; width: 100%; text-align: left; padding-left: 38px; }
 .running-conversations-list .session-card strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .running-conversations-list .session-card span { -webkit-line-clamp: 1; }
+
+/* Background task history */
+.background-tasks-trigger { position: relative; min-height: 40px; }
+.background-tasks-badge { min-width: 1.25rem; padding: 0 .3rem; border-radius: 999px; background: var(--danger); color: white; font-size: .72rem; text-align: center; }
+.background-tasks-dialog { padding: 0; }
+.background-tasks-dialog > .dialog-card { width: min(850px, calc(100vw - 24px)); max-width: none; max-height: calc(100dvh - 24px); overflow: auto; }
+.background-tasks-header, .background-tasks-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.background-tasks-header .icon-button { min-width: 40px; min-height: 40px; }
+.background-tasks-header h2 { margin: 0; }
+.background-tasks-grid { display: grid; grid-template-columns: minmax(220px, .8fr) minmax(0, 1.2fr); gap: 14px; min-height: 260px; }
+.background-tasks-list { overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+.background-task-row { min-height: 48px; display: flex; flex-direction: column; align-items: flex-start; text-align: left; }
+.background-task-row span, .background-tasks-node { color: var(--muted); font-size: .85rem; }
+.background-tasks-node.unavailable { color: var(--danger); }
+.background-tasks-node button, .background-tasks-details button, .background-tasks-footer button { min-height: 40px; }
+.background-tasks-details { min-width: 0; }
+.background-tasks-details pre { min-height: 150px; max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--field); padding: 10px; border-radius: 8px; }
+.background-tasks-dialog [hidden] { display: none !important; }
+@media (max-width: 600px) {
+  .background-tasks-dialog > .dialog-card { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); margin: 8px auto; }
+  .background-tasks-grid { grid-template-columns: 1fr; }
+  .background-tasks-list { max-height: 180px; }
+}

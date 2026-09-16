@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Background tasks now appear in a dedicated Tasks panel with live output, status tracking, and stop controls; completions automatically notify you in the conversation.
 - Tasks now preserve their local transcript pointers during cluster synchronization when the originating harness session hasn't changed.
 - Classification filter dropdown no longer overflows on small screens.
 

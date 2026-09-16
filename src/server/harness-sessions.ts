@@ -101,6 +101,7 @@ export function sendHarnessStatus(shared: SharedHarnessSession, socket?: WebSock
 
 function scheduleIdle(shared: SharedHarnessSession): void {
   clearIdle(shared);
+  if (findHarnessSession(shared.projectId, shared.engine, shared.session.id) !== shared) return;
   shared.idleTimer = setTimeout(() => {
     if (shared.clients.size || harnessSessionBusy(shared)) return scheduleIdle(shared);
     disposeHarnessSession(shared);
@@ -109,6 +110,7 @@ function scheduleIdle(shared: SharedHarnessSession): void {
 }
 
 export function disposeHarnessSession(shared: SharedHarnessSession): void {
+  if (findHarnessSession(shared.projectId, shared.engine, shared.session.id) !== shared) return;
   if (harnessSessionBusy(shared)) throw new Error("Cannot dispose an active harness session");
   clearIdle(shared); shared.unsubscribe(); shared.session.dispose();
   harnessSessions.delete(harnessSessionKey(shared.projectId, shared.engine, shared.session.id));

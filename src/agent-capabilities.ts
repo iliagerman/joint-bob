@@ -32,22 +32,27 @@ const taskInstructions = `# Joint Bob tasks
 
 Use the local task supervisor for commands that must outlive this turn:
 node "$JOINT_BOB_TASK_CLI" start [--id UUID] [--name label] -- command args
-node "$JOINT_BOB_TASK_CLI" status [id]
-node "$JOINT_BOB_TASK_CLI" output id [--offset N] [--limit N]
-node "$JOINT_BOB_TASK_CLI" stop id
+node "$JOINT_BOB_TASK_CLI" status [id] [--node UUID]
+node "$JOINT_BOB_TASK_CLI" output id [--offset N] [--limit N] [--node UUID]
+node "$JOINT_BOB_TASK_CLI" stop id [--node UUID]
 
-Shell features require an explicit sh -lc command. Do not background the native harness tool. The local supervisor owns the process, so ordinary app upgrades preserve it; a full native-service restart or reboot can interrupt it. An unknown status must never be rerun automatically. Retry an uncertain launch only with the same UUID.
+Start is always local. Use --node with status, output, or stop to access a task on its source node. Shell features require an explicit sh -lc command. Do not background the native harness tool. The local supervisor owns the process, so ordinary app upgrades preserve it; a full native-service restart or reboot can interrupt it. An unknown status must never be rerun automatically. Retry an uncertain launch only with the same UUID.
 
 Task logs may contain sensitive output. Never print credentials. If the task socket or token is absent or unavailable, report unsupported node mode for background tasks; do not fall back to harness background execution.
 
-Use status/output to check completion. Do not promise a later autonomous reply; automatic conversation wakeup is not implemented.`;
+Completions enqueue an automatic follow-up in the original conversation. Delivery can be delayed while the conversation is busy, offline, locked, or owned by another unavailable node; tasks remain on the node where they started. The Tasks panel shows task and delivery state. Do not guarantee that the user receives a reply before the queued follow-up is processed.`;
 
 function taskEnvironment(identity: AgentCapabilityIdentity): NodeJS.ProcessEnv {
   const dataDirectory = resolveDataDirectory();
+  const configuredPort = process.env.PORT ?? "8790";
+  const port = /^\d+$/.test(configuredPort) ? Number(configuredPort) : 0;
   const base = {
     JOINT_BOB_TASK_CLI: fileURLToPath(new URL("../bin/joint-bob-task.mjs", import.meta.url)),
     JOINT_BOB_TASK_SOCKET: undefined,
     JOINT_BOB_TASK_TOKEN: undefined,
+    JOINT_BOB_TASK_API: Number.isInteger(port) && port >= 1 && port <= 65535
+      ? `http://127.0.0.1:${port}/api/background-tasks/agent`
+      : undefined,
   };
   try {
     const control = readSupervisorControl(dataDirectory);

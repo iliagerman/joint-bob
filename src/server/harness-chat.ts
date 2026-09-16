@@ -24,7 +24,7 @@ import { socketMessageSchema } from "./schemas.js";
 import { claimConversationLocally, describeConversationOwner, type ForeignConversationOwner, requireLocalConversationOwner } from "./sessions-helpers.js";
 import { flags } from "./state.js";
 import { broadcastToProject, chatErrorMessage, send } from "./realtime.js";
-import { attachHarnessClient, detachHarnessClient, disposeHarnessSession, harnessSessionBusy, openHarnessSession, sendHarnessStatus, type SharedHarnessSession } from "./harness-sessions.js";
+import { attachHarnessClient, detachHarnessClient, disposeHarnessSession, findHarnessSession, harnessSessionBusy, openHarnessSession, sendHarnessStatus, type SharedHarnessSession } from "./harness-sessions.js";
 
 export interface HarnessChatConnection {
   socket: WebSocket; project: ProjectRecord; taskId: string | null; cwd: string; engine: HarnessId;
@@ -62,6 +62,15 @@ export async function autoCompactBetweenTurns(shared: SharedHarnessSession, thre
 }
 
 function queueKey(connection: HarnessChatConnection): string { return `${connection.project.id}:${connection.conversationId}`; }
+async function ensureCurrentSession(connection: HarnessChatConnection): Promise<void> {
+  if (findHarnessSession(connection.project.id, connection.engine, connection.shared.session.id) === connection.shared) return;
+  const old = connection.shared;
+  const shared = await openHarnessSession(connection.engine, { projectId: connection.project.id, cwd: connection.cwd, sessionId: old.session.id, sessionPath: old.session.file, conversationId: connection.conversationId, accountIds: connection.accountIds });
+  old.clients.delete(connection.socket);
+  connection.shared = shared;
+  if (connection.socket.readyState === WebSocket.OPEN) attachHarnessClient(shared, connection.socket);
+  else sendHarnessStatus(shared);
+}
 function publish(connection: HarnessChatConnection, event: Record<string, unknown>): void {
   for (const candidate of harnessChatConnections) if (queueKey(candidate) === queueKey(connection)) send(candidate.socket, event);
 }
@@ -168,6 +177,7 @@ async function applyQueuedSettings(connection: HarnessChatConnection, settings: 
 
 async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt): Promise<void> {
   if (queued.dispatchState === "starting" || startingIds.has(queued.id)) throw new Error("Queued prompt start is uncertain; edit or cancel it before retrying");
+  await ensureCurrentSession(connection);
   connection.shared.turnInFlight += 1;
   try {
     if (queued.settings) await applyQueuedSettings(connection, queued.settings);
@@ -192,7 +202,9 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
       if (!claimed) throw new Error("Harness did not start the queued prompt");
       publish(connection, { type: "promptCompleted", queueId: queued.id });
     } catch (error) {
-      if (!claimed) resetQueuedPromptAttempt(queued.id);
+      // An automatic completion may have crossed the harness start boundary even
+      // when transport failed before onStarted. Keep it fenced as uncertain.
+      if (!claimed && !queued.systemEventId) resetQueuedPromptAttempt(queued.id);
       publish(connection, { type: "promptFailed", queueId: queued.id, error: chatErrorMessage(error) });
       throw error;
     } finally {
@@ -211,6 +223,7 @@ async function runGoalTurn(connection: HarnessChatConnection): Promise<boolean> 
   const goal = await getConversationGoal(connection.project.id, connection.conversationId);
   if (goal?.status !== "active") return false;
   const local = await getClusterNode();
+  await ensureCurrentSession(connection);
   connection.shared.turnInFlight += 1;
   try {
     await writable(connection);
@@ -234,6 +247,7 @@ async function runGoalTurn(connection: HarnessChatConnection): Promise<boolean> 
 
 async function drainLoop(connection: HarnessChatConnection): Promise<void> {
   for (;;) {
+    await ensureCurrentSession(connection);
     if (pausedDrains.has(queueKey(connection)) || harnessSessionBusy(connection.shared)) return;
     if (await autoCompactBetweenTurns(connection.shared, getSettings().autoCompactThreshold, () => writable(connection))) sendHarnessStatus(connection.shared);
     const next = listQueuedPrompts(queueKey(connection))[0];
@@ -429,6 +443,8 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
   const conversationId = record?.conversationId ?? options.sessionId;
   const shared = await openHarnessSession(options.engine, { projectId: options.project.id, cwd: options.cwd, sessionId: options.sessionId, sessionPath: options.sessionPath, conversationId, accountIds: options.accountIds });
   const connection: HarnessChatConnection = { socket: options.socket, project: options.project, taskId: options.taskId, cwd: options.cwd, engine: options.engine, shared, handoffContext: options.handoffContext, accountIds: options.accountIds, readOnly: options.readOnly, conversationId };
+  const local = await getClusterNode();
+  if (!record && !options.readOnly) await ensureConversationRecord(options.project.id, options.engine, options.sessionId, local.id, options.taskId ?? undefined, { conversationId, segmentIndex: 0 });
   const saved = readQueueSettings(queueKey(connection));
   if (saved && selectedHarness(saved) === options.engine && !harnessSessionBusy(shared)) await shared.session.configure(runtimeSettings(saved));
   attachHarnessClient(shared, options.socket); harnessChatConnections.add(connection);
@@ -436,7 +452,7 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
   if (!shared.session.messages.length && transcript.segments.length > 1 && !connection.handoffContext) connection.handoffContext = buildHandoffContext(transcript.messages);
   const scheduled = Boolean(record?.cronTaskId);
   const browserMessages = scheduled ? scheduledReportMessages(transcript.messages, !harnessSessionBusy(shared)) : transcript.messages;
-  const [local, goal] = await Promise.all([getClusterNode(), getConversationGoal(options.project.id, conversationId)]);
+  const goal = await getConversationGoal(options.project.id, conversationId);
   send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, scheduled, bobGoal: goal ?? null, ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
   for (const event of shared.liveEvents) send(options.socket, event);
   refreshHarnessPromptQueue(connection);
