@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.42.0 — 2026-09-16
 
 - Agents can now send notifications to ntfy servers you've configured.
 - Force-starting a queued prompt after canceling a turn no longer shows the canceled turn's error in the chat.
