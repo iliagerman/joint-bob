@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.38.0 — 2026-09-16
 
 - Conversations can now be marked done to hide them from the active list; a "Show done" toggle reveals them when needed.
 
