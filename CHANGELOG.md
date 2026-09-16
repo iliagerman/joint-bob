@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- API responses now prevent browser cache retention, ensuring stale conversation data doesn't persist across sessions.
+
 ## 1.36.0 — 2026-09-16
 
 - Conversations can now run toward specific objectives with `/bob-goal`, continuing autonomously until the work is complete, blocked, or cancelled; goal state syncs across cluster nodes.

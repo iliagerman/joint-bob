@@ -46,6 +46,12 @@ const managedIgnorePatterns = [
   "**/.joint-bob/",
   ".pi-mobile-web/",
   "**/.pi-mobile-web/",
+  "aidlc/.aidlc-*",
+  "**/aidlc/.aidlc-*",
+  "aidlc/spaces/*/intents/.aidlc-*",
+  "**/aidlc/spaces/*/intents/.aidlc-*",
+  "aidlc/spaces/*/intents/*/.aidlc-*",
+  "**/aidlc/spaces/*/intents/*/.aidlc-*",
   "logs/",
   "**/logs/",
   "*.log",
@@ -169,6 +175,33 @@ test("an existing Syncthing folder updates when its requested path changes", asy
   assert.ok(update);
   assert.equal((update.body as { path: string }).path, path.resolve("/new/demo"));
   assert.deepEqual((update.body as { devices: Array<{ deviceID: string }> }).devices, [{ deviceID: "LOCAL" }]);
+});
+
+test("Syncthing ignores AI-DLC machine-local runtime state", async () => {
+  let postedIgnore: string[] | undefined;
+  await withSyncthingApi((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      response.setHeader("Content-Type", "application/json");
+      if (request.method === "GET" && request.url === "/rest/db/ignores?folder=demo") {
+        response.end(JSON.stringify({ ignore: [] }));
+        return;
+      }
+      if (request.method === "POST" && request.url === "/rest/db/ignores?folder=demo") {
+        postedIgnore = (JSON.parse(body) as { ignore: string[] }).ignore;
+        response.end("{}");
+        return;
+      }
+      response.statusCode = 404;
+      response.end();
+    });
+  }, async (syncthing) => {
+    await syncthing.reconcileSyncthingProjectFolders([{ syncFolderId: "demo" }]);
+  });
+  assert.ok(postedIgnore?.includes("aidlc/.aidlc-*"));
+  assert.ok(postedIgnore?.includes("**/aidlc/spaces/*/intents/*/.aidlc-*"));
+  assert.ok(!postedIgnore?.some((rule) => rule === ".aidlc-*" || rule === "**/.aidlc-*"));
 });
 
 test("Syncthing treats a null ignore list as empty", async () => {

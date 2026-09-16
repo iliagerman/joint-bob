@@ -70,6 +70,7 @@ export function securityHeaders(request: Request, response: Response, next: Next
   response.setHeader("X-Frame-Options", request.path === "/" && request.query.canvasPane === "1" ? "SAMEORIGIN" : "DENY");
   response.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   response.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  if (request.path.startsWith("/api/")) response.setHeader("Cache-Control", "no-store");
   next();
 }
 

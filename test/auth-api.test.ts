@@ -54,7 +54,9 @@ test("first startup lets the owner create credentials and signs them in", async 
       csrfToken: setupBody.csrfToken,
       username: "owner",
     });
-    assert.equal((await fetch(`${baseUrl}/api/projects`, { headers: { Cookie: sessionCookie } })).status, 200);
+    const projects = await fetch(`${baseUrl}/api/projects`, { headers: { Cookie: sessionCookie } });
+    assert.equal(projects.status, 200);
+    assert.equal(projects.headers.get("cache-control"), "no-store", "authenticated API responses must not leave stale browser data");
 
     const duplicateSetup = await fetch(`${baseUrl}/api/auth/setup`, {
       method: "POST",

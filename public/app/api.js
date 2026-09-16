@@ -10,7 +10,7 @@ function headers() {
 }
 
 export async function api(path, options = {}) {
-  const response = await fetch(path, { ...options, headers: { ...headers(), ...(options.headers || {}) } });
+  const response = await fetch(path, { ...options, cache: "no-store", headers: { ...headers(), ...(options.headers || {}) } });
   if (!response.ok) {
     const body = await response.json().catch(() => ({ error: response.statusText }));
     if (response.status === 401 && path !== "/api/auth/status" && path !== "/api/auth/login") showSignedOut();
