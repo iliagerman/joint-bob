@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.34.2 — 2026-09-16
 
 - Chat history now filters out internal Claude system messages that previously appeared in transcripts.
 
