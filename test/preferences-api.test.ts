@@ -66,11 +66,11 @@ test("preferences store v6 canvas layouts and reject invalid trees", async () =>
     const afterRejectedHarness = await fetch(`${node.baseUrl}/api/preferences`, { headers: { Cookie: cookie } });
     assert.deepEqual((await afterRejectedHarness.json() as { canvasLayout: unknown }).canvasLayout, stored);
 
-    const keymap = { version: 3, base: ["meta", "shift"], commands: { splitRight: ["ctrl", "SPACE", "\\"], splitBelow: ["ctrl", "SPACE", "-"] } };
+    const keymap = { version: 4, base: ["meta", "shift"], commands: { splitRight: ["ctrl", "SPACE", "\\"], splitBelow: ["ctrl", "SPACE", "-"] } };
     const savedKeymap = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ canvasKeymap: keymap }) });
     assert.equal(savedKeymap.status, 200);
     const savedKeymapBody = await savedKeymap.json() as { canvasKeymap: { version?: number; commands: Record<string, string[] | null> } };
-    assert.equal(savedKeymapBody.canvasKeymap.version, 3);
+    assert.equal(savedKeymapBody.canvasKeymap.version, 4);
     assert.deepEqual(savedKeymapBody.canvasKeymap.commands.splitRight, ["ctrl", "SPACE", "\\"]);
 
     for (const invalid of [

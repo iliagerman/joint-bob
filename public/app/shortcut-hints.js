@@ -1,7 +1,9 @@
 // Buttons show the active keyboard shortcut beside their label or below their
-// icon. A button declares its command with
-// data-shortcut-hint; this module fills the badge from the saved keymap.
-import { chordLabel, normalizeCanvasKeymap } from "../canvas-layout.js";
+// icon. A button declares its command with data-shortcut-hint; this module fills the
+// badge from the saved keymap. The badge names the key alone - every command rides the
+// same modifiers, so repeating them on 45 buttons only costs space - and the whole
+// chord stays available as the badge's tooltip and in the shortcuts panel.
+import { chordKeyLabel, chordLabel, normalizeCanvasKeymap } from "../canvas-layout.js";
 import { state } from "./state.js";
 
 export function syncShortcutHints() {
@@ -16,7 +18,8 @@ export function syncShortcutHints() {
       badge.setAttribute("aria-hidden", "true");
       host.append(badge);
     }
-    badge.textContent = chordLabel(chord);
+    badge.textContent = chordKeyLabel(chord);
+    badge.title = chordLabel(chord);
   }
 }
 

@@ -112,7 +112,13 @@ export function canvasPaneEngine(pane, harnesses) { return pane.harnessId || pan
 // every capital letter a conversation is typing.
 export const CANVAS_MODIFIERS = ["meta", "ctrl", "alt", "shift"];
 const MODIFIER_TOKENS = new Set(CANVAS_MODIFIERS);
-const modifierSymbols = { meta: "⌘", ctrl: "⌃", alt: "⌥", shift: "⇧" };
+/** Mac draws modifiers as symbols; everywhere else they are spelled out, because
+ *  ⌥ names a key that keyboard does not have. */
+const MAC_MODIFIER_LABELS = { meta: "⌘", ctrl: "⌃", alt: "⌥", shift: "⇧" };
+const OTHER_MODIFIER_LABELS = { meta: "Win+", ctrl: "Ctrl+", alt: "Alt+", shift: "Shift+" };
+export const isMacPlatform = () => (typeof navigator === "object" && navigator
+  ? /mac/i.test(navigator.userAgentData?.platform || navigator.platform || navigator.userAgent)
+  : true);
 /** The keys a canvas conversation shortcut may hold. Mirrors `src/canvas-keys.ts`;
  *  Space and the slashes cannot ride a URL path segment to the shortcut routes. */
 export const CANVAS_KEY_TOKENS = [..."0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ", "[", "]", ";", "'", ",", ".", "-", "=", "`", "ENTER"];
@@ -156,9 +162,17 @@ export const chordMatches = (chord, event) => Array.isArray(chord)
 export const canvasKeyLabel = (key) => ({ ENTER: "⏎", SPACE: "Space", ARROWLEFT: "←", ARROWRIGHT: "→", ARROWUP: "↑", ARROWDOWN: "↓" })[key] ?? (key || "");
 export function chordLabel(chord) {
   if (!Array.isArray(chord)) return "";
+  const symbols = isMacPlatform() ? MAC_MODIFIER_LABELS : OTHER_MODIFIER_LABELS;
   const keys = chord.filter((token) => !MODIFIER_TOKENS.has(token));
-  const first = CANVAS_MODIFIERS.filter((name) => chord.includes(name)).map((name) => modifierSymbols[name]).join("") + canvasKeyLabel(keys[0]);
+  const first = CANVAS_MODIFIERS.filter((name) => chord.includes(name)).map((name) => symbols[name]).join("") + canvasKeyLabel(keys[0]);
   return [first, ...keys.slice(1).map(canvasKeyLabel)].join(" ");
+}
+/** The keys alone, without the modifiers. Every default shortcut rides the same
+ *  modifiers, so a button badge only has to name the key that makes it unique - the
+ *  shortcuts panel is where the whole chord is spelled out. */
+export function chordKeyLabel(chord) {
+  if (!Array.isArray(chord)) return "";
+  return chord.filter((token) => !MODIFIER_TOKENS.has(token)).map(canvasKeyLabel).join(" ");
 }
 export const shortcutPrefix = (shortcut) => {
   const keys = Array.isArray(shortcut) ? shortcut.filter((token) => !MODIFIER_TOKENS.has(token)) : [];
@@ -190,77 +204,78 @@ export const CANVAS_KEYMAP_COMMANDS = [
   "toggleProjects", "toggleChats", "board", "newProject", "newPiChat", "newClaudeChat",
   "runsOn", "selectAgent", "selectModel", "selectThinking", "terminal", "notify", "addToCanvas", "rename", "browser", "scheduledTasks",
 ];
+/** Every command rides one modifier pair - Control+Option on a Mac, Control+Alt
+ *  elsewhere, the same two physical keys - so a button badge can name the key alone.
+ *  Conversation keys keep their own base chord: sharing this one would make
+ *  Control+Option+3 mean both "page 3" and "the conversation on 3". */
+export const CANVAS_COMMAND_MODIFIERS = ["ctrl", "alt"];
+const commandChord = (key) => [...CANVAS_COMMAND_MODIFIERS, key];
 export const DEFAULT_CANVAS_KEYMAP = {
-  version: 3,
+  version: 4,
   // The chord every conversation key rides under: the base modifiers plus its key.
   base: ["meta", "shift"],
   commands: {
-    toggleView: ["meta", "shift", "V"],
-    spotlight: ["meta", "shift", "P"],
-    pendingReviews: ["meta", "shift", "R"],
-    recents: ["meta", "K"],
-    runningConversations: ["meta", "shift", "O"],
-    settings: ["meta", ","],
-    focusInput: ["meta", "shift", "I"],
-    toggleProjects: ["ctrl", "shift", "["],
-    toggleChats: ["ctrl", "shift", "]"],
-    board: ["meta", "shift", "B"],
-    newProject: ["meta", "alt", "P"],
-    newPiChat: ["meta", "alt", "N"],
-    newClaudeChat: ["meta", "alt", "C"],
-    runsOn: ["ctrl", "alt", "N"],
-    selectAgent: ["ctrl", "alt", "A"],
-    selectModel: ["ctrl", "alt", "M"],
-    selectThinking: ["ctrl", "alt", "T"],
-    terminal: ["ctrl", "alt", "X"],
-    browser: ["ctrl", "alt", "B"],
-    notify: ["ctrl", "alt", "Y"],
-    addToCanvas: ["ctrl", "alt", "V"],
-    rename: ["ctrl", "alt", "R"],
-    scheduledTasks: ["ctrl", "alt", "S"],
-    paneSearch: ["meta", "shift", "F"],
-    recentPane: ["meta", "shift", "E"],
-    focusPane: ["meta", "shift", "G"],
-    splitRight: ["ctrl", "SPACE", "\\"],
-    splitBelow: ["ctrl", "SPACE", "-"],
-    closePane: ["ctrl", "SPACE", "X"],
-    createPage: ["meta", "shift", "C"],
-    nextPage: ["ctrl", "alt", "ARROWRIGHT"],
-    prevPage: ["ctrl", "alt", "ARROWLEFT"],
-    focusLeft: ["ctrl", "shift", "ARROWLEFT"],
-    focusRight: ["ctrl", "shift", "ARROWRIGHT"],
-    focusUp: ["ctrl", "shift", "ARROWUP"],
-    focusDown: ["ctrl", "shift", "ARROWDOWN"],
-    ...Object.fromEntries([..."123456789"].map((digit, index) => [`page${index + 1}`, ["ctrl", "alt", digit]])),
+    toggleView: commandChord("V"),
+    spotlight: commandChord("P"),
+    pendingReviews: commandChord("R"),
+    recents: commandChord("K"),
+    runningConversations: commandChord("O"),
+    settings: commandChord(","),
+    focusInput: commandChord("I"),
+    toggleProjects: commandChord("["),
+    toggleChats: commandChord("]"),
+    board: commandChord("D"),
+    newProject: commandChord("="),
+    newPiChat: commandChord("N"),
+    newClaudeChat: commandChord("C"),
+    runsOn: commandChord("H"),
+    selectAgent: commandChord("A"),
+    selectModel: commandChord("M"),
+    selectThinking: commandChord("T"),
+    terminal: commandChord("X"),
+    browser: commandChord("B"),
+    notify: commandChord("Y"),
+    addToCanvas: commandChord("J"),
+    rename: commandChord("E"),
+    scheduledTasks: commandChord("S"),
+    paneSearch: commandChord("F"),
+    recentPane: commandChord("L"),
+    focusPane: commandChord("G"),
+    splitRight: commandChord("\\"),
+    splitBelow: commandChord("-"),
+    closePane: commandChord("W"),
+    // Pages sit on the digits, and the digit that selects no page creates one.
+    createPage: commandChord("0"),
+    prevPage: commandChord(";"),
+    nextPage: commandChord("'"),
+    focusLeft: commandChord("ARROWLEFT"),
+    focusRight: commandChord("ARROWRIGHT"),
+    focusUp: commandChord("ARROWUP"),
+    focusDown: commandChord("ARROWDOWN"),
+    ...Object.fromEntries([..."123456789"].map((digit, index) => [`page${index + 1}`, commandChord(digit)])),
   },
 };
-// Keymaps saved before chords existed held one key per command under one shared
-// modifier set, so those keys ride whatever modifiers the account had chosen.
-const LEGACY_COMMAND_KEYS = { recentPane: "E", focusPane: "G", paneSearch: "F", toggleView: "V", spotlight: "P", pendingReviews: "R" };
-// Legacy keys were stored in any case; the chord vocabulary is upper case.
-const canonicalChordKey = (key) => (typeof key === "string" ? key.toUpperCase() : key);
 export function normalizeCanvasKeymap(keymap) {
   const source = keymap && typeof keymap === "object" ? keymap : {};
-  const legacy = !source.commands;
-  const base = normalizeChord(legacy ? source.modifiers : source.base, { modifierOnly: true }) || [...DEFAULT_CANVAS_KEYMAP.base];
+  // Before commands existed the base modifiers were stored as `modifiers`.
+  const base = normalizeChord(source.commands ? source.base : source.modifiers, { modifierOnly: true }) || [...DEFAULT_CANVAS_KEYMAP.base];
+  // Version 4 moved every command onto one modifier pair, so a keymap saved before it
+  // describes a scheme that no longer exists: its command chords are rebuilt from the
+  // defaults and only the conversation base modifiers carry over.
+  const rebuild = !(source.version >= 4);
   const commands = {};
   const taken = [];
   for (const command of CANVAS_KEYMAP_COMMANDS) {
-    let raw = legacy
-      ? (source[command] === null ? null
-        : LEGACY_COMMAND_KEYS[command] ? [...base, canonicalChordKey(source[command]) ?? LEGACY_COMMAND_KEYS[command]]
-          : [...DEFAULT_CANVAS_KEYMAP.commands[command]])
-      : (source.commands?.[command] === undefined ? [...DEFAULT_CANVAS_KEYMAP.commands[command]] : source.commands[command]);
-    if (!(source.version >= 2) && command === "splitRight" && chordId(raw) === chordId(["ctrl", "\\"])) raw = ["ctrl", "SPACE", "\\"];
-    if (!(source.version >= 2) && command === "splitBelow" && chordId(raw) === chordId(["ctrl", "-"])) raw = ["ctrl", "SPACE", "-"];
-    if (!(source.version >= 3) && command === "closePane" && chordId(raw) === chordId(["meta", "shift", "X"])) raw = ["ctrl", "SPACE", "X"];
+    const raw = rebuild || source.commands?.[command] === undefined
+      ? [...DEFAULT_CANVAS_KEYMAP.commands[command]]
+      : source.commands[command];
     const chord = raw === null ? null : normalizeChord(raw);
     // A chord the canvas cannot carry is dropped, not stored; a chord two commands
     // would share goes to the earlier one, so the second is unbound rather than random.
     commands[command] = chord && !taken.some((existing) => shortcutsConflict(existing, chord)) ? chord : null;
     if (commands[command]) taken.push(chord);
   }
-  return { version: 3, base, commands };
+  return { version: 4, base, commands };
 }
 /** Command/Control + ? opens the shortcuts panel. This one is fixed: it is how a person
  *  finds out what the configurable keys are. It matches the typed "?" as well as

@@ -159,7 +159,7 @@ export type CanvasModifier = CanvasChordModifier;
  * two-stroke sequence, at most four physical keys, or null when unbound. Conversation
  * keys ride the `base` modifier chord plus their own single key. */
 export interface CanvasKeymapPreference {
-  version: 3;
+  version: 4;
   base: CanvasModifier[];
   commands: Record<string, string[] | null>;
 }
@@ -177,55 +177,56 @@ const CANVAS_KEYMAP_COMMANDS = [
   "runsOn", "selectAgent", "selectModel", "selectThinking", "terminal", "notify", "addToCanvas", "rename", "browser", "scheduledTasks",
 ] as const;
 
+/** Mirrors `DEFAULT_CANVAS_KEYMAP` in `public/canvas-layout.js`; every command rides
+ * Control+Option (Control+Alt off a Mac) so a button badge can name the key alone.
+ * Conversation keys keep their own base chord, which no command may share. */
+const CANVAS_COMMAND_MODIFIERS: CanvasModifier[] = ["ctrl", "alt"];
+const commandChord = (key: string): string[] => [...CANVAS_COMMAND_MODIFIERS, key];
+
 export const defaultCanvasKeymap = (): CanvasKeymapPreference => ({
-  version: 3,
+  version: 4,
   base: ["meta", "shift"],
   commands: {
-    toggleView: ["meta", "shift", "V"],
-    spotlight: ["meta", "shift", "P"],
-    pendingReviews: ["meta", "shift", "R"],
-    recents: ["meta", "K"],
-    runningConversations: ["meta", "shift", "O"],
-    settings: ["meta", ","],
-    focusInput: ["meta", "shift", "I"],
-    toggleProjects: ["ctrl", "shift", "["],
-    toggleChats: ["ctrl", "shift", "]"],
-    board: ["meta", "shift", "B"],
-    newProject: ["meta", "alt", "P"],
-    newPiChat: ["meta", "alt", "N"],
-    newClaudeChat: ["meta", "alt", "C"],
-    runsOn: ["ctrl", "alt", "N"],
-    selectAgent: ["ctrl", "alt", "A"],
-    selectModel: ["ctrl", "alt", "M"],
-    selectThinking: ["ctrl", "alt", "T"],
-    terminal: ["ctrl", "alt", "X"],
-    browser: ["ctrl", "alt", "B"],
-    notify: ["ctrl", "alt", "Y"],
-    addToCanvas: ["ctrl", "alt", "V"],
-    rename: ["ctrl", "alt", "R"],
-    scheduledTasks: ["ctrl", "alt", "S"],
-    paneSearch: ["meta", "shift", "F"],
-    recentPane: ["meta", "shift", "E"],
-    focusPane: ["meta", "shift", "G"],
-    splitRight: ["ctrl", "SPACE", "\\"],
-    splitBelow: ["ctrl", "SPACE", "-"],
-    closePane: ["ctrl", "SPACE", "X"],
-    createPage: ["meta", "shift", "C"],
-    nextPage: ["ctrl", "alt", "ARROWRIGHT"],
-    prevPage: ["ctrl", "alt", "ARROWLEFT"],
-    focusLeft: ["ctrl", "shift", "ARROWLEFT"],
-    focusRight: ["ctrl", "shift", "ARROWRIGHT"],
-    focusUp: ["ctrl", "shift", "ARROWUP"],
-    focusDown: ["ctrl", "shift", "ARROWDOWN"],
-    ...Object.fromEntries([..."123456789"].map((digit, index) => [`page${index + 1}`, ["ctrl", "alt", digit]])),
+    toggleView: commandChord("V"),
+    spotlight: commandChord("P"),
+    pendingReviews: commandChord("R"),
+    recents: commandChord("K"),
+    runningConversations: commandChord("O"),
+    settings: commandChord(","),
+    focusInput: commandChord("I"),
+    toggleProjects: commandChord("["),
+    toggleChats: commandChord("]"),
+    board: commandChord("D"),
+    newProject: commandChord("="),
+    newPiChat: commandChord("N"),
+    newClaudeChat: commandChord("C"),
+    runsOn: commandChord("H"),
+    selectAgent: commandChord("A"),
+    selectModel: commandChord("M"),
+    selectThinking: commandChord("T"),
+    terminal: commandChord("X"),
+    browser: commandChord("B"),
+    notify: commandChord("Y"),
+    addToCanvas: commandChord("J"),
+    rename: commandChord("E"),
+    scheduledTasks: commandChord("S"),
+    paneSearch: commandChord("F"),
+    recentPane: commandChord("L"),
+    focusPane: commandChord("G"),
+    splitRight: commandChord("\\"),
+    splitBelow: commandChord("-"),
+    closePane: commandChord("W"),
+    // Pages sit on the digits, and the digit that selects no page creates one.
+    createPage: commandChord("0"),
+    prevPage: commandChord(";"),
+    nextPage: commandChord("'"),
+    focusLeft: commandChord("ARROWLEFT"),
+    focusRight: commandChord("ARROWRIGHT"),
+    focusUp: commandChord("ARROWUP"),
+    focusDown: commandChord("ARROWDOWN"),
+    ...Object.fromEntries([..."123456789"].map((digit, index) => [`page${index + 1}`, commandChord(digit)])),
   },
 });
-
-// Keymaps saved before chords existed held one key per command under one shared
-// modifier set; those keys ride whatever modifiers the account had chosen.
-const LEGACY_COMMAND_KEYS: Record<string, string> = { recentPane: "E", focusPane: "G", paneSearch: "F", toggleView: "V", spotlight: "P", pendingReviews: "R" };
-// Legacy keys were stored in any case; the chord vocabulary is upper case.
-const canonicalChordKey = (key: unknown): string | undefined => (typeof key === "string" ? key.toUpperCase() : undefined);
 
 function shortcutPrefix(shortcut: string[]): string[] | null {
   return shortcut.filter((token) => !CANVAS_MODIFIERS.includes(token as CanvasModifier)).length === 2 ? shortcut.slice(0, -1) : null;
@@ -243,31 +244,27 @@ function shortcutsConflict(left: string[], right: string[]): boolean {
  * Accepts any stored or posted shape and mirrors the page's `normalizeCanvasKeymap`:
  * a shortcut without Command, Control, or Option would swallow ordinary typing, so
  * an unusable one falls back to the default; a shortcut two commands would share goes to
- * the earlier command, and the later one is left unbound.
+ * the earlier command, and the later one is left unbound. A keymap saved before version
+ * 4 describes the old per-command modifier scheme, so its command chords are rebuilt
+ * from the defaults and only the conversation base modifiers carry over.
  */
 export function normalizeCanvasKeymapPreference(value: unknown): CanvasKeymapPreference {
   if (!value || typeof value !== "object" || Array.isArray(value)) return defaultCanvasKeymap();
   const source = value as Record<string, unknown>;
-  const legacy = !source.commands;
-  const base = (normalizeCanvasChordTokens(legacy ? source.modifiers : source.base, true) ?? [...defaultCanvasKeymap().base]) as CanvasModifier[];
+  // Before commands existed the base modifiers were stored as `modifiers`.
+  const base = (normalizeCanvasChordTokens(source.commands ? source.base : source.modifiers, true)
+    ?? [...defaultCanvasKeymap().base]) as CanvasModifier[];
+  const rebuild = !(Number(source.version) >= 4);
   const commands: Record<string, string[] | null> = {};
   const taken: string[][] = [];
   for (const command of CANVAS_KEYMAP_COMMANDS) {
-    let raw = legacy
-      ? (source[command] === null ? null
-        : LEGACY_COMMAND_KEYS[command] ? [...base, canonicalChordKey(source[command]) ?? LEGACY_COMMAND_KEYS[command]]
-          : [...defaultCanvasKeymap().commands[command]!])
-      : (((source.commands as Record<string, unknown> | undefined)?.[command] === undefined
-        ? [...defaultCanvasKeymap().commands[command]!]
-        : (source.commands as Record<string, unknown>)[command]) as unknown);
-    if (!(Number(source.version) >= 2) && command === "splitRight" && JSON.stringify(raw) === JSON.stringify(["ctrl", "\\"])) raw = ["ctrl", "SPACE", "\\"];
-    if (!(Number(source.version) >= 2) && command === "splitBelow" && JSON.stringify(raw) === JSON.stringify(["ctrl", "-"])) raw = ["ctrl", "SPACE", "-"];
-    if (!(Number(source.version) >= 3) && command === "closePane" && JSON.stringify(raw) === JSON.stringify(["meta", "shift", "X"])) raw = ["ctrl", "SPACE", "X"];
+    const stored = (source.commands as Record<string, unknown> | undefined)?.[command];
+    const raw: unknown = rebuild || stored === undefined ? [...defaultCanvasKeymap().commands[command]!] : stored;
     const chord = raw === null || typeof raw === "string" ? null : normalizeCanvasChordTokens(raw);
     commands[command] = chord && !taken.some((existing) => shortcutsConflict(existing, chord)) ? chord : null;
-    if (commands[command]) taken.push(commands[command]);
+    if (commands[command]) taken.push(commands[command]!);
   }
-  return { version: 3, base, commands };
+  return { version: 4, base, commands };
 }
 
 /** A hand-edited column must degrade to the default chord, never take the node down. */

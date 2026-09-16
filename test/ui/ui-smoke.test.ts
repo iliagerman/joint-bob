@@ -106,10 +106,10 @@ test("both side panels have independent collapse and expand shortcuts", async ()
   for (const [panel, key] of [["projects", "["], ["chats", "]"]]) {
     const collapse = page.getByTestId(`${panel}-panel-collapse-button`);
     assert.equal(await collapse.locator(".shortcut-hint").count(), 1, `${panel} collapse needs a shortcut label`);
-    await page.keyboard.press(`Control+Shift+${key}`);
+    await page.keyboard.press(`Control+Alt+${key}`);
     await page.getByTestId(`${panel}-panel-expand-button`).waitFor();
     assert.equal(await page.locator("body").evaluate((body, name) => body.classList.contains(`${name}-collapsed`), panel), true);
-    await page.keyboard.press(`Control+Shift+${key}`);
+    await page.keyboard.press(`Control+Alt+${key}`);
     await collapse.waitFor();
     assert.equal(await page.locator("body").evaluate((body, name) => body.classList.contains(`${name}-collapsed`), panel), false);
   }
@@ -560,8 +560,7 @@ test("zero selects the tenth canvas picker option", async () => {
   const pane = page.locator(".canvas-pane", { hasText: title! });
   await pane.waitFor();
   await pane.locator("iframe").contentFrame().getByTestId("chat-message-input").click();
-  await page.keyboard.press("Control+Space");
-  await page.keyboard.press("x");
+  await page.keyboard.press("Control+Alt+KeyW");
   await page.getByTestId("confirm-dialog").waitFor({ state: "visible" });
   await page.keyboard.press("y");
   await pane.waitFor({ state: "detached" });
@@ -646,19 +645,17 @@ test("split chords open the picker from the active canvas pane and really split 
   const focusPaneComposer = () => activePane.locator("iframe").contentFrame().getByTestId("chat-message-input").click();
   const panesBefore = await page.locator(".canvas-pane").count();
 
-  // The three-key sequence reaches the canvas even with the caret inside a pane,
+  // The split chord reaches the canvas even with the caret inside a pane,
   // whose iframe swallows keystrokes from the canvas document.
   await focusPaneComposer();
-  await page.keyboard.press("Control+Space");
-  await page.keyboard.press("Shift+Backslash");
+  await page.keyboard.press("Control+Alt+Backslash");
   await page.getByTestId("canvas-conversation-dialog").waitFor({ state: "visible" });
   assert.equal(await page.getByTestId("canvas-split-position").inputValue(), "right");
   await page.getByTestId("canvas-picker-cancel-button").click();
 
-  // Control+Space then Minus splits below, and choosing a conversation completes it.
+  // Control+Option+Minus splits below, and choosing a conversation completes it.
   await focusPaneComposer();
-  await page.keyboard.press("Control+Space");
-  await page.keyboard.press("Minus");
+  await page.keyboard.press("Control+Alt+Minus");
   await page.getByTestId("canvas-conversation-dialog").waitFor({ state: "visible" });
   assert.equal(await page.getByTestId("canvas-split-position").inputValue(), "below");
   await page.selectOption("#canvasProjectSelect", { label: "Internal Assistant" });
@@ -679,16 +676,14 @@ test("split chords open the picker from the active canvas pane and really split 
 
   // The close chord asks first, and only Y closes the pane.
   await focusPaneComposer();
-  await page.keyboard.press("Control+Space");
-  await page.keyboard.press("x");
+  await page.keyboard.press("Control+Alt+KeyW");
   await page.getByTestId("confirm-dialog").waitFor({ state: "visible" });
   await page.keyboard.press("n");
   await page.getByTestId("confirm-dialog").waitFor({ state: "hidden" });
   assert.equal(await activePane.count(), 1, "N keeps the active pane open");
 
   await focusPaneComposer();
-  await page.keyboard.press("Control+Space");
-  await page.keyboard.press("x");
+  await page.keyboard.press("Control+Alt+KeyW");
   await page.getByTestId("confirm-dialog").waitFor({ state: "visible" });
   await page.keyboard.press("y");
   await activePane.waitFor({ state: "detached" });
@@ -1070,11 +1065,11 @@ test("the canvas shortcut switches to the canvas and back to the view it was ope
   const opened = await currentView();
   assert.equal(opened, "view-chat", "the conversation is the view the shortcut is pressed from");
 
-  await page.keyboard.press("Meta+Shift+V");
+  await page.keyboard.press("Control+Alt+KeyV");
   await page.locator("#canvasPanel").waitFor({ state: "visible", timeout: 20_000 });
   assert.equal(await currentView(), "view-canvas", "one key reaches the canvas from a conversation");
 
-  await page.keyboard.press("Meta+Shift+V");
+  await page.keyboard.press("Control+Alt+KeyV");
   await page.locator("#canvasPanel").waitFor({ state: "hidden", timeout: 20_000 });
   assert.equal(await currentView(), opened, "the same key puts the user back where they were");
 });
@@ -1136,7 +1131,7 @@ test("the Settings shortcuts tab edits every shortcut in one place", async () =>
 
   const spotlight = page.getByTestId("canvas-keymap-spotlight-input");
   const paneSearch = page.getByTestId("canvas-keymap-pane-search-input");
-  assert.equal(await spotlight.inputValue(), "\u2318\u21e7P", "the tab shows the chord that is in force");
+  assert.equal(await spotlight.inputValue(), "\u2303\u2325P", "the tab shows the chord that is in force");
   assert.equal(await page.getByTestId("canvas-keymap-base-input").inputValue(), "\u2318\u21e7", "the conversation-key chord has its own recorder");
   assert.ok(await page.getByTestId("canvas-keymap-leader").isVisible(), "the fixed shortcuts are listed too");
 
@@ -1162,7 +1157,7 @@ test("the Settings shortcuts tab edits every shortcut in one place", async () =>
 
   // Two commands cannot share one chord, and the panel says so instead of saving.
   await paneSearch.click();
-  await page.keyboard.press("Meta+Shift+KeyP");
+  await page.keyboard.press("Control+Alt+KeyP");
   await page.getByTestId("canvas-keymap-save-button").click();
   await page.getByTestId("canvas-keymap-status").filter({ hasText: /cannot share/ }).waitFor();
 
@@ -1189,7 +1184,7 @@ test("the Settings shortcuts tab edits every shortcut in one place", async () =>
 // The bar opens on recent conversations, reaches workspace destinations, and still
 // finds a conversation in a project that is not the open one.
 test("the search bar navigates the whole workspace", async () => {
-  await page.keyboard.press("Meta+Shift+KeyP");
+  await page.keyboard.press("Control+Alt+KeyP");
   await page.getByTestId("spotlight-dialog").waitFor({ state: "visible" });
   await page.getByTestId("spotlight-option").first().waitFor();
   const spotlightInput = page.getByTestId("spotlight-input");
@@ -1200,13 +1195,13 @@ test("the search bar navigates the whole workspace", async () => {
 
   await page.keyboard.press("Escape");
   await page.getByTestId("spotlight-dialog").waitFor({ state: "hidden" });
-  await page.keyboard.press("Meta+Shift+KeyP");
+  await page.keyboard.press("Control+Alt+KeyP");
   await spotlightInput.fill("recent conversations");
   await page.getByTestId("spotlight-option").filter({ hasText: "Recent conversations" }).click();
   await page.getByTestId("recent-sessions-dialog").waitFor({ state: "visible" });
   await page.getByTestId("recent-sessions-close-button").click();
 
-  await page.keyboard.press("Meta+Shift+KeyP");
+  await page.keyboard.press("Control+Alt+KeyP");
   await spotlightInput.fill("settings shortcuts");
   await page.getByTestId("spotlight-option").filter({ hasText: "Shortcuts" }).click();
   await page.getByTestId("settings-dialog").waitFor({ state: "visible" });
@@ -1214,14 +1209,14 @@ test("the search bar navigates the whole workspace", async () => {
   await page.getByTestId("settings-cancel-button").click();
 
   for (const [query, view] of [["projects window", "projects"], ["conversations window", "sessions"], ["messages window", "chat"], ["canvas window", "canvas"]]) {
-    await page.keyboard.press("Meta+Shift+KeyP");
+    await page.keyboard.press("Control+Alt+KeyP");
     await spotlightInput.fill(query);
     await page.getByRole("option", { name: new RegExp(`^Go to ${query.split(" ")[0]} window$`, "i") }).click();
     await page.getByTestId("spotlight-dialog").waitFor({ state: "hidden" });
     assert.ok(await page.locator("body").evaluate((body, name) => body.classList.contains(`view-${name}`), view), `${query} opens the ${view} view`);
   }
 
-  await page.keyboard.press("Meta+Shift+KeyP");
+  await page.keyboard.press("Control+Alt+KeyP");
   await spotlightInput.fill("infra");
   const first = page.getByTestId("spotlight-option").filter({ hasText: "Infra Scripts" }).first();
   await first.waitFor();
@@ -1230,7 +1225,7 @@ test("the search bar navigates the whole workspace", async () => {
   await page.getByTestId("spotlight-dialog").waitFor({ state: "hidden" });
   await page.locator("#sessionList .session-card").first().waitFor();
 
-  await page.keyboard.press("Meta+Shift+KeyP");
+  await page.keyboard.press("Control+Alt+KeyP");
   await page.getByTestId("spotlight-input").fill("thread");
   const conversation = page.getByTestId("spotlight-option").filter({ hasText: "Mobile Multi-Agent Threads" });
   await conversation.waitFor();
@@ -1240,7 +1235,7 @@ test("the search bar navigates the whole workspace", async () => {
 
 // Reviews get the same treatment as the recents list: one key opens it, digits open rows.
 test("the pending reviews list opens on its own key and its rows answer to digits", async () => {
-  await page.keyboard.press("Meta+Shift+KeyR");
+  await page.keyboard.press("Control+Alt+KeyR");
   await page.getByTestId("pending-reviews-dialog").waitFor({ state: "visible" });
   const rows = page.getByTestId("pending-review-option");
   if (await rows.count()) {
@@ -1289,15 +1284,15 @@ test("running conversations open their live conversation in another project", as
 });
 
 test("toolbar shortcuts open the same actions as their buttons", async () => {
-  await page.keyboard.press("Meta+Alt+P");
+  await page.keyboard.press("Control+Alt+Equal");
   assert.equal(await page.locator("#projectDialog").isVisible(), true, "new-project shortcut opens the project form");
   await page.keyboard.press("Escape");
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
-  await page.keyboard.press("Meta+Shift+B");
+  await page.keyboard.press("Control+Alt+KeyD");
   assert.equal(await page.locator("#boardPanel").isVisible(), true, "board shortcut opens the board");
   for (const [key, button] of [["N", "session-create-button"], ["C", "session-create-claude-button"]]) {
     await page.locator(`[data-testid="${button}"]:enabled`).waitFor();
-    await page.keyboard.press(`Meta+Alt+${key}`);
+    await page.keyboard.press(`Control+Alt+${key}`);
     // Opening the form first loads conversation labels from /api/settings.
     await page.getByTestId("new-session-name-dialog").waitFor({ state: "visible" });
     assert.equal(await page.getByTestId("new-session-name-dialog").isVisible(), true, `${key} opens the conversation form`);
@@ -1312,15 +1307,15 @@ test("the focus key lands the cursor in the composer, or in the dialog on top", 
   await page.locator('#messageInput:not(:disabled)').waitFor({ state: "visible" });
   await page.locator("body").click({ position: { x: 5, y: 5 } });
 
-  await page.keyboard.press("Meta+Shift+KeyI");
+  await page.keyboard.press("Control+Alt+KeyI");
   assert.equal(await page.evaluate(() => document.activeElement?.id), "messageInput",
     "with nothing open the cursor goes to the conversation composer");
 
   // A dialog on top owns the keyboard, so its own field wins instead.
-  await page.keyboard.press("Meta+Shift+KeyP");
+  await page.keyboard.press("Control+Alt+KeyP");
   await page.getByTestId("spotlight-dialog").waitFor({ state: "visible" });
   await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
-  await page.keyboard.press("Meta+Shift+KeyI");
+  await page.keyboard.press("Control+Alt+KeyI");
   assert.equal(await page.evaluate(() => document.activeElement?.id), "spotlightInput",
     "an open dialog keeps the cursor");
   await page.keyboard.press("Escape");
@@ -1345,7 +1340,7 @@ test("the send button's icon sits in the middle of the button", async () => {
 // must hold still so the number still points at what the user can see, and Enter
 // must open that row rather than whichever one is highlighted.
 test("a digit typed into a dialog's search box names a row, and Enter opens it", async () => {
-  await page.keyboard.press("Meta+KeyK");
+  await page.keyboard.press("Control+Alt+KeyK");
   await page.getByTestId("recent-sessions-dialog").waitFor({ state: "visible" });
   const rows = page.getByTestId("recent-session-option");
   await rows.first().waitFor();

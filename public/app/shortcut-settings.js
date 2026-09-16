@@ -150,7 +150,9 @@ export async function fillShortcutSettings() {
 function keymapFromPanel() {
   const base = normalizeChord(baseInput.dataset.chord ? JSON.parse(baseInput.dataset.chord) : null, { modifierOnly: true });
   if (!base) throw new Error("The conversation-key chord needs Command, Control, or Option, and at most three modifiers.");
-  const draft = { version: 3, base, commands: {} };
+  // The panel always writes the current scheme, so the draft carries its version -
+  // an older one would be treated as stale and rebuilt back to the defaults.
+  const draft = { version: DEFAULT_CANVAS_KEYMAP.version, base, commands: {} };
   const taken = [];
   for (const [command, input] of commandInputs) {
     const raw = input.dataset.chord ? JSON.parse(input.dataset.chord) : null;

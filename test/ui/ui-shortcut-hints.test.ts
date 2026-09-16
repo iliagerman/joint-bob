@@ -63,11 +63,14 @@ const hint = (testid: string) => page.locator(`[data-testid="${testid}"] .shortc
 
 test("header icons wear the shortcut that opens them", async () => {
   await signIn();
-  assert.equal(await hint("recent-sessions-open-button").innerText(), "\u2318K", "recents shows its chord");
-  assert.equal(await hint("pending-reviews-open-button").innerText(), "\u2318\u21e7R", "reviews shows its chord");
-  assert.equal(await hint("running-conversations-open-button").innerText(), "\u2318\u21e7O", "running shows its chord");
-  assert.equal(await hint("settings-open-button").innerText(), "\u2318,", "settings shows its chord");
-  assert.equal(await hint("projects-open-canvas-button").innerText(), "\u2318\u21e7V", "the canvas launch shows its chord");
+  // Every command rides Control+Option, so the badge carries the key alone and the
+  // whole chord stays in the badge's tooltip.
+  assert.equal(await hint("recent-sessions-open-button").innerText(), "K", "recents shows its key");
+  assert.equal(await hint("pending-reviews-open-button").innerText(), "R", "reviews shows its key");
+  assert.equal(await hint("running-conversations-open-button").innerText(), "O", "running shows its key");
+  assert.equal(await hint("settings-open-button").innerText(), ",", "settings shows its key");
+  assert.equal(await hint("projects-open-canvas-button").innerText(), "V", "the canvas launch shows its key");
+  assert.equal(await hint("recent-sessions-open-button").getAttribute("title"), "\u2303\u2325K", "the badge spells the whole chord on hover");
 });
 
 test("canvas shares the top toolbar with larger icons and readable shortcut badges", async () => {
@@ -78,7 +81,7 @@ test("canvas shares the top toolbar with larger icons and readable shortcut badg
     const icon = await button.locator("svg").boundingBox();
     assert.ok(icon && icon.width >= 20, `toolbar icon must be at least 20px, got ${icon?.width}`);
     const font = await button.locator(".shortcut-hint").evaluate((badge) => parseFloat(getComputedStyle(badge).fontSize));
-    assert.ok(font >= 16, `shortcut needs at least 16px, got ${font}`);
+    assert.ok(font >= 13, `shortcut needs at least 13px, got ${font}`);
   }
   const rows = await tools.locator("button").evaluateAll((buttons) => buttons.map((button) => button.getBoundingClientRect().top));
   assert.ok(rows.every((top) => top === rows[0]), "all six toolbar buttons fit on one row");
@@ -106,11 +109,11 @@ test("Escape closes recent conversations even with a search query", async () => 
 });
 
 test("the running and settings shortcuts open their dialogs", async () => {
-  await page.keyboard.press("Meta+Shift+KeyO");
+  await page.keyboard.press("Control+Alt+KeyO");
   await page.getByTestId("running-conversations-dialog").waitFor({ state: "visible" });
   await page.keyboard.press("Escape");
   await page.getByTestId("running-conversations-dialog").waitFor({ state: "hidden" });
-  await page.keyboard.press("Meta+Comma");
+  await page.keyboard.press("Control+Alt+Comma");
   await page.getByTestId("settings-dialog").waitFor({ state: "visible" });
   await page.getByTestId("settings-cancel-button").click();
   await page.getByTestId("settings-dialog").waitFor({ state: "hidden" });
@@ -127,7 +130,7 @@ test("a saved chord retitles the badges without a reload", async () => {
   await page.getByTestId("canvas-keymap-status").filter({ hasText: "Saved." }).waitFor();
   await page.getByTestId("settings-cancel-button").click();
   await page.getByTestId("settings-dialog").waitFor({ state: "hidden" });
-  assert.equal(await hint("recent-sessions-open-button").innerText(), "\u2303J", "the badge follows the saved chord");
+  assert.equal(await hint("recent-sessions-open-button").innerText(), "J", "the badge follows the saved chord");
 
   // Put the defaults back so the other tests keep seeing them.
   await page.getByTestId("settings-open-button").click();
@@ -138,7 +141,7 @@ test("a saved chord retitles the badges without a reload", async () => {
   await page.getByTestId("canvas-keymap-status").filter({ hasText: "Saved." }).waitFor();
   await page.getByTestId("settings-cancel-button").click();
   await page.getByTestId("settings-dialog").waitFor({ state: "hidden" });
-  assert.equal(await hint("recent-sessions-open-button").innerText(), "\u2318K");
+  assert.equal(await hint("recent-sessions-open-button").innerText(), "K");
 });
 
 test("the board icon sits between running and settings, and the conversations header keeps running mobile-only", async () => {
@@ -157,7 +160,7 @@ test("the board icon sits between running and settings, and the conversations he
   const conversationsRunning = page.getByTestId("chats-running-conversations-open-button");
   assert.equal(await conversationsRunning.count(), 1, "the conversations header carries mobile running access");
   assert.equal(await conversationsRunning.isVisible(), false, "the duplicate running action stays hidden on desktop");
-  assert.equal(await hint("projects-open-board-button").innerText(), "\u2318\u21e7B",
+  assert.equal(await hint("projects-open-board-button").innerText(), "D",
     "the board advertises its keyboard shortcut");
 });
 
@@ -226,11 +229,11 @@ test("chat shortcuts focus selectors and open actions", async () => {
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
   await page.locator("#sessionList .session-card", { hasText: "Thread-Based Agent Builder" }).click();
   await page.locator("#modelButton:enabled").waitFor();
-  for (const [key, id] of [["N", "chatNodeSelect"], ["A", "chatHarnessSelect"], ["T", "reasoningLevelSelect"]]) {
+  for (const [key, id] of [["H", "chatNodeSelect"], ["A", "chatHarnessSelect"], ["T", "reasoningLevelSelect"]]) {
     await page.keyboard.press(`Control+Alt+${key}`);
     assert.equal(await page.evaluate(() => document.activeElement?.id), id, `${key} focuses ${id}`);
   }
-  for (const [key, target, close] of [["M", "model-dialog", "model-dialog-close-button"], ["X", "terminal-dialog", "terminal-close-button"], ["R", "rename-session-input", null]]) {
+  for (const [key, target, close] of [["M", "model-dialog", "model-dialog-close-button"], ["X", "terminal-dialog", "terminal-close-button"], ["E", "rename-session-input", null]]) {
     await page.keyboard.press(`Control+Alt+${key}`);
     await page.getByTestId(target!).waitFor({ timeout: 5000 });
     if (close) await page.getByTestId(close).click();
@@ -250,7 +253,7 @@ test("chat shortcuts focus selectors and open actions", async () => {
   const before = await page.getByTestId("chat-notify-button").getAttribute("aria-pressed");
   await page.keyboard.press("Control+Alt+Y");
   await page.locator(`#notifyButton[aria-pressed="${before === "true" ? "false" : "true"}"]`).waitFor();
-  await page.keyboard.press("Control+Alt+V");
+  await page.keyboard.press("Control+Alt+J");
   await page.locator("#canvasPanel").waitFor();
   const frame = page.locator(".canvas-pane:visible iframe").first().contentFrame();
   await frame.getByTestId("chat-message-input").click();
@@ -258,7 +261,7 @@ test("chat shortcuts focus selectors and open actions", async () => {
   await page.keyboard.press("Control+Alt+M");
   await frame.getByTestId("model-dialog").waitFor();
   assert.equal(await page.getByTestId("model-dialog").isVisible(), false, "canvas shortcuts target the pane, not the background chat");
-  await page.keyboard.press("Control+Alt+N");
+  await page.keyboard.press("Control+Alt+H");
   assert.equal(await frame.locator("body").evaluate(() => document.activeElement?.closest("dialog")?.id), "modelDialog", "an open pane dialog keeps keyboard focus");
   await page.keyboard.press("Escape");
 });

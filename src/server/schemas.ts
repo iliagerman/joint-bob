@@ -471,7 +471,7 @@ const canvasKeymapKeySchema = z.string().trim().refine((key) => canonicalCanvasK
 // token semantics and collisions; the schema only caps client input size.
 const canvasChordSchema = z.array(z.string().trim().min(1).max(16)).max(8);
 const canvasKeymapPreferenceSchema = z.object({
-  version: z.union([z.literal(2), z.literal(3)]).optional(),
+  version: z.union([z.literal(2), z.literal(3), z.literal(4)]).optional(),
   // Legacy shape, from a client that predates chords: one modifier set plus one key
   // per command. Still accepted and migrated by the normalizer.
   modifiers: z.array(z.enum(["meta", "ctrl", "alt", "shift"])).max(4).optional(),

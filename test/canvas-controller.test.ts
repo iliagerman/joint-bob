@@ -299,9 +299,8 @@ test("split chords open the picker relative to the active pane", async () => {
   let prevented = 0;
   const press = (event) => windowListeners.get("keydown")({ ...event, preventDefault: () => { prevented += 1; } });
   const bare = { ctrlKey: false, metaKey: false, altKey: false, shiftKey: false };
-  press({ ...bare, code: "Space", key: " ", ctrlKey: true });
-  press({ ...bare, code: "Backslash", key: "|", shiftKey: true });
-  assert.equal(prevented, 2, "both split keystrokes stay out of the active conversation");
+  press({ ...bare, code: "Backslash", key: "\\", ctrlKey: true, altKey: true });
+  assert.equal(prevented, 1, "the split keystroke stays out of the active conversation");
   assert.equal(registry.get("#canvasConversationDialog").open, true);
   assert.equal(registry.get("#canvasSplitPosition").value, "right");
 
@@ -313,8 +312,7 @@ test("split chords open the picker relative to the active pane", async () => {
   assert.deepEqual(listCanvasPanes(saved.at(-1)).map((pane) => pane.sessionId), ["s-one", "s-two", "s-three"],
     "the new pane lands immediately right of the active pane");
 
-  press({ ...bare, code: "Space", key: " ", ctrlKey: true });
-  press({ ...bare, code: "Minus", key: "-" });
+  press({ ...bare, code: "Minus", key: "-", ctrlKey: true, altKey: true });
   assert.equal(registry.get("#canvasConversationDialog").open, true);
   assert.equal(registry.get("#canvasSplitPosition").value, "below");
   registry.get("#canvasConversationDialog").close();
@@ -330,7 +328,7 @@ test("a re-recorded chord drives the same command, and a pane can forward it", a
   for (const frame of frames) frame.contentWindow = { postMessage() {} };
 
   // The old muscle memory, one step shorter: the split itself on Control+Space.
-  controller.setKeymap({ version: 2, base: ["meta", "shift"], commands: { splitRight: ["ctrl", "SPACE"], splitBelow: ["ctrl", "-"], closePane: ["meta", "shift", "X"] } });
+  controller.setKeymap({ version: 4, base: ["meta", "shift"], commands: { splitRight: ["ctrl", "SPACE"], splitBelow: ["ctrl", "-"], closePane: ["meta", "shift", "X"] } });
   let prevented = 0;
   windowListeners.get("keydown")({ code: "Space", key: " ", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false, preventDefault: () => { prevented += 1; } });
   assert.equal(prevented, 1, "the re-recorded chord opens the split picker");
@@ -362,8 +360,7 @@ test("the close chord closes the active pane only after Y confirmation", async (
     origin: "http://canvas.test", source: frames[1].contentWindow, data: { type: "canvasPaneActive" },
   });
   const pressClose = () => {
-    windowListeners.get("keydown")({ code: "Space", key: " ", metaKey: false, shiftKey: false, ctrlKey: true, altKey: false, preventDefault() {} });
-    windowListeners.get("keydown")({ code: "KeyX", key: "x", metaKey: false, shiftKey: false, ctrlKey: false, altKey: false, preventDefault() {} });
+    windowListeners.get("keydown")({ code: "KeyW", key: "w", metaKey: false, shiftKey: false, ctrlKey: true, altKey: true, preventDefault() {} });
   };
 
   confirmClose = false;
@@ -641,7 +638,7 @@ test("the jump key toggles between the two conversations most recently reached",
   const press = () => {
     first.scrolledIntoView = false;
     second.scrolledIntoView = false;
-    windowListeners.get("keydown")({ code: "KeyE", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false, preventDefault() {} });
+    windowListeners.get("keydown")({ code: "KeyL", metaKey: false, shiftKey: false, ctrlKey: true, altKey: true, preventDefault() {} });
   };
 
   press();
@@ -658,7 +655,7 @@ test("the jump key toggles between the two conversations most recently reached",
 
 test("the focus key brings the pane the user last touched forward", async () => {
   // Earlier tests in this file leave a custom keymap behind; start from the defaults.
-  controller.setKeymap({ modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F" });
+  controller.setKeymap({});
   const root = registry.get("#canvasRoot");
   let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
   layout = addCanvasPane(layout, paneFor("s-two", "/tmp/two.jsonl"), "pane-s-one", "right");
@@ -675,7 +672,7 @@ test("the focus key brings the pane the user last touched forward", async () => 
   windowListeners.get("message")({ origin: "http://canvas.test", source: frames[1].contentWindow, data: { type: "canvasPaneActive" } });
 
   const priorSaves = saved.length;
-  windowListeners.get("keydown")({ code: "KeyG", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false, preventDefault() {} });
+  windowListeners.get("keydown")({ code: "KeyG", metaKey: false, shiftKey: false, ctrlKey: true, altKey: true, preventDefault() {} });
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   assert.ok(saved.length > priorSaves, "focusing commits a layout");
@@ -686,7 +683,7 @@ test("the focus key brings the pane the user last touched forward", async () => 
   assert.ok(posted.some((message) => message.type === "canvasFocusComposer"), "the cursor lands in that conversation");
 
   // The same key is the way back: a conversation already in front returns to the others.
-  windowListeners.get("keydown")({ code: "KeyG", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false, preventDefault() {} });
+  windowListeners.get("keydown")({ code: "KeyG", metaKey: false, shiftKey: false, ctrlKey: true, altKey: true, preventDefault() {} });
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(saved.at(-1).pages.find((page) => page.id === saved.at(-1).activePageId).focusedPaneId, null,
     "pressing it on the conversation already in front takes it back");
@@ -735,28 +732,28 @@ test("a saved keymap changes which combination the canvas answers", async () => 
   controller.setLayout({ ...layout, focusedPaneId: null });
   await controller.activate();
 
-  controller.setKeymap({ modifiers: ["ctrl", "alt"], recentPane: null, focusPane: null, paneSearch: "J", toggleView: "V", spotlight: "P", pendingReviews: "R" });
+  controller.setKeymap({ version: 4, base: ["meta", "shift"], commands: { paneSearch: ["meta", "shift", "J"] } });
 
-  windowListeners.get("keydown")({ code: "KeyF", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false, preventDefault() {} });
+  windowListeners.get("keydown")({ code: "KeyF", metaKey: false, shiftKey: false, ctrlKey: true, altKey: true, preventDefault() {} });
   assert.equal(registry.get("#canvasFinderDialog").open, false, "old combination does not open finder");
 
-  windowListeners.get("keydown")({ code: "KeyJ", metaKey: false, shiftKey: false, ctrlKey: true, altKey: true, preventDefault() {} });
+  windowListeners.get("keydown")({ code: "KeyJ", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false, preventDefault() {} });
   assert.equal(registry.get("#canvasFinderDialog").open, true, "new combination opens finder");
   registry.get("#canvasFinderDialog").close();
-  controller.setKeymap({ modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F", toggleView: "V", spotlight: "P", pendingReviews: "R" });
+  controller.setKeymap({});
 });
 
 // The search bar spans the whole workspace, so its key answers with the canvas closed.
 test("the search bar key reaches the app even when the canvas is not open", async () => {
-  controller.setKeymap({ modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F", toggleView: "V", spotlight: "P", pendingReviews: "R" });
+  controller.setKeymap({});
   controller.deactivate();
   const priorOpens = spotlightOpens.length;
-  windowListeners.get("keydown")({ code: "KeyP", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false, preventDefault() {} });
+  windowListeners.get("keydown")({ code: "KeyP", metaKey: false, shiftKey: false, ctrlKey: true, altKey: true, preventDefault() {} });
   assert.equal(spotlightOpens.length, priorOpens + 1, "the closed canvas still forwards the search key");
 
   // The pending reviews list is workspace-wide for the same reason.
   const priorReviews = pendingReviewOpens.length;
-  windowListeners.get("keydown")({ code: "KeyR", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false, preventDefault() {} });
+  windowListeners.get("keydown")({ code: "KeyR", metaKey: false, shiftKey: false, ctrlKey: true, altKey: true, preventDefault() {} });
   assert.equal(pendingReviewOpens.length, priorReviews + 1, "the closed canvas still forwards the reviews key");
   await controller.activate();
 });
@@ -785,14 +782,14 @@ test("the focus key reaches the current pane's composer, unless a dialog is on t
 
   focusInputResult = false;
   posted.length = 0;
-  windowListeners.get("keydown")({ code: "KeyI", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false, preventDefault() {} });
+  windowListeners.get("keydown")({ code: "KeyI", metaKey: false, shiftKey: false, ctrlKey: true, altKey: true, preventDefault() {} });
   assert.equal(posted.filter((message) => message.type === "canvasFocusComposer").length, 1,
     "with no dialog open the cursor lands in the conversation the user was in");
 
   // The canvas must not steal the keystroke from a dialog the app already focused.
   focusInputResult = true;
   posted.length = 0;
-  windowListeners.get("keydown")({ code: "KeyI", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false, preventDefault() {} });
+  windowListeners.get("keydown")({ code: "KeyI", metaKey: false, shiftKey: false, ctrlKey: true, altKey: true, preventDefault() {} });
   assert.deepEqual(posted.filter((message) => message.type === "canvasFocusComposer"), [],
     "a dialog on top keeps the cursor");
   focusInputResult = false;
@@ -947,7 +944,7 @@ test("adding a pane leaves focus mode so the new conversation is visible", async
 
 test("a conversation keeps a key a canvas command also wants", async () => {
   // Earlier tests in this file leave a custom keymap behind; start from the defaults.
-  controller.setKeymap({ modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F" });
+  controller.setKeymap({});
   storedShortcuts = [{ binding: "F", projectId: "p-one", engine: "pi", sessionId: "s-two" }];
   const root = registry.get("#canvasRoot");
   let layout = addCanvasPane(emptyCanvasLayout(), paneFor("s-one", "/tmp/one.jsonl"));
@@ -963,7 +960,9 @@ test("a conversation keeps a key a canvas command also wants", async () => {
   finder.close();
   pane.scrolledIntoView = false;
 
-  // F is also the default search key. The conversation that already holds it wins.
+  // The account put the pane search on the chord conversation keys ride, so this
+  // conversation and the command both want it. The conversation wins.
+  controller.setKeymap({ version: 4, base: ["meta", "shift"], commands: { paneSearch: ["meta", "shift", "F"] } });
   windowListeners.get("keydown")({ code: "KeyF", metaKey: true, shiftKey: true, ctrlKey: false, altKey: false, preventDefault() {} });
   assert.equal(finder.open, false, "a command must not run while a conversation holds its key");
   assert.equal(pane.scrolledIntoView, true, "the conversation's own binding still works");
@@ -982,8 +981,8 @@ test("a conversation keeps a key a canvas command also wants", async () => {
 // has to answer from the conversation list too — otherwise the key only ever works in the
 // direction that leaves the canvas.
 test("the view toggle answers whether the canvas is open or closed", async () => {
-  controller.setKeymap({ modifiers: ["meta", "shift"], recentPane: "E", focusPane: "G", paneSearch: "F", toggleView: "V" });
-  const chord = { metaKey: true, shiftKey: true, ctrlKey: false, altKey: false };
+  controller.setKeymap({});
+  const chord = { metaKey: false, shiftKey: false, ctrlKey: true, altKey: true };
   controller.deactivate();
 
   let prevented = false;
