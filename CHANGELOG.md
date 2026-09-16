@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Classification filter dropdown no longer overflows on small screens.
+
 ## 1.40.1 — 2026-09-16
 
 - Notification preferences for review alerts and ntfy publishing now follow conversations across cluster nodes when ownership transfers.

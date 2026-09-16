@@ -507,7 +507,7 @@ input::placeholder, textarea::placeholder { color: color-mix(in srgb, var(--mute
 textarea:focus, input:focus, select:focus { border-color: var(--line-strong); box-shadow: 0 0 0 3px var(--focus-ring); }
 
 .conversation-search { margin-top: 8px; }
-.classification-filter { display: block; width: auto; margin: 8px 12px 2px; font-size: 12px; }
+.classification-filter { display: block; width: auto; max-width: 280px; margin: 8px 12px 2px; font-size: 12px; }
 .classification-filter select { min-width: 0; width: 100%; }
 .done-filter { display: flex; align-items: center; gap: 6px; margin: 4px 12px 2px; font-size: 12px; color: var(--muted); }
 .done-filter input { width: 14px; height: 14px; margin: 0; flex: 0 0 auto; }
@@ -1866,6 +1866,7 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 
 @media (max-width: 1023px) {
   .collapse-button { display: none; }
+  .classification-filter { max-width: none; }
   .chat-toolbar {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 0.75fr) auto auto;
