@@ -61,15 +61,31 @@ async function signIn(): Promise<void> {
 
 const hint = (testid: string) => page.locator(`[data-testid="${testid}"] .shortcut-hint`);
 
-test("header icons wear the shortcut that opens them", async () => {
+// The badges only exist on screen while the command modifiers are held, so every
+// assertion about them holds Control+Option first and lets go afterwards.
+async function holdingModifiers<T>(read: () => Promise<T>): Promise<T> {
+  await page.keyboard.down("Control");
+  await page.keyboard.down("Alt");
+  await page.locator("body.shortcuts-revealed").waitFor({ timeout: 2000 });
+  try { return await read(); } finally {
+    await page.keyboard.up("Alt");
+    await page.keyboard.up("Control");
+  }
+}
+
+test("header icons reveal the shortcut that opens them while the modifiers are held", async () => {
   await signIn();
+  assert.equal(await hint("recent-sessions-open-button").isVisible(), false, "a resting button shows no badge");
   // Every command rides Control+Option, so the badge carries the key alone and the
   // whole chord stays in the badge's tooltip.
-  assert.equal(await hint("recent-sessions-open-button").innerText(), "K", "recents shows its key");
-  assert.equal(await hint("pending-reviews-open-button").innerText(), "R", "reviews shows its key");
-  assert.equal(await hint("running-conversations-open-button").innerText(), "O", "running shows its key");
-  assert.equal(await hint("settings-open-button").innerText(), ",", "settings shows its key");
-  assert.equal(await hint("projects-open-canvas-button").innerText(), "V", "the canvas launch shows its key");
+  await holdingModifiers(async () => {
+    assert.equal(await hint("recent-sessions-open-button").innerText(), "K", "recents shows its key");
+    assert.equal(await hint("pending-reviews-open-button").innerText(), "R", "reviews shows its key");
+    assert.equal(await hint("running-conversations-open-button").innerText(), "O", "running shows its key");
+    assert.equal(await hint("settings-open-button").innerText(), ",", "settings shows its key");
+    assert.equal(await hint("projects-open-canvas-button").innerText(), "V", "the canvas launch shows its key");
+  });
+  assert.equal(await hint("recent-sessions-open-button").isVisible(), false, "letting go hides the badges again");
   assert.equal(await hint("recent-sessions-open-button").getAttribute("title"), "\u2303\u2325K", "the badge spells the whole chord on hover");
 });
 
@@ -82,6 +98,9 @@ test("canvas shares the top toolbar with larger icons and readable shortcut badg
     assert.ok(icon && icon.width >= 20, `toolbar icon must be at least 20px, got ${icon?.width}`);
     const font = await button.locator(".shortcut-hint").evaluate((badge) => parseFloat(getComputedStyle(badge).fontSize));
     assert.ok(font >= 13, `shortcut needs at least 13px, got ${font}`);
+    // The badge overlays the button, so carrying one costs the button no height.
+    const box = await button.boundingBox();
+    assert.ok(box && box.height <= 36, `a toolbar button stays icon-sized, got ${box?.height}px tall`);
   }
   const rows = await tools.locator("button").evaluateAll((buttons) => buttons.map((button) => button.getBoundingClientRect().top));
   assert.ok(rows.every((top) => top === rows[0]), "all six toolbar buttons fit on one row");
@@ -130,7 +149,7 @@ test("a saved chord retitles the badges without a reload", async () => {
   await page.getByTestId("canvas-keymap-status").filter({ hasText: "Saved." }).waitFor();
   await page.getByTestId("settings-cancel-button").click();
   await page.getByTestId("settings-dialog").waitFor({ state: "hidden" });
-  assert.equal(await hint("recent-sessions-open-button").innerText(), "J", "the badge follows the saved chord");
+  assert.equal(await hint("recent-sessions-open-button").textContent(), "J", "the badge follows the saved chord");
 
   // Put the defaults back so the other tests keep seeing them.
   await page.getByTestId("settings-open-button").click();
@@ -141,7 +160,7 @@ test("a saved chord retitles the badges without a reload", async () => {
   await page.getByTestId("canvas-keymap-status").filter({ hasText: "Saved." }).waitFor();
   await page.getByTestId("settings-cancel-button").click();
   await page.getByTestId("settings-dialog").waitFor({ state: "hidden" });
-  assert.equal(await hint("recent-sessions-open-button").innerText(), "K");
+  assert.equal(await hint("recent-sessions-open-button").textContent(), "K");
 });
 
 test("the board icon sits between running and settings, and the conversations header keeps running mobile-only", async () => {
@@ -160,7 +179,7 @@ test("the board icon sits between running and settings, and the conversations he
   const conversationsRunning = page.getByTestId("chats-running-conversations-open-button");
   assert.equal(await conversationsRunning.count(), 1, "the conversations header carries mobile running access");
   assert.equal(await conversationsRunning.isVisible(), false, "the duplicate running action stays hidden on desktop");
-  assert.equal(await hint("projects-open-board-button").innerText(), "D",
+  assert.equal(await hint("projects-open-board-button").textContent(), "D",
     "the board advertises its keyboard shortcut");
 });
 
@@ -180,7 +199,7 @@ test("the project title keeps collapse while its action row sits above search", 
   assert.equal(cut, false, "the app name and subtitle fit their row");
 });
 
-test("the chat toolbar keeps its controls and shortcut badges on shared lines", async () => {
+test("the chat toolbar keeps its controls on one line and overlays the badges", async () => {
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
   await page.locator("#sessionList .session-card", { hasText: "Thread-Based Agent Builder" }).click();
   await page.locator("#modelButton:enabled").waitFor();
@@ -188,17 +207,13 @@ test("the chat toolbar keeps its controls and shortcut badges on shared lines", 
   await page.setViewportSize({ width: 1800, height: 900 });
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 
-  const layout = await page.evaluate(() => {
+  const resting = await page.evaluate(() => {
     const bar = document.querySelector("#chatToolbar")!;
     return {
-      badges: [...bar.querySelectorAll(".shortcut-hint")]
-        .map((badge) => badge.getBoundingClientRect())
-        .filter((box) => box.height > 0)
-        .map((box) => Math.round(box.bottom * 10) / 10),
+      badges: [...bar.querySelectorAll(".shortcut-hint")].filter((badge) => badge.getBoundingClientRect().height > 0).length,
       controls: ["#chatNodeSelect", "#chatHarnessSelect", "#modelButton", "#reasoningLevelSelect"]
         .map((selector) => bar.querySelector(selector)!.getBoundingClientRect())
         .map((box) => Math.round((box.top + box.bottom) / 2 * 10) / 10),
-      // The action buttons carry their label as bare text, so the text run itself is measured.
       actions: ["#openTerminalButton", "#openBrowserButton", "#notifyButton", "#addToCanvasButton", "#renameSessionButton", "#chatCronButton"]
         .map((selector) => [...bar.querySelector(selector)!.childNodes]
           .find((child) => child.nodeType === Node.TEXT_NODE && child.textContent!.trim()))
@@ -212,17 +227,26 @@ test("the chat toolbar keeps its controls and shortcut badges on shared lines", 
     };
   });
 
+  // Every badge overlays the control it belongs to, so it neither adds a line nor drifts off it.
+  const overlays = await holdingModifiers(() => page.evaluate(() => {
+    const bar = document.querySelector("#chatToolbar")!;
+    return [...bar.querySelectorAll(".shortcut-hint")].map((badge) => {
+      const host = badge.parentElement!.getBoundingClientRect();
+      const box = badge.getBoundingClientRect();
+      return { covered: Math.abs(box.top - host.top) <= 1 && Math.abs(box.bottom - host.bottom) <= 1, height: box.height };
+    });
+  }));
+
   await page.setViewportSize({ width: 1440, height: 900 });
 
-  assert.ok(layout.badges.length >= 7, `every toolbar control shows its badge, saw ${layout.badges.length}`);
-  const badgeLine = layout.badges[0];
-  assert.ok(layout.badges.every((bottom) => Math.abs(bottom - badgeLine) <= 1),
-    `shortcut badges share one line, got ${JSON.stringify(layout.badges)}`);
-  const controlLine = layout.controls[0];
-  assert.ok(layout.controls.every((middle) => Math.abs(middle - controlLine) <= 1),
-    `selects and the model button share one line, got ${JSON.stringify(layout.controls)}`);
-  assert.ok(layout.actions.every((middle) => middle !== null && Math.abs(middle - controlLine) <= 2),
-    `action labels sit on the control line (${controlLine}), got ${JSON.stringify(layout.actions)}`);
+  assert.equal(resting.badges, 0, "a resting toolbar shows no badges at all");
+  assert.ok(overlays.length >= 7, `every toolbar control carries a badge, saw ${overlays.length}`);
+  assert.ok(overlays.every((badge) => badge.covered), `each badge covers its own control, got ${JSON.stringify(overlays)}`);
+  const controlLine = resting.controls[0];
+  assert.ok(resting.controls.every((middle) => Math.abs(middle - controlLine) <= 1),
+    `selects and the model button share one line, got ${JSON.stringify(resting.controls)}`);
+  assert.ok(resting.actions.every((middle) => middle !== null && Math.abs(middle - controlLine) <= 2),
+    `action labels sit on the control line (${controlLine}), got ${JSON.stringify(resting.actions)}`);
 });
 
 test("chat shortcuts focus selectors and open actions", async () => {

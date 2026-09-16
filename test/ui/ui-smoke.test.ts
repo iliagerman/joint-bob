@@ -85,6 +85,10 @@ test("signing in through the login form reaches the app and the session survives
 });
 
 test("shortcut badges are readable and stay inside their buttons", async () => {
+  // Badges only paint while the command modifiers are held, so hold them for the whole check.
+  await page.keyboard.down("Control");
+  await page.keyboard.down("Alt");
+  await page.locator("body.shortcuts-revealed").waitFor({ timeout: 2000 });
   for (const width of [1440, 1024]) {
     await page.setViewportSize({ width, height: 900 });
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
@@ -99,6 +103,8 @@ test("shortcut badges are readable and stay inside their buttons", async () => {
       assert.ok(badge.fits, `${badge.text} must fit inside its button at ${width}px`);
     }
   }
+  await page.keyboard.up("Alt");
+  await page.keyboard.up("Control");
   await page.setViewportSize({ width: 1440, height: 900 });
 });
 
