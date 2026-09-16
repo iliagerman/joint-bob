@@ -3,11 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.41.0 — 2026-09-16
 
-- Background tasks now appear in a dedicated Tasks panel with live output, status tracking, and stop controls; completions automatically notify you in the conversation.
-- Tasks now preserve their local transcript pointers during cluster synchronization when the originating harness session hasn't changed.
-- Classification filter dropdown no longer overflows on small screens.
+- Added a Tasks panel with live output, status, history, and stop controls across nodes. Finished tasks queue an automatic follow-up in their original conversation, even without an open browser.
+- Preserved local conversation history paths when syncing the same agent session across nodes.
+- Reopened stale agent sessions before dispatching queued messages and automatic follow-ups.
+- Kept the classification filter compact on desktop and full-width on mobile.
 
 ## 1.40.1 — 2026-09-16
 
