@@ -63,7 +63,11 @@ test("scheduled conversation keeps its active run isolated while edits apply to 
     const created = await api<{ task: { id: string } }>(nodeA, sessionA, "POST", "/cron", { nodeId: nodeB.nodeId, command: { action: "create", input } });
     assert.equal(created.status, 200, JSON.stringify(created.body));
     const id = created.body.task.id;
-    db.prepare("UPDATE cron_tasks SET next_run = ? WHERE id = ?").run(Date.now(), id);
+    const requestedAt = Date.now();
+    const runNow = await api<{ task: { id: string; nextRun: number } }>(nodeA, sessionA, "POST", "/cron", { nodeId: nodeB.nodeId, command: { action: "run", id } });
+    assert.equal(runNow.status, 200, JSON.stringify(runNow.body));
+    assert.equal(runNow.body.task.id, id);
+    assert.ok(runNow.body.task.nextRun >= requestedAt && runNow.body.task.nextRun <= Date.now(), "Run now must persist a due time on the owner");
     const deadline = Date.now() + 15000;
     while (!db.prepare("SELECT 1 FROM cron_runs WHERE task_id = ?").get(id) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
     await new Promise(resolve => setTimeout(resolve, 1200));

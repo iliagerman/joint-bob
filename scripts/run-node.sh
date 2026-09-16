@@ -33,4 +33,27 @@ else
   export MASTER_BOB_RELEASE=development
 fi
 cd "${REPO_ROOT}"
-exec node "${REPO_ROOT}/scripts/supervisor-service.mjs" "${REPO_ROOT}" "${STATE_DIR}"
+case "${JOINT_BOB_BROWSER_MODE:-headless}" in
+  headless)
+    exec node "${REPO_ROOT}/scripts/supervisor-service.mjs" "${REPO_ROOT}" "${STATE_DIR}"
+    ;;
+  virtual)
+    if [ "$(uname -s)" != "Linux" ]; then
+      echo "Virtual browser display is supported only on Linux" >&2
+      exit 1
+    fi
+    if ! command -v xvfb-run >/dev/null 2>&1; then
+      echo "Virtual browser display requires xvfb-run; install Xvfb using your system administrator" >&2
+      exit 1
+    fi
+    if ! command -v xauth >/dev/null 2>&1; then
+      echo "Virtual browser display requires xauth; install xauth using your system administrator" >&2
+      exit 1
+    fi
+    exec xvfb-run --auto-servernum --server-args='-screen 0 1100x740x24 -nolisten tcp' node "${REPO_ROOT}/scripts/supervisor-service.mjs" "${REPO_ROOT}" "${STATE_DIR}"
+    ;;
+  *)
+    echo "JOINT_BOB_BROWSER_MODE must be headless or virtual" >&2
+    exit 1
+    ;;
+esac

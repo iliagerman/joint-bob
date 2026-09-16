@@ -97,6 +97,7 @@ test("Kiro running observation blocks deletion and clears after completion", asy
     chat.socket.send(JSON.stringify({ type: "compact" }));
     await waitFor(chat.messages, () => chat.messages.slice(compactStart).some((message) => message.type === "status" && (message.status as { isCompacting?: boolean }).isCompacting));
     const compactStatus = chat.messages.findIndex((message, index) => index >= compactStart && message.type === "status" && (message.status as { isCompacting?: boolean }).isCompacting);
+    await waitFor(chat.messages, () => chat.messages.slice(compactStatus + 1).some((message) => message.type === "sessionsChanged"));
     assert.ok(chat.messages.slice(compactStatus + 1).some((message) => message.type === "sessionsChanged"), "Kiro compaction status must refresh the Running badge");
     const compacting = await api<{ sessions: Array<{ id: string; running: boolean }> }>(node, auth, "GET", `/projects/${project.id}/sessions`);
     assert.equal(compacting.body.sessions.find((candidate) => candidate.id === sessionId)?.running, true);

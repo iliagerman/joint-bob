@@ -3,6 +3,14 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Enabled headed Chrome automation on terminal-only Linux via private Xvfb virtual display, preserving native profiles and full Playwright compatibility.
+
+## 1.42.1 — 2026-09-16
+
+- Homeserver test release: opt-in Linux virtual-display mode preserves native browser profiles while running automated headed Chrome; Google compatibility is not promised and display prerequisites remain a manual install.
+
 ## 1.42.0 — 2026-09-16
 
 - Agents can now send notifications to ntfy servers you've configured.

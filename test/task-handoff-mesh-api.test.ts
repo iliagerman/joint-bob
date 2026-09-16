@@ -55,6 +55,7 @@ test("task handoff prepares then routes later updates to its new owner", { timeo
     assert.equal(firstPreparedTask.id, secondPreparedTask.id); assert.equal(firstPreparedTask.executionState, secondPreparedTask.executionState);
     assert.equal((await fetch(`${b.baseUrl}/api/cluster/tasks/abort`, { method: "POST", headers: { Authorization: `Bearer ${bToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ handoffId: abortedHandoffId }) })).status, 200);
     const restored = await waitForTask(b, bAuth, project.id, taskId, (item) => item.executionState === "idle"); assert.equal(restored.currentNodeId, aId);
+    await waitForTask(a, aAuth, project.id, taskId, (item) => item.updatedAt === restored.updatedAt && item.currentNodeId === aId && item.executionState === "idle");
     const handed = await fetch(`${a.baseUrl}/api/projects/${project.id}/tasks/${taskId}/handoff`, { method: "POST", headers: aAuth.headers, body: JSON.stringify({ peerId: bId }) });
     assert.equal(handed.status, 200, a.output());
     const handedTask = (await handed.json() as { task: any }).task;

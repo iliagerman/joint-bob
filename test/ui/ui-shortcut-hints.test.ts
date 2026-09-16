@@ -203,8 +203,9 @@ test("the chat toolbar keeps its controls on one line and overlays the badges", 
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
   await page.locator("#sessionList .session-card", { hasText: "Thread-Based Agent Builder" }).click();
   await page.locator("#modelButton:enabled").waitFor();
-  // Wide enough that the toolbar keeps every control on one row, so alignment is unambiguous.
-  await page.setViewportSize({ width: 1800, height: 900 });
+  // Leave enough space for the compared shortcut-bearing controls to share one row
+  // across the current toolbar and Linux font metrics, so alignment is unambiguous.
+  await page.setViewportSize({ width: 2048, height: 900 });
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 
   const resting = await page.evaluate(() => {

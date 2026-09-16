@@ -19,11 +19,26 @@ interface DetectionOptions {
   platform?: string;
   executable?: string;
   candidates?: string[];
+  mode?: string;
+  display?: string;
+}
+
+export function browserHeadlessMode(options: { mode?: string; platform?: string; display?: string } = {}): boolean {
+  const mode = options.mode ?? process.env.JOINT_BOB_BROWSER_MODE ?? "headless";
+  const platform = options.platform ?? process.platform;
+  const display = options.display ?? process.env.DISPLAY;
+  if (mode === "headless") return true;
+  if (mode !== "virtual") throw new Error("JOINT_BOB_BROWSER_MODE must be headless or virtual");
+  if (platform !== "linux") throw new Error("Virtual browser display is supported only on Linux");
+  if (!display?.trim()) throw new Error("Virtual browser display is unavailable; start Joint Bob through scripts/run-node.sh with Xvfb and xauth installed");
+  return false;
 }
 
 /** Detect installed browsers on this node; never download a browser. */
 export async function browserCapability(options: DetectionOptions = {}): Promise<BrowserCapability> {
   const unavailable = (supported: boolean, reason: string): BrowserCapability => ({ supported, available: false, executable: null, reason });
+  try { browserHeadlessMode(options); }
+  catch (error) { return unavailable(true, error instanceof Error ? error.message : String(error)); }
   const override = options.executable ?? process.env.JOINT_BOB_BROWSER_EXECUTABLE;
   if (override && !path.isAbsolute(override)) return unavailable(true, "JOINT_BOB_BROWSER_EXECUTABLE must be an absolute executable path on this node.");
   const candidates = override ? [override] : options.candidates ?? await installedCandidates(options.platform ?? process.platform);
@@ -188,12 +203,13 @@ export class BrowserRuntime {
     try {
       // Reserve in SQLite before yielding to native launch or filesystem I/O.
       if (!id) id = this.store.create(start).id;
+      const headless = browserHeadlessMode();
       const capability = await (this.options.capability ?? browserCapability)();
       if (!capability.supported || !capability.available || !capability.executable) throw new Error(capability.reason || "Browser unavailable on this node");
       const directory = await prepareProfile(profile.id);
       if (this.closed || (restoreId && this.cancelledRecoveries.has(restoreId))) throw new Error("Browser start cancelled");
       // server.ts owns TERM/INT shutdown. A second Playwright close force-kills Chrome before cookies flush.
-      context = await chromium.launchPersistentContext(directory, { executablePath: capability.executable, headless: true, handleSIGTERM: false, handleSIGINT: false, args: ["--window-size=1100,740"], viewport: { width: 1100, height: 740 }, acceptDownloads: true });
+      context = await chromium.launchPersistentContext(directory, { executablePath: capability.executable, headless, handleSIGTERM: false, handleSIGINT: false, args: ["--window-size=1100,740"], viewport: { width: 1100, height: 740 }, acceptDownloads: true });
       if (this.closed || (restoreId && this.cancelledRecoveries.has(restoreId))) throw new Error("Browser start cancelled");
       if (!profile.persistent) {
         try { await context.setStorageState(this.store.profileState(profile.id, start.projectId) as Parameters<BrowserContext["setStorageState"]>[0]); }
@@ -480,7 +496,13 @@ export class BrowserRuntime {
       case "wait": await this.locator(page, command.selector).waitFor({ state: command.state }); break;
       case "evaluate": return page.evaluate(command.expression);
       case "snapshot": return { pageId: session.activePageId, url: page.url(), title: await page.title(), accessibility: (await page.locator("body").ariaSnapshot({ timeout: 5000 })).slice(0, 50000), errors: [...session.errors] };
-      case "screenshot": return { pageId: session.activePageId, mimeType: "image/png", data: (await page.screenshot({ timeout: 10000 })).toString("base64") };
+      case "screenshot": {
+        const pageId = session.activePageId;
+        await page.bringToFront();
+        // Foreground activation can complete before the compositor has produced a frame.
+        await page.waitForFunction(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)))), undefined, { timeout: 10000 });
+        return { pageId, mimeType: "image/png", data: (await page.screenshot({ timeout: 10000 })).toString("base64") };
+      }
       case "upload": await this.upload(session, page, command, actor); break;
     }
     return this.get(session.id);

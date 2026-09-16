@@ -5,10 +5,13 @@ import path from "node:path";
 import os from "node:os";
 import { syncBuiltinESMExports } from "node:module";
 import { chromium } from "playwright-core";
-import { browserCapability, BrowserRuntime, validateBrowserUploads } from "../src/browser-runtime.js";
+import { browserCapability, browserHeadlessMode, BrowserRuntime, validateBrowserUploads } from "../src/browser-runtime.js";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { browserCommandSchema, browserStartSchema } from "../src/browser-types.js";
+
+// Unit fixtures choose the default mode independently; explicit mode cases set their own environment.
+delete process.env.JOINT_BOB_BROWSER_MODE;
 
 for (const platform of ["darwin", "linux", "win32", "freebsd"]) {
   test(`capability accepts an installed explicit executable on ${platform}`, async () => {
@@ -87,6 +90,62 @@ test("start reports unavailable local capability without launching Chrome", asyn
   } finally { await runtime.close(); }
 });
 
+test("virtual mode launches the same profile headed without extra flags", async t => {
+  const previousMode = process.env.JOINT_BOB_BROWSER_MODE;
+  const previousDisplay = process.env.DISPLAY;
+  const previousPlatform = Object.getOwnPropertyDescriptor(process, "platform")!;
+  process.env.JOINT_BOB_BROWSER_MODE = "virtual";
+  process.env.DISPLAY = ":999";
+  Object.defineProperty(process, "platform", { ...previousPlatform, value: "linux" });
+  t.after(() => {
+    if (previousMode === undefined) delete process.env.JOINT_BOB_BROWSER_MODE; else process.env.JOINT_BOB_BROWSER_MODE = previousMode;
+    if (previousDisplay === undefined) delete process.env.DISPLAY; else process.env.DISPLAY = previousDisplay;
+    Object.defineProperty(process, "platform", previousPlatform);
+  });
+  const page = Object.assign(new EventEmitter(), { url: () => "about:blank", title: async () => "" });
+  const context = Object.assign(new EventEmitter(), {
+    setDefaultTimeout() {}, setDefaultNavigationTimeout() {}, pages: () => [],
+    newPage: async () => { context.emit("page", page); return page; }, close: async () => {},
+  });
+  const launch = t.mock.method(chromium, "launchPersistentContext", async () => context);
+  const runtime = new BrowserRuntime({ capability: async () => ({ supported: true, available: true, executable: process.execPath, reason: null }) });
+  try {
+    const view = await runtime.create({ projectId: "virtual", engine: "pi", conversationId: randomUUID(), appNodeId: randomUUID() });
+    assert.deepEqual(launch.mock.calls[0].arguments, [path.join(process.env.PI_WEB_DATA_DIR!, "browser", "profiles", view.profileId!), { executablePath: process.execPath, headless: false, handleSIGTERM: false, handleSIGINT: false, args: ["--window-size=1100,740"], viewport: { width: 1100, height: 740 }, acceptDownloads: true }]);
+    await runtime.execute(view.id, { action: "close" }, { kind: "agent" });
+  } finally { await runtime.close(); }
+});
+
+test("browser mode rejects invalid, unavailable, and non-Linux virtual configurations", async () => {
+  assert.throws(() => browserHeadlessMode({ mode: "visible", platform: "linux", display: ":1" }), /must be headless or virtual/);
+  assert.throws(() => browserHeadlessMode({ mode: "virtual", platform: "darwin", display: ":1" }), /only on Linux/);
+  assert.throws(() => browserHeadlessMode({ mode: "virtual", platform: "linux", display: "  " }), /scripts\/run-node\.sh.*Xvfb.*xauth/);
+  const unavailable = await browserCapability({ executable: process.execPath, platform: "darwin", mode: "virtual", display: ":1" });
+  assert.equal(unavailable.available, false);
+  assert.match(unavailable.reason!, /only on Linux/);
+});
+
+test("runtime rejects invalid or display-less virtual configuration before launching", async t => {
+  const previousMode = process.env.JOINT_BOB_BROWSER_MODE;
+  const previousDisplay = process.env.DISPLAY;
+  const previousPlatform = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { ...previousPlatform, value: "linux" });
+  t.after(() => {
+    if (previousMode === undefined) delete process.env.JOINT_BOB_BROWSER_MODE; else process.env.JOINT_BOB_BROWSER_MODE = previousMode;
+    if (previousDisplay === undefined) delete process.env.DISPLAY; else process.env.DISPLAY = previousDisplay;
+    Object.defineProperty(process, "platform", previousPlatform);
+  });
+  const launch = t.mock.method(chromium, "launchPersistentContext", async () => { throw new Error("unexpected launch"); });
+  for (const [mode, error] of [["invalid", /must be headless or virtual/], ["virtual", /scripts\/run-node\.sh.*Xvfb.*xauth/]] as const) {
+    process.env.JOINT_BOB_BROWSER_MODE = mode;
+    delete process.env.DISPLAY;
+    const runtime = new BrowserRuntime({ capability: async () => ({ supported: true, available: true, executable: process.execPath, reason: null }) });
+    try { await assert.rejects(runtime.create({ projectId: mode, engine: "pi", conversationId: randomUUID(), appNodeId: randomUUID() }), error); }
+    finally { await runtime.close(); }
+  }
+  assert.equal(launch.mock.callCount(), 0);
+});
+
 test("runtime creates a direct-network context and closes it without a proxy", async t => {
   let contextsClosed = 0;
   const page = Object.assign(new EventEmitter(), { url: () => "about:blank", title: async () => "" });
@@ -111,6 +170,77 @@ test("runtime creates a direct-network context and closes it without a proxy", a
   } finally { await runtime.close(); }
   assert.equal(contextsClosed, 1);
 });
+
+for (const popupDuringActivation of [false, true]) {
+  test(`screenshot activates the selected page before capture${popupDuringActivation ? " when a popup arrives during activation" : ""}`, async t => {
+    const events: string[] = [];
+    let foreground = false;
+    let painted = false;
+    const image = Buffer.from("foreground screenshot");
+    const popup = Object.assign(new EventEmitter(), { url: () => "about:blank", title: async () => "Popup" });
+    const page = Object.assign(new EventEmitter(), {
+      url: () => "about:blank",
+      title: async () => "",
+      bringToFront: async () => {
+        events.push("front");
+        foreground = true;
+        if (popupDuringActivation) context.emit("page", popup);
+      },
+      waitForFunction: async () => {
+        assert.equal(foreground, true);
+        await Promise.resolve();
+        events.push("paint");
+        painted = true;
+      },
+      screenshot: async () => {
+        if (!foreground) throw new Error("Page is not foreground");
+        if (!painted) throw new Error("Page has not painted");
+        events.push("capture");
+        return image;
+      },
+    });
+    const context = Object.assign(new EventEmitter(), {
+      setDefaultTimeout() {}, setDefaultNavigationTimeout() {}, pages: () => [],
+      newPage: async () => { context.emit("page", page); return page; }, close: async () => {},
+    });
+    t.mock.method(chromium, "launchPersistentContext", async () => context);
+    const runtime = new BrowserRuntime({ capability: async () => ({ supported: true, available: true, executable: process.execPath, reason: null }) });
+    try {
+      const view = await runtime.create({ projectId: "p", engine: "pi", conversationId: randomUUID(), appNodeId: randomUUID() });
+      assert.deepEqual(await runtime.execute(view.id, { action: "screenshot" }, { kind: "agent" }), {
+        pageId: view.activePageId,
+        mimeType: "image/png",
+        data: image.toString("base64"),
+      });
+      assert.deepEqual(events, ["front", "paint", "capture"]);
+      if (popupDuringActivation) assert.notEqual((await runtime.get(view.id)).activePageId, view.activePageId);
+    } finally { await runtime.close(); }
+  });
+}
+
+for (const failure of ["activation", "paint"] as const) {
+  test(`screenshot does not capture when page ${failure} fails`, async t => {
+    const failureError = new Error(`Native compositor ${failure} failed`);
+    const page = Object.assign(new EventEmitter(), {
+      url: () => "about:blank",
+      title: async () => "",
+      bringToFront: async () => { if (failure === "activation") throw failureError; },
+      waitForFunction: async () => { if (failure === "paint") throw failureError; },
+      screenshot: t.mock.fn(async () => Buffer.from("unexpected")),
+    });
+    const context = Object.assign(new EventEmitter(), {
+      setDefaultTimeout() {}, setDefaultNavigationTimeout() {}, pages: () => [],
+      newPage: async () => { context.emit("page", page); return page; }, close: async () => {},
+    });
+    t.mock.method(chromium, "launchPersistentContext", async () => context);
+    const runtime = new BrowserRuntime({ capability: async () => ({ supported: true, available: true, executable: process.execPath, reason: null }) });
+    try {
+      const view = await runtime.create({ projectId: "p", engine: "pi", conversationId: randomUUID(), appNodeId: randomUUID() });
+      await assert.rejects(runtime.execute(view.id, { action: "screenshot" }, { kind: "agent" }), error => error === failureError);
+      assert.equal(page.screenshot.mock.callCount(), 0);
+    } finally { await runtime.close(); }
+  });
+}
 
 test("browser navigation accepts only HTTP(S), never executor files or privileged browser URLs", () => {
   const start = {projectId:"p",engine:"pi",conversationId:"c",appNodeId:randomUUID()};
