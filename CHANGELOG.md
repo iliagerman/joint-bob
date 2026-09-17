@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.50.0 — 2026-09-17
 
-- Scheduled task failures now retry at the next run time by default; optionally pause the schedule to review failed runs instead.
+- Added temporary by-the-way chats for exploring ideas in an isolated side panel without affecting your main conversation.
+- Scheduled task failures now retry at the next run time by default; you can optionally pause the schedule to review failed runs instead.
 
 ## 1.49.0 — 2026-09-17
 
