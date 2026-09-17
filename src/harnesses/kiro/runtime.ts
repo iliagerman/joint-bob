@@ -511,6 +511,9 @@ class KiroSession implements HarnessSession {
   async configure(settings: HarnessModelSettings): Promise<void> {
     if (this.running) throw new Error("Kiro session is busy");
     validate(settings);
+    if (this.model.modelId === settings.modelId
+      && this.model.reasoning === settings.reasoning
+      && JSON.stringify(this.trustedTools) === JSON.stringify(settings.enabledTools)) return;
     this.model = { provider: "kiro", modelId: settings.modelId, reasoning: settings.reasoning };
     this.actualModel = undefined;
     this.displayedReasoning = undefined;

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Kiro sessions no longer rewrite their history when reconfigured with unchanged settings.
+
 ## 1.43.0 — 2026-09-17
 
 - ntfy services can now be shared with paired nodes, and a default service can be selected when several are configured.

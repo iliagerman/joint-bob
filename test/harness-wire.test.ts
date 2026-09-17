@@ -160,6 +160,9 @@ test("synthetic Kiro ACP covers new, resume, frontend events, empty turns, and c
     session.dispose();
     await setScopeSecretAccounts("conversation", conversationScopeId("kiro", "wire_session"), []);
     session = await runtime.open({ projectId: project.id, cwd: root, sessionId: "wire_session", sessionPath: file, accountIds: [account.id] });
+    const unchangedTranscript = await readFile(file.replace(/^kiro:/, ""), "utf8");
+    await session.configure(session.settings());
+    assert.equal(await readFile(file.replace(/^kiro:/, ""), "utf8"), unchangedTranscript, "reapplying unchanged Kiro settings must not rewrite the transcript");
     const resumedEvents: unknown[] = [];
     session.subscribe((event) => { if (event.type === "textDelta") resumedEvents.push(event); });
     await session.prompt({ text: "again" });
