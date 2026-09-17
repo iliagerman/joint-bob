@@ -134,6 +134,22 @@ function applyRecord(session: KiroStoredSession, value: KiroRecord, index: numbe
     session.messages.push({ id: `${session.id}:${index}`, role: value.role, text: value.text, timestamp: timestamp(value.timestamp) });
     return;
   }
+  // A reloaded transcript shows the same collapsed tool bubble the live stream
+  // did, so the prose around a tool call still reads in order.
+  if (value.type === "tool") {
+    if (typeof value.text !== "string" || value.isError !== undefined && typeof value.isError !== "boolean") {
+      throw new Error("Invalid Kiro tool record");
+    }
+    session.messages.push({
+      id: `${session.id}:${index}`,
+      role: "toolResult",
+      toolName: nonempty(value.toolName, "tool record"),
+      text: value.text,
+      ...(value.isError === true ? { isError: true } : {}),
+      timestamp: timestamp(value.timestamp),
+    });
+    return;
+  }
   throw new Error(`Invalid Kiro transcript record type: ${String(value.type)}`);
 }
 

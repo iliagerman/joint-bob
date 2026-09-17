@@ -186,6 +186,8 @@ export interface ChatMessage {
   text: string;
   // Present on tool roles so the client can label the collapsed tool bubble.
   toolName?: string;
+  /** Present on tool roles that failed, so a reload shows the same failed bubble. */
+  isError?: boolean;
   /** ISO time the harness recorded for this message; absent when the transcript line carried none. */
   timestamp?: string;
 }

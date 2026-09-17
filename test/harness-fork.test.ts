@@ -18,6 +18,7 @@ test("Kiro fork copies context and settings without sharing the native session",
   const records = [
     { type: "joint-bob-kiro", version: 1, id: sourceId, cwd: "/tmp/project", nativeSessionId: "native-source", modelId: "default", reasoning: "low", timestamp: "2025-01-01T00:00:00.000Z" },
     { type: "message", role: "user", text: "first", timestamp: "2025-01-01T00:00:01.000Z" },
+    { type: "tool", toolName: "fs_read", text: "file body", timestamp: "2025-01-01T00:00:01.500Z" },
     { type: "message", role: "assistant", text: "done", timestamp: "2025-01-01T00:00:02.000Z" },
     { type: "settings", modelId: "model-two", reasoning: "high", enabledTools: ["read"], timestamp: "2025-01-01T00:00:03.000Z" },
     { type: "title", title: "Original", timestamp: "2025-01-01T00:00:04.000Z" },
@@ -35,7 +36,11 @@ test("Kiro fork copies context and settings without sharing the native session",
   assert.equal(fork.modelId, "model-two");
   assert.equal(fork.reasoning, "high");
   assert.deepEqual(fork.enabledTools, ["read"]);
-  assert.deepEqual(fork.messages.map(({ role, text }) => ({ role, text })), [{ role: "user", text: "first" }, { role: "assistant", text: "done" }]);
+  assert.deepEqual(fork.messages.map(({ role, text, toolName }) => ({ role, text, toolName })), [
+    { role: "user", text: "first", toolName: undefined },
+    { role: "toolResult", text: "file body", toolName: "fs_read" },
+    { role: "assistant", text: "done", toolName: undefined },
+  ], "a forked transcript keeps the tool bubbles that explain its prose");
   assert.equal(fork.title, "[F] Original");
   assert.equal(await readFile(source, "utf8"), original);
 });

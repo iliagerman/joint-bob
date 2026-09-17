@@ -401,7 +401,9 @@ class KiroSession implements HarnessSession {
       const kiro = metadata?.kiro === undefined ? undefined : object(metadata.kiro, "Kiro tool metadata");
       const toolName = kiro?.toolName === undefined ? title : requiredString(kiro.toolName, "native tool name");
       this.toolCalls.set(id, { title, toolName, rawInput: update.rawInput });
-      if (this.currentInput) this.markStarted();
+      // Kiro speaks again after a tool call. Closing the message here keeps the
+      // saved transcript in the same pieces the live stream showed.
+      if (this.currentInput) { this.markStarted(); this.persistAssistant(); }
       this.emit({ type: "toolStart", toolCallId: id, toolName, title, args: update.rawInput });
       return;
     }
@@ -419,6 +421,12 @@ class KiroSession implements HarnessSession {
     if (!call) throw new Error(`Kiro ACP tool update references unknown tool call: ${id}`);
     const textParts = Array.isArray(update.content) ? update.content.flatMap((part) => {
       const item = object(part, "tool content");
+      // An edit reports itself as a diff, not as text. Showing the file's new
+      // content beats the empty bubble a dropped diff produced.
+      if (item.type === "diff") {
+        if (typeof item.newText !== "string") throw new Error("Invalid Kiro ACP tool diff text");
+        return [`${requiredString(item.path, "tool diff path")}\n${item.newText}`];
+      }
       if (item.type !== "content") return [];
       const content = object(item.content, "tool content value");
       return content.type === "text" && typeof content.text === "string" ? [content.text] : [];
@@ -428,7 +436,11 @@ class KiroSession implements HarnessSession {
       if (text) this.emit({ type: "toolUpdate", toolCallId: id, toolName: call.toolName, title: call.title, text });
       return;
     }
-    this.emit({ type: "toolEnd", toolCallId: id, toolName: call.toolName, title: call.title, text, isError: update.status === "failed" });
+    const isError = update.status === "failed";
+    this.emit({ type: "toolEnd", toolCallId: id, toolName: call.toolName, title: call.title, text, isError });
+    if (!this.currentInput) return;
+    this.transcript.push({ id: `${this.id}:tool:${this.transcript.length}`, role: "toolResult", toolName: call.toolName, text, ...(isError ? { isError } : {}) });
+    this.queueRecord({ type: "tool", toolName: call.toolName, text, ...(isError ? { isError } : {}), timestamp: new Date().toISOString() });
   }
 
   private throwIfCancelled(): void {

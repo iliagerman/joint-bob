@@ -42,6 +42,8 @@ test("history rendering routes each transcript role to its own bubble", async ()
   assert.match(app, /function appendTranscript\(/);
   // Tool results become collapsed monospace tool bubbles, never markdown prose.
   assert.match(app, /appendTranscript[\s\S]*toolResult[\s\S]*appendToolMessage/);
+  // A saved tool that failed reads as failed, rather than as a finished step.
+  assert.match(app, /message\.isError \? "Failed" : "Done", message\.isError === true/);
   // The old "loop every message straight into a chat bubble" mapping is gone.
   assert.doesNotMatch(app, /for \(const message of payload\.messages/);
   // Both transcript entry points use the scroll-preserving renderer, which
@@ -101,7 +103,7 @@ test("assistant filesystem paths open through the authenticated project file rou
   assert.match(server, /File is outside the project directory/);
   assert.match(server, /project-file-content/);
   assert.match(server, /await rename\(temporary, resolved\)/);
-  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v216"/);
+  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v217"/);
   assert.match(serviceWorker, /\/vendor\/codemirror\/lib\/codemirror\.js/);
   assert.match(serviceWorker, /\/vendor\/codemirror\/keymap\/vim\.js/);
   assert.match(serviceWorker, /self\.addEventListener\("fetch"/);

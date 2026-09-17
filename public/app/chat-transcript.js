@@ -862,7 +862,7 @@ function appendTranscript(messages, segments) {
     }
     if (message.role === "toolResult" || message.role === "toolCall") {
       const bubble = appendToolMessage(message.toolName || "tool", `history-${message.id}`, 0);
-      updateToolMessage(bubble, message.text, "Done");
+      updateToolMessage(bubble, message.text, message.isError ? "Failed" : "Done", message.isError === true);
       continue;
     }
     const at = message.timestamp ? new Date(message.timestamp) : null;

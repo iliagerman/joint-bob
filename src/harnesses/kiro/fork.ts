@@ -21,6 +21,9 @@ export function snapshotKiroFork(options: HarnessForkOptions): HarnessForkSnapsh
     else if (record.type === "message") {
       if ((record.role !== "user" && record.role !== "assistant") || typeof record.text !== "string") throw new HarnessForkError(409, "Invalid Kiro message record");
       messages.push(record);
+    } else if (record.type === "tool") {
+      if (!requiredString(record.toolName) || typeof record.text !== "string") throw new HarnessForkError(409, "Invalid Kiro tool record");
+      messages.push(record);
     } else if (!["native-session", "title", "handoff-completed"].includes(String(record.type))) throw new HarnessForkError(409, `Invalid Kiro transcript record type: ${String(record.type)}`);
   }
   if (!requiredString(modelId) || !requiredString(reasoning)) throw new HarnessForkError(409, "Invalid Kiro transcript header");
