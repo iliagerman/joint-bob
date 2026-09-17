@@ -22,7 +22,7 @@ export const cronInputSchema = z.object({
   engine: z.string().refine(isHarnessId, "Harness ID is invalid")
     .refine(id => listDiscoveredHarnesses().some(adapter => adapter.id === id && adapter.runtime), "Harness is not registered on this node"),
   model: cronModelSchema.nullable().optional(), reasoning: reasoningSchema.optional(),
-  sessionId: z.string().min(1).max(240).nullable(), enabled: z.boolean(),
+  sessionId: z.string().min(1).max(240).nullable(), enabled: z.boolean(), pauseOnFailure: z.boolean().default(false),
   schedule: z.object({ frequency: z.enum(["hourly", "daily", "weekly"]), intervalHours: z.number().int().min(1).max(168).optional(), hour: z.number().int().min(0).max(23), minute: z.number().int().min(0).max(59), weekday: z.number().int().min(0).max(6), timezone: timezoneSchema }).strict(),
 }).strict().superRefine((input, context) => {
   const adapter = listDiscoveredHarnesses().find((candidate) => candidate.id === input.engine);
@@ -68,7 +68,7 @@ export class CronStore {
   }
   get(id: string): CronTask | null {
     const row = this.db.prepare("SELECT * FROM cron_tasks WHERE id = ?").get(id) as { id: string; input: string; next_run: number } | undefined;
-    return row ? { ...JSON.parse(row.input), id: row.id, nextRun: row.next_run, lastRun: this.history(id)[0] ?? null } : null;
+    return row ? { ...cronInputSchema.parse(JSON.parse(row.input)), id: row.id, nextRun: row.next_run, lastRun: this.history(id)[0] ?? null } : null;
   }
   list(projectId?: string): CronTask[] {
     const rows = (projectId === undefined ? this.db.prepare("SELECT id FROM cron_tasks").all() : this.db.prepare("SELECT id FROM cron_tasks WHERE project_id = ?").all(projectId)) as { id: string }[];

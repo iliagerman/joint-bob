@@ -116,8 +116,10 @@ async function executeCronRun(task: CronTask, run: CronRun): Promise<void> {
     await queuedCronPrompt(task, run, sessionId);
     cronStore().finish(run.id, "succeeded", null);
   } catch (error) {
-    const { id, nextRun, lastRun, ...input } = cronStore().get(task.id)!;
-    cronStore().update(id, { ...input, enabled: false });
+    if (task.pauseOnFailure) {
+      const { id, nextRun, lastRun, ...input } = cronStore().get(task.id)!;
+      cronStore().update(id, { ...input, enabled: false });
+    }
     cronStore().finish(run.id, "failed", error instanceof Error ? error.message : String(error));
   }
 }

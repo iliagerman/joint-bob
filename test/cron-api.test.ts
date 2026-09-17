@@ -213,6 +213,7 @@ test("cron API routes to execution owner, persists, runs fresh project conversat
     assert.equal((await api<{ project: { lock: { nodeId: string } } }>(b, authB, "GET", `/projects/${projectId}`)).body.project.lock.nodeId, a.nodeId, "execution node must see the foreign project lock");
     const locked = await api<{ task: CronTask }>(a, auth, "POST", "/cron", { nodeId: b.nodeId, command: { action: "create", input } });
     assert.equal(locked.status, 200);
+    assert.equal(locked.body.task.pauseOnFailure, false, "new schedules retry after failure by default");
     makeDue(b.dataDir, locked.body.task.id);
     let failed: CronTask | undefined;
     await until(async () => {
@@ -221,10 +222,21 @@ test("cron API routes to execution owner, persists, runs fresh project conversat
     });
     assert.equal(failed!.lastRun!.status, "failed");
     assert.match(failed!.lastRun!.error!, /Project is locked/);
-    assert.equal(failed!.enabled, false);
+    assert.equal(failed!.enabled, true, "default schedules must retry at the next occurrence");
+    const pausing = await api<{ task: CronTask }>(a, auth, "POST", "/cron", { nodeId: b.nodeId, command: { action: "create", input: { ...input, pauseOnFailure: true } } });
+    assert.equal(pausing.status, 200);
+    makeDue(b.dataDir, pausing.body.task.id);
+    let pausedAfterFailure: CronTask | undefined;
+    await until(async () => {
+      pausedAfterFailure = (await api<{ tasks: CronTask[] }>(a, auth, "GET", `/projects/${projectId}/cron`)).body.tasks.find(task => task.id === pausing.body.task.id);
+      return pausedAfterFailure?.lastRun?.finishedAt !== null && pausedAfterFailure?.lastRun?.finishedAt !== undefined;
+    });
+    assert.equal(pausedAfterFailure!.lastRun!.status, "failed");
+    assert.equal(pausedAfterFailure!.enabled, false, "opted-in schedules must pause after failure");
     assert.equal((await readFile(log, "utf8")).trim().split("\n").length, 4, "a locked project must not start an agent");
     await api(b, authB, "PUT", `/projects/${projectId}/lock`, { locked: false });
     await api(a, auth, "POST", "/cron", { nodeId: b.nodeId, command: { action: "delete", id: locked.body.task.id } });
+    await api(a, auth, "POST", "/cron", { nodeId: b.nodeId, command: { action: "delete", id: pausing.body.task.id } });
     const moved = await api<{ task: CronTask }>(a, auth, "POST", "/cron", { nodeId: b.nodeId, command: { action: "update", id, input: { ...input, ownerNodeId: a.nodeId, enabled: false } } });
     assert.equal(moved.status, 200, JSON.stringify(moved.body));
     assert.equal(moved.body.task.id, id);

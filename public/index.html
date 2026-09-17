@@ -1465,7 +1465,8 @@
           <label>Model<select name="model" data-testid="cron-model"></select></label>
           <label id="cronReasoningLabel">Reasoning<select name="reasoning" data-testid="cron-reasoning"></select></label>
           <label class="checkbox-row"><input name="enabled" type="checkbox" checked data-testid="cron-enabled">Enabled</label>
-          <p class="cron-help">Missed offline runs are skipped. Runs never overlap. Errors pause the task for review.</p>
+          <label class="checkbox-row"><input name="pauseOnFailure" type="checkbox" data-testid="cron-pause-on-failure">Pause schedule after a failed run</label>
+          <p class="cron-help">Missed offline runs are skipped. Runs never overlap. Failed runs retry at the next scheduled time unless pause on failure is selected.</p>
           <div class="dialog-actions"><button id="cronCancel" type="button" class="ghost" data-testid="cron-cancel">Cancel</button><button class="primary" type="submit" data-testid="cron-save">Save task</button></div>
         </form>
         <div id="cronFooter" class="dialog-actions"><button id="cronRefresh" type="button" class="ghost" data-testid="cron-refresh">Refresh</button><button id="cronClose" class="primary" type="button" data-testid="cron-close">Close</button></div>

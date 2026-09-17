@@ -5,7 +5,12 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Scheduled task failures now retry at the next run time by default; optionally pause the schedule to review failed runs instead.
+
+## 1.49.0 — 2026-09-17
+
 - Added `/bob-btw` command to open a temporary isolated conversation in a side panel for exploring ideas without affecting the main chat.
+- Scheduled tasks now retry after failure by default and can optionally be configured to pause for review instead.
 
 ## 1.48.1 — 2026-09-17
 

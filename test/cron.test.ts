@@ -27,7 +27,8 @@ test("cron validates schedule and required user input", async () => {
   for (const invalid of [{ name: " " }, { prompt: "" }, { ownerNodeId: "bad" }, { schedule: { ...input().schedule, timezone: "Mars" } }, { schedule: { ...input().schedule, hour: 24 } }]) {
     assert.equal(cronInputSchema.safeParse({ ...input(), ...invalid }).success, false);
   }
-  assert.equal(cronInputSchema.safeParse(input()).success, true);
+  assert.equal(cronInputSchema.parse(input()).pauseOnFailure, false);
+  assert.equal(cronInputSchema.parse({ ...input(), pauseOnFailure: true }).pauseOnFailure, true);
   assert.equal(cronInputSchema.safeParse({ ...input(), engine: "pi", model: { provider: "openai-codex", modelId: "gpt-5.6-sol", reasoning: "high" } }).success, true);
   assert.equal(cronInputSchema.safeParse({ ...input(), reasoning: "high" }).success, true);
   assert.equal(cronInputSchema.safeParse({ ...input(), schedule: { ...input().schedule, intervalHours: 0 } }).success, false);
