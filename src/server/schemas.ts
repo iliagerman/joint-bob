@@ -10,6 +10,7 @@ import { CANVAS_MAX_ROW_HEIGHT, CANVAS_MIN_ROW_HEIGHT, canvasRowGeometryIsLegal 
 import { isHarnessId, PROJECT_COLORS } from "../types.js";
 import { canonicalClusterUrl, isClusterOriginUrl } from "./http-auth.js";
 import type { RuntimeSettings, SettingsInput } from "../settings.js";
+import { normalizeWebsiteOrigin } from "../secrets.js";
 
 export const absolutePathSchema = z.string().trim().min(1).max(1000).refine(path.isAbsolute, "Path must be absolute");
 export const projectSchema = z.object({
@@ -174,7 +175,8 @@ export const secretCredentialBatchSchema = z.object({ events: z.array(secretCred
 export const secretCredentialSyncSchema = z.object({ peerIds: z.array(z.string().uuid()).min(1).max(50) });
 export const socketSecretAccountIdsSchema = z.array(z.string().uuid()).max(100);
 const secretVariableSchema = z.object({ name: z.string().trim().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), kind: z.enum(["value", "file"]), value: z.string().max(100000).optional() }).strict();
-export const secretAccountSchema = z.object({ id: z.string().uuid().optional(), label: z.string().trim().min(1).max(64).refine((value) => !/[\x00-\x1f\x7f]/.test(value), "Secret account label cannot contain control characters"), provider: z.enum(["aws", "google", "github", "custom"]), replicate: z.boolean().optional(), variables: z.array(secretVariableSchema).min(1).max(20) }).strict();
+const websiteOriginSchema = z.string().max(2048).refine((value) => { try { normalizeWebsiteOrigin(value); return true; } catch { return false; } }, "Website origin is invalid").transform(normalizeWebsiteOrigin);
+export const secretAccountSchema = z.object({ id: z.string().uuid().optional(), label: z.string().trim().min(1).max(64).refine((value) => !/[\x00-\x1f\x7f]/.test(value), "Secret account label cannot contain control characters"), provider: z.enum(["aws", "google", "github", "custom"]), replicate: z.boolean().optional(), websiteOrigin: websiteOriginSchema.nullable().optional(), variables: z.array(secretVariableSchema).min(1).max(20) }).strict();
 export const secretScopeParamsSchema = z.object({ scopeType: z.enum(["workspace", "project", "conversation"]), scopeId: z.string().trim().min(1).max(300) });
 export const secretScopeSchema = z.object({ accountIds: z.array(z.string().uuid()).max(100) }).strict();
 const taskStatusSchema = z.enum(["backlog", "planning", "in_progress", "review", "done"]);

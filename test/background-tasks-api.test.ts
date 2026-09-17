@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import path from "node:path";
@@ -7,6 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { api, projectNamed, signIn } from "./dev-nodes.js";
 import { backgroundClusterFixture, backgroundFixture, closeBackgroundClusterFixture, closeBackgroundFixture, startSyntheticTask } from "./background-tasks-fixture.js";
+import { mintTaskToken, readSupervisorControl } from "../scripts/supervisor-client.mjs";
 
 test("background task API exposes scoped metadata and output without a web start action", async () => {
   const f = await backgroundFixture();
@@ -53,6 +55,20 @@ test("background task API exposes scoped metadata and output without a web start
   } finally {
     await closeBackgroundFixture(f);
   }
+});
+
+test("short foreground shell commands are absent from background task history", async () => {
+  const f = await backgroundFixture();
+  try {
+    const session = await signIn(f.environment, f.node);
+    const project = projectNamed(f.node, "Joint Bob"); const conversationId = "short-shell";
+    const control = readSupervisorControl(f.node.dataDir)!;
+    const token = mintTaskToken(f.node.dataDir, JSON.stringify([project.id, conversationId]));
+    const child = spawn(process.execPath, [path.resolve("bin/joint-bob-bash.mjs"), "-lc", "exit 0"], { cwd: f.root, env: { PATH: process.env.PATH ?? "", HOME: f.root, NODE_NO_WARNINGS: "1", JOINT_BOB_TASK_DATA_DIR: f.node.dataDir, JOINT_BOB_TASK_SOCKET: control.socketPath, JOINT_BOB_TASK_TOKEN: token }, stdio: "ignore" });
+    const [code] = await once(child, "close"); assert.equal(code, 0);
+    const listed = await api<{ tasks: Array<Record<string, unknown>> }>(f.node, session, "GET", `/background-tasks?projectId=${project.id}&conversationId=${conversationId}`);
+    assert.equal(listed.status, 200); assert.deepEqual(listed.body.tasks, []);
+  } finally { await closeBackgroundFixture(f); }
 });
 
 test("background task keyset pagination returns every tied row exactly once", async () => {

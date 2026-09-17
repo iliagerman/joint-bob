@@ -1,6 +1,7 @@
-import { lstatSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import { pathToFileURL } from "node:url";
 
 export interface BackgroundTaskCompletion {
   state: "pending" | "queued" | "blocked" | "starting" | "consumed";
@@ -103,15 +104,24 @@ export function readBackgroundTasks(
       return { tasks: [], nextCursor: null, available: false };
     }
     if (!identities.length) return { tasks: [], nextCursor: null, available: true };
+    let policy = "";
+    const policyFile = path.join(realpathSync(dataDirectory), "node.db");
+    if (existsSync(policyFile)) {
+      db.prepare("ATTACH DATABASE ? AS shell_policy").run(`${pathToFileURL(policyFile).href}?mode=ro`);
+      if (db.prepare("SELECT 1 FROM shell_policy.sqlite_master WHERE type='table' AND name='supervised_shell_calls'").get()) {
+        policy = " AND NOT EXISTS (SELECT 1 FROM shell_policy.supervised_shell_calls p WHERE p.task_id=supervisor_tasks.id AND (p.state='returned' OR (p.state='foreground' AND p.foreground_until > ?)))";
+      }
+    }
     const placeholders = identities.map(() => "?").join(",");
     const cursor = before ? " AND (started_at < ? OR (started_at = ? AND id < ?))" : "";
     const values: SQLInputValue[] = [
       ...identities,
+      ...(policy ? [Date.now()] : []),
       ...(before ? [before.startedAt, before.startedAt, before.id] : []),
       limit + 1,
     ];
     const rows = db.prepare(
-      `SELECT id,name,status,pid,started_at,ended_at,exit_code,signal FROM supervisor_tasks WHERE identity IN (${placeholders})${cursor} ORDER BY started_at DESC,id DESC LIMIT ?`,
+      `SELECT id,name,status,pid,started_at,ended_at,exit_code,signal FROM supervisor_tasks WHERE identity IN (${placeholders})${policy}${cursor} ORDER BY started_at DESC,id DESC LIMIT ?`,
     ).all(...values) as unknown as Row[];
     const more = rows.length > limit;
     const selected = rows.slice(0, limit).map(task);

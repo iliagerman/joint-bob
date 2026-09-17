@@ -8,7 +8,7 @@ import { idleSessionTimeoutMs, localWriteGraceMs } from "./state.js";
 
 export interface SharedHarnessSession {
   engine: HarnessId; projectId: string; cwd: string; session: HarnessSession;
-  clients: Set<WebSocket>; turnInFlight: number; lastLocalEventAt: number;
+  clients: Set<WebSocket>; turnInFlight: number; lastLocalEventAt: number; internalTurn?: boolean;
   liveEvents: HarnessEvent[]; idleTimer: NodeJS.Timeout | null; unsubscribe: () => void;
   /** True while the running turn came from a scheduled task rather than a person. */
   scheduledTurn: boolean;
@@ -44,25 +44,26 @@ function appendEvent(events: HarnessEvent[], event: HarnessEvent): void {
 function subscribe(shared: SharedHarnessSession): () => void {
   let announcedFile: string | undefined;
   return shared.session.subscribe((event) => {
+    const internal = shared.internalTurn === true;
     shared.lastLocalEventAt = Date.now();
     if (event.type === "agent_start") shared.liveEvents = [];
-    if (shared.turnInFlight) appendEvent(shared.liveEvents, event);
-    for (const client of shared.clients) send(client, event);
+    if (!internal && shared.turnInFlight) appendEvent(shared.liveEvents, event);
+    if (!internal) for (const client of shared.clients) send(client, event);
     const file = shared.session.file;
     if (event.type === "sessionFile" && typeof event.sessionFile === "string") announcedFile = event.sessionFile;
     if (file && file !== announcedFile && event.type !== "sessionFile") {
       announcedFile = file;
-      for (const client of shared.clients) send(client, { type: "sessionFile", sessionId: shared.session.id, sessionFile: file });
+      if (!internal) for (const client of shared.clients) send(client, { type: "sessionFile", sessionId: shared.session.id, sessionFile: file });
     }
     if (event.type === "agent_start" || event.type === "status" || event.type === "conversationWorkChanged") broadcastToProject(shared.projectId, { type: "sessionsChanged" });
-    if (event.type === "conversationWorkChanged") scheduleReviewNotifications(shared.projectId);
+    if (!internal && event.type === "conversationWorkChanged") scheduleReviewNotifications(shared.projectId);
     if (event.type === "agent_end") {
       shared.liveEvents = [];
       const refreshFile = file ? getHarness(shared.engine).paths.transcriptFile?.(file) ?? file : undefined;
       const refresh = refreshHarnessSessions(shared.projectId, refreshFile ? [refreshFile] : []);
       void refresh.then(() => {
         broadcastToProject(shared.projectId, { type: "sessionsChanged" });
-        scheduleReviewNotifications(shared.projectId);
+        if (!internal) scheduleReviewNotifications(shared.projectId);
       }).catch((error) => console.error("Could not refresh completed harness session", error));
     }
     if (["agent_start", "agent_end", "status", "configuration", "sessionFile", "conversationWorkChanged"].includes(String(event.type))) sendHarnessStatus(shared);

@@ -18,7 +18,21 @@ async function assertOpened(page: import("playwright-core").Page, target: { id: 
 }
 
 test("notification links open stable conversation IDs, project aliases, and legacy paths", { timeout: 120_000 }, async (t) => {
-  const { page, environment, node } = await nativeUiFixture(t);
+  const alias = `notification-link-alias-${Date.now()}`;
+  const { page, environment, node } = await nativeUiFixture(t, (root) => {
+    // Seed before the server starts so this test never races a live SQLite writer.
+    const db = new DatabaseSync(path.join(root, "nodes/a/data/node.db"));
+    try {
+      const result = db.prepare(`
+        INSERT INTO project_aliases(alias_id,project_id,created_at)
+        SELECT ?,id,? FROM projects WHERE name=?
+      `).run(alias, new Date().toISOString(), "Internal Assistant");
+      assert.equal(result.changes, 1);
+    } finally {
+      db.close();
+    }
+    return {};
+  });
   await page.goto(node.url);
   await page.locator("#loginDialog[open]").waitFor();
   await page.getByTestId("login-username-input").fill(environment.username);
@@ -47,10 +61,6 @@ test("notification links open stable conversation IDs, project aliases, and lega
   await page.reload();
   await assertOpened(page, selected.target);
 
-  const alias = `notification-link-alias-${Date.now()}`;
-  const db = new DatabaseSync(path.join(node.dataDir, "node.db"));
-  db.prepare("INSERT INTO project_aliases(alias_id,project_id,created_at) VALUES(?,?,?)").run(alias, selected.projectId, new Date().toISOString());
-  db.close();
   await page.goto(`${node.url}/?projectId=${encodeURIComponent(alias)}&sessionId=${encodeURIComponent(selected.target.id)}`);
   await assertOpened(page, selected.target);
   assert.equal(await page.evaluate(async () => (await import("/app/state.js")).state.activeProjectId), selected.projectId);

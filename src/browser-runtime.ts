@@ -484,6 +484,8 @@ export class BrowserRuntime {
           await this.locator(page, command.selector).evaluate((element, input) => {
             if (element.ownerDocument.location.origin !== input.origin) throw new Error("Browser origin changed; credential fill refused");
             if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) || element.disabled || element.readOnly) throw new Error("Credential target must be an editable input or textarea");
+            if (element.autocomplete.toLowerCase().split(/\s+/).includes("one-time-code")) throw new Error("One-time-code fields require human input");
+            if (element.form && new URL(element.form.action, element.ownerDocument.URL).origin !== input.origin) throw new Error("Credential form action crosses origins");
             const setter = Object.getOwnPropertyDescriptor(element instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype, "value")?.set;
             element.focus(); setter!.call(element, input.text);
             element.dispatchEvent(new Event("input", { bubbles: true }));
@@ -688,6 +690,7 @@ export class BrowserRuntime {
       this.restartStream(session);
       await session.context.close().catch(() => {});
       try {
+        profileLeases.delete(profileDirectory(session.profileId));
         this.store.finish(session.id, state, error, restoreOnRestart);
         await Promise.all(session.transfers);
         await rm(path.join(this.root, session.id, "staging"), { recursive: true, force: true });

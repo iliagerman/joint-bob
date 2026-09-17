@@ -1,6 +1,7 @@
 import { harnessIdFromPath, harnessLabel } from "../harness-metadata.js";
 import { api, loadPins, savePreferencesInBackground } from "./api.js";
 import { clearAttachments } from "./attachments.js";
+import { syncBackgroundTasks } from "./background-tasks.js";
 import { renderChatSessionControls, renderConversationLock, sendSocket, setComposerEnabled, setModels, syncEngineUI, updateStatus } from "./chat-controls.js";
 import { appendMessage, appendToolMessage, clearChat, clearQueuedMark, clearThinkingBubble, finalizeAssistantBubble, finishTurnTimer, markMessageQueued, markUserMessagesRead, removeQueuedMessage, renderBubbleContent, requestPinChat, rerenderChatTranscript, resetQueuedForceStart, restoreChatScrollTop, showChatEmptyState, startDurationTicker, startHarnessSegment, syncQueuedMessageOrder, updateQueuedMessage, updateToolMessage } from "./chat-transcript.js";
 import { rememberDraft, restoreDraft, seedPromptHistory, setActiveSessionPath } from "./composer.js";
@@ -135,6 +136,7 @@ export function openSession(sessionPath, title = "New conversation", preserveCha
     state.pendingSessionColor = null;
     state.conversationSegments = null;
     state.activeConversationId = null;
+    syncBackgroundTasks();
     state.scheduledTurn = false;
     state.scheduledAssistantText = "";
     state.assistantRawText = "";
@@ -163,6 +165,7 @@ export function openSession(sessionPath, title = "New conversation", preserveCha
   state.socket = socket;
 
   socket.addEventListener("open", () => {
+    if (state.socket !== socket) return;
     setStatus("Connected", true);
     setConnecting(false);
     startHeartbeat();
@@ -179,7 +182,10 @@ export function openSession(sessionPath, title = "New conversation", preserveCha
   // The connecting banner already shows this state, and reconnect attempts
   // repeat, so a toast per attempt is pure noise.
   socket.addEventListener("error", () => console.warn("WebSocket connection failed"));
-  socket.addEventListener("message", (event) => handleSocketPayload(JSON.parse(event.data), !preserveChat));
+  socket.addEventListener("message", (event) => {
+    if (state.socket !== socket) return;
+    handleSocketPayload(JSON.parse(event.data), !preserveChat);
+  });
 }
 
 function handleSocketPayload(payload, scrollOnReady = false) {

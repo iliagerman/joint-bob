@@ -3,6 +3,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { resolveDataDirectory } from "./data-directory.js";
 import { supervisorDatabaseFile } from "./background-tasks.js";
+import { completionDispositions } from "../scripts/supervised-shell.mjs";
 
 export interface CompletionRecord {
   taskId: string;
@@ -56,7 +57,9 @@ export function ingestBackgroundCompletions(dataDirectory = resolveDataDirectory
     db.exec("BEGIN IMMEDIATE");
     try {
       const insert = db.prepare("INSERT OR IGNORE INTO background_completion_outbox(task_id,identity,status,created_at) VALUES(?,?,?,?)");
+      const dispositions = completionDispositions(db, rows.map((row) => row.task_id));
       for (const row of rows) {
+        if (dispositions.get(row.task_id) !== "deliver") continue;
         const identity = parseCompletionIdentity(row.identity);
         if (identity && identity[0] !== "system:update") insert.run(row.task_id, row.identity, row.status, row.created_at);
       }

@@ -89,6 +89,38 @@ async function activeScope(page: Awaited<ReturnType<typeof nativeUiFixture>>["pa
   });
 }
 
+test("task scope clears while another session is connecting", { timeout: 180_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  const diagnostics = attachDiagnostics(page);
+  try {
+    await loginAndOpenShortOne(page, environment, node);
+    const button = page.getByTestId("background-tasks-open");
+    assert.equal(await button.isEnabled(), true);
+    const transition = await page.evaluate(async () => {
+      const { state } = await import("/app/state.js");
+      const { openSession } = await import("/app/socket.js");
+      const target = state.sessions.find((session) => session.title?.includes("Thread-Based Agent Builder"));
+      if (!target) throw new Error("Thread-Based Agent Builder session is missing");
+      const previous = state.activeSessionId;
+      openSession(target.path, target.title);
+      return {
+        conversationId: state.activeConversationId,
+        sessionId: state.activeSessionId,
+        previous,
+        disabled: document.querySelector<HTMLButtonElement>("#backgroundTasksButton")?.disabled,
+        rows: document.querySelectorAll("[data-testid='background-task-row']").length,
+      };
+    });
+    assert.equal(transition.conversationId, null);
+    assert.equal(transition.sessionId, transition.previous, "the prior session id remains available during connection");
+    assert.equal(transition.disabled, true);
+    assert.equal(transition.rows, 0);
+  } catch (error) {
+    await recordFailure(page, diagnostics);
+    throw error;
+  }
+});
+
 test("a live supervisor task streams safely, stops, and remains in history after reload", { timeout: 180_000 }, async (t) => {
   const errors: Error[] = [];
   const { page, environment, node } = await nativeUiFixture(t, (root) => ({ JOINT_BOB_TEST_ENGINE_LOG: path.join(root, "engine.log") }));
@@ -163,6 +195,18 @@ test("a live supervisor task streams safely, stops, and remains in history after
 test("delayed output cannot overwrite a newer task or conversation selection", { timeout: 180_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t, (root) => ({ JOINT_BOB_TEST_ENGINE_LOG: path.join(root, "engine.log") }));
   const diagnostics = attachDiagnostics(page);
+  const readyFrames: Record<string, unknown>[] = [];
+  page.on("websocket", (socket) => socket.on("framereceived", ({ payload }) => {
+    try {
+      const frame = JSON.parse(typeof payload === "string" ? payload : payload.toString()) as Record<string, unknown>;
+      if (frame.type === "ready" && frame.sessionId) {
+        readyFrames.push(frame);
+        if (readyFrames.length > 20) readyFrames.shift();
+      }
+    } catch {
+      // Ignore non-JSON frames.
+    }
+  }));
   const runtime = await startSupervisor({ dataDirectory: node.dataDir, app: { executable: process.execPath, args: ["-e", "setInterval(()=>{},1000)"], cwd: environment.root, env: {} } });
   let release!: () => void;
   const delayed = new Promise<void>((resolve) => { release = resolve; });
@@ -174,6 +218,15 @@ test("delayed output cannot overwrite a newer task or conversation selection", {
   try {
     await loginAndOpenShortOne(page, environment, node);
     const scope = await activeScope(page);
+    const actualSessionId = await page.evaluate(() => import("/app/state.js").then(({ state }) => {
+      (window as typeof window & { __previousTaskSocket?: WebSocket }).__previousTaskSocket = state.socket;
+      return state.activeSessionId;
+    }));
+    const firstReady = [...readyFrames].reverse().find((frame) => frame.sessionId === actualSessionId
+      && (frame.conversationId || frame.sessionId) === scope.conversationId);
+    assert.ok(firstReady, "ready frame for the active Short one session was captured");
+    assert.equal(firstReady.sessionId, actualSessionId);
+    assert.equal(firstReady.conversationId || firstReady.sessionId, scope.conversationId);
     for (const [id, name, text] of [[UUID_A, "Held A", "A-OLD"], [UUID_B, "Held B", "B-ONLY"]]) {
       await supervisorRequest(node.dataDir, { action: "start", id, identity: JSON.stringify([scope.projectId, scope.conversationId]), name, executable: process.execPath, args: ["-e", `console.log(${JSON.stringify(text)});setInterval(()=>{},1000)`], cwd: environment.root, env: {} });
     }
@@ -203,7 +256,21 @@ test("delayed output cannot overwrite a newer task or conversation selection", {
     await page.getByTestId("background-tasks-close").click();
     const previousConversation = scope.conversationId;
     await page.locator("#sessionList .list-row", { hasText: "Thread-Based Agent Builder" }).locator("button").first().click();
-    await page.waitForFunction((previous) => import("/app/state.js").then(({ state }) => (state.activeConversationId || state.activeSessionId) !== previous), previousConversation);
+    await page.waitForFunction((previous) => import("/app/state.js").then(({ state }) => {
+      const input = document.querySelector<HTMLTextAreaElement | HTMLInputElement>("#messageInput");
+      return Boolean(state.activeConversationId && state.activeConversationId !== previous && input && !input.disabled);
+    }), previousConversation);
+    const secondScope = await activeScope(page);
+    assert.notDeepEqual(scope, secondScope);
+    const socketChanged = await page.evaluate((payload) => import("/app/state.js").then(({ state }) => {
+      const oldSocket = (window as typeof window & { __previousTaskSocket?: WebSocket }).__previousTaskSocket;
+      if (!oldSocket) throw new Error("Previous conversation socket was not captured");
+      const changed = oldSocket !== state.socket;
+      oldSocket.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(payload) }));
+      return changed;
+    }), firstReady);
+    assert.equal(socketChanged, true, "the stale frame was dispatched on the replaced socket");
+    assert.deepEqual(await activeScope(page), secondScope);
     release();
     await page.getByTestId("background-tasks-open").click();
     await page.locator("#backgroundTasksDetails h3").waitFor({ state: "detached" });

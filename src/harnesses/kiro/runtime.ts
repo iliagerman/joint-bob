@@ -187,7 +187,7 @@ class KiroSession implements HarnessSession {
     return {
       ...process.env,
       ...agentEnvironment(this.options.projectId, conversation),
-      ...agentCapabilityEnvironment(this.options.projectId, "kiro", logicalConversationId),
+      ...agentCapabilityEnvironment(this.options.projectId, "kiro", logicalConversationId, conversation),
       KIRO_HOME: runtimeSettings().configPath,
     };
   }

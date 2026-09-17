@@ -44,7 +44,7 @@ const query = z.object({
 }).strict().refine((value) => Boolean(value.beforeStartedAt) === Boolean(value.beforeId), "Incomplete cursor");
 
 const agentBody = z.discriminatedUnion("action", [
-  z.object({ nodeId: z.string().uuid(), action: z.literal("list") }).strict(),
+  z.object({ nodeId: z.string().uuid().optional(), action: z.literal("list") }).strict(),
   z.object({ nodeId: z.string().uuid(), action: z.literal("get"), id: z.string().uuid() }).strict(),
   z.object({ nodeId: z.string().uuid(), action: z.literal("output"), id: z.string().uuid(), offset: z.number().int().nonnegative().safe().optional(), limit: z.number().int().min(1).max(65536).optional() }).strict(),
   z.object({ nodeId: z.string().uuid(), action: z.literal("stop"), id: z.string().uuid() }).strict(),
@@ -79,7 +79,7 @@ app.post("/api/background-tasks/agent", route(async (request, response) => {
   const body = agentBody.parse(request.body);
   const { nodeId, ...operation } = body;
   const command = backgroundTaskCommandSchema.parse({ ...operation, projectId: identity.projectId, conversationId: identity.conversationId });
-  response.json(await routeBackgroundTaskOperation(nodeId, command));
+  response.json(nodeId ? await routeBackgroundTaskOperation(nodeId, command) : await localBackgroundTaskOperation(command));
 }));
 
 app.post("/api/cluster/background-tasks", route(async (request, response) => {

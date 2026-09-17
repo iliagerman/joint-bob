@@ -257,7 +257,11 @@ Skills can execute their included instructions and scripts. Publish only trusted
 
 Secret accounts hold named environment variables encrypted with the node key. Attach an account to a workspace, project, or conversation. More specific scopes override less specific scopes one variable at a time.
 
-Secret accounts stay node-local unless you explicitly replicate one. Use **Settings > Secrets > Sync to nodes** to send an account through encrypted cluster replication. Workspace attachments follow the account when the destination has the same workspace. Secrets never use filesystem synchronization.
+For website sign-in, create a **Custom** account such as `Mobile`, set Website origin to `https://mobile.com`, and add `LOGIN_USERNAME` and `LOGIN_PASSWORD` value fields (plus any additional named values the login needs). Attach it to a workspace, project, or conversation. Those scopes grant automatic sign-in across their conversations; more-specific scopes override individual variables, but only within the exact origin, including its port. Subdomains and path prefixes do not match. The agent receives only the selected effective account through `login-fill SELECTOR ACCOUNT_ID VARIABLE [--profile ID]`; values are encrypted at rest, snapshotted for each message, never exported to the shell, and never placed in commands as plaintext.
+
+Website sign-in uses the ordinary page: the agent inspects, fills, submits, and verifies the login, but arbitrary sites are not guaranteed to accept it. MFA, CAPTCHA, and rejected passwords stop for a human without retries or bypass attempts. Credentials are necessarily supplied to the trusted page at the user-authorized origin and may be read by that page's scripts or a privileged local host.
+
+Website-bound accounts intentionally stay on their credential node and cannot replicate, because older peers cannot enforce origin binding. An authorized paired browser can still receive an ephemeral fill. Moving an agent to a node without the account does not grant access. Clearing Website origin turns the account back into ordinary environment credentials, which stay node-local unless explicitly replicated through **Settings > Secrets > Sync to nodes**. Workspace attachments follow replicated ordinary accounts when the destination has the same workspace. Secrets never use filesystem synchronization. Existing manually signed-in browser profiles remain usable without Secrets.
 
 ## Conversation browsers
 

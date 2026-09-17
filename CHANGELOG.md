@@ -5,20 +5,32 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
-- Added Control+Alt+I keyboard shortcut to focus the message composer with a visual hint showing the shortcut key.
+- Agents can now automatically fill website login forms using credentials attached to your conversation.
 
-## 1.50.3 — 2026-09-17
+## 1.52.3 — 2026-09-17
 
-- Fixed by-the-way chat messages staying inside their dialog instead of overflowing.
-- Improved idle session expiration to prevent stale browser session state.
+- Pressing Escape now closes the by-the-way side panel.
+- By-the-way chat now stays within its dialog boundaries.
 
-- By-the-way chats can now be closed with the Escape key, and their isolated view no longer displays the app splash screen.
+## 1.52.2 — 2026-09-17
 
-- By-the-way chats can now be closed with the Escape key, and their isolated view no longer displays the app splash screen.
+- Fixed profile leases not being released when idle sessions expire.
 
-## 1.50.2 — 2026-09-17
+## 1.52.1 — 2026-09-17
 
-- Browser sessions now automatically close after two hours of inactivity, releasing Chrome resources while keeping their saved login profiles available for explicit reopen.
+- Browser sessions now safely close after two hours of inactivity, releasing Chrome resources while keeping their saved login profiles available for explicit reopen.
+
+## 1.52.0 — 2026-09-17
+
+- Website login credentials can now be bound to authorized origins for improved security.
+- Updated the cached app shell so existing installations load the new website credential settings.
+
+## 1.51.0 — 2026-09-17
+
+- Long-running agent shell commands continue in Tasks without restarting; short commands finish inline and stay out of task history.
+- Tasks stay scoped to their originating conversation, with output and stop controls preserved across ordinary app upgrades.
+- Internal completion prompts and routine follow-ups stay out of chat, including after reloads.
+- Fixed stale task views when switching conversations and database lock errors when updating conversation review state.
 
 ## 1.50.1 — 2026-09-17
 

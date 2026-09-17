@@ -102,14 +102,15 @@ async function remoteRequest(command, token) {
 async function main() {
   const command = parseArguments(process.argv.slice(2));
   const socket = process.env.JOINT_BOB_TASK_SOCKET, token = process.env.JOINT_BOB_TASK_TOKEN;
-  if (!token || (!command.nodeId && !socket)) throw new Error("Background tasks require the Joint Bob supervisor");
+  const useRemote = Boolean(command.nodeId || (command.verb === "status" && !command.taskId && process.env.JOINT_BOB_TASK_API));
+  if (!token || (!useRemote && !socket)) throw new Error("Background tasks require the Joint Bob supervisor");
   let body;
   if (command.verb === "start") body = { action: "start", id: command.taskId, name: command.name, executable: command.executable, args: command.args, cwd: realpathSync(process.cwd()), env: taskEnvironment() };
   if (command.verb === "status") body = command.taskId ? { action: "task", id: command.taskId } : { action: "list" };
   if (command.verb === "output") body = { action: "output", id: command.taskId, offset: command.offset, limit: command.limit };
   if (command.verb === "stop") body = { action: "stop", id: command.taskId };
   try {
-    const result = command.nodeId ? await remoteRequest(command, token) : await requestSupervisor(socket, token, body);
+    const result = useRemote ? await remoteRequest(command, token) : await requestSupervisor(socket, token, body);
     if (command.verb === "output") process.stdout.write(Buffer.from(result.chunk, "base64"));
     else process.stdout.write(`${JSON.stringify(result)}\n`);
   } catch (error) {

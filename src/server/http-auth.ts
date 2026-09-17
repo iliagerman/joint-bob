@@ -102,7 +102,7 @@ export async function requireHttpAuth(request: Request, response: Response, next
   const token = bearerToken(request);
   if (request.path === "/browser/agent" && request.method === "POST" && token) {
     const identity = browserAgentIdentity(token);
-    if (identity) { response.locals.browserAgent = identity; next(); return; }
+    if (identity) { response.locals.browserAgent = identity; response.locals.browserAgentToken = token; next(); return; }
   }
   if (request.path === "/background-tasks/agent" && request.method === "POST" && token) {
     const identity = backgroundTaskAgentIdentity(token);

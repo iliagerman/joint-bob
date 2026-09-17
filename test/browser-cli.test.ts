@@ -171,6 +171,41 @@ test("CLI errors are useful, nonzero, bounded and redact authentication", async 
   assert.doesNotMatch(offline.stderr, /designated executor|fallback/i);
 });
 
+test("login-fill sends identifiers only and suppresses hostile responses", async t => {
+  const f = await fixture(t);
+  const accountId = "11111111-1111-4111-8111-111111111111";
+  const profileId = "22222222-2222-4222-8222-222222222222";
+  const args = ["login-fill", "#password", accountId, "LOGIN_PASSWORD"];
+  f.respond(() => ({ body: { ok: true, hostile: secret } }));
+  const filled = await f.run(args);
+  assert.equal(filled.code, 0, filled.stderr);
+  assert.deepEqual(f.requests.at(-1), { operation: "loginFill", selector: "#password", accountId, variable: "LOGIN_PASSWORD" });
+  assert.deepEqual(JSON.parse(filled.stdout), { ok: true });
+  assert.ok(!`${filled.stdout}${filled.stderr}`.includes(secret));
+
+  const profiled = await f.run([...args, "--profile", profileId]);
+  assert.equal(profiled.code, 0, profiled.stderr);
+  assert.deepEqual(f.requests.at(-1), { operation: "loginFill", selector: "#password", accountId, variable: "LOGIN_PASSWORD", profileId });
+
+  f.respond(() => ({ status: 409, body: { error: `hostile ${secret}` } }));
+  const failed = await f.run(args);
+  assert.notEqual(failed.code, 0);
+  assert.ok(!`${failed.stdout}${failed.stderr}`.includes(secret));
+});
+
+test("login-fill rejects malformed arguments before sending", async t => {
+  const f = await fixture(t);
+  const accountId = "11111111-1111-4111-8111-111111111111";
+  for (const args of [
+    ["login-fill", "", accountId, "LOGIN_PASSWORD"],
+    ["login-fill", "#password", "not-an-account", "LOGIN_PASSWORD"],
+    ["login-fill", "#password", accountId, "bad-name"],
+    ["login-fill", "#password", accountId],
+    ["login-fill", "#password", accountId, "LOGIN_PASSWORD", "extra"],
+  ]) assert.notEqual((await f.run(args)).code, 0);
+  assert.equal(f.requests.length, 0);
+});
+
 test("fill-secret verifies active origin, refuses takeover/missing browser, and never prints secret responses", async (t) => {
   const f = await fixture(t);
   const args = ["fill-secret", "#password", "FIXTURE_PASSWORD", "--origin", "https://login.example"];

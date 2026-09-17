@@ -46,9 +46,33 @@ function secretValuePlaceholder(kind, configured) {
   return elements.secretAccountProviderInput.value === "google" ? "Paste the Google service account JSON" : "Paste the file contents";
 }
 
+function createSecretValueControl(kind, configured, currentValue = "") {
+  const masked = Boolean(elements.secretAccountOriginInput.value.trim()) && kind === "value";
+  const control = document.createElement(masked ? "input" : "textarea");
+  if (masked) {
+    control.type = "password";
+    control.autocomplete = "new-password";
+  }
+  control.setAttribute("aria-label", "Secret value");
+  control.placeholder = secretValuePlaceholder(kind, configured);
+  control.value = currentValue;
+  control.dataset.secretValue = "";
+  control.dataset.testid = "secret-variable-value-input";
+  return control;
+}
+
+function refreshSecretValueControl(row, configured = row.dataset.secretConfigured === "true") {
+  const kind = row.querySelector("[data-secret-kind]").value;
+  const current = row.querySelector("[data-secret-value]");
+  const replacement = createSecretValueControl(kind, configured, current.value);
+  if (replacement.tagName === current.tagName) current.placeholder = replacement.placeholder;
+  else current.replaceWith(replacement);
+}
+
 function secretRow(variable = { name: "", kind: "value", configured: false }) {
   const row = document.createElement("div");
   row.className = "secret-variable-row";
+  row.dataset.secretConfigured = String(variable.configured);
   const name = document.createElement("input");
   name.placeholder = "ENV_NAME";
   name.value = variable.name;
@@ -63,12 +87,8 @@ function secretRow(variable = { name: "", kind: "value", configured: false }) {
   kind.dataset.testid = "secret-variable-kind-select";
   for (const value of ["value", "file"]) { const option = document.createElement("option"); option.value = value; option.textContent = value === "file" ? "File content" : "Value"; kind.append(option); }
   kind.value = variable.kind;
-  const value = document.createElement("textarea");
-  value.setAttribute("aria-label", "Secret value");
-  value.placeholder = secretValuePlaceholder(variable.kind, variable.configured);
-  value.dataset.secretValue = "";
-  value.dataset.testid = "secret-variable-value-input";
-  kind.addEventListener("change", () => { value.placeholder = secretValuePlaceholder(kind.value, variable.configured); });
+  const value = createSecretValueControl(variable.kind, variable.configured);
+  kind.addEventListener("change", () => refreshSecretValueControl(row, variable.configured));
   const remove = document.createElement("button");
   remove.type = "button";
   remove.className = "ghost compact";
@@ -92,7 +112,11 @@ function renderSecretAccounts() {
     const name = document.createElement("strong"); name.textContent = `${account.label} · ${providerLabels[account.provider] ?? account.provider}`;
     const variables = document.createElement("span"); variables.className = "secret-account-vars";
     variables.textContent = account.variables.map((item) => `${item.name}${item.kind === "file" ? " (file)" : ""}`).join(", ");
-    meta.append(name, variables);
+    meta.append(name);
+    if (account.websiteOrigin) {
+      const origin = document.createElement("span"); origin.className = "secret-account-vars"; origin.textContent = account.websiteOrigin; meta.append(origin);
+    }
+    meta.append(variables);
     const edit = document.createElement("button"); edit.type = "button"; edit.className = "ghost compact"; edit.textContent = "Edit"; edit.dataset.testid = "secret-account-edit-button";
     edit.addEventListener("click", () => openSecretAccount(account));
     const remove = document.createElement("button"); remove.type = "button"; remove.className = "ghost compact danger"; remove.textContent = "Delete"; remove.dataset.testid = "secret-account-delete-button";
@@ -150,10 +174,12 @@ function openSecretAccount(account = null) {
   editingSecretAccountId = account?.id ?? null;
   elements.secretAccountTitle.textContent = account ? "Edit secret account" : "Add secret account";
   elements.secretAccountLabelInput.value = account?.label ?? "";
+  elements.secretAccountOriginInput.value = account?.websiteOrigin ?? "";
   // A provider tab opened from the list starts the form on that provider; "all" keeps AWS.
   elements.secretAccountProviderInput.value = account?.provider ?? (secretTypeFilter === "all" ? "aws" : secretTypeFilter);
   // Node-local is the default, so a new account never leaves this node by accident.
-  elements.secretAccountReplicateInput.checked = Boolean(account?.replicate);
+  elements.secretAccountReplicateInput.checked = Boolean(account?.replicate) && !elements.secretAccountOriginInput.value;
+  elements.secretAccountReplicateInput.disabled = Boolean(elements.secretAccountOriginInput.value);
   elements.secretVariableRows.replaceChildren();
   // A new account has no rows yet, so the preset below fills them; an edited one keeps its own.
   account?.variables.forEach((item) => secretRow(item));
@@ -171,7 +197,8 @@ export async function openSecretScope(scopeType, scopeId, label) {
   for (const account of secretAccounts) {
     const item = document.createElement("label"); item.className = "checkbox-row secret-scope-row";
     const input = document.createElement("input"); input.type = "checkbox"; input.value = account.id; input.checked = accountIds.includes(account.id); input.dataset.testid = "secret-scope-account-checkbox";
-    item.append(input, providerBadge(account.provider, "secret-scope-provider-badge"), document.createTextNode(` ${account.label}`)); elements.secretScopeList.append(item);
+    const detail = account.websiteOrigin ? ` — ${account.websiteOrigin}` : "";
+    item.append(input, providerBadge(account.provider, "secret-scope-provider-badge"), document.createTextNode(` ${account.label}${detail}`)); elements.secretScopeList.append(item);
   }
   elements.secretScopeDialog.showModal();
 }
@@ -187,12 +214,22 @@ elements.secretScopeForm.addEventListener("submit", async (event) => {
 elements.secretAccountAddButton.addEventListener("click", () => openSecretAccount());
 elements.secretVariableAddButton.addEventListener("click", () => secretRow());
 elements.secretAccountCancelButton.addEventListener("click", () => elements.secretAccountDialog.close());
+elements.secretAccountDialog.addEventListener("close", () => {
+  for (const control of elements.secretVariableRows.querySelectorAll("[data-secret-value]")) control.value = "";
+});
 elements.secretAccountProviderInput.addEventListener("change", () => {
   applySecretProviderPreset();
 });
-elements.secretAccountForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
+elements.secretAccountOriginInput.addEventListener("input", () => {
+  const bound = Boolean(elements.secretAccountOriginInput.value.trim());
+  elements.secretAccountReplicateInput.disabled = bound;
+  if (bound) elements.secretAccountReplicateInput.checked = false;
+  for (const row of elements.secretVariableRows.children) refreshSecretValueControl(row);
+});
+
+async function saveSecretAccount() {
   const provider = elements.secretAccountProviderInput.value;
+  const websiteOrigin = elements.secretAccountOriginInput.value.trim();
   const variables = [...elements.secretVariableRows.children].map((row) => {
     const name = row.querySelector("[data-secret-name]").value.trim();
     const kind = row.querySelector("[data-secret-kind]").value;
@@ -200,11 +237,12 @@ elements.secretAccountForm.addEventListener("submit", async (event) => {
     return { name, kind, ...(value === "" ? {} : { value }) };
   });
   if (!variables.every((item) => item.name) || new Set(variables.map((item) => item.name)).size !== variables.length || (!editingSecretAccountId && variables.some((item) => item.value === undefined))) throw new Error("Enter unique variable names and values");
+  if (websiteOrigin && variables.some((item) => item.kind === "file")) throw new Error("Website credentials cannot contain file values. Choose Value or clear the website origin.");
   if (provider === "google") for (const item of variables) {
     if (item.kind !== "file" || item.value === undefined) continue;
     try { JSON.parse(item.value); } catch { throw new Error("Google credentials must be valid JSON. Paste the whole service account file."); }
   }
-  const payload = { label: elements.secretAccountLabelInput.value.trim(), provider, replicate: elements.secretAccountReplicateInput.checked, variables };
+  const payload = { label: elements.secretAccountLabelInput.value.trim(), provider, websiteOrigin: websiteOrigin || null, replicate: elements.secretAccountReplicateInput.checked, variables };
   const saved = await api(editingSecretAccountId ? `/api/secrets/accounts/${encodeURIComponent(editingSecretAccountId)}` : "/api/secrets/accounts", { method: editingSecretAccountId ? "PUT" : "POST", body: JSON.stringify(payload) });
   elements.secretAccountDialog.close(); await loadSecretAccounts();
   // The server pushes a replicating save to every paired node; the Sync to nodes
@@ -218,4 +256,9 @@ elements.secretAccountForm.addEventListener("submit", async (event) => {
   if (!results.length) toast("Saved. No paired nodes yet — pair one in the Cluster tab, then use Sync to nodes");
   else if (failed.length) toast(`Synced ${results.length - failed.length} of ${results.length} nodes; ${failed[0].name}: ${failed[0].error}`, 8000);
   else toast(`Saved and synced to ${results.length} ${results.length === 1 ? "node" : "nodes"}`);
+}
+
+elements.secretAccountForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  void saveSecretAccount().catch((error) => toast(error.message));
 });

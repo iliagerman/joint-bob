@@ -10,6 +10,7 @@ import { type AuthSession } from "../../auth.js";
 import { browserRuntime, browserStatus, localBrowserStatus, configureBrowserExecutor, browserPreferences, canonicalBrowserIdentity, authorizeBrowserAgent, requireCompleteDiscovery, type BrowserDiscovery, browserOperation, browserOperationSchema, localBrowserOperation, BrowserRequestError, browserDownload, browserSessionOwner } from "../browser.js";
 import { clusterPeerMayAccessProject } from "../cluster-helpers.js";
 import { sendError } from "../http-auth.js";
+import { browserAgentCredential } from "../../browser-agent.js";
 
 const id = z.string().uuid();
 const actorSchema = z.discriminatedUnion("kind", [z.object({kind:z.literal("human"),id:z.string().min(1).max(500)}),z.object({kind:z.literal("agent")})]);
@@ -125,6 +126,7 @@ app.post("/api/browser/agent",route(async (request,response)=>{
     z.object({operation:z.literal("status")}),
     z.object({operation:z.literal("profiles")}),
     z.object({operation:z.literal("command"),command:browserCommandSchema,profileId:id.optional()}),
+    z.object({operation:z.literal("loginFill"),selector:z.string().min(1).max(4096),accountId:id,variable:z.string().min(1).max(128).regex(/^[A-Za-z_][A-Za-z0-9_]*$/),profileId:id.optional()}).strict(),
     z.object({operation:z.literal("download"),downloadId:id,profileId:id.optional()}),
   ]).parse(request.body);
   const actor:BrowserActor={kind:"agent"};
@@ -150,6 +152,15 @@ app.post("/api/browser/agent",route(async (request,response)=>{
   if(sessions.length>1) throw new BrowserRequestError(409,"Multiple browser profiles are running. Specify --profile ID.");
   const session=sessions[0];
   if(!session) throw new BrowserRequestError(body.profileId ? 404 : 409,body.profileId ? "No running browser for this profile in this conversation. Run browser start --profile ID first." : "No running browser for this conversation. Run browser start first.");
+  if(body.operation==="loginFill") {
+    try {
+      const credential=browserAgentCredential(response.locals.browserAgentToken as string,body.accountId,body.variable);
+      await browserOperation({operation:"command",args:{id:session.id,command:{action:"fill",selector:body.selector,text:credential.value,expectedOrigin:credential.origin,expectedPageId:session.activePageId!}}},actor,session.nodeId,identity);
+    } catch {
+      throw new BrowserRequestError(409,"Website credential fill failed; inspect the page and account access before continuing");
+    }
+    response.json({ok:true});return;
+  }
   if(body.operation==="command") { response.json(await browserOperation({operation:"command",args:{id:session.id,command:body.command}},actor,session.nodeId,identity));return; }
   const download=await browserDownload(session.id,body.downloadId,session.nodeId,identity);attachment(response,download.name);await pipeline(download.stream,response);
 }));

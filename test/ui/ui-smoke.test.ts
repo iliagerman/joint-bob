@@ -84,7 +84,7 @@ test("signing in through the login form reaches the app and the session survives
   assert.equal(await page.locator("#loginDialog[open]").count(), 0, "reload stays signed in");
 });
 
-test("shortcut badges are readable and stay inside their buttons", async () => {
+test("shortcut badges are readable and sit below their buttons", async () => {
   // Badges only paint while the command modifiers are held, so hold them for the whole check.
   await page.keyboard.down("Control");
   await page.keyboard.down("Alt");
@@ -95,12 +95,18 @@ test("shortcut badges are readable and stay inside their buttons", async () => {
     const badges = await page.locator(".shortcut-hint:visible").evaluateAll((items) => items.map((badge) => {
       const box = badge.getBoundingClientRect();
       const host = badge.parentElement!.getBoundingClientRect();
-      return { text: badge.textContent, size: parseFloat(getComputedStyle(badge).fontSize), fits: box.left >= host.left && box.right <= host.right && box.top >= host.top && box.bottom <= host.bottom };
+      return {
+        text: badge.textContent,
+        size: parseFloat(getComputedStyle(badge).fontSize),
+        gap: box.top - host.bottom,
+        centerOffset: Math.abs((box.left + box.right - host.left - host.right) / 2),
+      };
     }));
     assert.ok(badges.length > 0);
     for (const badge of badges) {
       assert.ok(badge.size >= 13, `${badge.text} is ${badge.size}px at ${width}px; needs at least 13px`);
-      assert.ok(badge.fits, `${badge.text} must fit inside its button at ${width}px`);
+      assert.ok(badge.gap >= 0 && badge.gap <= 8, `${badge.text} gap is ${badge.gap}px at ${width}px; must sit just below its button without overlap`);
+      assert.ok(badge.centerOffset <= 1, `${badge.text} center offset is ${badge.centerOffset}px at ${width}px; must be centered under its button`);
     }
   }
   await page.keyboard.up("Alt");

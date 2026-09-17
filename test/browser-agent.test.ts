@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { startSupervisor } from "../scripts/joint-bob-supervisor.mjs";
 import { browserAgentEnvironment, browserAgentIdentity, browserAgentInstructions } from "../src/browser-agent.js";
 import { resolveDataDirectory } from "../src/data-directory.js";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "./dev-nodes.js";
@@ -54,12 +55,23 @@ test("browser tokens expire at 30 days, reject malformed/unknown tokens, and cle
   finally { db.close(); t.mock.timers.reset(); }
 });
 
-test("Pi new and resumed sessions receive browser instructions and one stable merged bash environment", async () => {
+test("Pi new and resumed sessions receive browser instructions and one stable merged bash environment", async (t) => {
   const { createPiSession } = await import("../src/pi-service.js");
   const { addProject } = await import("../src/store.js");
   const { saveSecretAccount, setScopeSecretAccounts } = await import("../src/secrets.js");
   const cwd = path.join(os.homedir(), "browser-agent-project");
   await mkdir(cwd, { recursive: true });
+  const supervisor = await startSupervisor({
+    dataDirectory: resolveDataDirectory(),
+    app: { executable: process.execPath, args: ["-e", "setInterval(()=>{},1000)"], cwd, env: { PATH: process.env.PATH ?? "", HOME: os.homedir() } },
+  });
+  t.after(async () => { await supervisor.close(); });
+  const previousWarning = process.env.NODE_NO_WARNINGS;
+  process.env.NODE_NO_WARNINGS = "1";
+  t.after(() => {
+    if (previousWarning === undefined) delete process.env.NODE_NO_WARNINGS;
+    else process.env.NODE_NO_WARNINGS = previousWarning;
+  });
   const project = await addProject("Browser agent test", cwd, { writeInstructions: false });
   const account = await saveSecretAccount({ label: "Fixture", provider: "custom", variables: [{ name: "BRIDGE_FIXTURE", kind: "value", value: "first" }] });
   await setScopeSecretAccounts("project", project.id, [account.id]);

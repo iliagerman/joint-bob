@@ -7,10 +7,12 @@ import path from "node:path";
 import test, { after, before } from "node:test";
 import { chromium, type BrowserContext } from "playwright-core";
 import WebSocket from "ws";
+import { startSupervisor } from "../scripts/joint-bob-supervisor.mjs";
 import { browserAgentIdentity, browserAgentInstructions } from "../src/browser-agent.js";
 import { BrowserRuntime } from "../src/browser-runtime.js";
 import { getClusterNode } from "../src/cluster.js";
 import { ensureConversationRecord, getConversationRecord } from "../src/conversation-records.js";
+import { resolveDataDirectory } from "../src/data-directory.js";
 import { getSettings, updateSettings } from "../src/settings.js";
 import { addProject } from "../src/store.js";
 import { saveSecretAccount, setScopeSecretAccounts } from "../src/secrets.js";
@@ -24,9 +26,17 @@ const root = path.join(os.homedir(), "browser-spawn-regressions");
 const capture = path.join(root, "spawns.jsonl");
 let chat: typeof import("../src/server/chat.js");
 let runs: typeof import("../src/server/task-runs.js");
+let supervisor: Awaited<ReturnType<typeof startSupervisor>> | undefined;
+let previousWarning: string | undefined;
 
 before(async () => {
   await mkdir(root, { recursive: true });
+  supervisor = await startSupervisor({
+    dataDirectory: resolveDataDirectory(),
+    app: { executable: process.execPath, args: ["-e", "setInterval(()=>{},1000)"], cwd: root, env: { PATH: process.env.PATH ?? "", HOME: root } },
+  });
+  previousWarning = process.env.NODE_NO_WARNINGS;
+  process.env.NODE_NO_WARNINGS = "1";
   const executable = path.join(root, "claude-fixture.mjs");
   await writeFile(capture, "");
   await writeFile(executable, `#!/usr/bin/env node
@@ -52,7 +62,7 @@ console.log(JSON.stringify({type:'result',is_error:false,result:'done'}));
   runs = await import("../src/server/task-runs.js");
 });
 
-after(() => {
+after(async () => {
   chat?.sessionWatcher.close();
   for (const connection of harnessChatConnections) detachHarnessClient(connection.shared, connection.socket);
   harnessChatConnections.clear();
@@ -62,6 +72,9 @@ after(() => {
     shared.session.dispose();
   }
   harnessSessions.clear();
+  await supervisor?.close();
+  if (previousWarning === undefined) delete process.env.NODE_NO_WARNINGS;
+  else process.env.NODE_NO_WARNINGS = previousWarning;
 });
 
 async function projectFixture() {

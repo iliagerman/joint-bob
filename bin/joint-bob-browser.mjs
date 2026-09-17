@@ -9,7 +9,7 @@ import { parseArgs } from "node:util";
 
 const token = process.env.JOINT_BOB_BROWSER_TOKEN;
 const endpoint = process.env.JOINT_BOB_BROWSER_URL;
-const usage = "Usage: start [url] [--profile ID | --name LABEL] [--node UUID] | status | tabs | profiles | snapshot | screenshot PATH | click SELECTOR | fill SELECTOR TEXT | fill-secret SELECTOR ENV_NAME --origin URL | upload SELECTOR FILE... | download ID PATH | navigate URL | evaluate EXPRESSION | command JSON | close | save-login LABEL. Account commands accept --profile ID; required when multiple profiles run. Use -- before positional values beginning with --.";
+const usage = "Usage: start [url] [--profile ID | --name LABEL] [--node UUID] | status | tabs | profiles | snapshot | screenshot PATH | click SELECTOR | fill SELECTOR TEXT | login-fill SELECTOR ACCOUNT_ID VARIABLE | fill-secret SELECTOR ENV_NAME --origin URL | upload SELECTOR FILE... | download ID PATH | navigate URL | evaluate EXPRESSION | command JSON | close | save-login LABEL. Account commands accept --profile ID; required when multiple profiles run. Use -- before positional values beginning with --.";
 const uploadLimit = 20 * 1024 * 1024;
 let sensitiveValue;
 
@@ -151,6 +151,13 @@ async function main() {
     }
     case "fill":
       arity(2); result = await command({ action: "fill", selector: args[0], text: args[1] }); break;
+    case "login-fill": {
+      arity(3);
+      if (!args[0] || args[0].length > 4096) throw new Error("login-fill requires a nonempty selector");
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(args[1])) throw new Error("login-fill requires an account UUID");
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(args[2]) || args[2].length > 128) throw new Error("login-fill requires an environment variable name");
+      result = await request({ operation: "loginFill", selector: args[0], accountId: args[1], variable: args[2], ...target }, false, true); break;
+    }
     case "fill-secret": {
       arity(2);
       if (!values.origin) throw new Error(usage);

@@ -398,7 +398,7 @@ export async function runClaudeConversationPrompt(options: ClaudeRunOptions & { 
     ...options,
     model: options.model === undefined && !options.resumeSessionId ? defaults.modelId : options.model,
     effort: options.effort === undefined && !options.resumeSessionId ? defaults.thinkingLevel : options.effort,
-    env: { ...options.env, ...agentCapabilityEnvironment(options.projectId, "claude", conversationId) },
+    env: { ...options.env, ...agentCapabilityEnvironment(options.projectId, "claude", conversationId, { engine: "claude", sessionId }) },
     systemInstructions: [options.systemInstructions, ...agentCapabilityInstructionFiles().map((file) => file.content)].filter(Boolean).join("\n\n"),
   });
 }
