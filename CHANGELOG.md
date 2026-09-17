@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.53.2 — 2026-09-17
 
 - Conversations now recover reliably across machines by matching session identity, even when direct paths become stale.
 
