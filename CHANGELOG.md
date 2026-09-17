@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.50.3 — 2026-09-17
 
-- By-the-way chats can now be closed with the Escape key, and their isolated view no longer displays the app splash screen.
+- Fixed by-the-way chat messages staying inside their dialog instead of overflowing.
+- Improved idle session expiration to prevent stale browser session state.
 
 ## 1.50.2 — 2026-09-17
 
