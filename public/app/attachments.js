@@ -20,6 +20,15 @@ function renderAttachmentChips(container, attachments, removeAttachment) {
   for (const attachment of attachments) {
     const chip = document.createElement("div");
     chip.className = "attachment-chip";
+    // A picked image already carries its bytes, so the preview costs no request.
+    if (attachment.kind === "image" && attachment.data) {
+      const preview = document.createElement("img");
+      preview.className = "attachment-chip-thumbnail";
+      preview.src = `data:${attachment.mimeType};base64,${attachment.data}`;
+      preview.alt = "";
+      preview.dataset.testid = "attachment-thumbnail";
+      chip.append(preview);
+    }
     const label = document.createElement("span");
     label.textContent = attachment.name;
     const remove = document.createElement("button");

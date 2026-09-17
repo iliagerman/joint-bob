@@ -65,3 +65,18 @@ test("live and loaded image attachments render as thumbnails and expand on click
   await page.keyboard.press("Escape");
   await viewer.waitFor({ state: "hidden" });
 });
+
+test("a picked image previews in its composer chip before the message is sent", async () => {
+  await page.locator("#attachmentInput").setInputFiles(imagePath);
+  const chip = page.locator("#attachmentList .attachment-chip");
+  await chip.waitFor();
+  assert.match(await chip.innerText(), /example\.png/, "the chip still names the file");
+  const thumbnail = chip.getByTestId("attachment-thumbnail");
+  await thumbnail.waitFor();
+  assert.equal(await thumbnail.evaluate((image: HTMLImageElement) => image.src.startsWith("data:image/png;base64,")), true, "the preview uses the bytes already in the browser");
+  await thumbnail.evaluate((image: HTMLImageElement) => image.decode());
+  assert.equal(await thumbnail.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0), true, "the preview renders actual image bytes");
+  const box = await thumbnail.boundingBox();
+  assert.ok(box && box.width >= 20 && box.height >= 20, `preview too small to read: ${JSON.stringify(box)}`);
+  await page.evaluate(async () => (await import("/app/attachments.js")).clearAttachments());
+});

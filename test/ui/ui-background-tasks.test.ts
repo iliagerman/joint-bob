@@ -141,6 +141,9 @@ test("a live supervisor task streams safely, stops, and remains in history after
 
     for (const viewport of [{ width: 1440, height: 900, inset: 12 }, { width: 390, height: 500, inset: 8 }]) {
       await page.setViewportSize(viewport);
+      const cardBox = await dialog.locator(".dialog-card").boundingBox();
+      const gridBox = await dialog.locator("#backgroundTasksGrid").boundingBox();
+      assert.ok(cardBox && gridBox && gridBox.height > cardBox.height * 0.45, `task panes squeezed by stretched chrome: ${JSON.stringify({ cardBox, gridBox })}`);
       const box = await dialog.locator(".dialog-card").boundingBox();
       assert.ok(box && box.x >= viewport.inset && box.y >= viewport.inset && box.x + box.width <= viewport.width - viewport.inset && box.y + box.height <= viewport.height - viewport.inset, `dialog escaped viewport: ${JSON.stringify(box)}`);
       for (const target of await dialog.locator("button:visible").all()) {
@@ -205,6 +208,8 @@ test("delayed output cannot overwrite a newer task or conversation selection", {
     await page.getByTestId("background-tasks-open").click();
     await page.locator("#backgroundTasksDetails h3").waitFor({ state: "detached" });
     assert.equal(await page.getByTestId("background-task-row").count(), 0);
+    await page.getByTestId("background-tasks-empty").waitFor();
+    assert.equal(await page.locator("#backgroundTasksGrid").isVisible(), false, "a conversation with no tasks shows one explanation, not two blank panes");
     assert.doesNotMatch(await page.getByTestId("background-task-output").textContent() ?? "", /A-OLD|B-ONLY/);
     await fulfilled;
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));

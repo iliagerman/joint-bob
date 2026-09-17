@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Picked images now preview as thumbnails in the composer chip, and empty conversations show a helpful message instead of blank task panes.
+
 ## 1.48.0 — 2026-09-17
 
 - Moved keyboard shortcut badges below controls so button labels stay readable, and added U and Z shortcuts for background tasks and files panel.

@@ -117,7 +117,11 @@ function render() {
   el("backgroundTasksBadge").textContent = active > 99 ? "99+" : `${active}${incomplete ? "+" : ""}`;
   el("backgroundTasksSummary").textContent = values.length
     ? `${active} active, ${values.length - active} finished${incomplete ? ", older tasks available" : ""}`
-    : "No background tasks for this conversation.";
+    : "No tasks yet";
+  // Two blank panes read as a broken dialog, so an empty conversation gets a
+  // single centred explanation instead of the split view.
+  el("backgroundTasksGrid").hidden = !values.length;
+  el("backgroundTasksEmpty").hidden = Boolean(values.length);
   renderNodes();
 
   const nextSignature = values.map((task) => `${taskKey(task)}:${task.name}:${task.nodeName}:${safeStatus(task.status)}:${task.startedAt}`).join("|");

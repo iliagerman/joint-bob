@@ -1307,7 +1307,14 @@
           <div id="backgroundTasksSummary" role="status" aria-live="polite"></div>
           <div id="backgroundTasksNodes" class="background-tasks-nodes"></div>
         </div>
-        <div class="background-tasks-grid">
+        <div class="background-tasks-empty" id="backgroundTasksEmpty" data-testid="background-tasks-empty" hidden>
+          <span class="background-tasks-empty-glyph" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 1.8" /></svg>
+          </span>
+          <h3>No background tasks yet</h3>
+          <p>Long-running jobs started from this conversation appear here with their status and live output.</p>
+        </div>
+        <div class="background-tasks-grid" id="backgroundTasksGrid">
           <section class="background-tasks-list" id="backgroundTasksList" aria-label="Task history"></section>
           <section class="background-tasks-details" id="backgroundTasksDetails" aria-label="Task details"><p>Select a task to inspect its output.</p><pre id="backgroundTasksOutput" tabindex="0" data-testid="background-task-output"></pre></section>
         </div>
