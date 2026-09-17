@@ -9,6 +9,7 @@ function commandHandlers(calls: Array<[string, string]>) {
     model: (argument: string) => calls.push(["model", argument]),
     tools: (argument: string) => calls.push(["tools", argument]),
     compact: (argument: string) => calls.push(["compact", argument]),
+    bobBtw: (argument: string) => calls.push(["bob-btw", argument]),
   };
 }
 
@@ -17,7 +18,7 @@ test("composer commands execute UI actions instead of becoming prompts", () => {
   const prompts: string[] = [];
   const handlers = commandHandlers(calls);
 
-  for (const command of ["/help", "/skills", "/skill", "/skils", "/model", "/tools", "/compact keep decisions"]) {
+  for (const command of ["/help", "/skills", "/skill", "/skils", "/model", "/tools", "/compact keep decisions", "/bob-btw"]) {
     assert.equal(dispatchComposerInput(command, false, handlers, (message) => prompts.push(message)), "command");
   }
 
@@ -29,6 +30,7 @@ test("composer commands execute UI actions instead of becoming prompts", () => {
     ["model", ""],
     ["tools", ""],
     ["compact", "keep decisions"],
+    ["bob-btw", ""],
   ]);
   assert.deepEqual(prompts, []);
 });

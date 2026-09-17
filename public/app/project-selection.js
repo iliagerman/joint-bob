@@ -157,8 +157,9 @@ export async function selectProject(projectId, shouldRender = true, preserveSess
   void loadSessionNodes(projectId).catch((error) => toast(error.message, 8000));
   let body;
   try {
+    const byTheWayQuery = state.byTheWayToken ? `?byTheWayToken=${encodeURIComponent(state.byTheWayToken)}` : "";
     [body] = await Promise.all([
-      api(`/api/projects/${encodeURIComponent(projectId)}/sessions`),
+      api(`/api/projects/${encodeURIComponent(projectId)}/sessions${byTheWayQuery}`),
       state.harnesses.length ? undefined : loadHarnesses(),
     ]);
   } finally {

@@ -5,8 +5,23 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Added temporary side conversations with `/bob-btw` for exploring ideas in isolation, widened the browser viewport to standard laptop dimensions, and made scheduled task failures retry automatically by default with an optional pause-on-failure setting.
 - Shell commands now supervise automatically: short operations finish inline without task history, longer operations queue as background tasks with live output and stop controls, and shell background children stay tracked until completion.
 - Improved keyboard shortcut visibility with repositioned badges, added image attachment thumbnails in the composer, enhanced empty conversation and folder messaging, and redesigned the file explorer with browsable columns and breadcrumbs.
+
+## 1.50.1 — 2026-09-17
+
+- Widened the driven browser viewport to standard laptop dimensions, preventing websites from collapsing into narrow columns.
+
+## 1.50.0 — 2026-09-17
+
+- Added temporary by-the-way chats for exploring ideas in an isolated side panel without affecting your main conversation.
+- Scheduled task failures now retry at the next run time by default; you can optionally pause the schedule to review failed runs instead.
+
+## 1.49.0 — 2026-09-17
+
+- Added `/bob-btw` command to open a temporary isolated conversation in a side panel for exploring ideas without affecting the main chat.
+- Scheduled tasks now retry after failure by default and can optionally be configured to pause for review instead.
 
 ## 1.48.1 — 2026-09-17
 

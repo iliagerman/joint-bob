@@ -30,6 +30,8 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
     f.engine.value = "claude"; f.engine.dispatchEvent(new Event("change", { bubbles: true }));
     f.model.value = "claude|sonnet"; f.model.dispatchEvent(new Event("change", { bubbles: true }));
     f.reasoning.value = "high"; f.timezone.value = "UTC"; f.enabled.checked = false;
+    if (f.pauseOnFailure.checked) throw Error("Pause on failure must default off");
+    f.pauseOnFailure.checked = true;
     if (document.querySelector("#cronWeekdayLabel").hidden || document.querySelector("#cronTimeLabel").hidden || !document.querySelector("#cronMinuteLabel").hidden) throw Error("Weekly controls incorrect");
     if (f.engine.disabled || f.model.value !== "claude|sonnet" || f.reasoning.value !== "high") throw Error("Project execution settings unavailable");
     form.requestSubmit(); return true;
@@ -40,7 +42,7 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
   assert.equal(await page.getByTestId("cron-form").isVisible(), true, "Edit schedule should open the editor");
   assert.equal(await page.evaluate(`(() => {
     const form = document.querySelector("#cronForm"), f = form.elements;
-    if (f.frequency.value !== "weekly" || f.timezone.value !== "UTC" || f.enabled.checked) throw Error("Saved schedule not restored");
+    if (f.frequency.value !== "weekly" || f.timezone.value !== "UTC" || f.enabled.checked || !f.pauseOnFailure.checked) throw Error("Saved schedule not restored");
     if (f.engine.value !== "claude" || f.model.value !== "claude|sonnet" || f.reasoning.value !== "high") throw Error("Saved execution settings not restored");
     f.name.value = "Edited project cron"; f.frequency.value = "daily";
     f.frequency.dispatchEvent(new Event("change", { bubbles: true }));

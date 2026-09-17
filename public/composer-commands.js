@@ -4,6 +4,7 @@ export const LOCAL_COMMANDS = [
   { name: "model", description: "Choose the session model", invocation: "/model ", kind: "web" },
   { name: "tools", description: "Configure available tools", invocation: "/tools ", kind: "web" },
   { name: "compact", description: "Compact conversation context", invocation: "/compact ", kind: "web" },
+  { name: "bob-btw", description: "Open a temporary side conversation", invocation: "/bob-btw", kind: "web" },
 ];
 
 const COMMAND_ALIASES = new Map([
@@ -14,6 +15,7 @@ const COMMAND_ALIASES = new Map([
   ["model", "model"],
   ["tools", "tools"],
   ["compact", "compact"],
+  ["bob-btw", "bobBtw"],
 ]);
 
 export function executeComposerCommand(message, handlers) {

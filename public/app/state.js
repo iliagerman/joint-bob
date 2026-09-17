@@ -15,6 +15,7 @@ export const state = {
   // A canvas pane runs inside the canvas parent's iframe: one conversation, no
   // navigation, and no preference writes that would fight the parent app.
   canvasPaneMode: bootParams.get("canvasPane") === "1",
+  byTheWayToken: bootParams.get("byTheWayToken"),
   // Follow mode: the pane tracks the newest message while the reader sits at
   // the bottom, and releases the moment they scroll away. It resumes when they
   // return. Scroll events are the only input. They see every user-driven

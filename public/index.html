@@ -804,6 +804,20 @@
       </div>
     </dialog>
 
+    <dialog id="byTheWayDialog" class="by-the-way-dialog" data-testid="by-the-way-dialog" aria-labelledby="byTheWayTitle">
+      <section class="by-the-way-card">
+        <header class="by-the-way-heading">
+          <div>
+            <span class="eyebrow">Temporary conversation</span>
+            <h2 id="byTheWayTitle">By the Way</h2>
+          </div>
+          <button class="ghost compact" id="closeByTheWayButton" type="button" data-testid="by-the-way-close-button">Close</button>
+        </header>
+        <p class="by-the-way-status" id="byTheWayStatus" role="status">Cloning conversation…</p>
+        <div class="by-the-way-frame" id="byTheWayFrame"></div>
+      </section>
+    </dialog>
+
     <dialog id="terminalDialog" data-testid="terminal-dialog">
       <div class="dialog-card terminal-card">
         <div class="terminal-heading">
@@ -1451,7 +1465,8 @@
           <label>Model<select name="model" data-testid="cron-model"></select></label>
           <label id="cronReasoningLabel">Reasoning<select name="reasoning" data-testid="cron-reasoning"></select></label>
           <label class="checkbox-row"><input name="enabled" type="checkbox" checked data-testid="cron-enabled">Enabled</label>
-          <p class="cron-help">Missed offline runs are skipped. Runs never overlap. Errors pause the task for review.</p>
+          <label class="checkbox-row"><input name="pauseOnFailure" type="checkbox" data-testid="cron-pause-on-failure">Pause schedule after a failed run</label>
+          <p class="cron-help">Missed offline runs are skipped. Runs never overlap. Failed runs retry at the next scheduled time unless pause on failure is selected.</p>
           <div class="dialog-actions"><button id="cronCancel" type="button" class="ghost" data-testid="cron-cancel">Cancel</button><button class="primary" type="submit" data-testid="cron-save">Save task</button></div>
         </form>
         <div id="cronFooter" class="dialog-actions"><button id="cronRefresh" type="button" class="ghost" data-testid="cron-refresh">Refresh</button><button id="cronClose" class="primary" type="button" data-testid="cron-close">Close</button></div>

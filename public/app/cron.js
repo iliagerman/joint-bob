@@ -70,7 +70,7 @@ async function refreshTasks() {
     const harness = availableHarnesses.find(candidate => candidate.id === task.engine);
     const reasoning = task.reasoning ?? task.model?.reasoning;
     const repeat = task.schedule.frequency === "hourly" && (task.schedule.intervalHours ?? 1) > 1 ? `Every ${task.schedule.intervalHours} hours` : task.schedule.frequency;
-    const execution = [["Repeat", repeat], ["Harness", harness?.label || task.engine], ["Model", task.model ? task.model.modelId : "Harness default"], ["Reasoning", reasoning || "Harness default"]];
+    const execution = [["Repeat", repeat], ["Harness", harness?.label || task.engine], ["Model", task.model ? task.model.modelId : "Harness default"], ["Reasoning", reasoning || "Harness default"], ["On failure", task.pauseOnFailure ? "Pause schedule" : "Retry next run"]];
     const entries = task.enabled
       ? [["Next run", new Date(task.nextRun).toLocaleString(undefined, { timeZone: task.schedule.timezone })], ["Timezone", task.schedule.timezone], ...execution, ["Last run", last]]
       : [["Status", "Paused"], ["Timezone", task.schedule.timezone], ...execution, ["Last run", last]];
@@ -164,6 +164,7 @@ function editTask(task) {
   renderExecutionFields(task?.model ? `${task.model.provider}|${task.model.modelId}` : "", task?.reasoning ?? task?.model?.reasoning ?? "");
   if (task) {
     field("enabled").checked = task.enabled;
+    field("pauseOnFailure").checked = task.pauseOnFailure;
     field("frequency").value = task.schedule.frequency;
     field("weekday").value = task.schedule.weekday;
     field("intervalHours").value = task.schedule.intervalHours ?? 1;
@@ -193,6 +194,7 @@ form.addEventListener("submit", async event => {
       ownerNodeId: field("ownerNodeId").value, engine: field("engine").value,
       model: modelId ? { provider, modelId } : null, reasoning: field("reasoning").value || undefined,
       sessionId: editing ? editing.sessionId : context.session ? context.session.id : null, enabled: field("enabled").checked,
+      pauseOnFailure: field("pauseOnFailure").checked,
       schedule: { frequency: field("frequency").value, intervalHours: field("frequency").value === "hourly" ? Number(field("intervalHours").value) : undefined, hour, minute: field("frequency").value === "hourly" ? Number(field("minute").value) : minute, weekday: Number(field("weekday").value), timezone: field("timezone").value },
     };
     await command(editing ? editing.ownerNodeId : input.ownerNodeId, editing ? { action: "update", id: editing.id, input } : { action: "create", input });
