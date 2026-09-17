@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Increased browser viewport to 1512x945 for improved layout testing and wider content visibility.
+
 ## 1.50.0 — 2026-09-17
 
 - Added temporary by-the-way chats for exploring ideas in an isolated side panel without affecting your main conversation.

@@ -193,7 +193,7 @@ export class BrowserRuntime {
       const directory = await prepareProfile(profile.id);
       if (this.closed || (restoreId && this.cancelledRecoveries.has(restoreId))) throw new Error("Browser start cancelled");
       // server.ts owns TERM/INT shutdown. A second Playwright close force-kills Chrome before cookies flush.
-      context = await chromium.launchPersistentContext(directory, { executablePath: capability.executable, headless: true, handleSIGTERM: false, handleSIGINT: false, args: ["--window-size=1100,740"], viewport: { width: 1100, height: 740 }, acceptDownloads: true });
+      context = await chromium.launchPersistentContext(directory, { executablePath: capability.executable, headless: true, handleSIGTERM: false, handleSIGINT: false, args: ["--window-size=1512,945"], viewport: { width: 1512, height: 945 }, acceptDownloads: true });
       if (this.closed || (restoreId && this.cancelledRecoveries.has(restoreId))) throw new Error("Browser start cancelled");
       if (!profile.persistent) {
         try { await context.setStorageState(this.store.profileState(profile.id, start.projectId) as Parameters<BrowserContext["setStorageState"]>[0]); }

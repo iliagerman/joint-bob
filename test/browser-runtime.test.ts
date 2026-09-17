@@ -105,7 +105,7 @@ test("runtime creates a direct-network context and closes it without a proxy", a
     const movedAgent = await runtime.create({ ...start, appNodeId: randomUUID(), profileId: view.profileId });
     assert.equal(movedAgent.id, view.id, "Moving the agent must retain its existing browser and account");
     assert.equal(launch.mock.callCount(), 1, "Moving the agent must not launch another browser");
-    assert.deepEqual(launch.mock.calls[0].arguments, [path.join(process.env.PI_WEB_DATA_DIR!, "browser", "profiles", view.profileId!), { executablePath: process.execPath, headless: true, handleSIGTERM: false, handleSIGINT: false, args: ["--window-size=1100,740"], viewport: { width: 1100, height: 740 }, acceptDownloads: true }]);
+    assert.deepEqual(launch.mock.calls[0].arguments, [path.join(process.env.PI_WEB_DATA_DIR!, "browser", "profiles", view.profileId!), { executablePath: process.execPath, headless: true, handleSIGTERM: false, handleSIGINT: false, args: ["--window-size=1512,945"], viewport: { width: 1512, height: 945 }, acceptDownloads: true }]);
     await runtime.execute(view.id, { action: "close" }, { kind: "agent" });
     assert.equal((await runtime.get(view.id)).state, "closed");
   } finally { await runtime.close(); }
