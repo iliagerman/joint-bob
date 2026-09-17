@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.53.1 — 2026-09-17
 
-- Session paths are now portable across machines, and sessions can be recovered by ID when their saved path becomes unavailable.
+- Sessions now recover by ID even when their saved path becomes unavailable, enabling portable workspaces across multiple machines.
 
 ## 1.53.0 — 2026-09-17
 
