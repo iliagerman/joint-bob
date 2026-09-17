@@ -76,7 +76,7 @@ function safeWorkerEnvironment() {
   for (const key of ["PATH", "HOME", "TMPDIR", "SystemRoot"]) if (process.env[key]) env[key] = process.env[key];
   return env;
 }
-function launchWorker(spec, stdio) {
+function launchWorker(spec, stdio, background) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [workerPath], { detached: true, env: safeWorkerEnvironment(), stdio: ["ignore", ...stdio, "ipc"] });
     let settled = false;
@@ -89,7 +89,7 @@ function launchWorker(spec, stdio) {
     child.once("close", (code, signal) => {
       if (!settled) { settled = true; reject(new Error(`Worker exited before launch (${code ?? signal})`)); }
     });
-    child.send({ type: "launch", spec });
+    child.send({ type: "launch", spec, background });
   });
 }
 async function socketAvailable(socketPath) {
@@ -165,7 +165,7 @@ class Runtime {
     return { instanceId: this.instanceId, protocolVersion: 1, app: { pid: state && !state.commandExited ? state.commandPid : null, cwd: state?.spec.cwd ?? null, error: state?.error ?? null, exitCode: state?.exitCode ?? null, signal: state?.signal ?? null }, activeRelease: this.installation?.activeRelease ?? null, installing: this.installing === true, activeTaskCount: this.owned.size };
   }
   async launchApp(spec) {
-    const launched = await launchWorker(spec, ["inherit", "inherit"]);
+    const launched = await launchWorker(spec, ["inherit", "inherit"], false);
     const state = { spec, child: launched.child, commandPid: launched.commandPid, commandExited: false, exitCode: null, signal: null, error: null };
     launched.child.on("message", message => {
       if (message.type !== "exited" || state.commandExited) return;
@@ -278,7 +278,7 @@ class Runtime {
     try {
       fd = openSync(logPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
       if (!fstatSync(fd).isFile()) throw new Error("Task log is not a regular file");
-      const launched = await launchWorker({ ...task, env }, [fd, fd]);
+      const launched = await launchWorker({ ...task, env }, [fd, fd], true);
       const owned = { child: launched.child, stopRequested: false };
       this.owned.set(task.id, owned);
       launched.child.on("message", message => {

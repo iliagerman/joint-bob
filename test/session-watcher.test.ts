@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -49,6 +51,53 @@ function waitForCallback(callbacks: Map<string, string[]>, projectId: string, ex
     }, 10);
   });
 }
+
+test("projects share one recursive watcher and removing a subscriber keeps it alive", async (t) => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "session-watcher-shared-"));
+  const previousHome = process.env.HOME;
+  const root = path.join(home, ".pi/agent/sessions");
+  const opened: string[] = [];
+  const handles: fs.FSWatcher[] = [];
+  const originalWatch = fs.watch;
+  const watchMock = t.mock.method(fs, "watch", (...args: Parameters<typeof fs.watch>) => {
+    const handle = originalWatch(...args);
+    if (typeof args[1] === "object" && args[1] !== null && "recursive" in args[1] && args[1].recursive) {
+      opened.push(String(args[0]));
+      if (String(args[0]) === root) handles.push(handle);
+    }
+    return handle;
+  });
+  syncBuiltinESMExports();
+  const callbacks = new Map<string, string[]>();
+  const watcher = new SessionWatcher((id, files) => callbacks.set(id, files));
+  try {
+    process.env.HOME = home;
+    await mkdir(root, { recursive: true });
+    for (const id of ["a", "b", "c"]) watcher.ensureProject(project(id, path.join(home, id)));
+    assert.equal(opened.filter(dir => dir === root).length, 1, "shared transcript root must be watched only once");
+    await waitForCallbacks(callbacks, [], 3);
+    watcher.removeProject("a");
+    callbacks.clear();
+    const transcript = path.join(root, "new.jsonl");
+    await writeFile(transcript, `${JSON.stringify({ type: "session", cwd: path.join(home, "b") })}\n`);
+    await waitForCallback(callbacks, "b", transcript);
+    assert.equal(callbacks.has("a"), false);
+    handles[0]!.emit("error", Object.assign(new Error("root removed"), { code: "ENOENT" }));
+    for (const id of ["b", "c"]) watcher.ensureProject(project(id, path.join(home, id)));
+    assert.equal(handles.length, 2, "watcher failure must release all subscribers so one shared watch can reopen");
+    watcher.removeProject("b");
+    watcher.removeProject("c");
+    watcher.ensureProject(project("d", path.join(home, "d")));
+    assert.equal(opened.filter(dir => dir === root).length, 3, "last subscriber removal must release the root");
+  } finally {
+    watcher.close();
+    watchMock.mock.restore();
+    syncBuiltinESMExports();
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    await rm(home, { recursive: true, force: true });
+  }
+});
 
 test("shared flat Pi session watcher does not keep the process alive", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "session-watcher-exit-"));

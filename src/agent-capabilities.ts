@@ -31,7 +31,9 @@ Do not emit either protocol line in examples, progress updates, or unfinished wo
 
 const taskInstructions = `# Joint Bob tasks
 
-Use the local task supervisor for commands that must outlive this turn:
+Use the local task supervisor only for a real background job that is expected to run longer than the current turn and must survive the agent disconnecting. Never use it for ordinary shell commands, file inspection, builds, tests, or other commands that the native harness tool can run and await directly. One foreground harness command must never become one supervisor task.
+
+For a qualifying background job:
 node "$JOINT_BOB_TASK_CLI" start [--id UUID] [--name label] -- command args
 node "$JOINT_BOB_TASK_CLI" status [id] [--node UUID]
 node "$JOINT_BOB_TASK_CLI" output id [--offset N] [--limit N] [--node UUID]

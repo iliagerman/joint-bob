@@ -59,6 +59,17 @@ function safeStatus(value) {
   return statuses.has(value) ? value : "unknown";
 }
 
+function statusLabel(value) {
+  const status = safeStatus(value);
+  return status[0].toUpperCase() + status.slice(1);
+}
+
+function taskTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
 function showError(target, prefix, error) {
   target.textContent = `${prefix}: ${error instanceof Error ? error.message : String(error)}`;
 }
@@ -78,9 +89,10 @@ function renderNodes() {
   for (const node of nodes.values()) {
     const row = document.createElement("div");
     row.className = `background-tasks-node ${node.available ? "available" : "unavailable"}`;
-    row.textContent = node.available
-      ? `${node.nodeName} available`
-      : `${node.nodeName} unavailable${node.reason ? `: ${node.reason}` : ""}`;
+    const state = document.createElement("span");
+    state.textContent = node.nodeName;
+    state.title = node.available ? `${node.nodeName} available` : `${node.nodeName} unavailable${node.reason ? `: ${node.reason}` : ""}`;
+    row.append(state);
     const cursor = olderCursors.get(node.nodeId);
     if (cursor) {
       const more = document.createElement("button");
@@ -88,9 +100,9 @@ function renderNodes() {
       more.className = "ghost compact";
       more.dataset.testid = "background-tasks-load-older";
       more.setAttribute("aria-label", `Load older tasks from ${node.nodeName}`);
-      more.textContent = "Load older";
+      more.textContent = "Older";
       more.onclick = () => void loadOlder(node).catch((error) => showError(el("backgroundTasksSummary"), "Older tasks unavailable", error));
-      row.append(" ", more);
+      row.append(more);
     }
     nodeArea.append(row);
   }
@@ -108,7 +120,7 @@ function render() {
     : "No background tasks for this conversation.";
   renderNodes();
 
-  const nextSignature = values.map((task) => `${taskKey(task)}:${task.name}:${task.nodeName}:${safeStatus(task.status)}`).join("|");
+  const nextSignature = values.map((task) => `${taskKey(task)}:${task.name}:${task.nodeName}:${safeStatus(task.status)}:${task.startedAt}`).join("|");
   if (nextSignature !== listSignature) {
     listSignature = nextSignature;
     list.replaceChildren();
@@ -120,16 +132,28 @@ function render() {
       button.dataset.nodeId = task.nodeId;
       button.dataset.testid = "background-task-row";
       button.setAttribute("aria-label", `${task.name}, ${task.nodeName}, ${safeStatus(task.status)}`);
+      if (selected && taskKey(selected) === taskKey(task)) {
+        button.classList.add("selected");
+        button.setAttribute("aria-current", "true");
+      }
+      const body = document.createElement("span");
+      body.className = "background-task-body";
       const name = document.createElement("strong");
       name.textContent = task.name;
       const meta = document.createElement("span");
-      meta.textContent = `${task.nodeName} · ${safeStatus(task.status)}`;
-      button.append(name, meta);
+      meta.className = "background-task-meta";
+      meta.textContent = [task.nodeName, taskTime(task.startedAt)].filter(Boolean).join(" · ");
+      body.append(name, meta);
+      const status = document.createElement("span");
+      status.className = `background-task-status ${safeStatus(task.status)}`;
+      status.textContent = statusLabel(task.status);
+      button.append(body, status);
       button.onclick = () => selectTask(task);
       list.append(button);
     }
   }
-  if (selected) renderDetails(tasks.get(taskKey(selected)) || selected);
+  if (!selected && values.length) selectTask(values[0]);
+  else if (selected) renderDetails(tasks.get(taskKey(selected)) || selected);
 }
 
 function renderDetails(task) {
@@ -140,14 +164,25 @@ function renderDetails(task) {
   }
   detailsSignature = nextSignature;
   details.querySelectorAll(":scope > :not(#backgroundTasksOutput)").forEach((node) => node.remove());
+  const header = document.createElement("div");
+  header.className = "background-task-detail-header";
+  const identity = document.createElement("div");
   const heading = document.createElement("h3");
   heading.textContent = task.name;
   const meta = document.createElement("p");
-  meta.textContent = `${task.nodeName} · ${safeStatus(task.status)}`;
-  const follow = document.createElement("p");
+  meta.textContent = [task.nodeName, taskTime(task.startedAt)].filter(Boolean).join(" · ");
+  identity.append(heading, meta);
+  const status = document.createElement("span");
+  status.className = `background-task-status ${safeStatus(task.status)}`;
+  status.textContent = statusLabel(task.status);
+  header.append(identity, status);
+  const actions = document.createElement("div");
+  actions.className = "background-task-detail-actions";
+  const follow = document.createElement("span");
+  follow.className = "background-task-follow-up";
   follow.textContent = task.completion
     ? completionLabels[task.completion.state] || "Follow-up state unknown"
-    : "Follow-up not applicable";
+    : "No automatic follow-up";
   const stop = document.createElement("button");
   stop.type = "button";
   stop.className = "danger compact";
@@ -159,7 +194,11 @@ function renderDetails(task) {
     || stoppingKey === taskKey(task)
     || !nodes.get(task.nodeId)?.available;
   stop.onclick = () => void stopTask(task).catch((error) => showError(output, "Stop failed", error));
-  details.prepend(heading, meta, follow, stop);
+  actions.append(follow, stop);
+  const outputLabel = document.createElement("div");
+  outputLabel.className = "background-task-output-label";
+  outputLabel.textContent = "Output";
+  details.prepend(header, actions, outputLabel);
   output.textContent = outputText || "No output yet.";
 }
 
@@ -207,6 +246,12 @@ async function requestOutput(task, capturedGeneration) {
 function selectTask(task) {
   selectionEpoch++;
   selected = task;
+  for (const row of list.querySelectorAll(".background-task-row")) {
+    const current = row.dataset.taskId === task.id && row.dataset.nodeId === task.nodeId;
+    row.classList.toggle("selected", current);
+    if (current) row.setAttribute("aria-current", "true");
+    else row.removeAttribute("aria-current");
+  }
   outputOffset = 0;
   outputText = "";
   outputEof = false;

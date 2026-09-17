@@ -7,7 +7,8 @@ import type { ProjectRecord } from "./types.js";
 const DEBOUNCE_MS = 750;
 const RESCAN_MS = 15_000;
 export type SessionChangeListener = (projectId: string, changedFiles: string[]) => void;
-interface WatchedProject { paths: SessionProjectPaths; dirWatchers: Map<string, FSWatcher>; pendingFiles: Set<string>; needsFullRefresh: boolean; debounceTimer: NodeJS.Timeout | null; }
+interface WatchedProject { paths: SessionProjectPaths; directories: Set<string>; pendingFiles: Set<string>; needsFullRefresh: boolean; debounceTimer: NodeJS.Timeout | null; }
+interface SharedWatch { watcher: FSWatcher; projects: Set<string>; }
 
 export function sessionWatchDirs(project: SessionProjectPaths): string[] {
   return [...new Set(listDiscoveredHarnesses().flatMap((adapter) => adapter.sync.watchDirs?.(project) ?? [adapter.sync.transcriptRoot()]))];
@@ -16,6 +17,7 @@ function missing(error: unknown): boolean { const code = (error as NodeJS.ErrnoE
 
 export class SessionWatcher {
   private projects = new Map<string, WatchedProject>();
+  private directories = new Map<string, SharedWatch>();
   private ownerReads = new Map<string, Promise<string | null>>();
   private rescanTimer: NodeJS.Timeout;
   constructor(private listener: SessionChangeListener) { this.rescanTimer = setInterval(() => this.rescan(), RESCAN_MS); this.rescanTimer.unref(); }
@@ -24,28 +26,56 @@ export class SessionWatcher {
     const watched = this.projects.get(project.id);
     const paths = { path: project.path, macPath: project.macPath, locations: project.locations, additionalPaths: "additionalPaths" in project ? project.additionalPaths as string[] | undefined : undefined };
     if (watched) watched.paths = paths;
-    else this.projects.set(project.id, { paths, dirWatchers: new Map(), pendingFiles: new Set(), needsFullRefresh: false, debounceTimer: null });
+    else this.projects.set(project.id, { paths, directories: new Set(), pendingFiles: new Set(), needsFullRefresh: false, debounceTimer: null });
     this.watchDirs(project.id);
   }
-  removeProject(projectId: string): void { const project = this.projects.get(projectId); if (!project) return; if (project.debounceTimer) clearTimeout(project.debounceTimer); for (const watcher of project.dirWatchers.values()) watcher.close(); this.projects.delete(projectId); }
-  close(): void { clearInterval(this.rescanTimer); for (const project of this.projects.values()) { if (project.debounceTimer) clearTimeout(project.debounceTimer); for (const watcher of project.dirWatchers.values()) watcher.close(); } this.projects.clear(); this.ownerReads.clear(); }
+  removeProject(projectId: string): void {
+    const project = this.projects.get(projectId); if (!project) return;
+    if (project.debounceTimer) clearTimeout(project.debounceTimer);
+    for (const dir of project.directories) this.unsubscribe(projectId, dir);
+    this.projects.delete(projectId);
+  }
+  close(): void {
+    clearInterval(this.rescanTimer);
+    for (const projectId of this.projects.keys()) this.removeProject(projectId);
+    this.ownerReads.clear();
+  }
+  private unsubscribe(projectId: string, dir: string): void {
+    const shared = this.directories.get(dir)!;
+    shared.projects.delete(projectId);
+    if (!shared.projects.size) { shared.watcher.close(); this.directories.delete(dir); }
+    this.projects.get(projectId)!.directories.delete(dir);
+  }
 
   private watchDirs(projectId: string): void {
     const project = this.projects.get(projectId); if (!project) return;
     const desired = new Set(sessionWatchDirs(project.paths));
-    for (const [dir, watcher] of project.dirWatchers) if (!desired.has(dir)) { watcher.close(); project.dirWatchers.delete(dir); }
+    for (const dir of project.directories) if (!desired.has(dir)) this.unsubscribe(projectId, dir);
     for (const dir of desired) {
-      if (project.dirWatchers.has(dir)) continue;
+      if (project.directories.has(dir)) continue;
       try {
-        const watcher = watch(dir, { recursive: true }, (_event, file) => {
-          void this.handleEvent(projectId, dir, file).catch((error) => console.error(`Session watcher event failed for ${dir}:`, error));
-        });
-        watcher.unref();
-        watcher.on("error", (error) => { watcher.close(); project.dirWatchers.delete(dir); if (!missing(error)) console.error(`Session watcher failed for ${dir}:`, error); });
-        project.dirWatchers.set(dir, watcher);
+        const shared = this.directories.get(dir) ?? this.openDirectory(dir);
+        shared.projects.add(projectId);
+        project.directories.add(dir);
         void this.handleEvent(projectId, dir, null).catch((error) => console.error(`Session watcher event failed for ${dir}:`, error));
       } catch (error) { if (!missing(error)) console.error(`Session watcher could not watch ${dir}:`, error); }
     }
+  }
+  private openDirectory(dir: string): SharedWatch {
+    const projects = new Set<string>();
+    const watcher = watch(dir, { recursive: true }, (_event, file) => {
+      for (const projectId of projects) {
+        void this.handleEvent(projectId, dir, file).catch((error) => console.error(`Session watcher event failed for ${dir}:`, error));
+      }
+    });
+    watcher.unref();
+    watcher.on("error", (error) => {
+      for (const projectId of projects) this.unsubscribe(projectId, dir);
+      if (!missing(error)) console.error(`Session watcher failed for ${dir}:`, error);
+    });
+    const shared = { watcher, projects };
+    this.directories.set(dir, shared);
+    return shared;
   }
   private rescan(): void { for (const projectId of this.projects.keys()) this.watchDirs(projectId); }
 

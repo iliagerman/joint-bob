@@ -221,6 +221,7 @@
             <div class="chat-more-actions">
               <button class="ghost compact" id="openTerminalButton" data-shortcut-hint="terminal" type="button" disabled data-testid="chat-open-terminal-button">Terminal</button>
               <button class="ghost compact" id="openBrowserButton" data-shortcut-hint="browser" type="button" disabled aria-expanded="false" aria-controls="browserPanel" title="Open an existing conversation before starting its browser" data-testid="chat-open-browser-button">Browser</button>
+              <button class="ghost compact" id="chatFilesButton" type="button" data-testid="chat-files-button">Files</button>
               <button class="ghost compact" id="notifyButton" data-shortcut-hint="notify" type="button" aria-pressed="false" title="Notification device settings" data-testid="chat-notify-button">Notify</button>
               <button class="ghost compact" id="addToCanvasButton" data-shortcut-hint="addToCanvas" type="button" disabled data-testid="chat-add-to-canvas-button">Add to canvas</button>
               <button class="ghost compact" id="renameSessionButton" data-shortcut-hint="rename" type="button" disabled data-testid="chat-rename-button">Rename</button>
@@ -945,6 +946,23 @@
       </div>
     </dialog>
 
+    <dialog id="projectFilesDialog" data-testid="project-files-dialog">
+      <div class="dialog-card file-explorer-card">
+        <div class="file-editor-heading">
+          <span class="eyebrow">Project files</span>
+          <h2>Files</h2>
+          <p class="file-editor-path" id="projectFilesCrumbs" data-testid="project-files-crumbs"></p>
+        </div>
+        <p id="projectFilesStatus" role="status" aria-live="polite"></p>
+        <ul class="file-explorer-list" id="projectFilesList" data-testid="project-files-list"></ul>
+        <div class="dialog-actions">
+          <button class="ghost" id="projectFilesUpButton" type="button" disabled data-testid="project-files-up-button">Up</button>
+          <button class="ghost" id="projectFilesPasteButton" type="button" hidden data-testid="project-files-paste-button">Paste here</button>
+          <button class="primary" id="projectFilesCloseButton" type="button" data-testid="project-files-close-button">Close</button>
+        </div>
+      </div>
+    </dialog>
+
     <dialog id="renameDialog">
       <form method="dialog" class="dialog-card" id="renameForm">
         <div>
@@ -1280,15 +1298,17 @@
 
     <!-- The app's own confirm box. Replaces window.confirm so every prompt is themed and testable. -->
     <dialog id="backgroundTasksDialog" class="background-tasks-dialog" data-testid="background-tasks-dialog" aria-labelledby="backgroundTasksTitle">
-      <div class="dialog-card">
+      <div class="dialog-card background-tasks-card">
         <header class="background-tasks-header"><div><span class="eyebrow">Conversation</span><h2 id="backgroundTasksTitle">Background tasks</h2></div><button class="ghost icon-button" id="backgroundTasksClose" type="button" aria-label="Close background tasks" data-testid="background-tasks-close">×</button></header>
-        <div id="backgroundTasksSummary" role="status" aria-live="polite"></div>
-        <div id="backgroundTasksNodes" class="background-tasks-nodes"></div>
+        <div class="background-tasks-overview">
+          <div id="backgroundTasksSummary" role="status" aria-live="polite"></div>
+          <div id="backgroundTasksNodes" class="background-tasks-nodes"></div>
+        </div>
         <div class="background-tasks-grid">
           <section class="background-tasks-list" id="backgroundTasksList" aria-label="Task history"></section>
           <section class="background-tasks-details" id="backgroundTasksDetails" aria-label="Task details"><p>Select a task to inspect its output.</p><pre id="backgroundTasksOutput" tabindex="0" data-testid="background-task-output"></pre></section>
         </div>
-        <footer class="background-tasks-footer"><button class="ghost compact" id="backgroundTasksRefresh" type="button" aria-label="Refresh background tasks" data-testid="background-tasks-refresh">Refresh</button></footer>
+        <footer class="background-tasks-footer"><span>Tasks stay on the node where they started.</span><button class="ghost compact" id="backgroundTasksRefresh" type="button" aria-label="Refresh background tasks" data-testid="background-tasks-refresh">Refresh</button></footer>
       </div>
     </dialog>
 

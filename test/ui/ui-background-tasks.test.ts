@@ -112,6 +112,8 @@ test("a live supervisor task streams safely, stops, and remains in history after
     const row = page.getByTestId("background-task-row").filter({ hasText: "Browser heartbeat" });
     await row.waitFor();
     await assert.doesNotReject(() => page.waitForFunction(() => document.querySelector("#backgroundTasksBadge")?.textContent === "1"));
+    await page.locator("#backgroundTasksDetails h3", { hasText: "Browser heartbeat" }).waitFor();
+    assert.equal(await row.getAttribute("aria-current"), "true", "newest task is selected when the dialog opens");
     await row.click();
     const output = page.getByTestId("background-task-output");
     await output.getByText("FIRST", { exact: false }).waitFor();
@@ -135,7 +137,7 @@ test("a live supervisor task streams safely, stops, and remains in history after
     await page.getByTestId("background-tasks-open").click();
     const persisted = page.getByTestId("background-task-row").filter({ hasText: "Browser heartbeat" });
     await persisted.waitFor();
-    assert.match(await persisted.textContent() ?? "", /stopped/);
+    assert.match(await persisted.textContent() ?? "", /Stopped/);
 
     for (const viewport of [{ width: 1440, height: 900, inset: 12 }, { width: 390, height: 500, inset: 8 }]) {
       await page.setViewportSize(viewport);

@@ -136,6 +136,13 @@ export const projectFileUpdateSchema = z.object({
   version: z.string().regex(/^[0-9a-f]{64}$/),
   sessionId: z.string().min(1).max(240),
 }).strict();
+export const projectFileDeleteSchema = z.object({
+  sessionId: z.string().min(1).max(240),
+}).strict();
+export const projectFileCopySchema = z.object({
+  destinationDir: z.string().max(2000),
+  sessionId: z.string().min(1).max(240),
+}).strict();
 export const sessionTakeOwnershipSchema = z.object({
   peerId: z.string().uuid(),
   sessionId: z.string().min(1).max(240).optional(),

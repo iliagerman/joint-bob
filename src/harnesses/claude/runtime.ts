@@ -257,6 +257,9 @@ class ClaudeSession implements HarnessSession {
     this.compacting = true;
     try {
       await this.prompt({ text, beforeStart, onStarted: () => this.emit({ type: "userMessage", text }) });
+      // The compaction turn reports the pre-compaction window it just read, so
+      // the gauge stays unknown until the next real turn measures the new one.
+      this.contextUsage = undefined;
     } finally {
       this.compacting = false;
     }

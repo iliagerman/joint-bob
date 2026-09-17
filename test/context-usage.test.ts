@@ -29,6 +29,19 @@ test("Claude's 1M-context model variant reports the larger window", () => {
   assert.deepEqual(usage, { usedTokens: 250_000, contextWindow: 1_000_000, percent: 25 });
 });
 
+test("a compacted Claude transcript reports no usage until the next turn", () => {
+  const records = [
+    assistant("claude-opus-5", { input_tokens: 2, cache_read_input_tokens: 190_000, output_tokens: 300 }),
+    { type: "user", isCompactSummary: true, message: { role: "user", content: "summary" } },
+    { type: "user", message: { role: "user", content: "next" } },
+  ];
+
+  assert.equal(claudeContextUsage(records), undefined);
+
+  const afterTurn = [...records, assistant("claude-opus-5", { input_tokens: 1, cache_read_input_tokens: 20_000, output_tokens: 100 })];
+  assert.deepEqual(claudeContextUsage(afterTurn), { usedTokens: 20_101, contextWindow: 200_000, percent: 10 });
+});
+
 test("a Claude transcript with no reported usage has no context reading", () => {
   assert.equal(claudeContextUsage([{ type: "user", message: { role: "user", content: "hello" } }]), undefined);
 });
@@ -82,5 +95,5 @@ test("the chat header shows one context gauge for every harness", async () => {
   assert.match(app, /function syncContextUsage\(usage\)/);
   assert.match(app, /syncContextUsage\(status\.contextUsage\)/);
   assert.match(styles, /\.context-usage \{/);
-  assert.match(worker, /const CACHE_NAME = "joint-bob-v206";/);
+  assert.match(worker, /const CACHE_NAME = "joint-bob-v207";/);
 });

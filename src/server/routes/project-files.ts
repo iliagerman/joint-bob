@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { readdir, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { constants, createReadStream } from "node:fs";
+import { copyFile, readdir, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import type { Request, Response } from "express";
@@ -14,7 +14,7 @@ import { listTasks } from "../../tasks.js";
 import type { ProjectRecord } from "../../types.js";
 import { sendError } from "../http-auth.js";
 import { assertProjectEditable } from "../projects.js";
-import { projectFileUpdateSchema, TEXT_FILE_LIMIT } from "../schemas.js";
+import { projectFileCopySchema, projectFileDeleteSchema, projectFileUpdateSchema, TEXT_FILE_LIMIT } from "../schemas.js";
 import { requireLocalConversationOwner } from "../sessions-helpers.js";
 import { app } from "../state.js";
 
@@ -454,5 +454,175 @@ for (const method of ["get", "put"] as const) {
       }
       await sendProjectFileContent(response, request.params.projectId, requestedPath, method === "put" ? projectFileUpdateSchema.parse(request.body) : undefined, taskId);
     } catch (error) { next(error); }
+  });
+}
+
+interface ProjectFileEntry { name: string; path: string; type: "directory" | "file"; size: number | null }
+
+async function resolveProjectDirectory(projectId: string, requestedDir: string, taskId?: string): Promise<{ project: ProjectRecord; projectRoot: string; resolved: string; relativePath: string }> {
+  const project = await getProject(projectId);
+  if (!project) throw new ProjectFileError(404, "Project not found");
+  const dirValue = requestedDir.trim();
+  if (dirValue.length > 2000) throw new ProjectFileError(400, "Directory path is too long");
+  if (portablePathParts(dirValue).includes("..")) throw new ProjectFileError(403, "Directory is outside the project directory");
+  const projectRoot = await resolutionRoot(projectId, project.path, taskId);
+  let resolved: string;
+  try { resolved = await realpath(path.resolve(projectRoot, dirValue.replace(/\\/g, path.sep) || ".")); }
+  catch (error) {
+    if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) throw new ProjectFileError(404, "Directory not found");
+    throw error;
+  }
+  if (!projectPathInside(projectRoot, resolved)) throw new ProjectFileError(403, "Directory is outside the project directory");
+  const info = await stat(resolved);
+  if (!info.isDirectory()) throw new ProjectFileError(400, "Path is not a directory");
+  const relativePath = path.relative(projectRoot, resolved).split(path.sep).join("/");
+  return { project, projectRoot, resolved, relativePath };
+}
+
+async function listProjectFiles(projectId: string, requestedDir: string, taskId?: string): Promise<{ path: string; entries: ProjectFileEntry[] }> {
+  const { resolved, relativePath } = await resolveProjectDirectory(projectId, requestedDir, taskId);
+  const dirents = await readdir(resolved, { withFileTypes: true });
+  const entries: ProjectFileEntry[] = [];
+  for (const entry of dirents) {
+    // A symlink can point anywhere, including outside the project; the explorer only walks
+    // real files and directories.
+    if (!entry.isFile() && !entry.isDirectory()) continue;
+    const entryPath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+    const size = entry.isFile() ? (await stat(path.join(resolved, entry.name))).size : null;
+    entries.push({ name: entry.name, path: entryPath, type: entry.isDirectory() ? "directory" : "file", size });
+  }
+  entries.sort((left, right) => (left.type === right.type ? left.name.localeCompare(right.name) : left.type === "directory" ? -1 : 1));
+  return { path: relativePath, entries };
+}
+
+// Delete and copy act on the exact path the explorer shows. The fuzzy suffix search used
+// for chat references could pick a same-named file somewhere else, which must never
+// happen for a destructive operation.
+async function resolveExactProjectFile(projectId: string, requestedPath: string, taskId?: string): Promise<{ project: ProjectRecord; resolved: string; relativePath: string }> {
+  const project = await getProject(projectId);
+  if (!project) throw new ProjectFileError(404, "Project not found");
+  const pathValue = requestedPath.trim();
+  if (!pathValue) throw new ProjectFileError(400, "File path is required");
+  if (pathValue.length > 2000) throw new ProjectFileError(400, "File path is too long");
+  if (path.isAbsolute(pathValue)) throw new ProjectFileError(400, "File path must be relative");
+  if (portablePathParts(pathValue).includes("..")) throw new ProjectFileError(403, "File is outside the project directory");
+  const projectRoot = await resolutionRoot(projectId, project.path, taskId);
+  const direct = await verifiedProjectFile(projectRoot, path.resolve(projectRoot, pathValue.replace(/\\/g, path.sep)));
+  if (!direct) throw new ProjectFileError(404, "File not found");
+  const relativePath = path.relative(projectRoot, direct.resolved).split(path.sep).join("/");
+  return { project, resolved: direct.resolved, relativePath };
+}
+
+async function deleteProjectFile(projectId: string, requestedPath: string, payload: z.infer<typeof projectFileDeleteSchema>, taskId?: string): Promise<{ path: string }> {
+  const { project, resolved, relativePath } = await resolveExactProjectFile(projectId, requestedPath, taskId);
+  await assertProjectEditable(project);
+  await assertProjectFileConversationOwner(project, payload.sessionId);
+  await unlink(resolved);
+  return { path: relativePath };
+}
+
+async function copyProjectFile(projectId: string, requestedPath: string, payload: z.infer<typeof projectFileCopySchema>, taskId?: string): Promise<{ path: string }> {
+  const source = await resolveExactProjectFile(projectId, requestedPath, taskId);
+  await assertProjectEditable(source.project);
+  await assertProjectFileConversationOwner(source.project, payload.sessionId);
+  const destination = await resolveProjectDirectory(projectId, payload.destinationDir, taskId);
+  const fileName = path.basename(source.resolved);
+  try { await copyFile(source.resolved, path.join(destination.resolved, fileName), constants.COPYFILE_EXCL); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new ProjectFileError(409, "A file with that name already exists in the destination");
+    throw error;
+  }
+  return { path: destination.relativePath ? `${destination.relativePath}/${fileName}` : fileName };
+}
+
+async function proxyProjectFileJson(response: Response, peer: ClusterPeer, clusterRoute: string, query: Record<string, string>, request?: Request): Promise<void> {
+  const url = new URL(clusterRoute, peer.url);
+  for (const [key, value] of Object.entries(query)) if (value) url.searchParams.set(key, value);
+  const routed = await fetch(url, {
+    method: request?.method ?? "GET",
+    headers: { Authorization: `Bearer ${peer.token}`, ...(request ? { "Content-Type": "application/json" } : {}) },
+    ...(request ? { body: JSON.stringify(request.body) } : {}),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const contentType = routed.headers.get("content-type");
+  if (contentType) response.setHeader("Content-Type", contentType);
+  response.status(routed.status).send(await routed.text());
+}
+
+app.get("/api/cluster/project-files", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const taskId = typeof request.query.taskId === "string" ? request.query.taskId : undefined;
+    response.json(await listProjectFiles(String(request.query.projectId ?? ""), String(request.query.dir ?? ""), taskId));
+  } catch (error) {
+    if (error instanceof ProjectFileError) { sendError(response, error.status, error.message); return; }
+    next(error);
+  }
+});
+
+app.post("/api/cluster/project-file-delete", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const taskId = typeof request.query.taskId === "string" ? request.query.taskId : undefined;
+    response.json(await deleteProjectFile(String(request.query.projectId ?? ""), String(request.query.path ?? ""), projectFileDeleteSchema.parse(request.body), taskId));
+  } catch (error) {
+    if (error instanceof ProjectFileError) { sendError(response, error.status, error.message); return; }
+    next(error);
+  }
+});
+
+app.post("/api/cluster/project-file-copy", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const taskId = typeof request.query.taskId === "string" ? request.query.taskId : undefined;
+    response.json(await copyProjectFile(String(request.query.projectId ?? ""), String(request.query.path ?? ""), projectFileCopySchema.parse(request.body), taskId));
+  } catch (error) {
+    if (error instanceof ProjectFileError) { sendError(response, error.status, error.message); return; }
+    next(error);
+  }
+});
+
+app.get("/api/projects/:projectId/files", async (request, response, next) => {
+  try {
+    const dir = typeof request.query.dir === "string" ? request.query.dir : "";
+    let nodeId = typeof request.query.nodeId === "string" ? request.query.nodeId : "";
+    const taskId = typeof request.query.taskId === "string" ? request.query.taskId : undefined;
+    const local = await getClusterNode();
+    if (taskId) nodeId = await taskOwnerNodeId(request.params.projectId, taskId, nodeId);
+    if (nodeId && nodeId !== local.id) {
+      const peer = await getClusterPeer(nodeId);
+      if (!peer) { sendError(response, 404, "File node not found"); return; }
+      await proxyProjectFileJson(response, peer, "/api/cluster/project-files", { projectId: request.params.projectId, dir, taskId: taskId ?? "" });
+      return;
+    }
+    response.json(await listProjectFiles(request.params.projectId, dir, taskId));
+  } catch (error) {
+    if (error instanceof ProjectFileError) { sendError(response, error.status, error.message); return; }
+    next(error);
+  }
+});
+
+for (const [route, clusterRoute, handler] of [
+  ["/api/projects/:projectId/file-delete", "/api/cluster/project-file-delete", (projectId: string, requestedPath: string, body: unknown, taskId?: string) => deleteProjectFile(projectId, requestedPath, projectFileDeleteSchema.parse(body), taskId)],
+  ["/api/projects/:projectId/file-copy", "/api/cluster/project-file-copy", (projectId: string, requestedPath: string, body: unknown, taskId?: string) => copyProjectFile(projectId, requestedPath, projectFileCopySchema.parse(body), taskId)],
+] as const) {
+  app.post(route, async (request, response, next) => {
+    try {
+      const requestedPath = typeof request.query.path === "string" ? request.query.path : "";
+      let nodeId = typeof request.query.nodeId === "string" ? request.query.nodeId : "";
+      const taskId = typeof request.query.taskId === "string" ? request.query.taskId : undefined;
+      const local = await getClusterNode();
+      if (taskId) nodeId = await taskOwnerNodeId(request.params.projectId, taskId, nodeId);
+      if (nodeId && nodeId !== local.id) {
+        const peer = await getClusterPeer(nodeId);
+        if (!peer) { sendError(response, 404, "File node not found"); return; }
+        await proxyProjectFileJson(response, peer, clusterRoute, { projectId: request.params.projectId, path: requestedPath, taskId: taskId ?? "" }, request);
+        return;
+      }
+      response.json(await handler(request.params.projectId, requestedPath, request.body, taskId));
+    } catch (error) {
+      if (error instanceof ProjectFileError) { sendError(response, error.status, error.message); return; }
+      next(error);
+    }
   });
 }

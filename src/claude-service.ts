@@ -187,6 +187,9 @@ const CLAUDE_USAGE_FIELDS = ["input_tokens", "cache_creation_input_tokens", "cac
  */
 export function claudeContextUsage(records: UnknownRecord[]): ContextUsage | undefined {
   for (let index = records.length - 1; index >= 0; index -= 1) {
+    // Compaction replaces the context with a summary, so every usage number
+    // older than the boundary describes a window that no longer exists.
+    if (records[index].isCompactSummary === true) return undefined;
     const message = asRecord(records[index].message);
     const usage = asRecord(message.usage);
     const counted = CLAUDE_USAGE_FIELDS.filter((field) => typeof usage[field] === "number");

@@ -3,6 +3,16 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a project file explorer for navigating, opening, and managing files in your workspace, plus optimized background task display and improved supervisor resource efficiency.
+
+## 1.45.0 — 2026-09-17
+
+- Added a project file explorer for opening, copying, and deleting files from the active conversation.
+- Reworked background tasks with a compact live-output panel, hidden internal completion prompts, and stricter guidance so ordinary shell commands stay foregrounded.
+- Lowered supervised background-job priority, reduced duplicate transcript watchers, and reset context usage after Claude compaction.
+
 ## 1.44.0 — 2026-09-17
 
 - Added Kiro as a new agent option for starting conversations, with icon buttons on desktop and a choice dialog on mobile.

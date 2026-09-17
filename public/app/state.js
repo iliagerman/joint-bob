@@ -154,6 +154,7 @@ export const state = {
   initialProjectId: bootParams.get("projectId"),
   initialSessionPath: bootParams.get("sessionPath"),
   fileEditor: { requestedPath: null, path: null, downloadUrl: null, contentUrl: null, version: null, original: "", loading: false, saving: false },
+  fileExplorer: { dir: "", clipboard: null, loading: false },
 };
 
 export const TAKE_OWNERSHIP_WAIT_SECONDS = 5;

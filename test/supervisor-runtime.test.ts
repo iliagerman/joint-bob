@@ -93,6 +93,28 @@ async function processExists(pid: number) {
   try { process.kill(pid, 0); return true; } catch (error: any) { return error.code === "EPERM"; }
 }
 
+test("background commands and descendants inherit lower priority without lowering the app", async () => {
+  const f = await fixture();
+  try {
+    const report = path.join(f.root, "priorities.json");
+    await writeFile(path.join(f.root, "task.mjs"), `
+      import { getPriority } from 'node:os';
+      import { execFileSync } from 'node:child_process';
+      import { writeFileSync } from 'node:fs';
+      const descendant = Number(execFileSync(process.execPath, ['-e', "console.log(require('node:os').getPriority())"], { encoding: 'utf8' }));
+      writeFileSync(${JSON.stringify(report)}, JSON.stringify({ task: getPriority(), descendant }));
+    `);
+    const appPid = (await f.control({ action: "status" })).body.result.app.pid;
+    const appPriority = os.getPriority(appPid);
+    await f.control(startRequest(f.root));
+    await waitFor(async () => (await f.control({ action: "task", id: UUID })).body.result.status === "completed", "priority probe did not finish");
+    const priorities = JSON.parse(await readFile(report, "utf8"));
+    assert.equal(os.getPriority(appPid), appPriority, "app priority must not change");
+    assert.equal(priorities.task, Math.min(19, Math.max(10, appPriority + 10)), "background priority must be lowered before spawning");
+    assert.equal(priorities.descendant, priorities.task, "descendants must inherit background priority");
+  } finally { await cleanup(f); }
+});
+
 test("racing the same UUID launches once and completed retries never rerun", async () => {
   const f = await fixture();
   try {

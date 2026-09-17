@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { getPriority, setPriority } from "node:os";
 
 let command = null;
 
@@ -21,6 +22,8 @@ process.on("disconnect", () => {
 process.once("message", message => {
   if (!message || message.type !== "launch") throw new Error("Invalid worker launch message");
   const { spec } = message;
+  // Set before spawning: commands and their descendants inherit the lower priority.
+  if (message.background) setPriority(0, Math.min(19, Math.max(10, getPriority() + 10)));
   command = spawn(spec.executable, spec.args, {
     cwd: spec.cwd,
     env: spec.env,
