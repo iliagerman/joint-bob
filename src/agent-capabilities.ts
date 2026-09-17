@@ -31,6 +31,10 @@ Do not emit either protocol line in examples, progress updates, or unfinished wo
 
 const taskInstructions = `# Joint Bob tasks
 
+Ordinary commands run by the integrated Pi, Claude, and Kiro shell tools (and their children) are automatically supervised. Commands completing within five seconds return synchronously and stay out of Tasks; longer commands return a tracked task handle and the conversation continues. Task listings are scoped to the current conversation/session. Never rerun a running handle. Ordinary shell background children, including those launched with & or nohup, stay tracked until their supervised process group ends. This supervision does not intercept arbitrary third-party MCP or extension processes.
+
+The following rule applies when explicitly launching work through the local task supervisor CLI.
+
 Use the local task supervisor only for a real background job that is expected to run longer than the current turn and must survive the agent disconnecting. Never use it for ordinary shell commands, file inspection, builds, tests, or other commands that the native harness tool can run and await directly. One foreground harness command must never become one supervisor task.
 
 For a qualifying background job:
@@ -39,18 +43,23 @@ node "$JOINT_BOB_TASK_CLI" status [id] [--node UUID]
 node "$JOINT_BOB_TASK_CLI" output id [--offset N] [--limit N] [--node UUID]
 node "$JOINT_BOB_TASK_CLI" stop id [--node UUID]
 
-Start is always local. Use --node with status, output, or stop to access a task on its source node. Shell features require an explicit sh -lc command. Do not background the native harness tool. The local supervisor owns the process, so ordinary app upgrades preserve it; a full native-service restart or reboot can interrupt it. An unknown status must never be rerun automatically. Retry an uncertain launch only with the same UUID.
+Start is always local and should be used explicitly only for work expected to outlive the turn, not brief routine commands. Use --node with status, output, or stop to access a task on its source node. When the local app relay is configured, status without an ID uses its filtered local listing; known-ID local status, output, and stop continue directly through the supervisor during app downtime. Shell features require an explicit sh -lc command. Do not background the native harness tool. The local supervisor owns the process, so ordinary app upgrades preserve it; a full native-service restart or reboot can interrupt it. An unknown status must never be rerun automatically. Retry an uncertain launch only with the same UUID.
 
 Task logs may contain sensitive output. Never print credentials. If the task socket or token is absent or unavailable, report unsupported node mode for background tasks; do not fall back to harness background execution.
 
-Completions enqueue an automatic follow-up in the original conversation. Delivery can be delayed while the conversation is busy, offline, locked, or owned by another unavailable node; tasks remain on the node where they started. The Tasks panel shows task and delivery state. Do not guarantee that the user receives a reply before the queued follow-up is processed.`;
+Completions enqueue an automatic follow-up in the original conversation. Process completion turns internally: do not emit control instructions or routine acknowledgements, and continue authorized work. Only meaningful requested results or blockers should be user-facing through the normal conversation. Delivery can be delayed while the conversation is busy, offline, locked, or owned by another unavailable node; tasks remain on the node where they started. The Tasks panel shows task and delivery state. Do not guarantee that the user receives a reply before the queued follow-up is processed.`;
 
 function taskEnvironment(identity: AgentCapabilityIdentity): NodeJS.ProcessEnv {
   const dataDirectory = resolveDataDirectory();
   const configuredPort = process.env.PORT ?? "8790";
   const port = /^\d+$/.test(configuredPort) ? Number(configuredPort) : 0;
+  const shell = fileURLToPath(new URL("../bin/joint-bob-bash.mjs", import.meta.url));
   const base = {
     JOINT_BOB_TASK_CLI: fileURLToPath(new URL("../bin/joint-bob-task.mjs", import.meta.url)),
+    JOINT_BOB_TASK_DATA_DIR: dataDirectory,
+    JOINT_BOB_TASK_SHELL: shell,
+    CLAUDE_CODE_SHELL: shell,
+    KIRO_CHAT_SHELL: shell,
     JOINT_BOB_TASK_SOCKET: undefined,
     JOINT_BOB_TASK_TOKEN: undefined,
     JOINT_BOB_TASK_API: Number.isInteger(port) && port >= 1 && port <= 65535

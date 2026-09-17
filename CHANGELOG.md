@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Shell commands now supervise automatically: short operations finish inline without task history, longer operations queue as background tasks with live output and stop controls, and shell background children stay tracked until completion.
+
 ## 1.46.0 — 2026-09-17
 
 - Added a project file explorer for navigating, opening, and managing files in your workspace, plus optimized background task display and improved supervisor resource efficiency.

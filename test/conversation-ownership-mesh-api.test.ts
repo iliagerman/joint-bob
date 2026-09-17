@@ -194,9 +194,10 @@ async function exerciseConcurrentBoundary(
   const sourceSocket = await openConversation(source, source.projectId, wirePath);
   const destinationSocket = await openConversation(destination, source.projectId, wirePath);
   sockets.push(sourceSocket, destinationSocket);
-  const before = await readFile(sessionPath, "utf8");
   const ownerTurn = prompt(sourceSocket, `${engine} owner write`);
   await waitForInvocation(invocationLog, `${engine}:${source.id}`);
+  // Owner preflight may append settings; snapshot only once its held execution has started.
+  const before = await readFile(sessionPath, "utf8");
   const rejected = await prompt(destinationSocket, `${engine} spoofed continuation`);
   assert.equal(rejected.type, "error");
   assert.match(String(rejected.error), new RegExp(source.id));

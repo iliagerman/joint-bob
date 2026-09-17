@@ -554,6 +554,7 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
   await persistConversationSecretAccounts("pi", conversation.sessionId, options.conversation?.accountIds ?? []);
   let environment = agentEnvironment(options.projectId, conversation);
   const bashTool = createBashTool(options.cwd, {
+    shellPath: capabilityEnvironment.JOINT_BOB_TASK_SHELL,
     spawnHook: (context) => ({ ...context, env: { ...context.env, ...environment, ...capabilityEnvironment } }),
   });
   const agentDir = getAgentDir();

@@ -7,6 +7,7 @@ import { resolveDataDirectory } from "../data-directory.js";
 import { systemPromptState } from "../prompt-queue.js";
 import { getProject, projectAliasIds } from "../store.js";
 import { supervisorRequest } from "../../scripts/supervisor-client.mjs";
+import { readCompletionDisposition, readCompletionDispositions, type CompletionDisposition } from "../../scripts/supervised-shell.mjs";
 import { clusterPeerMayAccessProject } from "./cluster-helpers.js";
 
 const scope = z.object({
@@ -89,8 +90,9 @@ function completionPromptId(sourceNodeId: string, taskId: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function completion(value: Record<string, unknown>, nodeId: string, projectId: string, conversationId: string): z.infer<typeof completionSchema> | undefined {
+function completion(value: Record<string, unknown>, nodeId: string, projectId: string, conversationId: string, dispositions?: ReadonlyMap<string, CompletionDisposition>): z.infer<typeof completionSchema> | undefined {
   if (!["completed", "failed", "stopped", "unknown"].includes(String(value.status))) return undefined;
+  if ((dispositions?.get(String(value.id)) ?? readCompletionDisposition(resolveDataDirectory(), String(value.id))) !== "deliver") return undefined;
   const delivery = getDeliveryStatus(String(value.id));
   if (!delivery) return { state: "pending", targetNodeId: null, error: null };
   let state: z.infer<typeof completionSchema>["state"] = delivery.deliveryState;
@@ -101,7 +103,7 @@ function completion(value: Record<string, unknown>, nodeId: string, projectId: s
   return { state, targetNodeId: delivery.targetNodeId, error: delivery.error };
 }
 
-function publicTask(value: Record<string, unknown>, node: { id: string; name: string }, projectId?: string, conversationId?: string): PublicTask {
+function publicTask(value: Record<string, unknown>, node: { id: string; name: string }, projectId?: string, conversationId?: string, dispositions?: ReadonlyMap<string, CompletionDisposition>): PublicTask {
   return publicTaskSchema.parse({
     id: value.id,
     name: value.name,
@@ -113,7 +115,7 @@ function publicTask(value: Record<string, unknown>, node: { id: string; name: st
     signal: value.signal ?? null,
     nodeId: node.id,
     nodeName: node.name,
-    ...(projectId && conversationId ? { completion: completion(value, node.id, projectId, conversationId) } : {}),
+    ...(projectId && conversationId ? { completion: completion(value, node.id, projectId, conversationId, dispositions) } : {}),
   });
 }
 
@@ -140,10 +142,11 @@ export async function localBackgroundTaskOperation(commandInput: BackgroundTaskC
     } catch {
       live = false;
     }
+    const dispositions = readCompletionDispositions(data, stored.tasks.map((value) => value.id));
     const tasks = stored.tasks.map((value) => publicTask({
       ...value,
       status: !live && ["starting", "running", "stopping"].includes(value.status) ? "unknown" : value.status,
-    }, node, command.projectId, command.conversationId));
+    }, node, command.projectId, command.conversationId, dispositions));
     return {
       tasks,
       node: {

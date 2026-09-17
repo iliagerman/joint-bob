@@ -40,7 +40,7 @@ const olderCursors = new Map();
 let nodes = new Map();
 
 function scope() {
-  const conversationId = state.activeConversationId || state.activeSessionId;
+  const conversationId = state.activeConversationId;
   return state.authenticated && state.activeProjectId && conversationId
     ? { projectId: state.activeProjectId, conversationId }
     : null;

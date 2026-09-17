@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { visibleTaskMessages } from "../background-task-messages.js";
 import WebSocket from "ws";
 import { usernameForUser } from "../auth.js";
 import { getClusterNode } from "../cluster.js";
@@ -92,7 +93,9 @@ export async function notifyPendingReviews(projectId: string): Promise<void> {
       let delivered = false;
       try {
         const messages = await getHarness(session.harnessId).sessions.loadMessages(project, session.path).catch(() => []);
-        delivered = await notifyConversationReview(userId, projectId, conversationId, session.title || project.name, reviewNotificationBody(messages));
+        const visible = visibleTaskMessages(messages);
+        if (messages.length && visible.at(-1) !== messages.at(-1)) continue;
+        delivered = await notifyConversationReview(userId, projectId, conversationId, session.title || project.name, reviewNotificationBody(visible));
       } finally {
         finishConversationNotification(username, projectId, conversationId, session.updatedAt!, delivered, local.id);
         if (delivered) flushReplicationOutbox().catch((error) => console.warn("Notification delivery flush failed", error));

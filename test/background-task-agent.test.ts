@@ -32,6 +32,27 @@ async function runCli(nodeUrl: string, dataDir: string, token: string, args: str
   });
 }
 
+function seedReturnedShellCalls(dataDir: string, root: string, identity: string): void {
+  const node = new DatabaseSync(path.join(dataDir, "node.db"));
+  const supervisor = new DatabaseSync(path.join(dataDir, "supervisor.db"));
+  try {
+    node.exec("PRAGMA busy_timeout=5000");
+    supervisor.exec("PRAGMA busy_timeout=5000");
+    node.exec("CREATE TABLE IF NOT EXISTS supervised_shell_calls(task_id TEXT PRIMARY KEY,state TEXT NOT NULL,foreground_until INTEGER NOT NULL)");
+    const insertTask = supervisor.prepare("INSERT INTO supervisor_tasks(id,identity,name,executable,args_json,cwd,status,pid,started_at,ended_at,exit_code,signal,error) VALUES (?,?,?,'synthetic','[]',?,'completed',NULL,?,NULL,0,NULL,NULL)");
+    const insertPolicy = node.prepare("INSERT INTO supervised_shell_calls(task_id,state,foreground_until) VALUES (?,'returned',0)");
+    const startedAt = new Date().toISOString();
+    for (let index = 0; index < 101; index++) {
+      const taskId = randomUUID();
+      insertTask.run(taskId, identity, `returned-shell-${index}`, root, startedAt);
+      insertPolicy.run(taskId);
+    }
+  } finally {
+    supervisor.close();
+    node.close();
+  }
+}
+
 test("task relay URL accepts the normalized HTTP port and rejects unsafe endpoints", () => {
   const endpoint = "http://127.0.0.1/api/background-tasks/agent";
   assert.equal(taskApi("http://127.0.0.1:80/api/background-tasks/agent"), endpoint);
@@ -68,6 +89,10 @@ test("scoped task CLI reads and stops a task on its explicit source node", { tim
     assert.equal(status.id, taskB);
     await runCli(nodeA.url, nodeA.dataDir, token, ["stop", taskB, "--node", nodeB.nodeId]);
     assert.equal((await supervisorRequest<{ status: string }>(nodeA.dataDir, { action: "task", id: taskA })).status, "running");
+
+    seedReturnedShellCalls(nodeA.dataDir, fixture.root, JSON.stringify([projectA.id, conversationId]));
+    const listed = JSON.parse((await runCli(nodeA.url, nodeA.dataDir, token, ["status"])).stdout) as Array<{ id: string }>;
+    assert.deepEqual(listed.map((task) => task.id), [taskA]);
 
     const wrong = mintTaskToken(nodeA.dataDir, JSON.stringify([projectA.id, randomUUID()]));
     assert.equal((await agentFetch(nodeA.url, wrong, { nodeId: nodeB.nodeId, action: "get", id: taskB })).status, 404);

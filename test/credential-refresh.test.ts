@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after, before } from "node:test";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { startSupervisor } from "../scripts/joint-bob-supervisor.mjs";
+import { resolveDataDirectory } from "../src/data-directory.js";
 
 process.env.ANTHROPIC_API_KEY = "test-model-key";
 for (const name of ["GH_TOKEN", "GITHUB_TOKEN", "PI_GITHUB_TOKEN", "JOINT_BOB_BROWSER_CLI", "JOINT_BOB_BROWSER_URL"]) delete process.env[name];
@@ -13,6 +15,29 @@ const settings = getSettings();
 updateSettings({ ...settings, conversationDefaults: { ...settings.conversationDefaults, pi: { provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "medium" } } });
 const { createPiSession, reloadPiSkills } = await import("../src/pi-service.js");
 const secrets = await import("../src/secrets.js");
+
+let supervisor: Awaited<ReturnType<typeof startSupervisor>> | undefined;
+let previousWarning: string | undefined;
+
+before(async () => {
+  supervisor = await startSupervisor({
+    dataDirectory: resolveDataDirectory(),
+    app: {
+      executable: process.execPath,
+      args: ["-e", "setInterval(()=>{},1000)"],
+      cwd: os.homedir(),
+      env: { PATH: process.env.PATH ?? "", HOME: os.homedir() },
+    },
+  });
+  previousWarning = process.env.NODE_NO_WARNINGS;
+  process.env.NODE_NO_WARNINGS = "1";
+});
+
+after(async () => {
+  await supervisor?.close();
+  if (previousWarning === undefined) delete process.env.NODE_NO_WARNINGS;
+  else process.env.NODE_NO_WARNINGS = previousWarning;
+});
 
 type Model = Parameters<ModelRuntime["streamSimple"]>[0];
 type Context = Parameters<ModelRuntime["streamSimple"]>[1];

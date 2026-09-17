@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { internalTaskPrompt } from "../background-task-messages.js";
 import { unlink } from "node:fs/promises";
 import path from "node:path";
 import WebSocket from "ws";
@@ -103,7 +104,7 @@ async function writable(connection: HarnessChatConnection): Promise<void> {
 }
 
 export function refreshHarnessPromptQueue(connection: HarnessChatConnection): void {
-  const prompts = listQueuedPrompts(queueKey(connection)).filter((prompt) => !startingIds.has(prompt.id));
+  const prompts = listQueuedPrompts(queueKey(connection)).filter((prompt) => !prompt.systemEventId && !startingIds.has(prompt.id));
   publish(connection, { type: "queuedPrompts", prompts: prompts.map((prompt) => {
     const images = new Set(prompt.images.map(({ path: imagePath }) => imagePath));
     return { id: prompt.id, text: prompt.displayText, displayText: prompt.displayText, scheduled: isScheduledPromptText(prompt.promptText), revision: prompt.revision, editableText: prompt.messageText ?? prompt.displayText, settings: prompt.settings, attachments: prompt.attachmentPaths.map((attachmentPath) => ({ kind: images.has(attachmentPath) ? "image" : "file", name: path.basename(attachmentPath), path: attachmentPath })) };
@@ -179,7 +180,10 @@ async function applyQueuedSettings(connection: HarnessChatConnection, settings: 
 async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt): Promise<void> {
   if (queued.dispatchState === "starting" || startingIds.has(queued.id)) throw new Error("Queued prompt start is uncertain; edit or cancel it before retrying");
   await ensureCurrentSession(connection);
-  connection.shared.turnInFlight += 1;
+  const shared = connection.shared;
+  const previousInternalTurn = shared.internalTurn;
+  shared.internalTurn = Boolean(queued.systemEventId);
+  shared.turnInFlight += 1;
   try {
     if (queued.settings) await applyQueuedSettings(connection, queued.settings);
     await writable(connection);
@@ -191,31 +195,36 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
     startingIds.add(queued.id);
     let claimed = false;
     try {
-      await connection.shared.session.prompt({ text: `${connection.handoffContext ?? ""}${attachments.text}`, images: attachments.images, beforeStart: () => writable(connection), onStarted: () => {
+      const text = `${connection.handoffContext ?? ""}${attachments.text}`;
+      await connection.shared.session.prompt({ text: queued.systemEventId ? internalTaskPrompt(queued.systemEventId, text) : text, images: attachments.images, beforeStart: () => writable(connection), onStarted: () => {
         armAutoCompactAfterPrompt(connection.shared.session);
         if (claimed) return;
         claimed = claimQueuedPrompt(queued.id, currentSettings(connection));
         if (!claimed) throw new Error("Queued prompt was changed before start");
         connection.handoffContext = null;
         connection.shared.scheduledTurn = isScheduledPromptText(queued.promptText);
-        publish(connection, { type: "promptStarted", queueId: queued.id, scheduled: connection.shared.scheduledTurn });
+        if (!queued.systemEventId) publish(connection, { type: "promptStarted", queueId: queued.id, scheduled: connection.shared.scheduledTurn });
         refreshHarnessPromptQueue(connection);
       } });
       if (!claimed) throw new Error("Harness did not start the queued prompt");
-      publish(connection, { type: "promptCompleted", queueId: queued.id });
+      if (!queued.systemEventId) publish(connection, { type: "promptCompleted", queueId: queued.id });
     } catch (error) {
       // An automatic completion may have crossed the harness start boundary even
       // when transport failed before onStarted. Keep it fenced as uncertain.
       if (!claimed && !queued.systemEventId) resetQueuedPromptAttempt(queued.id);
       if (!pausedDrains.has(queueKey(connection))) {
-        publish(connection, { type: "promptFailed", queueId: queued.id, error: chatErrorMessage(error) });
+        if (!queued.systemEventId) publish(connection, { type: "promptFailed", queueId: queued.id, error: chatErrorMessage(error) });
         throw error;
       }
     } finally {
       startingIds.delete(queued.id);
     }
   } finally {
-    connection.shared.turnInFlight -= 1; connection.shared.scheduledTurn = false; sendHarnessStatus(connection.shared);
+    // switchHarness transfers the busy counter to the destination shared session.
+    connection.shared.turnInFlight -= 1;
+    shared.internalTurn = previousInternalTurn;
+    connection.shared.scheduledTurn = false;
+    sendHarnessStatus(connection.shared);
   }
 }
 
@@ -255,7 +264,16 @@ async function drainLoop(connection: HarnessChatConnection): Promise<void> {
     if (pausedDrains.has(queueKey(connection)) || harnessSessionBusy(connection.shared)) return;
     if (await autoCompactBetweenTurns(connection.shared, getSettings().autoCompactThreshold, () => writable(connection))) sendHarnessStatus(connection.shared);
     const next = listQueuedPrompts(queueKey(connection))[0];
-    if (next) { await dispatch(connection, next); continue; }
+    if (next?.systemEventId && next.dispatchState === "starting") return;
+    if (next) {
+      try { await dispatch(connection, next); }
+      catch (error) {
+        if (!next.systemEventId) throw error;
+        console.warn("Background completion dispatch failed", error instanceof Error ? error.message.slice(0, 200) : "unknown error");
+        return;
+      }
+      continue;
+    }
     if (!await runGoalTurn(connection)) return;
   }
 }

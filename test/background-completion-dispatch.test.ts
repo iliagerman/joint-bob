@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
@@ -20,13 +20,15 @@ async function waitFor<T>(read: () => T | Promise<T>, ready: (value: T) => boole
   assert.fail(`Timed out waiting for ${label}: ${JSON.stringify(value)}`);
 }
 
-async function openSeededPi(f: Awaited<ReturnType<typeof backgroundFixture>>): Promise<{
-  socket: WebSocket; messages: Record<string, unknown>[]; projectId: string; conversationId: string;
+async function openSeededPi(f: Awaited<ReturnType<typeof backgroundFixture>>, sessionPath?: string): Promise<{
+  socket: WebSocket; messages: Record<string, unknown>[]; projectId: string; conversationId: string; sessionPath: string;
 }> {
   const session = await signIn(f.environment, f.node);
   const project = projectNamed(f.node, "Internal Assistant");
   const listed = await api<{ sessions: Array<{ id: string; path: string; harnessId: string }> }>(f.node, session, "GET", `/projects/${project.id}/sessions`);
-  const target = listed.body.sessions.find((candidate) => candidate.harnessId === "pi");
+  const target = sessionPath
+    ? listed.body.sessions.find((candidate) => candidate.path === sessionPath)
+    : listed.body.sessions.find((candidate) => candidate.harnessId === "pi");
   assert.ok(target, "seeded Pi conversation must exist");
   const messages: Record<string, unknown>[] = [];
   const url = new URL("/ws", f.node.url.replace(/^http/, "ws"));
@@ -38,7 +40,7 @@ async function openSeededPi(f: Awaited<ReturnType<typeof backgroundFixture>>): P
   const db = new DatabaseSync(path.join(f.node.dataDir, "node.db"), { readOnly: true });
   const record = db.prepare("SELECT conversation_id FROM conversation_records WHERE project_id=? AND session_id=?").get(project.id, target.id) as { conversation_id: string | null } | undefined;
   db.close();
-  return { socket, messages, projectId: project.id, conversationId: record?.conversation_id ?? String(ready!.conversationId ?? target.id) };
+  return { socket, messages, projectId: project.id, conversationId: record?.conversation_id ?? String(ready!.conversationId ?? target.id), sessionPath: target.path };
 }
 
 function queueRow(dataDir: string, id: string): { dispatchState: string; systemEventId: string } | undefined {
@@ -70,10 +72,80 @@ function outboxState(dataDir: string, id: string): string | undefined {
   } finally { db.close(); }
 }
 
+async function chainPiTranscript(file: string): Promise<void> {
+  const lines = (await readFile(file, "utf8")).trimEnd().split("\n");
+  let parentId: string | null = null;
+  const chained = lines.map((line) => {
+    const record = JSON.parse(line) as { type?: string; id?: string; parentId?: string | null };
+    if (record.type === "message" && record.id) { record.parentId = parentId; parentId = record.id; }
+    return JSON.stringify(record);
+  });
+  await writeFile(file, `${chained.join("\n")}\n`);
+}
+
+async function fileLines(file: string): Promise<string[]> {
+  try { return (await readFile(file, "utf8")).trim().split("\n").filter(Boolean); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
+}
+
 async function failureEntries(file: string): Promise<Array<{ sessionId: string; text: string }>> {
   try { return (await readFile(file, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as { sessionId: string; text: string }); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
 }
+
+test("background completion turns stay internal live and after restart", async () => {
+  const envFor = (root: string) => ({ JOINT_BOB_TEST_ENGINE_LOG: path.join(root, "engine.log"), JOINT_BOB_TEST_ENGINE_HOLD_DIR: root });
+  const f = await backgroundFixture(envFor);
+  let setup: Awaited<ReturnType<typeof openSeededPi>> | undefined;
+  let reopened: Awaited<ReturnType<typeof openSeededPi>> | undefined;
+  try {
+    setup = await openSeededPi(f);
+    setup.socket.send(JSON.stringify({ type: "prompt", message: "visible trigger", requestId: randomUUID() }));
+    await waitFor(() => fileLines(path.join(f.root, "engine.log")), (lines) => lines.length === 1, "held ordinary prompt start");
+
+    const taskId = randomUUID();
+    await startSyntheticTask(f, setup.projectId, setup.conversationId, taskId);
+    await waitFor(() => queueRowForTask(f.node.dataDir, taskId), (row) => row?.dispatchState === "pending", "pending internal queue row");
+    assert.equal(setup.messages.some((frame) => frame.type === "queuedPrompts" && JSON.stringify(frame).includes(taskId)), false);
+
+    await writeFile(path.join(f.root, "pi.release"), "go");
+    await waitFor(async () => await readFile(setup!.sessionPath, "utf8"), (text) => text.includes(taskId) && text.includes("stubbed response"), "native internal transcript turn");
+    await waitFor(() => queueRowForTask(f.node.dataDir, taskId), (row) => row === undefined, "consumed internal queue row");
+
+    setup.socket.send(JSON.stringify({ type: "prompt", message: "visible follow-up", requestId: randomUUID() }));
+    await waitFor(() => setup!.messages.filter((frame) => frame.type === "promptCompleted").length, (count) => count === 2, "visible follow-up completion");
+
+    assert.equal(setup.messages.filter((frame) => frame.type === "textDelta" && frame.text === "stubbed response").length, 2);
+    const leakingFrames = setup.messages.filter((frame) => frame.type !== "backgroundTasksChanged" && JSON.stringify(frame).includes(taskId));
+    assert.deepEqual(leakingFrames, [], "internal task marker must never reach client frames");
+    await chainPiTranscript(setup.sessionPath);
+    const nativeBefore = await readFile(setup.sessionPath, "utf8");
+    assert.match(nativeBefore, /visible trigger/);
+    assert.match(nativeBefore, /visible follow-up/);
+    assert.match(nativeBefore, new RegExp(taskId));
+
+    setup.socket.close();
+    await new Promise<void>((resolve) => setup!.socket.once("close", resolve));
+    await stopDevNode(f.server);
+    f.server = await startDevNode(f.environment, f.node, envFor(f.root));
+    reopened = await openSeededPi(f, setup.sessionPath);
+    const ready = reopened.messages.find((frame) => frame.type === "ready") as { messages?: Array<{ role: string; text: string }> };
+    const visible = ready.messages ?? [];
+    assert.deepEqual(visible.filter((message) => /visible (trigger|follow-up)|stubbed response/.test(message.text)).map(({ role, text }) => ({ role, text })), [
+      { role: "user", text: "visible trigger" },
+      { role: "assistant", text: "stubbed response" },
+      { role: "user", text: "visible follow-up" },
+      { role: "assistant", text: "stubbed response" },
+    ]);
+    assert.equal(JSON.stringify(visible).includes(taskId), false);
+    assert.ok((await readFile(setup.sessionPath, "utf8")).startsWith(nativeBefore), "filtering must not delete or rewrite native transcript records");
+    assert.equal((await readFile(path.join(f.root, "engine.log"), "utf8")).trim().split("\n").length, 3);
+  } finally {
+    await writeFile(path.join(f.root, "pi.release"), "go").catch(() => {});
+    setup?.socket.terminate(); reopened?.socket.terminate();
+    await closeBackgroundFixture(f);
+  }
+});
 
 test("automatic completion start uncertainty remains fenced after dispatch failure and restart", async () => {
   const bootstrap = path.resolve("test/background-start-failure-bootstrap.ts");
@@ -91,18 +163,18 @@ test("automatic completion start uncertainty remains fenced after dispatch failu
 
     const observed = await waitFor(
       async () => ({
-        failed: setup!.messages.find((frame) => frame.type === "promptFailed"),
         messages: setup!.messages,
         queue: queueRowForTask(f.node.dataDir, first),
         outbox: outboxState(f.node.dataDir, first),
         failures: await failureEntries(path.join(f.root, "failure.log")),
       }),
-      (value) => Boolean(value.failed),
-      "promptFailed frame from dispatcher catch",
+      (value) => value.queue?.dispatchState === "starting" && value.failures.some((entry) => entry.text.includes(first)),
+      "fenced uncertain internal start",
     );
-    assert.match(String(observed.failed!.error), /Synthetic uncertain start before acknowledgement/);
-    const firstRow = queueRow(f.node.dataDir, String(observed.failed!.queueId));
-    assert.deepEqual(firstRow, { dispatchState: "starting", systemEventId: String(observed.failed!.queueId) });
+    assert.equal(observed.messages.some((frame) => frame.type === "promptFailed"), false);
+    assert.ok(observed.queue);
+    const firstRow = queueRow(f.node.dataDir, observed.queue.id);
+    assert.deepEqual(firstRow, { dispatchState: "starting", systemEventId: observed.queue.id });
     const failureLog = path.join(f.root, "failure.log");
     let failures = await failureEntries(failureLog);
     assert.equal(failures.filter((entry) => entry.text.includes(first)).length, 1, "first uncertain prompt must be attempted once");
@@ -118,7 +190,7 @@ test("automatic completion start uncertainty remains fenced after dispatch failu
     await waitFor(() => outboxState(f.node.dataDir, second), (state) => state === "queued", "second durable completion enqueue");
     await waitFor(() => queueRowForTask(f.node.dataDir, second), (row) => row?.dispatchState === "pending", "second pending queue row");
 
-    assert.deepEqual(queueRow(f.node.dataDir, String(observed.failed!.queueId)), { dispatchState: "starting", systemEventId: String(observed.failed!.queueId) });
+    assert.deepEqual(queueRow(f.node.dataDir, observed.queue.id), { dispatchState: "starting", systemEventId: observed.queue.id });
     const secondRow = queueRowForTask(f.node.dataDir, second);
     assert.deepEqual(secondRow && { dispatchState: secondRow.dispatchState, systemEventId: secondRow.systemEventId }, { dispatchState: "pending", systemEventId: secondRow?.id });
     failures = await failureEntries(failureLog);

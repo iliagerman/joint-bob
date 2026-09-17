@@ -1,3 +1,4 @@
+import { visibleTaskMessages } from "./background-task-messages.js";
 import { type ConversationRecord, getConversationRecord, listConversationSegments } from "./conversation-records.js";
 import { getHarness } from "./harnesses.js";
 import { getProject } from "./store.js";
@@ -22,7 +23,7 @@ function visibleTranscriptMessages<T extends ChatMessage>(messages: T[]): T[] {
 
 /** Keeps browser transcript payloads below mobile WebKit's memory-kill range. */
 export function boundTranscriptMessages<T extends ChatMessage & { segment?: number }>(messages: T[]): T[] {
-  const visible = visibleTranscriptMessages(messages);
+  const visible = visibleTranscriptMessages(visibleTaskMessages(messages));
   const retained: T[] = [];
   let characters = 0;
   for (let index = visible.length - 1; index >= 0 && retained.length < TRANSCRIPT_MESSAGE_LIMIT; index -= 1) {
