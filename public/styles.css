@@ -396,20 +396,19 @@ body.shortcuts-revealed .shortcut-hint { display: grid; }
 .primary.destructive:hover:not(:disabled) { background: var(--danger); filter: brightness(1.1); }
 .wide { margin: 12px 14px 0; }
 
-/* New chat: ink buttons with engine dot */
-.new-chat-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 12px 0; }
-.new-chat-row .primary::before {
-  content: "";
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-right: 8px;
-  border-radius: 50%;
-  background: var(--accent);
-  vertical-align: 1px;
-}
-.new-chat-row .primary.claude::before { background: var(--claude); }
-.primary.claude { color: var(--btn-fg); background: var(--btn-bg); }
+/* New conversation controls come from the harness registry. */
+.new-chat-row { margin: 12px 12px 0; }
+.new-chat-harnesses { display: grid; grid-template-columns: repeat(auto-fit, minmax(44px, 1fr)); gap: 8px; }
+.new-chat-harness-button { display: inline-grid; place-items: center; padding: 0; }
+.new-chat-harness-icon { width: 19px; height: 19px; }
+.new-chat-harness-icon.pi { color: var(--accent); }
+.new-chat-harness-icon.claude { color: var(--claude); }
+.new-chat-harness-icon.kiro { color: #ff9900; }
+.new-chat-mobile { display: none; width: 100%; }
+.choice-option-icon { width: 20px; height: 20px; flex: 0 0 auto; }
+.choice-option-icon.pi { color: var(--accent); }
+.choice-option-icon.claude { color: var(--claude); }
+.choice-option-icon.kiro { color: #ff9900; }
 
 .engine-toggle { display: inline-flex; flex: 0 0 auto; border: 1px solid var(--line); border-radius: var(--radius-ctl); padding: 2px; background: var(--field); }
 .engine-toggle button {
@@ -1834,11 +1833,11 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   .project-actions button.icon-button { min-width: 0; width: 100%; padding-inline: 0; }
   /* The toolbar reads as one straight line: the badges overlay their controls rather
      than claiming a second line under them. */
-  .chat-toolbar { --control-line: 32px; align-items: end; }
+  .chat-toolbar { --control-line: 32px; align-items: end; gap: 4px; }
   .chat-model-control, .chat-mode-control { align-self: end; }
-  .chat-toolbar button[data-shortcut-hint] {
+  .chat-toolbar button[data-shortcut-hint], .chat-toolbar .background-tasks-trigger, .chat-toolbar #chatFilesButton {
     min-height: 0;
-    padding: 0 8px;
+    padding: 0 6px;
     line-height: var(--control-line);
   }
   .mobile-nav { display: none; }
@@ -1870,8 +1869,14 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   #chatRunningConversationsButton { display: none !important; }
 }
 
+@media (min-width: 1600px) {
+  .chat-toolbar { flex-wrap: nowrap; }
+}
+
 @media (max-width: 1023px) {
   .collapse-button { display: none; }
+  .new-chat-harnesses { display: none; }
+  .new-chat-mobile { display: block; }
   .classification-filter { max-width: none; }
   .chat-toolbar {
     display: grid;
@@ -2743,7 +2748,7 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .running-conversations-list .session-card span { -webkit-line-clamp: 1; }
 
 /* Background task history */
-.background-tasks-trigger { position: relative; min-height: 40px; }
+.background-tasks-trigger { position: relative; }
 .background-tasks-badge { min-width: 1.25rem; padding: 0 .3rem; border-radius: 999px; background: var(--danger); color: white; font-size: .72rem; text-align: center; }
 .background-tasks-dialog { padding: 0; }
 .background-tasks-dialog > .dialog-card { width: min(850px, calc(100vw - 24px)); max-width: none; max-height: calc(100dvh - 24px); overflow: auto; }

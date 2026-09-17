@@ -31,5 +31,6 @@ window.addEventListener("keydown", (event) => revealShortcuts(modifiersHeld(even
 window.addEventListener("keyup", (event) => revealShortcuts(modifiersHeld(event)));
 // A chord that switches windows never delivers its keyup, so the badges would stay lit.
 window.addEventListener("blur", () => revealShortcuts(false));
+window.addEventListener("shortcut-targets-changed", syncShortcutHints);
 
 syncShortcutHints();

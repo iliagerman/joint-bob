@@ -19,8 +19,10 @@ test("creating a conversation asks for a name before it opens", async () => {
   for (const id of ["newSessionNameDialog", "newSessionNameForm", "newSessionNameInput", "newSessionNodeSelect", "cancelNewSessionNameButton"]) {
     assert.match(app, new RegExp(`${id}: document\\.querySelector\\("#${id}"\\)`));
   }
-  assert.match(app, /elements\.newSessionButton\.addEventListener\("click", \(\) => openNewSessionNameDialog\(null, "New Pi conversation"\)\.catch/);
-  assert.match(app, /elements\.newClaudeSessionButton\.addEventListener\("click", \(\) => openNewSessionNameDialog\("claude:new", "New Claude conversation"\)\.catch/);
+  assert.match(app, /export async function startNewHarnessConversation\(harnessId\)/);
+  assert.match(app, /state\.harnesses\.find\(\(candidate\) => candidate\.id === harnessId && candidate\.runtimeConfigured\)/);
+  assert.match(app, /openNewSessionNameDialog\(harness\.newSessionPath, `New \$\{harness\.label\} conversation`\)/);
+  assert.match(app, /elements\.newSessionButton\.addEventListener\("click", \(\) => chooseNewSessionHarness\(\)\.catch/);
   assert.match(app, /elements\.cancelNewSessionNameButton\.addEventListener\("click", \(\) => elements\.newSessionNameDialog\.close\(\)\);/);
 
   const openDialog = app.slice(app.indexOf("function openNewSessionNameDialog("));

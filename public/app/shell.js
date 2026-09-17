@@ -67,7 +67,9 @@ export function chooseOption({ title, message = "", eyebrow = "Choose", confirmL
       hint.textContent = option.hint;
       copy.append(hint);
     }
-    row.append(input, copy);
+    row.append(input);
+    if (option.icon) row.append(option.icon);
+    row.append(copy);
     elements.choiceList.append(row);
   }
   elements.choiceAcceptButton.disabled = !firstEnabled;

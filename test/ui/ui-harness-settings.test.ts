@@ -11,7 +11,7 @@ async function signIn(page: Page, url: string, username: string, password: strin
   await page.getByTestId("login-submit-button").click();
   await page.locator("#loginDialog[open]").waitFor({ state: "hidden" });
   await page.locator(".project-card").first().waitFor({ state: "visible" });
-  await page.getByTestId("settings-open-button").waitFor();
+  await page.getByTestId("settings-open-button").waitFor({ state: "attached" });
 }
 
 async function openHarnessSettings(page: Page) {
@@ -42,6 +42,52 @@ test("slow harness metadata does not hide projects", { timeout: 120_000 }, async
     releaseHarnesses();
     await waitForHarnesses(page);
   }
+});
+
+test("new conversation controls follow registered harnesses and align toolbar tasks", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await page.route("**/api/harnesses", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    body.harnesses.push({ id: "cursor", label: "Cursor", newSessionPath: "cursor:new", runtimeConfigured: true });
+    await route.fulfill({ response, json: body });
+  });
+  await signIn(page, node.url, environment.username, environment.password);
+  await waitForHarnesses(page);
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+
+  const buttons = page.locator("[data-new-session-harness]");
+  await buttons.first().waitFor();
+  assert.deepEqual(await buttons.evaluateAll((items) => items.map((item) => item.getAttribute("aria-label"))), [
+    "New Pi conversation", "New Claude conversation", "New Kiro conversation", "New Cursor conversation",
+  ]);
+  assert.deepEqual(await buttons.evaluateAll((items) => items.map((item) => item.querySelector("svg")?.classList.contains("new-chat-harness-icon"))), [true, true, true, true]);
+  assert.equal(await buttons.evaluateAll((items) => items.every((item) => [...item.childNodes].every((node) => node.nodeType !== Node.TEXT_NODE || !node.textContent?.trim()))), true, "desktop harness controls use icons without chat labels");
+
+  await page.locator("#sessionList .session-card").first().click();
+  const geometry = await page.evaluate(() => {
+    const tasks = document.querySelector("#backgroundTasksButton")!.getBoundingClientRect();
+    const terminal = document.querySelector("#openTerminalButton")!.getBoundingClientRect();
+    return { taskTop: tasks.top, taskHeight: tasks.height, terminalTop: terminal.top, terminalHeight: terminal.height };
+  });
+  assert.equal(geometry.taskTop, geometry.terminalTop, "Tasks aligns with adjacent toolbar buttons");
+  assert.equal(geometry.taskHeight, geometry.terminalHeight, "Tasks has the same height as adjacent toolbar buttons");
+});
+
+test("mobile uses one new conversation button with a dynamic harness dialog", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await signIn(page, node.url, environment.username, environment.password);
+  await waitForHarnesses(page);
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+
+  await page.getByTestId("new-conversation-mobile-button").click();
+  await page.getByTestId("choice-dialog").waitFor({ state: "visible" });
+  assert.deepEqual(await page.getByTestId("choice-option").locator(".choice-option-label").allTextContents(), ["Pi", "Claude", "Kiro"]);
+  await page.locator('#choiceDialog input[value="kiro"]').check();
+  await page.getByTestId("choice-accept-button").click();
+  await page.getByTestId("new-session-name-dialog").waitFor({ state: "visible" });
+  assert.equal(await page.evaluate(async () => (await import("/app/state.js")).state.newSessionDraft.sessionPath), "kiro:new");
 });
 
 test("model picker renders provider presentation metadata", { timeout: 120_000 }, async (t) => {

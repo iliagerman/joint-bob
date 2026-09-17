@@ -185,6 +185,7 @@ export function loadHarnesses() {
     if (!Array.isArray(body.harnesses)) throw new Error("Harness metadata response is invalid");
     state.harnesses = body.harnesses;
     renderChatSessionControls();
+    window.dispatchEvent(new CustomEvent("harnesses-changed"));
   })().finally(() => {
     harnessesRequest = null;
   });

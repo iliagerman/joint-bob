@@ -93,8 +93,8 @@
         </header>
         <div class="list-loading" id="sessionsLoading" role="progressbar" aria-label="Loading conversations" data-testid="session-list-loading-bar" hidden><span></span></div>
         <div class="new-chat-row">
-          <button class="primary" id="newSessionButton" data-shortcut-hint="newPiChat" type="button" disabled data-testid="session-create-button">＋ Pi chat</button>
-          <button class="primary claude" id="newClaudeSessionButton" data-shortcut-hint="newClaudeChat" type="button" disabled data-testid="session-create-claude-button">＋ Claude chat</button>
+          <div class="new-chat-harnesses" id="newSessionHarnesses" aria-label="Start a conversation"></div>
+          <button class="primary new-chat-mobile" id="newSessionButton" type="button" disabled data-testid="new-conversation-mobile-button">+ New conversation</button>
         </div>
         <div class="section-title live-row">
           <span>Conversations</span>
@@ -236,7 +236,7 @@
             <div class="empty-state">
               <div class="orb" aria-hidden="true"><img src="/icon.svg" alt="" width="56" height="56" /></div>
               <h2>Your server-side Pi, in your pocket.</h2>
-              <p>Select a project and start a Pi or Claude conversation on any connected node.</p>
+              <p>Select a project and start an agent conversation on any connected node.</p>
             </div>
           </section>
           <button class="jump-to-bottom" id="jumpToBottomButton" type="button" hidden aria-label="Jump to the newest message" title="Jump to the newest message" data-testid="chat-jump-to-bottom-button">

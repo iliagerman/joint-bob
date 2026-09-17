@@ -112,6 +112,7 @@ test("every command has a default chord, and the defaults never collide", () => 
   const ids = Object.values(defaults).map(chordId);
   assert.equal(new Set(ids).size, ids.length, "no two defaults share one chord");
   assert.deepEqual(defaults.browser, ["ctrl", "alt", "B"]);
+  assert.deepEqual(defaults.newKiroChat, ["ctrl", "alt", "Q"]);
   assert.deepEqual(defaults.scheduledTasks, ["ctrl", "alt", "S"]);
   assert.deepEqual(defaults.splitRight, ["ctrl", "alt", "\\"]);
   assert.deepEqual(defaults.splitBelow, ["ctrl", "alt", "-"]);

@@ -3,10 +3,11 @@ import { api, savePreferencesInBackground } from "./api.js";
 import { classificationPicker } from "./classification.js";
 import { conversationTask, loadHarnesses } from "./chat-controls.js";
 import { elements } from "./elements.js";
+import { brandIcon } from "./icons.js";
 import { loadSecretAccounts, providerBadge, secretAccounts } from "./secrets.js";
 import { rememberRecentSession } from "./recents.js";
 import { renderSessionColorSwatches, selectedSessionColor } from "./session-identity.js";
-import { toast } from "./shell.js";
+import { chooseOption, toast } from "./shell.js";
 import { openSession } from "./socket.js";
 import { state } from "./state.js";
 import { cancelHandoffWait } from "./tasks.js";
@@ -126,13 +127,54 @@ async function openNewSessionNameDialog(sessionPath, defaultTitle, sourceTaskId 
   elements.newSessionNameDialog.showModal();
   showWizardStep(1);
 }
+const HARNESS_SHORTCUTS = { pi: "newPiChat", claude: "newClaudeChat", kiro: "newKiroChat" };
+
+export async function startNewHarnessConversation(harnessId) {
+  if (!state.harnesses.length) await loadHarnesses();
+  const harness = state.harnesses.find((candidate) => candidate.id === harnessId && candidate.runtimeConfigured);
+  if (!harness) throw new Error(`Harness ${harnessId} is unavailable`);
+  await openNewSessionNameDialog(harness.newSessionPath, `New ${harness.label} conversation`);
+}
+
+export function renderNewSessionHarnesses() {
+  elements.newSessionHarnesses.replaceChildren(...state.harnesses.filter(({ runtimeConfigured }) => runtimeConfigured).map((harness) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "primary new-chat-harness-button";
+    button.disabled = !state.activeProjectId || !state.sessionNodes.length;
+    button.dataset.harnessId = harness.id;
+    button.dataset.newSessionHarness = "";
+    button.dataset.testid = harness.id === "pi" ? "session-create-button" : harness.id === "claude" ? "session-create-claude-button" : `session-create-${harness.id}-button`;
+    if (HARNESS_SHORTCUTS[harness.id]) button.dataset.shortcutHint = HARNESS_SHORTCUTS[harness.id];
+    button.setAttribute("aria-label", `New ${harness.label} conversation`);
+    button.title = `New ${harness.label} conversation`;
+    button.append(brandIcon(harness.id, `new-chat-harness-icon ${harness.id}`));
+    button.addEventListener("click", () => startNewHarnessConversation(harness.id).catch((error) => toast(error.message)));
+    return button;
+  }));
+  window.dispatchEvent(new CustomEvent("shortcut-targets-changed"));
+}
+
+async function chooseNewSessionHarness() {
+  if (!state.harnesses.length) await loadHarnesses();
+  const harnesses = state.harnesses.filter(({ runtimeConfigured }) => runtimeConfigured);
+  const harnessId = await chooseOption({
+    eyebrow: "New conversation",
+    title: "Choose an agent",
+    confirmLabel: "Continue",
+    options: harnesses.map((harness) => ({ value: harness.id, label: harness.label, icon: brandIcon(harness.id, `choice-option-icon ${harness.id}`) })),
+  });
+  if (harnessId) await startNewHarnessConversation(harnessId);
+}
+
+window.addEventListener("harnesses-changed", renderNewSessionHarnesses);
+renderNewSessionHarnesses();
 elements.handoffProgressCancelButton.addEventListener("click", cancelHandoffWait);
 elements.handoffProgressDialog.addEventListener("cancel", (event) => {
   event.preventDefault();
   cancelHandoffWait();
 });
-elements.newSessionButton.addEventListener("click", () => openNewSessionNameDialog(null, "New Pi conversation").catch((error) => toast(error.message)));
-elements.newClaudeSessionButton.addEventListener("click", () => openNewSessionNameDialog("claude:new", "New Claude conversation").catch((error) => toast(error.message)));
+elements.newSessionButton.addEventListener("click", () => chooseNewSessionHarness().catch((error) => toast(error.message)));
 elements.doneConversationContinueButton.addEventListener("click", () => {
   const task = conversationTask();
   if (!task || task.status !== "done") throw new Error("Done ticket was not found");

@@ -45,8 +45,9 @@ export function renderSessions() {
   elements.projectPath.textContent = project?.path || "Create or select a local folder.";
   elements.chatProjectName.textContent = project?.name || "No project selected";
   elements.chatProjectName.title = project?.name || "";
-  elements.newSessionButton.disabled = !project || !state.sessionNodes.length;
-  elements.newClaudeSessionButton.disabled = !project || !state.sessionNodes.length;
+  const newSessionDisabled = !project || !state.sessionNodes.length;
+  elements.newSessionButton.disabled = newSessionDisabled;
+  for (const button of elements.newSessionHarnesses.querySelectorAll("[data-new-session-harness]")) button.disabled = newSessionDisabled;
   renderClassificationFilter();
   updateChatFilterCounts();
   elements.markAllReviewedButton.disabled = !project || !reviewableSessions().length;
@@ -56,7 +57,7 @@ export function renderSessions() {
   if (state.sessions.length === 0) {
     const empty = document.createElement("p");
     empty.className = "muted";
-    empty.textContent = "No conversations yet. Start a Pi or Claude chat above.";
+    empty.textContent = "No conversations yet. Start a new conversation above.";
     elements.sessionList.append(empty);
     return;
   }

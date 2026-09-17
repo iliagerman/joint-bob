@@ -17,6 +17,7 @@ import { elements } from "./app/elements.js";
 import { setMobileView, toggleCanvasView, togglePanel } from "./app/layout.js";
 import { openRecentSessions } from "./app/recents.js";
 import { openRunningConversationsDialog } from "./app/running.js";
+import { startNewHarnessConversation } from "./app/new-session.js";
 import { confirmAction, SERVICE_WORKER_UPDATE_MS, setTheme, syncNotifyButton, toast, updateInstallButton, updateServiceWorker } from "./app/shell.js";
 import { state } from "./app/state.js";
 import "./app/state.js";
@@ -50,7 +51,6 @@ import "./app/project-selection.js";
 import "./app/socket.js";
 import "./app/tasks.js";
 import "./app/terminal.js";
-import "./app/new-session.js";
 import "./app/ownership.js";
 import "./app/composer.js";
 import "./app/secrets.js";
@@ -159,8 +159,9 @@ if (!state.canvasPaneMode) {
       toggleChats: () => togglePanel("chats"),
       board: () => elements.openBoardButton.click(),
       newProject: () => elements.newProjectButton.click(),
-      newPiChat: () => elements.newSessionButton.click(),
-      newClaudeChat: () => elements.newClaudeSessionButton.click(),
+      newPiChat: () => { void startNewHarnessConversation("pi").catch((error) => toast(error.message)); },
+      newClaudeChat: () => { void startNewHarnessConversation("claude").catch((error) => toast(error.message)); },
+      newKiroChat: () => { void startNewHarnessConversation("kiro").catch((error) => toast(error.message)); },
     },
     openShortcutSettings: () => { void openSettings("shortcuts"); },
     openSpotlight,

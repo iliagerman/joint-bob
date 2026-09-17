@@ -173,7 +173,7 @@ const CANVAS_KEYMAP_COMMANDS = [
   "splitRight", "splitBelow", "closePane", "createPage",
   "nextPage", "prevPage", "focusLeft", "focusRight", "focusUp", "focusDown",
   "page1", "page2", "page3", "page4", "page5", "page6", "page7", "page8", "page9",
-  "toggleProjects", "toggleChats", "board", "newProject", "newPiChat", "newClaudeChat",
+  "toggleProjects", "toggleChats", "board", "newProject", "newPiChat", "newClaudeChat", "newKiroChat",
   "runsOn", "selectAgent", "selectModel", "selectThinking", "terminal", "notify", "addToCanvas", "rename", "browser", "scheduledTasks",
 ] as const;
 
@@ -200,6 +200,7 @@ export const defaultCanvasKeymap = (): CanvasKeymapPreference => ({
     newProject: commandChord("="),
     newPiChat: commandChord("N"),
     newClaudeChat: commandChord("C"),
+    newKiroChat: commandChord("Q"),
     runsOn: commandChord("H"),
     selectAgent: commandChord("A"),
     selectModel: commandChord("M"),

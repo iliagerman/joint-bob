@@ -118,7 +118,7 @@ export function brandIcon(name, className) {
   svg.setAttribute("fill", "currentColor");
   svg.setAttribute("aria-hidden", "true");
   svg.setAttribute("class", className);
-  for (const d of brandIconPaths[name]) {
+  for (const d of brandIconPaths[name] || brandIconPaths.custom) {
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
     path.setAttribute("d", d);
     svg.append(path);

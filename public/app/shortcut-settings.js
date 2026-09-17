@@ -34,6 +34,7 @@ const COMMAND_ROWS = [
   { command: "newProject", label: "Add a project" },
   { command: "newPiChat", label: "Start a Pi conversation" },
   { command: "newClaudeChat", label: "Start a Claude conversation" },
+  { command: "newKiroChat", label: "Start a Kiro conversation" },
   { command: "runsOn", label: "Chat: focus the Runs on selector" },
   { command: "selectAgent", label: "Chat: focus the agent selector" },
   { command: "selectModel", label: "Chat: choose a model" },
