@@ -254,6 +254,26 @@ test("the chat toolbar keeps its controls on one line and hangs the badges below
     `action labels sit on the control line (${controlLine}), got ${JSON.stringify(resting.actions)}`);
 });
 
+test("the composer shortcut puts the cursor in the message box", async () => {
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+  await page.locator("#sessionList .session-card", { hasText: "Thread-Based Agent Builder" }).click();
+  await page.locator("#messageInput:enabled").waitFor();
+  await page.getByTestId("recent-sessions-open-button").focus();
+  await page.keyboard.press("Control+Alt+I");
+  assert.equal(await page.evaluate(() => document.activeElement?.id), "messageInput", "the shortcut lands in the composer");
+
+  // The composer sits on the bottom edge, so its badge hangs above the row: below it
+  // would fall off the screen.
+  const badge = await holdingModifiers(() => page.evaluate(() => {
+    const host = document.querySelector("#composer .composer-row")!;
+    const mark = host.querySelector(".shortcut-hint")!;
+    const box = mark.getBoundingClientRect();
+    return { key: mark.textContent, above: box.bottom <= host.getBoundingClientRect().top + 1 };
+  }));
+  assert.equal(badge.key, "I", "the composer advertises its key");
+  assert.ok(badge.above, "the composer badge sits above the row so the window edge never clips it");
+});
+
 test("chat shortcuts focus selectors and open actions", async () => {
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
   await page.locator("#sessionList .session-card", { hasText: "Thread-Based Agent Builder" }).click();

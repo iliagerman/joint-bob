@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added Control+Alt+I keyboard shortcut to focus the message composer with a visual hint showing the shortcut key.
+
 ## 1.50.3 — 2026-09-17
 
 - Fixed by-the-way chat messages staying inside their dialog instead of overflowing.
