@@ -3,11 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.48.0 — 2026-09-17
 
-- Enhanced file explorer with structured columns and breadcrumbs; added keyboard shortcuts for background tasks and the files panel.
-- Fixed internal goal control markers appearing at the end of assistant responses.
-- Cluster machines can now list, delete, and copy project files through authenticated API endpoints.
+- Moved keyboard shortcut badges below controls so button labels stay readable, and added U and Z shortcuts for background tasks and files panel.
+- Fixed goal completion markers appearing at the end of assistant responses.
+- Secured remote file explorer API endpoints with authentication.
 
 ## 1.47.0 — 2026-09-17
 
