@@ -690,6 +690,7 @@ export class BrowserRuntime {
       this.restartStream(session);
       await session.context.close().catch(() => {});
       try {
+        profileLeases.delete(profileDirectory(session.profileId));
         this.store.finish(session.id, state, error, restoreOnRestart);
         await Promise.all(session.transfers);
         await rm(path.join(this.root, session.id, "staging"), { recursive: true, force: true });
