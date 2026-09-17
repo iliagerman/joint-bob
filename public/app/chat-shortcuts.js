@@ -9,6 +9,8 @@ export const CHAT_SHORTCUT_CONTROLS = {
   addToCanvas: "addToCanvasButton",
   rename: "renameSessionButton",
   scheduledTasks: "chatCronButton",
+  backgroundTasks: "backgroundTasksButton",
+  chatFiles: "chatFilesButton",
 };
 
 export function runChatShortcut(command) {

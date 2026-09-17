@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Enhanced file explorer with structured columns and breadcrumbs; added keyboard shortcuts for background tasks and the files panel.
 - Fixed internal goal control markers appearing at the end of assistant responses.
 - Cluster machines can now list, delete, and copy project files through authenticated API endpoints.
 

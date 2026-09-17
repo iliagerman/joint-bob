@@ -175,6 +175,7 @@ const CANVAS_KEYMAP_COMMANDS = [
   "page1", "page2", "page3", "page4", "page5", "page6", "page7", "page8", "page9",
   "toggleProjects", "toggleChats", "board", "newProject", "newPiChat", "newClaudeChat", "newKiroChat",
   "runsOn", "selectAgent", "selectModel", "selectThinking", "terminal", "notify", "addToCanvas", "rename", "browser", "scheduledTasks",
+  "backgroundTasks", "chatFiles",
 ] as const;
 
 /** Mirrors `DEFAULT_CANVAS_KEYMAP` in `public/canvas-layout.js`; every command rides
@@ -211,6 +212,8 @@ export const defaultCanvasKeymap = (): CanvasKeymapPreference => ({
     addToCanvas: commandChord("J"),
     rename: commandChord("E"),
     scheduledTasks: commandChord("S"),
+    backgroundTasks: commandChord("U"),
+    chatFiles: commandChord("Z"),
     paneSearch: commandChord("F"),
     recentPane: commandChord("L"),
     focusPane: commandChord("G"),

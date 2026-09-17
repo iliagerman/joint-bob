@@ -328,27 +328,34 @@ body.view-chat #chatPanel :is(.panel-scroll, .board-columns, .messages) {
 .project-actions { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 12px 12px 0; }
 .project-actions .icon-button { min-width: 31px; width: 31px; min-height: 31px; font-size: 14px; }
 .project-actions .icon-button svg { width: 22px; height: 22px; }
-/* The key badge costs no layout: it overlays its control, and only while the command
-   modifiers are held (app/shortcut-hints.js adds the body class). A button therefore
-   keeps the square it had before shortcuts existed, and holding Control+Option turns
-   the whole toolbar into its keys. The badge still carries the full chord as a title. */
+/* The key badge costs no layout: it hangs under its control, and only while the
+   command modifiers are held (app/shortcut-hints.js adds the body class). Sitting
+   below rather than over the button keeps the label readable, so the badge and the
+   control it belongs to are legible at the same time. A button therefore keeps the
+   square it had before shortcuts existed, and holding Control+Option labels the whole
+   toolbar. The badge still carries the full chord as a title. */
 [data-shortcut-hint] { position: relative; }
 .shortcut-hint {
   position: absolute;
-  inset: 0;
+  top: calc(100% + 3px);
+  left: 50%;
+  transform: translateX(-50%);
   display: none;
   place-items: center;
+  min-width: 20px;
+  padding: 2px 5px;
   border: 1px solid var(--accent);
-  border-radius: 8px;
+  border-radius: 6px;
   background: var(--header);
   color: var(--accent);
   font-family: var(--mono);
   font-size: 13px;
-  line-height: 1;
+  line-height: 1.2;
   white-space: nowrap;
   text-align: center;
   pointer-events: none;
-  z-index: 3;
+  box-shadow: 0 2px 6px rgb(0 0 0 / 0.35);
+  z-index: 6;
 }
 body.shortcuts-revealed .shortcut-hint { display: grid; }
 .brand-mark, .orb, .install-banner-mark { flex: 0 0 auto; }
@@ -1831,8 +1838,8 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   }
   .project-actions { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 2px; }
   .project-actions button.icon-button { min-width: 0; width: 100%; padding-inline: 0; }
-  /* The toolbar reads as one straight line: the badges overlay their controls rather
-     than claiming a second line under them. */
+  /* The toolbar reads as one straight line: the badges hang below their controls
+     rather than claiming a second line in the layout. */
   .chat-toolbar { --control-line: 32px; align-items: end; gap: 4px; }
   .chat-model-control, .chat-mode-control { align-self: end; }
   .chat-toolbar button[data-shortcut-hint], .chat-toolbar .background-tasks-trigger, .chat-toolbar #chatFilesButton {

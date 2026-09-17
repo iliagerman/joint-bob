@@ -98,7 +98,7 @@ test("canvas shares the top toolbar with larger icons and readable shortcut badg
     assert.ok(icon && icon.width >= 20, `toolbar icon must be at least 20px, got ${icon?.width}`);
     const font = await button.locator(".shortcut-hint").evaluate((badge) => parseFloat(getComputedStyle(badge).fontSize));
     assert.ok(font >= 13, `shortcut needs at least 13px, got ${font}`);
-    // The badge overlays the button, so carrying one costs the button no height.
+    // The badge hangs under the button, so carrying one costs the button no height.
     const box = await button.boundingBox();
     assert.ok(box && box.height <= 36, `a toolbar button stays icon-sized, got ${box?.height}px tall`);
   }
@@ -107,7 +107,7 @@ test("canvas shares the top toolbar with larger icons and readable shortcut badg
 });
 
 test("chat controls advertise shortcuts", async () => {
-  for (const id of ["chat-node-select", "chat-harness-select", "chat-model-button", "chat-reasoning-select", "chat-open-terminal-button", "chat-open-browser-button", "chat-notify-button", "chat-add-to-canvas-button", "chat-rename-button", "chat-cron-button"]) {
+  for (const id of ["chat-node-select", "chat-harness-select", "chat-model-button", "chat-reasoning-select", "chat-open-terminal-button", "chat-open-browser-button", "chat-notify-button", "chat-add-to-canvas-button", "chat-rename-button", "chat-cron-button", "background-tasks-open", "chat-files-button"]) {
     const control = page.getByTestId(id);
     const host = await control.evaluate((element) => element.closest("[data-shortcut-hint]")?.getAttribute("data-shortcut-hint"));
     assert.ok(host, `${id} needs a shortcut hint`);
@@ -199,7 +199,7 @@ test("the project title keeps collapse while its action row sits above search", 
   assert.equal(cut, false, "the app name and subtitle fit their row");
 });
 
-test("the chat toolbar keeps its controls on one line and overlays the badges", async () => {
+test("the chat toolbar keeps its controls on one line and hangs the badges below them", async () => {
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
   await page.locator("#sessionList .session-card", { hasText: "Thread-Based Agent Builder" }).click();
   await page.locator("#modelButton:enabled").waitFor();
@@ -227,13 +227,18 @@ test("the chat toolbar keeps its controls on one line and overlays the badges", 
     };
   });
 
-  // Every badge overlays the control it belongs to, so it neither adds a line nor drifts off it.
+  // Every badge hangs under the control it belongs to: clear of the label, still
+  // centred on it, and out of the layout so it neither adds a line nor moves one.
   const overlays = await holdingModifiers(() => page.evaluate(() => {
     const bar = document.querySelector("#chatToolbar")!;
     return [...bar.querySelectorAll(".shortcut-hint")].map((badge) => {
       const host = badge.parentElement!.getBoundingClientRect();
       const box = badge.getBoundingClientRect();
-      return { covered: Math.abs(box.top - host.top) <= 1 && Math.abs(box.bottom - host.bottom) <= 1, height: box.height };
+      return {
+        below: box.top >= host.bottom - 1 && box.top - host.bottom <= 8,
+        centred: Math.abs((box.left + box.right) / 2 - (host.left + host.right) / 2) <= 1,
+        height: box.height,
+      };
     });
   }));
 
@@ -241,7 +246,7 @@ test("the chat toolbar keeps its controls on one line and overlays the badges", 
 
   assert.equal(resting.badges, 0, "a resting toolbar shows no badges at all");
   assert.ok(overlays.length >= 7, `every toolbar control carries a badge, saw ${overlays.length}`);
-  assert.ok(overlays.every((badge) => badge.covered), `each badge covers its own control, got ${JSON.stringify(overlays)}`);
+  assert.ok(overlays.every((badge) => badge.below && badge.centred), `each badge sits under its own control, got ${JSON.stringify(overlays)}`);
   const controlLine = resting.controls[0];
   assert.ok(resting.controls.every((middle) => Math.abs(middle - controlLine) <= 1),
     `selects and the model button share one line, got ${JSON.stringify(resting.controls)}`);
