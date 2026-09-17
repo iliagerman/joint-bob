@@ -1,3 +1,4 @@
+import { readdir } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { sessionClassificationOverrides, sessionColorOverrides, sessionDoneOverrides, sessionTitleOverrides } from "./names.js";
@@ -45,14 +46,34 @@ export class HarnessSessionCatalog<TAdapters extends readonly HarnessAdapter[]> 
     let transcriptPath = path.resolve(sessionPath.startsWith(prefix) ? sessionPath.slice(prefix.length) : sessionPath);
     if (!adapter.paths.ownsTranscript(transcriptPath)) {
       if (!adapter.paths.localize) return undefined;
-      // A peer or a saved recent supplies its own home path, not this node's.
       try {
         const localized = adapter.paths.localize(sessionPath, os.homedir());
         transcriptPath = path.resolve(localized.startsWith(prefix) ? localized.slice(prefix.length) : localized);
-      } catch { return undefined; } // Reject untrusted paths outside the synchronized roots.
-      if (!adapter.paths.ownsTranscript(transcriptPath)) return undefined;
+      } catch {
+        return undefined;
+      }
+      if (!adapter.paths.ownsTranscript(transcriptPath)) return this.recoverById(adapter, project, sessionId);
     }
     const sessions = await adapter.sessions.refresh(project, [], [transcriptPath]);
+    return sessions.length ? sessions.find((session) => session.id === sessionId) : this.recoverById(adapter, project, sessionId);
+  }
+
+  private async recoverById(adapter: HarnessAdapter, project: HarnessProject, sessionId: string): Promise<SessionSummary | undefined> {
+    let entries;
+    try { entries = await readdir(adapter.sync.transcriptRoot(), { recursive: true, withFileTypes: true }); }
+    catch (error) {
+      if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) return undefined;
+      throw error;
+    }
+    const files = entries
+      .filter((entry) => entry.isFile())
+      .map((entry) => path.join(entry.parentPath, entry.name))
+      .filter((file) => {
+        const sessionPath = adapter.paths.ownsSession(file) ? file : `${adapter.id}:${file}`;
+        return adapter.paths.ownsTranscript(file) && adapter.paths.sessionId(sessionPath) === sessionId;
+      });
+    if (!files.length) return undefined;
+    const sessions = await adapter.sessions.refresh(project, [], files);
     return sessions.find((session) => session.id === sessionId);
   }
 

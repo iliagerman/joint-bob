@@ -4,7 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { resolveLocalSessionPath, sessionCwds } from "../src/session-paths.js";
+import { portableSessionPath, resolveLocalSessionPath, sessionCwds } from "../src/session-paths.js";
 
 // Settings read their data directory once, at module load, so the override has
 // to be in place before the settings-backed modules below are imported.
@@ -41,6 +41,13 @@ test("resolveLocalSessionPath maps synchronized Pi conversations into the destin
 test("resolveLocalSessionPath rejects paths outside synchronized roots and traversal", () => {
   assert.throws(() => resolveLocalSessionPath("/Users/a/project/session.jsonl", "/home/b"), /outside/i);
   assert.throws(() => resolveLocalSessionPath("/Users/a/.pi/agent/../session.jsonl", "/home/b"), /invalid/i);
+});
+
+test("portable session paths are relative to the node home and localize on every node", () => {
+  assert.equal(portableSessionPath("/Users/a/.pi/agent/sessions/x.jsonl", "/Users/a"), "~/.pi/agent/sessions/x.jsonl");
+  assert.equal(portableSessionPath("claude:/Users/a/.claude/projects/-Users-a-project/x.jsonl", "/Users/a"), "claude:~/.claude/projects/-Users-a-project/x.jsonl");
+  assert.deepEqual(resolveLocalSessionPath("~/.pi/agent/sessions/x.jsonl", "/home/b"), { engine: "pi", path: "/home/b/.pi/agent/sessions/x.jsonl" });
+  assert.deepEqual(resolveLocalSessionPath("claude:~/.claude/projects/-Users-a-project/x.jsonl", "/home/b"), { engine: "claude", path: "claude:/home/b/.claude/projects/-Users-a-project/x.jsonl" });
 });
 
 // The takeover wire format only swaps the home prefix, so it keeps the encoded

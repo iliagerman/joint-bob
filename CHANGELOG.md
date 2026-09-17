@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Session paths are now portable across machines, and sessions can be recovered by ID when their saved path becomes unavailable.
+
 ## 1.53.0 — 2026-09-17
 
 - Agents can now automatically fill website login forms using credentials attached to your conversation.

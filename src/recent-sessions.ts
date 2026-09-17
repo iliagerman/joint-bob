@@ -4,6 +4,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { enqueueReplicationEvent, ensureReplicationSchema, resolveProjectAlias, type ReplicationEvent } from "./replication.js";
 import type { RecentSession } from "./preferences.js";
+import { portableSessionPath } from "./session-paths.js";
 import { isHarnessId, type HarnessId } from "./types.js";
 
 export interface SyncedRecentSession extends RecentSession { engine: HarnessId; sessionId: string; }
@@ -53,12 +54,22 @@ function recentDatabase(): DatabaseSync {
 function entityKey(username: string, target: Pick<SyncedRecentSession, "projectId" | "engine" | "sessionId">): string {
   return `${username}:${target.projectId}:${target.engine}:${target.sessionId}`;
 }
+function portableStoredPath(sessionPath: string): string {
+  try { return portableSessionPath(sessionPath); }
+  catch { return sessionPath; }
+}
 function fromRow(row: RecentRow): SyncedRecentSession {
-  return { projectId: row.project_id, engine: row.engine, sessionId: row.session_id, sessionPath: row.session_path, title: row.title, openedAt: row.opened_at, updatedAt: row.activity_updated_at };
+  return { projectId: row.project_id, engine: row.engine, sessionId: row.session_id, sessionPath: portableStoredPath(row.session_path), title: row.title, openedAt: row.opened_at, updatedAt: row.activity_updated_at };
 }
 export function listUserRecentSessions(username: string): SyncedRecentSession[] {
-  const rows = recentDatabase().prepare(`SELECT project_id, engine, session_id, session_path, title, opened_at, activity_updated_at, updated_at, origin_node_id
+  const db = recentDatabase();
+  const rows = db.prepare(`SELECT project_id, engine, session_id, session_path, title, opened_at, activity_updated_at, updated_at, origin_node_id
     FROM user_recent_sessions WHERE username = ? ORDER BY opened_at DESC, updated_at DESC, origin_node_id DESC LIMIT 20`).all(username) as unknown as RecentRow[];
+  const repair = db.prepare("UPDATE user_recent_sessions SET session_path = ? WHERE username = ? AND project_id = ? AND engine = ? AND session_id = ?");
+  for (const row of rows) {
+    const portable = portableStoredPath(row.session_path);
+    if (portable !== row.session_path) { repair.run(portable, username, row.project_id, row.engine, row.session_id); row.session_path = portable; }
+  }
   return rows.map(fromRow);
 }
 
@@ -102,7 +113,7 @@ function applyUpsert(db: DatabaseSync, payload: RecentPayload, target: Pick<Sync
   const tombstone = rowFor(db, "user_recent_session_tombstones", payload.username, target) as Stamp | undefined;
   if (tombstone && !newerStamp(incoming, tombstone)) return false;
   const active = rowFor(db, "user_recent_sessions", payload.username, target) as RecentRow | undefined;
-  const recent = { ...payload.recent!, projectId: target.projectId };
+  const recent = { ...payload.recent!, projectId: target.projectId, sessionPath: portableStoredPath(payload.recent!.sessionPath) };
   const openedLater = !active || recent.openedAt > active.opened_at
     || (recent.openedAt === active.opened_at && newerStamp(incoming, active));
   const merged = {
@@ -140,7 +151,7 @@ export function setUserRecentSession(username: string, recent: SyncedRecentSessi
   const db = recentDatabase();
   db.exec("BEGIN IMMEDIATE");
   try {
-    const canonical = { ...recent, projectId: resolveProjectAlias(db, recent.projectId) };
+    const canonical = { ...recent, projectId: resolveProjectAlias(db, recent.projectId), sessionPath: portableStoredPath(recent.sessionPath) };
     const payload: RecentPayload = { username, projectId: canonical.projectId, engine: canonical.engine, sessionId: canonical.sessionId, recent: canonical, updatedAt: nextUpdatedAt(db, username, canonical), originNodeId };
     apply(db, payload); publish(db, "upsert", payload); db.exec("COMMIT");
   } catch (error) { db.exec("ROLLBACK"); throw error; }
@@ -168,7 +179,7 @@ export function migrateLegacyRecentSessions(username: string, recents: SyncedRec
       if (!current || recent.openedAt > current.openedAt) unique.set(key, recent);
     }
     for (const recent of unique.values()) {
-      const canonical = { ...recent, projectId: resolveProjectAlias(db, recent.projectId) };
+      const canonical = { ...recent, projectId: resolveProjectAlias(db, recent.projectId), sessionPath: portableStoredPath(recent.sessionPath) };
       const payload: RecentPayload = { username, projectId: canonical.projectId, engine: canonical.engine, sessionId: canonical.sessionId, recent: canonical, updatedAt: canonical.openedAt, originNodeId };
       if (apply(db, payload)) publish(db, "upsert", payload);
     }

@@ -45,6 +45,24 @@ test("recent upserts and deletes publish stable per-conversation events", async 
   } finally { await rm(dataDir, { recursive: true, force: true }); }
 });
 
+test("recent paths are stored relative to the node home and legacy absolute rows repair on read", async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), "joint-bob-recents-portable-"));
+  try {
+    createNode(dataDir);
+    const recents = await freshRecents(dataDir);
+    const absolute = path.join(os.homedir(), ".pi", "agent", "sessions", "session-1.jsonl");
+    recents.setUserRecentSession("ilia", { ...recent(), sessionPath: absolute }, "node-a");
+    assert.equal(recents.listUserRecentSessions("ilia")[0].sessionPath, "~/.pi/agent/sessions/session-1.jsonl");
+    const db = new DatabaseSync(path.join(dataDir, "node.db"));
+    const payload = JSON.parse((db.prepare("SELECT payload FROM replication_outbox WHERE entity_type = 'user.recent'").get() as { payload: string }).payload);
+    assert.equal(payload.recent.sessionPath, "~/.pi/agent/sessions/session-1.jsonl");
+    db.prepare("UPDATE user_recent_sessions SET session_path = ?").run(absolute);
+    assert.equal(recents.listUserRecentSessions("ilia")[0].sessionPath, "~/.pi/agent/sessions/session-1.jsonl");
+    assert.equal((db.prepare("SELECT session_path FROM user_recent_sessions").get() as { session_path: string }).session_path, "~/.pi/agent/sessions/session-1.jsonl");
+    db.close();
+  } finally { await rm(dataDir, { recursive: true, force: true }); }
+});
+
 test("recent replication resolves aliases and converges out-of-order stamps", async () => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "joint-bob-recents-merge-"));
   const previous = process.env.PI_WEB_DATA_DIR;

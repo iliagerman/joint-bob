@@ -89,6 +89,34 @@ test("direct lookup resolves stale foreign paths without scanning either harness
   assert.equal(await catalog.find({ ...project, path: "/another-project" }, "pi", piPath, sessionId), undefined, "path mapping must not bypass project membership");
 });
 
+test("direct lookup recovers a transcript by session id when its saved path is unusable", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "joint-bob-recover-session-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const sessionId = randomUUID();
+  const recoveredPath = path.join(directory, "old-node-project", `created_${sessionId}.jsonl`);
+  await mkdir(path.dirname(recoveredPath), { recursive: true });
+  await writeFile(recoveredPath, "session");
+  const recovered: SessionSummary = { id: sessionId, path: `claude:${recoveredPath}`, harnessId: "claude", agentId: "claude", agentLabel: "Claude", title: "Recovered" };
+  const adapter = defineHarness({
+    id: "claude", label: "Claude",
+    paths: {
+      newSession: "claude:new", ownsSession: (sessionPath) => sessionPath.startsWith("claude:"),
+      ownsTranscript: (filePath) => filePath.startsWith(`${directory}${path.sep}`),
+      sessionId: (sessionPath) => sessionPath.startsWith("claude:") ? path.basename(sessionPath, ".jsonl").split("_").at(-1) : undefined,
+      localize: () => path.join(directory, "missing.jsonl"),
+    },
+    sync: { transcriptRoot: () => directory },
+    sessions: {
+      files: async () => [], list: async () => [],
+      refresh: async (_project, _previous, files) => files.includes(recoveredPath) ? [recovered] : [],
+      loadMessages: async () => [],
+    },
+  });
+  const catalog = new HarnessSessionCatalog([adapter]);
+  const found = await catalog.find({ id: randomUUID(), name: "Recovered", path: "/new/project" }, "claude", "claude:/retired/home/.claude/session.jsonl", sessionId);
+  assert.equal(found?.path, `claude:${recoveredPath}`);
+});
+
 test("cached lists and known-file refreshes do not rescan transcript roots", async () => {
   const project = { id: randomUUID(), name: "Cached catalog", path: "/tmp/cached-catalog" };
   let scans = 0;

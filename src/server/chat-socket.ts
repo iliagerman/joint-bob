@@ -39,8 +39,6 @@ function isNewSessionPath(value: string | null): boolean {
 async function directSessionForOpen(project: ProjectRecord, sessionPath: string, sessionId: string): Promise<SessionSummary | undefined> {
   const request = describeSessionRequest(sessionPath);
   if (!request.sessionPath || request.draft) return undefined;
-  const record = await getConversationRecord(project.id, request.engine, sessionId);
-  if (record?.conversationId) return undefined;
   return findHarnessSession(project, request.engine, sessionPath, sessionId);
 }
 
