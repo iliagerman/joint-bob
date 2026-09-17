@@ -69,9 +69,18 @@ test("mobile chat toolbar reaches running work and the label filter matches the 
   await page.locator(".project-card").first().click();
   await page.locator("#sessionList .session-card").first().waitFor();
 
-  // The label filter sits in the same lane as the search field, so both render the same width.
-  const search = await page.locator("#sessionSearchInput").boundingBox();
-  const labels = await page.locator("#conversationClassificationFilter").boundingBox();
+  // Sample together so parent entry animation cannot move between measurements.
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const { search, labels } = await page.evaluate(() => {
+    const searchNode = document.querySelector("#sessionSearchInput");
+    const labelsNode = document.querySelector("#conversationClassificationFilter");
+    const searchRect = searchNode?.getBoundingClientRect();
+    const labelsRect = labelsNode?.getBoundingClientRect();
+    return {
+      search: searchRect ? { x: searchRect.x, width: searchRect.width } : null,
+      labels: labelsRect ? { x: labelsRect.x, width: labelsRect.width } : null,
+    };
+  });
   assert.ok(search && labels, "both filter controls must be laid out");
   assert.equal(Math.round(labels!.width), Math.round(search!.width));
   assert.equal(Math.round(labels!.x), Math.round(search!.x));
