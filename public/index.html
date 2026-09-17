@@ -948,18 +948,21 @@
 
     <dialog id="projectFilesDialog" data-testid="project-files-dialog">
       <div class="dialog-card file-explorer-card">
-        <div class="file-editor-heading">
-          <span class="eyebrow">Project files</span>
-          <h2>Files</h2>
-          <p class="file-editor-path" id="projectFilesCrumbs" data-testid="project-files-crumbs"></p>
+        <header class="file-explorer-header">
+          <div>
+            <span class="eyebrow">Project files</span>
+            <h2>Files</h2>
+          </div>
+          <button class="ghost icon-button" id="projectFilesCloseButton" type="button" aria-label="Close file explorer" title="Close" data-testid="project-files-close-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+        </header>
+        <div class="file-explorer-toolbar">
+          <button class="ghost compact file-explorer-up" id="projectFilesUpButton" type="button" disabled data-testid="project-files-up-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 11 4-4 4 4M12 7v10"/></svg><span>Up</span></button>
+          <nav class="file-explorer-crumbs" id="projectFilesCrumbs" aria-label="Current folder" data-testid="project-files-crumbs"></nav>
+          <button class="ghost compact" id="projectFilesPasteButton" type="button" hidden data-testid="project-files-paste-button">Paste here</button>
         </div>
-        <p id="projectFilesStatus" role="status" aria-live="polite"></p>
+        <div class="file-explorer-columns" data-testid="project-files-columns" aria-hidden="true"><span>Name</span><span>Size</span><span>Actions</span></div>
         <ul class="file-explorer-list" id="projectFilesList" data-testid="project-files-list"></ul>
-        <div class="dialog-actions">
-          <button class="ghost" id="projectFilesUpButton" type="button" disabled data-testid="project-files-up-button">Up</button>
-          <button class="ghost" id="projectFilesPasteButton" type="button" hidden data-testid="project-files-paste-button">Paste here</button>
-          <button class="primary" id="projectFilesCloseButton" type="button" data-testid="project-files-close-button">Close</button>
-        </div>
+        <p class="file-explorer-status" id="projectFilesStatus" role="status" aria-live="polite"></p>
       </div>
     </dialog>
 
