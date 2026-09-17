@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Refreshed cached app shell to ensure latest version loads on next visit.
+
 ## 1.51.0 — 2026-09-17
 
 - Long-running agent shell commands continue in Tasks without restarting; short commands finish inline and stay out of task history.
