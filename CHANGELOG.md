@@ -8,6 +8,8 @@ Every deployment is a version. The newest section must always match the
 - Fixed by-the-way chat messages staying inside their dialog instead of overflowing.
 - Improved idle session expiration to prevent stale browser session state.
 
+- By-the-way chats can now be closed with the Escape key, and their isolated view no longer displays the app splash screen.
+
 ## 1.50.2 — 2026-09-17
 
 - Browser sessions now automatically close after two hours of inactivity, releasing Chrome resources while keeping their saved login profiles available for explicit reopen.
