@@ -116,6 +116,7 @@ export const state = {
   conversationReadOnly: false,
   scheduledTurn: false,
   scheduledAssistantText: "",
+  assistantRawText: "",
   socket: null,
   reconnectTimer: null,
   heartbeatTimer: null,

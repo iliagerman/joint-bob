@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed internal goal control markers appearing at the end of assistant responses.
+
 ## 1.47.0 — 2026-09-17
 
 - Redesigned project files as a familiar file explorer with breadcrumbs, file-type icons, aligned columns, compact rows, and icon actions.

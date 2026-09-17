@@ -17,6 +17,14 @@ test("internal background completion prompts stay out of browser transcripts", (
   assert.deepEqual(messages.map(({ id }) => id), ["user", "assistant"]);
 });
 
+test("goal control markers stay out of assistant responses", () => {
+  const messages = boundTranscriptMessages([
+    { id: "assistant", role: "assistant" as const, text: "Finished and verified.\nBOB_GOAL_COMPLETE" },
+  ]);
+
+  assert.equal(messages[0]?.text, "Finished and verified.");
+});
+
 test("loaded transcripts keep the tool role and tool name instead of flattening them into chat text", async () => {
   const [piService, types] = await Promise.all([
     readFile("src/pi-service.ts", "utf8"),
@@ -93,7 +101,7 @@ test("assistant filesystem paths open through the authenticated project file rou
   assert.match(server, /File is outside the project directory/);
   assert.match(server, /project-file-content/);
   assert.match(server, /await rename\(temporary, resolved\)/);
-  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v209"/);
+  assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v210"/);
   assert.match(serviceWorker, /\/vendor\/codemirror\/lib\/codemirror\.js/);
   assert.match(serviceWorker, /\/vendor\/codemirror\/keymap\/vim\.js/);
   assert.match(serviceWorker, /self\.addEventListener\("fetch"/);
