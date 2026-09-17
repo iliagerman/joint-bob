@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Fixed internal goal control markers appearing at the end of assistant responses.
+- Cluster machines can now list, delete, and copy project files through authenticated API endpoints.
 
 ## 1.47.0 — 2026-09-17
 

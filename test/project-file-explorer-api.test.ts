@@ -44,6 +44,14 @@ test("project files can be listed, deleted, and copied between folders", async (
     await writeFile(path.join(projectPath, "notes.txt"), "keep\n");
     await writeFile(path.join(projectPath, "docs", "guide.md"), "guide\n");
 
+    const { getClusterMachineToken } = await import("../src/cluster.ts");
+    const machineToken = await getClusterMachineToken();
+    const clusterFilesUrl = new URL(`${baseUrl}/api/cluster/project-files`);
+    clusterFilesUrl.searchParams.set("projectId", project.id);
+    const clusterListed = await fetch(clusterFilesUrl, { headers: { Authorization: `Bearer ${machineToken}` } });
+    assert.equal(clusterListed.status, 200);
+    assert.deepEqual((await clusterListed.json() as { entries: Array<{ name: string }> }).entries.map((entry) => entry.name), ["docs", "notes.txt", "readme.md"]);
+
     const filesUrl = (dir?: string): string => {
       const url = new URL(`${baseUrl}/api/projects/${project.id}/files`);
       if (dir !== undefined) url.searchParams.set("dir", dir);
