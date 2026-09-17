@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Conversations now recover reliably across machines by matching session identity, even when direct paths become stale.
+
 ## 1.53.1 — 2026-09-17
 
 - Sessions now recover by ID even when their saved path becomes unavailable, enabling portable workspaces across multiple machines.

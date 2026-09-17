@@ -39,6 +39,8 @@ function isNewSessionPath(value: string | null): boolean {
 async function directSessionForOpen(project: ProjectRecord, sessionPath: string, sessionId: string): Promise<SessionSummary | undefined> {
   const request = describeSessionRequest(sessionPath);
   if (!request.sessionPath || request.draft) return undefined;
+  const record = await getConversationRecord(project.id, request.engine, sessionId);
+  if (record?.conversationId) return undefined;
   return findHarnessSession(project, request.engine, sessionPath, sessionId);
 }
 
@@ -205,6 +207,12 @@ webSocketServer.on("connection", async (socket, request) => {
   if (requestedSessionId && rawSessionPath && rawSessionPath !== "watch") {
     const direct = await directSessionForOpen(sessionSearchProject, rawSessionPath, requestedSessionId);
     listedSessions = direct ? [direct] : await listHarnessSessions(sessionSearchProject);
+    const listedIdentity = listedSessions.some((candidate) => candidate.id === requestedSessionId || candidate.conversationId === requestedSessionId
+      || candidate.segments?.some((segment) => segment.sessionId === requestedSessionId));
+    if (!listedIdentity) {
+      const recovered = await findHarnessSession(sessionSearchProject, routingEngine, rawSessionPath, requestedSessionId);
+      if (recovered) listedSessions = [recovered];
+    }
     if (task?.sessionPath && taskIdentity?.sessionId === requestedSessionId) rawSessionPath = resolveLocalSessionPath(task.sessionPath).path;
     else {
       const matching = listedSessions.find((candidate) => candidate.id === requestedSessionId);
