@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.52.0 — 2026-09-17
 
-- Refreshed cached app shell to ensure latest version loads on next visit.
+- Website login credentials can now be bound to authorized origins for improved security.
+- Updated the cached app shell so existing installations load the new website credential settings.
 
 ## 1.51.0 — 2026-09-17
 
