@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 1.47.0 — 2026-09-17
+
+- Redesigned project files as a familiar file explorer with breadcrumbs, file-type icons, aligned columns, compact rows, and icon actions.
+
 ## 1.46.0 — 2026-09-17
 
 - Added a project file explorer for navigating, opening, and managing files in your workspace, plus optimized background task display and improved supervisor resource efficiency.
