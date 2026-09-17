@@ -33,6 +33,13 @@ function showConversation(session, token) {
   frame.src = temporaryUrl(session, token);
   frame.title = "By the Way conversation";
   frame.dataset.testid = "by-the-way-frame";
+  frame.addEventListener("load", () => {
+    frame.contentWindow.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      void closeByTheWay();
+    }, { capture: true });
+  });
   elements.byTheWayFrame.replaceChildren(frame);
   elements.byTheWayStatus.hidden = true;
 }
