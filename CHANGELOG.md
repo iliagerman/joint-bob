@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.48.1 — 2026-09-17
 
 - Picked images now preview as thumbnails in the composer chip, and empty conversations show a helpful message instead of blank task panes.
 
