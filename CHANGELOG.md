@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.50.1 — 2026-09-17
 
-- Increased browser viewport to 1512x945 for improved layout testing and wider content visibility.
+- Widened the driven browser viewport to standard laptop dimensions, preventing websites from collapsing into narrow columns.
 
 ## 1.50.0 — 2026-09-17
 
