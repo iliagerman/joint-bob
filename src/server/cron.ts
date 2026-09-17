@@ -66,7 +66,6 @@ export async function queuedCronPrompt(task: CronTask, run: CronRun, sessionId: 
     const socket = new WebSocket(url, { headers: { Authorization: `Bearer ${token}` } });
     const reasoning = task.reasoning ?? task.model?.reasoning;
     let queueId: string | undefined;
-    let configuration: "waiting" | "model" | "reasoning" | "prompt" = "waiting";
     let settled = false;
     const finish = (error?: Error) => {
       if (settled) return;
@@ -83,23 +82,17 @@ export async function queuedCronPrompt(task: CronTask, run: CronRun, sessionId: 
       const event = JSON.parse(raw.toString());
       if (event.type === "ready") {
         if (event.ownership || event.readOnly) { finish(new Error("Scheduled conversation is not writable on this node")); return; }
-        if (task.model) {
-          configuration = "model";
-          socket.send(JSON.stringify({ type: "setModel", provider: task.model.provider, modelId: task.model.modelId, ...(reasoning ? { level: reasoning } : {}) }));
-        } else if (reasoning) {
-          configuration = "reasoning";
-          socket.send(JSON.stringify({ type: "setThinking", level: reasoning }));
-        } else {
-          configuration = "prompt";
-          socket.send(JSON.stringify({ type: "prompt", message: task.prompt, requestId: run.id }));
-        }
-      }
-      if (event.type === "status" && task.model && configuration === "model" && event.status?.model?.provider === task.model.provider && event.status.model.id === task.model.modelId && (!reasoning || event.status.thinkingLevel === reasoning)) {
-        configuration = "prompt";
-        socket.send(JSON.stringify({ type: "prompt", message: task.prompt, requestId: run.id }));
-      } else if (event.type === "status" && configuration === "reasoning" && event.status?.thinkingLevel === reasoning) {
-        configuration = "prompt";
-        socket.send(JSON.stringify({ type: "prompt", message: task.prompt, requestId: run.id }));
+        // Model and reasoning ride along with the queued prompt instead of
+        // configuring the live session here: unrelated scheduled tasks share a
+        // conversation, and configuring one mid-turn throws "session is busy".
+        // The queue applies these when this prompt's own turn starts.
+        const queueSettings = task.model || reasoning ? {
+          harnessId: task.engine,
+          provider: task.model?.provider ?? event.status.model.provider,
+          modelId: task.model?.modelId ?? event.status.model.id,
+          reasoning: reasoning ?? event.status.thinkingLevel,
+        } : undefined;
+        socket.send(JSON.stringify({ type: "prompt", message: task.prompt, requestId: run.id, ...(queueSettings ? { queueSettings } : {}) }));
       }
       if (event.type === "userMessage" && event.queued && event.requestId === run.id) {
         queueId = event.queueId;

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 1.42.2 — 2026-09-17
+
+- Scheduled tasks that share a conversation now queue their prompts with their model and reasoning instead of reconfiguring the live session, so coinciding schedules no longer fail with "session is busy".
+
 ## 1.42.1 — 2026-09-17
 
 - Force-start button now shows a spinner while sending and prevents accidental repeated clicks.
