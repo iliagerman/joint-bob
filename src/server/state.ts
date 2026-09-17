@@ -58,6 +58,7 @@ export const machineRoutes = new Set([
   "POST /cluster/sessions/runtime-snapshot",
   "POST /cluster/events",
   "POST /cluster/github/events",
+  "POST /cluster/ntfy/services",
   "POST /cluster/secrets/events",
   "POST /cluster/push/events",
   "POST /cluster/tasks/eligibility",

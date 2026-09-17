@@ -7,37 +7,55 @@ import { state } from "./state.js";
 /** The dialog is shared, so it remembers which conversation it was opened for. */
 let pendingNtfySession = null;
 
-/**
- * Renders the central ntfy service list in Settings → Notifications.
- */
+function serviceButton(text, testid, className, action) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = className;
+  button.textContent = text;
+  button.dataset.testid = testid;
+  button.addEventListener("click", action);
+  return button;
+}
+
+function renderNtfyService(service) {
+  const item = document.createElement("li");
+  const label = document.createElement("span");
+  label.textContent = `${service.name} — ${service.url}${service.hasToken ? " · token" : ""}${service.isDefault ? " · Default" : ""}`;
+  const actions = document.createElement("span");
+  actions.className = "ntfy-service-actions";
+  if (!service.isDefault) actions.append(serviceButton("Make default", "ntfy-service-default-button", "ghost compact", async () => {
+    try {
+      await api(`/api/ntfy/services/${encodeURIComponent(service.id)}/default`, { method: "PUT" });
+      await loadNtfyServicesPanel();
+      toast(`${service.name} is the default ntfy service`);
+    } catch (error) { toast(error.message, 8000); }
+  }));
+  actions.append(serviceButton("Share", "ntfy-service-share-button", "ghost compact", async () => {
+    try {
+      const { results } = await api(`/api/ntfy/services/${encodeURIComponent(service.id)}/share`, { method: "POST" });
+      const failures = results.filter((result) => !result.ok);
+      toast(failures.length ? `Shared with ${results.length - failures.length} nodes; ${failures.length} failed` : `Shared with ${results.length} node${results.length === 1 ? "" : "s"}`, failures.length ? 8000 : 3000);
+    } catch (error) { toast(error.message, 8000); }
+  }));
+  const remove = serviceButton("Remove", "ntfy-service-remove-button", "ghost compact danger", async () => {
+    try {
+      await api(`/api/ntfy/services/${encodeURIComponent(service.id)}`, { method: "DELETE" });
+      await loadNtfyServicesPanel();
+      toast("ntfy service removed");
+    } catch (error) { toast(error.message, 8000); }
+  });
+  remove.setAttribute("aria-label", `Remove ntfy service ${service.name}`);
+  actions.append(remove);
+  item.append(label, actions);
+  return item;
+}
+
+/** Renders the central ntfy service list in Settings → Notifications. */
 export async function loadNtfyServicesPanel() {
   try {
     const { services } = await api("/api/ntfy/services");
-    elements.ntfyServiceList.replaceChildren(...services.map((service) => {
-      const item = document.createElement("li");
-      const label = document.createElement("span");
-      label.textContent = `${service.name} — ${service.url}${service.hasToken ? " · token" : ""}`;
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "ghost compact danger";
-      remove.textContent = "Remove";
-      remove.dataset.testid = "ntfy-service-remove-button";
-      remove.setAttribute("aria-label", `Remove ntfy service ${service.name}`);
-      remove.addEventListener("click", async () => {
-        try {
-          await api(`/api/ntfy/services/${encodeURIComponent(service.id)}`, { method: "DELETE" });
-          await loadNtfyServicesPanel();
-          toast("ntfy service removed");
-        } catch (error) {
-          toast(error.message, 8000);
-        }
-      });
-      item.append(label, remove);
-      return item;
-    }));
-  } catch (error) {
-    toast(error.message, 8000);
-  }
+    elements.ntfyServiceList.replaceChildren(...services.map(renderNtfyService));
+  } catch (error) { toast(error.message, 8000); }
 }
 
 elements.ntfyServiceAddButton.addEventListener("click", async () => {
@@ -81,7 +99,7 @@ export async function toggleSessionNtfy(session) {
     return;
   }
   pendingNtfySession = { projectId: state.activeProjectId, session };
-  elements.ntfyServiceSelect.replaceChildren(...services.map((service) => new Option(`${service.name} — ${service.url}`, service.id)));
+  elements.ntfyServiceSelect.replaceChildren(...services.map((service) => new Option(`${service.name} — ${service.url}`, service.id, service.isDefault, service.isDefault)));
   elements.ntfyTopicInput.value = "";
   elements.ntfyDialog.showModal();
 }

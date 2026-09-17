@@ -1523,6 +1523,9 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 .checkbox-row input { width: 16px; height: 16px; min-width: auto; accent-color: var(--ink); }
 .phase-settings { display: grid; gap: 10px; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); }
 .phase-settings legend { padding: 0 6px; color: var(--muted); font-family: var(--mono); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
+#ntfyServiceList { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+#ntfyServiceList li { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ntfy-service-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .settings-session-list { display: grid; gap: 6px; }
 /* The theme button sits in a grid fieldset; keep it at its own width instead of stretching. */
 #themeToggleButton { justify-self: start; }

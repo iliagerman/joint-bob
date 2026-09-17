@@ -16,42 +16,71 @@ export interface NtfyServiceView {
   name: string;
   url: string;
   hasToken: boolean;
+  isDefault: boolean;
+}
+
+interface NtfyConfig {
+  services: NtfyService[];
+  defaultServiceId: string | null;
 }
 
 const SERVICES_KEY = "ntfy.services";
 
-function readServices(): NtfyService[] {
+function readConfig(): NtfyConfig {
   const found = setting(SERVICES_KEY);
-  if (!found) return [];
-  return JSON.parse(found.isSecret ? decrypt(found.value) : found.value) as NtfyService[];
+  if (!found) return { services: [], defaultServiceId: null };
+  const stored = JSON.parse(found.isSecret ? decrypt(found.value) : found.value) as NtfyConfig | NtfyService[];
+  if (Array.isArray(stored)) return { services: stored, defaultServiceId: stored[0]?.id ?? null };
+  const defaultServiceId = stored.services.some(({ id }) => id === stored.defaultServiceId) ? stored.defaultServiceId : stored.services[0]?.id ?? null;
+  return { services: stored.services, defaultServiceId };
 }
 
-function writeServices(services: NtfyService[]): void {
-  save(settingsDatabase(), SERVICES_KEY, JSON.stringify(services), true);
+function writeConfig(config: NtfyConfig): void {
+  save(settingsDatabase(), SERVICES_KEY, JSON.stringify(config), true);
 }
 
-function view(service: NtfyService): NtfyServiceView {
-  return { id: service.id, name: service.name, url: service.url, hasToken: service.token !== "" };
+function view(service: NtfyService, defaultServiceId: string | null): NtfyServiceView {
+  return { id: service.id, name: service.name, url: service.url, hasToken: service.token !== "", isDefault: service.id === defaultServiceId };
 }
 
 export function listNtfyServices(): NtfyServiceView[] {
-  return readServices().map(view);
+  const config = readConfig();
+  return config.services.map((service) => view(service, config.defaultServiceId));
 }
 
 export function getNtfyService(id: string): NtfyService | undefined {
-  return readServices().find((service) => service.id === id);
+  return readConfig().services.find((service) => service.id === id);
 }
 
 export function addNtfyService(name: string, url: string, token: string): NtfyServiceView {
+  const config = readConfig();
   const service: NtfyService = { id: randomUUID(), name, url: url.replace(/\/+$/, ""), token };
-  writeServices([...readServices(), service]);
-  return view(service);
+  const defaultServiceId = config.defaultServiceId ?? service.id;
+  writeConfig({ services: [...config.services, service], defaultServiceId });
+  return view(service, defaultServiceId);
+}
+
+export function importNtfyService(service: NtfyService): NtfyServiceView {
+  const config = readConfig();
+  const imported = { ...service, url: service.url.replace(/\/+$/, "") };
+  const services = [...config.services.filter(({ id }) => id !== service.id), imported];
+  const defaultServiceId = config.defaultServiceId ?? service.id;
+  writeConfig({ services, defaultServiceId });
+  return view(imported, defaultServiceId);
+}
+
+export function setDefaultNtfyService(id: string): boolean {
+  const config = readConfig();
+  if (!config.services.some((service) => service.id === id)) return false;
+  writeConfig({ ...config, defaultServiceId: id });
+  return true;
 }
 
 export function deleteNtfyService(id: string): boolean {
-  const services = readServices();
-  const remaining = services.filter((service) => service.id !== id);
-  if (remaining.length === services.length) return false;
-  writeServices(remaining);
+  const config = readConfig();
+  const services = config.services.filter((service) => service.id !== id);
+  if (services.length === config.services.length) return false;
+  const defaultServiceId = config.defaultServiceId === id ? services[0]?.id ?? null : config.defaultServiceId;
+  writeConfig({ services, defaultServiceId });
   return true;
 }

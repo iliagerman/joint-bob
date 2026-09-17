@@ -47,8 +47,9 @@ function selectServer(serviceId: string | undefined, targets: NtfyConversationTa
   if (targets.length) return selectFromTarget(targets);
   const services = listNtfyServices();
   if (!services.length) throw new NtfyRequestError(409, "Configure ntfy in Settings before sending");
-  if (services.length > 1) throw new NtfyRequestError(409, "Multiple ntfy services are configured; choose --service ID using status");
-  const service = getNtfyService(services[0].id)!;
+  const selected = services.find((service) => service.isDefault);
+  if (!selected) throw new NtfyRequestError(409, "Choose a default ntfy service in Settings or use --service ID");
+  const service = getNtfyService(selected.id)!;
   return { url: normalizedUrl(service.url), token: service.token };
 }
 

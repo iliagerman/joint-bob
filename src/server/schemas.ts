@@ -329,6 +329,10 @@ export const ntfyServiceSchema = z.object({
   url: z.string().url().max(500),
   token: z.string().max(500).optional(),
 }).strict();
+export const sharedNtfyServiceSchema = ntfyServiceSchema.extend({
+  id: z.string().uuid(),
+  token: z.string().max(500),
+}).strict();
 export const sessionNtfySchema = z.object({
   sessionPath: z.string().trim().min(1).max(2000),
   enabled: z.boolean(),

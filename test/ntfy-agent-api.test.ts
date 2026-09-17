@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import test, { after, before, beforeEach } from "node:test";
 import { ntfyAgentEnvironment } from "../src/ntfy-agent.js";
-import { addNtfyService, deleteNtfyService, listNtfyServices } from "../src/ntfy.js";
+import { addNtfyService, deleteNtfyService, listNtfyServices, setDefaultNtfyService } from "../src/ntfy.js";
 import { settingsDatabase } from "../src/settings-store.js";
 import { deletePushSubscription, ntfySubscription, savePushSubscription } from "../src/push.js";
 
@@ -85,16 +85,19 @@ test("sole service publishes exact UTF-8 payload, rotates credentials, and disap
   } finally { deleteNtfyService(service.id); await new Promise<void>(resolve => upstream.server.close(() => resolve())); }
 });
 
-test("service ambiguity requires explicit valid selection", async () => {
+test("the default service resolves multiple services and explicit selection overrides it", async () => {
   const one = await fixture(), two = await fixture();
   const first = addNtfyService("One", one.url, "one-token"), second = addNtfyService("Two", two.url, "two-token");
   const capability = token();
   try {
-    assert.equal((await post(capability, { operation: "send", topic: "x", message: "ambiguous" })).status, 409);
+    assert.equal((await post(capability, { operation: "send", topic: "x", message: "default" })).status, 200);
+    assert.equal(one.received[0].authorization, "Bearer one-token");
     assert.equal((await post(capability, { operation: "send", serviceId: randomUUID(), topic: "x", message: "unknown" })).status, 404);
-    assert.equal(one.received.length + two.received.length, 0);
-    assert.equal((await post(capability, { operation: "send", serviceId: second.id, topic: "x", message: "selected" })).status, 200);
+    assert.equal(setDefaultNtfyService(second.id), true);
+    assert.equal((await post(capability, { operation: "send", topic: "x", message: "new default" })).status, 200);
+    assert.equal((await post(capability, { operation: "send", serviceId: first.id, topic: "x", message: "selected" })).status, 200);
     assert.equal(two.received[0].authorization, "Bearer two-token");
+    assert.equal(one.received[1].authorization, "Bearer one-token");
   } finally { deleteNtfyService(first.id); deleteNtfyService(second.id); await Promise.all([one, two].map(value => new Promise<void>(resolve => value.server.close(() => resolve())))); }
 });
 
