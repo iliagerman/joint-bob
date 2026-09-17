@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Browser login popups now appear automatically when agents need sign-in verification. Complete by signing in and choosing Done to resume browser automation; Gmail authentication redirects open the popup automatically, and agents can request handoff for other sites.
+
 ## 1.42.1 — 2026-09-16
 
 - Homeserver test release: opt-in Linux virtual-display mode preserves native browser profiles while running automated headed Chrome; Google compatibility is not promised and display prerequisites remain a manual install.

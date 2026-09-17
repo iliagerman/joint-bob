@@ -26,6 +26,14 @@ export interface BrowserSessionRecord extends BrowserStart {
   error?: string;
   restoreOnRestart?: boolean;
 }
+export const browserLoginRequestSchema = z.object({
+  id: z.string().uuid(),
+  expectedOrigin: browserWebUrlSchema.refine(value => new URL(value).origin === value, "Expected origin must not include a path, query, or credentials"),
+  readySelector: z.string().min(1).max(4096),
+  loginSelector: z.string().min(1).max(4096).nullable(),
+  label: z.string().trim().min(1).max(80),
+});
+export type BrowserLoginRequest = z.infer<typeof browserLoginRequestSchema>;
 export interface BrowserTab { id: string; url: string; title: string; }
 export interface BrowserConfiguration { executorNodeId: string | null; originNodeId: string; updatedAt: string; }
 export interface BrowserSessionView extends BrowserSessionRecord {
@@ -34,6 +42,7 @@ export interface BrowserSessionView extends BrowserSessionRecord {
   activePageId: string | null;
   profileLabel?: string;
   owner: "agent" | "human";
+  loginRequest?: BrowserLoginRequest | null;
   /** Viewer-specific; absent on node-wide metadata responses. */
   canControl?: boolean;
   fileChooser: boolean;
@@ -54,8 +63,10 @@ export const browserCommandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("newTab"), url: browserWebUrlSchema.optional() }),
   z.object({ action: z.literal("selectTab"), pageId: z.string().uuid() }),
   z.object({ action: z.literal("closeTab"), pageId: z.string().uuid() }),
-  z.object({ action: z.literal("takeControl"), force: z.boolean().optional() }),
+  z.object({ action: z.literal("takeControl"), force: z.boolean().optional(), loginRequestId: z.string().uuid().optional() }),
   z.object({ action: z.literal("resumeAgent") }),
+  z.object({ action: z.literal("requestLogin"), expectedOrigin: browserLoginRequestSchema.shape.expectedOrigin, readySelector: browserLoginRequestSchema.shape.readySelector, loginSelector: browserLoginRequestSchema.shape.loginSelector.default(null), label: browserLoginRequestSchema.shape.label.default("Sign in") }),
+  z.object({ action: z.literal("completeLogin"), requestId: z.string().uuid(), expectedPageId: z.string().uuid() }),
   z.object({ action: z.literal("click"), x: z.number().finite().min(0).max(20000), y: z.number().finite().min(0).max(20000), button: z.enum(["left", "right", "middle"]).optional(), clickCount: z.number().int().min(1).max(3).optional() }),
   z.object({ action: z.literal("key"), key: z.string().min(1).max(100) }),
   z.object({ action: z.literal("text"), text }),
