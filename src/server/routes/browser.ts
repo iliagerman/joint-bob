@@ -10,10 +10,11 @@ import { type AuthSession } from "../../auth.js";
 import { browserRuntime, browserStatus, localBrowserStatus, configureBrowserExecutor, browserPreferences, canonicalBrowserIdentity, authorizeBrowserAgent, requireCompleteDiscovery, type BrowserDiscovery, browserOperation, browserOperationSchema, localBrowserOperation, BrowserRequestError, browserDownload, browserSessionOwner } from "../browser.js";
 import { clusterPeerMayAccessProject } from "../cluster-helpers.js";
 import { sendError } from "../http-auth.js";
-import { browserAgentCredential } from "../../browser-agent.js";
+import { browserAgentCredential, browserAgentCredentialOrigins } from "../../browser-agent.js";
 
 const id = z.string().uuid();
-const actorSchema = z.discriminatedUnion("kind", [z.object({kind:z.literal("human"),id:z.string().min(1).max(500)}),z.object({kind:z.literal("agent")})]);
+const exactOrigin=z.string().url().refine(value=>{const url=new URL(value);return ["http:","https:"].includes(url.protocol)&&url.origin===value;});
+const actorSchema = z.discriminatedUnion("kind", [z.object({kind:z.literal("human"),id:z.string().min(1).max(500)}),z.object({kind:z.literal("agent"),credentialOrigins:z.array(exactOrigin).max(1000).optional()})]);
 const targetNode = (request: Request) => id.optional().parse(request.query.nodeId);
 function route(handler: (request: Request, response: Response) => Promise<void>) {
   return (request: Request, response: Response, _next: NextFunction) => {
@@ -129,7 +130,7 @@ app.post("/api/browser/agent",route(async (request,response)=>{
     z.object({operation:z.literal("loginFill"),selector:z.string().min(1).max(4096),accountId:id,variable:z.string().min(1).max(128).regex(/^[A-Za-z_][A-Za-z0-9_]*$/),profileId:id.optional()}).strict(),
     z.object({operation:z.literal("download"),downloadId:id,profileId:id.optional()}),
   ]).parse(request.body);
-  const actor:BrowserActor={kind:"agent"};
+  const actor:BrowserActor={kind:"agent",credentialOrigins:browserAgentCredentialOrigins(response.locals.browserAgentToken as string)};
   if(body.operation==="start") {
     response.json(await browserOperation({operation:"start",args:{...identity,appNodeId:(await getClusterNode()).id,url:body.url,profileId:body.profileId,profileName:body.profileName}},actor,body.nodeId,identity));return;
   }

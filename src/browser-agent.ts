@@ -56,6 +56,16 @@ export function browserAgentIdentity(token: string): BrowserAgentIdentity | unde
   return row ? { ...row } : undefined;
 }
 
+export function browserAgentCredentialOrigins(token: string): string[] {
+  if (!browserAgentIdentity(token)) throw new Error("Browser credential metadata is unavailable");
+  const row = db().prepare("SELECT credentials_encrypted FROM browser_agent_tokens WHERE token_hash = ? AND expires_at > ?").get(hash(token), Date.now()) as { credentials_encrypted: string | null } | undefined;
+  if (!row?.credentials_encrypted) return [];
+  try {
+    const accounts = JSON.parse(decryptSecretValue(row.credentials_encrypted)) as WebsiteCredentialAccount[];
+    return [...new Set(accounts.map(account => account.origin))];
+  } catch { throw new Error("Browser credential metadata is unavailable"); }
+}
+
 export function browserAgentCredential(token: string, accountId: string, variableName: string): { origin: string; value: string } {
   if (!browserAgentIdentity(token)) throw new Error("Browser credential is unavailable");
   const row = db().prepare("SELECT credentials_encrypted FROM browser_agent_tokens WHERE token_hash = ? AND expires_at > ?").get(hash(token), Date.now()) as { credentials_encrypted: string | null } | undefined;
@@ -81,6 +91,10 @@ Browser machine selection for new sessions is: explicit start --node ID > conver
 Browser localhost refers to the selected browser machine, not the agent's execution machine. Website traffic uses the browser machine's network directly; the authenticated relay carries commands, viewing and downloads, not website traffic.
 
 Start explicitly with start [url] [--profile ID | --name LABEL] [--node ID]. Named profiles preserve native browser login data automatically; the user signs in through Take control, without a separate Secrets account. A profile can hold several websites; use separate profiles for different accounts on the same website. Profiles are project-scoped and exclusive to one running conversation. The agent can list and reopen only profiles already attached to this conversation. The user attaches an existing project profile by opening it in the viewer; agent-created new profiles attach here automatically. Multiple profiles may run in this conversation: pass --profile ID on every account command when there is more than one. Never guess which account to use or supply another project/session identity. Use status, tabs, profiles, navigate URL, snapshot, click SELECTOR, fill SELECTOR TEXT, evaluate EXPRESSION, close, or save-login LABEL. save-login names the current profile; it no longer clones login snapshots. Use command '{"action":"..."}' for other browser commands. Run interactive test assertions through evaluate and read the returned results; do not claim tests passed without checking them. Manual takeover pauses agent commands. Wait for the user to resume agent control; do not override takeover.
+
+Login handoff: across all conversations, visible ordinary password or username-first forms without matching origin-bound website credentials, and visible login challenges, automatically open a persistent sign-in popup for that browser's conversation and profile. This includes background projects and conversations and Pi, Claude, and Kiro browsers shown in the board or canvas; no active conversation selection is required. Matching ordinary Secrets remain automatic, and manual sign-in does not require creating Secrets. Always pass an explicit --profile when multiple accounts run. A login request durably pauses browser commands: tell the user to sign in through the popup using the existing viewer and choose Done. Dismissing the popup or restarting never resumes automation; tell the user to open the requesting conversation's Browser panel to finish. For generic automatic handoffs, Done checks that the login or challenge is absent and a nonempty ready page remains at the detected or original origin, then returns control on the human's confirmation. It is not universal authentication verification or a bypass of website security; reinspect authenticated state afterward.
+
+For a custom control, unrecognized login or challenge, rejected credentials, or a known site-specific authenticated marker, explicitly request handoff with command JSON action requestLogin, expectedOrigin, and a specific readySelector; include loginSelector and label when useful, and --profile when needed. Wait for the human. Do not retry a wrong password or automate MFA/CAPTCHA. Arbitrary sites are not guaranteed to be compatible.
 
 Service restarts reopen recently active persistent profiles to their sites' origins with fresh page IDs and preserve human control. A browser with no running command or attached viewer closes after two idle hours; start --profile ID reopens the same saved login, then reinspect the current state before acting. Never replay an interrupted send, form submission, upload, or trade. Explicit close or closing the last tab ends only the chosen browser and disables its automatic reopening; its profile remains saved. Sites can expire logins or require MFA again. For WhatsApp, the user links WhatsApp Web from their phone's Linked devices screen. Read and summarize requested chats; send replies only when authorized by the user. Bank access is read-only: payments, transfers and real-money trades stay manual. Paper trading requires an explicit request and verification that the site is in paper mode, not merely a profile labelled paper.
 

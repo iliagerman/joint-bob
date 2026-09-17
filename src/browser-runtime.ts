@@ -14,6 +14,7 @@ import { createMonitorReadExpression, normalizeMonitorRead, type MonitorReadInpu
 import { BrowserMonitorCheckError } from "./browser-monitor-scheduler.js";
 import type { MonitorCheckResult } from "./browser-monitor-types.js";
 import { BrowserCommandQueue } from "./browser-command-queue.js";
+import { detectBrowserLogin } from "./browser-login-detection.js";
 
 interface DetectionOptions {
   platform?: string;
@@ -99,6 +100,9 @@ interface LiveSession {
   streamGeneration: number;
   lastActivityAt: number;
   activeOperations: number;
+  loginVerificationEpoch: number;
+  credentialOrigins: string[];
+  loginDetection?: Promise<void>;
   stopped: boolean;
   stopSignal: AbortController;
   stopping?: Promise<void>;
@@ -112,6 +116,7 @@ export class BrowserRuntime {
   private readonly store = new BrowserStore();
   private readonly sessions = new Map<string, LiveSession>();
   private readonly viewerActors = new WeakMap<WebSocket, BrowserActor>();
+  private readonly requestedOrigins = new WeakMap<Page, string>();
   private readonly root = path.join(resolveDataDirectory(), "browser");
   private initialization?: Promise<void>;
   private readonly recoveries = new Map<string, Promise<void>>();
@@ -156,14 +161,14 @@ export class BrowserRuntime {
     await Promise.all(this.recoveries.values());
   }
 
-  create(input: BrowserStart): Promise<BrowserSessionView> {
+  create(input: BrowserStart, credentialOrigins: string[] = []): Promise<BrowserSessionView> {
     const start = browserStartSchema.parse(input);
-    const job = this.creates.then(() => { void this.ready(); return this.createSession(start); });
+    const job = this.creates.then(() => { void this.ready(); return this.createSession(start, credentialOrigins); });
     this.creates = job.catch(() => {});
     return job;
   }
 
-  private async createSession(start: BrowserStart): Promise<BrowserSessionView> {
+  private async createSession(start: BrowserStart, credentialOrigins: string[]): Promise<BrowserSessionView> {
     if (this.closed) throw new Error("Browser runtime on this node is closed");
     const associated = this.store.list(start);
     if (!start.profileId && !start.profileName) {
@@ -174,11 +179,15 @@ export class BrowserRuntime {
     if (start.profileId) {
       this.store.profile(start.profileId, start.projectId);
       const existing = associated.find(row => row.state === "running" && row.profileId === start.profileId);
-      if (existing) return this.view(existing.id);
+      if (existing) {
+        const live = this.sessions.get(existing.id);
+        if (live) { live.credentialOrigins = credentialOrigins; this.checkpoint(live); }
+        return this.view(existing.id);
+      }
       const pending = associated.find(row => row.restoreOnRestart && row.profileId === start.profileId);
       if (pending) {
         if (this.recoveries.has(pending.id)) return this.view(pending.id);
-        return this.launchSession(start, pending.id, this.store.recovery(pending.id));
+        return this.launchSession(start, pending.id, this.store.recovery(pending.id), credentialOrigins);
       }
       this.store.assertProfileUnused(start.profileId, start.projectId);
     } else {
@@ -189,10 +198,10 @@ export class BrowserRuntime {
       for (let n = 2; labels.has(label); n++) label = `Default ${n}`;
       start = { ...start, profileId: this.store.createProfile(start.projectId, start.profileName ?? label).id };
     }
-    return this.launchSession(start);
+    return this.launchSession(start, undefined, undefined, credentialOrigins);
   }
 
-  private async launchSession(start: BrowserStart, restoreId?: string, recovery?: RecoveryState): Promise<BrowserSessionView> {
+  private async launchSession(start: BrowserStart, restoreId?: string, recovery?: RecoveryState, credentialOrigins: string[] = recovery?.credentialOrigins ?? []): Promise<BrowserSessionView> {
     const profile = this.store.profile(start.profileId!, start.projectId);
     const lease = profileDirectory(profile.id);
     if (profileLeases.has(lease)) throw new Error("Browser profile already in use");
@@ -220,7 +229,7 @@ export class BrowserRuntime {
       context.setDefaultNavigationTimeout(20000);
       const row = this.store.get(id);
       this.store.resume(id);
-      session = { id: row.id, profileId: profile.id, restoring: true, context, pages: new Map(), activePageId: null, human: recovery ? recovery.human : null, chooser: null, dialog: null, downloads: [], transfers: new Set(), viewers: new Set(), errors: [], queue: new BrowserCommandQueue(), streamGeneration: 0, lastActivityAt: Date.now(), activeOperations: 0, stopped: false, stopSignal: new AbortController() };
+      session = { id: row.id, profileId: profile.id, restoring: true, context, pages: new Map(), activePageId: null, human: recovery ? recovery.human : null, chooser: null, dialog: null, downloads: [], transfers: new Set(), viewers: new Set(), errors: [], queue: new BrowserCommandQueue(), streamGeneration: 0, lastActivityAt: Date.now(), activeOperations: 0, loginVerificationEpoch: 0, credentialOrigins, stopped: false, stopSignal: new AbortController() };
       this.sessions.set(row.id, session);
       const live = session;
       context.on("page", page => this.addPage(live, page));
@@ -254,7 +263,7 @@ export class BrowserRuntime {
       if (session.stopped) return;
       const page = await session.context.newPage();
       if (session.stopped) return;
-      if (target !== "about:blank") await page.goto(target, { waitUntil: "domcontentloaded" });
+      if (target !== "about:blank") await this.navigatePage(page, target);
     }
     if (session.stopped) return;
     for (const page of startupPages) {
@@ -279,7 +288,9 @@ export class BrowserRuntime {
     const row = this.store.get(id);
     const live = this.sessions.get(id);
     const profileLabel = row.profileId ? this.store.profiles(row.projectId).find(profile => profile.id === row.profileId)?.label : undefined;
-    return { ...row, nodeId: (await getClusterNode()).id, profileLabel, tabs: live ? await Promise.all([...live.pages].map(async ([id, page]) => ({ id, url: page.url(), title: live.restoring ? page.url() : await page.title().catch(() => page.url()) }))) : [], activePageId: live?.activePageId ?? null, owner: (live ? live.human : row.restoreOnRestart && this.store.recoveryHuman(id)) ? "human" : "agent", fileChooser: Boolean(live?.chooser), fileChooserRequest: live?.chooser ? { id: live.chooser.id, pageId: live.chooser.pageId } : null, dialog: live?.dialog ? { id: live.dialog.id, pageId: live.dialog.pageId, type: live.dialog.dialog.type(), message: live.dialog.dialog.message(), defaultValue: live.dialog.dialog.defaultValue() } : null, downloads: this.store.downloads(id) };
+    if (live) this.scheduleLoginDetection(live);
+    const tabs = live ? await Promise.all([...live.pages].map(async ([id, page]) => ({ id, url: page.url(), title: live.restoring ? page.url() : await page.title().catch(() => page.url()) }))) : [];
+    return { ...row, nodeId: (await getClusterNode()).id, profileLabel, tabs, loginRequest: this.store.loginRequest(id), activePageId: live?.activePageId ?? null, owner: (live ? live.human : row.restoreOnRestart && this.store.recoveryHuman(id)) ? "human" : "agent", fileChooser: Boolean(live?.chooser), fileChooserRequest: live?.chooser ? { id: live.chooser.id, pageId: live.chooser.pageId } : null, dialog: live?.dialog ? { id: live.dialog.id, pageId: live.dialog.pageId, type: live.dialog.dialog.type(), message: live.dialog.dialog.message(), defaultValue: live.dialog.dialog.defaultValue() } : null, downloads: this.store.downloads(id) };
   }
 
   async profiles(projectId: string): Promise<BrowserProfile[]> { void this.ready(); return this.store.profiles(projectId); }
@@ -315,6 +326,8 @@ export class BrowserRuntime {
       if (actor.kind === "human" && (!actor.id || actor.id.length > 500)) throw new Error("Authenticated human actor ID must contain 1..500 characters");
       if (command.action === "close" && !this.sessions.has(id)) return this.endRecovery(id, actor);
       session = this.live(id);
+      if (actor.kind === "agent") { session.credentialOrigins = actor.credentialOrigins ?? []; this.checkpoint(session); }
+      if (actor.kind === "agent" && command.action !== "requestLogin" && this.store.loginRequest(session.id)) throw new Error("Browser login required; automation paused");
       if (command.action === "dialog" || command.action === "upload") {
         this.authorize(session, command, actor);
         if (command.action === "upload" && command.selector) {
@@ -332,10 +345,10 @@ export class BrowserRuntime {
           // may wait for the preceding queued click to open its first chooser.
         }
       }
-      // Control, dialogs, and End browser must remain usable even during an unbounded page promise.
-      if (["takeControl", "resumeAgent", "dialog", "close"].includes(command.action)) {
+      // Control and login handoff must remain usable even during an unbounded page promise.
+      if (["takeControl", "resumeAgent", "requestLogin", "completeLogin", "dialog", "close"].includes(command.action)) {
         this.authorize(session, command, actor);
-        if (command.action === "takeControl" && actor.kind === "human") session.human = actor.id;
+        if (command.action === "takeControl" && actor.kind === "human") { session.human = actor.id; session.loginVerificationEpoch++; }
         return this.withActivity(session, () => this.run(session, command, actor)).finally(() => this.broadcastState(session));
       }
       if (session.restoring) throw new Error("Browser profile is still restoring; retry when ready");
@@ -383,6 +396,7 @@ export class BrowserRuntime {
     const record = this.store.get(grant.sessionId);
     if (record.projectId !== grant.projectId || record.conversationId !== grant.conversationId || record.profileId !== grant.profileId || session.profileId !== grant.profileId) throw new BrowserMonitorCheckError("wrong-account", "Browser session identity does not match monitor grant");
     if (session.activePageId !== grant.pageId || !session.pages.has(grant.pageId)) throw new BrowserMonitorCheckError("target-missing", "Browser tab changed");
+    if (this.store.loginRequest(session.id)) throw new BrowserMonitorCheckError("needs-login", "Browser login required; automation paused");
     if (session.human) throw new BrowserMonitorCheckError("paused-by-human", "Browser is under human control");
     if (session.restoring) throw new BrowserMonitorCheckError("incompatible", "Browser profile is still restoring");
     if (session.dialog || session.chooser) throw new BrowserMonitorCheckError("incompatible", "Browser has a pending prompt");
@@ -405,9 +419,24 @@ export class BrowserRuntime {
   }
 
   private authorize(session: LiveSession, command: BrowserCommand, actor: BrowserActor): void {
+    const pending = this.store.loginRequest(session.id);
+    if (pending && actor.kind === "agent" && command.action !== "requestLogin") {
+      throw new Error("Browser login required; automation paused");
+    }
+    if (command.action === "requestLogin") {
+      if (actor.kind === "agent" && session.human) throw new Error("Browser is under human control; agent input paused");
+      if (actor.kind === "human" && session.human !== actor.id) throw new Error("Take control before browser input");
+      return;
+    }
+    if (command.action === "completeLogin") {
+      if (actor.kind !== "human" || session.human !== actor.id) throw new Error("Only the controlling human can complete browser login");
+      return;
+    }
     if (command.action === "takeControl" || command.action === "resumeAgent") {
       if (actor.kind !== "human" || !actor.id) throw new Error("Only a human can change browser control");
       if (session.human && session.human !== actor.id && !(command.action === "takeControl" && command.force)) throw new Error("Browser control owned by another human; explicitly take over to recover control");
+      if (command.action === "takeControl" && command.loginRequestId && pending?.id !== command.loginRequestId) throw new Error("Browser login request changed; reopen the current login prompt");
+      if (command.action === "resumeAgent" && pending) throw new Error("Browser login required; automation paused");
       if (command.action === "resumeAgent" && !session.human) throw new Error("Take control before resuming the agent");
       return;
     }
@@ -428,6 +457,11 @@ export class BrowserRuntime {
     return page;
   }
 
+  private async navigatePage(page: Page, url: string): Promise<void> {
+    if (url !== "about:blank") this.requestedOrigins.set(page, new URL(url).origin);
+    await page.goto(url, { waitUntil: "domcontentloaded" });
+  }
+
   private locator(page: Page, selector: string): Locator {
     if (selector.startsWith("label=")) return page.getByLabel(selector.slice(6), { exact: true });
     // Playwright also accepts CSS, text=, role=button[name=Submit], and chained selectors.
@@ -443,13 +477,23 @@ export class BrowserRuntime {
     switch (command.action) {
       case "takeControl": // Actor id is assigned by execute, never trusted from the wire command.
         return this.get(session.id);
-      case "resumeAgent": session.human = null; return this.get(session.id);
+      case "requestLogin": {
+        const current = this.store.loginRequest(session.id);
+        const requested = { expectedOrigin: command.expectedOrigin, readySelector: command.readySelector, loginSelector: command.loginSelector, label: command.label };
+        if (current) {
+          const { id: _id, ...existing } = current;
+          if (JSON.stringify(existing) !== JSON.stringify(requested)) throw new Error("A different browser login request is already pending");
+        } else this.store.setLoginRequest(session.id, { id: randomUUID(), ...requested });
+        return this.get(session.id);
+      }
+      case "completeLogin": return this.completeLogin(session, command, actor);
+      case "resumeAgent": session.loginVerificationEpoch++; session.human = null; return this.get(session.id);
       case "close": await this.stop(session, "closed"); return this.get(session.id);
       case "saveProfile": return this.store.renameProfile(session.profileId, this.store.get(session.id).projectId, command.label);
-      case "newTab": { const page = await session.context.newPage(); if (command.url) await page.goto(command.url, { waitUntil: "domcontentloaded" }); return this.get(session.id); }
+      case "newTab": { const page = await session.context.newPage(); if (command.url) await this.navigatePage(page, command.url); return this.get(session.id); }
       case "selectTab": {
         if (!session.pages.has(command.pageId)) throw new Error("Browser tab not found");
-        session.activePageId = command.pageId; this.restartStream(session); return this.get(session.id);
+        session.activePageId = command.pageId; session.loginVerificationEpoch++; this.restartStream(session); return this.get(session.id);
       }
       case "closeTab": {
         const page = session.pages.get(command.pageId); if (!page) throw new Error("Browser tab not found");
@@ -468,7 +512,7 @@ export class BrowserRuntime {
     }
     const page = this.page(session);
     switch (command.action) {
-      case "navigate": await page.goto(command.url, { waitUntil: "domcontentloaded" }); break;
+      case "navigate": await this.navigatePage(page, command.url); break;
       case "back": await page.goBack({ waitUntil: "domcontentloaded" }); break;
       case "forward": await page.goForward({ waitUntil: "domcontentloaded" }); break;
       case "reload": await page.reload({ waitUntil: "domcontentloaded" }); break;
@@ -501,6 +545,37 @@ export class BrowserRuntime {
       case "screenshot": return { pageId: session.activePageId, mimeType: "image/png", data: (await page.screenshot({ timeout: 10000 })).toString("base64") };
       case "upload": await this.upload(session, page, command, actor); break;
     }
+    return this.get(session.id);
+  }
+
+  private async completeLogin(session: LiveSession, command: Extract<BrowserCommand, { action: "completeLogin" }>, actor: BrowserActor): Promise<BrowserSessionView> {
+    const request = this.store.loginRequest(session.id);
+    const page = this.page(session);
+    const human = actor.kind === "human" ? actor.id : "";
+    const epoch = session.loginVerificationEpoch;
+    const url = page.url();
+    const valid = () => this.sessions.get(session.id) === session && !session.stopped && session.loginVerificationEpoch === epoch && session.activePageId === command.expectedPageId && session.pages.get(command.expectedPageId) === page && page.url() === url && this.store.loginRequest(session.id)?.id === command.requestId && session.human === human;
+    const fail = () => { throw new Error("Login could not be verified; browser remains paused"); };
+    if (!request || request.id !== command.requestId || session.activePageId !== command.expectedPageId) return fail();
+    const origin = new URL(url).origin;
+    if (request.automatic ? origin !== request.expectedOrigin && origin !== request.returnOrigin : origin !== request.expectedOrigin) return fail();
+    try {
+      const ready = await page.locator(request.readySelector).filter({ visible: true }).first().isVisible();
+      if (!valid() || !ready) return fail();
+      if (request.automatic) {
+        const observation = await detectBrowserLogin(page);
+        if (!valid() || observation !== null) return fail();
+        const documentReady = await page.evaluate(`document.readyState !== 'loading' && Boolean(document.body && document.body.innerText.trim())`);
+        if (!valid() || documentReady !== true) return fail();
+      } else if (request.loginSelector) {
+        const login = await page.locator(request.loginSelector).filter({ visible: true }).first().isVisible();
+        if (!valid() || login) return fail();
+      }
+    } catch { return fail(); }
+    if (!valid()) return fail();
+    this.store.setLoginRequest(session.id, null);
+    session.loginVerificationEpoch++;
+    session.human = null;
     return this.get(session.id);
   }
 
@@ -550,7 +625,8 @@ export class BrowserRuntime {
 
   private addPage(session: LiveSession, page: Page): void {
     const id = randomUUID();
-    session.pages.set(id, page); session.activePageId = id;
+    session.pages.set(id, page); session.activePageId = id; session.loginVerificationEpoch++;
+    this.detectGmailLogin(session, page);
     const report = (error: string) => { session.errors.push(error.slice(0, 2000)); if (session.errors.length > 50) session.errors.shift(); };
     page.on("console", entry => { if (entry.type() === "error" || entry.type() === "warning") report(`${entry.type()}: ${entry.text()}`); });
     page.on("pageerror", error => report(`JavaScript: ${error.message}`));
@@ -558,8 +634,8 @@ export class BrowserRuntime {
     page.on("response", response => { if (response.status() >= 400) report(`HTTP ${response.status()}: ${response.url()}`); });
     page.on("filechooser", chooser => { session.chooser = { id: randomUUID(), pageId: id, page, chooser }; this.broadcastState(session); });
     page.on("dialog", dialog => { session.dialog = { id: randomUUID(), pageId: id, page, dialog }; session.dialogSignal?.(); this.broadcastState(session); });
-    page.on("framenavigated", frame => { if (frame === page.mainFrame()) { if (session.chooser?.page === page) session.chooser = null; this.broadcastState(session); } });
-    page.on("domcontentloaded", () => this.broadcastState(session));
+    page.on("framenavigated", frame => { if (frame === page.mainFrame()) { session.loginVerificationEpoch++; if (session.chooser?.page === page) session.chooser = null; this.detectGmailLogin(session, page); this.broadcastState(session); } });
+    page.on("domcontentloaded", () => { this.scheduleLoginDetection(session); this.broadcastState(session); });
     page.on("download", download => {
       const item = { id: randomUUID(), name: path.basename(download.suggestedFilename()).replace(/[\x00-\x1f]/g, "_") || "download", ready: false, error: undefined as string | undefined };
       session.downloads.push(item); this.store.saveDownload(session.id, item); this.broadcastState(session);
@@ -576,6 +652,7 @@ export class BrowserRuntime {
       session.transfers.add(transfer);
     });
     page.on("close", () => {
+      session.loginVerificationEpoch++;
       session.pages.delete(id);
       if (session.chooser?.page === page) session.chooser = null;
       if (session.dialog?.page === page) session.dialog = null;
@@ -585,6 +662,40 @@ export class BrowserRuntime {
       this.publishState(session);
     });
     this.restartStream(session); this.broadcastState(session);
+  }
+
+  private scheduleLoginDetection(session: LiveSession): void {
+    if (session.loginDetection || session.stopped || session.restoring || session.human || this.store.loginRequest(session.id) || !session.activePageId) return;
+    const pageId = session.activePageId;
+    const page = session.pages.get(pageId);
+    if (!page) return;
+    let current: URL;
+    try { current = new URL(page.url()); } catch { return; }
+    if (!["http:", "https:"].includes(current.protocol)) return;
+    const epoch = session.loginVerificationEpoch;
+    const credentialOrigins = session.credentialOrigins;
+    const valid = () => this.sessions.get(session.id) === session && !session.stopped && !session.restoring && !session.human && !this.store.loginRequest(session.id) && session.activePageId === pageId && session.pages.get(pageId) === page && session.loginVerificationEpoch === epoch && session.credentialOrigins === credentialOrigins && page.url() === current.href;
+    const observation = detectBrowserLogin(page).then(result => {
+      if (!result || !valid() || (result === "credentials" && credentialOrigins.includes(current.origin))) return;
+      let returnOrigin = this.requestedOrigins.get(page);
+      if (!returnOrigin) try { const requested = new URL(this.store.get(session.id).url ?? "about:blank"); if (["http:", "https:"].includes(requested.protocol)) returnOrigin = requested.origin; } catch {}
+      this.store.setLoginRequest(session.id, { id: randomUUID(), expectedOrigin: current.origin, readySelector: "body", loginSelector: null, label: `Sign in to ${current.hostname}`.slice(0, 80), automatic: true, ...(returnOrigin ? { returnOrigin } : {}) });
+      this.broadcastState(session);
+    }).catch(error => {
+      if (!session.stopped && session.pages.get(pageId) === page && !/Execution context was destroyed|Target page, context or browser has been closed|Navigation/.test(message(error))) console.error("Browser login detection failed");
+    }).finally(() => { if (session.loginDetection === observation) session.loginDetection = undefined; });
+    session.loginDetection = observation;
+  }
+
+  private detectGmailLogin(session: LiveSession, page: Page): void {
+    if (session.activePageId === null || session.pages.get(session.activePageId) !== page || this.store.loginRequest(session.id)) return;
+    let current: URL;
+    try { current = new URL(page.url()); } catch { return; }
+    if (current.origin !== "https://accounts.google.com" || session.credentialOrigins.includes(current.origin)) return;
+    let gmail = false;
+    try { gmail = new URL(this.store.get(session.id).url ?? "about:blank").origin === "https://mail.google.com"; } catch {}
+    if (!gmail) try { gmail = new URL(current.searchParams.get("continue") ?? "about:blank").origin === "https://mail.google.com"; } catch {}
+    if (gmail) this.store.setLoginRequest(session.id, { id: randomUUID(), expectedOrigin: "https://mail.google.com", readySelector: "[role=\"navigation\"]", loginSelector: "input[type=\"password\"], input[type=\"email\"]", label: "Sign in to Gmail" });
   }
 
   async attachViewer(id: string, ws: WebSocket, actor: BrowserActor): Promise<void> {
@@ -620,7 +731,8 @@ export class BrowserRuntime {
   private checkpoint(session: LiveSession): void {
     if (session.stopped) return;
     if (session.restoring) {
-      this.store.checkpoint(session.id, { ...this.store.recovery(session.id), human: session.human });
+      const { credentialOrigins: _credentialOrigins, ...recovery } = this.store.recovery(session.id);
+      this.store.checkpoint(session.id, { ...recovery, human: session.human, ...(session.credentialOrigins.length ? { credentialOrigins: session.credentialOrigins } : {}) });
       return;
     }
     if (!session.pages.size) return;
@@ -628,7 +740,7 @@ export class BrowserRuntime {
       const url = new URL(page.url());
       return ["http:", "https:"].includes(url.protocol) ? url.origin : "about:blank";
     });
-    this.store.checkpoint(session.id, { origins, activeIndex: Math.min(99, [...session.pages.keys()].indexOf(session.activePageId!)), human: session.human });
+    this.store.checkpoint(session.id, { origins, activeIndex: Math.min(99, [...session.pages.keys()].indexOf(session.activePageId!)), human: session.human, ...(session.credentialOrigins.length ? { credentialOrigins: session.credentialOrigins } : {}) });
   }
 
   private broadcastState(session: LiveSession): void {

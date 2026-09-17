@@ -5,10 +5,10 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { resolveDataDirectory } from "./data-directory.js";
 import { encryptSecretValue, decryptSecretValue } from "./secrets.js";
-import type { BrowserProfile, BrowserSessionRecord, BrowserSessionView, BrowserStart } from "./browser-types.js";
+import { browserLoginRequestSchema, type BrowserLoginRequest, type BrowserProfile, type BrowserSessionRecord, type BrowserSessionView, type BrowserStart } from "./browser-types.js";
 
 type Identity = { projectId?: string; engine?: string; conversationId?: string };
-export type RecoveryState = { origins: string[]; activeIndex: number; human: string | null };
+export type RecoveryState = { origins: string[]; activeIndex: number; human: string | null; credentialOrigins?: string[] };
 const recoveryHumanSchema = z.object({ human: z.string().min(1).max(500).nullable() });
 const recoverySchema = z.object({
   origins: z.array(z.string().max(2048).refine(value => {
@@ -18,6 +18,10 @@ const recoverySchema = z.object({
   })).max(100),
   activeIndex: z.number().int().min(-1).max(99),
   human: recoveryHumanSchema.shape.human,
+  credentialOrigins: z.array(z.string().max(2048).refine(value => {
+    try { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) && url.origin === value; }
+    catch { return false; }
+  })).max(1000).optional(),
 }).refine(value => value.origins.length ? value.activeIndex >= 0 && value.activeIndex < value.origins.length : value.activeIndex <= 0);
 
 function validateRecovery(value: unknown): RecoveryState {
@@ -25,7 +29,7 @@ function validateRecovery(value: unknown): RecoveryState {
   if (!result.success) throw new Error("Invalid browser recovery state");
   return result.data;
 }
-type SessionRow = Omit<BrowserSessionRecord, "restoreOnRestart" | "profileId" | "url" | "error"> & { profileId: string | null; url: string | null; error: string | null; restoreOnRestart: number; recovery: string };
+type SessionRow = Omit<BrowserSessionRecord, "restoreOnRestart" | "profileId" | "url" | "error"> & { profileId: string | null; url: string | null; error: string | null; restoreOnRestart: number; recovery: string; loginRequest: string | null };
 
 /** Node-local metadata. Neither these tables nor encrypted login states replicate. */
 export class BrowserStore {
@@ -56,6 +60,7 @@ export class BrowserStore {
     try {
       this.addColumn("browser_profiles", "persistent", "INTEGER NOT NULL DEFAULT 0");
       this.addColumn("browser_sessions", "restoreOnRestart", "INTEGER NOT NULL DEFAULT 0");
+      this.addColumn("browser_sessions", "loginRequest", "TEXT");
       const legacy = !this.db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'browser_running_profile'").get();
       this.addColumn("browser_sessions", "recovery", `TEXT NOT NULL DEFAULT '{"origins":[],"activeIndex":0,"human":null}'`);
       // Old ephemeral contexts could share one snapshot. Keep every historical row,
@@ -86,6 +91,20 @@ export class BrowserStore {
     this.db.prepare("INSERT INTO browser_sessions (id, projectId, engine, conversationId, appNodeId, url, profileId, state, createdAt, updatedAt, restoreOnRestart, recovery) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
       .run(row.id, row.projectId, row.engine, row.conversationId, row.appNodeId, row.url ?? null, row.profileId ?? null, row.state, now, now, persistent ? 1 : 0, JSON.stringify(recovery));
     return row;
+  }
+
+  loginRequest(id: string): BrowserLoginRequest | null {
+    this.get(id);
+    const row = this.db.prepare("SELECT loginRequest FROM browser_sessions WHERE id = ?").get(id) as { loginRequest: string | null };
+    if (row.loginRequest === null) return null;
+    try { return browserLoginRequestSchema.parse(JSON.parse(row.loginRequest)); }
+    catch { throw new Error("Invalid browser login request"); }
+  }
+
+  setLoginRequest(id: string, request: BrowserLoginRequest | null): void {
+    this.get(id);
+    const value = request === null ? null : JSON.stringify(browserLoginRequestSchema.parse(request));
+    this.db.prepare("UPDATE browser_sessions SET loginRequest = ?, updatedAt = ? WHERE id = ?").run(value, new Date().toISOString(), id);
   }
 
   recovery(id: string): RecoveryState {
@@ -211,7 +230,7 @@ export class BrowserStore {
   close(): void { this.db.close(); }
 
   private record(row: SessionRow): BrowserSessionRecord {
-    const { recovery, ...record } = row;
+    const { recovery, loginRequest, ...record } = row;
     return { ...record, restoreOnRestart: Boolean(row.restoreOnRestart), url: row.url ?? undefined, profileId: row.profileId ?? undefined, error: row.error ?? undefined };
   }
 }

@@ -32,7 +32,7 @@ function mockChrome(t: TestContext, failures: { launch?: (directory: string) => 
         if (closed) throw new Error("Persistent context closed after last page");
         let url = "about:blank";
         const page = Object.assign(new EventEmitter(), {
-          url: () => url, title: async () => url, bringToFront: async () => {},
+          url: () => url, title: async () => url, bringToFront: async () => {}, evaluate: async () => null, isClosed: () => false,
           mainFrame: () => page,
           goto: async (next: string) => { url = next; page.emit("framenavigated", page); },
           close: async () => {

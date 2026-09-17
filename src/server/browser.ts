@@ -125,7 +125,7 @@ export async function localBrowserOperation(input: BrowserOperation, actor: Brow
   switch (operation.operation) {
     case "start": {
       await knownNode(operation.args.appNodeId);
-      return { session: view(await service.create(operation.args)) };
+      return { session: view(await service.create(operation.args, actor.kind === "agent" ? actor.credentialOrigins ?? [] : [])) };
     }
     case "list": {
       const sessions = (await service.list(operation.args)).map(view);

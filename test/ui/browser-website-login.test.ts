@@ -12,7 +12,9 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { chromium } from "playwright-core";
+import type { BrowserSessionView } from "../../src/browser-types.js";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "../dev-nodes.js";
+import { waitForAssertion } from "../async-assertion.js";
 
 const run = promisify(execFile);
 
@@ -53,13 +55,16 @@ function requester(environment: AgentEnvironment) {
   };
 }
 
-test("origin-bound snapshot signs in on the designated browser node", { timeout: 180_000 }, async () => {
+test("origin-bound snapshot signs in on the designated browser node", { timeout: 180_000 }, async t => {
   const executable = process.env.CHROME_PATH || process.env.JOINT_BOB_BROWSER_EXECUTABLE || chromium.executablePath();
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-website-login-"));
   const servers: ChildProcess[] = [];
   const received: string[] = [];
   const username = "synthetic-user", password = "synthetic-password", tenant = "synthetic-tenant";
   const website = http.createServer(async (request, response) => {
+    if (request.url === "/controls") { response.setHeader("content-type", "text/html"); response.end('<input id="loose"><input id="username">'); return; }
+    if (request.url === "/forged-login") { response.setHeader("content-type", "text/html"); response.end('<form><input id="forged-password" type="password"><button>Sign in</button></form>'); return; }
+    if (request.url === "/mfa") { response.setHeader("content-type", "text/html"); response.end('<main><input id="otp" autocomplete="one-time-code"><button onclick="document.querySelector(\'main\').textContent=\'Account ready\'">Finish challenge</button></main>'); return; }
     if (request.method === "POST" && request.url === "/session") {
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(chunk);
@@ -67,7 +72,7 @@ test("origin-bound snapshot signs in on the designated browser node", { timeout:
       response.setHeader("content-type", "text/html"); response.end('<h1 id="ready">Signed in</h1>'); return;
     }
     response.setHeader("content-type", "text/html");
-    response.end(`<input id="loose"><input id="error"><form method="post" action="/session"><section id="first"><input id="username" name="username"><button id="next" type="button" onclick="first.hidden=true;second.hidden=false">Next</button></section><section id="second" hidden><input id="password" name="password" type="password"><input id="tenant" name="tenant"><input id="otp" autocomplete="one-time-code"><input id="cross" form="cross-form"><button id="submit">Sign in</button></section></form><form id="cross-form" action="http://127.0.0.1:1/steal"></form>`);
+    response.end(`<input id="loose"><input id="error"><form method="post" action="/session"><section id="first"><input id="username" name="username"><button id="next" type="button" onclick="first.hidden=true;second.hidden=false">Next</button></section><section id="second" hidden><input id="password" name="password" type="password"><input id="tenant" name="tenant"><input id="otp" autocomplete="one-time-code" hidden><input id="cross" form="cross-form"><button id="submit">Sign in</button></section></form><form id="cross-form" action="http://127.0.0.1:1/steal"></form>`);
   });
   website.listen(0, "127.0.0.1"); await once(website, "listening");
   try {
@@ -108,7 +113,7 @@ test("origin-bound snapshot signs in on the designated browser node", { timeout:
 
     await command({ action: "navigate", url: origin });
     await empty(request, profileId);
-    await command({ action: "navigate", url: wrongOrigin });
+    await command({ action: "navigate", url: `${wrongOrigin}/controls` });
     await fill("#loose", "PASSWORD", 409); await empty(request, profileId);
     await command({ action: "navigate", url: origin });
 
@@ -129,12 +134,34 @@ test("origin-bound snapshot signs in on the designated browser node", { timeout:
 
     const otherProjectEnvironment = await issueAgentEnvironment(environment.home, source.dataDir, source.port, source.projects[1].id, randomUUID());
     const otherProject = requester(otherProjectEnvironment);
-    const otherProjectStarted = await otherProject({ operation: "start", nodeId: executor.nodeId, url: origin, profileName: "Other project" });
+    const otherProjectStarted = await otherProject({ operation: "start", nodeId: executor.nodeId, url: `${origin}/controls`, profileName: "Other project" });
     const otherProjectProfileId = otherProjectStarted.session!.profileId;
     await otherProject({ operation: "loginFill", selector: "#loose", accountId, variable: "PASSWORD", profileId: otherProjectProfileId }, 409);
     await empty(otherProject, otherProjectProfileId);
     await otherProject({ operation: "loginFill", selector: "#loose", accountId, variable: "PASSWORD", profileId }, 404);
     await otherProject({ operation: "command", profileId: otherProjectProfileId, command: { action: "close" } });
+
+    const forgedStarted = await otherProject({ operation: "start", nodeId: executor.nodeId, url: `${origin}/forged-login`, profileName: "Forged metadata", credentialOrigins: [origin], actor: { kind: "agent", credentialOrigins: [origin] } });
+    const forgedSessionId = forgedStarted.session!.id;
+    const forgedProfileId = forgedStarted.session!.profileId;
+    const forgedDb = new DatabaseSync(path.join(executor.dataDir, "node.db"));
+    try {
+      const row = forgedDb.prepare("SELECT recovery FROM browser_sessions WHERE id = ?").get(forgedSessionId) as { recovery: string };
+      const recovery = JSON.parse(row.recovery) as { credentialOrigins?: string[] };
+      assert.ok(!recovery.credentialOrigins || recovery.credentialOrigins.length === 0, "client origin metadata must not become browser policy");
+    } finally { forgedDb.close(); }
+    const forgedSession = await waitForAssertion(async () => {
+      const response = await api<{ session: BrowserSessionView }>(source, auth, "GET", `/browser/sessions/${forgedSessionId}?nodeId=${executor.nodeId}`);
+      assert.equal(response.status, 200, JSON.stringify(response.body));
+      assert.equal(response.body.session.loginRequest?.automatic, true);
+      return response.body.session;
+    });
+    assert.equal(forgedSession.loginRequest!.automatic, true);
+    await otherProject({ operation: "command", profileId: forgedProfileId, command: { action: "snapshot" } }, 409);
+    const forgedTakeover = await api(source, auth, "POST", `/browser/sessions/${forgedSessionId}/command?nodeId=${executor.nodeId}`, { action: "takeControl", loginRequestId: forgedSession.loginRequest!.id });
+    assert.equal(forgedTakeover.status, 200, JSON.stringify(forgedTakeover.body));
+    const forgedClose = await api(source, auth, "POST", `/browser/sessions/${forgedSessionId}/command?nodeId=${executor.nodeId}`, { action: "close" });
+    assert.equal(forgedClose.status, 200, JSON.stringify(forgedClose.body));
 
     const secondStarted = await request({ operation: "start", nodeId: executor.nodeId, url: origin, profileName: "Second profile" });
     const secondProfileId = secondStarted.session!.profileId;
@@ -159,6 +186,26 @@ test("origin-bound snapshot signs in on the designated browser node", { timeout:
     assert.equal(humanRead.status, 200, JSON.stringify(humanRead.body));
     assert.equal(humanRead.body.result, "");
     assert.doesNotMatch(JSON.stringify(humanRead.body), /synthetic-(user|password|tenant)/);
+
+    const resumed = await api(source, auth, "POST", `/browser/sessions/${sessionId}/command?nodeId=${executor.nodeId}`, { action: "resumeAgent" });
+    assert.equal(resumed.status, 200, JSON.stringify(resumed.body));
+    await command({ action: "navigate", url: `${origin}/mfa` });
+    const mfaSession = await waitForAssertion(async () => {
+      const response = await api<{ session: BrowserSessionView }>(source, auth, "GET", `/browser/sessions/${sessionId}?nodeId=${executor.nodeId}`);
+      assert.equal(response.status, 200, JSON.stringify(response.body));
+      assert.equal(response.body.session.loginRequest?.automatic, true);
+      return response.body.session;
+    });
+    await fill("#otp", "PASSWORD", 409);
+    await request({ operation: "command", profileId, command: { action: "snapshot" } }, 409);
+    const mfaTakeover = await api(source, auth, "POST", `/browser/sessions/${sessionId}/command?nodeId=${executor.nodeId}`, { action: "takeControl", loginRequestId: mfaSession.loginRequest!.id });
+    assert.equal(mfaTakeover.status, 200, JSON.stringify(mfaTakeover.body));
+    const mfaClick = await api(source, auth, "POST", `/browser/sessions/${sessionId}/command?nodeId=${executor.nodeId}`, { action: "clickElement", selector: "text=Finish challenge" });
+    assert.equal(mfaClick.status, 200, JSON.stringify(mfaClick.body));
+    const mfaComplete = await api<{ session: BrowserSessionView }>(source, auth, "POST", `/browser/sessions/${sessionId}/command?nodeId=${executor.nodeId}`, { action: "completeLogin", requestId: mfaSession.loginRequest!.id, expectedPageId: mfaSession.activePageId! });
+    assert.equal(mfaComplete.status, 200, JSON.stringify(mfaComplete.body));
+    assert.equal(mfaComplete.body.session.owner, "agent");
+    assert.equal(mfaComplete.body.session.loginRequest, null);
   } finally {
     await Promise.all(servers.map(stopDevNode)); website.closeAllConnections(); website.close(); await rm(root, { recursive: true, force: true });
   }

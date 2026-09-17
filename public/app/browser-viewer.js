@@ -1,7 +1,8 @@
 // Shared by the conversation panel and the browser-only page. No app imports:
 // a browser tab must not boot the conversation app or its sockets.
-export function createBrowserViewer(root, { api: request, identity, sessionId, nodeId, confirm: confirmAction, onClose }) {
+export function createBrowserViewer(root, { api: request, identity, sessionId, nodeId, confirm: confirmAction, onClose, loginMode = false, onSession, isCurrent = () => true }) {
   let session = null, socket = null, disposed = false, retry = 0, retryTimer, connectionTimer;
+  const attemptedLoginControl = new Set();
   let framePending = null, drawing = false, frameVersion = 0, frameSize = null;
   let sessionVersion = 0;
   let busy = false, connected = false, loaded = false, profiles = [], sessions = [];
@@ -19,10 +20,11 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
   const startNodeId = () => get("start-node").value || preference?.effectiveNodeId;
   const preferenceUrl = () => `/api/browser/preferences?${new URLSearchParams({ projectId: identity.projectId, engine: identity.engine, conversationId: identity.conversationId })}`;
   root.classList.add("browser-viewer");
+  if (loginMode) root.classList.add("browser-login-mode");
   // Static markup only; page content and other dynamic values use textContent.
   root.replaceChildren(document.createRange().createContextualFragment(`
     <header class="browser-heading">
-      <div><span class="eyebrow">Conversation browser</span><h2>Browser</h2></div>
+      <div><span class="eyebrow">Conversation browser</span><h2 data-testid="browser-title">Browser</h2></div>
       <button class="compact danger browser-stop" type="button" data-testid="browser-end">Stop browser</button>
       <a class="ghost compact browser-link" data-testid="browser-open-tab" target="_blank" rel="noopener">Open in tab</a>
       <button type="button" class="ghost compact" data-testid="browser-close-viewer">Close viewer</button>
@@ -31,6 +33,13 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
       <p class="browser-notice" data-testid="browser-session-status" role="status">Finding this conversation's browser…</p>
       <p class="browser-error" data-testid="browser-error" role="alert" hidden></p>
       <p class="browser-error" data-testid="browser-discovery-status" role="status" hidden></p>
+      <section class="browser-login-notice" data-testid="browser-login-notice" hidden>
+        <strong data-part="login-label"></strong>
+        <span data-part="login-origin"></span>
+        <span data-testid="browser-login-context" data-part="login-context"></span>
+        <span data-part="login-help"></span>
+        <button class="primary" type="button" data-testid="browser-login-done">Done</button>
+      </section>
       <div class="browser-setup">
       <label class="browser-account-picker">Viewing account<select data-testid="browser-session-select" aria-label="Viewing account"></select></label>
       <div class="browser-start-row" data-part="start">
@@ -116,9 +125,10 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     get("open-tab").href = `/browser.html?${params}`;
   }
   function controls() {
+    const pendingLogin = Boolean(session?.loginRequest);
     get("start").disabled = !loaded || !profilesReady || busy || !identity?.conversationId || !identity?.appNodeId || !nodes.some((node) => node.id === startNodeId() && node.available && node.reachable);
     get("conversation-node").disabled = get("start-node").disabled = busy || !preference;
-    get("session-select").disabled = busy || !sessions.length;
+    get("session-select").disabled = loginMode || busy || !sessions.length;
     get("profile-select").disabled = get("profile-name").disabled = busy;
     get("start").textContent = running() ? "Open profile" : "Start browser";
     get("reopen").hidden = !session?.profileId || running();
@@ -126,13 +136,14 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     for (const name of ["navigation", "keyboard"]) part(name).hidden = !running();
     part("control-hint").hidden = !human();
     for (const name of ["tabs", "take-control", "control-status"]) get(name).hidden = !running();
-    get("resume-agent").hidden = !human();
+    get("resume-agent").hidden = !human() || pendingLogin;
     for (const element of part("navigation").querySelectorAll("button,input")) element.disabled = !canInput();
     for (const name of ["send-tab", "send-shift-tab", "dialog-input", "dialog-accept", "dialog-dismiss", "save-profile", "profile-label"]) get(name).disabled = !canInput();
     get("upload").disabled = !canInput() || uploading || !session?.fileChooserRequest;
     get("take-control").disabled = !running() || !connected || busy || (human() && session.canControl === true);
     get("take-control").textContent = human() ? session.canControl === true ? "You have control" : "Take over control" : "Take control";
-    get("resume-agent").disabled = !human() || session.canControl === false || !connected || busy;
+    get("resume-agent").disabled = pendingLogin || !human() || session.canControl === false || !connected || busy;
+    get("login-done").disabled = !pendingLogin || !running() || !connected || busy || !human() || session.canControl === false || !session.activePageId;
     get("end").disabled = (!running() && !session?.restoreOnRestart) || busy;
     get("reconnect").disabled = busy;
     screen.setAttribute("aria-disabled", String(!canInput()));
@@ -140,6 +151,20 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
   }
   function render() {
     updateLink();
+    const request = session?.loginRequest;
+    get("login-notice").hidden = !request;
+    if (request) {
+      part("login-label").textContent = request.label || session.profileLabel || "Browser sign-in";
+      part("login-origin").textContent = request.expectedOrigin || "";
+      part("login-context").textContent = `${session.profileLabel || "Browser"} · ${session.projectId} · ${session.engine} · ${session.conversationId}`;
+      part("login-help").textContent = request.automatic
+        ? "Complete sign-in, then choose Done to confirm and return control. The agent checks the signed-in page next. Closing leaves it paused."
+        : "Complete sign-in and reach the requested verification marker, then choose Done. Closing leaves it paused.";
+      if (loginMode) get("title").textContent = request.label || session.profileLabel || "Browser sign-in";
+    }
+    root.querySelector(".browser-footer .browser-hint").textContent = request
+      ? "Agent browser automation and actions are paused for human verification. Closing this viewer leaves them paused."
+      : "Viewing does not pause the agent. Closing this viewer leaves the browser running.";
     let restartStatus = "";
     if (session?.restoreOnRestart) {
       restartStatus = running() ? "Restores automatically after restart."
@@ -152,7 +177,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
       : "No browser selected. Choose an account or start a project profile.";
     get("session-select").replaceChildren(...sessions.map((item) => new Option(`${item.profileLabel || item.profileId || "Browser"} · ${machineName(item.nodeId)} · ${item.state}`, item.id)));
     get("session-select").value = session?.id || "";
-    get("control-status").textContent = human() ? "Human control · agent paused" : "Agent control";
+    get("control-status").textContent = human() ? "Human control · agent paused" : request ? "Login required · agent paused" : "Agent control";
     part("control-hint").textContent = human()
       ? session.canControl === false
         ? "Another viewer controls this browser. Take over control to replace it; the agent remains paused."
@@ -193,6 +218,21 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     }));
     if (!session?.downloads.length) get("downloads-list").textContent = "No downloads yet.";
     controls();
+    if (loginMode && request && running() && connected && !busy && session.owner === "agent" && !disposed && isCurrent()) {
+      const target = { nodeId: session.nodeId, sessionId: session.id, requestId: request.id };
+      const key = `${target.nodeId}:${target.sessionId}:${target.requestId}`;
+      if (!attemptedLoginControl.has(key)) {
+        attemptedLoginControl.add(key);
+        queueMicrotask(() => {
+          const matches = () => !disposed && isCurrent() && !busy && session?.nodeId === target.nodeId && session?.id === target.sessionId && session?.loginRequest?.id === target.requestId && session?.owner === "agent" && running() && connected;
+          if (!matches()) return;
+          void operation(() => {
+            if (disposed || !isCurrent() || session?.nodeId !== target.nodeId || session?.id !== target.sessionId || session?.loginRequest?.id !== target.requestId || session?.owner !== "agent" || !running() || !connected) return;
+            return command({ action: "takeControl", loginRequestId: target.requestId });
+          });
+        });
+      }
+    }
   }
   function acceptSession(next) {
     if (disposed || !next || (session && (next.id !== session.id || next.nodeId !== session.nodeId))) return;
@@ -209,6 +249,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     identity = { projectId, engine, conversationId, appNodeId, ...identity };
     if (!running()) { stopSocket(); get("connection-status").textContent = "Not connected"; screen.hidden = true; part("frame-hint").hidden = false; part("frame-hint").textContent = `Browser ${session.state}.${session.profileId ? ` Reopen ${session.profileLabel || "this profile"} on ${machineName(session.nodeId)} with its saved browser data.` : " Start a browser when ready."}`; }
     render();
+    if (!disposed) onSession?.(session);
   }
   function renderMachines() {
     for (const [name, label, inherited, selected] of [
@@ -436,6 +477,15 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     });
   });
   get("resume-agent").addEventListener("click", () => operation(() => command({ action: "resumeAgent" })));
+  get("login-done").addEventListener("click", () => {
+    if (loginMode && (disposed || !isCurrent())) return;
+    const target = session?.loginRequest && { sessionId: session.id, requestId: session.loginRequest.id, expectedPageId: session.activePageId };
+    if (!target?.requestId || !target.expectedPageId) { error("Login request changed. Wait for the current page."); return; }
+    void operation(() => {
+      if (loginMode && (disposed || !isCurrent() || session?.id !== target.sessionId || session?.loginRequest?.id !== target.requestId || session?.activePageId !== target.expectedPageId)) return;
+      return command({ action: "completeLogin", requestId: target.requestId, expectedPageId: target.expectedPageId });
+    });
+  });
   get("end").addEventListener("click", async () => {
     const id = session.id;
     if (await confirmAction({ title: "Stop this browser?", message: `Takes control and closes only the selected account, ${session?.profileLabel || "this browser"}. Its cookies and browser data stay saved, but it will not restart automatically. Other accounts stay running. Closing the viewer does not end an account.`, confirmLabel: "Stop browser", destructive: true })) await operation(async () => {
@@ -445,7 +495,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     });
   });
   get("close-viewer").addEventListener("click", async () => {
-    if (human() && !await confirmAction({ title: "Close viewer while agent is paused?", message: "The browser will keep running under human control. The agent stays paused until you reopen the viewer and choose Resume agent.", confirmLabel: "Close viewer" })) return;
+    if (!loginMode && human() && !await confirmAction({ title: "Close viewer while agent is paused?", message: "The browser will keep running under human control. The agent stays paused until you reopen the viewer and choose Resume agent.", confirmLabel: "Close viewer" })) return;
     dispose(); onClose?.();
   });
   for (const control of root.querySelectorAll("[data-command]")) control.addEventListener("click", () => sendInput({ action: control.dataset.command }));
@@ -527,6 +577,9 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
   function dispose() {
     disposed = true; frameVersion++; framePending = null; stopSocket();
     document.removeEventListener?.("browserSessionsChanged", refreshSessionList);
+  }
+  if (loginMode) {
+    for (const selector of [".browser-setup", ".browser-machines", "[data-testid='browser-profiles-details']", "[data-testid='browser-open-tab']"]) root.querySelector(selector)?.setAttribute("hidden", "");
   }
   updateLink(); controls();
   if (!identity?.conversationId && !sessionId) {

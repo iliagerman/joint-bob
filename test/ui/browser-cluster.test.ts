@@ -26,9 +26,11 @@ test("conversation browser runs independently of its agent node and stays pinned
     if(request.url==='/worked') {workedAfterClose=true;response.end('recorded');return;}
     if(request.url==='/download') {response.setHeader('Content-Disposition','attachment; filename="browser-result.txt"');response.end('downloaded on browser node');return;}
     if(request.url==='/login') {response.end('<title>Popup login</title><button onclick="document.cookie=\'login=remembered; path=/; Max-Age=86400\';opener.postMessage(\'done\',location.origin);window.close()">Sign in</button>');return;}
+    if(request.url==='/handoff') {response.setHeader('Content-Type','text/html');response.end('<title>Login handoff</title><form id="handoff-login"><input id="handoff-password" type="password"><button id="handoff-submit">Sign in</button></form><div id="signed-in" hidden>Signed in</div><script>document.querySelector("#handoff-login").addEventListener("submit",event=>{event.preventDefault();if(document.querySelector("#handoff-password").value==="synthetic-only"){event.currentTarget.remove();document.querySelector("#signed-in").hidden=false}})</script>');return;}
     response.setHeader('Content-Type','text/html');response.end('<title>Application on source node</title><h1>Remote app</h1><button id="login" onclick="open(\'/login\',\'login\',\'width=520,height=440\')">Popup login</button><input id="upload" type="file" onchange="fetch(\'/upload\',{method:\'POST\',body:this.files[0]})"><a id="download" href="/download" download>Download</a>');
   });
   fixture.listen(0,'127.0.0.1');await once(fixture,'listening');
+  const fixtureOrigin=`http://localhost:${(fixture.address() as AddressInfo).port}`;
   try {
     const environment=await seedDevEnvironment(root,2);const [a,b]=environment.nodes;
     servers.push(await startDevNode(environment,a,{JOINT_BOB_BROWSER_EXECUTABLE:'/browser-disabled-on-source'}));
@@ -46,7 +48,7 @@ test("conversation browser runs independently of its agent node and stays pinned
       const response=await agent({operation:'command',command});
       const body=await response.json();assert.equal(response.status,200,JSON.stringify(body));return body;
     }
-    const started=await agent({operation:'start',url:`http://localhost:${(fixture.address() as AddressInfo).port}`});
+    const started=await agent({operation:'start',url:fixtureOrigin});
     const startBody=await started.json() as {session:BrowserSessionView};assert.equal(started.status,200,JSON.stringify(startBody));
     const session=startBody.session;t.diagnostic('Agent on source node started browser on the other machine');
     assert.equal(session.appNodeId,a.nodeId);
@@ -73,6 +75,31 @@ test("conversation browser runs independently of its agent node and stays pinned
     await viewer.getByTestId('browser-take-control').click();await viewer.getByTestId('browser-control-status').filter({hasText:'Human control'}).waitFor();
     const blocked=await agent({operation:'command',command:{action:'evaluate',expression:'1+1'}});assert.equal(blocked.status,409);
     await viewer.getByTestId('browser-resume-agent').click();await viewer.getByTestId('browser-control-status').filter({hasText:'Agent control'}).waitFor();
+
+    await command({action:'navigate',url:`${fixtureOrigin}/handoff`});
+    await viewer.getByTestId('browser-login-done').waitFor();
+    const authoritative=await api<{session:BrowserSessionView}>(a,auth,'GET',`/browser/sessions/${session.id}?nodeId=${b.nodeId}`);
+    assert.equal(authoritative.status,200,JSON.stringify(authoritative.body));
+    assert.equal(authoritative.body.session.loginRequest?.automatic,true,'Native login handoff must be automatic');
+    assert.equal(authoritative.body.session.loginRequest?.expectedOrigin,fixtureOrigin,'Native login handoff must persist on browser owner');
+    const loginRequestId=authoritative.body.session.loginRequest!.id;
+    const handoffPageId=authoritative.body.session.activePageId!;
+    const paused=await agent({operation:'command',command:{action:'evaluate',expression:'window.__agentRan=true'}});
+    assert.equal(paused.status,409);assert.match(await paused.text(),/login required/i);
+    await viewer.getByTestId('browser-login-done').waitFor();assert.equal(await viewer.getByTestId('browser-login-done').isDisabled(),true);
+    const takeover=await api<BrowserSessionView>(a,auth,'POST',`/browser/sessions/${session.id}/command?nodeId=${b.nodeId}`,{action:'takeControl',loginRequestId});
+    assert.equal(takeover.status,200,JSON.stringify(takeover.body));await viewer.getByTestId('browser-control-status').filter({hasText:'Human control'}).waitFor();
+    await viewer.getByTestId('browser-login-done').click();await viewer.getByTestId('browser-error').filter({hasText:/could not be verified/i}).waitFor();
+    const premature=await api<{session:BrowserSessionView}>(a,auth,'GET',`/browser/sessions/${session.id}?nodeId=${b.nodeId}`);
+    assert.equal(premature.body.session.loginRequest?.id,loginRequestId);assert.equal(premature.body.session.owner,'human');assert.equal(await viewer.getByTestId('browser-resume-agent').isVisible(),false);
+    const fill=await api(a,auth,'POST',`/browser/sessions/${session.id}/command?nodeId=${b.nodeId}`,{action:'fill',selector:'#handoff-password',text:'synthetic-only',expectedPageId:handoffPageId});assert.equal(fill.status,200,JSON.stringify(fill.body));
+    const submit=await api(a,auth,'POST',`/browser/sessions/${session.id}/command?nodeId=${b.nodeId}`,{action:'clickElement',selector:'#handoff-submit',expectedPageId:handoffPageId});assert.equal(submit.status,200,JSON.stringify(submit.body));
+    await viewer.getByTestId('browser-login-done').click();await viewer.getByTestId('browser-login-notice').waitFor({state:'hidden'});await viewer.getByTestId('browser-control-status').filter({hasText:'Agent control'}).waitFor();
+    const completed=await api<{session:BrowserSessionView}>(a,auth,'GET',`/browser/sessions/${session.id}?nodeId=${b.nodeId}`);assert.equal(completed.body.session.loginRequest,null);
+    const verified=await command({action:'evaluate',expression:"Boolean(document.querySelector('#signed-in') && !document.querySelector('#signed-in').hidden)"});assert.equal(verified.result,true);
+    const replay=await api<BrowserSessionView>(a,auth,'POST',`/browser/sessions/${session.id}/command?nodeId=${b.nodeId}`,{action:'takeControl',loginRequestId});assert.equal(replay.status,409);
+    const afterReplay=await api<{session:BrowserSessionView}>(a,auth,'GET',`/browser/sessions/${session.id}?nodeId=${b.nodeId}`);assert.equal(afterReplay.body.session.owner,'agent');
+    await command({action:'navigate',url:fixtureOrigin});
     await command({action:'clickElement',selector:'#login'});
     await viewer.getByTestId('browser-select-tab').filter({hasText:'Popup login'}).waitFor();
     await command({action:'clickElement',selector:'text=Sign in'});
@@ -96,7 +123,7 @@ test("conversation browser runs independently of its agent node and stays pinned
     assert.ok(downloadId);const downloaded=await agent({operation:'download',downloadId});assert.equal(await downloaded.text(),'downloaded on browser node');
     const saved=await command({action:'saveProfile',label:'Integration login'});assert.ok(saved.result.id);
     await viewer.close();await command({action:'close'});
-    const restored=await(await agent({operation:'start',nodeId:b.nodeId,url:`http://localhost:${(fixture.address() as AddressInfo).port}`,profileId:saved.result.id})).json();assert.notEqual(restored.session.id,session.id);
+    const restored=await(await agent({operation:'start',nodeId:b.nodeId,url:fixtureOrigin,profileId:saved.result.id})).json();assert.notEqual(restored.session.id,session.id);
     assert.match((await command({action:'evaluate',expression:'document.cookie'})).result,/login=remembered/);
     await command({action:'close'});
   } finally {

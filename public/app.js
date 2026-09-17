@@ -55,6 +55,7 @@ import "./app/terminal.js";
 import "./app/ownership.js";
 import "./app/composer.js";
 import "./app/secrets.js";
+import "./app/browser-login.js";
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", async () => {
