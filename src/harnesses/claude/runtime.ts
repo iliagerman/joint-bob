@@ -31,6 +31,8 @@ const execute = promisify(execFile);
 const modelIds = ["fable", "claude-opus-5", "opus", "sonnet", "haiku"];
 const effortIds = ["default", "low", "medium", "high", "xhigh", "max"];
 type Listener = (event: HarnessEvent) => void;
+/** Text spoken so far in the running turn, and the tool names its bubbles carry. */
+interface TurnTranscript { assistant: string; toolNames: Map<string, string> }
 
 function validate(settings: HarnessModelSettings): void {
   if (settings.provider !== "claude") throw new Error("Provider must be claude");
@@ -145,6 +147,30 @@ class ClaudeSession implements HarnessSession {
     await preflightQueuedClaude(this.options.cwd, env);
   }
 
+  private recordTurnEvent(event: HarnessEvent, turn: TurnTranscript): void {
+    if (event.type === "textDelta") turn.assistant += String(event.text);
+    if (event.type === "toolStart") {
+      turn.toolNames.set(String(event.toolCallId), String(event.toolName));
+      this.pushAssistant(turn);
+    }
+    if (event.type !== "toolEnd") return;
+    const isError = event.isError === true;
+    this.transcript.push({
+      id: `${this.id}:tool:${this.transcript.length}`,
+      role: "toolResult",
+      toolName: turn.toolNames.get(String(event.toolCallId)) ?? String(event.toolName),
+      text: String(event.text ?? ""),
+      ...(isError ? { isError } : {}),
+    });
+  }
+
+  private pushAssistant(turn: TurnTranscript): void {
+    const text = turn.assistant.trim();
+    turn.assistant = "";
+    if (!text) return;
+    this.transcript.push({ id: `${this.id}:assistant:${this.transcript.length}`, role: "assistant", text });
+  }
+
   private markStarted(input: HarnessPrompt, state: { started: boolean }, event?: HarnessEvent): void {
     if (state.started || (event && !startsTurn(event))) return;
     state.started = true;
@@ -183,6 +209,9 @@ class ClaudeSession implements HarnessSession {
     context: string,
     resumeSessionId: string | undefined,
   ): Promise<void> {
+    // Claude speaks again after each tool call. Recording every block and tool
+    // result separately keeps the transcript in the pieces the live stream showed.
+    const turn: TurnTranscript = { assistant: "", toolNames: new Map() };
     const run = await runClaudeConversationPrompt({
       cwd: this.options.cwd,
       prompt: input.text,
@@ -197,14 +226,13 @@ class ClaudeSession implements HarnessSession {
       onEvent: (event) => {
         this.markStarted(input, state, event);
         if (event.type === "contextUsage") this.contextUsage = event.usage as ContextUsage;
+        this.recordTurnEvent(event, turn);
         this.emit(event);
       },
     });
     this.child = run.child;
     const result = await run.done;
-    if (result.assistantText) {
-      this.transcript.push({ id: `${this.id}:assistant:${this.transcript.length}`, role: "assistant", text: result.assistantText });
-    }
+    this.pushAssistant(turn);
     if (!result.ok) throw new Error(result.sawOutput ? "Claude prompt failed after output" : "Claude prompt failed before output");
     this.markStarted(input, state);
     if (result.tools !== null) this.availableTools = [...result.tools];

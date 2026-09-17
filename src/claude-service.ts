@@ -375,16 +375,36 @@ export async function claudeSessionContextUsage(sessionPath: string): Promise<Co
 export async function loadClaudeMessages(sessionPath: string): Promise<ChatMessage[]> {
   const filePath = resolveClaudeSessionPath(sessionPath);
   const lines = (await readFile(filePath, "utf8")).split("\n").filter(Boolean);
-  return lines
-    .map((line, index) => {
-      const record = JSON.parse(line) as UnknownRecord;
-      const message = asRecord(record.message);
-      const text = claudeMessageText(record);
-      const timestamp = typeof record.timestamp === "string" ? record.timestamp : undefined;
-      const role = message.role === "user" ? "user" : "assistant";
-      return { id: `${index}`, role, text: role === "user" ? stripHandoffEnvelope(text) : text, ...(timestamp ? { timestamp } : {}) };
-    })
-    .filter((message) => message.text.trim().length > 0 && !(message.role === "user" && isClaudeLocalCommandMessage(message.text)));
+  const toolNames = new Map<string, string>();
+  const messages: ChatMessage[] = [];
+  for (const [index, line] of lines.entries()) {
+    const record = JSON.parse(line) as UnknownRecord;
+    const message = asRecord(record.message);
+    const timestamp = typeof record.timestamp === "string" ? record.timestamp : undefined;
+    const stamp = timestamp ? { timestamp } : {};
+    // A tool result arrives as its own record, so replaying it here keeps the
+    // prose around a tool call reading in the order the turn streamed it.
+    for (const part of Array.isArray(message.content) ? message.content : []) {
+      const block = asRecord(part);
+      if (block.type === "tool_use") toolNames.set(String(block.id ?? ""), String(block.name ?? "tool"));
+      if (block.type !== "tool_result") continue;
+      const result = blockText(block.content);
+      if (!result.trim()) continue;
+      messages.push({
+        id: `${index}:${messages.length}`,
+        role: "toolResult",
+        toolName: toolNames.get(String(block.tool_use_id ?? "")) ?? "tool",
+        text: result,
+        ...(block.is_error === true ? { isError: true } : {}),
+        ...stamp,
+      });
+    }
+    const text = claudeMessageText(record);
+    const role = message.role === "user" ? "user" : "assistant";
+    if (!text.trim() || (role === "user" && isClaudeLocalCommandMessage(text))) continue;
+    messages.push({ id: `${index}`, role, text: role === "user" ? stripHandoffEnvelope(text) : text, ...stamp });
+  }
+  return messages;
 }
 
 /** Every conversation spawn gets the shared capabilities, including tasks and recovery. */
