@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.53.0 — 2026-09-17
 
 - Agents can now automatically fill website login forms using credentials attached to your conversation.
+- Holding the shortcut modifiers now shows the message box its own key, so you can jump straight to typing without the mouse.
 
 ## 1.52.3 — 2026-09-17
 
