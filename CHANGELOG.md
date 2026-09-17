@@ -5,6 +5,8 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+## 1.50.2 — 2026-09-17
+
 - Browser sessions now automatically close after two hours of inactivity, releasing Chrome resources while keeping their saved login profiles available for explicit reopen.
 
 ## 1.50.1 — 2026-09-17
