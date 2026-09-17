@@ -125,6 +125,26 @@ test("fork on a peer snapshots its running source on the owner without stopping 
   } finally { publishPiRuntime(db, runtime, false); db.close(); }
 });
 
+test("bob-btw created through a peer stays hidden and closes on its owner", { timeout: 45_000 }, async () => {
+  const project = nodeA.projects[0];
+  const listed = await api<{ sessions: SessionView[] }>(nodeA, sessionA, "GET", `/projects/${project.id}/sessions`);
+  const source = listed.body.sessions.find((row) => row.harnessId === "pi")!;
+  const takeover = await api(nodeA, sessionA, "POST", `/projects/${project.id}/sessions/take-ownership`, { peerId: nodeA.nodeId, sessionId: source.id, sessionPath: source.path });
+  assert.equal(takeover.status, 200);
+  const created = await api<{ session: SessionView; token: string }>(nodeB, sessionB, "POST", `/projects/${project.id}/sessions/by-the-way`, { engine: "pi", sessionId: source.id });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  assert.equal(created.body.session.executionNodeId, nodeA.nodeId);
+  assert.equal((await api<{ sessions: SessionView[] }>(nodeB, sessionB, "GET", `/projects/${project.id}/sessions`)).body.sessions.some((row) => row.id === created.body.session.id), false);
+  const closed = await api<{ closed: boolean }>(nodeB, sessionB, "POST", `/projects/${project.id}/sessions/by-the-way/close`, {
+    engine: created.body.session.harnessId,
+    sessionId: created.body.session.id,
+    token: created.body.token,
+    nodeId: created.body.session.executionNodeId,
+  });
+  assert.deepEqual(closed, { status: 200, body: { closed: true } });
+  await assert.rejects(readFile(created.body.session.path, "utf8"));
+});
+
 test("active bob-goal state replicates to the peer", async () => {
   const projectA = nodeA.projects[0];
   const projectB = nodeB.projects.find((project) => project.name === projectA.name)!;

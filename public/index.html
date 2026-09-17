@@ -804,6 +804,20 @@
       </div>
     </dialog>
 
+    <dialog id="byTheWayDialog" class="by-the-way-dialog" data-testid="by-the-way-dialog" aria-labelledby="byTheWayTitle">
+      <section class="by-the-way-card">
+        <header class="by-the-way-heading">
+          <div>
+            <span class="eyebrow">Temporary conversation</span>
+            <h2 id="byTheWayTitle">By the Way</h2>
+          </div>
+          <button class="ghost compact" id="closeByTheWayButton" type="button" data-testid="by-the-way-close-button">Close</button>
+        </header>
+        <p class="by-the-way-status" id="byTheWayStatus" role="status">Cloning conversation…</p>
+        <div class="by-the-way-frame" id="byTheWayFrame"></div>
+      </section>
+    </dialog>
+
     <dialog id="terminalDialog" data-testid="terminal-dialog">
       <div class="dialog-card terminal-card">
         <div class="terminal-heading">

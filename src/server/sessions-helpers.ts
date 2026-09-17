@@ -1,3 +1,4 @@
+import { listByTheWaySessionIds } from "../by-the-way-leases.js";
 import { applyConversationWork, listConversationWork, refreshConversationWork } from "../conversation-work.js";
 import { getClusterNode, getClusterPeer } from "../cluster.js";
 import { claimConversationOwnership, type ConversationEngine, type ConversationOwnership, ConversationOwnershipError, type ConversationOwnershipStatus, getConversationOwnership, healStaleLocalClaim } from "../conversation-ownership.js";
@@ -45,7 +46,7 @@ async function migratePortableNotifications(userId: string, username: string, pr
   return notifications;
 }
 
-export async function listProjectSessionsWithReviewState(project: ProjectRecord, userId: string, username: string, historyDays = getSettings().conversationHistoryDays): Promise<SessionSummary[]> {
+export async function listProjectSessionsWithReviewState(project: ProjectRecord, userId: string, username: string, historyDays = getSettings().conversationHistoryDays, includeTemporarySessionId?: string): Promise<SessionSummary[]> {
   const tasks = await listTasks(project.id);
   const pinnedSessionPaths = userId ? getUserPreferences(userId).pinnedSessionPaths : [];
   const pinnedSessionIds = (username ? listUserPins(username).conversations : [])
@@ -62,7 +63,9 @@ export async function listProjectSessionsWithReviewState(project: ProjectRecord,
     includedSessionIds,
   };
   sessionWatcher.ensureProject(searchProject);
-  const sessions = await listHarnessSessions(searchProject, includedSessionPaths, includedSessionIds);
+  const temporarySessionIds = await listByTheWaySessionIds(project.id);
+  const sessions = (await listHarnessSessions(searchProject, includedSessionPaths, includedSessionIds))
+    .filter((session) => !temporarySessionIds.has(session.id) || session.id === includeTemporarySessionId);
   const tasksBySessionPath = new Map(tasks.filter((task) => task.sessionPath).map((task) => [task.sessionPath, task]));
   const tasksById = new Map(tasks.map((task) => [task.id, task]));
   await refreshConversationWork();

@@ -1,5 +1,6 @@
 import { executeComposerCommand, LOCAL_COMMANDS } from "../composer-commands.js";
 import { api } from "./api.js";
+import { openByTheWay } from "./by-the-way.js";
 import { sendSocket } from "./chat-controls.js";
 import { setInputValue } from "./composer.js";
 import { elements } from "./elements.js";
@@ -296,6 +297,10 @@ export function composerCommandHandlers() {
         return;
       }
       toast("Compacting conversation…");
+    },
+    bobBtw: () => {
+      setInputValue("");
+      void openByTheWay();
     },
   };
 }

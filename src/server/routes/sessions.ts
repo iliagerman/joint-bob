@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { lstat, unlink } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import type { AuthSession } from "../../auth.js";
+import { createByTheWayLease, deleteByTheWayLease, getByTheWayLease, getByTheWayLeaseByToken, listByTheWayLeases } from "../../by-the-way-leases.js";
 import { type ClusterPeer, getClusterMachineToken, getClusterNode, getClusterPeer, listClusterPeers } from "../../cluster.js";
 import { beginConversationRecovery, compareAndSetConversationOwnership, type ConversationEngine, type ConversationOwnership, finishConversationRecovery, getConversationOwnership, type OwnershipApplyResult, sameConversationOwnership, takeConversationOwnership } from "../../conversation-ownership.js";
 import { deleteConversationRecord, getConversationRecord } from "../../conversation-records.js";
@@ -39,7 +41,9 @@ app.get("/api/projects/:projectId/sessions", async (request, response, next) => 
     }
     await touchProject(project.id);
     const authSession = response.locals.authSession as AuthSession;
-    response.json({ sessions: await listProjectSessionsWithReviewState(project, authSession.userId, authSession.username) });
+    const token = typeof request.query.byTheWayToken === "string" ? request.query.byTheWayToken : undefined;
+    const temporary = token ? await getByTheWayLeaseByToken(project.id, token) : undefined;
+    response.json({ sessions: await listProjectSessionsWithReviewState(project, authSession.userId, authSession.username, undefined, temporary?.sessionId) });
   } catch (error) {
     next(error);
   }
@@ -143,6 +147,147 @@ app.post("/api/cluster/sessions/fork", async (request, response, next) => {
     response.status(201).json({ session });
   } catch (error) {
     if (error instanceof ConversationForkError) { sendError(response, error.status, error.message); return; }
+    next(error);
+  }
+});
+
+const byTheWayCloseSchema = sessionForkSchema.extend({ token: z.string().uuid(), nodeId: z.string().uuid().optional() });
+
+async function createLocalByTheWay(project: ProjectRecord, engine: ConversationEngine, sessionId: string): Promise<{ session: SessionSummary; token: string }> {
+  const session = await forkLocalConversation(project, engine, sessionId, "[BTW]");
+  try {
+    const lease = await createByTheWayLease(project.id, session.harnessId, session.id);
+    return { session, token: lease.token };
+  } catch (error) {
+    await deleteLocalConversation(project, session.harnessId, session.id).catch((cleanupError) => console.warn("Could not roll back By the Way fork", cleanupError));
+    throw error;
+  }
+}
+
+async function closeLocalByTheWay(project: ProjectRecord, engine: ConversationEngine, sessionId: string, token: string): Promise<void> {
+  const lease = await getByTheWayLease(project.id, engine, sessionId, token);
+  if (!lease) throw new ConversationDeleteError(404, "By the Way conversation not found");
+  const shared = findHarnessSession(project.id, engine, sessionId);
+  if (shared && harnessSessionBusy(shared)) {
+    await shared.session.cancel();
+    const deadline = Date.now() + 10_000;
+    while (harnessSessionBusy(shared) && Date.now() < deadline) await delay(20);
+    if (harnessSessionBusy(shared)) throw new ConversationDeleteError(409, "By the Way conversation is still stopping");
+  }
+  try {
+    await deleteLocalConversation(project, engine, sessionId);
+  } catch (error) {
+    if (!(error instanceof ConversationDeleteError) || error.status !== 404) throw error;
+  }
+  await deleteByTheWayLease(lease);
+}
+
+export async function cleanupAbandonedByTheWayConversations(): Promise<void> {
+  for (const lease of await listByTheWayLeases()) {
+    try {
+      const project = await getProject(lease.projectId);
+      if (project) await closeLocalByTheWay(project, lease.engine, lease.sessionId, lease.token);
+      else await deleteByTheWayLease(lease);
+    } catch (error) {
+      console.warn(`Could not delete abandoned By the Way conversation ${lease.sessionId}`, error);
+    }
+  }
+}
+
+async function byTheWayOwner(engine: ConversationEngine, sessionId: string, requestedNodeId?: string): Promise<ClusterPeer | undefined> {
+  const local = await getClusterNode();
+  const ownership = await getConversationOwnership(engine, sessionId);
+  const ownerNodeId = requestedNodeId ?? ownership?.ownerNodeId;
+  if (!ownerNodeId || ownerNodeId === local.id) return undefined;
+  const peer = await getClusterPeer(ownerNodeId);
+  if (!peer) throw new ConversationDeleteError(409, "Conversation owner is unavailable");
+  return peer;
+}
+
+app.post("/api/projects/:projectId/sessions/by-the-way", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    const payload = sessionForkSchema.parse(request.body);
+    const peer = await byTheWayOwner(payload.engine, payload.sessionId);
+    if (peer) {
+      const routed = await fetch(`${peer.url}/api/cluster/sessions/by-the-way`, {
+        method: "POST", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, projectId: project.id }), signal: AbortSignal.timeout(30_000),
+      });
+      const body = await routed.json();
+      if (routed.ok) {
+        const result = z.object({ session: z.object({ harnessId: registeredHarnessIdSchema, id: z.string().min(1) }).passthrough(), token: z.string().uuid() }).parse(body);
+        try {
+          await createByTheWayLease(project.id, result.session.harnessId, result.session.id, result.token);
+        } catch (error) {
+          await fetch(`${peer.url}/api/cluster/sessions/by-the-way/close`, {
+            method: "POST", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ projectId: project.id, engine: result.session.harnessId, sessionId: result.session.id, token: result.token }), signal: AbortSignal.timeout(30_000),
+          }).catch((cleanupError) => console.warn("Could not roll back remote By the Way fork", cleanupError));
+          throw error;
+        }
+      }
+      response.status(routed.status).json(body);
+      return;
+    }
+    response.status(201).json(await createLocalByTheWay(project, payload.engine, payload.sessionId));
+  } catch (error) {
+    if (error instanceof ConversationForkError || error instanceof ConversationDeleteError) { sendError(response, error.status, error.message); return; }
+    next(error);
+  }
+});
+
+app.post("/api/cluster/sessions/by-the-way", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const payload = sessionForkSchema.extend({ projectId: z.string().min(1) }).parse(request.body);
+    const project = await getProject(payload.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    response.status(201).json(await createLocalByTheWay(project, payload.engine, payload.sessionId));
+  } catch (error) {
+    if (error instanceof ConversationForkError) { sendError(response, error.status, error.message); return; }
+    next(error);
+  }
+});
+
+app.post("/api/projects/:projectId/sessions/by-the-way/close", async (request, response, next) => {
+  try {
+    const project = await getProject(request.params.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    const payload = byTheWayCloseSchema.parse(request.body);
+    const peer = await byTheWayOwner(payload.engine, payload.sessionId, payload.nodeId);
+    if (peer) {
+      const routed = await fetch(`${peer.url}/api/cluster/sessions/by-the-way/close`, {
+        method: "POST", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, projectId: project.id }), signal: AbortSignal.timeout(30_000),
+      });
+      const body = await routed.json();
+      if (routed.ok) {
+        const shadow = await getByTheWayLease(project.id, payload.engine, payload.sessionId, payload.token);
+        if (shadow) await deleteByTheWayLease(shadow);
+      }
+      response.status(routed.status).json(body);
+      return;
+    }
+    await closeLocalByTheWay(project, payload.engine, payload.sessionId, payload.token);
+    response.json({ closed: true });
+  } catch (error) {
+    if (error instanceof ConversationDeleteError) { sendError(response, error.status, error.message); return; }
+    next(error);
+  }
+});
+
+app.post("/api/cluster/sessions/by-the-way/close", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const payload = byTheWayCloseSchema.extend({ projectId: z.string().min(1) }).parse(request.body);
+    const project = await getProject(payload.projectId);
+    if (!project) { sendError(response, 404, "Project not found"); return; }
+    await closeLocalByTheWay(project, payload.engine, payload.sessionId, payload.token);
+    response.json({ closed: true });
+  } catch (error) {
+    if (error instanceof ConversationDeleteError) { sendError(response, error.status, error.message); return; }
     next(error);
   }
 });
@@ -514,11 +659,11 @@ app.post("/api/projects/:projectId/sessions/recover", async (request, response, 
   } catch (error) { next(error); }
 });
 
-class ConversationDeleteError extends Error {
+export class ConversationDeleteError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
 }
 
-async function deleteLocalConversation(project: ProjectRecord, engine: ConversationEngine, sessionId: string, taskId?: string): Promise<void> {
+export async function deleteLocalConversation(project: ProjectRecord, engine: ConversationEngine, sessionId: string, taskId?: string): Promise<void> {
   await assertProjectEditable(project);
   const tasks = await listTasks(project.id);
   const ticket = taskId ? tasks.find((task) => task.id === taskId) : undefined;

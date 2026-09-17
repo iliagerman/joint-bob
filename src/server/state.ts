@@ -53,6 +53,8 @@ export const machineRoutes = new Set([
   "POST /cluster/sync/share",
   "DELETE /cluster/sessions/delete",
   "POST /cluster/sessions/fork",
+  "POST /cluster/sessions/by-the-way",
+  "POST /cluster/sessions/by-the-way/close",
   "POST /cluster/sessions/take-ownership",
   "POST /cluster/sessions/queue-transfer",
   "GET /cluster/sessions/transcript-presence",

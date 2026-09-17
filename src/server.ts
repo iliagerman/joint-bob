@@ -38,7 +38,7 @@ import "./server/routes/background-tasks.js";
 import "./server/routes/background-completions.js";
 import "./server/routes/browser-monitors.js";
 import "./server/routes/projects.js";
-import "./server/routes/sessions.js";
+import { cleanupAbandonedByTheWayConversations } from "./server/routes/sessions.js";
 import { startCronScheduler } from "./server/cron.js";
 import "./server/routes/cron.js";
 import "./server/routes/tasks.js";
@@ -87,6 +87,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   }).catch(() => undefined);
   recoverMerges()
     .then(async () => {
+      await cleanupAbandonedByTheWayConversations();
       const retired = await retireUnreachableConversationWorkAfterRestart();
       if (retired) console.log(`Retired ${retired} agent run(s) whose dashboard did not survive the restart`);
     })

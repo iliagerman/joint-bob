@@ -24,7 +24,7 @@ function isWithin(filePath: string, root: string): boolean {
 /** Snapshot history, not running work. Every segment gets its own identity and file.
  * Ticket/worktree linkage, pending prompts, review state and pins are not inherited.
  * The fork uses the existing project directory, like a new conversation. */
-export async function forkLocalConversation(project: ProjectRecord, engine: ConversationEngine, sessionId: string): Promise<SessionSummary> {
+export async function forkLocalConversation(project: ProjectRecord, engine: ConversationEngine, sessionId: string, titlePrefix = "[F]"): Promise<SessionSummary> {
   await assertProjectEditable(project);
   const local = await getClusterNode();
   const sessions = await listProjectSessionsWithReviewState(project, "", "").catch((error) => {
@@ -40,7 +40,7 @@ export async function forkLocalConversation(project: ProjectRecord, engine: Conv
   const accounts = await Promise.all(targets.map((target) => getScopeSecretAccounts("conversation", conversationScopeId(target.engine, target.sessionId))));
   const ownership = await getConversationOwnership(engine, sessionId);
   if (ownership && (ownership.ownerNodeId !== local.id || ownership.status !== "owned")) throw new HarnessForkError(409, "Conversation owner changed; retry on its owner");
-  const title = `[F] ${source.title}`;
+  const title = `${titlePrefix} ${source.title}`;
   const timestamp = new Date().toISOString();
   const loaded = await Promise.all(targets.map(async (target) => {
     const adapter = getHarness(target.engine);
