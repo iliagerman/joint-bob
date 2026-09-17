@@ -97,6 +97,8 @@ interface LiveSession {
   queue: BrowserCommandQueue;
   cdp?: CDPSession;
   streamGeneration: number;
+  lastActivityAt: number;
+  activeOperations: number;
   stopped: boolean;
   stopSignal: AbortController;
   stopping?: Promise<void>;
@@ -104,6 +106,7 @@ interface LiveSession {
 const profileLeases = new Set<string>();
 const readOnly = new Set(["snapshot", "screenshot", "wait"]);
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
+const defaultIdleTimeoutMs = 2 * 60 * 60 * 1000;
 
 export class BrowserRuntime {
   private readonly store = new BrowserStore();
@@ -116,15 +119,27 @@ export class BrowserRuntime {
   private creates: Promise<unknown> = Promise.resolve();
   private closed = false;
   private closing?: Promise<void>;
+  private readonly idleTimeoutMs: number;
+  private readonly idleTimer: NodeJS.Timeout;
 
-  constructor(private readonly options: { capability?: () => Promise<BrowserCapability> } = {}) {}
+  constructor(private readonly options: { capability?: () => Promise<BrowserCapability>; idleTimeoutMs?: number } = {}) {
+    this.idleTimeoutMs = options.idleTimeoutMs ?? defaultIdleTimeoutMs;
+    if (!Number.isFinite(this.idleTimeoutMs) || this.idleTimeoutMs <= 0) throw new Error("Browser idle timeout must be positive");
+    this.idleTimer = setInterval(() => this.expireIdleSessions(), Math.min(this.idleTimeoutMs, 60_000));
+    this.idleTimer.unref();
+  }
 
   ready(): Promise<void> {
     return this.initialization ??= this.restore();
   }
 
   private async restore(): Promise<void> {
-    const pending = this.store.list().filter(row => row.restoreOnRestart && row.profileId && !profileLeases.has(profileDirectory(row.profileId)));
+    const recoverable = this.store.list().filter(row => row.restoreOnRestart && row.profileId && !profileLeases.has(profileDirectory(row.profileId)));
+    const cutoff = Date.now() - this.idleTimeoutMs;
+    for (const row of recoverable.filter(row => Date.parse(row.updatedAt) <= cutoff)) {
+      this.store.finish(row.id, "interrupted", "Browser session became idle while the node was offline; reopen its saved profile explicitly.", false);
+    }
+    const pending = recoverable.filter(row => Date.parse(row.updatedAt) > cutoff);
     this.store.interruptRunning([...profileLeases].map(directory => path.basename(directory)));
     for (const row of pending) {
       const job = (async () => {
@@ -205,7 +220,7 @@ export class BrowserRuntime {
       context.setDefaultNavigationTimeout(20000);
       const row = this.store.get(id);
       this.store.resume(id);
-      session = { id: row.id, profileId: profile.id, restoring: true, context, pages: new Map(), activePageId: null, human: recovery ? recovery.human : null, chooser: null, dialog: null, downloads: [], transfers: new Set(), viewers: new Set(), errors: [], queue: new BrowserCommandQueue(), streamGeneration: 0, stopped: false, stopSignal: new AbortController() };
+      session = { id: row.id, profileId: profile.id, restoring: true, context, pages: new Map(), activePageId: null, human: recovery ? recovery.human : null, chooser: null, dialog: null, downloads: [], transfers: new Set(), viewers: new Set(), errors: [], queue: new BrowserCommandQueue(), streamGeneration: 0, lastActivityAt: Date.now(), activeOperations: 0, stopped: false, stopSignal: new AbortController() };
       this.sessions.set(row.id, session);
       const live = session;
       context.on("page", page => this.addPage(live, page));
@@ -216,6 +231,7 @@ export class BrowserRuntime {
       ]);
       if (session.stopped) { await session.stopping; return this.view(row.id); }
       session.restoring = false;
+      session.lastActivityAt = Date.now();
       this.checkpoint(session);
       return this.view(row.id);
     } catch (error) {
@@ -320,7 +336,7 @@ export class BrowserRuntime {
       if (["takeControl", "resumeAgent", "dialog", "close"].includes(command.action)) {
         this.authorize(session, command, actor);
         if (command.action === "takeControl" && actor.kind === "human") session.human = actor.id;
-        return this.run(session, command, actor).finally(() => this.broadcastState(session));
+        return this.withActivity(session, () => this.run(session, command, actor)).finally(() => this.broadcastState(session));
       }
       if (session.restoring) throw new Error("Browser profile is still restoring; retry when ready");
     } catch (error) { return Promise.reject(error); }
@@ -333,7 +349,7 @@ export class BrowserRuntime {
       }
       if (command.expectedPageId && !(command.action === "upload" && !command.selector) && session.activePageId !== command.expectedPageId) throw new Error("Browser tab changed; input from an old page was discarded");
       try {
-        const operation = this.run(session, command, actor);
+        const operation = this.withActivity(session, () => this.run(session, command, actor));
         // Upload preparation cannot cause a blocking dialog. Keep its actual
         // result while immediate dialog responses and End remain available.
         if (command.action === "upload") return await operation;
@@ -352,14 +368,14 @@ export class BrowserRuntime {
       session = this.sessions.get(grant.sessionId) as LiveSession;
       if (!session || session.stopped) throw new BrowserMonitorCheckError("browser-stopped", "Browser session is not running");
     } catch (error) { return Promise.reject(error); }
-    return session.queue.run("background", async () => {
+    return session.queue.run("background", () => this.withActivity(session, async () => {
       await grant.assertValid();
       this.assertMonitorTarget(grant, session);
       const value = await this.page(session).evaluate(expression);
       await grant.assertValid();
       this.assertMonitorTarget(grant, session);
       return normalizeMonitorRead(input, value);
-    });
+    }));
   }
 
   private assertMonitorTarget(grant: BrowserMonitorReadGrant, session: LiveSession): void {
@@ -572,6 +588,7 @@ export class BrowserRuntime {
   async attachViewer(id: string, ws: WebSocket, actor: BrowserActor): Promise<void> {
     void this.ready();
     const session = this.live(id);
+    session.lastActivityAt = Date.now();
     session.viewers.add(ws);
     this.viewerActors.set(ws, actor);
     ws.on("message", raw => {
@@ -643,6 +660,22 @@ export class BrowserRuntime {
     })().catch(error => { if (!session.stopped && generation === session.streamGeneration) for (const ws of session.viewers) this.send(ws, { type: "browserError", error: message(error) }); });
   }
 
+  private async withActivity<T>(session: LiveSession, operation: () => Promise<T>): Promise<T> {
+    session.lastActivityAt = Date.now();
+    session.activeOperations++;
+    try { return await operation(); }
+    finally { session.activeOperations--; session.lastActivityAt = Date.now(); }
+  }
+
+  private expireIdleSessions(): void {
+    const cutoff = Date.now() - this.idleTimeoutMs;
+    for (const session of this.sessions.values()) {
+      if (session.stopped || session.restoring || session.viewers.size || session.activeOperations || session.lastActivityAt > cutoff) continue;
+      void this.stop(session, "interrupted", "Browser session was idle; reopen its saved profile explicitly.", false)
+        .catch(error => console.error("Failed to close idle browser session", { sessionId: session.id, error: message(error) }));
+    }
+  }
+
   private stop(session: LiveSession, state: "closed" | "interrupted", error?: string, restoreOnRestart = false): Promise<void> {
     if (session.stopping) return session.stopping;
     if (state === "closed") this.cancelledRecoveries.add(session.id);
@@ -678,6 +711,7 @@ export class BrowserRuntime {
   close(): Promise<void> {
     if (this.closing) return this.closing;
     this.closed = true;
+    clearInterval(this.idleTimer);
     return this.closing = (async () => {
       const stopping = Promise.allSettled([...this.sessions.values()].map(session => this.stop(session, "interrupted", "Browser runtime stopped; profile will restore on restart.", true)));
       await this.initialization;

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Browser sessions now automatically close after two hours of inactivity, releasing Chrome resources while keeping their saved login profiles available for explicit reopen.
+
 ## 1.50.1 — 2026-09-17
 
 - Widened the driven browser viewport to standard laptop dimensions, preventing websites from collapsing into narrow columns.

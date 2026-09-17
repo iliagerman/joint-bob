@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test, type TestContext } from "node:test";
 import { EventEmitter } from "node:events";
 import { DatabaseSync } from "node:sqlite";
+import { setTimeout as delay } from "node:timers/promises";
 import { randomUUID } from "node:crypto";
 import { readFile, stat, access, rm, writeFile, mkdir } from "node:fs/promises";
 import type { WebSocket } from "ws";
@@ -82,6 +83,49 @@ test("native profiles isolate accounts, enforce leases, rename in place and dele
     await assert.rejects(access(launches[0].directory));
     await access(launches[1].directory);
     await runtime.execute(second.id, { action: "close" }, agent);
+  } finally { await runtime.close(); }
+});
+
+test("idle sessions release Chrome while keeping their profile available for an explicit reopen", async t => {
+  const launches = mockChrome(t);
+  const start = identity();
+  const runtime = new BrowserRuntime({ capability, idleTimeoutMs: 20 });
+  try {
+    const first = await runtime.create({ ...start, profileName: "Idle account", url: "https://example.com/account" });
+    for (let attempt = 0; attempt < 50 && (await runtime.get(first.id)).state === "running"; attempt++) await delay(10);
+    const idle = await runtime.get(first.id);
+    assert.equal(idle.state, "interrupted");
+    assert.equal(idle.restoreOnRestart, false);
+    assert.match(idle.error ?? "", /idle/i);
+
+    const reopened = await runtime.create({ ...start, profileId: first.profileId });
+    assert.notEqual(reopened.id, first.id);
+    assert.equal(reopened.state, "running");
+    assert.equal(launches[1].directory, launches[0].directory);
+    await runtime.execute(reopened.id, { action: "close" }, agent);
+  } finally { await runtime.close(); }
+});
+
+test("startup skips restore for a session that became stale while the node was down", async t => {
+  const launches = mockChrome(t);
+  const start = identity();
+  let runtime = new BrowserRuntime({ capability, idleTimeoutMs: 10_000 });
+  try {
+    const first = await runtime.create({ ...start, profileName: "Offline idle" });
+    await runtime.close();
+    await delay(30);
+
+    runtime = new BrowserRuntime({ capability, idleTimeoutMs: 20 });
+    await runtime.ready();
+    const stale = await runtime.get(first.id);
+    assert.equal(stale.state, "interrupted");
+    assert.equal(stale.restoreOnRestart, false);
+    assert.equal(launches.length, 1);
+
+    const reopened = await runtime.create({ ...start, profileId: first.profileId });
+    assert.equal(reopened.state, "running");
+    assert.equal(launches[1].directory, launches[0].directory);
+    await runtime.execute(reopened.id, { action: "close" }, agent);
   } finally { await runtime.close(); }
 });
 
