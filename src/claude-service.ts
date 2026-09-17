@@ -14,6 +14,7 @@ import { claudeAgentResourceArgs } from "./agent-resources.js";
 import { agentCapabilityEnvironment, agentCapabilityInstructionFiles } from "./agent-capabilities.js";
 import { getConversationRecord } from "./conversation-records.js";
 import type { ChatMessage, ContextUsage, SessionSummary } from "./types.js";
+import { stripScheduledPromptMarker } from "./scheduled-prompt.js";
 import { stripHandoffEnvelope } from "./handoff-context.js";
 export { buildHandoffContext, stripHandoffEnvelope } from "./handoff-context.js";
 
@@ -227,7 +228,7 @@ function cleanClaudeTitle(value: unknown): string {
 function meaningfulClaudePrompt(record: UnknownRecord): string {
   let text = claudeMessageText(record).trim();
   if (text.startsWith("## Available secret accounts")) text = text.split("\n\n").slice(1).join("\n\n").trim();
-  text = stripHandoffEnvelope(text).trim();
+  text = stripScheduledPromptMarker(stripHandoffEnvelope(text)).trim();
   if (isClaudeLocalCommandMessage(text)) return "";
   return text.split("\n")[0].slice(0, 80);
 }

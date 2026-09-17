@@ -3,6 +3,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import WebSocket from "ws";
 import { getClusterMachineToken, getClusterNode, getClusterPeer } from "../cluster.js";
 import { getConversationOwnership } from "../conversation-ownership.js";
+import { scheduledPromptText } from "../scheduled-prompt.js";
 import { ensureConversationRecord, getConversationRecord, markCronConversation } from "../conversation-records.js";
 import { cronStore, type CronTask, type CronRun } from "../cron.js";
 import { ensureSessionTitle } from "../names.js";
@@ -92,7 +93,7 @@ export async function queuedCronPrompt(task: CronTask, run: CronRun, sessionId: 
           modelId: task.model?.modelId ?? event.status.model.id,
           reasoning: reasoning ?? event.status.thinkingLevel,
         } : undefined;
-        socket.send(JSON.stringify({ type: "prompt", message: task.prompt, requestId: run.id, ...(queueSettings ? { queueSettings } : {}) }));
+        socket.send(JSON.stringify({ type: "prompt", message: scheduledPromptText(task.prompt), requestId: run.id, ...(queueSettings ? { queueSettings } : {}) }));
       }
       if (event.type === "userMessage" && event.queued && event.requestId === run.id) {
         queueId = event.queueId;

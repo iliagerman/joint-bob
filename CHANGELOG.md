@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Added a project file explorer for navigating, opening, and managing files in your workspace, plus optimized background task display and improved supervisor resource efficiency.
+- Scheduled task transcripts now collapse to show only final reports, while your own messages stay fully visible so you can see the complete conversation thread.
 
 ## 1.45.0 — 2026-09-17
 

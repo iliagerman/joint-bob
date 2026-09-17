@@ -10,6 +10,8 @@ export interface SharedHarnessSession {
   engine: HarnessId; projectId: string; cwd: string; session: HarnessSession;
   clients: Set<WebSocket>; turnInFlight: number; lastLocalEventAt: number;
   liveEvents: HarnessEvent[]; idleTimer: NodeJS.Timeout | null; unsubscribe: () => void;
+  /** True while the running turn came from a scheduled task rather than a person. */
+  scheduledTurn: boolean;
 }
 
 export const harnessSessions = new Map<string, SharedHarnessSession>();
@@ -70,7 +72,7 @@ function subscribe(shared: SharedHarnessSession): () => void {
 async function createSession(engine: HarnessId, options: HarnessOpenOptions): Promise<SharedHarnessSession> {
   const session = await (await getHarnessRuntime(engine)).open(options);
   if (session.id !== options.sessionId) throw new Error(`Harness returned unexpected session ID: ${session.id}`);
-  const shared: SharedHarnessSession = { engine, projectId: options.projectId, cwd: options.cwd, session, clients: new Set(), turnInFlight: 0, lastLocalEventAt: 0, liveEvents: [], idleTimer: null, unsubscribe: () => {} };
+  const shared: SharedHarnessSession = { engine, projectId: options.projectId, cwd: options.cwd, session, clients: new Set(), turnInFlight: 0, lastLocalEventAt: 0, liveEvents: [], idleTimer: null, unsubscribe: () => {}, scheduledTurn: false };
   shared.unsubscribe = subscribe(shared);
   harnessSessions.set(harnessSessionKey(options.projectId, engine, session.id), shared);
   return shared;

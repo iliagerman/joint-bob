@@ -125,7 +125,7 @@ export function openSession(sessionPath, title = "New conversation", preserveCha
     state.pendingSessionColor = null;
     state.conversationSegments = null;
     state.activeConversationId = null;
-    state.scheduledConversation = false;
+    state.scheduledTurn = false;
     state.scheduledAssistantText = "";
     // A conversation being opened fresh starts out following the newest message.
     state.followChat = true;
@@ -198,7 +198,7 @@ function handleSocketPayload(payload, scrollOnReady = false) {
     state.activeSessionId = payload.sessionId || state.activeSessionId;
     state.activeConversationId = payload.conversationId || payload.sessionId || null;
     state.conversationSegments = payload.segments || null;
-    state.scheduledConversation = payload.scheduled === true;
+    state.scheduledTurn = payload.scheduledTurn === true;
     state.scheduledAssistantText = "";
     syncEngineUI();
     if (payload.sessionFile) {
@@ -302,7 +302,9 @@ function handleSocketPayload(payload, scrollOnReady = false) {
   }
   if (payload.type === "userMessage") {
     finalizeAssistantBubble();
-    if (state.scheduledConversation) return;
+    // A scheduled task's trigger prompt is the scheduler talking; a person's own
+    // message always shows, even in a conversation a schedule also drives.
+    if (payload.scheduled) return;
     state.spinOffSourceTaskId = null;
     const bubble = appendMessage("user", payload.text, true, payload.attachments);
     if (payload.queued) markMessageQueued(bubble, payload.queueId, payload.editableText, payload.settings, payload.revision);
@@ -312,12 +314,12 @@ function handleSocketPayload(payload, scrollOnReady = false) {
   // Prompts typed while the agent was busy live on the conversation, not on this
   // socket, so a reload or a reconnect gets them back instead of losing them.
   if (payload.type === "queuedPrompts") {
-    if (state.scheduledConversation) return;
-    const retained = new Set(payload.prompts.map((prompt) => prompt.id));
+    const prompts = payload.prompts.filter((prompt) => !prompt.scheduled);
+    const retained = new Set(prompts.map((prompt) => prompt.id));
     for (const bubble of elements.messages.querySelectorAll("[data-queue-id]")) {
       if (!retained.has(bubble.dataset.queueId)) removeQueuedMessage(bubble.dataset.queueId);
     }
-    for (const prompt of payload.prompts) {
+    for (const prompt of prompts) {
       const existing = elements.messages.querySelector(`[data-queue-id="${prompt.id}"]`);
       if (existing) {
         if (Number(existing.dataset.queueRevision) !== prompt.revision) updateQueuedMessage(prompt.id, prompt.text, prompt.editableText, prompt.settings, prompt.revision);
@@ -325,10 +327,11 @@ function handleSocketPayload(payload, scrollOnReady = false) {
       }
       markMessageQueued(appendMessage("user", prompt.text, true, prompt.attachments), prompt.id, prompt.editableText, prompt.settings, prompt.revision);
     }
-    syncQueuedMessageOrder(payload.prompts.map((prompt) => prompt.id));
+    syncQueuedMessageOrder(prompts.map((prompt) => prompt.id));
     return;
   }
   if (payload.type === "promptStarted") {
+    state.scheduledTurn = payload.scheduled === true;
     clearQueuedMark(payload.queueId);
     return;
   }
@@ -341,7 +344,7 @@ function handleSocketPayload(payload, scrollOnReady = false) {
     return;
   }
   if (payload.type === "textDelta") {
-    if (state.scheduledConversation) {
+    if (state.scheduledTurn) {
       state.scheduledAssistantText += payload.text;
       return;
     }
@@ -352,7 +355,7 @@ function handleSocketPayload(payload, scrollOnReady = false) {
     return;
   }
   if (payload.type === "assistantFinal") {
-    if (state.scheduledConversation) {
+    if (state.scheduledTurn) {
       state.scheduledAssistantText = payload.text;
       return;
     }
@@ -363,12 +366,12 @@ function handleSocketPayload(payload, scrollOnReady = false) {
     return;
   }
   if (payload.type === "thinkingStart") {
-    if (state.scheduledConversation) return;
+    if (state.scheduledTurn) return;
     state.thinkingBubble = appendMessage("thinking", "Thinking…\n");
     return;
   }
   if (payload.type === "thinkingDelta") {
-    if (state.scheduledConversation) return;
+    if (state.scheduledTurn) return;
     if (!state.thinkingBubble) state.thinkingBubble = appendMessage("thinking", "Thinking…\n");
     const currentText = state.thinkingBubble._raw || "";
     renderBubbleContent(state.thinkingBubble, `${currentText}${payload.text}`);
@@ -379,7 +382,7 @@ function handleSocketPayload(payload, scrollOnReady = false) {
     return;
   }
   if (payload.type === "toolStart") {
-    if (state.scheduledConversation) return;
+    if (state.scheduledTurn) return;
     clearThinkingBubble();
     finalizeAssistantBubble();
     const bubble = appendToolMessage(payload.toolName, payload.toolCallId);
@@ -388,27 +391,27 @@ function handleSocketPayload(payload, scrollOnReady = false) {
     return;
   }
   if (payload.type === "toolUpdate") {
-    if (state.scheduledConversation) return;
+    if (state.scheduledTurn) return;
     const bubble = state.toolBubbles.get(payload.toolCallId) || appendToolMessage(payload.toolName, payload.toolCallId);
     state.toolBubbles.set(payload.toolCallId, bubble);
     updateToolMessage(bubble, payload.text || "", "Running");
     return;
   }
   if (payload.type === "toolEnd") {
-    if (state.scheduledConversation) return;
+    if (state.scheduledTurn) return;
     const bubble = state.toolBubbles.get(payload.toolCallId) || appendToolMessage(payload.toolName, payload.toolCallId);
     updateToolMessage(bubble, payload.text || "", payload.isError ? "Failed" : "Done", payload.isError);
     state.toolBubbles.delete(payload.toolCallId);
     return;
   }
   if (payload.type === "assistantError") {
-    if (state.scheduledConversation) return;
+    if (state.scheduledTurn) return;
     clearThinkingBubble();
     finalizeAssistantBubble();
     appendMessage("tool", `${harnessLabel(state.harnesses, state.engine)} error: ${payload.error}`);
   }
   if (payload.type === "agent_start") {
-    if (state.scheduledConversation) state.scheduledAssistantText = "";
+    if (state.scheduledTurn) state.scheduledAssistantText = "";
     setStatus(`${harnessLabel(state.harnesses, state.engine)} is working`, true);
     state.lastTurnStartedAt = Date.now();
     state.sessionBusy = true;
@@ -419,8 +422,9 @@ function handleSocketPayload(payload, scrollOnReady = false) {
   if (payload.type === "agent_end") {
     clearThinkingBubble();
     finalizeAssistantBubble();
-    if (state.scheduledConversation && state.scheduledAssistantText.trim()) appendMessage("assistant", state.scheduledAssistantText);
+    if (state.scheduledTurn && state.scheduledAssistantText.trim()) appendMessage("assistant", state.scheduledAssistantText);
     state.scheduledAssistantText = "";
+    state.scheduledTurn = false;
     setStatus("Connected", true);
     state.sessionBusy = false;
     if (state.lastTurnStartedAt) {
@@ -506,7 +510,6 @@ export async function refreshSessionsQuietly() {
     const newlyNeedsReview = body.sessions.some((session) => session.reviewState === "needs_review" && previousStates.get(session.path) !== "needs_review");
     state.sessions = body.sessions;
     const activeSession = state.sessions.find((session) => session.id === state.activeSessionId || session.path === state.activeSessionPath);
-    if (activeSession?.cronTaskId) state.scheduledConversation = true;
     if (newlyNeedsReview) playCompletionSound().catch((error) => console.warn("Completion sound failed", error));
     const activeNode = state.sessionNodes.find((node) => node.id === state.activeNodeId);
     const activeSessionExists = state.sessions.some((session) => state.activeSessionId ? session.id === state.activeSessionId : session.path === state.activeSessionPath);

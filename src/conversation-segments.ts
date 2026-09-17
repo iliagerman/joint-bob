@@ -3,6 +3,7 @@ import { getHarness } from "./harnesses.js";
 import { getProject } from "./store.js";
 import type { ChatMessage, SessionSummary } from "./types.js";
 import type { ConversationEngine } from "./conversation-ownership.js";
+import { isScheduledPromptText } from "./scheduled-prompt.js";
 
 export interface ConversationSegmentView {
   engine: string;
@@ -46,18 +47,24 @@ export function boundTranscriptMessages<T extends ChatMessage & { segment?: numb
   } as T, ...retained];
 }
 
-/** Keeps one completed assistant report per turn for scheduled-conversation browser views. */
+/** Collapses each scheduled turn to its one completed report and leaves human turns whole. */
 export function scheduledReportMessages<T extends ChatMessage>(messages: T[], includeTrailingTurn = true): T[] {
-  const reports: T[] = [];
-  let latestAssistant: T | undefined;
+  const kept: T[] = [];
+  let turn: T[] = [];
+  let scheduled = false;
+  const flush = (complete: boolean) => {
+    if (!scheduled) { kept.push(...turn); return; }
+    const report = [...turn].reverse().find((message) => message.role === "assistant");
+    if (report && complete) kept.push(report);
+  };
   for (const message of messages) {
-    if (message.role === "user") {
-      if (latestAssistant) reports.push(latestAssistant);
-      latestAssistant = undefined;
-    } else if (message.role === "assistant") latestAssistant = message;
+    if (message.role !== "user") { turn.push(message); continue; }
+    flush(true);
+    scheduled = isScheduledPromptText(message.text);
+    turn = scheduled ? [] : [message];
   }
-  if (includeTrailingTurn && latestAssistant) reports.push(latestAssistant);
-  return reports;
+  flush(scheduled ? includeTrailingTurn : true);
+  return kept;
 }
 
 /** One flat transcript where every message knows its segment, plus the segment engines in order. */

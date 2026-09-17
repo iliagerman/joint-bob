@@ -53,7 +53,7 @@ test("scheduled executor queues its model and reasoning with the prompt so a bus
   try {
     await queuedCronPrompt(task, run, sessionId);
     assert.deepEqual(requests, [
-      { type: "prompt", message: "Report", requestId: run.id, queueSettings: { harnessId: "pi", provider: "zai", modelId: "glm-5.3-flash", reasoning: "low" } },
+      { type: "prompt", message: "[Joint Bob scheduled task]\nReport", requestId: run.id, queueSettings: { harnessId: "pi", provider: "zai", modelId: "glm-5.3-flash", reasoning: "low" } },
     ]);
   } finally {
     for (const socket of endpoint.clients) socket.terminate();

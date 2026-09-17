@@ -20,6 +20,7 @@ import { listTasks, updateTask } from "../tasks.js";
 import { persistTaskAttachments, promptTextWithAttachments } from "./chat.js";
 import { conversationBelongsToDoneTask } from "./cluster-helpers.js";
 import { conversationTranscriptPayload, scheduledReportMessages } from "../conversation-segments.js";
+import { isScheduledPromptText } from "../scheduled-prompt.js";
 import { socketMessageSchema } from "./schemas.js";
 import { claimConversationLocally, describeConversationOwner, type ForeignConversationOwner, requireLocalConversationOwner } from "./sessions-helpers.js";
 import { flags } from "./state.js";
@@ -105,7 +106,7 @@ export function refreshHarnessPromptQueue(connection: HarnessChatConnection): vo
   const prompts = listQueuedPrompts(queueKey(connection)).filter((prompt) => !startingIds.has(prompt.id));
   publish(connection, { type: "queuedPrompts", prompts: prompts.map((prompt) => {
     const images = new Set(prompt.images.map(({ path: imagePath }) => imagePath));
-    return { id: prompt.id, text: prompt.displayText, displayText: prompt.displayText, revision: prompt.revision, editableText: prompt.messageText ?? prompt.displayText, settings: prompt.settings, attachments: prompt.attachmentPaths.map((attachmentPath) => ({ kind: images.has(attachmentPath) ? "image" : "file", name: path.basename(attachmentPath), path: attachmentPath })) };
+    return { id: prompt.id, text: prompt.displayText, displayText: prompt.displayText, scheduled: isScheduledPromptText(prompt.promptText), revision: prompt.revision, editableText: prompt.messageText ?? prompt.displayText, settings: prompt.settings, attachments: prompt.attachmentPaths.map((attachmentPath) => ({ kind: images.has(attachmentPath) ? "image" : "file", name: path.basename(attachmentPath), path: attachmentPath })) };
   }) });
   publish(connection, { type: "queueUpdate", pending: prompts.length });
 }
@@ -159,7 +160,7 @@ async function enqueue(connection: HarnessChatConnection, message: string, image
   const suffix = absolute.length ? `Attached: ${absolute.map(({ name }) => name).join(", ")}` : "";
   const displayText = [message.trim(), suffix].filter(Boolean).join("\n\n");
   const queued = enqueuePrompt(queueKey(connection), promptText, displayText, { requestId, messageText: message, promptSuffix: promptText.slice(message.trim().length).trim(), displaySuffix: suffix, attachmentPaths: absolute.map(({ path: file }) => file), images: imageAttachments.map(({ path: file, mimeType }) => ({ path: file, mimeType })), settings: settings === undefined ? null : settings });
-  publish(connection, { type: "userMessage", text: displayText, queued: true, requestId: queued.requestId, queueId: queued.id, revision: queued.revision, editableText: queued.messageText, settings: queued.settings, attachments: absolute.map(({ kind, name, path: attachmentPath }) => ({ kind, name, path: attachmentPath })) });
+  publish(connection, { type: "userMessage", text: displayText, scheduled: isScheduledPromptText(message), queued: true, requestId: queued.requestId, queueId: queued.id, revision: queued.revision, editableText: queued.messageText, settings: queued.settings, attachments: absolute.map(({ kind, name, path: attachmentPath }) => ({ kind, name, path: attachmentPath })) });
   refreshHarnessPromptQueue(connection);
   void drainHarnessPromptQueue(connection).catch((error) => publish(connection, { type: "error", error: chatErrorMessage(error) }));
 }
@@ -196,7 +197,8 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
         claimed = claimQueuedPrompt(queued.id, currentSettings(connection));
         if (!claimed) throw new Error("Queued prompt was changed before start");
         connection.handoffContext = null;
-        publish(connection, { type: "promptStarted", queueId: queued.id });
+        connection.shared.scheduledTurn = isScheduledPromptText(queued.promptText);
+        publish(connection, { type: "promptStarted", queueId: queued.id, scheduled: connection.shared.scheduledTurn });
         refreshHarnessPromptQueue(connection);
       } });
       if (!claimed) throw new Error("Harness did not start the queued prompt");
@@ -213,7 +215,7 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
       startingIds.delete(queued.id);
     }
   } finally {
-    connection.shared.turnInFlight -= 1; sendHarnessStatus(connection.shared);
+    connection.shared.turnInFlight -= 1; connection.shared.scheduledTurn = false; sendHarnessStatus(connection.shared);
   }
 }
 
@@ -455,7 +457,7 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
   const scheduled = Boolean(record?.cronTaskId);
   const browserMessages = scheduled ? scheduledReportMessages(transcript.messages, !harnessSessionBusy(shared)) : transcript.messages;
   const goal = await getConversationGoal(options.project.id, conversationId);
-  send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, scheduled, bobGoal: goal ?? null, ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
+  send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, scheduled, scheduledTurn: scheduled && shared.scheduledTurn, bobGoal: goal ?? null, ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
   for (const event of shared.liveEvents) send(options.socket, event);
   refreshHarnessPromptQueue(connection);
   options.socket.on("message", (raw) => void handleHarnessChatMessage(connection, raw as Buffer).catch(async (error) => {

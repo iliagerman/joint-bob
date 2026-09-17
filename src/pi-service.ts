@@ -21,6 +21,7 @@ import { agentCredentialContext, agentEnvironment, persistConversationSecretAcco
 import { agentCapabilityEnvironment, agentCapabilityInstructionFiles } from "./agent-capabilities.js";
 import { getConversationRecord } from "./conversation-records.js";
 import { stripHandoffEnvelope } from "./claude-service.js";
+import { stripScheduledPromptMarker } from "./scheduled-prompt.js";
 import { sessionCwds, type SessionProjectPaths } from "./harnesses/shared-paths.js";
 import { canonicalPiTranscriptName, piSessionIdFromFileName } from "./harnesses/pi/paths.js";
 import { getScopedResourcePaths, getSettings } from "./settings.js";
@@ -385,7 +386,7 @@ const piTranscriptSummaryCache = new Map<string, PiTranscriptSummaryState>();
 function applyPiSummaryRecords(state: PiTranscriptSummaryState, records: UnknownRecord[]): void {
   for (const record of records) {
     if (record.type === "session_info") state.name = typeof record.name === "string" ? record.name.trim() : "";
-    if (!state.firstMessage && record.type === "message" && asRecord(record.message).role === "user") state.firstMessage = textFromMessage(record.message).trim();
+    if (!state.firstMessage && record.type === "message" && asRecord(record.message).role === "user") state.firstMessage = stripScheduledPromptMarker(textFromMessage(record.message)).trim();
     const activity = piMessageActivity(record);
     if (activity && activity > state.updatedAt) state.updatedAt = activity;
   }
