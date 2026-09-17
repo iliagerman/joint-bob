@@ -237,6 +237,23 @@ test("a received workspace attachment rejects same-scope variable collisions", a
   });
 });
 
+test("ordinary replicated variables do not collide with bound website accounts", async () => {
+  await withNode("website-collision", async ({ dataDir, secrets, replication }) => {
+    const database = new DatabaseSync(path.join(dataDir, "node.db"));
+    try { database.exec("CREATE TABLE workspaces (id TEXT PRIMARY KEY); INSERT INTO workspaces VALUES ('personal')"); }
+    finally { database.close(); }
+    const website = await secrets.saveSecretAccount({ label: "Website", provider: "custom", websiteOrigin: "https://example.com", variables: [{ name: "LOGIN_PASSWORD", kind: "value", value: "website-only" }] });
+    await secrets.setScopeSecretAccounts("workspace", "personal", [website.id]);
+    const ordinaryId = randomUUID();
+    await replication.receiveSecretCredentialEvents([{
+      id: randomUUID(), entityKey: ordinaryId, operation: "upsert",
+      value: { label: "Ordinary", provider: "custom", variables: [{ name: "LOGIN_PASSWORD", kind: "value", value: "replicated" }], workspaceIds: ["personal"] },
+      updatedAt: "2026-01-01T00:00:00.000Z", originNodeId: randomUUID(), createdAt: "2026-01-01T00:00:00.000Z",
+    }]);
+    assert.deepEqual(await secrets.getScopeSecretAccounts("workspace", "personal"), { accountIds: [ordinaryId, website.id].sort() });
+  });
+});
+
 test("malformed peer input is rejected rather than half-applied", async () => {
   await withNode("reject", async ({ secrets, replication }) => {
     const base = {

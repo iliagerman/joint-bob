@@ -15,7 +15,7 @@ for await (const chunk of process.stdin) prompt += chunk;
 const args = process.argv.slice(2);
 const id = args[args.indexOf(args.includes('--resume') ? '--resume' : '--session-id') + 1];
 const token = !process.env.GH_TOKEN ? 'absent' : process.env.GH_TOKEN === 'fixture-first' ? 'first' : process.env.GH_TOKEN === 'fixture-second' ? 'second' : 'unexpected';
-await appendFile(${JSON.stringify(path.join(root, "credentials.jsonl"))}, JSON.stringify({ prompt, token, instructions: await readFile(args[args.indexOf('--append-system-prompt-file') + 1], 'utf8') }) + '\\n');
+await appendFile(${JSON.stringify(path.join(root, "credentials.jsonl"))}, JSON.stringify({ prompt, token, browserToken: process.env.JOINT_BOB_BROWSER_TOKEN, websiteEnvPresent: process.env.LOGIN_PASSWORD !== undefined, id, instructions: await readFile(args[args.indexOf('--append-system-prompt-file') + 1], 'utf8') }) + '\\n');
 const directory = path.join(process.env.JOINT_BOB_FAKE_PROJECTS_ROOT, process.cwd().replace(/^\\//, '-').replace(/[\\s_.\\/]+/g, '-'));
 await mkdir(directory, { recursive: true });
 await appendFile(path.join(directory, id + '.jsonl'), JSON.stringify({ type: 'user', sessionId: id, cwd: process.cwd(), timestamp: new Date().toISOString(), message: { role: 'user', content: prompt } }) + '\\n');
@@ -38,13 +38,15 @@ test("existing Claude chat refreshes workspace credentials and context on every 
   t.after(async () => { opened.socket.terminate(); await stopServer(started.server); process.env = previous; await rm(root, { recursive: true, force: true }); });
   await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "ready"));
   const secrets = await import("../src/secrets.js");
+  const { browserAgentCredential, browserAgentIdentity } = await import("../src/browser-agent.js");
+  type Capture = { token: string; browserToken: string; websiteEnvPresent: boolean; id: string; prompt: string; instructions: string };
   let turns = 0;
   const prompt = async (message: string) => {
     opened.socket.send(JSON.stringify({ type: "prompt", message }));
     turns += 1;
     await waitFor(opened.messages, () => opened.messages.filter((frame) => frame.type === "agent_end").length === turns);
     assert.deepEqual(opened.messages.filter((frame) => frame.type === "error"), []);
-    return JSON.parse((await readFile(path.join(root, "credentials.jsonl"), "utf8")).trim().split("\n").at(-1)!) as { token: string; prompt: string; instructions: string };
+    return JSON.parse((await readFile(path.join(root, "credentials.jsonl"), "utf8")).trim().split("\n").at(-1)!) as Capture;
   };
   assert.equal((await prompt("first")).token, "absent");
   const saved = await secrets.saveSecretAccount({ label: "Workspace GitHub", provider: "github", variables: [{ name: "GH_TOKEN", kind: "value", value: "fixture-first" }] });
@@ -62,4 +64,21 @@ test("existing Claude chat refreshes workspace credentials and context on every 
   const removed = await prompt("removed");
   assert.equal(removed.token, "absent");
   assert.match(removed.instructions, /No secret accounts are attached/);
+
+  const website = await secrets.saveSecretAccount({ label: "Claude Login", provider: "custom", websiteOrigin: "https://claude.fixture.test", variables: [{ name: "LOGIN_PASSWORD", kind: "value", value: "claude-website-first" }] });
+  await secrets.setScopeSecretAccounts("conversation", `claude:${removed.id}`, [website.id]);
+  const websiteAttached = await prompt("website attached");
+  assert.equal(websiteAttached.websiteEnvPresent, false);
+  assert.deepEqual(browserAgentCredential(websiteAttached.browserToken, website.id, "LOGIN_PASSWORD"), { origin: "https://claude.fixture.test", value: "claude-website-first" });
+  assert.deepEqual(browserAgentIdentity(websiteAttached.browserToken), { projectId: fixture.projectId, engine: "claude", conversationId: removed.id });
+  assert.match(websiteAttached.instructions, /Claude Login|claude\.fixture\.test|LOGIN_PASSWORD/);
+  assert.doesNotMatch(websiteAttached.instructions, /claude-website-(first|second)/);
+  await secrets.saveSecretAccount({ id: website.id, label: "Claude Login", provider: "custom", websiteOrigin: "https://claude.fixture.test", variables: [{ name: "LOGIN_PASSWORD", kind: "value", value: "claude-website-second" }] });
+  const websiteRotated = await prompt("website rotated");
+  assert.equal(browserAgentCredential(websiteRotated.browserToken, website.id, "LOGIN_PASSWORD").value, "claude-website-second");
+  assert.equal(browserAgentCredential(websiteAttached.browserToken, website.id, "LOGIN_PASSWORD").value, "claude-website-first");
+  await secrets.deleteSecretAccount(website.id);
+  const websiteRemoved = await prompt("website removed");
+  assert.equal(websiteRemoved.websiteEnvPresent, false);
+  await assert.rejects(async () => browserAgentCredential(websiteRemoved.browserToken, website.id, "LOGIN_PASSWORD"), /unavailable/);
 });

@@ -121,7 +121,8 @@ test("saving a replicating account pushes it instead of stranding it", async () 
   assert.ok(handler, "secret account submit handler is missing");
   // The server pushes a replicating save to every paired node; the picker stays
   // in Settings for retries and newly paired nodes.
-  assert.match(handler, /const saved = await api\(/);
-  assert.match(handler, /saved\.syncResults/);
+  assert.match(handler, /saveSecretAccount/);
+  assert.match(app, /const saved = await api\(/);
+  assert.match(app, /saved\.syncResults/);
   assert.doesNotMatch(handler, /openSecretSyncDialog\(\)/);
 });

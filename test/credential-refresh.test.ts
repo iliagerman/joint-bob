@@ -14,6 +14,7 @@ const { getSettings, updateSettings } = await import("../src/settings.js");
 const settings = getSettings();
 updateSettings({ ...settings, conversationDefaults: { ...settings.conversationDefaults, pi: { provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "medium" } } });
 const { createPiSession, reloadPiSkills } = await import("../src/pi-service.js");
+const { browserAgentCredential, browserAgentIdentity } = await import("../src/browser-agent.js");
 const secrets = await import("../src/secrets.js");
 
 let supervisor: Awaited<ReturnType<typeof startSupervisor>> | undefined;
@@ -77,6 +78,18 @@ async function account(label: string, value: string, id?: string) {
   return secrets.saveSecretAccount({ id, label, provider: "github", variables: [{ name: "GH_TOKEN", kind: "value", value }] });
 }
 
+async function websiteAccount(label: string, value: string, id?: string) {
+  return secrets.saveSecretAccount({ id, label, provider: "custom", websiteOrigin: "https://login.fixture.test", variables: [{ name: "LOGIN_PASSWORD", kind: "value", value }] });
+}
+
+async function browserCapture(handle: Awaited<ReturnType<typeof createPiSession>>) {
+  const bash = handle.session.agent.state.tools.find((tool) => tool.name === "bash")!;
+  const result = await bash.execute("browser-credential-check", { command: `printf '%s\\n%s' "$JOINT_BOB_BROWSER_TOKEN" "\${LOGIN_PASSWORD+x}"` });
+  const text = result.content.find((part) => part.type === "text")?.text ?? "";
+  const [token, websiteEnvPresent] = text.split("\n");
+  return { token, websiteEnvPresent: websiteEnvPresent === "x" };
+}
+
 async function checkShell(handle: Awaited<ReturnType<typeof createPiSession>>, expected: string) {
   const bash = handle.session.agent.state.tools.find((tool) => tool.name === "bash")!;
   const command = `if [ "$GH_TOKEN" = '${expected}' ] && [ "$GITHUB_TOKEN" = '${expected}' ] && [ "$PI_GITHUB_TOKEN" = '${expected}' ] && [ -n "$JOINT_BOB_BROWSER_CLI" ] && [ -n "$JOINT_BOB_BROWSER_URL" ]; then printf matched; else printf mismatch; fi`;
@@ -129,6 +142,37 @@ test("conversation selections use the persisted session id, not stale startup ac
   await f.prompt("detached");
 });
 
+test("Pi snapshots website credentials by origin without exporting plaintext", async (t) => {
+  const f = await fixture(t);
+  const saved = await websiteAccount("Fixture Login", "website-value-first");
+  await secrets.setScopeSecretAccounts("project", f.project.id, [saved.id]);
+  let previousToken = "";
+  let expected = "website-value-first";
+  f.inspect(async (context) => {
+    const capture = await browserCapture(f.handle);
+    assert.equal(capture.websiteEnvPresent, false);
+    assert.deepEqual(browserAgentCredential(capture.token, saved.id, "LOGIN_PASSWORD"), { origin: "https://login.fixture.test", value: expected });
+    assert.deepEqual(browserAgentIdentity(capture.token), { projectId: f.project.id, engine: "pi", conversationId: f.handle.session.sessionId });
+    assert.match(context.systemPrompt!, /Fixture Login|login\.fixture\.test|LOGIN_PASSWORD/);
+    assert.doesNotMatch(context.systemPrompt!, /website-value-(first|second)/);
+    if (previousToken) assert.notEqual(capture.token, previousToken);
+    previousToken = capture.token;
+  });
+  await f.prompt("attached");
+  const firstToken = previousToken;
+  await websiteAccount("Fixture Login", "website-value-second", saved.id);
+  expected = "website-value-second";
+  await f.prompt("rotated");
+  assert.equal(browserAgentCredential(firstToken, saved.id, "LOGIN_PASSWORD").value, "website-value-first");
+  await secrets.deleteSecretAccount(saved.id);
+  f.inspect(async () => {
+    const capture = await browserCapture(f.handle);
+    assert.equal(capture.websiteEnvPresent, false);
+    await assert.rejects(async () => browserAgentCredential(capture.token, saved.id, "LOGIN_PASSWORD"), /unavailable/);
+  });
+  await f.prompt("removed");
+});
+
 for (const method of ["followUp", "steer"] as const) test(`Pi ${method} messages refresh when consumed without changing a running message`, async (t) => {
   const saved = await account("Queued GitHub", "fixture-token-before");
   const f = await fixture(t);
@@ -146,5 +190,30 @@ for (const method of ["followUp", "steer"] as const) test(`Pi ${method} messages
     }
   });
   await f.prompt("running");
+  assert.equal(calls, 2);
+});
+
+for (const method of ["followUp", "steer"] as const) test(`Pi ${method} keeps a running website snapshot stable`, async (t) => {
+  const saved = await websiteAccount("Queued Login", "queued-website-before");
+  const f = await fixture(t);
+  await secrets.setScopeSecretAccounts("project", f.project.id, [saved.id]);
+  let calls = 0;
+  let firstToken = "";
+  f.inspect(async (context) => {
+    const capture = await browserCapture(f.handle);
+    assert.equal(capture.websiteEnvPresent, false);
+    if (++calls === 1) {
+      firstToken = capture.token;
+      await websiteAccount("Queued Login", "queued-website-after", saved.id);
+      await f.handle.session[method]("queued website");
+      assert.equal(browserAgentCredential(capture.token, saved.id, "LOGIN_PASSWORD").value, "queued-website-before");
+      assert.doesNotMatch(context.systemPrompt!, /queued-website-(before|after)/);
+    } else {
+      assert.notEqual(capture.token, firstToken);
+      assert.equal(browserAgentCredential(capture.token, saved.id, "LOGIN_PASSWORD").value, "queued-website-after");
+      assert.equal(browserAgentCredential(firstToken, saved.id, "LOGIN_PASSWORD").value, "queued-website-before");
+    }
+  });
+  await f.prompt("running website");
   assert.equal(calls, 2);
 });

@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { browserAgentEnvironment, browserAgentInstructions } from "./browser-agent.js";
 import { resolveDataDirectory } from "./data-directory.js";
 import { isHarnessId, type HarnessId } from "./types.js";
+import { websiteCredentialSnapshot, type SecretConversation } from "./secrets.js";
 import { ntfyAgentEnvironment, ntfyAgentInstructions } from "./ntfy-agent.js";
 import { mintTaskToken, readSupervisorControl } from "../scripts/supervisor-client.mjs";
 
@@ -9,6 +10,7 @@ export interface AgentCapabilityIdentity {
   projectId: string;
   engine: HarnessId;
   conversationId: string;
+  secretConversation?: SecretConversation;
 }
 
 export interface AgentCapability {
@@ -90,7 +92,7 @@ export const agentCapabilities: AgentCapability[] = [
   {
     id: "browser",
     instructions: { path: "/virtual/JOINT_BOB_BROWSER.md", content: browserAgentInstructions },
-    environment: ({ projectId, engine, conversationId }) => browserAgentEnvironment(projectId, engine, conversationId),
+    environment: ({ projectId, engine, conversationId, secretConversation }) => browserAgentEnvironment(projectId, engine, conversationId, secretConversation ? websiteCredentialSnapshot(projectId, secretConversation) : []),
   },
   {
     id: "ntfy",
@@ -110,8 +112,8 @@ function validateCapabilities(identity: AgentCapabilityIdentity): void {
   if (agentCapabilities.some((capability) => !capability.id.trim())) throw new Error("Agent capabilities require nonempty IDs");
 }
 
-export function agentCapabilityEnvironment(projectId: string, engine: HarnessId, conversationId: string): NodeJS.ProcessEnv {
-  const identity = { projectId, engine, conversationId };
+export function agentCapabilityEnvironment(projectId: string, engine: HarnessId, conversationId: string, secretConversation?: SecretConversation): NodeJS.ProcessEnv {
+  const identity = { projectId, engine, conversationId, secretConversation };
   validateCapabilities(identity);
   return Object.assign({}, ...agentCapabilities.map((capability) => capability.environment(identity)));
 }

@@ -327,6 +327,7 @@ export const elements = {
   secretAccountProviderInput: document.querySelector("#secretAccountProviderInput"),
   secretAccountProviderIcon: document.querySelector("#secretAccountProviderIcon"),
   secretAccountProviderHint: document.querySelector("#secretAccountProviderHint"),
+  secretAccountOriginInput: document.querySelector("#secretAccountOriginInput"),
   secretVariableRows: document.querySelector("#secretVariableRows"),
   secretVariableAddButton: document.querySelector("#secretVariableAddButton"),
   secretAccountReplicateInput: document.querySelector("#secretAccountReplicateInput"),

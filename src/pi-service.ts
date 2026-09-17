@@ -549,9 +549,9 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
   const logicalConversationId = options.conversationId
     ?? (await getConversationRecord(options.projectId, "pi", sessionManager.getSessionId()))?.conversationId
     ?? sessionManager.getSessionId();
-  let capabilityEnvironment = agentCapabilityEnvironment(options.projectId, "pi", logicalConversationId);
   const conversation = { engine: "pi" as const, sessionId: sessionManager.getSessionId() };
   await persistConversationSecretAccounts("pi", conversation.sessionId, options.conversation?.accountIds ?? []);
+  let capabilityEnvironment = agentCapabilityEnvironment(options.projectId, "pi", logicalConversationId, conversation);
   let environment = agentEnvironment(options.projectId, conversation);
   const bashTool = createBashTool(options.cwd, {
     shellPath: capabilityEnvironment.JOINT_BOB_TASK_SHELL,
@@ -609,7 +609,7 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
   const session = result.session;
   const unsubscribeCredentials = bindPiCredentials(session, options.projectId, conversation, () => {
     environment = agentEnvironment(options.projectId, conversation);
-    capabilityEnvironment = agentCapabilityEnvironment(options.projectId, "pi", logicalConversationId);
+    capabilityEnvironment = agentCapabilityEnvironment(options.projectId, "pi", logicalConversationId, conversation);
   });
 
   if ("bindExtensions" in session && typeof session.bindExtensions === "function") {

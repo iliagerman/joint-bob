@@ -15,10 +15,11 @@ export type ConversationEngineId = HarnessId;
     travel as `accountIds` until `persistConversationSecretAccounts` can store them. */
 export interface SecretConversation { engine: ConversationEngineId; sessionId?: string; accountIds?: string[] }
 export interface SecretVariable { name: string; kind: SecretKind; configured: true }
-export interface SecretAccount { id: string; label: string; provider: SecretProvider; replicate: boolean; variables: SecretVariable[] }
-export interface SecretAccountInput { id?: string; label: string; provider: SecretProvider; replicate?: boolean; variables: Array<{ name: string; kind: SecretKind; value?: string }> }
+export interface SecretAccount { id: string; label: string; provider: SecretProvider; replicate: boolean; variables: SecretVariable[]; websiteOrigin?: string }
+export interface SecretAccountInput { id?: string; label: string; provider: SecretProvider; replicate?: boolean; variables: Array<{ name: string; kind: SecretKind; value?: string }>; websiteOrigin?: string | null }
+export interface WebsiteCredentialAccount { id: string; origin: string; variables: Array<{ name: string; kind: SecretKind; value: string }> }
 type StoredVariable = { name: string; kind: SecretKind; value: string };
-type AccountRow = { id: string; label: string; provider: SecretProvider; replicate: number; variables_encrypted: string };
+type AccountRow = { id: string; label: string; provider: SecretProvider; replicate: number; variables_encrypted: string; website_origin: string | null };
 
 /** A `github` account's variable set is fixed: the user never types the name. */
 export const GITHUB_TOKEN_VARIABLE = "GH_TOKEN";
@@ -37,6 +38,7 @@ export function ensureSecretSchema(handle: DatabaseSync): void {
   const columns = (handle.prepare("PRAGMA table_info(secret_accounts)").all() as unknown as Array<{ name: string }>).map((column) => column.name);
   if (!columns.includes("replicate")) handle.exec("ALTER TABLE secret_accounts ADD COLUMN replicate INTEGER NOT NULL DEFAULT 0");
   if (!columns.includes("origin_node_id")) handle.exec("ALTER TABLE secret_accounts ADD COLUMN origin_node_id TEXT NOT NULL DEFAULT ''");
+  if (!columns.includes("website_origin")) handle.exec("ALTER TABLE secret_accounts ADD COLUMN website_origin TEXT");
 }
 
 function db(): DatabaseSync {
@@ -85,6 +87,15 @@ export function decryptSecretValue(value: string): string {
   return Buffer.concat([cipher.update(Buffer.from(body, "base64")), cipher.final()]).toString("utf8");
 }
 
+export function normalizeWebsiteOrigin(value: string): string {
+  let url: URL;
+  try { url = new URL(value); } catch { throw new Error("Website origin must be a valid URL"); }
+  const loopback = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) throw new Error("Website origin must use HTTPS, except loopback HTTP");
+  if (url.username || url.password || url.pathname !== "/" || url.search || url.hash) throw new Error("Website origin must not contain credentials, path, query, or hash");
+  return url.origin;
+}
+
 function assertAccountId(id: string): void {
   if (!UUID_PATTERN.test(id)) throw new Error("Secret account ID must be a UUID");
 }
@@ -130,13 +141,13 @@ function storedVariables(row: AccountRow): StoredVariable[] {
 
 function accountRow(id: string): AccountRow {
   assertAccountId(id);
-  const row = db().prepare("SELECT id, label, provider, replicate, variables_encrypted FROM secret_accounts WHERE id = ?").get(id) as AccountRow | undefined;
+  const row = db().prepare("SELECT id, label, provider, replicate, variables_encrypted, website_origin FROM secret_accounts WHERE id = ?").get(id) as AccountRow | undefined;
   if (!row) throw new Error("Secret account not found");
   return row;
 }
 
 function publicAccount(row: AccountRow): SecretAccount {
-  return { id: row.id, label: row.label, provider: row.provider, replicate: Boolean(row.replicate), variables: storedVariables(row).map(({ name, kind }) => ({ name, kind, configured: true })) };
+  return { id: row.id, label: row.label, provider: row.provider, replicate: Boolean(row.replicate), variables: storedVariables(row).map(({ name, kind }) => ({ name, kind, configured: true })), ...(row.website_origin ? { websiteOrigin: row.website_origin } : {}) };
 }
 
 function clearFiles(id: string): void {
@@ -173,14 +184,22 @@ function canonicalScopeId(scopeType: SecretScopeType, scopeId: string): string {
 /** Joins through `secret_accounts`, so an attachment whose account is gone simply yields
     no row and the remaining scopes still resolve (FR8.5). */
 function scopeRows(scopeType: SecretScopeType, scopeId: string): AccountRow[] {
-  return db().prepare("SELECT a.id, a.label, a.provider, a.replicate, a.variables_encrypted FROM secret_assignments s JOIN secret_accounts a ON a.id = s.account_id WHERE s.scope_type = ? AND s.scope_id = ? ORDER BY a.id").all(scopeType, scopeId) as unknown as AccountRow[];
+  return db().prepare("SELECT a.id, a.label, a.provider, a.replicate, a.variables_encrypted, a.website_origin FROM secret_assignments s JOIN secret_accounts a ON a.id = s.account_id WHERE s.scope_type = ? AND s.scope_id = ? ORDER BY a.id").all(scopeType, scopeId) as unknown as AccountRow[];
 }
 
 function assertNoCollision(rows: AccountRow[]): void {
   const names = new Set<string>();
-  for (const row of rows) for (const variable of storedVariables(row)) {
-    if (names.has(variable.name)) throw new Error("Selected secret accounts have duplicate environment variable names");
-    names.add(variable.name);
+  const origins = new Set<string>();
+  for (const row of rows) {
+    if (row.website_origin) {
+      if (origins.has(row.website_origin)) throw new Error("Selected website accounts have duplicate origins");
+      origins.add(row.website_origin);
+      continue;
+    }
+    for (const variable of storedVariables(row)) {
+      if (names.has(variable.name)) throw new Error("Selected secret accounts have duplicate environment variable names");
+      names.add(variable.name);
+    }
   }
 }
 
@@ -213,7 +232,7 @@ function resolved(project: string, conversation?: SecretConversation): ResolvedA
 }
 
 export async function listSecretAccounts(): Promise<SecretAccount[]> {
-  return (db().prepare("SELECT id, label, provider, replicate, variables_encrypted FROM secret_accounts ORDER BY label, id").all() as unknown as AccountRow[]).map(publicAccount);
+  return (db().prepare("SELECT id, label, provider, replicate, variables_encrypted, website_origin FROM secret_accounts ORDER BY label, id").all() as unknown as AccountRow[]).map(publicAccount);
 }
 
 export async function saveSecretAccount(input: SecretAccountInput): Promise<SecretAccount> {
@@ -221,6 +240,13 @@ export async function saveSecretAccount(input: SecretAccountInput): Promise<Secr
   const id = input.id ?? randomUUID();
   if (input.id) assertAccountId(id);
   const old = input.id ? accountRow(id) : undefined;
+  const websiteOrigin = input.websiteOrigin === undefined ? old?.website_origin ?? null : input.websiteOrigin === null ? null : normalizeWebsiteOrigin(input.websiteOrigin);
+  if (websiteOrigin && input.replicate) throw new Error("Website credential accounts cannot replicate");
+  if (websiteOrigin && input.variables.some((variable) => variable.kind === "file")) throw new Error("Website credential accounts cannot contain file variables");
+  if (old && websiteOrigin) {
+    const duplicate = db().prepare("SELECT 1 FROM secret_assignments own JOIN secret_assignments other ON other.scope_type = own.scope_type AND other.scope_id = own.scope_id AND other.account_id <> own.account_id JOIN secret_accounts account ON account.id = other.account_id WHERE own.account_id = ? AND account.website_origin = ? LIMIT 1").get(id, websiteOrigin);
+    if (duplicate) throw new Error("Selected website accounts have duplicate origins");
+  }
   const oldValues = new Map((old ? storedVariables(old) : []).map((item) => [`${item.name}:${item.kind}`, item.value]));
   const variables = input.variables.map((item) => {
     const value = item.value === undefined || item.value === "" ? oldValues.get(`${item.name}:${item.kind}`) : item.value;
@@ -229,9 +255,9 @@ export async function saveSecretAccount(input: SecretAccountInput): Promise<Secr
   });
   const replicate = input.replicate ? 1 : 0;
   const now = new Date().toISOString();
-  db().prepare("INSERT INTO secret_accounts (id, label, provider, variables_encrypted, replicate, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET label = excluded.label, provider = excluded.provider, variables_encrypted = excluded.variables_encrypted, replicate = excluded.replicate, updated_at = excluded.updated_at").run(id, input.label.trim(), input.provider, encryptSecretValue(JSON.stringify(variables)), replicate, now, now);
+  db().prepare("INSERT INTO secret_accounts (id, label, provider, variables_encrypted, replicate, website_origin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET label = excluded.label, provider = excluded.provider, variables_encrypted = excluded.variables_encrypted, replicate = excluded.replicate, website_origin = excluded.website_origin, updated_at = excluded.updated_at").run(id, input.label.trim(), input.provider, encryptSecretValue(JSON.stringify(variables)), replicate, websiteOrigin, now, now);
   clearFiles(id);
-  return { id, label: input.label.trim(), provider: input.provider, replicate: Boolean(replicate), variables: variables.map(({ name, kind }) => ({ name, kind, configured: true })) };
+  return { id, label: input.label.trim(), provider: input.provider, replicate: Boolean(replicate), variables: variables.map(({ name, kind }) => ({ name, kind, configured: true })), ...(websiteOrigin ? { websiteOrigin } : {}) };
 }
 
 export async function deleteSecretAccount(accountId: string): Promise<void> {
@@ -313,11 +339,23 @@ function applyGitHubEnvironment(values: NodeJS.ProcessEnv): void {
 
 export function genericSecretEnvironment(project: string, conversation?: SecretConversation): NodeJS.ProcessEnv {
   const values: NodeJS.ProcessEnv = {};
-  for (const { row } of resolved(project, conversation)) for (const variable of storedVariables(row)) {
+  for (const { row } of resolved(project, conversation)) if (!row.website_origin) for (const variable of storedVariables(row)) {
     values[variable.name] = variable.kind === "value" ? variable.value : secretFilePath(row.id, variable.name, variable.value);
   }
   applyGitHubEnvironment(values);
   return values;
+}
+
+export function websiteCredentialSnapshot(project: string, conversation?: SecretConversation): WebsiteCredentialAccount[] {
+  const groups = new Map<string, { id: string; origin: string; variables: Map<string, StoredVariable> }>();
+  for (const { row } of resolved(project, conversation)) {
+    if (!row.website_origin) continue;
+    const group = groups.get(row.website_origin) ?? { id: row.id, origin: row.website_origin, variables: new Map() };
+    for (const variable of storedVariables(row)) group.variables.set(variable.name, variable);
+    group.id = row.id;
+    groups.set(row.website_origin, group);
+  }
+  return Array.from(groups.values(), ({ id, origin, variables }) => ({ id, origin, variables: Array.from(variables.values()) }));
 }
 
 export function agentEnvironment(projectId: string, conversation?: SecretConversation): NodeJS.ProcessEnv {
@@ -343,10 +381,18 @@ const providerHints: Record<SecretProvider, string> = {
 export function agentCredentialContext(project: string, conversation?: SecretConversation): string {
   const accounts = resolved(project, conversation);
   if (!accounts.length) return "## Available secret accounts\nNo secret accounts are attached for this message. This replaces any earlier account list.";
-  const lines = ["## Available secret accounts", "This is the current account list for this message, replacing any earlier list. These credentials are already exported into your shell. Use the matching CLI directly and never ask the user for the values, which stay hidden from you."];
-  for (const { row, scope } of accounts) {
+  const ordinary = accounts.filter(({ row }) => !row.website_origin);
+  const effectiveRows = new Map(accounts.filter(({ row }) => row.website_origin).map((account) => [account.row.id, account]));
+  const lines = ["## Available secret accounts", "This is the current account list for this message, replacing any earlier list."];
+  if (ordinary.length) lines.push("Non-website credentials below are already exported into your shell. Use the matching CLI directly and never ask the user for the values, which stay hidden from you.");
+  for (const { row, scope } of ordinary) {
     const variables = storedVariables(row).map((item) => `${item.name}${item.kind === "file" ? " (secret file path)" : ""}`).join(", ");
     lines.push(`- ${row.provider} ${JSON.stringify(row.label)} (${scope}): ${variables} - ${providerHints[row.provider]}`);
+  }
+  for (const snapshot of websiteCredentialSnapshot(project, conversation)) {
+    const { row, scope } = effectiveRows.get(snapshot.id)!;
+    const variables = snapshot.variables.map(({ name }) => name).join(", ");
+    lines.push(`- website ${JSON.stringify(row.label)} (${scope}), account ${snapshot.id}, exact origin ${snapshot.origin}: ${variables}. Variables inherit per name from broader scopes and the narrowest account ID identifies the effective login. Use login-fill SELECTOR ${snapshot.id} VARIABLE.`);
   }
   return lines.join("\n");
 }

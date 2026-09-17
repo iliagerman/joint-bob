@@ -23,6 +23,8 @@ export interface SecretAccountPayload {
   workspaceIds?: string[];
   /** Every scope attachment, including projects the receiving node may not share yet. */
   assignments?: SecretAssignmentPayload[];
+  /** Rejected when received: website credentials are node-local. */
+  websiteOrigin?: string | null;
 }
 
 export interface SecretCredentialEvent {
@@ -79,6 +81,7 @@ function validateEvent(event: SecretCredentialEvent): void {
   if (!event.updatedAt || Number.isNaN(Date.parse(event.updatedAt))) throw new Error("Secret credential event needs an ISO updatedAt");
   if (!event.originNodeId) throw new Error("Secret credential event needs an origin node ID");
   const value = event.value;
+  if (value?.websiteOrigin != null) throw new Error("Website credential events cannot be replicated");
   if (!value || typeof value.label !== "string" || !value.label.trim() || value.label.length > 64) throw new Error("Secret credential event needs a label");
   if (!(["aws", "google", "github", "custom"] as string[]).includes(value.provider)) throw new Error("Secret credential event provider is invalid");
   if (!Array.isArray(value.variables) || value.variables.length < 1 || value.variables.length > 20) throw new Error("Secret credential event needs between 1 and 20 variables");
@@ -112,7 +115,7 @@ function assignments(handle: DatabaseSync, accountId: string): SecretAssignmentP
 function applyWorkspaceAssignments(handle: DatabaseSync, accountId: string, ids: string[] | undefined, variables: SecretAccountPayload["variables"]): void {
   if (ids === undefined) return;
   const incomingNames = new Set(variables.map((variable) => variable.name));
-  const assigned = handle.prepare("SELECT a.variables_encrypted FROM secret_assignments s JOIN secret_accounts a ON a.id = s.account_id WHERE s.scope_type = 'workspace' AND s.scope_id = ? AND a.id != ?");
+  const assigned = handle.prepare("SELECT a.variables_encrypted FROM secret_assignments s JOIN secret_accounts a ON a.id = s.account_id WHERE s.scope_type = 'workspace' AND s.scope_id = ? AND a.id != ? AND a.website_origin IS NULL");
   for (const id of ids) {
     const rows = assigned.all(id, accountId) as unknown as Array<{ variables_encrypted: string }>;
     for (const row of rows) {
@@ -131,7 +134,7 @@ function applyWorkspaceAssignments(handle: DatabaseSync, accountId: string, ids:
 function applyAssignments(handle: DatabaseSync, accountId: string, payload: SecretAssignmentPayload[] | undefined, variables: SecretAccountPayload["variables"]): void {
   if (payload === undefined) return;
   const incomingNames = new Set(variables.map((variable) => variable.name));
-  const collision = handle.prepare("SELECT a.variables_encrypted FROM secret_assignments s JOIN secret_accounts a ON a.id = s.account_id WHERE s.scope_type = ? AND s.scope_id = ? AND a.id != ?");
+  const collision = handle.prepare("SELECT a.variables_encrypted FROM secret_assignments s JOIN secret_accounts a ON a.id = s.account_id WHERE s.scope_type = ? AND s.scope_id = ? AND a.id != ? AND a.website_origin IS NULL");
   handle.prepare("DELETE FROM secret_assignments WHERE account_id = ?").run(accountId);
   const insert = handle.prepare("INSERT INTO secret_assignments (scope_type, scope_id, account_id) VALUES (?, ?, ?)");
   for (const entry of payload) {
