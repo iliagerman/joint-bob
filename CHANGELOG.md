@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.52.3 — 2026-09-17
 
 - Pressing Escape now closes the by-the-way side panel.
+- By-the-way chat now stays within its dialog boundaries.
 
 ## 1.52.2 — 2026-09-17
 
