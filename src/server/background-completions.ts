@@ -5,7 +5,7 @@ import { getClusterMachineToken, getClusterNode, getClusterPeer } from "../clust
 import { supervisorDatabaseFile } from "../background-tasks.js";
 import { getConversationOwnership } from "../conversation-ownership.js";
 import { listConversationSegments } from "../conversation-records.js";
-import { enqueueSystemPrompt, listPendingSystemQueues, systemPromptState } from "../prompt-queue.js";
+import { acknowledgeSystemPrompt, enqueueSystemPrompt, listPendingSystemQueues, systemPromptState } from "../prompt-queue.js";
 import { resolveDataDirectory } from "../data-directory.js";
 import { getProject } from "../store.js";
 import { getProjectLock } from "../project-locks.js";
@@ -26,6 +26,10 @@ export function completionPromptId(sourceNodeId: string, taskId: string): string
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
   const hex = bytes.toString("hex");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+export function acknowledgeCompletionResult(sourceNodeId: string, projectId: string, conversationId: string, taskId: string): boolean {
+  return acknowledgeSystemPrompt(`${projectId}:${conversationId}`, completionPromptId(sourceNodeId, taskId));
 }
 
 async function destination(projectId: string, conversationId: string): Promise<{ nodeId: string; engine: string; sessionId: string; taskId: string | null }> {

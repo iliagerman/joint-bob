@@ -399,3 +399,37 @@ export function applyQueuedPromptEvent(db: DatabaseSync, event: ReplicationEvent
   if (current && (current.revision > payload.revision || current.revision === payload.revision && current.origin_node_id >= event.originNodeId)) return;
   insert(db, { id: payload.id, queue_key: key, prompt: JSON.stringify(payload.prompt), created_at: payload.createdAt, sequence: payload.sequence, revision: payload.revision, origin_node_id: event.originNodeId });
 }
+
+/** Mark an automatic system prompt handled without ever making it dispatchable.
+ * Pending prompts are removed; missing prompts receive a tombstone so a later
+ * completion retry cannot recreate them. A starting prompt may already have
+ * crossed the harness boundary and therefore remains fenced as uncertain. */
+export function acknowledgeSystemPrompt(queueKey: string, id: string): boolean {
+  const db = queueDatabase();
+  const key = logicalQueueKey(queueKey);
+  return transaction(db, () => {
+    const tombstone = db.prepare("SELECT queue_key FROM queued_prompt_tombstones WHERE id = ?").get(id) as { queue_key: string } | undefined;
+    const row = db.prepare("SELECT * FROM queued_prompts WHERE id = ?").get(id) as unknown as Row | undefined;
+    const found = tombstone ?? row;
+    if (found && found.queue_key !== key) throw new Error("System prompt id belongs to a different queue");
+    if (tombstone) return true;
+    if (row) {
+      if (promptSchema.parse(JSON.parse(row.prompt)).dispatchState !== "pending") return false;
+      remove(db, row);
+      return true;
+    }
+    const createdAt = new Date().toISOString();
+    const synthetic: Row = {
+      id,
+      queue_key: key,
+      prompt: "",
+      created_at: createdAt,
+      sequence: nextSequence(db, key),
+      revision: 1,
+      origin_node_id: origin(db),
+    };
+    db.prepare("INSERT INTO queued_prompt_tombstones VALUES (?, ?)").run(id, key);
+    publish(db, synthetic, null);
+    return true;
+  });
+}

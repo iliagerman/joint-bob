@@ -159,6 +159,7 @@ test("task capability reports unavailable without creating supervisor state", as
     assert.equal(environment.JOINT_BOB_TASK_TOKEN, undefined);
     const instructions = agentCapabilityInstructionFiles().map((file) => file.content).join("\n");
     assert.match(instructions, /Completions enqueue an automatic follow-up/);
+    assert.match(instructions, /Supported extensions and external job producers must launch their process through this CLI/);
     assert.match(instructions, /Never use it for ordinary shell commands/);
     assert.match(instructions, /expected to run longer than the current turn/);
     assert.doesNotMatch(instructions, /automatic conversation wakeup is not implemented/);

@@ -33,7 +33,7 @@ Do not emit either protocol line in examples, progress updates, or unfinished wo
 
 const taskInstructions = `# Joint Bob tasks
 
-Ordinary commands run by the integrated Pi, Claude, and Kiro shell tools (and their children) are automatically supervised. Commands completing within five seconds return synchronously and stay out of Tasks; longer commands return a tracked task handle and the conversation continues. Task listings are scoped to the current conversation/session. Never rerun a running handle. Ordinary shell background children, including those launched with & or nohup, stay tracked until their supervised process group ends. This supervision does not intercept arbitrary third-party MCP or extension processes.
+Ordinary commands run by the integrated Pi, Claude, and Kiro shell tools (and their children) are automatically supervised. Commands completing within five seconds return synchronously and stay out of Tasks; longer commands return a tracked task handle and the conversation continues. Task listings are scoped to the current conversation/session. Never rerun a running handle. Ordinary shell background children, including those launched with & or nohup, stay tracked until their supervised process group ends. Arbitrary third-party MCP or extension processes cannot be intercepted after launch. Supported extensions and external job producers must launch their process through this CLI so the supervisor owns its complete lifecycle.
 
 The following rule applies when explicitly launching work through the local task supervisor CLI.
 

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Terminal output from completed background tasks is now marked as acknowledged, preventing duplicate follow-up prompts.
+
 ## 1.53.3 — 2026-09-18
 
 - Kiro transcripts now preserve tool results as separate messages, matching the live stream layout and correctly showing failed tools on reload.

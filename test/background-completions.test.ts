@@ -9,7 +9,7 @@ import WebSocket from "ws";
 import { claudeProjectDir } from "../src/harnesses/claude/paths.js";
 import { resolveDataDirectory } from "../src/data-directory.js";
 import { supervisorRequest } from "../scripts/supervisor-client.mjs";
-import { beginQueuedPrompt, claimQueuedPrompt, enqueueSystemPrompt, listPendingSystemQueues, listQueuedPrompts, systemPromptState } from "../src/prompt-queue.js";
+import { acknowledgeSystemPrompt, beginQueuedPrompt, claimQueuedPrompt, enqueueSystemPrompt, listPendingSystemQueues, listQueuedPrompts, systemPromptState } from "../src/prompt-queue.js";
 import { api, projectNamed, signIn, startDevNode, stopDevNode } from "./dev-nodes.js";
 import { backgroundFixture, closeBackgroundFixture, startSyntheticTask } from "./background-tasks-fixture.js";
 
@@ -278,4 +278,28 @@ test("a completion id cannot be reused for another conversation", () => {
   const id = randomUUID();
   enqueueSystemPrompt(`${randomUUID()}:one`, id, "completion");
   assert.throws(() => enqueueSystemPrompt(`${randomUUID()}:two`, id, "completion"), /different queue/);
+});
+
+test("acknowledged completion prompts stay consumed before or after enqueue", () => {
+  seedNode();
+  for (const enqueueFirst of [false, true]) {
+    const id = randomUUID();
+    const key = `${randomUUID()}:${randomUUID()}`;
+    if (enqueueFirst) assert.equal(enqueueSystemPrompt(key, id, "completion"), "queued");
+    assert.equal(acknowledgeSystemPrompt(key, id), true);
+    assert.equal(systemPromptState(key, id), "consumed");
+    assert.equal(enqueueSystemPrompt(key, id, "late completion"), "consumed");
+    assert.equal(listQueuedPrompts(key).length, 0);
+  }
+});
+
+test("acknowledgement cannot erase an uncertain completion start", () => {
+  seedNode();
+  const id = randomUUID();
+  const key = `${randomUUID()}:${randomUUID()}`;
+  enqueueSystemPrompt(key, id, "completion");
+  const prompt = listQueuedPrompts(key)[0];
+  assert.equal(beginQueuedPrompt(id, prompt.revision), true);
+  assert.equal(acknowledgeSystemPrompt(key, id), false);
+  assert.equal(systemPromptState(key, id), "starting");
 });

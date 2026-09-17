@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { z } from "zod";
 import { type AuthSession } from "../../auth.js";
+import { acknowledgeCompletionResult } from "../background-completions.js";
 import {
   backgroundTaskCommandSchema,
   discoverBackgroundTasks,
@@ -79,7 +80,20 @@ app.post("/api/background-tasks/agent", route(async (request, response) => {
   const body = agentBody.parse(request.body);
   const { nodeId, ...operation } = body;
   const command = backgroundTaskCommandSchema.parse({ ...operation, projectId: identity.projectId, conversationId: identity.conversationId });
-  response.json(nodeId ? await routeBackgroundTaskOperation(nodeId, command) : await localBackgroundTaskOperation(command));
+  const execute = () => nodeId ? routeBackgroundTaskOperation(nodeId, command) : localBackgroundTaskOperation(command);
+  if (body.action !== "output") {
+    response.json(await execute());
+    return;
+  }
+  const sourceNodeId = nodeId!;
+  const task = await routeBackgroundTaskOperation(sourceNodeId, backgroundTaskCommandSchema.parse({
+    action: "get", projectId: identity.projectId, conversationId: identity.conversationId, id: body.id,
+  })) as { status: string };
+  const result = await execute();
+  if (["completed", "failed", "stopped", "unknown"].includes(task.status)) {
+    acknowledgeCompletionResult(sourceNodeId, identity.projectId, identity.conversationId, body.id);
+  }
+  response.json(result);
 }));
 
 app.post("/api/cluster/background-tasks", route(async (request, response) => {
