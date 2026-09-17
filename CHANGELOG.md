@@ -3,11 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.51.0 — 2026-09-17
 
-- Added temporary side conversations with `/bob-btw` for exploring ideas in isolation, widened the browser viewport to standard laptop dimensions, and made scheduled task failures retry automatically by default with an optional pause-on-failure setting.
-- Shell commands now supervise automatically: short operations finish inline without task history, longer operations queue as background tasks with live output and stop controls, and shell background children stay tracked until completion.
-- Improved keyboard shortcut visibility with repositioned badges, added image attachment thumbnails in the composer, enhanced empty conversation and folder messaging, and redesigned the file explorer with browsable columns and breadcrumbs.
+- Long-running agent shell commands continue in Tasks without restarting; short commands finish inline and stay out of task history.
+- Tasks stay scoped to their originating conversation, with output and stop controls preserved across ordinary app upgrades.
+- Internal completion prompts and routine follow-ups stay out of chat, including after reloads.
+- Fixed stale task views when switching conversations and database lock errors when updating conversation review state.
 
 ## 1.50.1 — 2026-09-17
 
