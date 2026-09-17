@@ -45,6 +45,8 @@ const COMMAND_ROWS = [
   { command: "addToCanvas", label: "Chat: add this conversation to the canvas" },
   { command: "rename", label: "Chat: rename this conversation" },
   { command: "scheduledTasks", label: "Chat: open scheduled tasks" },
+  { command: "backgroundTasks", label: "Chat: open background tasks" },
+  { command: "chatFiles", label: "Chat: open the project files" },
   { command: "toggleView", label: "Switch between the canvas and the conversation you left" },
   { command: "recentPane", label: "Canvas: jump to the conversation you were in before" },
   { command: "focusPane", label: "Canvas: bring the current conversation forward, or put it back" },

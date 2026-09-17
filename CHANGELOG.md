@@ -6,6 +6,21 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Shell commands now supervise automatically: short operations finish inline without task history, longer operations queue as background tasks with live output and stop controls, and shell background children stay tracked until completion.
+- Improved keyboard shortcut visibility with repositioned badges, added image attachment thumbnails in the composer, enhanced empty conversation and folder messaging, and redesigned the file explorer with browsable columns and breadcrumbs.
+
+## 1.48.1 — 2026-09-17
+
+- Picked images now preview as thumbnails in the composer chip, and empty conversations show a helpful message instead of blank task panes.
+
+## 1.48.0 — 2026-09-17
+
+- Moved keyboard shortcut badges below controls so button labels stay readable, and added U and Z shortcuts for background tasks and files panel.
+- Fixed goal completion markers appearing at the end of assistant responses.
+- Secured remote file explorer API endpoints with authentication.
+
+## 1.47.0 — 2026-09-17
+
+- Redesigned project files as a familiar file explorer with breadcrumbs, file-type icons, aligned columns, compact rows, and icon actions.
 
 ## 1.46.0 — 2026-09-17
 

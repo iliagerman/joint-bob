@@ -215,13 +215,13 @@
           </label>
           <button class="ghost icon-button chat-recents-button" id="chatRecentSessionsButton" type="button" aria-label="Recent conversations" title="Recent conversations" data-recent-sessions-open data-shortcut-hint="recents" data-testid="chat-recent-sessions-open-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" /><path d="M3 4v4h4" /><path d="M12 7.5V12l3.2 1.9" /></svg></button>
           <button class="ghost icon-button chat-recents-button chat-running-button" id="chatRunningConversationsButton" type="button" data-running-conversations-open aria-label="Running conversations" title="Running conversations" data-shortcut-hint="runningConversations" data-testid="chat-running-conversations-open-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5.5 10 6.5L8 18.5z"/></svg></button>
-          <button class="ghost compact background-tasks-trigger" id="backgroundTasksButton" type="button" aria-controls="backgroundTasksDialog" aria-haspopup="dialog" aria-label="Background tasks" data-testid="background-tasks-open">Tasks <span class="background-tasks-badge" id="backgroundTasksBadge" hidden></span></button>
+          <button class="ghost compact background-tasks-trigger" id="backgroundTasksButton" data-shortcut-hint="backgroundTasks" type="button" aria-controls="backgroundTasksDialog" aria-haspopup="dialog" aria-label="Background tasks" data-testid="background-tasks-open">Tasks <span class="background-tasks-badge" id="backgroundTasksBadge" hidden></span></button>
           <details class="chat-more" id="chatMoreMenu">
             <summary class="ghost icon-button" aria-label="More chat actions" title="More chat actions" data-testid="chat-more-button"><svg class="chat-toolbar-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7" fill="currentColor" /><circle cx="12" cy="12" r="1.7" fill="currentColor" /><circle cx="19" cy="12" r="1.7" fill="currentColor" /></svg></summary>
             <div class="chat-more-actions">
               <button class="ghost compact" id="openTerminalButton" data-shortcut-hint="terminal" type="button" disabled data-testid="chat-open-terminal-button">Terminal</button>
               <button class="ghost compact" id="openBrowserButton" data-shortcut-hint="browser" type="button" disabled aria-expanded="false" aria-controls="browserPanel" title="Open an existing conversation before starting its browser" data-testid="chat-open-browser-button">Browser</button>
-              <button class="ghost compact" id="chatFilesButton" type="button" data-testid="chat-files-button">Files</button>
+              <button class="ghost compact" id="chatFilesButton" data-shortcut-hint="chatFiles" type="button" data-testid="chat-files-button">Files</button>
               <button class="ghost compact" id="notifyButton" data-shortcut-hint="notify" type="button" aria-pressed="false" title="Notification device settings" data-testid="chat-notify-button">Notify</button>
               <button class="ghost compact" id="addToCanvasButton" data-shortcut-hint="addToCanvas" type="button" disabled data-testid="chat-add-to-canvas-button">Add to canvas</button>
               <button class="ghost compact" id="renameSessionButton" data-shortcut-hint="rename" type="button" disabled data-testid="chat-rename-button">Rename</button>
@@ -948,18 +948,21 @@
 
     <dialog id="projectFilesDialog" data-testid="project-files-dialog">
       <div class="dialog-card file-explorer-card">
-        <div class="file-editor-heading">
-          <span class="eyebrow">Project files</span>
-          <h2>Files</h2>
-          <p class="file-editor-path" id="projectFilesCrumbs" data-testid="project-files-crumbs"></p>
+        <header class="file-explorer-header">
+          <div>
+            <span class="eyebrow">Project files</span>
+            <h2>Files</h2>
+          </div>
+          <button class="ghost icon-button" id="projectFilesCloseButton" type="button" aria-label="Close file explorer" title="Close" data-testid="project-files-close-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+        </header>
+        <div class="file-explorer-toolbar">
+          <button class="ghost compact file-explorer-up" id="projectFilesUpButton" type="button" disabled data-testid="project-files-up-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 11 4-4 4 4M12 7v10"/></svg><span>Up</span></button>
+          <nav class="file-explorer-crumbs" id="projectFilesCrumbs" aria-label="Current folder" data-testid="project-files-crumbs"></nav>
+          <button class="ghost compact" id="projectFilesPasteButton" type="button" hidden data-testid="project-files-paste-button">Paste here</button>
         </div>
-        <p id="projectFilesStatus" role="status" aria-live="polite"></p>
+        <div class="file-explorer-columns" data-testid="project-files-columns" aria-hidden="true"><span>Name</span><span>Size</span><span>Actions</span></div>
         <ul class="file-explorer-list" id="projectFilesList" data-testid="project-files-list"></ul>
-        <div class="dialog-actions">
-          <button class="ghost" id="projectFilesUpButton" type="button" disabled data-testid="project-files-up-button">Up</button>
-          <button class="ghost" id="projectFilesPasteButton" type="button" hidden data-testid="project-files-paste-button">Paste here</button>
-          <button class="primary" id="projectFilesCloseButton" type="button" data-testid="project-files-close-button">Close</button>
-        </div>
+        <p class="file-explorer-status" id="projectFilesStatus" role="status" aria-live="polite"></p>
       </div>
     </dialog>
 
@@ -1304,7 +1307,14 @@
           <div id="backgroundTasksSummary" role="status" aria-live="polite"></div>
           <div id="backgroundTasksNodes" class="background-tasks-nodes"></div>
         </div>
-        <div class="background-tasks-grid">
+        <div class="background-tasks-empty" id="backgroundTasksEmpty" data-testid="background-tasks-empty" hidden>
+          <span class="background-tasks-empty-glyph" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 1.8" /></svg>
+          </span>
+          <h3>No background tasks yet</h3>
+          <p>Long-running jobs started from this conversation appear here with their status and live output.</p>
+        </div>
+        <div class="background-tasks-grid" id="backgroundTasksGrid">
           <section class="background-tasks-list" id="backgroundTasksList" aria-label="Task history"></section>
           <section class="background-tasks-details" id="backgroundTasksDetails" aria-label="Task details"><p>Select a task to inspect its output.</p><pre id="backgroundTasksOutput" tabindex="0" data-testid="background-task-output"></pre></section>
         </div>

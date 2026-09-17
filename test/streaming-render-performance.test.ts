@@ -16,7 +16,7 @@ test("streamed assistant text paints cheaply before the final markdown render", 
   assert.match(app, /content\.textContent = text;[\s\S]*return;/);
   assert.match(app, /content\.textContent = bubble\._raw/);
   assert.match(app, /renderBubbleContent\(bubble, text, true\)/);
-  assert.match(app, /renderBubbleContent\(state\.assistantBubble, payload\.text, true\)/);
+  assert.match(app, /renderBubbleContent\(state\.assistantBubble, text, true\)/);
   assert.doesNotMatch(app, /LARGE_MESSAGE_RENDER_MS|bubble\._renderTimer/);
 });
 

@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { elements } from "./elements.js";
+import { menuIcon } from "./icons.js";
 import { openFileAction } from "./project-files.js";
 import { confirmAction, toast } from "./shell.js";
 import { state } from "./state.js";
@@ -37,7 +38,7 @@ async function loadExplorerDirectory(dir) {
     if (!elements.projectFilesDialog.open) return;
     state.fileExplorer.dir = body.path;
     renderExplorerEntries(body.entries);
-    elements.projectFilesStatus.textContent = body.entries.length ? "" : "This folder is empty.";
+    elements.projectFilesStatus.textContent = body.entries.length === 1 ? "1 item" : `${body.entries.length} items`;
   } catch (error) {
     toast(error.message, 8000);
     elements.projectFilesStatus.textContent = error.message;
@@ -48,10 +49,32 @@ async function loadExplorerDirectory(dir) {
 }
 
 function syncExplorerControls() {
-  elements.projectFilesCrumbs.textContent = `/${state.fileExplorer.dir}`;
+  renderExplorerCrumbs();
   elements.projectFilesUpButton.disabled = !state.fileExplorer.dir;
   elements.projectFilesPasteButton.hidden = !state.fileExplorer.clipboard;
   if (state.fileExplorer.clipboard) elements.projectFilesPasteButton.textContent = `Paste "${state.fileExplorer.clipboard.split("/").pop()}"`;
+}
+
+function renderExplorerCrumbs() {
+  elements.projectFilesCrumbs.textContent = "";
+  const parts = state.fileExplorer.dir ? state.fileExplorer.dir.split("/") : [];
+  const crumbs = [{ name: "Project", path: "" }, ...parts.map((name, index) => ({ name, path: parts.slice(0, index + 1).join("/") }))];
+  crumbs.forEach((crumb, index) => {
+    if (index) {
+      const separator = document.createElement("span");
+      separator.className = "file-explorer-crumb-separator";
+      separator.textContent = "/";
+      separator.setAttribute("aria-hidden", "true");
+      elements.projectFilesCrumbs.append(separator);
+    }
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "file-explorer-crumb";
+    button.textContent = crumb.name;
+    if (index === crumbs.length - 1) button.setAttribute("aria-current", "page");
+    button.addEventListener("click", () => { void loadExplorerDirectory(crumb.path); });
+    elements.projectFilesCrumbs.append(button);
+  });
 }
 
 function formatEntrySize(size) {
@@ -64,42 +87,48 @@ function renderExplorerEntries(entries) {
   elements.projectFilesList.textContent = "";
   for (const entry of entries) {
     const row = document.createElement("li");
-    row.className = "file-explorer-row";
+    row.className = `file-explorer-row is-${entry.type}`;
     const open = document.createElement("button");
     open.type = "button";
-    open.className = "ghost compact file-explorer-open";
+    open.className = "file-explorer-open";
     open.dataset.testid = entry.type === "directory" ? "project-files-folder" : "project-files-file";
+    open.setAttribute("aria-label", `${entry.type === "directory" ? "Open folder" : "Open file"} ${entry.name}`);
     const name = document.createElement("span");
     name.className = "file-explorer-name";
-    name.textContent = entry.type === "directory" ? `${entry.name}/` : entry.name;
-    open.append(name);
+    name.textContent = entry.name;
+    open.append(menuIcon(entry.type === "directory" ? "folder" : "file"), name);
     if (entry.type === "directory") open.addEventListener("click", () => { void loadExplorerDirectory(entry.path); });
     else open.addEventListener("click", () => { void openFileAction(entry.path); });
-    row.append(open);
+    const size = document.createElement("span");
+    size.className = "file-explorer-size";
+    size.textContent = entry.type === "file" ? formatEntrySize(entry.size) : "Folder";
+    const actions = document.createElement("div");
+    actions.className = "file-explorer-actions";
     if (entry.type === "file") {
-      const size = document.createElement("span");
-      size.className = "file-explorer-size";
-      size.textContent = formatEntrySize(entry.size);
-      row.append(size);
       const copy = document.createElement("button");
       copy.type = "button";
-      copy.className = "ghost compact";
-      copy.textContent = "Copy";
+      copy.className = "ghost icon-button file-explorer-action";
+      copy.setAttribute("aria-label", `Copy ${entry.name}`);
+      copy.title = "Copy";
       copy.dataset.testid = "project-files-copy-button";
+      copy.append(menuIcon("copy"));
       copy.addEventListener("click", () => {
         state.fileExplorer.clipboard = entry.path;
         syncExplorerControls();
         toast(`Copied ${entry.name}. Open the destination folder and paste.`);
       });
-      row.append(copy);
+      actions.append(copy);
       const remove = document.createElement("button");
       remove.type = "button";
-      remove.className = "ghost compact danger";
-      remove.textContent = "Delete";
+      remove.className = "ghost icon-button danger file-explorer-action";
+      remove.setAttribute("aria-label", `Delete ${entry.name}`);
+      remove.title = "Delete";
       remove.dataset.testid = "project-files-delete-button";
+      remove.append(menuIcon("trash"));
       remove.addEventListener("click", () => { void deleteExplorerFile(entry); });
-      row.append(remove);
+      actions.append(remove);
     }
+    row.append(open, size, actions);
     elements.projectFilesList.append(row);
   }
 }

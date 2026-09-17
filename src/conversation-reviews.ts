@@ -177,7 +177,7 @@ export function syncConversationReviewStates(userId: string, username: string, p
   const now = new Date().toISOString();
   const states = new Map<string, ConversationReviewState>();
   sessions = sessions.map((session) => ({ ...session, running: session.running || conversationWorkActive(session.engine, session.sessionId) }));
-  db.exec("BEGIN");
+  db.exec("BEGIN IMMEDIATE");
   try {
     const tracking = statements.selectTracking.get(userId, projectId) as { initialized_at: string } | undefined;
     const initializedAt = tracking?.initialized_at ?? now;

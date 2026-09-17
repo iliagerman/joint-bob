@@ -131,7 +131,7 @@ test("the turn timer counts up while the agent works and reports the total when 
 
   // agent_start begins the count; agent_end stamps the finished turn's total.
   const agentStart = app.slice(app.indexOf('payload.type === "agent_start"'));
-  assert.match(agentStart.slice(0, 400), /startDurationTicker\(\)/);
+  assert.match(agentStart.slice(0, 500), /startDurationTicker\(\)/);
   const finish = functionSource(app, "finishTurnTimer");
   assert.match(finish, /took \$\{formatDuration/);
   assert.match(finish, /message-time/);

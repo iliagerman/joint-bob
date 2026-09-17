@@ -17,6 +17,16 @@ import { maybeNotifyTurnComplete, playCompletionSound, setConnecting, setStatus,
 import { state } from "./state.js";
 import { loadTasks } from "./tasks.js";
 
+const GOAL_COMPLETE_MARKER = "BOB_GOAL_COMPLETE";
+
+function visibleAssistantText(text, streaming = false) {
+  const complete = text.replace(/\n?BOB_GOAL_COMPLETE\s*$/, "");
+  if (!streaming || complete !== text) return complete;
+  const lineStart = text.lastIndexOf("\n") + 1;
+  const trailingLine = text.slice(lineStart);
+  return trailingLine && GOAL_COMPLETE_MARKER.startsWith(trailingLine) ? text.slice(0, lineStart) : text;
+}
+
 export function socketOpen() {
   return Boolean(state.socket && state.socket.readyState === WebSocket.OPEN);
 }
@@ -129,6 +139,7 @@ export function openSession(sessionPath, title = "New conversation", preserveCha
     syncBackgroundTasks();
     state.scheduledTurn = false;
     state.scheduledAssistantText = "";
+    state.assistantRawText = "";
     // A conversation being opened fresh starts out following the newest message.
     state.followChat = true;
     clearChat();
@@ -206,6 +217,7 @@ function handleSocketPayload(payload, scrollOnReady = false) {
     state.conversationSegments = payload.segments || null;
     state.scheduledTurn = payload.scheduledTurn === true;
     state.scheduledAssistantText = "";
+    state.assistantRawText = "";
     syncEngineUI();
     if (payload.sessionFile) {
       setActiveSessionPath(payload.sessionFile);
@@ -356,8 +368,8 @@ function handleSocketPayload(payload, scrollOnReady = false) {
     }
     clearThinkingBubble();
     if (!state.assistantBubble) state.assistantBubble = appendMessage("assistant", "");
-    const currentText = state.assistantBubble._raw || "";
-    renderBubbleContent(state.assistantBubble, `${currentText}${payload.text}`);
+    state.assistantRawText += payload.text;
+    renderBubbleContent(state.assistantBubble, visibleAssistantText(state.assistantRawText, true));
     return;
   }
   if (payload.type === "assistantFinal") {
@@ -366,9 +378,11 @@ function handleSocketPayload(payload, scrollOnReady = false) {
       return;
     }
     clearThinkingBubble();
-    if (!state.assistantBubble) appendMessage("assistant", payload.text);
-    else renderBubbleContent(state.assistantBubble, payload.text, true);
+    const text = visibleAssistantText(payload.text);
+    if (!state.assistantBubble) appendMessage("assistant", text);
+    else renderBubbleContent(state.assistantBubble, text, true);
     state.assistantBubble = null;
+    state.assistantRawText = "";
     return;
   }
   if (payload.type === "thinkingStart") {
@@ -418,6 +432,7 @@ function handleSocketPayload(payload, scrollOnReady = false) {
   }
   if (payload.type === "agent_start") {
     if (state.scheduledTurn) state.scheduledAssistantText = "";
+    state.assistantRawText = "";
     setStatus(`${harnessLabel(state.harnesses, state.engine)} is working`, true);
     state.lastTurnStartedAt = Date.now();
     state.sessionBusy = true;
@@ -428,8 +443,9 @@ function handleSocketPayload(payload, scrollOnReady = false) {
   if (payload.type === "agent_end") {
     clearThinkingBubble();
     finalizeAssistantBubble();
-    if (state.scheduledTurn && state.scheduledAssistantText.trim()) appendMessage("assistant", state.scheduledAssistantText);
+    if (state.scheduledTurn && state.scheduledAssistantText.trim()) appendMessage("assistant", visibleAssistantText(state.scheduledAssistantText));
     state.scheduledAssistantText = "";
+    state.assistantRawText = "";
     state.scheduledTurn = false;
     setStatus("Connected", true);
     state.sessionBusy = false;
