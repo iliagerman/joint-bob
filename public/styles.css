@@ -202,8 +202,10 @@ h2 { font-size: 17px; line-height: 1.25; }
 @media (prefers-reduced-motion: reduce) {
   .boot-smoke, .boot-joint, .boot-ember { animation: none; }
 }
-body:not(.booting) .app-boot { display: none; }
+body:not(.booting) .app-boot,
+html.by-the-way-pane .app-boot { display: none; }
 body.booting :is(.shell, .mobile-nav) { visibility: hidden; }
+html.by-the-way-pane body.booting :is(.shell, .mobile-nav) { visibility: visible; }
 
 /* ---- App shell: mobile-first, one full-screen panel at a time ---- */
 .shell {
@@ -1272,6 +1274,9 @@ select.chat-toolbar-control {
 .command-autocomplete-name { font-family: var(--mono); font-size: 12px; font-weight: 650; }
 .command-autocomplete-description { overflow: hidden; color: var(--muted); font-size: 11px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .composer-row { width: 100%; max-width: 1100px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; }
+/* The composer owns the bottom edge of the window, so its badge hangs above the row -
+   below would fall off the screen - and sits over the send button, clear of the text. */
+.composer-row > .shortcut-hint { top: auto; bottom: calc(100% + 3px); left: auto; right: 0; transform: none; }
 .attachment-list { display: flex; gap: 8px; flex-wrap: wrap; }
 .attachment-list:empty { display: none; }
 .attachment-chip { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; min-height: 28px; padding: 0 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--field); color: var(--text); font-size: 12px; }

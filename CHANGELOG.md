@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Pressing Escape now closes the by-the-way side panel.
+
 ## 1.52.2 — 2026-09-17
 
 - Fixed profile leases not being released when idle sessions expire.

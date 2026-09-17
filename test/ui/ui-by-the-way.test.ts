@@ -32,6 +32,8 @@ test("bob-btw opens an isolated temporary conversation and deletes it on close",
       await page.locator("#composer").evaluate((form: HTMLFormElement) => form.requestSubmit());
       await page.locator("#byTheWayDialog[open]").waitFor();
       const frame = page.frameLocator('[data-testid="by-the-way-frame"]');
+      await frame.locator("#appBoot").waitFor({ state: "attached" });
+      assert.equal(await frame.locator("#appBoot").isVisible(), false, "BTW must open as an in-app dialog without the app splash screen");
       await frame.locator("#sessionTitle").filter({ hasText: "[BTW] Short one" }).waitFor();
       await frame.locator("#messages").getByText("Single short line.", { exact: true }).waitFor();
     };
@@ -44,7 +46,7 @@ test("bob-btw opens an isolated temporary conversation and deletes it on close",
     assert.equal(await page.locator("#messages").getByText("side-only question", { exact: true }).count(), 0, "BTW prompt must not enter the source conversation");
     const desktop = await page.getByTestId("by-the-way-dialog").boundingBox();
     assert.ok(desktop && desktop.width < 1400 && desktop.height < 880, `desktop BTW should be modal-sized: ${JSON.stringify(desktop)}`);
-    await page.getByTestId("by-the-way-close-button").click();
+    await sideChat.getByTestId("chat-message-input").press("Escape");
     await page.locator("#byTheWayDialog[open]").waitFor({ state: "hidden" });
     assert.equal(await page.locator("#sessionList").getByText("[BTW] Short one", { exact: true }).count(), 0);
 

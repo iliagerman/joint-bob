@@ -2,5 +2,6 @@
 // Preferences live on the server, so the OS setting is the only thing knowable this early;
 // app.js re-applies the signed-in choice behind the boot screen once it loads.
 const theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+if (new URLSearchParams(location.search).has("byTheWayToken")) document.documentElement.classList.add("by-the-way-pane");
 document.documentElement.dataset.theme = theme;
 document.querySelector('meta[name="theme-color"]').content = theme === "dark" ? "#0d0e10" : "#f2f2f0";
