@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.53.5 — 2026-09-18
 
 - Claude transcripts now preserve tool results as separate messages, keeping them in the order the agent spoke.
 
