@@ -99,13 +99,22 @@ test("shortcut badges are readable and sit below their buttons", async () => {
       return {
         text: badge.textContent,
         size: parseFloat(getComputedStyle(badge).fontSize),
+        // The composer is a tall field, not a button: its badge sits above it, right-aligned.
+        composer: badge.parentElement!.classList.contains("composer-row"),
         gap: box.top - host.bottom,
+        gapAbove: host.top - box.bottom,
         centerOffset: Math.abs((box.left + box.right - host.left - host.right) / 2),
+        rightOffset: Math.abs(host.right - box.right),
       };
     }));
     assert.ok(badges.length > 0);
     for (const badge of badges) {
       assert.ok(badge.size >= 13, `${badge.text} is ${badge.size}px at ${width}px; needs at least 13px`);
+      if (badge.composer) {
+        assert.ok(badge.gapAbove >= 0 && badge.gapAbove <= 8, `${badge.text} gap is ${badge.gapAbove}px at ${width}px; must sit just above the composer without overlap`);
+        assert.ok(badge.rightOffset <= 1, `${badge.text} right offset is ${badge.rightOffset}px at ${width}px; must align with the composer's right edge`);
+        continue;
+      }
       assert.ok(badge.gap >= 0 && badge.gap <= 8, `${badge.text} gap is ${badge.gap}px at ${width}px; must sit just below its button without overlap`);
       assert.ok(badge.centerOffset <= 1, `${badge.text} center offset is ${badge.centerOffset}px at ${width}px; must be centered under its button`);
     }
