@@ -3,10 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.57.4 — 2026-09-18
 
-- Sessions now distinguish between model turns and independent background work, showing "Running" when the model is actively responding and "Background tasks running" when work continues without a model turn.
-- Conversations now keep background tasks visible across harness switches and cluster nodes, so switching agents or machines no longer hides ongoing work.
+- Sessions now show "Background tasks running" when work continues without a model turn, separately from "Running" during active responses.
+- Conversations keep background tasks visible across harness switches and cluster nodes, so switching agents or machines no longer hides ongoing work.
 
 ## 1.57.3 — 2026-09-18
 
