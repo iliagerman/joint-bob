@@ -40,3 +40,18 @@ test("auto compact stays disabled below threshold, when configured off, and duri
   assert.equal(await autoCompactBetweenTurns(shared, 1), false);
   assert.equal(compactions, 0);
 });
+
+test("a failed auto compact is attempted once per turn, not on every wake-up", async () => {
+  let compactions = 0;
+  const shared = sharedSession(90, async () => {
+    compactions += 1;
+    throw new Error("Summarization failed: usage limit reached");
+  });
+
+  await assert.rejects(autoCompactBetweenTurns(shared, 70), /usage limit reached/);
+  assert.equal(await autoCompactBetweenTurns(shared, 70), false, "a failed compaction must not retry on the next poll");
+  assert.equal(shared.turnInFlight, 0, "a failed compaction releases its in-flight slot");
+  armAutoCompactAfterPrompt(shared.session);
+  await assert.rejects(autoCompactBetweenTurns(shared, 70), /usage limit reached/);
+  assert.equal(compactions, 2);
+});

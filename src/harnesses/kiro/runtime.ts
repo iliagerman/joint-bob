@@ -322,7 +322,9 @@ class KiroSession implements HarnessSession {
       this.pendingNotifications.push(envelope);
       return;
     }
-    if (envelope.sessionId !== this.nativeSessionId) throw new Error("Kiro ACP notification has an unexpected session ID");
+    // Each turn owns its kiro-cli process, so another session ID on this pipe is
+    // a sub-agent this turn spawned. The parent reports its result as a tool call.
+    if (envelope.sessionId !== this.nativeSessionId) return;
     if (this.replaying) return;
     this.handleUpdate(update);
   }

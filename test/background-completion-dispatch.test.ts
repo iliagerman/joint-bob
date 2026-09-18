@@ -147,62 +147,73 @@ test("background completion turns stay internal live and after restart", async (
   }
 });
 
-test("automatic completion start uncertainty remains fenced after dispatch failure and restart", async () => {
+function failureEnv(mode: "throw" | "hang") {
   const bootstrap = path.resolve("test/background-start-failure-bootstrap.ts");
-  const envFor = (root: string) => ({
+  return (root: string) => ({
     JOINT_BOB_TEST_ENGINE_LOG: path.join(root, "engine.log"),
     JOINT_BOB_TEST_FAILURE_LOG: path.join(root, "failure.log"),
+    JOINT_BOB_TEST_FAILURE_MODE: mode,
     NODE_OPTIONS: `--import tsx --import ${bootstrap}`,
   });
-  const f = await backgroundFixture(envFor);
+}
+
+function attempts(failures: Array<{ text: string }>, taskId: string): number {
+  return failures.filter((entry) => entry.text.includes(taskId)).length;
+}
+
+test("a failed automatic start is retired, surfaced, and never blocks later completions", async () => {
+  const f = await backgroundFixture(failureEnv("throw"));
   let setup: Awaited<ReturnType<typeof openSeededPi>> | undefined;
   try {
     setup = await openSeededPi(f);
+    const failureLog = path.join(f.root, "failure.log");
     const first = randomUUID();
     await startSyntheticTask(f, setup.projectId, setup.conversationId, first);
-
-    const observed = await waitFor(
-      async () => ({
-        messages: setup!.messages,
-        queue: queueRowForTask(f.node.dataDir, first),
-        outbox: outboxState(f.node.dataDir, first),
-        failures: await failureEntries(path.join(f.root, "failure.log")),
-      }),
-      (value) => value.queue?.dispatchState === "starting" && value.failures.some((entry) => entry.text.includes(first)),
-      "fenced uncertain internal start",
+    await waitFor(
+      async () => ({ failures: await failureEntries(failureLog), row: queueRowForTask(f.node.dataDir, first) }),
+      (value) => attempts(value.failures, first) === 1 && value.row === undefined,
+      "retired failed internal start",
     );
-    assert.equal(observed.messages.some((frame) => frame.type === "promptFailed"), false);
-    assert.ok(observed.queue);
-    const firstRow = queueRow(f.node.dataDir, observed.queue.id);
-    assert.deepEqual(firstRow, { dispatchState: "starting", systemEventId: observed.queue.id });
+
+    const notice = await waitFor(() => setup!.messages.find((frame) => frame.type === "error"), Boolean, "visible failure notice");
+    assert.match(String(notice!.error), /Synthetic uncertain start/);
+    assert.equal(JSON.stringify(notice).includes(first), false, "internal task marker must never reach client frames");
+    assert.equal(setup.messages.some((frame) => frame.type === "promptFailed"), false, "internal prompts never appear as queue items");
+
+    const second = randomUUID();
+    await startSyntheticTask(f, setup.projectId, setup.conversationId, second);
+    const failures = await waitFor(() => failureEntries(failureLog), (entries) => attempts(entries, second) === 1, "later completion delivered");
+    assert.equal(attempts(failures, first), 1, "a failed automatic start is never replayed");
+  } finally {
+    setup?.socket.terminate();
+    await closeBackgroundFixture(f);
+  }
+});
+
+test("an automatic start interrupted by shutdown is never replayed and does not block later completions", async () => {
+  const f = await backgroundFixture(failureEnv("hang"));
+  let setup: Awaited<ReturnType<typeof openSeededPi>> | undefined;
+  try {
+    setup = await openSeededPi(f);
     const failureLog = path.join(f.root, "failure.log");
-    let failures = await failureEntries(failureLog);
-    assert.equal(failures.filter((entry) => entry.text.includes(first)).length, 1, "first uncertain prompt must be attempted once");
+    const first = randomUUID();
+    await startSyntheticTask(f, setup.projectId, setup.conversationId, first);
+    await waitFor(
+      async () => ({ failures: await failureEntries(failureLog), row: queueRowForTask(f.node.dataDir, first) }),
+      (value) => attempts(value.failures, first) === 1 && value.row?.dispatchState === "starting",
+      "interrupted internal start",
+    );
 
     setup.socket.close();
     await new Promise<void>((resolve) => setup!.socket.once("close", resolve));
     await stopDevNode(f.server);
-    f.server = await startDevNode(f.environment, f.node, envFor(f.root));
+    f.server = await startDevNode(f.environment, f.node, failureEnv("throw")(f.root));
 
     const second = randomUUID();
     await startSyntheticTask(f, setup.projectId, setup.conversationId, second);
-    await waitFor(async () => (await supervisorRequest<{ status: string }>(f.node.dataDir, { action: "task", id: second })).status, (status) => status === "completed", "second supervisor task completion");
-    await waitFor(() => outboxState(f.node.dataDir, second), (state) => state === "queued", "second durable completion enqueue");
-    await waitFor(() => queueRowForTask(f.node.dataDir, second), (row) => row?.dispatchState === "pending", "second pending queue row");
-
-    assert.deepEqual(queueRow(f.node.dataDir, observed.queue.id), { dispatchState: "starting", systemEventId: observed.queue.id });
-    const secondRow = queueRowForTask(f.node.dataDir, second);
-    assert.deepEqual(secondRow && { dispatchState: secondRow.dispatchState, systemEventId: secondRow.systemEventId }, { dispatchState: "pending", systemEventId: secondRow?.id });
-    failures = await failureEntries(failureLog);
-    assert.equal(failures.filter((entry) => entry.text.includes(first)).length, 1, "restart must not replay the uncertain prompt");
-    assert.equal(failures.filter((entry) => entry.text.includes(second)).length, 0, "uncertain predecessor must fence the later prompt");
-
-    const supervisor = new DatabaseSync(path.join(f.node.dataDir, "supervisor.db"), { readOnly: true });
-    try {
-      const rows = supervisor.prepare("SELECT id,status FROM supervisor_tasks WHERE id IN (?,?) ORDER BY id").all(first, second) as Array<{ id: string; status: string }>;
-      assert.deepEqual(rows.map(({ id, status }) => ({ id, status })), [first, second].sort().map((id) => ({ id, status: "completed" })));
-      assert.equal((supervisor.prepare("SELECT count(*) AS count FROM supervisor_completions WHERE task_id IN (?,?)").get(first, second) as { count: number }).count, 2);
-    } finally { supervisor.close(); }
+    const failures = await waitFor(() => failureEntries(failureLog), (entries) => attempts(entries, second) === 1, "later completion delivered after restart");
+    assert.equal(attempts(failures, first), 1, "restart must not replay the interrupted start");
+    assert.equal(queueRowForTask(f.node.dataDir, first), undefined, "the interrupted start is retired");
   } finally {
     setup?.socket.terminate();
     await closeBackgroundFixture(f);

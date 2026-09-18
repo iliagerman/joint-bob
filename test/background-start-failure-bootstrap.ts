@@ -15,6 +15,8 @@ runtime.open = async (options): Promise<HarnessSession> => {
   session.prompt = async (input) => {
     await input.beforeStart?.();
     await appendFile(process.env.JOINT_BOB_TEST_FAILURE_LOG!, `${JSON.stringify({ sessionId: options.sessionId, text: input.text })}\n`);
+    // "hang" leaves the start in flight so a shutdown can interrupt it.
+    if (process.env.JOINT_BOB_TEST_FAILURE_MODE === "hang") await new Promise<never>(() => {});
     throw new Error("Synthetic uncertain start before acknowledgement");
   };
   return session;

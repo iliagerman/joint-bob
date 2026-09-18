@@ -54,9 +54,11 @@ export async function autoCompactBetweenTurns(shared: SharedHarnessSession, thre
   const usage = shared.session.status().contextUsage;
   if (threshold === null || !usage || usage.percent < threshold || shared.turnInFlight > 0 || shared.session.isBusy() || autoCompacted.has(shared.session)) return false;
   shared.turnInFlight += 1;
+  // A failed attempt counts too: wake-ups poll every two seconds, and retrying a
+  // failing compaction on each one floods the log and never reaches the prompt.
+  autoCompacted.add(shared.session);
   try {
     await shared.session.compact(undefined, beforeStart);
-    autoCompacted.add(shared.session);
     return true;
   } finally {
     shared.turnInFlight -= 1;
@@ -210,8 +212,11 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
       if (!queued.systemEventId) publish(connection, { type: "promptCompleted", queueId: queued.id });
     } catch (error) {
       // An automatic completion may have crossed the harness start boundary even
-      // when transport failed before onStarted. Keep it fenced as uncertain.
-      if (!claimed && !queued.systemEventId) resetQueuedPromptAttempt(queued.id);
+      // when transport failed before onStarted, so it is retired, never replayed.
+      if (!claimed) {
+        if (queued.systemEventId) claimQueuedPrompt(queued.id);
+        else resetQueuedPromptAttempt(queued.id);
+      }
       if (!pausedDrains.has(queueKey(connection))) {
         if (!queued.systemEventId) publish(connection, { type: "promptFailed", queueId: queued.id, error: chatErrorMessage(error) });
         throw error;
@@ -264,12 +269,20 @@ async function drainLoop(connection: HarnessChatConnection): Promise<void> {
     if (pausedDrains.has(queueKey(connection)) || harnessSessionBusy(connection.shared)) return;
     if (await autoCompactBetweenTurns(connection.shared, getSettings().autoCompactThreshold, () => writable(connection))) sendHarnessStatus(connection.shared);
     const next = listQueuedPrompts(queueKey(connection))[0];
-    if (next?.systemEventId && next.dispatchState === "starting") return;
+    if (next?.systemEventId && next.dispatchState === "starting") {
+      if (startingIds.has(next.id)) return;
+      // No dispatch here owns this start, so a shutdown interrupted it. Retire it
+      // rather than replay it, or every later completion waits behind it forever.
+      await writable(connection);
+      claimQueuedPrompt(next.id);
+      continue;
+    }
     if (next) {
       try { await dispatch(connection, next); }
       catch (error) {
         if (!next.systemEventId) throw error;
         console.warn("Background completion dispatch failed", error instanceof Error ? error.message.slice(0, 200) : "unknown error");
+        publish(connection, { type: "error", error: chatErrorMessage(error) });
         return;
       }
       continue;
