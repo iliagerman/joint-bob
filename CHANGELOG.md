@@ -8,6 +8,19 @@ Every deployment is a version. The newest section must always match the
 - Browser login forms now appear as a panel beside your chat instead of a popup, sharing the space with the manual browser viewer.
 - Browser conversations now detect visible login forms and automatically open a persistent sign-in popup so you can authenticate while agent automation pauses.
 
+## 1.56.1 — 2026-09-18
+
+- Fixed spurious sign-in prompts when accessing git panels across clustered nodes with mismatched versions.
+
+## 1.56.0 — 2026-09-18
+
+- Added a project-level Git review panel to view repository status, diffs, and commit history within project workspaces.
+- Ask AI to explain git changes; review discussions persist for 7 days.
+
+## 1.55.0 — 2026-09-18
+
+- Added a Git panel where you can browse the working tree, commit history, and ask AI to explain code changes—explanations are saved for 7 days and can be referenced in follow-ups.
+
 ## 1.54.0 — 2026-09-18
 
 - Added website accounts to store structured login credentials that agents can fill automatically at bound origins.

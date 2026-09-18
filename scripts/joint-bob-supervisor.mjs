@@ -53,6 +53,9 @@ function validId(value) {
 function sameTask(row, task) {
   return row.identity === task.identity && row.name === task.name && row.executable === task.executable && JSON.stringify(row.args) === JSON.stringify(task.args) && row.cwd === task.cwd;
 }
+// The UI polls "output", "task", and "list" every few seconds; tracing those would bury
+// the deploy-relevant control operations in noise.
+const CONTROL_TRACE_ACTIONS = new Set(["activate-release", "status"]);
 function signalGroup(child, signal) {
   if (child.exitCode !== null || child.signalCode !== null) return;
   try { process.kill(-child.pid, signal); } catch (error) { if (error.code !== "ESRCH") throw error; }
@@ -120,6 +123,9 @@ function readBody(request) {
       data += part;
     });
     request.on("end", () => {
+      // The whole request has arrived; clear the idle guard so a dispatch that legitimately
+      // takes seconds (activate-release stops and restarts the app) keeps its connection.
+      request.setTimeout(0);
       try {
         const body = JSON.parse(data);
         if (!body || typeof body !== "object" || Array.isArray(body)) throw new InputError("Invalid request");
@@ -222,8 +228,11 @@ class Runtime {
       try {
         assertSupervisorCompatible(this.installation.installRoot, releaseRoot);
         const next = releaseAppSpec(this.installation.installRoot, releaseRoot, path.dirname(this.socketPath));
+        const replaceStartedAt = Date.now();
         await this.replace(next);
+        console.error(`[supervisor] activate-release replaced the app in ${Date.now() - replaceStartedAt}ms`);
         await waitForAppHealth(next, next.env.JOINT_BOB_RELEASE, () => this.appState.commandExited);
+        console.error(`[supervisor] activate-release app healthy after another ${Date.now() - replaceStartedAt}ms`);
         this.store.setInstallation({ installRoot: this.installation.installRoot, activeRelease: releaseRoot });
         this.installation = { installRoot: this.installation.installRoot, activeRelease: releaseRoot };
         return this.status();
@@ -361,7 +370,16 @@ class Runtime {
         const identity = admin ? undefined : this.store.taskIdentity(hash.toString("hex"));
         if (!admin && !identity) throw new InputError("Unauthorized", 401);
         if (request.headers["content-type"]?.split(";")[0] !== "application/json") throw new InputError("Content-Type must be application/json");
-        response.end(JSON.stringify({ result: await this.dispatch(await readBody(request), identity) }));
+        const body = await readBody(request);
+        const action = String(body.action ?? "unknown");
+        const startedAt = Date.now();
+        if (CONTROL_TRACE_ACTIONS.has(action)) console.error(`[supervisor] control ${action} started`);
+        response.on("close", () => {
+          if (!response.writableEnded) console.error(`[supervisor] control ${action} connection lost before the response after ${Date.now() - startedAt}ms`);
+        });
+        const result = await this.dispatch(body, identity);
+        if (CONTROL_TRACE_ACTIONS.has(action)) console.error(`[supervisor] control ${action} completed in ${Date.now() - startedAt}ms`);
+        response.end(JSON.stringify({ result }));
       } catch (error) {
         const status = error instanceof InputError ? error.status : 500;
         response.statusCode = status;

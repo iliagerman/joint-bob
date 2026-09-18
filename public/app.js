@@ -24,6 +24,7 @@ import "./app/state.js";
 import "./app/elements.js";
 import "./app/project-files.js";
 import "./app/project-explorer.js";
+import "./app/git-review.js";
 import "./app/api.js";
 import "./app/auth.js";
 import "./app/settings.js";

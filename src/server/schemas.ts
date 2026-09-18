@@ -144,6 +144,26 @@ export const projectFileCopySchema = z.object({
   destinationDir: z.string().max(2000),
   sessionId: z.string().min(1).max(240),
 }).strict();
+const gitReviewThinkingSchema = z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+export const gitReviewSelectionSchema = z.object({
+  scope: z.enum(["worktree", "commit"]),
+  revision: z.string().regex(/^[0-9a-fA-F]{4,64}$/).optional(),
+  filePath: z.string().max(2000).optional(),
+  staged: z.boolean().optional(),
+}).strict().refine((value) => value.scope !== "commit" || Boolean(value.revision), { message: "A commit review needs a revision", path: ["revision"] });
+export const gitReviewAskSchema = z.object({
+  harnessId: registeredHarnessIdSchema,
+  provider: z.string().trim().max(200).optional(),
+  modelId: z.string().trim().min(1).max(300),
+  thinkingLevel: gitReviewThinkingSchema,
+  selection: gitReviewSelectionSchema,
+  question: z.string().trim().min(1).max(4000),
+  /** The conversation this review is scoped to, for a conversation-level Ask AI. */
+  conversationId: z.string().min(1).max(240).optional(),
+}).strict();
+export const gitReviewFollowUpSchema = z.object({
+  question: z.string().trim().min(1).max(4000),
+}).strict();
 export const sessionTakeOwnershipSchema = z.object({
   peerId: z.string().uuid(),
   sessionId: z.string().min(1).max(240).optional(),
