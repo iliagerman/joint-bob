@@ -116,8 +116,10 @@ export function applyConversationWork<T extends SessionSummary>(sessions: T[]): 
   const result = sessions.map((session) => {
     const runs = new Map((session.agentRuns ?? []).map((run) => [run.runId, run]));
     for (const work of listConversationWork(session.harnessId, session.id)) runs.set(work.summary.runId, work.summary);
+    const backgroundRunning = Boolean(session.backgroundRunning || [...runs.values()].some(agentWorkActive));
     return { ...session, ...(runs.size ? { agentRuns: [...runs.values()] } : {}),
-      running: Boolean(session.running || [...runs.values()].some(agentWorkActive)) };
+      ...(backgroundRunning ? { backgroundRunning: true } : {}),
+      running: Boolean(session.running || backgroundRunning) };
   });
   const byPath = new Map(result.map((session) => [session.path, session]));
   for (const session of result) {
@@ -127,6 +129,8 @@ export function applyConversationWork<T extends SessionSummary>(sessions: T[]): 
     while (parent && !seen.has(parent.path)) {
       seen.add(parent.path);
       parent.running = true;
+      if (session.backgroundRunning) parent.backgroundRunning = true;
+      if (session.turnRunning) parent.turnRunning = true;
       parent = parent.parentSessionPath && byPath.get(parent.parentSessionPath);
     }
   }

@@ -46,6 +46,8 @@ const managedIgnorePatterns = [
   "**/.joint-bob/",
   ".pi-mobile-web/",
   "**/.pi-mobile-web/",
+  "(?d).dev-env/",
+  "(?d)**/.dev-env/",
   "aidlc/.aidlc-*",
   "**/aidlc/.aidlc-*",
   "aidlc/spaces/*/intents/.aidlc-*",
@@ -202,6 +204,32 @@ test("Syncthing ignores AI-DLC machine-local runtime state", async () => {
   assert.ok(postedIgnore?.includes("aidlc/.aidlc-*"));
   assert.ok(postedIgnore?.includes("**/aidlc/spaces/*/intents/*/.aidlc-*"));
   assert.ok(!postedIgnore?.some((rule) => rule === ".aidlc-*" || rule === "**/.aidlc-*"));
+});
+
+test("Syncthing ignores the local dev-cluster scratch directory as deletable", async () => {
+  let postedIgnore: string[] | undefined;
+  await withSyncthingApi((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      response.setHeader("Content-Type", "application/json");
+      if (request.method === "GET" && request.url === "/rest/db/ignores?folder=demo") {
+        response.end(JSON.stringify({ ignore: [] }));
+        return;
+      }
+      if (request.method === "POST" && request.url === "/rest/db/ignores?folder=demo") {
+        postedIgnore = (JSON.parse(body) as { ignore: string[] }).ignore;
+        response.end("{}");
+        return;
+      }
+      response.statusCode = 404;
+      response.end();
+    });
+  }, async (syncthing) => {
+    await syncthing.reconcileSyncthingProjectFolders([{ syncFolderId: "demo" }]);
+  });
+  assert.ok(postedIgnore?.includes("(?d).dev-env/"));
+  assert.ok(postedIgnore?.includes("(?d)**/.dev-env/"));
 });
 
 test("Syncthing treats a null ignore list as empty", async () => {

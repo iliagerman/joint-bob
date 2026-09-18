@@ -6,7 +6,7 @@ import { changeReasoningLevel, hideCommandAutocomplete, renderReasoningOptions, 
 import { elements } from "./elements.js";
 import { shortSessionTitle, syncChatTitleFromSessions } from "./layout.js";
 import { renderSessions } from "./session-list.js";
-import { toast } from "./shell.js";
+import { setStatus, toast } from "./shell.js";
 import { openSession } from "./socket.js";
 import { shared, state } from "./state.js";
 import { activeChatSession, continueTaskOnNode } from "./terminal.js";
@@ -158,8 +158,10 @@ function syncContextUsage(usage) {
 export function updateStatus(status) {
   if (!status) return;
   if (!status.isStreaming) clearThinkingBubble();
-  state.sessionBusy = Boolean(status.isStreaming || status.isBashRunning || status.isCompacting || status.isRetrying);
-  elements.abortButton.disabled = !status.isStreaming && !status.isBashRunning && !status.isCompacting && !status.isRetrying;
+  const turnBusy = Boolean(status.isStreaming || status.isBashRunning || status.isCompacting || status.isRetrying);
+  state.sessionBusy = turnBusy;
+  elements.abortButton.disabled = !turnBusy;
+  if (!turnBusy) setStatus(status.backgroundRunning ? "Background tasks running" : "Connected", true);
   if (status.sessionName) syncChatTitleFromSessions(status.sessionName);
   state.activeModelKey = status.model ? `${status.model.provider}/${status.model.id}` : "";
   state.activeModelLabel = status.model ? status.model.label : "";

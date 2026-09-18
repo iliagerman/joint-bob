@@ -364,7 +364,7 @@ launchctl kickstart -k gui/$(id -u)/com.joint-bob.node
 
 Node-specific ports, model aliases, credentials, proxy URLs, and executable overrides belong in `~/.joint-bob/env`. Restart the service after changing that file.
 
-Supervised background commands start at a lower OS scheduling priority, inherited by their subprocesses; the app keeps its existing priority. This favors HTTP and peer traffic when tests compete for CPU, but is not a hard CPU or memory limit. Existing tasks keep their launch priority. Supervisor-component changes require a native-service maintenance restart after active tasks finish; an ordinary app-only update rejects incompatible supervisor components.
+Supervised background commands start at a lower OS scheduling priority, inherited by their subprocesses; the app keeps its existing priority. This favors HTTP and peer traffic when tests compete for CPU, but is not a hard CPU or memory limit. Existing tasks keep their launch priority. A release that changes the supervisor's own components installs as a maintenance activation: the new app is verified healthy first, the install root's `scripts/` are then swapped to the activated release, and the supervisor stands down so systemd or launchd relaunches it on the new components. Running background tasks do not survive that relaunch; ordinary updates, which leave the supervisor components unchanged, still keep them running.
 
 ## Development
 

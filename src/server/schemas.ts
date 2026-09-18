@@ -120,6 +120,7 @@ const runtimeLeaseSchema = z.object({
   sessionId: z.string().min(1).max(200),
   ownershipEpoch: z.number().int().positive(),
   runId: z.string().min(1).max(200),
+  backgroundRunning: z.boolean().optional().default(false),
   updatedAt: z.string().datetime(),
   expiresAt: z.string().datetime(),
 });

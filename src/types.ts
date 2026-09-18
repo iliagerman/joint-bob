@@ -106,6 +106,11 @@ export interface SessionSummary {
   segments?: Array<{ engine: HarnessId; sessionId: string; path: string; draft?: boolean }>;
   taskStatus?: TaskStatus;
   taskId?: string;
+  /** True while the model itself is processing a turn. */
+  turnRunning?: boolean;
+  /** True while child or external work continues independently of the model turn. */
+  backgroundRunning?: boolean;
+  /** Compatibility aggregate: either a model turn or background work is active. */
   running?: boolean;
   reviewState?: "running" | "needs_review" | "reviewed";
   reviewNotificationsEnabled?: boolean;
@@ -220,6 +225,8 @@ export interface SessionStatus {
   isCompacting: boolean;
   isRetrying: boolean;
   isBashRunning: boolean;
+  /** Child or external work is active, but it does not make this model turn busy. */
+  backgroundRunning?: boolean;
   pendingMessageCount: number;
   messageCount: number;
   activeTools: string[];

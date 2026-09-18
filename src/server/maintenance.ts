@@ -16,7 +16,7 @@ import type { HarnessId } from "../types.js";
 import { fetchPeerInventory } from "./cluster-helpers.js";
 import { broadcastSessionsChangedToAllProjects, scheduleReviewNotifications, wakeQueuedConversations } from "./realtime.js";
 import { replicationReceiptSchema } from "./schemas.js";
-import { harnessSessions, harnessSessionBusy } from "./harness-sessions.js";
+import { harnessSessions, harnessTurnBusy } from "./harness-sessions.js";
 import { configuredTicketWorkspacePeers, flags } from "./state.js";
 import { reconcileOutgoingTaskHandoff } from "./task-handoff.js";
 
@@ -253,7 +253,7 @@ export async function buildRuntimeLeaseSnapshot(localNodeId: string): Promise<Ru
     return ownership?.epoch ?? 1;
   };
   for (const shared of harnessSessions.values()) {
-    if (!harnessSessionBusy(shared)) continue;
+    if (!harnessTurnBusy(shared)) continue;
     const sessionId = shared.session.id;
     const key = `${shared.engine}\n${sessionId}`;
     const ownershipEpoch = await epochFor(shared.engine, sessionId);
@@ -262,11 +262,13 @@ export async function buildRuntimeLeaseSnapshot(localNodeId: string): Promise<Ru
   }
   for (const work of listConversationWork()) {
     if (!agentWorkActive(work.summary)) continue;
+    const key = `${work.engine}\n${work.sessionId}`;
+    if (entries.has(key)) continue;
     const ownershipEpoch = await epochFor(work.engine, work.sessionId);
     if (ownershipEpoch === null) continue;
-    entries.set(`${work.engine}\n${work.sessionId}`, {
+    entries.set(key, {
       engine: work.engine, sessionId: work.sessionId, ownerNodeId: localNodeId,
-      ownershipEpoch, runId: work.summary.runId, updatedAt, expiresAt,
+      ownershipEpoch, runId: work.summary.runId, backgroundRunning: true, updatedAt, expiresAt,
     });
   }
   for (const adapter of listHarnesses()) {
@@ -296,7 +298,7 @@ export async function pushRuntimeLeaseSnapshots(): Promise<void> {
     const local = await getClusterNode();
     const leases = await buildRuntimeLeaseSnapshot(local.id);
     const signature = JSON.stringify(leases
-      .map(({ engine, sessionId, runId, ownershipEpoch }) => [engine, sessionId, runId, ownershipEpoch])
+      .map(({ engine, sessionId, runId, ownershipEpoch, backgroundRunning }) => [engine, sessionId, runId, ownershipEpoch, Boolean(backgroundRunning)])
       .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))));
     if (signature !== localRuntimeLeaseSignature) {
       localRuntimeLeaseSignature = signature;

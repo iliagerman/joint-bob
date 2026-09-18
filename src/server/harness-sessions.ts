@@ -25,8 +25,12 @@ export function findHarnessSession(projectId: string, engine: HarnessId, id: str
   return harnessSessions.get(harnessSessionKey(projectId, engine, id));
 }
 
+export function harnessTurnBusy(shared: SharedHarnessSession): boolean {
+  return shared.turnInFlight > 0 || shared.session.isBusy();
+}
+
 export function harnessSessionBusy(shared: SharedHarnessSession): boolean {
-  return shared.turnInFlight > 0 || shared.session.isBusy() || conversationWorkActive(shared.engine, shared.session.id);
+  return harnessTurnBusy(shared) || conversationWorkActive(shared.engine, shared.session.id);
 }
 
 export function listHarnessSessionsRunning(): SharedHarnessSession[] {
@@ -98,7 +102,7 @@ export function attachHarnessClient(shared: SharedHarnessSession, socket: WebSoc
 export function detachHarnessClient(shared: SharedHarnessSession, socket: WebSocket): void { shared.clients.delete(socket); scheduleIdle(shared); }
 export function sendHarnessStatus(shared: SharedHarnessSession, socket?: WebSocket): void {
   const clients = socket ? [socket] : shared.clients;
-  for (const client of clients) send(client, { type: "status", status: shared.session.status() });
+  for (const client of clients) send(client, { type: "status", status: { ...shared.session.status(), backgroundRunning: conversationWorkActive(shared.engine, shared.session.id) } });
   if (!shared.clients.size) scheduleIdle(shared);
 }
 

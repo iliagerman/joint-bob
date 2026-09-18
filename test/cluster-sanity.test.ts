@@ -289,10 +289,14 @@ test("background children keep both nodes running after parent completion for ev
       const waitFor = async (node: SeededNode, auth: SignedIn, expected: boolean) => {
         const deadline = Date.now() + 20_000;
         while (Date.now() < deadline) {
-          const response = await api<{ sessions: Array<SessionView & { running: boolean; reviewState: string }> }>(node, auth, "GET", `/projects/${project.id}/sessions`);
+          const response = await api<{ sessions: Array<SessionView & { running: boolean; turnRunning?: boolean; backgroundRunning?: boolean; reviewState: string }> }>(node, auth, "GET", `/projects/${project.id}/sessions`);
           const row = response.body.sessions.find((row) => row.id === parent.id);
           if (row?.running === expected) {
-            if (expected) assert.equal(row.reviewState, "running");
+            if (expected) {
+              assert.equal(row.reviewState, "running");
+              assert.equal(row.backgroundRunning, true);
+              assert.equal(row.turnRunning, false);
+            }
             return;
           }
           await new Promise((resolve) => setTimeout(resolve, 100));

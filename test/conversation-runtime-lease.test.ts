@@ -130,3 +130,16 @@ test("the expiry sweep reports the leases it dropped", async () => {
     return Promise.resolve();
   });
 });
+
+
+test("runtime leases preserve background work as a distinct live state", async () => {
+  await withRuntime((runtime, db) => {
+    const now = new Date("2026-09-01T12:00:00.000Z");
+    runtime.applyRuntimeLeaseSnapshot(db, "node-b", now.toISOString(), [lease({ backgroundRunning: true })], now);
+    assert.deepEqual(runtime.conversationLeaseState("pi", "session-a", now), { running: true, backgroundRunning: true });
+    const later = new Date(now.getTime() + 1_000);
+    assert.deepEqual(runtime.applyRuntimeLeaseSnapshot(db, "node-b", later.toISOString(), [lease({ updatedAt: later.toISOString(), expiresAt: new Date(later.getTime() + 15_000).toISOString() })], later), ["pi\nsession-a"]);
+    assert.deepEqual(runtime.conversationLeaseState("pi", "session-a", later), { running: true, backgroundRunning: false });
+    return Promise.resolve();
+  });
+});

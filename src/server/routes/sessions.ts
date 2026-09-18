@@ -588,6 +588,8 @@ app.get("/api/running", async (_request, response, next) => {
           agentModel: session.agentModel,
           updatedAt: session.updatedAt,
           executionNodeId: session.executionNodeId,
+          turnRunning: session.turnRunning,
+          backgroundRunning: session.backgroundRunning,
           running: true,
         })),
       };

@@ -1,10 +1,16 @@
 import { listByTheWaySessionIds } from "../by-the-way-leases.js";
-import { applyConversationWork, listConversationWork, refreshConversationWork } from "../conversation-work.js";
+import { readActiveBackgroundTaskIdentities } from "../background-tasks.js";
+import { resolveDataDirectory } from "../data-directory.js";
+import { readActiveBackgroundTaskIdentities } from "../background-tasks.js";
+import { readActiveBackgroundTaskIdentities } from "../background-tasks.js";
+import { agentWorkActive, applyConversationWork, listConversationWork, refreshConversationWork } from "../conversation-work.js";
 import { getClusterNode, getClusterPeer } from "../cluster.js";
 import { claimConversationOwnership, type ConversationEngine, type ConversationOwnership, ConversationOwnershipError, type ConversationOwnershipStatus, getConversationOwnership, healStaleLocalClaim } from "../conversation-ownership.js";
 import { conversationReviewNotificationPaths, setConversationReviewNotifications, syncConversationReviewStates } from "../conversation-reviews.js";
 import { conversationNotifications, notificationConversationId, setConversationNotification } from "../conversation-notifications.js";
-import { conversationLeaseRunning } from "../conversation-runtime.js";
+import { resolveDataDirectory } from "../data-directory.js";
+import { conversationLeaseState } from "../conversation-runtime.js";
+import { resolveDataDirectory } from "../data-directory.js";
 import { getHarness, getHarnessRuntime, listHarnesses, listHarnessSessions, type HarnessProject } from "../harnesses.js";
 import { getUserPreferences } from "../preferences.js";
 import { migratePushConversationSubscriptions, ntfySubscribedSessionPaths } from "../push.js";
@@ -16,7 +22,7 @@ import { listTasks } from "../tasks.js";
 import type { ProjectRecord, SessionSummary } from "../types.js";
 import { listUserPins } from "../user-pins.js";
 import { sessionWatcher } from "./chat.js";
-import { findHarnessSession, harnessSessionBusy } from "./harness-sessions.js";
+import { findHarnessSession, harnessTurnBusy } from "./harness-sessions.js";
 import { taskConfig, taskCwd, taskPhase } from "./task-runs.js";
 
 /**
@@ -106,6 +112,9 @@ export async function listProjectSessionsWithReviewState(project: ProjectRecord,
     const liveModel = shared?.session.status().model?.label;
     const agentModel = config?.modelId || liveModel;
     const work = listConversationWork(session.harnessId, session.id);
+    const lease = conversationLeaseState(session.harnessId, session.id);
+    const backgroundRunning = work.some((entry) => agentWorkActive(entry.summary)) || lease.backgroundRunning;
+    const turnRunning = Boolean(shared && harnessTurnBusy(shared) || task?.executionState === "running" || externalRunning.get(session.harnessId)?.has(session.id) || lease.running && !lease.backgroundRunning);
     return {
       ...session,
       agentId,
@@ -114,7 +123,9 @@ export async function listProjectSessionsWithReviewState(project: ProjectRecord,
       taskStatus: task?.status,
       taskId: task?.id,
       agentRuns: work.length ? work.map((entry) => entry.summary).sort((left, right) => left.runId.localeCompare(right.runId)) : undefined,
-      running: Boolean(shared && harnessSessionBusy(shared) || task?.executionState === "running" || externalRunning.get(session.harnessId)?.has(session.id) || conversationLeaseRunning(session.harnessId, session.id) || work.some((entry) => entry.summary.status === "running")),
+      turnRunning,
+      backgroundRunning,
+      running: turnRunning || backgroundRunning,
       engine: session.harnessId,
       sessionId: session.id,
     };

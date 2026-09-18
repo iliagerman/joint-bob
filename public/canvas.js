@@ -173,7 +173,8 @@ export function createConversationCanvas({ api, getProjects, saveLayout, showMes
   }
 
   function statusLine(session) {
-    if (session.running) return "Running";
+    if (session.turnRunning || session.running && !session.backgroundRunning) return "Running";
+    if (session.backgroundRunning) return "Background tasks";
     if (session.reviewState === "needs_review") return "Needs review";
     return "Idle";
   }

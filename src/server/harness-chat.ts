@@ -26,7 +26,7 @@ import { socketMessageSchema } from "./schemas.js";
 import { claimConversationLocally, describeConversationOwner, type ForeignConversationOwner, requireLocalConversationOwner } from "./sessions-helpers.js";
 import { flags } from "./state.js";
 import { broadcastToProject, chatErrorMessage, send } from "./realtime.js";
-import { attachHarnessClient, detachHarnessClient, disposeHarnessSession, findHarnessSession, harnessSessionBusy, openHarnessSession, sendHarnessStatus, type SharedHarnessSession } from "./harness-sessions.js";
+import { attachHarnessClient, detachHarnessClient, disposeHarnessSession, findHarnessSession, harnessSessionBusy, harnessTurnBusy, openHarnessSession, sendHarnessStatus, type SharedHarnessSession } from "./harness-sessions.js";
 
 export interface HarnessChatConnection {
   socket: WebSocket; project: ProjectRecord; taskId: string | null; cwd: string; engine: HarnessId;
@@ -266,7 +266,7 @@ async function runGoalTurn(connection: HarnessChatConnection): Promise<boolean> 
 async function drainLoop(connection: HarnessChatConnection): Promise<void> {
   for (;;) {
     await ensureCurrentSession(connection);
-    if (pausedDrains.has(queueKey(connection)) || harnessSessionBusy(connection.shared)) return;
+    if (pausedDrains.has(queueKey(connection)) || harnessTurnBusy(connection.shared)) return;
     if (await autoCompactBetweenTurns(connection.shared, getSettings().autoCompactThreshold, () => writable(connection))) sendHarnessStatus(connection.shared);
     const next = listQueuedPrompts(queueKey(connection))[0];
     if (next?.systemEventId && next.dispatchState === "starting") {

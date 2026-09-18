@@ -48,7 +48,8 @@ function renderRunningEntry(group, entry) {
   const title = document.createElement("strong");
   title.textContent = entry.title;
   const meta = document.createElement("span");
-  const details = ["Running", entry.agentLabel, entry.agentModel, entry.updatedAt && formatDate(entry.updatedAt)].filter(Boolean).join(" · ");
+  const activity = entry.backgroundRunning && !entry.turnRunning ? "Background tasks running" : "Running";
+  const details = [activity, entry.agentLabel, entry.agentModel, entry.updatedAt && formatDate(entry.updatedAt)].filter(Boolean).join(" · ");
   meta.append(agentIcon(sessionAgentId(entry)), document.createTextNode(details));
   button.append(title, meta);
   button.addEventListener("click", () => openRunningConversation(group, entry).catch((error) => toast(error.message)));

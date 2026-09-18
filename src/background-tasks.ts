@@ -156,3 +156,23 @@ export function readBackgroundTaskIdentity(dataDirectory: string, id: string): s
     db.close();
   }
 }
+
+
+export function readActiveBackgroundTaskIdentities(dataDirectory: string): Set<string> {
+  const db = open(dataDirectory);
+  if (!db) return new Set();
+  try {
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='supervisor_tasks'").get()) return new Set();
+    let policy = "";
+    const policyFile = path.join(realpathSync(dataDirectory), "node.db");
+    if (existsSync(policyFile)) {
+      db.prepare("ATTACH DATABASE ? AS active_policy").run(`${pathToFileURL(policyFile).href}?mode=ro`);
+      if (db.prepare("SELECT 1 FROM active_policy.sqlite_master WHERE type='table' AND name='supervised_shell_calls'").get()) {
+        policy = " AND NOT EXISTS (SELECT 1 FROM active_policy.supervised_shell_calls p WHERE p.task_id=supervisor_tasks.id AND (p.state='returned' OR (p.state='foreground' AND p.foreground_until > ?)))";
+      }
+    }
+    const values: SQLInputValue[] = [...(policy ? [Date.now()] : [])];
+    const rows = db.prepare(`SELECT DISTINCT identity FROM supervisor_tasks WHERE status IN ('starting','running','stopping')${policy}`).all(...values) as Array<{ identity: string }>;
+    return new Set(rows.map((row) => row.identity));
+  } finally { db.close(); }
+}

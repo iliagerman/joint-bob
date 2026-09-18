@@ -91,6 +91,8 @@ const projectIgnorePatterns = [
   "**/.joint-bob/",
   ".pi-mobile-web/",
   "**/.pi-mobile-web/",
+  "(?d).dev-env/",
+  "(?d)**/.dev-env/",
   "aidlc/.aidlc-*",
   "**/aidlc/.aidlc-*",
   "aidlc/spaces/*/intents/.aidlc-*",

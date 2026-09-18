@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Sessions now distinguish between model turns and independent background work, showing "Running" when the model is actively responding and "Background tasks running" when work continues without a model turn.
+
 ## 1.57.3 — 2026-09-18
 
 - Claude now automatically trusts workspace directories when spawned, so project-level settings are honored without manual trust dialogs.

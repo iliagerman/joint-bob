@@ -5,7 +5,7 @@ import { renderChatSessionControls, setComposerEnabled } from "./chat-controls.j
 import { clearChat } from "./chat-transcript.js";
 import { elements } from "./elements.js";
 import { agentIcon, sessionAgentId } from "./icons.js";
-import { filteredSessions, normalizedQuery, selectedProject, sessionChatState, setMobileView, shortSessionTitle, updateChatFilterCounts } from "./layout.js";
+import { filteredSessions, normalizedQuery, selectedProject, sessionDisplayState, setMobileView, shortSessionTitle, updateChatFilterCounts } from "./layout.js";
 import { toggleSessionNtfy } from "./ntfy.js";
 import { keepListScroll, renderProjects } from "./project-list.js";
 import { syncRecentSessionActivity } from "./recents.js";
@@ -109,14 +109,14 @@ export function renderSessions() {
       sessionName.append(classification);
     }
     button.append(sessionName, meta);
-    const chatState = sessionChatState(session);
+    const displayState = sessionDisplayState(session);
     const badge = document.createElement("em");
-    badge.className = `chat-badge chat-badge-${chatState}`;
+    badge.className = `chat-badge chat-badge-${displayState}`;
     const dot = document.createElement("i");
     dot.className = "chat-status-dot";
     dot.setAttribute("aria-hidden", "true");
     const statusLabel = document.createElement("b");
-    statusLabel.textContent = chatState === "active" ? "Running" : chatState === "review" ? "Needs review" : session.draft ? "Ready" : "Reviewed";
+    statusLabel.textContent = displayState === "active" ? "Running" : displayState === "background" ? "Background tasks" : displayState === "review" ? "Needs review" : session.draft ? "Ready" : "Reviewed";
     badge.append(dot, statusLabel);
     meta.append(" ", badge);
     if (session.doneAt) {

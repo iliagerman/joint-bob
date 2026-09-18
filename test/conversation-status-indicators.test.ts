@@ -88,5 +88,15 @@ test("conversation UI exposes state counts, automatic review, notifications, and
   assert.match(server, /sessions\/reviewed-all/);
   assert.match(server, /const shared = findHarnessSession\(project\.id, session\.harnessId, session\.id\);/);
   assert.match(server, /const externalRunning = new Map<string, Set<string>>\(\);[\s\S]*runtime\.externalRunning\(\)/);
-  assert.match(server, /running: Boolean\(shared && harnessSessionBusy\(shared\)[\s\S]*externalRunning\.get\(session\.harnessId\)\?\.has\(session\.id\)/);
+  assert.match(server, /const backgroundRunning = work\.some\(\(entry\) => agentWorkActive\(entry\.summary\)\) \|\| lease\.backgroundRunning/);
+  assert.match(server, /const turnRunning = Boolean\(shared && harnessTurnBusy\(shared\)[\s\S]*externalRunning\.get\(session\.harnessId\)\?\.has\(session\.id\)/);
+});
+
+
+test("background work has a distinct writable conversation status", async () => {
+  const [app, server, styles] = await Promise.all([appSource(), serverSource(), readFile("public/styles.css", "utf8")]);
+  assert.match(server, /backgroundRunning/);
+  assert.match(server, /harnessTurnBusy/);
+  assert.match(app, /Background tasks running/);
+  assert.match(styles, /\.chat-badge-background/);
 });

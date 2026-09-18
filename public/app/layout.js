@@ -105,10 +105,16 @@ export function normalizedQuery(value) {
   return value.trim().toLowerCase();
 }
 
-export function sessionChatState(session) {
-  if (session.running || session.reviewState === "running") return "active";
+export function sessionDisplayState(session) {
+  if (session.turnRunning || (!session.backgroundRunning && (session.running || session.reviewState === "running"))) return "active";
+  if (session.backgroundRunning) return "background";
   if (session.reviewState === "needs_review") return "review";
   return "done";
+}
+
+export function sessionChatState(session) {
+  const display = sessionDisplayState(session);
+  return display === "background" ? "active" : display;
 }
 
 /** A conversation the user closed out. Unrelated to the "done" status chip, which means reviewed. */

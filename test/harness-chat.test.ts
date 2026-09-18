@@ -96,6 +96,22 @@ test("websocket chat routes Kiro prompts through the generic harness runtime", a
     await waitFor(first.messages, () => first.messages.some((message) => message.type === "promptCompleted" && message.queueId === acknowledgement.queueId));
     await waitFor(first.messages, () => first.messages.some((message) => message.type === "queuedPrompts" && Array.isArray(message.prompts) && message.prompts.length === 0));
 
+    const readyFrame = first.messages.find((message) => message.type === "ready")!;
+    const workDb = new DatabaseSync(path.join(node.dataDir, "node.db"));
+    workDb.exec("CREATE TABLE IF NOT EXISTS conversation_work (engine TEXT NOT NULL, session_id TEXT NOT NULL, run_id TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY (engine, session_id, run_id))");
+    const backgroundWork = { engine: "kiro", sessionId: String(readyFrame.sessionId), summary: { runId: "background-worker", status: "running", tasks: [{ name: "worker", role: "worker", status: "running" }] } };
+    workDb.prepare("INSERT OR REPLACE INTO conversation_work VALUES (?,?,?,?)").run("kiro", String(readyFrame.sessionId), "background-worker", JSON.stringify(backgroundWork));
+    workDb.close();
+    const backgroundRequest = randomUUID();
+    first.socket.send(JSON.stringify({ type: "prompt", message: "background writable", requestId: backgroundRequest }));
+    await waitFor(first.messages, () => first.messages.some((message) => message.type === "userMessage" && message.requestId === backgroundRequest));
+    const backgroundAcknowledgement = first.messages.find((message) => message.type === "userMessage" && message.requestId === backgroundRequest)!;
+    await waitFor(first.messages, () => first.messages.some((message) => message.type === "promptCompleted" && message.queueId === backgroundAcknowledgement.queueId));
+    await waitFor(first.messages, () => first.messages.some((message) => message.type === "textDelta" && message.text === "background writable"));
+    const clearWork = new DatabaseSync(path.join(node.dataDir, "node.db"));
+    clearWork.prepare("DELETE FROM conversation_work WHERE engine=? AND session_id=? AND run_id=?").run("kiro", readyFrame.sessionId, "background-worker");
+    clearWork.close();
+
     const deltaCount = first.messages.filter((message) => message.type === "textDelta").length;
     first.socket.send(JSON.stringify({ type: "prompt", message: "   " }));
     await waitFor(first.messages, () => first.messages.some((message) => message.type === "error" && /empty/i.test(String(message.error))));
@@ -125,7 +141,7 @@ test("websocket chat routes Kiro prompts through the generic harness runtime", a
     first.socket.send(JSON.stringify({ type: "forceStartQueuedPrompt", queueId: editable.id, queueRevision: editable.revision + 1 }));
     await waitFor(first.messages, () => first.messages.some((message) => message.type === "textDelta" && message.text === "revised"));
     await writeFile(releasePath, "release");
-    await waitFor(first.messages, () => first.messages.filter((message) => message.type === "agent_end").length === 3);
+    await waitFor(first.messages, () => first.messages.filter((message) => message.type === "agent_end").length === 4);
     assert.ok(first.messages.some((message) => message.type === "textDelta" && message.text === "hello"));
     assert.ok(first.messages.some((message) => message.type === "textDelta" && message.text === "revised"));
     assert.ok(!first.messages.some((message) => message.type === "textDelta" && message.text === "cancelled"));

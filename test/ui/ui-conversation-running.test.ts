@@ -21,7 +21,7 @@ test("peer-reported running conversation returns to review without a dashboard o
     const id = state.sessions.find(session => session.title === 'Short one').id;
     const endpoint = '/api/projects/' + encodeURIComponent(state.activeProjectId) + '/sessions';
     const originalFetch = window.fetch;
-    window.__runningPollTest = { running: true, requests: 0 };
+    window.__runningPollTest = { mode: 'turn', requests: 0 };
     window.fetch = async (...args) => {
       const response = await originalFetch(...args);
       if (new URL(String(args[0]), location.href).pathname !== endpoint) return response;
@@ -29,7 +29,10 @@ test("peer-reported running conversation returns to review without a dashboard o
       window.__runningPollTest.requests++;
       for (const session of body.sessions) {
         delete session.agentRuns;
-        session.running = session.id === id && window.__runningPollTest.running;
+        const selected = session.id === id;
+        session.turnRunning = selected && window.__runningPollTest.mode === 'turn';
+        session.backgroundRunning = selected && window.__runningPollTest.mode === 'background';
+        session.running = selected && window.__runningPollTest.mode !== 'done';
         session.reviewState = session.running ? 'running' : 'needs_review';
       }
       return new Response(JSON.stringify(body), { status: response.status, headers: response.headers });
@@ -40,7 +43,9 @@ test("peer-reported running conversation returns to review without a dashboard o
     return true;
   })()`), true);
   await page.waitForFunction(() => [...document.querySelectorAll("#sessionList .list-row")].find(row => row.textContent.includes("Short one"))?.querySelector(".chat-badge b").textContent === "Running");
-  await page.evaluate('window.__runningPollTest.running = false');
+  await page.evaluate('window.__runningPollTest.mode = "background"');
+  await page.waitForFunction(() => [...document.querySelectorAll("#sessionList .list-row")].find(row => row.textContent.includes("Short one"))?.querySelector(".chat-badge b").textContent === "Background tasks");
+  await page.evaluate('window.__runningPollTest.mode = "done"');
   await page.waitForFunction(() => [...document.querySelectorAll("#sessionList .list-row")].find(row => row.textContent.includes("Short one"))?.querySelector(".chat-badge b").textContent === "Needs review");
   assert.equal(await page.evaluate(`(async () => {
     const { state } = await import('/app/state.js');

@@ -47,5 +47,12 @@
     "dirName": "260911-subagent-lifecycle-track",
     "scope": "bugfix",
     "status": "in-flight"
+  },
+  {
+    "uuid": "01a0ab8e-fbb4-7da8-ab81-c6b02d516896",
+    "slug": "homeserver-browser-login",
+    "dirName": "260916-homeserver-browser-login",
+    "scope": "feature",
+    "status": "in-flight"
   }
 ]

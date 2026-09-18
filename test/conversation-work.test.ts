@@ -10,9 +10,13 @@ test("running descendants propagate across harnesses before review, without muta
   const row = (id: string, harnessId: string, parentSessionPath?: string, running = false): SessionSummary =>
     ({ id, path: id, title: id, harnessId, agentId: harnessId, agentLabel: harnessId, parentSessionPath, running });
   const input = [row("root", "pi"), row("child", "claude", "root"), { ...row("leaf", "future", "child", true), readOnly: true }, row("unrelated", "pi")];
-  assert.deepEqual(applyConversationWork(input).map((session) => session.running), [true, true, true, false]);
+  recordConversationWork({ engine: "future", sessionId: "leaf", summary: { runId: "child-work", status: "running", tasks: [] } });
+  const applied = applyConversationWork(input);
+  assert.deepEqual(applied.map((session) => session.running), [true, true, true, false]);
+  assert.deepEqual(applied.map((session) => session.backgroundRunning), [true, true, true, undefined]);
   assert.equal(input[0].running, false);
   input[2].running = false;
+  recordConversationWork({ engine: "future", sessionId: "leaf", summary: { runId: "child-work", status: "succeeded", tasks: [] } });
   assert.deepEqual(applyConversationWork(input).map((session) => session.running), [false, false, false, false]);
 });
 
