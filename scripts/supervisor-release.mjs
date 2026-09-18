@@ -1,9 +1,9 @@
-import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, readFileSync, realpathSync, renameSync, rmSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 const COMPONENTS = ["joint-bob-supervisor.mjs", "supervisor-worker.mjs", "supervisor-store.mjs", "supervisor-client.mjs", "supervisor-service.mjs", "supervisor-release.mjs"];
-const MESSAGE = "Supervisor components changed; a maintenance reinstall is required after running tasks finish";
+const MESSAGE = "Supervisor components changed; this release needs a maintenance activation";
 
 export function readInstallation(dataDirectory) {
   const file = path.join(dataDirectory, "supervisor.db");
@@ -41,12 +41,56 @@ export function releaseAppSpec(installRoot, releaseRoot, dataDirectory) {
   return { executable: process.execPath, args: [server], cwd: release, env };
 }
 
-export function assertSupervisorCompatible(installRoot, candidateRoot) {
+/**
+ * The supervisor process runs from the install root's scripts, not from the release
+ * directory, so a release that changes any of them cannot be activated by swapping
+ * the app alone: the install root's scripts must be replaced and the supervisor
+ * restarted onto them.
+ */
+export function supervisorComponentsMatch(installRoot, candidateRoot) {
   for (const file of COMPONENTS) {
     const stable = path.join(installRoot, "scripts", file);
     const candidate = path.join(candidateRoot, "scripts", file);
-    if (!existsSync(stable) || !existsSync(candidate) || !readFileSync(stable).equals(readFileSync(candidate))) throw new Error(MESSAGE);
+    if (!existsSync(stable) || !existsSync(candidate) || !readFileSync(stable).equals(readFileSync(candidate))) return false;
   }
+  return true;
+}
+
+export function assertSupervisorCompatible(installRoot, candidateRoot) {
+  if (!supervisorComponentsMatch(installRoot, candidateRoot)) throw new Error(MESSAGE);
+}
+
+/**
+ * Replaces the install root's scripts with the activated release's copy, keeping the
+ * outgoing copy beside it. Every swap is two renames so scripts/run-node.sh, which the
+ * service manager relaunches by absolute path, is never missing.
+ */
+export function swapSupervisorScripts(installRoot, releaseRoot) {
+  const current = path.join(installRoot, "scripts");
+  const incoming = `${current}.incoming`;
+  const previous = `${current}.previous`;
+  rmSync(incoming, { recursive: true, force: true });
+  rmSync(previous, { recursive: true, force: true });
+  cpSync(path.join(releaseRoot, "scripts"), incoming, { recursive: true });
+  renameSync(current, previous);
+  try { renameSync(incoming, current); }
+  catch (error) { renameSync(previous, current); throw error; }
+}
+
+/** Puts the outgoing scripts back when the activation they were swapped in for fails. */
+export function restoreSupervisorScripts(installRoot) {
+  const current = path.join(installRoot, "scripts");
+  const previous = `${current}.previous`;
+  const discarded = `${current}.discarded`;
+  if (!existsSync(previous)) return;
+  rmSync(discarded, { recursive: true, force: true });
+  renameSync(current, discarded);
+  renameSync(previous, current);
+  rmSync(discarded, { recursive: true, force: true });
+}
+
+export function discardSupervisorScripts(installRoot) {
+  rmSync(path.join(installRoot, "scripts.previous"), { recursive: true, force: true });
 }
 
 export async function waitForAppHealth(spec, expectedRelease, isExited) {

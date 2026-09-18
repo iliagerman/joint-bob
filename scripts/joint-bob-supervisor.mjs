@@ -217,7 +217,7 @@ class Runtime {
     this.replaceQueue = operation.catch(() => undefined);
     return this.track(operation);
   }
-  activateRelease(releaseRoot) {
+  activateRelease(releaseRoot, maintenance) {
     if (!this.installation) throw new InputError("Supervisor does not own an installation", 409);
     if (!path.isAbsolute(releaseRoot)) throw new InputError("releaseRoot must be absolute");
     this.replacementCount += 1;
@@ -226,7 +226,7 @@ class Runtime {
       this.installing = true;
       const oldSpec = this.appState.spec;
       try {
-        assertSupervisorCompatible(this.installation.installRoot, releaseRoot);
+        if (!maintenance) assertSupervisorCompatible(this.installation.installRoot, releaseRoot);
         const next = releaseAppSpec(this.installation.installRoot, releaseRoot, path.dirname(this.socketPath));
         const replaceStartedAt = Date.now();
         await this.replace(next);
@@ -235,6 +235,7 @@ class Runtime {
         console.error(`[supervisor] activate-release app healthy after another ${Date.now() - replaceStartedAt}ms`);
         this.store.setInstallation({ installRoot: this.installation.installRoot, activeRelease: releaseRoot });
         this.installation = { installRoot: this.installation.installRoot, activeRelease: releaseRoot };
+        if (maintenance) this.standDown = true;
         return this.status();
       } catch (error) {
         if (this.appState.spec !== oldSpec) {
@@ -329,7 +330,7 @@ class Runtime {
     switch (action) {
       case "status": return this.status();
       case "replace-app": return this.queueReplacement(commandSpec(body.app));
-      case "activate-release": return this.activateRelease(text(body.releaseRoot, "releaseRoot"));
+      case "activate-release": return this.activateRelease(text(body.releaseRoot, "releaseRoot"), body.maintenance === true);
       case "start": return this.track(this.startTask(scopedIdentity ? { ...body, identity: scopedIdentity } : body));
       case "list": return this.store.listTasks(scopedIdentity ?? text(body.identity, "identity", 1024), body.limit === undefined ? 100 : limit(body.limit));
       case "task": { const row = this.store.getTask(validId(body.id)); if (!row) throw new InputError("Task not found", 404); return row; }
@@ -380,6 +381,7 @@ class Runtime {
         const result = await this.dispatch(body, identity);
         if (CONTROL_TRACE_ACTIONS.has(action)) console.error(`[supervisor] control ${action} completed in ${Date.now() - startedAt}ms`);
         response.end(JSON.stringify({ result }));
+        if (this.standDown) this.scheduleStandDown();
       } catch (error) {
         const status = error instanceof InputError ? error.status : 500;
         response.statusCode = status;
@@ -389,6 +391,19 @@ class Runtime {
     this.server.keepAliveTimeout = 1000;
     this.server.requestTimeout = 5000;
     return this.server;
+  }
+  /**
+   * The install root now holds a different supervisor than this process is running.
+   * Exit so the service manager (systemd Restart=always, launchd KeepAlive) relaunches
+   * scripts/run-node.sh on the swapped code; the delay lets the installer that asked
+   * for the maintenance activation finish and report before its task group is closed.
+   */
+  scheduleStandDown() {
+    if (this.standDownTimer) return;
+    console.error("[supervisor] supervisor components were replaced; standing down for the service manager");
+    this.standDownTimer = setTimeout(() => {
+      this.close().then(() => process.exit(0), error => { console.error(error.message); process.exit(1); });
+    }, 5000);
   }
   close() {
     if (this.closePromise) return this.closePromise;

@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { readSupervisorControl, supervisorRequest } from "../scripts/supervisor-client.mjs";
-import { assertSupervisorCompatible, readInstallation, releaseAppSpec } from "../scripts/supervisor-release.mjs";
+import { assertSupervisorCompatible, readInstallation, releaseAppSpec, supervisorComponentsMatch } from "../scripts/supervisor-release.mjs";
 
 const repo = path.resolve(import.meta.dirname, "..");
 const components = ["joint-bob-supervisor.mjs", "supervisor-worker.mjs", "supervisor-store.mjs", "supervisor-client.mjs", "supervisor-service.mjs", "supervisor-release.mjs", "supervisor-install.mjs"];
@@ -132,24 +132,42 @@ async function cleanup(f: Fixture) {
   try { await stop(f.supervisor); } finally { await rm(f.root, { recursive: true, force: true }); }
 }
 
-test("release specifications accept one commit field and reject changed supervisor components", async () => {
+test("release specifications accept one commit field and detect changed supervisor components", async () => {
   const f = await createFixture();
   try {
     const spec = releaseAppSpec(f.app, f.app, f.state);
     assert.equal(spec.env.JOINT_BOB_RELEASE, "a".repeat(40));
+    assert.equal(supervisorComponentsMatch(f.app, f.source), true);
     assertSupervisorCompatible(f.app, f.source);
     await appendFile(path.join(f.source, "scripts/supervisor-worker.mjs"), "\n// mismatch\n");
-    assert.throws(() => assertSupervisorCompatible(f.app, f.source), /maintenance reinstall/);
+    assert.equal(supervisorComponentsMatch(f.app, f.source), false);
+    assert.throws(() => assertSupervisorCompatible(f.app, f.source), /maintenance activation/);
   } finally { await cleanup(f); }
 });
 
-test("actual installer rejects changed supervisor components before preparation", async () => {
+test("changed supervisor components prepare sessions, activate, swap scripts, and restart the supervisor", async () => {
   const f = await createFixture();
   try {
     await appendFile(path.join(f.source, "scripts/supervisor-worker.mjs"), "\n// incompatible\n");
-    await assert.rejects(install(f), /maintenance reinstall/);
-    await absent(path.join(f.root, "prepared"));
-    assert.equal((await health(f.port)).release, "a".repeat(40));
+    await install(f);
+    // Running work is paused through the ordinary preparation step, not refused.
+    assert.equal((await readFile(path.join(f.root, "prepared"), "utf8")).trim(), "prepared");
+    assert.deepEqual(await health(f.port), { status: "ok", release: "b".repeat(40) });
+    assert.equal(readInstallation(f.state)!.activeRelease.startsWith(path.join(f.app, "releases")), true);
+    // The install root now carries the new supervisor, so the next update compares equal.
+    assert.equal(
+      await readFile(path.join(f.app, "scripts/supervisor-worker.mjs"), "utf8"),
+      await readFile(path.join(f.source, "scripts/supervisor-worker.mjs"), "utf8"),
+    );
+    assert.equal(supervisorComponentsMatch(f.app, f.source), true);
+    await absent(path.join(f.app, "scripts.incoming"));
+    await absent(path.join(f.app, "scripts.previous"));
+    // The supervisor stands down so the service manager restarts it on the new code.
+    await waitClosed(f.supervisor, 20000);
+    assert.equal(f.supervisor.exitCode, 0);
+    await absent(path.join(f.root, "native-called"));
+    f.supervisor = f.start();
+    await waitFor(async () => { assert.equal((await health(f.port)).release, "b".repeat(40)); return true; }, "release after supervisor restart");
   } finally { await cleanup(f); }
 });
 
