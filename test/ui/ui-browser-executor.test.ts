@@ -66,11 +66,15 @@ test("local browser identity closes viewer when owner node changes", async () =>
   let disposed = 0;
   const button = { addEventListener() {}, setAttribute() {} };
   const state = { activeProjectId: "project", engine: "pi", activeConversationId: "conversation", activeNodeId: "one" };
-  const context = runInNewContext(`${source.replace(/^import .*;\n/gm, "").replace(/export /g, "")}\nviewer = { dispose() { recordDispose(); } }; viewerKey = identityKey(browserIdentity()); ({ syncBrowserButton })`, {
+  // The shared panel slot lives in browser-panel.js; releasing it is what evicts this module's viewer.
+  const panel = { release: () => {} };
+  const context = runInNewContext(`${source.replace(/^import .*;\n/gm, "").replace(/export /g, "")}\nviewer = { dispose() { recordDispose(); } }; viewerKey = identityKey(browserIdentity()); ({ syncBrowserButton, disposeViewer })`, {
     state, recordDispose: () => disposed++, elements: { openBrowserButton: button, expandProjectsButton: button, expandChatsButton: button },
     document: { querySelector: () => button, body: { classList: { remove() {} } } },
     MutationObserver: class { observe() {} }, window: { addEventListener() {} },
+    releaseBrowserPanel: () => panel.release(), claimBrowserPanel: () => button,
   });
+  panel.release = context.disposeViewer;
   context.syncBrowserButton(); assert.equal(disposed, 0);
   state.activeNodeId = "two";
   context.syncBrowserButton(); assert.equal(disposed, 1);

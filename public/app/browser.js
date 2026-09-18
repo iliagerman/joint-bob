@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { claimBrowserPanel, releaseBrowserPanel } from "./browser-panel.js";
 import { createBrowserViewer } from "./browser-viewer.js";
 import { elements } from "./elements.js";
 import { confirmAction, toast } from "./shell.js";
@@ -16,11 +17,13 @@ function browserIdentity() {
 function identityKey(identity) {
   return identity ? JSON.stringify([identity.projectId, identity.engine, identity.conversationId, identity.appNodeId]) : null;
 }
-function closeViewer() {
-  viewer?.dispose(); viewer = null; viewerKey = null;
-  panel?.remove(); panel = null;
-  document.body.classList.remove("browser-visible");
+function disposeViewer() {
+  viewer?.dispose(); viewer = null; viewerKey = null; panel = null;
   elements.openBrowserButton?.setAttribute("aria-expanded", "false");
+}
+function closeViewer() {
+  if (!viewer) { disposeViewer(); return; }
+  releaseBrowserPanel();
 }
 export function syncBrowserButton() {
   const identity = browserIdentity();
@@ -36,10 +39,8 @@ function openBrowser() {
   if (!identity) { toast("Open an existing conversation or send its first message before starting a browser."); return; }
   if (viewer && viewerKey === identityKey(identity)) { panel.querySelector("button")?.focus(); return; }
   closeViewer();
-  panel = document.createElement("aside"); panel.id = "browserPanel";
-  panel.className = "panel"; panel.setAttribute("aria-label", "Conversation browser");
-  elements.chatPanel.after(panel);
-  document.body.classList.add("browser-visible");
+  panel = claimBrowserPanel(disposeViewer);
+  panel.setAttribute("aria-label", "Conversation browser");
   viewerKey = identityKey(identity);
   viewer = createBrowserViewer(panel, { api, identity, confirm: confirmAction, onClose: () => { closeViewer(); elements.openBrowserButton.focus(); } });
   elements.openBrowserButton.setAttribute("aria-expanded", "true");

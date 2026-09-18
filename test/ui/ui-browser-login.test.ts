@@ -129,11 +129,16 @@ test("pending browser login popup preserves ownership through failure, dismissal
   try {
     await page.goto(node.url);
     session.loginRequest = { ...session.loginRequest, id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" };
-    const dialog = page.getByTestId("browser-login-dialog");
+    const dialog = page.getByTestId("browser-login-panel");
     await page.evaluate(() => document.dispatchEvent(new Event("browserSessionsChanged")));
     await dialog.waitFor();
     await dialog.getByTestId("browser-login-context").filter({ hasText: `Synthetic login · ${backgroundProjectId} · kiro · ${backgroundConversationId}` }).waitFor();
     await dialog.getByText("The agent checks the signed-in page next.", { exact: false }).waitFor();
+    // Native-feeling sign-in: the live page fills the panel and browsing chrome stays out of the way.
+    await dialog.getByTestId("browser-screen").waitFor();
+    await dialog.getByTestId("browser-reload").waitFor();
+    for (const hidden of ["browser-url", "browser-go", "browser-new-tab", "browser-forward", "browser-downloads-details", "browser-end"])
+      await dialog.getByTestId(hidden).waitFor({ state: "hidden" });
     assert.deepEqual(await page.evaluate(() => import("/app/state.js").then(({ state }) => [state.activeProjectId, state.activeConversationId, state.activeSessionId])), [null, null, null], "background discovery must not select a conversation");
     await page.keyboard.press("Escape"); await dialog.waitFor({ state: "detached" });
 
@@ -241,7 +246,7 @@ test("pending browser login popup preserves ownership through failure, dismissal
     await page.evaluate(() => document.dispatchEvent(new Event("browserSessionsChanged"))); await exactEntered;
     await page.evaluate(() => import("/app/state.js").then(({ state }) => { state.activeConversationId = "99999999-9999-4999-8999-999999999999"; }));
     await page.evaluate(() => {
-      const dialog = document.querySelector('[data-testid="browser-login-dialog"]')!;
+      const dialog = document.querySelector('[data-testid="browser-login-panel"]')!;
       (window as any).__staleOutcome = new Promise(resolve => {
         const observer = new MutationObserver(() => {
           const outcome = !dialog.isConnected ? "closed" : dialog.querySelector('[data-testid="browser-control-status"]')?.textContent?.includes("Human control") ? "takeover" : null;
@@ -306,6 +311,6 @@ test("signing out during global browser discovery cannot mount or control a late
   releaseDiscovery();
   await (await response).finished();
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  assert.equal(await page.getByTestId("browser-login-dialog").count(), 0, "late discovery after logout must not mount a browser login popup");
+  assert.equal(await page.getByTestId("browser-login-panel").count(), 0, "late discovery after logout must not mount a browser login popup");
   assert.equal(takeControlRequests, 0, "late discovery after logout must not take browser control");
 });

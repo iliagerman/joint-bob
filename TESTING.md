@@ -13,6 +13,15 @@ npm run typecheck
 npm run build
 ```
 
+`npm run test:ui` points `HOME` at a throwaway directory, so Playwright's own
+browser cache is empty there and any test that launches a session browser fails
+with `Failed to launch chromium because executable doesn't exist`. Point those
+runs at an installed Chrome:
+
+```bash
+JOINT_BOB_BROWSER_EXECUTABLE="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" npm run test:ui
+```
+
 Run a single file while iterating:
 
 ```bash

@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { claimBrowserPanel, releaseBrowserPanel } from "./browser-panel.js";
 import { createBrowserViewer } from "./browser-viewer.js";
 import { confirmAction, toast } from "./shell.js";
 import { state } from "./state.js";
@@ -15,61 +16,66 @@ function identity() {
 const identityKey = value => value && JSON.stringify([value.projectId, value.engine, value.conversationId, value.appNodeId]);
 const requestKey = session => `${session.nodeId}:${session.id}:${session.loginRequest.id}`;
 
+// Called both when the sign-in closes itself and when the manual viewer evicts it from the slot.
 function removePopup(current, markDismissed = false) {
   if (!current || current.closed) return;
   current.closed = true;
   if (markDismissed) dismissed.add(current.requestKey);
   current.viewer?.dispose();
-  current.dialog.removeEventListener("keydown", current.escape, true);
-  if (current.dialog.open) current.dialog.close();
-  current.dialog.remove();
+  document.removeEventListener("keydown", current.escape, true);
   if (popup === current) popup = null;
   if (current.focus?.isConnected && typeof current.focus.focus === "function") current.focus.focus();
   if (markDismissed) toast("Browser remains paused. Reopen the requesting conversation's Browser panel to finish signing in.", 8000);
 }
 
+function closePopup(current, markDismissed = false) {
+  removePopup(current, markDismissed);
+  releaseBrowserPanel();
+}
+
 function mount(session, currentScreenIdentity) {
   const key = requestKey(session);
-  const dialog = document.createElement("dialog");
-  dialog.className = "browser-login-dialog";
-  dialog.dataset.testid = "browser-login-dialog";
-  dialog.setAttribute("aria-label", "Browser sign-in");
+  const current = { root: null, requestKey: key, requestId: session.loginRequest.id, identityKey: identityKey(currentScreenIdentity), sessionId: session.id, nodeId: session.nodeId, focus: document.activeElement, viewer: null, closed: false };
+  // Taking the slot back for the manual viewer counts as dismissal, otherwise discovery would
+  // re-claim it two seconds later and the two panels would flip-flop.
+  const panel = claimBrowserPanel(() => removePopup(current, true));
+  panel.classList.add("browser-login-panel");
+  panel.dataset.testid = "browser-login-panel";
+  panel.setAttribute("aria-label", "Browser sign-in");
   const root = document.createElement("div");
-  dialog.append(root); document.body.append(dialog);
-  const current = { dialog, root, requestKey: key, requestId: session.loginRequest.id, identityKey: identityKey(currentScreenIdentity), sessionId: session.id, nodeId: session.nodeId, focus: document.activeElement, viewer: null, closed: false };
+  panel.append(root);
+  current.root = root;
   popup = current;
-  const dismiss = () => removePopup(current, true);
+  const dismiss = () => closePopup(current, true);
+  // The modal dialog used to own Escape outright; a modeless panel has to claim it on the document to keep that.
   current.escape = event => { if (event.key === "Escape") { event.preventDefault(); event.stopImmediatePropagation(); dismiss(); } };
-  dialog.addEventListener("keydown", current.escape, true);
-  dialog.addEventListener("cancel", event => { event.preventDefault(); dismiss(); });
-  dialog.addEventListener("close", () => { if (!current.closed) dismiss(); });
+  document.addEventListener("keydown", current.escape, true);
   const sessionIdentity = { projectId: session.projectId, engine: session.engine, conversationId: session.conversationId, appNodeId: session.appNodeId };
   current.viewer = createBrowserViewer(root, {
     api, identity: sessionIdentity, sessionId: session.id, nodeId: session.nodeId,
     confirm: confirmAction, loginMode: true, onClose: dismiss,
-    isCurrent: () => state.authenticated && popup === current && !current.closed && identityKey(identity()) === current.identityKey && dialog.open && !document.hidden,
+    isCurrent: () => state.authenticated && popup === current && !current.closed && identityKey(identity()) === current.identityKey && root.isConnected && !document.hidden,
     onSession(next) {
       if (popup !== current || current.closed) return;
-      if (!state.authenticated) { removePopup(current, false); return; }
-      if (identityKey(identity()) !== current.identityKey) { removePopup(current, false); return; }
+      if (!state.authenticated) { closePopup(current, false); return; }
+      if (identityKey(identity()) !== current.identityKey) { closePopup(current, false); return; }
       if (next?.id !== current.sessionId || next?.nodeId !== current.nodeId) return;
       if (next.state !== "running" || !next.loginRequest) {
         dismissed.add(current.requestKey);
-        removePopup(current, false);
+        closePopup(current, false);
       } else if (next.loginRequest.id !== current.requestId) {
-        removePopup(current, false);
+        closePopup(current, false);
         queueMicrotask(schedule);
       }
     },
   });
-  dialog.showModal();
-  dialog.querySelector('[data-testid="browser-close-viewer"]')?.focus();
+  panel.querySelector('[data-testid="browser-close-viewer"]')?.focus();
 }
 
 async function discover() {
   const currentIdentity = identity();
   const currentIdentityKey = identityKey(currentIdentity);
-  if (popup && (!state.authenticated || popup.identityKey !== currentIdentityKey)) removePopup(popup, false);
+  if (popup && (!state.authenticated || popup.identityKey !== currentIdentityKey)) closePopup(popup, false);
   if (discovering || popup || !state.authenticated || window.top !== window || document.hidden) return;
   discovering = true;
   try {
@@ -96,5 +102,5 @@ window.addEventListener("pagehide", () => {
   document.removeEventListener("browserSessionsChanged", schedule);
   window.removeEventListener("focus", schedule);
   document.removeEventListener("visibilitychange", schedule);
-  removePopup(popup, false);
+  closePopup(popup, false);
 }, { once: true });
