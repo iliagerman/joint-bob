@@ -136,3 +136,40 @@ test("browser tokens hold immutable encrypted scope snapshots", async () => {
     assert.doesNotMatch(JSON.stringify(rows), /old-value|new-value/);
   });
 });
+
+test("the website provider requires an origin and keeps its structured login variables out of the shell", async () => {
+  await useFixture("provider", async ({ secrets }) => {
+    // A website-provider account cannot be saved without an origin, unlike an ordinary custom account.
+    await assert.rejects(() => secrets.saveSecretAccount({ label: "No origin", provider: "website", variables: [
+      { name: "LOGIN_USERNAME", kind: "value" as const, value: "user" }, { name: "LOGIN_PASSWORD", kind: "value" as const, value: "pass" },
+    ] }), /website origin/i);
+    // Clearing the origin on an existing website account is rejected for the same reason.
+    const account = await secrets.saveSecretAccount({ label: "Login", provider: "website", websiteOrigin: "https://app.example.com", variables: [
+      { name: "LOGIN_USERNAME", kind: "value" as const, value: "user" }, { name: "LOGIN_PASSWORD", kind: "value" as const, value: "synthetic-pass" },
+    ] });
+    assert.equal(account.provider, "website");
+    assert.equal(account.websiteOrigin, "https://app.example.com");
+    await assert.rejects(() => secrets.saveSecretAccount({ id: account.id, label: "Login", provider: "website", websiteOrigin: null, variables: [
+      { name: "LOGIN_USERNAME", kind: "value" as const, value: "user" }, { name: "LOGIN_PASSWORD", kind: "value" as const, value: "synthetic-pass" },
+    ] }), /website origin/i);
+    // Website accounts never replicate and never hold file variables.
+    await assert.rejects(() => secrets.saveSecretAccount({ label: "Bad", provider: "website", websiteOrigin: "https://other.example", replicate: true, variables: [
+      { name: "LOGIN_PASSWORD", kind: "value" as const, value: "x" },
+    ] }), /replicate/i);
+    await assert.rejects(() => secrets.saveSecretAccount({ label: "Bad", provider: "website", websiteOrigin: "https://other.example", variables: [
+      { name: "LOGIN_PASSWORD", kind: "file" as const, value: "x" },
+    ] }), /file/i);
+
+    await secrets.setScopeSecretAccounts("project", "project-a", [account.id]);
+    // The structured login is surfaced through the website snapshot / login-fill path, not the shell.
+    assert.deepEqual(secrets.genericSecretEnvironment("project-a"), {});
+    assert.deepEqual(secrets.websiteCredentialSnapshot("project-a"), [
+      { id: account.id, origin: "https://app.example.com", variables: [
+        { name: "LOGIN_USERNAME", kind: "value", value: "user" }, { name: "LOGIN_PASSWORD", kind: "value", value: "synthetic-pass" },
+      ] },
+    ]);
+    const context = secrets.agentCredentialContext("project-a");
+    assert.match(context, new RegExp(`website .*account ${account.id}.*https://app\\.example\\.com.*LOGIN_USERNAME, LOGIN_PASSWORD.*login-fill`));
+    assert.doesNotMatch(context, /synthetic-pass|already exported/);
+  });
+});

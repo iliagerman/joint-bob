@@ -25,7 +25,7 @@
   --btn-bg-hover: #2e3134;
   --accent: #0e8a74;
   --claude: #7053c9;
-  --kiro: #c25e00;
+  --kiro: #8e48ff;
   --live: #148a52;
   --amber: #9a7410;
   --danger: #cf4238;
@@ -71,7 +71,7 @@
   --btn-bg-hover: #2c3035;
   --accent: #37cfab;
   --claude: #b39bff;
-  --kiro: #ffa63d;
+  --kiro: #b788ff;
   --live: #3cb474;
   --amber: #d0a63c;
   --danger: #e0564e;
@@ -412,12 +412,12 @@ body.shortcuts-revealed .shortcut-hint { display: grid; }
 .new-chat-harness-icon { width: 19px; height: 19px; }
 .new-chat-harness-icon.pi { color: var(--accent); }
 .new-chat-harness-icon.claude { color: var(--claude); }
-.new-chat-harness-icon.kiro { color: #ff9900; }
+.new-chat-harness-icon.kiro { color: var(--kiro); }
 .new-chat-mobile { display: none; width: 100%; }
 .choice-option-icon { width: 20px; height: 20px; flex: 0 0 auto; }
 .choice-option-icon.pi { color: var(--accent); }
 .choice-option-icon.claude { color: var(--claude); }
-.choice-option-icon.kiro { color: #ff9900; }
+.choice-option-icon.kiro { color: var(--kiro); }
 
 .engine-toggle { display: inline-flex; flex: 0 0 auto; border: 1px solid var(--line); border-radius: var(--radius-ctl); padding: 2px; background: var(--field); }
 .engine-toggle button {
@@ -1685,6 +1685,7 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 .secret-provider-icon.aws { color: #ff9900; }
 .secret-provider-icon.google { color: #4285f4; }
 .secret-provider-icon.github { color: var(--text); }
+.secret-provider-icon.website { color: #2f9e6c; }
 .secret-provider-icon.custom { color: var(--accent); }
 
 .secret-dialog-heading { display: flex; align-items: flex-start; gap: 12px; }

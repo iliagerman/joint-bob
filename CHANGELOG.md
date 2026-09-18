@@ -8,6 +8,10 @@ Every deployment is a version. The newest section must always match the
 - Browser login forms now appear as a panel beside your chat instead of a popup, sharing the space with the manual browser viewer.
 - Browser conversations now detect visible login forms and automatically open a persistent sign-in popup so you can authenticate while agent automation pauses.
 
+## 1.54.0 — 2026-09-18
+
+- Added website accounts to store structured login credentials that agents can fill automatically at bound origins.
+
 ## 1.53.6 — 2026-09-18
 
 - Conversations kept visible by recent activity can now be marked as reviewed, even when they fall outside the listing cap.

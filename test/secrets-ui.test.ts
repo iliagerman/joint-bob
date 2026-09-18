@@ -37,9 +37,9 @@ test("every secret provider carries a brand icon in the list, the picker, and th
   assert.match(html, /<option value="github">GitHub<\/option>/);
   assert.match(html, /data-testid="secret-account-provider-icon"/);
   assert.match(app, /function providerIcon\(provider\)/);
-  for (const provider of ["aws", "google", "github", "custom"]) assert.ok(new RegExp(`\\b${provider}:\\s*\\[`).test(app), `providerIconPaths is missing ${provider}`);
+  for (const provider of ["aws", "google", "github", "custom", "website"]) assert.ok(new RegExp(`\\b${provider}:\\s*\\[`).test(app), `providerIconPaths is missing ${provider}`);
   assert.match(app, /data-testid="secret-account-provider-badge"|secret-account-provider-badge/);
-  for (const selector of [".secret-provider-icon", ".secret-provider-icon.aws", ".secret-provider-icon.google", ".secret-provider-icon.github", ".secret-provider-icon.custom"]) assert.ok(styles.includes(selector), `styles are missing ${selector}`);
+  for (const selector of [".secret-provider-icon", ".secret-provider-icon.aws", ".secret-provider-icon.google", ".secret-provider-icon.github", ".secret-provider-icon.custom", ".secret-provider-icon.website"]) assert.ok(styles.includes(selector), `styles are missing ${selector}`);
 });
 
 test("GitHub is a built-in provider whose preset is an API token", async () => {
@@ -50,8 +50,8 @@ test("GitHub is a built-in provider whose preset is an API token", async () => {
   ]);
   assert.match(app, /GH_TOKEN/);
   assert.match(app, /GITHUB_TOKEN/);
-  assert.match(server, /z\.enum\(\["aws", "google", "github", "custom"\]\)/);
-  assert.match(secrets, /"aws" \| "google" \| "github" \| "custom"/);
+  assert.match(server, /z\.enum\(\["aws", "google", "github", "custom", "website"\]\)/);
+  assert.match(secrets, /"aws" \| "google" \| "github" \| "custom" \| "website"/);
 });
 
 test("the GitHub credential group surfaces are gone, replaced by workspace-scoped accounts", async () => {

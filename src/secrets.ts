@@ -5,7 +5,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { isHarnessId, type HarnessId } from "./types.js";
 
-export type SecretProvider = "aws" | "google" | "github" | "custom";
+export type SecretProvider = "aws" | "google" | "github" | "custom" | "website";
 export type SecretKind = "value" | "file";
 /** Attachment tiers, broadest first. Resolution merges them in this order. */
 export type SecretScopeType = "workspace" | "project" | "conversation";
@@ -110,7 +110,7 @@ function assertScope(scopeType: string, scopeId: string): asserts scopeType is S
 }
 
 function assertInput(input: SecretAccountInput): void {
-  if (!(["aws", "google", "github", "custom"] as string[]).includes(input.provider)) throw new Error("Secret provider must be aws, google, github, or custom");
+  if (!(["aws", "google", "github", "custom", "website"] as string[]).includes(input.provider)) throw new Error("Secret provider must be aws, google, github, custom, or website");
   if (!input.label.trim() || input.label.trim().length > 64 || /[\x00-\x1f\x7f]/.test(input.label)) throw new Error("Secret account label must be between 1 and 64 characters without control characters");
   if (input.variables.length < 1 || input.variables.length > 20) throw new Error("Secret accounts need between 1 and 20 variables");
   const names = new Set<string>();
@@ -241,6 +241,7 @@ export async function saveSecretAccount(input: SecretAccountInput): Promise<Secr
   if (input.id) assertAccountId(id);
   const old = input.id ? accountRow(id) : undefined;
   const websiteOrigin = input.websiteOrigin === undefined ? old?.website_origin ?? null : input.websiteOrigin === null ? null : normalizeWebsiteOrigin(input.websiteOrigin);
+  if (input.provider === "website" && !websiteOrigin) throw new Error("Website secret accounts require a website origin");
   if (websiteOrigin && input.replicate) throw new Error("Website credential accounts cannot replicate");
   if (websiteOrigin && input.variables.some((variable) => variable.kind === "file")) throw new Error("Website credential accounts cannot contain file variables");
   if (old && websiteOrigin) {
@@ -376,6 +377,7 @@ const providerHints: Record<SecretProvider, string> = {
   google: "gcloud and the Google SDKs read GOOGLE_APPLICATION_CREDENTIALS automatically",
   github: "the gh CLI, the GitHub API and git push all read these automatically",
   custom: "plain environment variables for this project",
+  website: "structured website sign-in credentials filled through login-fill at the bound origin",
 };
 
 export function agentCredentialContext(project: string, conversation?: SecretConversation): string {

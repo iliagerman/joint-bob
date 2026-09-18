@@ -11,13 +11,14 @@ let secretScopeTarget = null;
 let secretTypeFilter = "all";
 
 // Brand marks, drawn inline so the offline shell never reaches for a network icon.
-const providerLabels = { aws: "AWS", google: "Google", github: "GitHub", custom: "Custom" };
+const providerLabels = { aws: "AWS", google: "Google", github: "GitHub", custom: "Custom", website: "Website" };
 /** Shown under the provider picker so the choice explains itself before anything is typed. */
 const providerHints = {
   aws: "An access key pair. The AWS CLI and the AWS SDKs pick these up with no extra setup.",
   google: "Paste the Google service account JSON. It is stored privately and GOOGLE_APPLICATION_CREDENTIALS points gcloud and the Google SDKs at it.",
   github: "A personal access token. The gh CLI and the GitHub API read it, and GITHUB_TOKEN is filled in from GH_TOKEN. Git pushes keep using the GitHub group set under Projects.",
   custom: "Any environment variables you need. Every agent session in the scopes you assign this account to receives them.",
+  website: "Structured website sign-in. Set the exact website origin, then LOGIN_USERNAME and LOGIN_PASSWORD (add more fields the form needs). The agent fills them at that origin with login-fill; values stay on this node and never enter the shell.",
 };
 
 function providerIcon(provider) {
@@ -37,6 +38,7 @@ function secretProviderPresets(provider) {
   if (provider === "aws") return [{ name: "AWS_ACCESS_KEY_ID", kind: "value" }, { name: "AWS_SECRET_ACCESS_KEY", kind: "value" }];
   if (provider === "google") return [{ name: "GOOGLE_APPLICATION_CREDENTIALS", kind: "file" }];
   if (provider === "github") return [{ name: "GH_TOKEN", kind: "value" }];
+  if (provider === "website") return [{ name: "LOGIN_USERNAME", kind: "value" }, { name: "LOGIN_PASSWORD", kind: "value" }];
   return [{ name: "", kind: "value" }];
 }
 
@@ -237,6 +239,7 @@ async function saveSecretAccount() {
     return { name, kind, ...(value === "" ? {} : { value }) };
   });
   if (!variables.every((item) => item.name) || new Set(variables.map((item) => item.name)).size !== variables.length || (!editingSecretAccountId && variables.some((item) => item.value === undefined))) throw new Error("Enter unique variable names and values");
+  if (provider === "website" && !websiteOrigin) throw new Error("Website accounts need a website origin. Enter the exact HTTPS origin the login lives at.");
   if (websiteOrigin && variables.some((item) => item.kind === "file")) throw new Error("Website credentials cannot contain file values. Choose Value or clear the website origin.");
   if (provider === "google") for (const item of variables) {
     if (item.kind !== "file" || item.value === undefined) continue;
