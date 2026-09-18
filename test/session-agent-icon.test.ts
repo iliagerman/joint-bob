@@ -65,8 +65,8 @@ test("the mark uses each agent's own colour in both themes", async () => {
 });
 
 /**
- * The marks are the real published logos, not lookalikes: Simple Icons' own 24x24 path
- * for each vendor, and pi.dev's own logo geometry rescaled onto the same 24-unit grid.
+ * The marks are the real published logos, not lookalikes: vendor paths from their
+ * published assets, including Kiro's bundled kiricons package.
  */
 test("every brand mark is the vendor's real logo", async () => {
   const app = await appSource();
@@ -77,10 +77,10 @@ test("every brand mark is the vendor's real logo", async () => {
   }
 
   // Verbatim opening runs of each published path, so a hand-drawn stand-in cannot pass.
-  // The AWS path is hoisted so the aws and kiro entries share it.
   assert.ok(app.includes("M6.763 10.036c0 .296.032.535.088.71"), "AWS is not the published mark");
   assert.match(brands, /\n  aws: \[awsMark\]/);
-  assert.match(brands, /\n  kiro: \[awsMark\]/);
+  assert.doesNotMatch(brands, /\n  kiro: \[awsMark\]/);
+  assert.ok(brands.includes("M8.74842 1C10.9904 0.997658 13.2522 2.35131"), "Kiro is not the official ghost mark");
   assert.ok(brands.includes("M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133"), "Google is not the published mark");
   assert.ok(brands.includes("M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385"), "GitHub is not the published mark");
   assert.ok(brands.includes("M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108"), "OpenAI is not the published mark");
@@ -94,10 +94,9 @@ test("every brand mark is the vendor's real logo", async () => {
 test("every brand mark is built the same way, so they line up wherever they appear", async () => {
   const app = await appSource();
 
-  // One builder, one box, one fill: differing viewBoxes are what make icons sit at
-  // different apparent sizes beside each other.
+  // One builder and one fill keep all marks aligned; Kiro retains its published 17x16 box.
   const builder = functionBody(app, "function brandIcon(name, className) {");
-  assert.match(builder, /setAttribute\("viewBox", "0 0 24 24"\)/);
+  assert.match(builder, /name === "kiro" \? "0 0 17 16" : "0 0 24 24"/);
   assert.match(builder, /setAttribute\("fill", "currentColor"\)/);
   for (const wrapper of ["function agentIcon(agentId) {", "function providerIcon(provider) {"]) {
     assert.match(functionBody(app, wrapper), /brandIcon\(/, `${wrapper} does not use the shared builder`);
