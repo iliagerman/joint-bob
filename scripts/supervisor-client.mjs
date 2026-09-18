@@ -66,10 +66,14 @@ export function mintTaskToken(dataDirectory, identity) {
 export function requestSupervisor(socketPath, token, body, timeoutMs = 15000) {
   if (typeof socketPath !== "string" || !path.isAbsolute(socketPath) || Buffer.byteLength(socketPath) > 100) return Promise.reject(new Error("Invalid supervisor socket path"));
   return new Promise((resolve, reject) => {
+    const action = body && typeof body.action === "string" ? body.action : "unknown";
+    const startedAt = Date.now();
+    let reusedSocket = false;
     const request = http.request({ socketPath, path: "/control", method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" } }, response => {
       const chunks = []; let size = 0;
       response.on("data", chunk => { size += chunk.length; if (size > 1024 * 1024) request.destroy(new Error("Supervisor response exceeds 1 MiB")); else chunks.push(chunk); });
       response.on("end", () => {
+        if (Date.now() - startedAt > 3000) console.error(`[supervisor-client] ${action} responded ${response.statusCode} after ${Date.now() - startedAt}ms on a ${reusedSocket ? "reused" : "fresh"} socket`);
         let value;
         try { value = JSON.parse(Buffer.concat(chunks).toString()); } catch { reject(new Error("Malformed supervisor response")); return; }
         if (!value || typeof value !== "object" || (!("result" in value) && typeof value.error !== "string")) { reject(new Error("Malformed supervisor response")); return; }
@@ -77,8 +81,12 @@ export function requestSupervisor(socketPath, token, body, timeoutMs = 15000) {
         resolve(value.result);
       });
     });
+    request.on("socket", () => { reusedSocket = request.reusedSocket === true; });
     request.setTimeout(timeoutMs, () => request.destroy(new Error("Supervisor request timed out")));
-    request.on("error", error => reject(new Error(`Supervisor request failed: ${error.message}`)));
+    request.on("error", error => {
+      console.error(`[supervisor-client] ${action} failed after ${Date.now() - startedAt}ms on a ${reusedSocket ? "reused" : "fresh"} socket: ${error.message}`);
+      reject(new Error(`Supervisor request failed: ${error.message}`));
+    });
     request.end(JSON.stringify(body));
   });
 }
