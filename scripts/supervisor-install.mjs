@@ -1,8 +1,24 @@
-import { cpSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { discardSupervisorScripts, restoreSupervisorScripts, supervisorComponentsMatch, swapSupervisorScripts } from "./supervisor-release.mjs";
 import { supervisorRequest } from "./supervisor-client.mjs";
+
+// Every update unpacks a full copy of the app, so without this the releases
+// directory grows by one build per deploy and never shrinks. The activated
+// release always survives; the runner-up stays behind it for rollback.
+function pruneReleases(installRoot, activeRelease, keep = 2) {
+  const releases = path.join(installRoot, "releases");
+  const active = path.resolve(activeRelease);
+  const stale = readdirSync(releases, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => path.join(releases, entry.name))
+    .filter(release => path.resolve(release) !== active)
+    .map(release => ({ release, at: statSync(release).mtimeMs }))
+    .sort((a, b) => b.at - a.at)
+    .slice(keep - 1);
+  for (const entry of stale) rmSync(entry.release, { recursive: true, force: true });
+}
 
 export async function installSupervisedRelease({ sourceRoot, installRoot, dataDirectory, execute, isInterrupted }) {
   const staging = `${installRoot}.staging-${process.pid}-${randomUUID()}`;
@@ -37,6 +53,7 @@ export async function installSupervisedRelease({ sourceRoot, installRoot, dataDi
     }
     if (maintenance) discardSupervisorScripts(installRoot);
     if (isInterrupted()) throw new Error("Installation completed after interruption");
+    pruneReleases(installRoot, releaseRoot);
     console.log(`Activated Joint Bob release ${releaseRoot}${maintenance ? "; the supervisor restarts onto its new components" : ""}`);
   } finally {
     if (!published && existsSync(staging)) rmSync(staging, { recursive: true, force: true });

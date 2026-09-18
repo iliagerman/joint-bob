@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { access, appendFile, cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { access, appendFile, cp, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
 import os from "node:os";
@@ -292,5 +292,20 @@ test("installed app crash restarts the app without replacing supervisor or held 
     assert.equal(after.instanceId, before.instanceId);
     assert.equal((await supervisorRequest(f.state, { action: "task", id })).pid, task.pid);
     await writeFile(task.release, "go");
+  } finally { await cleanup(f); }
+});
+
+test("repeated installs keep only the newest releases so the disk does not grow forever", async () => {
+  const f = await createFixture();
+  try {
+    await install(f);
+    await install(f);
+    await install(f);
+    const active = readInstallation(f.state)!.activeRelease;
+    const releases = path.join(f.app, "releases");
+    const kept = (await readdir(releases, { withFileTypes: true })).filter(entry => entry.isDirectory()).map(entry => path.join(releases, entry.name));
+    assert.equal(kept.length, 2, `expected 2 retained releases, found ${kept.length}`);
+    assert.equal(kept.map(entry => path.resolve(entry)).includes(path.resolve(active)), true, "the active release must survive pruning");
+    assert.deepEqual(await health(f.port), { status: "ok", release: "b".repeat(40) });
   } finally { await cleanup(f); }
 });
