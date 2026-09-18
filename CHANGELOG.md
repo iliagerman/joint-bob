@@ -3,7 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.56.0 — 2026-09-18
+
+- Added a project-level Git review panel to view repository status, diffs, and commit history within project workspaces.
+- Ask AI to explain git changes; review discussions persist for 7 days.
+
+## 1.55.0 — 2026-09-18
 
 - Added a Git panel where you can browse the working tree, commit history, and ask AI to explain code changes—explanations are saved for 7 days and can be referenced in follow-ups.
 
