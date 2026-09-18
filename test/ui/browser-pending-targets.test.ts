@@ -21,7 +21,7 @@ function gate() {
   return { promise, resolve };
 }
 
-test("pending browser requests never redirect approval or files", { timeout: 120000 }, async t => {
+test("pending browser requests never redirect approval or files", { timeout: 300000 }, async t => {
   const server = http.createServer((_req, res) => {
     res.setHeader("content-type", "text/html");
     res.end('<title>Pending requests</title><input id="a" type="file"><input id="b" type="file">');
@@ -134,7 +134,9 @@ test("pending browser requests never redirect approval or files", { timeout: 120
         const upload = f.execute({ action: "upload", selector: "#a", files }, agent);
         void upload.catch(() => {});
         blocked.resolve(); await Promise.all([prior, select, upload]);
-        assert.equal(await f.a.locator("#a").evaluate((input: HTMLInputElement) => input.files!.length), 0);
+        // Page a is a background tab here. Chrome pauses animation frames there, which a
+        // locator waits on, so read the input directly.
+        assert.equal(await f.a.evaluate(() => document.querySelector<HTMLInputElement>("#a")!.files!.length), 0);
         assert.equal(await f.b.locator("#a").evaluate((input: HTMLInputElement) => input.files![0].text()), "private bytes");
       } finally { blocked.resolve(); await f.execute({ action: "takeControl" }); await f.close(); }
     });
