@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Claude now automatically trusts workspace directories when spawned, so project-level settings are honored without manual trust dialogs.
+
 ## 1.57.2 — 2026-09-18
 
 - Kiro conversations no longer stop mid-turn when the agent delegates work to a sub-agent.

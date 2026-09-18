@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { parseCompletedJsonl } from "./jsonl.js";
 import type { Stats } from "node:fs";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { access, copyFile, mkdir, readdir, readFile, rename, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -77,6 +78,33 @@ export function claudeConfigPath(): string | undefined {
   const configPath = getSettings().claude.configPath;
   const defaultPath = path.join(os.homedir(), ".claude");
   return configPath && path.resolve(configPath) !== defaultPath ? configPath : undefined;
+}
+
+const trustedWorkspaces = new Set<string>();
+
+/**
+ * Claude discards a workspace's `.claude/settings.json` until a human accepts its
+ * trust dialog, which a non-interactive spawn never shows. Joint Bob created the
+ * directory it is about to run in, so it records that acceptance itself.
+ */
+function trustWorkspace(cwd: string): void {
+  const workspace = path.resolve(cwd);
+  if (trustedWorkspaces.has(workspace)) return;
+  const configFile = path.join(claudeConfigPath() ?? os.homedir(), ".claude.json");
+  let config: UnknownRecord = {};
+  try {
+    config = asRecord(JSON.parse(readFileSync(configFile, "utf8")));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const projects = asRecord(config.projects);
+  const project = asRecord(projects[workspace]);
+  if (project.hasTrustDialogAccepted !== true) {
+    config.projects = { ...projects, [workspace]: { ...project, hasTrustDialogAccepted: true } };
+    mkdirSync(path.dirname(configFile), { recursive: true });
+    writeFileSync(configFile, JSON.stringify(config, null, 2));
+  }
+  trustedWorkspaces.add(workspace);
 }
 
 export function claudeProjectsRoot(): string {
@@ -442,6 +470,7 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
 
   const settings = getSettings().claude;
   const configPath = claudeConfigPath();
+  trustWorkspace(options.cwd);
   const child = spawn(settings.executable || "claude", args, {
     detached: process.platform !== "win32",
     cwd: options.cwd,
