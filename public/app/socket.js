@@ -239,7 +239,10 @@ function handleSocketPayload(payload, scrollOnReady = false) {
         .then(() => refreshSessionsQuietly())
         .catch((error) => toast(error.message, 8000));
     }
-    const matchingSession = state.sessions.find((session) => session.path === payload.sessionFile);
+    // Match the conversations list by id first: a conversation reopened from the
+    // board or a task carries an id before its file path is known here, and
+    // matching on the path alone fell back to a bare "<Harness> conversation".
+    const matchingSession = state.sessions.find((session) => (state.activeSessionId && session.id === state.activeSessionId) || session.path === payload.sessionFile);
     elements.sessionTitle.textContent = pendingTitle
       ? pendingTitle
       : matchingSession
@@ -532,6 +535,9 @@ export async function refreshSessionsQuietly() {
     const newlyNeedsReview = body.sessions.some((session) => session.reviewState === "needs_review" && previousStates.get(session.path) !== "needs_review");
     state.sessions = body.sessions;
     const activeSession = state.sessions.find((session) => session.id === state.activeSessionId || session.path === state.activeSessionPath);
+    // The list can arrive after the conversation opened, so the header takes the
+    // list's name as soon as it exists rather than keeping its harness fallback.
+    if (activeSession && !state.pendingSessionTitle) elements.sessionTitle.textContent = shortSessionTitle(activeSession);
     if (newlyNeedsReview) playCompletionSound().catch((error) => console.warn("Completion sound failed", error));
     const activeNode = state.sessionNodes.find((node) => node.id === state.activeNodeId);
     const activeSessionExists = state.sessions.some((session) => state.activeSessionId ? session.id === state.activeSessionId : session.path === state.activeSessionPath);

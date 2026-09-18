@@ -3,6 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 1.57.1 — 2026-09-18
+
+- Mobile agent picker now displays each agent as a logo with its name on one line, making the list more compact.
+- Conversation name now shows in the chat header instead of a generic fallback label.
+- Mobile chat toolbar now keeps model, reasoning, and tasks on one row with tasks shown as an icon.
+
 ## 1.57.0 — 2026-09-18
 
 - Browser login forms now appear as a panel beside your chat instead of a popup, sharing the space with the manual browser viewer.

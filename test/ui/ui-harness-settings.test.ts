@@ -84,10 +84,49 @@ test("mobile uses one new conversation button with a dynamic harness dialog", { 
   await page.getByTestId("new-conversation-mobile-button").click();
   await page.getByTestId("choice-dialog").waitFor({ state: "visible" });
   assert.deepEqual(await page.getByTestId("choice-option").locator(".choice-option-label").allTextContents(), ["Pi", "Claude", "Kiro"]);
+  // The picker is a logo beside a small name, not a logo stacked above one.
+  const pickerRows = await page.getByTestId("choice-option").evaluateAll((rows) => rows.map((row) => {
+    const icon = row.querySelector(".choice-option-icon")!.getBoundingClientRect();
+    const label = row.querySelector(".choice-option-label")!.getBoundingClientRect();
+    return { sameRow: label.top < icon.bottom && icon.top < label.bottom, height: row.getBoundingClientRect().height };
+  }));
+  assert.equal(pickerRows.length, 3);
+  for (const row of pickerRows) {
+    assert.equal(row.sameRow, true, "the agent logo and its name share one row");
+    assert.ok(row.height < 56, `an agent option stays compact, got ${row.height}px`);
+  }
   await page.locator('#choiceDialog input[value="kiro"]').check();
   await page.getByTestId("choice-accept-button").click();
   await page.getByTestId("new-session-name-dialog").waitFor({ state: "visible" });
   assert.equal(await page.evaluate(async () => (await import("/app/state.js")).state.newSessionDraft.sessionPath), "kiro:new");
+});
+
+test("mobile chat toolbar keeps model, reasoning and tasks on one row", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await signIn(page, node.url, environment.username, environment.password);
+  await waitForHarnesses(page);
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+  await page.locator("#sessionList .session-card").first().click();
+  await page.locator("#chatToolbar").waitFor({ state: "visible" });
+
+  const layout = await page.evaluate(() => {
+    const tasksIcon = document.querySelector(".background-tasks-icon")!;
+    const tasksLabel = document.querySelector(".background-tasks-label")!;
+    const reasoning = document.querySelector("#chatModeControl") as HTMLElement;
+    return {
+      model: document.querySelector("#modelButton")!.getBoundingClientRect().bottom,
+      // Harnesses without a reasoning control hide the whole label.
+      reasoning: reasoning.hidden ? null : document.querySelector("#reasoningLevelSelect")!.getBoundingClientRect().bottom,
+      tasks: document.querySelector("#backgroundTasksButton")!.getBoundingClientRect().bottom,
+      iconShown: getComputedStyle(tasksIcon).display !== "none",
+      labelShown: getComputedStyle(tasksLabel).display !== "none",
+    };
+  });
+  if (layout.reasoning !== null) assert.equal(layout.reasoning, layout.model, "reasoning sits on the model's row");
+  assert.equal(layout.tasks, layout.model, "tasks sits on the model's row instead of a third row");
+  assert.equal(layout.iconShown, true, "tasks shows its icon on mobile");
+  assert.equal(layout.labelShown, false, "tasks drops its word on mobile");
 });
 
 test("model picker renders provider presentation metadata", { timeout: 120_000 }, async (t) => {
