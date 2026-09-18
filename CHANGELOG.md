@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed spurious sign-in prompts when accessing git panels across clustered nodes with mismatched versions.
+
 ## 1.56.0 — 2026-09-18
 
 - Added a project-level Git review panel to view repository status, diffs, and commit history within project workspaces.

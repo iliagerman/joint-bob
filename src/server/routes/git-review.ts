@@ -65,6 +65,15 @@ async function proxyGitJson(response: Response, peer: ClusterPeer, clusterRoute:
   });
   const contentType = routed.headers.get("content-type");
   if (contentType) response.setHeader("Content-Type", contentType);
+  // A peer rejecting our machine token (401/403) is a node-to-node auth problem, not the
+  // browser user's session expiring. Passing that 401 straight through makes the client
+  // show a spurious sign-in dialog, so it is reported as an upstream (502) failure instead.
+  // The usual cause is the peer running an older build without the git cluster routes.
+  if (routed.status === 401 || routed.status === 403) {
+    const detail = await routed.text().catch(() => "");
+    response.status(502).json({ error: `Git node rejected the request (HTTP ${routed.status}). It may be running an older Joint Bob version; update every node.${detail ? ` Details: ${detail.slice(0, 200)}` : ""}` });
+    return;
+  }
   response.status(routed.status).send(await routed.text());
 }
 
