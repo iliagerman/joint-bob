@@ -3,7 +3,8 @@ import { mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { TestContext } from "node:test";
-import { chromium, type Browser } from "playwright-core";
+import type { Browser } from "playwright-core";
+import { launchChrome } from "./launch-chrome.js";
 import { seedDevEnvironment, startDevNode, stopDevNode } from "../dev-nodes.js";
 
 // Repository UI tests only: synthetic accounts, loopback nodes, fresh Chrome context.
@@ -25,11 +26,7 @@ export async function nativeUiFixture(t: TestContext, extraEnv: (root: string) =
   const environment = await seedDevEnvironment(root, 1);
   const node = environment.nodes[0];
   server = await startDevNode(environment, node, extraEnv(root));
-  browser = await chromium.launch({
-    channel: process.env.CHROME_CHANNEL ?? "chrome",
-    headless: true,
-    env: { ...process.env, HOME: environment.home },
-  });
+  browser = await launchChrome({ headless: true, env: { ...process.env, HOME: environment.home } });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: "block" });
   context.setDefaultTimeout(20_000);
   const page = await context.newPage();

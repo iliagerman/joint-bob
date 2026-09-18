@@ -9,7 +9,8 @@ import { DatabaseSync } from "node:sqlite";
 import os from "node:os";
 import path from "node:path";
 import test, { after, before } from "node:test";
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
+import { type Browser, type BrowserContext, type Page } from "playwright-core";
+import { launchChrome } from "./launch-chrome.js";
 import { projectNamed, seedDevEnvironment, startDevNode, stopDevNode, type DevEnvironment, type SeededNode } from "../dev-nodes.js";
 
 const TICKET_TITLE = "Fix the payment webhook";
@@ -66,7 +67,7 @@ before(async () => {
   await seedTicketConversation();
   server = await startDevNode(environment, node);
 
-  browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL ?? "chrome", headless: process.env.HEADED !== "1" });
+  browser = await launchChrome({ headless: process.env.HEADED !== "1" });
   context = await browser.newContext({
     viewport: { width: 1440, height: 900 },
     reducedMotion: "reduce",

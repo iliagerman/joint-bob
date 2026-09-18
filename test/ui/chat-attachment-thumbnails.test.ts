@@ -4,7 +4,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test, { after, before } from "node:test";
-import { chromium, type Browser, type Page } from "playwright-core";
+import { type Browser, type Page } from "playwright-core";
+import { launchChrome } from "./launch-chrome.js";
 import { seedDevEnvironment, signIn, startDevNode, stopDevNode, type SeededNode } from "../dev-nodes.js";
 
 let root: string;
@@ -23,7 +24,7 @@ before(async () => {
   await writeFile(imagePath, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"));
   server = await startDevNode(environment, node);
   const session = await signIn(environment, node);
-  browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL ?? "chrome", headless: true });
+  browser = await launchChrome({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: "block" });
   const [name, value] = session.cookie.split("=");
   await context.addCookies([{ name, value, url: node.url }]);

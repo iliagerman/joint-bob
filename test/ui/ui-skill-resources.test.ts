@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { chromium } from "playwright-core";
+import { launchChrome } from "./launch-chrome.js";
 import { seedDevEnvironment, startDevNode, stopDevNode } from "../dev-nodes.js";
 
 test("resource settings explicitly publish and reload skills", { timeout: 120_000 }, async () => {
@@ -13,7 +13,7 @@ test("resource settings explicitly publish and reload skills", { timeout: 120_00
     const environment = await seedDevEnvironment(root, 1); const node = environment.nodes[0];
     const source = path.join(root, "external/visible"); await mkdir(source, { recursive: true });
     await writeFile(path.join(source, "SKILL.md"), "---\nname: visible\ndescription: first\n---\n");
-    server = await startDevNode(environment, node); browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL ?? "chrome", headless: true });
+    server = await startDevNode(environment, node); browser = await launchChrome({ headless: true });
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, serviceWorkers: "block" });
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));

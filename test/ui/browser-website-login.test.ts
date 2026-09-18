@@ -11,7 +11,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { chromium } from "playwright-core";
+import { chromeExecutable } from "./launch-chrome.js";
 import type { BrowserSessionView } from "../../src/browser-types.js";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "../dev-nodes.js";
 import { waitForAssertion } from "../async-assertion.js";
@@ -56,7 +56,7 @@ function requester(environment: AgentEnvironment) {
 }
 
 test("origin-bound snapshot signs in on the designated browser node", { timeout: 180_000 }, async t => {
-  const executable = process.env.CHROME_PATH || process.env.JOINT_BOB_BROWSER_EXECUTABLE || chromium.executablePath();
+  const executable = await chromeExecutable();
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-website-login-"));
   const servers: ChildProcess[] = [];
   const received: string[] = [];

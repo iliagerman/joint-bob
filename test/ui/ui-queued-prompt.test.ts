@@ -9,7 +9,8 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test, { after, before } from "node:test";
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
+import { type Browser, type BrowserContext, type Page } from "playwright-core";
+import { launchChrome } from "./launch-chrome.js";
 import { seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode } from "../dev-nodes.js";
 import { gatedClaude } from "../queued-prompt-harness.js";
 
@@ -75,7 +76,7 @@ before(async () => {
   const saved = await fetch(`${node.url}/api/settings`, { method: "PUT", headers, body: JSON.stringify(settings) });
   assert.ok(saved.ok, "the node accepts the fake Claude executable");
 
-  browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL ?? "chrome", headless: process.env.HEADED !== "1" });
+  browser = await launchChrome({ headless: process.env.HEADED !== "1" });
   context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce", serviceWorkers: "block" });
   page = await context.newPage();
   page.on("console", (message) => { if (message.type() === "error") console.error("console:", message.text()); });

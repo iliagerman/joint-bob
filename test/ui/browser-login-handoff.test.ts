@@ -4,12 +4,11 @@ import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
-import { chromium } from "playwright-core";
 import { BrowserRuntime } from "../../src/browser-runtime.js";
+import { chromeExecutable } from "./launch-chrome.js";
 import { waitForAssertion } from "../async-assertion.js";
 
-const executable = process.env.CHROME_PATH || process.env.JOINT_BOB_BROWSER_EXECUTABLE || chromium.executablePath();
-const capability = async () => ({ supported: true, available: true, executable, reason: null });
+const capability = async () => ({ supported: true, available: true, executable: await chromeExecutable(), reason: null });
 const agent = (credentialOrigins: string[] = []) => ({ kind: "agent" as const, credentialOrigins });
 const human = { kind: "human" as const, id: "native-login-owner" };
 

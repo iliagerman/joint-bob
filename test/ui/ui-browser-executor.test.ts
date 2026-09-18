@@ -4,7 +4,8 @@ import { runInNewContext } from "node:vm";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { chromium, type Page, type WebSocketRoute } from "playwright-core";
+import type { Browser, Page, WebSocketRoute } from "playwright-core";
+import { launchChrome } from "./launch-chrome.js";
 import { seedDevEnvironment, signIn, startDevNode, stopDevNode } from "../dev-nodes.js";
 
 test("Settings lists paired browser machines and saves the independent default", async () => {
@@ -219,9 +220,9 @@ test("browser viewer UI", { timeout: 180_000 }, async (t) => {
   const environment = await seedDevEnvironment(root, 1);
   const node = environment.nodes[0];
   const server = await startDevNode(environment, node);
-  let browser: Awaited<ReturnType<typeof chromium.launch>>;
+  let browser: Browser;
   try {
-    browser = await chromium.launch({ ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : { channel: process.env.CHROME_CHANNEL ?? "chrome" }), headless: true });
+    browser = await launchChrome({ headless: true });
   } catch (error) { await stopDevNode(server); await rm(root, { recursive: true, force: true }); throw error; }
   const pageErrors: string[] = [];
   const executorId = "11111111-1111-4111-8111-111111111111";

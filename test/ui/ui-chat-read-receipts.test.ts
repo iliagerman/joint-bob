@@ -13,7 +13,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test, { after, before } from "node:test";
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
+import { type Browser, type BrowserContext, type Page } from "playwright-core";
+import { launchChrome } from "./launch-chrome.js";
 import { seedDevEnvironment, startDevNode, stopDevNode, type DevEnvironment, type SeededNode } from "../dev-nodes.js";
 
 const PROJECT_NAME = "Internal Assistant";
@@ -38,7 +39,7 @@ before(async () => {
   node = environment.nodes[0];
   server = await startDevNode(environment, node);
 
-  browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL ?? "chrome", headless: process.env.HEADED !== "1" });
+  browser = await launchChrome({ headless: process.env.HEADED !== "1" });
   context = await browser.newContext({
     viewport: { width: 1440, height: 900 },
     reducedMotion: "reduce",

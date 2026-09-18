@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { chromium } from "playwright-core";
+import { launchChrome } from "./launch-chrome.js";
 import { seedDevEnvironment, startDevNode, stopDevNode } from "../dev-nodes.js";
 
 /** The conversation list's row menu and the open conversation's menu are the same
@@ -15,7 +15,7 @@ test("the open conversation offers the same menu its row offers", { timeout: 120
   const server = await startDevNode(environment, node);
   let browser;
   try {
-    browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL ?? "chrome", headless: true });
+    browser = await launchChrome({ headless: true });
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, serviceWorkers: "block" });
     page.setDefaultTimeout(15_000);
     const errors: string[] = [];

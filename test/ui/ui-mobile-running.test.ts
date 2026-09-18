@@ -4,7 +4,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { chromium, type Browser } from "playwright-core";
+import { type Browser } from "playwright-core";
+import { launchChrome } from "./launch-chrome.js";
 import { seedDevEnvironment, signIn, startDevNode, stopDevNode } from "../dev-nodes.js";
 
 test("mobile conversations expose running work and keep the current chat globally reachable", { timeout: 120_000 }, async (t) => {
@@ -19,7 +20,7 @@ test("mobile conversations expose running work and keep the current chat globall
   const environment = await seedDevEnvironment(root, 1);
   const node = environment.nodes[0];
   server = await startDevNode(environment, node);
-  browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL ?? "chrome", headless: true });
+  browser = await launchChrome({ headless: true });
   const context = await browser.newContext({ viewport: { width: 375, height: 850 }, serviceWorkers: "block" });
   const session = await signIn(environment, node);
   await context.addCookies([{ name: node.cookieName, value: session.cookie.split("=")[1], url: node.url }]);
@@ -58,7 +59,7 @@ test("mobile chat toolbar reaches running work and the label filter matches the 
   const environment = await seedDevEnvironment(root, 1);
   const node = environment.nodes[0];
   server = await startDevNode(environment, node);
-  browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL ?? "chrome", headless: true });
+  browser = await launchChrome({ headless: true });
   const session = await signIn(environment, node);
 
   const phone = await browser.newContext({ viewport: { width: 375, height: 850 }, serviceWorkers: "block" });

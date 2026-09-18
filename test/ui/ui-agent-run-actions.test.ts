@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { chromium } from "playwright-core";
+import { launchChrome } from "./launch-chrome.js";
 import { seedDevEnvironment, startDevNode, stopDevNode } from "../dev-nodes.js";
 
 test("conversation actions stay inside the card when sub-agent tasks extend the row", async () => {
@@ -11,7 +11,7 @@ test("conversation actions stay inside the card when sub-agent tasks extend the 
   const environment = await seedDevEnvironment(root, 1);
   const node = environment.nodes[0];
   const server = await startDevNode(environment, node);
-  const browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL ?? "chrome", headless: true });
+  const browser = await launchChrome({ headless: true });
   try {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, serviceWorkers: "block" });
     await page.route("**/api/projects/*/sessions", async (route) => {

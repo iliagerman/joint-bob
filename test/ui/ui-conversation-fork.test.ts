@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { chromium } from "playwright-core";
+import { launchChrome } from "./launch-chrome.js";
 import { seedDevEnvironment, startDevNode, stopDevNode } from "../dev-nodes.js";
 
 test("conversation submenu forks and opens independent Pi and Claude history", { timeout: 120_000 }, async () => {
@@ -13,7 +13,7 @@ test("conversation submenu forks and opens independent Pi and Claude history", {
   const server = await startDevNode(environment, node);
   let browser;
   try {
-    browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL ?? "chrome", headless: true });
+    browser = await launchChrome({ headless: true });
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, serviceWorkers: "block" });
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));

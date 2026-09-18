@@ -4,7 +4,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test, { after, before } from "node:test";
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
+import { type Browser, type BrowserContext, type Page } from "playwright-core";
+import { launchChrome } from "./launch-chrome.js";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode } from "../dev-nodes.js";
 
 let root: string;
@@ -29,7 +30,7 @@ before(async () => {
   });
   assert.equal(renamed.status, 200);
 
-  browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL ?? "chrome", headless: process.env.HEADED !== "1" });
+  browser = await launchChrome({ headless: process.env.HEADED !== "1" });
   context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: "block" });
   await context.addInitScript({ content: `
     const nativeAddEventListener = WebSocket.prototype.addEventListener;

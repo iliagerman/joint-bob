@@ -3,7 +3,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { chromium, type Browser } from "playwright-core";
+import { type Browser } from "playwright-core";
+import { launchChrome } from "./launch-chrome.js";
 import type { SessionSummary } from "../../src/types.js";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "../dev-nodes.js";
 
@@ -22,7 +23,7 @@ test("classification filters combine with search and status, include custom labe
       assert.ok(session, `Missing seeded conversation ${title}`);
       assert.equal((await api(node, auth, "PUT", `/projects/${project.id}/sessions/classification`, { sessionId: session.id, engine: session.harnessId, classification })).status, 200);
     }
-    browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL ?? "chrome", headless: true });
+    browser = await launchChrome({ headless: true });
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, serviceWorkers: "block" });
     page.setDefaultTimeout(15_000);
     const errors: string[] = [];

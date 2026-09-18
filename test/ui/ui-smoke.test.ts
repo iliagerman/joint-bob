@@ -15,7 +15,8 @@ import path from "node:path";
 import test, { after, before } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
+import { type Browser, type BrowserContext, type Page } from "playwright-core";
+import { launchChrome } from "./launch-chrome.js";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode } from "../dev-nodes.js";
 
 let root: string;
@@ -40,7 +41,7 @@ before(async () => {
   node = environment.nodes[0];
   server = await startDevNode(environment, node);
 
-  browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL ?? "chrome", headless: process.env.HEADED !== "1" });
+  browser = await launchChrome({ headless: process.env.HEADED !== "1" });
   context = await browser.newContext({
     // Wide enough for the desktop layout: the canvas is hidden below 1024px.
     viewport: { width: 1440, height: 900 },

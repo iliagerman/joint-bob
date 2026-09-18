@@ -7,7 +7,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { syncBuiltinESMExports } from "node:module";
 import { resolveDataDirectory } from "../../src/data-directory.js";
-import { chromium, type Page } from "playwright-core";
+import type { Page } from "playwright-core";
+import { chromeExecutable } from "./launch-chrome.js";
 import { BrowserRuntime } from "../../src/browser-runtime.js";
 
 const human = { kind: "human", id: "alice" } as const;
@@ -28,7 +29,7 @@ test("pending browser requests never redirect approval or files", { timeout: 120
   server.listen(0, "127.0.0.1"); await once(server, "listening");
   const url = `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}`;
   const runtime = new BrowserRuntime({
-    capability: async () => ({ supported: true, available: true, executable: process.env.CHROME_PATH || chromium.executablePath(), reason: null }),
+    capability: async () => ({ supported: true, available: true, executable: await chromeExecutable(), reason: null }),
   });
   async function fixture() {
     const view = await runtime.create({ projectId: randomUUID(), conversationId: randomUUID(), engine: "pi", appNodeId: randomUUID(), url });

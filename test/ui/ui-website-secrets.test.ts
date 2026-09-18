@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
-import { chromium, type Browser } from "playwright-core";
+import { type Browser } from "playwright-core";
+import { launchChrome } from "./launch-chrome.js";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "../dev-nodes.js";
 
 const run = promisify(execFile);
@@ -28,7 +29,7 @@ test("website secrets stay masked, origin-bound, editable, and usable in project
   const server = await startDevNode(environment, node);
   let browser: Browser | undefined;
   try {
-    browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL ?? "chrome", headless: true });
+    browser = await launchChrome({ headless: true });
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, serviceWorkers: "block" });
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));

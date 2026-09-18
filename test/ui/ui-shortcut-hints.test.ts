@@ -5,7 +5,8 @@ import { createServer, type Server } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test, { after, before } from "node:test";
-import { chromium, type Browser, type Page } from "playwright-core";
+import { type Browser, type Page } from "playwright-core";
+import { launchChrome } from "./launch-chrome.js";
 import { seedDevEnvironment, startDevNode, stopDevNode, type DevEnvironment, type SeededNode } from "../dev-nodes.js";
 
 let root: string;
@@ -38,7 +39,7 @@ before(async () => {
   node = environment.nodes[0];
   const syncthingUrl = await startFakeSyncthing();
   server = await startDevNode(environment, node, { PI_MOBILE_WEB_SYNCTHING_URL: syncthingUrl, PI_MOBILE_WEB_SYNCTHING_API_KEY: "test-key" });
-  browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL ?? "chrome", headless: process.env.HEADED !== "1" });
+  browser = await launchChrome({ headless: process.env.HEADED !== "1" });
   page = await browser.newPage({ viewport: { width: 1440, height: 900 }, serviceWorkers: "block" });
   page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
 }, { timeout: 120_000 });

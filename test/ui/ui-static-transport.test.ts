@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import http from "node:http";
 import test from "node:test";
-import { chromium, type Browser } from "playwright-core";
+import { type Browser } from "playwright-core";
+import { launchChrome } from "./launch-chrome.js";
 import { installStaticBrowserTransport } from "../static-browser-transport.mjs";
 
 test("static transport retries one reset and exposes permanent failures", async () => {
@@ -43,7 +44,7 @@ test("static transport retries one reset and exposes permanent failures", async 
     assert.ok(address && typeof address !== "string");
     const origin = `http://127.0.0.1:${address.port}`;
 
-    browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL ?? "chrome", headless: true });
+    browser = await launchChrome({ headless: true });
     const context = await browser.newContext({ serviceWorkers: "block" });
     const page = await context.newPage();
     await page.goto(origin);

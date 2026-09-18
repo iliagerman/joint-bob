@@ -3,7 +3,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { chromium, type Browser } from "playwright-core";
+import { type Browser } from "playwright-core";
+import { launchChrome } from "./launch-chrome.js";
 import { seedDevEnvironment, startDevNode, stopDevNode } from "../dev-nodes.js";
 
 test("bob-goal status is shown without starting the harness", { timeout: 120_000 }, async () => {
@@ -13,7 +14,7 @@ test("bob-goal status is shown without starting the harness", { timeout: 120_000
   const server = await startDevNode(environment, node);
   let browser: Browser | undefined;
   try {
-    browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL ?? "chrome", headless: process.env.HEADED !== "1" });
+    browser = await launchChrome({ headless: process.env.HEADED !== "1" });
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, serviceWorkers: "block" });
     await page.goto(node.url, { waitUntil: "domcontentloaded" });
     await page.getByTestId("login-username-input").fill(environment.username);

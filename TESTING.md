@@ -13,14 +13,33 @@ npm run typecheck
 npm run build
 ```
 
-`npm run test:ui` points `HOME` at a throwaway directory, so Playwright's own
-browser cache is empty there and any test that launches a session browser fails
-with `Failed to launch chromium because executable doesn't exist`. Point those
-runs at an installed Chrome:
+`npm run test:ui` points `HOME` at a throwaway directory, but `test/setup.mjs` pins
+`PLAYWRIGHT_BROWSERS_PATH` to the real cache before it does, so a downloaded Chromium
+stays reachable. A node with no browser at all still has to be told where one is:
 
 ```bash
 JOINT_BOB_BROWSER_EXECUTABLE="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" npm run test:ui
 ```
+
+Both the browser under test and the browser that *drives* the UI resolve through
+`browserCapability()` in `src/browser-runtime.ts` — the same detection the product
+uses: `JOINT_BOB_BROWSER_EXECUTABLE`, then the standard system locations, then
+Playwright's browser cache. UI tests reach it through `test/ui/launch-chrome.ts`:
+
+- `launchChrome(options)` launches the driving browser.
+- `chromeExecutable()` returns the absolute path, for tests that hand one to a dev node.
+
+`CHROME_PATH` pins an absolute binary; `CHROME_CHANNEL` forces a named Playwright
+channel (`chromium`, `chrome-beta`); `CHROME_PATH` wins when both are set. Without
+either, a node that has no browser fails with its own advice — `Chrome is not
+installed on this node. Install Google Chrome or Playwright Chromium, or set
+JOINT_BOB_BROWSER_EXECUTABLE…` — rather than a Playwright miss on a bundled Chromium
+it never downloaded.
+
+Use those two helpers in new UI tests. Do not call `chromium.launch({ channel:
+"chrome" })` directly: it only finds a system-wide Chrome, so it fails on a node whose
+only Chrome is the Joint Bob installer's bundled copy, which is the case on the
+homeserver.
 
 Run a single file while iterating:
 

@@ -11,13 +11,14 @@ import type { AddressInfo } from "node:net";
 import { randomUUID, createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { chromium, type Browser } from "playwright-core";
+import type { Browser } from "playwright-core";
+import { chromeExecutable, launchChrome } from "./launch-chrome.js";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "../dev-nodes.js";
 import type { BrowserSessionView } from "../../src/browser-types.js";
 
 // Real servers, real cluster calls, real Chrome, real viewer. No browser API stubs.
 test("conversation browser runs independently of its agent node and stays pinned when defaults change", { timeout: 180000 }, async (t) => {
-  const executablePath=process.env.CHROME_PATH || process.env.JOINT_BOB_BROWSER_EXECUTABLE || chromium.executablePath();
+  const executablePath=await chromeExecutable();
   const root=await mkdtemp(path.join(os.tmpdir(),"joint-bob-browser-cluster-"));
   const servers:ChildProcess[]=[];let viewerBrowser:Browser|undefined;
   let uploaded=Buffer.alloc(0),workedAfterClose=false;
@@ -60,7 +61,7 @@ test("conversation browser runs independently of its agent node and stays pinned
     const db=new DatabaseSync(path.join(b.dataDir,'node.db'));try{assert.ok(db.prepare('SELECT id FROM browser_sessions WHERE id=?').get(session.id));}finally{db.close();}
     const snapshot=await command({action:'snapshot'});assert.match(JSON.stringify(snapshot.result),/Remote app/);
     const beforeTarget=session.tabs[0].id;
-    viewerBrowser=await chromium.launch({executablePath,headless:true});
+    viewerBrowser=await launchChrome({headless:true});
     const context=await viewerBrowser.newContext({viewport:{width:1450,height:1000},serviceWorkers:'block'});
     context.setDefaultTimeout(15000);
     await context.addCookies(auth.cookie.split('; ').map(value=>({name:value.slice(0,value.indexOf('=')),value:value.slice(value.indexOf('=')+1),url:a.url})));

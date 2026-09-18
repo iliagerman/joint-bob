@@ -3,7 +3,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { chromium, type Browser, type Page } from "playwright-core";
+import { type Browser, type Page } from "playwright-core";
+import { launchChrome } from "./launch-chrome.js";
 import { seedDevEnvironment, startDevNode, stopDevNode } from "../dev-nodes.js";
 
 async function assertHorizontalStepper(page: Page): Promise<void> {
@@ -22,7 +23,7 @@ test("new Pi and Claude conversations keep predefined and free-text classificati
   const server = await startDevNode(environment, node);
   let browser: Browser | undefined;
   try {
-    browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL ?? "chrome", headless: true });
+    browser = await launchChrome({ headless: true });
     const page = await browser.newPage({ viewport: { width: 1920, height: 900 }, serviceWorkers: "block" });
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));

@@ -4,7 +4,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { chromium, type Browser } from "playwright-core";
+import { type Browser } from "playwright-core";
+import { launchChrome } from "./launch-chrome.js";
 import { seedDevEnvironment, startDevNode, stopDevNode } from "../dev-nodes.js";
 
 test("markdown renders Hebrew and English blocks in their natural directions", { timeout: 120_000 }, async () => {
@@ -15,7 +16,7 @@ test("markdown renders Hebrew and English blocks in their natural directions", {
     const environment = await seedDevEnvironment(root, 1);
     const node = environment.nodes[0];
     server = await startDevNode(environment, node);
-    browser = await chromium.launch({ ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : { channel: process.env.CHROME_CHANNEL ?? "chrome" }), headless: true });
+    browser = await launchChrome({ headless: true });
     const page = await browser.newPage();
     await page.goto(node.url, { waitUntil: "domcontentloaded" });
     await page.locator("#loginDialog[open]").waitFor({ timeout: 20_000 });

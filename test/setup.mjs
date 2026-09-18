@@ -3,6 +3,10 @@ import os from "node:os";
 import path from "node:path";
 
 const testHome = mkdtempSync(path.join(os.tmpdir(), "joint-bob-test-runner-"));
+// Pin Playwright's browser cache to the real home before HOME is redirected: browser detection
+// builds that path from os.homedir(), so without this a node whose only Chrome is the cached
+// Chromium can never find it and the UI suite cannot launch a browser at all.
+process.env.PLAYWRIGHT_BROWSERS_PATH ??= path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache"), "ms-playwright");
 process.env.HOME = testHome;
 if (process.platform === "darwin" || process.platform === "linux") {
   const testBin = path.join(testHome, "bin");
