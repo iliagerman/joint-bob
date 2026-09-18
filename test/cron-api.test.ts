@@ -12,10 +12,15 @@ async function until(check: () => Promise<boolean>): Promise<void> {
   const deadline = Date.now() + 30000;
   while (!await check()) { if (Date.now() > deadline) throw new Error("Cron state did not settle"); await new Promise(resolve => setTimeout(resolve, 100)); }
 }
-function makeDue(directory: string, id: string): void {
+/** The nodes under test write node.db while the test reads and writes it too. */
+function openNodeDb(directory: string): DatabaseSync {
   const db = new DatabaseSync(path.join(directory, "node.db"));
+  db.exec("PRAGMA busy_timeout = 5000");
+  return db;
+}
+function makeDue(directory: string, id: string): void {
+  const db = openNodeDb(directory);
   try {
-    db.exec("PRAGMA busy_timeout = 5000");
     db.prepare("UPDATE cron_tasks SET next_run = ? WHERE id = ?").run(Date.now(), id);
   } finally { db.close(); }
 }
@@ -134,7 +139,7 @@ test("cron API routes to execution owner, persists, runs fresh project conversat
     const created = await api<{ task: CronTask }>(a, auth, "POST", "/cron", { nodeId: b.nodeId, command: { action: "create", input } });
     assert.equal(created.status, 200, JSON.stringify(created.body));
     const id = created.body.task.id;
-    const dbA = new DatabaseSync(path.join(a.dataDir, "node.db"));
+    const dbA = openNodeDb(a.dataDir);
     assert.equal(dbA.prepare("SELECT count(*) AS n FROM cron_tasks").get()!.n, 0, "viewing node must not store a dispatchable copy"); dbA.close();
     const readTask = async () => {
       const task = (await api<{ tasks: CronTask[] }>(a, auth, "GET", `/projects/${projectId}/cron`)).body.tasks.find(task => task.id === id)!;
@@ -157,21 +162,21 @@ test("cron API routes to execution owner, persists, runs fresh project conversat
     assert.equal(owned.status, 200, JSON.stringify(owned.body));
     const transcriptPath = existing.path.replace(/^claude:/, "");
     const originalTranscript = await readFile(transcriptPath, "utf8");
-    const ownerDb = new DatabaseSync(path.join(a.dataDir, "node.db"));
+    const ownerDb = openNodeDb(a.dataDir);
     const busy = { engine: "claude", sessionId: existing.id, summary: { runId: "cron-busy-child", status: "running", tasks: [] } };
     ownerDb.prepare("INSERT INTO conversation_work VALUES (?, ?, ?, ?)").run("claude", existing.id, busy.summary.runId, JSON.stringify(busy));
     ownerDb.close();
     const conversation = await api<{ task: CronTask }>(a, auth, "POST", "/cron", { nodeId: b.nodeId, command: { action: "create", input: { ...input, sessionId: existing.id } } });
     assert.equal(conversation.status, 200, JSON.stringify(conversation.body));
     makeDue(b.dataDir, conversation.body.task.id);
-    const executionDb = new DatabaseSync(path.join(b.dataDir, "node.db"));
+    const executionDb = openNodeDb(b.dataDir);
     try {
       await until(async () => Boolean(executionDb.prepare("SELECT 1 FROM cron_runs WHERE task_id = ?").get(conversation.body.task.id)));
       await new Promise(resolve => setTimeout(resolve, 1200));
       assert.equal(executionDb.prepare("SELECT status FROM cron_runs WHERE task_id = ?").get(conversation.body.task.id)!.status, "waiting", "busy remote conversation must remain waiting");
       assert.equal(executionDb.prepare("SELECT owner_node_id FROM conversation_ownership WHERE session_id = ?").get(existing.id)!.owner_node_id, a.nodeId, "waiting must not take ownership");
       assert.equal(await readFile(transcriptPath, "utf8"), originalTranscript, "waiting must not append a prompt");
-      const releaseDb = new DatabaseSync(path.join(a.dataDir, "node.db"));
+      const releaseDb = openNodeDb(a.dataDir);
       releaseDb.prepare("DELETE FROM conversation_work WHERE engine = ? AND session_id = ? AND run_id = ?").run("claude", existing.id, busy.summary.runId);
       releaseDb.close();
     } finally { executionDb.close(); }
@@ -184,11 +189,11 @@ test("cron API routes to execution owner, persists, runs fresh project conversat
     assert.ok(appended.startsWith(originalTranscript), "scheduled continuation preserves original history");
     const additions = appended.slice(originalTranscript.length).trim().split("\n").map(line => JSON.parse(line));
     assert.equal(additions.filter(record => record.type === "user" && record.message.content.includes(input.prompt)).length, 1, "idle transition appends exactly one scheduled prompt");
-    const dbB = new DatabaseSync(path.join(b.dataDir, "node.db"));
+    const dbB = openNodeDb(b.dataDir);
     assert.equal(dbB.prepare("SELECT owner_node_id FROM conversation_ownership WHERE session_id = ?").get(existing.id)!.owner_node_id, b.nodeId);
     dbB.close();
     const previousRunId = (await api<{ tasks: CronTask[] }>(b, authBInitial, "GET", `/projects/${projectId}/cron`)).body.tasks.find(task => task.id === conversation.body.task.id)!.lastRun!.id;
-    const peerDb = new DatabaseSync(path.join(b.dataDir, "node.db"));
+    const peerDb = openNodeDb(b.dataDir);
     peerDb.prepare("UPDATE cluster_peers SET url = 'http://127.0.0.1:1'").run();
     peerDb.close();
     makeDue(b.dataDir, conversation.body.task.id);
@@ -197,7 +202,7 @@ test("cron API routes to execution owner, persists, runs fresh project conversat
       if (run?.status === "failed") throw new Error(JSON.stringify(run));
       return run?.status === "succeeded" && run.id !== previousRunId;
     });
-    const restorePeerDb = new DatabaseSync(path.join(b.dataDir, "node.db"));
+    const restorePeerDb = openNodeDb(b.dataDir);
     restorePeerDb.prepare("UPDATE cluster_peers SET url = ? WHERE id = ?").run(a.url, a.nodeId);
     restorePeerDb.close();
     const paused = await api<{ task: CronTask }>(a, auth, "POST", "/cron", { nodeId: b.nodeId, command: { action: "update", id, input: { ...input, enabled: false } } });
@@ -206,7 +211,7 @@ test("cron API routes to execution owner, persists, runs fresh project conversat
     children.push(await startDevNode(environment, b, { JOINT_BOB_TEST_ENGINE_LOG: log }));
     assert.equal((await readTask()).enabled, false);
     assert.equal((await readTask()).lastRun?.status, "succeeded");
-    const lockDb = new DatabaseSync(path.join(b.dataDir, "node.db"));
+    const lockDb = openNodeDb(b.dataDir);
     lockDb.prepare("INSERT OR REPLACE INTO project_locks VALUES (?, ?, ?, ?, ?, ?)").run(created.body.task.projectId, a.nodeId, a.name, new Date().toISOString(), new Date().toISOString(), a.nodeId);
     lockDb.close();
     const authB = await signIn(environment, b);
