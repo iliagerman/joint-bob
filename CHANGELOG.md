@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed background task completions that fail or are interrupted by shutdown—they now retire cleanly instead of blocking later work and blocking user visibility into errors.
+
 ## 1.57.1 — 2026-09-18
 
 - Mobile agent picker now displays each agent as a logo with its name on one line, making the list more compact.
