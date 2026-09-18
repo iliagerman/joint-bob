@@ -95,5 +95,5 @@ test("the chat header shows one context gauge for every harness", async () => {
   assert.match(app, /function syncContextUsage\(usage\)/);
   assert.match(app, /syncContextUsage\(status\.contextUsage\)/);
   assert.match(styles, /\.context-usage \{/);
-  assert.match(worker, /const CACHE_NAME = "joint-bob-v218";/);
+  assert.match(worker, /const CACHE_NAME = "joint-bob-v219";/);
 });

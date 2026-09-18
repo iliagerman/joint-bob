@@ -43,6 +43,7 @@ import { startCronScheduler } from "./server/cron.js";
 import "./server/routes/cron.js";
 import "./server/routes/tasks.js";
 import "./server/routes/project-files.js";
+import "./server/routes/git-review.js";
 import "./server/routes/search.js";
 import "./server/routes/updates.js";
 export { app, createApp, server } from "./server/state.js";

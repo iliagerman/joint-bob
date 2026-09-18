@@ -222,6 +222,7 @@
               <button class="ghost compact" id="openTerminalButton" data-shortcut-hint="terminal" type="button" disabled data-testid="chat-open-terminal-button">Terminal</button>
               <button class="ghost compact" id="openBrowserButton" data-shortcut-hint="browser" type="button" disabled aria-expanded="false" aria-controls="browserPanel" title="Open an existing conversation before starting its browser" data-testid="chat-open-browser-button">Browser</button>
               <button class="ghost compact" id="chatFilesButton" data-shortcut-hint="chatFiles" type="button" data-testid="chat-files-button">Files</button>
+              <button class="ghost compact" id="chatGitButton" type="button" data-testid="chat-git-button">Git</button>
               <button class="ghost compact" id="notifyButton" data-shortcut-hint="notify" type="button" aria-pressed="false" title="Notification device settings" data-testid="chat-notify-button">Notify</button>
               <button class="ghost compact" id="addToCanvasButton" data-shortcut-hint="addToCanvas" type="button" disabled data-testid="chat-add-to-canvas-button">Add to canvas</button>
               <button class="ghost compact" id="renameSessionButton" data-shortcut-hint="rename" type="button" disabled data-testid="chat-rename-button">Rename</button>
@@ -958,6 +959,54 @@
             <button class="primary" id="fileEditorSaveButton" type="button" data-testid="file-editor-save-button">Save</button>
           </div>
         </div>
+      </div>
+    </dialog>
+
+    <dialog id="gitReviewDialog" data-testid="git-review-dialog">
+      <div class="dialog-card git-review-card">
+        <header class="git-review-header">
+          <div>
+            <span class="eyebrow" id="gitReviewContext">Project changes</span>
+            <h2>Git</h2>
+            <p class="git-review-branch" id="gitReviewBranch" data-testid="git-review-branch"></p>
+          </div>
+          <button class="ghost icon-button" id="gitReviewCloseButton" type="button" aria-label="Close git review" title="Close" data-testid="git-review-close-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+        </header>
+        <div class="git-review-tabs" role="tablist" aria-label="Git views">
+          <button class="git-review-tab is-active" id="gitReviewTabChanges" type="button" role="tab" aria-selected="true" data-git-tab="changes" data-testid="git-review-tab-changes">Changes</button>
+          <button class="git-review-tab" id="gitReviewTabHistory" type="button" role="tab" aria-selected="false" data-git-tab="history" data-testid="git-review-tab-history">History</button>
+          <button class="git-review-tab" id="gitReviewTabReviews" type="button" role="tab" aria-selected="false" data-git-tab="reviews" data-testid="git-review-tab-reviews">Reviews</button>
+        </div>
+        <p class="git-review-ambiguity" id="gitReviewAmbiguity" hidden data-testid="git-review-ambiguity"></p>
+        <div class="git-review-body">
+          <aside class="git-review-list" id="gitReviewList" data-testid="git-review-list" aria-label="Changed files and commits"></aside>
+          <section class="git-review-detail">
+            <div class="git-review-diff-head">
+              <p class="git-review-diff-path" id="gitReviewDiffPath" data-testid="git-review-diff-path"></p>
+              <button class="ghost compact" id="gitReviewAskButton" type="button" hidden data-testid="git-review-ask-button">Ask AI</button>
+            </div>
+            <pre class="git-review-diff" id="gitReviewDiff" data-testid="git-review-diff" tabindex="0"></pre>
+          </section>
+        </div>
+        <p class="git-review-status" id="gitReviewStatus" role="status" aria-live="polite"></p>
+        <form class="git-review-ask" id="gitReviewAskForm" hidden data-testid="git-review-ask-form">
+          <div class="git-review-ask-head">
+            <span class="eyebrow" id="gitReviewAskTarget">Ask about this change</span>
+            <button class="ghost icon-button" id="gitReviewAskCloseButton" type="button" aria-label="Close Ask AI" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+          </div>
+          <div class="git-review-ask-controls">
+            <label>Harness<select id="gitReviewHarness" data-testid="git-review-harness"></select></label>
+            <label>Model<select id="gitReviewModel" data-testid="git-review-model"></select></label>
+            <label>Thinking<select id="gitReviewThinking" data-testid="git-review-thinking"></select></label>
+          </div>
+          <div class="git-review-thread" id="gitReviewThread" data-testid="git-review-thread"></div>
+          <label class="sr-only" for="gitReviewQuestion">Question</label>
+          <textarea id="gitReviewQuestion" rows="2" placeholder="Why was this changed?" data-testid="git-review-question"></textarea>
+          <div class="git-review-ask-actions">
+            <span class="git-review-ask-note">Explanation only. The reviewer reads but never edits. Reviews expire after 7 days.</span>
+            <button class="primary" id="gitReviewAskSubmit" type="submit" data-testid="git-review-ask-submit">Ask</button>
+          </div>
+        </form>
       </div>
     </dialog>
 
