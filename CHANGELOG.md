@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added website accounts to store structured login credentials that agents can fill automatically at bound origins.
+
 ## 1.53.6 — 2026-09-18
 
 - Conversations kept visible by recent activity can now be marked as reviewed, even when they fall outside the listing cap.

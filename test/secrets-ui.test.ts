@@ -25,7 +25,7 @@ test("secret accounts have an accessible node-local UI using authenticated api c
   assert.match(app, /project-secrets-button/);
   for (const testid of ["secret-variable-name-input", "secret-variable-kind-select", "secret-variable-value-input", "secret-variable-remove-button", "secret-account-edit-button", "secret-account-delete-button", "secret-scope-account-checkbox"]) assert.ok(app.includes(testid));
   for (const selector of [".secret-account-list", ".secret-account-row", ".secret-account-meta", ".secret-variable-row", ".secret-scope-list"]) assert.ok(styles.includes(selector));
-  assert.match(worker, /const CACHE_NAME = "joint-bob-v216";/);
+  assert.match(worker, /const CACHE_NAME = "joint-bob-v218";/);
 });
 
 test("every secret provider carries a brand icon in the list, the picker, and the scope dialog", async () => {
@@ -37,9 +37,9 @@ test("every secret provider carries a brand icon in the list, the picker, and th
   assert.match(html, /<option value="github">GitHub<\/option>/);
   assert.match(html, /data-testid="secret-account-provider-icon"/);
   assert.match(app, /function providerIcon\(provider\)/);
-  for (const provider of ["aws", "google", "github", "custom"]) assert.ok(new RegExp(`\\b${provider}:\\s*\\[`).test(app), `providerIconPaths is missing ${provider}`);
+  for (const provider of ["aws", "google", "github", "custom", "website"]) assert.ok(new RegExp(`\\b${provider}:\\s*\\[`).test(app), `providerIconPaths is missing ${provider}`);
   assert.match(app, /data-testid="secret-account-provider-badge"|secret-account-provider-badge/);
-  for (const selector of [".secret-provider-icon", ".secret-provider-icon.aws", ".secret-provider-icon.google", ".secret-provider-icon.github", ".secret-provider-icon.custom"]) assert.ok(styles.includes(selector), `styles are missing ${selector}`);
+  for (const selector of [".secret-provider-icon", ".secret-provider-icon.aws", ".secret-provider-icon.google", ".secret-provider-icon.github", ".secret-provider-icon.custom", ".secret-provider-icon.website"]) assert.ok(styles.includes(selector), `styles are missing ${selector}`);
 });
 
 test("GitHub is a built-in provider whose preset is an API token", async () => {
@@ -50,8 +50,8 @@ test("GitHub is a built-in provider whose preset is an API token", async () => {
   ]);
   assert.match(app, /GH_TOKEN/);
   assert.match(app, /GITHUB_TOKEN/);
-  assert.match(server, /z\.enum\(\["aws", "google", "github", "custom"\]\)/);
-  assert.match(secrets, /"aws" \| "google" \| "github" \| "custom"/);
+  assert.match(server, /z\.enum\(\["aws", "google", "github", "custom", "website"\]\)/);
+  assert.match(secrets, /"aws" \| "google" \| "github" \| "custom" \| "website"/);
 });
 
 test("the GitHub credential group surfaces are gone, replaced by workspace-scoped accounts", async () => {

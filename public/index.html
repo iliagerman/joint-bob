@@ -536,12 +536,13 @@
         </section>
 
         <section class="settings-panel" id="settingsPanel-secrets" role="tabpanel" aria-labelledby="settingsTab-secrets" tabindex="0" hidden>
-          <p>Named AWS, Google, GitHub, and custom accounts are encrypted and stay on this node unless you mark one to replicate. Attach them to a workspace, a project, or a single conversation.</p>
+          <p>Named AWS, Google, GitHub, website, and custom accounts are encrypted and stay on this node unless you mark one to replicate. Attach them to a workspace, a project, or a single conversation.</p>
           <div class="settings-subtabs" role="group" aria-label="Secret types" id="secretTypeTabs">
             <button class="settings-subtab" type="button" data-secret-tab="all" aria-pressed="true" data-testid="secret-tab-all">All</button>
             <button class="settings-subtab" type="button" data-secret-tab="aws" aria-pressed="false" data-testid="secret-tab-aws">AWS</button>
             <button class="settings-subtab" type="button" data-secret-tab="google" aria-pressed="false" data-testid="secret-tab-google">Google</button>
             <button class="settings-subtab" type="button" data-secret-tab="github" aria-pressed="false" data-testid="secret-tab-github">GitHub</button>
+            <button class="settings-subtab" type="button" data-secret-tab="website" aria-pressed="false" data-testid="secret-tab-website">Website</button>
             <button class="settings-subtab" type="button" data-secret-tab="custom" aria-pressed="false" data-testid="secret-tab-custom">Custom</button>
           </div>
           <fieldset class="phase-settings"><legend>Secret accounts</legend><p>Attached accounts are exported into every new agent session in that scope, so the AWS CLI, gcloud, the gh CLI and git push work without being asked for keys. The most specific scope wins per variable name.</p><div id="secretAccountList" class="secret-account-list" data-testid="secret-account-list"></div><div class="github-group-actions"><button class="ghost" type="button" id="secretAccountAddButton" data-testid="secret-account-add-button">Add account</button><button class="ghost" type="button" id="secretSyncButton" data-testid="secret-sync-open-button">Sync to nodes</button></div></fieldset>
@@ -1104,7 +1105,7 @@
           <div><span class="eyebrow">Node-local credentials</span><h2 id="secretAccountTitle">Secret account</h2><p>File entries store their content privately; the environment receives the private file path.</p></div>
         </div>
         <label>Label<input id="secretAccountLabelInput" required autocomplete="off" placeholder="Work AWS" data-testid="secret-account-label-input" /></label>
-        <label>Provider<select id="secretAccountProviderInput" data-testid="secret-account-provider-input"><option value="aws">AWS</option><option value="google">Google</option><option value="github">GitHub</option><option value="custom">Custom</option></select></label>
+        <label>Provider<select id="secretAccountProviderInput" data-testid="secret-account-provider-input"><option value="aws">AWS</option><option value="google">Google</option><option value="github">GitHub</option><option value="website">Website</option><option value="custom">Custom</option></select></label>
         <p class="secret-provider-hint" id="secretAccountProviderHint" data-testid="secret-account-provider-hint"></p>
         <label>Website origin <span class="muted">(optional)</span><input id="secretAccountOriginInput" data-testid="secret-account-origin-input" type="url" placeholder="https://mobile.com" autocomplete="off" spellcheck="false" aria-describedby="secretAccountOriginHint" /></label>
         <p class="secret-provider-hint" id="secretAccountOriginHint">Use the exact HTTPS scheme, host, and port; subdomains are separate. Assigned scopes authorize ordinary automatic sign-in; MFA and CAPTCHA remain human-only. Bound values are not exported and stay on this credential node, though they can fill an authorized paired browser. Clear the origin to use ordinary environment secrets.</p>
