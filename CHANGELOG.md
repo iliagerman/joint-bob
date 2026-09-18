@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Conversations kept visible by recent activity can now be marked as reviewed, even when they fall outside the listing cap.
+
 ## 1.53.5 — 2026-09-18
 
 - Claude transcripts now preserve tool results as separate messages, keeping them in the order the agent spoke.

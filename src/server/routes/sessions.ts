@@ -29,7 +29,7 @@ import { assertProjectEditable, projectsWithSharedNames } from "../projects.js";
 import { broadcastToProject, scheduleReviewNotifications, send } from "../realtime.js";
 import { disposeHarnessSession, findHarnessSession, harnessSessionBusy } from "../harness-sessions.js";
 import { ownershipSchema, registeredHarnessIdSchema, routedSessionTakeOwnershipSchema, sessionDeleteSchema, sessionNtfySchema, sessionRecoverySchema, sessionReviewedSchema, sessionReviewNotificationsSchema, sessionsReviewedSchema, sessionTakeOwnershipSchema } from "../schemas.js";
-import { listProjectSessionsWithReviewState, requireLocalConversationOwner } from "../sessions-helpers.js";
+import { listProjectSessionsWithReviewState, listReviewScopeSessions, requireLocalConversationOwner } from "../sessions-helpers.js";
 import { app } from "../state.js";
 
 app.get("/api/projects/:projectId/sessions", async (request, response, next) => {
@@ -497,15 +497,11 @@ app.put("/api/projects/:projectId/sessions/reviewed", async (request, response, 
       return;
     }
     const submitted = sessionReviewedSchema.parse(request.body);
-    const tasks = await listTasks(project.id);
-    const sessions = await listHarnessSessions({
-      ...project,
-      additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []),
-    });
+    const authSession = response.locals.authSession as AuthSession;
+    const sessions = await listReviewScopeSessions(project, authSession.userId, authSession.username);
     const session = sessions.find((candidate) => candidate.path === submitted.sessionPath);
     if (!session) { sendError(response, 404, "Conversation not found"); return; }
     if (!session.updatedAt || submitted.updatedAt > session.updatedAt) { sendError(response, 409, "Conversation review watermark is newer than current activity"); return; }
-    const authSession = response.locals.authSession as AuthSession;
     const local = await getClusterNode();
     markConversationReviewed(authSession.userId, authSession.username, project.id, { path: session.path, engine: session.harnessId, sessionId: session.id, updatedAt: submitted.updatedAt }, local.id);
     response.status(204).send();
@@ -522,18 +518,14 @@ app.put("/api/projects/:projectId/sessions/reviewed-all", async (request, respon
       return;
     }
     const { sessions: submitted } = sessionsReviewedSchema.parse(request.body);
-    const tasks = await listTasks(project.id);
-    const sessions = await listHarnessSessions({
-      ...project,
-      additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []),
-    });
+    const authSession = response.locals.authSession as AuthSession;
+    const sessions = await listReviewScopeSessions(project, authSession.userId, authSession.username);
     const currentByPath = new Map(sessions.map((session) => [session.path, session]));
     const invalid = submitted.find((watermark) => {
       const current = currentByPath.get(watermark.sessionPath);
       return !current || !current.updatedAt || watermark.updatedAt > current.updatedAt;
     });
     if (invalid) { sendError(response, 409, `Conversation review watermark is stale or missing: ${invalid.sessionPath}`); return; }
-    const authSession = response.locals.authSession as AuthSession;
     const local = await getClusterNode();
     markConversationsReviewed(authSession.userId, authSession.username, project.id, submitted.flatMap((watermark) => {
       const current = currentByPath.get(watermark.sessionPath)!;

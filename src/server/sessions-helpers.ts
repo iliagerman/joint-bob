@@ -5,7 +5,7 @@ import { claimConversationOwnership, type ConversationEngine, type ConversationO
 import { conversationReviewNotificationPaths, setConversationReviewNotifications, syncConversationReviewStates } from "../conversation-reviews.js";
 import { conversationNotifications, notificationConversationId, setConversationNotification } from "../conversation-notifications.js";
 import { conversationLeaseRunning } from "../conversation-runtime.js";
-import { getHarness, getHarnessRuntime, listHarnesses, listHarnessSessions } from "../harnesses.js";
+import { getHarness, getHarnessRuntime, listHarnesses, listHarnessSessions, type HarnessProject } from "../harnesses.js";
 import { getUserPreferences } from "../preferences.js";
 import { migratePushConversationSubscriptions, ntfySubscribedSessionPaths } from "../push.js";
 import { flushReplicationOutbox } from "./maintenance.js";
@@ -46,7 +46,13 @@ async function migratePortableNotifications(userId: string, username: string, pr
   return notifications;
 }
 
-export async function listProjectSessionsWithReviewState(project: ProjectRecord, userId: string, username: string, historyDays = getSettings().conversationHistoryDays, includeTemporarySessionId?: string): Promise<SessionSummary[]> {
+/**
+ * The scope every review surface resolves conversations through: pins and recents keep
+ * conversations visible past the 50-row listing cap. The watermark routes must use it too —
+ * a plain listing drops those conversations and returns 404, so a pending review could
+ * never be cleared.
+ */
+async function reviewScope(project: ProjectRecord, userId: string, username: string, historyDays?: number): Promise<{ project: HarnessProject; tasks: Awaited<ReturnType<typeof listTasks>>; includedSessionPaths: string[]; includedSessionIds: string[] }> {
   const tasks = await listTasks(project.id);
   const pinnedSessionPaths = userId ? getUserPreferences(userId).pinnedSessionPaths : [];
   const pinnedSessionIds = (username ? listUserPins(username).conversations : [])
@@ -55,16 +61,32 @@ export async function listProjectSessionsWithReviewState(project: ProjectRecord,
   const recents = username ? listUserRecentSessions(username).filter((recent) => recent.projectId === project.id) : [];
   const includedSessionPaths = [...pinnedSessionPaths, ...recents.map((recent) => recent.sessionPath)];
   const includedSessionIds = [...pinnedSessionIds, ...recents.map((recent) => `${recent.engine}:${recent.sessionId}`)];
-  const searchProject = {
-    ...project,
-    additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []),
-    historyDays,
+  return {
+    project: {
+      ...project,
+      additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []),
+      historyDays: historyDays ?? getSettings().conversationHistoryDays,
+      includedSessionPaths,
+      includedSessionIds,
+    },
+    tasks,
     includedSessionPaths,
     includedSessionIds,
   };
+}
+
+export async function listReviewScopeSessions(project: ProjectRecord, userId: string, username: string): Promise<SessionSummary[]> {
+  const scope = await reviewScope(project, userId, username);
+  return listHarnessSessions(scope.project, scope.includedSessionPaths, scope.includedSessionIds);
+}
+
+export async function listProjectSessionsWithReviewState(project: ProjectRecord, userId: string, username: string, historyDays = getSettings().conversationHistoryDays, includeTemporarySessionId?: string): Promise<SessionSummary[]> {
+  const scope = await reviewScope(project, userId, username, historyDays);
+  const tasks = scope.tasks;
+  const searchProject = scope.project;
   sessionWatcher.ensureProject(searchProject);
   const temporarySessionIds = await listByTheWaySessionIds(project.id);
-  const sessions = (await listHarnessSessions(searchProject, includedSessionPaths, includedSessionIds))
+  const sessions = (await listHarnessSessions(searchProject, scope.includedSessionPaths, scope.includedSessionIds))
     .filter((session) => !temporarySessionIds.has(session.id) || session.id === includeTemporarySessionId);
   const tasksBySessionPath = new Map(tasks.filter((task) => task.sessionPath).map((task) => [task.sessionPath, task]));
   const tasksById = new Map(tasks.map((task) => [task.id, task]));
