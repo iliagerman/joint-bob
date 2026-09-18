@@ -3,9 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.57.3 — 2026-09-18
 
 - Claude now automatically trusts workspace directories when spawned, so project-level settings are honored without manual trust dialogs.
+- Fixed composer shortcut badge to appear in the correct position.
+- Fixed repository state that could cause broken dependencies on fresh clones.
 
 ## 1.57.2 — 2026-09-18
 
@@ -15,6 +17,7 @@ Every deployment is a version. The newest section must always match the
 
 ## 1.57.1 — 2026-09-18
 
+- Updates that change the supervisor itself no longer fail with `Installation failed with status 1`; the node installs them as a maintenance activation and restarts the supervisor onto its new components.
 - Mobile agent picker now displays each agent as a logo with its name on one line, making the list more compact.
 - Conversation name now shows in the chat header instead of a generic fallback label.
 - Mobile chat toolbar now keeps model, reasoning, and tasks on one row with tasks shown as an icon.
