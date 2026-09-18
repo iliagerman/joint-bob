@@ -9,6 +9,7 @@ import type { Server } from "node:http";
 import type WebSocket from "ws";
 import type { HarnessSession } from "../src/harnesses/runtime.js";
 import { configure, environment, gatedClaude, openChat, startServer, stopServer, temporaryRoot, waitFor, type Fixture } from "./queued-prompt-harness.js";
+import { waitForAssertion } from "./async-assertion.js";
 
 type TestPiSession = HarnessSession & { handle: { session: any } };
 
@@ -234,7 +235,13 @@ test("Pi queue resumes after update recovery finishes", async (context) => {
   await waitFor(opened.messages, () => opened.messages.some((frame) => frame.type === "ready"));
   const sessionId = String(opened.messages.find((frame) => frame.type === "ready")!.sessionId);
   const { harnessSessions } = await import("../src/server/harness-sessions.js");
-  const shared = [...harnessSessions.values()].find((candidate) => candidate.session.id === sessionId)!;
+  // The ready frame is sent while the session is still being registered, so on a loaded
+  // machine the map can be a moment behind it.
+  const shared = await waitForAssertion(async () => {
+    const candidate = [...harnessSessions.values()].find((entry) => entry.session.id === sessionId);
+    assert.ok(candidate, `session ${sessionId} was never registered`);
+    return candidate;
+  }, 10_000);
   const sessionPath = shared.session.file!;
   let release!: () => void;
   let started!: () => void;
