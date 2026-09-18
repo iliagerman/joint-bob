@@ -84,5 +84,8 @@ test("browser warns during update and refreshes cached shell", async () => {
   const [app, worker] = await Promise.all([appSource(), readFile("public/sw.js", "utf8")]);
   assert.match(app, /payload\.type === "updatePreparing"/);
   assert.match(app, /Updating\.\.\. Work will resume automatically\./);
-  assert.match(worker, /joint-bob-v220/);
+  // The shell is refreshed by a versioned cache name, not by one specific version:
+  // AGENTS.md requires bumping it on every frontend change, so pinning a number here
+  // would fail every such change without testing anything real.
+  assert.match(worker, /const CACHE_NAME = "joint-bob-v\d+";/);
 });

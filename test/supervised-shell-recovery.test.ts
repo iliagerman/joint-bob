@@ -28,7 +28,7 @@ async function eventually<T>(read: () => Promise<T>, accept: (value: T) => boole
 }
 
 async function fixture() {
-  const root = await mkdtemp(path.join(os.tmpdir(), "supervised-shell-recovery-"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "jbsr-"));
   const state = path.join(root, "state");
   await mkdir(state, { mode: 0o700 });
   const runtime = await startSupervisor({
@@ -274,7 +274,7 @@ test("foreground output is bounded while the task retains complete output", { ti
 });
 
 test("an unreachable supervisor rejects once without executing locally", { timeout: 20_000, concurrency: false }, async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "supervised-shell-unreachable-"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "jbsu-"));
   const state = path.join(root, "state"); const marker = path.join(root, "marker");
   await mkdir(state, { mode: 0o700 });
   try {

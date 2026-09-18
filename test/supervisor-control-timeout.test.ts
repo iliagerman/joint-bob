@@ -43,7 +43,7 @@ async function freePort(): Promise<number> {
 }
 
 test("a slow control dispatch keeps its connection until the response is delivered", { timeout: 60_000 }, async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "supervisor-control-timeout-"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "jbct-"));
   const previousPort = process.env.PORT;
   try {
     const installRoot = await mkdir(path.join(root, "install"), { recursive: true }).then(() => realpathSync(path.join(root, "install")));
