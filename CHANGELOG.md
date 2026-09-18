@@ -3,10 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.57.0 — 2026-09-18
 
 - Browser login forms now appear as a panel beside your chat instead of a popup, sharing the space with the manual browser viewer.
-- Browser conversations now detect visible login forms and automatically open a persistent sign-in popup so you can authenticate while agent automation pauses.
+- Browser conversations now detect visible login forms and automatically open a persistent sign-in panel so you can authenticate while agent automation pauses.
+- A pending sign-in request now survives a service restart, so you can finish authenticating after the browser reconnects.
 
 ## 1.56.1 — 2026-09-18
 
