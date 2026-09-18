@@ -158,6 +158,11 @@ export function readBackgroundTaskIdentity(dataDirectory: string, id: string): s
 }
 
 
+/** Identities are [projectId, conversationId]; the conversation half is the logical id. */
+export function backgroundTaskConversationId(identity: string): string {
+  try { return String(JSON.parse(identity)[1] ?? ""); } catch { return ""; }
+}
+
 export function readActiveBackgroundTaskIdentities(dataDirectory: string): Set<string> {
   const db = open(dataDirectory);
   if (!db) return new Set();

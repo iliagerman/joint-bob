@@ -1,16 +1,12 @@
 import { listByTheWaySessionIds } from "../by-the-way-leases.js";
-import { readActiveBackgroundTaskIdentities } from "../background-tasks.js";
+import { backgroundTaskConversationId, readActiveBackgroundTaskIdentities } from "../background-tasks.js";
 import { resolveDataDirectory } from "../data-directory.js";
-import { readActiveBackgroundTaskIdentities } from "../background-tasks.js";
-import { readActiveBackgroundTaskIdentities } from "../background-tasks.js";
 import { agentWorkActive, applyConversationWork, listConversationWork, refreshConversationWork } from "../conversation-work.js";
 import { getClusterNode, getClusterPeer } from "../cluster.js";
 import { claimConversationOwnership, type ConversationEngine, type ConversationOwnership, ConversationOwnershipError, type ConversationOwnershipStatus, getConversationOwnership, healStaleLocalClaim } from "../conversation-ownership.js";
 import { conversationReviewNotificationPaths, setConversationReviewNotifications, syncConversationReviewStates } from "../conversation-reviews.js";
 import { conversationNotifications, notificationConversationId, setConversationNotification } from "../conversation-notifications.js";
-import { resolveDataDirectory } from "../data-directory.js";
 import { conversationLeaseState } from "../conversation-runtime.js";
-import { resolveDataDirectory } from "../data-directory.js";
 import { getHarness, getHarnessRuntime, listHarnesses, listHarnessSessions, type HarnessProject } from "../harnesses.js";
 import { getUserPreferences } from "../preferences.js";
 import { migratePushConversationSubscriptions, ntfySubscribedSessionPaths } from "../push.js";
@@ -98,6 +94,12 @@ export async function listProjectSessionsWithReviewState(project: ProjectRecord,
   const tasksById = new Map(tasks.map((task) => [task.id, task]));
   await refreshConversationWork();
   const externalRunning = new Map<string, Set<string>>();
+  // A supervised command the agent left running keeps its conversation in the background
+  // state. The identity names the logical conversation, which survives a harness switch,
+  // so the project half never has to match an alias.
+  const backgroundTaskConversations = new Set([...readActiveBackgroundTaskIdentities(resolveDataDirectory())]
+    .map(backgroundTaskConversationId)
+    .filter(Boolean));
   await Promise.all(listHarnesses().map(async (adapter) => {
     if (!adapter.runtime) return;
     const runtime = await getHarnessRuntime(adapter.id);
@@ -113,7 +115,7 @@ export async function listProjectSessionsWithReviewState(project: ProjectRecord,
     const agentModel = config?.modelId || liveModel;
     const work = listConversationWork(session.harnessId, session.id);
     const lease = conversationLeaseState(session.harnessId, session.id);
-    const backgroundRunning = work.some((entry) => agentWorkActive(entry.summary)) || lease.backgroundRunning;
+    const backgroundRunning = work.some((entry) => agentWorkActive(entry.summary)) || lease.backgroundRunning || backgroundTaskConversations.has(session.conversationId ?? session.id);
     const turnRunning = Boolean(shared && harnessTurnBusy(shared) || task?.executionState === "running" || externalRunning.get(session.harnessId)?.has(session.id) || lease.running && !lease.backgroundRunning);
     return {
       ...session,

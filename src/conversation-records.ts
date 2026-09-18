@@ -187,6 +187,19 @@ export async function listConversationSegments(projectId: string, conversationId
     .sort((left, right) => (left.segmentIndex ?? 0) - (right.segmentIndex ?? 0) || left.createdAt.localeCompare(right.createdAt));
 }
 
+/**
+ * The segment a conversation currently faces, found from the logical conversation id
+ * alone: a background task carries that id, and the project half of its identity may be
+ * a project alias that never matches the canonical record.
+ */
+export async function latestConversationSegment(conversationId: string): Promise<ConversationRecord | undefined> {
+  const records = ((await database()).prepare("SELECT * FROM conversation_records WHERE conversation_id = ? OR session_id = ?").all(conversationId, conversationId) as Record<string, unknown>[]).map(row);
+  return records
+    .filter((record) => (record.conversationId ?? record.sessionId) === conversationId)
+    .sort((left, right) => (left.segmentIndex ?? 0) - (right.segmentIndex ?? 0) || left.createdAt.localeCompare(right.createdAt))
+    .at(-1);
+}
+
 export async function deleteConversationRecord(projectId: string, engine: ConversationEngine, sessionId: string, originNodeId: string): Promise<boolean> {
   const db = await database();
   const existing = selectRecord(db, projectId, engine, sessionId);

@@ -145,7 +145,7 @@ test("the running and review wiring is present end to end", async () => {
 
   // The conversation list consults replicated leases, not just local runtime.
   const listing = server.slice(server.indexOf("async function listProjectSessionsWithReviewState"), server.indexOf("app.get(\"/api/projects/:projectId/sessions\""));
-  assert.match(listing, /conversationLeaseRunning\(session\.harnessId, session\.id\)/);
+  assert.match(listing, /conversationLeaseState\(session\.harnessId, session\.id\)/);
   // Leases travel on an authenticated cluster route pushed from the periodic loop.
   assert.match(server, /app\.post\("\/api\/cluster\/sessions\/runtime-snapshot"/);
   assert.match(server, /pushRuntimeLeaseSnapshots\(\)\.catch/);

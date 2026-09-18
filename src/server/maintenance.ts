@@ -2,7 +2,9 @@ import { agentWorkActive, listConversationWork, refreshConversationWork } from "
 import { AGENT_RESOURCES_FOLDER_ID, agentResourcesRoot, reconcileAgentResources } from "../agent-resources.js";
 import { type ClusterPeer, dueMembershipDeliveries, getClusterMachineToken, getClusterMembership, getClusterNode, getClusterPeer, listClusterPeers, recordMembershipDelivered, recordMembershipFailure } from "../cluster.js";
 import { getConversationOwnership } from "../conversation-ownership.js";
-import { ensureConversationRecord } from "../conversation-records.js";
+import { backgroundTaskConversationId, readActiveBackgroundTaskIdentities } from "../background-tasks.js";
+import { resolveDataDirectory } from "../data-directory.js";
+import { ensureConversationRecord, latestConversationSegment } from "../conversation-records.js";
 import { conversationRuntimeDatabase, type RuntimeLeaseInput, sweepExpiredRuntimeLeases } from "../conversation-runtime.js";
 import { getHarnessRuntime, harnessForSessionPath, listHarnesses, listHarnessSyncFolders } from "../harnesses.js";
 import { eventsForPeer, recordPeerFailure, recordPeerReceipt } from "../replication.js";
@@ -269,6 +271,23 @@ export async function buildRuntimeLeaseSnapshot(localNodeId: string): Promise<Ru
     entries.set(key, {
       engine: work.engine, sessionId: work.sessionId, ownerNodeId: localNodeId,
       ownershipEpoch, runId: work.summary.runId, backgroundRunning: true, updatedAt, expiresAt,
+    });
+  }
+  // A supervised command outlives the turn that started it, so the conversation it
+  // belongs to keeps advertising background work until the command ends. The task
+  // identity names the logical conversation; the lease names the segment facing it.
+  for (const identity of readActiveBackgroundTaskIdentities(resolveDataDirectory())) {
+    const conversationId = backgroundTaskConversationId(identity);
+    if (!conversationId) continue;
+    const segment = await latestConversationSegment(conversationId);
+    if (!segment) continue;
+    const key = `${segment.engine}\n${segment.sessionId}`;
+    if (entries.has(key)) continue;
+    const ownershipEpoch = await epochFor(segment.engine, segment.sessionId);
+    if (ownershipEpoch === null) continue;
+    entries.set(key, {
+      engine: segment.engine, sessionId: segment.sessionId, ownerNodeId: localNodeId,
+      ownershipEpoch, runId: conversationId, backgroundRunning: true, updatedAt, expiresAt,
     });
   }
   for (const adapter of listHarnesses()) {

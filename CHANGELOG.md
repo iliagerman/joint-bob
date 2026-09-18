@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Sessions now distinguish between model turns and independent background work, showing "Running" when the model is actively responding and "Background tasks running" when work continues without a model turn.
+- Conversations now keep background tasks visible across harness switches and cluster nodes, so switching agents or machines no longer hides ongoing work.
 
 ## 1.57.3 — 2026-09-18
 
