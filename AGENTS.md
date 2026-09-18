@@ -27,12 +27,6 @@ two-node cluster suite.
   `npm run dev:cluster` (two paired nodes), disposable and seeded under
   `.dev-env/`. Never point them at `~/.joint-bob`.
 
-## AI-DLC bypass
-
-- Bypass AI-DLC for one request only when the user explicitly says `bypass AI-DLC` or `skip AI-DLC`.
-- Park any active AI-DLC workflow before changing feature code under that bypass.
-- Never infer a bypass from urgency, blanket approval, or a request to avoid questions.
-
 ## Deployment
 
 Production services run from `~/.local/share/joint-bob/app`, never from a source checkout.
