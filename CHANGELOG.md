@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.54.0 — 2026-09-18
 
 - Added website accounts to store structured login credentials that agents can fill automatically at bound origins.
 
