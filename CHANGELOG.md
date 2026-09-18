@@ -3,9 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.57.2 — 2026-09-18
 
-- Fixed background task completions that fail or are interrupted by shutdown—they now retire cleanly instead of blocking later work and blocking user visibility into errors.
+- Kiro conversations no longer stop mid-turn when the agent delegates work to a sub-agent.
+- A failed automatic compaction is tried once per turn instead of every few seconds, so it no longer holds up the conversation or floods the log.
+- A background-task wake-up that fails or is interrupted by a restart no longer stalls the conversation for good: it is never replayed, later wake-ups still arrive, and the failure now shows in the conversation.
 
 ## 1.57.1 — 2026-09-18
 
