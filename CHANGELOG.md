@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.56.1 — 2026-09-18
 
 - Fixed spurious sign-in prompts when accessing git panels across clustered nodes with mismatched versions.
 
