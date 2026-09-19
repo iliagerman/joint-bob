@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.59.0 — 2026-09-19
 
 - Nodes can now belong to multiple independent clusters with selective project sharing, automatic twin pairing for full data synchronization, per-cluster auto-share settings, and a visual cluster management canvas in Settings.
 
