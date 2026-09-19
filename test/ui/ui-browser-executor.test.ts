@@ -472,7 +472,7 @@ test("browser viewer UI", { timeout: 180_000 }, async (t) => {
         assert.ok(box.width >= 400, `remote image should remain usable: ${box.width}px`);
         await f.page.screenshot({ path: "/tmp/browser-ui-desktop.png" });
         await screen.click({ position: { x: box.width / 2, y: box.height / 2 } });
-        await f.page.waitForFunction(() => document.activeElement?.getAttribute("data-testid") === "browser-screen");
+        await f.page.waitForFunction(() => document.activeElement?.getAttribute("data-testid") === "browser-typing");
         await screen.press("Control+a");
         await screen.evaluate((el) => { const clipboardData = new DataTransfer(); clipboardData.setData("text/plain", "pasted text"); el.dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true })); });
         await f.page.getByTestId("browser-url").fill("https://example.org");

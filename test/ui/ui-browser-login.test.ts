@@ -37,7 +37,7 @@ test("pending browser login popup preserves ownership through failure, dismissal
         assert.ok(count > 0, "fault marker drifted: viewer isCurrent() invocations");
         source = source.split("isCurrent()").join("true");
       }
-      if (fault === "stale" && file === "browser-login.js") source = replaceExactly(source, "      if (identityKey(identity()) !== current.identityKey) { removePopup(current, false); return; }\n", "");
+      if (fault === "stale" && file === "browser-login.js") source = replaceExactly(source, "      if (identityKey(identity()) !== current.identityKey) { close(current, false); return; }\n", "");
       if (fault === "premature" && file === "browser-viewer.js") source = replaceExactly(source, "return command({ action: \"completeLogin\", requestId: target.requestId, expectedPageId: target.expectedPageId });", "const pending = command({ action: \"completeLogin\", requestId: target.requestId, expectedPageId: target.expectedPageId }); onClose?.(); return pending;");
       if ((fault === "dismiss" && file === "browser-login.js") || fault === "stale" || (fault === "premature" && file === "browser-viewer.js")) {
         await page.route(`**/app/${file}`, route => route.fulfill({ contentType: "text/javascript", body: source }));
@@ -128,31 +128,13 @@ test("pending browser login popup preserves ownership through failure, dismissal
   let staleObserverInstalled = false;
   try {
     await page.goto(node.url);
-    session.loginRequest = { ...session.loginRequest, id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" };
     const dialog = page.getByTestId("browser-login-panel");
+    session.loginRequest = { ...session.loginRequest, id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" };
     await page.evaluate(() => document.dispatchEvent(new Event("browserSessionsChanged")));
-    await dialog.waitFor();
-    await dialog.getByTestId("browser-login-context").filter({ hasText: `Synthetic login · ${backgroundProjectId} · kiro · ${backgroundConversationId}` }).waitFor();
-    await dialog.getByText("The agent checks the signed-in page next.", { exact: false }).waitFor();
-    // Native-feeling sign-in: the live page fills the panel and browsing chrome stays out of the way.
-    await dialog.getByTestId("browser-screen").waitFor();
-    await dialog.getByTestId("browser-reload").waitFor();
-    for (const hidden of ["browser-url", "browser-go", "browser-new-tab", "browser-forward", "browser-downloads-details", "browser-end"])
-      await dialog.getByTestId(hidden).waitFor({ state: "hidden" });
+    // A request another conversation owns announces itself; it never takes over the open screen.
+    await page.locator(".toast-message").filter({ hasText: "needs you to sign in" }).waitFor();
+    assert.equal(await dialog.count(), 0, "a background conversation's sign-in must not mount here");
     assert.deepEqual(await page.evaluate(() => import("/app/state.js").then(({ state }) => [state.activeProjectId, state.activeConversationId, state.activeSessionId])), [null, null, null], "background discovery must not select a conversation");
-    await page.keyboard.press("Escape"); await dialog.waitFor({ state: "detached" });
-
-    session.loginRequest = { ...session.loginRequest, id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd" };
-    await page.evaluate(() => { document.body.classList.add("view-board"); document.dispatchEvent(new Event("browserSessionsChanged")); });
-    await dialog.waitFor();
-    await dialog.getByTestId("browser-login-context").filter({ hasText: "kiro" }).waitFor();
-    await page.keyboard.press("Escape"); await dialog.waitFor({ state: "detached" });
-    session.loginRequest = { ...session.loginRequest, id: "ffffffff-ffff-4fff-8fff-ffffffffffff" };
-    await page.evaluate(() => { document.body.classList.remove("view-board"); document.body.classList.add("view-canvas"); document.dispatchEvent(new Event("browserSessionsChanged")); });
-    await dialog.waitFor();
-    await dialog.getByTestId("browser-login-context").filter({ hasText: backgroundConversationId }).waitFor();
-    await page.keyboard.press("Escape"); await dialog.waitFor({ state: "detached" });
-    await page.evaluate(() => document.body.classList.remove("view-canvas"));
 
     await page.locator("#projectList").getByText("Internal Assistant", { exact: true }).click();
     await page.locator("#sessionList .list-row").filter({ has: page.locator("strong", { hasText: "Short one" }) }).first().click();
@@ -160,24 +142,34 @@ test("pending browser login popup preserves ownership through failure, dismissal
     const activeIdentity = await page.evaluate(async () => { const { state } = await import("/app/state.js"); return { projectId: state.activeProjectId, engine: state.engine, conversationId: state.activeConversationId || state.activeSessionId, appNodeId: state.conversationLock?.nodeId || state.activeNodeId }; });
     assert.notEqual(activeIdentity.projectId, backgroundIdentity.projectId);
     assert.notEqual(activeIdentity.conversationId, backgroundIdentity.conversationId);
-    session.loginRequest = { ...session.loginRequest, id: "12121212-1212-4121-8121-121212121212" }; session.owner = "agent"; session.canControl = true;
+    session.loginRequest = { ...session.loginRequest, id: "12121212-1212-4121-8121-121212121212" };
     await page.evaluate(() => document.dispatchEvent(new Event("browserSessionsChanged")));
-    await dialog.waitFor();
-    await dialog.getByTestId("browser-login-context").filter({ hasText: `Synthetic login · ${backgroundProjectId} · kiro · ${backgroundConversationId}` }).waitFor();
-    assert.deepEqual(await page.evaluate(() => import("/app/state.js").then(({ state }) => [state.activeProjectId, state.activeConversationId || state.activeSessionId])), [activeIdentity.projectId, activeIdentity.conversationId], "background popup must not change the selected conversation");
-    await page.keyboard.press("Escape"); await dialog.waitFor({ state: "detached" });
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await dialog.count(), 0, "another conversation's sign-in must stay out of the open conversation");
+    assert.deepEqual(await page.evaluate(() => import("/app/state.js").then(({ state }) => [state.activeProjectId, state.activeConversationId || state.activeSessionId])), [activeIdentity.projectId, activeIdentity.conversationId], "background discovery must not change the selected conversation");
 
     Object.assign(session, activeIdentity);
     session.loginRequest = { id: requestId, expectedOrigin: "https://accounts.example.test", readySelector: "[data-authenticated]", loginSelector: "input", label: "Synthetic login", automatic: false };
     session.owner = "agent"; session.canControl = true;
     await page.evaluate(() => document.dispatchEvent(new Event("browserSessionsChanged")));
     await dialog.waitFor();
-    await dialog.getByTestId("browser-login-context").filter({ hasText: `Synthetic login · ${activeIdentity.projectId} · ${activeIdentity.engine} · ${activeIdentity.conversationId}` }).waitFor();
-    await dialog.getByTestId("browser-screen").waitFor({ state: "visible" });
-    await dialog.getByTestId("browser-control-status").filter({ hasText: "Human control" }).waitFor();
+    // Inside the conversation, directly above its composer — not the side browser panel.
+    assert.equal(await dialog.evaluate(element => !!element.closest("#chatPanel")), true, "sign-in must render inside the conversation");
+    assert.equal(await dialog.evaluate(element => element.nextElementSibling?.id ?? ""), "composer", "sign-in must sit directly above the composer");
+    assert.equal(await page.locator("#browserPanel").count(), 0, "sign-in must not claim the side browser panel");
+    assert.equal(await page.evaluate(() => document.body.classList.contains("browser-visible")), false, "sign-in must not widen the shell for a browser panel");
+    // Only the page content and the sign-in banner: every browsing control stays out.
+    await dialog.getByTestId("browser-screen").waitFor();
+    await dialog.getByTestId("browser-reload").waitFor();
+    await dialog.getByTestId("browser-login-dismiss").waitFor();
+    for (const hidden of ["browser-url", "browser-go", "browser-new-tab", "browser-forward", "browser-downloads-details", "browser-end", "browser-close-viewer", "browser-title", "browser-take-control", "browser-resume-agent", "browser-connection-status"])
+      await dialog.getByTestId(hidden).waitFor({ state: "hidden" });
+    await dialog.getByTestId("browser-login-context").filter({ hasText: `Synthetic login \u00b7 ${activeIdentity.projectId} \u00b7 ${activeIdentity.engine} \u00b7 ${activeIdentity.conversationId}` }).waitFor();
+    await dialog.getByText("Complete sign-in and reach the requested verification marker, then choose Done.", { exact: false }).waitFor({ state: "attached" });
+    await dialog.getByTestId("browser-control-status").filter({ hasText: "Human control" }).waitFor({ state: "attached" });
     assert.deepEqual(commands.filter(command => command.action === "takeControl" && command.loginRequestId === requestId), [{ action: "takeControl", loginRequestId: requestId }]);
     broadcast(); broadcast();
-    await dialog.getByTestId("browser-control-status").filter({ hasText: "Human control" }).waitFor();
+    await dialog.getByTestId("browser-control-status").filter({ hasText: "Human control" }).waitFor({ state: "attached" });
     assert.equal(commands.filter(command => command.action === "takeControl" && command.loginRequestId === requestId).length, 1, "repeated pending state must not retake control");
     await page.waitForFunction(element => !(element as HTMLButtonElement).disabled, await dialog.getByTestId("browser-login-done").elementHandle());
     await dialog.getByTestId("browser-screen").focus();
@@ -197,10 +189,31 @@ test("pending browser login popup preserves ownership through failure, dismissal
       const geometry = await dialog.evaluate(element => { const rect = element.getBoundingClientRect(); return { width: rect.width, height: rect.height, left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, viewportWidth: innerWidth, viewportHeight: innerHeight, overflow: document.documentElement.scrollWidth > innerWidth }; });
       assert.ok(geometry.width > 0 && geometry.height > 0 && geometry.left >= 0 && geometry.top >= 0 && geometry.right <= geometry.viewportWidth && geometry.bottom <= geometry.viewportHeight, `login dialog must fit viewport: ${JSON.stringify(geometry)}`);
       assert.equal(geometry.overflow, false, "login dialog must not overflow horizontally");
-      await dialog.getByTestId("browser-login-done").waitFor({ state: "visible" }); await dialog.getByTestId("browser-close-viewer").waitFor({ state: "visible" });
+      await dialog.getByTestId("browser-login-done").waitFor({ state: "visible" }); await dialog.getByTestId("browser-login-dismiss").waitFor({ state: "visible" });
     };
-    await page.setViewportSize({ width: 1440, height: 900 }); await checkGeometry(); await page.screenshot({ path: path.resolve("tmp/login-popup-desktop.png") });
-    await page.setViewportSize({ width: 390, height: 844 }); await checkGeometry(); await page.screenshot({ path: path.resolve("tmp/login-popup-mobile.png") });
+    await page.setViewportSize({ width: 1440, height: 900 }); await checkGeometry(); await page.screenshot({ path: path.resolve("tmp/login-inline-desktop.png") });
+    await page.setViewportSize({ width: 390, height: 844 }); await checkGeometry(); await page.screenshot({ path: path.resolve("tmp/login-inline-mobile.png") });
+
+    // A phone has no hardware keyboard: tapping the page must focus a real text field so the
+    // on-screen keyboard opens, and everything typed there must reach the remote page.
+    const typing = dialog.getByTestId("browser-typing");
+    await typing.waitFor({ state: "attached" });
+    assert.ok(await typing.evaluate(element => parseFloat(getComputedStyle(element).fontSize) >= 16), "typing field must be at least 16px so iOS does not zoom the page");
+    await dialog.getByTestId("browser-screen").click();
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("data-testid")), "browser-typing", "tapping the page must focus the typing field so the phone keyboard opens");
+    for (const [event, expected] of [
+      [{ kind: "beforeinput", inputType: "insertText", data: "hi" }, { action: "text", text: "hi", expectedPageId: pageId }],
+      [{ kind: "keydown", key: "Enter" }, { action: "key", key: "Enter", expectedPageId: pageId }],
+      [{ kind: "beforeinput", inputType: "deleteContentBackward" }, { action: "key", key: "Backspace", expectedPageId: pageId }],
+    ] as [any, any][]) {
+      inputReceived = new Promise(resolve => { receivedInput = resolve; });
+      await typing.evaluate((element, detail) => element.dispatchEvent(detail.kind === "keydown"
+        ? new KeyboardEvent("keydown", { key: detail.key, bubbles: true, cancelable: true })
+        : new InputEvent("beforeinput", { inputType: detail.inputType, data: detail.data, bubbles: true, cancelable: true })), event);
+      assert.deepEqual(await inputReceived, expected);
+    }
+    assert.equal(await typing.inputValue(), "", "the typing field must never keep what was typed");
+    assert.equal(await page.getByTestId("chat-message-input").inputValue(), "", "remote typing must not reach app chat");
     await page.setViewportSize({ width: 1440, height: 900 });
 
     await dialog.getByTestId("browser-screen").focus(); await page.keyboard.press("Escape"); await dialog.waitFor({ state: "detached" });
@@ -214,9 +227,29 @@ test("pending browser login popup preserves ownership through failure, dismissal
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     assert.equal(await dialog.count(), 0, "dismissed request must not reopen");
 
+    // Switching conversation must take the sign-in away with it, and coming back must bring it home.
+    session.loginRequest = { ...session.loginRequest, id: "abababab-abab-4bab-8bab-abababababab" };
+    await page.evaluate(() => document.dispatchEvent(new Event("browserSessionsChanged"))); await dialog.waitFor();
+    await page.locator("#sessionList .list-row").filter({ has: page.locator("strong", { hasText: "Short one" }) }).first().waitFor();
+    const otherRow = page.locator("#sessionList .list-row").filter({ hasNot: page.locator("strong", { hasText: "Short one" }) }).first();
+    await otherRow.click();
+    await dialog.waitFor({ state: "detached" });
+    await page.locator("#sessionList .list-row").filter({ has: page.locator("strong", { hasText: "Short one" }) }).first().click();
+    await page.locator("#sessionTitle").filter({ hasText: "Short one" }).waitFor();
+    await dialog.waitFor();
+    await dialog.getByTestId("browser-login-dismiss").click(); await dialog.waitFor({ state: "detached" });
+    await page.evaluate(() => document.dispatchEvent(new Event("browserSessionsChanged")));
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await dialog.count(), 0, "a dismissed request must not reopen");
+
+    session.loginRequest = { ...session.loginRequest, id: requestId };
+    session.owner = "agent"; session.canControl = true;
     if (await page.getByTestId("chat-more-button").isVisible()) await page.getByTestId("chat-more-button").click();
     await page.getByTestId("chat-open-browser-button").click();
     const panel = page.locator("#browserPanel"); await panel.getByTestId("browser-screen").waitFor({ state: "visible" }); await panel.getByTestId("browser-login-done").waitFor();
+    // The side panel must claim control for the human too: nobody should have to press Take control.
+    await panel.getByTestId("browser-control-status").filter({ hasText: "Human control" }).waitFor();
+    await page.waitForFunction(element => !(element as HTMLButtonElement).disabled, await panel.getByTestId("browser-login-done").elementHandle());
     verified = true; await panel.getByTestId("browser-login-done").click(); await panel.getByTestId("browser-login-notice").waitFor({ state: "hidden" }); await panel.getByTestId("browser-control-status").filter({ hasText: "Agent control" }).waitFor();
     assert.deepEqual(commands.findLast(command => command.action === "completeLogin"), { action: "completeLogin", requestId, expectedPageId: pageId });
     await panel.getByTestId("browser-close-viewer").click(); await panel.waitFor({ state: "detached" });
@@ -224,15 +257,15 @@ test("pending browser login popup preserves ownership through failure, dismissal
     const secondRequestId = "66666666-6666-4666-8666-666666666666";
     session.loginRequest = { id: secondRequestId, expectedOrigin: "https://accounts.example.test", label: "Second login" }; session.owner = "agent"; session.canControl = true; verified = false;
     await page.evaluate(() => document.dispatchEvent(new Event("browserSessionsChanged"))); await dialog.waitFor(); await dialog.getByTestId("browser-screen").waitFor({ state: "visible" });
-    await dialog.getByTestId("browser-control-status").filter({ hasText: "Human control" }).waitFor();
+    await dialog.getByTestId("browser-control-status").filter({ hasText: "Human control" }).waitFor({ state: "attached" });
     assert.equal(commands.filter(command => command.action === "takeControl" && command.loginRequestId === secondRequestId).length, 1);
-    await dialog.getByTestId("browser-close-viewer").click(); await dialog.waitFor({ state: "detached" });
+    await dialog.getByTestId("browser-login-dismiss").click(); await dialog.waitFor({ state: "detached" });
     assert.equal(session.loginRequest.id, secondRequestId); assert.equal(commands.some(command => command.action === "close" || command.action === "resumeAgent"), false);
 
     const otherHumanRequestId = "77777777-7777-4777-8777-777777777777";
     session.loginRequest = { id: otherHumanRequestId, expectedOrigin: "https://accounts.example.test", label: "Other viewer login" }; session.owner = "human"; session.canControl = false;
-    await page.evaluate(() => document.dispatchEvent(new Event("browserSessionsChanged"))); await dialog.waitFor(); await dialog.getByTestId("browser-connection-status").filter({ hasText: "Live" }).waitFor();
-    await dialog.getByTestId("browser-take-control").filter({ hasText: "Take over control" }).waitFor();
+    await page.evaluate(() => document.dispatchEvent(new Event("browserSessionsChanged"))); await dialog.waitFor(); await dialog.getByTestId("browser-connection-status").filter({ hasText: "Live" }).waitFor({ state: "attached" });
+    await dialog.getByTestId("browser-take-control").filter({ hasText: "Take over control" }).waitFor({ state: "attached" });
     assert.equal(await dialog.getByTestId("browser-login-done").isDisabled(), true);
     const beforeOtherDismiss = await page.evaluate(() => (window as any).__loginHttpCommands.slice());
     assert.equal(beforeOtherDismiss.some((command: any) => command.action === "takeControl" && command.loginRequestId === otherHumanRequestId), false, "another human's request must not be taken automatically");
@@ -264,7 +297,8 @@ test("pending browser login popup preserves ownership through failure, dismissal
     const finalCaptured = await page.evaluate(() => (window as any).__loginHttpCommands);
     assert.equal(finalCaptured.some((command: any) => command.action === "takeControl" && command.loginRequestId === staleRequestId), false, "late exact-session response must not take control");
     assert.ok(discoveries.some(url => !url.search), "coordinator discovery must be unfiltered");
-    assert.ok(discoveries.some(url => url.searchParams.get("projectId") === backgroundIdentity.projectId && url.searchParams.get("engine") === "kiro" && url.searchParams.get("conversationId") === backgroundIdentity.conversationId), "viewer discovery must use the pending session identity");
+    // The only sign-in that ever mounts here is this conversation's, so scoped discovery carries its identity.
+    assert.ok(discoveries.some(url => url.searchParams.get("projectId") === activeIdentity.projectId && url.searchParams.get("engine") === activeIdentity.engine && url.searchParams.get("conversationId") === activeIdentity.conversationId), "viewer discovery must use the mounted session identity");
     assert.ok(discoveries.every(url => !url.search || [backgroundIdentity.conversationId, activeIdentity.conversationId].includes(url.searchParams.get("conversationId") || "")), "scoped discovery must bind a viewer's session identity");
     assert.ok(sockets.length > 0); assert.deepEqual(errors, []);
   } finally {

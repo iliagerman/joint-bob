@@ -36,6 +36,8 @@
 .browser-screen { display: block; width: 100%; height: auto; /* The image rect stays exact for remote pointer coordinates. */ }
 .browser-screen[aria-disabled="false"] { cursor: crosshair; }
 .browser-screen:focus { outline: 3px solid var(--accent); outline-offset: -3px; }
+/* Focus target for typing. Kept out of sight but focusable, and 16px so iOS does not zoom. */
+.browser-typing { flex: 0 0 auto; width: 1px; height: 1px; min-height: 0; padding: 0; margin: 0; border: 0; background: transparent; color: transparent; font-size: 16px; opacity: 0; }
 .browser-empty { max-width: 48ch; padding: 24px; margin: 0; color: var(--muted); text-align: center; line-height: 1.6; }
 [data-testid="browser-reopen"] { margin-bottom: 24px; }
 .browser-viewer[data-control="human"] .browser-stage { border-color: var(--accent); }
@@ -63,18 +65,27 @@
 .browser-login-notice [data-part="login-context"], .browser-login-notice [data-part="login-help"] { grid-column: 1 / 3; }
 .browser-login-notice [data-part="login-context"] { font-family: var(--mono); overflow-wrap: anywhere; }
 .browser-login-notice [data-part="login-help"] { color: var(--muted); }
-.browser-login-notice button { grid-column: 3; grid-row: 1 / 4; }
-/* Sign-in shows the real page, not a browser app: origin banner, control, back/reload and Done only. */
+.browser-login-actions { display: flex; align-items: center; gap: 6px; grid-column: 3; grid-row: 1 / 4; }
+.browser-viewer:not(.browser-login-mode) [data-testid="browser-login-dismiss"] { display: none; }
+/* Sign-in lives inside the conversation, directly above its composer. */
+.browser-login-inline { display: flex; min-width: 0; margin: 0 var(--gap, 8px) 8px; border: 1px solid var(--accent); border-radius: var(--radius); overflow: hidden; }
+.browser-login-inline > .browser-viewer { flex: 1; min-width: 0; border: 0; border-radius: 0; }
+/* Cap the live page so the banner and the composer stay reachable without leaving the conversation. */
+.browser-login-inline .browser-stage { flex: 0 0 auto; max-height: 52vh; overflow: auto; justify-content: flex-start; }
+/* Sign-in shows the real page, not a browser app: origin banner, back/reload and Done only. */
 .browser-login-mode .browser-setup, .browser-login-mode .browser-machines, .browser-login-mode .browser-tabs, .browser-login-mode .browser-footer,
 .browser-login-mode [data-testid="browser-profiles-details"], .browser-login-mode [data-testid="browser-downloads-details"], .browser-login-mode [data-testid="browser-open-tab"],
 .browser-login-mode [data-testid="browser-end"], .browser-login-mode [data-testid="browser-url"], .browser-login-mode [data-testid="browser-go"],
-.browser-login-mode [data-testid="browser-forward"], .browser-login-mode [data-testid="browser-new-tab"] { display: none; }
+.browser-login-mode [data-testid="browser-forward"], .browser-login-mode [data-testid="browser-new-tab"],
+.browser-login-mode .browser-heading, .browser-login-mode .browser-toolbar:not([data-part="keyboard"]),
+.browser-login-mode [data-part="control-hint"], .browser-login-mode [data-testid="browser-session-status"],
+.browser-login-mode [data-part="keyboard"] .browser-hint { display: none; }
 /* The remote page takes every spare pixel; its rect still maps 1:1 to remote pointer coordinates. */
 .browser-login-mode .browser-stage { min-height: 0; }
 @media (max-width: 520px) {
   .browser-login-notice { grid-template-columns: minmax(0, 1fr) auto; }
   .browser-login-notice [data-part="login-context"], .browser-login-notice [data-part="login-help"] { grid-column: 1; }
-  .browser-login-notice button { grid-column: 2; grid-row: 1 / 5; }
+  .browser-login-actions { grid-column: 2; grid-row: 1 / 5; }
 }
 /* Modeless on narrow screens. Chat stays mounted and no socket is stopped. */
 body.browser-visible #browserPanel { position: fixed; z-index: 35; inset: 12% 8px calc(var(--nav-height) + 8px); box-shadow: var(--shadow); }

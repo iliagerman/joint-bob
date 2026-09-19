@@ -99,6 +99,7 @@ function syncSelectOptions(select, options) {
 
 export function renderChatSessionControls() {
   syncBrowserButton();
+  document.dispatchEvent(new CustomEvent("activeConversationChanged"));
   syncBackgroundTasks();
   syncSelectOptions(elements.chatNodeSelect, state.sessionNodes.map((node) => ({
     value: node.id,

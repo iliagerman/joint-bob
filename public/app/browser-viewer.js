@@ -38,7 +38,10 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
         <span data-part="login-origin"></span>
         <span data-testid="browser-login-context" data-part="login-context"></span>
         <span data-part="login-help"></span>
-        <button class="primary" type="button" data-testid="browser-login-done">Done</button>
+        <div class="browser-login-actions">
+          <button class="primary" type="button" data-testid="browser-login-done">Done</button>
+          <button class="ghost compact" type="button" data-testid="browser-login-dismiss">Not now</button>
+        </div>
       </section>
       <div class="browser-setup">
       <label class="browser-account-picker">Viewing account<select data-testid="browser-session-select" aria-label="Viewing account"></select></label>
@@ -68,12 +71,13 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
       <div class="browser-stage">
         <p class="browser-empty" data-part="frame-hint">Start a browser to see its live page.</p>
         <button class="primary" type="button" data-testid="browser-reopen" hidden>Reopen browser</button>
-        <img class="browser-screen" data-testid="browser-screen" tabindex="0" draggable="false" alt="Live remote browser. Take control, then focus here to use keyboard and mouse. Tab leaves the viewer; use Send Tab to tab within the remote page." hidden />
+        <img class="browser-screen" data-testid="browser-screen" tabindex="0" draggable="false" alt="Live remote browser. Take control, then tap or focus here to use keyboard and mouse. Tab leaves the viewer; use Send Tab to tab within the remote page." hidden />
+        <input class="browser-typing" data-testid="browser-typing" aria-label="Type into the remote page" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
       </div>
       <div class="browser-toolbar" data-part="keyboard">
         <button class="ghost compact" type="button" data-testid="browser-send-tab">Send Tab</button>
         <button class="ghost compact" type="button" data-testid="browser-send-shift-tab">Send Shift+Tab</button>
-        <span class="browser-hint">Keyboard goes to the browser only while its image is focused.</span>
+        <span class="browser-hint">Tap or click the page to type into it. On a phone the on-screen keyboard opens automatically.</span>
       </div>
       <section class="browser-prompt" data-part="dialog" aria-label="Website dialog" hidden>
         <p data-part="dialog-message"></p>
@@ -105,6 +109,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
   const get = (name) => root.querySelector(`[data-testid="browser-${name}"]`);
   const part = (name) => root.querySelector(`[data-part="${name}"]`);
   const screen = get("screen");
+  const typing = get("typing");
   const error = (message = "") => { get("error").textContent = message; get("error").hidden = !message; };
   const running = () => session?.state === "running";
   const human = () => running() && session.owner === "human";
@@ -146,6 +151,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     get("login-done").disabled = !pendingLogin || !running() || !connected || busy || !human() || session.canControl === false || !session.activePageId;
     get("end").disabled = (!running() && !session?.restoreOnRestart) || busy;
     get("reconnect").disabled = busy;
+    typing.disabled = !canInput();
     screen.setAttribute("aria-disabled", String(!canInput()));
     root.dataset.control = human() ? "human" : "agent";
   }
@@ -218,7 +224,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     }));
     if (!session?.downloads.length) get("downloads-list").textContent = "No downloads yet.";
     controls();
-    if (loginMode && request && running() && connected && !busy && session.owner === "agent" && !disposed && isCurrent()) {
+    if (request && running() && connected && !busy && session.owner === "agent" && !disposed && isCurrent()) {
       const target = { nodeId: session.nodeId, sessionId: session.id, requestId: request.id };
       const key = `${target.nodeId}:${target.sessionId}:${target.requestId}`;
       if (!attemptedLoginControl.has(key)) {
@@ -494,6 +500,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
       await command({ action: "close" });
     });
   });
+  get("login-dismiss").addEventListener("click", () => { dispose(); onClose?.(); });
   get("close-viewer").addEventListener("click", async () => {
     if (!loginMode && human() && !await confirmAction({ title: "Close viewer while agent is paused?", message: "The browser will keep running under human control. The agent stays paused until you reopen the viewer and choose Resume agent.", confirmLabel: "Close viewer" })) return;
     dispose(); onClose?.();
@@ -544,7 +551,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
   });
   function click(event, button) {
     if (!canInput() || !frameSize) return;
-    event.preventDefault(); screen.focus();
+    event.preventDefault(); typing.focus();
     const rect = screen.getBoundingClientRect();
     sendInput({ action: "click", x: Math.max(0, Math.min(frameSize.width, (event.clientX - rect.left) / rect.width * frameSize.width)), y: Math.max(0, Math.min(frameSize.height, (event.clientY - rect.top) / rect.height * frameSize.height)), button, clickCount: Math.min(event.detail || 1, 3) });
   }
@@ -552,7 +559,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
   screen.addEventListener("contextmenu", (event) => click(event, "right"));
   screen.addEventListener("auxclick", (event) => { if (event.button === 1) click(event, "middle"); });
   screen.addEventListener("wheel", (event) => {
-    if (!canInput() || document.activeElement !== screen) return;
+    if (!canInput() || (document.activeElement !== screen && document.activeElement !== typing)) return;
     event.preventDefault();
     const multiplier = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? frameSize?.height || 800 : 1;
     sendInput({ action: "scroll", x: Math.max(-20000, Math.min(20000, event.deltaX * multiplier)), y: Math.max(-20000, Math.min(20000, event.deltaY * multiplier)) });
@@ -567,13 +574,33 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     const key = [...(event.ctrlKey ? ["Control"] : []), ...(event.metaKey ? ["Meta"] : []), ...(event.altKey ? ["Alt"] : []), ...(event.shiftKey ? ["Shift"] : []), event.key === " " ? "Space" : event.key].join("+");
     sendInput({ action: "key", key });
   });
-  screen.addEventListener("paste", (event) => {
-    if (!canInput() || document.activeElement !== screen) return;
+  function paste(event) {
+    if (!canInput()) return;
     event.preventDefault(); event.stopPropagation();
     const text = event.clipboardData?.getData("text/plain") || "";
     if (text.length > 100000) error("Paste is limited to 100,000 characters.");
     else if (text) sendInput({ action: "text", text });
+  }
+  screen.addEventListener("paste", (event) => { if (document.activeElement === screen) paste(event); });
+  // Phones only raise their on-screen keyboard for a real text field, and they report most
+  // soft-keyboard keys as "Unidentified". The field stays empty: every character is forwarded
+  // from beforeinput, and named keys from keydown, so nothing is ever sent twice.
+  typing.addEventListener("keydown", (event) => {
+    if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) return;
+    if (!canInput() || event.key === "Tab") return;
+    event.stopPropagation();
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v") return;
+    event.preventDefault();
+    if (["Control", "Meta", "Alt", "Shift", "Unidentified"].includes(event.key) || event.isComposing) return;
+    sendInput({ action: "key", key: [...(event.ctrlKey ? ["Control"] : []), ...(event.metaKey ? ["Meta"] : []), ...(event.altKey ? ["Alt"] : []), ...(event.shiftKey ? ["Shift"] : []), event.key].join("+") });
   });
+  typing.addEventListener("beforeinput", (event) => {
+    event.preventDefault();
+    if (!canInput()) return;
+    if (event.inputType === "deleteContentBackward") sendInput({ action: "key", key: "Backspace" });
+    else if (event.inputType.startsWith("insert") && event.data) sendInput({ action: "text", text: event.data });
+  });
+  typing.addEventListener("paste", paste);
   function dispose() {
     disposed = true; frameVersion++; framePending = null; stopSocket();
     document.removeEventListener?.("browserSessionsChanged", refreshSessionList);
