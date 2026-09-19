@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.62.0 — 2026-09-19
 
-- Added a **Settings > Attachments** digest option (off by default) that sends agents a description of uploaded images and browser screenshots plus small text file contents instead of raw image bytes, and made failed or silent harness turns show as an error message that stays in the conversation.
+- Settings > Attachments option now digests uploaded images and screenshots into descriptions that agents receive instead of raw bytes.
+- Failed or silent harness turns are now recorded and displayed as persistent error messages in conversations.
 
 ## 1.61.0 — 2026-09-19
 
