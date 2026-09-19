@@ -106,6 +106,7 @@ class KiroSession implements HarnessSession {
   private compacting = false;
   private compactionTerminal: ((terminal: CompactionTerminal) => void) | undefined;
   private pendingMetadata: JsonObject[] = [];
+  private turnError: string | undefined;
 
   constructor(private readonly options: HarnessOpenOptions) {
     this.id = options.sessionId;
@@ -199,6 +200,7 @@ class KiroSession implements HarnessSession {
     this.started = false;
     this.assistant = "";
     this.cancelRequested = false;
+    this.turnError = undefined;
     this.emit({ type: "agent_start" });
     let failure: unknown;
     try {
@@ -213,7 +215,9 @@ class KiroSession implements HarnessSession {
       await this.finishPrompt(response);
     } catch (error) {
       this.persistAssistant();
-      failure = error;
+      // Kiro explains a refused turn (quota, auth) in an error notification and
+      // then fails the request generically, so the notification is the message.
+      failure = this.turnError && !this.cancelRequested ? new Error(this.turnError) : error;
     }
     for (const finish of [() => this.finishWrites(), () => this.cleanup()]) {
       try {
@@ -309,6 +313,11 @@ class KiroSession implements HarnessSession {
       const metadata = object(params, "metadata notification");
       if (!this.nativeSessionId) this.pendingMetadata.push(metadata);
       else this.handleMetadata(metadata);
+      return;
+    }
+    if (method.startsWith("_kiro.dev/error/")) {
+      const message = object(params, "error notification").message;
+      if (typeof message === "string" && message.trim()) this.turnError = message.trim();
       return;
     }
     if (method === "_kiro.dev/compaction/status") {

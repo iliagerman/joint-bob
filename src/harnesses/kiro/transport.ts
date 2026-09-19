@@ -165,7 +165,10 @@ function asRpcError(value: unknown): { message: string } {
   if (typeof error.code !== "number" || typeof error.message !== "string") {
     throw new Error("Invalid JSON-RPC error reply");
   }
-  return { message: error.message };
+  // Kiro answers a failed turn with the generic "Internal error" and puts the
+  // reason (quota, auth, stream failure) in data, so the reason must travel too.
+  const detail = typeof error.data === "string" ? error.data.trim() : "";
+  return { message: detail && detail !== error.message ? `${error.message}: ${detail}` : error.message };
 }
 
 export function createKiroConnection(

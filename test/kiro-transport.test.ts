@@ -175,3 +175,14 @@ test("child errors reject outstanding and future requests immediately", async ()
   assert.throws(() => connection.notify("later", null), /spawn failed/);
   await connection.closed;
 });
+
+test("an error reply keeps the detail Kiro puts in data", async () => {
+  const { child } = fakeChild();
+  const connection = createKiroConnection(child, createCallbacks().onNotification, createCallbacks().onRequest);
+  const failed = connection.request("session/prompt", null);
+  child.stdout.write(Buffer.from('{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"Internal error","data":"The monthly usage limit has been reached"}}\n'));
+  await assert.rejects(failed, (error: Error) => {
+    assert.match(error.message, /The monthly usage limit has been reached/);
+    return true;
+  });
+});

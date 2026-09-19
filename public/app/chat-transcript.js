@@ -786,6 +786,20 @@ export function updateQueuedMessage(queueId, text, editableText, settings = null
   bubble.querySelector(".queued-controls").hidden = false;
 }
 
+export function markQueuedMessageFailed(queueId, error) {
+  const bubble = elements.messages.querySelector(`[data-queue-id="${queueId}"]`);
+  if (!bubble) return;
+  let reason = bubble.querySelector(".queued-error");
+  if (!reason) {
+    reason = document.createElement("p");
+    reason.className = "queued-error";
+    reason.dataset.testid = "queued-message-error";
+    reason.setAttribute("role", "alert");
+    bubble.querySelector(".queued-controls").after(reason);
+  }
+  reason.textContent = error;
+}
+
 export function removeQueuedMessage(queueId) {
   const bubble = elements.messages.querySelector(`[data-queue-id="${queueId}"]`);
   if (!bubble) return;
@@ -805,6 +819,7 @@ export function clearQueuedMark(queueId) {
   delete bubble.dataset.queuedEditableText;
   bubble.querySelector(".queued-controls")?.remove();
   bubble.querySelector(".queued-editor")?.remove();
+  bubble.querySelector(".queued-error")?.remove();
   refreshQueuedControls();
 }
 

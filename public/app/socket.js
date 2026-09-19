@@ -3,7 +3,7 @@ import { api, loadPins, savePreferencesInBackground } from "./api.js";
 import { clearAttachments } from "./attachments.js";
 import { syncBackgroundTasks } from "./background-tasks.js";
 import { renderChatSessionControls, renderConversationLock, sendSocket, setComposerEnabled, setModels, syncEngineUI, updateStatus } from "./chat-controls.js";
-import { appendMessage, appendToolMessage, clearChat, clearQueuedMark, clearThinkingBubble, finalizeAssistantBubble, finishTurnTimer, markMessageQueued, markUserMessagesRead, removeQueuedMessage, renderBubbleContent, requestPinChat, rerenderChatTranscript, resetQueuedForceStart, restoreChatScrollTop, showChatEmptyState, startDurationTicker, startHarnessSegment, syncQueuedMessageOrder, updateQueuedMessage, updateToolMessage } from "./chat-transcript.js";
+import { appendMessage, appendToolMessage, clearChat, clearQueuedMark, clearThinkingBubble, finalizeAssistantBubble, finishTurnTimer, markMessageQueued, markQueuedMessageFailed, markUserMessagesRead, removeQueuedMessage, renderBubbleContent, requestPinChat, rerenderChatTranscript, resetQueuedForceStart, restoreChatScrollTop, showChatEmptyState, startDurationTicker, startHarnessSegment, syncQueuedMessageOrder, updateQueuedMessage, updateToolMessage } from "./chat-transcript.js";
 import { rememberDraft, restoreDraft, seedPromptHistory, setActiveSessionPath } from "./composer.js";
 import { renderToolsDialog } from "./composer-dialogs.js";
 import { elements } from "./elements.js";
@@ -188,7 +188,7 @@ export function openSession(sessionPath, title = "New conversation", preserveCha
   });
 }
 
-function handleSocketPayload(payload, scrollOnReady = false) {
+export function handleSocketPayload(payload, scrollOnReady = false) {
   if (payload.type === "updatePreparing") {
     const message = payload.message || "Updating... Work will resume automatically.";
     setConnecting(true, message);
@@ -354,6 +354,12 @@ function handleSocketPayload(payload, scrollOnReady = false) {
   if (payload.type === "promptStarted") {
     state.scheduledTurn = payload.scheduled === true;
     clearQueuedMark(payload.queueId);
+    return;
+  }
+  // The harness refused to start this prompt (quota, auth, crash). It stays
+  // queued for a retry, so the reason belongs on the bubble, not only in a toast.
+  if (payload.type === "promptFailed") {
+    markQueuedMessageFailed(payload.queueId, payload.error);
     return;
   }
   if (payload.type === "queuedPromptEdited") {
