@@ -481,6 +481,18 @@
             <p class="settings-hint">This setting applies only to conversations running on this node. Disable it to compact manually.</p>
           </fieldset>
           <fieldset class="phase-settings">
+            <legend>Shell commands</legend>
+            <label class="checkbox-row">
+              <input id="settingsShellTimeoutEnabled" type="checkbox" data-testid="settings-shell-timeout-enabled" />
+              Limit how long an agent's shell command may run
+            </label>
+            <label>Stop a command after
+              <input id="settingsShellTimeoutSeconds" type="number" min="1" max="86400" step="1" required data-testid="settings-shell-timeout-seconds" />
+              seconds
+            </label>
+            <p class="settings-hint">Commands run to completion by default, however long they take. A limit applies to every agent on this node; a stopped command returns exit code 124.</p>
+          </fieldset>
+          <fieldset class="phase-settings">
             <legend>Account</legend>
             <p>Signed in as <output id="settingsUsername" data-testid="settings-username"></output>.</p>
             <div class="account-password-fields">

@@ -222,6 +222,9 @@ export async function openSettings(tab = "account") {
   elements.settingsAutoCompactEnabled.checked = settings.autoCompactThreshold !== null;
   elements.settingsAutoCompactThreshold.value = settings.autoCompactThreshold ?? 70;
   elements.settingsAutoCompactThreshold.disabled = !elements.settingsAutoCompactEnabled.checked;
+  elements.settingsShellTimeoutEnabled.checked = settings.shellCommandTimeoutSeconds !== null;
+  elements.settingsShellTimeoutSeconds.value = settings.shellCommandTimeoutSeconds ?? 600;
+  elements.settingsShellTimeoutSeconds.disabled = !elements.settingsShellTimeoutEnabled.checked;
   elements.settingsRuntimeStatus.textContent = "";
   elements.settingsSkillsStatus.textContent = "";
   fillResourceFields(globalResourceFields, settings.resources);
@@ -248,6 +251,7 @@ async function saveSettings(event) {
       conversationLabels: document.querySelector("#settingsConversationLabels").value.split("\n").map((label) => label.trim()).filter(Boolean),
       conversationHistoryDays: Number(document.querySelector("#settingsConversationHistoryDays").value),
       autoCompactThreshold: elements.settingsAutoCompactEnabled.checked ? Number(elements.settingsAutoCompactThreshold.value) : null,
+      shellCommandTimeoutSeconds: elements.settingsShellTimeoutEnabled.checked ? Number(elements.settingsShellTimeoutSeconds.value) : null,
     }),
   });
   state.conversationLabels = saved.conversationLabels;
@@ -292,6 +296,7 @@ elements.settingsSyncSkillsButton.addEventListener("click", () => runSkillOperat
 elements.settingsReloadSkillsButton.addEventListener("click", () => runSkillOperation(reloadSkills));
 elements.settingsCheckRuntimePathsButton.addEventListener("click", () => checkRuntimePaths().catch((error) => toast(error.message)));
 elements.settingsAutoCompactEnabled.addEventListener("change", () => { elements.settingsAutoCompactThreshold.disabled = !elements.settingsAutoCompactEnabled.checked; });
+elements.settingsShellTimeoutEnabled.addEventListener("change", () => { elements.settingsShellTimeoutSeconds.disabled = !elements.settingsShellTimeoutEnabled.checked; });
 for (const tab of elements.settingsTabs) {
   tab.addEventListener("click", () => selectSettingsTab(tab.dataset.settingsTab));
   tab.addEventListener("keydown", (event) => {

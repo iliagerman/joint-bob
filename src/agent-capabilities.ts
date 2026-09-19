@@ -5,6 +5,7 @@ import { isHarnessId, type HarnessId } from "./types.js";
 import { websiteCredentialSnapshot, type SecretConversation } from "./secrets.js";
 import { ntfyAgentEnvironment, ntfyAgentInstructions } from "./ntfy-agent.js";
 import { mintTaskToken, readSupervisorControl } from "../scripts/supervisor-client.mjs";
+import { getSettings } from "./settings.js";
 
 export interface AgentCapabilityIdentity {
   projectId: string;
@@ -33,11 +34,11 @@ Do not emit either protocol line in examples, progress updates, or unfinished wo
 
 const taskInstructions = `# Joint Bob tasks
 
-Ordinary commands run by the integrated Pi, Claude, and Kiro shell tools (and their children) are automatically supervised. Commands completing within five seconds return synchronously and stay out of Tasks; longer commands return a tracked task handle and the conversation continues. Task listings are scoped to the current conversation/session. Never rerun a running handle. Ordinary shell background children, including those launched with & or nohup, stay tracked until their supervised process group ends. Arbitrary third-party MCP or extension processes cannot be intercepted after launch. Supported extensions and external job producers must launch their process through this CLI so the supervisor owns its complete lifecycle.
+Ordinary commands run by the integrated Pi, Claude, and Kiro shell tools (and their children) are supervised so the Tasks panel can list them, show their live output, and stop them. Supervision never changes how a command behaves: every command runs to completion inside the tool call and returns its real output and exit code, however long it takes, so wait for tests, builds, and other long commands directly instead of polling for them. If this node has a shell command time limit configured, a command that exceeds it is stopped and returns exit code 124 with a message saying so. Commands finishing within a few seconds stay out of the Tasks panel; longer ones appear there while they run and remain there with their output afterwards. Task listings are scoped to the current conversation/session. Ordinary shell background children, including those launched with & or nohup, stay tracked until their supervised process group ends. Arbitrary third-party MCP or extension processes cannot be intercepted after launch. Supported extensions and external job producers must launch their process through this CLI so the supervisor owns its complete lifecycle.
 
 The following rule applies when explicitly launching work through the local task supervisor CLI.
 
-Use the local task supervisor only for a real background job that is expected to run longer than the current turn and must survive the agent disconnecting. Never use it for ordinary shell commands, file inspection, builds, tests, or other commands that the native harness tool can run and await directly. One foreground harness command must never become one supervisor task.
+Use the local task supervisor only for a real background job that is expected to run longer than the current turn and must survive the agent disconnecting, such as a development server. Never use it for ordinary shell commands, file inspection, builds, tests, or other commands that the native harness tool can run and await directly. One foreground harness command must never become one supervisor task.
 
 For a qualifying background job:
 node "$JOINT_BOB_TASK_CLI" start [--id UUID] [--name label] -- command args
@@ -49,14 +50,23 @@ Start is always local and should be used explicitly only for work expected to ou
 
 Task logs may contain sensitive output. Never print credentials. If the task socket or token is absent or unavailable, report unsupported node mode for background tasks; do not fall back to harness background execution.
 
-Completions enqueue an automatic follow-up in the original conversation. Process completion turns internally: do not emit control instructions or routine acknowledgements, and continue authorized work. Only meaningful requested results or blockers should be user-facing through the normal conversation. Delivery can be delayed while the conversation is busy, offline, locked, or owned by another unavailable node; tasks remain on the node where they started. The Tasks panel shows task and delivery state. Do not guarantee that the user receives a reply before the queued follow-up is processed.`;
+The Tasks panel is a view only: a task that finishes never wakes the conversation and never queues a follow-up turn. If a result from an explicitly started job matters, read it with the output command in a later turn or ask the user to check the Tasks panel.`;
 
 function taskEnvironment(identity: AgentCapabilityIdentity): NodeJS.ProcessEnv {
   const dataDirectory = resolveDataDirectory();
   const configuredPort = process.env.PORT ?? "8790";
   const port = /^\d+$/.test(configuredPort) ? Number(configuredPort) : 0;
   const shell = fileURLToPath(new URL("../bin/joint-bob-bash.mjs", import.meta.url));
+  const timeoutSeconds = getSettings().shellCommandTimeoutSeconds;
+  // Claude's Bash tool stops a command after its own timeout (two minutes by
+  // default, ten at most). The shim owns the limit here, so Claude's is raised to a
+  // week when the node sets none, or to the node's limit plus slack so the shim
+  // stops the command and reports the limit before Claude's tool gives up.
+  const claudeBashTimeoutMs = String(timeoutSeconds === null ? 7 * 24 * 60 * 60 * 1000 : timeoutSeconds * 1000 + 5000);
   const base = {
+    JOINT_BOB_SHELL_TIMEOUT_MS: timeoutSeconds === null ? undefined : String(timeoutSeconds * 1000),
+    BASH_DEFAULT_TIMEOUT_MS: claudeBashTimeoutMs,
+    BASH_MAX_TIMEOUT_MS: claudeBashTimeoutMs,
     JOINT_BOB_TASK_CLI: fileURLToPath(new URL("../bin/joint-bob-task.mjs", import.meta.url)),
     JOINT_BOB_TASK_DATA_DIR: dataDirectory,
     JOINT_BOB_TASK_SHELL: shell,

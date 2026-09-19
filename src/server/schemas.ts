@@ -401,6 +401,7 @@ export const settingsSchema = z.object({
   conversationLabels: conversationLabelsSchema.optional(),
   conversationHistoryDays: z.number().int().min(1).max(3650).optional(),
   autoCompactThreshold: z.number().int().min(1).max(100).nullable().optional(),
+  shellCommandTimeoutSeconds: z.number().int().min(1).max(86_400).nullable().optional(),
 }).extend(runtimeSchemaShape) as unknown as z.ZodType<SettingsInput>;
 export const auditQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional().default(100),

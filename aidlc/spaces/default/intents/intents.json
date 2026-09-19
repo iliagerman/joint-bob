@@ -54,5 +54,12 @@
     "dirName": "260916-homeserver-browser-login",
     "scope": "feature",
     "status": "in-flight"
+  },
+  {
+    "uuid": "01a0b63a-ef55-71fd-98d3-c4f85334bfa1",
+    "slug": "shell-supervision-fix",
+    "dirName": "260918-shell-supervision-fix",
+    "scope": "express",
+    "status": "in-flight"
   }
 ]

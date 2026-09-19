@@ -134,6 +134,8 @@ export const elements = {
   settingsProjectHome: document.querySelector("#settingsProjectHome"),
   settingsAutoCompactEnabled: document.querySelector("#settingsAutoCompactEnabled"),
   settingsAutoCompactThreshold: document.querySelector("#settingsAutoCompactThreshold"),
+  settingsShellTimeoutEnabled: document.querySelector("#settingsShellTimeoutEnabled"),
+  settingsShellTimeoutSeconds: document.querySelector("#settingsShellTimeoutSeconds"),
   settingsResourceSkillsPaths: document.querySelector("#settingsResourceSkillsPaths"),
   settingsSyncSkillsButton: document.querySelector("#settingsSyncSkillsButton"),
   settingsReloadSkillsButton: document.querySelector("#settingsReloadSkillsButton"),

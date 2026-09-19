@@ -195,6 +195,34 @@ test("node settings configure or disable automatic context compaction", { timeou
   assert.equal(await page.evaluate(async () => (await (await fetch("/api/settings")).json()).autoCompactThreshold), null);
 });
 
+test("node settings leave shell commands unlimited by default and can cap their run time", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await signIn(page, node.url, environment.username, environment.password);
+  await page.getByTestId("settings-open-button").click();
+  await page.locator("#settingsDialog[open]").waitFor();
+
+  const enabled = page.getByTestId("settings-shell-timeout-enabled");
+  const seconds = page.getByTestId("settings-shell-timeout-seconds");
+  assert.equal(await enabled.isChecked(), false);
+  assert.equal(await seconds.isDisabled(), true);
+  await enabled.check();
+  assert.equal(await seconds.isDisabled(), false);
+  await seconds.fill("900");
+  await page.getByTestId("settings-save-button").click();
+  await page.locator("#settingsDialog[open]").waitFor({ state: "hidden" });
+  assert.equal(await page.evaluate(async () => (await (await fetch("/api/settings")).json()).shellCommandTimeoutSeconds), 900);
+
+  await page.getByTestId("settings-open-button").click();
+  await page.locator("#settingsDialog[open]").waitFor();
+  assert.equal(await enabled.isChecked(), true);
+  assert.equal(await seconds.inputValue(), "900");
+  await enabled.uncheck();
+  assert.equal(await seconds.isDisabled(), true);
+  await page.getByTestId("settings-save-button").click();
+  await page.locator("#settingsDialog[open]").waitFor({ state: "hidden" });
+  assert.equal(await page.evaluate(async () => (await (await fetch("/api/settings")).json()).shellCommandTimeoutSeconds), null);
+});
+
 test("harness settings and model picker follow runtime metadata", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   await signIn(page, node.url, environment.username, environment.password);

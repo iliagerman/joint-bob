@@ -3,12 +3,6 @@ import path from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 
-export interface BackgroundTaskCompletion {
-  state: "pending" | "queued" | "blocked" | "starting" | "consumed";
-  targetNodeId: string | null;
-  error: string | null;
-}
-
 export interface BackgroundTask {
   id: string;
   name: string;
@@ -18,7 +12,6 @@ export interface BackgroundTask {
   endedAt: string | null;
   exitCode: number | null;
   signal: string | null;
-  completion?: BackgroundTaskCompletion;
 }
 
 export interface TaskCursor {

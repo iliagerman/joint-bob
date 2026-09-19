@@ -38,6 +38,8 @@ export interface SettingsInput {
   conversationLabels?: string[];
   conversationHistoryDays?: number;
   autoCompactThreshold?: number | null;
+  /** Seconds a harness shell command may run before this node stops it; null means no limit. */
+  shellCommandTimeoutSeconds?: number | null;
   conversationDefaults?: Record<string, ConversationDefault>;
 }
 
@@ -52,6 +54,7 @@ export interface SettingsResponse {
   conversationLabels: string[];
   conversationHistoryDays: number;
   autoCompactThreshold: number | null;
+  shellCommandTimeoutSeconds: number | null;
   conversationDefaults: ReturnType<typeof conversationDefaultsSchema.parse>;
   restartRequired: Record<string, boolean>;
 }
@@ -156,6 +159,7 @@ export function getSettings(): SettingsResponse {
     conversationLabels: conversationLabelsSchema.parse(JSON.parse(value("conversationLabels", JSON.stringify(DEFAULT_CONVERSATION_LABELS)))),
     conversationHistoryDays: Number(value("conversationHistoryDays", "30")),
     autoCompactThreshold: value("autoCompactThreshold", "70") === "disabled" ? null : Number(value("autoCompactThreshold", "70")),
+    shellCommandTimeoutSeconds: value("shellCommandTimeoutSeconds", "unlimited") === "unlimited" ? null : Number(value("shellCommandTimeoutSeconds", "unlimited")),
     restartRequired: Object.fromEntries(runtimeAdapters().map((adapter) => [adapter.id, false])),
   } as SettingsResponse;
 }
@@ -248,6 +252,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
   const conversationLabels = conversationLabelsSchema.parse(input.conversationLabels ?? previous.conversationLabels);
   const conversationHistoryDays = input.conversationHistoryDays ?? previous.conversationHistoryDays;
   const autoCompactThreshold = input.autoCompactThreshold === undefined ? previous.autoCompactThreshold : input.autoCompactThreshold;
+  const shellCommandTimeoutSeconds = input.shellCommandTimeoutSeconds === undefined ? previous.shellCommandTimeoutSeconds : input.shellCommandTimeoutSeconds;
   const conversationDefaults = conversationDefaultsSchema.parse(input.conversationDefaults ?? previous.conversationDefaults);
   if (!homePath.trim() || !path.isAbsolute(homePath)) throw new Error("Joint Bob home folder must be absolute");
   db.exec("BEGIN");
@@ -262,6 +267,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
     save(db, "conversationLabels", JSON.stringify(conversationLabels));
     save(db, "conversationHistoryDays", String(conversationHistoryDays));
     save(db, "autoCompactThreshold", autoCompactThreshold === null ? "disabled" : String(autoCompactThreshold));
+    save(db, "shellCommandTimeoutSeconds", shellCommandTimeoutSeconds === null ? "unlimited" : String(shellCommandTimeoutSeconds));
     save(db, "conversationDefaults", JSON.stringify(conversationDefaults));
     for (const type of RESOURCE_TYPES) save(db, `resources.${type}`, JSON.stringify(resources[type]));
     if (input.syncthing.apiKey !== undefined) {
@@ -283,6 +289,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
         conversationLabelsChanged: JSON.stringify(previous.conversationLabels) !== JSON.stringify(settings.conversationLabels),
         conversationHistoryDaysChanged: previous.conversationHistoryDays !== settings.conversationHistoryDays,
         autoCompactThresholdChanged: previous.autoCompactThreshold !== settings.autoCompactThreshold,
+        shellCommandTimeoutChanged: previous.shellCommandTimeoutSeconds !== settings.shellCommandTimeoutSeconds,
         apiKeyConfigured: settings.syncthing.apiKeyConfigured,
       },
     });

@@ -27,7 +27,6 @@ export const machineRoutes = new Set([
   "POST /cluster/cron",
   "GET /cluster/node",
   "POST /cluster/background-tasks",
-  "POST /cluster/background-completions",
   "POST /cluster/browser/status",
   "POST /cluster/browser/config",
   "POST /cluster/browser/preferences",

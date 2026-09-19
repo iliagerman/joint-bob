@@ -10,7 +10,9 @@ import test from "node:test";
 import { runSupervisedShell } from "../scripts/supervised-shell.mjs";
 import { startSupervisor } from "../scripts/joint-bob-supervisor.mjs";
 import { mintTaskToken, readSupervisorControl, requestSupervisor } from "../scripts/supervisor-client.mjs";
-import { closeBackgroundCompletionStore, ingestBackgroundCompletions, pendingBackgroundCompletions } from "../src/background-completions.js";
+import { readBackgroundTasks } from "../src/background-tasks.js";
+
+const identity = JSON.stringify(["p", "c"]);
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -36,24 +38,12 @@ async function fixture() {
     app: { executable: process.execPath, args: ["-e", "setInterval(()=>{},1000)"], cwd: root, env: { PATH: process.env.PATH ?? "", HOME: root } },
   });
   const control = readSupervisorControl(state)!;
-  const token = mintTaskToken(state, JSON.stringify(["p", "c"]));
+  const token = mintTaskToken(state, identity);
   const env = {
     PATH: process.env.PATH ?? "", HOME: root, NODE_NO_WARNINGS: "1",
     JOINT_BOB_TASK_DATA_DIR: state, JOINT_BOB_TASK_SOCKET: control.socketPath, JOINT_BOB_TASK_TOKEN: token,
   };
   return { root, state, runtime, control, token, env };
-}
-
-async function withCompletionStore<T>(state: string, action: () => Promise<T> | T): Promise<T> {
-  const previous = process.env.JOINT_BOB_DATA_DIR;
-  closeBackgroundCompletionStore();
-  process.env.JOINT_BOB_DATA_DIR = state;
-  try { return await action(); }
-  finally {
-    closeBackgroundCompletionStore();
-    if (previous === undefined) delete process.env.JOINT_BOB_DATA_DIR;
-    else process.env.JOINT_BOB_DATA_DIR = previous;
-  }
 }
 
 async function terminalTask(f: Awaited<ReturnType<typeof fixture>>, id: string) {
@@ -62,10 +52,6 @@ async function terminalTask(f: Awaited<ReturnType<typeof fixture>>, id: string) 
     (task) => ["completed", "failed", "stopped"].includes(String(task.status)),
     `task ${id} did not become terminal`,
   );
-}
-
-async function ingestCycles(state: string, count = 3) {
-  for (let index = 0; index < count; index++) ingestBackgroundCompletions(state);
 }
 
 async function isMissing(file: string): Promise<boolean> {
@@ -82,17 +68,17 @@ function processAlive(pid: number): boolean {
   }
 }
 
-test("short supervised commands complete without queuing a follow-up", { timeout: 20_000, concurrency: false }, async () => {
+test("short supervised commands complete and stay out of the Tasks view", { timeout: 20_000, concurrency: false }, async () => {
   const f = await fixture();
   try {
-    const result = await runSupervisedShell({ args: ["-lc", "exit 0"], cwd: f.root, env: f.env, waitMs: 5_000 });
-    assert.deepEqual({ exitCode: result.exitCode, background: result.background }, { exitCode: 0, background: false });
+    const result = await runSupervisedShell({ args: ["-lc", "exit 0"], cwd: f.root, env: f.env });
+    assert.equal(result.exitCode, 0);
     const task = await requestSupervisor(f.control.socketPath, f.token, { action: "task", id: result.taskId }) as Record<string, unknown>;
     assert.equal(task.status, "completed");
-    await withCompletionStore(f.state, async () => {
-      await ingestCycles(f.state, 4); // Includes an empty scan, which resets the ingestion cursor.
-      assert.equal(pendingBackgroundCompletions().length, 0);
-    });
+    assert.deepEqual(readBackgroundTasks(f.state, [identity], 10).tasks, []);
+    const db = new DatabaseSync(path.join(f.state, "node.db"), { readOnly: true });
+    try { assert.equal(db.prepare("SELECT 1 FROM sqlite_master WHERE name='background_completion_outbox'").get(), undefined, "finished commands must not be queued for delivery"); }
+    finally { db.close(); }
   } finally { await f.runtime.close(); await rm(f.root, { recursive: true, force: true }); }
 });
 
@@ -102,11 +88,10 @@ test("fast builtin commands complete without false background promotion", { time
     for (let index = 0; index < 6; index++) {
       const chunks: Buffer[] = [];
       const result = await runSupervisedShell({
-        args: ["-lc", "printf matched"], cwd: f.root, env: f.env, waitMs: 5_000,
+        args: ["-lc", "printf matched"], cwd: f.root, env: f.env,
         onData: (chunk: Buffer) => chunks.push(chunk),
       });
       assert.equal(Buffer.concat(chunks).toString(), "matched");
-      assert.equal(result.background, false);
       const task = await requestSupervisor(f.control.socketPath, f.token, { action: "task", id: result.taskId }) as Record<string, unknown>;
       assert.equal(task.status, "completed");
     }
@@ -158,7 +143,12 @@ for (const style of ["ordinary", "nohup"] as const) {
       assert.equal(tasks.length, 1);
       assert.equal(tasks[0].status, "running");
       assert.equal(processAlive(pid), true);
-      const firstHeartbeat = Number((await readFile(heartbeatFile, "utf8")).trim().split("\n").at(-1));
+      // The wrapper now returns as soon as the shell exits, before the child's first heartbeat lands.
+      const firstHeartbeat = await eventually(
+        async () => Number((await readFile(heartbeatFile, "utf8")).trim().split("\n").at(-1)),
+        (value) => Number.isFinite(value) && value > 0,
+        "background child never wrote a heartbeat",
+      );
       await eventually(
         async () => Number((await readFile(heartbeatFile, "utf8")).trim().split("\n").at(-1)),
         (value) => value > firstHeartbeat,
@@ -179,44 +169,16 @@ for (const style of ["ordinary", "nohup"] as const) {
   });
 }
 
-test("promoted commands produce exactly one durable completion", { timeout: 20_000, concurrency: false }, async () => {
+test("a command that outlives the visibility window stays listed with its output after it finishes", { timeout: 30_000, concurrency: false }, async () => {
   const f = await fixture();
   try {
-    const result = await runSupervisedShell({ args: ["-lc", `exec ${JSON.stringify(process.execPath)} -e "setInterval(()=>{},1000)"`], cwd: f.root, env: f.env, waitMs: 100 });
-    assert.equal(result.background, true);
-    const running = await requestSupervisor(f.control.socketPath, f.token, { action: "task", id: result.taskId }) as Record<string, unknown>;
-    assert.equal(running.status, "running");
-    await requestSupervisor(f.control.socketPath, f.token, { action: "stop", id: result.taskId });
-    await terminalTask(f, result.taskId);
-    await withCompletionStore(f.state, async () => {
-      await ingestCycles(f.state, 3);
-      assert.deepEqual(pendingBackgroundCompletions().map((item) => item.taskId), [result.taskId]);
-      await ingestCycles(f.state, 4);
-      assert.deepEqual(pendingBackgroundCompletions().map((item) => item.taskId), [result.taskId]);
-    });
-  } finally { await f.runtime.close(); await rm(f.root, { recursive: true, force: true }); }
-});
-
-test("an expired foreground lease recovers a completion after caller loss", { timeout: 20_000, concurrency: false }, async () => {
-  const f = await fixture();
-  try {
-    const result = await runSupervisedShell({ args: ["-lc", "exit 0"], cwd: f.root, env: f.env, waitMs: 5_000 });
-    // Simulate the durable precondition left by a caller crash before it can mark the return.
-    const db = new DatabaseSync(path.join(f.state, "node.db"));
-    try { db.prepare("UPDATE supervised_shell_calls SET state='foreground',foreground_until=? WHERE task_id=?").run(Date.now() + 60_000, result.taskId); }
-    finally { db.close(); }
-    await withCompletionStore(f.state, async () => {
-      await ingestCycles(f.state, 3);
-      assert.equal(pendingBackgroundCompletions().length, 0);
-      const update = new DatabaseSync(path.join(f.state, "node.db"));
-      try { update.prepare("UPDATE supervised_shell_calls SET foreground_until=0 WHERE task_id=?").run(result.taskId); }
-      finally { update.close(); }
-      await ingestCycles(f.state, 3);
-      assert.deepEqual(pendingBackgroundCompletions().map((item) => item.taskId), [result.taskId]);
-      assert.deepEqual(pendingBackgroundCompletions().map((item) => item.taskId), [result.taskId]);
-      closeBackgroundCompletionStore();
-      assert.deepEqual(pendingBackgroundCompletions().map((item) => item.taskId), [result.taskId]);
-    });
+    const chunks: Buffer[] = [];
+    const result = await runSupervisedShell({ args: ["-lc", "sleep 6; printf finished-marker"], cwd: f.root, env: f.env, onData: (chunk: Buffer) => chunks.push(chunk) });
+    assert.equal(result.exitCode, 0);
+    assert.equal(Buffer.concat(chunks).toString(), "finished-marker");
+    assert.deepEqual(readBackgroundTasks(f.state, [identity], 10).tasks.map((task) => task.id), [result.taskId]);
+    const output = await requestSupervisor(f.control.socketPath, f.token, { action: "output", id: result.taskId, offset: 0, limit: 65_536 }) as { chunk: string };
+    assert.match(Buffer.from(output.chunk, "base64").toString(), /finished-marker/);
   } finally { await f.runtime.close(); await rm(f.root, { recursive: true, force: true }); }
 });
 
@@ -227,7 +189,7 @@ test("aborting a foreground call stops its supervised process", { timeout: 20_00
   let pid = 0;
   try {
     const script = `require('fs').writeFileSync(${JSON.stringify(ready)},String(process.pid));setInterval(()=>{},1000)`;
-    const running = runSupervisedShell({ args: ["-lc", `exec ${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`], cwd: f.root, env: f.env, signal: controller.signal, waitMs: 5_000 });
+    const running = runSupervisedShell({ args: ["-lc", `exec ${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`], cwd: f.root, env: f.env, signal: controller.signal });
     const rejected = assert.rejects(running, /aborted/i);
     pid = Number(await eventually(() => readFile(ready, "utf8"), (value) => Number(value) > 0, "command did not become ready"));
     controller.abort();
@@ -258,9 +220,8 @@ test("foreground output is bounded while the task retains complete output", { ti
           writeFileSync(gate, "");
         }
       },
-      waitMs: 5_000,
     });
-    assert.equal(result.exitCode, 0); assert.equal(result.background, false);
+    assert.equal(result.exitCode, 0);
     const shown = Buffer.concat(chunks);
     assert.equal(shown.filter((byte) => byte === 120).length, 131_072);
     assert.match(shown.toString(), /output truncated; inspect it in Tasks/);
@@ -280,7 +241,7 @@ test("an unreachable supervisor rejects once without executing locally", { timeo
   try {
     const missingSocket = path.join(root, "missing.sock");
     await assert.rejects(runSupervisedShell({
-      args: ["-lc", `touch ${JSON.stringify(marker)}`], cwd: root, waitMs: 100,
+      args: ["-lc", `touch ${JSON.stringify(marker)}`], cwd: root,
       env: { PATH: process.env.PATH ?? "", HOME: root, NODE_NO_WARNINGS: "1", JOINT_BOB_TASK_DATA_DIR: state, JOINT_BOB_TASK_SOCKET: missingSocket, JOINT_BOB_TASK_TOKEN: randomUUID() },
     }), /task [0-9a-f-]{36}; do not retry it/i);
     assert.equal(await isMissing(marker), true);

@@ -158,13 +158,43 @@ test("task capability reports unavailable without creating supervisor state", as
     assert.equal(environment.JOINT_BOB_TASK_SOCKET, undefined);
     assert.equal(environment.JOINT_BOB_TASK_TOKEN, undefined);
     const instructions = agentCapabilityInstructionFiles().map((file) => file.content).join("\n");
-    assert.match(instructions, /Completions enqueue an automatic follow-up/);
+    assert.doesNotMatch(instructions, /Completions enqueue an automatic follow-up/);
+    assert.doesNotMatch(instructions, /within five seconds/);
+    assert.match(instructions, /runs? to completion/);
+    assert.match(instructions, /never wakes|does not wake/);
     assert.match(instructions, /Supported extensions and external job producers must launch their process through this CLI/);
     assert.match(instructions, /Never use it for ordinary shell commands/);
     assert.match(instructions, /expected to run longer than the current turn/);
     assert.doesNotMatch(instructions, /automatic conversation wakeup is not implemented/);
     assert.match(instructions, /unsupported node mode/);
     await assert.rejects(readFile(path.join(root, "supervisor.db")));
+  } finally {
+    if (previousData === undefined) delete process.env.JOINT_BOB_DATA_DIR;
+    else process.env.JOINT_BOB_DATA_DIR = previousData;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the node's shell time limit reaches every harness shell through the shared environment", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agent-capabilities-shell-limit-"));
+  const previousData = process.env.JOINT_BOB_DATA_DIR;
+  process.env.JOINT_BOB_DATA_DIR = root;
+  try {
+    const { agentCapabilityEnvironment } = await import("../src/agent-capabilities.js");
+    const { getSettings, updateSettings } = await import("../src/settings.js");
+    const engines = ["pi", "claude", "kiro"] as const;
+    const shellLimits = (engine: (typeof engines)[number]) => {
+      const environment = agentCapabilityEnvironment("project", engine, "conversation");
+      return { shim: environment.JOINT_BOB_SHELL_TIMEOUT_MS, claudeDefault: environment.BASH_DEFAULT_TIMEOUT_MS, claudeMax: environment.BASH_MAX_TIMEOUT_MS };
+    };
+    // Claude's own Bash tool would stop a command after two minutes; the shared environment lifts that to a week so the shim decides.
+    const week = String(7 * 24 * 60 * 60 * 1000);
+    for (const engine of engines) assert.deepEqual(shellLimits(engine), { shim: undefined, claudeDefault: week, claudeMax: week }, `${engine} starts unlimited`);
+    updateSettings({ ...getSettings(), syncthing: { endpoint: "" }, shellCommandTimeoutSeconds: 90 });
+    // Claude's tool gets a few seconds of slack so the shim stops the command and reports the limit first.
+    for (const engine of engines) assert.deepEqual(shellLimits(engine), { shim: "90000", claudeDefault: "95000", claudeMax: "95000" }, `${engine} receives the limit`);
+    updateSettings({ ...getSettings(), syncthing: { endpoint: "" }, shellCommandTimeoutSeconds: null });
+    for (const engine of engines) assert.deepEqual(shellLimits(engine), { shim: undefined, claudeDefault: week, claudeMax: week }, `${engine} returns to unlimited`);
   } finally {
     if (previousData === undefined) delete process.env.JOINT_BOB_DATA_DIR;
     else process.env.JOINT_BOB_DATA_DIR = previousData;

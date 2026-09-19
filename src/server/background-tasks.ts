@@ -1,13 +1,9 @@
-import { createHash } from "node:crypto";
 import { z } from "zod";
-import { getDeliveryStatus } from "../background-completions.js";
-import { readBackgroundTaskIdentity, readBackgroundTasks, readPersistedBackgroundTask, type BackgroundTask, type TaskCursor } from "../background-tasks.js";
+import { readBackgroundTaskIdentity, readBackgroundTasks, readPersistedBackgroundTask, type TaskCursor } from "../background-tasks.js";
 import { getClusterMachineToken, getClusterNode, getClusterPeer, listClusterPeers } from "../cluster.js";
 import { resolveDataDirectory } from "../data-directory.js";
-import { systemPromptState } from "../prompt-queue.js";
 import { getProject, projectAliasIds } from "../store.js";
 import { supervisorRequest } from "../../scripts/supervisor-client.mjs";
-import { readCompletionDisposition, readCompletionDispositions, type CompletionDisposition } from "../../scripts/supervised-shell.mjs";
 import { clusterPeerMayAccessProject } from "./cluster-helpers.js";
 
 const scope = z.object({
@@ -30,10 +26,6 @@ export class TaskRequestError extends Error {
 }
 
 const status = z.enum(["starting", "running", "stopping", "completed", "failed", "stopped", "unknown"]);
-const completionSchema = z.object({
-  state: z.enum(["pending", "queued", "blocked", "starting", "consumed"]),
-  targetNodeId: z.string().uuid().nullable(), error: z.string().max(200).nullable(),
-}).strict();
 const publicTaskSchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
@@ -45,7 +37,6 @@ const publicTaskSchema = z.object({
   signal: z.string().nullable(),
   nodeId: z.string().uuid(),
   nodeName: z.string(),
-  completion: completionSchema.optional(),
 }).strict();
 const outputSchema = z.object({
   chunk: z.string().max(87384).refine((value) => /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value), "Invalid output encoding"),
@@ -83,27 +74,7 @@ async function projectScope(command: BackgroundTaskCommand, callerNodeId?: strin
   };
 }
 
-function completionPromptId(sourceNodeId: string, taskId: string): string {
-  const bytes = createHash("sha256").update(`${sourceNodeId}:${taskId}`).digest().subarray(0, 16);
-  bytes[6] = (bytes[6] & 0x0f) | 0x50; bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = bytes.toString("hex");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
-function completion(value: Record<string, unknown>, nodeId: string, projectId: string, conversationId: string, dispositions?: ReadonlyMap<string, CompletionDisposition>): z.infer<typeof completionSchema> | undefined {
-  if (!["completed", "failed", "stopped", "unknown"].includes(String(value.status))) return undefined;
-  if ((dispositions?.get(String(value.id)) ?? readCompletionDisposition(resolveDataDirectory(), String(value.id))) !== "deliver") return undefined;
-  const delivery = getDeliveryStatus(String(value.id));
-  if (!delivery) return { state: "pending", targetNodeId: null, error: null };
-  let state: z.infer<typeof completionSchema>["state"] = delivery.deliveryState;
-  if (delivery.targetNodeId === nodeId && delivery.deliveryState === "queued") {
-    const queued = systemPromptState(`${projectId}:${conversationId}`, completionPromptId(nodeId, String(value.id)));
-    if (queued === "starting" || queued === "consumed") state = queued;
-  }
-  return { state, targetNodeId: delivery.targetNodeId, error: delivery.error };
-}
-
-function publicTask(value: Record<string, unknown>, node: { id: string; name: string }, projectId?: string, conversationId?: string, dispositions?: ReadonlyMap<string, CompletionDisposition>): PublicTask {
+function publicTask(value: Record<string, unknown>, node: { id: string; name: string }): PublicTask {
   return publicTaskSchema.parse({
     id: value.id,
     name: value.name,
@@ -115,7 +86,6 @@ function publicTask(value: Record<string, unknown>, node: { id: string; name: st
     signal: value.signal ?? null,
     nodeId: node.id,
     nodeName: node.name,
-    ...(projectId && conversationId ? { completion: completion(value, node.id, projectId, conversationId, dispositions) } : {}),
   });
 }
 
@@ -142,11 +112,10 @@ export async function localBackgroundTaskOperation(commandInput: BackgroundTaskC
     } catch {
       live = false;
     }
-    const dispositions = readCompletionDispositions(data, stored.tasks.map((value) => value.id));
     const tasks = stored.tasks.map((value) => publicTask({
       ...value,
       status: !live && ["starting", "running", "stopping"].includes(value.status) ? "unknown" : value.status,
-    }, node, command.projectId, command.conversationId, dispositions));
+    }, node));
     return {
       tasks,
       node: {
@@ -167,7 +136,7 @@ export async function localBackgroundTaskOperation(commandInput: BackgroundTaskC
         action: command.action === "get" ? "task" : "stop",
         id: command.id,
       });
-      return publicTask(value, node, command.projectId, command.conversationId);
+      return publicTask(value, node);
     }
     const result = await supervisorRequest(data, {
       action: "output",
@@ -179,15 +148,17 @@ export async function localBackgroundTaskOperation(commandInput: BackgroundTaskC
   } catch (error) {
     if (command.action === "get") {
       const stored = readPersistedBackgroundTask(data, command.id);
-      if (stored && identities.includes(stored.identity)) return publicTask({ ...stored, status: ["starting", "running", "stopping"].includes(stored.status) ? "unknown" : stored.status }, node, command.projectId, command.conversationId);
+      if (stored && identities.includes(stored.identity)) return publicTask({ ...stored, status: ["starting", "running", "stopping"].includes(stored.status) ? "unknown" : stored.status }, node);
     }
     if (error instanceof z.ZodError) throw new TaskRequestError(503, "Background task supervisor is unavailable");
     throw supervisorError(error);
   }
 }
 
+// An older peer still reports a follow-up delivery state; it is dropped, not rejected.
+const peerTaskSchema = publicTaskSchema.extend({ completion: z.unknown().optional() }).transform(({ completion: _legacy, ...task }) => task);
 const listResponse = z.object({
-  tasks: z.array(publicTaskSchema).max(100),
+  tasks: z.array(peerTaskSchema).max(100),
   node: z.object({
     nodeId: z.string().uuid(),
     nodeName: z.string(),
@@ -231,7 +202,7 @@ export async function routeBackgroundTaskOperation(nodeId: string, commandInput:
       return result;
     }
     if (command.action === "output") return outputSchema.parse(body);
-    const task = publicTaskSchema.parse(body);
+    const task = peerTaskSchema.parse(body);
     if (task.nodeId !== nodeId) throw new Error("Peer returned mismatched task ownership");
     return task;
   } catch (error) {

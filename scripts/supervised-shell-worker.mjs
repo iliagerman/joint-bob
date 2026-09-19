@@ -1,4 +1,6 @@
 import { execFile, spawn } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { requestSupervisor } from "./supervisor-client.mjs";
 
 const pause = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
@@ -79,6 +81,11 @@ async function main() {
   }
   child.once("error", () => fail("could not launch command"));
   const code = await new Promise(resolve => child.once("close", resolve));
+  // The shell has finished; tell the waiting shim its exit code now, even if
+  // background children keep this task alive and visible in Tasks.
+  const exits = path.join(process.env.JOINT_BOB_TASK_DATA_DIR, "shell-exits");
+  mkdirSync(exits, { recursive: true, mode: 0o700 });
+  writeFileSync(path.join(exits, id), String(code ?? 1), { mode: 0o600 });
   try {
     while (await groupHasCommands(groupId)) await pause(100);
   } catch {

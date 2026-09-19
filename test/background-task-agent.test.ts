@@ -6,7 +6,6 @@ import { promisify } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { taskApi } from "../bin/joint-bob-task.mjs";
-import { completionPromptId } from "../src/server/background-completions.js";
 import { mintTaskToken, readSupervisorControl, supervisorRequest } from "../scripts/supervisor-client.mjs";
 import { backgroundClusterFixture, closeBackgroundClusterFixture, startSyntheticTask } from "./background-tasks-fixture.js";
 
@@ -54,28 +53,6 @@ function seedReturnedShellCalls(dataDir: string, root: string, identity: string)
   }
 }
 
-function seedCompletionPrompt(dataDir: string, nodeId: string, queueKey: string, id: string): void {
-  const db = new DatabaseSync(path.join(dataDir, "node.db"));
-  try {
-    db.exec(`CREATE TABLE IF NOT EXISTS queued_prompts (
-      id TEXT PRIMARY KEY, queue_key TEXT NOT NULL, prompt TEXT NOT NULL,
-      created_at TEXT NOT NULL, sequence INTEGER NOT NULL, revision INTEGER NOT NULL, origin_node_id TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS queued_prompt_sequences (queue_key TEXT PRIMARY KEY, sequence INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS queued_prompt_tombstones (id TEXT PRIMARY KEY, queue_key TEXT NOT NULL);`);
-    db.prepare("INSERT INTO queued_prompt_sequences VALUES (?,1) ON CONFLICT(queue_key) DO UPDATE SET sequence=sequence+1").run(queueKey);
-    const prompt = { id, requestId: id, systemEventId: id, dispatchState: "pending", promptText: "completion", displayText: "completion", messageText: null, promptSuffix: null, displaySuffix: null, attachmentPaths: [], images: [], settings: null, revision: 1 };
-    db.prepare("INSERT INTO queued_prompts VALUES (?,?,?,?,1,1,?)").run(id, queueKey, JSON.stringify(prompt), new Date().toISOString(), nodeId);
-  } finally { db.close(); }
-}
-
-function completionWasAcknowledged(dataDir: string, queueKey: string, id: string): boolean {
-  const db = new DatabaseSync(path.join(dataDir, "node.db"), { readOnly: true });
-  try {
-    return Boolean(db.prepare("SELECT 1 FROM queued_prompt_tombstones WHERE id=? AND queue_key=?").get(id, queueKey))
-      && !db.prepare("SELECT 1 FROM queued_prompts WHERE id=?").get(id);
-  } finally { db.close(); }
-}
-
 test("task relay URL accepts the normalized HTTP port and rejects unsafe endpoints", () => {
   const endpoint = "http://127.0.0.1/api/background-tasks/agent";
   assert.equal(taskApi("http://127.0.0.1:80/api/background-tasks/agent"), endpoint);
@@ -116,11 +93,13 @@ test("scoped task CLI reads and stops a task on its explicit source node", { tim
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     assert.equal((await supervisorRequest<{ status: string }>(nodeB.dataDir, { action: "task", id: completedTask })).status, "completed");
-    const promptId = completionPromptId(nodeB.nodeId, completedTask);
-    const queueKey = `${projectA.id}:${conversationId}`;
-    seedCompletionPrompt(nodeA.dataDir, nodeA.nodeId, queueKey, promptId);
-    await runCli(nodeA.url, nodeA.dataDir, token, ["output", completedTask, "--node", nodeB.nodeId]);
-    assert.equal(completionWasAcknowledged(nodeA.dataDir, queueKey, promptId), true, "reading terminal output must acknowledge the completion");
+    const finished = await runCli(nodeA.url, nodeA.dataDir, token, ["output", completedTask, "--node", nodeB.nodeId]);
+    assert.match(finished.stdout, /safe-output/);
+    const queue = new DatabaseSync(path.join(nodeA.dataDir, "node.db"), { readOnly: true });
+    try {
+      const table = queue.prepare("SELECT 1 FROM sqlite_master WHERE name='queued_prompts'").get();
+      if (table) assert.equal(Number((queue.prepare("SELECT COUNT(*) AS n FROM queued_prompts").get() as { n: number }).n), 0, "a finished task must not queue a conversation prompt");
+    } finally { queue.close(); }
     const status = JSON.parse((await runCli(nodeA.url, nodeA.dataDir, token, ["status", taskB, "--node", nodeB.nodeId])).stdout) as { id: string };
     assert.equal(status.id, taskB);
     await runCli(nodeA.url, nodeA.dataDir, token, ["stop", taskB, "--node", nodeB.nodeId]);

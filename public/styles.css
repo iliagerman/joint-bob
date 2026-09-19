@@ -2848,7 +2848,6 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 .background-task-detail-header h3 { margin: 0; overflow-wrap: anywhere; font-size: 16px; }
 .background-task-detail-header p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
 .background-task-detail-actions { align-items: center; min-height: 48px; margin: 8px 0 10px; border-bottom: 1px solid var(--line); }
-.background-task-follow-up { color: var(--muted); font-size: 12px; }
 .background-tasks-details button, .background-tasks-footer button { min-height: 40px; }
 .background-task-output-label { margin-bottom: 7px; color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
 .background-tasks-details pre { flex: 1; min-height: 0; margin: 0; overflow: auto; padding: 12px; border: 1px solid var(--code-line); border-radius: 9px; background: var(--code-bg); color: var(--code-text); font-size: 11px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }

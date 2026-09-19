@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Shell commands now run to completion instead of timing out, and finished tasks no longer wake the conversation with automatic follow-ups; an optional per-node time limit can be set in Settings > Shell commands.
+
 ## 1.57.4 — 2026-09-18
 
 - Sessions now show "Background tasks running" when work continues without a model turn, separately from "Running" during active responses.

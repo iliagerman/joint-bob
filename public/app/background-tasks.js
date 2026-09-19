@@ -11,13 +11,6 @@ const output = el("backgroundTasksOutput");
 const activeStatuses = new Set(["starting", "running", "stopping"]);
 const terminalStatuses = new Set(["completed", "failed", "stopped", "unknown"]);
 const statuses = new Set([...activeStatuses, ...terminalStatuses]);
-const completionLabels = {
-  pending: "Follow-up pending",
-  queued: "Follow-up queued",
-  blocked: "Follow-up blocked",
-  starting: "Follow-up start uncertain",
-  consumed: "Follow-up dispatched",
-};
 
 let scopeKey = "";
 let generation = 0;
@@ -161,7 +154,7 @@ function render() {
 }
 
 function renderDetails(task) {
-  const nextSignature = `${taskKey(task)}:${safeStatus(task.status)}:${task.completion?.state || ""}:${nodes.get(task.nodeId)?.available}:${stoppingKey}`;
+  const nextSignature = `${taskKey(task)}:${safeStatus(task.status)}:${nodes.get(task.nodeId)?.available}:${stoppingKey}`;
   if (nextSignature === detailsSignature) {
     output.textContent = outputText || "No output yet.";
     return;
@@ -182,11 +175,6 @@ function renderDetails(task) {
   header.append(identity, status);
   const actions = document.createElement("div");
   actions.className = "background-task-detail-actions";
-  const follow = document.createElement("span");
-  follow.className = "background-task-follow-up";
-  follow.textContent = task.completion
-    ? completionLabels[task.completion.state] || "Follow-up state unknown"
-    : "No automatic follow-up";
   const stop = document.createElement("button");
   stop.type = "button";
   stop.className = "danger compact";
@@ -198,7 +186,7 @@ function renderDetails(task) {
     || stoppingKey === taskKey(task)
     || !nodes.get(task.nodeId)?.available;
   stop.onclick = () => void stopTask(task).catch((error) => showError(output, "Stop failed", error));
-  actions.append(follow, stop);
+  actions.append(stop);
   const outputLabel = document.createElement("div");
   outputLabel.className = "background-task-output-label";
   outputLabel.textContent = "Output";
