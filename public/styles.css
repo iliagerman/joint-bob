@@ -2057,16 +2057,16 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 
 /* Both lists carry a real pin button on every row, so each needs a second button
    lane and pays for it with padding — the button is the pinned indicator. */
-.session-list .pin-button, .project-list .pin-button { right: 42px; }
-.session-list .session-card, .project-list .project-card { padding-right: 78px; }
+.session-list .pin-button, .project-list .pin-button { right: 46px; }
+.session-list .session-card, .project-list .project-card { padding-right: 82px; }
 /* Parents with sub-agent children carry a third lane for the expand toggle. */
-.session-children-toggle { right: 74px; width: auto; min-width: 28px; padding: 0 7px; font-family: var(--mono); font-size: 10.5px; }
-.session-list .list-row.has-children .session-card { padding-right: 118px; }
+.session-children-toggle { right: 78px; width: auto; min-width: 28px; padding: 0 7px; font-family: var(--mono); font-size: 10.5px; }
+.session-list .list-row.has-children .session-card { padding-right: 122px; }
 
 /* ---- Ticket conversations in the list ---- */
 /* The jump button owns the outermost lane, and the row pays for the
    lane with padding so the title never runs under it. */
-.session-list .ticket-link-button { right: 74px; color: var(--accent); }
+.session-list .ticket-link-button { right: 78px; color: var(--accent); }
 .session-list .ticket-link-button svg { width: 15px; height: 15px; }
 /* A ticket conversation needs three lanes: ticket, pin, menu. */
 .session-list .list-row.has-ticket .session-card { padding-right: 110px; }
