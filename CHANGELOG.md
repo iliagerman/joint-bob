@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.58.1 — 2026-09-19
 
 - Queued prompts that fail to start now show the harness's reason on the bubble instead of staying silently pending.
 
