@@ -157,6 +157,20 @@ export class BrowserStore {
     this.db.prepare("UPDATE browser_sessions SET state = ?, error = ?, restoreOnRestart = ?, updatedAt = ? WHERE id = ?").run(state, error ?? null, restoreOnRestart ? 1 : 0, new Date().toISOString(), id);
   }
 
+  // Removes a stopped session record and its download history. A running or
+  // restore-pending session must be closed first, so its live lease and any
+  // automatic restore intent are gone before the row disappears.
+  forget(id: string): void {
+    const row = this.get(id);
+    if (row.state === "running" || row.restoreOnRestart) throw new Error("Close the browser before removing its session");
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db.prepare("DELETE FROM browser_downloads WHERE sessionId = ?").run(id);
+      this.db.prepare("DELETE FROM browser_sessions WHERE id = ?").run(id);
+      this.db.exec("COMMIT");
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+  }
+
   profiles(projectId: string): BrowserProfile[] {
     const rows = this.db.prepare("SELECT id, projectId, label, createdAt, updatedAt, persistent FROM browser_profiles WHERE projectId = ? ORDER BY createdAt DESC").all(projectId) as unknown as BrowserProfile[];
     return rows.map(row => ({ ...row, persistent: Boolean(row.persistent) }));

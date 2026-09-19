@@ -1,19 +1,22 @@
 /* Native controls and the same paper/ink surfaces as the conversation shell. */
 .browser-viewer { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius); container-type: inline-size; }
 .browser-heading { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--header); }
-.browser-heading > div { flex: 1; min-width: 100px; }
-.browser-heading .eyebrow { color: var(--muted); font-size: 9px; }
-.browser-heading h2 { margin: 3px 0 0; }
+.browser-heading > div:first-child { flex: 1 1 100px; min-width: 100px; display: flex; flex-direction: column; }
+.browser-heading-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.browser-heading .eyebrow { color: var(--muted); font-size: 9px; line-height: 1.3; }
+.browser-heading h2 { margin: 2px 0 0; line-height: 1.35; }
 .browser-body { display: flex; flex: 1; flex-direction: column; gap: 10px; overflow: auto; padding: 12px 16px; min-height: 0; scrollbar-gutter: stable; }
 .browser-body > * { flex-shrink: 0; }
 .browser-viewer :is(button, input, select) { min-height: 38px; }
 .browser-viewer :is(input, select) { min-width: 0; width: 100%; margin: 0; }
 .browser-viewer :is(a, button):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.browser-link { text-decoration: none; text-align: center; color: var(--text); }
+.browser-link { display: inline-flex; align-items: center; justify-content: center; min-height: 38px; text-decoration: none; text-align: center; color: var(--text); }
 .browser-stop { border: 1px solid color-mix(in srgb, var(--danger) 50%, var(--line)); background: color-mix(in srgb, var(--danger) 12%, var(--panel)); white-space: nowrap; }
 .browser-stop:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 22%, var(--panel)); }
 .browser-stop:disabled { color: var(--muted); border-color: var(--line); background: transparent; }
 .browser-setup { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); align-items: end; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--header); }
+.browser-session-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
+.browser-session-actions button { flex: 0 0 auto; }
 .browser-viewer label { display: grid; gap: 5px; min-width: 0; color: var(--muted); font-size: 12px; }
 .browser-start-row { display: flex; align-items: end; gap: 8px; min-width: 0; flex-wrap: wrap; }
 .browser-start-row label { flex: 1 1 120px; }

@@ -68,6 +68,9 @@ app.get("/api/browser/sessions/:id", route(async (request,response) => {
 app.post("/api/browser/sessions/:id/command", route(async (request,response) => {
   response.json(await browserOperation({operation:"command",args:{id:id.parse(request.params.id),command:browserCommandSchema.parse(request.body)}},await human(response),targetNode(request)));
 }));
+app.delete("/api/browser/sessions/:id", route(async (request,response) => {
+  response.json(await browserOperation({operation:"forget",args:{id:id.parse(request.params.id)}},await human(response),targetNode(request)));
+}));
 app.get("/api/browser/profiles", route(async (request,response) => {
   response.json(await browserOperation({operation:"profiles",args:{projectId:z.string().min(1).parse(request.query.projectId)}},await human(response),targetNode(request)));
 }));

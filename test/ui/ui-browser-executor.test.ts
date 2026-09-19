@@ -301,6 +301,14 @@ test("browser viewer UI", { timeout: 180_000 }, async (t) => {
         if (body.action === "close" && sessions.find(session => session.id === id).owner !== "human") return route.fulfill({ status: 409, json: { error: "Take control before browser input" } });
         result = { result: {}, session: apply(body, id) };
       }
+      else if (/\/api\/browser\/sessions\/[^/]+$/.test(url.pathname) && method === "DELETE") {
+        const id = url.pathname.split("/").at(-1);
+        const target = sessions.find((session) => session.id === id);
+        if (target?.state === "running" || target?.restoreOnRestart) return route.fulfill({ status: 409, json: { error: "Close the browser before removing its session" } });
+        const index = sessions.findIndex((session) => session.id === id);
+        if (index >= 0) sessions.splice(index, 1);
+        result = { forgotten: true, projectId: target?.projectId };
+      }
       else result = { session: sessions.find((session) => session.id === url.pathname.split("/").at(-1)) };
       return route.fulfill({ json: result });
     });
@@ -564,6 +572,69 @@ test("browser viewer UI", { timeout: 180_000 }, async (t) => {
         await f.page.setViewportSize({ width: 390, height: 844 });
         await f.page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
         assert.ok(await f.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      } finally { await f.page.close(); }
+    });
+    await t.test("stopped sessions can be removed individually and cleared, running sessions stay", async () => {
+      const f = await setup();
+      try {
+        await openConversation(f.page);
+        await f.page.getByTestId("browser-profile-select").selectOption(profileId);
+        await f.page.getByTestId("browser-start").click();
+        await f.page.getByTestId("browser-screen").waitFor();
+        await f.page.getByTestId("browser-profile-select").selectOption("new");
+        await f.page.getByTestId("browser-profile-name").fill("Personal");
+        await f.page.getByTestId("browser-start").click();
+        await f.page.getByTestId("browser-session-status").filter({ hasText: "Personal" }).waitFor();
+        // Remove is disabled while the viewed session is running.
+        assert.equal(await f.page.getByTestId("browser-remove-session").isDisabled(), true, "running session cannot be removed");
+        assert.equal(await f.page.getByTestId("browser-clear-sessions").isDisabled(), true, "no stopped sessions yet");
+        // Stop the first account; it becomes removable.
+        await f.page.getByTestId("browser-session-select").selectOption("browser-1");
+        f.sessions.find(session => session.id === "browser-1").restoreOnRestart = false;
+        await f.page.getByTestId("browser-end").click();
+        await f.page.getByTestId("confirm-accept-button").click();
+        await f.page.getByTestId("browser-session-status").filter({ hasText: "closed" }).waitFor();
+        assert.equal(await f.page.getByTestId("browser-remove-session").isDisabled(), false, "closed session is removable");
+        await f.page.getByTestId("browser-remove-session").click();
+        await f.page.getByTestId("confirm-accept-button").click();
+        await f.page.waitForFunction(() => !document.querySelector('[data-testid="browser-session-select"] option[value="browser-1"]'));
+        assert.deepEqual(f.sessions.map(session => session.id), ["browser-2"], "only the stopped session was forgotten");
+        // Stop the second account and clear all stopped sessions.
+        await f.page.getByTestId("browser-session-select").selectOption("browser-2");
+        f.sessions.find(session => session.id === "browser-2").restoreOnRestart = false;
+        await f.page.getByTestId("browser-end").click();
+        await f.page.getByTestId("confirm-accept-button").click();
+        await f.page.getByTestId("browser-session-status").filter({ hasText: "closed" }).waitFor();
+        await f.page.getByTestId("browser-clear-sessions").click();
+        await f.page.getByTestId("confirm-accept-button").click();
+        await f.page.getByTestId("browser-session-status").filter({ hasText: "No browser selected" }).waitFor();
+        assert.deepEqual(f.sessions, [], "clear removed every stopped session");
+      } finally { await f.page.close(); }
+    });
+    await t.test("header keeps the title unclipped and aligns the tab link with its row", async () => {
+      const f = await setup();
+      try {
+        await openConversation(f.page);
+        const heading = (await f.page.locator(".browser-heading").boundingBox())!;
+        const title = (await f.page.getByTestId("browser-title").boundingBox())!;
+        // The serif title must sit fully inside the header, not clip past its top padding.
+        assert.ok(title.y >= heading.y - 0.5, `title top must stay inside the header: title ${title.y} vs heading ${heading.y}`);
+        assert.ok(title.y + title.height <= heading.y + heading.height + 0.5, "title bottom must stay inside the header");
+        // Open in tab is an anchor, not a button; it must still line up with the adjacent Stop button.
+        const link = (await f.page.getByTestId("browser-open-tab").boundingBox())!;
+        const stop = (await f.page.getByTestId("browser-end").boundingBox())!;
+        assert.ok(Math.abs((link.y + link.height / 2) - (stop.y + stop.height / 2)) < 2, `Open in tab must share the Stop button's baseline: ${JSON.stringify({ link, stop })}`);
+        assert.ok(Math.abs(link.height - stop.height) < 2, "Open in tab must be the same height as the header buttons, not bare inline text");
+      } finally { await f.page.close(); }
+    });
+    await t.test("searching conversations closes the conversation-bound browser viewer", async () => {
+      const f = await setup();
+      try {
+        await openConversation(f.page);
+        await f.page.locator("#browserPanel").waitFor();
+        await f.page.getByTestId("conversation-list-search-input").fill("Short");
+        await f.page.locator("#browserPanel").waitFor({ state: "detached" });
+        assert.equal(await f.page.locator("#browserPanel").count(), 0, "conversation search must close the browser bound to the open conversation");
       } finally { await f.page.close(); }
     });
     await t.test("machine changes fence profile loads and leave accounts pinned to their owners", async () => {

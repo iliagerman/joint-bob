@@ -47,6 +47,12 @@ function openBrowser() {
   panel.querySelector('[data-testid="browser-close-viewer"]').focus();
 }
 elements.openBrowserButton.addEventListener("click", openBrowser);
+// The viewer is bound to the open conversation. Searching the conversation list
+// means navigating away from it, so close the viewer instead of leaving it
+// hovering over an unrelated search result.
+elements.sessionSearchInput?.addEventListener("input", () => {
+  if (viewer && elements.sessionSearchInput.value.trim()) hideForNavigation();
+});
 function hideForNavigation() {
   if (viewer?.session?.owner === "human") toast("Viewer hidden. Browser remains under human control; reopen it to resume the agent.", 8000);
   closeViewer();

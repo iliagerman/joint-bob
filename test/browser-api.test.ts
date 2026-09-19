@@ -27,6 +27,31 @@ async function seedProfile(node: SeededNode, label: string) {
   });
 }
 
+async function seedSession(node: SeededNode, conversationId: string, state: "closed" | "running") {
+  const { stdout } = await promisify(execFile)(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `import { BrowserStore } from './src/browser-store.ts'; const store = new BrowserStore(); const row = store.create({ projectId: ${JSON.stringify(node.projects[0].id)}, engine: 'pi', conversationId: ${JSON.stringify(conversationId)}, appNodeId: ${JSON.stringify(node.nodeId)} }); if (${JSON.stringify(state)} === 'closed') store.finish(row.id, 'closed'); process.stdout.write(row.id); store.close();`], {
+    cwd: process.cwd(), env: { ...process.env, HOME: environment.home, JOINT_BOB_DATA_DIR: node.dataDir }, timeout: 15000,
+  });
+  return stdout.trim();
+}
+
+test("DELETE forgets a stopped browser session and refuses a running one", async () => {
+  const [a] = environment.nodes;
+  const conversationId = "forget-fixture-conversation";
+  const closedId = await seedSession(a, conversationId, "closed");
+  const runningId = await seedSession(a, conversationId, "running");
+  const query = new URLSearchParams({ projectId: a.projects[0].id, engine: "pi", conversationId });
+  const before = await api<{ sessions: Array<{ id: string }> }>(a, logins[0], "GET", `/browser/sessions?${query}`);
+  assert.equal(before.status, 200);
+  assert.deepEqual(new Set(before.body.sessions.map(session => session.id)), new Set([closedId, runningId]));
+  const removed = await api(a, logins[0], "DELETE", `/browser/sessions/${closedId}`);
+  assert.equal(removed.status, 200, JSON.stringify(removed.body));
+  const runningRefused = await api<{ error: string }>(a, logins[0], "DELETE", `/browser/sessions/${runningId}`);
+  assert.equal(runningRefused.status, 409);
+  assert.match(runningRefused.body.error, /close the browser/i);
+  const after = await api<{ sessions: Array<{ id: string }> }>(a, logins[0], "GET", `/browser/sessions?${query}`);
+  assert.deepEqual(after.body.sessions.map(session => session.id), [runningId]);
+});
+
 test("browser status lists machines and missing Chrome fails on the configured machine", async () => {
   for (const [index, node] of environment.nodes.entries()) {
     const status = await api<{ node: { id: string }; capability: { available: boolean; reason: string } }>(node, logins[index], "GET", "/browser/status");

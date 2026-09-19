@@ -25,9 +25,11 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
   root.replaceChildren(document.createRange().createContextualFragment(`
     <header class="browser-heading">
       <div><span class="eyebrow">Conversation browser</span><h2 data-testid="browser-title">Browser</h2></div>
-      <button class="compact danger browser-stop" type="button" data-testid="browser-end">Stop browser</button>
-      <a class="ghost compact browser-link" data-testid="browser-open-tab" target="_blank" rel="noopener">Open in tab</a>
-      <button type="button" class="ghost compact" data-testid="browser-close-viewer">Close viewer</button>
+      <div class="browser-heading-actions">
+        <button class="compact danger browser-stop" type="button" data-testid="browser-end">Stop browser</button>
+        <a class="ghost compact browser-link" data-testid="browser-open-tab" target="_blank" rel="noopener">Open in tab</a>
+        <button type="button" class="ghost compact" data-testid="browser-close-viewer">Close viewer</button>
+      </div>
     </header>
     <div class="browser-body">
       <p class="browser-notice" data-testid="browser-session-status" role="status">Finding this conversation's browser…</p>
@@ -49,6 +51,10 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
         <label>Project profile<select data-testid="browser-profile-select"><option value="">Conversation default</option></select></label>
         <label data-part="profile-name" hidden>New profile name<input data-testid="browser-profile-name" maxlength="80" placeholder="e.g. Work account" /></label>
         <button class="primary" type="button" data-testid="browser-start" disabled>Start browser</button>
+      </div>
+      <div class="browser-session-actions" data-part="session-actions">
+        <button class="ghost compact" type="button" data-testid="browser-remove-session">Remove session</button>
+        <button class="ghost compact" type="button" data-testid="browser-clear-sessions">Clear stopped sessions</button>
       </div>
       </div>
       <div class="browser-toolbar">
@@ -114,6 +120,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
   const running = () => session?.state === "running";
   const human = () => running() && session.owner === "human";
   const canInput = () => human() && session.canControl !== false && connected && !busy;
+  const stopped = (item) => item.state !== "running" && !item.restoreOnRestart;
   const endpoint = () => `/api/browser/sessions/${encodeURIComponent(session.id)}`;
   function button(label, testid, handler, className = "ghost compact") {
     const element = document.createElement("button");
@@ -134,6 +141,10 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     get("start").disabled = !loaded || !profilesReady || busy || !identity?.conversationId || !identity?.appNodeId || !nodes.some((node) => node.id === startNodeId() && node.available && node.reachable);
     get("conversation-node").disabled = get("start-node").disabled = busy || !preference;
     get("session-select").disabled = loginMode || busy || !sessions.length;
+    const anyStopped = sessions.some(stopped);
+    part("session-actions").hidden = loginMode || !anyStopped;
+    get("remove-session").disabled = busy || !session || !stopped(session);
+    get("clear-sessions").disabled = busy || !anyStopped;
     get("profile-select").disabled = get("profile-name").disabled = busy;
     get("start").textContent = running() ? "Open profile" : "Start browser";
     get("reopen").hidden = !session?.profileId || running();
@@ -473,6 +484,33 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     const result = await api(browserUrl(`/api/browser/sessions/${encodeURIComponent(id)}`, selected.nodeId));
     if (!disposed) selectSession(result.session);
   }));
+  async function forgetSession(target) {
+    await api(browserUrl(`/api/browser/sessions/${encodeURIComponent(target.id)}`, target.nodeId), { method: "DELETE" });
+    sessions = sessions.filter((item) => !(item.id === target.id && item.nodeId === target.nodeId));
+  }
+  get("remove-session").addEventListener("click", async () => {
+    const target = session;
+    if (!target || !stopped(target)) return;
+    if (!await confirmAction({ title: "Remove this browser session?", message: `Removes the stopped “${target.profileLabel || "Browser"}” session and its download history from the list. Its saved login profile is kept. This does not affect running sessions.`, confirmLabel: "Remove session", destructive: true })) return;
+    await operation(async () => {
+      if (session?.id !== target.id) throw new Error("Viewed account changed. Choose Remove again for the session you want.");
+      await forgetSession(target);
+      selectSession(sessions.find((candidate) => candidate.state === "running") || sessions[0]);
+    });
+  });
+  get("clear-sessions").addEventListener("click", async () => {
+    const targets = sessions.filter(stopped);
+    if (!targets.length) return;
+    if (!await confirmAction({ title: "Clear stopped browser sessions?", message: `Removes ${targets.length} stopped session${targets.length === 1 ? "" : "s"} and their download history from this conversation. Saved login profiles and running sessions are kept.`, confirmLabel: "Clear stopped sessions", destructive: true })) return;
+    await operation(async () => {
+      const failures = [];
+      for (const target of targets) {
+        try { await forgetSession(target); } catch (failure) { failures.push(failure.message); }
+      }
+      if (session && stopped(session) && !sessions.some((item) => item.id === session.id)) selectSession(sessions.find((candidate) => candidate.state === "running") || sessions[0]);
+      if (failures.length) throw new Error(failures.join(" "));
+    });
+  });
   get("reconnect").addEventListener("click", refresh);
   get("take-control").addEventListener("click", async () => {
     const id = session.id, force = human();

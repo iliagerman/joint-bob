@@ -41,6 +41,27 @@ test("browser metadata survives reopening and running sessions become interrupte
   reopened.close();
 });
 
+test("forget removes a stopped session and its downloads but refuses live or restore-pending rows", () => {
+  const store = new BrowserStore();
+  const db = new DatabaseSync(path.join(resolveDataDirectory(), "node.db"));
+  try {
+    const start = { projectId: "project", engine: "pi" as const, conversationId: randomUUID(), appNodeId: randomUUID() };
+    const running = store.create(start);
+    store.saveDownload(running.id, { id: randomUUID(), name: "a.txt", ready: true });
+    // A running session must be closed first.
+    assert.throws(() => store.forget(running.id), /close the browser/i);
+    store.finish(running.id, "interrupted", "Restart pending", true);
+    // Restore-pending sessions still refuse removal until their intent is cleared.
+    assert.throws(() => store.forget(running.id), /close the browser/i);
+    store.finish(running.id, "closed");
+    store.forget(running.id);
+    assert.throws(() => store.get(running.id), /not found/i);
+    assert.deepEqual(store.downloads(running.id), []);
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM browser_downloads WHERE sessionId = ?").get(running.id)!.n, 0);
+    assert.equal(store.list({ conversationId: start.conversationId }).length, 0);
+  } finally { db.close(); store.close(); }
+});
+
 for (const partialUpgrade of [false, true]) test(`legacy duplicate snapshot sessions upgrade without losing history, partial=${partialUpgrade}`, t => {
   const previous = process.env.PI_WEB_DATA_DIR;
   const root = path.join(resolveDataDirectory(), randomUUID());

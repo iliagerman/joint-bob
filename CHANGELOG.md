@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Stopped browser sessions can now be removed individually or cleared in bulk; the browser viewer closes when searching conversations.
+
 ## 1.62.0 — 2026-09-19
 
 - Settings > Attachments option now digests uploaded images and screenshots into descriptions that agents receive instead of raw bytes.

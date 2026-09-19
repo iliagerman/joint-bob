@@ -103,6 +103,7 @@ export const browserOperationSchema = z.discriminatedUnion("operation", [
   z.object({ operation: z.literal("start"), args: browserStartSchema }),
   z.object({ operation: z.literal("list"), args: browserIdentitySchema.partial() }),
   z.object({ operation: z.literal("get"), args: z.object({ id: idSchema }) }),
+  z.object({ operation: z.literal("forget"), args: z.object({ id: idSchema }) }),
   z.object({ operation: z.literal("command"), args: z.object({ id: idSchema, command: browserCommandSchema }) }),
   z.object({ operation: z.literal("profiles"), args: z.object({ projectId: z.string().min(1) }) }),
   z.object({ operation: z.literal("deleteProfile"), args: z.object({ id: idSchema, projectId: z.string().min(1) }) }),
@@ -132,6 +133,7 @@ export async function localBrowserOperation(input: BrowserOperation, actor: Brow
       return { sessions: machineNodeId ? (await Promise.all(sessions.map(async session => await clusterPeerMayAccessProject(machineNodeId, session.projectId) ? session : null))).filter(Boolean) : sessions };
     }
     case "get": return { session: view(await service.get(operation.args.id)) };
+    case "forget": { const projectId = (await service.get(operation.args.id)).projectId; await service.forget(operation.args.id); return { forgotten: true, projectId }; }
     case "command": return { result: await service.execute(operation.args.id, operation.args.command, actor), session: view(await service.get(operation.args.id)) };
     case "profiles": return { profiles: (await service.profiles(operation.args.projectId)).map(profile => ({ ...profile, nodeId: local.id })) };
     case "deleteProfile": await service.deleteProfile(operation.args.id, operation.args.projectId); return { deleted: true };
@@ -149,9 +151,15 @@ export async function browserOperation(input: BrowserOperation, actor: BrowserAc
     broadcastToProject(operation.args.projectId, { type: "browserSessionsChanged" });
     return result;
   }
-  if (!nodeId && (operation.operation === "get" || operation.operation === "command")) nodeId = await browserSessionOwner(operation.args.id, actor, identity);
-  if (!nodeId || idSchema.parse(nodeId) === (await getClusterNode()).id) return localBrowserOperation(operation, actor);
-  return (await peerRequest(nodeId, "operation", { ...operation, actor, identity })).json();
+  if (!nodeId && (operation.operation === "get" || operation.operation === "command" || operation.operation === "forget")) nodeId = await browserSessionOwner(operation.args.id, actor, identity);
+  if (!nodeId || idSchema.parse(nodeId) === (await getClusterNode()).id) {
+    const result = await localBrowserOperation(operation, actor);
+    if (operation.operation === "forget") broadcastToProject((result as { projectId: string }).projectId, { type: "browserSessionsChanged" });
+    return result;
+  }
+  const result = await (await peerRequest(nodeId, "operation", { ...operation, actor, identity })).json();
+  if (operation.operation === "forget") broadcastToProject((result as { projectId: string }).projectId, { type: "browserSessionsChanged" });
+  return result;
 }
 async function discoverBrowsers(operation: Extract<BrowserOperation, { operation: "list" }>, actor: BrowserActor, identity?: z.infer<typeof browserIdentitySchema>): Promise<BrowserDiscovery> {
   const local = await localBrowserOperation(operation, actor) as { sessions: BrowserSessionView[] };
