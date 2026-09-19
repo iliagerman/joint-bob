@@ -95,6 +95,27 @@ test("every secrets endpoint returns metadata only and the three scopes round-tr
       assert.deepEqual(await read.json(), { accountIds: [account.id] }, scopeType);
     }
 
+    // A project-owned account is created attached to its project, listed with its owner, and never replicates.
+    const owned = await fetch(`${node.baseUrl}/api/secrets/accounts`, {
+      method: "POST", headers,
+      body: JSON.stringify({ label: "Site key", provider: "custom", projectId, variables: [{ name: "SITE_KEY", kind: "value", value: SECRET_VALUE }] }),
+    });
+    assert.equal(owned.status, 201);
+    const ownedText = await owned.text();
+    assert.doesNotMatch(ownedText, new RegExp(SECRET_VALUE));
+    const ownedAccount = (JSON.parse(ownedText) as { account: { id: string; projectId?: string } }).account;
+    assert.equal(ownedAccount.projectId, projectId);
+    const ownedScope = await fetch(`${node.baseUrl}/api/secrets/scopes/project/${encodeURIComponent(projectId)}`, { headers: { Cookie: cookie } });
+    assert.deepEqual(await ownedScope.json(), { accountIds: [account.id, ownedAccount.id].sort() });
+    const relisted = await fetch(`${node.baseUrl}/api/secrets`, { headers: { Cookie: cookie } });
+    assert.deepEqual((await relisted.json() as { accounts: Array<{ id: string; projectId?: string }> }).accounts.find((item) => item.id === ownedAccount.id)?.projectId, projectId);
+    const leaky = await fetch(`${node.baseUrl}/api/secrets/accounts`, {
+      method: "POST", headers,
+      body: JSON.stringify({ label: "Leaky", provider: "custom", projectId, replicate: true, variables: [{ name: "LEAK", kind: "value", value: "x" }] }),
+    });
+    assert.equal(leaky.status, 400);
+    assert.match(await leaky.text(), /cannot replicate/);
+
     // The removed scope tier is rejected by the route schema, not silently accepted.
     assert.equal((await fetch(`${node.baseUrl}/api/secrets/scopes/project_type/personal`, { headers: { Cookie: cookie } })).status, 400);
     // The GitHub credential group routes are gone.

@@ -15,11 +15,13 @@ export type ConversationEngineId = HarnessId;
     travel as `accountIds` until `persistConversationSecretAccounts` can store them. */
 export interface SecretConversation { engine: ConversationEngineId; sessionId?: string; accountIds?: string[] }
 export interface SecretVariable { name: string; kind: SecretKind; configured: true }
-export interface SecretAccount { id: string; label: string; provider: SecretProvider; replicate: boolean; variables: SecretVariable[]; websiteOrigin?: string }
-export interface SecretAccountInput { id?: string; label: string; provider: SecretProvider; replicate?: boolean; variables: Array<{ name: string; kind: SecretKind; value?: string }>; websiteOrigin?: string | null }
+/** `projectId` marks an account owned by one project: it is attached to that project on creation, never
+    replicates, and is offered only in that project's pickers. Absent means global to this node. */
+export interface SecretAccount { id: string; label: string; provider: SecretProvider; replicate: boolean; variables: SecretVariable[]; websiteOrigin?: string; projectId?: string }
+export interface SecretAccountInput { id?: string; label: string; provider: SecretProvider; replicate?: boolean; variables: Array<{ name: string; kind: SecretKind; value?: string }>; websiteOrigin?: string | null; projectId?: string }
 export interface WebsiteCredentialAccount { id: string; origin: string; variables: Array<{ name: string; kind: SecretKind; value: string }> }
 type StoredVariable = { name: string; kind: SecretKind; value: string };
-type AccountRow = { id: string; label: string; provider: SecretProvider; replicate: number; variables_encrypted: string; website_origin: string | null };
+type AccountRow = { id: string; label: string; provider: SecretProvider; replicate: number; variables_encrypted: string; website_origin: string | null; project_id: string | null };
 
 /** A `github` account's variable set is fixed: the user never types the name. */
 export const GITHUB_TOKEN_VARIABLE = "GH_TOKEN";
@@ -39,6 +41,7 @@ export function ensureSecretSchema(handle: DatabaseSync): void {
   if (!columns.includes("replicate")) handle.exec("ALTER TABLE secret_accounts ADD COLUMN replicate INTEGER NOT NULL DEFAULT 0");
   if (!columns.includes("origin_node_id")) handle.exec("ALTER TABLE secret_accounts ADD COLUMN origin_node_id TEXT NOT NULL DEFAULT ''");
   if (!columns.includes("website_origin")) handle.exec("ALTER TABLE secret_accounts ADD COLUMN website_origin TEXT");
+  if (!columns.includes("project_id")) handle.exec("ALTER TABLE secret_accounts ADD COLUMN project_id TEXT");
 }
 
 function db(): DatabaseSync {
@@ -141,13 +144,13 @@ function storedVariables(row: AccountRow): StoredVariable[] {
 
 function accountRow(id: string): AccountRow {
   assertAccountId(id);
-  const row = db().prepare("SELECT id, label, provider, replicate, variables_encrypted, website_origin FROM secret_accounts WHERE id = ?").get(id) as AccountRow | undefined;
+  const row = db().prepare("SELECT id, label, provider, replicate, variables_encrypted, website_origin, project_id FROM secret_accounts WHERE id = ?").get(id) as AccountRow | undefined;
   if (!row) throw new Error("Secret account not found");
   return row;
 }
 
 function publicAccount(row: AccountRow): SecretAccount {
-  return { id: row.id, label: row.label, provider: row.provider, replicate: Boolean(row.replicate), variables: storedVariables(row).map(({ name, kind }) => ({ name, kind, configured: true })), ...(row.website_origin ? { websiteOrigin: row.website_origin } : {}) };
+  return { id: row.id, label: row.label, provider: row.provider, replicate: Boolean(row.replicate), variables: storedVariables(row).map(({ name, kind }) => ({ name, kind, configured: true })), ...(row.website_origin ? { websiteOrigin: row.website_origin } : {}), ...(row.project_id ? { projectId: row.project_id } : {}) };
 }
 
 function clearFiles(id: string): void {
@@ -184,7 +187,7 @@ function canonicalScopeId(scopeType: SecretScopeType, scopeId: string): string {
 /** Joins through `secret_accounts`, so an attachment whose account is gone simply yields
     no row and the remaining scopes still resolve (FR8.5). */
 function scopeRows(scopeType: SecretScopeType, scopeId: string): AccountRow[] {
-  return db().prepare("SELECT a.id, a.label, a.provider, a.replicate, a.variables_encrypted, a.website_origin FROM secret_assignments s JOIN secret_accounts a ON a.id = s.account_id WHERE s.scope_type = ? AND s.scope_id = ? ORDER BY a.id").all(scopeType, scopeId) as unknown as AccountRow[];
+  return db().prepare("SELECT a.id, a.label, a.provider, a.replicate, a.variables_encrypted, a.website_origin, a.project_id FROM secret_assignments s JOIN secret_accounts a ON a.id = s.account_id WHERE s.scope_type = ? AND s.scope_id = ? ORDER BY a.id").all(scopeType, scopeId) as unknown as AccountRow[];
 }
 
 function assertNoCollision(rows: AccountRow[]): void {
@@ -232,7 +235,7 @@ function resolved(project: string, conversation?: SecretConversation): ResolvedA
 }
 
 export async function listSecretAccounts(): Promise<SecretAccount[]> {
-  return (db().prepare("SELECT id, label, provider, replicate, variables_encrypted, website_origin FROM secret_accounts ORDER BY label, id").all() as unknown as AccountRow[]).map(publicAccount);
+  return (db().prepare("SELECT id, label, provider, replicate, variables_encrypted, website_origin, project_id FROM secret_accounts ORDER BY label, id").all() as unknown as AccountRow[]).map(publicAccount);
 }
 
 export async function saveSecretAccount(input: SecretAccountInput): Promise<SecretAccount> {
@@ -244,6 +247,9 @@ export async function saveSecretAccount(input: SecretAccountInput): Promise<Secr
   if (input.provider === "website" && !websiteOrigin) throw new Error("Website secret accounts require a website origin");
   if (websiteOrigin && input.replicate) throw new Error("Website credential accounts cannot replicate");
   if (websiteOrigin && input.variables.some((variable) => variable.kind === "file")) throw new Error("Website credential accounts cannot contain file variables");
+  // Ownership is fixed at creation: an edit keeps the stored owner and ignores any other.
+  const projectId = old ? old.project_id : input.projectId === undefined ? null : canonicalScopeId("project", input.projectId);
+  if (projectId && input.replicate) throw new Error("Project-scoped secret accounts cannot replicate");
   if (old && websiteOrigin) {
     const duplicate = db().prepare("SELECT 1 FROM secret_assignments own JOIN secret_assignments other ON other.scope_type = own.scope_type AND other.scope_id = own.scope_id AND other.account_id <> own.account_id JOIN secret_accounts account ON account.id = other.account_id WHERE own.account_id = ? AND account.website_origin = ? LIMIT 1").get(id, websiteOrigin);
     if (duplicate) throw new Error("Selected website accounts have duplicate origins");
@@ -256,9 +262,18 @@ export async function saveSecretAccount(input: SecretAccountInput): Promise<Secr
   });
   const replicate = input.replicate ? 1 : 0;
   const now = new Date().toISOString();
-  db().prepare("INSERT INTO secret_accounts (id, label, provider, variables_encrypted, replicate, website_origin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET label = excluded.label, provider = excluded.provider, variables_encrypted = excluded.variables_encrypted, replicate = excluded.replicate, website_origin = excluded.website_origin, updated_at = excluded.updated_at").run(id, input.label.trim(), input.provider, encryptSecretValue(JSON.stringify(variables)), replicate, websiteOrigin, now, now);
+  db().exec("BEGIN IMMEDIATE");
+  try {
+    db().prepare("INSERT INTO secret_accounts (id, label, provider, variables_encrypted, replicate, website_origin, project_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET label = excluded.label, provider = excluded.provider, variables_encrypted = excluded.variables_encrypted, replicate = excluded.replicate, website_origin = excluded.website_origin, updated_at = excluded.updated_at").run(id, input.label.trim(), input.provider, encryptSecretValue(JSON.stringify(variables)), replicate, websiteOrigin, projectId, now, now);
+    // A project-owned account is attached to its project in the same write, so it is never left floating.
+    if (!old && projectId) db().prepare("INSERT INTO secret_assignments (scope_type, scope_id, account_id) VALUES ('project', ?, ?)").run(projectId, id);
+    db().exec("COMMIT");
+  } catch (error) {
+    db().exec("ROLLBACK");
+    throw error;
+  }
   clearFiles(id);
-  return { id, label: input.label.trim(), provider: input.provider, replicate: Boolean(replicate), variables: variables.map(({ name, kind }) => ({ name, kind, configured: true })), ...(websiteOrigin ? { websiteOrigin } : {}) };
+  return { id, label: input.label.trim(), provider: input.provider, replicate: Boolean(replicate), variables: variables.map(({ name, kind }) => ({ name, kind, configured: true })), ...(websiteOrigin ? { websiteOrigin } : {}), ...(projectId ? { projectId } : {}) };
 }
 
 export async function deleteSecretAccount(accountId: string): Promise<void> {

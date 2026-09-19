@@ -18,7 +18,7 @@ app.get("/api/secrets", async (_request, response, next) => {
 app.post("/api/secrets/accounts", async (request, response, next) => {
   try {
     const session = response.locals.authSession as AuthSession;
-    const account = await saveSecretAccount(secretAccountSchema.omit({ id: true }).parse(request.body));
+    const account = await saveSecretAccount(secretAccountSchema.parse(request.body));
     const syncResults = await replicateSecretAccount(account, session.userId);
     response.status(201).json({ accounts: await listSecretAccounts(), account, ...(syncResults ? { syncResults } : {}) });
   } catch (error) { next(error); }
@@ -26,7 +26,7 @@ app.post("/api/secrets/accounts", async (request, response, next) => {
 app.put("/api/secrets/accounts/:accountId", async (request, response, next) => {
   try {
     const session = response.locals.authSession as AuthSession;
-    const account = await saveSecretAccount({ ...secretAccountSchema.omit({ id: true }).parse(request.body), id: z.string().uuid().parse(request.params.accountId) });
+    const account = await saveSecretAccount({ ...secretAccountSchema.parse(request.body), id: z.string().uuid().parse(request.params.accountId) });
     const syncResults = await replicateSecretAccount(account, session.userId);
     response.json({ accounts: await listSecretAccounts(), account, ...(syncResults ? { syncResults } : {}) });
   } catch (error) { next(error); }

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Secret accounts can now be scoped to a specific project and appear only in that project's picker.
+
 ## 1.62.1 — 2026-09-19
 
 - Stopped browser sessions can now be removed individually or cleared all at once.

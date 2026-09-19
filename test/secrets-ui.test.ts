@@ -126,3 +126,15 @@ test("saving a replicating account pushes it instead of stranding it", async () 
   assert.match(app, /saved\.syncResults/);
   assert.doesNotMatch(handler, /openSecretSyncDialog\(\)/);
 });
+
+test("the project secret picker can create a project-owned account and hides owned accounts elsewhere", async () => {
+  const [html, app] = await Promise.all([readFile("public/index.html", "utf8"), appSource()]);
+  assert.match(html, /data-testid="secret-scope-add-button"/);
+  assert.match(app, /secretScopeAddButton/);
+  // Owned accounts show only in their own project's pickers, never in a workspace picker.
+  assert.match(app, /!account\.projectId \|\| account\.projectId === /);
+  assert.match(app, /scopeType === "workspace" \? !account\.projectId/);
+  assert.match(app, /account\.projectId === state\.activeProjectId/);
+  // The create request carries the owner and never asks to replicate.
+  assert.match(app, /projectId: creatingForProjectId/);
+});

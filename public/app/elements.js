@@ -344,6 +344,7 @@ export const elements = {
   secretScopeForm: document.querySelector("#secretScopeForm"),
   secretScopeTitle: document.querySelector("#secretScopeTitle"),
   secretScopeList: document.querySelector("#secretScopeList"),
+  secretScopeAddButton: document.querySelector("#secretScopeAddButton"),
   secretScopeCancelButton: document.querySelector("#secretScopeCancelButton"),
   fileActionDialog: document.querySelector("#fileActionDialog"),
   fileActionPath: document.querySelector("#fileActionPath"),

@@ -26,7 +26,8 @@ function renderNewSessionSecrets() {
     return;
   }
   const remote = elements.newSessionNodeSelect.value !== localSessionNode()?.id;
-  for (const account of secretAccounts) {
+  // Project-owned accounts are offered only to conversations in their own project.
+  for (const account of secretAccounts.filter((account) => !account.projectId || account.projectId === state.activeProjectId)) {
     const item = document.createElement("label");
     item.className = "checkbox-row secret-scope-row";
     const input = document.createElement("input");

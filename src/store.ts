@@ -811,6 +811,7 @@ export async function updateProjectSyncFolderId(projectId: string, syncFolderId:
 
 export async function removeProject(projectId: string): Promise<void> {
   const db = await projectDatabase();
+  let ownedAccountIds: string[] = [];
   db.exec("BEGIN IMMEDIATE");
   try {
     const canonicalId = resolveProjectId(db, projectId);
@@ -833,12 +834,17 @@ export async function removeProject(projectId: string): Promise<void> {
     if (tableExists(db, "name_overrides")) db.prepare(`DELETE FROM name_overrides WHERE scope = 'projects' AND key IN (${placeholders})`).run(...projectIds);
     if (tableExists(db, "name_override_tombstones")) db.prepare(`DELETE FROM name_override_tombstones WHERE scope = 'projects' AND key IN (${placeholders})`).run(...projectIds);
     db.prepare(`DELETE FROM secret_assignments WHERE scope_type = 'project' AND scope_id IN (${placeholders})`).run(...projectIds);
+    // Accounts the project owns go with it; their decrypted files are removed after the commit.
+    ownedAccountIds = (db.prepare(`SELECT id FROM secret_accounts WHERE project_id IN (${placeholders})`).all(...projectIds) as Array<{ id: string }>).map((row) => row.id);
+    db.prepare(`DELETE FROM secret_assignments WHERE account_id IN (SELECT id FROM secret_accounts WHERE project_id IN (${placeholders}))`).run(...projectIds);
+    db.prepare(`DELETE FROM secret_accounts WHERE project_id IN (${placeholders})`).run(...projectIds);
     db.prepare("DELETE FROM projects WHERE id = ?").run(canonicalId);
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
     throw error;
   }
+  for (const id of ownedAccountIds) await fs.rm(path.join(resolveDataDirectory(), "secret-files", id), { recursive: true, force: true });
 }
 
 export async function touchProject(projectId: string): Promise<void> {

@@ -347,3 +347,21 @@ test("sync UI provides pending mapping and a node filesystem picker", async () =
   assert.match(html, /id="projectImportDialog"/);
   assert.match(html, /data-testid="project-import-browse-button"/);
 });
+
+test("removing a project deletes the secret accounts it owns along with their files", async () => {
+  await withStore(async (root, store) => {
+    const tag = `${Date.now()}-${Math.random()}`;
+    const secrets = await import(new URL(`../src/secrets.ts?owned-delete=${tag}`, import.meta.url).href) as typeof import("../src/secrets.js");
+    const project = await store.addProject("owned", path.join(root, "owned"));
+    const owned = await secrets.saveSecretAccount({ label: "Owned", provider: "google", projectId: project.id, variables: [{ name: "GOOGLE_APPLICATION_CREDENTIALS", kind: "file", value: "{}" }] });
+    const global = await secrets.saveSecretAccount({ label: "Global", provider: "custom", variables: [{ name: "G", kind: "value", value: "g" }] });
+    await secrets.setScopeSecretAccounts("project", project.id, [owned.id, global.id]);
+    const filePath = secrets.genericSecretEnvironment(project.id).GOOGLE_APPLICATION_CREDENTIALS!;
+    await readFile(filePath, "utf8");
+
+    await store.removeProject(project.id);
+
+    assert.deepEqual((await secrets.listSecretAccounts()).map((account) => account.id), [global.id]);
+    await assert.rejects(readFile(filePath, "utf8"), (error: NodeJS.ErrnoException) => error.code === "ENOENT");
+  });
+});

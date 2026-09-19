@@ -205,3 +205,36 @@ test("deleting a project or a workspace deletes its attachments, and an alias me
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("project-owned accounts are attached on creation, keep their owner, and cannot replicate", async () => {
+  await withSecrets("owned", async (secrets) => {
+    // Created through an alias id, stored and attached under the canonical project id.
+    const owned = await secrets.saveSecretAccount({ label: "Deploy key", provider: "custom", projectId: "project-alias", variables: [{ name: "DEPLOY_KEY", kind: "value", value: "deploy" }] });
+    assert.equal(owned.projectId, "project-a");
+    assert.deepEqual(await secrets.getScopeSecretAccounts("project", "project-a"), { accountIds: [owned.id] });
+    assert.equal(secrets.genericSecretEnvironment("project-a").DEPLOY_KEY, "deploy");
+    assert.deepEqual((await secrets.listSecretAccounts()).map((account) => account.projectId), ["project-a"]);
+
+    // An edit cannot move the account to another owner or detach it from its project.
+    const edited = await secrets.saveSecretAccount({ id: owned.id, label: "Deploy key 2", provider: "custom", projectId: "other", variables: [{ name: "DEPLOY_KEY", kind: "value" }] });
+    assert.equal(edited.projectId, "project-a");
+    assert.equal(edited.label, "Deploy key 2");
+
+    // Owned accounts never leave this node, and never point at a project that does not exist.
+    await assert.rejects(
+      secrets.saveSecretAccount({ label: "Bad", provider: "custom", projectId: "project-a", replicate: true, variables: [{ name: "X", kind: "value", value: "x" }] }),
+      (error: Error) => error.message === "Project-scoped secret accounts cannot replicate",
+    );
+    await assert.rejects(
+      secrets.saveSecretAccount({ id: owned.id, label: "Bad", provider: "custom", replicate: true, variables: [{ name: "DEPLOY_KEY", kind: "value" }] }),
+      (error: Error) => error.message === "Project-scoped secret accounts cannot replicate",
+    );
+    await assert.rejects(
+      secrets.saveSecretAccount({ label: "Bad", provider: "custom", projectId: "missing", variables: [{ name: "X", kind: "value", value: "x" }] }),
+      (error: Error) => error.message === "Secret project not found",
+    );
+    // A global account carries no owner at all.
+    const global = await secrets.saveSecretAccount({ label: "Global", provider: "custom", variables: [{ name: "G", kind: "value", value: "g" }] });
+    assert.equal("projectId" in global, false);
+  });
+});
