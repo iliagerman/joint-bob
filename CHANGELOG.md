@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.60.0 — 2026-09-19
 
-- Removed browser monitor reply rules and draft approval workflow.
+- Removed auto-reply draft and approval features from browser monitors.
 
 ## 1.59.2 — 2026-09-19
 
