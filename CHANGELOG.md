@@ -3,9 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.58.0 — 2026-09-19
 
-- Shell commands now run to completion instead of timing out, and finished tasks no longer wake the conversation with automatic follow-ups; an optional per-node time limit can be set in Settings > Shell commands.
+- Shell commands now run to completion instead of timing out after five seconds; timeout is configurable per node in Settings > Shell commands.
+- Background tasks no longer generate automatic conversation follow-ups when finished.
+- Long-running tasks appear in the tasks panel with persistent output during execution; short commands remain hidden.
+- Processes spawned by shell commands are now tracked and stoppable from the Tasks panel.
 
 ## 1.57.4 — 2026-09-18
 
