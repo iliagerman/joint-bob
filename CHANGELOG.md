@@ -3,9 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.62.1 — 2026-09-19
 
-- Stopped browser sessions can now be removed individually or cleared in bulk; the browser viewer closes when searching conversations.
+- Stopped browser sessions can now be removed individually or cleared all at once.
+- Browser viewer closes when searching conversations.
+- Fixed header layout: page title no longer clips and buttons align correctly.
 
 ## 1.62.0 — 2026-09-19
 
