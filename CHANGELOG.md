@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.60.2 — 2026-09-19
 
 - Kiro harness now correctly starts force-queued prompts when the previous turn is still initializing.
 
