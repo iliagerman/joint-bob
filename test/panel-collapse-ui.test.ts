@@ -36,7 +36,7 @@ test("both side panels collapse to a rail that can always be re-expanded", async
   assert.match(styles, /\.collapse-button \{[^}]*border-color: var\(--line\)/);
   assert.doesNotMatch(html, /collapse-button[^>]*>\u2039</);
   assert.doesNotMatch(html, /panel-expand-button"[^>]*>\u203a</);
-  assert.match(styles, /@media \(max-width: 1023px\) \{\n  \.collapse-button \{ display: none; \}/);
+  assert.match(styles, /@media \(max-width: 1023px\) \{[\s\S]*?\.collapse-button \{ display: none; \}/);
 
   assert.match(app, /function setPanelCollapsed\(panel, collapsed\)/);
   assert.match(app, /projectsPanelCollapsed/);

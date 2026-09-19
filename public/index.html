@@ -561,7 +561,7 @@
           <fieldset class="phase-settings"><legend>Secret accounts</legend><p>Attached accounts are exported into every new agent session in that scope, so the AWS CLI, gcloud, the gh CLI and git push work without being asked for keys. The most specific scope wins per variable name.</p><div id="secretAccountList" class="secret-account-list" data-testid="secret-account-list"></div><div class="github-group-actions"><button class="ghost" type="button" id="secretAccountAddButton" data-testid="secret-account-add-button">Add account</button><button class="ghost" type="button" id="secretSyncButton" data-testid="secret-sync-open-button">Sync to nodes</button></div></fieldset>
         </section>
 
-        <section class="settings-panel" id="settingsPanel-cluster" role="tabpanel" aria-labelledby="settingsTab-cluster" tabindex="0" hidden>
+        <section class="settings-panel" id="settingsPanel-cluster" role="tabpanel" aria-labelledby="settingsTab-cluster" tabindex="0" data-testid="settingsPanel-cluster" hidden>
           <fieldset class="phase-settings">
             <legend>Browser machines</legend>
             <p>Choose the default machine for new browsers, independent of where the agent runs. Conversations and individual starts can override it. Existing accounts stay on their original machines. Browsers are never installed automatically.</p>
@@ -571,13 +571,21 @@
             </div>
             <p class="settings-hint" id="browserStatus" data-testid="browser-status" role="status">Browser status has not been checked.</p>
           </fieldset>
-          <p>Every cluster member can create a one-time link. Paste it into the new node to join.</p>
-          <fieldset class="phase-settings">
-            <legend>Cluster nodes</legend>
-            <div class="cluster-inventory" id="clusterInventory"></div>
-            <div class="cluster-leave">
-              <button class="ghost danger" type="button" id="clusterLeaveButton" data-testid="cluster-leave-button" disabled>Leave cluster</button>
-              <p class="settings-hint">Leaving removes every paired node from this machine and from the other nodes. Running conversations and task handoffs must settle first.</p>
+          <p id="clusterMigrationMessage" class="cluster-message" role="status" hidden></p>
+          <fieldset class="phase-settings" id="fieldsetClusters">
+            <legend>Clusters</legend>
+            <div class="cluster-canvas" id="clusterCanvas" data-testid="cluster-canvas"></div>
+            <div class="cluster-details" id="clusterDetails" data-testid="cluster-details"></div>
+            <div class="cluster-inventory" id="clusterInventory" hidden></div>
+            <div class="cluster-create-row">
+              <label>New cluster name<input id="clusterCreateNameInput" autocomplete="off" maxlength="80" data-testid="cluster-create-name-input" /></label>
+              <button class="ghost" type="button" id="clusterCreateButton" data-testid="cluster-create-button">Create cluster</button>
+            </div>
+            <label class="checkbox-row"><input type="checkbox" id="clusterAutoShareInput" data-testid="cluster-auto-share-input" /> Automatically share projects created in the future</label>
+            <p class="settings-hint">Existing projects are unchanged.</p>
+            <div class="github-group-actions">
+              <button class="ghost" type="button" id="clusterShareAllButton" data-testid="cluster-share-all-button">Share existing owned projects</button>
+              <button class="ghost danger" type="button" id="clusterLeaveButton" data-testid="cluster-leave-button" disabled>Leave selected cluster</button>
             </div>
           </fieldset>
           <fieldset class="phase-settings">
@@ -594,14 +602,7 @@
           </fieldset>
           <fieldset class="phase-settings">
             <legend>Invite a node</legend>
-            <p>Generating a link invalidates any unused link from this machine. Pick the projects the new node may see — only they will be available on it, and the choice is frozen into the link.</p>
-            <div class="cluster-invite-projects">
-              <label class="checkbox-row" data-testid="cluster-invite-select-all-row">
-                <input type="checkbox" id="clusterInviteAllProjects" data-testid="cluster-invite-select-all" checked />
-                All projects
-              </label>
-              <div id="clusterInviteProjectList" data-testid="cluster-invite-project-list"></div>
-            </div>
+            <p>The link admits one node to the selected cluster. It does not share projects automatically.</p>
             <button class="ghost" type="button" id="clusterGenerateInviteButton" data-testid="cluster-invite-generate-button">Generate one-time link</button>
             <label>
               Join link
@@ -613,6 +614,7 @@
           </fieldset>
           <fieldset class="phase-settings">
             <legend>Join an existing cluster</legend>
+            <p>Joining adds another membership. It does not leave current clusters or share projects automatically.</p>
             <label>
               One-time join link
               <input id="clusterJoinLinkInput" type="url" autocomplete="off" placeholder="Paste a join link" data-testid="cluster-join-link-input" />

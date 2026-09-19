@@ -22,19 +22,19 @@ async function fixture(root: string) {
   await writeFile(path.join(app, "scripts/install-pi-runtime.mjs"), "");
   await writeFile(path.join(state, "node.db"), "");
   const commands: Record<string, string> = {
-    node: 'if [ "$1" = --import ]; then echo test-token; else exec "$REAL_NODE" "$@"; fi',
+    node: `if [ "$1" = --import ]; then
+  echo prepare >> "$LOG"
+  if [ "$PREPARE_STATUS" = 200 ]; then echo 0; else echo "Service update preparation failed ($PREPARE_STATUS)" >&2; exit 1; fi
+else
+  exec "$REAL_NODE" "$@"
+fi`,
     npm: 'echo "npm $*" >> "$LOG"; [ "$1" = --version ]',
     uname: 'echo "$TEST_PLATFORM"',
     plutil: 'exit 0',
     loginctl: 'echo yes',
     systemctl: 'echo "systemctl $*" >> "$LOG"; if [[ "$*" == *"restart joint-bob.service"* ]]; then touch "$LOG.restarted"; fi; if [[ "$*" == *MainPID* ]]; then if [ -e "$LOG.restarted" ]; then echo 456; else echo 123; fi; fi; exit 0',
     launchctl: 'echo "launchctl $*" >> "$LOG"; touch "$LOG.restarted"',
-    curl: `if [[ "$*" == *api/update/prepare* ]]; then
-  echo prepare >> "$LOG"
-  while [ "$1" != -o ]; do shift; done
-  if [ "$PREPARE_STATUS" = 200 ]; then printf '{"ready":true,"recoveryCount":0}' > "$2"; else printf '{"error":"Interrupted work is still recovering; wait before updating again"}' > "$2"; fi
-  printf '%s' "$PREPARE_STATUS"
-elif [ -e "$LOG.restarted" ]; then
+    curl: `if [ -e "$LOG.restarted" ]; then
   echo '{"status":"ok","release":"development"}'
 else
   # A fenced server is reachable but returns HTTP 503.
@@ -47,7 +47,7 @@ fi`,
 }
 
 for (const platform of ["Linux", "Darwin"]) {
-  for (const status of ["200", "503"]) {
+  for (const status of ["200", "503", "401", "404", "403"]) {
     test(`${platform} activation ${status === "200" ? "prepares before native restart" : "does not restart when preparation fails"}`, async () => {
       const root = await mkdtemp(path.join(os.tmpdir(), "installer-activation-"));
       try {
@@ -56,7 +56,7 @@ for (const platform of ["Linux", "Darwin"]) {
           env: { ...f.env, TEST_PLATFORM: platform, PREPARE_STATUS: status }, timeout: 10_000,
         });
         if (status === "200") await activation;
-        else await assert.rejects(activation, /Service update preparation failed \(503\).*Interrupted work is still recovering/);
+        else await assert.rejects(activation, new RegExp(`Service update preparation failed \\(${status}\\)`));
         const commands = (await readFile(f.env.LOG, "utf8")).trim().split("\n");
         const prepare = commands.indexOf("prepare");
         assert.ok(prepare >= 0, "activation must prepare even when health returns 503");

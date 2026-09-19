@@ -65,19 +65,24 @@ test("server prepares and recovers active sessions around service updates", asyn
 });
 
 test("installer coordinates update preparation before native restart", async () => {
-  const installer = await readFile("scripts/install-service.sh", "utf8");
+  const [installer, preparationClient] = await Promise.all([
+    readFile("scripts/install-service.sh", "utf8"),
+    readFile("src/update-preparation-client.ts", "utf8"),
+  ]);
   const prepare = installer.indexOf("\nprepare_update\n");
   const build = installer.indexOf('"${NPM_BIN}" run build');
   assert.ok(prepare >= 0);
   assert.ok(build >= 0 && build < prepare);
   assert.ok(prepare < installer.indexOf("systemctl --user restart joint-bob.service", prepare));
   assert.ok(prepare < installer.indexOf("launchctl bootstrap", prepare));
-  assert.match(installer, /Authorization: Bearer/);
   assert.match(installer, /--import tsx/);
-  assert.match(installer, /src\/cluster\.ts/);
+  assert.match(installer, /prepareLocalUpdate/);
+  assert.match(installer, /src\/update-preparation-client\.ts/);
+  assert.doesNotMatch(installer, /Authorization: Bearer/);
+  assert.match(preparationClient, /signClusterRequest/);
+  assert.match(preparationClient, /\/api\/cluster\/v2\/update\/prepare/);
+  assert.match(preparationClient, /getOrCreateClusterIdentity\(database, node\.id\)/);
   assert.doesNotMatch(installer, /dist\/cluster\.js/);
-  assert.match(installer, /\/api\/update\/prepare/);
-  assert.match(installer, /"\$\{status\}" = 404.*"\$\{status\}" = 401/);
 });
 
 test("browser warns during update and refreshes cached shell", async () => {

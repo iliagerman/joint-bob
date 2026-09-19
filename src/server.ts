@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { discoverMissingPeerProjects } from "./server/cluster-helpers.js";
 import { flushMembershipOutbox, flushReplicationOutbox, flushSecretCredentialOutbox, initializeStartupReadiness, pushRuntimeLeaseSnapshots, reconcileManagedAgentResources, reconcileTaskConversationRecords, reconcileTaskHandoffs, reconcileTicketWorkspaceSync, sweepRuntimeLeases } from "./server/maintenance.js";
 import { flushPushSubscriptionOutbox } from "./server/push-flush.js";
+import { flushV2ClusterAdministration } from "./server/cluster-manager.js";
 import { reconcileUpdateJobs, startUpdateScheduler } from "./updater.js";
 import { flags, port, server } from "./server/state.js";
 import { browserRuntime, closeBrowserRuntime } from "./server/browser.js";
@@ -27,6 +28,11 @@ import "./server/chat.js";
 import "./server/chat-socket.js";
 import "./server/maintenance.js";
 import "./server/routes/core.js";
+import "./server/routes/cluster-v2.js";
+import "./server/routes/cluster-manager.js";
+import "./server/routes/twins.js";
+import "./server/routes/sharing.js";
+import "./server/routes/resource-policy.js";
 import "./server/routes/preferences.js";
 import "./server/routes/cluster.js";
 import "./server/routes/cluster-tasks.js";
@@ -104,6 +110,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       .then(async () => { await recoverPendingUpdateRuns(); await reconcileTicketWorkspaceSync(); await reconcileTaskConversationRecords(); })
       .catch((error) => console.warn("Ticket workspace sync failed", error));
     flushMembershipOutbox().catch((error) => console.warn("Membership flush failed", error));
+    flushV2ClusterAdministration().catch((error) => console.warn("V2 cluster administration flush failed", error));
     flushReplicationOutbox().catch((error) => console.warn("Replication flush failed", error));
     pushRuntimeLeaseSnapshots().catch((error) => console.warn("Runtime lease push failed", error));
     flushSecretCredentialOutbox().catch((error) => console.warn("Secret credential flush failed", error));
@@ -116,6 +123,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       void initializeStartupReadiness();
       reconcileTicketWorkspaceSync().catch((error) => console.warn("Ticket workspace sync failed", error));
       flushMembershipOutbox().catch((error) => console.warn("Membership flush failed", error));
+      flushV2ClusterAdministration().catch((error) => console.warn("V2 cluster administration flush failed", error));
       flushReplicationOutbox().catch((error) => console.warn("Replication flush failed", error));
       pushRuntimeLeaseSnapshots().catch((error) => console.warn("Runtime lease push failed", error));
       sweepRuntimeLeases();

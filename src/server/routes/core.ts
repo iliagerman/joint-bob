@@ -5,10 +5,14 @@ import { z } from "zod";
 import { authenticate, authenticationStatus, type AuthSession, changePassword, clearSessionCookieValue, createAdministrator, listLoginSessions, revokeSession, revokeUserSession, sessionCookieName, sessionCookieValue, sessionForId } from "../../auth.js";
 import { appVersion } from "../../changelog.js";
 import { clusterInvitationProjects, clusterInvitationStatus, consumeClusterInvitation, createClusterPeer, getClusterMembership, getClusterNode, listClusterPeers, saveClusterPeer, saveClusterProjectGrant } from "../../cluster.js";
-import { clusterInvitationConflict, canonicalClusterUrl, requestCookie, requireCsrf, requireHttpAuth, securityHeaders, sendError } from "../http-auth.js";
+import { captureClusterRawBody, clusterBodyParserError, clusterInvitationConflict, canonicalClusterUrl, rejectEncodedClusterBody, requestCookie, requireCsrf, requireHttpAuth, securityHeaders, sendError } from "../http-auth.js";
 import { machineProjectAccessGuard } from "../cluster-helpers.js";
 import { clusterInvitationPreflightSchema, clusterInvitationRedeemSchema, loginSchema, passwordChangeSchema } from "../schemas.js";
 import { app, codemirrorDir, flags, publicDir } from "../state.js";
+import { redeemV2Membership } from "../cluster-v2.js";
+import { receiveManagerCertificate } from "../cluster-manager.js";
+import { confirmTwinHttp } from "../twins.js";
+import { selectiveSharingActive } from "../../cluster-v2-mode.js";
 
 app.use(securityHeaders);
 app.set("trust proxy", 1);
@@ -29,7 +33,12 @@ app.get("/sw.js", async (_request, response, next) => {
 });
 app.use("/vendor/codemirror", express.static(codemirrorDir, { index: false }));
 app.use(express.static(publicDir));
-app.use(express.json({ limit: "56mb" }));
+app.use("/api/cluster/v2", rejectEncodedClusterBody);
+app.use(express.json({ limit: "56mb", verify: captureClusterRawBody }));
+app.use(clusterBodyParserError);
+app.post("/api/cluster/v2/membership/redeem", redeemV2Membership);
+app.post("/api/cluster/v2/manager-transfer/certificate", receiveManagerCertificate);
+app.post("/api/cluster/v2/twins/confirm", confirmTwinHttp);
 
 app.get("/api/auth/status", (request, response) => {
   response.json(authenticationStatus(sessionForId(requestCookie(request, sessionCookieName))));
@@ -93,6 +102,7 @@ app.post("/api/auth/login", (request, response, next) => {
     leave its current cluster before redeeming. Placed before the auth middleware like redeem. */
 app.post("/api/cluster/invitations/preflight", async (request, response, next) => {
   try {
+    if (await selectiveSharingActive()) { sendError(response, 409, "Legacy sharing is disabled in selective sharing mode"); return; }
     const payload = clusterInvitationPreflightSchema.parse(request.body);
     const status = await clusterInvitationStatus(payload.invitationId, payload.secret, payload.nodeId);
     const localNode = await getClusterNode();
@@ -105,6 +115,7 @@ app.post("/api/cluster/invitations/preflight", async (request, response, next) =
 
 app.post("/api/cluster/invitations/redeem", async (request, response, next) => {
   try {
+    if (await selectiveSharingActive()) { sendError(response, 409, "Legacy sharing is disabled in selective sharing mode"); return; }
     const payload = clusterInvitationRedeemSchema.parse(request.body);
     const invitationResult = await clusterInvitationStatus(payload.invitationId, payload.secret, payload.member.id);
     if (invitationResult === "invalid") { sendError(response, 401, "Invalid cluster invitation"); return; }
@@ -137,9 +148,18 @@ app.post("/api/cluster/invitations/redeem", async (request, response, next) => {
 });
 
 app.use("/api", requireHttpAuth, requireCsrf);
+app.use("/api/cluster", async (request, response, next) => {
+  try {
+    if (["GET", "HEAD", "OPTIONS"].includes(request.method)) { next(); return; }
+    const pathname = request.path.toLowerCase();
+    const v2 = pathname === "/v2" || pathname.startsWith("/v2/");
+    if (v2 || (request.method === "PUT" && pathname === "/node") || !await selectiveSharingActive()) { next(); return; }
+    sendError(response, 409, "Legacy sharing is disabled in selective sharing mode");
+  } catch (error) { next(error); }
+});
 app.use("/api/cluster", machineProjectAccessGuard);
 app.use("/api", (request, response, next) => {
-  if (flags.updatePreparing && !["GET", "HEAD", "OPTIONS"].includes(request.method) && request.path !== "/update/prepare") {
+  if (flags.updatePreparing && !["GET", "HEAD", "OPTIONS"].includes(request.method) && request.path !== "/cluster/v2/update/prepare") {
     response.status(503).json({ error: "Server update in progress" });
     return;
   }

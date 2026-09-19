@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import type { NextFunction, Request, Response } from "express";
 import { z } from "zod";
 import { type AuthSession, sessionCookieName, sessionForId } from "../auth.js";
@@ -8,6 +9,40 @@ import { machineRoutes } from "./state.js";
 import { browserAgentIdentity } from "../browser-agent.js";
 import { backgroundTaskAgentIdentity } from "../background-task-agent.js";
 import { ntfyAgentIdentity } from "../ntfy-agent.js";
+import { getOrCreateClusterIdentity, pinClusterPublicKey } from "../cluster-identity.js";
+import { ClusterProtocolError, verifyClusterRequest } from "../cluster-protocol.js";
+import { clusterV2Database } from "../cluster-v2-store.js";
+import { ClusterV2HttpError, selectiveSharingActive } from "../cluster-v2-mode.js";
+
+const clusterRawBodies = new WeakMap<IncomingMessage, Buffer>();
+
+function isClusterV2Url(url: string | undefined): boolean {
+  if (url === undefined) return false;
+  const pathname = url.split("?", 1)[0].toLowerCase();
+  return pathname === "/api/cluster/v2" || pathname.startsWith("/api/cluster/v2/");
+}
+
+export function captureClusterRawBody(request: IncomingMessage, _response: ServerResponse, body: Buffer): void {
+  if (isClusterV2Url(request.url)) clusterRawBodies.set(request, Buffer.from(body));
+}
+
+export function rejectEncodedClusterBody(request: Request, response: Response, next: NextFunction): void {
+  const encoding = request.header("content-encoding");
+  if (encoding && encoding.toLowerCase() !== "identity") {
+    response.status(415).json({ error: "Encoded cluster request bodies are not supported" });
+    return;
+  }
+  next();
+}
+
+export function clusterBodyParserError(error: unknown, request: Request, response: Response, next: NextFunction): void {
+  if (!isClusterV2Url(request.originalUrl)) { next(error); return; }
+  const type = (error as { type?: string }).type;
+  if (type === "entity.parse.failed") { response.status(400).json({ error: "Malformed cluster JSON" }); return; }
+  if (type === "entity.too.large") { response.status(413).json({ error: "Cluster request body is too large" }); return; }
+  if (type === "encoding.unsupported") { response.status(415).json({ error: "Encoded cluster request bodies are not supported" }); return; }
+  next(error);
+}
 
 export function sendError(response: Response, statusCode: number, message: string): void {
   response.status(statusCode).json({ error: message });
@@ -98,7 +133,37 @@ export async function machineCredentialNodeId(token: string): Promise<string | u
   return peers.find((peer) => machineTokenMatches(token, peer.token))?.id;
 }
 
+export function clusterRequestRawBody(request: Request): Buffer {
+  const captured = clusterRawBodies.get(request);
+  const declaredBody = request.header("transfer-encoding") !== undefined || Number(request.header("content-length") ?? "0") > 0;
+  if (!captured && declaredBody) throw new ClusterV2HttpError(415, "Unsupported cluster request body");
+  return captured ?? Buffer.alloc(0);
+}
+
+async function requireClusterV2Auth(request: Request, response: Response, next: NextFunction): Promise<void> {
+  try {
+    const captured = clusterRequestRawBody(request);
+    const node = await getClusterNode();
+    const database = await clusterV2Database();
+    const identity = getOrCreateClusterIdentity(database, node.id);
+    pinClusterPublicKey(database, node.id, identity.publicKey);
+    const sender = verifyClusterRequest(database, node.id, request.method, request.originalUrl, captured, request.header("authorization"));
+    response.locals.machineAuth = true;
+    response.locals.machineNodeId = sender;
+    response.locals.machineProtocol = 2;
+    next();
+  } catch (error) {
+    if (error instanceof ClusterProtocolError) { sendError(response, 401, "Unauthorized"); return; }
+    if (error instanceof ClusterV2HttpError) { sendError(response, error.statusCode, error.message); return; }
+    next(error);
+  }
+}
+
 export async function requireHttpAuth(request: Request, response: Response, next: NextFunction): Promise<void> {
+  if (isClusterV2Url(`/api${request.path}`)) {
+    await requireClusterV2Auth(request, response, next);
+    return;
+  }
   const token = bearerToken(request);
   if (request.path === "/browser/agent" && request.method === "POST" && token) {
     const identity = browserAgentIdentity(token);
@@ -116,6 +181,7 @@ export async function requireHttpAuth(request: Request, response: Response, next
     ? await machineCredentialNodeId(token)
     : undefined;
   if (machineNodeId) {
+    if (await selectiveSharingActive()) { sendError(response, 409, "Legacy machine authentication is disabled in selective sharing mode"); return; }
     response.locals.machineAuth = true;
     response.locals.machineNodeId = machineNodeId;
     next();

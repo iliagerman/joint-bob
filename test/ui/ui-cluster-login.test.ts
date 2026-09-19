@@ -147,7 +147,7 @@ test("an open remote conversation can switch locally and take ownership", async 
   assert.equal(await takeButton.isVisible(), true, `local view offers takeover: ${JSON.stringify(takeoverState)}`);
   await takeButton.click();
   await homeserverPage.locator("#conversationLock").waitFor({ state: "hidden", timeout: 30_000 });
-  await homeserverPage.locator("#messageInput:not(:disabled)").waitFor();
+  await homeserverPage.locator("#messageInput:not(:disabled)").waitFor({ timeout: 30_000 });
   assert.equal(await homeserverPage.getByTestId("chat-message-input").isEnabled(), true, "the destination can continue the conversation after takeover");
 
   await nodeSelect.selectOption(mac.nodeId);

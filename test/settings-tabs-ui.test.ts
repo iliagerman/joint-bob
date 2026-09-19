@@ -28,8 +28,9 @@ test("settings tabs absorb notification, secret, and cluster configuration", asy
   assert.match(html, /id="clusterJoinLinkInput"[^>]*data-testid="cluster-join-link-input"/);
   assert.match(html, /id="clusterJoinButton"[^>]*data-testid="cluster-join-button"/);
   assert.doesNotMatch(html, /clusterLocalToken|clusterPeerUrlInput|clusterPeerTokenInput/);
-  assert.match(app, /api\("\/api\/cluster\/invitations", \{ method: "POST", body: JSON\.stringify\(\{ projectIds \}\) \}\)/);
-  assert.match(app, /api\("\/api\/cluster\/join", \{[\s\S]*method: "POST"/);
+  assert.match(app, /api\(`\/api\/clusters\/\$\{cluster\.id\}\/invitations`, \{ method: "POST", body: JSON\.stringify\(\{ expectedEpoch: cluster\.managerEpoch \}\) \}\)/);
+  assert.match(app, /api\("\/api\/clusters\/join", \{[\s\S]*method: "POST"/);
+  assert.doesNotMatch(html, /cluster-invite-project-input/);
   // Workspaces live in the Workspaces tab; the Secrets tab carries every secret account.
   assert.match(html, /id="settingsPanel-workspaces"[\s\S]*id="workspaceList"/);
   assert.match(html, /data-settings-tab="workspaces"[^>]*data-testid="settings-tab-workspaces">Workspaces</);

@@ -1,9 +1,20 @@
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { nanoid } from "nanoid";
 import { ensureWorkspaceSecretsMigration, rekeySecretAssignments } from "./secrets-migration.js";
+import { selectiveSharingActiveInDatabase } from "./cluster-v2-mode-state.js";
+import {
+  applyResourcePolicy, ensureResourceSharingSchema, registerLocalSharingResource,
+  ResourceSharingError, hasCurrentResourcePolicyContext, type SignedResourcePolicy,
+} from "./cluster-sharing.js";
+import { resourceClusterIds } from "./cluster-sharing-policy.js";
+import {
+  ensureProjectMetadataSchema, projectMetadataEnvelopeSchema, projectMetadataVisible,
+  recordProjectMetadataReceipt, storedProjectMetadata, validateProjectMetadataVersion, type ProjectMetadataEnvelope,
+} from "./cluster-project-metadata.js";
 import type { ProjectRecord, WorkspaceId, WorkspaceRecord } from "./types.js";
 
 interface AddProjectOptions {
@@ -63,6 +74,11 @@ function rowToProject(db: DatabaseSync, row: ProjectRow): ProjectRecord {
     ORDER BY node_id
   `).all(row.id) as unknown as ProjectLocationRow[];
   const locations = locationRows.map((location) => ({ nodeId: location.nodeId, path: location.path }));
+  const sharing = selectiveSharingActiveInDatabase(db)
+    ? db.prepare("SELECT owner_node_id FROM sharing_resource_owners WHERE kind='project' AND resource_id=?")
+      .get(row.id) as { owner_node_id: string } | undefined
+    : undefined;
+  const local = sharing ? db.prepare("SELECT id FROM cluster_node LIMIT 1").get() as { id: string } : undefined;
   return {
     id: row.id,
     name: row.name,
@@ -74,6 +90,11 @@ function rowToProject(db: DatabaseSync, row: ProjectRow): ProjectRecord {
     ...(locations.length ? { locations } : {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    ...(sharing ? {
+      ownerNodeId: sharing.owner_node_id,
+      locallyOwned: sharing.owner_node_id === local!.id,
+      clusterIds: resourceClusterIds(db, local!.id, "project", row.id),
+    } : {}),
   };
 }
 
@@ -116,6 +137,22 @@ function saveProject(db: DatabaseSync, project: ProjectRecord): void {
       created_at = excluded.created_at,
       updated_at = excluded.updated_at
   `).run(...projectValues(project));
+}
+
+function saveNewLocalProject(db: DatabaseSync, project: ProjectRecord): void {
+  db.exec("SAVEPOINT project_create");
+  try {
+    saveProject(db, project);
+    if (selectiveSharingActiveInDatabase(db)) {
+      const local = db.prepare("SELECT id FROM cluster_node LIMIT 1").get() as { id: string };
+      ensureResourceSharingSchema(db);
+      registerLocalSharingResource(db, local.id, { kind: "project", id: project.id });
+    }
+    db.exec("RELEASE project_create");
+  } catch (error) {
+    db.exec("ROLLBACK TO project_create; RELEASE project_create");
+    throw error;
+  }
 }
 
 function resolveProjectId(db: DatabaseSync, id: string): string | undefined {
@@ -463,11 +500,113 @@ async function writeProjectInstructions(project: ProjectRecord): Promise<void> {
 export async function listProjects(): Promise<ProjectRecord[]> {
   const db = await projectDatabase();
   const rows = db.prepare("SELECT * FROM projects ORDER BY updated_at DESC").all() as unknown as ProjectRow[];
-  return rows.map((row) => rowToProject(db, row));
+  if (!selectiveSharingActiveInDatabase(db)) return rows.map((row) => rowToProject(db, row));
+  const local = (db.prepare("SELECT id FROM cluster_node LIMIT 1").get() as { id: string }).id;
+  return rows.filter((row) => projectMetadataVisible(db, local, row.id)).map((row) => rowToProject(db, row));
 }
 
 export async function canonicalProjectId(projectId: string): Promise<string | undefined> {
   return resolveProjectId(await projectDatabase(), projectId);
+}
+
+function applyProjectResourcePolicyInDatabase(
+  db: DatabaseSync, localNodeId: string, senderNodeId: string, input: SignedResourcePolicy,
+): void {
+  ensureResourceSharingSchema(db);
+  if (!selectiveSharingActiveInDatabase(db)) throw new ResourceSharingError("Selective sharing is not active", 409);
+  if (input.body.kind !== "project") throw new ResourceSharingError("Invalid project policy", 400);
+  const resourceId = input.body.resourceId;
+  const canonical = resolveProjectId(db, resourceId);
+  const hadOwnership = Boolean(db.prepare(
+    "SELECT 1 FROM sharing_resource_owners WHERE kind='project' AND resource_id=?").get(resourceId));
+  applyResourcePolicy(db, localNodeId, senderNodeId, input);
+  if (input.body.operation === "upsert" && canonical && (canonical !== resourceId || !hadOwnership)) {
+    throw new ResourceSharingError("Project identity requires adoption", 409);
+  }
+}
+
+export async function applyProjectResourcePolicy(
+  localNodeId: string, senderNodeId: string, input: SignedResourcePolicy,
+): Promise<void> {
+  const db = await projectDatabase();
+  db.exec("SAVEPOINT project_policy_receive");
+  try {
+    applyProjectResourcePolicyInDatabase(db, localNodeId, senderNodeId, input);
+    db.exec("RELEASE project_policy_receive");
+  } catch (error) {
+    db.exec("ROLLBACK TO project_policy_receive; RELEASE project_policy_receive");
+    throw error;
+  }
+}
+
+function replicaWorkspace(db: DatabaseSync, owner: string): string {
+  ensureProjectMetadataSchema(db);
+  const workspaceId = `shared-${createHash("sha256").update(owner).digest("hex").slice(0, 24)}`;
+  const registry = db.prepare("SELECT owner_node_id FROM cluster_v2_project_workspaces WHERE workspace_id=?")
+    .get(workspaceId) as { owner_node_id: string } | undefined;
+  if (registry && registry.owner_node_id !== owner) throw new ResourceSharingError("Shared workspace owner conflict", 409);
+  const workspace = db.prepare("SELECT id FROM workspaces WHERE id=?").get(workspaceId);
+  if (workspace && !registry) throw new ResourceSharingError("Shared workspace identity conflict", 409);
+  if (!workspace) {
+    const now = new Date().toISOString();
+    db.prepare("INSERT INTO workspaces(id,label,created_at,updated_at) VALUES(?,?,?,?)")
+      .run(workspaceId, "Shared projects", now, now);
+    if (!registry) db.prepare("INSERT INTO cluster_v2_project_workspaces(workspace_id,owner_node_id) VALUES(?,?)")
+      .run(workspaceId, owner);
+  }
+  return workspaceId;
+}
+
+function saveIncomingProject(db: DatabaseSync, envelope: ProjectMetadataEnvelope, managedHome: string): void {
+  const body = envelope.statement.body;
+  const row = db.prepare("SELECT * FROM projects WHERE id=?").get(body.resourceId) as ProjectRow | undefined;
+  if (row) {
+    saveProject(db, { ...rowToProject(db, row), name: envelope.metadata.name,
+      ...(envelope.metadata.color ? { color: envelope.metadata.color } : { color: undefined }),
+      createdAt: envelope.metadata.createdAt, updatedAt: envelope.metadata.updatedAt });
+    return;
+  }
+  const workspaceId = replicaWorkspace(db, body.ownerNodeId);
+  const digest = createHash("sha256").update(`${body.ownerNodeId}\0${body.resourceId}`).digest("hex");
+  const replicaPath = path.join(managedHome, workspaceId, "projects", digest);
+  if (db.prepare("SELECT 1 FROM projects WHERE path=? AND id<>?").get(replicaPath, body.resourceId)) {
+    throw new ResourceSharingError("Project path conflict", 409);
+  }
+  saveProject(db, { id: body.resourceId, name: envelope.metadata.name, type: workspaceId,
+    ...(envelope.metadata.color ? { color: envelope.metadata.color } : {}), path: replicaPath,
+    createdAt: envelope.metadata.createdAt, updatedAt: envelope.metadata.updatedAt });
+}
+
+export async function applyProjectMetadata(
+  localNodeId: string, senderNodeId: string, input: unknown, managedHome: string,
+): Promise<void> {
+  const envelope = projectMetadataEnvelopeSchema.parse(input);
+  const body = envelope.statement.body;
+  if (body.kind !== "project" || body.operation !== "upsert") throw new ResourceSharingError("Invalid project metadata policy", 400);
+  if (senderNodeId !== body.ownerNodeId || body.writerNodeId !== body.ownerNodeId) {
+    throw new ResourceSharingError("Only original owner may send project metadata", 403);
+  }
+  const db = await projectDatabase();
+  db.exec("SAVEPOINT project_metadata_receive");
+  try {
+    applyProjectResourcePolicyInDatabase(db, localNodeId, senderNodeId, envelope.statement);
+    if (!hasCurrentResourcePolicyContext(db, localNodeId, envelope.statement)) {
+      throw new ResourceSharingError("Unauthorized project metadata context", 403);
+    }
+    const isNewer = validateProjectMetadataVersion(db, envelope);
+    const nativeProject = db.prepare("SELECT 1 FROM projects WHERE id=?").get(body.resourceId);
+    if (isNewer) saveIncomingProject(db, envelope, managedHome);
+    else if (!nativeProject) {
+      const metadata = storedProjectMetadata(db, body.ownerNodeId, body.resourceId);
+      if (!metadata) throw new Error("Stored project metadata is missing");
+      saveIncomingProject(db, { ...envelope, metadata }, managedHome);
+    }
+    recordProjectMetadataReceipt(db, envelope);
+    db.exec("RELEASE project_metadata_receive");
+  } catch (error) {
+    db.exec("ROLLBACK TO project_metadata_receive; RELEASE project_metadata_receive");
+    throw error;
+  }
 }
 
 export async function projectAliasIds(projectId: string): Promise<string[]> {
@@ -506,7 +645,12 @@ export async function getProject(projectId: string): Promise<ProjectRecord | und
   const canonicalId = resolveProjectId(db, projectId);
   if (!canonicalId) return undefined;
   const row = db.prepare("SELECT * FROM projects WHERE id = ?").get(canonicalId) as ProjectRow | undefined;
-  return row ? rowToProject(db, row) : undefined;
+  if (!row) return undefined;
+  if (selectiveSharingActiveInDatabase(db)) {
+    const local = (db.prepare("SELECT id FROM cluster_node LIMIT 1").get() as { id: string }).id;
+    if (!projectMetadataVisible(db, local, row.id)) return undefined;
+  }
+  return rowToProject(db, row);
 }
 
 export async function addProject(name: string, folderPath: string, options: AddProjectOptions = {}): Promise<ProjectRecord> {
@@ -545,7 +689,7 @@ export async function addProject(name: string, folderPath: string, options: AddP
     updatedAt: now,
   };
   if (options.synced && options.writeInstructions !== false) await writeProjectInstructions(project);
-  saveProject(db, project);
+  saveNewLocalProject(db, project);
   return project;
 }
 
@@ -734,6 +878,7 @@ export async function saveWorkspace(input: { id?: string; label: string }): Prom
 
 export async function deleteWorkspace(workspaceId: string): Promise<void> {
   const db = await projectDatabase();
+  ensureProjectMetadataSchema(db);
   const used = db.prepare("SELECT COUNT(*) AS total FROM projects WHERE workspace_id = ?").get(workspaceId) as { total: number };
   if (used.total > 0) throw new WorkspaceError("Move or delete this workspace's projects before deleting it");
   const remaining = db.prepare("SELECT COUNT(*) AS total FROM workspaces").get() as { total: number };
@@ -741,6 +886,7 @@ export async function deleteWorkspace(workspaceId: string): Promise<void> {
   db.exec("BEGIN IMMEDIATE");
   try {
     db.prepare("DELETE FROM secret_assignments WHERE scope_type = 'workspace' AND scope_id = ?").run(workspaceId);
+    db.prepare("DELETE FROM cluster_v2_project_workspaces WHERE workspace_id = ?").run(workspaceId);
     db.prepare("DELETE FROM workspaces WHERE id = ?").run(workspaceId);
     db.exec("COMMIT");
   } catch (error) {

@@ -42,6 +42,9 @@ export interface ProjectRecord {
   locations?: ProjectLocation[];
   createdAt: string;
   updatedAt: string;
+  ownerNodeId?: string;
+  locallyOwned?: boolean;
+  clusterIds?: string[];
 }
 
 export interface ProjectView extends ProjectRecord {

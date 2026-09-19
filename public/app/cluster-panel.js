@@ -1,270 +1,188 @@
 import { api } from "./api.js";
+import { renderClusterCanvas } from "./cluster-canvas.js";
 import { elements } from "./elements.js";
-import { openProjectImportMapping } from "./project-forms.js";
 import { loadProjects } from "./project-selection.js";
 import { confirmAction, toast } from "./shell.js";
 
-function clusterNodeRow({ name, url, state, status }) {
-  const row = document.createElement("div");
-  row.className = "cluster-node";
-  row.dataset.state = state;
-  row.dataset.testid = "cluster-node-row";
-  const dot = document.createElement("span");
-  dot.className = "cluster-node-dot";
-  dot.setAttribute("aria-hidden", "true");
-  const identity = document.createElement("div");
-  identity.className = "cluster-node-identity";
-  const title = document.createElement("strong");
-  title.textContent = name;
-  identity.append(title);
-  if (url) {
-    const address = document.createElement("span");
-    address.className = "cluster-node-url";
-    address.textContent = url;
-    identity.append(address);
-  }
-  const label = document.createElement("span");
-  label.className = "cluster-node-status";
-  label.dataset.testid = "cluster-node-status";
-  label.textContent = status;
-  row.append(dot, identity, label);
-  return row;
-}
+let selectedClusterId = null;
+let panelState = null;
+let pendingJoin = { link: "", requestId: "" };
+let invitationRequestId = 0;
 
-/**
- * One row per node, each saying whether this machine can currently reach it. An
- * unreachable peer keeps the name and address it was paired under, so the list still
- * says which machine is missing rather than showing an opaque id.
- */
-function renderClusterInventory(inventory) {
+function renderLegacyInventory(inventory) {
   elements.clusterInventory.replaceChildren();
-  const local = clusterNodeRow({ name: inventory.local.name, url: inventory.local.url, state: "local", status: "This node" });
-  elements.clusterInventory.append(local);
-  for (const entry of inventory.remote) {
-    const name = entry.name || entry.inventory?.node?.name || entry.peerId;
-    const url = entry.url || entry.inventory?.node?.url || "";
-    const status = entry.reachable ? "Connected" : `Not connected — ${entry.error}`;
-    const row = clusterNodeRow({ name, url, state: entry.reachable ? "online" : "offline", status });
-    const importButton = document.createElement("button");
-    importButton.type = "button";
-    importButton.className = "ghost compact";
-    importButton.textContent = "Import projects";
-    importButton.dataset.testid = "cluster-import-projects-button";
-    importButton.addEventListener("click", async () => {
-      try {
-        const result = await api("/api/cluster/projects/import", { method: "POST", body: JSON.stringify({ peerId: entry.peerId }) });
-        toast(`Imported ${result.imported.length} projects${result.pending.length ? `; ${result.pending.length} need a local folder` : ""}${result.skipped.length ? `; skipped ${result.skipped.length}` : ""}`);
-        await loadProjects();
-        renderClusterInventory(await api("/api/cluster/inventory"));
-        if (result.pending.length) {
-          elements.settingsDialog.close();
-          openProjectImportMapping(result.pending);
-        }
-      } catch (error) {
-        toast(error.message);
-      }
-    });
-    row.append(importButton);
-    const removeButton = document.createElement("button");
-    removeButton.type = "button";
-    removeButton.className = "ghost compact danger";
-    removeButton.textContent = "Remove";
-    removeButton.dataset.testid = "cluster-remove-peer-button";
-    removeButton.title = "Only the node that created this member's invitation can remove it";
-    removeButton.addEventListener("click", async () => {
-      try {
-        await api(`/api/cluster/peers/${entry.peerId}`, { method: "DELETE" });
-        toast(`Removed ${name} from the cluster`);
-        renderClusterInventory(await api("/api/cluster/inventory"));
-        await loadProjects();
-      } catch (error) {
-        toast(error.message);
-      }
-    });
-    row.append(removeButton);
-    elements.clusterInventory.append(row);
+  const nodes = [{ ...inventory.local, status: "This node", state: "local" }, ...inventory.remote.map((entry) => ({
+    name: entry.name || entry.inventory?.node?.name || entry.peerId,
+    url: entry.url || entry.inventory?.node?.url,
+    status: entry.reachable ? "Connected" : `Not connected — ${entry.error}`,
+    state: entry.reachable ? "online" : "offline",
+  }))];
+  for (const node of nodes) {
+    const row = document.createElement("div"); row.className = "cluster-node"; row.dataset.testid = "cluster-node-row"; row.dataset.state = node.state;
+    const name = document.createElement("strong"); name.textContent = node.name;
+    const url = document.createElement("span"); url.textContent = node.url || "";
+    const status = document.createElement("span"); status.className = "cluster-node-status"; status.dataset.testid = "cluster-node-status"; status.textContent = node.status;
+    row.append(name, url, status); elements.clusterInventory.append(row);
   }
 }
 
-/** The invitation's project selector: every local project, checked by default so a link
-    without a decision keeps sharing everything, which is what clusters did before. */
-async function renderInviteProjectList() {
-  const { projects } = await api("/api/projects?syncStatus=false");
-  elements.clusterInviteProjectList.replaceChildren();
-  for (const project of projects) {
-    const row = document.createElement("label");
-    row.className = "checkbox-row";
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.value = project.id;
-    input.checked = true;
-    input.dataset.testid = "cluster-invite-project-input";
-    input.dataset.projectName = project.name;
-    row.append(input, document.createTextNode(` ${project.name}`));
-    elements.clusterInviteProjectList.append(row);
-  }
-  syncSelectAllState();
+function selectedCluster() {
+  return panelState?.clusters.find((cluster) => cluster.id === selectedClusterId) || null;
 }
 
-function inviteProjectInputs() {
-  return [...elements.clusterInviteProjectList.querySelectorAll("input[type=checkbox]")];
-}
-
-function selectedInviteProjectIds() {
-  return inviteProjectInputs().filter((input) => input.checked).map((input) => input.value);
-}
-
-function syncSelectAllState() {
-  const inputs = inviteProjectInputs();
-  elements.clusterInviteAllProjects.checked = inputs.length > 0 && inputs.every((input) => input.checked);
-  elements.clusterGenerateInviteButton.disabled = selectedInviteProjectIds().length === 0;
-}
-
-/** A generated link belongs to the selection it was made with; changing the selection
-    invalidates the link on screen so it can never be handed out for the wrong projects. */
 function clearGeneratedLink() {
+  invitationRequestId += 1;
   elements.clusterInviteLink.value = "";
   elements.copyClusterInviteButton.disabled = true;
 }
 
-export async function loadClusterPanel() {
-  const inventory = await api("/api/cluster/inventory");
+function syncControls() {
+  const cluster = selectedCluster();
+  const blocked = panelState.migrationRequired;
+  const controls = [elements.clusterCreateButton, elements.clusterJoinButton, elements.clusterGenerateInviteButton,
+    elements.clusterAutoShareInput, elements.clusterShareAllButton, elements.clusterLeaveButton];
+  for (const control of controls) control.disabled = blocked;
+  if (!cluster || blocked) {
+    for (const control of [elements.clusterGenerateInviteButton, elements.clusterAutoShareInput, elements.clusterShareAllButton, elements.clusterLeaveButton]) control.disabled = true;
+  }
+  if (!cluster) return;
+  elements.clusterAutoShareInput.checked = cluster.autoShareProjects;
+  const localIsManager = cluster.managerNodeId === panelState.localNodeId;
+  if (localIsManager && cluster.members.length > 1) {
+    elements.clusterLeaveButton.disabled = true;
+    elements.clusterLeaveButton.title = "Transfer cluster membership management before leaving";
+  } else elements.clusterLeaveButton.title = "";
+}
+
+function selectCluster(clusterId) {
+  if (selectedClusterId !== clusterId) clearGeneratedLink();
+  selectedClusterId = clusterId;
+  syncControls();
+}
+
+function renderPanel(inventory, clusterData, projects) {
+  const memberships = clusterData.clusters;
+  if (!memberships.some((cluster) => cluster.id === selectedClusterId)) selectedClusterId = memberships[0]?.id || null;
+  panelState = { ...clusterData, projects, localNodeId: inventory.local.id };
+  elements.clusterMigrationMessage.hidden = !clusterData.migrationRequired;
+  elements.clusterMigrationMessage.textContent = clusterData.migrationRequired ? "Migration required. Existing legacy pairing is read-only until migration is available." : "";
+  elements.clusterInventory.hidden = !clusterData.migrationRequired;
+  if (clusterData.migrationRequired) renderLegacyInventory(inventory);
+  renderClusterCanvas({ canvas: elements.clusterCanvas, details: elements.clusterDetails, clusters: memberships,
+    projects, localNodeId: inventory.local.id, selectedClusterId, onSelect: selectCluster });
+  elements.secretSyncButton.disabled = clusterData.mode === "selective";
+  elements.secretSyncButton.title = clusterData.mode === "selective" ? "Legacy node-wide secret sync is unavailable with selective cluster memberships" : "";
+  syncControls();
+}
+
+export async function loadClusterPanel(preferredClusterId = selectedClusterId) {
+  clearGeneratedLink();
+  const [inventory, clusterData, projectData] = await Promise.all([
+    api("/api/cluster/inventory"), api("/api/clusters"), api("/api/projects?syncStatus=false"),
+  ]);
+  selectedClusterId = preferredClusterId;
   elements.clusterNodeNameInput.value = inventory.local.name;
   elements.clusterNodeUrlInput.value = inventory.local.url;
-  elements.clusterInviteLink.value = "";
-  elements.copyClusterInviteButton.disabled = true;
-  elements.clusterJoinLinkInput.value = "";
-  elements.clusterLeaveButton.disabled = inventory.remote.length === 0;
-  renderClusterInventory(inventory);
-  await renderInviteProjectList();
+  renderPanel(inventory, clusterData, projectData.projects);
   return inventory;
 }
 
-function clusterNodePayload() {
-  return { name: elements.clusterNodeNameInput.value.trim(), url: elements.clusterNodeUrlInput.value.trim() };
+async function refreshAfterError(error) {
+  toast(error.message);
+  try { await loadClusterPanel(); } catch (refreshError) { toast(refreshError.message); }
 }
 
 async function saveClusterNode() {
-  await api("/api/cluster/node", { method: "PUT", body: JSON.stringify(clusterNodePayload()) });
-  renderClusterInventory(await api("/api/cluster/inventory"));
-  toast("Node saved");
+  const body = { name: elements.clusterNodeNameInput.value.trim(), url: elements.clusterNodeUrlInput.value.trim() };
+  await api("/api/cluster/node", { method: "PUT", body: JSON.stringify(body) });
+  await loadClusterPanel(); toast("Node saved");
 }
 
-async function generateClusterInvitation() {
-  const projectIds = selectedInviteProjectIds();
-  if (!projectIds.length) throw new Error("Share at least one project");
-  await api("/api/cluster/node", { method: "PUT", body: JSON.stringify(clusterNodePayload()) });
-  const invitation = await api("/api/cluster/invitations", { method: "POST", body: JSON.stringify({ projectIds }) });
-  elements.clusterInviteLink.value = invitation.link;
-  elements.copyClusterInviteButton.disabled = false;
-  toast(`One-time join link generated for ${projectIds.length} ${projectIds.length === 1 ? "project" : "projects"}`);
+async function createCluster() {
+  const name = elements.clusterCreateNameInput.value.trim();
+  if (!name) throw new Error("Cluster name is required");
+  const result = await api("/api/clusters", { method: "POST", body: JSON.stringify({ name }) });
+  elements.clusterCreateNameInput.value = "";
+  await loadClusterPanel(result.snapshot.body.clusterId); toast("Cluster created");
+}
+
+async function generateInvitation() {
+  const cluster = selectedCluster();
+  if (!cluster) throw new Error("Select a cluster first");
+  clearGeneratedLink();
+  const requestId = invitationRequestId;
+  const invitation = await api(`/api/clusters/${cluster.id}/invitations`, { method: "POST", body: JSON.stringify({ expectedEpoch: cluster.managerEpoch }) });
+  if (requestId !== invitationRequestId || selectedClusterId !== cluster.id) return;
+  elements.clusterInviteLink.value = invitation.link; elements.copyClusterInviteButton.disabled = false;
+  toast("One-time membership link generated");
 }
 
 async function joinCluster() {
   const link = elements.clusterJoinLinkInput.value.trim();
   if (!link) throw new Error("Join link is required");
-  const { peers } = await api("/api/cluster/peers");
-  if (peers.length && !await confirmAction({
-    eyebrow: "Replace cluster",
-    title: "Join a new cluster?",
-    message: "This removes this node from its current cluster first.",
-    confirmLabel: "Join cluster",
-    destructive: true,
-  })) return;
-  await api("/api/cluster/join", {
-    method: "POST",
-    body: JSON.stringify({ ...clusterNodePayload(), link }),
-  });
-  await loadClusterPanel();
-  toast("Joined cluster");
+  if (pendingJoin.link !== link) pendingJoin = { link, requestId: crypto.randomUUID() };
+  const result = await api("/api/clusters/join", { method: "POST", body: JSON.stringify(pendingJoin) });
+  pendingJoin = { link: "", requestId: "" };
+  await loadClusterPanel(result.snapshot.body.clusterId); toast("Cluster membership added");
 }
 
-/** Lists paired nodes with a checkbox each so the user can push replicating accounts to some or all of them. */
+async function setAutoShare() {
+  const cluster = selectedCluster();
+  if (!cluster) throw new Error("Select a cluster first");
+  await api(`/api/clusters/${cluster.id}/membership`, { method: "PATCH", body: JSON.stringify({ autoShareProjects: elements.clusterAutoShareInput.checked }) });
+  await loadClusterPanel(cluster.id); toast("Future project sharing updated");
+}
+
+async function shareAllProjects() {
+  const cluster = selectedCluster();
+  if (!cluster) throw new Error("Select a cluster first");
+  if (!await confirmAction({ title: "Share existing projects?", message: `Share every existing project owned by this node with ${cluster.name}?`, confirmLabel: "Share projects" })) return;
+  await api(`/api/clusters/${cluster.id}/share-all-projects`, { method: "POST", body: JSON.stringify({}) });
+  await loadClusterPanel(cluster.id); toast("Existing owned projects shared");
+}
+
+async function leaveCluster() {
+  const cluster = selectedCluster();
+  const last = cluster.members.length === 1;
+  if (!await confirmAction({ eyebrow: "Leave cluster", title: last ? "Close this cluster?" : "Leave this cluster?",
+    message: last ? "You are the last member. Leaving closes this cluster." : `Leave ${cluster.name}? Other memberships are unchanged.`,
+    confirmLabel: last ? "Close cluster" : "Leave cluster", destructive: true })) return;
+  await api(`/api/clusters/${cluster.id}/leave`, { method: "POST", body: JSON.stringify({ expectedEpoch: cluster.managerEpoch }) });
+  selectedClusterId = null; await loadClusterPanel(); await loadProjects(); toast(last ? "Cluster closed" : "Left cluster");
+}
+
 async function openSecretSyncDialog() {
   const { peers } = await api("/api/cluster/peers");
-  elements.secretSyncNodeList.replaceChildren();
-  elements.secretSyncAllInput.checked = false;
+  elements.secretSyncNodeList.replaceChildren(); elements.secretSyncAllInput.checked = false;
   if (!peers.length) {
-    const empty = document.createElement("p");
-    empty.className = "github-group-empty";
-    empty.textContent = "No paired nodes yet. Add one in the Cluster tab first.";
-    elements.secretSyncNodeList.append(empty);
+    const empty = document.createElement("p"); empty.className = "github-group-empty";
+    empty.textContent = "No paired nodes yet. Add one in the Cluster tab first."; elements.secretSyncNodeList.append(empty);
   }
   for (const peer of peers) {
-    const row = document.createElement("label");
-    row.className = "checkbox-row";
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.value = peer.id;
-    input.dataset.testid = "secret-sync-node-input";
-    input.addEventListener("change", () => {
-      elements.secretSyncAllInput.checked = secretSyncSelectedIds().length === peers.length;
-    });
-    row.append(input, document.createTextNode(` ${peer.name}${peer.online ? "" : " (offline)"}`));
-    elements.secretSyncNodeList.append(row);
+    const row = document.createElement("label"); row.className = "checkbox-row";
+    const input = document.createElement("input"); input.type = "checkbox"; input.value = peer.id; input.dataset.testid = "secret-sync-node-input";
+    input.addEventListener("change", () => { elements.secretSyncAllInput.checked = secretSyncSelectedIds().length === peers.length; });
+    row.append(input, document.createTextNode(` ${peer.name}${peer.online ? "" : " (offline)"}`)); elements.secretSyncNodeList.append(row);
   }
   elements.secretSyncDialog.showModal();
 }
-
-function secretSyncSelectedIds() {
-  return [...elements.secretSyncNodeList.querySelectorAll("input[type=checkbox]")].filter((input) => input.checked).map((input) => input.value);
-}
-
+function secretSyncSelectedIds() { return [...elements.secretSyncNodeList.querySelectorAll("input[type=checkbox]")].filter((input) => input.checked).map((input) => input.value); }
 async function submitSecretSync() {
-  const peerIds = secretSyncSelectedIds();
-  if (!peerIds.length) {
-    toast("Pick at least one node");
-    return;
-  }
+  const peerIds = secretSyncSelectedIds(); if (!peerIds.length) throw new Error("Pick at least one node");
   const { results } = await api("/api/secrets/sync", { method: "POST", body: JSON.stringify({ peerIds }) });
   const failed = results.filter((result) => result.error);
   elements.secretSyncDialog.close();
   toast(failed.length ? `Synced ${results.length - failed.length} of ${results.length} nodes; ${failed[0].name}: ${failed[0].error}` : `Synced accounts to ${results.length} ${results.length === 1 ? "node" : "nodes"}`);
 }
-async function leaveCluster() {
-  const confirmed = await confirmAction({
-    eyebrow: "Leave cluster",
-    title: "Leave the cluster?",
-    message: "This node forgets every paired node, and the other nodes drop this one. Paired projects stay on disk but stop syncing.",
-    confirmLabel: "Leave cluster",
-    destructive: true,
-  });
-  if (!confirmed) return;
-  await api("/api/cluster/leave", { method: "POST" });
-  await loadClusterPanel();
-  await loadProjects();
-  toast("Left the cluster");
-}
 
-elements.clusterLeaveButton.addEventListener("click", () => leaveCluster().catch((error) => toast(error.message)));
-elements.clusterSaveButton.addEventListener("click", () => saveClusterNode().catch((error) => toast(error.message)));
-elements.clusterGenerateInviteButton.addEventListener("click", () => generateClusterInvitation().catch((error) => toast(error.message)));
-elements.clusterJoinButton.addEventListener("click", () => joinCluster().catch((error) => toast(error.message)));
-elements.clusterInviteProjectList.addEventListener("change", (event) => {
-  if (event.target instanceof HTMLInputElement) {
-    clearGeneratedLink();
-    syncSelectAllState();
-  }
-});
-elements.clusterInviteAllProjects.addEventListener("change", () => {
-  for (const input of inviteProjectInputs()) input.checked = elements.clusterInviteAllProjects.checked;
-  clearGeneratedLink();
-  syncSelectAllState();
-});
+function mutation(button, action) { button.addEventListener("click", () => action().catch(refreshAfterError)); }
+mutation(elements.clusterSaveButton, saveClusterNode); mutation(elements.clusterCreateButton, createCluster);
+mutation(elements.clusterGenerateInviteButton, generateInvitation); mutation(elements.clusterJoinButton, joinCluster);
+mutation(elements.clusterAutoShareInput, setAutoShare); mutation(elements.clusterShareAllButton, shareAllProjects);
+mutation(elements.clusterLeaveButton, leaveCluster);
+elements.clusterJoinLinkInput.addEventListener("input", () => { if (elements.clusterJoinLinkInput.value.trim() !== pendingJoin.link) pendingJoin = { link: "", requestId: "" }; });
 elements.secretSyncButton.addEventListener("click", () => openSecretSyncDialog().catch((error) => toast(error.message)));
 elements.cancelSecretSyncButton.addEventListener("click", () => elements.secretSyncDialog.close());
-elements.secretSyncAllInput.addEventListener("change", () => {
-  for (const input of elements.secretSyncNodeList.querySelectorAll("input[type=checkbox]")) input.checked = elements.secretSyncAllInput.checked;
-});
-elements.secretSyncForm.addEventListener("submit", (event) => {
-  event.preventDefault();
-  submitSecretSync().catch((error) => toast(error.message));
-});
-elements.copyClusterInviteButton.addEventListener("click", async () => {
-  try {
-    await navigator.clipboard.writeText(elements.clusterInviteLink.value);
-    toast("One-time join link copied");
-  } catch (error) {
-    toast(error.message || "Could not copy join link");
-  }
-});
+elements.secretSyncAllInput.addEventListener("change", () => { for (const input of elements.secretSyncNodeList.querySelectorAll("input")) input.checked = elements.secretSyncAllInput.checked; });
+elements.secretSyncForm.addEventListener("submit", (event) => { event.preventDefault(); submitSecretSync().catch((error) => toast(error.message)); });
+elements.copyClusterInviteButton.addEventListener("click", async () => { try { await navigator.clipboard.writeText(elements.clusterInviteLink.value); toast("One-time join link copied"); } catch (error) { toast(error.message || "Could not copy join link"); } });

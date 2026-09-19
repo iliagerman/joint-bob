@@ -15,6 +15,8 @@ import test, { after, before } from "node:test";
 import { promisify } from "node:util";
 import WebSocket from "ws";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, type SignedIn } from "./dev-nodes.js";
+import { getOrCreateClusterIdentity } from "../src/cluster-identity.js";
+import { signClusterRequest } from "../src/cluster-protocol.js";
 import { openPiRuntimeDatabase, publishPiRuntime } from "../src/pi-runtime.js";
 import { startSupervisor } from "../scripts/joint-bob-supervisor.mjs";
 import { supervisorRequest } from "../scripts/supervisor-client.mjs";
@@ -894,7 +896,7 @@ test("a canvas shortcut assigned on one node reaches the same account on the oth
   await untilShortcuts(nodeB, sessionB, (rows) => rows.length === 0, "node B still holds the released binding");
 });
 
-test("an up-to-date coordinator updates an older peer without reinstalling itself", { timeout: 60_000 }, async () => {
+test("fleet updates exclude legacy peers", { timeout: 60_000 }, async () => {
   const version = JSON.parse(await readFile("package.json", "utf8")).version;
   let peerVersion = "0.0.1";
   let installs = 0;
@@ -918,15 +920,17 @@ test("an up-to-date coordinator updates an older peer without reinstalling itsel
   try {
     servers[0] = await startDevNode(environment, nodeA, { JOINT_BOB_RELEASE: "a".repeat(40), JOINT_BOB_RELEASE_API: nodeB.url });
     sessionA = await signIn(environment, nodeA);
-    const result = await api<{ state: string; error?: string }>(nodeA, sessionA, "POST", "/update/install-all");
+    const result = await api<{ state: string; error?: string; entries: Array<{ nodeId: string }> }>(nodeA, sessionA, "POST", "/update/install-all");
     assert.equal(result.status, 202, `current coordinator must accept fleet update: ${JSON.stringify(result.body)}`);
+    assert.deepEqual(result.body.entries.map((entry) => entry.nodeId), [nodeA.nodeId], "legacy peer is not a fleet target");
     let state = result.body.state;
     for (let attempt = 0; state === "running" && attempt < 100; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, 50));
       state = (await api<{ state: string }>(nodeA, sessionA, "GET", "/update/install-all")).body.state;
     }
     assert.equal(state, "succeeded", "skip coordinator install when already on target");
-    assert.equal(installs, 1, "older peer receives one install request");
+    assert.equal(installs, 0, "legacy peer receives no install request");
+    assert.equal(peerVersion, "0.0.1", "legacy peer remains unchanged");
     const status = await api<{ activeJob: unknown; recentJobs: unknown[] }>(nodeA, sessionA, "GET", "/update/status");
     assert.equal(status.body.activeJob, null);
     assert.equal(status.body.recentJobs.length, 0, "coordinator must not spawn an installer");
@@ -941,7 +945,7 @@ test("an up-to-date coordinator updates an older peer without reinstalling itsel
   }
 });
 
-test("cluster inventory reports each node's version and a peer update needs machine auth", async () => {
+test("cluster inventory reports each node's version and denies peer updates despite machine auth", async () => {
   const manifest = JSON.parse(await readFile("package.json", "utf8"));
   interface InventoryEntry { peerId: string; reachable: boolean; inventory?: { version: string; updates?: { supported: boolean; activeJob: unknown } } }
   const inventory = await api<{ local: { id: string }; remote: InventoryEntry[] }>(nodeA, sessionA, "GET", "/cluster/inventory");
@@ -958,8 +962,8 @@ test("cluster inventory reports each node's version and a peer update needs mach
 
   const { token } = (await api<{ token: string }>(nodeA, sessionA, "GET", "/cluster/invite")).body;
   const machineAuthenticated = await fetch(installUrl, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ version: "9.9.9" }) });
-  assert.equal(machineAuthenticated.status, 409, "a paired machine peer reaches the route and the dev checkout refuses");
-  assert.match(((await machineAuthenticated.json()) as { error: string }).error, /development checkout/);
+  assert.equal(machineAuthenticated.status, 403, "a paired machine peer is forbidden from requesting an update");
+  assert.match(((await machineAuthenticated.json()) as { error: string }).error, /forbidden/i);
 });
 
 test("a node opens new conversations while its peer is down, and the claim replicates when it returns", async () => {
@@ -1404,15 +1408,33 @@ test("chat ntfy sends use the replicated conversation destination on another nod
   }
 });
 
+async function signedSelfPrepare(node: SeededNode): Promise<Response> {
+  const target = "/api/cluster/v2/update/prepare";
+  const body = Buffer.from("{}");
+  const database = new DatabaseSync(path.join(node.dataDir, "node.db"));
+  const previousSecretKey = process.env.JOINT_BOB_SECRET_KEY;
+  let authorization: string;
+  try {
+    database.exec("PRAGMA busy_timeout=5000");
+    process.env.JOINT_BOB_SECRET_KEY = (await readFile(path.join(node.dataDir, "secret.key"), "utf8")).trim();
+    getOrCreateClusterIdentity(database, node.nodeId);
+    authorization = signClusterRequest(database, node.nodeId, node.nodeId, "POST", target, body);
+  } finally {
+    database.close();
+    if (previousSecretKey === undefined) delete process.env.JOINT_BOB_SECRET_KEY;
+    else process.env.JOINT_BOB_SECRET_KEY = previousSecretKey;
+  }
+  return fetch(`${node.url}${target}`, {
+    method: "POST", headers: { authorization, "content-type": "application/json" }, body,
+  });
+}
+
 test("both prepared nodes become writable and resume replication after restart", { timeout: 60_000 }, async () => {
   const nodes = [nodeA, nodeB];
   const sessions = [sessionA, sessionB];
   for (let index = 0; index < nodes.length; index += 1) {
     const node = nodes[index];
-    const { token } = (await api<{ token: string }>(node, sessions[index], "GET", "/cluster/invite")).body;
-    const prepared = await fetch(`${node.url}/api/update/prepare`, {
-      method: "POST", headers: { Authorization: `Bearer ${token}` },
-    });
+    const prepared = await signedSelfPrepare(node);
     assert.equal(prepared.status, 200);
     const health = await fetch(`${node.url}/api/health`);
     assert.equal(health.status, 503, `${node.key} must not claim health while blocking writes`);
