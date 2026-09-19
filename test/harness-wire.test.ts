@@ -170,8 +170,10 @@ test("synthetic Kiro ACP covers new, resume, frontend events, empty turns, and c
     await session.prompt({ text: "again" });
     assert.deepEqual(resumedEvents, [{ type: "textDelta", text: "removed" }]);
     assert.deepEqual((await getScopeSecretAccounts("conversation", conversationScopeId("kiro", "wire_session"))).accountIds, []);
+    // A turn Kiro ends with no text is reported as a failure (the provider may
+    // have refused the model call), but it still started, so the prompt is retired.
     let emptyStarts = 0;
-    await session.prompt({ text: "empty", onStarted: () => { emptyStarts += 1; } });
+    await assert.rejects(session.prompt({ text: "empty", onStarted: () => { emptyStarts += 1; } }), /ended the turn without a reply/);
     assert.equal(emptyStarts, 1);
     assert.equal(session.messages.some((message) => message.text === "old assistant"), false);
   } finally {

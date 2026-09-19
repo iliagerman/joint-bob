@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added a **Settings > Attachments** digest option (off by default) that sends agents a description of uploaded images and browser screenshots plus small text file contents instead of raw image bytes, and made failed or silent harness turns show as an error message that stays in the conversation.
+
 ## 1.61.0 — 2026-09-19
 
 - Scheduled tasks dialog now displays a loading indicator while fetching tasks.

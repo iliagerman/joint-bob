@@ -225,6 +225,7 @@ export async function openSettings(tab = "account") {
   elements.settingsShellTimeoutEnabled.checked = settings.shellCommandTimeoutSeconds !== null;
   elements.settingsShellTimeoutSeconds.value = settings.shellCommandTimeoutSeconds ?? 600;
   elements.settingsShellTimeoutSeconds.disabled = !elements.settingsShellTimeoutEnabled.checked;
+  elements.settingsDigestAttachments.checked = settings.digestAttachments;
   elements.settingsRuntimeStatus.textContent = "";
   elements.settingsSkillsStatus.textContent = "";
   fillResourceFields(globalResourceFields, settings.resources);
@@ -252,6 +253,7 @@ async function saveSettings(event) {
       conversationHistoryDays: Number(document.querySelector("#settingsConversationHistoryDays").value),
       autoCompactThreshold: elements.settingsAutoCompactEnabled.checked ? Number(elements.settingsAutoCompactThreshold.value) : null,
       shellCommandTimeoutSeconds: elements.settingsShellTimeoutEnabled.checked ? Number(elements.settingsShellTimeoutSeconds.value) : null,
+      digestAttachments: elements.settingsDigestAttachments.checked,
     }),
   });
   state.conversationLabels = saved.conversationLabels;

@@ -558,6 +558,30 @@ export function appendMessage(role, text, timestamp = true, attachments = [], re
   return bubble;
 }
 
+/** A failed harness turn stays in the conversation as its own bubble, live and on reload. */
+export function appendErrorMessage(text, timestamp = true) {
+  elements.messages.querySelector(".empty-state")?.remove();
+  const bubble = document.createElement("article");
+  bubble.className = "message error";
+  bubble.dataset.role = "error";
+  bubble.dataset.testid = "turn-error";
+  bubble.setAttribute("role", "alert");
+  const content = document.createElement("pre");
+  content.className = "message-content";
+  content.textContent = text;
+  bubble.append(content);
+  const at = timestamp === true ? new Date() : timestamp;
+  if (at) {
+    const meta = document.createElement("div");
+    meta.className = "message-meta";
+    meta.append(messageTimestamp(at));
+    bubble.append(meta);
+  }
+  appendBeforeQueuedMessages(bubble);
+  requestPinChat();
+  return bubble;
+}
+
 function sendQueuedPromptAction(payload) {
   if (!state.socket || state.socket.readyState !== WebSocket.OPEN) {
     toast("Conversation is not connected yet");
@@ -882,6 +906,10 @@ function appendTranscript(messages, segments) {
     }
     const at = message.timestamp ? new Date(message.timestamp) : null;
     const recorded = at && Number.isFinite(at.getTime()) ? at : false;
+    if (message.role === "error") {
+      appendErrorMessage(message.text, recorded);
+      continue;
+    }
     const role = message.role === "user" ? "user" : "assistant";
     // A replayed user message sits in the agent's own transcript, so the agent
     // has it. An undated assistant message cannot be tracked and reads as seen.

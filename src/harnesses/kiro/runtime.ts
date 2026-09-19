@@ -107,6 +107,9 @@ class KiroSession implements HarnessSession {
   private compactionTerminal: ((terminal: CompactionTerminal) => void) | undefined;
   private pendingMetadata: JsonObject[] = [];
   private turnError: string | undefined;
+  /** Whether the current turn produced any assistant text. */
+  private replied = false;
+
 
   constructor(private readonly options: HarnessOpenOptions) {
     this.id = options.sessionId;
@@ -201,6 +204,7 @@ class KiroSession implements HarnessSession {
     this.assistant = "";
     this.cancelRequested = false;
     this.turnError = undefined;
+    this.replied = false;
     this.emit({ type: "agent_start" });
     let failure: unknown;
     try {
@@ -401,7 +405,7 @@ class KiroSession implements HarnessSession {
         return;
       }
       this.markStarted();
-      if (kind === "agent_message_chunk") this.assistant += text;
+      if (kind === "agent_message_chunk") { this.assistant += text; this.replied ||= text.trim().length > 0; }
       this.emit({ type: kind === "agent_message_chunk" ? "textDelta" : "thinkingDelta", text });
       return;
     }
@@ -485,6 +489,10 @@ class KiroSession implements HarnessSession {
     if (reason === "cancelled") throw new Error("Kiro turn cancelled");
     if (reason !== "end_turn") throw new Error(`Kiro turn failed with stop reason: ${reason}`);
     this.markStarted();
+    // Kiro answers end_turn even when the provider refused the model call (it only
+    // logs the refusal), so a turn with no text at all is reported as a failure.
+    // The turn did run, so the user's message is recorded first.
+    if (!this.replied) throw new Error("Kiro ended the turn without a reply. The model provider may have rejected the request; check Kiro's log for details.");
     this.persistAssistant();
     await this.finishWrites();
   }

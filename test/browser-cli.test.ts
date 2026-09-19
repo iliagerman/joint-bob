@@ -283,6 +283,11 @@ test("CLI writes screenshot and raw downloads on agent node without dumping blob
     assert.ok(!result.stdout.includes(bytes.toString("base64")));
   }
   assert.deepEqual(f.requests.at(-1), { operation: "download", downloadId: "download-id" });
+  f.respond(() => ({ body: { result: { data: bytes.toString("base64"), mimeType: "image/png", description: "A sign-in form with one error banner." }, session } }));
+  const described = await f.run(["screenshot", path.join(f.root, "output", "described.png")]);
+  assert.equal(described.code, 0, described.stderr);
+  assert.deepEqual(await readFile(path.join(f.root, "output", "described.png")), bytes);
+  assert.deepEqual(JSON.parse(described.stdout), { path: path.join(f.root, "output", "described.png"), description: "A sign-in form with one error banner." });
   const generic = await f.run(["command", '{"action":"screenshot"}']);
   assert.notEqual(generic.code, 0);
   assert.match(generic.stderr, /screenshot PATH/);

@@ -25,6 +25,7 @@ rl.on("line", line => {
   if (request.method === "session/load") return send({jsonrpc:"2.0",id:request.id,result:null});
   if (request.method === "session/prompt") {
     const text = request.params.prompt[0].text;
+    if (text === "silent") return send({jsonrpc:"2.0",id:request.id,result:{stopReason:"end_turn"}});
     const response = text.startsWith("Joint Bob goal:") ? "Progress update"
       : text.startsWith("Continue the active Joint Bob goal") ? "Finished and tested.\\nBOB_GOAL_COMPLETE"
       : text;
@@ -180,6 +181,54 @@ test("websocket chat routes Kiro prompts through the generic harness runtime", a
     assert.equal(close.code, 1008);
   } finally {
     if (releasePath) await writeFile(releasePath, "release");
+    for (const socket of sockets) socket.close();
+    if (server) await stopDevNode(server);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// A provider can refuse the model call after a tool result (Bedrock's image limits
+// did this) and Kiro then ends the turn with no text at all. The user must see a
+// failure in the conversation, live and after reopening it, instead of silence.
+test("a Kiro turn that ends without a reply is reported and stays visible after reopening", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "harness-chat-silent-"));
+  let server: Awaited<ReturnType<typeof startDevNode>> | undefined;
+  const sockets: WebSocket[] = [];
+  try {
+    const environment = await seedDevEnvironment(root, 1);
+    const node = environment.nodes[0];
+    const executable = path.join(environment.home, "bin", "kiro-fixture");
+    const configPath = path.join(environment.home, ".kiro");
+    const sessionPath = path.join(configPath, "sessions");
+    await Promise.all([mkdir(path.dirname(executable), { recursive: true }), mkdir(sessionPath, { recursive: true })]);
+    await writeFile(executable, fixtureSource);
+    await chmod(executable, 0o700);
+    configureKiro(node.dataDir, executable, configPath, sessionPath);
+    server = await startDevNode(environment, node);
+    const auth = await signIn(environment, node);
+    const project = projectNamed(node, "Joint Bob");
+    const first = openChat(node.url, auth.cookie, project.id, "kiro:new");
+    sockets.push(first.socket);
+    await waitFor(first.messages, () => first.messages.some((message) => message.type === "ready" && message.engine === "kiro"));
+    first.socket.send(JSON.stringify({ type: "prompt", message: "silent" }));
+    await waitFor(first.messages, () => first.messages.some((message) => message.type === "promptFailed"));
+    const failed = first.messages.find((message) => message.type === "promptFailed")!;
+    assert.match(String(failed.error), /ended the turn without a reply/);
+    await waitFor(first.messages, () => first.messages.some((message) => message.type === "sessionFile" && typeof message.sessionFile === "string"));
+    const sessionFile = String(first.messages.find((message) => message.type === "sessionFile")!.sessionFile);
+
+    const second = openChat(node.url, auth.cookie, project.id, sessionFile);
+    sockets.push(second.socket);
+    await waitFor(second.messages, () => second.messages.some((message) => message.type === "ready" && message.engine === "kiro"));
+    const ready = second.messages.find((message) => message.type === "ready")!;
+    const history = ready.messages as Array<{ role: string; text: string; timestamp?: string }>;
+    const error = history.find((message) => message.role === "error");
+    assert.ok(error, `history must carry the failure: ${JSON.stringify(history)}`);
+    assert.match(error!.text, /ended the turn without a reply/);
+    assert.equal(typeof error!.timestamp, "string");
+    assert.equal(history.indexOf(error!), history.length - 1, "the failure follows the turn that failed");
+    assert.equal(history.filter((message) => message.role === "user").length, 1);
+  } finally {
     for (const socket of sockets) socket.close();
     if (server) await stopDevNode(server);
     await rm(root, { recursive: true, force: true });

@@ -104,5 +104,5 @@ Saved website credentials are available according to their attached access scope
 
 Do not automate MFA, one-time-code or CAPTCHA fields, retry a wrong password, or bypass human takeover. Pause for the human on any challenge. For non-website environment credentials, continue to use fill-secret SELECTOR ENV_NAME --origin URL, passing only the variable name and never its expanded value. Do not inspect the browser token environment variable.
 
-Use screenshot PATH to save an image, upload SELECTOR FILE... for local files or directories (20 MiB total), and download ID PATH for downloaded bytes. Screenshots and downloads are written on the agent node, with parent directories created. Do not dump image or file base64 into the conversation.
+Use screenshot PATH to save an image; when this node digests attachments the command also prints a text description of the page, so read that description and use snapshot or evaluate for text instead of opening the PNG, and open the saved file only when the description is not enough. Use upload SELECTOR FILE... for local files or directories (20 MiB total), and download ID PATH for downloaded bytes. Screenshots and downloads are written on the agent node, with parent directories created. Do not dump image or file base64 into the conversation.
 `;

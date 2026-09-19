@@ -16,6 +16,8 @@ import { getProjectLock } from "../project-locks.js";
 import { getSettings } from "../settings.js";
 import { beginQueuedPrompt, cancelQueuedPrompt, claimQueuedPrompt, editQueuedPrompt, enqueuePrompt, listQueuedPrompts, mergeQueuedPrompts, prioritizeQueuedPrompt, queuedSettingsSchema, readQueueSettings, recordQueueSettings, resetQueuedPromptAttempt, swapQueuedPrompts, type QueuedPrompt, type QueuedSettings } from "../prompt-queue.js";
 import { queuedAttachments } from "../queued-attachments.js";
+import { describeImage } from "../attachment-digest.js";
+import { listTurnFailures, recordTurnFailure, withTurnFailures } from "../turn-failures.js";
 import type { HarnessId, ProjectRecord, SessionSummary, TaskAttachment } from "../types.js";
 import { listTasks, updateTask } from "../tasks.js";
 import { persistTaskAttachments, promptTextWithAttachments } from "./chat.js";
@@ -190,7 +192,7 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
     if (queued.settings) await applyQueuedSettings(connection, queued.settings);
     await writable(connection);
     await connection.shared.session.preflight();
-    const attachments = await queuedAttachments(connection.cwd, queued);
+    const attachments = await queuedAttachments(connection.cwd, queued, getSettings().digestAttachments ? describeImage : undefined);
     await writable(connection);
     const latest = listQueuedPrompts(queueKey(connection)).find(({ id }) => id === queued.id);
     if (!latest || latest.revision !== queued.revision || !beginQueuedPrompt(queued.id, queued.revision)) return;
@@ -218,6 +220,8 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
         else resetQueuedPromptAttempt(queued.id);
       }
       if (!pausedDrains.has(queueKey(connection))) {
+        // The failure outlives this socket: a reopened conversation shows it in place.
+        if (claimed) recordTurnFailure(connection.engine, connection.shared.session.id, chatErrorMessage(error));
         if (!queued.systemEventId) publish(connection, { type: "promptFailed", queueId: queued.id, error: chatErrorMessage(error) });
         throw error;
       }
@@ -493,7 +497,8 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
   const transcript = await conversationTranscriptPayload(options.project.id, options.engine, shared.session.id, options.listedSessions, shared.session.messages);
   if (!shared.session.messages.length && transcript.segments.length > 1 && !connection.handoffContext) connection.handoffContext = buildHandoffContext(transcript.messages);
   const scheduled = Boolean(record?.cronTaskId);
-  const browserMessages = scheduled ? scheduledReportMessages(transcript.messages, !harnessSessionBusy(shared)) : transcript.messages;
+  const history = withTurnFailures(transcript.messages, listTurnFailures(options.engine, shared.session.id));
+  const browserMessages = scheduled ? scheduledReportMessages(history, !harnessSessionBusy(shared)) : history;
   const goal = await getConversationGoal(options.project.id, conversationId);
   send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, scheduled, scheduledTurn: scheduled && shared.scheduledTurn, bobGoal: goal ?? null, ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
   for (const event of shared.liveEvents) send(options.socket, event);

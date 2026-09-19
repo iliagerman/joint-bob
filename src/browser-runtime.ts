@@ -15,6 +15,8 @@ import { BrowserMonitorCheckError } from "./browser-monitor-scheduler.js";
 import type { MonitorCheckResult } from "./browser-monitor-types.js";
 import { BrowserCommandQueue } from "./browser-command-queue.js";
 import { detectBrowserLogin } from "./browser-login-detection.js";
+import { describeImage } from "./attachment-digest.js";
+import { getSettings } from "./settings.js";
 
 interface DetectionOptions {
   platform?: string;
@@ -306,6 +308,20 @@ export class BrowserRuntime {
     return job;
   }
 
+  // Drops a stopped session's record, downloads and staging directory. A live or
+  // restore-pending session is refused so its native browser and automatic
+  // restore are gone before the history disappears.
+  async forget(id: string): Promise<void> {
+    void this.ready();
+    const job = this.creates.then(async () => {
+      if (this.sessions.has(id) || this.recoveries.has(id)) throw new Error("Close the browser before removing its session");
+      this.store.forget(id);
+      await rm(path.join(this.root, id), { recursive: true, force: true });
+    });
+    this.creates = job.catch(() => {});
+    return job;
+  }
+
   async download(id: string, downloadId: string): Promise<{ path: string; name: string }> {
     void this.ready();
     this.store.get(id);
@@ -542,7 +558,12 @@ export class BrowserRuntime {
       case "wait": await this.locator(page, command.selector).waitFor({ state: command.state }); break;
       case "evaluate": return page.evaluate(command.expression);
       case "snapshot": return { pageId: session.activePageId, url: page.url(), title: await page.title(), accessibility: (await page.locator("body").ariaSnapshot({ timeout: 5000 })).slice(0, 50000), errors: [...session.errors] };
-      case "screenshot": return { pageId: session.activePageId, mimeType: "image/png", data: (await page.screenshot({ timeout: 10000 })).toString("base64") };
+      case "screenshot": {
+        const data = (await page.screenshot({ timeout: 10000 })).toString("base64");
+        // With attachment digest on, the agent gets the page in words and reads the PNG only when it must.
+        const description = getSettings().digestAttachments ? await describeImage({ data, mimeType: "image/png" }) : undefined;
+        return { pageId: session.activePageId, mimeType: "image/png", data, ...(description === undefined ? {} : { description }) };
+      }
       case "upload": await this.upload(session, page, command, actor); break;
     }
     return this.get(session.id);

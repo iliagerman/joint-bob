@@ -167,3 +167,9 @@ console.log(JSON.stringify({type:'result',is_error:false}));
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("browser instructions steer agents to the screenshot description before the PNG", () => {
+  assert.match(browserAgentInstructions, /screenshot PATH/);
+  assert.match(browserAgentInstructions, /description/);
+  assert.match(browserAgentInstructions, /only when the description is not enough/i);
+});

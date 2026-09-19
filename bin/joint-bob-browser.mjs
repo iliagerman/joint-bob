@@ -102,7 +102,7 @@ async function uploadFiles(inputs) {
   return files;
 }
 
-async function save(output, source) {
+async function save(output, source, extra = {}) {
   const destination = path.resolve(output);
   await mkdir(path.dirname(destination), { recursive: true });
   const temporary = `${destination}.${randomUUID()}.part`;
@@ -111,7 +111,7 @@ async function save(output, source) {
     else await pipeline(Readable.fromWeb(source), createWriteStream(temporary, { mode: 0o600, flags: "wx" }));
     await rename(temporary, destination);
   } finally { await rm(temporary, { force: true }); }
-  print({ path: destination });
+  print({ path: destination, ...extra });
 }
 
 async function main() {
@@ -190,7 +190,8 @@ async function main() {
       const response = await command({ action: "screenshot" });
       const data = response.result?.data;
       if (typeof data !== "string" || !data.length || data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) throw new Error("Invalid screenshot response");
-      await save(args[0], Buffer.from(data, "base64")); return;
+      const description = response.result?.description;
+      await save(args[0], Buffer.from(data, "base64"), typeof description === "string" ? { description } : {}); return;
     }
     case "command": {
       arity(1);

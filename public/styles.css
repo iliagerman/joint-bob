@@ -1198,6 +1198,8 @@ select.chat-toolbar-control {
 .queued-settings select { max-width: 100%; }
 .queued-editor textarea { grid-column: 1 / -1; width: min(520px, 70vw); min-height: 80px; resize: vertical; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--panel); color: var(--text); font: inherit; }
 .queued-editor button:first-of-type { grid-column: 2; }
+.message.error { align-self: flex-start; max-width: 100%; border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); background: color-mix(in srgb, var(--danger) 8%, var(--panel)); color: var(--danger); }
+.message.error .message-content { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
 .message.assistant { align-self: flex-start; width: 100%; max-width: 100%; padding: 12px 15px; border-color: var(--line); background: var(--panel); }
 /* A sibling of the bubble, not a child, so the control sits outside the card.
    The .messages column already supplies 10px of gap, hence the negative margin. */

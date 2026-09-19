@@ -481,6 +481,14 @@
             <p class="settings-hint">This setting applies only to conversations running on this node. Disable it to compact manually.</p>
           </fieldset>
           <fieldset class="phase-settings">
+            <legend>Attachments</legend>
+            <label class="checkbox-row">
+              <input id="settingsDigestAttachments" type="checkbox" data-testid="settings-digest-attachments" />
+              Digest images and files for the agent
+            </label>
+            <p class="settings-hint">When on, this node describes uploaded images and browser screenshots with a vision-capable Pi model and inlines small text files, sending the words and the file path instead of the raw image so the harness does not carry every picture in its history. Agents can still open the file. When off, attachments are sent as today.</p>
+          </fieldset>
+          <fieldset class="phase-settings">
             <legend>Shell commands</legend>
             <label class="checkbox-row">
               <input id="settingsShellTimeoutEnabled" type="checkbox" data-testid="settings-shell-timeout-enabled" />

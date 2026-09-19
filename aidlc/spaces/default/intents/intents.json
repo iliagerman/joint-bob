@@ -61,5 +61,12 @@
     "dirName": "260918-shell-supervision-fix",
     "scope": "express",
     "status": "in-flight"
+  },
+  {
+    "uuid": "01a0ba81-2e68-7fd9-bcbc-698a54ec4631",
+    "slug": "attachment-digest",
+    "dirName": "260919-attachment-digest",
+    "scope": "feature",
+    "status": "in-flight"
   }
 ]
