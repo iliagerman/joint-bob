@@ -1,8 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { browserCheckerSchema } from "../browser-monitor-checkers.js";
-import { browserMonitorActions } from "../browser-monitor-actions.js";
-import { browserMonitorRuleInputSchema } from "../browser-monitor-rules.js";
 import { browserCheckerStore } from "../browser-checker-store.js";
 import { BrowserMonitorCheckError, BrowserMonitorScheduler } from "../browser-monitor-scheduler.js";
 import { monitorBindingSchema, monitorCheckpointSchema, monitorCheckResultSchema, monitorInputSchema, type MonitorCheckResult, type MonitorInput, type MonitorRecord } from "../browser-monitor-types.js";
@@ -30,16 +28,6 @@ export const browserMonitorCommandSchema = z.discriminatedUnion("action", [
   projectCommand({ action: z.literal("update"), id, generation, patch: monitorPatchSchema }),
   projectCommand({ action: z.literal("rebind"), id, generation, binding: monitorBindingSchema }),
   projectCommand({ action: z.literal("check"), id, generation }), projectCommand({ action: z.literal("delete"), id, generation }),
-  projectCommand({ action: z.literal("rules"), id }),
-  projectCommand({ action: z.literal("createRule"), id, input: browserMonitorRuleInputSchema }),
-  projectCommand({ action: z.literal("updateRule"), id, ruleId: id, version: generation, input: browserMonitorRuleInputSchema }),
-  projectCommand({ action: z.literal("enableRule"), id, ruleId: id, version: generation, enabled: z.boolean() }),
-  projectCommand({ action: z.literal("deleteRule"), id, ruleId: id, version: generation }),
-  projectCommand({ action: z.literal("actions"), limit: z.number().int().min(1).max(200).default(50), before: z.object({ createdAt: z.number().int().nonnegative().safe(), id }).strict().optional() }),
-  projectCommand({ action: z.literal("action"), actionId: id }),
-  projectCommand({ action: z.literal("editDraft"), actionId: id, version: generation, text: z.string().trim().min(1).max(4000) }),
-  projectCommand({ action: z.literal("approveDraft"), actionId: id, version: generation }),
-  projectCommand({ action: z.literal("rejectDraft"), actionId: id, version: generation }),
 ]);
 export type BrowserMonitorCommand = z.infer<typeof browserMonitorCommandSchema>;
 
@@ -107,8 +95,6 @@ function changed(monitor: MonitorRecord): void {
 }
 
 type MonitorMutation = Extract<BrowserMonitorCommand, { action: "enable" | "update" | "check" | "delete" | "rebind" }>;
-type RuleCommand = Extract<BrowserMonitorCommand, { action: "rules" | "createRule" | "updateRule" | "enableRule" | "deleteRule" }>;
-type ActionCommand = Extract<BrowserMonitorCommand, { action: "actions" | "action" | "editDraft" | "approveDraft" | "rejectDraft" }>;
 
 async function mutate(command: MonitorMutation, current: MonitorRecord): Promise<unknown> {
   const store = browserMonitorStore();
@@ -126,36 +112,6 @@ async function mutate(command: MonitorMutation, current: MonitorRecord): Promise
   const monitor = store.rebind(current.id, paused.generation, command.binding); changed(monitor); return { monitor };
 }
 
-function manageRuleCommand(command: RuleCommand, current: MonitorRecord): unknown {
-  const store = browserMonitorStore();
-  if (command.action === "rules") return { rules: store.listRules(current.id) };
-  if (command.action === "createRule") {
-    const rule = store.createRule(current.id, command.input); changed(current); return { rule };
-  }
-  if (command.action === "updateRule") {
-    const rule = store.updateRule(current.id, command.ruleId, command.version, command.input); changed(current); return { rule };
-  }
-  if (command.action === "enableRule") {
-    const rule = store.setRuleEnabled(current.id, command.ruleId, command.version, command.enabled); changed(current); return { rule };
-  }
-  store.deleteRule(current.id, command.ruleId, command.version); changed(current); return { deleted: true };
-}
-
-async function manageActionCommand(command: ActionCommand, project: Awaited<ReturnType<typeof projectScope>>): Promise<unknown> {
-  const actions = browserMonitorActions();
-  if (command.action === "actions") return { actions: actions.list(project.id, command.limit, command.before) };
-  const action = actions.getForProject(project.id, command.actionId);
-  const monitor = await currentMonitor(project.id, action.monitorId);
-  if (command.action === "action") return { action, monitor, events: browserMonitorStore().eventsByIds(monitor.id, action.eventIds) };
-  const updated = command.action === "editDraft"
-    ? actions.editDraft(project.id, command.actionId, command.version, command.text)
-    : command.action === "approveDraft"
-      ? actions.approve(project.id, command.actionId, command.version)
-      : actions.reject(project.id, command.actionId, command.version);
-  changed(monitor);
-  return { action: updated };
-}
-
 export async function manageBrowserMonitor(value: BrowserMonitorCommand, createdBy: string, callerNodeId?: string): Promise<unknown> {
   const command = browserMonitorCommandSchema.parse(value);
   const requestedProject = command.action === "create" ? command.input.projectId : command.projectId;
@@ -170,17 +126,9 @@ export async function manageBrowserMonitor(value: BrowserMonitorCommand, created
     await knownNode(input.binding.nodeId);
     const monitor = store.create(input, (await getClusterNode()).id); changed(monitor); return { monitor };
   }
-  switch (command.action) {
-    case "actions": case "action": case "editDraft": case "approveDraft": case "rejectDraft":
-      return manageActionCommand(command, project);
-  }
   const current = await currentMonitor(project.id, command.id, "generation" in command ? command.generation : undefined);
   if (command.action === "history") return { runs: store.history(current.id), events: store.events(current.id) };
   if (command.action === "preview") return { result: await previewMonitor(current) };
-  switch (command.action) {
-    case "rules": case "createRule": case "updateRule": case "enableRule": case "deleteRule":
-      return manageRuleCommand(command, current);
-  }
   return mutate(command, current);
 }
 

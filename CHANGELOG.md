@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Removed browser monitor reply rules and draft approval workflow.
+
 ## 1.59.2 — 2026-09-19
 
 - Added breathing room between the pin button and the actions menu on project and conversation rows.

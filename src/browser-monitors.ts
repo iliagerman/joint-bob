@@ -5,13 +5,11 @@ import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { resolveDataDirectory } from "./data-directory.js";
 import { monitorBindingSchema, monitorCheckpointSchema, monitorCheckResultSchema, monitorInputSchema, type MonitorBinding, type MonitorCheckResult, type MonitorEvent, type MonitorHealth, type MonitorInput, type MonitorItem, type MonitorPartition, type MonitorRecord, type MonitorRun } from "./browser-monitor-types.js";
-import { browserMonitorRuleInputSchema, type BrowserMonitorRuleInput, type BrowserMonitorRuleRecord } from "./browser-monitor-rules.js";
 
 type MonitorRow = { id: string; owner_node_id: string; input: string; generation: number; enabled: number; baseline: number; checkpoint: string; health: MonitorHealth; detail: string; next_due_at: number | null; last_started_at: number | null; last_finished_at: number | null; created_at: number; updated_at: number };
 type RunRow = { id: string; monitor_id: string; generation: number; due_at: number; started_at: number; finished_at: number | null; status: MonitorRun["status"]; detail: string };
 type EventRow = { id: string; monitor_id: string; item: string; observed_at: number; processed: number; review_required: number };
 type PartitionRow = { monitor_id: string; target_id: string; baseline: number; cursor: string | null; continuation: string | null; complete: number; detail: string; last_checked_at: number };
-type RuleRow = { id: string; monitor_id: string; version: number; input: string; enabled: number; activation_at: number | null; created_at: number; updated_at: number };
 const patchSchema = z.object({ name: z.string().trim().min(1).max(120).optional(), intervalSeconds: z.number().int().min(10).max(86400).optional(), readAcknowledged: z.boolean().optional() }).strict();
 const failureHealthSchema = z.enum(["needs-login", "wrong-account", "target-missing", "incompatible", "browser-stopped", "paused-by-human", "unavailable", "error"]);
 const blockedHealth = new Set<MonitorHealth>(["needs-login", "wrong-account", "target-missing", "incompatible", "browser-stopped", "paused-by-human"]);
@@ -20,13 +18,11 @@ export class BrowserMonitorStore {
   constructor(private readonly db: DatabaseSync) {
     db.exec(`PRAGMA foreign_keys = ON;
       CREATE TABLE IF NOT EXISTS browser_monitor_monitors (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, owner_node_id TEXT NOT NULL, input TEXT NOT NULL, generation INTEGER NOT NULL, enabled INTEGER NOT NULL, baseline INTEGER NOT NULL, checkpoint TEXT NOT NULL, health TEXT NOT NULL, detail TEXT NOT NULL, next_due_at INTEGER, last_started_at INTEGER, last_finished_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS browser_monitor_rules (id TEXT PRIMARY KEY, monitor_id TEXT NOT NULL REFERENCES browser_monitor_monitors(id) ON DELETE CASCADE, version INTEGER NOT NULL, input TEXT NOT NULL, enabled INTEGER NOT NULL, activation_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS browser_monitor_runs (id TEXT PRIMARY KEY, monitor_id TEXT NOT NULL, generation INTEGER NOT NULL, due_at INTEGER NOT NULL, started_at INTEGER NOT NULL, finished_at INTEGER, status TEXT NOT NULL, detail TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS browser_monitor_events (id TEXT PRIMARY KEY, monitor_id TEXT NOT NULL, external_id TEXT NOT NULL, item TEXT NOT NULL, observed_at INTEGER NOT NULL, processed INTEGER NOT NULL, review_required INTEGER NOT NULL DEFAULT 1, UNIQUE(monitor_id, external_id));
       CREATE TABLE IF NOT EXISTS browser_monitor_activation (monitor_id TEXT PRIMARY KEY REFERENCES browser_monitor_monitors(id) ON DELETE CASCADE, activated_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS browser_monitor_partitions (monitor_id TEXT NOT NULL REFERENCES browser_monitor_monitors(id) ON DELETE CASCADE, target_id TEXT NOT NULL, baseline INTEGER NOT NULL, cursor TEXT, continuation TEXT, complete INTEGER NOT NULL, detail TEXT NOT NULL, last_checked_at INTEGER NOT NULL, PRIMARY KEY(monitor_id, target_id));
       CREATE INDEX IF NOT EXISTS browser_monitor_due ON browser_monitor_monitors(owner_node_id, enabled, next_due_at);
-      CREATE INDEX IF NOT EXISTS browser_monitor_rules_monitor ON browser_monitor_rules(monitor_id, created_at, id);
       CREATE INDEX IF NOT EXISTS browser_monitor_latest_runs ON browser_monitor_runs(monitor_id, started_at DESC, id DESC);
       CREATE INDEX IF NOT EXISTS browser_monitor_pending_events ON browser_monitor_events(monitor_id, processed, observed_at, id);
       CREATE UNIQUE INDEX IF NOT EXISTS browser_monitor_active_run ON browser_monitor_runs(monitor_id) WHERE status = 'running';`);
@@ -34,11 +30,7 @@ export class BrowserMonitorStore {
     try {
       const eventColumns = db.prepare("PRAGMA table_info(browser_monitor_events)").all() as unknown as Array<{ name: string }>;
       if (!eventColumns.some(column => column.name === "review_required")) db.exec("ALTER TABLE browser_monitor_events ADD COLUMN review_required INTEGER NOT NULL DEFAULT 1");
-      const ruleColumns = db.prepare("PRAGMA table_info(browser_monitor_rules)").all() as unknown as Array<{ name: string }>;
-      if (!ruleColumns.some(column => column.name === "activation_at")) {
-        db.exec("ALTER TABLE browser_monitor_rules ADD COLUMN activation_at INTEGER");
-        db.exec("UPDATE browser_monitor_rules SET enabled = 0, version = version + 1 WHERE enabled = 1");
-      }
+      db.exec("DROP TABLE IF EXISTS browser_monitor_action_events; DROP TABLE IF EXISTS browser_monitor_actions; DROP TABLE IF EXISTS browser_monitor_rules;");
       db.exec("COMMIT");
     } catch (error) { db.exec("ROLLBACK"); throw error; }
   }
@@ -64,53 +56,6 @@ export class BrowserMonitorStore {
     const row = this.db.prepare("SELECT * FROM browser_monitor_monitors WHERE id = ? AND project_id = ?").get(id, projectId) as MonitorRow | undefined;
     if (!row) throw new Error("Browser monitor not found");
     return this.record(row);
-  }
-  private ruleRecord(row: RuleRow): BrowserMonitorRuleRecord {
-    return { id: row.id, monitorId: row.monitor_id, version: z.number().int().positive().safe().parse(row.version), input: browserMonitorRuleInputSchema.parse(JSON.parse(row.input)), enabled: z.union([z.literal(0), z.literal(1)]).transform(Boolean).parse(row.enabled), activatedAt: z.number().int().nonnegative().safe().nullable().parse(row.activation_at), createdAt: z.number().int().nonnegative().safe().parse(row.created_at), updatedAt: z.number().int().nonnegative().safe().parse(row.updated_at) };
-  }
-  getRule(monitorId: string, id: string): BrowserMonitorRuleRecord {
-    const row = this.db.prepare("SELECT * FROM browser_monitor_rules WHERE monitor_id = ? AND id = ?").get(monitorId, id) as RuleRow | undefined;
-    if (!row) throw new Error("Browser monitor rule not found");
-    return this.ruleRecord(row);
-  }
-  listRules(monitorId: string): BrowserMonitorRuleRecord[] {
-    this.get(monitorId);
-    const rows = this.db.prepare("SELECT * FROM browser_monitor_rules WHERE monitor_id = ? ORDER BY created_at, id LIMIT 200").all(monitorId) as unknown as RuleRow[];
-    return rows.map(row => this.ruleRecord(row));
-  }
-  createRule(monitorId: string, input: BrowserMonitorRuleInput, now = Date.now()): BrowserMonitorRuleRecord {
-    const valid = browserMonitorRuleInputSchema.parse(input); this.timestamp(now); const id = randomUUID();
-    return this.transaction(() => {
-      this.get(monitorId);
-      const count = this.db.prepare("SELECT COUNT(*) AS count FROM browser_monitor_rules WHERE monitor_id = ?").get(monitorId) as { count: number };
-      if (count.count >= 200) throw new Error("Browser monitor has too many rules");
-      this.db.prepare("INSERT INTO browser_monitor_rules (id, monitor_id, version, input, enabled, created_at, updated_at) VALUES (?, ?, 1, ?, 0, ?, ?)").run(id, monitorId, JSON.stringify(valid), now, now);
-      return this.getRule(monitorId, id);
-    });
-  }
-  private ruleCurrent(monitorId: string, id: string, version: number): BrowserMonitorRuleRecord {
-    z.number().int().positive().safe().parse(version); const rule = this.getRule(monitorId, id);
-    if (rule.version !== version) throw new Error("Browser monitor rule changed; refresh before continuing");
-    return rule;
-  }
-  updateRule(monitorId: string, id: string, version: number, input: BrowserMonitorRuleInput, now = Date.now()): BrowserMonitorRuleRecord {
-    const valid = browserMonitorRuleInputSchema.parse(input); this.timestamp(now);
-    return this.transaction(() => {
-      this.ruleCurrent(monitorId, id, version);
-      this.db.prepare("UPDATE browser_monitor_rules SET version = version + 1, input = ?, enabled = 0, activation_at = NULL, updated_at = ? WHERE monitor_id = ? AND id = ?").run(JSON.stringify(valid), now, monitorId, id);
-      return this.getRule(monitorId, id);
-    });
-  }
-  setRuleEnabled(monitorId: string, id: string, version: number, enabled: boolean, now = Date.now()): BrowserMonitorRuleRecord {
-    z.boolean().parse(enabled); this.timestamp(now);
-    return this.transaction(() => {
-      this.ruleCurrent(monitorId, id, version);
-      this.db.prepare("UPDATE browser_monitor_rules SET version = version + 1, enabled = ?, activation_at = ?, updated_at = ? WHERE monitor_id = ? AND id = ?").run(Number(enabled), enabled ? now : null, now, monitorId, id);
-      return this.getRule(monitorId, id);
-    });
-  }
-  deleteRule(monitorId: string, id: string, version: number): void {
-    this.transaction(() => { const rule = this.ruleCurrent(monitorId, id, version); if (rule.enabled) throw new Error("Pause browser monitor rule before deleting"); this.db.prepare("DELETE FROM browser_monitor_rules WHERE monitor_id = ? AND id = ?").run(monitorId, id); });
   }
   private timestamp(now: number): void { z.number().int().nonnegative().safe().parse(now); }
   list(projectId?: string): MonitorRecord[] {
