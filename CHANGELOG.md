@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.63.0 — 2026-09-19
 
-- Secret accounts can now be scoped to a specific project and appear only in that project's picker.
+- Secret accounts can now be created straight from a project's Secret accounts dialog; such accounts belong to that project only, never replicate to other nodes, and are removed with the project.
 
 ## 1.62.1 — 2026-09-19
 
