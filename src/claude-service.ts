@@ -429,7 +429,8 @@ export async function loadClaudeMessages(sessionPath: string): Promise<ChatMessa
     }
     const text = claudeMessageText(record);
     const role = message.role === "user" ? "user" : "assistant";
-    if (!text.trim() || (role === "user" && isClaudeLocalCommandMessage(text))) continue;
+    // Compaction stores its summary as a user record; nobody typed it, so it stays out of the chat.
+    if (!text.trim() || record.isCompactSummary === true || (role === "user" && isClaudeLocalCommandMessage(text))) continue;
     messages.push({ id: `${index}`, role, text: role === "user" ? stripHandoffEnvelope(text) : text, ...stamp });
   }
   return messages;

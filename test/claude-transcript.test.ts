@@ -87,6 +87,9 @@ test("a reloaded Claude transcript keeps the tool bubbles between the spoken blo
     await mkdir(path.dirname(transcript), { recursive: true });
     await writeFile(transcript, [
       JSON.stringify({ type: "user", message: { role: "user", content: "check the plan" } }),
+      // Compaction writes its summary as a user record; nobody typed it, so the chat never shows it.
+      JSON.stringify({ type: "system", subtype: "compact_boundary", content: "Conversation compacted" }),
+      JSON.stringify({ type: "user", isCompactSummary: true, message: { role: "user", content: "This session is being continued from a previous conversation that ran out of context. Summary: …" } }),
       JSON.stringify({ type: "assistant", message: { role: "assistant", content: [
         { type: "text", text: "Reading the plan." },
         { type: "tool_use", id: "tool-1", name: "Read", input: { path: "plan.md" } },

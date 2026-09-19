@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Automatically generated conversation summaries are now hidden from the chat history when context is compacted.
+
 ## 1.60.0 — 2026-09-19
 
 - Removed auto-reply draft and approval features from browser monitors.
