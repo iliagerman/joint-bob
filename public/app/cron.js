@@ -21,6 +21,7 @@ export async function openScheduledTasks(projectId, session = null) {
   context = { projectId, session };
   editing = null;
   showList();
+  showLoading();
   errorText.textContent = "";
   document.querySelector("#cronContext").textContent = session
     ? "Appends to this conversation. Ownership transfers automatically to the selected node after the active run finishes."
@@ -126,6 +127,17 @@ function showList() {
   footer.hidden = false;
   dialog.querySelector(".cron-card").scrollTo(0, 0);
 }
+function showLoading() {
+  const list = document.querySelector("#cronList");
+  const loading = document.createElement("p");
+  loading.className = "cron-loading";
+  loading.dataset.testid = "cron-loading";
+  const spinner = document.createElement("span");
+  spinner.className = "queued-force-spinner";
+  spinner.setAttribute("aria-hidden", "true");
+  loading.append(spinner, document.createTextNode("Loading scheduled tasks\u2026"));
+  list.replaceChildren(loading);
+}
 function modelsForHarness(engine) {
   return availableModels.filter((model) => model.harnessId === engine);
 }
@@ -208,7 +220,7 @@ field("model").addEventListener("change", () => renderExecutionFields(field("mod
 document.querySelector("#cronNew").addEventListener("click", () => editTask(null));
 document.querySelector("#cronCancel").addEventListener("click", showList);
 document.querySelector("#cronClose").addEventListener("click", () => dialog.close());
-document.querySelector("#cronRefresh").addEventListener("click", () => refreshTasks().catch(error => { errorText.textContent = error.message; }));
+document.querySelector("#cronRefresh").addEventListener("click", () => { showLoading(); refreshTasks().catch(error => { errorText.textContent = error.message; }); });
 document.querySelector("#chatCronButton").addEventListener("click", () => {
   const session = state.sessions.find(session => session.id === state.activeSessionId || session.path === state.activeSessionPath);
   if (!session) { toast("Open a conversation first"); return; }

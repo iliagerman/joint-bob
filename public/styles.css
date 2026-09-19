@@ -1422,6 +1422,7 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 #cronListView, #cronForm { display: grid; gap: 14px; min-width: 0; }
 .cron-list { display: grid; gap: 10px; }
 .cron-empty { padding: 18px; border: 1px dashed var(--line-strong); border-radius: var(--radius-ctl); text-align: center; }
+.cron-loading { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 18px; color: var(--muted); }
 .cron-task { display: grid; gap: 12px; min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--panel); }
 .cron-task-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; min-width: 0; }
 .cron-task-heading strong { min-width: 0; font-size: 14px; overflow-wrap: anywhere; }

@@ -121,3 +121,34 @@ test("project and conversation schedules, edit, pause, history, delete and Cron 
   await page.getByTestId("cron-save").scrollIntoViewIfNeeded();
   assert.equal(await page.getByTestId("cron-save").isVisible(), true, "Save action should remain reachable on a short mobile viewport");
 });
+
+test("scheduled tasks dialog shows a loading spinner until tasks arrive", { timeout: 180_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await page.goto(node.url);
+  await page.locator('#loginDialog[open]').waitFor();
+  await page.locator("#loginUsernameInput").fill(environment.username);
+  await page.locator("#loginPasswordInput").fill(environment.password);
+  await page.locator("#loginSubmitButton").click();
+  await page.waitForFunction(() => document.querySelectorAll("#projectList .list-row").length === 3);
+
+  // Delay the task listing so the loading state stays observable, and prove the
+  // list never renders its empty placeholder before the response arrives.
+  let release: () => void = () => {};
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await page.route("**/cron", async route => {
+    if (route.request().method() !== "GET") return route.continue();
+    await gate;
+    return route.continue();
+  });
+
+  await page.locator('[aria-label="Actions for Internal Assistant"]').click();
+  await page.locator('[data-testid="project-cron-button"]').click();
+  await page.getByTestId("cron-loading").waitFor();
+  assert.equal(await page.getByTestId("cron-loading").isVisible(), true, "Dialog should show a spinner while tasks load");
+  assert.equal(await page.evaluate('document.querySelector("#cronList").textContent.includes("No scheduled tasks")'), false, "Empty placeholder must not flash before tasks load");
+  assert.equal(await page.evaluate('Boolean(document.querySelector("#cronList .queued-force-spinner"))'), true, "Loading indicator needs a spinner");
+
+  release();
+  await page.waitForFunction(() => document.querySelector("#cronList").textContent.includes("No scheduled tasks"));
+  assert.equal(await page.getByTestId("cron-loading").count(), 0, "Spinner must clear once tasks resolve");
+});
