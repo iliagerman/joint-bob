@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.59.1 — 2026-09-19
 
 - Browser sign-in now works on phones: tapping the remote page opens the on-screen keyboard, and the sign-in panel hands you control automatically instead of waiting for a Take control click.
 
