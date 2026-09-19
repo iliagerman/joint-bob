@@ -403,7 +403,14 @@ async function queueCommand(connection: HarnessChatConnection, message: ReturnTy
     pausedDrains.add(key);
     refreshHarnessPromptQueue(connection);
     try {
-      await connection.shared.session.cancel();
+      // Force start interrupts the running turn so the prioritized prompt runs
+      // next. Kiro and Claude throw from cancel() when no turn is running (for
+      // example between a dispatch claiming the queue and the harness process
+      // starting during preflight). That is benign here: the paused drain plus
+      // re-drain still starts the forced prompt, so a cancel that reports no
+      // running turn must not surface an error or abort the force start.
+      try { await connection.shared.session.cancel(); }
+      catch (error) { if (!/not running/i.test(chatErrorMessage(error))) throw error; }
       if (draining) try { await draining; }
       catch (error) { publish(connection, { type: "error", error: chatErrorMessage(error) }); }
       sendHarnessStatus(connection.shared);

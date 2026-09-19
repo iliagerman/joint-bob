@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Kiro harness now correctly starts force-queued prompts when the previous turn is still initializing.
+
 ## 1.60.1 — 2026-09-19
 
 - Automatically generated conversation summaries are now hidden from the chat history when context is compacted.
