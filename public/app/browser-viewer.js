@@ -3,7 +3,7 @@
 export function createBrowserViewer(root, { api: request, identity, sessionId, nodeId, confirm: confirmAction, onClose, loginMode = false, onSession, isCurrent = () => true }) {
   let session = null, socket = null, disposed = false, retry = 0, retryTimer, connectionTimer;
   const attemptedLoginControl = new Set();
-  const requestedPhoneViewport = new Set();
+  const requestedPhoneViewport = new Map();
   let framePending = null, drawing = false, frameVersion = 0, frameSize = null;
   let sessionVersion = 0;
   let busy = false, connected = false, loaded = false, profiles = [], sessions = [];
@@ -267,17 +267,28 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     if (request && canInput() && !disposed && isCurrent() && window.innerWidth < 700) {
       const target = { nodeId: session.nodeId, sessionId: session.id, requestId: request.id };
       const key = `${target.nodeId}:${target.sessionId}:${target.requestId}`;
-      if (!requestedPhoneViewport.has(key)) {
-        requestedPhoneViewport.add(key);
+      const attempts = requestedPhoneViewport.get(key) || 0;
+      if (attempts < 5 && !requestedPhoneViewport.get(`${key}:pending`)) {
         queueMicrotask(() => {
+          if (busy || disposed || requestedPhoneViewport.get(`${key}:pending`)) return;
+          requestedPhoneViewport.set(`${key}:pending`, true);
           void operation(async () => {
             if (disposed || !isCurrent() || session?.nodeId !== target.nodeId || session?.id !== target.sessionId || session?.loginRequest?.id !== target.requestId || session?.owner !== "human" || !running() || !connected || window.innerWidth >= 700) return;
-            await command({
-              action: "setViewport",
-              width: Math.max(320, Math.min(500, Math.round(window.innerWidth))),
-              height: Math.max(480, Math.min(1000, Math.round(window.innerHeight))),
-            });
-          });
+            try {
+              await command({
+                action: "setViewport",
+                width: Math.max(320, Math.min(500, Math.round(window.innerWidth))),
+                height: Math.max(480, Math.min(1000, Math.round(window.innerHeight))),
+              });
+              requestedPhoneViewport.set(key, 5);
+            } catch (failure) {
+              // A restart swapping page ids or a network blip must not leave the
+              // handoff desktop-sized: count the attempt and retry on a later render.
+              requestedPhoneViewport.set(key, attempts + 1);
+              setTimeout(() => { if (!disposed) render(); }, 1000);
+              throw failure;
+            }
+          }).finally(() => requestedPhoneViewport.delete(`${key}:pending`));
         });
       }
     }
