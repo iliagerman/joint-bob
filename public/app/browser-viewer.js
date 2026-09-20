@@ -617,6 +617,26 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     const multiplier = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? frameSize?.height || 800 : 1;
     sendInput({ action: "scroll", x: Math.max(-20000, Math.min(20000, event.deltaX * multiplier)), y: Math.max(-20000, Math.min(20000, event.deltaY * multiplier)) });
   }, { passive: false });
+  // Phones never emit wheel events, so a finger drag on the remote screen must
+  // become remote scroll commands. A small dead zone keeps taps as clicks.
+  let touchScroll = null;
+  screen.addEventListener("touchstart", (event) => {
+    touchScroll = event.touches.length === 1 ? { x: event.touches[0].clientX, y: event.touches[0].clientY, active: false } : null;
+  }, { passive: true });
+  screen.addEventListener("touchmove", (event) => {
+    if (!touchScroll || event.touches.length !== 1 || !canInput() || !frameSize) return;
+    const touch = event.touches[0];
+    if (!touchScroll.active && Math.hypot(touch.clientX - touchScroll.x, touch.clientY - touchScroll.y) < 8) return;
+    event.preventDefault();
+    touchScroll.active = true;
+    const scale = frameSize.width / screen.getBoundingClientRect().width;
+    const x = Math.max(-20000, Math.min(20000, (touchScroll.x - touch.clientX) * scale));
+    const y = Math.max(-20000, Math.min(20000, (touchScroll.y - touch.clientY) * scale));
+    touchScroll.x = touch.clientX; touchScroll.y = touch.clientY;
+    if (x || y) sendInput({ action: "scroll", x, y });
+  }, { passive: false });
+  screen.addEventListener("touchend", () => { touchScroll = null; });
+  screen.addEventListener("touchcancel", () => { touchScroll = null; });
   screen.addEventListener("keydown", (event) => {
     if (!canInput() || document.activeElement !== screen || event.key === "Tab") return;
     event.stopPropagation();
