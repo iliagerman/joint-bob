@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.65.0 — 2026-09-20
 
-- Conversations can now be marked as done or not done directly from the chat menu without a nested dialog.
+- Moved "Mark done" action to the conversation menu for easier access on phones.
 
 ## 1.64.2 — 2026-09-20
 
