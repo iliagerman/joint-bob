@@ -227,6 +227,74 @@ test("a handoff already under human control still gets a phone-sized page", { ti
   assert.ok(!commands.some(c => c.action === "takeControl"), "control is already held; the viewer must not take it again");
 });
 
+// While an HTTP command is in flight the viewer sets its busy flag. The busy
+// flag must not disable the typing proxy: disabling blurs it, and a phone
+// closes its on-screen keyboard the instant the field blurs.
+test("typing keeps focus while a slow command is in flight", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+
+  const frame = await page.evaluate(([width, height]) => {
+    const canvas = document.createElement("canvas"); canvas.width = width; canvas.height = height;
+    const context = canvas.getContext("2d")!; context.fillStyle = "#eef4ff"; context.fillRect(0, 0, width, height);
+    return canvas.toDataURL("image/jpeg", .85).split(",")[1];
+  }, [frameWidth, frameHeight]);
+
+  const session: any = {
+    id: sessionId, nodeId: ownerNodeId, state: "running", owner: "human", canControl: true,
+    profileId: "55555555-5555-4555-8555-555555555555", profileLabel: "Synthetic login",
+    activePageId: pageId, tabs: [{ id: pageId, title: "Sign in", url: "https://accounts.example.test/login" }], downloads: [],
+    loginRequest: { id: requestId, expectedOrigin: "https://accounts.example.test", readySelector: "[data-authenticated]", loginSelector: "input", label: "Synthetic login", automatic: false },
+  };
+  const snapshot = () => ({ ...session });
+  await page.route("**/api/browser/**", async route => {
+    const url = new URL(route.request().url());
+    let result: any = {};
+    if (url.pathname === "/api/browser/sessions" && route.request().method() === "GET") result = { sessions: [snapshot()] };
+    else if (url.pathname === `/api/browser/sessions/${sessionId}`) result = { session: snapshot() };
+    else if (url.pathname.endsWith("/command")) {
+      // Every command crawls: the busy window is wide open while typing happens.
+      await new Promise(r => setTimeout(r, 1500));
+      result = { session: snapshot() };
+    } else if (url.pathname === "/api/browser/status") result = { config: { executorNodeId: node.nodeId }, nodes: [{ id: ownerNodeId, name: "Owner", available: true, reachable: true, runningCount: 1 }] };
+    else if (url.pathname === "/api/browser/preferences") result = { nodeId: null, effectiveNodeId: ownerNodeId };
+    else if (url.pathname === "/api/browser/profiles") result = { profiles: [] };
+    await route.fulfill({ json: result });
+  });
+  await page.routeWebSocket(/\/ws\?mode=browser/, ws => {
+    ws.send(JSON.stringify({ type: "browserState", session: snapshot() }));
+    ws.send(JSON.stringify({ type: "browserFrame", pageId, width: frameWidth, height: frameHeight, data: frame }));
+  });
+
+  const login = await signIn(environment, node);
+  await page.context().addCookies(login.cookie.split("; ").map(cookie => ({ name: cookie.slice(0, cookie.indexOf("=")), value: cookie.slice(cookie.indexOf("=") + 1), url: node.url })));
+  await page.goto(node.url);
+  await page.locator("#projectList").getByText("Internal Assistant", { exact: true }).click();
+  await page.locator("#sessionList .list-row").filter({ has: page.locator("strong", { hasText: "Short one" }) }).first().click();
+  await page.locator("#sessionTitle").filter({ hasText: "Short one" }).waitFor();
+  await page.setViewportSize({ width: 412, height: 730 });
+
+  const activeIdentity = await page.evaluate(async () => { const { state } = await import("/app/state.js"); return { projectId: state.activeProjectId, engine: state.engine, conversationId: state.activeConversationId || state.activeSessionId, appNodeId: state.conversationLock?.nodeId || state.activeNodeId }; });
+  Object.assign(session, activeIdentity);
+  await page.evaluate(() => document.dispatchEvent(new Event("browserSessionsChanged")));
+
+  const dialog = page.getByTestId("browser-login-panel");
+  await dialog.waitFor();
+  const screen = dialog.getByTestId("browser-screen");
+  await screen.waitFor({ state: "visible" });
+
+  // Tap the page: the typing proxy takes focus (a phone opens its keyboard).
+  await screen.click();
+  const typing = dialog.getByTestId("browser-typing");
+  // The mount-time size request is now crawling through its 1.5s response.
+  // Through that whole busy window the typing field must stay enabled and focused.
+  for (let sample = 0; sample < 10; sample++) {
+    const state = await typing.evaluate(element => ({ disabled: (element as HTMLInputElement).disabled, focused: document.activeElement === element }));
+    assert.equal(state.disabled, false, `typing must not be disabled while a command is in flight (sample ${sample})`);
+    assert.equal(state.focused, true, `typing must keep focus while a command is in flight (sample ${sample})`);
+    await new Promise(r => setTimeout(r, 150));
+  }
+});
+
 // The phone-size request can fail transiently — a service restart swaps page
 // ids mid-flight, a network blip drops the POST. A single burned attempt must
 // not leave the handoff desktop-sized forever: the viewer retries on a later

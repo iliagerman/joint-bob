@@ -122,6 +122,10 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
   const running = () => session?.state === "running";
   const human = () => running() && session.owner === "human";
   const canInput = () => human() && session.canControl !== false && connected && !busy;
+  // Typing, taps and drags ride the websocket and never conflict with an HTTP
+  // operation in flight. Gating them on busy disables the typing proxy for a
+  // moment, which blurs it — and a phone closes its keyboard on blur.
+  const canType = () => human() && session.canControl !== false && connected;
   const stopped = (item) => item.state !== "running" && !item.restoreOnRestart;
   const endpoint = () => `/api/browser/sessions/${encodeURIComponent(session.id)}`;
   function button(label, testid, handler, className = "ghost compact") {
@@ -164,8 +168,8 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     get("login-done").disabled = !pendingLogin || !running() || !connected || busy || !human() || session.canControl === false || !session.activePageId;
     get("end").disabled = (!running() && !session?.restoreOnRestart) || busy;
     get("reconnect").disabled = busy;
-    typing.disabled = !canInput();
-    screen.setAttribute("aria-disabled", String(!canInput()));
+    typing.disabled = !canType();
+    screen.setAttribute("aria-disabled", String(!canType()));
     root.dataset.control = human() ? "human" : "agent";
   }
   function render() {
@@ -381,11 +385,11 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     if (version === sessionVersion) acceptSession(body.session);
   }
   function sendInput(command) {
-    if (!canInput()) return;
+    const fromFrame = ["click", "key", "text", "scroll"].includes(command.action);
+    if (fromFrame ? !canType() : !canInput()) return;
     // Never queue disconnected input or grow an unbounded send buffer. The user
     // must retry, rather than have a delayed click land on a different page.
     if (socket?.readyState !== WebSocket.OPEN || socket.bufferedAmount > 64 * 1024) { error("Viewer connection is busy. Try that action again."); return; }
-    const fromFrame = ["click", "key", "text", "scroll"].includes(command.action);
     if (fromFrame && (!frameSize || frameSize.pageId !== session.activePageId)) { error("Wait for the current tab's image before sending input."); return; }
     const expectedPageId = command.expectedPageId || (fromFrame ? frameSize.pageId : session.activePageId);
     socket.send(JSON.stringify({ type: "browserCommand", command: { ...command, ...(expectedPageId ? { expectedPageId } : {}) } }));
@@ -637,7 +641,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     }).finally(() => { uploading = false; if (!disposed) controls(); });
   });
   function click(event, button) {
-    if (!canInput() || !frameSize) return;
+    if (!canType() || !frameSize) return;
     event.preventDefault(); typing.focus();
     const rect = screen.getBoundingClientRect();
     sendInput({ action: "click", x: Math.max(0, Math.min(frameSize.width, (event.clientX - rect.left) / rect.width * frameSize.width)), y: Math.max(0, Math.min(frameSize.height, (event.clientY - rect.top) / rect.height * frameSize.height)), button, clickCount: Math.min(event.detail || 1, 3) });
@@ -646,7 +650,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
   screen.addEventListener("contextmenu", (event) => click(event, "right"));
   screen.addEventListener("auxclick", (event) => { if (event.button === 1) click(event, "middle"); });
   screen.addEventListener("wheel", (event) => {
-    if (!canInput() || (document.activeElement !== screen && document.activeElement !== typing)) return;
+    if (!canType() || (document.activeElement !== screen && document.activeElement !== typing)) return;
     event.preventDefault();
     const multiplier = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? frameSize?.height || 800 : 1;
     sendInput({ action: "scroll", x: Math.max(-20000, Math.min(20000, event.deltaX * multiplier)), y: Math.max(-20000, Math.min(20000, event.deltaY * multiplier)) });
@@ -658,7 +662,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     touchScroll = event.touches.length === 1 ? { x: event.touches[0].clientX, y: event.touches[0].clientY, active: false } : null;
   }, { passive: true });
   screen.addEventListener("touchmove", (event) => {
-    if (!touchScroll || event.touches.length !== 1 || !canInput() || !frameSize) return;
+    if (!touchScroll || event.touches.length !== 1 || !canType() || !frameSize) return;
     const touch = event.touches[0];
     if (!touchScroll.active && Math.hypot(touch.clientX - touchScroll.x, touch.clientY - touchScroll.y) < 8) return;
     event.preventDefault();
@@ -672,7 +676,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
   screen.addEventListener("touchend", () => { touchScroll = null; });
   screen.addEventListener("touchcancel", () => { touchScroll = null; });
   screen.addEventListener("keydown", (event) => {
-    if (!canInput() || document.activeElement !== screen || event.key === "Tab") return;
+    if (!canType() || document.activeElement !== screen || event.key === "Tab") return;
     event.stopPropagation();
     // Let the local browser emit paste; never also send a remote Control+V.
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v") return;
@@ -682,7 +686,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     sendInput({ action: "key", key });
   });
   function paste(event) {
-    if (!canInput()) return;
+    if (!canType()) return;
     event.preventDefault(); event.stopPropagation();
     const text = event.clipboardData?.getData("text/plain") || "";
     if (text.length > 100000) error("Paste is limited to 100,000 characters.");
@@ -694,7 +698,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
   // from beforeinput, and named keys from keydown, so nothing is ever sent twice.
   typing.addEventListener("keydown", (event) => {
     if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) return;
-    if (!canInput() || event.key === "Tab") return;
+    if (!canType() || event.key === "Tab") return;
     event.stopPropagation();
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v") return;
     event.preventDefault();
@@ -703,7 +707,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
   });
   typing.addEventListener("beforeinput", (event) => {
     event.preventDefault();
-    if (!canInput()) return;
+    if (!canType()) return;
     if (event.inputType === "deleteContentBackward") sendInput({ action: "key", key: "Backspace" });
     else if (event.inputType.startsWith("insert") && event.data) sendInput({ action: "text", text: event.data });
   });
