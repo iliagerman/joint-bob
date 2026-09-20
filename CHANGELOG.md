@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 1.64.2 — 2026-09-20
+
+- App shell cache was refreshed to ensure users receive the latest assets instead of stale browser-cached versions.
+
 ## 1.64.1 — 2026-09-20
 
 - The conversation sign-in panel gained a Full screen button: it hides the app around the browser view so a phone keyboard leaves room to see and type into the page. Escape steps back to the inline panel first, then dismisses.
