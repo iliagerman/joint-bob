@@ -206,6 +206,20 @@ test("origin-bound snapshot signs in on the designated browser node", { timeout:
     assert.equal(mfaComplete.status, 200, JSON.stringify(mfaComplete.body));
     assert.equal(mfaComplete.body.session.owner, "agent");
     assert.equal(mfaComplete.body.session.loginRequest, null);
+
+    // Done must nudge the paused conversation: the executor queues a hidden
+    // system prompt that replicates to the conversation's node, so the agent
+    // continues without a manual "go on" message.
+    await waitForAssertion(async () => {
+      const queueDb = new DatabaseSync(path.join(source.dataDir, "node.db"));
+      try {
+        const queued = queueDb.prepare("SELECT queue_key, prompt FROM queued_prompts").all() as Array<{ queue_key: string; prompt: string }>;
+        const continuation = queued.find(row => (JSON.parse(row.prompt) as { systemEventId?: string }).systemEventId === mfaSession.loginRequest!.id);
+        assert.ok(continuation, "completed login must queue a continuation prompt");
+        assert.equal(continuation.queue_key, `${projectId}:${conversationId}`);
+        assert.match((JSON.parse(continuation.prompt) as { promptText: string }).promptText, /sign-in/i);
+      } finally { queueDb.close(); }
+    }, 15000);
   } finally {
     await Promise.all(servers.map(stopDevNode)); website.closeAllConnections(); website.close(); await rm(root, { recursive: true, force: true });
   }

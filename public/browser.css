@@ -114,3 +114,9 @@ body.canvas-pane-mode.browser-visible #browserPanel { position: static; height: 
   .browser-navigation input { min-width: 80px; }
   .browser-toolbar { gap: 4px; }
 }
+
+/* Touch screens: 16px text in the viewer's fields keeps phones from zooming in
+   on focus and makes typing usable. The hidden typing proxy is already 16px. */
+@media (pointer: coarse) {
+  .browser-viewer input:not(.browser-typing), .browser-viewer select { font-size: 16px; }
+}

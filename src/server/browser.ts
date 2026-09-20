@@ -6,9 +6,10 @@ import { getClusterNode, getClusterPeer, getClusterMachineToken, listClusterPeer
 import { applyBrowserConfiguration, readBrowserConfiguration, browserConfigurationSchema, applyBrowserPreference, readBrowserPreference, browserPreferenceSchema } from "../browser-configuration.js";
 import { browserCapability, BrowserRuntime } from "../browser-runtime.js";
 import { browserCommandSchema, browserStartSchema, browserIdentitySchema, type BrowserActor, type BrowserSessionView } from "../browser-types.js";
+import { enqueueSystemPrompt } from "../prompt-queue.js";
 import { getProject } from "../store.js";
 import { clusterPeerMayAccessProject } from "./cluster-helpers.js";
-import { broadcastToProject } from "./realtime.js";
+import { broadcastToProject, wakeQueuedConversations } from "./realtime.js";
 
 export class BrowserRequestError extends Error { constructor(public status: number, message: string) { super(message); } }
 let runtime: BrowserRuntime | undefined;
@@ -134,11 +135,27 @@ export async function localBrowserOperation(input: BrowserOperation, actor: Brow
     }
     case "get": return { session: view(await service.get(operation.args.id)) };
     case "forget": { const projectId = (await service.get(operation.args.id)).projectId; await service.forget(operation.args.id); return { forgotten: true, projectId }; }
-    case "command": return { result: await service.execute(operation.args.id, operation.args.command, actor), session: view(await service.get(operation.args.id)) };
+    case "command": {
+      const result = await service.execute(operation.args.id, operation.args.command, actor);
+      const session = view(await service.get(operation.args.id));
+      if (operation.args.command.action === "completeLogin") announceBrowserLoginCompleted(session, operation.args.command.requestId);
+      return { result, session };
+    }
     case "profiles": return { profiles: (await service.profiles(operation.args.projectId)).map(profile => ({ ...profile, nodeId: local.id })) };
     case "deleteProfile": await service.deleteProfile(operation.args.id, operation.args.projectId); return { deleted: true };
   }
 }
+/** A verified Done resumes the conversation without a manual "continue" message.
+ * The queued prompt replicates to the conversation's node; the local wake covers
+ * the common case where the harness runs on this node. */
+function announceBrowserLoginCompleted(session: BrowserSessionView, requestId: string): void {
+  try {
+    enqueueSystemPrompt(`${session.projectId}:${session.conversationId}`, requestId,
+      `Browser sign-in completed: the human finished signing in on "${session.profileLabel || "the browser"}" and chose Done, returning control to the agent. Re-inspect the signed-in page state, then continue the paused browser task.`);
+    wakeQueuedConversations();
+  } catch (error) { console.warn("Browser login continuation prompt failed", error); }
+}
+
 export interface BrowserDiscovery { sessions: BrowserSessionView[]; unavailableNodes: Array<{ nodeId: string; reason: string }>; }
 export function requireCompleteDiscovery(discovery: BrowserDiscovery) {
   if (discovery.unavailableNodes.length) throw new BrowserRequestError(503, `Browser attachment discovery incomplete: ${discovery.unavailableNodes.map(node => `${node.nodeId}: ${node.reason}`).join("; ")}. No account was selected or created.`);
