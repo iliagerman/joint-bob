@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 1.67.4 — 2026-09-20
+
+- Sign-in pages now properly transfer control when reconnecting through a different app node, preventing you from getting stuck as a spectator unable to input or dismiss.
+
 ## 1.67.3 — 2026-09-20
 
 - Sign-in pages on phones now display at phone dimensions when resuming control of a handoff.
