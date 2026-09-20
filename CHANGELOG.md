@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 1.68.0 — 2026-09-20
+
+- Phone sign-in now opens full screen and responds to keyboard visibility, keeping the form readable when typing on phones.
+
 ## 1.67.5 — 2026-09-20
 
 - Sign-in pages on phones now retry the page-size request if it fails, preventing the page from staying desktop-sized when a service restart or network blip blocks the initial attempt.
