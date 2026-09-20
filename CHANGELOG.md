@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 1.66.0 — 2026-09-20
+
+- The conversation sign-in panel now shows only the site name, actions, and page itself, with session context and helper controls hidden until full screen.
+
 ## 1.65.0 — 2026-09-20
 
 - Moved "Mark done" action to the conversation menu for easier access on phones.
