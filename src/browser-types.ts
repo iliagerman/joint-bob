@@ -73,7 +73,7 @@ export const browserCommandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("key"), key: z.string().min(1).max(100) }),
   z.object({ action: z.literal("text"), text }),
   z.object({ action: z.literal("scroll"), x: z.number().finite().min(-20000).max(20000), y: z.number().finite().min(-20000).max(20000) }),
-  z.object({ action: z.literal("setViewport"), width: z.number().int().min(320).max(1600), height: z.number().int().min(480).max(2000) }),
+  z.object({ action: z.literal("setViewport"), width: z.number().int().min(320).max(1600), height: z.number().int().min(320).max(2000) }),
   z.object({ action: z.literal("clickElement"), selector }),
   z.object({ action: z.literal("fill"), selector, text, expectedOrigin: browserWebUrlSchema.optional() }),
   z.object({ action: z.literal("select"), selector, values: z.array(z.string().max(4096)).max(100) }),

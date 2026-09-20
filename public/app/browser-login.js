@@ -83,6 +83,9 @@ function mount(session) {
     if (on) document.body.append(host);
     else elements.composer.before(host);
   });
+  // On a phone the embedded strip shrinks to almost nothing once the keyboard
+  // opens; start straight in the full-screen popup so only the page shows.
+  if (window.innerWidth < 700) expandButton.click();
   host.querySelector('[data-testid="browser-login-done"]')?.focus();
 }
 

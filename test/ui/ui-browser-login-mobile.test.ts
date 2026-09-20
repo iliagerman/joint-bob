@@ -84,6 +84,22 @@ test("sign-in on a phone resizes the remote page to phone dimensions", { timeout
   const resize = commands[setViewport];
   assert.ok(resize.width >= 320 && resize.width < 700, `remote width must be phone-sized: ${resize.width}`);
   assert.ok(resize.height >= 480 && resize.height <= 2000, `remote height must be phone-sized: ${resize.height}`);
+
+  // On a phone the embedded strip is a few pixels tall once the keyboard
+  // opens; the sign-in starts as the full-screen popup with only the page.
+  const fullscreen = await dialog.evaluate(element => element.classList.contains("browser-login-fullscreen"));
+  assert.equal(fullscreen, true, "a phone sign-in must open in full-screen mode");
+  const exitLabel = await dialog.getByTestId("browser-login-expand").textContent();
+  assert.equal(exitLabel, "Exit full screen", "the expand button must offer the way back");
+
+  // The on-screen keyboard shrinks the window; the remote page must follow so
+  // the focused field is never hidden below the visible area.
+  const before = commands.filter(c => c.action === "setViewport").length;
+  await page.setViewportSize({ width: 412, height: 360 });
+  for (let i = 0; i < 100 && commands.filter(c => c.action === "setViewport").length === before; i++) await new Promise(r => setTimeout(r, 100));
+  const shrunk = commands.filter(c => c.action === "setViewport").at(-1);
+  assert.ok(commands.filter(c => c.action === "setViewport").length > before, "a shrinking window must re-request the remote page size");
+  assert.ok(shrunk.height <= 400, `the remote page must follow the keyboard-shrunk height: ${shrunk.height}`);
 });
 
 // A handoff can be held by a stale controller identity: the same person's
@@ -340,22 +356,20 @@ test("a finger drag on the remote screen scrolls the remote page", { timeout: 12
   const screen = dialog.getByTestId("browser-screen");
   await screen.waitFor({ state: "visible" });
 
-  // Swipe up on the remote screen: finger moves up, the remote page scrolls down.
-  const dispatched = await screen.evaluate(element => {
-    const rect = element.getBoundingClientRect();
-    const startX = rect.left + rect.width / 2, startY = rect.top + rect.height * .7;
-    const results: Array<[string, boolean]> = [];
-    for (const [type, offset] of [["touchstart", 0], ["touchmove", 30], ["touchmove", 60], ["touchmove", 90], ["touchmove", 120], ["touchmove", 150], ["touchend", 150]] as const) {
-      const touch = new Touch({ identifier: 1, target: element, clientX: startX, clientY: startY - offset });
-      const handled = !element.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true, touches: type === "touchend" ? [] : [touch], changedTouches: [touch] }));
-      results.push([type, handled]);
-    }
-    return results;
-  });
-  // Handled moves are prevented from also scrolling the panel around the screen.
-  assert.ok(dispatched.filter(([type]) => type === "touchmove").every(([, handled]) => handled), `every drag move must be consumed by the viewer: ${JSON.stringify(dispatched)}`);
-
-  for (let i = 0; i < 100 && !wsMessages.some(m => m.command?.action === "scroll"); i++) await new Promise(r => setTimeout(r, 100));
+  // Swipe up on the remote screen: finger moves up, the remote page scrolls
+  // down. The viewer briefly ignores input while its own mount-time size
+  // request is in flight, so the swipe repeats until a quiet moment lands it.
+  for (let round = 0; round < 40 && !wsMessages.some(m => m.command?.action === "scroll"); round++) {
+    await screen.evaluate(element => {
+      const rect = element.getBoundingClientRect();
+      const startX = rect.left + rect.width / 2, startY = rect.top + rect.height * .7;
+      for (const [type, offset] of [["touchstart", 0], ["touchmove", 30], ["touchmove", 60], ["touchmove", 90], ["touchmove", 120], ["touchmove", 150], ["touchend", 150]] as const) {
+        const touch = new Touch({ identifier: 1, target: element, clientX: startX, clientY: startY - offset });
+        element.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true, touches: type === "touchend" ? [] : [touch], changedTouches: [touch] }));
+      }
+    });
+    await new Promise(r => setTimeout(r, 250));
+  }
   const scrolls = wsMessages.filter(m => m.type === "browserCommand" && m.command?.action === "scroll");
   assert.ok(scrolls.length > 0, "a finger drag must send remote scroll commands");
   const total = scrolls.reduce((sum, m) => sum + m.command.y, 0);

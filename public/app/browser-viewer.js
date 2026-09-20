@@ -267,28 +267,31 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     if (request && canInput() && !disposed && isCurrent() && window.innerWidth < 700) {
       const target = { nodeId: session.nodeId, sessionId: session.id, requestId: request.id };
       const key = `${target.nodeId}:${target.sessionId}:${target.requestId}`;
-      const attempts = requestedPhoneViewport.get(key) || 0;
-      if (attempts < 5 && !requestedPhoneViewport.get(`${key}:pending`)) {
+      // The size follows the window: the on-screen keyboard shrinks it, and the
+      // remote page must shrink with it so the focused field stays visible.
+      const width = Math.max(320, Math.min(500, Math.round(window.innerWidth)));
+      const height = Math.max(320, Math.min(1000, Math.round(window.innerHeight)));
+      const desired = `${width}x${height}`;
+      const entry = requestedPhoneViewport.get(key) || { sent: null, tried: null, attempts: 0, pending: false };
+      requestedPhoneViewport.set(key, entry);
+      if (entry.sent !== desired && !entry.pending && (entry.tried !== desired || entry.attempts < 5)) {
         queueMicrotask(() => {
-          if (busy || disposed || requestedPhoneViewport.get(`${key}:pending`)) return;
-          requestedPhoneViewport.set(`${key}:pending`, true);
+          if (busy || disposed || entry.pending) return;
+          entry.pending = true;
           void operation(async () => {
             if (disposed || !isCurrent() || session?.nodeId !== target.nodeId || session?.id !== target.sessionId || session?.loginRequest?.id !== target.requestId || session?.owner !== "human" || !running() || !connected || window.innerWidth >= 700) return;
             try {
-              await command({
-                action: "setViewport",
-                width: Math.max(320, Math.min(500, Math.round(window.innerWidth))),
-                height: Math.max(480, Math.min(1000, Math.round(window.innerHeight))),
-              });
-              requestedPhoneViewport.set(key, 5);
+              await command({ action: "setViewport", width, height });
+              entry.sent = desired;
             } catch (failure) {
               // A restart swapping page ids or a network blip must not leave the
               // handoff desktop-sized: count the attempt and retry on a later render.
-              requestedPhoneViewport.set(key, attempts + 1);
+              entry.attempts = entry.tried === desired ? entry.attempts + 1 : 1;
+              entry.tried = desired;
               setTimeout(() => { if (!disposed) render(); }, 1000);
               throw failure;
             }
-          }).finally(() => requestedPhoneViewport.delete(`${key}:pending`));
+          }).finally(() => { entry.pending = false; });
         });
       }
     }
@@ -705,8 +708,14 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     else if (event.inputType.startsWith("insert") && event.data) sendInput({ action: "text", text: event.data });
   });
   typing.addEventListener("paste", paste);
+  // The on-screen keyboard resizes the window; the sign-in size-follow above
+  // reacts from render, so a resize must schedule one.
+  let resizeTimer = null;
+  const onWindowResize = () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (!disposed) render(); }, 250); };
+  window.addEventListener("resize", onWindowResize);
   function dispose() {
     disposed = true; frameVersion++; framePending = null; stopSocket();
+    window.removeEventListener("resize", onWindowResize); clearTimeout(resizeTimer);
     document.removeEventListener?.("browserSessionsChanged", refreshSessionList);
   }
   if (loginMode) {
