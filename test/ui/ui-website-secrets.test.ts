@@ -155,3 +155,56 @@ test("website secrets stay masked, origin-bound, editable, and usable in project
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("a website account is created from the workspace picker and attaches to that workspace", { timeout: 240_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-workspace-secrets-"));
+  const environment = await seedDevEnvironment(root, 1);
+  const node = environment.nodes[0];
+  const server = await startDevNode(environment, node);
+  let browser: Browser | undefined;
+  try {
+    browser = await launchChrome({ headless: true });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, serviceWorkers: "block" });
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    await page.goto(node.url);
+    await page.getByTestId("login-username-input").fill(environment.username);
+    await page.getByTestId("login-password-input").fill(environment.password);
+    await page.getByTestId("login-submit-button").click();
+    await page.getByText("Internal Assistant", { exact: true }).waitFor();
+
+    await page.getByTestId("settings-open-button").click();
+    await page.getByTestId("settings-tab-workspaces").click();
+    const workspaceRow = page.getByTestId("workspace-row").first();
+    const workspaceId = (await workspaceRow.locator("code").textContent())!.replace(/^\//, "");
+    await workspaceRow.getByTestId("workspace-secrets-button").click();
+    // The picker creates the account it is missing, instead of sending the user to Settings.
+    await page.getByTestId("secret-scope-add-button").click();
+    await page.getByTestId("secret-account-provider-input").selectOption("website");
+    await page.getByTestId("secret-account-origin-input").fill("https://workspace.example");
+    await page.getByTestId("secret-account-label-input").fill("Workspace login");
+    const values = page.getByTestId("secret-variable-value-input");
+    await values.first().fill("synthetic-user");
+    await values.nth(1).fill("synthetic-password");
+    const createdResponse = page.waitForResponse((response) => response.url().endsWith("/api/secrets/accounts") && response.request().method() === "POST");
+    await page.getByTestId("secret-account-save-button").click();
+    const createdBody = await (await createdResponse).json() as { account: { id: string; websiteOrigin?: string } };
+    assert.equal(createdBody.account.websiteOrigin, "https://workspace.example");
+
+    // It comes back ticked, so saving the picker attaches it without a second pass.
+    const checkbox = page.getByTestId("secret-scope-account-checkbox").first();
+    await checkbox.waitFor();
+    assert.equal(await checkbox.isChecked(), true);
+    await page.getByTestId("secret-scope-save-button").click();
+    await page.getByTestId("secret-scope-dialog").waitFor({ state: "hidden" });
+
+    const session = await signIn(environment, node);
+    const scope = await api<{ accountIds: string[] }>(node, session, "GET", `/secrets/scopes/workspace/${workspaceId}`);
+    assert.deepEqual(scope.body.accountIds, [createdBody.account.id]);
+    assert.deepEqual(errors, []);
+  } finally {
+    if (browser) await browser.close();
+    await stopDevNode(server);
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -4,7 +4,7 @@ import { classificationPicker } from "./classification.js";
 import { conversationTask, loadHarnesses } from "./chat-controls.js";
 import { elements } from "./elements.js";
 import { brandIcon } from "./icons.js";
-import { loadSecretAccounts, providerBadge, secretAccounts } from "./secrets.js";
+import { loadSecretAccounts, openNewSecretAccount, providerBadge, secretAccounts } from "./secrets.js";
 import { rememberRecentSession } from "./recents.js";
 import { renderSessionColorSwatches, selectedSessionColor } from "./session-identity.js";
 import { chooseOption, toast } from "./shell.js";
@@ -19,10 +19,16 @@ function localSessionNode() {
   return state.sessionNodes.find((node) => node.local);
 }
 
-function renderNewSessionSecrets() {
+function checkedNewSessionSecretIds() {
+  return [...elements.newSessionSecretList.querySelectorAll("input:checked")].map((input) => input.value);
+}
+
+/** Re-rendering keeps the ticks already made, so changing the node or adding an account
+    never silently drops a pick. */
+function renderNewSessionSecrets(selected = checkedNewSessionSecretIds()) {
   elements.newSessionSecretList.replaceChildren();
   if (!secretAccounts.length) {
-    elements.newSessionSecretList.textContent = "No node-local secret accounts. Add one in Settings.";
+    elements.newSessionSecretList.textContent = "No node-local secret accounts yet. Add one below.";
     return;
   }
   const remote = elements.newSessionNodeSelect.value !== localSessionNode()?.id;
@@ -33,12 +39,21 @@ function renderNewSessionSecrets() {
     const input = document.createElement("input");
     input.type = "checkbox";
     input.value = account.id;
+    input.checked = selected.includes(account.id);
     input.disabled = remote && account.replicate !== true;
     input.dataset.testid = "conversation-secrets-checkbox";
-    item.append(input, providerBadge(account.provider, "secret-scope-provider-badge"), document.createTextNode(` ${account.label}${input.disabled ? " · local only" : ""}`));
+    const detail = account.websiteOrigin ? ` — ${account.websiteOrigin}` : "";
+    item.append(input, providerBadge(account.provider, "secret-scope-provider-badge"), document.createTextNode(` ${account.label}${detail}${input.disabled ? " · local only" : ""}`));
     elements.newSessionSecretList.append(item);
   }
 }
+
+// A conversation can need a credential that does not exist yet — a website sign-in most of
+// all — so the account is created here and starts ticked.
+elements.newSessionSecretAddButton.addEventListener("click", () => {
+  const ticked = checkedNewSessionSecretIds();
+  openNewSecretAccount((account) => renderNewSessionSecrets([...ticked, account.id]));
+});
 
 /** The dialog is a three-step wizard so a conversation is set up one decision at a
     time, and every step is reachable from the keyboard alone: Enter walks forward,

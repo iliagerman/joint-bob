@@ -233,6 +233,7 @@ export const elements = {
   newSessionNodeSelect: document.querySelector("#newSessionNodeSelect"),
   newSessionColorSwatches: document.querySelector("#newSessionColorSwatches"),
   newSessionSecretList: document.querySelector("#newSessionSecretList"),
+  newSessionSecretAddButton: document.querySelector("#newSessionSecretAddButton"),
   newSessionStepTitle: document.querySelector("#newSessionStepTitle"),
   newSessionStepHint: document.querySelector("#newSessionStepHint"),
   newSessionStepList: document.querySelector("#newSessionStepList"),

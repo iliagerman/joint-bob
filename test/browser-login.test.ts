@@ -352,3 +352,32 @@ test("runtime restart restores pending login with fresh page identity until owne
     await runtime.execute(session.id, { action: "completeLogin", requestId: restored.loginRequest!.id, expectedPageId: restored.activePageId! }, human("owner"));
   } finally { await cleanup(runtime, session.id, "cleanup"); }
 });
+
+/** A saved website credential for the site the agent was sent to means the agent can
+    sign in itself, so the automatic handoff must not interrupt it — even when the form
+    lives on a separate identity-provider origin. */
+async function settleDetection(runtime: BrowserRuntime, id: string) {
+  void runtime.get(id);
+  const probe = (runtime as unknown as { sessions: Map<string, { loginDetection?: Promise<void> }> }).sessions.get(id)!.loginDetection;
+  await probe;
+  return runtime.get(id);
+}
+
+test("a credential for the requested site suppresses the automatic sign-in prompt on its identity provider", async t => {
+  const f = fixture(t), runtime = f.runtime();
+  const session = await runtime.create({ ...start(), url: "https://site.example.test" }, ["https://site.example.test"]);
+  const page = f.pages.at(-1)!;
+  try {
+    page.detectionResult = "credentials"; page.setUrl("https://idp.example.test/sign-in");
+    assert.equal((await settleDetection(runtime, session.id)).loginRequest, null);
+  } finally { await cleanup(runtime, session.id, "cleanup"); }
+});
+
+test("a Gmail credential suppresses the Google sign-in handoff", async t => {
+  const f = fixture(t), runtime = f.runtime();
+  const session = await runtime.create(start(), ["https://mail.google.com"]);
+  try {
+    f.pages.at(-1)!.setUrl("https://accounts.google.com/v3/signin");
+    assert.equal((await runtime.get(session.id)).loginRequest, null);
+  } finally { await cleanup(runtime, session.id, "cleanup"); }
+});

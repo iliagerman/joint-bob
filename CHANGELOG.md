@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Website secret accounts can now be created directly in the conversation setup wizard and from a session's menu.
+
 ## 1.63.2 — 2026-09-20
 
 - The conversation browser no longer stretches the remote page image past its real size on wide screens, keeping the viewer sharp and fully visible instead of a blurry magnified slice.

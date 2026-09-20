@@ -697,9 +697,13 @@ export class BrowserRuntime {
     const credentialOrigins = session.credentialOrigins;
     const valid = () => this.sessions.get(session.id) === session && !session.stopped && !session.restoring && !session.human && !this.store.loginRequest(session.id) && session.activePageId === pageId && session.pages.get(pageId) === page && session.loginVerificationEpoch === epoch && session.credentialOrigins === credentialOrigins && page.url() === current.href;
     const observation = detectBrowserLogin(page).then(result => {
-      if (!result || !valid() || (result === "credentials" && credentialOrigins.includes(current.origin))) return;
+      if (!result || !valid()) return;
       let returnOrigin = this.requestedOrigins.get(page);
       if (!returnOrigin) try { const requested = new URL(this.store.get(session.id).url ?? "about:blank"); if (["http:", "https:"].includes(requested.protocol)) returnOrigin = requested.origin; } catch {}
+      // A stored credential means the agent can sign in itself. The form often lives on a
+      // separate identity provider, so the credential for the site the browser was sent to
+      // suppresses the handoff as well. A challenge (MFA, CAPTCHA) still needs the human.
+      if (result === "credentials" && (credentialOrigins.includes(current.origin) || (returnOrigin !== undefined && credentialOrigins.includes(returnOrigin)))) return;
       this.store.setLoginRequest(session.id, { id: randomUUID(), expectedOrigin: current.origin, readySelector: "body", loginSelector: null, label: `Sign in to ${current.hostname}`.slice(0, 80), automatic: true, ...(returnOrigin ? { returnOrigin } : {}) });
       this.broadcastState(session);
     }).catch(error => {
@@ -712,7 +716,8 @@ export class BrowserRuntime {
     if (session.activePageId === null || session.pages.get(session.activePageId) !== page || this.store.loginRequest(session.id)) return;
     let current: URL;
     try { current = new URL(page.url()); } catch { return; }
-    if (current.origin !== "https://accounts.google.com" || session.credentialOrigins.includes(current.origin)) return;
+    // A credential for Google's sign-in origin or for Gmail itself lets the agent sign in.
+    if (current.origin !== "https://accounts.google.com" || session.credentialOrigins.includes(current.origin) || session.credentialOrigins.includes("https://mail.google.com")) return;
     let gmail = false;
     try { gmail = new URL(this.store.get(session.id).url ?? "about:blank").origin === "https://mail.google.com"; } catch {}
     if (!gmail) try { gmail = new URL(current.searchParams.get("continue") ?? "about:blank").origin === "https://mail.google.com"; } catch {}

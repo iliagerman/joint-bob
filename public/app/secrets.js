@@ -9,6 +9,8 @@ export const secretAccounts = [];
 let editingSecretAccountId = null;
 // Set while the account form was opened from a project's picker: the new account belongs to that project.
 let creatingForProjectId = null;
+// Set while the account form was opened from a picker that wants the new account ticked.
+let onAccountSaved = null;
 let secretScopeTarget = null;
 // Which provider tab Settings shows; "all" lists every account.
 let secretTypeFilter = "all";
@@ -176,9 +178,10 @@ function applySecretProviderPreset() {
   secretProviderPresets(provider).forEach((item) => secretRow(item));
 }
 
-function openSecretAccount(account = null, projectId = null) {
+function openSecretAccount(account = null, projectId = null, onSaved = null) {
   editingSecretAccountId = account?.id ?? null;
   creatingForProjectId = projectId;
+  onAccountSaved = onSaved;
   elements.secretAccountTitle.textContent = account ? "Edit secret account" : projectId ? "Add project secret" : "Add secret account";
   elements.secretAccountLabelInput.value = account?.label ?? "";
   elements.secretAccountOriginInput.value = account?.websiteOrigin ?? "";
@@ -194,6 +197,12 @@ function openSecretAccount(account = null, projectId = null) {
   account?.variables.forEach((item) => secretRow(item));
   applySecretProviderPreset();
   elements.secretAccountDialog.showModal();
+}
+
+/** Opens the account form from a picker outside Settings; `onSaved` receives the new account
+    so the picker can tick it without losing the ticks already made. */
+export function openNewSecretAccount(onSaved, projectId = null) {
+  openSecretAccount(null, projectId, onSaved);
 }
 
 /** Owned accounts appear only in their own project's picker; a workspace picker lists global accounts only. */
@@ -219,7 +228,10 @@ export async function openSecretScope(scopeType, scopeId, label) {
   const { accountIds } = await api(`/api/secrets/scopes/${encodeURIComponent(scopeType)}/${encodeURIComponent(scopeId)}`);
   secretScopeTarget = { scopeType, scopeId };
   elements.secretScopeTitle.textContent = `Secret accounts: ${label}`;
-  elements.secretScopeAddButton.hidden = scopeType !== "project";
+  // Every scope can create an account. Only a project owns the accounts it creates;
+  // a workspace or conversation picker creates an ordinary node-local account.
+  elements.secretScopeAddButton.hidden = false;
+  elements.secretScopeAddButton.textContent = scopeType === "project" ? "New project secret" : "New secret account";
   renderSecretScopeList(accountIds);
   elements.secretScopeDialog.showModal();
 }
@@ -233,11 +245,15 @@ elements.secretScopeForm.addEventListener("submit", async (event) => {
   elements.secretScopeDialog.close(); toast("Secret accounts saved");
 });
 elements.secretAccountAddButton.addEventListener("click", () => openSecretAccount());
-elements.secretScopeAddButton.addEventListener("click", () => openSecretAccount(null, secretScopeTarget.scopeId));
+elements.secretScopeAddButton.addEventListener("click", () => {
+  const ticked = checkedSecretScopeIds();
+  openSecretAccount(null, secretScopeTarget.scopeType === "project" ? secretScopeTarget.scopeId : null, (account) => renderSecretScopeList([...ticked, account.id]));
+});
 elements.secretVariableAddButton.addEventListener("click", () => secretRow());
 elements.secretAccountCancelButton.addEventListener("click", () => elements.secretAccountDialog.close());
 elements.secretAccountDialog.addEventListener("close", () => {
   creatingForProjectId = null;
+  onAccountSaved = null;
   for (const control of elements.secretVariableRows.querySelectorAll("[data-secret-value]")) control.value = "";
 });
 elements.secretAccountProviderInput.addEventListener("change", () => {
@@ -268,11 +284,11 @@ async function saveSecretAccount() {
   }
   const payload = { label: elements.secretAccountLabelInput.value.trim(), provider, websiteOrigin: websiteOrigin || null, replicate: elements.secretAccountReplicateInput.checked, variables, ...(creatingForProjectId ? { projectId: creatingForProjectId } : {}) };
   const saved = await api(editingSecretAccountId ? `/api/secrets/accounts/${encodeURIComponent(editingSecretAccountId)}` : "/api/secrets/accounts", { method: editingSecretAccountId ? "PUT" : "POST", body: JSON.stringify(payload) });
-  // Created from a project's picker: the picker underneath stays open, keeps the user's ticks,
-  // and shows the new account already ticked because the server attached it.
-  const ticked = payload.projectId ? [...checkedSecretScopeIds(), saved.account.id] : null;
+  // Created from a picker: it stays open underneath, keeps the user's ticks, and shows
+  // the new account already ticked.
+  const notify = onAccountSaved;
   elements.secretAccountDialog.close(); await loadSecretAccounts();
-  if (ticked) renderSecretScopeList(ticked);
+  if (notify) notify(saved.account);
   // The server pushes a replicating save to every paired node; the Sync to nodes
   // button in Settings stays for retries and newly paired nodes.
   if (!payload.replicate) {

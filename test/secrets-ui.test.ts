@@ -138,3 +138,17 @@ test("the project secret picker can create a project-owned account and hides own
   // The create request carries the owner and never asks to replicate.
   assert.match(app, /projectId: creatingForProjectId/);
 });
+
+test("website accounts can be created and attached at every scope, including a live conversation", async () => {
+  const [html, app] = await Promise.all([readFile("public/index.html", "utf8"), appSource()]);
+  // A conversation that already exists can change its own accounts, not just a new one.
+  assert.match(app, /session-secrets-button/);
+  assert.match(app, /openSecretScope\("conversation", `\$\{sessionEngine\(session\)\}:\$\{session\.id\}`/);
+  // Creating an account is offered from every picker, not only a project's.
+  assert.match(app, /secretScopeAddButton\.hidden = false/);
+  assert.match(app, /New secret account/);
+  assert.match(html, /data-testid="new-session-secret-add-button"/);
+  assert.match(app, /newSessionSecretAddButton/);
+  // The new-conversation list names the origin a website account is bound to.
+  assert.match(app, /conversation-secrets-checkbox[\s\S]*?websiteOrigin|websiteOrigin[\s\S]{0,400}?conversation-secrets-checkbox/);
+});
