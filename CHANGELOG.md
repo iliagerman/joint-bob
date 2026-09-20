@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.63.1 — 2026-09-20
 
 - Browser sign-in now automatically resumes the paused conversation, allowing the agent to continue the task without a manual "continue" message.
 - Fixed mobile input zoom on focus by preventing scaling and setting appropriate font sizes for form fields.
