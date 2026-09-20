@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Conversations can now be marked as done or not done directly from the chat menu without a nested dialog.
+
 ## 1.64.2 — 2026-09-20
 
 - App shell cache was refreshed to ensure users receive the latest assets instead of stale browser-cached versions.

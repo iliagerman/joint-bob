@@ -39,6 +39,7 @@ export function renderSessions() {
   queueMicrotask(refreshRowMenuAnchor);
   elements.sessionList.replaceChildren();
   renderChatSessionControls();
+  syncChatDoneButton();
   // A conversation entering or leaving review changes its project's badge, so redraw that too.
   renderProjects();
   const project = selectedProject();
@@ -349,6 +350,28 @@ elements.chatSessionMenuButton.addEventListener("click", () => {
   const anchor = elements.chatMoreMenu.open ? elements.chatMoreMenu.querySelector("summary") : elements.chatSessionMenuButton;
   openRowMenu(anchor, sessionMenuItems(session, true));
 });
+
+/**
+ * Closing a conversation out is the action people reach for most from inside one, so it
+ * sits in the chat menu itself rather than behind Conversation actions, which on a phone
+ * means opening a second menu on top of the first.
+ */
+elements.chatDoneButton.addEventListener("click", () => {
+  const session = activeChatSession();
+  if (!session) { toast("Open a conversation first"); return; }
+  elements.chatMoreMenu.open = false;
+  toggleSessionDone(session).catch((error) => toast(error.message));
+});
+
+/** The one label has to say what the click will do, on whichever conversation is open. */
+function syncChatDoneButton() {
+  const session = activeChatSession();
+  elements.chatDoneButton.textContent = session?.doneAt ? "Mark not done" : "Mark done";
+  elements.chatDoneButton.title = session?.doneAt
+    ? "Put it back in the active list"
+    : "Hide it from the list until you ask for done conversations";
+  elements.chatDoneButton.disabled = !session;
+}
 
 /**
  * Puts an already-open conversation on the canvas from the conversation list or the
