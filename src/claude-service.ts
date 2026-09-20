@@ -201,10 +201,16 @@ function isClaudeLocalCommandMessage(text: string): boolean {
   return /^<(?:local-command-[^>]+|command-(?:message|name|args))>/.test(text.trimStart());
 }
 
-// Claude Code runs every model in a 200k window, except the explicit 1M-context
-// variants the model id marks with a `[1m]` suffix.
+// Claude Code runs older models in a 200k window. The Claude 5 family
+// (claude-fable-5, claude-opus-5, claude-sonnet-5, ...) and the explicit `[1m]`
+// model-id variants get the 1M window.
 const CLAUDE_CONTEXT_WINDOW = 200_000;
 const CLAUDE_LONG_CONTEXT_WINDOW = 1_000_000;
+const CLAUDE_5_MODEL = /^claude-[a-z]+-5\b/;
+
+function claudeContextWindow(model: string): number {
+  return model.endsWith("[1m]") || CLAUDE_5_MODEL.test(model) ? CLAUDE_LONG_CONTEXT_WINDOW : CLAUDE_CONTEXT_WINDOW;
+}
 
 // A turn's whole context is what the request carried plus what it produced: fresh
 // input, the cache it wrote, the cache it read back, and the reply itself.
@@ -224,7 +230,7 @@ export function claudeContextUsage(records: UnknownRecord[]): ContextUsage | und
     const counted = CLAUDE_USAGE_FIELDS.filter((field) => typeof usage[field] === "number");
     if (!counted.length) continue;
     const usedTokens = counted.reduce((total, field) => total + (usage[field] as number), 0);
-    const contextWindow = String(message.model ?? "").endsWith("[1m]") ? CLAUDE_LONG_CONTEXT_WINDOW : CLAUDE_CONTEXT_WINDOW;
+    const contextWindow = claudeContextWindow(String(message.model ?? ""));
     return { usedTokens, contextWindow, percent: Math.round((usedTokens / contextWindow) * 100) };
   }
   return undefined;

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Claude 5 models now correctly report their 1M context window in the usage gauge instead of showing 200k.
+
 ## 1.67.0 — 2026-09-20
 
 - Sign-in pages on narrow screens now display at phone dimensions with mobile-optimized layout and readability, returning to desktop size when sign-in completes.

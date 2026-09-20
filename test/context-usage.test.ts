@@ -13,9 +13,9 @@ const assistant = (model: string, usage: Record<string, number>): Record<string,
 
 test("Claude context usage sums the newest turn's input, cache and output tokens", () => {
   const usage = claudeContextUsage([
-    assistant("claude-opus-5", { input_tokens: 5, cache_creation_input_tokens: 10, cache_read_input_tokens: 20, output_tokens: 5 }),
+    assistant("claude-haiku-4-5-20251001", { input_tokens: 5, cache_creation_input_tokens: 10, cache_read_input_tokens: 20, output_tokens: 5 }),
     { type: "user", message: { role: "user", content: "next" } },
-    assistant("claude-opus-5", { input_tokens: 2, cache_creation_input_tokens: 3311, cache_read_input_tokens: 105707, output_tokens: 285 }),
+    assistant("claude-haiku-4-5-20251001", { input_tokens: 2, cache_creation_input_tokens: 3311, cache_read_input_tokens: 105707, output_tokens: 285 }),
   ]);
 
   assert.deepEqual(usage, { usedTokens: 109305, contextWindow: 200_000, percent: 55 });
@@ -29,16 +29,34 @@ test("Claude's 1M-context model variant reports the larger window", () => {
   assert.deepEqual(usage, { usedTokens: 250_000, contextWindow: 1_000_000, percent: 25 });
 });
 
+test("Claude 5 family models report the 1M window even without the [1m] suffix", () => {
+  for (const model of ["claude-fable-5", "claude-opus-5", "claude-sonnet-5", "claude-fable-5-1"]) {
+    const usage = claudeContextUsage([
+      assistant(model, { input_tokens: 2, cache_creation_input_tokens: 1004, cache_read_input_tokens: 256_755, output_tokens: 763 }),
+    ]);
+
+    assert.deepEqual(usage, { usedTokens: 258_524, contextWindow: 1_000_000, percent: 26 }, model);
+  }
+});
+
+test("Claude 4.x models keep the 200k window", () => {
+  const usage = claudeContextUsage([
+    assistant("claude-haiku-4-5-20251001", { input_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 100_000, output_tokens: 0 }),
+  ]);
+
+  assert.deepEqual(usage, { usedTokens: 100_000, contextWindow: 200_000, percent: 50 });
+});
+
 test("a compacted Claude transcript reports no usage until the next turn", () => {
   const records = [
-    assistant("claude-opus-5", { input_tokens: 2, cache_read_input_tokens: 190_000, output_tokens: 300 }),
+    assistant("claude-haiku-4-5-20251001", { input_tokens: 2, cache_read_input_tokens: 190_000, output_tokens: 300 }),
     { type: "user", isCompactSummary: true, message: { role: "user", content: "summary" } },
     { type: "user", message: { role: "user", content: "next" } },
   ];
 
   assert.equal(claudeContextUsage(records), undefined);
 
-  const afterTurn = [...records, assistant("claude-opus-5", { input_tokens: 1, cache_read_input_tokens: 20_000, output_tokens: 100 })];
+  const afterTurn = [...records, assistant("claude-haiku-4-5-20251001", { input_tokens: 1, cache_read_input_tokens: 20_000, output_tokens: 100 })];
   assert.deepEqual(claudeContextUsage(afterTurn), { usedTokens: 20_101, contextWindow: 200_000, percent: 10 });
 });
 
