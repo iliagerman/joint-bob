@@ -71,9 +71,18 @@
 .browser-login-actions { display: flex; align-items: center; gap: 6px; grid-column: 3; grid-row: 1 / 4; }
 .browser-viewer:not(.browser-login-mode) [data-testid="browser-login-dismiss"],
 .browser-viewer:not(.browser-login-mode) [data-testid="browser-login-expand"] { display: none; }
-/* Sign-in lives inside the conversation, directly above its composer. */
-.browser-login-inline { display: flex; min-width: 0; margin: 0 var(--gap, 8px) 8px; border: 1px solid var(--accent); border-radius: var(--radius); overflow: hidden; }
+/* Sign-in lives inside the conversation, directly above its composer. It reads
+   like a message — a slim caption (site + actions) over the page, no card frame.
+   Working browser chrome (back/reload, Send Tab, session context) belongs to the
+   Browser panel and to full screen, not to the conversation. */
+.browser-login-inline { display: flex; min-width: 0; margin: 0 var(--gap, 8px) 8px; border: 0; border-radius: var(--radius); overflow: hidden; }
 .browser-login-inline > .browser-viewer { flex: 1; min-width: 0; border: 0; border-radius: 0; }
+.browser-login-inline .browser-body { padding: 0 0 2px; gap: 6px; }
+.browser-login-inline .browser-login-notice { border: 0; border-radius: 0; background: none; padding: 2px 2px 0; }
+.browser-login-inline [data-part="login-context"], .browser-login-inline [data-part="login-help"],
+.browser-login-inline:not(.browser-login-fullscreen) .browser-navigation,
+.browser-login-inline:not(.browser-login-fullscreen) [data-part="keyboard"] { display: none; }
+.browser-login-inline.browser-login-fullscreen .browser-body { padding: 8px 10px; }
 /* Cap the live page so the banner and the composer stay reachable without leaving the conversation. */
 .browser-login-inline .browser-stage { flex: 0 0 auto; max-height: 52vh; overflow: auto; justify-content: flex-start; }
 /* Sign-in shows the real page, not a browser app: origin banner, back/reload and Done only. */
