@@ -237,17 +237,24 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     }));
     if (!session?.downloads.length) get("downloads-list").textContent = "No downloads yet.";
     controls();
-    if (request && running() && connected && !busy && session.owner === "agent" && !disposed && isCurrent()) {
+    // A handoff can also be held by a stale controller: the same person's
+    // earlier connection through another app node took control, and this
+    // viewer is a spectator with no way to interact or dismiss. Whoever views
+    // this conversation's own sign-in handoff is the intended controller, so
+    // take over (force replaces the stale holder).
+    const controllable = session?.owner === "agent" || (session?.owner === "human" && session.canControl === false);
+    if (request && running() && connected && !busy && controllable && !disposed && isCurrent()) {
       const target = { nodeId: session.nodeId, sessionId: session.id, requestId: request.id };
       const key = `${target.nodeId}:${target.sessionId}:${target.requestId}`;
       if (!attemptedLoginControl.has(key)) {
         attemptedLoginControl.add(key);
         queueMicrotask(() => {
-          const matches = () => !disposed && isCurrent() && !busy && session?.nodeId === target.nodeId && session?.id === target.sessionId && session?.loginRequest?.id === target.requestId && session?.owner === "agent" && running() && connected;
+          const pending = () => session?.owner === "agent" || (session?.owner === "human" && session.canControl === false);
+          const matches = () => !disposed && isCurrent() && !busy && session?.nodeId === target.nodeId && session?.id === target.sessionId && session?.loginRequest?.id === target.requestId && pending() && running() && connected;
           if (!matches()) return;
           void operation(async () => {
-            if (disposed || !isCurrent() || session?.nodeId !== target.nodeId || session?.id !== target.sessionId || session?.loginRequest?.id !== target.requestId || session?.owner !== "agent" || !running() || !connected) return;
-            await command({ action: "takeControl", loginRequestId: target.requestId });
+            if (disposed || !isCurrent() || session?.nodeId !== target.nodeId || session?.id !== target.sessionId || session?.loginRequest?.id !== target.requestId || !pending() || !running() || !connected) return;
+            await command({ action: "takeControl", loginRequestId: target.requestId, ...(session.owner === "human" ? { force: true } : {}) });
           });
         });
       }
