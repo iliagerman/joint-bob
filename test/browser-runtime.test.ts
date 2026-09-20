@@ -122,6 +122,15 @@ test("browser navigation accepts only HTTP(S), never executor files or privilege
   for (const url of ["http://localhost:3000", "https://example.com"]) assert.equal(browserCommandSchema.safeParse({action:"navigate",url}).success,true);
 });
 
+test("setViewport accepts phone and desktop sizes and rejects absurd dimensions", () => {
+  for (const [width, height] of [[320, 480], [412, 730], [1512, 945]]) {
+    assert.equal(browserCommandSchema.safeParse({ action: "setViewport", width, height }).success, true, `${width}x${height}`);
+  }
+  for (const [width, height] of [[100, 730], [412, 100], [5000, 730], [412, 5000], [412.5, 730]]) {
+    assert.equal(browserCommandSchema.safeParse({ action: "setViewport", width, height }).success, false, `${width}x${height}`);
+  }
+});
+
 test("uploads reject traversal, malformed base64, duplicate names and cumulative size", () => {
   const file = (name: string, data = "aGVsbG8=") => ({ name, data });
   for (const name of ["../escape", "/absolute", "a/../b", "a\\b", "a//b", "./a", "x\u0000y", "C:/escape"]) assert.throws(() => validateBrowserUploads([file(name)]), /path|name/i);

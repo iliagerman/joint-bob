@@ -244,9 +244,19 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
         queueMicrotask(() => {
           const matches = () => !disposed && isCurrent() && !busy && session?.nodeId === target.nodeId && session?.id === target.sessionId && session?.loginRequest?.id === target.requestId && session?.owner === "agent" && running() && connected;
           if (!matches()) return;
-          void operation(() => {
+          void operation(async () => {
             if (disposed || !isCurrent() || session?.nodeId !== target.nodeId || session?.id !== target.sessionId || session?.loginRequest?.id !== target.requestId || session?.owner !== "agent" || !running() || !connected) return;
-            return command({ action: "takeControl", loginRequestId: target.requestId });
+            await command({ action: "takeControl", loginRequestId: target.requestId });
+            // A phone screen showing a desktop-sized remote page is unreadable and
+            // untappable. Shrink the remote page to phone dimensions so the site
+            // serves its mobile layout; the runtime restores the desktop size when
+            // the sign-in handoff ends.
+            if (disposed || window.innerWidth >= 700 || session?.owner !== "human") return;
+            await command({
+              action: "setViewport",
+              width: Math.max(320, Math.min(500, Math.round(window.innerWidth))),
+              height: Math.max(480, Math.min(1000, Math.round(window.innerHeight))),
+            });
           });
         });
       }

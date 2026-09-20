@@ -160,11 +160,12 @@ test("pending browser login popup preserves ownership through failure, dismissal
     assert.equal(await page.evaluate(() => document.body.classList.contains("browser-visible")), false, "sign-in must not widen the shell for a browser panel");
     // Only the page content and the sign-in banner: every browsing control stays out.
     await dialog.getByTestId("browser-screen").waitFor();
-    await dialog.getByTestId("browser-reload").waitFor();
+    await dialog.getByTestId("browser-login-done").waitFor();
     await dialog.getByTestId("browser-login-dismiss").waitFor();
-    for (const hidden of ["browser-url", "browser-go", "browser-new-tab", "browser-forward", "browser-downloads-details", "browser-end", "browser-close-viewer", "browser-title", "browser-take-control", "browser-resume-agent", "browser-connection-status"])
+    // Embedded, the panel reads like a message: even back/reload waits for full screen.
+    for (const hidden of ["browser-url", "browser-go", "browser-new-tab", "browser-forward", "browser-reload", "browser-downloads-details", "browser-end", "browser-close-viewer", "browser-title", "browser-take-control", "browser-resume-agent", "browser-connection-status"])
       await dialog.getByTestId(hidden).waitFor({ state: "hidden" });
-    await dialog.getByTestId("browser-login-context").filter({ hasText: `Synthetic login \u00b7 ${activeIdentity.projectId} \u00b7 ${activeIdentity.engine} \u00b7 ${activeIdentity.conversationId}` }).waitFor();
+    await dialog.getByTestId("browser-login-context").filter({ hasText: `Synthetic login \u00b7 ${activeIdentity.projectId} \u00b7 ${activeIdentity.engine} \u00b7 ${activeIdentity.conversationId}` }).waitFor({ state: "attached" });
     await dialog.getByText("Complete sign-in and reach the requested verification marker, then choose Done.", { exact: false }).waitFor({ state: "attached" });
     await dialog.getByTestId("browser-control-status").filter({ hasText: "Human control" }).waitFor({ state: "attached" });
     assert.deepEqual(commands.filter(command => command.action === "takeControl" && command.loginRequestId === requestId), [{ action: "takeControl", loginRequestId: requestId }]);

@@ -104,12 +104,16 @@ interface LiveSession {
   activeOperations: number;
   loginVerificationEpoch: number;
   credentialOrigins: string[];
+  viewportOverrides: Set<Page>;
   loginDetection?: Promise<void>;
   stopped: boolean;
   stopSignal: AbortController;
   stopping?: Promise<void>;
 }
 const profileLeases = new Set<string>();
+// Every page starts desktop-sized; a sign-in handoff on a phone may shrink one page
+// so the site serves its mobile layout, and the override ends with the handoff.
+const defaultViewport = { width: 1512, height: 945 };
 const readOnly = new Set(["snapshot", "screenshot", "wait"]);
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 const defaultIdleTimeoutMs = 2 * 60 * 60 * 1000;
@@ -219,7 +223,7 @@ export class BrowserRuntime {
       const directory = await prepareProfile(profile.id);
       if (this.closed || (restoreId && this.cancelledRecoveries.has(restoreId))) throw new Error("Browser start cancelled");
       // server.ts owns TERM/INT shutdown. A second Playwright close force-kills Chrome before cookies flush.
-      context = await chromium.launchPersistentContext(directory, { executablePath: capability.executable, headless: true, handleSIGTERM: false, handleSIGINT: false, args: ["--window-size=1512,945"], viewport: { width: 1512, height: 945 }, acceptDownloads: true });
+      context = await chromium.launchPersistentContext(directory, { executablePath: capability.executable, headless: true, handleSIGTERM: false, handleSIGINT: false, args: ["--window-size=1512,945"], viewport: defaultViewport, acceptDownloads: true });
       if (this.closed || (restoreId && this.cancelledRecoveries.has(restoreId))) throw new Error("Browser start cancelled");
       if (!profile.persistent) {
         try { await context.setStorageState(this.store.profileState(profile.id, start.projectId) as Parameters<BrowserContext["setStorageState"]>[0]); }
@@ -231,7 +235,7 @@ export class BrowserRuntime {
       context.setDefaultNavigationTimeout(20000);
       const row = this.store.get(id);
       this.store.resume(id);
-      session = { id: row.id, profileId: profile.id, restoring: true, context, pages: new Map(), activePageId: null, human: recovery ? recovery.human : null, chooser: null, dialog: null, downloads: [], transfers: new Set(), viewers: new Set(), errors: [], queue: new BrowserCommandQueue(), streamGeneration: 0, lastActivityAt: Date.now(), activeOperations: 0, loginVerificationEpoch: 0, credentialOrigins, stopped: false, stopSignal: new AbortController() };
+      session = { id: row.id, profileId: profile.id, restoring: true, context, pages: new Map(), activePageId: null, human: recovery ? recovery.human : null, chooser: null, dialog: null, downloads: [], transfers: new Set(), viewers: new Set(), errors: [], queue: new BrowserCommandQueue(), streamGeneration: 0, lastActivityAt: Date.now(), activeOperations: 0, loginVerificationEpoch: 0, credentialOrigins, viewportOverrides: new Set(), stopped: false, stopSignal: new AbortController() };
       this.sessions.set(row.id, session);
       const live = session;
       context.on("page", page => this.addPage(live, page));
@@ -503,7 +507,7 @@ export class BrowserRuntime {
         return this.get(session.id);
       }
       case "completeLogin": return this.completeLogin(session, command, actor);
-      case "resumeAgent": session.loginVerificationEpoch++; session.human = null; return this.get(session.id);
+      case "resumeAgent": session.loginVerificationEpoch++; session.human = null; await this.restoreViewports(session); return this.get(session.id);
       case "close": await this.stop(session, "closed"); return this.get(session.id);
       case "saveProfile": return this.store.renameProfile(session.profileId, this.store.get(session.id).projectId, command.label);
       case "newTab": { const page = await session.context.newPage(); if (command.url) await this.navigatePage(page, command.url); return this.get(session.id); }
@@ -536,6 +540,7 @@ export class BrowserRuntime {
       case "key": await page.keyboard.press(command.key); break;
       case "text": await page.keyboard.insertText(command.text); break;
       case "scroll": await page.mouse.wheel(command.x, command.y); break;
+      case "setViewport": await page.setViewportSize({ width: command.width, height: command.height }); session.viewportOverrides.add(page); break;
       case "clickElement": await this.locator(page, command.selector).click(); break;
       case "fill":
         if (command.expectedOrigin) {
@@ -597,7 +602,16 @@ export class BrowserRuntime {
     this.store.setLoginRequest(session.id, null);
     session.loginVerificationEpoch++;
     session.human = null;
+    await this.restoreViewports(session);
     return this.get(session.id);
+  }
+
+  // The handoff is over: any page shrunk for a phone goes back to the desktop
+  // size the agent's automation expects. A page closed mid-flow just drops out.
+  private async restoreViewports(session: LiveSession): Promise<void> {
+    const pages = [...session.viewportOverrides];
+    session.viewportOverrides.clear();
+    await Promise.all(pages.filter(page => !page.isClosed()).map(page => page.setViewportSize(defaultViewport).catch(() => {})));
   }
 
   private async upload(session: LiveSession, page: Page, command: Extract<BrowserCommand, { action: "upload" }>, actor: BrowserActor): Promise<void> {
