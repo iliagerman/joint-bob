@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.67.1 — 2026-09-20
 
 - Claude 5 models now correctly report their 1M context window in the usage gauge instead of showing 200k.
 
