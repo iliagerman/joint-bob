@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 1.67.3 — 2026-09-20
+
+- Sign-in pages on phones now display at phone dimensions when resuming control of a handoff.
+
 ## 1.67.2 — 2026-09-20
 
 - Phones can now scroll the remote browser page with one-finger touch drags.
