@@ -233,7 +233,7 @@ class ClaudeSession implements HarnessSession {
     this.child = run.child;
     const result = await run.done;
     this.pushAssistant(turn);
-    if (!result.ok) throw new Error(result.sawOutput ? "Claude prompt failed after output" : "Claude prompt failed before output");
+    if (!result.ok) throw new Error(result.error ?? (result.sawOutput ? "Claude prompt failed after output" : "Claude prompt failed before output"));
     this.markStarted(input, state);
     if (result.tools !== null) this.availableTools = [...result.tools];
     if (!this.nativeFile && result.sessionId) this.captureSession(result.sessionId);

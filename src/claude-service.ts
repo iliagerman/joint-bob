@@ -35,6 +35,8 @@ export interface ClaudeRunResult {
   sessionId: string | null;
   sawOutput: boolean;
   assistantText: string;
+  /** Why the CLI failed, when it said so, so a failed turn shows its reason instead of a generic message. */
+  error: string | null;
   /** Built-in tool names the CLI reported in its init record, when it sent one. */
   tools: string[] | null;
 }
@@ -491,6 +493,7 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
     sessionId: null as string | null,
     sawOutput: false,
     assistantText: "",
+    error: null as string | null,
     tools: null as string[] | null,
     // Text already streamed via deltas for the in-flight assistant message, so
     // the completed-message event does not repeat it.
@@ -596,8 +599,9 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
       return;
     }
     if (record.type === "result") {
-      if (record.is_error && !state.sawOutput) {
-        options.onEvent({ type: "assistantError", error: typeof record.result === "string" && record.result ? record.result : "Claude run failed" });
+      if (record.is_error) {
+        state.error = typeof record.result === "string" && record.result ? record.result : "Claude run failed";
+        if (!state.sawOutput) options.onEvent({ type: "assistantError", error: state.error });
       }
     }
   };
@@ -617,17 +621,18 @@ export function runClaudePrompt(options: ClaudeRunOptions): ClaudeRunHandle {
   const done = new Promise<ClaudeRunResult>((resolve) => {
     child.on("error", (error) => {
       options.onEvent({ type: "assistantError", error: `Could not start Claude: ${error.message}` });
-      resolve({ ok: false, sessionId: state.sessionId, sawOutput: state.sawOutput, assistantText: state.assistantText, tools: state.tools });
+      resolve({ ok: false, sessionId: state.sessionId, sawOutput: state.sawOutput, assistantText: state.assistantText, tools: state.tools, error: `Could not start Claude: ${error.message}` });
     });
     child.on("close", (code) => {
       if (state.buffer) handleLine(state.buffer);
       if (state.sessionId && failUnobservedConversationWork("claude", state.sessionId, "Claude process ended before reporting task completion")) {
         options.onEvent({ type: "conversationWorkChanged" });
       }
+      if (code !== 0 && !state.error && state.stderr.trim()) state.error = state.stderr.trim().slice(0, 2000);
       if (code !== 0 && !state.sawOutput && state.stderr.trim()) {
         options.onEvent({ type: "assistantError", error: state.stderr.trim().slice(0, 2000) });
       }
-      resolve({ ok: code === 0, sessionId: state.sessionId, sawOutput: state.sawOutput, assistantText: state.assistantText.trim(), tools: state.tools });
+      resolve({ ok: code === 0, sessionId: state.sessionId, sawOutput: state.sawOutput, assistantText: state.assistantText.trim(), tools: state.tools, error: code === 0 ? null : state.error });
     });
   });
 

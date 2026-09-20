@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Claude failures now show the specific reason instead of a generic message.
+
 ## 1.68.1 — 2026-09-20
 
 - Phone keyboard now stays open while commands are running, so you can keep typing without the keyboard closing and reopening.
