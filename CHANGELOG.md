@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 1.67.0 — 2026-09-20
+
+- Sign-in pages on narrow screens now display at phone dimensions with mobile-optimized layout and readability, returning to desktop size when sign-in completes.
+
 ## 1.66.0 — 2026-09-20
 
 - The conversation sign-in panel now shows only the site name, actions, and page itself, with session context and helper controls hidden until full screen.
