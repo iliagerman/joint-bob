@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.68.2 — 2026-09-20
 
 - Claude failures now show the specific reason instead of a generic message.
 
