@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- The conversation browser no longer stretches the remote page image past its real size on wide screens, keeping the viewer sharp and fully visible instead of a blurry magnified slice.
+
 ## 1.63.1 — 2026-09-20
 
 - Browser sign-in now automatically resumes the paused conversation, allowing the agent to continue the task without a manual "continue" message.

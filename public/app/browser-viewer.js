@@ -391,6 +391,10 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
       if (!disposed && version === frameVersion && frame.pageId === session?.activePageId) {
         screen.src = image.src; screen.hidden = false; part("frame-hint").hidden = true;
         frameSize = { pageId: frame.pageId, width: frame.width || image.naturalWidth, height: frame.height || image.naturalHeight };
+        // Wide screens must not upscale the remote page past its real size: an
+        // enlarged frame is blurry and overflows its scrollbox. Narrower
+        // containers still downscale through the stylesheet's width rule.
+        screen.style.maxWidth = `${frameSize.width}px`;
       }
       drawFrame();
     };
