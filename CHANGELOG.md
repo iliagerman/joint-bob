@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 1.64.1 — 2026-09-20
+
+- The conversation sign-in panel gained a Full screen button: it hides the app around the browser view so a phone keyboard leaves room to see and type into the page. Escape steps back to the inline panel first, then dismisses.
+
 ## 1.64.0 — 2026-09-20
 
 - Website secret accounts can now be created from every scope picker (workspace, project, and conversation), appear ticked in the setup wizard, and can be managed from a conversation's row menu.

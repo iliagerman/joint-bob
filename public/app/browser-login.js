@@ -45,7 +45,13 @@ function mount(session) {
   popup = current;
   const dismiss = () => close(current, true);
   // A modeless block inside the conversation has to claim Escape on the document.
-  current.escape = event => { if (event.key === "Escape") { event.preventDefault(); event.stopImmediatePropagation(); dismiss(); } };
+  current.escape = event => {
+    if (event.key !== "Escape") return;
+    event.preventDefault(); event.stopImmediatePropagation();
+    // Full screen is a view state: Escape backs out of it before dismissing the sign-in.
+    if (host.classList.contains("browser-login-fullscreen")) { host.querySelector('[data-testid="browser-login-expand"]')?.click(); return; }
+    dismiss();
+  };
   document.addEventListener("keydown", current.escape, true);
   current.viewer = createBrowserViewer(host, {
     api, identity: sessionIdentity(session), sessionId: session.id, nodeId: session.nodeId,
@@ -64,6 +70,18 @@ function mount(session) {
         queueMicrotask(schedule);
       }
     },
+  });
+  // A phone keyboard leaves little room above it; full screen drops the app
+  // chrome so the remote page keeps every remaining pixel while typing. The
+  // panel reparents to <body>: an ancestor's containment would otherwise pin
+  // position:fixed to the chat column instead of the screen.
+  const expandButton = host.querySelector('[data-testid="browser-login-expand"]');
+  expandButton.addEventListener("click", () => {
+    const on = host.classList.toggle("browser-login-fullscreen");
+    expandButton.textContent = on ? "Exit full screen" : "Full screen";
+    expandButton.setAttribute("aria-pressed", String(on));
+    if (on) document.body.append(host);
+    else elements.composer.before(host);
   });
   host.querySelector('[data-testid="browser-login-done"]')?.focus();
 }

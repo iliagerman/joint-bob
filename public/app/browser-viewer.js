@@ -42,6 +42,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
         <span data-part="login-help"></span>
         <div class="browser-login-actions">
           <button class="primary" type="button" data-testid="browser-login-done">Done</button>
+          <button class="ghost compact" type="button" data-testid="browser-login-expand" aria-pressed="false">Full screen</button>
           <button class="ghost compact" type="button" data-testid="browser-login-dismiss">Not now</button>
         </div>
       </section>
