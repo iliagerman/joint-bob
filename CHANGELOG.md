@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 1.68.1 — 2026-09-20
+
+- Phone keyboard now stays open while commands are running, so you can keep typing without the keyboard closing and reopening.
+
 ## 1.68.0 — 2026-09-20
 
 - Phone sign-in now opens full screen and responds to keyboard visibility, keeping the form readable when typing on phones.
