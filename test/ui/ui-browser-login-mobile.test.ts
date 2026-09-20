@@ -86,6 +86,66 @@ test("sign-in on a phone resizes the remote page to phone dimensions", { timeout
   assert.ok(resize.height >= 480 && resize.height <= 2000, `remote height must be phone-sized: ${resize.height}`);
 });
 
+// A sign-in handoff that already granted control before this code loaded (an
+// older app version took control, or the panel reopened) must still get the
+// phone-sized remote page: the resize belongs to showing the handoff on a
+// narrow screen, not to the moment control was taken.
+test("a handoff already under human control still gets a phone-sized page", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  const commands: any[] = [];
+
+  const frame = await page.evaluate(([width, height]) => {
+    const canvas = document.createElement("canvas"); canvas.width = width; canvas.height = height;
+    const context = canvas.getContext("2d")!; context.fillStyle = "#eef4ff"; context.fillRect(0, 0, width, height);
+    return canvas.toDataURL("image/jpeg", .85).split(",")[1];
+  }, [frameWidth, frameHeight]);
+
+  const session: any = {
+    id: sessionId, nodeId: ownerNodeId, state: "running", owner: "human", canControl: true,
+    profileId: "55555555-5555-4555-8555-555555555555", profileLabel: "Synthetic login",
+    activePageId: pageId, tabs: [{ id: pageId, title: "Sign in", url: "https://accounts.example.test/login" }], downloads: [],
+    loginRequest: { id: requestId, expectedOrigin: "https://accounts.example.test", readySelector: "[data-authenticated]", loginSelector: "input", label: "Synthetic login", automatic: false },
+  };
+  const snapshot = () => ({ ...session });
+  await page.route("**/api/browser/**", async route => {
+    const url = new URL(route.request().url());
+    let result: any = {};
+    if (url.pathname === "/api/browser/sessions" && route.request().method() === "GET") result = { sessions: [snapshot()] };
+    else if (url.pathname === `/api/browser/sessions/${sessionId}`) result = { session: snapshot() };
+    else if (url.pathname.endsWith("/command")) { commands.push(route.request().postDataJSON()); result = { session: snapshot() }; }
+    else if (url.pathname === "/api/browser/status") result = { config: { executorNodeId: node.nodeId }, nodes: [{ id: ownerNodeId, name: "Owner", available: true, reachable: true, runningCount: 1 }] };
+    else if (url.pathname === "/api/browser/preferences") result = { nodeId: null, effectiveNodeId: ownerNodeId };
+    else if (url.pathname === "/api/browser/profiles") result = { profiles: [] };
+    await route.fulfill({ json: result });
+  });
+  await page.routeWebSocket(/\/ws\?mode=browser/, ws => {
+    ws.send(JSON.stringify({ type: "browserState", session: snapshot() }));
+    ws.send(JSON.stringify({ type: "browserFrame", pageId, width: frameWidth, height: frameHeight, data: frame }));
+  });
+
+  const login = await signIn(environment, node);
+  await page.context().addCookies(login.cookie.split("; ").map(cookie => ({ name: cookie.slice(0, cookie.indexOf("=")), value: cookie.slice(cookie.indexOf("=") + 1), url: node.url })));
+  await page.goto(node.url);
+  await page.locator("#projectList").getByText("Internal Assistant", { exact: true }).click();
+  await page.locator("#sessionList .list-row").filter({ has: page.locator("strong", { hasText: "Short one" }) }).first().click();
+  await page.locator("#sessionTitle").filter({ hasText: "Short one" }).waitFor();
+  await page.setViewportSize({ width: 412, height: 730 });
+
+  const activeIdentity = await page.evaluate(async () => { const { state } = await import("/app/state.js"); return { projectId: state.activeProjectId, engine: state.engine, conversationId: state.activeConversationId || state.activeSessionId, appNodeId: state.conversationLock?.nodeId || state.activeNodeId }; });
+  Object.assign(session, activeIdentity);
+  await page.evaluate(() => document.dispatchEvent(new Event("browserSessionsChanged")));
+
+  const dialog = page.getByTestId("browser-login-panel");
+  await dialog.waitFor();
+  await dialog.getByTestId("browser-screen").waitFor({ state: "visible" });
+
+  for (let i = 0; i < 100 && !commands.some(c => c.action === "setViewport"); i++) await new Promise(r => setTimeout(r, 100));
+  const resize = commands.find(c => c.action === "setViewport");
+  assert.ok(resize, "an already-controlled handoff must still request a phone-sized page");
+  assert.ok(resize.width >= 320 && resize.width < 700, `remote width must be phone-sized: ${resize.width}`);
+  assert.ok(!commands.some(c => c.action === "takeControl"), "control is already held; the viewer must not take it again");
+});
+
 // Phones never emit wheel events, so before this a finger swipe on the remote
 // screen scrolled nothing: the remote page was stuck at the top. A drag on the
 // screen must translate into remote scroll commands.

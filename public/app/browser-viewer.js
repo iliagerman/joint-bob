@@ -3,6 +3,7 @@
 export function createBrowserViewer(root, { api: request, identity, sessionId, nodeId, confirm: confirmAction, onClose, loginMode = false, onSession, isCurrent = () => true }) {
   let session = null, socket = null, disposed = false, retry = 0, retryTimer, connectionTimer;
   const attemptedLoginControl = new Set();
+  const requestedPhoneViewport = new Set();
   let framePending = null, drawing = false, frameVersion = 0, frameSize = null;
   let sessionVersion = 0;
   let busy = false, connected = false, loaded = false, profiles = [], sessions = [];
@@ -247,11 +248,23 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
           void operation(async () => {
             if (disposed || !isCurrent() || session?.nodeId !== target.nodeId || session?.id !== target.sessionId || session?.loginRequest?.id !== target.requestId || session?.owner !== "agent" || !running() || !connected) return;
             await command({ action: "takeControl", loginRequestId: target.requestId });
-            // A phone screen showing a desktop-sized remote page is unreadable and
-            // untappable. Shrink the remote page to phone dimensions so the site
-            // serves its mobile layout; the runtime restores the desktop size when
-            // the sign-in handoff ends.
-            if (disposed || window.innerWidth >= 700 || session?.owner !== "human") return;
+          });
+        });
+      }
+    }
+    // A phone screen showing a desktop-sized remote page is unreadable and
+    // untappable. Whenever a sign-in handoff is under this viewer's control on
+    // a narrow screen — freshly taken or held before this page loaded — shrink
+    // the remote page to phone dimensions so the site serves its mobile layout;
+    // the runtime restores the desktop size when the handoff ends.
+    if (request && canInput() && !disposed && isCurrent() && window.innerWidth < 700) {
+      const target = { nodeId: session.nodeId, sessionId: session.id, requestId: request.id };
+      const key = `${target.nodeId}:${target.sessionId}:${target.requestId}`;
+      if (!requestedPhoneViewport.has(key)) {
+        requestedPhoneViewport.add(key);
+        queueMicrotask(() => {
+          void operation(async () => {
+            if (disposed || !isCurrent() || session?.nodeId !== target.nodeId || session?.id !== target.sessionId || session?.loginRequest?.id !== target.requestId || session?.owner !== "human" || !running() || !connected || window.innerWidth >= 700) return;
             await command({
               action: "setViewport",
               width: Math.max(320, Math.min(500, Math.round(window.innerWidth))),
