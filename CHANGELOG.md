@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.64.0 — 2026-09-20
 
-- Website secret accounts can now be created directly in the conversation setup wizard and from a session's menu.
+- Website secret accounts can now be created from every scope picker (workspace, project, and conversation), appear ticked in the setup wizard, and can be managed from a conversation's row menu.
+- Automatic sign-in no longer shows redundant popups when a stored credential exists for either the browser's destination or the authentication form's origin.
 
 ## 1.63.2 — 2026-09-20
 
