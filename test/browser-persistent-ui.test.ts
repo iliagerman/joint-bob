@@ -31,6 +31,7 @@ async function fixture(confirm = async () => true, configuredNode: string | null
   const documentHandlers: Record<string, Function> = {};
   const { createBrowserViewer } = runInNewContext(`${source.replace(/export /g, "")}\n({ createBrowserViewer })`, {
     URL, URLSearchParams, location: new URL("https://app.example/browser.html"),
+    window: { innerWidth: 1024, innerHeight: 900, addEventListener() {}, removeEventListener() {} },
     document: {
       querySelector: () => null, documentElement: { dataset: {} }, createElement: element, createRange: () => ({ createContextualFragment: () => ({}) }),
       addEventListener(name: string, handler: Function) { documentHandlers[name] = handler; },
