@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 1.68.4 — 2026-09-21
+
+- Touch dragging on the mobile browser viewer is now smoother, accumulating scroll deltas and flushing them about ten times a second instead of flooding the connection.
+
 ## 1.68.3 — 2026-09-21
 
 - Touch scrolling on the browser viewer no longer floods the socket with commands, preventing dropped input and connection failures when dragging on mobile.
