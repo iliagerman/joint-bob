@@ -664,12 +664,20 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
   // A drag fires touchmove ~60 times a second. One command per move floods the
   // socket: typing is dropped as "connection is busy" and the stream lags a
   // backed-up queue. Deltas accumulate and flush at most once per frame.
-  let pendingScroll = null, scrollFrame = 0;
+  // The remote runs one command at a time, so a command per frame still backs
+  // its queue up and the page keeps scrolling after the finger stops. Deltas
+  // accumulate and flush about ten times a second, preserving distance.
+  const scrollInterval = 100;
+  let pendingScroll = null, scrollTimer = 0, lastScrollAt = 0;
   function flushScroll() {
-    scrollFrame = 0;
+    scrollTimer = 0; lastScrollAt = Date.now();
     const delta = pendingScroll; pendingScroll = null;
-    if (!delta || (!delta.x && !delta.y)) return;
+    if (!delta || (!Math.round(delta.x) && !Math.round(delta.y))) return;
     sendInput({ action: "scroll", x: Math.max(-20000, Math.min(20000, delta.x)), y: Math.max(-20000, Math.min(20000, delta.y)) });
+  }
+  function scheduleScroll() {
+    if (scrollTimer) return;
+    scrollTimer = setTimeout(flushScroll, Math.max(0, scrollInterval - (Date.now() - lastScrollAt)));
   }
   screen.addEventListener("touchmove", (event) => {
     if (!touchScroll || event.touches.length !== 1 || !canType() || !frameSize) return;
@@ -682,9 +690,9 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     pendingScroll.x += (touchScroll.x - touch.clientX) * scale;
     pendingScroll.y += (touchScroll.y - touch.clientY) * scale;
     touchScroll.x = touch.clientX; touchScroll.y = touch.clientY;
-    if (!scrollFrame) scrollFrame = requestAnimationFrame(flushScroll);
+    scheduleScroll();
   }, { passive: false });
-  const endTouch = () => { touchScroll = null; if (scrollFrame) { cancelAnimationFrame(scrollFrame); flushScroll(); } };
+  const endTouch = () => { touchScroll = null; if (scrollTimer) { clearTimeout(scrollTimer); scrollTimer = 0; } flushScroll(); };
   screen.addEventListener("touchend", endTouch);
   screen.addEventListener("touchcancel", endTouch);
   screen.addEventListener("keydown", (event) => {

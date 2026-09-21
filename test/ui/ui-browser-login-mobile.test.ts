@@ -521,4 +521,30 @@ test("a fast finger drag is coalesced into few scroll commands", { timeout: 120_
   assert.ok(scrolls.length <= 20, `${moves} moves must coalesce into few commands, sent ${scrolls.length}`);
   const total = scrolls.reduce((sum, m) => sum + m.command.y, 0);
   assert.ok(total > 0, `the coalesced scroll must keep its direction and distance (total ${total})`);
+
+  // A real drag spreads its moves over time, so per-frame coalescing alone
+  // still emits ~60 commands a second. The server runs them one at a time, so
+  // the queue backs up and the page keeps scrolling after the finger stops.
+  // A sustained drag must stay near ten commands a second.
+  const sustainedStart = wsMessages.length;
+  await screen.evaluate(async element => {
+    const rect = element.getBoundingClientRect();
+    const startX = rect.left + rect.width / 2;
+    let y = rect.top + rect.height * .9;
+    let touch = new Touch({ identifier: 1, target: element, clientX: startX, clientY: y });
+    element.dispatchEvent(new TouchEvent("touchstart", { bubbles: true, cancelable: true, touches: [touch], changedTouches: [touch] }));
+    // 100 moves at ~10ms: one second of a steady, real-world drag.
+    for (let step = 0; step < 100; step++) {
+      y -= 2;
+      touch = new Touch({ identifier: 1, target: element, clientX: startX, clientY: y });
+      element.dispatchEvent(new TouchEvent("touchmove", { bubbles: true, cancelable: true, touches: [touch], changedTouches: [touch] }));
+      await new Promise(r => setTimeout(r, 10));
+    }
+    element.dispatchEvent(new TouchEvent("touchend", { bubbles: true, cancelable: true, touches: [], changedTouches: [touch] }));
+  });
+  await new Promise(r => setTimeout(r, 400));
+  const sustained = wsMessages.slice(sustainedStart).filter(m => m.type === "browserCommand" && m.command?.action === "scroll");
+  assert.ok(sustained.length > 0, "a sustained drag must still scroll");
+  assert.ok(sustained.length <= 18, `a one-second drag must stay near ten commands, sent ${sustained.length}`);
+  assert.ok(sustained.reduce((sum, m) => sum + m.command.y, 0) > 0, "the throttled drag must keep its direction");
 });
