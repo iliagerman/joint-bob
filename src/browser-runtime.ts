@@ -57,6 +57,15 @@ async function installedCandidates(platform: string): Promise<string[]> {
   return candidates;
 }
 
+// A live page emits a JPEG per repaint, and a phone on a slow link cannot
+// drain them. Frames are disposable, unlike state messages: skip them well
+// before the socket's 1 MiB allowance so latency stays low and the link is
+// never saturated into failing.
+const frameBacklogLimit = 192 * 1024;
+export function shouldSendFrame(bufferedAmount: number): boolean {
+  return bufferedAmount < frameBacklogLimit;
+}
+
 export function validateBrowserUploads(files: Array<{ name: string; data: string }>): Array<{ name: string; buffer: Buffer }> {
   let bytes = 0;
   const names = new Set<string>();
@@ -806,11 +815,15 @@ export class BrowserRuntime {
       session.cdp = cdp;
       await page.bringToFront();
       cdp.on("Page.screencastFrame", frame => {
-        if (generation === session.streamGeneration) for (const ws of session.viewers) this.send(ws, { type: "browserFrame", pageId: id, data: frame.data, width: frame.metadata.deviceWidth, height: frame.metadata.deviceHeight });
+        if (generation === session.streamGeneration) for (const ws of session.viewers) {
+          if (!shouldSendFrame(ws.bufferedAmount)) continue;
+          this.send(ws, { type: "browserFrame", pageId: id, data: frame.data, width: frame.metadata.deviceWidth, height: frame.metadata.deviceHeight });
+        }
         void cdp.send("Page.screencastFrameAck", { sessionId: frame.sessionId }).catch(() => {});
       });
       // Never resize individual pages or screencast output: Playwright preserves popup window features.
-      await cdp.send("Page.startScreencast", { format: "jpeg", quality: 75, everyNthFrame: 1 });
+      // Every repaint at full quality saturates a phone link during a scroll.
+      await cdp.send("Page.startScreencast", { format: "jpeg", quality: 60, everyNthFrame: 2 });
     })().catch(error => { if (!session.stopped && generation === session.streamGeneration) for (const ws of session.viewers) this.send(ws, { type: "browserError", error: message(error) }); });
   }
 

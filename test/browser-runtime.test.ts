@@ -5,7 +5,7 @@ import path from "node:path";
 import os from "node:os";
 import { syncBuiltinESMExports } from "node:module";
 import { chromium } from "playwright-core";
-import { browserCapability, BrowserRuntime, validateBrowserUploads } from "../src/browser-runtime.js";
+import { browserCapability, BrowserRuntime, shouldSendFrame, validateBrowserUploads } from "../src/browser-runtime.js";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { browserCommandSchema, browserStartSchema } from "../src/browser-types.js";
@@ -140,4 +140,15 @@ test("uploads reject traversal, malformed base64, duplicate names and cumulative
   const big = Buffer.alloc(11 * 1024 * 1024).toString("base64");
   assert.throws(() => validateBrowserUploads([file("a", big), file("b", big)]), /20 MiB/);
   assert.deepEqual(validateBrowserUploads([file("directory/file.txt")])[0], { name: "directory/file.txt", buffer: Buffer.from("hello") });
+});
+
+// The live page streams a JPEG per repaint. A phone on a slow link cannot
+// drain them, and a queue of whole frames adds seconds of latency before the
+// socket finally fails. Frames are disposable: skip them while the viewer is
+// behind, and keep the allowance far below the 1 MiB used for state messages.
+test("frames are dropped while a viewer socket is behind", () => {
+  assert.equal(shouldSendFrame(0), true, "an idle socket takes frames");
+  assert.equal(shouldSendFrame(64 * 1024), true, "a small backlog still takes frames");
+  assert.equal(shouldSendFrame(256 * 1024), false, "a quarter-megabyte backlog skips frames");
+  assert.equal(shouldSendFrame(1024 * 1024), false, "a megabyte backlog skips frames");
 });
