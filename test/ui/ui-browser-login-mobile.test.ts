@@ -443,3 +443,82 @@ test("a finger drag on the remote screen scrolls the remote page", { timeout: 12
   const total = scrolls.reduce((sum, m) => sum + m.command.y, 0);
   assert.ok(total > 0, `an upward swipe must scroll the page downward (total deltaY ${total})`);
 });
+
+// A finger drag fires touchmove ~60 times a second. Sending one command per
+// move floods the viewer socket: typing is dropped as "connection is busy",
+// scrolling lags behind a backed-up queue, and the socket eventually dies.
+// Moves must be coalesced into far fewer commands without losing distance.
+test("a fast finger drag is coalesced into few scroll commands", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  const wsMessages: any[] = [];
+
+  const frame = await page.evaluate(([width, height]) => {
+    const canvas = document.createElement("canvas"); canvas.width = width; canvas.height = height;
+    const context = canvas.getContext("2d")!; context.fillStyle = "#eef4ff"; context.fillRect(0, 0, width, height);
+    return canvas.toDataURL("image/jpeg", .85).split(",")[1];
+  }, [frameWidth, frameHeight]);
+
+  const session: any = {
+    id: sessionId, nodeId: ownerNodeId, state: "running", owner: "human", canControl: true,
+    profileId: "55555555-5555-4555-8555-555555555555", profileLabel: "Synthetic login",
+    activePageId: pageId, tabs: [{ id: pageId, title: "Sign in", url: "https://accounts.example.test/login" }], downloads: [],
+    loginRequest: { id: requestId, expectedOrigin: "https://accounts.example.test", readySelector: "[data-authenticated]", loginSelector: "input", label: "Synthetic login", automatic: false },
+  };
+  const snapshot = () => ({ ...session });
+  await page.route("**/api/browser/**", async route => {
+    const url = new URL(route.request().url());
+    let result: any = {};
+    if (url.pathname === "/api/browser/sessions" && route.request().method() === "GET") result = { sessions: [snapshot()] };
+    else if (url.pathname === `/api/browser/sessions/${sessionId}`) result = { session: snapshot() };
+    else if (url.pathname.endsWith("/command")) result = { session: snapshot() };
+    else if (url.pathname === "/api/browser/status") result = { config: { executorNodeId: node.nodeId }, nodes: [{ id: ownerNodeId, name: "Owner", available: true, reachable: true, runningCount: 1 }] };
+    else if (url.pathname === "/api/browser/preferences") result = { nodeId: null, effectiveNodeId: ownerNodeId };
+    else if (url.pathname === "/api/browser/profiles") result = { profiles: [] };
+    await route.fulfill({ json: result });
+  });
+  await page.routeWebSocket(/\/ws\?mode=browser/, ws => {
+    ws.onMessage(message => wsMessages.push(JSON.parse(String(message))));
+    ws.send(JSON.stringify({ type: "browserState", session: snapshot() }));
+    ws.send(JSON.stringify({ type: "browserFrame", pageId, width: frameWidth, height: frameHeight, data: frame }));
+  });
+
+  const login = await signIn(environment, node);
+  await page.context().addCookies(login.cookie.split("; ").map(cookie => ({ name: cookie.slice(0, cookie.indexOf("=")), value: cookie.slice(cookie.indexOf("=") + 1), url: node.url })));
+  await page.goto(node.url);
+  await page.locator("#projectList").getByText("Internal Assistant", { exact: true }).click();
+  await page.locator("#sessionList .list-row").filter({ has: page.locator("strong", { hasText: "Short one" }) }).first().click();
+  await page.locator("#sessionTitle").filter({ hasText: "Short one" }).waitFor();
+  await page.setViewportSize({ width: 412, height: 730 });
+
+  const activeIdentity = await page.evaluate(async () => { const { state } = await import("/app/state.js"); return { projectId: state.activeProjectId, engine: state.engine, conversationId: state.activeConversationId || state.activeSessionId, appNodeId: state.conversationLock?.nodeId || state.activeNodeId }; });
+  Object.assign(session, activeIdentity);
+  await page.evaluate(() => document.dispatchEvent(new Event("browserSessionsChanged")));
+
+  const dialog = page.getByTestId("browser-login-panel");
+  await dialog.waitFor();
+  const screen = dialog.getByTestId("browser-screen");
+  await screen.waitFor({ state: "visible" });
+
+  // 120 synchronous moves: a real drag's event storm, with no frame boundaries.
+  const moves = 120;
+  for (let round = 0; round < 20 && !wsMessages.some(m => m.command?.action === "scroll"); round++) {
+    await screen.evaluate((element, count) => {
+      const rect = element.getBoundingClientRect();
+      const startX = rect.left + rect.width / 2, startY = rect.top + rect.height * .9;
+      const steps: Array<[string, number]> = [["touchstart", startY]];
+      for (let step = 1; step <= count; step++) steps.push(["touchmove", startY - step * 2]);
+      steps.push(["touchend", startY - count * 2]);
+      for (const [type, y] of steps) {
+        const touch = new Touch({ identifier: 1, target: element, clientX: startX, clientY: y });
+        element.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true, touches: type === "touchend" ? [] : [touch], changedTouches: [touch] }));
+      }
+    }, moves);
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  const scrolls = wsMessages.filter(m => m.type === "browserCommand" && m.command?.action === "scroll");
+  assert.ok(scrolls.length > 0, "a finger drag must send remote scroll commands");
+  assert.ok(scrolls.length <= 20, `${moves} moves must coalesce into few commands, sent ${scrolls.length}`);
+  const total = scrolls.reduce((sum, m) => sum + m.command.y, 0);
+  assert.ok(total > 0, `the coalesced scroll must keep its direction and distance (total ${total})`);
+});

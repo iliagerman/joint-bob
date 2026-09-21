@@ -661,6 +661,16 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
   screen.addEventListener("touchstart", (event) => {
     touchScroll = event.touches.length === 1 ? { x: event.touches[0].clientX, y: event.touches[0].clientY, active: false } : null;
   }, { passive: true });
+  // A drag fires touchmove ~60 times a second. One command per move floods the
+  // socket: typing is dropped as "connection is busy" and the stream lags a
+  // backed-up queue. Deltas accumulate and flush at most once per frame.
+  let pendingScroll = null, scrollFrame = 0;
+  function flushScroll() {
+    scrollFrame = 0;
+    const delta = pendingScroll; pendingScroll = null;
+    if (!delta || (!delta.x && !delta.y)) return;
+    sendInput({ action: "scroll", x: Math.max(-20000, Math.min(20000, delta.x)), y: Math.max(-20000, Math.min(20000, delta.y)) });
+  }
   screen.addEventListener("touchmove", (event) => {
     if (!touchScroll || event.touches.length !== 1 || !canType() || !frameSize) return;
     const touch = event.touches[0];
@@ -668,13 +678,15 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     event.preventDefault();
     touchScroll.active = true;
     const scale = frameSize.width / screen.getBoundingClientRect().width;
-    const x = Math.max(-20000, Math.min(20000, (touchScroll.x - touch.clientX) * scale));
-    const y = Math.max(-20000, Math.min(20000, (touchScroll.y - touch.clientY) * scale));
+    pendingScroll = pendingScroll || { x: 0, y: 0 };
+    pendingScroll.x += (touchScroll.x - touch.clientX) * scale;
+    pendingScroll.y += (touchScroll.y - touch.clientY) * scale;
     touchScroll.x = touch.clientX; touchScroll.y = touch.clientY;
-    if (x || y) sendInput({ action: "scroll", x, y });
+    if (!scrollFrame) scrollFrame = requestAnimationFrame(flushScroll);
   }, { passive: false });
-  screen.addEventListener("touchend", () => { touchScroll = null; });
-  screen.addEventListener("touchcancel", () => { touchScroll = null; });
+  const endTouch = () => { touchScroll = null; if (scrollFrame) { cancelAnimationFrame(scrollFrame); flushScroll(); } };
+  screen.addEventListener("touchend", endTouch);
+  screen.addEventListener("touchcancel", endTouch);
   screen.addEventListener("keydown", (event) => {
     if (!canType() || document.activeElement !== screen || event.key === "Tab") return;
     event.stopPropagation();
