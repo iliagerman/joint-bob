@@ -99,6 +99,16 @@
    into the page. interactive-widget=resizes-content shrinks inset:0 above the keyboard. */
 .browser-login-inline.browser-login-fullscreen { position: fixed; inset: 0; z-index: 60; margin: 0; border: 0; border-radius: 0; }
 .browser-login-inline.browser-login-fullscreen .browser-stage { max-height: none; flex: 1 1 auto; }
+/* A phone has no room for the inline halfway state: squeezed into the chat
+   column, the page overlaps the transcript and its actions scroll away behind
+   the composer. The sign-in is only ever the popup there, and its actions stay
+   pinned to the top of it. */
+@media (max-width: 699px) {
+  .browser-login-mode [data-testid="browser-login-expand"] { display: none; }
+  .browser-login-inline.browser-login-fullscreen .browser-login-notice {
+    position: sticky; top: 0; z-index: 1; background: var(--panel); padding: 8px 2px;
+  }
+}
 @media (max-width: 520px) {
   .browser-login-notice { grid-template-columns: minmax(0, 1fr) auto; }
   .browser-login-notice [data-part="login-context"], .browser-login-notice [data-part="login-help"] { grid-column: 1; }

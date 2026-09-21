@@ -48,8 +48,10 @@ function mount(session) {
   current.escape = event => {
     if (event.key !== "Escape") return;
     event.preventDefault(); event.stopImmediatePropagation();
-    // Full screen is a view state: Escape backs out of it before dismissing the sign-in.
-    if (host.classList.contains("browser-login-fullscreen")) { host.querySelector('[data-testid="browser-login-expand"]')?.click(); return; }
+    // Full screen is a view state: Escape backs out of it before dismissing the
+    // sign-in. A phone has no inline state to back out to, so Escape dismisses.
+    const expand = host.querySelector('[data-testid="browser-login-expand"]');
+    if (host.classList.contains("browser-login-fullscreen") && expand?.offsetParent) { expand.click(); return; }
     dismiss();
   };
   document.addEventListener("keydown", current.escape, true);

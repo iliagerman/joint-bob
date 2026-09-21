@@ -102,6 +102,75 @@ test("sign-in on a phone resizes the remote page to phone dimensions", { timeout
   assert.ok(shrunk.height <= 400, `the remote page must follow the keyboard-shrunk height: ${shrunk.height}`);
 });
 
+// Inline mode squeezes the page into the chat column, where the action bar
+// scrolls out of reach behind the composer and the transcript. A phone has no
+// room for that halfway state: the sign-in is only ever the full-screen popup,
+// its actions always reachable, and Escape dismisses rather than un-maximising.
+test("a phone sign-in has no inline mode and keeps its actions reachable", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+
+  const frame = await page.evaluate(([width, height]) => {
+    const canvas = document.createElement("canvas"); canvas.width = width; canvas.height = height;
+    const context = canvas.getContext("2d")!; context.fillStyle = "#eef4ff"; context.fillRect(0, 0, width, height);
+    return canvas.toDataURL("image/jpeg", .85).split(",")[1];
+  }, [frameWidth, frameHeight]);
+
+  const session: any = {
+    id: sessionId, nodeId: ownerNodeId, state: "running", owner: "human", canControl: true,
+    profileId: "55555555-5555-4555-8555-555555555555", profileLabel: "Synthetic login",
+    activePageId: pageId, tabs: [{ id: pageId, title: "Sign in", url: "https://accounts.example.test/login" }], downloads: [],
+    loginRequest: { id: requestId, expectedOrigin: "https://accounts.example.test", readySelector: "[data-authenticated]", loginSelector: "input", label: "Synthetic login", automatic: false },
+  };
+  const snapshot = () => ({ ...session });
+  await page.route("**/api/browser/**", async route => {
+    const url = new URL(route.request().url());
+    let result: any = {};
+    if (url.pathname === "/api/browser/sessions" && route.request().method() === "GET") result = { sessions: [snapshot()] };
+    else if (url.pathname === `/api/browser/sessions/${sessionId}`) result = { session: snapshot() };
+    else if (url.pathname.endsWith("/command")) result = { session: snapshot() };
+    else if (url.pathname === "/api/browser/status") result = { config: { executorNodeId: node.nodeId }, nodes: [{ id: ownerNodeId, name: "Owner", available: true, reachable: true, runningCount: 1 }] };
+    else if (url.pathname === "/api/browser/preferences") result = { nodeId: null, effectiveNodeId: ownerNodeId };
+    else if (url.pathname === "/api/browser/profiles") result = { profiles: [] };
+    await route.fulfill({ json: result });
+  });
+  await page.routeWebSocket(/\/ws\?mode=browser/, ws => {
+    ws.send(JSON.stringify({ type: "browserState", session: snapshot() }));
+    ws.send(JSON.stringify({ type: "browserFrame", pageId, width: frameWidth, height: frameHeight, data: frame }));
+  });
+
+  const login = await signIn(environment, node);
+  await page.context().addCookies(login.cookie.split("; ").map(cookie => ({ name: cookie.slice(0, cookie.indexOf("=")), value: cookie.slice(cookie.indexOf("=") + 1), url: node.url })));
+  await page.goto(node.url);
+  await page.locator("#projectList").getByText("Internal Assistant", { exact: true }).click();
+  await page.locator("#sessionList .list-row").filter({ has: page.locator("strong", { hasText: "Short one" }) }).first().click();
+  await page.locator("#sessionTitle").filter({ hasText: "Short one" }).waitFor();
+  await page.setViewportSize({ width: 412, height: 730 });
+
+  const activeIdentity = await page.evaluate(async () => { const { state } = await import("/app/state.js"); return { projectId: state.activeProjectId, engine: state.engine, conversationId: state.activeConversationId || state.activeSessionId, appNodeId: state.conversationLock?.nodeId || state.activeNodeId }; });
+  Object.assign(session, activeIdentity);
+  await page.evaluate(() => document.dispatchEvent(new Event("browserSessionsChanged")));
+
+  const dialog = page.getByTestId("browser-login-panel");
+  await dialog.waitFor();
+  await dialog.getByTestId("browser-screen").waitFor({ state: "visible" });
+
+  // The popup covers the screen and offers no way back to the cluttered inline view.
+  assert.equal(await dialog.evaluate(element => element.classList.contains("browser-login-fullscreen")), true, "a phone sign-in must be full screen");
+  assert.equal(await dialog.getByTestId("browser-login-expand").isVisible(), false, "a phone must not offer the inline halfway state");
+
+  // Finishing and dismissing stay on screen, inside the viewport, at all times.
+  for (const testid of ["browser-login-done", "browser-login-dismiss"]) {
+    const button = dialog.getByTestId(testid);
+    await button.waitFor({ state: "visible" });
+    const box = await button.evaluate(element => { const rect = element.getBoundingClientRect(); return { top: rect.top, bottom: rect.bottom, height: innerHeight }; });
+    assert.ok(box.top >= 0 && box.bottom <= box.height, `${testid} must sit inside the viewport: ${JSON.stringify(box)}`);
+  }
+
+  // With no inline state to fall back to, Escape dismisses the sign-in outright.
+  await page.keyboard.press("Escape");
+  await dialog.waitFor({ state: "detached" });
+});
+
 // A handoff can be held by a stale controller identity: the same person's
 // earlier connection through another app node took control, and their current
 // viewer is treated as a spectator — input ignored, no way to dismiss, agent
