@@ -5,16 +5,19 @@ import path from "node:path";
 import WebSocket from "ws";
 import { getClusterNode } from "../cluster.js";
 import { getConversationRecord, ensureConversationRecord, listConversationSegments } from "../conversation-records.js";
+import type { DifficultyClassification } from "../classifiers/contract.js";
+import { getDifficultyClassifier } from "../classifiers/registry.js";
+import { routingEvalDue, routingPolicyForProject, type StoredRoutingPolicy } from "../routing-policy.js";
 import { blockConversationGoal, cancelConversationGoal, getConversationGoal, goalPrompt, goalStatusMessage, parseBobGoalCommand, recordConversationGoalResponse, startConversationGoal, type ConversationGoal } from "../conversation-goals.js";
 import { ConversationOwnershipError } from "../conversation-ownership.js";
 import { buildHandoffContext } from "../handoff-context.js";
 import { getHarness, getHarnessRuntime, harnessForProvider, listHarnesses, listHarnessSessions } from "../harnesses.js";
 import type { HarnessModelSettings, HarnessSession } from "../harnesses/runtime.js";
 import { setSessionTitle } from "../names.js";
-import { conversationScopeId, getScopeSecretAccounts } from "../secrets.js";
+import { conversationScopeId, genericSecretEnvironment, getScopeSecretAccounts } from "../secrets.js";
 import { getProjectLock } from "../project-locks.js";
 import { getSettings } from "../settings.js";
-import { beginQueuedPrompt, cancelQueuedPrompt, claimQueuedPrompt, editQueuedPrompt, enqueuePrompt, listQueuedPrompts, mergeQueuedPrompts, prioritizeQueuedPrompt, queuedSettingsSchema, readQueueSettings, recordQueueSettings, resetQueuedPromptAttempt, swapQueuedPrompts, type QueuedPrompt, type QueuedSettings } from "../prompt-queue.js";
+import { beginQueuedPrompt, bumpRoutingPromptCount, cancelQueuedPrompt, claimQueuedPrompt, editQueuedPrompt, enqueuePrompt, listQueuedPrompts, mergeQueuedPrompts, prioritizeQueuedPrompt, queuedSettingsSchema, readQueueSettings, readRoutingState, recordQueueSettings, recordRoutingEval, resetQueuedPromptAttempt, swapQueuedPrompts, type QueuedPrompt, type QueuedSettings } from "../prompt-queue.js";
 import { queuedAttachments } from "../queued-attachments.js";
 import { describeImage } from "../attachment-digest.js";
 import { listTurnFailures, recordTurnFailure, withTurnFailures } from "../turn-failures.js";
@@ -181,6 +184,60 @@ async function applyQueuedSettings(connection: HarnessChatConnection, settings: 
   if (settings.enabledTools !== undefined || settings.claudeTools) await connection.shared.session.setTools(runtimeSettings(settings).enabledTools ?? []);
 }
 
+/** Cluster routing: classify the prompt's difficulty and switch the conversation's
+    model to the policy mapping for this harness. Manual picks always win; any failure
+    keeps the conversation's current settings and never blocks the prompt. */
+async function routePromptByDifficulty(connection: HarnessChatConnection, queued: QueuedPrompt): Promise<void> {
+  if (queued.systemEventId) return;
+  let policy: StoredRoutingPolicy | null = null;
+  try { policy = routingPolicyForProject(connection.project.id); }
+  catch (error) { console.warn("Routing policy resolution failed", error instanceof Error ? error.message.slice(0, 200) : "unknown error"); }
+  if (!policy) return;
+  const key = queueKey(connection);
+  const ordinal = bumpRoutingPromptCount(key);
+  const { lastEvalOrdinal } = readRoutingState(key);
+  const due = routingEvalDue(policy.policy, ordinal, lastEvalOrdinal);
+  if (queued.settings) {
+    // A manual per-prompt model pick wins and consumes this evaluation point.
+    if (due) recordRoutingEval(key, ordinal);
+    return;
+  }
+  if (!due) return;
+  recordRoutingEval(key, ordinal);
+  const skip = (reason: string, level?: number, confidence?: number): void => {
+    publish(connection, { type: "promptRouted", queueId: queued.id, skipped: reason, ...(level !== undefined ? { level } : {}), ...(confidence !== undefined ? { confidence } : {}) });
+  };
+  const classifier = getDifficultyClassifier(policy.policy.classifierId);
+  if (!classifier) { skip("unknown classifier"); return; }
+  const apiKey = genericSecretEnvironment(connection.project.id)[classifier.variableName];
+  if (!apiKey) { skip("classifier key missing"); return; }
+  let classification: DifficultyClassification | null = null;
+  try { classification = await classifier.classify(queued.messageText ?? queued.promptText, apiKey); }
+  catch { classification = null; }
+  if (!classification) { skip("classifier failed"); return; }
+  if (classification.confidence < policy.policy.confidenceThreshold) { skip("low confidence", classification.level, classification.confidence); return; }
+  const mapping = policy.policy.harnesses[connection.engine]?.levels[String(classification.level)];
+  if (!mapping) {
+    publish(connection, { type: "promptRouted", queueId: queued.id, level: classification.level, confidence: classification.confidence, mapped: false });
+    return;
+  }
+  const settings = {
+    provider: mapping.provider ?? getHarness(connection.engine).configuration?.fixedProvider ?? connection.shared.session.settings().provider,
+    modelId: mapping.modelId,
+    reasoning: mapping.thinkingLevel,
+  };
+  try {
+    await (await getHarnessRuntime(connection.engine)).validateSettings(settings);
+    await connection.shared.session.configure(settings);
+    recordQueueSettings(key, currentSettings(connection));
+  } catch (error) {
+    console.warn("Routed model unavailable", error instanceof Error ? error.message.slice(0, 200) : "unknown error");
+    skip("model unavailable", classification.level, classification.confidence);
+    return;
+  }
+  publish(connection, { type: "promptRouted", queueId: queued.id, level: classification.level, confidence: classification.confidence, mapped: true, provider: settings.provider, modelId: settings.modelId, thinkingLevel: settings.reasoning, classifierId: classifier.id });
+}
+
 async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt): Promise<void> {
   if (queued.dispatchState === "starting" || startingIds.has(queued.id)) throw new Error("Queued prompt start is uncertain; edit or cancel it before retrying");
   await ensureCurrentSession(connection);
@@ -190,6 +247,7 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
   shared.turnInFlight += 1;
   try {
     if (queued.settings) await applyQueuedSettings(connection, queued.settings);
+    await routePromptByDifficulty(connection, queued);
     await writable(connection);
     await connection.shared.session.preflight();
     const attachments = await queuedAttachments(connection.cwd, queued, getSettings().digestAttachments ? describeImage : undefined);

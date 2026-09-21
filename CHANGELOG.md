@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Prompts now route automatically to different models based on difficulty classification, with per-cluster policies configurable in Settings and graceful fallback to conversation settings on any error.
+
 ## 1.68.6 — 2026-09-21
 
 - Phone sign-in now uses popup mode only, preventing UI overlap and allowing Escape to dismiss.

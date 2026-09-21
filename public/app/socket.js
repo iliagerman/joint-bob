@@ -3,7 +3,7 @@ import { api, loadPins, savePreferencesInBackground } from "./api.js";
 import { clearAttachments } from "./attachments.js";
 import { syncBackgroundTasks } from "./background-tasks.js";
 import { renderChatSessionControls, renderConversationLock, sendSocket, setComposerEnabled, setModels, syncEngineUI, updateStatus } from "./chat-controls.js";
-import { appendMessage, appendToolMessage, clearChat, clearQueuedMark, clearThinkingBubble, finalizeAssistantBubble, finishTurnTimer, markMessageQueued, appendErrorMessage, markQueuedMessageFailed, markUserMessagesRead, removeQueuedMessage, renderBubbleContent, requestPinChat, rerenderChatTranscript, resetQueuedForceStart, restoreChatScrollTop, showChatEmptyState, startDurationTicker, startHarnessSegment, syncQueuedMessageOrder, updateQueuedMessage, updateToolMessage } from "./chat-transcript.js";
+import { appendMessage, appendToolMessage, clearChat, clearQueuedMark, clearThinkingBubble, finalizeAssistantBubble, finishTurnTimer, markMessageQueued, markPromptRouted, appendErrorMessage, markQueuedMessageFailed, markUserMessagesRead, removeQueuedMessage, renderBubbleContent, requestPinChat, rerenderChatTranscript, resetQueuedForceStart, restoreChatScrollTop, showChatEmptyState, startDurationTicker, startHarnessSegment, syncQueuedMessageOrder, updateQueuedMessage, updateToolMessage } from "./chat-transcript.js";
 import { rememberDraft, restoreDraft, seedPromptHistory, setActiveSessionPath } from "./composer.js";
 import { renderToolsDialog } from "./composer-dialogs.js";
 import { elements } from "./elements.js";
@@ -354,6 +354,10 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
   if (payload.type === "promptStarted") {
     state.scheduledTurn = payload.scheduled === true;
     clearQueuedMark(payload.queueId);
+    return;
+  }
+  if (payload.type === "promptRouted") {
+    markPromptRouted(payload);
     return;
   }
   // The harness refused to start this prompt (quota, auth, crash). It stays

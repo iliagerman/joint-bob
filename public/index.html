@@ -630,6 +630,22 @@
             </label>
             <button class="primary" type="button" id="clusterJoinButton" data-testid="cluster-join-button">Join cluster</button>
           </fieldset>
+          <fieldset class="phase-settings" id="routingPolicyFieldset">
+            <legend>Prompt routing</legend>
+            <p id="routingPolicyStatus" data-testid="routing-status" role="status"></p>
+            <label>Policy cluster<select id="routingClusterSelect" data-testid="routing-cluster-select"></select></label>
+            <label class="checkbox-row"><input type="checkbox" id="routingEnabled" data-testid="routing-enabled" /> Route prompts to a model by difficulty</label>
+            <label>Classifier<select id="routingClassifier" data-testid="routing-classifier"></select></label>
+            <label>Evaluate difficulty<select id="routingCadence" data-testid="routing-cadence"><option value="first-message">First message only</option><option value="every-n">Every N messages</option></select></label>
+            <label>Messages between evaluations<input type="number" id="routingCadenceN" min="1" max="500" step="1" value="5" data-testid="routing-cadence-n" /></label>
+            <label>Confidence threshold (0 to 1)<input type="number" id="routingConfidence" min="0" max="1" step="0.05" value="0.3" data-testid="routing-confidence" /></label>
+            <p class="settings-hint">Below the threshold, or on any classifier failure, prompts keep the conversation's current model. A manual model pick always wins until the next evaluation point.</p>
+            <div id="routingHarnessTables" data-testid="routing-harness-tables"></div>
+            <div class="github-group-actions">
+              <button class="ghost" type="button" id="routingSaveButton" data-testid="routing-save-button">Save routing policy</button>
+              <button class="ghost danger" type="button" id="routingClearButton" data-testid="routing-clear-button">Clear policy</button>
+            </div>
+          </fieldset>
         </section>
 
         <section class="settings-panel" id="settingsPanel-workspaces" role="tabpanel" aria-labelledby="settingsTab-workspaces" tabindex="0" hidden>

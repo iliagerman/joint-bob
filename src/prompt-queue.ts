@@ -35,7 +35,8 @@ export function ensurePromptQueueSchema(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS queued_prompts_order ON queued_prompts(queue_key, sequence, id);
     CREATE TABLE IF NOT EXISTS queued_prompt_sequences (queue_key TEXT PRIMARY KEY, sequence INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS queued_prompt_settings (queue_key TEXT PRIMARY KEY, sequence INTEGER NOT NULL, settings TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS queued_prompt_tombstones (id TEXT PRIMARY KEY, queue_key TEXT NOT NULL);`);
+    CREATE TABLE IF NOT EXISTS queued_prompt_tombstones (id TEXT PRIMARY KEY, queue_key TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS conversation_routing_state (queue_key TEXT PRIMARY KEY, prompt_count INTEGER NOT NULL DEFAULT 0, last_eval_ordinal INTEGER, updated_at TEXT NOT NULL, origin_node_id TEXT NOT NULL DEFAULT '');`);
 }
 
 function queueDatabase(): DatabaseSync {
@@ -432,4 +433,70 @@ export function acknowledgeSystemPrompt(queueKey: string, id: string): boolean {
     publish(db, synthetic, null);
     return true;
   });
+}
+export interface ConversationRoutingState { promptCount: number; lastEvalOrdinal: number | null }
+
+const routingStateEventSchema = z.object({
+  projectId: z.string().min(1), conversationId: z.string().min(1),
+  promptCount: z.number().int().min(0), lastEvalOrdinal: z.number().int().min(1).nullable(),
+  updatedAt: z.string().min(1), originNodeId: z.string().min(1),
+}).strict();
+
+function readRoutingStateRow(db: DatabaseSync, key: string): (ConversationRoutingState & { updatedAt: string; originNodeId: string }) | undefined {
+  const row = db.prepare("SELECT prompt_count, last_eval_ordinal, updated_at, origin_node_id FROM conversation_routing_state WHERE queue_key = ?").get(key) as { prompt_count: number; last_eval_ordinal: number | null; updated_at: string; origin_node_id: string } | undefined;
+  return row ? { promptCount: row.prompt_count, lastEvalOrdinal: row.last_eval_ordinal, updatedAt: row.updated_at, originNodeId: row.origin_node_id } : undefined;
+}
+
+export function readRoutingState(queueKey: string): ConversationRoutingState {
+  const row = readRoutingStateRow(queueDatabase(), logicalQueueKey(queueKey));
+  return { promptCount: row?.promptCount ?? 0, lastEvalOrdinal: row?.lastEvalOrdinal ?? null };
+}
+
+function writeRoutingState(db: DatabaseSync, key: string, state: ConversationRoutingState, updatedAt?: string): void {
+  const stamp = updatedAt ?? new Date().toISOString();
+  db.prepare(`INSERT INTO conversation_routing_state(queue_key,prompt_count,last_eval_ordinal,updated_at,origin_node_id) VALUES (?,?,?,?,?)
+    ON CONFLICT(queue_key) DO UPDATE SET prompt_count=excluded.prompt_count, last_eval_ordinal=excluded.last_eval_ordinal, updated_at=excluded.updated_at, origin_node_id=excluded.origin_node_id`)
+    .run(key, state.promptCount, state.lastEvalOrdinal, stamp, origin(db));
+  const separator = key.indexOf(":");
+  enqueueReplicationEvent(db, {
+    originNodeId: origin(db), entityType: "conversation.routing", entityKey: key, operation: "upsert",
+    payload: { projectId: key.slice(0, separator), conversationId: key.slice(separator + 1), promptCount: state.promptCount, lastEvalOrdinal: state.lastEvalOrdinal, updatedAt: stamp, originNodeId: origin(db) },
+  });
+}
+
+/** Counts one dispatched user prompt and returns its 1-based ordinal in the conversation. */
+export function bumpRoutingPromptCount(queueKey: string): number {
+  const db = queueDatabase();
+  const key = logicalQueueKey(queueKey);
+  return transaction(db, () => {
+    const current = readRoutingStateRow(db, key);
+    const ordinal = (current?.promptCount ?? 0) + 1;
+    writeRoutingState(db, key, { promptCount: ordinal, lastEvalOrdinal: current?.lastEvalOrdinal ?? null });
+    return ordinal;
+  });
+}
+
+/** Marks an evaluation as consumed at this ordinal, so retries and later prompts
+    continue the cadence from here instead of re-evaluating. */
+export function recordRoutingEval(queueKey: string, ordinal: number): void {
+  if (!Number.isSafeInteger(ordinal) || ordinal < 1) throw new Error("Routing eval ordinal must be a positive integer");
+  const db = queueDatabase();
+  const key = logicalQueueKey(queueKey);
+  transaction(db, () => {
+    const current = readRoutingStateRow(db, key);
+    writeRoutingState(db, key, { promptCount: Math.max(current?.promptCount ?? 0, ordinal), lastEvalOrdinal: Math.max(current?.lastEvalOrdinal ?? 0, ordinal) });
+  });
+}
+
+export function applyConversationRoutingEvent(db: DatabaseSync, event: ReplicationEvent): void {
+  if (event.entityType !== "conversation.routing" || event.operation !== "upsert") throw new Error("Unsupported routing state replication event");
+  const payload = routingStateEventSchema.parse(event.payload);
+  if (event.entityKey !== `${payload.projectId}:${payload.conversationId}` || payload.originNodeId !== event.originNodeId) throw new Error("Malformed routing state replication event");
+  ensurePromptQueueSchema(db);
+  const key = `${resolveProjectAlias(db, payload.projectId)}:${payload.conversationId}`;
+  const current = readRoutingStateRow(db, key);
+  if (current && `${payload.updatedAt}\n${payload.originNodeId}` <= `${current.updatedAt}\n${current.originNodeId}`) return;
+  db.prepare(`INSERT INTO conversation_routing_state(queue_key,prompt_count,last_eval_ordinal,updated_at,origin_node_id) VALUES (?,?,?,?,?)
+    ON CONFLICT(queue_key) DO UPDATE SET prompt_count=excluded.prompt_count, last_eval_ordinal=excluded.last_eval_ordinal, updated_at=excluded.updated_at, origin_node_id=excluded.origin_node_id`)
+    .run(key, payload.promptCount, payload.lastEvalOrdinal, payload.updatedAt, payload.originNodeId);
 }

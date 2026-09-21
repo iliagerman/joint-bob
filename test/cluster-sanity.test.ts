@@ -1454,3 +1454,49 @@ test("both prepared nodes become writable and resume replication after restart",
     assert.equal(replication.status, 200, `${node.key} accepts authenticated replication after recovery`);
   }
 });
+
+test("a leader-authored routing policy replicates cluster-wide and stays leader-gated", { timeout: 60_000 }, async () => {
+  const policy = {
+    enabled: true,
+    classifierId: "typesafe",
+    evalCadence: { mode: "every-n", n: 4 },
+    confidenceThreshold: 0.3,
+    harnesses: { kiro: { levels: { "8": { modelId: "default", thinkingLevel: "max" } } } },
+  };
+  const dbB = new DatabaseSync(path.join(nodeB.dataDir, "node.db"));
+  dbB.exec("PRAGMA busy_timeout=5000");
+  const rowFor = () => dbB.prepare("SELECT cluster_id, revision, leader_node_id FROM cluster_routing_policies WHERE cluster_id = ''").get() as { cluster_id: string; revision: number; leader_node_id: string } | undefined;
+
+  const created = await api<{ policy: { revision: number } | null }>(nodeA, sessionA, "PUT", "/cluster/routing", { clusterId: "", policy });
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+  assert.equal(created.body.policy?.revision, 1);
+
+  const deadline = Date.now() + 20000;
+  let row: { cluster_id: string; revision: number; leader_node_id: string } | undefined;
+  while (!(row = rowFor()) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.ok(row, "the routing policy must replicate to the paired node");
+  assert.equal(row.leader_node_id, nodeA.nodeId);
+
+  const read = await api<{ policies: Array<{ clusterId: string; editable: boolean; leaderNodeId: string }> }>(nodeB, sessionB, "GET", "/cluster/routing");
+  assert.equal(read.status, 200, JSON.stringify(read.body));
+  const replica = read.body.policies.find((entry) => entry.clusterId === "");
+  assert.ok(replica, "the paired node serves the replicated policy");
+  assert.equal(replica.editable, false, "only the leader may edit the policy");
+
+  const refused = await api(nodeB, sessionB, "PUT", "/cluster/routing", { clusterId: "", policy: { ...policy, confidenceThreshold: 0.5 } });
+  assert.equal(refused.status, 403, "a non-leader node must not change the policy");
+
+  const updated = await api<{ policy: { revision: number } | null }>(nodeA, sessionA, "PUT", "/cluster/routing", { clusterId: "", policy: { ...policy, confidenceThreshold: 0.5 } });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.body.policy?.revision, 2);
+  const converge = Date.now() + 20000;
+  while (rowFor()?.revision !== 2 && Date.now() < converge) await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(rowFor()?.revision, 2, "the revision must converge on the paired node");
+
+  const cleared = await api(nodeA, sessionA, "DELETE", "/cluster/routing?clusterId=");
+  assert.equal(cleared.status, 200);
+  const drained = Date.now() + 20000;
+  while (rowFor() && Date.now() < drained) await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(rowFor(), undefined, "clearing the policy must remove it on the paired node too");
+  dbB.close();
+});

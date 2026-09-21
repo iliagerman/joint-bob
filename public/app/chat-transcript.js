@@ -847,6 +847,20 @@ export function clearQueuedMark(queueId) {
   refreshQueuedControls();
 }
 
+/** Shows the cluster routing decision for one prompt on its bubble. */
+export function markPromptRouted(routing) {
+  const bubble = (routing.queueId && elements.messages.querySelector(`[data-queue-id="${CSS.escape(routing.queueId)}"]`))
+    || [...elements.messages.querySelectorAll(".message.user")].at(-1);
+  if (!bubble) return;
+  const note = bubble.querySelector(".routed-note") || document.createElement("div");
+  note.className = "routed-note";
+  note.dataset.testid = "routed-note";
+  if (routing.skipped) note.textContent = `Routing skipped: ${routing.skipped}`;
+  else if (routing.mapped) note.textContent = `Routed: difficulty ${routing.level} → ${routing.provider}/${routing.modelId} (${routing.thinkingLevel})`;
+  else note.textContent = `Difficulty ${routing.level}: no mapping, conversation model kept`;
+  if (!note.isConnected) bubble.append(note);
+}
+
 // startedAt is 0 for a replayed transcript entry: it already finished, at a
 // time this client never saw, so it gets no elapsed label.
 export function appendToolMessage(toolName, toolCallId, startedAt = Date.now()) {

@@ -1,0 +1,91 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { classifyWithTypesafe, DIFFICULTY_RUBRIC, levelFromAnswer } from "../src/classifiers/typesafe.js";
+import { getDifficultyClassifier, listDifficultyClassifiers } from "../src/classifiers/registry.js";
+
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+}
+
+function scoreAnswer(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return { type: "score", score: 6.2, confidence: 0.8, probabilities: { "5": 0.1, "6": 0.8, "7": 0.1 }, ...overrides };
+}
+
+test("levelFromAnswer picks the highest-probability level on the 1 to 10 scale", () => {
+  const classification = levelFromAnswer(scoreAnswer());
+  assert.ok(classification, "answer must parse");
+  assert.equal(classification.level, 7);
+  assert.equal(classification.score, 7.2);
+  assert.equal(classification.confidence, 0.8);
+});
+
+test("levelFromAnswer falls back to the rounded score without probabilities", () => {
+  const classification = levelFromAnswer(scoreAnswer({ probabilities: undefined }));
+  assert.ok(classification);
+  assert.equal(classification.level, 7);
+});
+
+test("levelFromAnswer rejects answers without a score or confidence", () => {
+  assert.equal(levelFromAnswer({ type: "score", score: "high" }), null);
+  assert.equal(levelFromAnswer({ score: 1 }), null);
+});
+
+test("classifyWithTypesafe sends one score question with the ten-level rubric and parses the answer", async () => {
+  let captured: { url: string; init: RequestInit } | undefined;
+  const fetchImpl: typeof fetch = async (url, init) => {
+    captured = { url: String(url), init: init! };
+    return jsonResponse(200, { model: "jev-1.13.0", answers: { complexity: scoreAnswer() }, usage: { input_tokens: 10, output_tokens: 1 } });
+  };
+  const classification = await classifyWithTypesafe("Refactor the scheduler for concurrency", "key-1", fetchImpl);
+  assert.ok(classification);
+  assert.equal(classification.level, 7);
+  assert.equal(captured.url, "https://api.typesafe.ai/v1/systemone");
+  assert.equal((captured.init.headers as Record<string, string>).Authorization, "Bearer key-1");
+  const body = JSON.parse(String(captured.init.body));
+  assert.equal(body.model, "jev-latest");
+  assert.equal(body.questions.complexity.type, "score");
+  assert.equal(body.questions.complexity.criteria.length, DIFFICULTY_RUBRIC.length);
+  assert.equal(body.questions.complexity.criteria.length, 10);
+});
+
+test("classifyWithTypesafe retries a 429 once and then succeeds", async () => {
+  let calls = 0;
+  const fetchImpl: typeof fetch = async () => {
+    calls += 1;
+    return calls === 1 ? jsonResponse(429, { error: "rate limited" }) : jsonResponse(200, { answers: { complexity: scoreAnswer() } });
+  };
+  const classification = await classifyWithTypesafe("text", "key", fetchImpl);
+  assert.equal(calls, 2);
+  assert.equal(classification?.level, 7);
+});
+
+test("classifyWithTypesafe returns null after repeated server errors", async () => {
+  let calls = 0;
+  const fetchImpl: typeof fetch = async () => {
+    calls += 1;
+    return jsonResponse(503, {});
+  };
+  assert.equal(await classifyWithTypesafe("text", "key", fetchImpl), null);
+  assert.equal(calls, 2);
+});
+
+test("classifyWithTypesafe returns null on network failure, malformed JSON, or a missing answer", async () => {
+  assert.equal(await classifyWithTypesafe("text", "key", async () => { throw new Error("offline"); }), null);
+  assert.equal(await classifyWithTypesafe("text", "key", async () => new Response("not json", { status: 200 })), null);
+  assert.equal(await classifyWithTypesafe("text", "key", async () => jsonResponse(200, { answers: {} })), null);
+});
+
+test("classifyWithTypesafe refuses blank input or a missing key", async () => {
+  let called = false;
+  const fetchImpl: typeof fetch = async () => { called = true; return jsonResponse(200, { answers: { complexity: scoreAnswer() } }); };
+  assert.equal(await classifyWithTypesafe("   ", "key", fetchImpl), null);
+  assert.equal(await classifyWithTypesafe("text", "", fetchImpl), null);
+  assert.equal(called, false);
+});
+
+test("the registry exposes the typesafe classifier under its policy id", () => {
+  const classifier = getDifficultyClassifier("typesafe");
+  assert.ok(classifier);
+  assert.equal(classifier.variableName, "TYPESAFE_API_KEY");
+  assert.ok(listDifficultyClassifiers().some((entry) => entry.id === "typesafe"));
+});

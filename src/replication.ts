@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { applyQueuedPromptEvent } from "./prompt-queue.js";
+import { applyQueuedPromptEvent, applyConversationRoutingEvent } from "./prompt-queue.js";
 import { promises as fs } from "node:fs";
 import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
@@ -15,6 +15,7 @@ import { applyUserPinEvent, ensureUserPinSchema } from "./user-pins.js";
 import { applyUserRecentSessionEvent, ensureUserRecentSessionSchema } from "./recent-sessions.js";
 import { isHarnessId, PROJECT_COLORS, type TaskRecord } from "./types.js";
 import { listDiscoveredHarnesses } from "./harnesses/registry.js";
+import { applyClusterRoutingEvent, ensureRoutingPolicySchema } from "./routing-policy.js";
 
 export interface ReplicationEvent {
   id: string;
@@ -75,7 +76,7 @@ function ensureProjectLockSchema(db: DatabaseSync): void {
 
 async function replicationDatabase(): Promise<DatabaseSync> {
   if (databasePromise) return databasePromise;
-  databasePromise = (async () => { await fs.mkdir(dataDir, { recursive: true, mode: 0o700 }); const db = new DatabaseSync(databasePath); db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;"); ensureReplicationSchema(db); ensureNameSchema(db); ensureTaskSchema(db); ensureProjectLockSchema(db); ensureConversationOwnershipSchema(db); ensureConversationRecordSchema(db); ensureConversationReviewReplicaSchema(db); ensureConversationNotificationSchema(db); ensureConversationGoalSchema(db); ensureCanvasShortcutSchema(db); ensureUserPinSchema(db); ensureUserRecentSessionSchema(db); return db; })();
+  databasePromise = (async () => { await fs.mkdir(dataDir, { recursive: true, mode: 0o700 }); const db = new DatabaseSync(databasePath); db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;"); ensureReplicationSchema(db); ensureNameSchema(db); ensureTaskSchema(db); ensureProjectLockSchema(db); ensureConversationOwnershipSchema(db); ensureConversationRecordSchema(db); ensureConversationReviewReplicaSchema(db); ensureConversationNotificationSchema(db); ensureConversationGoalSchema(db); ensureCanvasShortcutSchema(db); ensureUserPinSchema(db); ensureUserRecentSessionSchema(db); ensureRoutingPolicySchema(db); return db; })();
   return databasePromise;
 }
 
@@ -93,7 +94,7 @@ export function replicationEventProjectId(event: ReplicationEvent): string | und
   const payload = event.payload as Record<string, unknown> | null | undefined;
   if (!payload || typeof payload !== "object") return undefined;
   if (event.entityType === "name.override") return payload.scope === "projects" && typeof payload.key === "string" ? payload.key : undefined;
-  if (!["task", "project.lock", "conversation.record", "conversation.queue", "conversation.goal", "canvas.shortcut", "user.pin", "user.recent", "conversation.review", "conversation.notification", "conversation.notification.delivered"].includes(event.entityType)) return undefined;
+  if (!["task", "project.lock", "conversation.record", "conversation.queue", "conversation.goal", "conversation.routing", "canvas.shortcut", "user.pin", "user.recent", "conversation.review", "conversation.notification", "conversation.notification.delivered"].includes(event.entityType)) return undefined;
   return typeof payload.projectId === "string" && payload.projectId ? payload.projectId : undefined;
 }
 
@@ -253,6 +254,8 @@ const REPLICATION_APPLIERS: Record<string, ReplicationApplier> = {
   "conversation.ownership": applyConversationOwnershipEvent,
   "conversation.record": applyConversationRecordEvent,
   "conversation.queue": applyQueuedPromptEvent,
+  "conversation.routing": applyConversationRoutingEvent,
+  "cluster.routing": applyClusterRoutingEvent,
   "conversation.review": applyConversationReviewEvent,
   "conversation.notification": applyConversationNotificationEvent,
   "conversation.notification.delivered": applyConversationNotificationDeliveredEvent,
