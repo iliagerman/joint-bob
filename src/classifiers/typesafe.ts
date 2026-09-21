@@ -104,6 +104,6 @@ export async function classifyWithTypesafe(text: string, apiKey: string, fetchIm
 export const typesafeClassifier: DifficultyClassifier = {
   id: "typesafe",
   label: "TypeSafe (Jev)",
-  variableName: "TYPESAFE_API_KEY",
+  variableName: "TYPESAFE_AI_API_KEY",
   classify: (text, apiKey) => classifyWithTypesafe(text, apiKey),
 };

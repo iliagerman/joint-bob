@@ -86,6 +86,6 @@ test("classifyWithTypesafe refuses blank input or a missing key", async () => {
 test("the registry exposes the typesafe classifier under its policy id", () => {
   const classifier = getDifficultyClassifier("typesafe");
   assert.ok(classifier);
-  assert.equal(classifier.variableName, "TYPESAFE_API_KEY");
+  assert.equal(classifier.variableName, "TYPESAFE_AI_API_KEY");
   assert.ok(listDifficultyClassifiers().some((entry) => entry.id === "typesafe"));
 });

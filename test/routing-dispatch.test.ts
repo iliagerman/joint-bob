@@ -93,7 +93,7 @@ before(async () => {
   session = await signIn(environment, node);
   const project = projectNamed(node, "Joint Bob");
   projectId = project.id;
-  const account = await api<{ account: { id: string } }>(node, session, "POST", "/secrets/accounts", { label: "routing-test", provider: "custom", variables: [{ name: "TYPESAFE_API_KEY", kind: "value", value: "test-key" }] });
+  const account = await api<{ account: { id: string } }>(node, session, "POST", "/secrets/accounts", { label: "routing-test", provider: "custom", variables: [{ name: "TYPESAFE_AI_API_KEY", kind: "value", value: "test-key" }] });
   assert.equal(account.status, 201, JSON.stringify(account.body));
   secretAccountId = account.body.account.id;
   const attached = await api(node, session, "PUT", `/secrets/scopes/project/${projectId}`, { accountIds: [secretAccountId] });
