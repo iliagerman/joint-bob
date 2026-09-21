@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 1.68.6 — 2026-09-21
+
+- Phone sign-in now uses popup mode only, preventing UI overlap and allowing Escape to dismiss.
+
 ## 1.68.5 — 2026-09-21
 
 - Live stream on phones now performs reliably during scrolling by skipping frames when behind and reducing capture frequency.
