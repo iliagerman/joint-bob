@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
-import { getDifficultyClassifier } from "./classifiers/registry.js";
+import { getDifficultyClassifier, listDifficultyClassifiers } from "./classifiers/registry.js";
 import { listDiscoveredHarnesses } from "./harnesses/registry.js";
 import { resolveDataDirectory } from "./data-directory.js";
 import { enqueueReplicationEvent, type ReplicationEvent } from "./replication.js";
@@ -204,20 +204,73 @@ export function routingEvalDue(policy: RoutingPolicy, promptOrdinal: number, las
   return promptOrdinal - lastEvalOrdinal >= (policy.evalCadence.n ?? Number.POSITIVE_INFINITY);
 }
 
+/** Resolves the mapped entry for a difficulty level, spreading the 1 to 10 scale
+    across the filled rows in order: fewer filled levels each cover a wider band. */
+export function resolveAdaptiveMapping(harnessPolicy: RoutingPolicy["harnesses"][string] | undefined, level: number): RoutingMapping | null {
+  const entries = Object.entries(harnessPolicy?.levels ?? {})
+    .filter(([, mapping]) => mapping !== null)
+    .map(([key, mapping]) => ({ level: Number(key), mapping: mapping! }))
+    .filter((entry) => Number.isInteger(entry.level) && entry.level >= 1 && entry.level <= ROUTING_LEVELS)
+    .sort((left, right) => left.level - right.level);
+  if (!entries.length) return null;
+  const rank = Math.min(entries.length, Math.max(1, Math.ceil((level * entries.length) / ROUTING_LEVELS)));
+  return entries[rank - 1].mapping;
+}
+
+export interface DefaultPolicyModel { provider: string; id: string; label: string }
+
+const cheapModel = /flash|mini|lite|haiku|fast|small|nano|air/i;
+const topModel = /opus|ultra|\bpro\b|pro[-_.]|max|big|large/i;
+
+/** Builds a starting policy from each harness's conversation default and live model
+    list: a cheap, a default, and a strongest pair when the catalog allows one. */
+export function defaultRoutingPolicy(modelsByHarness: Record<string, DefaultPolicyModel[]>): RoutingPolicy {
+  const harnesses: RoutingPolicy["harnesses"] = {};
+  for (const adapter of listDiscoveredHarnesses()) {
+    if (!adapter.configuration) continue;
+    const levels = adapter.configuration.thinkingLevels;
+    const models = modelsByHarness[adapter.id] ?? [];
+    const fixed = adapter.configuration.fixedProvider;
+    const pick = (model: DefaultPolicyModel | undefined, thinkingLevel: string) => model
+      ? { ...(fixed ? {} : { provider: model.provider }), modelId: model.id, thinkingLevel: thinkingLevel as never }
+      : null;
+    const cheap = models.find((model) => cheapModel.test(`${model.id} ${model.label}`) && !(`${model.provider}/${model.id}` === `${adapter.defaults.provider}/${adapter.defaults.modelId}`));
+    const top = models.find((model) => topModel.test(`${model.id} ${model.label}`) && model !== cheap && !(`${model.provider}/${model.id}` === `${adapter.defaults.provider}/${adapter.defaults.modelId}`));
+    const mid = models.find((model) => model.provider === adapter.defaults.provider && model.id === adapter.defaults.modelId)
+      ?? models[Math.floor(models.length / 2)]
+      ?? models[0]
+      ?? { provider: adapter.defaults.provider, id: adapter.defaults.modelId, label: adapter.defaults.modelId };
+    const low = levels[0];
+    const high = levels.at(-1)!;
+    const medium = levels[Math.floor((levels.length - 1) / 2)];
+    const levelsMap: RoutingPolicy["harnesses"][string]["levels"] = {
+      "1": pick(cheap ?? mid, low)!,
+      "5": pick(mid, medium)!,
+      "10": pick(top ?? mid, high)!,
+    };
+    harnesses[adapter.id] = { levels: levelsMap };
+  }
+  return { enabled: true, classifierId: listDifficultyClassifiers()[0]?.id ?? "typesafe", evalCadence: { mode: "first-message" }, confidenceThreshold: 0.3, harnesses };
+}
+
 /** Resolves the routing policy that governs a project on this node, or null.
     Deterministic on every node: v2 shares resolve per cluster with the lowest cluster
-    ID winning; the legacy policy applies to all projects on a legacy-paired node. */
+    ID winning; the legacy policy applies to all projects on a legacy-paired node.
+    Never throws: an unreadable store means no routing. */
 export function routingPolicyForProject(projectId: string): StoredRoutingPolicy | null {
-  const db = routingPolicyDatabase();
-  const local = localNodeId(db);
-  if (!local) return null;
-  if (selectiveSharingActiveInDatabase(db)) {
-    let clusterIds: string[] = [];
-    try { clusterIds = resourceClusterIds(db, local, "project", projectId); }
-    catch { return null; }
-    const candidates = clusterIds.map((clusterId) => readRoutingPolicy(db, clusterId)).filter((stored): stored is StoredRoutingPolicy => Boolean(stored?.policy.enabled));
-    return candidates.sort((left, right) => left.clusterId.localeCompare(right.clusterId))[0] ?? null;
+  try {
+    const db = routingPolicyDatabase();
+    const local = localNodeId(db);
+    if (!local) return null;
+    if (selectiveSharingActiveInDatabase(db)) {
+      const clusterIds = resourceClusterIds(db, local, "project", projectId);
+      const candidates = clusterIds.map((clusterId) => readRoutingPolicy(db, clusterId)).filter((stored): stored is StoredRoutingPolicy => Boolean(stored?.policy.enabled));
+      return candidates.sort((left, right) => left.clusterId.localeCompare(right.clusterId))[0] ?? null;
+    }
+    const legacy = readRoutingPolicy(db, LEGACY_CLUSTER_ID);
+    return legacy?.policy.enabled ? legacy : null;
+  } catch (error) {
+    console.warn("Routing policy resolution failed", error instanceof Error ? error.message.slice(0, 200) : "unknown error");
+    return null;
   }
-  const legacy = readRoutingPolicy(db, LEGACY_CLUSTER_ID);
-  return legacy?.policy.enabled ? legacy : null;
 }

@@ -3,7 +3,7 @@ import { listDifficultyClassifiers } from "../../classifiers/registry.js";
 import { getClusterNode, listClusterPeers } from "../../cluster.js";
 import { getHarness, getHarnessRuntime, listHarnesses } from "../../harnesses.js";
 import { getSharingCluster, listSharingMemberships } from "../../cluster-sharing-policy.js";
-import { LEGACY_CLUSTER_ID, listRoutingPolicies, readRoutingPolicy, RoutingPolicyError, routingPolicyDatabase, updateClusterRoutingPolicy, validateRoutingPolicy } from "../../routing-policy.js";
+import { LEGACY_CLUSTER_ID, defaultRoutingPolicy, listRoutingPolicies, readRoutingPolicy, RoutingPolicyError, routingPolicyDatabase, updateClusterRoutingPolicy, validateRoutingPolicy } from "../../routing-policy.js";
 import { selectiveSharingActive } from "../../cluster-v2-mode.js";
 import { sendError } from "../http-auth.js";
 import { app } from "../state.js";
@@ -64,13 +64,15 @@ app.get("/api/cluster/routing", async (_request, response, next) => {
       editable: editableByLocal(db, stored.clusterId, local.id),
     }));
     const legacyEditable = editableByLocal(db, LEGACY_CLUSTER_ID, local.id);
+    const harnesses = await routingModels();
     response.json({
       routingLevels: 10,
       v2,
       clusters: clusterChoices,
       policies,
+      defaultPolicy: defaultRoutingPolicy(Object.fromEntries(harnesses.map((harness) => [harness.id, harness.models.map(({ provider, id, label }) => ({ provider, id, label }))]))),
       classifiers: listDifficultyClassifiers().map(({ id, label, variableName }) => ({ id, label, variableName })),
-      harnesses: await routingModels(),
+      harnesses,
       canCreate: clusterChoices.filter((choice) => !readRoutingPolicy(db, choice.clusterId) && editableByLocal(db, choice.clusterId, local.id)).map((choice) => choice.clusterId),
       legacyLeaderName: policies.find((policy) => policy.clusterId === LEGACY_CLUSTER_ID)?.leaderName ?? null,
       legacyEditable,

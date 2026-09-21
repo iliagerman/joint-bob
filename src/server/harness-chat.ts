@@ -7,7 +7,7 @@ import { getClusterNode } from "../cluster.js";
 import { getConversationRecord, ensureConversationRecord, listConversationSegments } from "../conversation-records.js";
 import type { DifficultyClassification } from "../classifiers/contract.js";
 import { getDifficultyClassifier } from "../classifiers/registry.js";
-import { routingEvalDue, routingPolicyForProject, type StoredRoutingPolicy } from "../routing-policy.js";
+import { resolveAdaptiveMapping, routingEvalDue, routingPolicyForProject, type StoredRoutingPolicy } from "../routing-policy.js";
 import { blockConversationGoal, cancelConversationGoal, getConversationGoal, goalPrompt, goalStatusMessage, parseBobGoalCommand, recordConversationGoalResponse, startConversationGoal, type ConversationGoal } from "../conversation-goals.js";
 import { ConversationOwnershipError } from "../conversation-ownership.js";
 import { buildHandoffContext } from "../handoff-context.js";
@@ -17,7 +17,7 @@ import { setSessionTitle } from "../names.js";
 import { conversationScopeId, genericSecretEnvironment, getScopeSecretAccounts } from "../secrets.js";
 import { getProjectLock } from "../project-locks.js";
 import { getSettings } from "../settings.js";
-import { beginQueuedPrompt, bumpRoutingPromptCount, cancelQueuedPrompt, claimQueuedPrompt, editQueuedPrompt, enqueuePrompt, listQueuedPrompts, mergeQueuedPrompts, prioritizeQueuedPrompt, queuedSettingsSchema, readQueueSettings, readRoutingState, recordQueueSettings, recordRoutingEval, resetQueuedPromptAttempt, swapQueuedPrompts, type QueuedPrompt, type QueuedSettings } from "../prompt-queue.js";
+import { beginQueuedPrompt, bumpRoutingPromptCount, cancelQueuedPrompt, claimQueuedPrompt, editQueuedPrompt, enqueuePrompt, listQueuedPrompts, mergeQueuedPrompts, prioritizeQueuedPrompt, queuedSettingsSchema, readQueueSettings, readRoutingState, recordQueueSettings, recordRoutingEval, resetQueuedPromptAttempt, setRoutingMode, swapQueuedPrompts, type QueuedPrompt, type QueuedSettings } from "../prompt-queue.js";
 import { queuedAttachments } from "../queued-attachments.js";
 import { describeImage } from "../attachment-digest.js";
 import { listTurnFailures, recordTurnFailure, withTurnFailures } from "../turn-failures.js";
@@ -186,7 +186,8 @@ async function applyQueuedSettings(connection: HarnessChatConnection, settings: 
 
 /** Cluster routing: classify the prompt's difficulty and switch the conversation's
     model to the policy mapping for this harness. Manual picks always win; any failure
-    keeps the conversation's current settings and never blocks the prompt. */
+    keeps the conversation's current settings and never blocks the prompt. In manual
+    mode nothing routes: the hand-picked model stands until Bob auto is selected. */
 async function routePromptByDifficulty(connection: HarnessChatConnection, queued: QueuedPrompt): Promise<void> {
   if (queued.systemEventId) return;
   let policy: StoredRoutingPolicy | null = null;
@@ -195,8 +196,9 @@ async function routePromptByDifficulty(connection: HarnessChatConnection, queued
   if (!policy) return;
   const key = queueKey(connection);
   const ordinal = bumpRoutingPromptCount(key);
-  const { lastEvalOrdinal } = readRoutingState(key);
-  const due = routingEvalDue(policy.policy, ordinal, lastEvalOrdinal);
+  const state = readRoutingState(key);
+  const due = routingEvalDue(policy.policy, ordinal, state.lastEvalOrdinal);
+  if (state.mode === "manual") return;
   if (queued.settings) {
     // A manual per-prompt model pick wins and consumes this evaluation point.
     if (due) recordRoutingEval(key, ordinal);
@@ -216,7 +218,7 @@ async function routePromptByDifficulty(connection: HarnessChatConnection, queued
   catch { classification = null; }
   if (!classification) { skip("classifier failed"); return; }
   if (classification.confidence < policy.policy.confidenceThreshold) { skip("low confidence", classification.level, classification.confidence); return; }
-  const mapping = policy.policy.harnesses[connection.engine]?.levels[String(classification.level)];
+  const mapping = resolveAdaptiveMapping(policy.policy.harnesses[connection.engine], classification.level);
   if (!mapping) {
     publish(connection, { type: "promptRouted", queueId: queued.id, level: classification.level, confidence: classification.confidence, mapped: false });
     return;
@@ -394,6 +396,18 @@ async function switchHarness(connection: HarnessChatConnection, engine: HarnessI
   sendHarnessStatus(shared, connection.socket); broadcastToProject(connection.project.id, { type: "sessionsChanged" });
 }
 
+function publishRoutingMode(connection: HarnessChatConnection): void {
+  publish(connection, { type: "routingMode", mode: readRoutingState(queueKey(connection)).mode, active: true });
+}
+
+/** An explicit model or reasoning pick ends classifier control of the conversation. */
+function markRoutingManual(connection: HarnessChatConnection): void {
+  if (!routingPolicyForProject(connection.project.id)) return;
+  if (readRoutingState(queueKey(connection)).mode === "manual") return;
+  setRoutingMode(queueKey(connection), "manual");
+  publishRoutingMode(connection);
+}
+
 async function models(connection: HarnessChatConnection): Promise<void> {
   const groups = await Promise.all(listHarnesses().filter((adapter) => adapter.runtime).map(async (adapter) => (await (await getHarnessRuntime(adapter.id)).models()).map((model) => ({ ...model, harnessId: adapter.id }))));
   send(connection.socket, { type: "models", models: groups.flat() });
@@ -432,14 +446,31 @@ async function controls(connection: HarnessChatConnection, message: ReturnType<t
     return true;
   }
   if (message.type === "setTools") { if (!message.toolNames) throw new Error("Tools are required"); await connection.shared.session.setTools(message.toolNames); recordQueueSettings(queueKey(connection), currentSettings(connection)); send(connection.socket, { type: "tools", tools: connection.shared.session.tools(), supported: true }); sendHarnessStatus(connection.shared); return true; }
-  if (message.type === "setModel") { const provider = message.provider ?? getHarness(connection.engine).configuration?.fixedProvider; if (!provider || !message.modelId) throw new Error("Model is required"); const settings = { ...connection.shared.session.settings(), provider, modelId: message.modelId, ...(message.level ? { reasoning: message.level } : {}) }; await (await getHarnessRuntime(connection.engine)).validateSettings(settings); await connection.shared.session.configure(settings); recordQueueSettings(queueKey(connection), currentSettings(connection)); sendHarnessStatus(connection.shared); return true; }
-  if (message.type === "setThinking" || message.type === "setEffort") { const reasoning = message.level ?? message.effort; if (!reasoning) throw new Error("Reasoning level is required"); await connection.shared.session.configure({ ...connection.shared.session.settings(), reasoning }); recordQueueSettings(queueKey(connection), currentSettings(connection)); sendHarnessStatus(connection.shared); return true; }
+  if (message.type === "setModel") {
+    if (message.modelId === "bob-auto") {
+      if (!routingPolicyForProject(connection.project.id)) throw new Error("Prompt routing is not active for this project");
+      setRoutingMode(queueKey(connection), "auto");
+      publishRoutingMode(connection);
+      sendHarnessStatus(connection.shared);
+      return true;
+    }
+    const provider = message.provider ?? getHarness(connection.engine).configuration?.fixedProvider;
+    if (!provider || !message.modelId) throw new Error("Model is required");
+    const settings = { ...connection.shared.session.settings(), provider, modelId: message.modelId, ...(message.level ? { reasoning: message.level } : {}) };
+    await (await getHarnessRuntime(connection.engine)).validateSettings(settings);
+    await connection.shared.session.configure(settings);
+    recordQueueSettings(queueKey(connection), currentSettings(connection));
+    markRoutingManual(connection);
+    sendHarnessStatus(connection.shared);
+    return true;
+  }
+  if (message.type === "setThinking" || message.type === "setEffort") { const reasoning = message.level ?? message.effort; if (!reasoning) throw new Error("Reasoning level is required"); await connection.shared.session.configure({ ...connection.shared.session.settings(), reasoning }); recordQueueSettings(queueKey(connection), currentSettings(connection)); markRoutingManual(connection); sendHarnessStatus(connection.shared); return true; }
   if (message.type === "cycleThinking") {
     const status = connection.shared.session.status();
     const index = status.availableThinkingLevels.indexOf(status.thinkingLevel);
     const reasoning = status.availableThinkingLevels[(index + 1) % status.availableThinkingLevels.length];
     await connection.shared.session.configure({ ...connection.shared.session.settings(), reasoning });
-    recordQueueSettings(queueKey(connection), currentSettings(connection)); sendHarnessStatus(connection.shared); return true;
+    recordQueueSettings(queueKey(connection), currentSettings(connection)); markRoutingManual(connection); sendHarnessStatus(connection.shared); return true;
   }
   if (message.type === "cycleModel") {
     const available = await (await getHarnessRuntime(connection.engine)).models();
@@ -448,7 +479,7 @@ async function controls(connection: HarnessChatConnection, message: ReturnType<t
     const index = available.findIndex((model) => model.provider === settings.provider && model.id === settings.modelId);
     const model = available[(index + 1) % available.length];
     await connection.shared.session.configure({ ...settings, provider: model.provider, modelId: model.id });
-    recordQueueSettings(queueKey(connection), currentSettings(connection)); sendHarnessStatus(connection.shared); return true;
+    recordQueueSettings(queueKey(connection), currentSettings(connection)); markRoutingManual(connection); sendHarnessStatus(connection.shared); return true;
   }
   if (message.type === "rename") { await connection.shared.session.rename(message.name ?? ""); await setSessionTitle(connection.conversationId, message.name ?? ""); broadcastToProject(connection.project.id, { type: "sessionsChanged" }); return true; }
   if (message.type === "setSafeguards") { if (message.safeguardsEnabled === undefined) throw new Error("Safeguards setting is required"); try { await connection.shared.session.setSafeguards(message.safeguardsEnabled); } finally { sendHarnessStatus(connection.shared); void drainHarnessPromptQueue(connection).catch((error) => publish(connection, { type: "error", error: chatErrorMessage(error) })); } return true; }
@@ -558,7 +589,9 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
   const history = withTurnFailures(transcript.messages, listTurnFailures(options.engine, shared.session.id));
   const browserMessages = scheduled ? scheduledReportMessages(history, !harnessSessionBusy(shared)) : history;
   const goal = await getConversationGoal(options.project.id, conversationId);
-  send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, scheduled, scheduledTurn: scheduled && shared.scheduledTurn, bobGoal: goal ?? null, ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
+  const routingActive = Boolean(routingPolicyForProject(options.project.id));
+  const routingMode = routingActive ? readRoutingState(queueKey(connection)).mode : "manual";
+  send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, scheduled, scheduledTurn: scheduled && shared.scheduledTurn, bobGoal: goal ?? null, routing: { active: routingActive, mode: routingMode }, ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
   for (const event of shared.liveEvents) send(options.socket, event);
   refreshHarnessPromptQueue(connection);
   options.socket.on("message", (raw) => void handleHarnessChatMessage(connection, raw as Buffer).catch(async (error) => {

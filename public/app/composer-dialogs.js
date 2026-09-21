@@ -16,8 +16,15 @@ export const CLAUDE_MODEL_OPTIONS = [];
 export const PI_MODEL_PROVIDERS = [];
 
 export function syncModelButton() {
-  const active = state.models.find((model) => `${model.provider}/${model.id}` === state.activeModelKey);
-  elements.modelButtonName.textContent = active?.label || state.activeModelLabel || "Model";
+  const auto = state.routing?.active && state.routing.mode === "auto";
+  if (auto) {
+    elements.modelButtonName.textContent = "Bob auto";
+    elements.modelButton.title = "The difficulty classifier picks the model and reasoning for each prompt";
+  } else {
+    elements.modelButton.title = "";
+    const active = state.models.find((model) => `${model.provider}/${model.id}` === state.activeModelKey);
+    elements.modelButtonName.textContent = active?.label || state.activeModelLabel || "Model";
+  }
   if (elements.modelDialog.open) renderModelDialog();
 }
 
@@ -415,6 +422,7 @@ export function renderCommandAutocomplete() {
 
 export function renderReasoningOptions() {
   const hasLevels = state.availableThinkingLevels.length > 0;
+  const auto = state.routing?.active && state.routing.mode === "auto";
   elements.chatModeLabel.textContent = "Reasoning";
   elements.reasoningLevelSelect.replaceChildren();
   for (const level of state.availableThinkingLevels) {
@@ -425,6 +433,9 @@ export function renderReasoningOptions() {
   }
   elements.reasoningLevelSelect.value = state.thinkingLevel;
   elements.chatModeControl.hidden = !hasLevels;
+  // Bob auto owns the reasoning level; the picker stays visible but locked.
+  elements.reasoningLevelSelect.disabled = auto;
+  elements.chatModeLabel.textContent = auto ? "Reasoning (Bob auto)" : "Reasoning";
 }
 
 export function changeReasoningLevel(event) {
@@ -446,6 +457,16 @@ function renderModelDialog() {
   elements.modelDialogTitle.textContent = `${descriptor.label} model`;
   elements.modelDialogList.replaceChildren(); modelShortcuts = [];
   if (queuedModelSelection) { renderQueuedModels(); return; }
+  if (state.routing?.active) {
+    const autoActive = state.routing.mode === "auto";
+    const autoRow = modelOptionButton({
+      key: "bob-auto", label: "Bob auto", active: autoActive,
+      onSelect: () => { if (!sendSocket({ type: "setModel", modelId: "bob-auto" })) toast("Not connected"); },
+    });
+    autoRow.dataset.testid = "model-option-bob-auto";
+    autoRow.title = "The difficulty classifier picks the model and reasoning for each prompt";
+    elements.modelDialogList.append(autoRow);
+  }
   if (!models.length) {
     const empty = document.createElement("span"); empty.className = "model-shortcuts-empty"; empty.textContent = "No configured models"; elements.modelDialogList.append(empty); return;
   }

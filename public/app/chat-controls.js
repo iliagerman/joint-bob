@@ -18,13 +18,15 @@ function conversationIsReadOnly() {
 export function setComposerEnabled(enabled) {
   // Ownership and completed tickets both fence writes, regardless of socket health.
   const allowed = enabled && !state.conversationLock && !conversationIsReadOnly();
+  const auto = state.routing?.active && state.routing.mode === "auto";
   elements.messageInput.disabled = !allowed;
   elements.sendButton.disabled = !allowed;
   elements.attachButton.disabled = !allowed;
   elements.attachmentInput.disabled = !allowed;
   elements.renameSessionButton.disabled = !allowed;
   elements.modelButton.disabled = !allowed;
-  elements.reasoningLevelSelect.disabled = !allowed;
+  // In Bob auto the classifier owns the reasoning level, so the picker follows the lock.
+  elements.reasoningLevelSelect.disabled = !allowed || auto;
   // Putting a conversation on the canvas reads it; a lock must not hide the action.
   elements.addToCanvasButton.disabled = !enabled;
   if (!allowed) hideCommandAutocomplete();
@@ -154,6 +156,12 @@ function syncContextUsage(usage) {
   elements.contextUsage.title = usage.usedTokens !== undefined && usage.contextWindow !== undefined
     ? `Context: ${usage.usedTokens.toLocaleString()} of ${usage.contextWindow.toLocaleString()} tokens (${percent}%)`
     : `Context: ${percent}% (token counts unavailable)`;
+}
+
+export function updateRoutingMode(routing) {
+  state.routing = routing;
+  renderReasoningOptions();
+  syncModelButton();
 }
 
 export function updateStatus(status) {

@@ -7,6 +7,7 @@ Every deployment is a version. The newest section must always match the
 
 - Prompts now route automatically to different models based on difficulty classification, with per-cluster policies configurable in Settings and graceful fallback to conversation settings on any error.
 - TypeSafe classifier now reads from TYPESAFE_AI_API_KEY instead of TYPESAFE_API_KEY.
+- Prompt routing now supports manual mode: select a model or reasoning level to take control from the classifier, or choose 'Bob auto' to resume automatic routing.
 
 ## 1.68.6 — 2026-09-21
 

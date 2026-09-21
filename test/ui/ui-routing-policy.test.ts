@@ -28,7 +28,12 @@ test("the cluster panel edits, saves, and clears the routing policy", { timeout:
   const rows = page.locator('[data-testid="routing-harness-kiro"] [data-testid^="routing-level-kiro-"]');
   await rows.first().waitFor();
   assert.equal(await rows.count(), 10, "each harness exposes levels 1 to 10");
-  assert.equal(await page.locator('[data-testid="routing-model-kiro-1"]').inputValue(), "", "levels default to the conversation model");
+  // Whether a model name prefills depends on this machine's installed runtimes;
+  // the reasoning pairs always prefill.
+  const level1Model = await page.locator('[data-testid="routing-model-kiro-1"]').inputValue();
+  assert.ok(level1Model === "" || level1Model.includes("\u0000"), "level 1 prefill is either empty or a real model choice");
+  assert.equal(await page.locator('[data-testid="routing-thinking-kiro-1"]').inputValue(), "low", "level 1 prefills the easiest reasoning pair");
+  assert.equal(await page.locator('[data-testid="routing-thinking-kiro-10"]').inputValue(), "max", "level 10 prefills the strongest reasoning pair");
 
   await page.getByTestId("routing-enabled").check();
   await page.getByTestId("routing-cadence").selectOption("every-n");
@@ -43,6 +48,7 @@ test("the cluster panel edits, saves, and clears the routing policy", { timeout:
   assert.equal(await page.getByTestId("routing-cadence").inputValue(), "every-n");
   assert.equal(await page.getByTestId("routing-cadence-n").inputValue(), "3");
   assert.equal(await page.getByTestId("routing-confidence").inputValue(), "0.25");
+  assert.equal(await page.getByTestId("routing-thinking-kiro-1").inputValue(), "low", "prefilled pairs persist after save");
 
   await page.getByTestId("routing-clear-button").click();
   await page.locator("#confirmDialog[open]").waitFor();

@@ -2,7 +2,7 @@ import { harnessIdFromPath, harnessLabel } from "../harness-metadata.js";
 import { api, loadPins, savePreferencesInBackground } from "./api.js";
 import { clearAttachments } from "./attachments.js";
 import { syncBackgroundTasks } from "./background-tasks.js";
-import { renderChatSessionControls, renderConversationLock, sendSocket, setComposerEnabled, setModels, syncEngineUI, updateStatus } from "./chat-controls.js";
+import { renderChatSessionControls, renderConversationLock, sendSocket, setComposerEnabled, setModels, syncEngineUI, updateRoutingMode, updateStatus } from "./chat-controls.js";
 import { appendMessage, appendToolMessage, clearChat, clearQueuedMark, clearThinkingBubble, finalizeAssistantBubble, finishTurnTimer, markMessageQueued, markPromptRouted, appendErrorMessage, markQueuedMessageFailed, markUserMessagesRead, removeQueuedMessage, renderBubbleContent, requestPinChat, rerenderChatTranscript, resetQueuedForceStart, restoreChatScrollTop, showChatEmptyState, startDurationTicker, startHarnessSegment, syncQueuedMessageOrder, updateQueuedMessage, updateToolMessage } from "./chat-transcript.js";
 import { rememberDraft, restoreDraft, seedPromptHistory, setActiveSessionPath } from "./composer.js";
 import { renderToolsDialog } from "./composer-dialogs.js";
@@ -218,6 +218,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     state.scheduledTurn = payload.scheduledTurn === true;
     state.scheduledAssistantText = "";
     state.assistantRawText = "";
+    updateRoutingMode(payload.routing ?? null);
     syncEngineUI();
     if (payload.sessionFile) {
       setActiveSessionPath(payload.sessionFile);
@@ -358,6 +359,10 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
   }
   if (payload.type === "promptRouted") {
     markPromptRouted(payload);
+    return;
+  }
+  if (payload.type === "routingMode") {
+    updateRoutingMode({ active: payload.active !== false, mode: payload.mode === "manual" ? "manual" : "auto" });
     return;
   }
   // The harness refused to start this prompt (quota, auth, crash). It stays

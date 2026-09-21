@@ -100,7 +100,7 @@ before(async () => {
   assert.equal(attached.status, 200, JSON.stringify(attached.body));
   const saved = await api(node, session, "PUT", "/cluster/routing", {
     clusterId: "",
-    policy: { enabled: true, classifierId: "typesafe", evalCadence: { mode: "every-n", n: 2 }, confidenceThreshold: 0.3, harnesses: { kiro: { levels: { "7": { modelId: "big", thinkingLevel: "high" } } } } },
+    policy: { enabled: true, classifierId: "typesafe", evalCadence: { mode: "every-n", n: 2 }, confidenceThreshold: 0.3, harnesses: { kiro: { levels: { "1": { modelId: "default", thinkingLevel: "low" }, "8": { modelId: "big", thinkingLevel: "high" } } } } },
   });
   assert.equal(saved.status, 200, JSON.stringify(saved.body));
 }, { timeout: 120_000 });
@@ -138,7 +138,9 @@ test("difficulty routing maps a classified prompt to the policy model and honour
   events = routingEvents(chat.messages);
   assert.equal(events.length, 2, "third prompt is the next evaluation point");
   assert.equal(events[1].level, 2);
-  assert.equal(events[1].mapped, false, "unmapped level keeps the conversation model");
+  assert.equal(events[1].mapped, true, "two mapped levels spread across the 1 to 10 scale");
+  assert.equal(events[1].modelId, "default", "difficulty 2 of 10 lands on the easier pair");
+  assert.equal(events[1].thinkingLevel, "low");
 
   answer = { level: 7, confidence: 0.9 };
   chat.socket.send(JSON.stringify({ type: "prompt", message: "manual pick off cadence", requestId: randomUUID(), queueSettings: { harnessId: "kiro", provider: "kiro", modelId: "default", reasoning: "low" } }));
@@ -159,6 +161,26 @@ test("difficulty routing maps a classified prompt to the policy model and honour
   events = routingEvents(chat.messages);
   assert.equal(events.length, 3, "ordinal 7 is due again");
   assert.equal(events[2].skipped, "low confidence", `expected a low-confidence skip, got ${JSON.stringify(events[2])}`);
+
+  const unmapped = await api(node, session, "PUT", "/cluster/routing", {
+    clusterId: "",
+    policy: { enabled: true, classifierId: "typesafe", evalCadence: { mode: "every-n", n: 1 }, confidenceThreshold: 0.3, harnesses: {} },
+  });
+  assert.equal(unmapped.status, 200, JSON.stringify(unmapped.body));
+  const fresh = openChat(node.url, session.cookie, projectId, "kiro:new");
+  sockets.push(fresh.socket);
+  await waitFor(fresh.messages, () => fresh.messages.some((message) => message.type === "ready"));
+  answer = { level: 5, confidence: 0.9 };
+  fresh.socket.send(JSON.stringify({ type: "prompt", message: "nothing mapped", requestId: randomUUID() }));
+  await completed(fresh.messages, 1);
+  const unmappedEvents = routingEvents(fresh.messages);
+  assert.equal(unmappedEvents.length, 1);
+  assert.equal(unmappedEvents[0].mapped, false, "a harness with no mapped levels keeps the conversation model");
+  const restored = await api(node, session, "PUT", "/cluster/routing", {
+    clusterId: "",
+    policy: { enabled: true, classifierId: "typesafe", evalCadence: { mode: "every-n", n: 2 }, confidenceThreshold: 0.3, harnesses: { kiro: { levels: { "1": { modelId: "default", thinkingLevel: "low" }, "8": { modelId: "big", thinkingLevel: "high" } } } } },
+  });
+  assert.equal(restored.status, 200, JSON.stringify(restored.body));
 });
 
 test("a missing key or a failing classifier falls back to conversation settings", { timeout: 120_000 }, async () => {
@@ -184,4 +206,41 @@ test("a missing key or a failing classifier falls back to conversation settings"
   events = routingEvents(chat.messages);
   assert.equal(events.length, 2);
   assert.equal(events[1].skipped, "classifier key missing");
+});
+
+test("bob-auto is the default and an explicit pick pauses classifier control until bob-auto returns", { timeout: 120_000 }, async () => {
+  const chat = openChat(node.url, session.cookie, projectId, "kiro:new");
+  sockets.push(chat.socket);
+  await waitFor(chat.messages, () => chat.messages.some((message) => message.type === "ready" && message.engine === "kiro"));
+  const ready = chat.messages.find((message) => message.type === "ready") as { routing?: { active: boolean; mode: string } };
+  assert.equal(ready.routing?.active, true, "the ready payload must report active routing");
+  assert.equal(ready.routing?.mode, "auto", "new conversations start under Bob auto");
+
+  answer = { level: 7, confidence: 0.9 };
+  chat.socket.send(JSON.stringify({ type: "prompt", message: "auto prompt", requestId: randomUUID() }));
+  await completed(chat.messages, 1);
+  assert.equal(routingEvents(chat.messages).length, 1, "auto mode routes the first prompt");
+
+  chat.socket.send(JSON.stringify({ type: "setModel", provider: "kiro", modelId: "default" }));
+  await waitFor(chat.messages, () => chat.messages.some((message) => message.type === "routingMode"));
+  const manual = chat.messages.find((message) => message.type === "routingMode") as { mode: string; active: boolean };
+  assert.equal(manual.mode, "manual", "an explicit model pick switches the conversation to manual");
+
+  answer = { level: 7, confidence: 0.9 };
+  chat.socket.send(JSON.stringify({ type: "prompt", message: "manual prompt", requestId: randomUUID() }));
+  await completed(chat.messages, 2);
+  assert.equal(routingEvents(chat.messages).length, 1, "manual mode must not route, even at a due ordinal");
+  chat.socket.send(JSON.stringify({ type: "prompt", message: "still manual", requestId: randomUUID() }));
+  await completed(chat.messages, 3);
+  assert.equal(routingEvents(chat.messages).length, 1, "manual mode keeps holding");
+
+  chat.socket.send(JSON.stringify({ type: "setModel", modelId: "bob-auto" }));
+  await waitFor(chat.messages, () => chat.messages.filter((message) => message.type === "routingMode").length >= 2);
+  const back = chat.messages.filter((message) => message.type === "routingMode").at(-1) as { mode: string };
+  assert.equal(back.mode, "auto", "bob-auto returns the conversation to classifier control");
+
+  answer = { level: 7, confidence: 0.9 };
+  chat.socket.send(JSON.stringify({ type: "prompt", message: "auto again", requestId: randomUUID() }));
+  await completed(chat.messages, 4);
+  assert.equal(routingEvents(chat.messages).length, 2, "auto mode resumes routing");
 });

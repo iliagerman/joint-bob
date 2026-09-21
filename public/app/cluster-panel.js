@@ -56,7 +56,8 @@ function renderRoutingHarnessTables(harnesses, levels, policy) {
 
 function fillRoutingForm(routing) {
   const policyEntry = routing.policies.find((entry) => entry.clusterId === (elements.routingClusterSelect.value || routing.clusters[0]?.clusterId)) || routing.policies[0];
-  const policy = policyEntry?.policy || null;
+  // An untouched policy prefills the default model and reasoning pairs for every harness.
+  const policy = policyEntry?.policy || routing.defaultPolicy || null;
   elements.routingEnabled.checked = policy?.enabled === true;
   if (!policy) elements.routingEnabled.checked = true;
   elements.routingClassifier.replaceChildren();
@@ -70,7 +71,7 @@ function fillRoutingForm(routing) {
   const leader = policyEntry?.leaderName || null;
   elements.routingPolicyStatus.textContent = policyEntry
     ? (editable ? `This node leads the routing policy${leader ? ` (${leader})` : ""}.` : `Managed by ${leader || "the leader node"}. Read-only here.`)
-    : "No routing policy yet. Saving creates one; this node becomes its leader.";
+    : "No routing policy yet. Levels below are prefilled defaults; saving creates the policy and makes this node its leader.";
   for (const control of [elements.routingEnabled, elements.routingClassifier, elements.routingCadence, elements.routingCadenceN, elements.routingConfidence, elements.routingSaveButton, elements.routingClearButton, ...elements.routingHarnessTables.querySelectorAll("select")]) control.disabled = !editable;
   elements.routingClearButton.disabled = !editable || !policyEntry;
 }
