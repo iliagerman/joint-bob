@@ -3,11 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.69.0 — 2026-09-21
 
-- Prompts now route automatically to different models based on difficulty classification, with per-cluster policies configurable in Settings and graceful fallback to conversation settings on any error.
+- Conversations now automatically route prompts to appropriate models based on difficulty, with adaptive mapping and pre-filled defaults for cost, standard, and capable options.
+- Routing policies are managed in Settings and replicate across cluster nodes, with automatic fallback if classification fails.
+- Switch to manual routing by selecting a specific model or reasoning level; choose 'Bob auto' to resume automatic selection.
 - TypeSafe classifier now reads from TYPESAFE_AI_API_KEY instead of TYPESAFE_API_KEY.
-- Prompt routing now supports manual mode: select a model or reasoning level to take control from the classifier, or choose 'Bob auto' to resume automatic routing.
 
 ## 1.68.6 — 2026-09-21
 
