@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.70.1 — 2026-09-21
 
 - Automatic routing now restricts model selection to approved tiers and allows the difficulty classifier to decline routing when no configured level is a good fit.
 
