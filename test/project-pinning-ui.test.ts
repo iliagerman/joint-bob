@@ -73,8 +73,8 @@ test("every conversation and project row carries the same pin quick action", asy
   assert.doesNotMatch(app, /testid: "session-unpin-button"/);
 
   // Two permanent buttons need two permanent lanes in both lists.
-  assert.match(styles, /\.session-list \.pin-button, \.project-list \.pin-button \{ right: 42px; \}/);
-  assert.match(styles, /\.session-list \.session-card, \.project-list \.project-card \{ padding-right: 78px; \}/);
+  assert.match(styles, /\.session-list \.pin-button, \.project-list \.pin-button \{ right: 46px; \}/);
+  assert.match(styles, /\.session-list \.session-card, \.project-list \.project-card \{ padding-right: 82px; \}/);
 
   // On phones both buttons grow to a real touch target, so the lanes widen with them.
   assert.match(styles, /\.session-list \.pin-button, \.project-list \.pin-button \{ min-height: 34px; min-width: 34px; width: 34px; right: 52px; \}/);
