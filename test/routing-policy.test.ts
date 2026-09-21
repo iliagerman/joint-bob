@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test, { after, before } from "node:test";
-import { applyClusterRoutingEvent, defaultRoutingPolicy, ensureRoutingPolicySchema, LEGACY_CLUSTER_ID, readRoutingPolicy, resolveAdaptiveMapping, RoutingPolicyError, routingEvalDue, routingPolicyDatabase, routingPolicyForProject, routingPolicySchema, updateClusterRoutingPolicy, validateRoutingPolicy, type RoutingPolicy } from "../src/routing-policy.js";
+import { applyClusterRoutingEvent, defaultRoutingPolicy, ensureRoutingPolicySchema, LEGACY_CLUSTER_ID, readRoutingPolicy, RoutingPolicyError, routingEvalDue, routingPolicyDatabase, routingPolicyForProject, routingPolicySchema, updateClusterRoutingPolicy, validateRoutingPolicy, type RoutingPolicy } from "../src/routing-policy.js";
 import { ensureClusterSharingPolicySchema } from "../src/cluster-sharing-policy.js";
 import { ensureReplicationSchema } from "../src/replication.js";
 import { ensurePromptQueueSchema } from "../src/prompt-queue.js";
@@ -140,35 +140,31 @@ test("routingPolicyForProject applies the enabled legacy policy to any project",
   updateClusterRoutingPolicy(routingPolicyDatabase(), LEGACY_CLUSTER_ID, null, nodeA);
 });
 
-test("resolveAdaptiveMapping spreads the 1 to 10 scale across the filled levels", () => {
-  const two = { levels: { "1": { modelId: "easy", thinkingLevel: "low" }, "8": { modelId: "hard", thinkingLevel: "high" } } };
-  assert.equal(resolveAdaptiveMapping(two, 1)?.modelId, "easy");
-  assert.equal(resolveAdaptiveMapping(two, 5)?.modelId, "easy", "difficulty 5 of 10 lands on the first of two rows");
-  assert.equal(resolveAdaptiveMapping(two, 6)?.modelId, "hard", "difficulty 6 of 10 lands on the second of two rows");
-  assert.equal(resolveAdaptiveMapping(two, 10)?.modelId, "hard");
-  const full = policy({ harnesses: { kiro: { levels: Object.fromEntries(Array.from({ length: 10 }, (_, index) => [String(index + 1), { modelId: `m${index + 1}`, thinkingLevel: "high" }])) } } });
-  for (const level of [1, 5, 10]) assert.equal(resolveAdaptiveMapping(full.harnesses.kiro, level)?.modelId, `m${level}`, "a full grid maps levels literally");
-  assert.equal(resolveAdaptiveMapping({ levels: {} }, 7), null, "no filled levels means no mapping");
-  assert.equal(resolveAdaptiveMapping(undefined, 7), null);
-});
-
-test("defaultRoutingPolicy prefills model and reasoning pairs for every harness", () => {
+test("defaultRoutingPolicy uses only the approved Codex routing tiers", () => {
   const generated = defaultRoutingPolicy({
     pi: [
-      { provider: "zai", id: "glm-flash", label: "GLM Flash" },
+      { provider: "openai-codex", id: "gpt-4.1", label: "GPT 4.1" },
+      { provider: "openai-codex", id: "gpt-5.6-luna", label: "GPT 5.6 Luna" },
+      { provider: "openai-codex", id: "gpt-5.6-terra", label: "GPT 5.6 Terra" },
       { provider: "openai-codex", id: "gpt-5.6-sol", label: "GPT 5.6 Sol" },
-      { provider: "anthropic", id: "claude-opus-5", label: "Claude Opus" },
+      { provider: "openai-codex", id: "gpt-6-astra", label: "GPT 6 Astra" },
     ],
     kiro: [],
   });
   const pi = generated.harnesses.pi.levels;
-  assert.equal(pi["1"]?.modelId, "glm-flash", "the flash-style model takes the easy tier");
-  assert.equal(pi["5"]?.modelId, "gpt-5.6-sol", "the conversation default takes the middle tier");
-  assert.equal(pi["10"]?.modelId, "claude-opus-5", "the strongest-named model takes the top tier");
-  assert.notEqual(pi["1"]?.thinkingLevel, pi["10"]?.thinkingLevel, "reasoning scales with difficulty");
-  const kiro = generated.harnesses.kiro.levels;
-  assert.ok(kiro["1"] && kiro["5"] && kiro["10"], "a harness without models still gets default pairs");
+  assert.deepEqual(Object.entries(pi).filter(([, mapping]) => mapping).map(([level, mapping]) => [level, mapping!.modelId]), [
+    ["1", "gpt-5.6-luna"],
+    ["4", "gpt-5.6-terra"],
+    ["7", "gpt-5.6-sol"],
+    ["10", "gpt-6-astra"],
+  ]);
+  assert.ok(Object.values(generated.harnesses.kiro.levels).every((mapping) => !mapping), "harnesses without approved models stay blank");
   assert.doesNotThrow(() => validateRoutingPolicy(generated), "generated defaults must satisfy the policy schema");
+});
+
+test("routing policy rejects retired GPT-4 and unapproved Codex models", () => {
+  assert.throws(() => validateRoutingPolicy(policy({ harnesses: { pi: { levels: { "1": { provider: "openai-codex", modelId: "gpt-4.1", thinkingLevel: "low" } } } } })), /not allowed for automatic routing/);
+  assert.throws(() => validateRoutingPolicy(policy({ harnesses: { pi: { levels: { "1": { provider: "openai-codex", modelId: "gpt-5.5", thinkingLevel: "low" } } } } })), /not allowed for automatic routing/);
 });
 
 test("the policy carries trimmed calibration instructions", () => {

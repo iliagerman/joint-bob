@@ -31,17 +31,17 @@ export function syncModelButton() {
 /** Rows 1-10 carry a digit shortcut, in the order this render lists them. */
 let modelShortcuts = [];
 let queuedModelSelection = null;
+let routingClassifiersRequest = null;
 
 export async function loadRoutingClassifiers() {
   if (state.routingClassifiers) return state.routingClassifiers;
-  try {
-    const body = await api("/api/cluster/routing");
-    state.routingClassifiers = Array.isArray(body.classifiers) ? body.classifiers : [];
-  } catch (error) {
-    toast(error.message);
-    state.routingClassifiers = [];
-  }
-  return state.routingClassifiers;
+  if (routingClassifiersRequest) return routingClassifiersRequest;
+  routingClassifiersRequest = api("/api/cluster/routing")
+    .then((body) => { state.routingClassifiers = Array.isArray(body.classifiers) ? body.classifiers : []; })
+    .catch((error) => { toast(error.message); state.routingClassifiers = []; })
+    .then(() => state.routingClassifiers)
+    .finally(() => { routingClassifiersRequest = null; });
+  return routingClassifiersRequest;
 }
 
 /** Saves a new classifier choice onto the active routing policy. Leader nodes only. */
@@ -515,7 +515,7 @@ function renderModelDialog() {
     classifierSelect.addEventListener("click", (event) => event.stopPropagation());
     classifierRow.append(classifierLabel, classifierSelect);
     elements.modelDialogList.append(classifierRow);
-    void loadRoutingClassifiers().then(() => { if (elements.modelDialog.open) renderModelDialog(); });
+    if (state.routingClassifiers === null) void loadRoutingClassifiers().then(() => { if (elements.modelDialog.open) renderModelDialog(); });
   }
   if (!models.length) {
     const empty = document.createElement("span"); empty.className = "model-shortcuts-empty"; empty.textContent = "No configured models"; elements.modelDialogList.append(empty); return;

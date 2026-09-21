@@ -12,6 +12,13 @@ import { selectiveSharingActiveInDatabase } from "./cluster-v2-mode-state.js";
 /** The routing policy of the implicit legacy cluster, where every peer sees every project. */
 export const LEGACY_CLUSTER_ID = "";
 export const ROUTING_LEVELS = 10;
+export const CODEX_ROUTING_MODELS = ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-astra"] as const;
+const codexRoutingModels = new Set<string>(CODEX_ROUTING_MODELS);
+
+export function automaticRoutingModelAllowed(provider: string | undefined, modelId: string): boolean {
+  if (/^gpt-4(?:[.-]|$)/i.test(modelId)) return false;
+  return provider !== "openai-codex" || codexRoutingModels.has(modelId);
+}
 
 const levelKeys = Array.from({ length: ROUTING_LEVELS }, (_, index) => String(index + 1));
 
@@ -90,6 +97,8 @@ export function validateRoutingPolicy(policy: unknown): RoutingPolicy {
         throw new RoutingPolicyError(400, `${adapter.label} models must use provider ${adapter.configuration.fixedProvider}`);
       }
       if (!adapter.configuration?.fixedProvider && !mapping.provider) throw new RoutingPolicyError(400, `${adapter.label} level ${level} mapping needs a provider`);
+      const provider = mapping.provider ?? adapter.configuration?.fixedProvider;
+      if (!automaticRoutingModelAllowed(provider, mapping.modelId)) throw new RoutingPolicyError(400, `${mapping.modelId} is not allowed for automatic routing`);
       if (adapter.configuration && !adapter.configuration.thinkingLevels.includes(mapping.thinkingLevel as never)) {
         throw new RoutingPolicyError(400, `${adapter.label} does not support thinking level ${mapping.thinkingLevel}`);
       }
@@ -217,50 +226,32 @@ export function routingEvalDue(policy: RoutingPolicy, promptOrdinal: number, las
   return promptOrdinal - lastEvalOrdinal >= (policy.evalCadence.n ?? Number.POSITIVE_INFINITY);
 }
 
-/** Resolves the mapped entry for a difficulty level, spreading the 1 to 10 scale
-    across the filled rows in order: fewer filled levels each cover a wider band. */
-export function resolveAdaptiveMapping(harnessPolicy: RoutingPolicy["harnesses"][string] | undefined, level: number): RoutingMapping | null {
-  const entries = Object.entries(harnessPolicy?.levels ?? {})
-    .filter(([, mapping]) => mapping !== null)
-    .map(([key, mapping]) => ({ level: Number(key), mapping: mapping! }))
-    .filter((entry) => Number.isInteger(entry.level) && entry.level >= 1 && entry.level <= ROUTING_LEVELS)
-    .sort((left, right) => left.level - right.level);
-  if (!entries.length) return null;
-  const rank = Math.min(entries.length, Math.max(1, Math.ceil((level * entries.length) / ROUTING_LEVELS)));
-  return entries[rank - 1].mapping;
-}
-
 export interface DefaultPolicyModel { provider: string; id: string; label: string }
 
-const cheapModel = /flash|mini|lite|haiku|fast|small|nano|air/i;
-const topModel = /opus|ultra|\bpro\b|pro[-_.]|max|big|large/i;
-
-/** Builds a starting policy from each harness's conversation default and live model
-    list: a cheap, a default, and a strongest pair when the catalog allows one. */
+/** Builds the approved automatic-routing tiers. Other harnesses stay blank until
+    configured explicitly, so defaults never guess a model. */
 export function defaultRoutingPolicy(modelsByHarness: Record<string, DefaultPolicyModel[]>): RoutingPolicy {
   const harnesses: RoutingPolicy["harnesses"] = {};
   for (const adapter of listDiscoveredHarnesses()) {
     if (!adapter.configuration) continue;
-    const levels = adapter.configuration.thinkingLevels;
-    const models = modelsByHarness[adapter.id] ?? [];
-    const fixed = adapter.configuration.fixedProvider;
-    const pick = (model: DefaultPolicyModel | undefined, thinkingLevel: string) => model
-      ? { ...(fixed ? {} : { provider: model.provider }), modelId: model.id, thinkingLevel: thinkingLevel as never }
-      : null;
-    const cheap = models.find((model) => cheapModel.test(`${model.id} ${model.label}`) && !(`${model.provider}/${model.id}` === `${adapter.defaults.provider}/${adapter.defaults.modelId}`));
-    const top = models.find((model) => topModel.test(`${model.id} ${model.label}`) && model !== cheap && !(`${model.provider}/${model.id}` === `${adapter.defaults.provider}/${adapter.defaults.modelId}`));
-    const mid = models.find((model) => model.provider === adapter.defaults.provider && model.id === adapter.defaults.modelId)
-      ?? models[Math.floor(models.length / 2)]
-      ?? models[0]
-      ?? { provider: adapter.defaults.provider, id: adapter.defaults.modelId, label: adapter.defaults.modelId };
-    const low = levels[0];
-    const high = levels.at(-1)!;
-    const medium = levels[Math.floor((levels.length - 1) / 2)];
-    const levelsMap: RoutingPolicy["harnesses"][string]["levels"] = {
-      "1": pick(cheap ?? mid, low)!,
-      "5": pick(mid, medium)!,
-      "10": pick(top ?? mid, high)!,
-    };
+    const levelsMap: RoutingPolicy["harnesses"][string]["levels"] = {};
+    if (adapter.id === "pi") {
+      const models = modelsByHarness[adapter.id] ?? [];
+      const tiers = [
+        { level: "1", modelId: "gpt-5.6-luna", thinking: "low" },
+        { level: "4", modelId: "gpt-5.6-terra", thinking: "medium" },
+        { level: "7", modelId: "gpt-5.6-sol", thinking: "high" },
+        { level: "10", modelId: "gpt-6-astra", thinking: "max" },
+      ];
+      for (const tier of tiers) {
+        const model = models.find((candidate) => candidate.provider === "openai-codex" && candidate.id === tier.modelId);
+        if (!model) continue;
+        const thinkingLevel = adapter.configuration.thinkingLevels.includes(tier.thinking as never)
+          ? tier.thinking
+          : adapter.configuration.thinkingLevels.at(-1)!;
+        levelsMap[tier.level] = { provider: model.provider, modelId: model.id, thinkingLevel };
+      }
+    }
     harnesses[adapter.id] = { levels: levelsMap };
   }
   return { enabled: true, classifierId: listDifficultyClassifiers()[0]?.id ?? "typesafe", instructions: "", evalCadence: { mode: "first-message" }, confidenceThreshold: 0.3, harnesses };

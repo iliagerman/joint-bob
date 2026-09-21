@@ -7,7 +7,7 @@ import { getClusterNode } from "../cluster.js";
 import { getConversationRecord, ensureConversationRecord, listConversationSegments } from "../conversation-records.js";
 import type { DifficultyClassification } from "../classifiers/contract.js";
 import { getDifficultyClassifier } from "../classifiers/registry.js";
-import { resolveAdaptiveMapping, routingEvalDue, routingPolicyDatabase, routingPolicyEditableBy, routingPolicyForProject, type StoredRoutingPolicy } from "../routing-policy.js";
+import { automaticRoutingModelAllowed, routingEvalDue, routingPolicyDatabase, routingPolicyEditableBy, routingPolicyForProject, type StoredRoutingPolicy } from "../routing-policy.js";
 import { blockConversationGoal, cancelConversationGoal, getConversationGoal, goalPrompt, goalStatusMessage, parseBobGoalCommand, recordConversationGoalResponse, startConversationGoal, type ConversationGoal } from "../conversation-goals.js";
 import { ConversationOwnershipError } from "../conversation-ownership.js";
 import { buildHandoffContext } from "../handoff-context.js";
@@ -209,16 +209,30 @@ async function routePromptByDifficulty(connection: HarnessChatConnection, queued
   const skip = (reason: string, level?: number, confidence?: number): void => {
     publish(connection, { type: "promptRouted", queueId: queued.id, skipped: reason, ...(level !== undefined ? { level } : {}), ...(confidence !== undefined ? { confidence } : {}) });
   };
+  const harnessPolicy = policy.policy.harnesses[connection.engine];
+  const configuredLevels = Object.entries(harnessPolicy?.levels ?? {})
+    .filter(([, mapping]) => Boolean(mapping))
+    .map(([level]) => Number(level))
+    .sort((left, right) => left - right);
+  if (!configuredLevels.length) {
+    publish(connection, { type: "promptRouted", queueId: queued.id, skipped: "no configured mapping", mapped: false });
+    return;
+  }
   const classifier = getDifficultyClassifier(policy.policy.classifierId);
   if (!classifier) { skip("unknown classifier"); return; }
   const apiKey = genericSecretEnvironment(connection.project.id)[classifier.variableName];
   if (!apiKey) { skip("classifier key missing"); return; }
   let classification: DifficultyClassification | null = null;
-  try { classification = await classifier.classify(queued.messageText ?? queued.promptText, apiKey, policy.policy.instructions ?? ""); }
-  catch { classification = null; }
+  try {
+    classification = await classifier.classify(queued.messageText ?? queued.promptText, apiKey, {
+      calibration: policy.policy.instructions ?? "",
+      levels: configuredLevels,
+    });
+  } catch { classification = null; }
   if (!classification) { skip("classifier failed"); return; }
   if (classification.confidence < policy.policy.confidenceThreshold) { skip("low confidence", classification.level, classification.confidence); return; }
-  const mapping = resolveAdaptiveMapping(policy.policy.harnesses[connection.engine], classification.level);
+  if (classification.abstained) { skip("no suitable mapping", undefined, classification.confidence); return; }
+  const mapping = harnessPolicy?.levels[String(classification.level)] ?? null;
   if (!mapping) {
     publish(connection, { type: "promptRouted", queueId: queued.id, level: classification.level, confidence: classification.confidence, mapped: false });
     return;
@@ -228,6 +242,7 @@ async function routePromptByDifficulty(connection: HarnessChatConnection, queued
     modelId: mapping.modelId,
     reasoning: mapping.thinkingLevel,
   };
+  if (!automaticRoutingModelAllowed(settings.provider, settings.modelId)) { skip("model not allowed", classification.level, classification.confidence); return; }
   try {
     await (await getHarnessRuntime(connection.engine)).validateSettings(settings);
     await connection.shared.session.configure(settings);

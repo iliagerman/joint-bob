@@ -114,3 +114,23 @@ test("classifyWithTypesafe keeps a plain question without context", async () => 
   const instructions = (captured as { questions: { complexity: { instructions: unknown } } }).questions.complexity.instructions;
   assert.equal(typeof instructions, "string");
 });
+
+test("classifyWithTypesafe offers only configured levels and an escape choice", async () => {
+  let captured: unknown;
+  const fetchImpl: typeof fetch = async (_url, init) => {
+    captured = JSON.parse(String(init!.body));
+    return jsonResponse(200, { answers: { complexity: { type: "choice", choice: "level_6", confidence: 0.91, probabilities: { level_2: 0.01, level_3: 0.03, level_6: 0.91, level_10: 0.03, none: 0.02 } } } });
+  };
+  const classification = await classifyWithTypesafe("text", "key", { calibration: "Use project scale", levels: [10, 6, 3, 2] }, fetchImpl);
+  assert.equal(classification?.level, 6);
+  const question = (captured as { questions: { complexity: { type: string; criteria: Record<string, unknown> } } }).questions.complexity;
+  assert.equal(question.type, "choice");
+  assert.deepEqual(Object.keys(question.criteria), ["level_2", "level_3", "level_6", "level_10", "none"]);
+});
+
+test("classifyWithTypesafe can decline every configured level", async () => {
+  const fetchImpl: typeof fetch = async () => jsonResponse(200, { answers: { complexity: { type: "choice", choice: "none", confidence: 0.88, probabilities: { level_3: 0.12, none: 0.88 } } } });
+  const classification = await classifyWithTypesafe("text", "key", { levels: [3] }, fetchImpl);
+  assert.equal(classification?.abstained, true);
+  assert.equal(classification?.confidence, 0.88);
+});

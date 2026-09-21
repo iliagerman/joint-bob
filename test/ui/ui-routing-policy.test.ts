@@ -38,10 +38,8 @@ test("routing settings are split across harness tabs, the Classifiers tab, and t
   await openHarnessRoutingGrid(page, "kiro");
   const rows = page.locator('[data-routing-harness="kiro"] [data-testid^="routing-level-kiro-"]');
   assert.equal(await rows.count(), 10, "each harness exposes levels 1 to 10");
-  const level1Model = await page.getByTestId("routing-model-kiro-1").inputValue();
-  assert.ok(level1Model === "" || level1Model.includes("\u0000"), "level 1 prefill is either empty or a real model choice");
-  assert.equal(await page.getByTestId("routing-thinking-kiro-1").inputValue(), "low", "level 1 prefills the easiest reasoning pair");
-  assert.equal(await page.getByTestId("routing-thinking-kiro-10").inputValue(), "max", "level 10 prefills the strongest reasoning pair");
+  assert.equal(await page.getByTestId("routing-model-kiro-1").inputValue(), "", "harnesses without approved defaults stay blank");
+  assert.equal(await page.getByTestId("routing-model-kiro-10").inputValue(), "", "blank rows are omitted from classifier choices");
 
   // The classifier and its calibration context live in their own tab, not under Clusters.
   await openSettingsTab(page, "classifiers");
@@ -61,6 +59,20 @@ test("routing settings are split across harness tabs, the Classifiers tab, and t
   await page.getByTestId("routing-status").getByText("This node leads the routing policy").waitFor();
 
   await page.evaluate('document.querySelector("#settingsDialog").close(); true');
+
+  // Loading the classifier list once must not start a model-dialog render loop.
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+  await page.locator(".session-card", { hasText: "Thread-Based Agent Builder" }).first().click();
+  await page.locator("#modelButton:enabled").waitFor();
+  const routing = await page.evaluate('import("/app/state.js").then(({ state }) => state.routing)');
+  assert.equal(routing?.active, true, `saved routing policy must be active for the conversation: ${JSON.stringify(routing)}`);
+  await page.getByTestId("chat-model-button").click();
+  await page.getByTestId("model-option-bob-auto").waitFor();
+  await page.getByTestId("routing-classifier-dialog-select").waitFor();
+  await page.waitForTimeout(500);
+  await page.getByTestId("model-dialog-close-button").click();
+  assert.equal(await page.getByTestId("model-dialog").isVisible(), false, "the model picker stays responsive after classifier loading");
+
   await openSettingsTab(page, "classifiers");
   assert.equal(await page.getByTestId("routing-instructions").inputValue(), "easiest is a rename; hardest is a two-service migration", "calibration survives save and reload");
 

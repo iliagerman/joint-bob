@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Automatic routing now restricts model selection to approved tiers and allows the difficulty classifier to decline routing when no configured level is a good fit.
+
 ## 1.70.0 — 2026-09-21
 
 - Routing setup is now organized by function: level-to-model pairs live in each harness's tab in Settings > Harnesses, and classifier configuration moved to a new Classifiers tab where you can add free-text calibration describing what easy and hard work looks like on your projects.

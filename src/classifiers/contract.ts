@@ -6,6 +6,14 @@ export interface DifficultyClassification {
   score: number;
   /** Classifier confidence from 0 to 1. Low confidence falls back to conversation settings. */
   confidence: number;
+  /** The classifier deliberately chose the escape option instead of a configured tier. */
+  abstained?: boolean;
+}
+
+export interface DifficultyClassifierContext {
+  calibration?: string;
+  /** Only these configured levels may be selected. Empty means the full scale. */
+  levels?: readonly number[];
 }
 
 /** A pluggable prompt-difficulty classifier. Implementations must never throw
@@ -16,6 +24,6 @@ export interface DifficultyClassifier {
   label: string;
   /** Environment variable that carries the API key, resolved from attached secret accounts. */
   variableName: string;
-  /** context is the policy's free-text calibration, embedded into the question. */
-  classify(text: string, apiKey: string, context?: string): Promise<DifficultyClassification | null>;
+  /** A string is accepted for older classifiers that only use calibration text. */
+  classify(text: string, apiKey: string, context?: string | DifficultyClassifierContext): Promise<DifficultyClassification | null>;
 }

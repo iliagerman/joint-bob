@@ -36,11 +36,14 @@ rl.on("line", line => {
 rl.on("close", () => process.exit(0));
 `;
 
-let answer: { level: number; confidence: number } | { error: true } = { level: 7, confidence: 0.9 };
+let answer: { level: number; confidence: number } | { none: true; confidence: number } | { error: true } = { level: 7, confidence: 0.9 };
 const classifierRequests: unknown[] = [];
 
-function scoreResponse(): Record<string, unknown> {
+function classifierResponse(request: unknown): Record<string, unknown> {
   if ("error" in answer) return {};
+  const question = (request as { questions?: { complexity?: { type?: string } } })?.questions?.complexity;
+  if ("none" in answer) return { answers: { complexity: { type: "choice", choice: "none", confidence: answer.confidence, probabilities: { none: 1 } } } };
+  if (question?.type === "choice") return { answers: { complexity: { type: "choice", choice: `level_${answer.level}`, confidence: answer.confidence, probabilities: { [`level_${answer.level}`]: 1 } } } };
   const probabilities: Record<string, number> = {};
   for (let index = 0; index < 10; index += 1) probabilities[String(index)] = index + 1 === answer.level ? 1 : 0;
   return { answers: { complexity: { type: "score", score: answer.level - 1, confidence: answer.confidence, probabilities } }, usage: { input_tokens: 10, output_tokens: 1 } };
@@ -81,9 +84,11 @@ before(async () => {
     let body = "";
     request.on("data", (chunk) => { body += chunk; });
     request.on("end", () => {
-      try { classifierRequests.push(JSON.parse(body)); } catch { classifierRequests.push(null); }
+      let parsed: unknown = null;
+      try { parsed = JSON.parse(body); } catch { /* malformed requests are recorded as null */ }
+      classifierRequests.push(parsed);
       response.writeHead(200, { "Content-Type": "application/json" });
-      response.end(JSON.stringify(scoreResponse()));
+      response.end(JSON.stringify(classifierResponse(parsed)));
     });
   });
   await new Promise<void>((resolve) => classifierEndpoint.listen(0, "127.0.0.1", resolve));
@@ -123,30 +128,31 @@ test("difficulty routing maps a classified prompt to the policy model and honour
   sockets.push(chat.socket);
   await waitFor(chat.messages, () => chat.messages.some((message) => message.type === "ready" && message.engine === "kiro"));
 
-  answer = { level: 7, confidence: 0.9 };
+  answer = { level: 8, confidence: 0.9 };
   chat.socket.send(JSON.stringify({ type: "prompt", message: "first prompt", requestId: randomUUID() }));
   await completed(chat.messages, 1);
   let events = routingEvents(chat.messages);
   assert.equal(events.length, 1, "first prompt must be evaluated");
-  assert.equal(events[0].level, 7);
+  assert.equal(events[0].level, 8);
   assert.equal(events[0].mapped, true);
   assert.equal(events[0].modelId, "big");
   assert.equal(events[0].thinkingLevel, "high");
   assert.ok(classifierRequests.some((request) => (request as { questions?: { complexity?: { instructions?: { calibration?: string } } } })?.questions?.complexity?.instructions?.calibration === "easiest is a rename; hardest is a two-service migration"), "the policy's calibration context must reach the classifier question");
+  assert.ok(classifierRequests.some((request) => JSON.stringify(Object.keys((request as { questions?: { complexity?: { criteria?: Record<string, unknown> } } })?.questions?.complexity?.criteria ?? {})) === JSON.stringify(["level_1", "level_8", "none"])), "blank policy rows must not be offered to the classifier");
 
   answer = { level: 7, confidence: 0.9 };
   chat.socket.send(JSON.stringify({ type: "prompt", message: "second prompt", requestId: randomUUID() }));
   await completed(chat.messages, 2);
   assert.equal(routingEvents(chat.messages).length, 1, "second prompt is not an evaluation point with n=2");
 
-  answer = { level: 2, confidence: 0.9 };
+  answer = { level: 1, confidence: 0.9 };
   chat.socket.send(JSON.stringify({ type: "prompt", message: "third prompt", requestId: randomUUID() }));
   await completed(chat.messages, 3);
   events = routingEvents(chat.messages);
   assert.equal(events.length, 2, "third prompt is the next evaluation point");
-  assert.equal(events[1].level, 2);
-  assert.equal(events[1].mapped, true, "two mapped levels spread across the 1 to 10 scale");
-  assert.equal(events[1].modelId, "default", "difficulty 2 of 10 lands on the easier pair");
+  assert.equal(events[1].level, 1);
+  assert.equal(events[1].mapped, true, "the classifier can select only a configured level");
+  assert.equal(events[1].modelId, "default", "the selected configured level maps exactly");
   assert.equal(events[1].thinkingLevel, "low");
 
   answer = { level: 7, confidence: 0.9 };
@@ -168,6 +174,14 @@ test("difficulty routing maps a classified prompt to the policy model and honour
   events = routingEvents(chat.messages);
   assert.equal(events.length, 3, "ordinal 7 is due again");
   assert.equal(events[2].skipped, "low confidence", `expected a low-confidence skip, got ${JSON.stringify(events[2])}`);
+
+  answer = { none: true, confidence: 0.9 };
+  chat.socket.send(JSON.stringify({ type: "prompt", message: "not due before escape", requestId: randomUUID() }));
+  await completed(chat.messages, 8);
+  chat.socket.send(JSON.stringify({ type: "prompt", message: "none of the tiers fit", requestId: randomUUID() }));
+  await completed(chat.messages, 9);
+  events = routingEvents(chat.messages);
+  assert.equal(events[3].skipped, "no suitable mapping", "the classifier escape keeps current conversation settings");
 
   const unmapped = await api(node, session, "PUT", "/cluster/routing", {
     clusterId: "",

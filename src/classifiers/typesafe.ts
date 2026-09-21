@@ -1,4 +1,4 @@
-import type { DifficultyClassification, DifficultyClassifier } from "./contract.js";
+import type { DifficultyClassification, DifficultyClassifier, DifficultyClassifierContext } from "./contract.js";
 
 export const DIFFICULTY_LEVELS = 10;
 
@@ -30,6 +30,13 @@ interface ScoreAnswer {
   probabilities?: unknown;
 }
 
+interface ChoiceAnswer {
+  type?: unknown;
+  choice?: unknown;
+  confidence?: unknown;
+  probabilities?: unknown;
+}
+
 function numberOrUndefined(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
@@ -56,38 +63,52 @@ export function levelFromAnswer(answer: ScoreAnswer): DifficultyClassification |
 
 const CONTEXT_CHARACTER_LIMIT = 8_000;
 
-async function postOnce(text: string, apiKey: string, context: string, fetchImpl: typeof fetch): Promise<Response> {
-  const trimmedContext = context.trim().slice(0, CONTEXT_CHARACTER_LIMIT);
+function normalizedContext(context: string | DifficultyClassifierContext): { calibration: string; levels: number[] } {
+  const calibration = (typeof context === "string" ? context : context.calibration ?? "").trim().slice(0, CONTEXT_CHARACTER_LIMIT);
+  const rawLevels = typeof context === "string" ? [] : context.levels ?? [];
+  const levels = [...new Set(rawLevels)].filter((level) => Number.isInteger(level) && level >= 1 && level <= DIFFICULTY_LEVELS).sort((left, right) => left - right);
+  return { calibration, levels };
+}
+
+function questionFor(context: string | DifficultyClassifierContext): Record<string, unknown> {
+  const { calibration, levels } = normalizedContext(context);
+  const question = levels.length
+    ? "Which configured difficulty tier best fits this software development request? Choose `none` when every configured tier is a poor fit."
+    : "How complex is this software development request for a coding agent to execute, based on the work it describes?";
+  const instructions = calibration ? { calibration, question: `${question} Calibrate the decision using \`calibration\`.` } : question;
+  if (!levels.length) return { type: "score", instructions, criteria: DIFFICULTY_RUBRIC };
+  const criteria = Object.fromEntries(levels.map((level) => [`level_${level}`, `Difficulty ${level} of 10. ${DIFFICULTY_RUBRIC[level - 1]}`]));
+  criteria.none = "None of the configured difficulty tiers fits well enough. Keep the conversation's current model and reasoning.";
+  return { type: "choice", instructions, criteria };
+}
+
+function choiceFromAnswer(answer: ChoiceAnswer): DifficultyClassification | null {
+  const confidence = numberOrUndefined(answer.confidence);
+  if (typeof answer.choice !== "string" || confidence === undefined) return null;
+  if (answer.choice === "none") return { level: 1, score: 1, confidence: Math.min(1, Math.max(0, confidence)), abstained: true };
+  const match = /^level_(10|[1-9])$/.exec(answer.choice);
+  if (!match) return null;
+  const level = Number(match[1]);
+  return { level, score: level, confidence: Math.min(1, Math.max(0, confidence)) };
+}
+
+async function postOnce(text: string, apiKey: string, context: string | DifficultyClassifierContext, fetchImpl: typeof fetch): Promise<Response> {
   return fetchImpl(TYPESAFE_ENDPOINT, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       state: text.slice(0, STATE_CHARACTER_LIMIT),
       model: TYPESAFE_MODEL,
-      questions: {
-        complexity: trimmedContext
-          ? {
-            type: "score",
-            // A structured instruction keeps the user's calibration separate from the
-            // question itself; the question points back at it by name.
-            instructions: { calibration: trimmedContext, question: "How complex is this software development request for a coding agent to execute, calibrated by `calibration`? `calibration` describes what easy and hard work look like here; weigh the request against it." },
-            criteria: DIFFICULTY_RUBRIC,
-          }
-          : {
-            type: "score",
-            instructions: "How complex is this software development request for a coding agent to execute, based on the work it describes?",
-            criteria: DIFFICULTY_RUBRIC,
-          },
-      },
+      questions: { complexity: questionFor(context) },
     }),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
 }
 
-/** Evaluates prompt difficulty through TypeSafe's System One score question.
+/** Evaluates prompt difficulty through a TypeSafe System One score or configured-level choice.
     The optional context is embedded as structured calibration for the question.
     Returns null on any failure: network error, timeout, non-2xx status, or a malformed answer. */
-export async function classifyWithTypesafe(text: string, apiKey: string, context = "", fetchImpl: typeof fetch = fetch): Promise<DifficultyClassification | null> {
+export async function classifyWithTypesafe(text: string, apiKey: string, context: string | DifficultyClassifierContext = "", fetchImpl: typeof fetch = fetch): Promise<DifficultyClassification | null> {
   if (!text.trim() || !apiKey) return null;
   let response: Response | undefined;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
@@ -109,8 +130,11 @@ export async function classifyWithTypesafe(text: string, apiKey: string, context
   if (!answers || typeof answers !== "object" || Array.isArray(answers)) return null;
   const answer = (answers as Record<string, unknown>).complexity;
   if (!answer || typeof answer !== "object" || Array.isArray(answer)) return null;
-  try { return levelFromAnswer(answer as ScoreAnswer); }
-  catch { return null; }
+  try {
+    return (answer as { type?: unknown }).type === "choice"
+      ? choiceFromAnswer(answer as ChoiceAnswer)
+      : levelFromAnswer(answer as ScoreAnswer);
+  } catch { return null; }
 }
 
 export const typesafeClassifier: DifficultyClassifier = {

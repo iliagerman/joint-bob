@@ -3,7 +3,7 @@ import { listDifficultyClassifiers } from "../../classifiers/registry.js";
 import { getClusterNode, listClusterPeers } from "../../cluster.js";
 import { getHarness, getHarnessRuntime, listHarnesses } from "../../harnesses.js";
 import { getSharingCluster, listSharingMemberships } from "../../cluster-sharing-policy.js";
-import { LEGACY_CLUSTER_ID, defaultRoutingPolicy, listRoutingPolicies, readRoutingPolicy, RoutingPolicyError, routingPolicyDatabase, updateClusterRoutingPolicy, validateRoutingPolicy } from "../../routing-policy.js";
+import { automaticRoutingModelAllowed, LEGACY_CLUSTER_ID, defaultRoutingPolicy, listRoutingPolicies, readRoutingPolicy, RoutingPolicyError, routingPolicyDatabase, updateClusterRoutingPolicy, validateRoutingPolicy } from "../../routing-policy.js";
 import { selectiveSharingActive } from "../../cluster-v2-mode.js";
 import { sendError } from "../http-auth.js";
 import { app } from "../state.js";
@@ -31,7 +31,7 @@ async function routingModels(): Promise<Array<{ id: string; label: string; think
   for (const adapter of listHarnesses()) {
     if (!adapter.runtime || !adapter.configuration) continue;
     let models: Array<{ provider: string; id: string; label: string; providerLabel?: string }> = [];
-    try { models = (await (await getHarnessRuntime(adapter.id)).models()).map((model) => ({ provider: model.provider, id: model.id, label: model.label, ...(model.providerLabel ? { providerLabel: model.providerLabel } : {}) })); }
+    try { models = (await (await getHarnessRuntime(adapter.id)).models()).filter((model) => automaticRoutingModelAllowed(model.provider, model.id)).map((model) => ({ provider: model.provider, id: model.id, label: model.label, ...(model.providerLabel ? { providerLabel: model.providerLabel } : {}) })); }
     catch { /* A node without that runtime ready still shows the policy, just without its model list. */ }
     groups.push({ id: adapter.id, label: adapter.label, thinkingLevels: adapter.configuration.thinkingLevels as string[], ...(adapter.configuration.fixedProvider ? { fixedProvider: adapter.configuration.fixedProvider } : {}), models });
   }
