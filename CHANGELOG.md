@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 1.68.3 — 2026-09-21
+
+- Touch scrolling on the browser viewer no longer floods the socket with commands, preventing dropped input and connection failures when dragging on mobile.
+
 ## 1.68.2 — 2026-09-20
 
 - Claude failures now show the specific reason instead of a generic message.
