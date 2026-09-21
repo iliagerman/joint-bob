@@ -16,5 +16,6 @@ export interface DifficultyClassifier {
   label: string;
   /** Environment variable that carries the API key, resolved from attached secret accounts. */
   variableName: string;
-  classify(text: string, apiKey: string): Promise<DifficultyClassification | null>;
+  /** context is the policy's free-text calibration, embedded into the question. */
+  classify(text: string, apiKey: string, context?: string): Promise<DifficultyClassification | null>;
 }

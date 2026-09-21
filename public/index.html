@@ -449,6 +449,7 @@
           <button class="settings-tab" type="button" data-settings-tab="cluster" role="tab" id="settingsTab-cluster" aria-controls="settingsPanel-cluster" aria-selected="false" tabindex="-1" data-testid="settings-tab-cluster">Cluster</button>
           <button class="settings-tab" type="button" data-settings-tab="workspaces" role="tab" id="settingsTab-workspaces" aria-controls="settingsPanel-workspaces" aria-selected="false" tabindex="-1" data-testid="settings-tab-workspaces">Workspaces</button>
           <button class="settings-tab" type="button" data-settings-tab="engines" role="tab" id="settingsTab-engines" aria-controls="settingsPanel-engines" aria-selected="false" tabindex="-1" data-testid="settings-tab-engines">Harnesses</button>
+          <button class="settings-tab" type="button" data-settings-tab="classifiers" role="tab" id="settingsTab-classifiers" aria-controls="settingsPanel-classifiers" aria-selected="false" tabindex="-1" data-testid="settings-tab-classifiers">Classifiers</button>
           <button class="settings-tab" type="button" data-settings-tab="resources" role="tab" id="settingsTab-resources" aria-controls="settingsPanel-resources" aria-selected="false" tabindex="-1" data-testid="settings-tab-resources">Resources</button>
           <button class="settings-tab" type="button" data-settings-tab="shortcuts" role="tab" id="settingsTab-shortcuts" aria-controls="settingsPanel-shortcuts" aria-selected="false" tabindex="-1" data-testid="settings-tab-shortcuts">Shortcuts</button>
           <button class="settings-tab" type="button" data-settings-tab="updates" role="tab" id="settingsTab-updates" aria-controls="settingsPanel-updates" aria-selected="false" tabindex="-1" data-testid="settings-tab-updates">Updates</button>
@@ -635,12 +636,10 @@
             <p id="routingPolicyStatus" data-testid="routing-status" role="status"></p>
             <label>Policy cluster<select id="routingClusterSelect" data-testid="routing-cluster-select"></select></label>
             <label class="checkbox-row"><input type="checkbox" id="routingEnabled" data-testid="routing-enabled" /> Route prompts to a model by difficulty</label>
-            <label>Classifier<select id="routingClassifier" data-testid="routing-classifier"></select></label>
             <label>Evaluate difficulty<select id="routingCadence" data-testid="routing-cadence"><option value="first-message">First message only</option><option value="every-n">Every N messages</option></select></label>
             <label>Messages between evaluations<input type="number" id="routingCadenceN" min="1" max="500" step="1" value="5" data-testid="routing-cadence-n" /></label>
             <label>Confidence threshold (0 to 1)<input type="number" id="routingConfidence" min="0" max="1" step="0.05" value="0.3" data-testid="routing-confidence" /></label>
-            <p class="settings-hint">Rows are ordered by difficulty and adapt: with fewer mapped levels, each one covers a wider band of the 1 to 10 scale. Below the confidence threshold, or on any classifier failure, prompts keep the conversation's current model. A manual model pick always wins until Bob auto is selected again.</p>
-            <div id="routingHarnessTables" data-testid="routing-harness-tables"></div>
+            <p class="settings-hint">Level-to-model pairs live under each harness's tab in Harnesses; the classifier and its calibration under Classifiers. Both save here. Below the confidence threshold, or on any classifier failure, prompts keep the conversation's current model. A manual model pick always wins until Bob auto is selected again.</p>
             <div class="github-group-actions">
               <button class="ghost" type="button" id="routingSaveButton" data-testid="routing-save-button">Save routing policy</button>
               <button class="ghost danger" type="button" id="routingClearButton" data-testid="routing-clear-button">Clear policy</button>
@@ -682,6 +681,19 @@
           <div id="harnessPanels"></div>
           <div class="engine-actions"><button class="ghost" id="settingsCheckRuntimePathsButton" type="button" data-testid="settings-check-runtime-paths-button">Check paths</button></div>
           <p class="engine-readiness" id="settingsRuntimeStatus" role="status" aria-live="polite" data-testid="settings-runtime-status"></p>
+        </section>
+
+        <section class="settings-panel" id="settingsPanel-classifiers" role="tabpanel" aria-labelledby="settingsTab-classifiers" tabindex="0" hidden>
+          <p>The scoring model that rates each prompt's difficulty for routing. Its API key comes from the matching variable on an attached secret account.</p>
+          <fieldset class="phase-settings">
+            <legend>Classifier</legend>
+            <label>Scoring model<select id="routingClassifier" data-testid="routing-classifier"></select></label>
+            <label>Calibration context<textarea id="routingInstructions" rows="6" maxlength="4000" placeholder="For example: easiest is a one-line typo fix in a single file; hardest is redesigning the replication layer across two services with a migration." data-testid="routing-instructions"></textarea></label>
+            <p class="settings-hint">Free text describing what easy and hard look like on your projects. It is embedded into every scoring question, so the classifier rates against your scale instead of a generic one. Changes save with the routing policy in the Cluster tab.</p>
+            <div class="github-group-actions">
+              <button class="ghost" type="button" id="routingSaveClassifiersButton" data-testid="routing-save-classifiers-button">Save routing policy</button>
+            </div>
+          </fieldset>
         </section>
 
         <section class="settings-panel" id="settingsPanel-resources" role="tabpanel" aria-labelledby="settingsTab-resources" tabindex="0" hidden>

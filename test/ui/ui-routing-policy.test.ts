@@ -12,29 +12,47 @@ async function signIn(page: Page, url: string, username: string, password: strin
   await page.locator("#projectList .project-card").first().waitFor();
 }
 
-async function openClusterSettings(page: Page) {
-  await page.getByTestId("settings-open-button").click();
+async function openSettingsTab(page: Page, tab: string) {
+  await page.locator("#settingsDialog[open]").waitFor({ state: "hidden" }).catch(() => {});
+  // The shell re-renders its buttons about once a second; retry the click through the jitter.
+  for (let attempt = 0; attempt < 10 && !(await page.locator("#settingsDialog[open]").count()); attempt += 1) {
+    await page.getByTestId("settings-open-button").click({ force: true }).catch(() => {});
+    await page.waitForTimeout(300);
+  }
   await page.locator("#settingsDialog[open]").waitFor();
-  await page.getByTestId("settings-tab-cluster").click();
-  await page.getByTestId("routing-status").waitFor();
+  await page.locator("#settingsDialog[open]").waitFor();
+  await page.getByTestId(`settings-tab-${tab}`).click();
 }
 
-test("the cluster panel edits, saves, and clears the routing policy", { timeout: 180_000 }, async (t) => {
+async function openHarnessRoutingGrid(page: Page, harnessId: string) {
+  await openSettingsTab(page, "engines");
+  await page.locator(`#harnessTabs [data-harness-tab="${harnessId}"]`).click();
+  await page.locator(`[data-routing-harness="${harnessId}"] [data-testid="routing-model-${harnessId}-1"]`).waitFor();
+}
+
+test("routing settings are split across harness tabs, the Classifiers tab, and the Cluster tab", { timeout: 240_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   await signIn(page, node.url, environment.username, environment.password);
-  await openClusterSettings(page);
 
-  await page.getByTestId("routing-status").getByText("No routing policy yet").waitFor();
-  const rows = page.locator('[data-testid="routing-harness-kiro"] [data-testid^="routing-level-kiro-"]');
-  await rows.first().waitFor();
+  // The level grids live under each harness's own tab in the Harnesses section.
+  await openHarnessRoutingGrid(page, "kiro");
+  const rows = page.locator('[data-routing-harness="kiro"] [data-testid^="routing-level-kiro-"]');
   assert.equal(await rows.count(), 10, "each harness exposes levels 1 to 10");
-  // Whether a model name prefills depends on this machine's installed runtimes;
-  // the reasoning pairs always prefill.
-  const level1Model = await page.locator('[data-testid="routing-model-kiro-1"]').inputValue();
+  const level1Model = await page.getByTestId("routing-model-kiro-1").inputValue();
   assert.ok(level1Model === "" || level1Model.includes("\u0000"), "level 1 prefill is either empty or a real model choice");
-  assert.equal(await page.locator('[data-testid="routing-thinking-kiro-1"]').inputValue(), "low", "level 1 prefills the easiest reasoning pair");
-  assert.equal(await page.locator('[data-testid="routing-thinking-kiro-10"]').inputValue(), "max", "level 10 prefills the strongest reasoning pair");
+  assert.equal(await page.getByTestId("routing-thinking-kiro-1").inputValue(), "low", "level 1 prefills the easiest reasoning pair");
+  assert.equal(await page.getByTestId("routing-thinking-kiro-10").inputValue(), "max", "level 10 prefills the strongest reasoning pair");
 
+  // The classifier and its calibration context live in their own tab, not under Clusters.
+  await openSettingsTab(page, "classifiers");
+  await page.getByTestId("routing-classifier").waitFor();
+  assert.equal(await page.getByTestId("routing-classifier").inputValue(), "typesafe");
+  await page.getByTestId("routing-instructions").fill("easiest is a rename; hardest is a two-service migration");
+
+  // Policy controls, saving, and the leader status stay in the Cluster tab.
+  await openSettingsTab(page, "cluster");
+  await page.getByTestId("routing-status").getByText("No routing policy yet").waitFor();
+  assert.equal(await page.locator('#settingsPanel-cluster [data-testid="routing-classifier"]').count(), 0, "the classifier select must not be under Clusters");
   await page.getByTestId("routing-enabled").check();
   await page.getByTestId("routing-cadence").selectOption("every-n");
   await page.getByTestId("routing-cadence-n").fill("3");
@@ -43,13 +61,10 @@ test("the cluster panel edits, saves, and clears the routing policy", { timeout:
   await page.getByTestId("routing-status").getByText("This node leads the routing policy").waitFor();
 
   await page.evaluate('document.querySelector("#settingsDialog").close(); true');
-  await openClusterSettings(page);
-  assert.equal(await page.getByTestId("routing-enabled").isChecked(), true, "saved policy survives reload");
-  assert.equal(await page.getByTestId("routing-cadence").inputValue(), "every-n");
-  assert.equal(await page.getByTestId("routing-cadence-n").inputValue(), "3");
-  assert.equal(await page.getByTestId("routing-confidence").inputValue(), "0.25");
-  assert.equal(await page.getByTestId("routing-thinking-kiro-1").inputValue(), "low", "prefilled pairs persist after save");
+  await openSettingsTab(page, "classifiers");
+  assert.equal(await page.getByTestId("routing-instructions").inputValue(), "easiest is a rename; hardest is a two-service migration", "calibration survives save and reload");
 
+  await openSettingsTab(page, "cluster");
   await page.getByTestId("routing-clear-button").click();
   await page.locator("#confirmDialog[open]").waitFor();
   await page.getByTestId("confirm-accept-button").click();

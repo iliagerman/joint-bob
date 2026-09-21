@@ -362,7 +362,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     return;
   }
   if (payload.type === "routingMode") {
-    updateRoutingMode({ active: payload.active !== false, mode: payload.mode === "manual" ? "manual" : "auto" });
+    updateRoutingMode({ active: payload.active !== false, mode: payload.mode === "manual" ? "manual" : "auto", ...(payload.classifierId ? { classifierId: payload.classifierId } : {}), ...(payload.editable !== undefined ? { editable: payload.editable } : {}) });
     return;
   }
   // The harness refused to start this prompt (quota, auth, crash). It stays

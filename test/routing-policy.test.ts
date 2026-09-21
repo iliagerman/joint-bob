@@ -170,3 +170,9 @@ test("defaultRoutingPolicy prefills model and reasoning pairs for every harness"
   assert.ok(kiro["1"] && kiro["5"] && kiro["10"], "a harness without models still gets default pairs");
   assert.doesNotThrow(() => validateRoutingPolicy(generated), "generated defaults must satisfy the policy schema");
 });
+
+test("the policy carries trimmed calibration instructions", () => {
+  const parsed = validateRoutingPolicy(policy({ instructions: "  easiest is a rename; hardest is a migration  " }));
+  assert.equal(parsed.instructions, "easiest is a rename; hardest is a migration");
+  assert.throws(() => policy({ instructions: "x".repeat(4001) }), /instructions/);
+});

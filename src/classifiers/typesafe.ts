@@ -54,7 +54,10 @@ export function levelFromAnswer(answer: ScoreAnswer): DifficultyClassification |
   return { level, score: score + 1, confidence: Math.min(1, Math.max(0, confidence)) };
 }
 
-async function postOnce(text: string, apiKey: string, fetchImpl: typeof fetch): Promise<Response> {
+const CONTEXT_CHARACTER_LIMIT = 8_000;
+
+async function postOnce(text: string, apiKey: string, context: string, fetchImpl: typeof fetch): Promise<Response> {
+  const trimmedContext = context.trim().slice(0, CONTEXT_CHARACTER_LIMIT);
   return fetchImpl(TYPESAFE_ENDPOINT, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
@@ -62,11 +65,19 @@ async function postOnce(text: string, apiKey: string, fetchImpl: typeof fetch): 
       state: text.slice(0, STATE_CHARACTER_LIMIT),
       model: TYPESAFE_MODEL,
       questions: {
-        complexity: {
-          type: "score",
-          instructions: "How complex is this software development request for a coding agent to execute, based on the work it describes?",
-          criteria: DIFFICULTY_RUBRIC,
-        },
+        complexity: trimmedContext
+          ? {
+            type: "score",
+            // A structured instruction keeps the user's calibration separate from the
+            // question itself; the question points back at it by name.
+            instructions: { calibration: trimmedContext, question: "How complex is this software development request for a coding agent to execute, calibrated by `calibration`? `calibration` describes what easy and hard work look like here; weigh the request against it." },
+            criteria: DIFFICULTY_RUBRIC,
+          }
+          : {
+            type: "score",
+            instructions: "How complex is this software development request for a coding agent to execute, based on the work it describes?",
+            criteria: DIFFICULTY_RUBRIC,
+          },
       },
     }),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -74,13 +85,14 @@ async function postOnce(text: string, apiKey: string, fetchImpl: typeof fetch): 
 }
 
 /** Evaluates prompt difficulty through TypeSafe's System One score question.
+    The optional context is embedded as structured calibration for the question.
     Returns null on any failure: network error, timeout, non-2xx status, or a malformed answer. */
-export async function classifyWithTypesafe(text: string, apiKey: string, fetchImpl: typeof fetch = fetch): Promise<DifficultyClassification | null> {
+export async function classifyWithTypesafe(text: string, apiKey: string, context = "", fetchImpl: typeof fetch = fetch): Promise<DifficultyClassification | null> {
   if (!text.trim() || !apiKey) return null;
   let response: Response | undefined;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
     try {
-      const candidate = await postOnce(text, apiKey, fetchImpl);
+      const candidate = await postOnce(text, apiKey, context, fetchImpl);
       if (candidate.ok || (candidate.status !== 429 && candidate.status < 500) || attempt === MAX_ATTEMPTS) {
         response = candidate;
         break;
@@ -105,5 +117,5 @@ export const typesafeClassifier: DifficultyClassifier = {
   id: "typesafe",
   label: "TypeSafe (Jev)",
   variableName: "TYPESAFE_AI_API_KEY",
-  classify: (text, apiKey) => classifyWithTypesafe(text, apiKey),
+  classify: (text, apiKey, context) => classifyWithTypesafe(text, apiKey, context),
 };

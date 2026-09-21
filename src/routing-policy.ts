@@ -33,6 +33,9 @@ export const routingCadenceSchema = z.object({
 export const routingPolicySchema = z.object({
   enabled: z.boolean(),
   classifierId: z.string().trim().min(1).max(80),
+  /** Free-text calibration the classifier embeds into its question, for example
+      what the easiest and hardest work looks like on this cluster. */
+  instructions: z.string().trim().max(4000).optional(),
   evalCadence: routingCadenceSchema,
   confidenceThreshold: z.number().min(0).max(1),
   harnesses: z.record(z.string().trim().min(1).max(80), z.object({
@@ -105,6 +108,16 @@ function rowToStored(row: PolicyRow): StoredRoutingPolicy {
 export function readRoutingPolicy(db: DatabaseSync, clusterId: string): StoredRoutingPolicy | null {
   const row = db.prepare("SELECT cluster_id,policy,revision,leader_node_id,updated_by,updated_at FROM cluster_routing_policies WHERE cluster_id = ?").get(clusterId) as PolicyRow | undefined;
   return row ? rowToStored(row) : null;
+}
+
+/** Whether the local node may edit this stored policy: the v2 cluster manager, or
+    the legacy policy's leader. */
+export function routingPolicyEditableBy(db: DatabaseSync, stored: StoredRoutingPolicy, localNodeId: string): boolean {
+  if (stored.clusterId !== LEGACY_CLUSTER_ID) {
+    const row = db.prepare("SELECT manager_node_id FROM sharing_clusters WHERE id = ?").get(stored.clusterId) as { manager_node_id: string | null } | undefined;
+    return row?.manager_node_id === localNodeId;
+  }
+  return stored.leaderNodeId === localNodeId;
 }
 
 export function listRoutingPolicies(db: DatabaseSync): StoredRoutingPolicy[] {
@@ -250,7 +263,7 @@ export function defaultRoutingPolicy(modelsByHarness: Record<string, DefaultPoli
     };
     harnesses[adapter.id] = { levels: levelsMap };
   }
-  return { enabled: true, classifierId: listDifficultyClassifiers()[0]?.id ?? "typesafe", evalCadence: { mode: "first-message" }, confidenceThreshold: 0.3, harnesses };
+  return { enabled: true, classifierId: listDifficultyClassifiers()[0]?.id ?? "typesafe", instructions: "", evalCadence: { mode: "first-message" }, confidenceThreshold: 0.3, harnesses };
 }
 
 /** Resolves the routing policy that governs a project on this node, or null.

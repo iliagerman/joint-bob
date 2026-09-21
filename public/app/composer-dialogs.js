@@ -32,6 +32,36 @@ export function syncModelButton() {
 let modelShortcuts = [];
 let queuedModelSelection = null;
 
+export async function loadRoutingClassifiers() {
+  if (state.routingClassifiers) return state.routingClassifiers;
+  try {
+    const body = await api("/api/cluster/routing");
+    state.routingClassifiers = Array.isArray(body.classifiers) ? body.classifiers : [];
+  } catch (error) {
+    toast(error.message);
+    state.routingClassifiers = [];
+  }
+  return state.routingClassifiers;
+}
+
+/** Saves a new classifier choice onto the active routing policy. Leader nodes only. */
+async function saveRoutingClassifier(classifierId) {
+  try {
+    const body = await api("/api/cluster/routing");
+    const policy = body.policies?.find((entry) => entry.clusterId === "") ?? body.policies?.[0];
+    if (!policy) throw new Error("No routing policy is saved yet");
+    if (!policy.editable) throw new Error("Only the leader node can change the classifier");
+    const saved = await api("/api/cluster/routing", { method: "PUT", body: JSON.stringify({ clusterId: policy.clusterId, policy: { ...policy.policy, classifierId } }) });
+    if (!saved.policy) throw new Error("Saving the classifier failed");
+    state.routing = { ...state.routing, classifierId };
+    toast("Classifier updated");
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    if (elements.modelDialog.open) renderModelDialog();
+  }
+}
+
 export function openQueuedModelPicker(activeKey, onSelect) {
   const model = state.models.find((candidate) => `${candidate.provider}/${candidate.id}` === activeKey);
   queuedModelSelection = { activeKey, onSelect, harness: model?.harnessId || state.engine };
@@ -466,6 +496,26 @@ function renderModelDialog() {
     autoRow.dataset.testid = "model-option-bob-auto";
     autoRow.title = "The difficulty classifier picks the model and reasoning for each prompt";
     elements.modelDialogList.append(autoRow);
+    // Under Bob auto, the scoring model itself is selectable here too. Editing the
+    // choice changes the cluster's routing policy, so it is leader-gated.
+    const classifierRow = document.createElement("label");
+    classifierRow.className = "model-option routing-classifier-option";
+    classifierRow.dataset.testid = "routing-classifier-option";
+    const classifierLabel = document.createElement("span");
+    classifierLabel.textContent = "Classifier";
+    const classifierSelect = document.createElement("select");
+    classifierSelect.dataset.testid = "routing-classifier-dialog-select";
+    const classifiers = state.routingClassifiers ?? [{ id: state.routing.classifierId, label: state.routing.classifierId }];
+    for (const classifier of classifiers) classifierSelect.add(new Option(classifier.label || classifier.id, classifier.id));
+    classifierSelect.value = state.routing.classifierId || classifiers[0]?.id || "";
+    const editable = state.routing.editable !== false;
+    classifierSelect.disabled = !editable;
+    classifierSelect.title = editable ? "Changes the cluster's routing policy" : "Only the leader node can change the classifier";
+    classifierSelect.addEventListener("change", () => { void saveRoutingClassifier(classifierSelect.value); });
+    classifierSelect.addEventListener("click", (event) => event.stopPropagation());
+    classifierRow.append(classifierLabel, classifierSelect);
+    elements.modelDialogList.append(classifierRow);
+    void loadRoutingClassifiers().then(() => { if (elements.modelDialog.open) renderModelDialog(); });
   }
   if (!models.length) {
     const empty = document.createElement("span"); empty.className = "model-shortcuts-empty"; empty.textContent = "No configured models"; elements.modelDialogList.append(empty); return;

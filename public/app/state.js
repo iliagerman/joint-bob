@@ -126,6 +126,8 @@ export const state = {
   thinkingBubble: null,
   toolBubbles: new Map(),
   models: [],
+  routing: null,
+  routingClassifiers: null,
   activeModelKey: "",
   activeModelLabel: "",
   thinkingLevel: "off",

@@ -7,7 +7,7 @@ import { getClusterNode } from "../cluster.js";
 import { getConversationRecord, ensureConversationRecord, listConversationSegments } from "../conversation-records.js";
 import type { DifficultyClassification } from "../classifiers/contract.js";
 import { getDifficultyClassifier } from "../classifiers/registry.js";
-import { resolveAdaptiveMapping, routingEvalDue, routingPolicyForProject, type StoredRoutingPolicy } from "../routing-policy.js";
+import { resolveAdaptiveMapping, routingEvalDue, routingPolicyDatabase, routingPolicyEditableBy, routingPolicyForProject, type StoredRoutingPolicy } from "../routing-policy.js";
 import { blockConversationGoal, cancelConversationGoal, getConversationGoal, goalPrompt, goalStatusMessage, parseBobGoalCommand, recordConversationGoalResponse, startConversationGoal, type ConversationGoal } from "../conversation-goals.js";
 import { ConversationOwnershipError } from "../conversation-ownership.js";
 import { buildHandoffContext } from "../handoff-context.js";
@@ -214,7 +214,7 @@ async function routePromptByDifficulty(connection: HarnessChatConnection, queued
   const apiKey = genericSecretEnvironment(connection.project.id)[classifier.variableName];
   if (!apiKey) { skip("classifier key missing"); return; }
   let classification: DifficultyClassification | null = null;
-  try { classification = await classifier.classify(queued.messageText ?? queued.promptText, apiKey); }
+  try { classification = await classifier.classify(queued.messageText ?? queued.promptText, apiKey, policy.policy.instructions ?? ""); }
   catch { classification = null; }
   if (!classification) { skip("classifier failed"); return; }
   if (classification.confidence < policy.policy.confidenceThreshold) { skip("low confidence", classification.level, classification.confidence); return; }
@@ -396,8 +396,24 @@ async function switchHarness(connection: HarnessChatConnection, engine: HarnessI
   sendHarnessStatus(shared, connection.socket); broadcastToProject(connection.project.id, { type: "sessionsChanged" });
 }
 
+/** The routing state clients need to render the pickers: whether the classifier
+    drives this conversation, which classifier won, and whether this node may edit it. */
+async function routingClientState(connection: HarnessChatConnection, localNodeId: string): Promise<{ active: boolean; mode: "auto" | "manual"; classifierId?: string; editable?: boolean } | null> {
+  const policy = routingPolicyForProject(connection.project.id);
+  if (!policy) return null;
+  return {
+    active: true,
+    mode: readRoutingState(queueKey(connection)).mode,
+    classifierId: policy.policy.classifierId,
+    editable: routingPolicyEditableBy(routingPolicyDatabase(), policy, localNodeId),
+  };
+}
+
 function publishRoutingMode(connection: HarnessChatConnection): void {
-  publish(connection, { type: "routingMode", mode: readRoutingState(queueKey(connection)).mode, active: true });
+  const mode = readRoutingState(queueKey(connection)).mode;
+  void getClusterNode().then((local) => routingClientState(connection, local.id)).then((state) => {
+    publish(connection, { type: "routingMode", mode, active: state?.active ?? true, ...(state?.classifierId ? { classifierId: state.classifierId } : {}), ...(state?.editable !== undefined ? { editable: state.editable } : {}) });
+  });
 }
 
 /** An explicit model or reasoning pick ends classifier control of the conversation. */
@@ -589,9 +605,9 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
   const history = withTurnFailures(transcript.messages, listTurnFailures(options.engine, shared.session.id));
   const browserMessages = scheduled ? scheduledReportMessages(history, !harnessSessionBusy(shared)) : history;
   const goal = await getConversationGoal(options.project.id, conversationId);
-  const routingActive = Boolean(routingPolicyForProject(options.project.id));
-  const routingMode = routingActive ? readRoutingState(queueKey(connection)).mode : "manual";
-  send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, scheduled, scheduledTurn: scheduled && shared.scheduledTurn, bobGoal: goal ?? null, routing: { active: routingActive, mode: routingMode }, ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
+  const routing = await routingClientState(connection, local.id);
+  const routingMode = routing ? routing.mode : "manual";
+  send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, scheduled, scheduledTurn: scheduled && shared.scheduledTurn, bobGoal: goal ?? null, routing: routing ?? { active: false, mode: routingMode }, ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
   for (const event of shared.liveEvents) send(options.socket, event);
   refreshHarnessPromptQueue(connection);
   options.socket.on("message", (raw) => void handleHarnessChatMessage(connection, raw as Buffer).catch(async (error) => {

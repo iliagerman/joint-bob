@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Routing setup is now organized by function: level-to-model pairs live in each harness's tab in Settings > Harnesses, and classifier configuration moved to a new Classifiers tab where you can add free-text calibration describing what easy and hard work looks like on your projects.
+
 ## 1.69.0 — 2026-09-21
 
 - Conversations now automatically route prompts to appropriate models based on difficulty, with adaptive mapping and pre-filled defaults for cost, standard, and capable options.

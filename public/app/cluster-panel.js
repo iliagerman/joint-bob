@@ -12,15 +12,12 @@ let routingState = null;
 
 function routingModelValue(provider, modelId) { return `${provider}\u0000${modelId}`; }
 
+/** Each harness tab owns its level grid; the routing policy fills them all. */
 function renderRoutingHarnessTables(harnesses, levels, policy) {
-  elements.routingHarnessTables.replaceChildren();
   for (const harness of harnesses) {
-    const block = document.createElement("fieldset");
-    block.className = "phase-settings routing-harness";
-    block.dataset.testid = `routing-harness-${harness.id}`;
-    const legend = document.createElement("legend");
-    legend.textContent = `${harness.label} level mapping`;
-    block.append(legend);
+    const container = document.querySelector(`[data-routing-harness="${harness.id}"]`);
+    if (!container) continue;
+    container.replaceChildren(...container.querySelectorAll("legend"), container.querySelector(".settings-hint") ?? document.createElement("p"));
     for (let level = 1; level <= levels; level += 1) {
       const row = document.createElement("label");
       row.className = "routing-level-row";
@@ -39,7 +36,7 @@ function renderRoutingHarnessTables(harnesses, levels, policy) {
       thinking.dataset.harness = harness.id;
       thinking.dataset.level = String(level);
       thinking.dataset.testid = `routing-thinking-${harness.id}-${level}`;
-      for (const level2 of harness.thinkingLevels) thinking.add(new Option(level2, level2));
+      for (const thinkingLevel of harness.thinkingLevels) thinking.add(new Option(thinkingLevel, thinkingLevel));
       if (!harness.thinkingLevels.length) thinking.add(new Option("default", "default"));
       const mapping = policy?.harnesses[harness.id]?.levels[String(level)];
       if (mapping) {
@@ -48,9 +45,8 @@ function renderRoutingHarnessTables(harnesses, levels, policy) {
         thinking.value = mapping.thinkingLevel;
       }
       row.append(levelLabel, model, thinking);
-      block.append(row);
+      container.append(row);
     }
-    elements.routingHarnessTables.append(block);
   }
 }
 
@@ -63,6 +59,7 @@ function fillRoutingForm(routing) {
   elements.routingClassifier.replaceChildren();
   for (const classifier of routing.classifiers) elements.routingClassifier.add(new Option(classifier.label, classifier.id));
   elements.routingClassifier.value = policy?.classifierId || routing.classifiers[0]?.id || "";
+  elements.routingInstructions.value = policy?.instructions || "";
   elements.routingCadence.value = policy?.evalCadence.mode || "first-message";
   elements.routingCadenceN.value = policy?.evalCadence.n || 5;
   elements.routingConfidence.value = policy?.confidenceThreshold ?? 0.3;
@@ -71,8 +68,10 @@ function fillRoutingForm(routing) {
   const leader = policyEntry?.leaderName || null;
   elements.routingPolicyStatus.textContent = policyEntry
     ? (editable ? `This node leads the routing policy${leader ? ` (${leader})` : ""}.` : `Managed by ${leader || "the leader node"}. Read-only here.`)
-    : "No routing policy yet. Levels below are prefilled defaults; saving creates the policy and makes this node its leader.";
-  for (const control of [elements.routingEnabled, elements.routingClassifier, elements.routingCadence, elements.routingCadenceN, elements.routingConfidence, elements.routingSaveButton, elements.routingClearButton, ...elements.routingHarnessTables.querySelectorAll("select")]) control.disabled = !editable;
+    : "No routing policy yet. Harness tabs and Classifiers show prefilled defaults; saving from the Cluster tab creates the policy and makes this node its leader.";
+  const controls = [elements.routingEnabled, elements.routingClassifier, elements.routingInstructions, elements.routingCadence, elements.routingCadenceN, elements.routingConfidence, elements.routingSaveButton, elements.routingSaveClassifiersButton, elements.routingClearButton,
+    ...document.querySelectorAll("[data-routing-harness] select")];
+  for (const control of controls) control.disabled = !editable;
   elements.routingClearButton.disabled = !editable || !policyEntry;
 }
 
@@ -90,21 +89,24 @@ export async function loadRoutingPolicy() {
 function routingFormValue() {
   const cadenceMode = elements.routingCadence.value;
   const harnesses = {};
-  for (const harness of routingState.harnesses) {
+  for (const container of document.querySelectorAll("[data-routing-harness]")) {
+    const harnessId = container.dataset.routingHarness;
     const levels = {};
-    for (let level = 1; level <= routingState.routingLevels; level += 1) {
-      const modelSelect = elements.routingHarnessTables.querySelector(`select.routing-model[data-harness="${harness.id}"][data-level="${level}"]`);
+    for (let level = 1; level <= (routingState?.routingLevels ?? 10); level += 1) {
+      const modelSelect = container.querySelector(`select.routing-model[data-level="${level}"]`);
       if (!modelSelect) continue;
       if (!modelSelect.value) { levels[String(level)] = null; continue; }
-      const thinkingSelect = elements.routingHarnessTables.querySelector(`select.routing-thinking[data-harness="${harness.id}"][data-level="${level}"]`);
+      const thinkingSelect = container.querySelector(`select.routing-thinking[data-level="${level}"]`);
       const [provider, modelId] = modelSelect.value.split("\u0000");
-      levels[String(level)] = { ...(harness.fixedProvider ? {} : { provider }), modelId, thinkingLevel: thinkingSelect.value };
+      const fixed = routingState?.harnesses.find((harness) => harness.id === harnessId)?.fixedProvider;
+      levels[String(level)] = { ...(fixed ? {} : { provider }), modelId, thinkingLevel: thinkingSelect.value };
     }
-    harnesses[harness.id] = { levels };
+    harnesses[harnessId] = { levels };
   }
   return {
     enabled: elements.routingEnabled.checked,
     classifierId: elements.routingClassifier.value,
+    instructions: elements.routingInstructions.value.trim(),
     evalCadence: { mode: cadenceMode, ...(cadenceMode === "every-n" ? { n: Number(elements.routingCadenceN.value) } : {}) },
     confidenceThreshold: Number(elements.routingConfidence.value),
     harnesses,
@@ -297,6 +299,7 @@ mutation(elements.clusterGenerateInviteButton, generateInvitation); mutation(ele
 mutation(elements.clusterAutoShareInput, setAutoShare); mutation(elements.clusterShareAllButton, shareAllProjects);
 mutation(elements.clusterLeaveButton, leaveCluster);
 mutation(elements.routingSaveButton, saveRoutingPolicy); mutation(elements.routingClearButton, clearRoutingPolicy);
+mutation(elements.routingSaveClassifiersButton, saveRoutingPolicy);
 elements.routingClusterSelect.addEventListener("change", () => { if (routingState) fillRoutingForm(routingState); });
 elements.clusterJoinLinkInput.addEventListener("input", () => { if (elements.clusterJoinLinkInput.value.trim() !== pendingJoin.link) pendingJoin = { link: "", requestId: "" }; });
 elements.secretSyncButton.addEventListener("click", () => openSecretSyncDialog().catch((error) => toast(error.message)));

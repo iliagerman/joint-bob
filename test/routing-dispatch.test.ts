@@ -37,6 +37,7 @@ rl.on("close", () => process.exit(0));
 `;
 
 let answer: { level: number; confidence: number } | { error: true } = { level: 7, confidence: 0.9 };
+const classifierRequests: unknown[] = [];
 
 function scoreResponse(): Record<string, unknown> {
   if ("error" in answer) return {};
@@ -75,10 +76,15 @@ before(async () => {
   await Promise.all([mkdir(path.dirname(executable), { recursive: true }), mkdir(sessionPath, { recursive: true })]);
   await writeFile(executable, kiroFixture);
   await chmod(executable, 0o700);
-  classifierEndpoint = createServer((_request, response) => {
+  classifierEndpoint = createServer((request, response) => {
     if ("error" in answer) { response.writeHead(500); response.end("{}"); return; }
-    response.writeHead(200, { "Content-Type": "application/json" });
-    response.end(JSON.stringify(scoreResponse()));
+    let body = "";
+    request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      try { classifierRequests.push(JSON.parse(body)); } catch { classifierRequests.push(null); }
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify(scoreResponse()));
+    });
   });
   await new Promise<void>((resolve) => classifierEndpoint.listen(0, "127.0.0.1", resolve));
   const classifierPort = (classifierEndpoint.address() as { port: number }).port;
@@ -100,7 +106,7 @@ before(async () => {
   assert.equal(attached.status, 200, JSON.stringify(attached.body));
   const saved = await api(node, session, "PUT", "/cluster/routing", {
     clusterId: "",
-    policy: { enabled: true, classifierId: "typesafe", evalCadence: { mode: "every-n", n: 2 }, confidenceThreshold: 0.3, harnesses: { kiro: { levels: { "1": { modelId: "default", thinkingLevel: "low" }, "8": { modelId: "big", thinkingLevel: "high" } } } } },
+    policy: { enabled: true, classifierId: "typesafe", instructions: "easiest is a rename; hardest is a two-service migration", evalCadence: { mode: "every-n", n: 2 }, confidenceThreshold: 0.3, harnesses: { kiro: { levels: { "1": { modelId: "default", thinkingLevel: "low" }, "8": { modelId: "big", thinkingLevel: "high" } } } } },
   });
   assert.equal(saved.status, 200, JSON.stringify(saved.body));
 }, { timeout: 120_000 });
@@ -126,6 +132,7 @@ test("difficulty routing maps a classified prompt to the policy model and honour
   assert.equal(events[0].mapped, true);
   assert.equal(events[0].modelId, "big");
   assert.equal(events[0].thinkingLevel, "high");
+  assert.ok(classifierRequests.some((request) => (request as { questions?: { complexity?: { instructions?: { calibration?: string } } } })?.questions?.complexity?.instructions?.calibration === "easiest is a rename; hardest is a two-service migration"), "the policy's calibration context must reach the classifier question");
 
   answer = { level: 7, confidence: 0.9 };
   chat.socket.send(JSON.stringify({ type: "prompt", message: "second prompt", requestId: randomUUID() }));

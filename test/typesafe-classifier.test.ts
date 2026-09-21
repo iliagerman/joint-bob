@@ -36,7 +36,7 @@ test("classifyWithTypesafe sends one score question with the ten-level rubric an
     captured = { url: String(url), init: init! };
     return jsonResponse(200, { model: "jev-1.13.0", answers: { complexity: scoreAnswer() }, usage: { input_tokens: 10, output_tokens: 1 } });
   };
-  const classification = await classifyWithTypesafe("Refactor the scheduler for concurrency", "key-1", fetchImpl);
+  const classification = await classifyWithTypesafe("Refactor the scheduler for concurrency", "key-1", "", fetchImpl);
   assert.ok(classification);
   assert.equal(classification.level, 7);
   assert.equal(captured.url, "https://api.typesafe.ai/v1/systemone");
@@ -54,7 +54,7 @@ test("classifyWithTypesafe retries a 429 once and then succeeds", async () => {
     calls += 1;
     return calls === 1 ? jsonResponse(429, { error: "rate limited" }) : jsonResponse(200, { answers: { complexity: scoreAnswer() } });
   };
-  const classification = await classifyWithTypesafe("text", "key", fetchImpl);
+  const classification = await classifyWithTypesafe("text", "key", "", fetchImpl);
   assert.equal(calls, 2);
   assert.equal(classification?.level, 7);
 });
@@ -65,21 +65,21 @@ test("classifyWithTypesafe returns null after repeated server errors", async () 
     calls += 1;
     return jsonResponse(503, {});
   };
-  assert.equal(await classifyWithTypesafe("text", "key", fetchImpl), null);
+  assert.equal(await classifyWithTypesafe("text", "key", "", fetchImpl), null);
   assert.equal(calls, 2);
 });
 
 test("classifyWithTypesafe returns null on network failure, malformed JSON, or a missing answer", async () => {
-  assert.equal(await classifyWithTypesafe("text", "key", async () => { throw new Error("offline"); }), null);
-  assert.equal(await classifyWithTypesafe("text", "key", async () => new Response("not json", { status: 200 })), null);
-  assert.equal(await classifyWithTypesafe("text", "key", async () => jsonResponse(200, { answers: {} })), null);
+  assert.equal(await classifyWithTypesafe("text", "key", "", async () => { throw new Error("offline"); }), null);
+  assert.equal(await classifyWithTypesafe("text", "key", "", async () => new Response("not json", { status: 200 })), null);
+  assert.equal(await classifyWithTypesafe("text", "key", "", async () => jsonResponse(200, { answers: {} })), null);
 });
 
 test("classifyWithTypesafe refuses blank input or a missing key", async () => {
   let called = false;
   const fetchImpl: typeof fetch = async () => { called = true; return jsonResponse(200, { answers: { complexity: scoreAnswer() } }); };
-  assert.equal(await classifyWithTypesafe("   ", "key", fetchImpl), null);
-  assert.equal(await classifyWithTypesafe("text", "", fetchImpl), null);
+  assert.equal(await classifyWithTypesafe("   ", "key", "", fetchImpl), null);
+  assert.equal(await classifyWithTypesafe("text", "", "", fetchImpl), null);
   assert.equal(called, false);
 });
 
@@ -88,4 +88,29 @@ test("the registry exposes the typesafe classifier under its policy id", () => {
   assert.ok(classifier);
   assert.equal(classifier.variableName, "TYPESAFE_AI_API_KEY");
   assert.ok(listDifficultyClassifiers().some((entry) => entry.id === "typesafe"));
+});
+
+test("classifyWithTypesafe embeds calibration context as structured instructions", async () => {
+  let captured: unknown;
+  const fetchImpl: typeof fetch = async (_url, init) => {
+    captured = JSON.parse(String(init!.body));
+    return jsonResponse(200, { answers: { complexity: scoreAnswer() } });
+  };
+  const classification = await classifyWithTypesafe("text", "key", "easiest: typo fix; hardest: two-service migration", fetchImpl);
+  assert.ok(classification);
+  const instructions = (captured as { questions: { complexity: { instructions: unknown } } }).questions.complexity.instructions;
+  assert.equal(typeof instructions, "object");
+  assert.equal((instructions as { calibration: string }).calibration, "easiest: typo fix; hardest: two-service migration");
+  assert.match((instructions as { question: string }).question, /calibration/);
+});
+
+test("classifyWithTypesafe keeps a plain question without context", async () => {
+  let captured: unknown;
+  const fetchImpl: typeof fetch = async (_url, init) => {
+    captured = JSON.parse(String(init!.body));
+    return jsonResponse(200, { answers: { complexity: scoreAnswer() } });
+  };
+  await classifyWithTypesafe("text", "key", "   ", fetchImpl);
+  const instructions = (captured as { questions: { complexity: { instructions: unknown } } }).questions.complexity.instructions;
+  assert.equal(typeof instructions, "string");
 });

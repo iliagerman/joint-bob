@@ -153,9 +153,14 @@ function createHarnessPanel(descriptor, settings, defaults) {
   output.textContent = `Node defaults — executable: ${defaults[descriptor.id].executable}; config: ${defaults[descriptor.id].configPath}; sessions: ${defaults[descriptor.id].sessionPath}.`;
   const conversation = createConversationControls(descriptor, settings, prefix);
   const runtime = createRuntimeControls(descriptor, settings, defaults, prefix);
+  const routing = document.createElement("fieldset"); routing.className = "phase-settings routing-harness"; routing.dataset.routingHarness = descriptor.id;
+  const routingLegend = document.createElement("legend"); routingLegend.textContent = "Prompt routing levels";
+  const routingHint = document.createElement("p"); routingHint.className = "settings-hint";
+  routingHint.textContent = "Pairs save with the routing policy in the Cluster tab. Rows are ordered by difficulty and adapt: fewer mapped levels each cover a wider band of the 1 to 10 scale.";
+  routing.append(routingLegend, routingHint);
   conversationFields[descriptor.id] = conversation.fields; runtimeFields[descriptor.id] = runtime.fields; defaultsOutputs[descriptor.id] = output;
   runtimeLabels[descriptor.id] = { executable: `${descriptor.label} executable`, configPath: `${descriptor.label} config path`, sessionPath: `${descriptor.label} session path` };
-  panel.append(output, ...conversation.controls, runtime.fieldset); return panel;
+  panel.append(output, ...conversation.controls, runtime.fieldset, routing); return panel;
 }
 
 function selectHarnessTab(name) {

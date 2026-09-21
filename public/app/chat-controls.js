@@ -159,7 +159,8 @@ function syncContextUsage(usage) {
 }
 
 export function updateRoutingMode(routing) {
-  state.routing = routing;
+  // Events may carry only what changed; keep the rest of the last known state.
+  state.routing = routing ? { ...state.routing, ...routing } : null;
   renderReasoningOptions();
   syncModelButton();
 }
