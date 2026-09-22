@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.70.2 — 2026-09-22
 
 - Routing policy changes from non-leader cluster nodes are now forwarded to the leader for processing.
 
