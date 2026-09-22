@@ -52,6 +52,12 @@ test("v2 HTTP membership preserves independent clusters and routes authority thr
     const clusterA = createdA.body.snapshot.body.clusterId;
     const clusterB = createdB.body.snapshot.body.clusterId;
 
+    const routingPolicy = {
+      enabled: true, classifierId: "typesafe", evalCadence: { mode: "first-message" }, confidenceThreshold: 0.3, harnesses: {},
+    };
+    const routingSaved = await call(nodeA, sessionA, "PUT", "/cluster/routing", { clusterId: clusterA, policy: routingPolicy });
+    assert.equal(routingSaved.status, 200, JSON.stringify(routingSaved.body));
+
     const rejectedSelection = await call(nodeA, sessionA, "POST", `/clusters/${clusterA}/invitations`, { expectedEpoch: 1, projectIds: [nodeA.projects[0].id] });
     assert.equal(rejectedSelection.status, 400);
     const invitation = await call<{ link: string }>(nodeA, sessionA, "POST", `/clusters/${clusterA}/invitations`, { expectedEpoch: 1 });
@@ -64,6 +70,8 @@ test("v2 HTTP membership preserves independent clusters and routes authority thr
     const retry = await call<{ snapshot: Snapshot }>(nodeB, sessionB, "POST", "/clusters/join", { link: invitation.body.link, requestId });
     assert.equal(retry.status, 200);
     assert.deepEqual(retry.body.snapshot, joined.body.snapshot);
+    const joinedRouting = await call<{ policies: Array<{ clusterId: string; policy: { classifierId: string } }> }>(nodeB, sessionB, "GET", "/cluster/routing");
+    assert.equal(joinedRouting.body.policies.find((entry) => entry.clusterId === clusterA)?.policy.classifierId, "typesafe", "a joining node receives the cluster routing policy before join completes");
 
     const statusB = await call<ClusterStatus>(nodeB, sessionB, "GET", "/clusters");
     assert.equal(statusB.status, 200);

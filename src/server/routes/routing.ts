@@ -3,7 +3,7 @@ import { listDifficultyClassifiers } from "../../classifiers/registry.js";
 import { getClusterNode, listClusterPeers } from "../../cluster.js";
 import { getHarness, getHarnessRuntime, listHarnesses } from "../../harnesses.js";
 import { getSharingCluster, listSharingMemberships } from "../../cluster-sharing-policy.js";
-import { automaticRoutingModelAllowed, LEGACY_CLUSTER_ID, defaultRoutingPolicy, listRoutingPolicies, readRoutingPolicy, RoutingPolicyError, routingPolicyDatabase, updateClusterRoutingPolicy, validateRoutingPolicy } from "../../routing-policy.js";
+import { applySignedRoutingPolicySnapshot, automaticRoutingModelAllowed, LEGACY_CLUSTER_ID, defaultRoutingPolicy, listRoutingPolicies, readRoutingPolicy, RoutingPolicyError, routingPolicyDatabase, routingPolicyWarning, signedRoutingPolicySnapshotSchema, updateClusterRoutingPolicy, validateRoutingPolicy } from "../../routing-policy.js";
 import { selectiveSharingActive } from "../../cluster-v2-mode.js";
 import { sendError } from "../http-auth.js";
 import { app } from "../state.js";
@@ -82,6 +82,8 @@ app.get("/api/cluster/routing", async (_request, response, next) => {
       ...stored,
       leaderName: names.get(stored.leaderNodeId) ?? stored.leaderNodeId,
       editable: editableByLocal(db, stored.clusterId, local.id) || (stored.clusterId === LEGACY_CLUSTER_ID && peerIds.has(stored.leaderNodeId)),
+      localLeader: editableByLocal(db, stored.clusterId, local.id),
+      warning: routingPolicyWarning(db, stored.clusterId)?.message ?? null,
     }));
     const legacyEditable = editableByLocal(db, LEGACY_CLUSTER_ID, local.id);
     const harnesses = await routingModels();
@@ -99,6 +101,20 @@ app.get("/api/cluster/routing", async (_request, response, next) => {
     });
   } catch (error) {
     if (error instanceof RoutingPolicyError) { sendError(response, error.statusCode, error.message); return; }
+    next(error);
+  }
+});
+
+app.post("/api/cluster/v2/routing", async (request, response, next) => {
+  try {
+    if (response.locals.machineProtocol !== 2 || typeof response.locals.machineNodeId !== "string") throw new RoutingPolicyError(401, "Unauthorized");
+    const snapshot = signedRoutingPolicySnapshotSchema.parse(z.object({ snapshot: z.unknown() }).strict().parse(request.body).snapshot);
+    if (snapshot.signerNodeId !== response.locals.machineNodeId) throw new RoutingPolicyError(401, "Unauthorized");
+    applySignedRoutingPolicySnapshot(routingPolicyDatabase(), snapshot);
+    response.json({ ok: true });
+  } catch (error) {
+    if (error instanceof RoutingPolicyError) { sendError(response, error.statusCode, error.message); return; }
+    if (error instanceof z.ZodError) { sendError(response, 400, "Invalid routing policy snapshot"); return; }
     next(error);
   }
 });

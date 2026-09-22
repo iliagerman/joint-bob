@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test, { after, before } from "node:test";
-import { applyClusterRoutingEvent, defaultRoutingPolicy, ensureRoutingPolicySchema, LEGACY_CLUSTER_ID, readRoutingPolicy, RoutingPolicyError, routingEvalDue, routingPolicyDatabase, routingPolicyForProject, routingPolicySchema, updateClusterRoutingPolicy, validateRoutingPolicy, type RoutingPolicy } from "../src/routing-policy.js";
+import { applyClusterRoutingEvent, assertRoutingClassifierForJoin, defaultRoutingPolicy, ensureRoutingPolicySchema, LEGACY_CLUSTER_ID, readRoutingPolicy, RoutingPolicyError, routingEvalDue, routingPolicyDatabase, routingPolicyForProject, routingPolicySchema, routingPolicyWarning, updateClusterRoutingPolicy, validateRoutingPolicy, type RoutingPolicy } from "../src/routing-policy.js";
 import { ensureClusterSharingPolicySchema } from "../src/cluster-sharing-policy.js";
 import { ensureReplicationSchema } from "../src/replication.js";
 import { ensurePromptQueueSchema } from "../src/prompt-queue.js";
@@ -96,10 +96,10 @@ test("legacy leadership clears with the policy and another node can claim it", (
 test("v2 clusters reject writes from non-manager nodes", () => {
   const db = routingPolicyDatabase();
   const clusterId = randomUUID();
-  db.prepare("INSERT INTO sharing_clusters(id,name,original_node_id,manager_node_id,manager_epoch,next_join_sequence,closed) VALUES (?,?,?,?,1,2,0)").run(clusterId, "main", nodeA, nodeB);
-  db.prepare("INSERT INTO sharing_memberships(cluster_id,node_id,join_sequence) VALUES (?,?,1)").run(clusterId, nodeB);
-  assert.throws(() => updateClusterRoutingPolicy(db, clusterId, policy(), nodeA), RoutingPolicyError);
-  assert.equal(updateClusterRoutingPolicy(db, clusterId, policy(), nodeB)?.leaderNodeId, nodeB);
+  db.prepare("INSERT INTO sharing_clusters(id,name,original_node_id,manager_node_id,manager_epoch,next_join_sequence,closed) VALUES (?,?,?,?,1,2,0)").run(clusterId, "main", nodeA, nodeA);
+  db.prepare("INSERT INTO sharing_memberships(cluster_id,node_id,join_sequence) VALUES (?,?,1)").run(clusterId, nodeA);
+  assert.throws(() => updateClusterRoutingPolicy(db, clusterId, policy(), nodeB), RoutingPolicyError);
+  assert.equal(updateClusterRoutingPolicy(db, clusterId, policy(), nodeA)?.leaderNodeId, nodeA);
 });
 
 test("replication applies the newest writer and ignores stale events", () => {
@@ -111,6 +111,17 @@ test("replication applies the newest writer and ignores stale events", () => {
   assert.equal(readRoutingPolicy(db, LEGACY_CLUSTER_ID)?.policy.confidenceThreshold, 0.9, "stale event must not win");
   applyClusterRoutingEvent(db, replicationEvent({ clusterId: LEGACY_CLUSTER_ID, policy: null }, "2026-01-03T00:00:00Z", nodeB));
   assert.equal(readRoutingPolicy(db, LEGACY_CLUSTER_ID), null);
+});
+
+test("an unavailable classifier keeps the last usable policy and records a warning", () => {
+  const db = routingPolicyDatabase();
+  updateClusterRoutingPolicy(db, LEGACY_CLUSTER_ID, policy({ confidenceThreshold: 0.4 }), nodeA);
+  applyClusterRoutingEvent(db, replicationEvent({ clusterId: LEGACY_CLUSTER_ID, policy: policy({ classifierId: "future-classifier", confidenceThreshold: 0.8 }) }, "2030-01-01T00:00:00Z", nodeB));
+  assert.equal(readRoutingPolicy(db, LEGACY_CLUSTER_ID)?.policy.classifierId, "typesafe", "the previous usable policy stays active");
+  assert.match(routingPolicyWarning(db, LEGACY_CLUSTER_ID)?.message ?? "", /future-classifier/);
+  assert.throws(() => assertRoutingClassifierForJoin(db, LEGACY_CLUSTER_ID, []), /missing required routing classifier: typesafe/);
+  assert.doesNotThrow(() => assertRoutingClassifierForJoin(db, LEGACY_CLUSTER_ID, ["typesafe"]));
+  applyClusterRoutingEvent(db, replicationEvent({ clusterId: LEGACY_CLUSTER_ID, policy: null }, "2031-01-01T00:00:00Z", nodeB));
 });
 
 test("replication drops policies for clusters this node does not know", () => {

@@ -66,9 +66,10 @@ function fillRoutingForm(routing) {
   renderRoutingHarnessTables(routing.harnesses, routing.routingLevels, policy);
   const editable = policyEntry ? policyEntry.editable : routing.canCreate.includes(elements.routingClusterSelect.value || routing.clusters[0]?.clusterId);
   const leader = policyEntry?.leaderName || null;
-  elements.routingPolicyStatus.textContent = policyEntry
-    ? (editable ? `This node leads the routing policy${leader ? ` (${leader})` : ""}.` : `Managed by ${leader || "the leader node"}. Read-only here.`)
+  const status = policyEntry
+    ? (policyEntry.localLeader ? "This node manages the routing policy." : editable ? `Managed by ${leader || "the policy leader"}. Changes forward there.` : `Managed by ${leader || "the policy leader"}. Read-only here.`)
     : "No routing policy yet. Harness tabs and Classifiers show prefilled defaults; saving from the Cluster tab creates the policy and makes this node its leader.";
+  elements.routingPolicyStatus.textContent = policyEntry?.warning ? `${status} ${policyEntry.warning}` : status;
   const controls = [elements.routingEnabled, elements.routingClassifier, elements.routingInstructions, elements.routingCadence, elements.routingCadenceN, elements.routingConfidence, elements.routingSaveButton, elements.routingSaveClassifiersButton, elements.routingClearButton,
     ...document.querySelectorAll("[data-routing-harness] select")];
   for (const control of controls) control.disabled = !editable;

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Page } from "playwright-core";
+import { DatabaseSync } from "node:sqlite";
+import path from "node:path";
 import { nativeUiFixture } from "./native-ui-fixture.js";
 
 async function signIn(page: Page, url: string, username: string, password: string) {
@@ -56,9 +58,15 @@ test("routing settings are split across harness tabs, the Classifiers tab, and t
   await page.getByTestId("routing-cadence-n").fill("3");
   await page.getByTestId("routing-confidence").fill("0.25");
   await page.getByTestId("routing-save-button").click();
-  await page.getByTestId("routing-status").getByText("This node leads the routing policy").waitFor();
+  await page.getByTestId("routing-status").getByText("This node manages the routing policy").waitFor();
 
   await page.evaluate('document.querySelector("#settingsDialog").close(); true');
+  const db = new DatabaseSync(path.join(node.dataDir, "node.db"));
+  db.exec("PRAGMA busy_timeout=5000");
+  const stored = db.prepare("SELECT policy,revision,leader_node_id,updated_by FROM cluster_routing_policies WHERE cluster_id='' ").get() as { policy: string; revision: number; leader_node_id: string; updated_by: string };
+  const pending = { clusterId: "", policy: { ...JSON.parse(stored.policy), classifierId: "future-classifier" }, revision: stored.revision + 1, leaderNodeId: stored.leader_node_id, updatedBy: stored.updated_by, updatedAt: "2030-01-01T00:00:00Z", originNodeId: stored.leader_node_id };
+  db.prepare("INSERT INTO cluster_routing_pending VALUES (?,?,?,?)").run("", JSON.stringify(pending), pending.updatedAt, pending.originNodeId);
+  db.close();
 
   // Loading the classifier list once must not start a model-dialog render loop.
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
@@ -66,6 +74,7 @@ test("routing settings are split across harness tabs, the Classifiers tab, and t
   await page.locator("#modelButton:enabled").waitFor();
   const routing = await page.evaluate('import("/app/state.js").then(({ state }) => state.routing)');
   assert.equal(routing?.active, true, `saved routing policy must be active for the conversation: ${JSON.stringify(routing)}`);
+  await page.getByTestId("chat-routing-warning").getByText("future-classifier").waitFor();
   await page.getByTestId("chat-model-button").click();
   await page.getByTestId("model-option-bob-auto").waitFor();
   await page.getByTestId("routing-classifier-dialog-select").waitFor();
@@ -77,6 +86,7 @@ test("routing settings are split across harness tabs, the Classifiers tab, and t
   assert.equal(await page.getByTestId("routing-instructions").inputValue(), "easiest is a rename; hardest is a two-service migration", "calibration survives save and reload");
 
   await openSettingsTab(page, "cluster");
+  await page.getByTestId("routing-status").getByText("future-classifier").waitFor();
   await page.getByTestId("routing-clear-button").click();
   await page.locator("#confirmDialog[open]").waitFor();
   await page.getByTestId("confirm-accept-button").click();

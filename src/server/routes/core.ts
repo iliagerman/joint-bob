@@ -153,7 +153,7 @@ app.use("/api/cluster", async (request, response, next) => {
     if (["GET", "HEAD", "OPTIONS"].includes(request.method)) { next(); return; }
     const pathname = request.path.toLowerCase();
     const v2 = pathname === "/v2" || pathname.startsWith("/v2/");
-    if (v2 || (request.method === "PUT" && pathname === "/node") || !await selectiveSharingActive()) { next(); return; }
+    if (v2 || pathname === "/routing" || (request.method === "PUT" && pathname === "/node") || !await selectiveSharingActive()) { next(); return; }
     sendError(response, 409, "Legacy sharing is disabled in selective sharing mode");
   } catch (error) { next(error); }
 });

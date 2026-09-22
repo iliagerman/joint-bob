@@ -13,6 +13,7 @@ import {
   type MembershipEntry,
 } from "../src/cluster-membership.js";
 import { clusterPublicKeyFingerprint, getOrCreateClusterIdentity, pinnedClusterPublicKey, signClusterMessage } from "../src/cluster-identity.js";
+import { ensureRoutingPolicySchema } from "../src/routing-policy.js";
 import {
   createSharingCluster,
   listResourceShares,
@@ -52,6 +53,20 @@ test("membership-only signed invitation joins and applies without leaking policy
     assert.deepEqual(listSharingClusterMembers(receiver, CLUSTER).map((entry) => [entry.nodeId, entry.joinSequence]), [[A, 1], [B, 2]]);
     assert.equal(JSON.stringify(result.invitation).includes("project"), false);
     assert.equal(/token|secret|grant|twin/i.test(JSON.stringify(result.snapshot)), false);
+  } finally { manager.close(); receiver.close(); }
+});
+
+test("a node missing the cluster routing classifier cannot join", () => {
+  const manager = db(), receiver = db();
+  try {
+    createMembershipCluster(manager, local(A, "Alpha", 4001), { id: CLUSTER, name: "Team" });
+    ensureRoutingPolicySchema(manager);
+    const policy = { enabled: true, classifierId: "typesafe", evalCadence: { mode: "first-message" }, confidenceThreshold: 0.3, harnesses: {} };
+    manager.prepare("INSERT INTO cluster_routing_policies VALUES (?,?,?,?,?,?,?)").run(CLUSTER, JSON.stringify(policy), 1, A, A, new Date(1000).toISOString(), A);
+    const invitation = createMembershipInvitation(manager, A, A, CLUSTER, 1, 1000);
+    const request = prepareMembershipJoin(receiver, local(B, "Beta", 4002), invitation, clusterPublicKeyFingerprint(invitation.body.manager.publicKey), REQUEST, 1000, []);
+    assert.throws(() => redeemMembershipInvitation(manager, A, request, invitation.secret, 1000), /missing required routing classifier: typesafe/);
+    assert.deepEqual(listSharingClusterMembers(manager, CLUSTER).map(({ nodeId }) => nodeId), [A], "failed capability validation must not admit the node");
   } finally { manager.close(); receiver.close(); }
 });
 
@@ -131,7 +146,7 @@ test("a skipped local departure and rejoin requires fresh consent", () => {
     removeMembershipMember(manager, A, B, CLUSTER, B, 1);
     const invitation = createMembershipInvitation(manager, A, A, CLUSTER, 1, 2000);
     const member = { ...local(B, "Beta", 4002), publicKey: getOrCreateClusterIdentity(receiver, B).publicKey };
-    const unsigned = { invitationId: invitation.body.invitationId, clusterId: CLUSTER, requestId: REQUEST_B_AGAIN, member };
+    const unsigned = { invitationId: invitation.body.invitationId, clusterId: CLUSTER, requestId: REQUEST_B_AGAIN, member, classifierIds: [] };
     const request = { ...unsigned, signature: signClusterMessage(receiver, B, "membership-join", JSON.stringify(unsigned)) };
     const rejoined = redeemMembershipInvitation(manager, A, request, invitation.secret, 2000);
 
@@ -240,7 +255,7 @@ test("pending transfer blocks fresh invitation consumption by current member", (
     join(manager, receiver);
     const invitation = createMembershipInvitation(manager, A, A, CLUSTER, 1, 1000);
     const member = { ...local(B, "Beta", 4002), publicKey: getOrCreateClusterIdentity(receiver, B).publicKey };
-    const unsigned = { invitationId: invitation.body.invitationId, clusterId: CLUSTER, requestId: REQUEST_C, member };
+    const unsigned = { invitationId: invitation.body.invitationId, clusterId: CLUSTER, requestId: REQUEST_C, member, classifierIds: [] };
     const request = { ...unsigned, signature: signClusterMessage(receiver, B, "membership-join", JSON.stringify(unsigned)) };
     prepareSharingManagerTransfer(manager, CLUSTER, A, B, 1, TRANSFER);
     const revision = getMembershipSnapshot(manager, CLUSTER).body.revision;

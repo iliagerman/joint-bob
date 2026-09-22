@@ -161,6 +161,9 @@ function syncContextUsage(usage) {
 export function updateRoutingMode(routing) {
   // Events may carry only what changed; keep the rest of the last known state.
   state.routing = routing ? { ...state.routing, ...routing } : null;
+  const warning = state.routing?.warning || "";
+  elements.routingWarning.textContent = warning;
+  elements.routingWarning.hidden = !warning;
   renderReasoningOptions();
   syncModelButton();
 }

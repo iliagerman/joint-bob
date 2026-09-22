@@ -1266,6 +1266,7 @@ select.chat-toolbar-control {
 .conversation-lock-copy strong { color: var(--amber); font-size: 12px; font-weight: 600; }
 .done-conversation-notice { background: color-mix(in srgb, var(--accent) 8%, var(--header)); }
 .done-conversation-notice .conversation-lock-copy strong { color: var(--accent); }
+.routing-warning { margin: 0 18px 8px; padding: 9px 12px; border: 1px solid color-mix(in srgb, var(--amber) 50%, var(--line)); border-radius: 10px; background: color-mix(in srgb, var(--amber) 10%, var(--panel)); color: var(--text); font-size: 12px; }
 .conversation-lock-copy span { color: var(--muted); font-size: 12px; line-height: 1.4; }
 .conversation-lock-status:empty { display: none; }
 .conversation-lock button { flex: 0 0 auto; }

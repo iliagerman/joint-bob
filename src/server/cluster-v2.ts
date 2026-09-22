@@ -10,6 +10,8 @@ import { getSharingCluster, listSharingClusterMembers } from "../cluster-sharing
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { activateSelectiveSharing, assertSelectiveSharingCanActivate, ClusterV2HttpError, selectiveSharingActive } from "../cluster-v2-mode.js";
 import { clusterRequestRawBody, isClusterOriginUrl, sendError } from "./http-auth.js";
+import { listDifficultyClassifiers } from "../classifiers/registry.js";
+import { applySignedRoutingPolicySnapshot, currentSignedRoutingPolicy, RoutingPolicyError, type SignedRoutingPolicySnapshot } from "../routing-policy.js";
 
 const uuid = z.string().uuid().regex(/^[0-9a-f-]+$/);
 const origin = z.string().transform((value, context) => {
@@ -27,7 +29,7 @@ const publicKey = z.string().max(4096).superRefine((value, context) => {
   catch { context.addIssue({ code: z.ZodIssueCode.custom, message: "Invalid Ed25519 public key" }); }
 });
 const nodeSchema = z.object({ nodeId: uuid, name: z.string().trim().min(1).max(80), url: origin, publicKey }).strict();
-const joinRequestSchema = z.object({ invitationId: uuid, clusterId: uuid, requestId: uuid, member: nodeSchema, signature: z.string().regex(/^[A-Za-z0-9_-]{86}$/) }).strict();
+const joinRequestSchema = z.object({ invitationId: uuid, clusterId: uuid, requestId: uuid, member: nodeSchema, classifierIds: z.array(z.string().trim().min(1).max(80)).max(50), signature: z.string().regex(/^[A-Za-z0-9_-]{86}$/) }).strict();
 const redeemSchema = z.object({ request: joinRequestSchema, secret: z.string().regex(/^[A-Za-z0-9_-]{43}$/) }).strict();
 const positive = z.number().int().safe().positive();
 const invitationSchema = z.object({
@@ -135,16 +137,17 @@ async function executeJoinV2Membership(parsed: ReturnType<typeof parseV2Invitati
     const local = await localMembershipDescriptor();
     db.exec("SAVEPOINT cluster_v2_prepare_join");
     try {
-      joinRequest = prepareMembershipJoin(db, local, parsed.invitation, parsed.fingerprint, requestId);
+      joinRequest = prepareMembershipJoin(db, local, parsed.invitation, parsed.fingerprint, requestId, Date.now(), listDifficultyClassifiers().map(({ id }) => id));
       db.prepare("INSERT OR IGNORE INTO cluster_v2_membership_nodes VALUES(?,?,?,?,?,NULL)").run(joinRequest.clusterId, parsed.invitation.body.manager.nodeId, parsed.invitation.body.manager.name, parsed.invitation.body.manager.url, parsed.invitation.body.manager.publicKey);
       db.prepare("INSERT INTO cluster_v2_join_attempts VALUES(?,?,?,?,?)").run(requestId, joinRequest.invitationId, joinRequest.clusterId, hash, JSON.stringify(joinRequest));
       activateSelectiveSharing(db); db.exec("RELEASE cluster_v2_prepare_join");
     } catch (error) { db.exec("ROLLBACK TO cluster_v2_prepare_join; RELEASE cluster_v2_prepare_join"); throw error; }
   }
-  const result = await signedPost<{ snapshot: SignedMembershipSnapshot }>(db, joinRequest.member.nodeId, parsed.invitation.body.manager.nodeId, joinRequest.clusterId, "/api/cluster/v2/membership/redeem", { request: joinRequest, secret: parsed.secret });
+  const result = await signedPost<{ snapshot: SignedMembershipSnapshot; routingPolicy: SignedRoutingPolicySnapshot | null }>(db, joinRequest.member.nodeId, parsed.invitation.body.manager.nodeId, joinRequest.clusterId, "/api/cluster/v2/membership/redeem", { request: joinRequest, secret: parsed.secret });
   db.exec("SAVEPOINT cluster_v2_finish_join");
   try {
     applyMembershipSnapshot(db, joinRequest.member.nodeId, result.snapshot);
+    if (result.routingPolicy) applySignedRoutingPolicySnapshot(db, result.routingPolicy);
     db.prepare("INSERT INTO cluster_v2_join_results VALUES(?,?,?,?,?)").run(requestId, joinRequest.invitationId, joinRequest.clusterId, hash, JSON.stringify(result.snapshot));
     db.prepare("DELETE FROM cluster_v2_join_attempts WHERE request_id=?").run(requestId);
     db.exec("RELEASE cluster_v2_finish_join");
@@ -155,7 +158,7 @@ async function executeJoinV2Membership(parsed: ReturnType<typeof parseV2Invitati
 export function mapV2Error(error: unknown, response: Response, next: NextFunction): void {
   if (error instanceof z.ZodError) { sendError(response, 400, "Invalid cluster request"); return; }
   if (error instanceof ClusterProtocolError) { sendError(response, 401, "Unauthorized"); return; }
-  if (error instanceof ClusterV2HttpError) { sendError(response, error.statusCode, error.message); return; }
+  if (error instanceof ClusterV2HttpError || error instanceof RoutingPolicyError) { sendError(response, error.statusCode, error.message); return; }
   if (!(error instanceof Error)) { next(error); return; }
   const message = error.message;
   if (/expired|already used/i.test(message)) { sendError(response, 410, message); return; }
@@ -181,8 +184,9 @@ export async function redeemV2Membership(request: Request, response: Response, n
       const sender = verifyClusterRequest(db, local.id, request.method, request.originalUrl, raw, request.header("authorization"));
       if (sender !== payload.request.member.nodeId) throw new ClusterProtocolError("Invalid cluster request");
       const snapshot = redeemMembershipInvitation(db, local.id, payload.request as MembershipJoinRequest, payload.secret);
+      const routingPolicy = currentSignedRoutingPolicy(db, payload.request.clusterId, local.id);
       db.exec("RELEASE cluster_v2_bootstrap");
-      response.status(201).json({ snapshot });
+      response.status(201).json({ snapshot, routingPolicy });
     } catch (error) { db.exec("ROLLBACK TO cluster_v2_bootstrap; RELEASE cluster_v2_bootstrap"); throw error; }
   } catch (error) { mapV2Error(error, response, next); }
 }

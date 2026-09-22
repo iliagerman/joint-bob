@@ -32,6 +32,7 @@ export const elements = {
   turnTimer: document.querySelector("#turnTimer"),
   reconnectBanner: document.querySelector("#reconnectBanner"),
   reconnectBannerText: document.querySelector("#reconnectBannerText"),
+  routingWarning: document.querySelector("#routingWarning"),
   contextUsage: document.querySelector("#contextUsage"),
   contextUsageFill: document.querySelector("#contextUsageFill"),
   contextUsageText: document.querySelector("#contextUsageText"),

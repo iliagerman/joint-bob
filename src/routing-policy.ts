@@ -8,6 +8,7 @@ import { resolveDataDirectory } from "./data-directory.js";
 import { enqueueReplicationEvent, type ReplicationEvent } from "./replication.js";
 import { resourceClusterIds } from "./cluster-sharing-policy.js";
 import { selectiveSharingActiveInDatabase } from "./cluster-v2-mode-state.js";
+import { getOrCreateClusterIdentity, pinnedClusterPublicKey, signClusterMessage, verifyClusterMessage } from "./cluster-identity.js";
 
 /** The routing policy of the implicit legacy cluster, where every peer sees every project. */
 export const LEGACY_CLUSTER_ID = "";
@@ -69,7 +70,9 @@ interface PolicyRow { cluster_id: string; policy: string; revision: number; lead
 let database: DatabaseSync | undefined;
 
 export function ensureRoutingPolicySchema(db: DatabaseSync): void {
-  db.exec(`CREATE TABLE IF NOT EXISTS cluster_routing_policies(cluster_id TEXT PRIMARY KEY, policy TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>0), leader_node_id TEXT NOT NULL, updated_by TEXT NOT NULL, updated_at TEXT NOT NULL, origin_node_id TEXT NOT NULL DEFAULT '')`);
+  db.exec(`CREATE TABLE IF NOT EXISTS cluster_routing_policies(cluster_id TEXT PRIMARY KEY, policy TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>0), leader_node_id TEXT NOT NULL, updated_by TEXT NOT NULL, updated_at TEXT NOT NULL, origin_node_id TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS cluster_routing_pending(cluster_id TEXT PRIMARY KEY,payload TEXT NOT NULL,updated_at TEXT NOT NULL,origin_node_id TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS cluster_v2_routing_deliveries(cluster_id TEXT NOT NULL,peer_id TEXT NOT NULL,revision INTEGER NOT NULL,snapshot TEXT NOT NULL,PRIMARY KEY(cluster_id,peer_id,revision));`);
 }
 
 export function routingPolicyDatabase(): DatabaseSync {
@@ -115,6 +118,7 @@ function rowToStored(row: PolicyRow): StoredRoutingPolicy {
 }
 
 export function readRoutingPolicy(db: DatabaseSync, clusterId: string): StoredRoutingPolicy | null {
+  activateAvailablePendingRoutingPolicies(db);
   const row = db.prepare("SELECT cluster_id,policy,revision,leader_node_id,updated_by,updated_at FROM cluster_routing_policies WHERE cluster_id = ?").get(clusterId) as PolicyRow | undefined;
   return row ? rowToStored(row) : null;
 }
@@ -130,6 +134,7 @@ export function routingPolicyEditableBy(db: DatabaseSync, stored: StoredRoutingP
 }
 
 export function listRoutingPolicies(db: DatabaseSync): StoredRoutingPolicy[] {
+  activateAvailablePendingRoutingPolicies(db);
   return (db.prepare("SELECT cluster_id,policy,revision,leader_node_id,updated_by,updated_at FROM cluster_routing_policies ORDER BY cluster_id").all() as unknown as PolicyRow[]).map(rowToStored);
 }
 
@@ -171,22 +176,26 @@ export function updateClusterRoutingPolicy(db: DatabaseSync, clusterId: string, 
   if (policy === null) {
     const previousRevision = (db.prepare("SELECT revision FROM cluster_routing_policies WHERE cluster_id = ?").get(clusterId) as { revision: number } | undefined)?.revision ?? 0;
     db.prepare("DELETE FROM cluster_routing_policies WHERE cluster_id = ?").run(clusterId);
-    enqueueClusterRoutingEvent(db, originNodeId, clusterId, null, previousRevision + 1, leaderNodeId, actorNodeId);
+    db.prepare("DELETE FROM cluster_routing_pending WHERE cluster_id = ?").run(clusterId);
+    publishClusterRoutingUpdate(db, originNodeId, clusterId, null, previousRevision + 1, leaderNodeId, actorNodeId);
     return null;
   }
   const stored = storeRoutingPolicyRow(db, { clusterId, policy, leaderNodeId, updatedBy: actorNodeId });
-  enqueueClusterRoutingEvent(db, originNodeId, clusterId, stored.policy, stored.revision, leaderNodeId, actorNodeId, stored.updatedAt);
+  db.prepare("DELETE FROM cluster_routing_pending WHERE cluster_id = ?").run(clusterId);
+  publishClusterRoutingUpdate(db, originNodeId, clusterId, stored.policy, stored.revision, leaderNodeId, actorNodeId, stored.updatedAt);
   return stored;
 }
 
-function enqueueClusterRoutingEvent(db: DatabaseSync, originNodeId: string, clusterId: string, policy: RoutingPolicy | null, revision: number, leaderNodeId: string, updatedBy: string, updatedAt?: string): void {
-  enqueueReplicationEvent(db, {
-    originNodeId,
-    entityType: "cluster.routing",
-    entityKey: clusterId || "legacy",
-    operation: policy ? "upsert" : "delete",
-    payload: { clusterId, policy, revision, leaderNodeId, updatedBy, updatedAt: updatedAt ?? new Date().toISOString(), originNodeId },
-  });
+function publishClusterRoutingUpdate(db: DatabaseSync, originNodeId: string, clusterId: string, policy: RoutingPolicy | null, revision: number, leaderNodeId: string, updatedBy: string, updatedAt?: string): void {
+  const payload = clusterRoutingEventPayloadSchema.parse({ clusterId, policy, revision, leaderNodeId, updatedBy, updatedAt: updatedAt ?? new Date().toISOString(), originNodeId });
+  if (clusterId === LEGACY_CLUSTER_ID) {
+    enqueueReplicationEvent(db, { originNodeId, entityType: "cluster.routing", entityKey: "legacy", operation: policy ? "upsert" : "delete", payload });
+    return;
+  }
+  const snapshot = signRoutingPolicySnapshot(db, payload, leaderNodeId);
+  const members = db.prepare("SELECT node_id FROM sharing_memberships WHERE cluster_id = ? AND node_id <> ?").all(clusterId, originNodeId) as unknown as Array<{ node_id: string }>;
+  const insert = db.prepare("INSERT OR REPLACE INTO cluster_v2_routing_deliveries(cluster_id,peer_id,revision,snapshot) VALUES (?,?,?,?)");
+  for (const member of members) insert.run(clusterId, member.node_id, revision, JSON.stringify(snapshot));
 }
 
 export const clusterRoutingEventPayloadSchema = z.object({
@@ -199,23 +208,99 @@ export const clusterRoutingEventPayloadSchema = z.object({
   originNodeId: z.string().min(1),
 }).strict();
 
-/** Replication applier: last writer wins on (updatedAt, originNodeId). A v2 cluster
-    policy is only stored where the cluster is known locally. */
-export function applyClusterRoutingEvent(db: DatabaseSync, event: ReplicationEvent): void {
-  if (event.entityType !== "cluster.routing" || !["upsert", "delete"].includes(event.operation)) throw new Error("Unsupported routing replication event");
-  const payload = clusterRoutingEventPayloadSchema.parse(event.payload);
-  if ((event.operation === "upsert") !== (payload.policy !== null)) throw new Error("Malformed routing replication event");
-  if (event.entityKey !== (payload.clusterId || "legacy")) throw new Error("Malformed routing replication event");
-  if (payload.clusterId !== LEGACY_CLUSTER_ID && !db.prepare("SELECT 1 FROM sharing_clusters WHERE id = ?").get(payload.clusterId)) return;
-  const existing = db.prepare("SELECT updated_at, origin_node_id FROM cluster_routing_policies WHERE cluster_id = ?").get(payload.clusterId) as { updated_at: string; origin_node_id: string } | undefined;
-  if (existing && `${payload.updatedAt}\n${payload.originNodeId}` <= `${existing.updated_at}\n${existing.origin_node_id}`) return;
+export const signedRoutingPolicySnapshotSchema = z.object({ body: clusterRoutingEventPayloadSchema, signerNodeId: z.string().min(1), signature: z.string().min(1) }).strict();
+export type SignedRoutingPolicySnapshot = z.infer<typeof signedRoutingPolicySnapshotSchema>;
+
+function routingVersion(value: { updatedAt: string; originNodeId: string }): string { return `${value.updatedAt}\n${value.originNodeId}`; }
+
+function applyRoutingPayload(db: DatabaseSync, payload: z.infer<typeof clusterRoutingEventPayloadSchema>): void {
+  const existing = db.prepare("SELECT updated_at,origin_node_id FROM cluster_routing_policies WHERE cluster_id=?").get(payload.clusterId) as { updated_at: string; origin_node_id: string } | undefined;
+  const pending = db.prepare("SELECT updated_at,origin_node_id FROM cluster_routing_pending WHERE cluster_id=?").get(payload.clusterId) as { updated_at: string; origin_node_id: string } | undefined;
+  if (pending && routingVersion(payload) <= routingVersion({ updatedAt: pending.updated_at, originNodeId: pending.origin_node_id })) return;
+  if (existing && routingVersion(payload) <= routingVersion({ updatedAt: existing.updated_at, originNodeId: existing.origin_node_id })) return;
   if (payload.policy === null) {
-    db.prepare("DELETE FROM cluster_routing_policies WHERE cluster_id = ?").run(payload.clusterId);
+    db.prepare("DELETE FROM cluster_routing_policies WHERE cluster_id=?").run(payload.clusterId);
+    db.prepare("DELETE FROM cluster_routing_pending WHERE cluster_id=?").run(payload.clusterId);
+    return;
+  }
+  if (!getDifficultyClassifier(payload.policy.classifierId)) {
+    db.prepare(`INSERT INTO cluster_routing_pending(cluster_id,payload,updated_at,origin_node_id) VALUES (?,?,?,?)
+      ON CONFLICT(cluster_id) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at,origin_node_id=excluded.origin_node_id`)
+      .run(payload.clusterId, JSON.stringify(payload), payload.updatedAt, payload.originNodeId);
     return;
   }
   db.prepare(`INSERT INTO cluster_routing_policies(cluster_id,policy,revision,leader_node_id,updated_by,updated_at,origin_node_id) VALUES (?,?,?,?,?,?,?)
-    ON CONFLICT(cluster_id) DO UPDATE SET policy=excluded.policy, revision=excluded.revision, leader_node_id=excluded.leader_node_id, updated_by=excluded.updated_by, updated_at=excluded.updated_at, origin_node_id=excluded.origin_node_id`)
+    ON CONFLICT(cluster_id) DO UPDATE SET policy=excluded.policy,revision=excluded.revision,leader_node_id=excluded.leader_node_id,updated_by=excluded.updated_by,updated_at=excluded.updated_at,origin_node_id=excluded.origin_node_id`)
     .run(payload.clusterId, JSON.stringify(payload.policy), payload.revision, payload.leaderNodeId, payload.updatedBy, payload.updatedAt, payload.originNodeId);
+  db.prepare("DELETE FROM cluster_routing_pending WHERE cluster_id=?").run(payload.clusterId);
+}
+
+function activateAvailablePendingRoutingPolicies(db: DatabaseSync): void {
+  const rows = db.prepare("SELECT payload FROM cluster_routing_pending").all() as unknown as Array<{ payload: string }>;
+  for (const row of rows) {
+    const payload = clusterRoutingEventPayloadSchema.parse(JSON.parse(row.payload));
+    if (payload.policy && getDifficultyClassifier(payload.policy.classifierId)) {
+      db.prepare("DELETE FROM cluster_routing_pending WHERE cluster_id=?").run(payload.clusterId);
+      applyRoutingPayload(db, payload);
+    }
+  }
+}
+
+export function routingPolicyWarning(db: DatabaseSync, clusterId: string): { classifierId: string; revision: number; message: string } | null {
+  activateAvailablePendingRoutingPolicies(db);
+  const row = db.prepare("SELECT payload FROM cluster_routing_pending WHERE cluster_id=?").get(clusterId) as { payload: string } | undefined;
+  if (!row) return null;
+  const payload = clusterRoutingEventPayloadSchema.parse(JSON.parse(row.payload));
+  if (!payload.policy) return null;
+  return { classifierId: payload.policy.classifierId, revision: payload.revision, message: `Routing update paused: classifier ${payload.policy.classifierId} is not installed on this node. Using the previous policy.` };
+}
+
+export function requiredRoutingClassifier(db: DatabaseSync, clusterId: string): string | null { return readRoutingPolicy(db, clusterId)?.policy.classifierId ?? null; }
+
+export function assertRoutingClassifierForJoin(db: DatabaseSync, clusterId: string, classifierIds: readonly string[]): void {
+  ensureRoutingPolicySchema(db);
+  const required = requiredRoutingClassifier(db, clusterId);
+  if (required && !classifierIds.includes(required)) throw new RoutingPolicyError(409, `Node is missing required routing classifier: ${required}`);
+}
+
+export function signRoutingPolicySnapshot(db: DatabaseSync, body: z.infer<typeof clusterRoutingEventPayloadSchema>, signerNodeId: string): SignedRoutingPolicySnapshot {
+  getOrCreateClusterIdentity(db, signerNodeId);
+  return signedRoutingPolicySnapshotSchema.parse({ body, signerNodeId, signature: signClusterMessage(db, signerNodeId, "routing-policy", JSON.stringify(body)) });
+}
+
+export function currentSignedRoutingPolicy(db: DatabaseSync, clusterId: string, signerNodeId: string): SignedRoutingPolicySnapshot | null {
+  ensureRoutingPolicySchema(db);
+  const stored = readRoutingPolicy(db, clusterId);
+  return stored ? signRoutingPolicySnapshot(db, { ...stored, originNodeId: signerNodeId }, signerNodeId) : null;
+}
+
+export function applySignedRoutingPolicySnapshot(db: DatabaseSync, snapshot: SignedRoutingPolicySnapshot): void {
+  ensureRoutingPolicySchema(db);
+  const parsed = signedRoutingPolicySnapshotSchema.parse(snapshot);
+  const manager = db.prepare("SELECT manager_node_id FROM sharing_clusters WHERE id=?").get(parsed.body.clusterId) as { manager_node_id: string | null } | undefined;
+  const key = pinnedClusterPublicKey(db, parsed.signerNodeId);
+  if (!manager || manager.manager_node_id !== parsed.signerNodeId || parsed.body.leaderNodeId !== parsed.signerNodeId || !key || !verifyClusterMessage(key, "routing-policy", JSON.stringify(parsed.body), parsed.signature)) throw new RoutingPolicyError(401, "Invalid routing policy snapshot");
+  applyRoutingPayload(db, parsed.body);
+}
+
+export function listRoutingPolicyDeliveries(db: DatabaseSync): Array<{ clusterId: string; peerId: string; revision: number; snapshot: SignedRoutingPolicySnapshot }> {
+  ensureRoutingPolicySchema(db);
+  const rows = db.prepare("SELECT cluster_id,peer_id,revision,snapshot FROM cluster_v2_routing_deliveries ORDER BY cluster_id,peer_id,revision").all() as unknown as Array<{ cluster_id: string; peer_id: string; revision: number; snapshot: string }>;
+  return rows.map((row) => ({ clusterId: row.cluster_id, peerId: row.peer_id, revision: row.revision, snapshot: signedRoutingPolicySnapshotSchema.parse(JSON.parse(row.snapshot)) }));
+}
+
+export function acknowledgeRoutingPolicyDelivery(db: DatabaseSync, clusterId: string, peerId: string, revision: number): void {
+  ensureRoutingPolicySchema(db);
+  db.prepare("DELETE FROM cluster_v2_routing_deliveries WHERE cluster_id=? AND peer_id=? AND revision=?").run(clusterId, peerId, revision);
+}
+
+/** Legacy replication applier. Selective clusters use signed manager snapshots. */
+export function applyClusterRoutingEvent(db: DatabaseSync, event: ReplicationEvent): void {
+  if (event.entityType !== "cluster.routing" || !["upsert", "delete"].includes(event.operation)) throw new Error("Unsupported routing replication event");
+  const payload = clusterRoutingEventPayloadSchema.parse(event.payload);
+  if ((event.operation === "upsert") !== (payload.policy !== null) || event.entityKey !== (payload.clusterId || "legacy")) throw new Error("Malformed routing replication event");
+  if (payload.clusterId !== LEGACY_CLUSTER_ID && !db.prepare("SELECT 1 FROM sharing_clusters WHERE id=?").get(payload.clusterId)) return;
+  applyRoutingPayload(db, payload);
 }
 
 /** True when this prompt ordinal is an evaluation point under the policy's cadence. */

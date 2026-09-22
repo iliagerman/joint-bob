@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Routing policies now display a warning when the configured classifier is not installed locally, and queue pending updates until the classifier becomes available. Cluster nodes can forward policy edits to the leader if they don't manage it locally. Joining a cluster now validates that the joining node has the required routing classifiers installed.
+
 ## 1.70.3 — 2026-09-22
 
 - Background tasks now show running tasks first and are filtered to running tasks by default, with options to view all, completed, failed, stopped, or unknown statuses.

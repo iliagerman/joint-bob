@@ -3,11 +3,11 @@ import { internalTaskPrompt } from "../background-task-messages.js";
 import { unlink } from "node:fs/promises";
 import path from "node:path";
 import WebSocket from "ws";
-import { getClusterNode } from "../cluster.js";
+import { getClusterNode, listClusterPeers } from "../cluster.js";
 import { getConversationRecord, ensureConversationRecord, listConversationSegments } from "../conversation-records.js";
 import type { DifficultyClassification } from "../classifiers/contract.js";
 import { getDifficultyClassifier } from "../classifiers/registry.js";
-import { automaticRoutingModelAllowed, routingEvalDue, routingPolicyDatabase, routingPolicyEditableBy, routingPolicyForProject, type StoredRoutingPolicy } from "../routing-policy.js";
+import { automaticRoutingModelAllowed, LEGACY_CLUSTER_ID, routingEvalDue, routingPolicyDatabase, routingPolicyEditableBy, routingPolicyForProject, routingPolicyWarning, type StoredRoutingPolicy } from "../routing-policy.js";
 import { blockConversationGoal, cancelConversationGoal, getConversationGoal, goalPrompt, goalStatusMessage, parseBobGoalCommand, recordConversationGoalResponse, startConversationGoal, type ConversationGoal } from "../conversation-goals.js";
 import { ConversationOwnershipError } from "../conversation-ownership.js";
 import { buildHandoffContext } from "../handoff-context.js";
@@ -413,21 +413,25 @@ async function switchHarness(connection: HarnessChatConnection, engine: HarnessI
 
 /** The routing state clients need to render the pickers: whether the classifier
     drives this conversation, which classifier won, and whether this node may edit it. */
-async function routingClientState(connection: HarnessChatConnection, localNodeId: string): Promise<{ active: boolean; mode: "auto" | "manual"; classifierId?: string; editable?: boolean } | null> {
+async function routingClientState(connection: HarnessChatConnection, localNodeId: string): Promise<{ active: boolean; mode: "auto" | "manual"; classifierId?: string; editable?: boolean; warning?: string } | null> {
   const policy = routingPolicyForProject(connection.project.id);
   if (!policy) return null;
+  const db = routingPolicyDatabase();
+  const leaderReachable = policy.clusterId === LEGACY_CLUSTER_ID && (await listClusterPeers()).some((peer) => peer.id === policy.leaderNodeId);
+  const warning = routingPolicyWarning(db, policy.clusterId)?.message;
   return {
     active: true,
     mode: readRoutingState(queueKey(connection)).mode,
     classifierId: policy.policy.classifierId,
-    editable: routingPolicyEditableBy(routingPolicyDatabase(), policy, localNodeId),
+    editable: routingPolicyEditableBy(db, policy, localNodeId) || leaderReachable,
+    ...(warning ? { warning } : {}),
   };
 }
 
 function publishRoutingMode(connection: HarnessChatConnection): void {
   const mode = readRoutingState(queueKey(connection)).mode;
   void getClusterNode().then((local) => routingClientState(connection, local.id)).then((state) => {
-    publish(connection, { type: "routingMode", mode, active: state?.active ?? true, ...(state?.classifierId ? { classifierId: state.classifierId } : {}), ...(state?.editable !== undefined ? { editable: state.editable } : {}) });
+    publish(connection, { type: "routingMode", mode, active: state?.active ?? true, ...(state?.classifierId ? { classifierId: state.classifierId } : {}), ...(state?.editable !== undefined ? { editable: state.editable } : {}), warning: state?.warning ?? "" });
   });
 }
 

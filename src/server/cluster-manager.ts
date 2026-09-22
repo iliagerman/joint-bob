@@ -11,12 +11,13 @@ import { verifyClusterRequest } from "../cluster-protocol.js";
 import { getSharingCluster } from "../cluster-sharing-policy.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { ClusterV2HttpError, selectiveSharingActive } from "../cluster-v2-mode.js";
-import { flushV2MembershipOutbox, mapV2Error } from "./cluster-v2.js";
+import { flushV2MembershipOutbox, mapV2Error, signedPost } from "./cluster-v2.js";
 import { clusterRequestRawBody } from "./http-auth.js";
 import { signClusterRequest } from "../cluster-protocol.js";
 import { flushTwinDeliveries } from "./twins.js";
 import { flushProjectMetadataDeliveries } from "./project-metadata.js";
 import { flushResourcePolicyDeliveries } from "./resource-policy.js";
+import { acknowledgeRoutingPolicyDelivery, listRoutingPolicyDeliveries } from "../routing-policy.js";
 
 const certificatePayloadSchema = z.object({ certificate: managerTransferCertificateSchema }).strict();
 type ManagerStep =
@@ -62,6 +63,14 @@ export async function flushV2ClusterAdministration(): Promise<void> {
     for (const step of steps) await deliverStep(db, local.id, step);
     for (const delivery of listManagerTransferDeliveries(db)) await deliverCertificate(db, local.id, delivery);
     await flushV2MembershipOutbox();
+    for (const delivery of listRoutingPolicyDeliveries(db)) {
+      try {
+        await signedPost(db, local.id, delivery.peerId, delivery.clusterId, "/api/cluster/v2/routing", { snapshot: delivery.snapshot });
+        acknowledgeRoutingPolicyDelivery(db, delivery.clusterId, delivery.peerId, delivery.revision);
+      } catch (error) {
+        console.warn(`Routing policy delivery to ${delivery.peerId} failed: ${error instanceof Error ? error.message : "delivery failed"}`);
+      }
+    }
     await flushResourcePolicyDeliveries();
     await flushProjectMetadataDeliveries();
   } finally { flushing = false; }
