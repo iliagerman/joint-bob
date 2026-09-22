@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.71.0 — 2026-09-22
 
-- Routing policies now display a warning when the configured classifier is not installed locally, and queue pending updates until the classifier becomes available. Cluster nodes can forward policy edits to the leader if they don't manage it locally. Joining a cluster now validates that the joining node has the required routing classifiers installed.
+- Joining a cluster now requires its routing classifier and receives the cluster policy immediately.
+- Nodes keep their previous routing policy when a later classifier is unavailable, with warnings in Cluster settings and affected conversations.
 
 ## 1.70.3 — 2026-09-22
 
