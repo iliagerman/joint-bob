@@ -54,14 +54,16 @@ test("routing settings are split across harness tabs, the Classifiers tab, and t
   await page.getByTestId("routing-classifier").waitFor();
   assert.equal(await page.getByTestId("routing-classifier").inputValue(), "typesafe");
   assert.equal(await page.getByTestId("routing-instructions").count(), 0, "the fixed classifier prompt has no calibration field");
+  await page.getByTestId("routing-cadence").selectOption("every-n");
+  await page.getByTestId("routing-cadence-n").fill("3");
+  await page.getByTestId("routing-context-messages").fill("6");
 
   // Policy controls, saving, and the leader status stay in the Cluster tab.
   await openSettingsTab(page, "cluster");
   await page.getByTestId("routing-status").getByText("No routing policy yet").waitFor();
   assert.equal(await page.locator('#settingsPanel-cluster [data-testid="routing-classifier"]').count(), 0, "the classifier select must not be under Clusters");
+  assert.equal(await page.locator('#settingsPanel-cluster [data-testid="routing-cadence"]').count(), 0, "evaluation cadence must live under Classifiers");
   await page.getByTestId("routing-enabled").check();
-  await page.getByTestId("routing-cadence").selectOption("every-n");
-  await page.getByTestId("routing-cadence-n").fill("3");
   await page.getByTestId("routing-confidence").fill("0.25");
   await page.getByTestId("routing-save-button").click();
   await page.getByTestId("routing-status").getByText("This node manages the routing policy").waitFor();
@@ -94,6 +96,10 @@ test("routing settings are split across harness tabs, the Classifiers tab, and t
 
   await openHarnessRoutingGrid(page, "kiro");
   assert.equal(await page.getByTestId("routing-description-kiro-1").inputValue(), "Small, localized requests with clear requirements", "classifier description survives save and reload");
+
+  await openSettingsTab(page, "classifiers");
+  assert.equal(await page.getByTestId("routing-cadence-n").inputValue(), "3");
+  assert.equal(await page.getByTestId("routing-context-messages").inputValue(), "6");
 
   await openSettingsTab(page, "cluster");
   await page.getByTestId("routing-status").getByText("future-classifier").waitFor();

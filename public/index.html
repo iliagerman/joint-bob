@@ -637,8 +637,6 @@
             <p id="routingPolicyStatus" data-testid="routing-status" role="status"></p>
             <label>Policy cluster<select id="routingClusterSelect" data-testid="routing-cluster-select"></select></label>
             <label class="checkbox-row"><input type="checkbox" id="routingEnabled" data-testid="routing-enabled" /> Route prompts to a model by difficulty</label>
-            <label>Evaluate difficulty<select id="routingCadence" data-testid="routing-cadence"><option value="first-message">First message only</option><option value="every-n">Every N messages</option></select></label>
-            <label>Messages between evaluations<input type="number" id="routingCadenceN" min="1" max="500" step="1" value="5" data-testid="routing-cadence-n" /></label>
             <label>Confidence threshold (0 to 1)<input type="number" id="routingConfidence" min="0" max="1" step="0.05" value="0.3" data-testid="routing-confidence" /></label>
             <p class="settings-hint">Model options and their required classifier descriptions live under each harness's tab. The classifier uses its fixed question and chooses among those options. Below the confidence threshold, or on any classifier failure, prompts keep the conversation's current model. A manual model pick always wins until Bob auto is selected again.</p>
             <div class="github-group-actions">
@@ -689,7 +687,10 @@
           <fieldset class="phase-settings">
             <legend>Classifier</legend>
             <label>Classifier model<select id="routingClassifier" data-testid="routing-classifier"></select></label>
-            <p class="settings-hint">The classifier uses a fixed question. Each choice and its description come from the active harness's configured model options. Changes save with the routing policy in the Cluster tab.</p>
+            <label>Evaluate the conversation<select id="routingCadence" data-testid="routing-cadence"><option value="first-message">First turn only</option><option value="every-n">Every N user turns</option></select></label>
+            <label>User turns between evaluations<input type="number" id="routingCadenceN" min="1" max="500" step="1" value="5" data-testid="routing-cadence-n" /></label>
+            <label>Recent messages per evaluation<input type="number" id="routingContextMessages" min="1" max="100" step="1" value="10" data-testid="routing-context-messages" /></label>
+            <p class="settings-hint">At each evaluation, the classifier receives this many recent user and assistant messages, including the current prompt. It uses a fixed question and chooses among the model options described under the active harness. Changes save with the routing policy in the Cluster tab.</p>
             <div class="github-group-actions">
               <button class="ghost" type="button" id="routingSaveClassifiersButton" data-testid="routing-save-classifiers-button">Save routing policy</button>
             </div>

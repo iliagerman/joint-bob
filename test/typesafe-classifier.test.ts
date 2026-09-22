@@ -48,6 +48,17 @@ test("classifyWithTypesafe sends one score question with the ten-level rubric an
   assert.equal(body.questions.complexity.criteria.length, 10);
 });
 
+test("classifyWithTypesafe preserves the newest text when state exceeds its budget", async () => {
+  let state = "";
+  const fetchImpl: typeof fetch = async (_url, init) => {
+    state = (JSON.parse(String(init!.body)) as { state: string }).state;
+    return jsonResponse(200, { answers: { complexity: scoreAnswer() } });
+  };
+  await classifyWithTypesafe(`${"old".repeat(50_000)}\nCURRENT PROMPT`, "key", "", fetchImpl);
+  assert.ok(state.length <= 120_000);
+  assert.match(state, /CURRENT PROMPT$/);
+});
+
 test("classifyWithTypesafe retries a 429 once and then succeeds", async () => {
   let calls = 0;
   const fetchImpl: typeof fetch = async () => {

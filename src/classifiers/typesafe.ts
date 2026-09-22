@@ -97,7 +97,8 @@ async function postOnce(text: string, apiKey: string, context: string | Difficul
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      state: text.slice(0, STATE_CHARACTER_LIMIT),
+      // Keep the newest context, especially the current prompt, when long messages exceed Jev's state budget.
+      state: text.slice(-STATE_CHARACTER_LIMIT),
       model: TYPESAFE_MODEL,
       questions: { complexity: questionFor(context) },
     }),

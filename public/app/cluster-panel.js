@@ -73,6 +73,7 @@ function fillRoutingForm(routing) {
   elements.routingClassifier.value = policy?.classifierId || routing.classifiers[0]?.id || "";
   elements.routingCadence.value = policy?.evalCadence.mode || "first-message";
   elements.routingCadenceN.value = policy?.evalCadence.n || 5;
+  elements.routingContextMessages.value = policy?.contextMessages || 10;
   elements.routingConfidence.value = policy?.confidenceThreshold ?? 0.3;
   renderRoutingHarnessTables(routing.harnesses, routing.routingLevels, policy);
   const editable = policyEntry ? policyEntry.editable : routing.canCreate.includes(elements.routingClusterSelect.value || routing.clusters[0]?.clusterId);
@@ -81,7 +82,7 @@ function fillRoutingForm(routing) {
     ? (policyEntry.localLeader ? "This node manages the routing policy." : editable ? `Managed by ${leader || "the policy leader"}. Changes forward there.` : `Managed by ${leader || "the policy leader"}. Read-only here.`)
     : "No routing policy yet. Harness tabs and Classifiers show prefilled defaults; saving from the Cluster tab creates the policy and makes this node its leader.";
   elements.routingPolicyStatus.textContent = policyEntry?.warning ? `${status} ${policyEntry.warning}` : status;
-  const controls = [elements.routingEnabled, elements.routingClassifier, elements.routingCadence, elements.routingCadenceN, elements.routingConfidence, elements.routingSaveButton, elements.routingSaveClassifiersButton, elements.routingClearButton,
+  const controls = [elements.routingEnabled, elements.routingClassifier, elements.routingCadence, elements.routingCadenceN, elements.routingContextMessages, elements.routingConfidence, elements.routingSaveButton, elements.routingSaveClassifiersButton, elements.routingClearButton,
     ...document.querySelectorAll("[data-routing-harness] select, [data-routing-harness] input")];
   for (const control of controls) control.disabled = !editable;
   elements.routingClearButton.disabled = !editable || !policyEntry;
@@ -122,6 +123,7 @@ function routingFormValue() {
     enabled: elements.routingEnabled.checked,
     classifierId: elements.routingClassifier.value,
     evalCadence: { mode: cadenceMode, ...(cadenceMode === "every-n" ? { n: Number(elements.routingCadenceN.value) } : {}) },
+    contextMessages: Number(elements.routingContextMessages.value),
     confidenceThreshold: Number(elements.routingConfidence.value),
     harnesses,
   };

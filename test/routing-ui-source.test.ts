@@ -30,10 +30,14 @@ test("prompt routing UI wiring stays connected", async () => {
   assert.match(controls, /updateRoutingMode/, "mode changes must refresh the pickers");
   assert.match(controls, /elements\.reasoningLevelSelect\.disabled = !allowed \|\| auto/, "Bob auto locks the reasoning picker");
   assert.match(settings, /dataset\.routingHarness = descriptor\.id/, "each harness tab owns a routing grid");
-  for (const testid of ["routing-enabled", "routing-cadence", "routing-confidence", "routing-classifier", "routing-save-button", "routing-clear-button", "model-auto-label"]) {
+  for (const testid of ["routing-enabled", "routing-cadence", "routing-context-messages", "routing-confidence", "routing-classifier", "routing-save-button", "routing-clear-button", "model-auto-label"]) {
     assert.ok(index.includes(`data-testid="${testid}"`), `index.html must carry ${testid}`);
   }
   assert.ok(index.includes('data-settings-tab="classifiers"'), "the Classifiers tab must exist outside the Cluster tab");
-  assert.ok(!index.includes('id="routingClassifier" data-testid="routing-classifier"></select></label>\n            <label>Evaluate difficulty'), "the classifier select must not live under Clusters");
+  const clusterPanel = index.slice(index.indexOf('id="settingsPanel-cluster"'), index.indexOf('id="settingsPanel-workspaces"'));
+  const classifierPanel = index.slice(index.indexOf('id="settingsPanel-classifiers"'), index.indexOf('id="settingsPanel-resources"'));
+  assert.ok(!clusterPanel.includes('data-testid="routing-classifier"'), "the classifier select must not live under Clusters");
+  assert.ok(!clusterPanel.includes('data-testid="routing-cadence"'), "evaluation cadence must not live under Clusters");
+  assert.ok(classifierPanel.includes('data-testid="routing-cadence"') && classifierPanel.includes('data-testid="routing-context-messages"'), "classifier timing and context controls must live under Classifiers");
   assert.match(worker, /const CACHE_NAME = "joint-bob-v\d+";/);
 });

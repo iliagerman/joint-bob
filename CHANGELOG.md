@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- The difficulty classifier now considers recent conversation history when evaluating prompts, not just the current message; context window and evaluation cadence controls moved to the Classifiers settings tab.
+
 ## 1.73.0 — 2026-09-22
 
 - Conversations from the review queue now highlight messages newer than your last review.

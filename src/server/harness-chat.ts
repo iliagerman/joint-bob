@@ -184,7 +184,15 @@ async function applyQueuedSettings(connection: HarnessChatConnection, settings: 
   if (settings.enabledTools !== undefined || settings.claudeTools) await connection.shared.session.setTools(runtimeSettings(settings).enabledTools ?? []);
 }
 
-/** Cluster routing: classify the prompt's difficulty and switch the conversation's
+function routingClassifierInput(connection: HarnessChatConnection, queued: QueuedPrompt, messageLimit: number): string {
+  const messages = connection.shared.session.messages
+    .filter((message) => (message.role === "user" || message.role === "assistant") && message.text.trim())
+    .map((message) => ({ role: message.role, text: message.text.trim() }));
+  messages.push({ role: "user", text: (queued.messageText ?? queued.promptText).trim() });
+  return messages.slice(-messageLimit).map((message) => `${message.role === "user" ? "User" : "Assistant"}:\n${message.text}`).join("\n\n");
+}
+
+/** Cluster routing: classify recent conversation context and switch the conversation's
     model to the policy mapping for this harness. Manual picks always win; any failure
     keeps the conversation's current settings and never blocks the prompt. In manual
     mode nothing routes: the hand-picked model stands until Bob auto is selected. */
@@ -224,7 +232,8 @@ async function routePromptByDifficulty(connection: HarnessChatConnection, queued
   if (!apiKey) { skip("classifier key missing"); return; }
   let classification: DifficultyClassification | null = null;
   try {
-    classification = await classifier.classify(queued.messageText ?? queued.promptText, apiKey, { options: configuredOptions });
+    const input = routingClassifierInput(connection, queued, policy.policy.contextMessages ?? 10);
+    classification = await classifier.classify(input, apiKey, { options: configuredOptions });
   } catch { classification = null; }
   if (!classification) { skip("classifier failed"); return; }
   if (classification.confidence < policy.policy.confidenceThreshold) { skip("low confidence", classification.level, classification.confidence); return; }

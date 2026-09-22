@@ -43,6 +43,8 @@ export const routingPolicySchema = z.object({
   enabled: z.boolean(),
   classifierId: z.string().trim().min(1).max(80),
   evalCadence: routingCadenceSchema,
+  /** Number of recent user/assistant messages, including the current prompt, sent to the classifier. Optional for policies saved by older releases. */
+  contextMessages: z.number().int().min(1).max(100).optional(),
   confidenceThreshold: z.number().min(0).max(1),
   harnesses: z.record(z.string().trim().min(1).max(80), z.object({
     levels: z.record(z.string().trim().regex(/^(10|[1-9])$/), routingMappingSchema.nullable()),
@@ -337,7 +339,7 @@ export function defaultRoutingPolicy(modelsByHarness: Record<string, DefaultPoli
     }
     harnesses[adapter.id] = { levels: levelsMap };
   }
-  return { enabled: true, classifierId: listDifficultyClassifiers()[0]?.id ?? "typesafe", evalCadence: { mode: "first-message" }, confidenceThreshold: 0.3, harnesses };
+  return { enabled: true, classifierId: listDifficultyClassifiers()[0]?.id ?? "typesafe", evalCadence: { mode: "first-message" }, contextMessages: 10, confidenceThreshold: 0.3, harnesses };
 }
 
 /** Resolves the routing policy that governs a project on this node, or null.

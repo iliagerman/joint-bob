@@ -20,6 +20,7 @@ function policy(overrides: Partial<RoutingPolicy> = {}): RoutingPolicy {
     enabled: true,
     classifierId: "typesafe",
     evalCadence: { mode: "every-n", n: 3 },
+    contextMessages: 10,
     confidenceThreshold: 0.3,
     harnesses: { kiro: { levels: { "7": { modelId: "default", thinkingLevel: "high", description: "Complex multi-file work" } } } },
     ...overrides,
@@ -68,9 +69,14 @@ test("validateRoutingPolicy accepts a valid policy", () => {
   assert.equal(parsed.harnesses.kiro.levels["7"]?.modelId, "default");
 });
 
-test("every-n cadence requires n and first-message forbids it", () => {
+test("classifier cadence and context window are bounded", () => {
   assert.throws(() => policy({ evalCadence: { mode: "every-n" } }), /requires n/);
   assert.throws(() => policy({ evalCadence: { mode: "first-message", n: 2 } }), /cannot carry n/);
+  assert.throws(() => policy({ contextMessages: 0 }), /greater than or equal to 1/);
+  assert.throws(() => policy({ contextMessages: 101 }), /less than or equal to 100/);
+  const legacy = structuredClone(policy()) as Partial<RoutingPolicy>;
+  delete legacy.contextMessages;
+  assert.equal(validateRoutingPolicy(legacy).contextMessages, undefined, "policies saved before context windows remain valid");
 });
 
 test("legacy leadership: the first writer becomes the leader and only the leader may change the policy", () => {
@@ -170,6 +176,7 @@ test("defaultRoutingPolicy uses only the approved Codex routing tiers", () => {
     ["10", "gpt-6-astra"],
   ]);
   assert.ok(Object.values(generated.harnesses.kiro.levels).every((mapping) => !mapping), "harnesses without approved models stay blank");
+  assert.equal(generated.contextMessages, 10);
   assert.doesNotThrow(() => validateRoutingPolicy(generated), "generated defaults must satisfy the policy schema");
 });
 

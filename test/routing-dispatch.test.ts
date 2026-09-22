@@ -111,7 +111,7 @@ before(async () => {
   assert.equal(attached.status, 200, JSON.stringify(attached.body));
   const saved = await api(node, session, "PUT", "/cluster/routing", {
     clusterId: "",
-    policy: { enabled: true, classifierId: "typesafe", evalCadence: { mode: "every-n", n: 2 }, confidenceThreshold: 0.3, harnesses: { kiro: { levels: { "1": { modelId: "default", thinkingLevel: "low", description: "Small obvious request" }, "8": { modelId: "big", thinkingLevel: "high", description: "Cross-component design or difficult debugging" } } } } },
+    policy: { enabled: true, classifierId: "typesafe", evalCadence: { mode: "every-n", n: 2 }, contextMessages: 3, confidenceThreshold: 0.3, harnesses: { kiro: { levels: { "1": { modelId: "default", thinkingLevel: "low", description: "Small obvious request" }, "8": { modelId: "big", thinkingLevel: "high", description: "Cross-component design or difficult debugging" } } } } },
   });
   assert.equal(saved.status, 200, JSON.stringify(saved.body));
 }, { timeout: 120_000 });
@@ -153,6 +153,11 @@ test("difficulty routing maps a classified prompt to the policy model and honour
   assert.equal(events[1].mapped, true, "the classifier can select only a configured level");
   assert.equal(events[1].modelId, "default", "the selected configured level maps exactly");
   assert.equal(events[1].thinkingLevel, "low");
+  const classifiedContext = String((classifierRequests.at(-1) as { state?: unknown })?.state ?? "");
+  assert.doesNotMatch(classifiedContext, /first prompt/, "the configured context window drops older conversation messages");
+  assert.match(classifiedContext, /User:\nsecond prompt/);
+  assert.match(classifiedContext, /Assistant:\ndone/);
+  assert.match(classifiedContext, /User:\nthird prompt/);
 
   answer = { level: 7, confidence: 0.9 };
   chat.socket.send(JSON.stringify({ type: "prompt", message: "manual pick off cadence", requestId: randomUUID(), queueSettings: { harnessId: "kiro", provider: "kiro", modelId: "default", reasoning: "low" } }));
