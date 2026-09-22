@@ -11,8 +11,27 @@ import { app } from "../state.js";
 const uuid = z.string().uuid();
 const policyPutSchema = z.object({ clusterId: z.string(), policy: z.object({}).passthrough() }).strict();
 
-function localAuth(response: { locals: { authSession?: unknown } }): void {
-  if (!response.locals.authSession) throw new RoutingPolicyError(401, "Unauthorized");
+function localAuth(response: { locals: { authSession?: unknown; machineAuth?: unknown } }): void {
+  if (!response.locals.authSession && !response.locals.machineAuth) throw new RoutingPolicyError(401, "Unauthorized");
+}
+
+async function forwardLegacyRouting<T>(leaderNodeId: string, method: "PUT" | "DELETE", suffix: string, body?: unknown): Promise<T> {
+  const peer = (await listClusterPeers()).find((candidate) => candidate.id === leaderNodeId);
+  if (!peer) throw new RoutingPolicyError(503, "Routing policy leader is unavailable");
+  let leaderResponse: globalThis.Response;
+  try {
+    leaderResponse = await fetch(`${peer.url}/api/cluster/routing${suffix}`, {
+      method,
+      headers: { Authorization: `Bearer ${peer.token}`, ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    throw new RoutingPolicyError(503, "Routing policy leader is unavailable");
+  }
+  const result = await leaderResponse.json() as T & { error?: string };
+  if (!leaderResponse.ok) throw new RoutingPolicyError(leaderResponse.status, result.error || "Routing policy leader rejected the change");
+  return result;
 }
 
 /** A node may edit the policy when it leads: the v2 cluster manager, or the legacy
@@ -58,10 +77,11 @@ app.get("/api/cluster/routing", async (_request, response, next) => {
     const clusterChoices: Array<{ clusterId: string; name: string }> = v2
       ? listSharingMemberships(db, local.id).map((membership) => { try { return { clusterId: membership.clusterId, name: getSharingCluster(db, membership.clusterId).name }; } catch { return null; } }).filter((choice): choice is { clusterId: string; name: string } => choice !== null)
       : [{ clusterId: LEGACY_CLUSTER_ID, name: "Cluster" }];
+    const peerIds = new Set((await listClusterPeers()).map((peer) => peer.id));
     const policies = listRoutingPolicies(db).map((stored) => ({
       ...stored,
       leaderName: names.get(stored.leaderNodeId) ?? stored.leaderNodeId,
-      editable: editableByLocal(db, stored.clusterId, local.id),
+      editable: editableByLocal(db, stored.clusterId, local.id) || (stored.clusterId === LEGACY_CLUSTER_ID && peerIds.has(stored.leaderNodeId)),
     }));
     const legacyEditable = editableByLocal(db, LEGACY_CLUSTER_ID, local.id);
     const harnesses = await routingModels();
@@ -90,6 +110,11 @@ app.put("/api/cluster/routing", async (request, response, next) => {
     const clusterId = input.clusterId === LEGACY_CLUSTER_ID ? LEGACY_CLUSTER_ID : uuid.parse(input.clusterId);
     const local = await getClusterNode();
     const db = routingPolicyDatabase();
+    const existing = readRoutingPolicy(db, clusterId);
+    if (clusterId === LEGACY_CLUSTER_ID && existing && existing.leaderNodeId !== local.id) {
+      response.json(await forwardLegacyRouting(existing.leaderNodeId, "PUT", "", input));
+      return;
+    }
     const stored = updateClusterRoutingPolicy(db, clusterId, validateRoutingPolicy(input.policy), local.id);
     response.json({ policy: stored });
   } catch (error) {
@@ -105,7 +130,13 @@ app.delete("/api/cluster/routing", async (request, response, next) => {
     const raw = typeof request.query.clusterId === "string" ? request.query.clusterId : LEGACY_CLUSTER_ID;
     const clusterId = raw === LEGACY_CLUSTER_ID ? LEGACY_CLUSTER_ID : uuid.parse(raw);
     const local = await getClusterNode();
-    updateClusterRoutingPolicy(routingPolicyDatabase(), clusterId, null, local.id);
+    const db = routingPolicyDatabase();
+    const existing = readRoutingPolicy(db, clusterId);
+    if (clusterId === LEGACY_CLUSTER_ID && existing && existing.leaderNodeId !== local.id) {
+      response.json(await forwardLegacyRouting(existing.leaderNodeId, "DELETE", `?clusterId=${encodeURIComponent(clusterId)}`));
+      return;
+    }
+    updateClusterRoutingPolicy(db, clusterId, null, local.id);
     response.json({ policy: null });
   } catch (error) {
     if (error instanceof RoutingPolicyError) { sendError(response, error.statusCode, error.message); return; }

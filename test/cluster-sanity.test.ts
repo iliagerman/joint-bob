@@ -1455,7 +1455,7 @@ test("both prepared nodes become writable and resume replication after restart",
   }
 });
 
-test("a leader-authored routing policy replicates cluster-wide and stays leader-gated", { timeout: 60_000 }, async () => {
+test("routing policy edits from a follower are forwarded to the leader", { timeout: 60_000 }, async () => {
   const policy = {
     enabled: true,
     classifierId: "typesafe",
@@ -1481,19 +1481,17 @@ test("a leader-authored routing policy replicates cluster-wide and stays leader-
   assert.equal(read.status, 200, JSON.stringify(read.body));
   const replica = read.body.policies.find((entry) => entry.clusterId === "");
   assert.ok(replica, "the paired node serves the replicated policy");
-  assert.equal(replica.editable, false, "only the leader may edit the policy");
+  assert.equal(replica.editable, true, "a paired UI may ask the leader to edit the policy");
 
-  const refused = await api(nodeB, sessionB, "PUT", "/cluster/routing", { clusterId: "", policy: { ...policy, confidenceThreshold: 0.5 } });
-  assert.equal(refused.status, 403, "a non-leader node must not change the policy");
-
-  const updated = await api<{ policy: { revision: number } | null }>(nodeA, sessionA, "PUT", "/cluster/routing", { clusterId: "", policy: { ...policy, confidenceThreshold: 0.5 } });
-  assert.equal(updated.status, 200);
+  const updated = await api<{ policy: { revision: number; leaderNodeId: string } | null }>(nodeB, sessionB, "PUT", "/cluster/routing", { clusterId: "", policy: { ...policy, confidenceThreshold: 0.5 } });
+  assert.equal(updated.status, 200, JSON.stringify(updated.body));
   assert.equal(updated.body.policy?.revision, 2);
+  assert.equal(updated.body.policy?.leaderNodeId, nodeA.nodeId, "the leader remains the policy author");
   const converge = Date.now() + 20000;
   while (rowFor()?.revision !== 2 && Date.now() < converge) await new Promise((resolve) => setTimeout(resolve, 200));
   assert.equal(rowFor()?.revision, 2, "the revision must converge on the paired node");
 
-  const cleared = await api(nodeA, sessionA, "DELETE", "/cluster/routing?clusterId=");
+  const cleared = await api(nodeB, sessionB, "DELETE", "/cluster/routing?clusterId=");
   assert.equal(cleared.status, 200);
   const drained = Date.now() + 20000;
   while (rowFor() && Date.now() < drained) await new Promise((resolve) => setTimeout(resolve, 200));
