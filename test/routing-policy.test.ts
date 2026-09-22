@@ -69,6 +69,27 @@ test("validateRoutingPolicy accepts a valid policy", () => {
   assert.equal(parsed.harnesses.kiro.levels["7"]?.modelId, "default");
 });
 
+test("stored policies from before classifier descriptions remain readable", () => {
+  const db = routingPolicyDatabase();
+  const legacy = {
+    enabled: true,
+    classifierId: "typesafe",
+    instructions: "Retired custom classifier prompt",
+    evalCadence: { mode: "first-message" },
+    confidenceThreshold: 0.3,
+    harnesses: { kiro: { levels: { "7": { modelId: "default", thinkingLevel: "high" } } } },
+  };
+  db.prepare("INSERT OR REPLACE INTO cluster_routing_policies(cluster_id,policy,revision,leader_node_id,updated_by,updated_at,origin_node_id) VALUES ('',?,1,?,?,?,?)")
+    .run(JSON.stringify(legacy), nodeA, nodeA, "2026-01-01T00:00:00Z", nodeA);
+  try {
+    const stored = readRoutingPolicy(db, LEGACY_CLUSTER_ID);
+    assert.equal(stored?.policy.harnesses.kiro.levels["7"]?.description, "Hard: an architectural change, refactoring coupled systems, or debugging an unclear failure");
+    assert.equal("instructions" in (stored?.policy ?? {}), false, "the retired classifier prompt is discarded");
+  } finally {
+    db.prepare("DELETE FROM cluster_routing_policies WHERE cluster_id = ''").run();
+  }
+});
+
 test("classifier cadence and context window are bounded", () => {
   assert.throws(() => policy({ evalCadence: { mode: "every-n" } }), /requires n/);
   assert.throws(() => policy({ evalCadence: { mode: "first-message", n: 2 } }), /cannot carry n/);

@@ -3,6 +3,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { getDifficultyClassifier, listDifficultyClassifiers } from "./classifiers/registry.js";
+import { DIFFICULTY_RUBRIC } from "./classifiers/typesafe.js";
 import { listDiscoveredHarnesses } from "./harnesses/registry.js";
 import { resolveDataDirectory } from "./data-directory.js";
 import { enqueueReplicationEvent, type ReplicationEvent } from "./replication.js";
@@ -113,8 +114,28 @@ export function validateRoutingPolicy(policy: unknown): RoutingPolicy {
   return parsed;
 }
 
+function parseStoredRoutingPolicy(value: unknown): RoutingPolicy {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return routingPolicySchema.parse(value);
+  const candidate = { ...value } as Record<string, unknown>;
+  // Releases before classifier choices used one free-form prompt and mappings had no descriptions.
+  delete candidate.instructions;
+  if (candidate.harnesses && typeof candidate.harnesses === "object" && !Array.isArray(candidate.harnesses)) {
+    for (const harness of Object.values(candidate.harnesses)) {
+      if (!harness || typeof harness !== "object" || Array.isArray(harness)) continue;
+      const levels = (harness as Record<string, unknown>).levels;
+      if (!levels || typeof levels !== "object" || Array.isArray(levels)) continue;
+      for (const [level, mapping] of Object.entries(levels)) {
+        if (!mapping || typeof mapping !== "object" || Array.isArray(mapping)) continue;
+        const record = mapping as Record<string, unknown>;
+        if (typeof record.description !== "string" || !record.description.trim()) record.description = DIFFICULTY_RUBRIC[Number(level) - 1];
+      }
+    }
+  }
+  return routingPolicySchema.parse(candidate);
+}
+
 function rowToStored(row: PolicyRow): StoredRoutingPolicy {
-  return { clusterId: row.cluster_id, policy: routingPolicySchema.parse(JSON.parse(row.policy)), revision: row.revision, leaderNodeId: row.leader_node_id, updatedBy: row.updated_by, updatedAt: row.updated_at };
+  return { clusterId: row.cluster_id, policy: parseStoredRoutingPolicy(JSON.parse(row.policy)), revision: row.revision, leaderNodeId: row.leader_node_id, updatedBy: row.updated_by, updatedAt: row.updated_at };
 }
 
 export function readRoutingPolicy(db: DatabaseSync, clusterId: string): StoredRoutingPolicy | null {
