@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Background tasks panel now filters to show running tasks by default, with options to view all, completed, failed, stopped, or unknown statuses.
+
 ## 1.70.2 — 2026-09-22
 
 - Routing policy changes from non-leader cluster nodes are now forwarded to the leader for processing.

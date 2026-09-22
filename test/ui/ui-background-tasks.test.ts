@@ -161,13 +161,17 @@ test("a live supervisor task streams safely, stops, and remains in history after
     const stop = page.getByTestId("background-task-stop");
     await stop.click();
     await page.getByRole("button", { name: "Stop task" }).click();
+    await row.waitFor({ state: "detached" });
+    await page.getByTestId("background-tasks-filter").selectOption("stopped");
     await row.getByText("stopped", { exact: false }).waitFor();
-    assert.equal(await stop.isDisabled(), true);
+    assert.equal(await page.getByTestId("background-task-stop").isDisabled(), true);
 
     await page.reload();
     await loginAndOpenShortOne(page, environment, node, false);
     await page.getByTestId("background-tasks-open").click();
     const persisted = page.getByTestId("background-task-row").filter({ hasText: "Browser heartbeat" });
+    assert.equal(await persisted.count(), 0, "running is the default filter, so stopped tasks stay out of the list");
+    await page.getByTestId("background-tasks-filter").selectOption("stopped");
     await persisted.waitFor();
     assert.match(await persisted.textContent() ?? "", /Stopped/);
 
@@ -247,6 +251,9 @@ test("delayed output cannot overwrite a newer task or conversation selection", {
     await page.getByTestId("background-tasks-open").click();
     const rowA = page.getByTestId("background-task-row").filter({ hasText: "Held A" });
     const rowB = page.getByTestId("background-task-row").filter({ hasText: "Held B" });
+    await rowA.waitFor();
+    await rowB.waitFor();
+    assert.deepEqual(await page.getByTestId("background-task-row").locator("strong").allTextContents(), ["Held B", "Held A"], "running tasks are newest first");
     await rowA.click();
     await intercepted;
     await rowB.click();

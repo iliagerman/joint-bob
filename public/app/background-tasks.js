@@ -8,6 +8,7 @@ const trigger = el("backgroundTasksButton");
 const list = el("backgroundTasksList");
 const details = el("backgroundTasksDetails");
 const output = el("backgroundTasksOutput");
+const filter = el("backgroundTasksFilter");
 const activeStatuses = new Set(["starting", "running", "stopping"]);
 const terminalStatuses = new Set(["completed", "failed", "stopped", "unknown"]);
 const statuses = new Set([...activeStatuses, ...terminalStatuses]);
@@ -63,6 +64,29 @@ function taskTime(value) {
   return date.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
+function taskMatchesFilter(task) {
+  const status = safeStatus(task.status);
+  return filter.value === "all" || (filter.value === "active" ? activeStatuses.has(status) : status === filter.value);
+}
+
+function compareTasks(a, b) {
+  const activeDifference = Number(!activeStatuses.has(safeStatus(a.status))) - Number(!activeStatuses.has(safeStatus(b.status)));
+  return activeDifference || String(b.startedAt).localeCompare(String(a.startedAt)) || taskKey(b).localeCompare(taskKey(a));
+}
+
+function clearSelection(message) {
+  selectionEpoch++;
+  selected = null;
+  outputOffset = 0;
+  outputText = "";
+  outputEof = false;
+  outputPending = undefined;
+  decoder = undefined;
+  detailsSignature = "";
+  details.replaceChildren(output);
+  output.textContent = message;
+}
+
 function showError(target, prefix, error) {
   target.textContent = `${prefix}: ${error instanceof Error ? error.message : String(error)}`;
 }
@@ -101,23 +125,31 @@ function renderNodes() {
   }
 }
 
+function renderEmptyState(visibleCount, totalCount) {
+  el("backgroundTasksGrid").hidden = !visibleCount;
+  el("backgroundTasksEmpty").hidden = Boolean(visibleCount);
+  el("backgroundTasksEmpty").querySelector("h3").textContent = filter.value === "active" ? "No running tasks" : "No matching tasks";
+  el("backgroundTasksEmpty").querySelector("p").textContent = totalCount
+    ? "Choose another status to see this conversation's tasks."
+    : "Long-running jobs started from this conversation appear here with their status and live output.";
+}
+
 function render() {
   pruneTasks();
-  const values = [...tasks.values()].sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)));
-  const active = values.filter((task) => activeStatuses.has(safeStatus(task.status))).length;
+  const allValues = [...tasks.values()];
+  const values = allValues.filter(taskMatchesFilter).sort(compareTasks);
+  const active = allValues.filter((task) => activeStatuses.has(safeStatus(task.status))).length;
   const incomplete = [...nodes.values()].some((node) => olderCursors.get(node.nodeId));
   el("backgroundTasksBadge").hidden = !active;
   el("backgroundTasksBadge").textContent = active > 99 ? "99+" : `${active}${incomplete ? "+" : ""}`;
-  el("backgroundTasksSummary").textContent = values.length
-    ? `${active} active, ${values.length - active} finished${incomplete ? ", older tasks available" : ""}`
+  el("backgroundTasksSummary").textContent = allValues.length
+    ? `${active} running, ${allValues.length - active} other${incomplete ? ", older tasks available" : ""}`
     : "No tasks yet";
-  // Two blank panes read as a broken dialog, so an empty conversation gets a
-  // single centred explanation instead of the split view.
-  el("backgroundTasksGrid").hidden = !values.length;
-  el("backgroundTasksEmpty").hidden = Boolean(values.length);
+  // Two blank panes read as a broken dialog, so an empty filter gets one explanation.
+  renderEmptyState(values.length, allValues.length);
   renderNodes();
 
-  const nextSignature = values.map((task) => `${taskKey(task)}:${task.name}:${task.nodeName}:${safeStatus(task.status)}:${task.startedAt}`).join("|");
+  const nextSignature = `${filter.value}|${values.map((task) => `${taskKey(task)}:${task.name}:${task.nodeName}:${safeStatus(task.status)}:${task.startedAt}`).join("|")}`;
   if (nextSignature !== listSignature) {
     listSignature = nextSignature;
     list.replaceChildren();
@@ -149,6 +181,8 @@ function render() {
       list.append(button);
     }
   }
+  const visibleSelection = selected && values.find((task) => taskKey(task) === taskKey(selected));
+  if (!visibleSelection) clearSelection(values.length ? "Select a task to inspect its output." : "No tasks match this filter.");
   if (!selected && values.length) selectTask(values[0]);
   else if (selected) renderDetails(tasks.get(taskKey(selected)) || selected);
 }
@@ -352,6 +386,7 @@ export function syncBackgroundTasks() {
   decoder = undefined;
   listSignature = "";
   detailsSignature = "";
+  filter.value = "active";
   list.replaceChildren();
   details.replaceChildren(output);
   output.textContent = "";
@@ -370,6 +405,7 @@ dialog.addEventListener("close", () => {
   schedule(5000);
 });
 el("backgroundTasksRefresh").addEventListener("click", () => void refresh());
+filter.addEventListener("change", render);
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) {
     syncBackgroundTasks();

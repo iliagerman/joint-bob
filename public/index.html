@@ -1424,6 +1424,16 @@
         <header class="background-tasks-header"><div><span class="eyebrow">Conversation</span><h2 id="backgroundTasksTitle">Background tasks</h2></div><button class="ghost icon-button" id="backgroundTasksClose" type="button" aria-label="Close background tasks" data-testid="background-tasks-close">×</button></header>
         <div class="background-tasks-overview">
           <div id="backgroundTasksSummary" role="status" aria-live="polite"></div>
+          <label class="background-tasks-filter">Show
+            <select id="backgroundTasksFilter" name="taskStatus" data-testid="background-tasks-filter">
+              <option value="active">Running</option>
+              <option value="all">All</option>
+              <option value="completed">Completed</option>
+              <option value="failed">Failed</option>
+              <option value="stopped">Stopped</option>
+              <option value="unknown">Unknown</option>
+            </select>
+          </label>
           <div id="backgroundTasksNodes" class="background-tasks-nodes"></div>
         </div>
         <div class="background-tasks-empty" id="backgroundTasksEmpty" data-testid="background-tasks-empty" hidden>
