@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.72.0 — 2026-09-22
 
-- Each configured model option in automatic routing now requires a description of the requests it should handle, replacing the single calibration context field across all options.
+- Model options in automatic routing now require descriptions of the requests they should handle, giving you finer control over when each model is used.
 
 ## 1.71.0 — 2026-09-22
 
