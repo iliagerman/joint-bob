@@ -9,7 +9,7 @@ import { selectProject } from "./project-selection.js";
 import { rememberRecentSession } from "./recents.js";
 import { renderSessions } from "./session-list.js";
 import { formatDate, toast } from "./shell.js";
-import { openSession } from "./socket.js";
+import { openSession, refreshSessionsQuietly } from "./socket.js";
 import { state } from "./state.js";
 
 /**
@@ -31,10 +31,9 @@ function markSessionReviewed(session) {
   void api(`/api/projects/${encodeURIComponent(state.activeProjectId)}/sessions/reviewed`, {
     method: "PUT",
     body: JSON.stringify({ sessionPath: session.path, updatedAt: session.updatedAt }),
-  }).catch((error) => {
-    session.reviewState = "needs_review";
+  }).catch((error) => toast(error.message)).finally(async () => {
+    await refreshSessionsQuietly();
     renderReviewCounts();
-    toast(error.message);
   });
 }
 
@@ -54,9 +53,10 @@ async function markAllSessionsReviewed() {
       body: JSON.stringify({ sessions }),
     });
   } catch (error) {
-    for (const session of targets) session.reviewState = "needs_review";
-    renderReviewCounts();
     toast(error.message);
+  } finally {
+    await refreshSessionsQuietly();
+    renderReviewCounts();
   }
 }
 
@@ -64,8 +64,12 @@ async function markAllSessionsReviewed() {
  * The review inbox spans every project, so the badge and the dialog read one server snapshot
  * rather than the active project's in-memory conversations.
  */
+let pendingReviewsVersion = 0;
+
 export async function refreshPendingReviews() {
+  const version = ++pendingReviewsVersion;
   const body = await api("/api/reviews/pending");
+  if (version !== pendingReviewsVersion) return;
   state.pendingReviews = body.projects;
   renderPendingReviewsBadge();
   renderProjects();
@@ -169,19 +173,20 @@ async function openPendingReview(group, entry) {
 async function markAllPendingReviewed() {
   const groups = state.pendingReviews;
   if (!groups.length) return;
-  for (const group of groups) {
-    await api(`/api/projects/${encodeURIComponent(group.projectId)}/sessions/reviewed-all`, {
-      method: "PUT",
-      body: JSON.stringify({ sessions: group.sessions.map((entry) => ({ sessionPath: entry.path, updatedAt: entry.updatedAt })) }),
-    });
+  try {
+    for (const group of groups) {
+      await api(`/api/projects/${encodeURIComponent(group.projectId)}/sessions/reviewed-all`, {
+        method: "PUT",
+        body: JSON.stringify({ sessions: group.sessions.map((entry) => ({ sessionPath: entry.path, updatedAt: entry.updatedAt })) }),
+      });
+    }
+  } finally {
+    // Only the submitted watermarks were reviewed. New activity, other projects,
+    // and partial failures must be reconciled rather than blanket-cleared locally.
+    await refreshSessionsQuietly();
+    await refreshPendingReviews();
+    renderPendingReviewsDialog();
   }
-  // The open conversation list holds its own copy of the state the server just cleared.
-  for (const session of state.sessions) {
-    if (session.reviewState === "needs_review") session.reviewState = "reviewed";
-  }
-  renderSessions();
-  await refreshPendingReviews();
-  renderPendingReviewsDialog();
   toast("All conversations marked as read");
 }
 

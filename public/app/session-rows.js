@@ -1,6 +1,6 @@
 import { ticketGlyph } from "../board.js";
 import { harnessIdFromPath } from "../harness-metadata.js";
-import { api, savePreferencesInBackground } from "./api.js";
+import { savePin, savePreferencesInBackground } from "./api.js";
 import { renderProjects } from "./project-list.js";
 import { renderSessions } from "./session-list.js";
 import { toast } from "./shell.js";
@@ -124,12 +124,9 @@ export function nestedSessionRows(sessions, shouldExpand = () => true) {
 export function togglePinnedProject(projectId) {
   const pinned = !isProjectPinned(projectId);
   state.pinnedProjectIds = state.pinnedProjectIds.filter((id) => id !== projectId);
-  state.replicatedPinnedProjectIds = pinned
-    ? [...state.replicatedPinnedProjectIds.filter((id) => id !== projectId), projectId]
-    : state.replicatedPinnedProjectIds.filter((id) => id !== projectId);
   if (state.preferencesLoaded) {
     savePreferencesInBackground({ pinnedProjectIds: state.pinnedProjectIds });
-    void api("/api/pins", { method: "PUT", body: JSON.stringify({ kind: "project", projectId, pinned }) }).catch((error) => toast(error.message));
+    void savePin({ kind: "project", projectId }, pinned).catch((error) => toast(error.message));
   }
   renderProjects();
 }
@@ -143,14 +140,10 @@ export function togglePinnedSession(session) {
   const legacy = sessionPinIdentities(session).filter((candidate) => candidate.engine !== identity.engine || candidate.sessionId !== identity.sessionId);
   const segmentPaths = [session.sessionPath || session.path, ...(session.segments || []).map((segment) => segment.path)];
   state.pinnedSessionPaths = state.pinnedSessionPaths.filter((path) => !segmentPaths.includes(path));
-  state.pinnedConversations = state.pinnedConversations.filter((pin) => !(pin.projectId === identity.projectId
-    && (pin.engine === identity.engine && pin.sessionId === identity.sessionId
-      || legacy.some((candidate) => candidate.engine === pin.engine && candidate.sessionId === pin.sessionId))));
-  if (pinned) state.pinnedConversations.push(identity);
   if (state.preferencesLoaded) {
     savePreferencesInBackground({ pinnedSessionPaths: state.pinnedSessionPaths });
     for (const target of pinned ? [identity] : [identity, ...legacy]) {
-      void api("/api/pins", { method: "PUT", body: JSON.stringify({ kind: "conversation", ...target, pinned }) }).catch((error) => toast(error.message));
+      void savePin({ kind: "conversation", ...target }, pinned).catch((error) => toast(error.message));
     }
   }
   renderSessions();

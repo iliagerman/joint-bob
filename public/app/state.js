@@ -107,7 +107,6 @@ export const state = {
   conversationLabels: [],
   watchSocket: null,
   watchProjectId: null,
-  watchNeedsRefresh: false,
   rowMenuAnchor: null,
   rowMenuAnchorSelector: null,
   watchReconnectTimer: null,

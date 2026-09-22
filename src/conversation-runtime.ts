@@ -123,7 +123,7 @@ function validatedLease(lease: RuntimeLeaseInput, snapshotTime: number, now: num
 
 /**
  * Applies one node's full running set, ordered by the snapshot's generation time.
- * A snapshot older than the newest one already applied from that node is skipped
+ * A snapshot no newer than the newest one already applied from that node is skipped
  * whole, so a delayed push can neither delete nor resurrect leases. Entries
  * missing from an accepted snapshot end that node's lease for rows at least as
  * old as the snapshot. Callers must push snapshots sequentially, never
@@ -141,7 +141,7 @@ export function applyRuntimeLeaseSnapshot(db: DatabaseSync, nodeId: string, gene
   db.exec("BEGIN IMMEDIATE");
   try {
     const progress = db.prepare("SELECT generated_at FROM runtime_snapshot_progress WHERE node_id = ?").get(nodeId) as { generated_at: string } | undefined;
-    if (progress && generatedTime < Date.parse(progress.generated_at)) {
+    if (progress && generatedTime <= Date.parse(progress.generated_at)) {
       db.exec("COMMIT");
       return [];
     }

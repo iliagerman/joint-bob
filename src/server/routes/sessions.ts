@@ -26,7 +26,7 @@ import { flushReplicationOutbox } from "../maintenance.js";
 import { flushPushSubscriptionOutbox } from "../push-flush.js";
 import { ConversationForkError, forkLocalConversation } from "../conversation-fork.js";
 import { assertProjectEditable, projectsWithSharedNames } from "../projects.js";
-import { broadcastToProject, scheduleReviewNotifications, send } from "../realtime.js";
+import { broadcastSessionsChangedToAllProjects, broadcastToProject, scheduleReviewNotifications, send } from "../realtime.js";
 import { disposeHarnessSession, findHarnessSession, harnessSessionBusy } from "../harness-sessions.js";
 import { ownershipSchema, registeredHarnessIdSchema, routedSessionTakeOwnershipSchema, sessionDeleteSchema, sessionNtfySchema, sessionRecoverySchema, sessionReviewedSchema, sessionReviewNotificationsSchema, sessionsReviewedSchema, sessionTakeOwnershipSchema } from "../schemas.js";
 import { listProjectSessionsWithReviewState, listReviewScopeSessions, requireLocalConversationOwner } from "../sessions-helpers.js";
@@ -504,6 +504,8 @@ app.put("/api/projects/:projectId/sessions/reviewed", async (request, response, 
     if (!session.updatedAt || submitted.updatedAt > session.updatedAt) { sendError(response, 409, "Conversation review watermark is newer than current activity"); return; }
     const local = await getClusterNode();
     markConversationReviewed(authSession.userId, authSession.username, project.id, { path: session.path, engine: session.harnessId, sessionId: session.id, updatedAt: submitted.updatedAt }, local.id);
+    broadcastSessionsChangedToAllProjects();
+    flushReplicationOutbox().catch((error) => console.warn("Review watermark flush failed", error));
     response.status(204).send();
   } catch (error) {
     next(error);
@@ -531,6 +533,8 @@ app.put("/api/projects/:projectId/sessions/reviewed-all", async (request, respon
       const current = currentByPath.get(watermark.sessionPath)!;
       return [{ path: watermark.sessionPath, engine: current.harnessId, sessionId: current.id, updatedAt: watermark.updatedAt }];
     }), local.id);
+    broadcastSessionsChangedToAllProjects();
+    flushReplicationOutbox().catch((error) => console.warn("Review watermark flush failed", error));
     response.status(204).send();
   } catch (error) {
     next(error);

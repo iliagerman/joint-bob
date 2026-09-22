@@ -520,6 +520,41 @@ test("every project on one node is aliased to its twin on the other", async () =
   }
 });
 
+test("review writes wake same-node tabs even when they watch another project", async () => {
+  const project = nodeA.projects.find((candidate) => candidate.name === "Internal Assistant")!;
+  const other = nodeA.projects.find((candidate) => candidate.id !== project.id)!;
+  const sessions = await api<{ sessions: Array<SessionView & { updatedAt: string }> }>(nodeA, sessionA, "GET", `/projects/${project.id}/sessions`);
+  const conversation = sessions.body.sessions.find((candidate) => candidate.harnessId === "pi")!;
+  const url = new URL("/ws", nodeA.url.replace(/^http/, "ws"));
+  url.searchParams.set("projectId", other.id);
+  url.searchParams.set("sessionPath", "watch");
+  const socket = new WebSocket(url, { headers: { Cookie: sessionA.cookie, Origin: nodeA.url } });
+  const waitFor = (type: string) => new Promise<void>((resolve, reject) => {
+    const onMessage = (raw: WebSocket.RawData) => {
+      if (JSON.parse(raw.toString()).type !== type) return;
+      clearTimeout(timer);
+      socket.off("message", onMessage);
+      resolve();
+    };
+    const timer = setTimeout(() => { socket.off("message", onMessage); reject(new Error(`same-node tab did not receive ${type}`)); }, 5000);
+    socket.on("message", onMessage);
+  });
+  try {
+    await waitFor("watchReady");
+    for (const bulk of [false, true]) {
+      const notice = waitFor("sessionsChanged");
+      const watermark = { sessionPath: conversation.path, updatedAt: conversation.updatedAt };
+      await Promise.all([
+        notice,
+        fetch(`${nodeA.url}/api/projects/${project.id}/sessions/${bulk ? "reviewed-all" : "reviewed"}`, {
+          method: "PUT", headers: { Cookie: sessionA.cookie, "X-CSRF-Token": sessionA.csrfToken, "Content-Type": "application/json" },
+          body: JSON.stringify(bulk ? { sessions: [watermark] } : watermark),
+        }).then((response) => assert.equal(response.status, 204)),
+      ]);
+    }
+  } finally { socket.close(); }
+});
+
 test("pin and unpin events replicate by stable conversation identity and wake remote tabs", async () => {
   const projectA = nodeA.projects.find((candidate) => candidate.name === "Internal Assistant")!;
   const projectB = nodeB.projects.find((candidate) => candidate.name === "Internal Assistant")!;

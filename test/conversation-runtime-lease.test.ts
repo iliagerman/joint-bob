@@ -111,6 +111,17 @@ test("same-owner snapshots applied out of order cannot delete or resurrect lease
   });
 });
 
+test("replaying an expired snapshot after sweeping cannot resurrect a run", async () => {
+  await withRuntime(async (runtime, db) => {
+    const now = new Date("2026-09-01T12:00:00.000Z");
+    runtime.applyRuntimeLeaseSnapshot(db, "node-b", now.toISOString(), [lease()], now);
+    const later = new Date(now.getTime() + 16_000);
+    runtime.sweepExpiredRuntimeLeases(db, later);
+    assert.deepEqual(runtime.applyRuntimeLeaseSnapshot(db, "node-b", now.toISOString(), [lease()], later), [], "duplicate snapshot must remain consumed after expiry");
+    assert.equal(runtime.conversationLeaseRunning("pi", "session-a", later), false);
+  });
+});
+
 test("leases with out-of-band TTL or skewed timestamps are rejected", async () => {
   await withRuntime((runtime, db) => {
     const now = new Date("2026-09-01T12:00:00.000Z");

@@ -537,12 +537,22 @@ function handleInvalidation(payload) {
   return true;
 }
 
+let sessionsRefreshPending = false;
+let sessionsRefreshPromise;
+
 export async function refreshSessionsQuietly() {
   // The pane frame hosts one conversation; parent-shell list polling stays off.
   if (state.canvasPaneMode) return;
   const projectId = state.activeProjectId;
-  if (!projectId || state.sessionsRefreshing) return;
+  if (!projectId) return;
+  if (state.sessionsRefreshing) { sessionsRefreshPending = true; return sessionsRefreshPromise; }
+  sessionsRefreshPending = false;
   state.sessionsRefreshing = true;
+  sessionsRefreshPromise = refreshSessionSnapshot(projectId);
+  return sessionsRefreshPromise;
+}
+
+async function refreshSessionSnapshot(projectId) {
   const previousStates = new Map(state.sessions.map((session) => [session.path, session.reviewState]));
   try {
     const body = await api(`/api/projects/${encodeURIComponent(projectId)}/sessions`);
@@ -576,6 +586,7 @@ export async function refreshSessionsQuietly() {
   } finally {
     state.sessionsRefreshing = false;
     scheduleAgentRunPoll();
+    if (sessionsRefreshPending) await refreshSessionsQuietly();
   }
 }
 
@@ -620,22 +631,23 @@ export function ensureWatchSocket() {
   state.watchSocket = socket;
   state.watchProjectId = state.activeProjectId;
   socket.addEventListener("open", () => {
+    if (state.watchSocket !== socket) return;
     elements.chatsLiveDot.hidden = false;
-    if (state.watchNeedsRefresh) {
-      state.watchNeedsRefresh = false;
-      refreshSessionsQuietly();
-      schedulePendingReviewsRefresh();
-    }
+    // Invalidations have no replay log. Every new subscription needs a snapshot,
+    // including the gap between the initial HTTP load and subscribing.
+    refreshSessionsQuietly();
+    schedulePendingReviewsRefresh();
+    loadPins().catch((error) => console.warn(error));
+    loadRecentSessions().catch((error) => console.warn(error));
     state.watchPingTimer = setInterval(() => {
       if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "ping" }));
     }, 25000);
   });
   socket.addEventListener("message", (event) => {
-    handleInvalidation(JSON.parse(event.data));
+    if (state.watchSocket === socket) handleInvalidation(JSON.parse(event.data));
   });
   socket.addEventListener("close", () => {
     if (state.watchSocket !== socket) return;
-    state.watchNeedsRefresh = true;
     if (state.watchPingTimer) clearInterval(state.watchPingTimer);
     state.watchPingTimer = null;
     elements.chatsLiveDot.hidden = true;
@@ -654,6 +666,8 @@ document.addEventListener("visibilitychange", () => {
   resumeConnection();
   ensureWatchSocket();
   refreshSessionsQuietly();
+  loadPins().catch((error) => console.warn(error));
+  schedulePendingReviewsRefresh();
 });
 window.addEventListener("pageshow", (event) => {
   if (event.persisted) {
