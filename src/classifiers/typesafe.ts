@@ -61,24 +61,24 @@ export function levelFromAnswer(answer: ScoreAnswer): DifficultyClassification |
   return { level, score: score + 1, confidence: Math.min(1, Math.max(0, confidence)) };
 }
 
-const CONTEXT_CHARACTER_LIMIT = 8_000;
-
-function normalizedContext(context: string | DifficultyClassifierContext): { calibration: string; levels: number[] } {
-  const calibration = (typeof context === "string" ? context : context.calibration ?? "").trim().slice(0, CONTEXT_CHARACTER_LIMIT);
-  const rawLevels = typeof context === "string" ? [] : context.levels ?? [];
-  const levels = [...new Set(rawLevels)].filter((level) => Number.isInteger(level) && level >= 1 && level <= DIFFICULTY_LEVELS).sort((left, right) => left - right);
-  return { calibration, levels };
+function normalizedOptions(context: string | DifficultyClassifierContext): Array<{ level: number; description: string }> {
+  if (typeof context === "string") return [];
+  const options = new Map<number, string>();
+  for (const option of context.options ?? []) {
+    const description = option.description.trim();
+    if (Number.isInteger(option.level) && option.level >= 1 && option.level <= DIFFICULTY_LEVELS && description) options.set(option.level, description);
+  }
+  return [...options].sort(([left], [right]) => left - right).map(([level, description]) => ({ level, description }));
 }
 
 function questionFor(context: string | DifficultyClassifierContext): Record<string, unknown> {
-  const { calibration, levels } = normalizedContext(context);
-  const question = levels.length
-    ? "Which configured difficulty tier best fits this software development request? Choose `none` when every configured tier is a poor fit."
+  const options = normalizedOptions(context);
+  const instructions = options.length
+    ? "Which configured option best fits this software development request? Choose `none` when none of the options fits."
     : "How complex is this software development request for a coding agent to execute, based on the work it describes?";
-  const instructions = calibration ? { calibration, question: `${question} Calibrate the decision using \`calibration\`.` } : question;
-  if (!levels.length) return { type: "score", instructions, criteria: DIFFICULTY_RUBRIC };
-  const criteria = Object.fromEntries(levels.map((level) => [`level_${level}`, `Difficulty ${level} of 10. ${DIFFICULTY_RUBRIC[level - 1]}`]));
-  criteria.none = "None of the configured difficulty tiers fits well enough. Keep the conversation's current model and reasoning.";
+  if (!options.length) return { type: "score", instructions, criteria: DIFFICULTY_RUBRIC };
+  const criteria = Object.fromEntries(options.map(({ level, description }) => [`level_${level}`, description]));
+  criteria.none = "None of the configured options fits. Keep the conversation's current model and reasoning.";
   return { type: "choice", instructions, criteria };
 }
 
@@ -105,8 +105,8 @@ async function postOnce(text: string, apiKey: string, context: string | Difficul
   });
 }
 
-/** Evaluates prompt difficulty through a TypeSafe System One score or configured-level choice.
-    The optional context is embedded as structured calibration for the question.
+/** Evaluates prompt difficulty through a TypeSafe System One score or configured-option choice.
+    Harness-owned option descriptions become the Choice criteria.
     Returns null on any failure: network error, timeout, non-2xx status, or a malformed answer. */
 export async function classifyWithTypesafe(text: string, apiKey: string, context: string | DifficultyClassifierContext = "", fetchImpl: typeof fetch = fetch): Promise<DifficultyClassification | null> {
   if (!text.trim() || !apiKey) return null;

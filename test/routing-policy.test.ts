@@ -21,7 +21,7 @@ function policy(overrides: Partial<RoutingPolicy> = {}): RoutingPolicy {
     classifierId: "typesafe",
     evalCadence: { mode: "every-n", n: 3 },
     confidenceThreshold: 0.3,
-    harnesses: { kiro: { levels: { "7": { modelId: "default", thinkingLevel: "high" } } } },
+    harnesses: { kiro: { levels: { "7": { modelId: "default", thinkingLevel: "high", description: "Complex multi-file work" } } } },
     ...overrides,
   });
 }
@@ -58,9 +58,9 @@ test("validateRoutingPolicy rejects mappings the local harnesses cannot serve", 
   assert.throws(() => validateRoutingPolicy({ ...policy(), classifierId: "nope" }), /Unknown classifier/);
   assert.throws(() => validateRoutingPolicy(policy({ harnesses: { smol: { levels: {} } } })), /Unknown harness/);
   // Kiro has a fixed kiro provider, so another provider is invalid.
-  assert.throws(() => validateRoutingPolicy(policy({ harnesses: { kiro: { levels: { "7": { provider: "openai", modelId: "x", thinkingLevel: "high" } } } } })), /provider/);
+  assert.throws(() => validateRoutingPolicy(policy({ harnesses: { kiro: { levels: { "7": { provider: "openai", modelId: "x", thinkingLevel: "high", description: "Complex multi-file work" } } } } })), /provider/);
   // Kiro supports low to max thinking levels only.
-  assert.throws(() => validateRoutingPolicy(policy({ harnesses: { kiro: { levels: { "7": { modelId: "default", thinkingLevel: "off" } } } } })), /thinking level/);
+  assert.throws(() => validateRoutingPolicy(policy({ harnesses: { kiro: { levels: { "7": { modelId: "default", thinkingLevel: "off", description: "Complex multi-file work" } } } } })), /thinking level/);
 });
 
 test("validateRoutingPolicy accepts a valid policy", () => {
@@ -174,12 +174,13 @@ test("defaultRoutingPolicy uses only the approved Codex routing tiers", () => {
 });
 
 test("routing policy rejects retired GPT-4 and unapproved Codex models", () => {
-  assert.throws(() => validateRoutingPolicy(policy({ harnesses: { pi: { levels: { "1": { provider: "openai-codex", modelId: "gpt-4.1", thinkingLevel: "low" } } } } })), /not allowed for automatic routing/);
-  assert.throws(() => validateRoutingPolicy(policy({ harnesses: { pi: { levels: { "1": { provider: "openai-codex", modelId: "gpt-5.5", thinkingLevel: "low" } } } } })), /not allowed for automatic routing/);
+  assert.throws(() => validateRoutingPolicy(policy({ harnesses: { pi: { levels: { "1": { provider: "openai-codex", modelId: "gpt-4.1", thinkingLevel: "low", description: "Small obvious request" } } } } })), /not allowed for automatic routing/);
+  assert.throws(() => validateRoutingPolicy(policy({ harnesses: { pi: { levels: { "1": { provider: "openai-codex", modelId: "gpt-5.5", thinkingLevel: "low", description: "Small obvious request" } } } } })), /not allowed for automatic routing/);
 });
 
-test("the policy carries trimmed calibration instructions", () => {
-  const parsed = validateRoutingPolicy(policy({ instructions: "  easiest is a rename; hardest is a migration  " }));
-  assert.equal(parsed.instructions, "easiest is a rename; hardest is a migration");
-  assert.throws(() => policy({ instructions: "x".repeat(4001) }), /instructions/);
+test("every configured model option requires a classifier description", () => {
+  const invalid = structuredClone(policy()) as unknown as { harnesses: { kiro: { levels: { "7": Record<string, unknown> } } } };
+  delete invalid.harnesses.kiro.levels["7"].description;
+  assert.throws(() => validateRoutingPolicy(invalid), /description/);
+  assert.equal(policy().harnesses.kiro.levels["7"]?.description, "Complex multi-file work");
 });

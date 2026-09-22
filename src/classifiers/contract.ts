@@ -10,10 +10,14 @@ export interface DifficultyClassification {
   abstained?: boolean;
 }
 
+export interface DifficultyClassifierOption {
+  level: number;
+  description: string;
+}
+
 export interface DifficultyClassifierContext {
-  calibration?: string;
-  /** Only these configured levels may be selected. Empty means the full scale. */
-  levels?: readonly number[];
+  /** Harness-owned choices available for this prompt. Empty means the full scale. */
+  options?: readonly DifficultyClassifierOption[];
 }
 
 /** A pluggable prompt-difficulty classifier. Implementations must never throw

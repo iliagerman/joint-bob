@@ -42,12 +42,18 @@ test("routing settings are split across harness tabs, the Classifiers tab, and t
   assert.equal(await rows.count(), 10, "each harness exposes levels 1 to 10");
   assert.equal(await page.getByTestId("routing-model-kiro-1").inputValue(), "", "harnesses without approved defaults stay blank");
   assert.equal(await page.getByTestId("routing-model-kiro-10").inputValue(), "", "blank rows are omitted from classifier choices");
+  const modelOption = await page.getByTestId("routing-model-kiro-1").locator("option:not([value=''])").first().getAttribute("value");
+  assert.ok(modelOption, "Kiro exposes a model option for routing");
+  await page.getByTestId("routing-model-kiro-1").selectOption(modelOption);
+  const description = page.getByTestId("routing-description-kiro-1");
+  assert.equal(await description.isEnabled(), true, "choosing a model enables its mandatory classifier description");
+  await description.fill("Small, localized requests with clear requirements");
 
-  // The classifier and its calibration context live in their own tab, not under Clusters.
+  // The classifier uses a fixed question; choices come from harness settings.
   await openSettingsTab(page, "classifiers");
   await page.getByTestId("routing-classifier").waitFor();
   assert.equal(await page.getByTestId("routing-classifier").inputValue(), "typesafe");
-  await page.getByTestId("routing-instructions").fill("easiest is a rename; hardest is a two-service migration");
+  assert.equal(await page.getByTestId("routing-instructions").count(), 0, "the fixed classifier prompt has no calibration field");
 
   // Policy controls, saving, and the leader status stay in the Cluster tab.
   await openSettingsTab(page, "cluster");
@@ -74,6 +80,10 @@ test("routing settings are split across harness tabs, the Classifiers tab, and t
   await page.locator("#modelButton:enabled").waitFor();
   const routing = await page.evaluate('import("/app/state.js").then(({ state }) => state.routing)');
   assert.equal(routing?.active, true, `saved routing policy must be active for the conversation: ${JSON.stringify(routing)}`);
+  const actualModel = (await page.getByTestId("chat-model-button").innerText()).replace(/\s*Auto\s*$/, "").trim();
+  assert.notEqual(actualModel, "", "the toolbar always names the model in use");
+  assert.notEqual(actualModel, "Bob auto", "auto mode must not hide the actual model");
+  await page.getByTestId("model-auto-label").waitFor();
   await page.getByTestId("chat-routing-warning").getByText("future-classifier").waitFor();
   await page.getByTestId("chat-model-button").click();
   await page.getByTestId("model-option-bob-auto").waitFor();
@@ -82,8 +92,8 @@ test("routing settings are split across harness tabs, the Classifiers tab, and t
   await page.getByTestId("model-dialog-close-button").click();
   assert.equal(await page.getByTestId("model-dialog").isVisible(), false, "the model picker stays responsive after classifier loading");
 
-  await openSettingsTab(page, "classifiers");
-  assert.equal(await page.getByTestId("routing-instructions").inputValue(), "easiest is a rename; hardest is a two-service migration", "calibration survives save and reload");
+  await openHarnessRoutingGrid(page, "kiro");
+  assert.equal(await page.getByTestId("routing-description-kiro-1").inputValue(), "Small, localized requests with clear requirements", "classifier description survives save and reload");
 
   await openSettingsTab(page, "cluster");
   await page.getByTestId("routing-status").getByText("future-classifier").waitFor();

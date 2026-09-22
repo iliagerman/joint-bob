@@ -48,7 +48,7 @@ test("model buttons are name-only and mobile controls use fixed toolbar rows", a
   assert.ok(titleMetaStart >= 0, "Missing chat title meta");
   assert.match(html.slice(titleMetaStart, titleMetaEnd), /id="chatProjectName"[^>]*data-testid="chat-project-name"/);
   assert.match(html, /<details\b[^>]*id="chatMoreMenu"[^>]*>[\s\S]*?<summary\b[^>]*data-testid="chat-more-button"/);
-  assert.match(html, /id="modelButtonName">Model<\/span><\/button>/);
+  assert.match(html, /id="modelButtonName">Model<\/span><span[^>]*data-testid="model-auto-label"[^>]*>Auto<\/span><\/button>/);
   assert.doesNotMatch(html, /modelButtonMode/);
   assert.ok(syncStart >= 0, "Missing syncModelButton");
   assert.doesNotMatch(app.slice(syncStart, syncEnd), /thinkingLevel|claudeEffort/);

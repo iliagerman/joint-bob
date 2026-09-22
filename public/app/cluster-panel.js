@@ -38,13 +38,25 @@ function renderRoutingHarnessTables(harnesses, levels, policy) {
       thinking.dataset.testid = `routing-thinking-${harness.id}-${level}`;
       for (const thinkingLevel of harness.thinkingLevels) thinking.add(new Option(thinkingLevel, thinkingLevel));
       if (!harness.thinkingLevels.length) thinking.add(new Option("default", "default"));
+      const description = document.createElement("input");
+      description.className = "routing-description";
+      description.dataset.harness = harness.id;
+      description.dataset.level = String(level);
+      description.dataset.testid = `routing-description-${harness.id}-${level}`;
+      description.maxLength = 1000;
+      description.placeholder = "Required: describe requests for this option";
+      description.setAttribute("aria-label", `Level ${level} classifier description`);
       const mapping = policy?.harnesses[harness.id]?.levels[String(level)];
       if (mapping) {
         model.value = routingModelValue(mapping.provider || harness.fixedProvider, mapping.modelId);
         if (![...thinking.options].some((option) => option.value === mapping.thinkingLevel)) thinking.add(new Option(mapping.thinkingLevel, mapping.thinkingLevel));
         thinking.value = mapping.thinkingLevel;
+        description.value = mapping.description;
       }
-      row.append(levelLabel, model, thinking);
+      const syncDescription = () => { description.disabled = !model.value; description.required = Boolean(model.value); };
+      model.addEventListener("change", syncDescription);
+      syncDescription();
+      row.append(levelLabel, model, thinking, description);
       container.append(row);
     }
   }
@@ -59,7 +71,6 @@ function fillRoutingForm(routing) {
   elements.routingClassifier.replaceChildren();
   for (const classifier of routing.classifiers) elements.routingClassifier.add(new Option(classifier.label, classifier.id));
   elements.routingClassifier.value = policy?.classifierId || routing.classifiers[0]?.id || "";
-  elements.routingInstructions.value = policy?.instructions || "";
   elements.routingCadence.value = policy?.evalCadence.mode || "first-message";
   elements.routingCadenceN.value = policy?.evalCadence.n || 5;
   elements.routingConfidence.value = policy?.confidenceThreshold ?? 0.3;
@@ -70,8 +81,8 @@ function fillRoutingForm(routing) {
     ? (policyEntry.localLeader ? "This node manages the routing policy." : editable ? `Managed by ${leader || "the policy leader"}. Changes forward there.` : `Managed by ${leader || "the policy leader"}. Read-only here.`)
     : "No routing policy yet. Harness tabs and Classifiers show prefilled defaults; saving from the Cluster tab creates the policy and makes this node its leader.";
   elements.routingPolicyStatus.textContent = policyEntry?.warning ? `${status} ${policyEntry.warning}` : status;
-  const controls = [elements.routingEnabled, elements.routingClassifier, elements.routingInstructions, elements.routingCadence, elements.routingCadenceN, elements.routingConfidence, elements.routingSaveButton, elements.routingSaveClassifiersButton, elements.routingClearButton,
-    ...document.querySelectorAll("[data-routing-harness] select")];
+  const controls = [elements.routingEnabled, elements.routingClassifier, elements.routingCadence, elements.routingCadenceN, elements.routingConfidence, elements.routingSaveButton, elements.routingSaveClassifiersButton, elements.routingClearButton,
+    ...document.querySelectorAll("[data-routing-harness] select, [data-routing-harness] input")];
   for (const control of controls) control.disabled = !editable;
   elements.routingClearButton.disabled = !editable || !policyEntry;
 }
@@ -98,16 +109,18 @@ function routingFormValue() {
       if (!modelSelect) continue;
       if (!modelSelect.value) { levels[String(level)] = null; continue; }
       const thinkingSelect = container.querySelector(`select.routing-thinking[data-level="${level}"]`);
+      const descriptionInput = container.querySelector(`input.routing-description[data-level="${level}"]`);
+      const description = descriptionInput.value.trim();
+      if (!description) { descriptionInput.focus(); throw new Error(`Level ${level} needs a classifier description`); }
       const [provider, modelId] = modelSelect.value.split("\u0000");
       const fixed = routingState?.harnesses.find((harness) => harness.id === harnessId)?.fixedProvider;
-      levels[String(level)] = { ...(fixed ? {} : { provider }), modelId, thinkingLevel: thinkingSelect.value };
+      levels[String(level)] = { ...(fixed ? {} : { provider }), modelId, thinkingLevel: thinkingSelect.value, description };
     }
     harnesses[harnessId] = { levels };
   }
   return {
     enabled: elements.routingEnabled.checked,
     classifierId: elements.routingClassifier.value,
-    instructions: elements.routingInstructions.value.trim(),
     evalCadence: { mode: cadenceMode, ...(cadenceMode === "every-n" ? { n: Number(elements.routingCadenceN.value) } : {}) },
     confidenceThreshold: Number(elements.routingConfidence.value),
     harnesses,

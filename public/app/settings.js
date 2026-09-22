@@ -156,7 +156,7 @@ function createHarnessPanel(descriptor, settings, defaults) {
   const routing = document.createElement("fieldset"); routing.className = "phase-settings routing-harness"; routing.dataset.routingHarness = descriptor.id;
   const routingLegend = document.createElement("legend"); routingLegend.textContent = "Prompt routing levels";
   const routingHint = document.createElement("p"); routingHint.className = "settings-hint";
-  routingHint.textContent = "Pairs save with the routing policy in the Cluster tab. Rows are ordered by difficulty and adapt: fewer mapped levels each cover a wider band of the 1 to 10 scale.";
+  routingHint.textContent = "Each model option needs a description of the requests it should handle. Jev chooses only among the configured options. Changes save with the routing policy in the Cluster tab.";
   routing.append(routingLegend, routingHint);
   conversationFields[descriptor.id] = conversation.fields; runtimeFields[descriptor.id] = runtime.fields; defaultsOutputs[descriptor.id] = output;
   runtimeLabels[descriptor.id] = { executable: `${descriptor.label} executable`, configPath: `${descriptor.label} config path`, sessionPath: `${descriptor.label} session path` };

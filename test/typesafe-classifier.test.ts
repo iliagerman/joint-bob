@@ -90,21 +90,7 @@ test("the registry exposes the typesafe classifier under its policy id", () => {
   assert.ok(listDifficultyClassifiers().some((entry) => entry.id === "typesafe"));
 });
 
-test("classifyWithTypesafe embeds calibration context as structured instructions", async () => {
-  let captured: unknown;
-  const fetchImpl: typeof fetch = async (_url, init) => {
-    captured = JSON.parse(String(init!.body));
-    return jsonResponse(200, { answers: { complexity: scoreAnswer() } });
-  };
-  const classification = await classifyWithTypesafe("text", "key", "easiest: typo fix; hardest: two-service migration", fetchImpl);
-  assert.ok(classification);
-  const instructions = (captured as { questions: { complexity: { instructions: unknown } } }).questions.complexity.instructions;
-  assert.equal(typeof instructions, "object");
-  assert.equal((instructions as { calibration: string }).calibration, "easiest: typo fix; hardest: two-service migration");
-  assert.match((instructions as { question: string }).question, /calibration/);
-});
-
-test("classifyWithTypesafe keeps a plain question without context", async () => {
+test("classifyWithTypesafe keeps a fixed question without configured options", async () => {
   let captured: unknown;
   const fetchImpl: typeof fetch = async (_url, init) => {
     captured = JSON.parse(String(init!.body));
@@ -121,16 +107,28 @@ test("classifyWithTypesafe offers only configured levels and an escape choice", 
     captured = JSON.parse(String(init!.body));
     return jsonResponse(200, { answers: { complexity: { type: "choice", choice: "level_6", confidence: 0.91, probabilities: { level_2: 0.01, level_3: 0.03, level_6: 0.91, level_10: 0.03, none: 0.02 } } } });
   };
-  const classification = await classifyWithTypesafe("text", "key", { calibration: "Use project scale", levels: [10, 6, 3, 2] }, fetchImpl);
+  const classification = await classifyWithTypesafe("text", "key", { options: [
+    { level: 10, description: "Cross-system architecture" },
+    { level: 6, description: "Complex multi-file change" },
+    { level: 3, description: "Localized routine edit" },
+    { level: 2, description: "Tiny obvious fix" },
+  ] }, fetchImpl);
   assert.equal(classification?.level, 6);
-  const question = (captured as { questions: { complexity: { type: string; criteria: Record<string, unknown> } } }).questions.complexity;
+  const question = (captured as { questions: { complexity: { type: string; instructions: string; criteria: Record<string, unknown> } } }).questions.complexity;
   assert.equal(question.type, "choice");
-  assert.deepEqual(Object.keys(question.criteria), ["level_2", "level_3", "level_6", "level_10", "none"]);
+  assert.equal(question.instructions, "Which configured option best fits this software development request? Choose `none` when none of the options fits.");
+  assert.deepEqual(question.criteria, {
+    level_2: "Tiny obvious fix",
+    level_3: "Localized routine edit",
+    level_6: "Complex multi-file change",
+    level_10: "Cross-system architecture",
+    none: "None of the configured options fits. Keep the conversation's current model and reasoning.",
+  });
 });
 
 test("classifyWithTypesafe can decline every configured level", async () => {
   const fetchImpl: typeof fetch = async () => jsonResponse(200, { answers: { complexity: { type: "choice", choice: "none", confidence: 0.88, probabilities: { level_3: 0.12, none: 0.88 } } } });
-  const classification = await classifyWithTypesafe("text", "key", { levels: [3] }, fetchImpl);
+  const classification = await classifyWithTypesafe("text", "key", { options: [{ level: 3, description: "Localized routine edit" }] }, fetchImpl);
   assert.equal(classification?.abstained, true);
   assert.equal(classification?.confidence, 0.88);
 });

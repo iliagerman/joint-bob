@@ -978,8 +978,10 @@ select.chat-toolbar-control {
 .chat-recents-button:hover:not(:disabled), .chat-more > summary:hover { color: var(--text); }
 .chat-more[open] > summary { color: var(--text); border-color: var(--line-strong); }
 .model-shortcuts-empty { color: var(--muted); font-size: 11px; white-space: nowrap; }
-.model-button { display: flex; align-items: center; max-width: 44vw; min-width: 0; overflow: hidden; white-space: nowrap; padding: 0 12px; }
+.model-button { display: flex; align-items: center; gap: 7px; max-width: 44vw; min-width: 0; overflow: hidden; white-space: nowrap; padding: 0 12px; }
 #modelButtonName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-auto-label { flex: none; padding: 1px 5px; border: 1px solid color-mix(in srgb, var(--live) 55%, transparent); border-radius: 999px; color: var(--live); font-size: 9px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.model-button.auto { border-color: color-mix(in srgb, var(--live) 45%, var(--line)); background: color-mix(in srgb, var(--live) 8%, var(--field)); }
 .model-button.claude { color: var(--claude); border-color: color-mix(in srgb, var(--claude) 30%, transparent); background: transparent; }
 .chat-more, .chat-more-actions { display: contents; }
 /* A closed <details> hides its content in current browsers, so flattening it
@@ -1182,7 +1184,8 @@ select.chat-toolbar-control {
 .queued-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 7px; }
 .queued-badge { margin-right: auto; color: var(--muted); font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; }
 .routed-note { margin-top: 6px; color: var(--muted); font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.03em; }
-.routing-level-row { display: grid; grid-template-columns: 64px 1fr 120px; gap: 8px; align-items: center; margin: 4px 0; }
+.routing-level-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) 120px; gap: 8px; align-items: center; margin: 8px 0; }
+.routing-description { grid-column: 2 / -1; min-width: 0; }
 .routing-harness { margin-top: 10px; }
 .queued-select { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 11px; }
 .queued-controls button, .queued-editor button, .queued-batch-controls button { min-height: 26px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--muted); font-size: 11px; }

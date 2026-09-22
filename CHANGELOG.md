@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Each configured model option in automatic routing now requires a description of the requests it should handle, replacing the single calibration context field across all options.
+
 ## 1.71.0 — 2026-09-22
 
 - Joining a cluster now requires its routing classifier and receives the cluster policy immediately.

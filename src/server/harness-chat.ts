@@ -210,11 +210,11 @@ async function routePromptByDifficulty(connection: HarnessChatConnection, queued
     publish(connection, { type: "promptRouted", queueId: queued.id, skipped: reason, ...(level !== undefined ? { level } : {}), ...(confidence !== undefined ? { confidence } : {}) });
   };
   const harnessPolicy = policy.policy.harnesses[connection.engine];
-  const configuredLevels = Object.entries(harnessPolicy?.levels ?? {})
-    .filter(([, mapping]) => Boolean(mapping))
-    .map(([level]) => Number(level))
-    .sort((left, right) => left - right);
-  if (!configuredLevels.length) {
+  const configuredOptions = Object.entries(harnessPolicy?.levels ?? {})
+    .filter((entry): entry is [string, NonNullable<typeof entry[1]>] => Boolean(entry[1]))
+    .map(([level, mapping]) => ({ level: Number(level), description: mapping.description }))
+    .sort((left, right) => left.level - right.level);
+  if (!configuredOptions.length) {
     publish(connection, { type: "promptRouted", queueId: queued.id, skipped: "no configured mapping", mapped: false });
     return;
   }
@@ -224,10 +224,7 @@ async function routePromptByDifficulty(connection: HarnessChatConnection, queued
   if (!apiKey) { skip("classifier key missing"); return; }
   let classification: DifficultyClassification | null = null;
   try {
-    classification = await classifier.classify(queued.messageText ?? queued.promptText, apiKey, {
-      calibration: policy.policy.instructions ?? "",
-      levels: configuredLevels,
-    });
+    classification = await classifier.classify(queued.messageText ?? queued.promptText, apiKey, { options: configuredOptions });
   } catch { classification = null; }
   if (!classification) { skip("classifier failed"); return; }
   if (classification.confidence < policy.policy.confidenceThreshold) { skip("low confidence", classification.level, classification.confidence); return; }

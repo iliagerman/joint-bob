@@ -17,14 +17,11 @@ export const PI_MODEL_PROVIDERS = [];
 
 export function syncModelButton() {
   const auto = state.routing?.active && state.routing.mode === "auto";
-  if (auto) {
-    elements.modelButtonName.textContent = "Bob auto";
-    elements.modelButton.title = "The difficulty classifier picks the model and reasoning for each prompt";
-  } else {
-    elements.modelButton.title = "";
-    const active = state.models.find((model) => `${model.provider}/${model.id}` === state.activeModelKey);
-    elements.modelButtonName.textContent = active?.label || state.activeModelLabel || "Model";
-  }
+  const active = state.models.find((model) => `${model.provider}/${model.id}` === state.activeModelKey);
+  elements.modelButtonName.textContent = active?.label || state.activeModelLabel || "Model";
+  elements.modelAutoLabel.hidden = !auto;
+  elements.modelButton.classList.toggle("auto", auto);
+  elements.modelButton.title = auto ? "Auto evaluator active: the classifier picks the model and reasoning for each prompt" : "";
   if (elements.modelDialog.open) renderModelDialog();
 }
 

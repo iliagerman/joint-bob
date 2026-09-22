@@ -22,7 +22,7 @@ test("prompt routing UI wiring stays connected", async () => {
   assert.match(panel, /\/api\/cluster\/routing/, "the cluster panel must load and save the routing policy");
   assert.match(panel, /routingFormValue/, "the panel must submit the full policy shape");
   assert.match(panel, /defaultPolicy/, "an untouched policy prefills the default pairs");
-  assert.match(panel, /routingInstructions/, "the classifier calibration saves with the policy");
+  assert.match(panel, /routing-description/, "each configured option carries a classifier description");
   assert.match(dialogs, /bob-auto/, "the model dialog must offer Bob auto");
   assert.match(dialogs, /model-option-bob-auto/, "Bob auto carries a stable test id");
   assert.match(dialogs, /routing-classifier-dialog-select/, "the model dialog exposes the classifier choice");
@@ -30,7 +30,7 @@ test("prompt routing UI wiring stays connected", async () => {
   assert.match(controls, /updateRoutingMode/, "mode changes must refresh the pickers");
   assert.match(controls, /elements\.reasoningLevelSelect\.disabled = !allowed \|\| auto/, "Bob auto locks the reasoning picker");
   assert.match(settings, /dataset\.routingHarness = descriptor\.id/, "each harness tab owns a routing grid");
-  for (const testid of ["routing-enabled", "routing-cadence", "routing-confidence", "routing-classifier", "routing-instructions", "routing-save-button", "routing-clear-button"]) {
+  for (const testid of ["routing-enabled", "routing-cadence", "routing-confidence", "routing-classifier", "routing-save-button", "routing-clear-button", "model-auto-label"]) {
     assert.ok(index.includes(`data-testid="${testid}"`), `index.html must carry ${testid}`);
   }
   assert.ok(index.includes('data-settings-tab="classifiers"'), "the Classifiers tab must exist outside the Cluster tab");

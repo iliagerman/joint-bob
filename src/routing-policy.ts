@@ -27,6 +27,7 @@ export const routingMappingSchema = z.object({
   provider: z.string().trim().min(1).max(200).optional(),
   modelId: z.string().trim().min(1).max(300),
   thinkingLevel: z.string().trim().min(1).max(16),
+  description: z.string().trim().min(1).max(1000),
 }).strict();
 export type RoutingMapping = z.infer<typeof routingMappingSchema>;
 
@@ -41,9 +42,6 @@ export const routingCadenceSchema = z.object({
 export const routingPolicySchema = z.object({
   enabled: z.boolean(),
   classifierId: z.string().trim().min(1).max(80),
-  /** Free-text calibration the classifier embeds into its question, for example
-      what the easiest and hardest work looks like on this cluster. */
-  instructions: z.string().trim().max(4000).optional(),
   evalCadence: routingCadenceSchema,
   confidenceThreshold: z.number().min(0).max(1),
   harnesses: z.record(z.string().trim().min(1).max(80), z.object({
@@ -323,10 +321,10 @@ export function defaultRoutingPolicy(modelsByHarness: Record<string, DefaultPoli
     if (adapter.id === "pi") {
       const models = modelsByHarness[adapter.id] ?? [];
       const tiers = [
-        { level: "1", modelId: "gpt-5.6-luna", thinking: "low" },
-        { level: "4", modelId: "gpt-5.6-terra", thinking: "medium" },
-        { level: "7", modelId: "gpt-5.6-sol", thinking: "high" },
-        { level: "10", modelId: "gpt-6-astra", thinking: "max" },
+        { level: "1", modelId: "gpt-5.6-luna", thinking: "low", description: "Small, obvious requests such as a factual answer, rename, or one-line edit." },
+        { level: "4", modelId: "gpt-5.6-terra", thinking: "medium", description: "Routine localized work with clear requirements and limited codebase context." },
+        { level: "7", modelId: "gpt-5.6-sol", thinking: "high", description: "Complex multi-file work, architectural changes, or debugging with unclear causes." },
+        { level: "10", modelId: "gpt-6-astra", thinking: "max", description: "Open-ended, high-risk, or cross-system work requiring sustained design and verification." },
       ];
       for (const tier of tiers) {
         const model = models.find((candidate) => candidate.provider === "openai-codex" && candidate.id === tier.modelId);
@@ -334,12 +332,12 @@ export function defaultRoutingPolicy(modelsByHarness: Record<string, DefaultPoli
         const thinkingLevel = adapter.configuration.thinkingLevels.includes(tier.thinking as never)
           ? tier.thinking
           : adapter.configuration.thinkingLevels.at(-1)!;
-        levelsMap[tier.level] = { provider: model.provider, modelId: model.id, thinkingLevel };
+        levelsMap[tier.level] = { provider: model.provider, modelId: model.id, thinkingLevel, description: tier.description };
       }
     }
     harnesses[adapter.id] = { levels: levelsMap };
   }
-  return { enabled: true, classifierId: listDifficultyClassifiers()[0]?.id ?? "typesafe", instructions: "", evalCadence: { mode: "first-message" }, confidenceThreshold: 0.3, harnesses };
+  return { enabled: true, classifierId: listDifficultyClassifiers()[0]?.id ?? "typesafe", evalCadence: { mode: "first-message" }, confidenceThreshold: 0.3, harnesses };
 }
 
 /** Resolves the routing policy that governs a project on this node, or null.

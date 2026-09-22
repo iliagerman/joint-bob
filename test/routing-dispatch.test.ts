@@ -111,7 +111,7 @@ before(async () => {
   assert.equal(attached.status, 200, JSON.stringify(attached.body));
   const saved = await api(node, session, "PUT", "/cluster/routing", {
     clusterId: "",
-    policy: { enabled: true, classifierId: "typesafe", instructions: "easiest is a rename; hardest is a two-service migration", evalCadence: { mode: "every-n", n: 2 }, confidenceThreshold: 0.3, harnesses: { kiro: { levels: { "1": { modelId: "default", thinkingLevel: "low" }, "8": { modelId: "big", thinkingLevel: "high" } } } } },
+    policy: { enabled: true, classifierId: "typesafe", evalCadence: { mode: "every-n", n: 2 }, confidenceThreshold: 0.3, harnesses: { kiro: { levels: { "1": { modelId: "default", thinkingLevel: "low", description: "Small obvious request" }, "8": { modelId: "big", thinkingLevel: "high", description: "Cross-component design or difficult debugging" } } } } },
   });
   assert.equal(saved.status, 200, JSON.stringify(saved.body));
 }, { timeout: 120_000 });
@@ -137,8 +137,7 @@ test("difficulty routing maps a classified prompt to the policy model and honour
   assert.equal(events[0].mapped, true);
   assert.equal(events[0].modelId, "big");
   assert.equal(events[0].thinkingLevel, "high");
-  assert.ok(classifierRequests.some((request) => (request as { questions?: { complexity?: { instructions?: { calibration?: string } } } })?.questions?.complexity?.instructions?.calibration === "easiest is a rename; hardest is a two-service migration"), "the policy's calibration context must reach the classifier question");
-  assert.ok(classifierRequests.some((request) => JSON.stringify(Object.keys((request as { questions?: { complexity?: { criteria?: Record<string, unknown> } } })?.questions?.complexity?.criteria ?? {})) === JSON.stringify(["level_1", "level_8", "none"])), "blank policy rows must not be offered to the classifier");
+  assert.ok(classifierRequests.some((request) => JSON.stringify((request as { questions?: { complexity?: { criteria?: Record<string, unknown> } } })?.questions?.complexity?.criteria) === JSON.stringify({ level_1: "Small obvious request", level_8: "Cross-component design or difficult debugging", none: "None of the configured options fits. Keep the conversation's current model and reasoning." })), "Jev must receive only the active harness's described options");
 
   answer = { level: 7, confidence: 0.9 };
   chat.socket.send(JSON.stringify({ type: "prompt", message: "second prompt", requestId: randomUUID() }));
@@ -199,7 +198,7 @@ test("difficulty routing maps a classified prompt to the policy model and honour
   assert.equal(unmappedEvents[0].mapped, false, "a harness with no mapped levels keeps the conversation model");
   const restored = await api(node, session, "PUT", "/cluster/routing", {
     clusterId: "",
-    policy: { enabled: true, classifierId: "typesafe", evalCadence: { mode: "every-n", n: 2 }, confidenceThreshold: 0.3, harnesses: { kiro: { levels: { "1": { modelId: "default", thinkingLevel: "low" }, "8": { modelId: "big", thinkingLevel: "high" } } } } },
+    policy: { enabled: true, classifierId: "typesafe", evalCadence: { mode: "every-n", n: 2 }, confidenceThreshold: 0.3, harnesses: { kiro: { levels: { "1": { modelId: "default", thinkingLevel: "low", description: "Small obvious request" }, "8": { modelId: "big", thinkingLevel: "high", description: "Cross-component design or difficult debugging" } } } } },
   });
   assert.equal(restored.status, 200, JSON.stringify(restored.body));
 });

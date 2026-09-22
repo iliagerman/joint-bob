@@ -1461,7 +1461,7 @@ test("routing policy edits from a follower are forwarded to the leader", { timeo
     classifierId: "typesafe",
     evalCadence: { mode: "every-n", n: 4 },
     confidenceThreshold: 0.3,
-    harnesses: { kiro: { levels: { "8": { modelId: "default", thinkingLevel: "max" } } } },
+    harnesses: { kiro: { levels: { "8": { modelId: "default", thinkingLevel: "max", description: "Complex cluster-spanning work" } } } },
   };
   const dbB = new DatabaseSync(path.join(nodeB.dataDir, "node.db"));
   dbB.exec("PRAGMA busy_timeout=5000");
