@@ -4,7 +4,7 @@ import { resolveDataDirectory } from "../data-directory.js";
 import { agentWorkActive, applyConversationWork, listConversationWork, refreshConversationWork } from "../conversation-work.js";
 import { getClusterNode, getClusterPeer } from "../cluster.js";
 import { claimConversationOwnership, type ConversationEngine, type ConversationOwnership, ConversationOwnershipError, type ConversationOwnershipStatus, getConversationOwnership, healStaleLocalClaim } from "../conversation-ownership.js";
-import { conversationReviewNotificationPaths, setConversationReviewNotifications, syncConversationReviewStates } from "../conversation-reviews.js";
+import { conversationReviewNotificationPaths, setConversationReviewNotifications, syncConversationReviewDetails } from "../conversation-reviews.js";
 import { conversationNotifications, notificationConversationId, setConversationNotification } from "../conversation-notifications.js";
 import { conversationLeaseState } from "../conversation-runtime.js";
 import { getHarness, getHarnessRuntime, listHarnesses, listHarnessSessions, type HarnessProject } from "../harnesses.js";
@@ -133,7 +133,7 @@ export async function listProjectSessionsWithReviewState(project: ProjectRecord,
     };
   }));
   // Internal snapshots do not belong to a viewer and must not create review records.
-  const reviewStates = userId ? syncConversationReviewStates(userId, username, project.id, listedSessions.filter((session) => !session.readOnly)) : new Map();
+  const reviewDetails = userId ? syncConversationReviewDetails(userId, username, project.id, listedSessions.filter((session) => !session.readOnly)) : new Map();
   const ownership = await Promise.all(listedSessions.map((session) => getConversationOwnership(session.harnessId, session.id)));
   const notifications = userId
     ? await migratePortableNotifications(userId, username, project.id, listedSessions)
@@ -143,7 +143,8 @@ export async function listProjectSessionsWithReviewState(project: ProjectRecord,
     const { engine: _engine, sessionId: _sessionId, ...summary } = session;
     return {
       ...summary,
-      reviewState: reviewStates.get(session.path),
+      reviewState: reviewDetails.get(session.path)?.state,
+      reviewedAt: reviewDetails.get(session.path)?.reviewedAt,
       reviewNotificationsEnabled: notifications.get(notificationConversationId(session))?.enabled === true,
       ntfyEnabled: ntfyPaths.has(notificationConversationId(session)),
       executionNodeId: ownership[index]?.ownerNodeId,

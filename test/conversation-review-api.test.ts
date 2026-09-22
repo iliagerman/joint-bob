@@ -100,7 +100,7 @@ test("session API persists automatic review transitions for the signed-in accoun
     const list = async () => {
       const response = await fetch(`${node.baseUrl}/api/projects/${fixture.projectId}/sessions`, { headers: { Cookie: cookie } });
       assert.equal(response.status, 200);
-      return (await response.json() as { sessions: Array<{ path: string; updatedAt: string; reviewState: string }> }).sessions[0];
+      return (await response.json() as { sessions: Array<{ path: string; updatedAt: string; reviewedAt: string; reviewState: string }> }).sessions[0];
     };
     const waitForReview = async (reviewState: string, minimumUpdatedAt?: Date) => {
       const deadline = Date.now() + 5_000;
@@ -119,6 +119,7 @@ test("session API persists automatic review transitions for the signed-in accoun
     const future = new Date(Date.now() + 1000);
     await utimes(fixture.sessionFile, future, future);
     const finished = await waitForReview("needs_review", future);
+    assert.ok(finished.reviewedAt < finished.updatedAt, "a pending review exposes the previous review watermark");
 
     const reviewed = await fetch(`${node.baseUrl}/api/projects/${fixture.projectId}/sessions/reviewed`, {
       method: "PUT",
@@ -126,7 +127,8 @@ test("session API persists automatic review transitions for the signed-in accoun
       body: JSON.stringify({ sessionPath: finished.path, updatedAt: finished.updatedAt }),
     });
     assert.equal(reviewed.status, 204);
-    await waitForReview("reviewed", future);
+    const reviewedSession = await waitForReview("reviewed", future);
+    assert.equal(reviewedSession.reviewedAt, reviewedSession.updatedAt, "marking reviewed advances the exposed watermark");
 
     const followUp = { type: "assistant", cwd: fixture.projectPath, message: { role: "assistant", content: [{ type: "text", text: "more work" }] } };
     await writeFile(fixture.sessionFile, `${JSON.stringify(firstRecord)}\n${JSON.stringify(assistant)}\n${JSON.stringify(followUp)}\n`);

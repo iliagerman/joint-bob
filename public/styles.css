@@ -1254,6 +1254,12 @@ select.chat-toolbar-control {
 .message.tool-output .tool-download:hover { color: var(--text); }
 .message.tool-output .tool-download-open { display: inline-block; margin-left: 2px; padding: 0 5px; border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 5px; color: var(--accent); font-weight: 600; text-decoration: none; }
 
+/* Messages newer than the previous review watermark stay visibly grouped after
+   opening a conversation from the review queue. */
+.message.pending-review { border-color: color-mix(in srgb, var(--amber) 52%, var(--line)); box-shadow: inset 3px 0 0 color-mix(in srgb, var(--amber) 72%, transparent); }
+.message.assistant.pending-review, .message.tool-output.pending-review { background: color-mix(in srgb, var(--amber) 11%, var(--panel)); }
+.message.user.pending-review { background: color-mix(in srgb, var(--amber) 13%, var(--field)); }
+
 /* ---- Harness segments: one conversation, visibly split where the agent changed ---- */
 .harness-switch-notice { display: flex; align-items: center; gap: 10px; margin: 14px 0 2px; color: var(--muted); font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; }
 .harness-switch-notice::before, .harness-switch-notice::after { content: ""; flex: 1; border-top: 1px solid var(--line); }

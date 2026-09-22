@@ -98,6 +98,8 @@ export const state = {
   activeSessionId: null,
   activeConversationId: null,
   conversationSegments: null,
+  // Previous review watermark for the conversation currently being opened.
+  reviewHighlightAfter: null,
   chatFilter: "all",
   classificationFilter: "",
   // Conversations the user has closed out are hidden until this is switched on.

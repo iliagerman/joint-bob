@@ -65,5 +65,5 @@ test("sub-agent children collapse under their parent and skip review tracking", 
   assert.match(app, /expandedSessionParents: new Set\(\)/);
   assert.match(app, /dataset\.testid = "session-children-toggle"/);
   assert.match(styles, /\.session-children-toggle \{/);
-  assert.match(server, /syncConversationReviewStates\(userId, username, project\.id, listedSessions\.filter\(\(session\) => !session\.readOnly\)\)/);
+  assert.match(server, /syncConversationReviewDetails\(userId, username, project\.id, listedSessions\.filter\(\(session\) => !session\.readOnly\)\)/);
 });

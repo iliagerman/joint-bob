@@ -124,14 +124,14 @@ test("Claude default reasoning suppresses configured effort on native spawn", as
   }
 });
 
-test("Pi display messages strip handoff context only from user messages", () => {
+test("Pi display messages keep timestamps and strip handoff context only from user messages", () => {
   const prompt = `${buildHandoffContext([{ id: "old", role: "user", text: "prior history" }])}actual question`;
   assert.deepEqual(simplifyMessages([
-    { role: "user", content: prompt },
-    { role: "assistant", content: prompt },
-  ]).map(({ role, text }) => ({ role, text })), [
-    { role: "user", text: "actual question" },
-    { role: "assistant", text: prompt },
+    { role: "user", content: prompt, timestamp: Date.parse("2026-01-01T00:00:00.000Z") },
+    { role: "assistant", content: prompt, timestamp: "2026-01-01T00:01:00.000Z" },
+  ]).map(({ role, text, timestamp }) => ({ role, text, timestamp })), [
+    { role: "user", text: "actual question", timestamp: "2026-01-01T00:00:00.000Z" },
+    { role: "assistant", text: prompt, timestamp: "2026-01-01T00:01:00.000Z" },
   ]);
 });
 

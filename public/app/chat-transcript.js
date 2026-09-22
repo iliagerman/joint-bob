@@ -902,6 +902,12 @@ export function updateToolMessage(bubble, text, status, isError = false) {
   renderBubbleContent(bubble, text);
 }
 
+function markPendingReview(bubble, recordedAt) {
+  const reviewedAt = Date.parse(state.reviewHighlightAfter || "");
+  if (recordedAt && Number.isFinite(reviewedAt) && recordedAt.getTime() > reviewedAt) bubble.classList.add("pending-review");
+  return bubble;
+}
+
 // A saved transcript interleaves chat text with tool results. Rendering every
 // non-user entry as assistant markdown reflowed file dumps into prose, so each
 // role gets the same bubble the live stream would have produced.
@@ -913,22 +919,22 @@ function appendTranscript(messages, segments) {
       startHarnessSegment(segments?.[segment]?.engine || state.engine);
       lastSegment = segment;
     }
+    const at = message.timestamp ? new Date(message.timestamp) : null;
+    const recorded = at && Number.isFinite(at.getTime()) ? at : false;
     if (message.role === "toolResult" || message.role === "toolCall") {
-      const bubble = appendToolMessage(message.toolName || "tool", `history-${message.id}`, 0);
+      const bubble = markPendingReview(appendToolMessage(message.toolName || "tool", `history-${message.id}`, 0), recorded);
       updateToolMessage(bubble, message.text, message.isError ? "Failed" : "Done", message.isError === true);
       continue;
     }
-    const at = message.timestamp ? new Date(message.timestamp) : null;
-    const recorded = at && Number.isFinite(at.getTime()) ? at : false;
     if (message.role === "error") {
-      appendErrorMessage(message.text, recorded);
+      markPendingReview(appendErrorMessage(message.text, recorded), recorded);
       continue;
     }
     const role = message.role === "user" ? "user" : "assistant";
     // A replayed user message sits in the agent's own transcript, so the agent
     // has it. An undated assistant message cannot be tracked and reads as seen.
     const read = role === "user" || !recorded || recorded.getTime() <= lastReadAt(state.activeConversationId);
-    appendMessage(role, message.text, recorded, [], read);
+    markPendingReview(appendMessage(role, message.text, recorded, [], read), recorded);
   }
   // A freshly switched segment has no messages yet, but its seam still shows
   // where the conversation changed harness.

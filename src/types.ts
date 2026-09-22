@@ -116,6 +116,8 @@ export interface SessionSummary {
   /** Compatibility aggregate: either a model turn or background work is active. */
   running?: boolean;
   reviewState?: "running" | "needs_review" | "reviewed";
+  /** Last activity watermark the current account reviewed. */
+  reviewedAt?: string;
   reviewNotificationsEnabled?: boolean;
   /** Review notifications also publish to an ntfy topic. */
   ntfyEnabled?: boolean;

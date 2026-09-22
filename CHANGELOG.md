@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Conversations from the review queue now highlight messages newer than your last review.
+
 ## 1.72.0 — 2026-09-22
 
 - Model options in automatic routing now require descriptions of the requests they should handle, giving you finer control over when each model is used.

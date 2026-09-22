@@ -1065,6 +1065,24 @@ test("opening a conversation that is waiting for review updates the badge at onc
   await page.locator(".session-card", { hasText: "Thread Notifications Naming and Pinning" }).first().click();
   await page.locator(".message").first().waitFor({ timeout: 20_000 });
 
+  const reviewHighlight = await page.evaluate(() => {
+    const messages = [...document.querySelectorAll<HTMLElement>("#messages > .message")];
+    const pending = messages.filter((message) => message.classList.contains("pending-review"));
+    const sample = pending.find((message) => message.classList.contains("assistant"));
+    if (!sample) return { messages: messages.length, pending: pending.length, painted: false };
+    const ordinary = sample.cloneNode(true) as HTMLElement;
+    ordinary.classList.remove("pending-review");
+    ordinary.style.position = "absolute";
+    ordinary.style.visibility = "hidden";
+    document.body.append(ordinary);
+    const painted = getComputedStyle(sample).backgroundColor !== getComputedStyle(ordinary).backgroundColor;
+    ordinary.remove();
+    return { messages: messages.length, pending: pending.length, painted };
+  });
+  assert.ok(reviewHighlight.messages > 0, "the review conversation has transcript messages");
+  assert.equal(reviewHighlight.pending, reviewHighlight.messages, `messages after the review watermark are marked pending (${JSON.stringify(reviewHighlight)})`);
+  assert.equal(reviewHighlight.painted, true, "pending messages have a distinct background");
+
   // Well inside the background refresh, which trails the burst by five seconds: this has
   // to be the click's own doing, not a timer catching up.
   const deadline = Date.now() + 2_000;

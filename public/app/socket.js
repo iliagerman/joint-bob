@@ -114,7 +114,7 @@ function websocketUrl(sessionPath) {
   return url.toString();
 }
 
-export function openSession(sessionPath, title = "New conversation", preserveChat = false, preserveTask = false) {
+export function openSession(sessionPath, title = "New conversation", preserveChat = false, preserveTask = false, reviewHighlightAfter = null) {
   rememberDraft();
   // Opening a conversation that already exists drops the picks made for a new one.
   if (sessionPath && !state.harnesses.some(({ newSessionPath }) => newSessionPath === sessionPath)) {
@@ -132,6 +132,7 @@ export function openSession(sessionPath, title = "New conversation", preserveCha
   }
   closeSocket();
   if (!preserveChat) {
+    state.reviewHighlightAfter = reviewHighlightAfter;
     state.pendingSessionTitle = null;
     state.pendingSessionColor = null;
     state.conversationSegments = null;

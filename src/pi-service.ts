@@ -284,14 +284,17 @@ export async function setSessionModel(session: AgentSession, provider: string, m
 export function simplifyMessages(messages: unknown[]): ChatMessage[] {
   return messages
     .map((message, index) => {
-      const toolName = asRecord(message).toolName;
+      const record = asRecord(message);
+      const toolName = record.toolName;
       const role = roleFromMessage(message);
       const rawText = textFromMessage(message);
+      const time = typeof record.timestamp === "number" ? record.timestamp : Date.parse(String(record.timestamp ?? ""));
       return {
         id: `${index}`,
         role,
         text: role === "user" ? stripHandoffEnvelope(rawText) : rawText,
         toolName: typeof toolName === "string" ? toolName : undefined,
+        ...(Number.isFinite(time) ? { timestamp: new Date(time).toISOString() } : {}),
       };
     })
     .filter((message) => message.text.trim().length > 0);

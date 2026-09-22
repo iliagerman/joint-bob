@@ -205,6 +205,7 @@ function openPendingReviewsDialog() {
 }
 
 export async function openListedSession(session) {
+  const reviewHighlightAfter = session.reviewState === "needs_review" ? session.reviewedAt : null;
   markSessionReviewed(session);
   rememberRecentSession(session);
   const projectId = state.activeProjectId;
@@ -226,7 +227,7 @@ export async function openListedSession(session) {
     if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: destinationId });
   }
   const title = shortSessionTitle(session);
-  openSession(session.path, title, false, Boolean(state.activeTaskId));
+  openSession(session.path, title, false, Boolean(state.activeTaskId), reviewHighlightAfter);
   if (!local) return;
   try {
     const result = await api(`/api/projects/${encodeURIComponent(projectId)}/sessions/take-ownership`, {
@@ -234,7 +235,7 @@ export async function openListedSession(session) {
     });
     if (state.activeProjectId !== projectId || state.activeSessionId !== session.id) return;
     state.activeSessionId = null;
-    openSession(result.sessionPath, title);
+    openSession(result.sessionPath, title, false, false, reviewHighlightAfter);
     toast(result.pendingPeerIds?.length ? "Switched to this node; offline nodes will update when they return" : "Switched to this node");
   } catch (error) {
     if (state.activeProjectId === projectId && state.activeSessionId === session.id) toast(error.message, 8000);

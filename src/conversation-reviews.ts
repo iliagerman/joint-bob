@@ -8,6 +8,10 @@ import { enqueueReplicationEvent, ensureReplicationSchema, resolveProjectAlias, 
 import { isHarnessId } from "./types.js";
 
 export type ConversationReviewState = "running" | "needs_review" | "reviewed";
+export interface ConversationReviewDetails {
+  state: ConversationReviewState;
+  reviewedAt: string;
+}
 
 interface ConversationStateInput {
   path: string;
@@ -170,12 +174,12 @@ function reviewStatements(db: DatabaseSync): ReviewStatements {
  * replicated for the same (username, project, engine, session id), so marking a
  * conversation reviewed anywhere marks it everywhere.
  */
-export function syncConversationReviewStates(userId: string, username: string, projectId: string, sessions: ConversationStateInput[]): Map<string, ConversationReviewState> {
+export function syncConversationReviewDetails(userId: string, username: string, projectId: string, sessions: ConversationStateInput[]): Map<string, ConversationReviewDetails> {
   const db = reviewDatabase();
   const statements = reviewStatements(db);
   const remote = remoteWatermarks(db, username, projectId);
   const now = new Date().toISOString();
-  const states = new Map<string, ConversationReviewState>();
+  const states = new Map<string, ConversationReviewDetails>();
   sessions = sessions.map((session) => ({ ...session, running: session.running || conversationWorkActive(session.engine, session.sessionId) }));
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -190,7 +194,10 @@ export function syncConversationReviewStates(userId: string, username: string, p
         const baseline = tracking ? initializedAt : observedAt;
         const reviewedAt = remoteReviewedAt && remoteReviewedAt > baseline ? remoteReviewedAt : baseline;
         statements.insert.run(userId, projectId, session.path, observedAt, reviewedAt, session.running ? 1 : 0);
-        states.set(session.path, session.running ? "running" : activityCovered(observedAt, reviewedAt, remoteReviewedAt) ? "reviewed" : "needs_review");
+        states.set(session.path, {
+          state: session.running ? "running" : activityCovered(observedAt, reviewedAt, remoteReviewedAt) ? "reviewed" : "needs_review",
+          reviewedAt,
+        });
         continue;
       }
       // The reported time is authoritative in both directions. Clamping it to the highest value
@@ -200,7 +207,10 @@ export function syncConversationReviewStates(userId: string, username: string, p
       // A remote review starts this account's next notification cycle, exactly like a local one.
       const remoteAdvanced = Boolean(remoteReviewedAt && remoteReviewedAt > row.reviewed_at);
       statements.update.run(observedAt, reviewedAt, session.running ? 1 : 0, session.running ? 1 : 0, remoteAdvanced ? 1 : 0, userId, projectId, session.path);
-      states.set(session.path, session.running ? "running" : activityCovered(observedAt, reviewedAt, remoteReviewedAt) ? "reviewed" : "needs_review");
+      states.set(session.path, {
+        state: session.running ? "running" : activityCovered(observedAt, reviewedAt, remoteReviewedAt) ? "reviewed" : "needs_review",
+        reviewedAt,
+      });
     }
     db.exec("COMMIT");
     return states;
@@ -208,6 +218,11 @@ export function syncConversationReviewStates(userId: string, username: string, p
     db.exec("ROLLBACK");
     throw error;
   }
+}
+
+export function syncConversationReviewStates(userId: string, username: string, projectId: string, sessions: ConversationStateInput[]): Map<string, ConversationReviewState> {
+  return new Map([...syncConversationReviewDetails(userId, username, projectId, sessions)]
+    .map(([sessionPath, details]) => [sessionPath, details.state]));
 }
 
 function publishReview(db: DatabaseSync, username: string, projectId: string, session: { engine: ConversationEngine; sessionId: string }, reviewedAt: string, originNodeId: string): void {
