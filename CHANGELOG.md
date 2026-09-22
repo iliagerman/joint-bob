@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.74.2 — 2026-09-22
 
 - UI state now reconciles correctly when multiple tabs are open, preventing stale server snapshots from erasing pending pins, reviews, or other recent activity.
 
