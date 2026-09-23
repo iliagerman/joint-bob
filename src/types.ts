@@ -194,6 +194,13 @@ export interface ChatMessage {
   id: string;
   role: string;
   text: string;
+  /** Exact execution settings for the assistant answer, when the transcript records them. */
+  attribution?: {
+    harnessId: HarnessId;
+    provider: string;
+    modelId: string;
+    reasoning: string;
+  };
   // Present on tool roles so the client can label the collapsed tool bubble.
   toolName?: string;
   /** Present on tool roles that failed, so a reload shows the same failed bubble. */

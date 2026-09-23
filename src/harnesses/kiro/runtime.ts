@@ -464,8 +464,17 @@ class KiroSession implements HarnessSession {
 
   private persistAssistant(): void {
     if (!this.assistant) return;
-    this.transcript.push({ id: `${this.id}:assistant:${this.transcript.length}`, role: "assistant", text: this.assistant });
-    this.queueRecord({ type: "message", role: "assistant", text: this.assistant, timestamp: new Date().toISOString() });
+    const status = this.status();
+    const provider = status.model!.provider;
+    const modelId = status.model!.id;
+    const reasoning = status.thinkingLevel;
+    this.transcript.push({
+      id: `${this.id}:assistant:${this.transcript.length}`,
+      role: "assistant",
+      text: this.assistant,
+      attribution: { harnessId: "kiro", provider, modelId, reasoning },
+    });
+    this.queueRecord({ type: "message", role: "assistant", text: this.assistant, provider, modelId, reasoning, timestamp: new Date().toISOString() });
     this.assistant = "";
   }
 

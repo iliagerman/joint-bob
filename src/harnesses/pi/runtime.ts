@@ -59,7 +59,7 @@ export class PiSession implements HarnessSession {
   }
 
   get messages(): ChatMessage[] {
-    return service.simplifyMessages(this.handle.session.messages);
+    return service.simplifyTranscriptEntries(this.snapshotEntries());
   }
 
   snapshotEntries(): unknown[] {

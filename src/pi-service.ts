@@ -300,22 +300,51 @@ export function simplifyMessages(messages: unknown[]): ChatMessage[] {
     .filter((message) => message.text.trim().length > 0);
 }
 
-/** Reads a Pi transcript file into chat messages without opening a live session. */
-export async function loadPiMessages(sessionPath: string): Promise<ChatMessage[]> {
-  const lines = (await readFile(sessionPath, "utf8")).split("\n").filter(Boolean);
+/** Converts Pi's branch records while carrying model and thinking changes onto each answer. */
+export function simplifyTranscriptEntries(entries: unknown[]): ChatMessage[] {
+  let provider = "";
+  let modelId = "";
+  let reasoning = "";
   const messages: ChatMessage[] = [];
-  for (const [index, line] of lines.entries()) {
-    const record = asRecord(JSON.parse(line));
+  for (const [index, entry] of entries.entries()) {
+    const record = asRecord(entry);
+    if (record.type === "model_change") {
+      provider = String(record.provider ?? "");
+      modelId = String(record.modelId ?? "");
+      continue;
+    }
+    if (record.type === "thinking_level_change") {
+      reasoning = String(record.thinkingLevel ?? "");
+      continue;
+    }
     if (record.type !== "message") continue;
     const message = asRecord(record.message);
     const role = roleFromMessage(message);
-    if (role !== "user" && role !== "assistant" && role !== "toolCall" && role !== "toolResult") continue;
+    if (!["user", "assistant", "toolCall", "toolResult"].includes(role)) continue;
     const text = role === "user" ? stripHandoffEnvelope(textFromMessage(message)) : textFromMessage(message);
+    if (!text.trim()) continue;
+    const answerProvider = String(message.provider ?? provider);
+    const answerModel = String(message.model ?? modelId);
     const toolName = typeof message.toolName === "string" ? message.toolName : undefined;
     const timestamp = typeof record.timestamp === "string" ? record.timestamp : undefined;
-    if (text.trim().length > 0) messages.push({ id: `${index}`, role, text, ...(toolName ? { toolName } : {}), ...(timestamp ? { timestamp } : {}) });
+    messages.push({
+      id: `${index}`,
+      role,
+      text,
+      ...(toolName ? { toolName } : {}),
+      ...(timestamp ? { timestamp } : {}),
+      ...(role === "assistant" && answerProvider && answerModel && reasoning
+        ? { attribution: { harnessId: "pi", provider: answerProvider, modelId: answerModel, reasoning } }
+        : {}),
+    });
   }
   return messages;
+}
+
+/** Reads a Pi transcript file into chat messages without opening a live session. */
+export async function loadPiMessages(sessionPath: string): Promise<ChatMessage[]> {
+  const entries = (await readFile(sessionPath, "utf8")).split("\n").filter(Boolean).map((line) => JSON.parse(line) as unknown);
+  return simplifyTranscriptEntries(entries);
 }
 
 function piSessionDirectories(cwd: string): Array<string | undefined> {

@@ -24,7 +24,7 @@ test("every chat message carries a copy button that copies its raw text", async 
   const appendStart = app.indexOf("function appendMessage(");
   assert.ok(appendStart >= 0, "Missing appendMessage");
   const appendBody = app.slice(appendStart, app.indexOf("\n}", appendStart));
-  assert.match(appendBody, /if \(isMarkdown\) appendCopyButton\(bubble\);/);
+  assert.match(appendBody, /if \(isMarkdown\) appendCopyButton\(bubble, role === "assistant" \? assistantAttribution\(attribution\) : null\);/);
 
   assert.match(app, /\n  copy: \[/);
   assert.match(app, /\n  check: \[/);

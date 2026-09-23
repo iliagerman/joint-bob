@@ -3,7 +3,7 @@ import { savePreferencesInBackground } from "./api.js";
 import { openQueuedModelPicker, queuedReasoningLevels } from "./composer-dialogs.js";
 import { renderMarkdown } from "../markdown.js";
 import { elements } from "./elements.js";
-import { menuIcon } from "./icons.js";
+import { brandIcon, menuIcon } from "./icons.js";
 import { openFileAction, projectFileUrl } from "./project-files.js";
 import { toast } from "./shell.js";
 import { state } from "./state.js";
@@ -421,9 +421,10 @@ function copyGlyph(name) {
 
 // The button reads bubble._raw when clicked rather than when built, so copying a
 // streamed assistant message yields its finished text and not its first delta.
-function appendCopyButton(bubble) {
+function appendCopyButton(bubble, attribution = null) {
   const actions = document.createElement("div");
   actions.className = "message-actions";
+  if (attribution) actions.append(attribution);
   const button = document.createElement("button");
   button.type = "button";
   button.className = "message-copy";
@@ -519,13 +520,31 @@ function appendMessageAttachments(bubble, attachments) {
   if (gallery.childElementCount) bubble.append(gallery);
 }
 
+function assistantAttribution(attribution) {
+  const live = attribution === undefined;
+  const execution = attribution || {};
+  const harnessId = execution.harnessId || state.engine;
+  const harness = harnessLabel(state.harnesses, harnessId);
+  const model = execution.provider && execution.modelId
+    ? `${execution.provider}/${execution.modelId}`
+    : live && state.activeModelKey ? state.activeModelKey : "model unavailable";
+  const reasoning = execution.reasoning || (live ? state.thinkingLevel : "reasoning unavailable");
+  const label = document.createElement("span");
+  label.className = "message-attribution";
+  label.dataset.testid = "assistant-attribution";
+  label.setAttribute("aria-label", `${harness} · ${model} · ${reasoning}`);
+  label.title = `${harness} · ${model} · ${reasoning}`;
+  label.append(brandIcon(harnessId, `message-attribution-icon ${harnessId}`), document.createTextNode(`${model} · ${reasoning}`));
+  return label;
+}
+
 // `timestamp` is true for a live message (stamped "now"), a Date for a
 // replayed message's recorded time, and false when the harness recorded no
 // time — undated beats labelling a week-old message with the render moment.
 // `read` is the known receipt state: a replayed user message already reached
 // the agent, and a replayed assistant message older than the watermark was
 // already seen.
-export function appendMessage(role, text, timestamp = true, attachments = [], read = false) {
+export function appendMessage(role, text, timestamp = true, attachments = [], read = false, attribution = undefined) {
   elements.messages.querySelector(".empty-state")?.remove();
   const presentation = role === "user" ? transcriptMessagePresentation(text, attachments) : { text, attachments: [] };
   const bubble = document.createElement("article");
@@ -553,7 +572,7 @@ export function appendMessage(role, text, timestamp = true, attachments = [], re
   }
   renderBubbleContent(bubble, presentation.text, true);
   appendBeforeQueuedMessages(bubble);
-  if (isMarkdown) appendCopyButton(bubble);
+  if (isMarkdown) appendCopyButton(bubble, role === "assistant" ? assistantAttribution(attribution) : null);
   requestPinChat();
   return bubble;
 }
@@ -934,7 +953,9 @@ function appendTranscript(messages, segments) {
     // A replayed user message sits in the agent's own transcript, so the agent
     // has it. An undated assistant message cannot be tracked and reads as seen.
     const read = role === "user" || !recorded || recorded.getTime() <= lastReadAt(state.activeConversationId);
-    markPendingReview(appendMessage(role, message.text, recorded, [], read), recorded);
+    const engine = segments?.[segment]?.engine || state.engine;
+    const attribution = role === "assistant" ? message.attribution || { harnessId: engine } : undefined;
+    markPendingReview(appendMessage(role, message.text, recorded, [], read, attribution), recorded);
   }
   // A freshly switched segment has no messages yet, but its seam still shows
   // where the conversation changed harness.

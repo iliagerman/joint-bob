@@ -149,9 +149,11 @@ test("Kiro persisted configuration and rename survive reopen", async () => {
   await session.configure({ provider: "kiro", modelId: "custom", reasoning: "high" });
   await session.rename("Persisted title");
   session.dispose();
+  await storage.appendKiroRecord(file, { type: "message", role: "assistant", text: "Attributed answer", timestamp: "2026-09-22T08:00:00.000Z" });
   const reopened = await runtime.open({ projectId: "project", cwd: root, sessionId: "persisted", sessionPath: `kiro:${file}` });
   assert.deepEqual(reopened.settings(), { provider: "kiro", modelId: "custom", reasoning: "high" });
   assert.equal(reopened.status().sessionName, "Persisted title");
+  assert.deepEqual(reopened.messages.at(-1)?.attribution, { harnessId: "kiro", provider: "kiro", modelId: "custom", reasoning: "high" });
   reopened.dispose();
 });
 

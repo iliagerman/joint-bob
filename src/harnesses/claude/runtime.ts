@@ -168,7 +168,13 @@ class ClaudeSession implements HarnessSession {
     const text = turn.assistant.trim();
     turn.assistant = "";
     if (!text) return;
-    this.transcript.push({ id: `${this.id}:assistant:${this.transcript.length}`, role: "assistant", text });
+    const { provider, modelId, reasoning } = this.config;
+    this.transcript.push({
+      id: `${this.id}:assistant:${this.transcript.length}`,
+      role: "assistant",
+      text,
+      attribution: { harnessId: "claude", provider, modelId, reasoning },
+    });
   }
 
   private markStarted(input: HarnessPrompt, state: { started: boolean }, event?: HarnessEvent): void {

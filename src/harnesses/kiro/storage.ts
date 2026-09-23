@@ -131,7 +131,16 @@ function applyRecord(session: KiroStoredSession, value: KiroRecord, index: numbe
     if ((value.role !== "user" && value.role !== "assistant") || typeof value.text !== "string") {
       throw new Error("Invalid Kiro message record");
     }
-    session.messages.push({ id: `${session.id}:${index}`, role: value.role, text: value.text, timestamp: timestamp(value.timestamp) });
+    const provider = value.provider === undefined ? "kiro" : nonempty(value.provider, "message provider");
+    const modelId = value.modelId === undefined ? session.modelId : nonempty(value.modelId, "message model");
+    const reasoning = value.reasoning === undefined ? session.reasoning : nonempty(value.reasoning, "message reasoning");
+    session.messages.push({
+      id: `${session.id}:${index}`,
+      role: value.role,
+      text: value.text,
+      timestamp: timestamp(value.timestamp),
+      ...(value.role === "assistant" ? { attribution: { harnessId: "kiro", provider, modelId, reasoning } } : {}),
+    });
     return;
   }
   // A reloaded transcript shows the same collapsed tool bubble the live stream

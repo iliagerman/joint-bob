@@ -439,7 +439,15 @@ export async function loadClaudeMessages(sessionPath: string): Promise<ChatMessa
     const role = message.role === "user" ? "user" : "assistant";
     // Compaction stores its summary as a user record; nobody typed it, so it stays out of the chat.
     if (!text.trim() || record.isCompactSummary === true || (role === "user" && isClaudeLocalCommandMessage(text))) continue;
-    messages.push({ id: `${index}`, role, text: role === "user" ? stripHandoffEnvelope(text) : text, ...stamp });
+    const modelId = typeof message.model === "string" ? message.model : "";
+    const reasoning = typeof record.perTurnEffort === "string" ? record.perTurnEffort : typeof record.effort === "string" ? record.effort : "";
+    messages.push({
+      id: `${index}`,
+      role,
+      text: role === "user" ? stripHandoffEnvelope(text) : text,
+      ...stamp,
+      ...(role === "assistant" && modelId && reasoning ? { attribution: { harnessId: "claude", provider: "claude", modelId, reasoning } } : {}),
+    });
   }
   return messages;
 }

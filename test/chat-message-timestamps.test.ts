@@ -25,7 +25,7 @@ test("Claude transcript messages carry their recorded timestamps", async () => {
     const transcript = path.join(projectDir, "stamped.jsonl");
     await writeFile(transcript, [
       { type: "user", cwd: projectCwd, timestamp: "2026-09-14T08:30:00.000Z", message: { role: "user", content: [{ text: "Hello there" }] } },
-      { type: "assistant", cwd: projectCwd, timestamp: "2026-09-14T08:31:05.000Z", message: { role: "assistant", content: [{ type: "text", text: "Hi back" }] } },
+      { type: "assistant", cwd: projectCwd, timestamp: "2026-09-14T08:31:05.000Z", effort: "high", message: { role: "assistant", model: "claude-fable-5-1", content: [{ type: "text", text: "Hi back" }] } },
       { type: "user", cwd: projectCwd, message: { role: "user", content: [{ text: "No stamp on this line" }] } },
       { type: "user", cwd: projectCwd, message: { role: "user", content: [{ text: "<local-command-caveat>Caveat</local-command-caveat>\n<command-name>/compact</command-name>\n<local-command-stdout>Compacted</local-command-stdout>" }] } },
     ].map((line) => JSON.stringify(line)).join("\n"));
@@ -33,6 +33,7 @@ test("Claude transcript messages carry their recorded timestamps", async () => {
     assert.equal(messages.length, 3, "local command metadata stays out of the chat transcript");
     assert.equal(messages[0].timestamp, "2026-09-14T08:30:00.000Z", "user message keeps its recorded time");
     assert.equal(messages[1].timestamp, "2026-09-14T08:31:05.000Z", "assistant message keeps its recorded time");
+    assert.deepEqual(messages[1].attribution, { harnessId: "claude", provider: "claude", modelId: "claude-fable-5-1", reasoning: "high" });
     assert.equal(messages[2].timestamp, undefined, "a line without a timestamp stays unstamped");
   } finally {
     if (previousDataDir === undefined) delete process.env.PI_WEB_DATA_DIR;
@@ -47,8 +48,10 @@ test("Pi transcript messages carry their recorded timestamps", async () => {
     const transcript = path.join(root, "session.jsonl");
     await writeFile(transcript, [
       { type: "session", version: 3, id: "session-1", timestamp: "2026-09-14T08:00:00.000Z", cwd: root },
+      { type: "model_change", provider: "openai-codex", modelId: "gpt-5.6-sol" },
+      { type: "thinking_level_change", thinkingLevel: "high" },
       { type: "message", timestamp: "2026-09-14T08:30:00.000Z", message: { role: "user", content: [{ type: "text", text: "Hello there" }] } },
-      { type: "message", timestamp: "2026-09-14T08:31:05.000Z", message: { role: "assistant", content: [{ type: "text", text: "Hi back" }] } },
+      { type: "message", timestamp: "2026-09-14T08:31:05.000Z", message: { role: "assistant", provider: "openai-codex", model: "gpt-5.6-sol", content: [{ type: "text", text: "Hi back" }] } },
       { type: "message", message: { role: "user", content: [{ type: "text", text: "No stamp on this line" }] } },
     ].map((line) => JSON.stringify(line)).join("\n"));
     const pi = await import("../src/pi-service.js");
@@ -56,6 +59,7 @@ test("Pi transcript messages carry their recorded timestamps", async () => {
     assert.equal(messages.length, 3, "all three fixture messages load");
     assert.equal(messages[0].timestamp, "2026-09-14T08:30:00.000Z", "user message keeps its recorded time");
     assert.equal(messages[1].timestamp, "2026-09-14T08:31:05.000Z", "assistant message keeps its recorded time");
+    assert.deepEqual(messages[1].attribution, { harnessId: "pi", provider: "openai-codex", modelId: "gpt-5.6-sol", reasoning: "high" });
     assert.equal(messages[2].timestamp, undefined, "a line without a timestamp stays unstamped");
   } finally {
     await rm(root, { recursive: true, force: true });

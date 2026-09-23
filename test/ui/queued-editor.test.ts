@@ -119,6 +119,33 @@ test("queued messages can swap positions and merge any selection", async () => {
   assert.deepEqual((await commands()).at(-1), { type: "mergeQueuedPrompts", queueItems: [{ id: "72", revision: 2 }, { id: "73", revision: 3 }] });
 });
 
+test("assistant messages show harness, model, and reasoning attribution", async () => {
+  await page.evaluate(async () => {
+    const transcript = await import("/app/chat-transcript.js");
+    const { state } = await import("/app/state.js");
+    transcript.clearChat();
+    state.engine = "pi";
+    state.activeModelKey = "openai-codex/gpt-5.6-sol";
+    state.thinkingLevel = "high";
+    transcript.appendMessage("assistant", "Live answer");
+    transcript.appendMessage("assistant", "Replay answer", false, [], true, { harnessId: "claude", provider: "claude", modelId: "claude-fable-5-1", reasoning: "max" });
+  });
+  const tags = page.getByTestId("assistant-attribution");
+  assert.deepEqual(await tags.allTextContents(), [
+    "openai-codex/gpt-5.6-sol · high",
+    "claude/claude-fable-5-1 · max",
+  ]);
+  assert.deepEqual(await tags.evaluateAll((labels) => labels.map((label) => ({
+    actions: label.parentElement?.classList.contains("message-actions"),
+    nextToCopy: label.nextElementSibling?.getAttribute("data-testid") === "message-copy-button",
+    harnessIcon: label.querySelector("svg")?.classList[1],
+    accessibleName: label.getAttribute("aria-label"),
+  }))), [
+    { actions: true, nextToCopy: true, harnessIcon: "pi", accessibleName: "Pi · openai-codex/gpt-5.6-sol · high" },
+    { actions: true, nextToCopy: true, harnessIcon: "claude", accessibleName: "Claude · claude/claude-fable-5-1 · max" },
+  ]);
+});
+
 test("queued messages stay below replies until they become active", async () => {
   await openEditor();
   await page.evaluate(async () => (await import("/app/chat-transcript.js")).appendMessage("assistant", "Current reply"));

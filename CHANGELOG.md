@@ -22,6 +22,7 @@ Every deployment is a version. The newest section must always match the
 
 ## 1.75.1 — 2026-09-23
 
+- Assistant responses now display a badge showing the harness, model, and reasoning level that produced each message.
 - The board view is now hidden from navigation, keyboard shortcuts, and preferences.
 
 ## 1.75.0 — 2026-09-23
