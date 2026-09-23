@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.75.1 — 2026-09-23
 
 - The board view is now hidden from navigation, keyboard shortcuts, and preferences.
 
