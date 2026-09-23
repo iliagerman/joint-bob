@@ -33,6 +33,7 @@ export const state = {
   viewBeforeCanvas: null,
   projects: [],
   sessions: [],
+  quickNotes: [],
   skills: [],
   skillsLoading: false,
   skillsProjectId: null,

@@ -404,8 +404,9 @@ body.shortcuts-revealed .shortcut-hint { display: grid; }
 .wide { margin: 12px 14px 0; }
 
 /* New conversation controls come from the harness registry. */
-.new-chat-row { margin: 12px 12px 0; }
+.new-chat-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin: 12px 12px 0; }
 .new-chat-harnesses { display: grid; grid-template-columns: repeat(auto-fit, minmax(44px, 1fr)); gap: 8px; }
+.quick-note-create { min-height: 38px; padding: 0 12px; border-color: var(--line); border-radius: var(--radius-ctl); font-size: 12px; }
 .new-chat-harness-button { display: inline-grid; place-items: center; padding: 0; }
 .new-chat-harness-icon { width: 19px; height: 19px; }
 .new-chat-harness-icon.pi { color: var(--accent); }
@@ -482,6 +483,17 @@ body.shortcuts-revealed .shortcut-hint { display: grid; }
 }
 .mark-all-reviewed-button:hover:not(:disabled) { color: var(--text); background: var(--field); }
 .mark-all-reviewed-button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.quick-notes-section { flex: 0 1 32%; min-height: 92px; max-height: 32%; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--field) 28%, transparent); }
+.quick-notes-section .section-title { margin-top: 10px; }
+.quick-note-list { max-height: calc(100% - 28px); overflow: auto; padding: 0 10px 10px; }
+.quick-note-row { display: grid; width: 100%; min-height: 0; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); text-align: left; }
+.quick-note-row:hover, .quick-note-row:focus-visible { background: var(--surface); }
+.quick-note-row strong, .quick-note-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.quick-note-row strong { font-size: 12.5px; font-weight: 650; }
+.quick-note-row span { margin-top: 2px; color: var(--muted); font-size: 11.5px; }
+.quick-note-row small { margin-top: 5px; color: var(--muted); font-family: var(--mono); font-size: 9.5px; }
+.quick-note-empty { margin: 8px 6px; color: var(--muted); font-size: 12px; }
 
 /* ---- Search + inputs ---- */
 .search-shell { display: block; margin: 12px 12px 2px; }
@@ -1523,6 +1535,11 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 .dialog-card label { color: var(--text); font-size: 12px; font-weight: 550; }
 .dialog-card :is(input, textarea, select) { background-color: var(--panel); }
 .dialog-card p { margin-top: 6px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.quick-note-card { width: min(680px, calc(100vw - 24px)); }
+.quick-note-card textarea { min-height: 170px; resize: vertical; line-height: 1.5; }
+.quick-note-settings { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.quick-note-error { color: var(--danger) !important; }
+.quick-note-card #deleteQuickNoteButton { margin-right: auto; }
 /* Wider than a normal dialog: 80-odd columns is the width most shell output is
    written for, and wrapping it costs more than the extra dialog width does. */
 .terminal-card { width: min(1360px, calc(100vw - 24px)); }
@@ -2004,6 +2021,9 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   .messages { padding: 12px; }
   .composer { padding: 6px 8px 10px; }
   .dialog-card { padding: 20px; }
+  .new-chat-row { grid-template-columns: 1fr; }
+  .quick-note-create { width: 100%; }
+  .quick-note-settings { grid-template-columns: 1fr; }
   .search-shell input, input, select { font-size: 16px; }
   /* The menu is the only way to reach a row's actions, so it needs a real touch target,
      and a wider lane to sit in so the title still clears it. */

@@ -7,6 +7,7 @@ import { elements } from "./elements.js";
 import { setMobileView, setPanelCollapsed } from "./layout.js";
 import { openProjectImportMapping } from "./project-forms.js";
 import { renderProjects } from "./project-list.js";
+import { renderQuickNotes } from "./quick-notes.js";
 import { loadProjects, refreshProjectsQuietly, startProjectSyncPolling } from "./project-selection.js";
 import { renderSessions } from "./session-list.js";
 import { showWhatsNew } from "./settings.js";
@@ -66,6 +67,7 @@ export function showSignedOut() {
   state.activeTaskId = null;
   state.projects = [];
   state.sessions = [];
+  state.quickNotes = [];
   state.tasks = [];
   closeSocket();
   closeWatchSocket();
@@ -76,6 +78,7 @@ export function showSignedOut() {
   document.querySelectorAll("dialog[open]").forEach((dialog) => dialog.close());
   renderProjects();
   renderSessions();
+  renderQuickNotes();
   renderBoardView();
   setMobileView("projects");
   showLogin();

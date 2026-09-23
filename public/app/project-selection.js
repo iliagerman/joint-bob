@@ -7,6 +7,7 @@ import { elements } from "./elements.js";
 import { setMobileView } from "./layout.js";
 import { addOptimisticSession } from "./new-session.js";
 import { renderProjects } from "./project-list.js";
+import { refreshQuickNotes, renderQuickNotes } from "./quick-notes.js";
 import { openListedSession, refreshPendingReviews } from "./reviews.js";
 import { renderSessions } from "./session-list.js";
 import { setListLoading, subscribeToPush, toast } from "./shell.js";
@@ -151,8 +152,10 @@ export async function selectProject(projectId, shouldRender = true, preserveSess
   elements.sessionTitle.textContent = "Select a conversation";
   state.sessionNodes = [];
   state.sessions = [];
+  state.quickNotes = [];
   setListLoading("sessions", true);
   renderSessions();
+  renderQuickNotes();
   setMobileView("sessions");
   void loadSessionNodes(projectId).catch((error) => toast(error.message, 8000));
   let body;
@@ -161,6 +164,7 @@ export async function selectProject(projectId, shouldRender = true, preserveSess
     [body] = await Promise.all([
       api(`/api/projects/${encodeURIComponent(projectId)}/sessions${byTheWayQuery}`),
       state.harnesses.length ? undefined : loadHarnesses(),
+      refreshQuickNotes(projectId),
     ]);
   } finally {
     if (state.activeProjectId === projectId) setListLoading("sessions", false);

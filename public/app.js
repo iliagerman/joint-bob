@@ -18,6 +18,7 @@ import { setMobileView, toggleCanvasView, togglePanel } from "./app/layout.js";
 import { openRecentSessions } from "./app/recents.js";
 import { openRunningConversationsDialog } from "./app/running.js";
 import { startNewHarnessConversation } from "./app/new-session.js";
+import { openQuickNote } from "./app/quick-notes.js";
 import { confirmAction, SERVICE_WORKER_UPDATE_MS, setTheme, syncNotifyButton, toast, updateInstallButton, updateServiceWorker } from "./app/shell.js";
 import { state } from "./app/state.js";
 import "./app/state.js";
@@ -165,6 +166,7 @@ if (!state.canvasPaneMode) {
       newPiChat: () => { void startNewHarnessConversation("pi").catch((error) => toast(error.message)); },
       newClaudeChat: () => { void startNewHarnessConversation("claude").catch((error) => toast(error.message)); },
       newKiroChat: () => { void startNewHarnessConversation("kiro").catch((error) => toast(error.message)); },
+      quickNote: () => { void openQuickNote().catch((error) => toast(error.message)); },
     },
     openShortcutSettings: () => { void openSettings("shortcuts"); },
     openSpotlight,

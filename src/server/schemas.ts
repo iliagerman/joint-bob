@@ -115,6 +115,18 @@ export const replicationBatchSchema = z.object({ events: z.array(replicationEven
 export const replicationReceiptSchema = z.object({ received: z.array(z.string().uuid()).max(100) });
 export const registeredHarnessIdSchema = z.string().refine(isHarnessId, "Harness ID is invalid")
   .refine((value) => listHarnesses().some((harness) => harness.id === value), "Harness is not registered on this node");
+export const quickNoteSchema = z.object({
+  projectId: z.string().trim().min(1).max(120),
+  title: z.string().trim().min(1).max(120),
+  content: z.string().max(100_000),
+  harnessId: registeredHarnessIdSchema,
+  provider: z.string().trim().min(1).max(200).nullable().optional(),
+  modelId: z.string().trim().min(1).max(300).nullable().optional(),
+  thinkingLevel: z.string().trim().min(1).max(40).nullable().optional(),
+}).strict().refine((value) => Boolean(value.provider) === Boolean(value.modelId), {
+  message: "Provider and model must be selected together",
+  path: ["modelId"],
+});
 const runtimeLeaseSchema = z.object({
   engine: registeredHarnessIdSchema,
   sessionId: z.string().min(1).max(200),

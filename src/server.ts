@@ -43,6 +43,7 @@ import "./server/routes/browser.js";
 import "./server/routes/background-tasks.js";
 import "./server/routes/browser-monitors.js";
 import "./server/routes/projects.js";
+import "./server/routes/quick-notes.js";
 import { cleanupAbandonedByTheWayConversations } from "./server/routes/sessions.js";
 import { startCronScheduler } from "./server/cron.js";
 import "./server/routes/cron.js";

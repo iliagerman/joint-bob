@@ -95,6 +95,7 @@
         <div class="new-chat-row">
           <div class="new-chat-harnesses" id="newSessionHarnesses" aria-label="Start a conversation"></div>
           <button class="primary new-chat-mobile" id="newSessionButton" type="button" disabled data-testid="new-conversation-mobile-button">+ New conversation</button>
+          <button class="ghost quick-note-create" id="quickNoteButton" type="button" disabled data-shortcut-hint="quickNote" data-testid="quick-note-create-button">+ Quick note</button>
         </div>
         <div class="section-title live-row">
           <span>Conversations</span>
@@ -123,6 +124,10 @@
           Show done
         </label>
         <div class="panel-scroll session-list" id="sessionList"></div>
+        <section class="quick-notes-section" id="quickNotesSection" aria-labelledby="quickNotesHeading">
+          <div class="section-title" id="quickNotesHeading">Notes</div>
+          <div class="quick-note-list" id="quickNoteList" data-testid="quick-note-list"></div>
+        </section>
         <div class="panel-rail">
           <button class="ghost icon-button" id="expandChatsButton" data-shortcut-hint="toggleChats" type="button" aria-label="Expand conversations panel" title="Expand conversations panel" data-testid="chats-panel-expand-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 6l6 6-6 6"/></svg></button>
           <span class="panel-rail-label">Conversations</span>
@@ -1178,6 +1183,42 @@
           <button class="ghost" type="button" id="newSessionBackButton" data-testid="new-session-back-button">Back</button>
           <button class="ghost" type="button" id="newSessionNextButton" data-testid="new-session-next-button">Next</button>
           <button class="primary" value="default" type="submit" data-testid="new-session-name-start-button">Start conversation</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="quickNoteDialog" data-testid="quick-note-dialog" aria-labelledby="quickNoteDialogTitle">
+      <form method="dialog" class="dialog-card quick-note-card" id="quickNoteForm">
+        <div>
+          <span class="eyebrow">Project note</span>
+          <h2 id="quickNoteDialogTitle">New quick note</h2>
+          <p>Saved for reference. No agent runs.</p>
+        </div>
+        <label>Project
+          <select id="quickNoteProject" name="projectId" required data-testid="quick-note-project-select"></select>
+        </label>
+        <label>Title
+          <input id="quickNoteTitle" name="title" maxlength="120" autocomplete="off" required placeholder="What needs attention?" data-testid="quick-note-title-input" />
+        </label>
+        <label>Content
+          <textarea id="quickNoteContent" name="content" maxlength="100000" rows="8" placeholder="Capture context, links, or the next step." data-testid="quick-note-content-input"></textarea>
+        </label>
+        <div class="quick-note-settings">
+          <label>Agent
+            <select id="quickNoteHarness" name="harnessId" required data-testid="quick-note-harness-select"></select>
+          </label>
+          <label>Model
+            <select id="quickNoteModel" name="model" data-testid="quick-note-model-select"></select>
+          </label>
+          <label>Thinking
+            <select id="quickNoteThinking" name="thinkingLevel" data-testid="quick-note-thinking-select"></select>
+          </label>
+        </div>
+        <p class="quick-note-error" id="quickNoteError" role="alert" hidden></p>
+        <div class="dialog-actions">
+          <button class="ghost danger" type="button" id="deleteQuickNoteButton" data-testid="quick-note-delete-button" hidden>Delete</button>
+          <button class="ghost" type="button" id="cancelQuickNoteButton" data-testid="quick-note-cancel-button">Cancel</button>
+          <button class="primary" type="submit" data-testid="quick-note-save-button">Save note</button>
         </div>
       </form>
     </dialog>
