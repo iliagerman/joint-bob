@@ -123,6 +123,11 @@ const profileLeases = new Set<string>();
 // Every page starts desktop-sized; a sign-in handoff on a phone may shrink one page
 // so the site serves its mobile layout, and the override ends with the handoff.
 const defaultViewport = { width: 1512, height: 945 };
+export function browserLaunchArguments(platform = process.platform): string[] {
+  // Docker and other virtual interfaces churn on Linux hosts. Chromium treats
+  // each change as a broken request even when the active route did not change.
+  return ["--window-size=1512,945", ...(platform === "linux" ? ["--disable-network-change-notifier"] : [])];
+}
 const readOnly = new Set(["snapshot", "screenshot", "wait"]);
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 const defaultIdleTimeoutMs = 2 * 60 * 60 * 1000;
@@ -232,7 +237,7 @@ export class BrowserRuntime {
       const directory = await prepareProfile(profile.id);
       if (this.closed || (restoreId && this.cancelledRecoveries.has(restoreId))) throw new Error("Browser start cancelled");
       // server.ts owns TERM/INT shutdown. A second Playwright close force-kills Chrome before cookies flush.
-      context = await chromium.launchPersistentContext(directory, { executablePath: capability.executable, headless: true, handleSIGTERM: false, handleSIGINT: false, args: ["--window-size=1512,945"], viewport: defaultViewport, acceptDownloads: true });
+      context = await chromium.launchPersistentContext(directory, { executablePath: capability.executable, headless: true, handleSIGTERM: false, handleSIGINT: false, args: browserLaunchArguments(), viewport: defaultViewport, acceptDownloads: true });
       if (this.closed || (restoreId && this.cancelledRecoveries.has(restoreId))) throw new Error("Browser start cancelled");
       if (!profile.persistent) {
         try { await context.setStorageState(this.store.profileState(profile.id, start.projectId) as Parameters<BrowserContext["setStorageState"]>[0]); }

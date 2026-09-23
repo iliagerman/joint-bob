@@ -5,7 +5,7 @@ import path from "node:path";
 import os from "node:os";
 import { syncBuiltinESMExports } from "node:module";
 import { chromium } from "playwright-core";
-import { browserCapability, BrowserRuntime, shouldSendFrame, validateBrowserUploads } from "../src/browser-runtime.js";
+import { browserCapability, browserLaunchArguments, BrowserRuntime, shouldSendFrame, validateBrowserUploads } from "../src/browser-runtime.js";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { browserCommandSchema, browserStartSchema } from "../src/browser-types.js";
@@ -87,6 +87,12 @@ test("start reports unavailable local capability without launching Chrome", asyn
   } finally { await runtime.close(); }
 });
 
+test("Linux browser ignores virtual interface churn without changing other platforms", () => {
+  assert.deepEqual(browserLaunchArguments("linux"), ["--window-size=1512,945", "--disable-network-change-notifier"]);
+  assert.deepEqual(browserLaunchArguments("darwin"), ["--window-size=1512,945"]);
+  assert.deepEqual(browserLaunchArguments("win32"), ["--window-size=1512,945"]);
+});
+
 test("runtime creates a direct-network context and closes it without a proxy", async t => {
   let contextsClosed = 0;
   const page = Object.assign(new EventEmitter(), { url: () => "about:blank", title: async () => "" });
@@ -105,7 +111,7 @@ test("runtime creates a direct-network context and closes it without a proxy", a
     const movedAgent = await runtime.create({ ...start, appNodeId: randomUUID(), profileId: view.profileId });
     assert.equal(movedAgent.id, view.id, "Moving the agent must retain its existing browser and account");
     assert.equal(launch.mock.callCount(), 1, "Moving the agent must not launch another browser");
-    assert.deepEqual(launch.mock.calls[0].arguments, [path.join(process.env.PI_WEB_DATA_DIR!, "browser", "profiles", view.profileId!), { executablePath: process.execPath, headless: true, handleSIGTERM: false, handleSIGINT: false, args: ["--window-size=1512,945"], viewport: { width: 1512, height: 945 }, acceptDownloads: true }]);
+    assert.deepEqual(launch.mock.calls[0].arguments, [path.join(process.env.PI_WEB_DATA_DIR!, "browser", "profiles", view.profileId!), { executablePath: process.execPath, headless: true, handleSIGTERM: false, handleSIGINT: false, args: ["--window-size=1512,945", "--disable-network-change-notifier"], viewport: { width: 1512, height: 945 }, acceptDownloads: true }]);
     await runtime.execute(view.id, { action: "close" }, { kind: "agent" });
     assert.equal((await runtime.get(view.id)).state, "closed");
   } finally { await runtime.close(); }
