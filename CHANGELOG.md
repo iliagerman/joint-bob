@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Quick notes now include a project filter dropdown, letting you view and manage notes from different projects without changing the active project.
+
 ## 1.77.0 — 2026-09-23
 
 - Quick notes can now be started as full conversations, and the notes section can be toggled open or closed with Ctrl+Alt+/.

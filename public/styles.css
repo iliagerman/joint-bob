@@ -404,9 +404,8 @@ body.shortcuts-revealed .shortcut-hint { display: grid; }
 .wide { margin: 12px 14px 0; }
 
 /* New conversation controls come from the harness registry. */
-.new-chat-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin: 12px 12px 0; }
+.new-chat-row { margin: 12px 12px 0; }
 .new-chat-harnesses { display: grid; grid-template-columns: repeat(auto-fit, minmax(44px, 1fr)); gap: 8px; }
-.quick-note-create { min-height: 38px; padding: 0 12px; border-color: var(--line); border-radius: var(--radius-ctl); font-size: 12px; }
 .new-chat-harness-button { display: inline-grid; place-items: center; padding: 0; }
 .new-chat-harness-icon { width: 19px; height: 19px; }
 .new-chat-harness-icon.pi { color: var(--accent); }
@@ -485,13 +484,16 @@ body.shortcuts-revealed .shortcut-hint { display: grid; }
 .mark-all-reviewed-button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .quick-notes-section { flex: 0 1 32%; min-height: 92px; max-height: 32%; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--field) 28%, transparent); transition: flex-basis 160ms ease, min-height 160ms ease, max-height 160ms ease; }
-.quick-notes-section .section-title { min-height: 34px; margin-top: 6px; }
-.quick-notes-toggle { display: inline-grid; place-items: center; width: 28px; min-height: 28px; margin-left: auto; padding: 0; border: 0; border-radius: 7px; color: var(--muted); }
-.quick-notes-toggle:hover, .quick-notes-toggle:focus-visible { background: var(--surface); color: var(--text); }
+.quick-notes-section .section-title { min-height: 34px; margin-top: 6px; gap: 6px; }
+.quick-notes-filter { width: min(150px, 45%); min-height: 28px; margin-left: auto; padding: 3px 24px 3px 7px; font-size: 11px; }
+.quick-note-add, .quick-notes-toggle { display: inline-grid; place-items: center; width: 28px; min-height: 28px; padding: 0; border: 0; border-radius: 7px; color: var(--muted); }
+.quick-note-add { color: var(--accent); font-size: 18px; }
+.quick-note-add:hover, .quick-note-add:focus-visible, .quick-notes-toggle:hover, .quick-notes-toggle:focus-visible { background: var(--surface); color: var(--text); }
 .quick-notes-toggle svg { width: 15px; height: 15px; transition: transform 160ms ease; }
 .quick-notes-section.collapsed { flex: 0 0 41px; min-height: 41px; max-height: 41px; }
+.quick-notes-section.collapsed .quick-notes-toggle { margin-left: auto; }
 .quick-notes-section.collapsed .quick-notes-toggle svg { transform: rotate(-90deg); }
-.quick-notes-section.collapsed .quick-note-list { display: none; }
+.quick-notes-section.collapsed :is(.quick-notes-filter, .quick-note-add, .quick-note-list) { display: none; }
 .quick-note-list { max-height: calc(100% - 40px); overflow: auto; padding: 0 10px 10px; }
 .quick-note-row-wrap { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border-radius: 8px; }
 .quick-note-row-wrap:hover, .quick-note-row-wrap:focus-within { background: var(--surface); }
@@ -1339,7 +1341,7 @@ textarea { flex: 1; resize: none; max-height: 160px; min-height: 46px; border: 1
   bottom: max(8px, env(safe-area-inset-bottom));
   z-index: 40;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 2px;
   padding: 5px;
   border: 1px solid var(--line);
@@ -2026,15 +2028,13 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   /* 52px of reserved lane on the right so no header control lands under the fixed app menu. */
   .panel-bar, .chat-topbar { height: auto; min-height: 58px; padding: 10px 52px 10px 12px; padding-top: calc(10px + env(safe-area-inset-top, 0px)); }
   .app-menu { display: block; position: fixed; top: calc(18px + env(safe-area-inset-top, 0px)); right: 16px; z-index: 50; }
-  /* The bottom bar already reaches the board and settings, so the header drops both. */
-  #settingsButton, #projectBoardButton, #openCanvasButton, #canvasPanel { display: none; }
+  /* The bottom bar already reaches Notes, so the duplicate desktop action stays hidden. */
+  #settingsButton, #projectNotesButton, #projectBoardButton, #openCanvasButton, #canvasPanel { display: none; }
   /* A phone has no modifier keys to hold, so the badges never reveal there. */
   body.shortcuts-revealed .shortcut-hint { display: none; }
   .messages { padding: 12px; }
   .composer { padding: 6px 8px 10px; }
   .dialog-card { padding: 20px; }
-  .new-chat-row { grid-template-columns: 1fr; }
-  .quick-note-create { width: 100%; }
   .quick-note-settings { grid-template-columns: 1fr; }
   .search-shell input, input, select { font-size: 16px; }
   /* The menu is the only way to reach a row's actions, so it needs a real touch target,

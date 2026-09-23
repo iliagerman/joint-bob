@@ -41,11 +41,17 @@ after(async () => {
 test("a quick note can move, start a conversation, and be deleted", async () => {
   await page.getByText("Internal Assistant", { exact: true }).click();
   await page.getByTestId("session-list-loading-bar").waitFor({ state: "hidden" });
+  const activeProjectId = node.projects.find((project) => project.name === "Internal Assistant")!.id;
   const conversationCount = await page.locator("#sessionList .session-card").count();
 
   const notesSection = page.getByTestId("quick-notes-section");
+  const notesShortcut = page.getByTestId("projects-open-notes-button");
+  assert.equal(await notesShortcut.isVisible(), true, "the hidden Board action is replaced by Notes");
+  assert.equal(await notesShortcut.locator(".shortcut-hint").count(), 1, "the Notes action advertises its shortcut");
+  await notesShortcut.click();
+  const projectFilter = page.getByTestId("quick-notes-project-filter");
+  assert.equal(await projectFilter.inputValue(), activeProjectId, "Notes defaults to the active project");
   const notesToggle = page.getByTestId("quick-notes-toggle-button");
-  assert.equal(await notesToggle.locator(".shortcut-hint").count(), 1, "the project notes section advertises its shortcut");
   await notesToggle.click();
   await notesSection.and(page.locator(".collapsed")).waitFor();
   assert.equal(await notesToggle.getAttribute("aria-expanded"), "false");
@@ -54,10 +60,11 @@ test("a quick note can move, start a conversation, and be deleted", async () => 
   assert.equal(await notesToggle.getAttribute("aria-expanded"), "true");
 
   const button = page.getByTestId("quick-note-create-button");
+  assert.equal(await button.evaluate((element) => element.closest("#quickNotesSection") !== null), true, "add note belongs to Notes, not the harness row");
   assert.equal(await button.locator(".shortcut-hint").count(), 1, "quick note button advertises its shortcut");
   await page.keyboard.press("Control+Alt+.");
   await page.locator("#quickNoteDialog[open]").waitFor();
-  assert.equal(await page.getByTestId("quick-note-project-select").inputValue(), node.projects.find((project) => project.name === "Internal Assistant")!.id);
+  assert.equal(await page.getByTestId("quick-note-project-select").inputValue(), activeProjectId);
   await page.getByTestId("quick-note-title-input").fill("Verify release smoke test");
   await page.getByTestId("quick-note-content-input").fill("Do this manually after deploy.");
   await page.getByTestId("quick-note-save-button").click();
@@ -72,8 +79,11 @@ test("a quick note can move, start a conversation, and be deleted", async () => 
   await row.waitFor({ state: "detached" });
 
   const jointBobId = node.projects.find((project) => project.name === "Joint Bob")!.id;
-  await page.locator(`[data-project-id="${jointBobId}"] .project-card`).click();
+  await projectFilter.selectOption(jointBobId);
+  assert.equal(await page.locator("#projectName").textContent(), "Internal Assistant", "filtering notes does not change the active project");
   const movedRow = page.getByTestId("quick-note-row").filter({ hasText: "Verify release smoke test" });
+  await movedRow.waitFor();
+  await page.locator(`[data-project-id="${jointBobId}"] .project-card`).click();
   await movedRow.waitFor();
   const movedItem = page.locator(".quick-note-row-wrap").filter({ has: movedRow });
   assert.equal(await movedItem.getByTestId("quick-note-start-button").isVisible(), true, "each note has a start shortcut");

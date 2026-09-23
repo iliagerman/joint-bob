@@ -42,11 +42,11 @@ test("a global menu reaches settings from every page and names the node and rele
 
   assert.match(styles, /@media \(max-width: 1023px\)[\s\S]*?\.app-menu \{[^}]*display: block;/);
   assert.match(styles, /@media \(max-width: 1023px\)[\s\S]*?padding: 10px 52px 10px 12px;/);
-  // The bottom bar already reaches both, so the header drops them on mobile.
-  assert.match(styles, /@media \(max-width: 1023px\)[\s\S]*?#settingsButton, #projectBoardButton, #openCanvasButton, #canvasPanel \{ display: none; \}/);
+  // The bottom bar already reaches Notes, so its desktop shortcut drops away on mobile.
+  assert.match(styles, /@media \(max-width: 1023px\)[\s\S]*?#settingsButton, #projectNotesButton, #projectBoardButton, #openCanvasButton, #canvasPanel \{ display: none; \}/);
 });
 
-test("the bottom bar keeps the dormant Board entry hidden", async () => {
+test("the bottom bar replaces dormant Board with Notes", async () => {
   const [html, styles] = await Promise.all([readFile("public/index.html", "utf8"), readFile("public/styles.css", "utf8")]);
   const nav = html.slice(html.indexOf('<nav class="mobile-nav"'), html.indexOf("</nav>"));
   const order = [...nav.matchAll(/id="(nav[A-Za-z]+Button)"/g)].map((match) => match[1]);
@@ -56,11 +56,13 @@ test("the bottom bar keeps the dormant Board entry hidden", async () => {
     "navSessionsButton",
     "navChatButton",
     "navReviewsButton",
+    "navNotesButton",
     "navBoardButton",
   ]);
   assert.match(nav, /data-testid="nav-chat-button"[\s\S]*?<\/span>Current<\/button>/);
+  assert.match(nav, /id="navNotesButton"[^>]*data-notes-open/, "Notes is available from mobile navigation");
   assert.match(nav, /id="navBoardButton"[^>]*hidden/, "Board stays in the dormant markup but is hidden from users");
-  assert.match(styles, /\.mobile-nav \{[\s\S]*?grid-template-columns: repeat\(4, 1fr\);/, "visible mobile actions fill all four columns");
+  assert.match(styles, /\.mobile-nav \{[\s\S]*?grid-template-columns: repeat\(5, 1fr\);/, "visible mobile actions fill all five columns");
 });
 
 test("the chat header shows a traffic light, an icon Stop, and the project name", async () => {

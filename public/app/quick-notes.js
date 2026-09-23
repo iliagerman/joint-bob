@@ -19,10 +19,14 @@ const convertButton = document.querySelector("#convertQuickNoteButton");
 const saveButton = form.querySelector("[type='submit']");
 const createButton = document.querySelector("#quickNoteButton");
 const section = document.querySelector("#quickNotesSection");
+const filterSelect = document.querySelector("#quickNotesProjectFilter");
 const toggleButton = document.querySelector("#quickNotesToggle");
 const list = document.querySelector("#quickNoteList");
+const openButtons = document.querySelectorAll("[data-notes-open]");
 let editingId = null;
 let availableModels = null;
+let filterProjectId = null;
+let notesRequestId = 0;
 
 function showError(message = "") {
   errorText.textContent = message;
@@ -35,19 +39,37 @@ function setQuickNotesCollapsed(collapsed) {
   toggleButton.setAttribute("aria-label", collapsed ? "Show project notes" : "Collapse project notes");
 }
 
-export function toggleQuickNotes() {
+function renderProjectFilter() {
+  const activeProject = state.projects.find((project) => project.id === state.activeProjectId);
+  filterSelect.replaceChildren(
+    new Option("All projects", "*"),
+    ...state.projects.map((project) => new Option(project.id === activeProject?.id ? `${project.name} (active)` : project.name, project.id)),
+  );
+  filterSelect.disabled = !activeProject;
+  filterSelect.value = filterProjectId || activeProject?.id || "*";
+}
+
+export function showQuickNotes() {
   if (!state.activeProjectId) { toast("Select a project first"); return; }
-  const opening = section.classList.contains("collapsed") || section.getClientRects().length === 0;
-  setQuickNotesCollapsed(!opening);
-  if (opening) {
-    setMobileView("sessions");
-    requestAnimationFrame(() => (list.querySelector("button") || list).focus());
-  }
+  filterProjectId = state.activeProjectId;
+  renderProjectFilter();
+  setQuickNotesCollapsed(false);
+  setMobileView("sessions");
+  void refreshQuickNotes().catch((error) => toast(error.message));
+  requestAnimationFrame(() => filterSelect.focus());
+}
+
+export function toggleQuickNotes() {
+  if (section.classList.contains("collapsed") || section.getClientRects().length === 0) showQuickNotes();
+  else setQuickNotesCollapsed(true);
 }
 
 export function renderQuickNotes() {
   createButton.disabled = !state.activeProjectId;
   toggleButton.disabled = !state.activeProjectId;
+  if (!state.activeProjectId) filterProjectId = null;
+  else if (!filterProjectId || (filterProjectId !== "*" && !state.projects.some((project) => project.id === filterProjectId))) filterProjectId = state.activeProjectId;
+  renderProjectFilter();
   list.replaceChildren();
   if (!state.activeProjectId) return;
   if (!state.quickNotes.length) {
@@ -70,9 +92,11 @@ export function renderQuickNotes() {
     const preview = document.createElement("span");
     preview.textContent = note.content.trim() || "No content";
     const meta = document.createElement("small");
+    const project = state.projects.find((candidate) => candidate.id === note.projectId);
     const harness = state.harnesses.find((candidate) => candidate.id === note.harnessId);
     const model = note.modelId ? availableModels?.find((candidate) => candidate.harnessId === note.harnessId && candidate.provider === note.provider && candidate.id === note.modelId) : null;
-    meta.textContent = `${harness?.label || note.harnessId} · ${model?.label || note.modelId || "Default model"}`;
+    const projectLabel = filterProjectId === state.activeProjectId ? "" : `${project?.name || "Unknown project"} · `;
+    meta.textContent = `${projectLabel}${harness?.label || note.harnessId} · ${model?.label || note.modelId || "Default model"}`;
     button.append(title, preview, meta);
     button.addEventListener("click", () => openQuickNote(note));
 
@@ -100,11 +124,16 @@ export function renderQuickNotes() {
   }
 }
 
-export async function refreshQuickNotes(projectId = state.activeProjectId) {
-  if (!projectId) { state.quickNotes = []; renderQuickNotes(); return; }
-  const body = await api(`/api/projects/${encodeURIComponent(projectId)}/quick-notes`);
-  if (state.activeProjectId !== projectId) return;
-  state.quickNotes = body.notes;
+export async function refreshQuickNotes(projectId) {
+  if (projectId !== undefined) filterProjectId = projectId;
+  if (!state.activeProjectId) { state.quickNotes = []; renderQuickNotes(); return; }
+  filterProjectId ||= state.activeProjectId;
+  const requestId = ++notesRequestId;
+  const activeProjectId = state.activeProjectId;
+  const projectIds = filterProjectId === "*" ? state.projects.map((project) => project.id) : [filterProjectId];
+  const bodies = await Promise.all(projectIds.map((id) => api(`/api/projects/${encodeURIComponent(id)}/quick-notes`)));
+  if (requestId !== notesRequestId || state.activeProjectId !== activeProjectId) return;
+  state.quickNotes = bodies.flatMap((body) => body.notes).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   renderQuickNotes();
 }
 
@@ -202,6 +231,11 @@ harnessSelect.addEventListener("change", () => renderModels());
 modelSelect.addEventListener("change", () => renderThinking());
 form.addEventListener("submit", saveNote);
 createButton.addEventListener("click", () => { void openQuickNote(); });
+openButtons.forEach((button) => button.addEventListener("click", showQuickNotes));
+filterSelect.addEventListener("change", () => {
+  filterProjectId = filterSelect.value;
+  void refreshQuickNotes().catch((error) => toast(error.message));
+});
 toggleButton.addEventListener("click", toggleQuickNotes);
 document.querySelector("#cancelQuickNoteButton").addEventListener("click", () => dialog.close());
 async function removeNote(note) {
