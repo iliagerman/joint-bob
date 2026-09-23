@@ -32,6 +32,19 @@ test("Pi abort deadline refuses readiness instead of waiting forever", async (t)
   await pending;
 });
 
+test("planned Pi update abort does not surface as an assistant error", async () => {
+  let fixture: ReturnType<typeof nativePiSessionFixture>;
+  fixture = nativePiSessionFixture({ abort: async () => {
+    fixture.emitRaw({ type: "message_end", message: { role: "assistant", stopReason: "error", errorMessage: "This operation was aborted" } });
+  } });
+  const events: Record<string, unknown>[] = [];
+  fixture.session.subscribe((event) => events.push(event));
+
+  await fixture.session.stopForUpdate();
+
+  assert.equal(events.some((event) => event.type === "assistantError"), false, "the updating banner and recovery turn already explain the interruption");
+});
+
 test("already signaled Claude child does not wait for a past close event", async () => {
   const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "pipe" });
   await once(child, "spawn");

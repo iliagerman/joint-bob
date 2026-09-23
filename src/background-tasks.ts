@@ -156,6 +156,56 @@ export function backgroundTaskConversationId(identity: string): string {
   try { return String(JSON.parse(identity)[1] ?? ""); } catch { return ""; }
 }
 
+export interface ImplicitShellTask {
+  id: string;
+  identity: string;
+  startedAt: string;
+}
+
+/* A `supervised_shell_calls` row marks a task the harness started inside a tool
+   call. Those shells are meant to end with the work of a turn, while a job started
+   with `joint-bob-task start` is meant to outlive it, so only the former is ever
+   reaped. A node that has never supervised a shell has no policy table and nothing
+   to reap. */
+export function readImplicitShellTasks(dataDirectory: string): ImplicitShellTask[] {
+  const db = open(dataDirectory);
+  if (!db) return [];
+  try {
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='supervisor_tasks'").get()) return [];
+    const policyFile = path.join(realpathSync(dataDirectory), "node.db");
+    if (!existsSync(policyFile)) return [];
+    db.prepare("ATTACH DATABASE ? AS shell_calls").run(`${pathToFileURL(policyFile).href}?mode=ro`);
+    if (!db.prepare("SELECT 1 FROM shell_calls.sqlite_master WHERE type='table' AND name='supervised_shell_calls'").get()) return [];
+    const rows = db.prepare(
+      `SELECT id,identity,started_at FROM supervisor_tasks
+       WHERE status IN ('starting','running','stopping')
+         AND EXISTS (SELECT 1 FROM shell_calls.supervised_shell_calls p WHERE p.task_id=supervisor_tasks.id)
+       ORDER BY started_at`,
+    ).all() as Array<{ id: string; identity: string; started_at: string }>;
+    return rows.map((row) => ({ id: row.id, identity: row.identity, startedAt: row.started_at }));
+  } finally {
+    db.close();
+  }
+}
+
+/* A tool-call shell is supervised so it can outlive the turn that started it and
+   wake the conversation when it ends. Nothing ends it when that conversation never
+   comes back: the shell keeps running, keeps its release directory pinned, and keeps
+   the conversation advertising background work. Two things make one abandoned - the
+   conversation it belongs to is gone, or it has outlived any turn it could still be
+   reporting to. */
+export const TOOL_CALL_SHELL_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+/* A conversation starting its first turn can run a shell before its record lands,
+   so a missing conversation only counts once the shell is older than that window. */
+export const MISSING_CONVERSATION_GRACE_MS = 5 * 60 * 1000;
+
+export function abandonedShellReason(startedAt: string, conversationExists: boolean, now: number): string | null {
+  const age = now - Date.parse(startedAt);
+  if (!conversationExists && age > MISSING_CONVERSATION_GRACE_MS) return "its conversation is gone";
+  if (age > TOOL_CALL_SHELL_MAX_AGE_MS) return `it started ${startedAt} and outlived the tool call`;
+  return null;
+}
+
 export function readActiveBackgroundTaskIdentities(dataDirectory: string): Set<string> {
   const db = open(dataDirectory);
   if (!db) return new Set();

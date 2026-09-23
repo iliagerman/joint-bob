@@ -96,7 +96,13 @@
         <div class="new-chat-row">
           <div class="new-chat-harnesses" id="newSessionHarnesses" aria-label="Start a conversation"></div>
           <button class="primary new-chat-mobile" id="newSessionButton" type="button" disabled data-testid="new-conversation-mobile-button">+ New conversation</button>
+          <button class="ghost quick-note-mobile" id="quickNoteMobileButton" type="button" disabled data-testid="quick-note-create-mobile-button">+ Quick note</button>
         </div>
+        <div class="conversation-tabs" role="tablist" aria-label="Project content">
+          <button class="active" id="conversationsTab" type="button" role="tab" aria-selected="true" aria-controls="conversationListPane" data-testid="conversations-tab">Conversations</button>
+          <button id="notesTab" type="button" role="tab" aria-selected="false" aria-controls="quickNotesSection" tabindex="-1" data-testid="notes-tab">Notes</button>
+        </div>
+        <div class="conversation-list-pane" id="conversationListPane" role="tabpanel" aria-labelledby="conversationsTab" data-testid="conversation-list-pane">
         <div class="section-title live-row">
           <span>Conversations</span>
           <span class="live-dot" id="chatsLiveDot" title="Auto-refreshing" hidden></span>
@@ -124,13 +130,13 @@
           Show done
         </label>
         <div class="panel-scroll session-list" id="sessionList"></div>
-        <section class="quick-notes-section" id="quickNotesSection" aria-labelledby="quickNotesHeading" data-testid="quick-notes-section">
+        </div>
+        <section class="quick-notes-section" id="quickNotesSection" role="tabpanel" aria-labelledby="notesTab" data-testid="quick-notes-section" hidden>
           <div class="section-title" id="quickNotesHeading">
             <span>Notes</span>
             <label class="sr-only" for="quickNotesProjectFilter">Filter notes by project</label>
             <select class="quick-notes-filter" id="quickNotesProjectFilter" aria-label="Filter notes by project" data-testid="quick-notes-project-filter"></select>
             <button class="ghost quick-note-add" id="quickNoteButton" type="button" disabled aria-label="Add note" title="Add note" data-shortcut-hint="quickNote" data-testid="quick-note-create-button">+</button>
-            <button class="ghost quick-notes-toggle" id="quickNotesToggle" type="button" aria-label="Collapse project notes" aria-expanded="true" title="Show or collapse project notes" data-testid="quick-notes-toggle-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></button>
           </div>
           <div class="quick-note-list" id="quickNoteList" data-testid="quick-note-list" tabindex="-1"></div>
         </section>

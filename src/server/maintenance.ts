@@ -2,7 +2,7 @@ import { agentWorkActive, listConversationWork, refreshConversationWork } from "
 import { AGENT_RESOURCES_FOLDER_ID, agentResourcesRoot, reconcileAgentResources } from "../agent-resources.js";
 import { type ClusterPeer, dueMembershipDeliveries, getClusterMachineToken, getClusterMembership, getClusterNode, getClusterPeer, listClusterPeers, recordMembershipDelivered, recordMembershipFailure } from "../cluster.js";
 import { getConversationOwnership } from "../conversation-ownership.js";
-import { backgroundTaskConversationId, readActiveBackgroundTaskIdentities } from "../background-tasks.js";
+import { abandonedShellReason, backgroundTaskConversationId, readActiveBackgroundTaskIdentities, readImplicitShellTasks } from "../background-tasks.js";
 import { resolveDataDirectory } from "../data-directory.js";
 import { ensureConversationRecord, latestConversationSegment } from "../conversation-records.js";
 import { conversationRuntimeDatabase, type RuntimeLeaseInput, sweepExpiredRuntimeLeases } from "../conversation-runtime.js";
@@ -10,6 +10,7 @@ import { getHarnessRuntime, harnessForSessionPath, listHarnesses, listHarnessSyn
 import { eventsForPeer, recordPeerFailure, recordPeerReceipt } from "../replication.js";
 import { enqueueSecretCredentialSync, recordSecretCredentialFailure, recordSecretCredentialReceipt, secretCredentialEventsForPeer } from "../secret-replication.js";
 import { currentRoutingConfigTarget, dueRoutingConfigDeliveries, dropRoutingConfigDelivery, recordRoutingConfigDeliveryFailure, recordRoutingConfigDeliverySuccess, routingConfigDatabase, type PendingRoutingConfigDelivery } from "../routing-configs.js";
+import { supervisorRequest } from "../../scripts/supervisor-client.mjs";
 import { signedPost } from "./cluster-v2.js";
 import { listSecretAccounts, type SecretAccount } from "../secrets.js";
 import { listProjects } from "../store.js";
@@ -412,6 +413,32 @@ export async function pushRuntimeLeaseSnapshots(): Promise<void> {
     }));
   } finally {
     runtimeLeasePushInProgress = false;
+  }
+}
+
+let shellReapInProgress = false;
+
+/* Reaps tool-call shells whose turn is never coming back. A job started with
+   `joint-bob-task start` is meant to be long-lived and is never reaped. */
+export async function reapAbandonedShellTasks(now = Date.now()): Promise<void> {
+  if (shellReapInProgress) return;
+  shellReapInProgress = true;
+  try {
+    const data = resolveDataDirectory();
+    for (const shell of readImplicitShellTasks(data)) {
+      const conversationId = backgroundTaskConversationId(shell.identity);
+      const exists = Boolean(conversationId) && Boolean(await latestConversationSegment(conversationId));
+      const reason = abandonedShellReason(shell.startedAt, exists, now);
+      if (!reason) continue;
+      try {
+        await supervisorRequest(data, { action: "stop", id: shell.id });
+        console.warn(`Stopped abandoned shell task ${shell.id}: ${reason}`);
+      } catch (error) {
+        console.warn(`Could not stop abandoned shell task ${shell.id}`, error);
+      }
+    }
+  } finally {
+    shellReapInProgress = false;
   }
 }
 

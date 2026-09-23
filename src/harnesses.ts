@@ -194,7 +194,7 @@ function transcriptName(sessionPath: string): string {
   return sessionPath.replace(/\\/g, "/").split("/").at(-1) ?? sessionPath;
 }
 
-export function orderSessionFamilies(sessions: SessionSummary[]): SessionSummary[] {
+export function orderSessionFamilies(sessions: SessionSummary[], rootLimit = Infinity): SessionSummary[] {
   const byPath = new Map(sessions.map((session) => [session.path, session]));
   const byName = new Map(sessions.map((session) => [transcriptName(session.path), session]));
   const parentOf = (session: SessionSummary): SessionSummary | undefined => {
@@ -225,7 +225,7 @@ export function orderSessionFamilies(sessions: SessionSummary[]): SessionSummary
     ordered.push(session);
     for (const child of children.get(session.path) ?? []) append(child);
   };
-  for (const root of roots) append(root);
+  for (const root of roots.slice(0, rootLimit)) append(root);
   return ordered;
 }
 
@@ -341,5 +341,5 @@ export async function listHarnessSessions(project: HarnessProject, pinnedSession
     ...ordered.filter(isPinned),
     ...ordered.filter((session) => !isPinned(session) && !session.doneAt),
     ...ordered.filter((session) => !isPinned(session) && session.doneAt),
-  ]).slice(0, 50);
+  ], 50);
 }

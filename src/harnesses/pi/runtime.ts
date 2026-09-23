@@ -31,6 +31,7 @@ export class PiSession implements HarnessSession {
   private handle: PiHandle;
   private readonly listeners = new Set<Listener>();
   private unsubscribeNative: () => void = () => {};
+  private stoppingForUpdate = false;
 
   constructor(private readonly options: HarnessOpenOptions, handle: PiHandle) {
     this.handle = handle;
@@ -46,7 +47,10 @@ export class PiSession implements HarnessSession {
         for (const listener of this.listeners) listener({ type: "conversationWorkChanged" });
       }
       const payload = service.eventPayload(event);
-      for (const listener of this.listeners) listener(payload);
+      const expectedUpdateAbort = this.stoppingForUpdate
+        && payload.type === "assistantError"
+        && /\babort(?:ed)?\b/i.test(String(payload.error ?? ""));
+      if (!expectedUpdateAbort) for (const listener of this.listeners) listener(payload);
     });
   }
 
@@ -221,6 +225,7 @@ export class PiSession implements HarnessSession {
   }
 
   async stopForUpdate(): Promise<void> {
+    this.stoppingForUpdate = true;
     this.handle.session.clearQueue();
     this.abortOperations();
     let timer: NodeJS.Timeout | undefined;

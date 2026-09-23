@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Quick notes now display alongside conversations in tabbed panels, with notes filterable by project.
 - Classifier edits now persist when Settings is saved with the main Save button.
 - Assistant responses now display a badge showing the harness, model, and reasoning level that produced each message.
 

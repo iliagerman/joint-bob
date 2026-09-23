@@ -406,6 +406,7 @@ body.shortcuts-revealed .shortcut-hint { display: grid; }
 /* New conversation controls come from the harness registry. */
 .new-chat-row { margin: 12px 12px 0; }
 .new-chat-harnesses { display: grid; grid-template-columns: repeat(auto-fit, minmax(44px, 1fr)); gap: 8px; }
+.quick-note-mobile { display: none; }
 .new-chat-harness-button { display: inline-grid; place-items: center; padding: 0; }
 .new-chat-harness-icon { width: 19px; height: 19px; }
 .new-chat-harness-icon.pi { color: var(--accent); }
@@ -483,18 +484,17 @@ body.shortcuts-revealed .shortcut-hint { display: grid; }
 .mark-all-reviewed-button:hover:not(:disabled) { color: var(--text); background: var(--field); }
 .mark-all-reviewed-button:disabled { opacity: 0.4; cursor: not-allowed; }
 
-.quick-notes-section { flex: 0 1 32%; min-height: 92px; max-height: 32%; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--field) 28%, transparent); transition: flex-basis 160ms ease, min-height 160ms ease, max-height 160ms ease; }
-.quick-notes-section .section-title { min-height: 34px; margin-top: 6px; gap: 6px; }
+.conversation-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 12px 12px 0; padding: 3px; border: 1px solid var(--line); border-radius: var(--radius-ctl); background: var(--field); }
+.conversation-tabs button { min-height: 32px; border: 0; border-radius: calc(var(--radius-ctl) - 3px); background: transparent; color: var(--muted); font-size: 12px; font-weight: 600; }
+.conversation-tabs button.active { background: var(--panel); color: var(--text); box-shadow: 0 1px 3px rgb(0 0 0 / 0.16); }
+.conversation-list-pane { display: flex; flex: 1; min-height: 0; flex-direction: column; }
+.conversation-list-pane[hidden] { display: none; }
+.quick-notes-section { flex: 1; min-height: 0; background: color-mix(in srgb, var(--field) 28%, transparent); }
+.quick-notes-section .section-title { min-height: 34px; margin-top: 10px; gap: 6px; }
 .quick-notes-filter { width: min(150px, 45%); min-height: 28px; margin-left: auto; padding: 3px 24px 3px 7px; font-size: 11px; }
-.quick-note-add, .quick-notes-toggle { display: inline-grid; place-items: center; width: 28px; min-height: 28px; padding: 0; border: 0; border-radius: 7px; color: var(--muted); }
-.quick-note-add { color: var(--accent); font-size: 18px; }
-.quick-note-add:hover, .quick-note-add:focus-visible, .quick-notes-toggle:hover, .quick-notes-toggle:focus-visible { background: var(--surface); color: var(--text); }
-.quick-notes-toggle svg { width: 15px; height: 15px; transition: transform 160ms ease; }
-.quick-notes-section.collapsed { flex: 0 0 41px; min-height: 41px; max-height: 41px; }
-.quick-notes-section.collapsed .quick-notes-toggle { margin-left: auto; }
-.quick-notes-section.collapsed .quick-notes-toggle svg { transform: rotate(-90deg); }
-.quick-notes-section.collapsed :is(.quick-notes-filter, .quick-note-add, .quick-note-list) { display: none; }
-.quick-note-list { max-height: calc(100% - 40px); overflow: auto; padding: 0 10px 10px; }
+.quick-note-add { display: inline-grid; place-items: center; width: 28px; min-height: 28px; padding: 0; border: 0; border-radius: 7px; color: var(--accent); font-size: 18px; }
+.quick-note-add:hover, .quick-note-add:focus-visible { background: var(--surface); color: var(--text); }
+.quick-note-list { height: calc(100% - 44px); overflow: auto; padding: 0 10px 10px; }
 .quick-note-row-wrap { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border-radius: 8px; }
 .quick-note-row-wrap:hover, .quick-note-row-wrap:focus-within { background: var(--surface); }
 .quick-note-row { display: grid; width: 100%; min-width: 0; min-height: 0; padding: 9px 8px 9px 10px; border: 0; background: transparent; color: var(--text); text-align: left; }
@@ -1970,8 +1970,10 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 @media (max-width: 1023px) {
   .classification-filter { max-width: none; }
   .collapse-button { display: none; }
+  .new-chat-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .new-chat-harnesses { display: none; }
-  .new-chat-mobile { display: block; }
+  .new-chat-mobile, .quick-note-mobile { display: block; width: 100%; }
+  .quick-note-mobile { min-height: 40px; border-color: var(--line); }
   .classification-filter { max-width: none; }
   .chat-toolbar {
     display: grid;

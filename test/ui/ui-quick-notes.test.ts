@@ -38,10 +38,36 @@ after(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
-test("a quick note can move, start a conversation, and be deleted", async () => {
-  await page.getByText("Internal Assistant", { exact: true }).click();
+test("mobile keeps creation actions together and switches conversations and notes with tabs", async () => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const projectId = node.projects.find((project) => project.name === "Internal Assistant")!.id;
+  await page.locator(`[data-project-id="${projectId}"] .project-card`).click();
   await page.getByTestId("session-list-loading-bar").waitFor({ state: "hidden" });
+
+  const newConversation = page.getByTestId("new-conversation-mobile-button");
+  const newNote = page.getByTestId("quick-note-create-mobile-button");
+  const [conversationBox, noteBox] = await Promise.all([newConversation.boundingBox(), newNote.boundingBox()]);
+  assert.ok(conversationBox && noteBox, "both mobile creation actions are visible");
+  assert.ok(Math.abs(conversationBox.y - noteBox.y) < 2, "mobile creation actions share one row");
+
+  const conversationsTab = page.getByTestId("conversations-tab");
+  const notesTab = page.getByTestId("notes-tab");
+  assert.equal(await conversationsTab.getAttribute("aria-selected"), "true", "conversations is the default tab");
+  assert.equal(await page.getByTestId("conversation-list-pane").isVisible(), true);
+  assert.equal(await page.getByTestId("quick-notes-section").isVisible(), false);
+
+  await notesTab.click();
+  assert.equal(await notesTab.getAttribute("aria-selected"), "true");
+  assert.equal(await page.getByTestId("conversation-list-pane").isVisible(), false);
+  assert.equal(await page.getByTestId("quick-notes-section").isVisible(), true);
+  await conversationsTab.click();
+  await page.setViewportSize({ width: 1440, height: 900 });
+});
+
+test("a quick note can move, start a conversation, and be deleted", async () => {
   const activeProjectId = node.projects.find((project) => project.name === "Internal Assistant")!.id;
+  await page.locator(`[data-project-id="${activeProjectId}"] .project-card`).click();
+  await page.getByTestId("session-list-loading-bar").waitFor({ state: "hidden" });
   const conversationCount = await page.locator("#sessionList .session-card").count();
 
   const notesSection = page.getByTestId("quick-notes-section");
@@ -51,13 +77,12 @@ test("a quick note can move, start a conversation, and be deleted", async () => 
   await notesShortcut.click();
   const projectFilter = page.getByTestId("quick-notes-project-filter");
   assert.equal(await projectFilter.inputValue(), activeProjectId, "Notes defaults to the active project");
-  const notesToggle = page.getByTestId("quick-notes-toggle-button");
-  await notesToggle.click();
-  await notesSection.and(page.locator(".collapsed")).waitFor();
-  assert.equal(await notesToggle.getAttribute("aria-expanded"), "false");
+  assert.equal(await page.getByTestId("notes-tab").getAttribute("aria-selected"), "true");
   await page.keyboard.press("Control+Alt+/");
-  await notesSection.and(page.locator(":not(.collapsed)")).waitFor();
-  assert.equal(await notesToggle.getAttribute("aria-expanded"), "true");
+  await notesSection.waitFor({ state: "hidden" });
+  assert.equal(await page.getByTestId("conversations-tab").getAttribute("aria-selected"), "true");
+  await page.keyboard.press("Control+Alt+/");
+  await notesSection.waitFor({ state: "visible" });
 
   const button = page.getByTestId("quick-note-create-button");
   assert.equal(await button.evaluate((element) => element.closest("#quickNotesSection") !== null), true, "add note belongs to Notes, not the harness row");
@@ -83,11 +108,13 @@ test("a quick note can move, start a conversation, and be deleted", async () => 
   assert.equal(await page.locator("#projectName").textContent(), "Internal Assistant", "filtering notes does not change the active project");
   const movedRow = page.getByTestId("quick-note-row").filter({ hasText: "Verify release smoke test" });
   await movedRow.waitFor();
-  await page.locator(`[data-project-id="${jointBobId}"] .project-card`).click();
-  await movedRow.waitFor();
   const movedItem = page.locator(".quick-note-row-wrap").filter({ has: movedRow });
   assert.equal(await movedItem.getByTestId("quick-note-start-button").isVisible(), true, "each note has a start shortcut");
 
+  await page.locator(`[data-project-id="${jointBobId}"] .project-card`).click();
+  assert.equal(await page.getByTestId("conversations-tab").getAttribute("aria-selected"), "true", "a project opens on conversations");
+  await page.getByTestId("notes-tab").click();
+  await movedRow.waitFor();
   await movedRow.click();
   assert.equal(await page.getByTestId("quick-note-convert-button").isVisible(), true, "the note dialog can start a conversation");
   await page.getByTestId("quick-note-cancel-button").click();

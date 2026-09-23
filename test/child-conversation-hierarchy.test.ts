@@ -37,6 +37,17 @@ test("a child can find a parent transcript moved to another node", () => {
   assert.deepEqual(orderSessionFamilies([child, parent]).map((entry) => entry.id), ["parent", "child"]);
 });
 
+test("the conversation limit counts top-level families instead of sub-agent rows", () => {
+  const parent = session("parent");
+  const children = Array.from({ length: 50 }, (_, index) => session(`child-${index}`, parent.path));
+  const unrelated = session("other");
+
+  assert.deepEqual(
+    orderSessionFamilies([parent, ...children, unrelated], 1).map((entry) => entry.id),
+    ["parent", ...children.map((entry) => entry.id)],
+  );
+});
+
 test("the conversation list renders child lineage", async () => {
   const [app, styles, serviceWorker] = await Promise.all([
     appSource(),

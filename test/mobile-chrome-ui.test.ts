@@ -104,10 +104,5 @@ test("the copy button sits outside the message bubble", async () => {
   assert.match(styles, /\.message\.assistant \+ \.message-actions \{/);
 
   // The bubble must already be in the list before its sibling actions are inserted.
-  const appendStart = app.indexOf("function appendMessage(");
-  const appendBody = app.slice(appendStart, app.indexOf("\n}", appendStart));
-  assert.ok(
-    appendBody.indexOf("elements.messages.insertBefore(bubble") < appendBody.indexOf("appendCopyButton(bubble)"),
-    "appendMessage must insert the bubble before appending its actions",
-  );
+  assert.match(app, /appendBeforeQueuedMessages\(bubble\);\n  if \(isMarkdown\) appendCopyButton\(bubble/);
 });

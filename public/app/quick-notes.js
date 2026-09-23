@@ -18,9 +18,12 @@ const deleteButton = document.querySelector("#deleteQuickNoteButton");
 const convertButton = document.querySelector("#convertQuickNoteButton");
 const saveButton = form.querySelector("[type='submit']");
 const createButton = document.querySelector("#quickNoteButton");
+const mobileCreateButton = document.querySelector("#quickNoteMobileButton");
 const section = document.querySelector("#quickNotesSection");
+const conversationsPane = document.querySelector("#conversationListPane");
+const conversationsTab = document.querySelector("#conversationsTab");
+const notesTab = document.querySelector("#notesTab");
 const filterSelect = document.querySelector("#quickNotesProjectFilter");
-const toggleButton = document.querySelector("#quickNotesToggle");
 const list = document.querySelector("#quickNoteList");
 const openButtons = document.querySelectorAll("[data-notes-open]");
 let editingId = null;
@@ -33,10 +36,20 @@ function showError(message = "") {
   errorText.hidden = !message;
 }
 
-function setQuickNotesCollapsed(collapsed) {
-  section.classList.toggle("collapsed", collapsed);
-  toggleButton.setAttribute("aria-expanded", String(!collapsed));
-  toggleButton.setAttribute("aria-label", collapsed ? "Show project notes" : "Collapse project notes");
+function setProjectContentTab(tab) {
+  const showingNotes = tab === "notes";
+  conversationsPane.hidden = showingNotes;
+  section.hidden = !showingNotes;
+  conversationsTab.classList.toggle("active", !showingNotes);
+  notesTab.classList.toggle("active", showingNotes);
+  conversationsTab.setAttribute("aria-selected", String(!showingNotes));
+  notesTab.setAttribute("aria-selected", String(showingNotes));
+  conversationsTab.tabIndex = showingNotes ? -1 : 0;
+  notesTab.tabIndex = showingNotes ? 0 : -1;
+}
+
+export function showConversations() {
+  setProjectContentTab("conversations");
 }
 
 function renderProjectFilter() {
@@ -53,20 +66,20 @@ export function showQuickNotes() {
   if (!state.activeProjectId) { toast("Select a project first"); return; }
   filterProjectId = state.activeProjectId;
   renderProjectFilter();
-  setQuickNotesCollapsed(false);
+  setProjectContentTab("notes");
   setMobileView("sessions");
   void refreshQuickNotes().catch((error) => toast(error.message));
   requestAnimationFrame(() => filterSelect.focus());
 }
 
 export function toggleQuickNotes() {
-  if (section.classList.contains("collapsed") || section.getClientRects().length === 0) showQuickNotes();
-  else setQuickNotesCollapsed(true);
+  if (section.hidden) showQuickNotes();
+  else showConversations();
 }
 
 export function renderQuickNotes() {
   createButton.disabled = !state.activeProjectId;
-  toggleButton.disabled = !state.activeProjectId;
+  mobileCreateButton.disabled = !state.activeProjectId;
   if (!state.activeProjectId) filterProjectId = null;
   else if (!filterProjectId || (filterProjectId !== "*" && !state.projects.some((project) => project.id === filterProjectId))) filterProjectId = state.activeProjectId;
   renderProjectFilter();
@@ -218,7 +231,7 @@ async function saveNote(event) {
       body: JSON.stringify(payload),
     });
     dialog.close();
-    setQuickNotesCollapsed(false);
+    setProjectContentTab("notes");
     await refreshQuickNotes();
   } catch (error) {
     showError(error.message);
@@ -231,12 +244,14 @@ harnessSelect.addEventListener("change", () => renderModels());
 modelSelect.addEventListener("change", () => renderThinking());
 form.addEventListener("submit", saveNote);
 createButton.addEventListener("click", () => { void openQuickNote(); });
+mobileCreateButton.addEventListener("click", () => { void openQuickNote(); });
+conversationsTab.addEventListener("click", showConversations);
+notesTab.addEventListener("click", showQuickNotes);
 openButtons.forEach((button) => button.addEventListener("click", showQuickNotes));
 filterSelect.addEventListener("change", () => {
   filterProjectId = filterSelect.value;
   void refreshQuickNotes().catch((error) => toast(error.message));
 });
-toggleButton.addEventListener("click", toggleQuickNotes);
 document.querySelector("#cancelQuickNoteButton").addEventListener("click", () => dialog.close());
 async function removeNote(note) {
   if (!await confirmAction({ title: `Delete "${note.title}"?`, confirmLabel: "Delete note", destructive: true })) return;

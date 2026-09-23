@@ -21,7 +21,7 @@ test("chat messages carry a wall-clock stamp: live ones the arrival time, replay
   assert.match(stamp, /dataset\.testid = "message-timestamp"/);
 
   const append = functionSource(app, "appendMessage");
-  assert.match(append, /function appendMessage\(role, text, timestamp = true, attachments = \[\], read = false\)/);
+  assert.match(append, /function appendMessage\(role, text, timestamp = true, attachments = \[\], read = false, attribution = undefined\)/);
   assert.match(append, /timestamp === true \? new Date\(\) : timestamp/);
 
   // The transcript passes each message's recorded time through to the bubble,

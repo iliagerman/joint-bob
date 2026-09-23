@@ -7,7 +7,7 @@ import { elements } from "./elements.js";
 import { setMobileView } from "./layout.js";
 import { addOptimisticSession } from "./new-session.js";
 import { renderProjects } from "./project-list.js";
-import { refreshQuickNotes, renderQuickNotes } from "./quick-notes.js";
+import { refreshQuickNotes, renderQuickNotes, showConversations } from "./quick-notes.js";
 import { openListedSession, refreshPendingReviews } from "./reviews.js";
 import { renderSessions } from "./session-list.js";
 import { setListLoading, subscribeToPush, toast } from "./shell.js";
@@ -131,6 +131,7 @@ async function startCanvasPaneConversation() {
 
 export async function selectProject(projectId, shouldRender = true, preserveSession = false) {
   if (state.activeProjectId !== projectId) state.classificationFilter = "";
+  showConversations();
   state.activeProjectId = projectId;
   state.skills = [];
   state.skillsLoading = false;
