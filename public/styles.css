@@ -484,15 +484,27 @@ body.shortcuts-revealed .shortcut-hint { display: grid; }
 .mark-all-reviewed-button:hover:not(:disabled) { color: var(--text); background: var(--field); }
 .mark-all-reviewed-button:disabled { opacity: 0.4; cursor: not-allowed; }
 
-.quick-notes-section { flex: 0 1 32%; min-height: 92px; max-height: 32%; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--field) 28%, transparent); }
-.quick-notes-section .section-title { margin-top: 10px; }
-.quick-note-list { max-height: calc(100% - 28px); overflow: auto; padding: 0 10px 10px; }
-.quick-note-row { display: grid; width: 100%; min-height: 0; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); text-align: left; }
-.quick-note-row:hover, .quick-note-row:focus-visible { background: var(--surface); }
+.quick-notes-section { flex: 0 1 32%; min-height: 92px; max-height: 32%; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--field) 28%, transparent); transition: flex-basis 160ms ease, min-height 160ms ease, max-height 160ms ease; }
+.quick-notes-section .section-title { min-height: 34px; margin-top: 6px; }
+.quick-notes-toggle { display: inline-grid; place-items: center; width: 28px; min-height: 28px; margin-left: auto; padding: 0; border: 0; border-radius: 7px; color: var(--muted); }
+.quick-notes-toggle:hover, .quick-notes-toggle:focus-visible { background: var(--surface); color: var(--text); }
+.quick-notes-toggle svg { width: 15px; height: 15px; transition: transform 160ms ease; }
+.quick-notes-section.collapsed { flex: 0 0 41px; min-height: 41px; max-height: 41px; }
+.quick-notes-section.collapsed .quick-notes-toggle svg { transform: rotate(-90deg); }
+.quick-notes-section.collapsed .quick-note-list { display: none; }
+.quick-note-list { max-height: calc(100% - 40px); overflow: auto; padding: 0 10px 10px; }
+.quick-note-row-wrap { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border-radius: 8px; }
+.quick-note-row-wrap:hover, .quick-note-row-wrap:focus-within { background: var(--surface); }
+.quick-note-row { display: grid; width: 100%; min-width: 0; min-height: 0; padding: 9px 8px 9px 10px; border: 0; background: transparent; color: var(--text); text-align: left; }
 .quick-note-row strong, .quick-note-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .quick-note-row strong { font-size: 12.5px; font-weight: 650; }
 .quick-note-row span { margin-top: 2px; color: var(--muted); font-size: 11.5px; }
 .quick-note-row small { margin-top: 5px; color: var(--muted); font-family: var(--mono); font-size: 9.5px; }
+.quick-note-row-actions { display: flex; gap: 2px; padding-right: 5px; }
+.quick-note-action { display: grid; place-items: center; width: 28px; min-height: 28px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: 13px; opacity: 0.55; }
+.quick-note-action:hover, .quick-note-action:focus-visible { background: var(--panel); color: var(--text); opacity: 1; }
+.quick-note-start:hover, .quick-note-start:focus-visible { color: var(--accent); }
+.quick-note-remove:hover, .quick-note-remove:focus-visible { color: var(--danger); }
 .quick-note-empty { margin: 8px 6px; color: var(--muted); font-size: 12px; }
 
 /* ---- Search + inputs ---- */

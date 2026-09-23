@@ -31,6 +31,19 @@ export function socketOpen() {
   return Boolean(state.socket && state.socket.readyState === WebSocket.OPEN);
 }
 
+function sendPendingQuickNotePrompt() {
+  const conversion = state.pendingQuickNoteConversion;
+  if (!conversion || conversion.waitingForSettings) return;
+  state.pendingQuickNoteConversion = null;
+  if (!sendSocket({ type: "prompt", message: conversion.message, images: [], files: [] })) {
+    toast("Conversation connected, but the note could not be sent", 8000);
+    return;
+  }
+  state.lastTurnStartedAt = Date.now();
+  startDurationTicker();
+  Promise.resolve(conversion.onStarted?.()).catch((error) => toast(error.message, 8000));
+}
+
 export function closeSocket() {
   if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
   state.reconnectTimer = null;
@@ -135,6 +148,7 @@ export function openSession(sessionPath, title = "New conversation", preserveCha
     state.reviewHighlightAfter = reviewHighlightAfter;
     state.pendingSessionTitle = null;
     state.pendingSessionColor = null;
+    state.pendingQuickNoteConversion = null;
     state.conversationSegments = null;
     state.activeConversationId = null;
     syncBackgroundTasks();
@@ -275,6 +289,22 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     renderChatSessionControls();
     updateStatus(payload.status);
     sendSocket({ type: "models" });
+    const conversion = state.pendingQuickNoteConversion;
+    if (conversion?.provider && conversion.modelId) {
+      conversion.waitingForSettings = true;
+      if (!sendSocket({ type: "setModel", provider: conversion.provider, modelId: conversion.modelId, ...(conversion.thinkingLevel ? { level: conversion.thinkingLevel } : {}) })) {
+        state.pendingQuickNoteConversion = null;
+        toast("Conversation connected, but its saved model could not be selected", 8000);
+      }
+    } else if (conversion?.thinkingLevel) {
+      conversion.waitingForSettings = true;
+      if (!sendSocket({ type: "setThinking", level: conversion.thinkingLevel })) {
+        state.pendingQuickNoteConversion = null;
+        toast("Conversation connected, but its saved thinking level could not be selected", 8000);
+      }
+    } else {
+      sendPendingQuickNotePrompt();
+    }
     subscribeToPush().catch((error) => console.warn("Push subscription failed", error));
     refreshSessionsQuietly();
     return;
@@ -317,6 +347,10 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
   }
   if (payload.type === "status") {
     updateStatus(payload.status);
+    if (state.pendingQuickNoteConversion?.waitingForSettings) {
+      state.pendingQuickNoteConversion.waitingForSettings = false;
+      sendPendingQuickNotePrompt();
+    }
     return;
   }
   if (payload.type === "bobGoal") {
@@ -493,6 +527,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     return;
   }
   if (payload.type === "error") {
+    if (state.pendingQuickNoteConversion?.waitingForSettings) state.pendingQuickNoteConversion = null;
     resetQueuedForceStart();
     if (elements.toolsDialog.open && state.toolsLoading) {
       state.toolsLoading = false;

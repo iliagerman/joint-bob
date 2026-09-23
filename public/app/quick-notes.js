@@ -1,5 +1,7 @@
 import { api } from "./api.js";
 import { loadHarnesses } from "./chat-controls.js";
+import { setMobileView } from "./layout.js";
+import { startConversationFromQuickNote } from "./new-session.js";
 import { confirmAction, toast } from "./shell.js";
 import { state } from "./state.js";
 
@@ -13,8 +15,11 @@ const modelSelect = document.querySelector("#quickNoteModel");
 const thinkingSelect = document.querySelector("#quickNoteThinking");
 const errorText = document.querySelector("#quickNoteError");
 const deleteButton = document.querySelector("#deleteQuickNoteButton");
+const convertButton = document.querySelector("#convertQuickNoteButton");
 const saveButton = form.querySelector("[type='submit']");
 const createButton = document.querySelector("#quickNoteButton");
+const section = document.querySelector("#quickNotesSection");
+const toggleButton = document.querySelector("#quickNotesToggle");
 const list = document.querySelector("#quickNoteList");
 let editingId = null;
 let availableModels = null;
@@ -24,8 +29,25 @@ function showError(message = "") {
   errorText.hidden = !message;
 }
 
+function setQuickNotesCollapsed(collapsed) {
+  section.classList.toggle("collapsed", collapsed);
+  toggleButton.setAttribute("aria-expanded", String(!collapsed));
+  toggleButton.setAttribute("aria-label", collapsed ? "Show project notes" : "Collapse project notes");
+}
+
+export function toggleQuickNotes() {
+  if (!state.activeProjectId) { toast("Select a project first"); return; }
+  const opening = section.classList.contains("collapsed") || section.getClientRects().length === 0;
+  setQuickNotesCollapsed(!opening);
+  if (opening) {
+    setMobileView("sessions");
+    requestAnimationFrame(() => (list.querySelector("button") || list).focus());
+  }
+}
+
 export function renderQuickNotes() {
   createButton.disabled = !state.activeProjectId;
+  toggleButton.disabled = !state.activeProjectId;
   list.replaceChildren();
   if (!state.activeProjectId) return;
   if (!state.quickNotes.length) {
@@ -36,6 +58,8 @@ export function renderQuickNotes() {
     return;
   }
   for (const note of state.quickNotes) {
+    const row = document.createElement("div");
+    row.className = "quick-note-row-wrap";
     const button = document.createElement("button");
     button.type = "button";
     button.className = "quick-note-row";
@@ -51,7 +75,28 @@ export function renderQuickNotes() {
     meta.textContent = `${harness?.label || note.harnessId} · ${model?.label || note.modelId || "Default model"}`;
     button.append(title, preview, meta);
     button.addEventListener("click", () => openQuickNote(note));
-    list.append(button);
+
+    const actions = document.createElement("div");
+    actions.className = "quick-note-row-actions";
+    const start = document.createElement("button");
+    start.type = "button";
+    start.className = "quick-note-action quick-note-start";
+    start.dataset.testid = "quick-note-start-button";
+    start.setAttribute("aria-label", `Start ${note.title} as a conversation`);
+    start.title = "Start as conversation";
+    start.textContent = "▶";
+    start.addEventListener("click", () => { void convertNote(note).catch((error) => toast(error.message)); });
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "quick-note-action quick-note-remove";
+    remove.dataset.testid = "quick-note-quick-delete-button";
+    remove.setAttribute("aria-label", `Delete ${note.title}`);
+    remove.title = "Delete note";
+    remove.textContent = "×";
+    remove.addEventListener("click", () => { void removeNote(note).catch((error) => toast(error.message)); });
+    actions.append(start, remove);
+    row.append(button, actions);
+    list.append(row);
   }
 }
 
@@ -102,6 +147,7 @@ export async function openQuickNote(note = null) {
   editingId = note?.id || null;
   showError();
   deleteButton.hidden = !editingId;
+  convertButton.hidden = !editingId;
   saveButton.disabled = true;
   document.querySelector("#quickNoteDialogTitle").textContent = editingId ? "Edit quick note" : "New quick note";
   renderProjects(note?.projectId || state.activeProjectId);
@@ -143,6 +189,7 @@ async function saveNote(event) {
       body: JSON.stringify(payload),
     });
     dialog.close();
+    setQuickNotesCollapsed(false);
     await refreshQuickNotes();
   } catch (error) {
     showError(error.message);
@@ -155,14 +202,44 @@ harnessSelect.addEventListener("change", () => renderModels());
 modelSelect.addEventListener("change", () => renderThinking());
 form.addEventListener("submit", saveNote);
 createButton.addEventListener("click", () => { void openQuickNote(); });
+toggleButton.addEventListener("click", toggleQuickNotes);
 document.querySelector("#cancelQuickNoteButton").addEventListener("click", () => dialog.close());
-deleteButton.addEventListener("click", async () => {
-  if (!editingId || !await confirmAction({ title: "Delete this quick note?", confirmLabel: "Delete note", destructive: true })) return;
-  try {
-    await api(`/api/quick-notes/${encodeURIComponent(editingId)}`, { method: "DELETE" });
-    dialog.close();
-    await refreshQuickNotes();
-  } catch (error) {
-    showError(error.message);
+async function removeNote(note) {
+  if (!await confirmAction({ title: `Delete "${note.title}"?`, confirmLabel: "Delete note", destructive: true })) return;
+  await api(`/api/quick-notes/${encodeURIComponent(note.id)}`, { method: "DELETE" });
+  if (editingId === note.id) dialog.close();
+  await refreshQuickNotes();
+}
+
+async function convertNote(note) {
+  await startConversationFromQuickNote(note, async () => {
+    await api(`/api/quick-notes/${encodeURIComponent(note.id)}`, { method: "DELETE" });
+    state.quickNotes = state.quickNotes.filter((candidate) => candidate.id !== note.id);
+    renderQuickNotes();
+  });
+}
+
+convertButton.addEventListener("click", () => {
+  const note = state.quickNotes.find((candidate) => candidate.id === editingId);
+  if (!note || !form.reportValidity()) return;
+  if (projectSelect.value !== note.projectId) {
+    showError("Save the project change before starting this conversation.");
+    return;
   }
+  const [provider, modelId] = modelSelect.value.split("\u0000");
+  dialog.close();
+  void convertNote({
+    ...note,
+    title: titleInput.value.trim(),
+    content: contentInput.value,
+    harnessId: harnessSelect.value,
+    provider: provider || null,
+    modelId: modelId || null,
+    thinkingLevel: thinkingSelect.value || null,
+  }).catch((error) => toast(error.message));
+});
+
+deleteButton.addEventListener("click", () => {
+  const note = state.quickNotes.find((candidate) => candidate.id === editingId);
+  if (note) void removeNote(note).catch((error) => showError(error.message));
 });

@@ -152,6 +152,33 @@ export async function startNewHarnessConversation(harnessId) {
   await openNewSessionNameDialog(harness.newSessionPath, `New ${harness.label} conversation`);
 }
 
+export async function startConversationFromQuickNote(note, onStarted) {
+  if (state.activeProjectId !== note.projectId) throw new Error("Open the note's project before starting it");
+  if (!state.harnesses.length) await loadHarnesses();
+  const harness = state.harnesses.find((candidate) => candidate.id === note.harnessId && candidate.runtimeConfigured);
+  if (!harness) throw new Error(`Harness ${note.harnessId} is unavailable`);
+  const node = localSessionNode() || state.sessionNodes.find((candidate) => candidate.online && candidate.mapped);
+  if (!node?.online || !node.mapped) throw new Error("No online node has this project mapped");
+
+  const title = note.title.trim();
+  const content = note.content.trim();
+  const sessionId = crypto.randomUUID();
+  state.activeNodeId = node.id;
+  state.activeSessionId = sessionId;
+  state.newSessionSecretAccountIds = [];
+  if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: node.id });
+  addOptimisticSession(sessionId, harness.newSessionPath, title, null);
+  openSession(harness.newSessionPath, title);
+  state.pendingSessionTitle = title;
+  state.pendingQuickNoteConversion = {
+    message: content ? `${title}\n\n${content}` : title,
+    provider: note.provider,
+    modelId: note.modelId,
+    thinkingLevel: note.thinkingLevel,
+    onStarted,
+  };
+}
+
 export function renderNewSessionHarnesses() {
   elements.newSessionHarnesses.replaceChildren(...state.harnesses.filter(({ runtimeConfigured }) => runtimeConfigured).map((harness) => {
     const button = document.createElement("button");

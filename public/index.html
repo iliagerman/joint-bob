@@ -124,9 +124,12 @@
           Show done
         </label>
         <div class="panel-scroll session-list" id="sessionList"></div>
-        <section class="quick-notes-section" id="quickNotesSection" aria-labelledby="quickNotesHeading">
-          <div class="section-title" id="quickNotesHeading">Notes</div>
-          <div class="quick-note-list" id="quickNoteList" data-testid="quick-note-list"></div>
+        <section class="quick-notes-section" id="quickNotesSection" aria-labelledby="quickNotesHeading" data-testid="quick-notes-section">
+          <div class="section-title" id="quickNotesHeading">
+            <span>Notes</span>
+            <button class="ghost quick-notes-toggle" id="quickNotesToggle" type="button" aria-label="Collapse project notes" aria-expanded="true" title="Show or collapse project notes" data-shortcut-hint="toggleNotes" data-testid="quick-notes-toggle-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></button>
+          </div>
+          <div class="quick-note-list" id="quickNoteList" data-testid="quick-note-list" tabindex="-1"></div>
         </section>
         <div class="panel-rail">
           <button class="ghost icon-button" id="expandChatsButton" data-shortcut-hint="toggleChats" type="button" aria-label="Expand conversations panel" title="Expand conversations panel" data-testid="chats-panel-expand-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 6l6 6-6 6"/></svg></button>
@@ -1227,6 +1230,7 @@
         <p class="quick-note-error" id="quickNoteError" role="alert" hidden></p>
         <div class="dialog-actions">
           <button class="ghost danger" type="button" id="deleteQuickNoteButton" data-testid="quick-note-delete-button" hidden>Delete</button>
+          <button class="ghost" type="button" id="convertQuickNoteButton" data-testid="quick-note-convert-button" hidden>Start conversation</button>
           <button class="ghost" type="button" id="cancelQuickNoteButton" data-testid="quick-note-cancel-button">Cancel</button>
           <button class="primary" type="submit" data-testid="quick-note-save-button">Save note</button>
         </div>

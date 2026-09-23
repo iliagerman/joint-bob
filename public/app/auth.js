@@ -68,6 +68,7 @@ export function showSignedOut() {
   state.projects = [];
   state.sessions = [];
   state.quickNotes = [];
+  state.pendingQuickNoteConversion = null;
   state.tasks = [];
   closeSocket();
   closeWatchSocket();

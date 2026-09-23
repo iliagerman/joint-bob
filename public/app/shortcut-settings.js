@@ -35,6 +35,7 @@ const COMMAND_ROWS = [
   { command: "newClaudeChat", label: "Start a Claude conversation" },
   { command: "newKiroChat", label: "Start a Kiro conversation" },
   { command: "quickNote", label: "Create a quick note for the active project" },
+  { command: "toggleNotes", label: "Show or collapse notes for the active project" },
   { command: "runsOn", label: "Chat: focus the Runs on selector" },
   { command: "selectAgent", label: "Chat: focus the agent selector" },
   { command: "selectModel", label: "Chat: choose a model" },

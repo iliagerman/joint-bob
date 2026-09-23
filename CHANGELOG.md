@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Quick notes can now be started as full conversations, and the notes section can be toggled open or closed with Ctrl+Alt+/.
+
 ## 1.76.1 — 2026-09-23
 
 - The conversation toolbar now splits into two rows on desktop, so the action buttons no longer get squeezed off the right edge.

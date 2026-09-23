@@ -38,10 +38,20 @@ after(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
-test("a quick note defaults to the active project, stays inert, and can move projects", async () => {
+test("a quick note can move, start a conversation, and be deleted", async () => {
   await page.getByText("Internal Assistant", { exact: true }).click();
   await page.getByTestId("session-list-loading-bar").waitFor({ state: "hidden" });
   const conversationCount = await page.locator("#sessionList .session-card").count();
+
+  const notesSection = page.getByTestId("quick-notes-section");
+  const notesToggle = page.getByTestId("quick-notes-toggle-button");
+  assert.equal(await notesToggle.locator(".shortcut-hint").count(), 1, "the project notes section advertises its shortcut");
+  await notesToggle.click();
+  await notesSection.and(page.locator(".collapsed")).waitFor();
+  assert.equal(await notesToggle.getAttribute("aria-expanded"), "false");
+  await page.keyboard.press("Control+Alt+/");
+  await notesSection.and(page.locator(":not(.collapsed)")).waitFor();
+  assert.equal(await notesToggle.getAttribute("aria-expanded"), "true");
 
   const button = page.getByTestId("quick-note-create-button");
   assert.equal(await button.locator(".shortcut-hint").count(), 1, "quick note button advertises its shortcut");
@@ -63,5 +73,23 @@ test("a quick note defaults to the active project, stays inert, and can move pro
 
   const jointBobId = node.projects.find((project) => project.name === "Joint Bob")!.id;
   await page.locator(`[data-project-id="${jointBobId}"] .project-card`).click();
-  await page.getByTestId("quick-note-list").getByText("Verify release smoke test", { exact: true }).waitFor();
+  const movedRow = page.getByTestId("quick-note-row").filter({ hasText: "Verify release smoke test" });
+  await movedRow.waitFor();
+  const movedItem = page.locator(".quick-note-row-wrap").filter({ has: movedRow });
+  assert.equal(await movedItem.getByTestId("quick-note-start-button").isVisible(), true, "each note has a start shortcut");
+
+  await movedRow.click();
+  assert.equal(await page.getByTestId("quick-note-convert-button").isVisible(), true, "the note dialog can start a conversation");
+  await page.getByTestId("quick-note-cancel-button").click();
+  await movedItem.getByTestId("quick-note-start-button").click();
+  await page.locator("#messages .message.user").filter({ hasText: "Do this manually after deploy." }).waitFor();
+  await movedRow.waitFor({ state: "detached" });
+
+  await page.getByTestId("quick-note-create-button").click();
+  await page.getByTestId("quick-note-title-input").fill("Delete this note");
+  await page.getByTestId("quick-note-save-button").click();
+  const disposable = page.locator(".quick-note-row-wrap").filter({ hasText: "Delete this note" });
+  await disposable.getByTestId("quick-note-quick-delete-button").click();
+  await page.getByTestId("confirm-accept-button").click();
+  await disposable.waitFor({ state: "detached" });
 });

@@ -63,6 +63,7 @@ export const state = {
   newSessionSecretAccountIds: [],
   pendingSessionTitle: null,
   pendingSessionColor: null,
+  pendingQuickNoteConversion: null,
   colorSessionId: null,
   colorSessionEngine: "pi",
   projectsLoading: true,
