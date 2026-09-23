@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.76.0 — 2026-09-23
 
-- Routing configurations are now created, stored, and selected independently on each node, with optional sharing to other cluster members. Every node owns its active configuration separately and can share named configurations with the eligible nodes of its clusters.
+- Routing configurations are now owned and managed independently by each node, with the ability to name and share them with cluster members in Settings → Classifiers.
+- Previous cluster-wide routing policies are automatically migrated to locally owned configurations, and offline nodes sync shared configurations when they reconnect.
 
 ## 1.75.1 — 2026-09-23
 
