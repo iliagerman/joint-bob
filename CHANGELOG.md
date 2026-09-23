@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Classifier edits now persist when Settings is saved with the main Save button.
+- Assistant responses now display a badge showing the harness, model, and reasoning level that produced each message.
+
 ## 1.78.0 — 2026-09-23
 
 - Project Notes now has dedicated desktop and mobile navigation, its own shortcut, and a project filter that defaults to the active project.

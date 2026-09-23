@@ -7,7 +7,7 @@ import { loadClusterPanel } from "./cluster-panel.js";
 import { loadUpdatesPanel } from "./updates.js";
 import { elements } from "./elements.js";
 import { loadNtfyServicesPanel } from "./ntfy.js";
-import { loadRoutingConfigs } from "./routing-configs.js";
+import { loadRoutingConfigs, saveDirtyRoutingConfig } from "./routing-configs.js";
 import { loadSecretAccounts } from "./secrets.js";
 import { confirmAction, syncNotifyButton, toast } from "./shell.js";
 import { state } from "./state.js";
@@ -243,6 +243,7 @@ async function saveSettings(event) {
   for (const harness of clearedHarnessesOnSave) runtime[harness] = blankHarnessPayload();
   const invalid = invalidRuntimeOverrides(await checkRuntimePaths(), runtime);
   if (invalid.length) throw new Error(`Fix unavailable custom paths: ${invalid.join(", ")}`);
+  await saveDirtyRoutingConfig();
   const saved = await api("/api/settings", {
     method: "PUT",
     body: JSON.stringify({

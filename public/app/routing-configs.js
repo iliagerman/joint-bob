@@ -228,14 +228,19 @@ async function createConfig() {
   toast("Routing configuration created");
 }
 
-async function saveConfig() {
+async function saveConfig(notify = true) {
   if (!editingId) throw new Error("Select a configuration first");
   const body = { name: elements.routingConfigEditorNameInput.value.trim(), policy: editorFormValue() };
   const result = await api(`/api/routing-configs/${editingId}`, { method: "PUT", body: JSON.stringify(body) });
   editorDirty = false;
   const failed = (result.results ?? []).filter((entry) => !entry.delivered);
   await loadRoutingConfigs(result.config.id);
-  toast(failed.length ? `Saved; sharing to ${failed[0].name} failed: ${failed[0].error}` : result.results?.length ? "Saved and redistributed to eligible nodes" : "Routing configuration saved");
+  if (notify) toast(failed.length ? `Saved; sharing to ${failed[0].name} failed: ${failed[0].error}` : result.results?.length ? "Saved and redistributed to eligible nodes" : "Routing configuration saved");
+}
+
+/** The dialog-wide Save action commits classifier edits before closing Settings. */
+export async function saveDirtyRoutingConfig() {
+  if (editorDirty) await saveConfig(false);
 }
 
 async function shareConfig() {

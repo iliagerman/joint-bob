@@ -58,20 +58,14 @@ test("routing configurations live under Classifiers, save mappings, and keep una
   await page.getByTestId("routing-context-messages").fill("6");
   await page.getByTestId("routing-confidence").fill("0.25");
   await page.getByTestId("routing-enabled").check();
-  await page.getByTestId("routing-config-save-button").click();
-  await page.getByTestId("routing-config-status").getByText("Local to this node").waitFor();
+  // The dialog-wide Save button must save dirty classifier controls too. Otherwise it
+  // closes Settings successfully while silently restoring this configuration's defaults.
+  await page.getByTestId("settings-save-button").click();
+  await page.locator("#settingsDialog[open]").waitFor({ state: "hidden" });
 
-  await page.getByTestId("routing-active-config-select").selectOption({ label: "Field routing" });
   const configIdRow = db.prepare("SELECT id FROM routing_configs WHERE name = 'Field routing'").get() as { id: string } | undefined;
   assert.ok(configIdRow, "the configuration exists before it is selected");
   const configId = configIdRow.id;
-  const selectionDeadline = Date.now() + 15_000;
-  let selection: { config_id: string } | undefined;
-  while (Date.now() < selectionDeadline) {
-    selection = db.prepare("SELECT config_id FROM routing_config_selection WHERE singleton = 1").get() as { config_id: string } | undefined;
-    if (selection?.config_id === configId) break;
-    await page.waitForTimeout(250);
-  }
   const stored = db.prepare("SELECT policy FROM routing_configs WHERE name = 'Field routing'").get() as { policy: string } | undefined;
   assert.ok(stored, "the configuration is saved under its name");
   const saved = JSON.parse(stored!.policy);
@@ -81,10 +75,18 @@ test("routing configurations live under Classifiers, save mappings, and keep una
   assert.equal(saved.evalCadence.n, 3);
   assert.equal(saved.contextMessages, 6);
   assert.equal(saved.confidenceThreshold, 0.25);
-  assert.equal(selection?.config_id, configId, "the active select stores this node's own selection");
 
   // Reopening the editor shows the saved values.
   await openSettingsTab(page, "classifiers");
+  await page.getByTestId("routing-active-config-select").selectOption({ label: "Field routing" });
+  const selectionDeadline = Date.now() + 15_000;
+  let selection: { config_id: string } | undefined;
+  while (Date.now() < selectionDeadline) {
+    selection = db.prepare("SELECT config_id FROM routing_config_selection WHERE singleton = 1").get() as { config_id: string } | undefined;
+    if (selection?.config_id === configId) break;
+    await page.waitForTimeout(250);
+  }
+  assert.equal(selection?.config_id, configId, "the active select stores this node's own selection");
   await page.locator('[data-testid="routing-config-edit-button"]').first().click();
   await page.getByTestId("routing-config-editor").waitFor();
   await page.getByTestId("routing-model-kiro-1").waitFor();
