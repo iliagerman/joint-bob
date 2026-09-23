@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.81.0 — 2026-09-23
 
 - Routing configurations now display a harness selector so each harness (Claude, Pi, Kiro) can have its own model priority tiers, with Claude Opus 5.5 added as an available option.
 
