@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.75.0 — 2026-09-23
 
-- Quick notes now let you save reference notes for any project without running agents; press Ctrl+Alt+. to create one, edit its title and content, assign it to a harness and optionally a model for context, and move it between projects anytime.
+- Project quick notes let you save reference information without running agents; press Ctrl+Alt+. to create, edit, and move them between projects.
 
 ## 1.74.3 — 2026-09-23
 
