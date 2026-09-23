@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 1.76.1 — 2026-09-23
+
+- The conversation toolbar now splits into two rows on desktop, so the action buttons no longer get squeezed off the right edge.
+
 ## 1.76.0 — 2026-09-23
 
 - Routing configurations are now owned and managed independently by each node, with the ability to name and share them with cluster members in Settings → Classifiers.

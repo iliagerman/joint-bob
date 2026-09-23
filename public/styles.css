@@ -949,6 +949,8 @@ textarea:focus, input:focus, select:focus { border-color: var(--line-strong); bo
 /* The actions wrap to a second row rather than being clipped by the panel edge. */
 .chat-toolbar { overflow: visible; flex-wrap: wrap; row-gap: 8px; }
 .panel-toolbar[hidden], .chat-toolbar[hidden] { display: none; }
+/* Desktop-only line break: the selects keep row 1, the action buttons take row 2. */
+.chat-toolbar-break { display: none; }
 .chat-session-controls { display: flex; align-items: end; gap: 8px; flex: 0 0 auto; }
 .chat-control { display: grid; gap: 4px; flex: 0 0 auto; }
 .chat-control > span {
@@ -1911,6 +1913,8 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   /* The toolbar reads as one straight line: the badges hang below their controls
      rather than claiming a second line in the layout. */
   .chat-toolbar { --control-line: 32px; align-items: end; gap: 4px; }
+  /* Forces the wrap right after the reasoning control. */
+  .chat-toolbar-break { display: block; flex: 0 0 100%; width: 100%; height: 0; }
   .chat-model-control, .chat-mode-control { align-self: end; }
   .chat-toolbar button[data-shortcut-hint], .chat-toolbar .background-tasks-trigger, .chat-toolbar #chatFilesButton {
     min-height: 0;
@@ -1944,10 +1948,6 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   #chatsRunningConversationsButton { display: none !important; }
   /* The desktop header already carries a running-conversations button, so the chat toolbar drops its copy. */
   #chatRunningConversationsButton { display: none !important; }
-}
-
-@media (min-width: 1600px) {
-  .chat-toolbar { flex-wrap: nowrap; }
 }
 
 @media (max-width: 1023px) {
