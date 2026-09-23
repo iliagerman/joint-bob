@@ -11,7 +11,6 @@ import { clusterV2Database } from "../cluster-v2-store.js";
 import { activateSelectiveSharing, assertSelectiveSharingCanActivate, ClusterV2HttpError, selectiveSharingActive } from "../cluster-v2-mode.js";
 import { clusterRequestRawBody, isClusterOriginUrl, sendError } from "./http-auth.js";
 import { listDifficultyClassifiers } from "../classifiers/registry.js";
-import { applySignedRoutingPolicySnapshot, currentSignedRoutingPolicy, RoutingPolicyError, type SignedRoutingPolicySnapshot } from "../routing-policy.js";
 
 const uuid = z.string().uuid().regex(/^[0-9a-f-]+$/);
 const origin = z.string().transform((value, context) => {
@@ -143,11 +142,10 @@ async function executeJoinV2Membership(parsed: ReturnType<typeof parseV2Invitati
       activateSelectiveSharing(db); db.exec("RELEASE cluster_v2_prepare_join");
     } catch (error) { db.exec("ROLLBACK TO cluster_v2_prepare_join; RELEASE cluster_v2_prepare_join"); throw error; }
   }
-  const result = await signedPost<{ snapshot: SignedMembershipSnapshot; routingPolicy: SignedRoutingPolicySnapshot | null }>(db, joinRequest.member.nodeId, parsed.invitation.body.manager.nodeId, joinRequest.clusterId, "/api/cluster/v2/membership/redeem", { request: joinRequest, secret: parsed.secret });
+  const result = await signedPost<{ snapshot: SignedMembershipSnapshot }>(db, joinRequest.member.nodeId, parsed.invitation.body.manager.nodeId, joinRequest.clusterId, "/api/cluster/v2/membership/redeem", { request: joinRequest, secret: parsed.secret });
   db.exec("SAVEPOINT cluster_v2_finish_join");
   try {
     applyMembershipSnapshot(db, joinRequest.member.nodeId, result.snapshot);
-    if (result.routingPolicy) applySignedRoutingPolicySnapshot(db, result.routingPolicy);
     db.prepare("INSERT INTO cluster_v2_join_results VALUES(?,?,?,?,?)").run(requestId, joinRequest.invitationId, joinRequest.clusterId, hash, JSON.stringify(result.snapshot));
     db.prepare("DELETE FROM cluster_v2_join_attempts WHERE request_id=?").run(requestId);
     db.exec("RELEASE cluster_v2_finish_join");
@@ -158,7 +156,7 @@ async function executeJoinV2Membership(parsed: ReturnType<typeof parseV2Invitati
 export function mapV2Error(error: unknown, response: Response, next: NextFunction): void {
   if (error instanceof z.ZodError) { sendError(response, 400, "Invalid cluster request"); return; }
   if (error instanceof ClusterProtocolError) { sendError(response, 401, "Unauthorized"); return; }
-  if (error instanceof ClusterV2HttpError || error instanceof RoutingPolicyError) { sendError(response, error.statusCode, error.message); return; }
+  if (error instanceof ClusterV2HttpError) { sendError(response, error.statusCode, error.message); return; }
   if (!(error instanceof Error)) { next(error); return; }
   const message = error.message;
   if (/expired|already used/i.test(message)) { sendError(response, 410, message); return; }
@@ -184,9 +182,10 @@ export async function redeemV2Membership(request: Request, response: Response, n
       const sender = verifyClusterRequest(db, local.id, request.method, request.originalUrl, raw, request.header("authorization"));
       if (sender !== payload.request.member.nodeId) throw new ClusterProtocolError("Invalid cluster request");
       const snapshot = redeemMembershipInvitation(db, local.id, payload.request as MembershipJoinRequest, payload.secret);
-      const routingPolicy = currentSignedRoutingPolicy(db, payload.request.clusterId, local.id);
       db.exec("RELEASE cluster_v2_bootstrap");
-      response.status(201).json({ snapshot, routingPolicy });
+      // Routing configurations are shared explicitly and are never part of the join:
+      // a joiner starts with no configuration and selects its own.
+      response.status(201).json({ snapshot });
     } catch (error) { db.exec("ROLLBACK TO cluster_v2_bootstrap; RELEASE cluster_v2_bootstrap"); throw error; }
   } catch (error) { mapV2Error(error, response, next); }
 }

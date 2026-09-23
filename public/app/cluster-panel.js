@@ -8,140 +8,6 @@ let selectedClusterId = null;
 let panelState = null;
 let pendingJoin = { link: "", requestId: "" };
 let invitationRequestId = 0;
-let routingState = null;
-
-function routingModelValue(provider, modelId) { return `${provider}\u0000${modelId}`; }
-
-/** Each harness tab owns its level grid; the routing policy fills them all. */
-function renderRoutingHarnessTables(harnesses, levels, policy) {
-  for (const harness of harnesses) {
-    const container = document.querySelector(`[data-routing-harness="${harness.id}"]`);
-    if (!container) continue;
-    container.replaceChildren(...container.querySelectorAll("legend"), container.querySelector(".settings-hint") ?? document.createElement("p"));
-    for (let level = 1; level <= levels; level += 1) {
-      const row = document.createElement("label");
-      row.className = "routing-level-row";
-      row.dataset.testid = `routing-level-${harness.id}-${level}`;
-      const levelLabel = document.createElement("span");
-      levelLabel.textContent = `Level ${level}`;
-      const model = document.createElement("select");
-      model.className = "routing-model";
-      model.dataset.harness = harness.id;
-      model.dataset.level = String(level);
-      model.dataset.testid = `routing-model-${harness.id}-${level}`;
-      model.add(new Option("Conversation default", ""));
-      for (const entry of harness.models) model.add(new Option(`${entry.providerLabel || entry.provider} / ${entry.label || entry.id}`, routingModelValue(entry.provider, entry.id)));
-      const thinking = document.createElement("select");
-      thinking.className = "routing-thinking";
-      thinking.dataset.harness = harness.id;
-      thinking.dataset.level = String(level);
-      thinking.dataset.testid = `routing-thinking-${harness.id}-${level}`;
-      for (const thinkingLevel of harness.thinkingLevels) thinking.add(new Option(thinkingLevel, thinkingLevel));
-      if (!harness.thinkingLevels.length) thinking.add(new Option("default", "default"));
-      const description = document.createElement("input");
-      description.className = "routing-description";
-      description.dataset.harness = harness.id;
-      description.dataset.level = String(level);
-      description.dataset.testid = `routing-description-${harness.id}-${level}`;
-      description.maxLength = 1000;
-      description.placeholder = "Required: describe requests for this option";
-      description.setAttribute("aria-label", `Level ${level} classifier description`);
-      const mapping = policy?.harnesses[harness.id]?.levels[String(level)];
-      if (mapping) {
-        model.value = routingModelValue(mapping.provider || harness.fixedProvider, mapping.modelId);
-        if (![...thinking.options].some((option) => option.value === mapping.thinkingLevel)) thinking.add(new Option(mapping.thinkingLevel, mapping.thinkingLevel));
-        thinking.value = mapping.thinkingLevel;
-        description.value = mapping.description;
-      }
-      const syncDescription = () => { description.disabled = !model.value; description.required = Boolean(model.value); };
-      model.addEventListener("change", syncDescription);
-      syncDescription();
-      row.append(levelLabel, model, thinking, description);
-      container.append(row);
-    }
-  }
-}
-
-function fillRoutingForm(routing) {
-  const policyEntry = routing.policies.find((entry) => entry.clusterId === (elements.routingClusterSelect.value || routing.clusters[0]?.clusterId)) || routing.policies[0];
-  // An untouched policy prefills the default model and reasoning pairs for every harness.
-  const policy = policyEntry?.policy || routing.defaultPolicy || null;
-  elements.routingEnabled.checked = policy?.enabled === true;
-  if (!policy) elements.routingEnabled.checked = true;
-  elements.routingClassifier.replaceChildren();
-  for (const classifier of routing.classifiers) elements.routingClassifier.add(new Option(classifier.label, classifier.id));
-  elements.routingClassifier.value = policy?.classifierId || routing.classifiers[0]?.id || "";
-  elements.routingCadence.value = policy?.evalCadence.mode || "first-message";
-  elements.routingCadenceN.value = policy?.evalCadence.n || 5;
-  elements.routingContextMessages.value = policy?.contextMessages || 10;
-  elements.routingConfidence.value = policy?.confidenceThreshold ?? 0.3;
-  renderRoutingHarnessTables(routing.harnesses, routing.routingLevels, policy);
-  const editable = policyEntry ? policyEntry.editable : routing.canCreate.includes(elements.routingClusterSelect.value || routing.clusters[0]?.clusterId);
-  const leader = policyEntry?.leaderName || null;
-  const status = policyEntry
-    ? (policyEntry.localLeader ? "This node manages the routing policy." : editable ? `Managed by ${leader || "the policy leader"}. Changes forward there.` : `Managed by ${leader || "the policy leader"}. Read-only here.`)
-    : "No routing policy yet. Harness tabs and Classifiers show prefilled defaults; saving from the Cluster tab creates the policy and makes this node its leader.";
-  elements.routingPolicyStatus.textContent = policyEntry?.warning ? `${status} ${policyEntry.warning}` : status;
-  const controls = [elements.routingEnabled, elements.routingClassifier, elements.routingCadence, elements.routingCadenceN, elements.routingContextMessages, elements.routingConfidence, elements.routingSaveButton, elements.routingSaveClassifiersButton, elements.routingClearButton,
-    ...document.querySelectorAll("[data-routing-harness] select, [data-routing-harness] input")];
-  for (const control of controls) control.disabled = !editable;
-  elements.routingClearButton.disabled = !editable || !policyEntry;
-}
-
-export async function loadRoutingPolicy() {
-  const routing = await api("/api/cluster/routing");
-  routingState = routing;
-  const previous = elements.routingClusterSelect.value;
-  elements.routingClusterSelect.replaceChildren();
-  for (const cluster of routing.clusters) elements.routingClusterSelect.add(new Option(cluster.name, cluster.clusterId));
-  const policyCluster = routing.policies[0]?.clusterId;
-  elements.routingClusterSelect.value = routing.clusters.some((cluster) => cluster.clusterId === previous) ? previous : policyCluster || routing.clusters[0]?.clusterId || "";
-  fillRoutingForm(routing);
-}
-
-function routingFormValue() {
-  const cadenceMode = elements.routingCadence.value;
-  const harnesses = {};
-  for (const container of document.querySelectorAll("[data-routing-harness]")) {
-    const harnessId = container.dataset.routingHarness;
-    const levels = {};
-    for (let level = 1; level <= (routingState?.routingLevels ?? 10); level += 1) {
-      const modelSelect = container.querySelector(`select.routing-model[data-level="${level}"]`);
-      if (!modelSelect) continue;
-      if (!modelSelect.value) { levels[String(level)] = null; continue; }
-      const thinkingSelect = container.querySelector(`select.routing-thinking[data-level="${level}"]`);
-      const descriptionInput = container.querySelector(`input.routing-description[data-level="${level}"]`);
-      const description = descriptionInput.value.trim();
-      if (!description) { descriptionInput.focus(); throw new Error(`Level ${level} needs a classifier description`); }
-      const [provider, modelId] = modelSelect.value.split("\u0000");
-      const fixed = routingState?.harnesses.find((harness) => harness.id === harnessId)?.fixedProvider;
-      levels[String(level)] = { ...(fixed ? {} : { provider }), modelId, thinkingLevel: thinkingSelect.value, description };
-    }
-    harnesses[harnessId] = { levels };
-  }
-  return {
-    enabled: elements.routingEnabled.checked,
-    classifierId: elements.routingClassifier.value,
-    evalCadence: { mode: cadenceMode, ...(cadenceMode === "every-n" ? { n: Number(elements.routingCadenceN.value) } : {}) },
-    contextMessages: Number(elements.routingContextMessages.value),
-    confidenceThreshold: Number(elements.routingConfidence.value),
-    harnesses,
-  };
-}
-
-async function saveRoutingPolicy() {
-  await api("/api/cluster/routing", { method: "PUT", body: JSON.stringify({ clusterId: elements.routingClusterSelect.value, policy: routingFormValue() }) });
-  await loadRoutingPolicy();
-  toast("Routing policy saved");
-}
-
-async function clearRoutingPolicy() {
-  if (!await confirmAction({ eyebrow: "Prompt routing", title: "Clear the routing policy?", message: "Prompts keep each conversation's current model on every cluster node.", confirmLabel: "Clear policy", destructive: true })) return;
-  await api(`/api/cluster/routing?clusterId=${encodeURIComponent(elements.routingClusterSelect.value)}`, { method: "DELETE" });
-  await loadRoutingPolicy();
-  toast("Routing policy cleared");
-}
-
 function renderLegacyInventory(inventory) {
   elements.clusterInventory.replaceChildren();
   const nodes = [{ ...inventory.local, status: "This node", state: "local" }, ...inventory.remote.map((entry) => ({
@@ -217,7 +83,6 @@ export async function loadClusterPanel(preferredClusterId = selectedClusterId) {
   elements.clusterNodeNameInput.value = inventory.local.name;
   elements.clusterNodeUrlInput.value = inventory.local.url;
   renderPanel(inventory, clusterData, projectData.projects);
-  void loadRoutingPolicy().catch((error) => { elements.routingPolicyStatus.textContent = error.message; });
   return inventory;
 }
 
@@ -314,9 +179,6 @@ mutation(elements.clusterSaveButton, saveClusterNode); mutation(elements.cluster
 mutation(elements.clusterGenerateInviteButton, generateInvitation); mutation(elements.clusterJoinButton, joinCluster);
 mutation(elements.clusterAutoShareInput, setAutoShare); mutation(elements.clusterShareAllButton, shareAllProjects);
 mutation(elements.clusterLeaveButton, leaveCluster);
-mutation(elements.routingSaveButton, saveRoutingPolicy); mutation(elements.routingClearButton, clearRoutingPolicy);
-mutation(elements.routingSaveClassifiersButton, saveRoutingPolicy);
-elements.routingClusterSelect.addEventListener("change", () => { if (routingState) fillRoutingForm(routingState); });
 elements.clusterJoinLinkInput.addEventListener("input", () => { if (elements.clusterJoinLinkInput.value.trim() !== pendingJoin.link) pendingJoin = { link: "", requestId: "" }; });
 elements.secretSyncButton.addEventListener("click", () => openSecretSyncDialog().catch((error) => toast(error.message)));
 elements.cancelSecretSyncButton.addEventListener("click", () => elements.secretSyncDialog.close());

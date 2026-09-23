@@ -9,6 +9,8 @@ import { conversationRuntimeDatabase, type RuntimeLeaseInput, sweepExpiredRuntim
 import { getHarnessRuntime, harnessForSessionPath, listHarnesses, listHarnessSyncFolders } from "../harnesses.js";
 import { eventsForPeer, recordPeerFailure, recordPeerReceipt } from "../replication.js";
 import { enqueueSecretCredentialSync, recordSecretCredentialFailure, recordSecretCredentialReceipt, secretCredentialEventsForPeer } from "../secret-replication.js";
+import { currentRoutingConfigTarget, dueRoutingConfigDeliveries, dropRoutingConfigDelivery, recordRoutingConfigDeliveryFailure, recordRoutingConfigDeliverySuccess, routingConfigDatabase, type PendingRoutingConfigDelivery } from "../routing-configs.js";
+import { signedPost } from "./cluster-v2.js";
 import { listSecretAccounts, type SecretAccount } from "../secrets.js";
 import { listProjects } from "../store.js";
 import { ensureAgentResourcesFolder, ensureConversationSyncFolders, ensureTicketWorkspaceFolder, pauseEngineSyncFolders, reconcileSyncthingProjectFolders, syncthingDeviceId } from "../syncthing.js";
@@ -197,6 +199,71 @@ export async function pushSecretCredentialsToPeer(peer: ClusterPeer): Promise<{ 
       console.warn(`Secret credential replication to ${peer.id} failed: ${message}`);
       return { delivered, error: message };
     }
+  }
+}
+
+class RevokedDeliveryTargetError extends Error {
+  constructor() { super("Target is no longer an eligible member"); }
+}
+
+/** Pushes one pending routing-configuration delivery. Eligibility is re-resolved at
+    push time against the node's current clusters and pairings — not the cluster the
+    delivery was enrolled under — so a peer that left one shared cluster but remains in
+    another still receives its pending event through that one, while a peer with no
+    current membership (or a legacy pending after selective mode activated) is dropped
+    rather than retried or transmitted. */
+async function pushPendingRoutingConfigDelivery(localNodeId: string, delivery: PendingRoutingConfigDelivery): Promise<void> {
+  const db = routingConfigDatabase();
+  const peers = await listClusterPeers();
+  const current = currentRoutingConfigTarget(db, localNodeId, peers, delivery.nodeId);
+  if (!current) throw new RevokedDeliveryTargetError();
+  if (current.kind === "legacy") {
+    const peer = peers.find((candidate) => candidate.id === current.nodeId)!;
+    const response = await fetch(`${peer.url}/api/cluster/routing-configs/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${peer.token}` },
+      body: JSON.stringify({ events: [delivery.event] }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) throw new Error(`Peer returned ${response.status}`);
+    return;
+  }
+  await signedPost(db, localNodeId, current.nodeId, current.clusterId!, "/api/cluster/v2/routing-configs", { events: [delivery.event] });
+}
+
+let routingConfigFlushInProgress = false;
+
+/** Delivers every due pending routing-configuration event: used by the share, update,
+    and delete handlers for an immediate attempt and by the maintenance interval for
+    retries while a receiver is offline. A configuration id scopes the flush so one
+    share's result reporting describes only that configuration's targets; the
+    maintenance interval flushes everything due. */
+export async function flushRoutingConfigDeliveries(configId?: string): Promise<Array<{ nodeId: string; name: string; delivered: boolean; error?: string }>> {
+  if (routingConfigFlushInProgress) return [];
+  routingConfigFlushInProgress = true;
+  try {
+    const local = await getClusterNode();
+    const db = routingConfigDatabase();
+    const results: Array<{ nodeId: string; name: string; delivered: boolean; error?: string }> = [];
+    for (const delivery of dueRoutingConfigDeliveries(db, new Date(), configId)) {
+      try {
+        await pushPendingRoutingConfigDelivery(local.id, delivery);
+        recordRoutingConfigDeliverySuccess(db, delivery.id);
+        results.push({ nodeId: delivery.nodeId, name: delivery.name, delivered: true });
+      } catch (error) {
+        if (error instanceof RevokedDeliveryTargetError) {
+          dropRoutingConfigDelivery(db, delivery.id);
+          continue;
+        }
+        const message = error instanceof Error ? error.message : "Distribution failed";
+        recordRoutingConfigDeliveryFailure(db, delivery.id, delivery.attempts + 1, message);
+        console.warn(`Routing configuration delivery to ${delivery.nodeId} failed: ${message}`);
+        results.push({ nodeId: delivery.nodeId, name: delivery.name, delivered: false, error: message });
+      }
+    }
+    return results;
+  } finally {
+    routingConfigFlushInProgress = false;
   }
 }
 

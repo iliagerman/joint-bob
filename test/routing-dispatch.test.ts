@@ -69,6 +69,13 @@ async function completed(messages: Array<Record<string, unknown>>, count: number
   assert.ok(!messages.some((message) => message.type === "promptFailed"), `prompt failed: ${JSON.stringify(messages.filter((message) => message.type === "error" || message.type === "promptFailed"))}`);
 }
 
+let configId = "";
+
+async function updateSelectedPolicy(policy: Record<string, unknown>): Promise<void> {
+  const updated = await api(node, session, "PUT", `/routing-configs/${configId}`, { policy });
+  assert.equal(updated.status, 200, JSON.stringify(updated.body));
+}
+
 before(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "routing-dispatch-"));
   environment = await seedDevEnvironment(root, 1);
@@ -109,11 +116,12 @@ before(async () => {
   secretAccountId = account.body.account.id;
   const attached = await api(node, session, "PUT", `/secrets/scopes/project/${projectId}`, { accountIds: [secretAccountId] });
   assert.equal(attached.status, 200, JSON.stringify(attached.body));
-  const saved = await api(node, session, "PUT", "/cluster/routing", {
-    clusterId: "",
-    policy: { enabled: true, classifierId: "typesafe", evalCadence: { mode: "every-n", n: 2 }, contextMessages: 3, confidenceThreshold: 0.3, harnesses: { kiro: { levels: { "1": { modelId: "default", thinkingLevel: "low", description: "Small obvious request" }, "8": { modelId: "big", thinkingLevel: "high", description: "Cross-component design or difficult debugging" } } } } },
-  });
-  assert.equal(saved.status, 200, JSON.stringify(saved.body));
+  const savedPolicy = { enabled: true, classifierId: "typesafe", evalCadence: { mode: "every-n", n: 2 }, contextMessages: 3, confidenceThreshold: 0.3, harnesses: { kiro: { levels: { "1": { modelId: "default", thinkingLevel: "low", description: "Small obvious request" }, "8": { modelId: "big", thinkingLevel: "high", description: "Cross-component design or difficult debugging" } } } } };
+  const created = await api<{ config: { id: string } }>(node, session, "POST", "/routing-configs", { name: "Dispatch routing", policy: savedPolicy });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  configId = created.body.config.id;
+  const selected = await api(node, session, "PUT", "/routing-configs/selection", { configId });
+  assert.equal(selected.status, 200, JSON.stringify(selected.body));
 }, { timeout: 120_000 });
 
 after(async () => {
@@ -187,8 +195,7 @@ test("difficulty routing maps a classified prompt to the policy model and honour
   events = routingEvents(chat.messages);
   assert.equal(events[3].skipped, "no suitable mapping", "the classifier escape keeps current conversation settings");
 
-  const unmapped = await api(node, session, "PUT", "/cluster/routing", {
-    clusterId: "",
+  const unmapped = await api(node, session, "PUT", `/routing-configs/${configId}`, {
     policy: { enabled: true, classifierId: "typesafe", evalCadence: { mode: "every-n", n: 1 }, confidenceThreshold: 0.3, harnesses: {} },
   });
   assert.equal(unmapped.status, 200, JSON.stringify(unmapped.body));
@@ -201,8 +208,7 @@ test("difficulty routing maps a classified prompt to the policy model and honour
   const unmappedEvents = routingEvents(fresh.messages);
   assert.equal(unmappedEvents.length, 1);
   assert.equal(unmappedEvents[0].mapped, false, "a harness with no mapped levels keeps the conversation model");
-  const restored = await api(node, session, "PUT", "/cluster/routing", {
-    clusterId: "",
+  const restored = await api(node, session, "PUT", `/routing-configs/${configId}`, {
     policy: { enabled: true, classifierId: "typesafe", evalCadence: { mode: "every-n", n: 2 }, confidenceThreshold: 0.3, harnesses: { kiro: { levels: { "1": { modelId: "default", thinkingLevel: "low", description: "Small obvious request" }, "8": { modelId: "big", thinkingLevel: "high", description: "Cross-component design or difficult debugging" } } } } },
   });
   assert.equal(restored.status, 200, JSON.stringify(restored.body));
@@ -268,4 +274,75 @@ test("bob-auto is the default and an explicit pick pauses classifier control unt
   chat.socket.send(JSON.stringify({ type: "prompt", message: "auto again", requestId: randomUUID() }));
   await completed(chat.messages, 4);
   assert.equal(routingEvents(chat.messages).length, 2, "auto mode resumes routing");
+});
+
+test("switching the active configuration re-evaluates on the next turn even after a first-message evaluation", { timeout: 120_000 }, async () => {
+  // The earlier test deleted the classifier's secret account; give the project a fresh one.
+  const account = await api<{ account: { id: string } }>(node, session, "POST", "/secrets/accounts", { label: "routing-switch", provider: "custom", variables: [{ name: "TYPESAFE_AI_API_KEY", kind: "value", value: "test-key" }] });
+  assert.equal(account.status, 201, JSON.stringify(account.body));
+  await api(node, session, "PUT", `/secrets/scopes/project/${projectId}`, { accountIds: [account.body.account.id] });
+  // A first-message configuration has already consumed its evaluation point on the
+  // conversation above; switching to another named configuration must take effect on
+  // the very next user turn instead of waiting for a cadence point that never comes.
+  const firstMessagePolicy = {
+    enabled: true, classifierId: "typesafe", evalCadence: { mode: "first-message" }, contextMessages: 3, confidenceThreshold: 0.3,
+    harnesses: { kiro: { levels: { "8": { modelId: "big", thinkingLevel: "high", description: "Cross-component design or difficult debugging" } } } },
+  };
+  const switcherPolicy = {
+    enabled: true, classifierId: "typesafe", evalCadence: { mode: "first-message" }, contextMessages: 3, confidenceThreshold: 0.3,
+    harnesses: { kiro: { levels: { "1": { modelId: "default", thinkingLevel: "low", description: "Small obvious request" } } } },
+  };
+  const first = await api<{ config: { id: string } }>(node, session, "POST", "/routing-configs", { name: "First message A", policy: firstMessagePolicy });
+  assert.equal(first.status, 201, JSON.stringify(first.body));
+  const switcher = await api<{ config: { id: string } }>(node, session, "POST", "/routing-configs", { name: "First message B", policy: switcherPolicy });
+  assert.equal(switcher.status, 201, JSON.stringify(switcher.body));
+  const previousConfigId = configId;
+  configId = first.body.config.id;
+  await updateSelectedPolicy(firstMessagePolicy);
+  await api(node, session, "PUT", "/routing-configs/selection", { configId: first.body.config.id });
+
+  const chat = openChat(node.url, session.cookie, projectId, "kiro:new");
+  sockets.push(chat.socket);
+  await waitFor(chat.messages, () => chat.messages.some((message) => message.type === "ready" && message.engine === "kiro"));
+
+  answer = { level: 8, confidence: 0.9 };
+  chat.socket.send(JSON.stringify({ type: "prompt", message: "first under config A", requestId: randomUUID() }));
+  await completed(chat.messages, 1);
+  assert.equal(routingEvents(chat.messages).length, 1, "the first prompt evaluates under configuration A");
+  assert.equal(routingEvents(chat.messages)[0].modelId, "big");
+
+  chat.socket.send(JSON.stringify({ type: "prompt", message: "second under config A", requestId: randomUUID() }));
+  await completed(chat.messages, 2);
+  assert.equal(routingEvents(chat.messages).length, 1, "first-message cadence does not re-evaluate under the same configuration");
+
+  // Switch the node's active configuration; the next turn must evaluate again.
+  configId = switcher.body.config.id;
+  await updateSelectedPolicy(switcherPolicy);
+  const switched = await api(node, session, "PUT", "/routing-configs/selection", { configId: switcher.body.config.id });
+  assert.equal(switched.status, 200);
+
+  answer = { level: 1, confidence: 0.9 };
+  chat.socket.send(JSON.stringify({ type: "prompt", message: "first under config B", requestId: randomUUID() }));
+  await completed(chat.messages, 3);
+  const afterSwitch = routingEvents(chat.messages);
+  assert.equal(afterSwitch.length, 2, "a configuration switch re-evaluates on the next turn");
+  assert.equal(afterSwitch[1].modelId, "default", "the new configuration's mapping applies");
+
+  chat.socket.send(JSON.stringify({ type: "prompt", message: "second under config B", requestId: randomUUID() }));
+  await completed(chat.messages, 4);
+  assert.equal(routingEvents(chat.messages).length, 2, "the same configuration keeps its cadence afterwards");
+
+  // An owner edit of the active configuration is a content change: the next turn re-evaluates.
+  configId = switcher.body.config.id;
+  await updateSelectedPolicy({ ...switcherPolicy, harnesses: { kiro: { levels: { "8": { modelId: "big", thinkingLevel: "max", description: "Cross-component design or difficult debugging" } } } } });
+  answer = { level: 8, confidence: 0.9 };
+  chat.socket.send(JSON.stringify({ type: "prompt", message: "after edit", requestId: randomUUID() }));
+  await completed(chat.messages, 5);
+  const afterEdit = routingEvents(chat.messages);
+  assert.equal(afterEdit.length, 3, "an edited configuration re-evaluates on the next turn");
+  assert.equal(afterEdit[2].thinkingLevel, "max", "the edited mapping applies");
+
+  await api(node, session, "PUT", "/routing-configs/selection", { configId: previousConfigId });
+  await api(node, session, "DELETE", `/routing-configs/${first.body.config.id}`);
+  await api(node, session, "DELETE", `/routing-configs/${switcher.body.config.id}`);
 });

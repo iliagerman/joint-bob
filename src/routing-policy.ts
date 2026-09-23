@@ -6,10 +6,7 @@ import { getDifficultyClassifier, listDifficultyClassifiers } from "./classifier
 import { DIFFICULTY_RUBRIC } from "./classifiers/typesafe.js";
 import { listDiscoveredHarnesses } from "./harnesses/registry.js";
 import { resolveDataDirectory } from "./data-directory.js";
-import { enqueueReplicationEvent, type ReplicationEvent } from "./replication.js";
-import { resourceClusterIds } from "./cluster-sharing-policy.js";
-import { selectiveSharingActiveInDatabase } from "./cluster-v2-mode-state.js";
-import { getOrCreateClusterIdentity, pinnedClusterPublicKey, signClusterMessage, verifyClusterMessage } from "./cluster-identity.js";
+import { type ReplicationEvent } from "./replication.js";
 
 /** The routing policy of the implicit legacy cluster, where every peer sees every project. */
 export const LEGACY_CLUSTER_ID = "";
@@ -144,79 +141,9 @@ export function readRoutingPolicy(db: DatabaseSync, clusterId: string): StoredRo
   return row ? rowToStored(row) : null;
 }
 
-/** Whether the local node may edit this stored policy: the v2 cluster manager, or
-    the legacy policy's leader. */
-export function routingPolicyEditableBy(db: DatabaseSync, stored: StoredRoutingPolicy, localNodeId: string): boolean {
-  if (stored.clusterId !== LEGACY_CLUSTER_ID) {
-    const row = db.prepare("SELECT manager_node_id FROM sharing_clusters WHERE id = ?").get(stored.clusterId) as { manager_node_id: string | null } | undefined;
-    return row?.manager_node_id === localNodeId;
-  }
-  return stored.leaderNodeId === localNodeId;
-}
-
 export function listRoutingPolicies(db: DatabaseSync): StoredRoutingPolicy[] {
   activateAvailablePendingRoutingPolicies(db);
   return (db.prepare("SELECT cluster_id,policy,revision,leader_node_id,updated_by,updated_at FROM cluster_routing_policies ORDER BY cluster_id").all() as unknown as PolicyRow[]).map(rowToStored);
-}
-
-function localNodeId(db: DatabaseSync): string | undefined {
-  return (db.prepare("SELECT id FROM cluster_node WHERE singleton = 1").get() as { id: string } | undefined)?.id;
-}
-
-function requiresClusterManager(db: DatabaseSync, clusterId: string, actorNodeId: string): string {
-  // In v2 selective sharing the manager node is the leader. In the legacy cluster the
-  // policy's first author is the leader until they clear it.
-  if (clusterId !== LEGACY_CLUSTER_ID) {
-    const row = db.prepare("SELECT manager_node_id FROM sharing_clusters WHERE id = ?").get(clusterId) as { manager_node_id: string | null } | undefined;
-    if (!row) throw new RoutingPolicyError(404, `Unknown cluster: ${clusterId}`);
-    if (!row.manager_node_id) throw new RoutingPolicyError(409, "Cluster is closed");
-    if (row.manager_node_id !== actorNodeId) throw new RoutingPolicyError(403, "Only the current cluster manager can change the routing policy");
-    return row.manager_node_id;
-  }
-  const existing = readRoutingPolicy(db, clusterId);
-  if (existing && existing.leaderNodeId !== actorNodeId) throw new RoutingPolicyError(403, "Only the current routing policy leader can change it. Clear the policy on the leader node to hand the role over.");
-  return existing?.leaderNodeId ?? actorNodeId;
-}
-
-function storeRoutingPolicyRow(db: DatabaseSync, input: Omit<StoredRoutingPolicy, "revision" | "updatedAt"> & { revision?: number; updatedAt?: string; originNodeId?: string }): StoredRoutingPolicy {
-  const previous = db.prepare("SELECT revision, updated_at, origin_node_id FROM cluster_routing_policies WHERE cluster_id = ?").get(input.clusterId) as { revision: number; updated_at: string; origin_node_id: string } | undefined;
-  const revision = input.revision ?? (previous?.revision ?? 0) + 1;
-  const updatedAt = input.updatedAt ?? new Date().toISOString();
-  const originNodeId = input.originNodeId ?? localNodeId(db) ?? "";
-  db.prepare(`INSERT INTO cluster_routing_policies(cluster_id,policy,revision,leader_node_id,updated_by,updated_at,origin_node_id) VALUES (?,?,?,?,?,?,?)
-    ON CONFLICT(cluster_id) DO UPDATE SET policy=excluded.policy, revision=excluded.revision, leader_node_id=excluded.leader_node_id, updated_by=excluded.updated_by, updated_at=excluded.updated_at, origin_node_id=excluded.origin_node_id`)
-    .run(input.clusterId, JSON.stringify(input.policy), revision, input.leaderNodeId, input.updatedBy, updatedAt, originNodeId);
-  return { clusterId: input.clusterId, policy: input.policy, revision, leaderNodeId: input.leaderNodeId, updatedBy: input.updatedBy, updatedAt };
-}
-
-/** Saves (or, with policy null, clears) the routing policy after checking leadership. */
-export function updateClusterRoutingPolicy(db: DatabaseSync, clusterId: string, policy: RoutingPolicy | null, actorNodeId: string): StoredRoutingPolicy | null {
-  const leaderNodeId = requiresClusterManager(db, clusterId, actorNodeId);
-  const originNodeId = localNodeId(db);
-  if (!originNodeId) throw new Error("Routing policy requires a node identity");
-  if (policy === null) {
-    const previousRevision = (db.prepare("SELECT revision FROM cluster_routing_policies WHERE cluster_id = ?").get(clusterId) as { revision: number } | undefined)?.revision ?? 0;
-    db.prepare("DELETE FROM cluster_routing_policies WHERE cluster_id = ?").run(clusterId);
-    db.prepare("DELETE FROM cluster_routing_pending WHERE cluster_id = ?").run(clusterId);
-    publishClusterRoutingUpdate(db, originNodeId, clusterId, null, previousRevision + 1, leaderNodeId, actorNodeId);
-    return null;
-  }
-  const stored = storeRoutingPolicyRow(db, { clusterId, policy, leaderNodeId, updatedBy: actorNodeId });
-  db.prepare("DELETE FROM cluster_routing_pending WHERE cluster_id = ?").run(clusterId);
-  publishClusterRoutingUpdate(db, originNodeId, clusterId, stored.policy, stored.revision, leaderNodeId, actorNodeId, stored.updatedAt);
-  return stored;
-}
-
-function publishClusterRoutingUpdate(db: DatabaseSync, originNodeId: string, clusterId: string, policy: RoutingPolicy | null, revision: number, leaderNodeId: string, updatedBy: string, updatedAt?: string): void {
-  const payload = clusterRoutingEventPayloadSchema.parse({ clusterId, policy, revision, leaderNodeId, updatedBy, updatedAt: updatedAt ?? new Date().toISOString(), originNodeId });
-  if (clusterId === LEGACY_CLUSTER_ID) {
-    enqueueReplicationEvent(db, { originNodeId, entityType: "cluster.routing", entityKey: "legacy", operation: policy ? "upsert" : "delete", payload });
-    return;
-  }
-  const snapshot = signRoutingPolicySnapshot(db, payload, leaderNodeId);
-  const members = db.prepare("SELECT node_id FROM sharing_memberships WHERE cluster_id = ? AND node_id <> ?").all(clusterId, originNodeId) as unknown as Array<{ node_id: string }>;
-  const insert = db.prepare("INSERT OR REPLACE INTO cluster_v2_routing_deliveries(cluster_id,peer_id,revision,snapshot) VALUES (?,?,?,?)");
-  for (const member of members) insert.run(clusterId, member.node_id, revision, JSON.stringify(snapshot));
 }
 
 export const clusterRoutingEventPayloadSchema = z.object({
@@ -228,9 +155,6 @@ export const clusterRoutingEventPayloadSchema = z.object({
   updatedAt: z.string().min(1),
   originNodeId: z.string().min(1),
 }).strict();
-
-export const signedRoutingPolicySnapshotSchema = z.object({ body: clusterRoutingEventPayloadSchema, signerNodeId: z.string().min(1), signature: z.string().min(1) }).strict();
-export type SignedRoutingPolicySnapshot = z.infer<typeof signedRoutingPolicySnapshotSchema>;
 
 function routingVersion(value: { updatedAt: string; originNodeId: string }): string { return `${value.updatedAt}\n${value.originNodeId}`; }
 
@@ -274,45 +198,6 @@ export function routingPolicyWarning(db: DatabaseSync, clusterId: string): { cla
   const payload = clusterRoutingEventPayloadSchema.parse(JSON.parse(row.payload));
   if (!payload.policy) return null;
   return { classifierId: payload.policy.classifierId, revision: payload.revision, message: `Routing update paused: classifier ${payload.policy.classifierId} is not installed on this node. Using the previous policy.` };
-}
-
-export function requiredRoutingClassifier(db: DatabaseSync, clusterId: string): string | null { return readRoutingPolicy(db, clusterId)?.policy.classifierId ?? null; }
-
-export function assertRoutingClassifierForJoin(db: DatabaseSync, clusterId: string, classifierIds: readonly string[]): void {
-  ensureRoutingPolicySchema(db);
-  const required = requiredRoutingClassifier(db, clusterId);
-  if (required && !classifierIds.includes(required)) throw new RoutingPolicyError(409, `Node is missing required routing classifier: ${required}`);
-}
-
-export function signRoutingPolicySnapshot(db: DatabaseSync, body: z.infer<typeof clusterRoutingEventPayloadSchema>, signerNodeId: string): SignedRoutingPolicySnapshot {
-  getOrCreateClusterIdentity(db, signerNodeId);
-  return signedRoutingPolicySnapshotSchema.parse({ body, signerNodeId, signature: signClusterMessage(db, signerNodeId, "routing-policy", JSON.stringify(body)) });
-}
-
-export function currentSignedRoutingPolicy(db: DatabaseSync, clusterId: string, signerNodeId: string): SignedRoutingPolicySnapshot | null {
-  ensureRoutingPolicySchema(db);
-  const stored = readRoutingPolicy(db, clusterId);
-  return stored ? signRoutingPolicySnapshot(db, { ...stored, originNodeId: signerNodeId }, signerNodeId) : null;
-}
-
-export function applySignedRoutingPolicySnapshot(db: DatabaseSync, snapshot: SignedRoutingPolicySnapshot): void {
-  ensureRoutingPolicySchema(db);
-  const parsed = signedRoutingPolicySnapshotSchema.parse(snapshot);
-  const manager = db.prepare("SELECT manager_node_id FROM sharing_clusters WHERE id=?").get(parsed.body.clusterId) as { manager_node_id: string | null } | undefined;
-  const key = pinnedClusterPublicKey(db, parsed.signerNodeId);
-  if (!manager || manager.manager_node_id !== parsed.signerNodeId || parsed.body.leaderNodeId !== parsed.signerNodeId || !key || !verifyClusterMessage(key, "routing-policy", JSON.stringify(parsed.body), parsed.signature)) throw new RoutingPolicyError(401, "Invalid routing policy snapshot");
-  applyRoutingPayload(db, parsed.body);
-}
-
-export function listRoutingPolicyDeliveries(db: DatabaseSync): Array<{ clusterId: string; peerId: string; revision: number; snapshot: SignedRoutingPolicySnapshot }> {
-  ensureRoutingPolicySchema(db);
-  const rows = db.prepare("SELECT cluster_id,peer_id,revision,snapshot FROM cluster_v2_routing_deliveries ORDER BY cluster_id,peer_id,revision").all() as unknown as Array<{ cluster_id: string; peer_id: string; revision: number; snapshot: string }>;
-  return rows.map((row) => ({ clusterId: row.cluster_id, peerId: row.peer_id, revision: row.revision, snapshot: signedRoutingPolicySnapshotSchema.parse(JSON.parse(row.snapshot)) }));
-}
-
-export function acknowledgeRoutingPolicyDelivery(db: DatabaseSync, clusterId: string, peerId: string, revision: number): void {
-  ensureRoutingPolicySchema(db);
-  db.prepare("DELETE FROM cluster_v2_routing_deliveries WHERE cluster_id=? AND peer_id=? AND revision=?").run(clusterId, peerId, revision);
 }
 
 /** Legacy replication applier. Selective clusters use signed manager snapshots. */
@@ -361,26 +246,4 @@ export function defaultRoutingPolicy(modelsByHarness: Record<string, DefaultPoli
     harnesses[adapter.id] = { levels: levelsMap };
   }
   return { enabled: true, classifierId: listDifficultyClassifiers()[0]?.id ?? "typesafe", evalCadence: { mode: "first-message" }, contextMessages: 10, confidenceThreshold: 0.3, harnesses };
-}
-
-/** Resolves the routing policy that governs a project on this node, or null.
-    Deterministic on every node: v2 shares resolve per cluster with the lowest cluster
-    ID winning; the legacy policy applies to all projects on a legacy-paired node.
-    Never throws: an unreadable store means no routing. */
-export function routingPolicyForProject(projectId: string): StoredRoutingPolicy | null {
-  try {
-    const db = routingPolicyDatabase();
-    const local = localNodeId(db);
-    if (!local) return null;
-    if (selectiveSharingActiveInDatabase(db)) {
-      const clusterIds = resourceClusterIds(db, local, "project", projectId);
-      const candidates = clusterIds.map((clusterId) => readRoutingPolicy(db, clusterId)).filter((stored): stored is StoredRoutingPolicy => Boolean(stored?.policy.enabled));
-      return candidates.sort((left, right) => left.clusterId.localeCompare(right.clusterId))[0] ?? null;
-    }
-    const legacy = readRoutingPolicy(db, LEGACY_CLUSTER_ID);
-    return legacy?.policy.enabled ? legacy : null;
-  } catch (error) {
-    console.warn("Routing policy resolution failed", error instanceof Error ? error.message.slice(0, 200) : "unknown error");
-    return null;
-  }
 }

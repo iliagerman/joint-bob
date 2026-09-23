@@ -55,8 +55,11 @@ test("v2 HTTP membership preserves independent clusters and routes authority thr
     const routingPolicy = {
       enabled: true, classifierId: "typesafe", evalCadence: { mode: "first-message" }, confidenceThreshold: 0.3, harnesses: {},
     };
-    const routingSaved = await call(nodeA, sessionA, "PUT", "/cluster/routing", { clusterId: clusterA, policy: routingPolicy });
-    assert.equal(routingSaved.status, 200, JSON.stringify(routingSaved.body));
+    const configCreated = await call<{ config: { id: string } }>(nodeA, sessionA, "POST", "/routing-configs", { name: "Cluster routing", policy: routingPolicy });
+    assert.equal(configCreated.status, 201, JSON.stringify(configCreated.body));
+    const configId = configCreated.body.config.id;
+    const selected = await call(nodeA, sessionA, "PUT", "/routing-configs/selection", { configId });
+    assert.equal(selected.status, 200);
 
     const rejectedSelection = await call(nodeA, sessionA, "POST", `/clusters/${clusterA}/invitations`, { expectedEpoch: 1, projectIds: [nodeA.projects[0].id] });
     assert.equal(rejectedSelection.status, 400);
@@ -70,8 +73,24 @@ test("v2 HTTP membership preserves independent clusters and routes authority thr
     const retry = await call<{ snapshot: Snapshot }>(nodeB, sessionB, "POST", "/clusters/join", { link: invitation.body.link, requestId });
     assert.equal(retry.status, 200);
     assert.deepEqual(retry.body.snapshot, joined.body.snapshot);
-    const joinedRouting = await call<{ policies: Array<{ clusterId: string; policy: { classifierId: string } }> }>(nodeB, sessionB, "GET", "/cluster/routing");
-    assert.equal(joinedRouting.body.policies.find((entry) => entry.clusterId === clusterA)?.policy.classifierId, "typesafe", "a joining node receives the cluster routing policy before join completes");
+
+    // Joining carries no routing configuration: the new member starts unselected.
+    const beforeShare = await call<{ configs: unknown[]; selectedId: string }>(nodeB, sessionB, "GET", "/routing-configs");
+    assert.equal(beforeShare.status, 200);
+    assert.deepEqual(beforeShare.body.configs, [], "a joiner receives no routing configuration with its membership");
+    assert.equal(beforeShare.body.selectedId, "");
+
+    // Sharing distributes over the signed cluster protocol to every eligible member.
+    const shared = await call<{ results: Array<{ nodeId: string; delivered: boolean }> }>(nodeA, sessionA, "POST", `/routing-configs/${configId}/share`, {});
+    assert.equal(shared.status, 200, JSON.stringify(shared.body));
+    assert.ok(shared.body.results.some((result) => result.nodeId === nodeB.nodeId && result.delivered), "the cluster member receives the share");
+    const onMember = await call<{ configs: Array<{ id: string; mine: boolean; ownerNodeId: string }>; selectedId: string }>(nodeB, sessionB, "GET", "/routing-configs");
+    const replica = onMember.body.configs.find((config) => config.id === configId);
+    assert.ok(replica, "the member holds the shared configuration");
+    assert.equal(replica.ownerNodeId, nodeA.nodeId);
+    assert.equal(onMember.body.selectedId, "", "sharing did not change the member's selection");
+    const adopted = await call(nodeB, sessionB, "PUT", "/routing-configs/selection", { configId });
+    assert.equal(adopted.status, 200, "the member may adopt the shared configuration");
 
     const statusB = await call<ClusterStatus>(nodeB, sessionB, "GET", "/clusters");
     assert.equal(statusB.status, 200);
@@ -95,6 +114,18 @@ test("v2 HTTP membership preserves independent clusters and routes authority thr
     assert.equal(left.status, 200);
     const finalB = await call<ClusterStatus>(nodeB, sessionB, "GET", "/clusters");
     assert.deepEqual(finalB.body.clusters.map((cluster) => cluster.id), [clusterB]);
+
+    // After leaving, the departed member is no longer an eligible share target: owner
+    // updates stop reaching it, its copy stays frozen, and its selection is its own.
+    const departed = await call<{ configs: Array<{ id: string; revision: number }> }>(nodeB, sessionB, "GET", "/routing-configs");
+    const frozen = departed.body.configs.find((config) => config.id === configId);
+    assert.ok(frozen, "the departed member keeps the copy it already received");
+    const afterDeparture = await call<{ results: Array<{ nodeId: string; delivered: boolean; error?: string }> }>(nodeA, sessionA, "PUT", `/routing-configs/${configId}`, { name: "Cluster routing", policy: { ...routingPolicy, confidenceThreshold: 0.9 } });
+    assert.equal(afterDeparture.status, 200);
+    assert.ok(!afterDeparture.body.results.some((result) => result.nodeId === nodeB.nodeId && result.delivered), "the departed member receives no further updates");
+    const stillFrozen = (await call<{ configs: Array<{ id: string; policy: { confidenceThreshold: number } }>; selectedId: string }>(nodeB, sessionB, "GET", "/routing-configs")).body;
+    assert.equal(stillFrozen.configs.find((config) => config.id === configId)?.policy.confidenceThreshold, 0.3, "the departed member's copy did not change");
+    assert.equal(stillFrozen.selectedId, configId, "the departed member's own selection is untouched");
   } finally {
     await Promise.all(children.map(stopDevNode));
   }

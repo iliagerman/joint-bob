@@ -13,7 +13,8 @@ import {
   type MembershipEntry,
 } from "../src/cluster-membership.js";
 import { clusterPublicKeyFingerprint, getOrCreateClusterIdentity, pinnedClusterPublicKey, signClusterMessage } from "../src/cluster-identity.js";
-import { ensureRoutingPolicySchema } from "../src/routing-policy.js";
+import { routingPolicySchema } from "../src/routing-policy.js";
+import { createRoutingConfig, ensureRoutingConfigSchema, setRoutingConfigSelection } from "../src/routing-configs.js";
 import {
   createSharingCluster,
   listResourceShares,
@@ -56,17 +57,20 @@ test("membership-only signed invitation joins and applies without leaking policy
   } finally { manager.close(); receiver.close(); }
 });
 
-test("a node missing the cluster routing classifier cannot join", () => {
+test("joining no longer requires any routing classifier", () => {
   const manager = db(), receiver = db();
   try {
     createMembershipCluster(manager, local(A, "Alpha", 4001), { id: CLUSTER, name: "Team" });
-    ensureRoutingPolicySchema(manager);
-    const policy = { enabled: true, classifierId: "typesafe", evalCadence: { mode: "first-message" }, confidenceThreshold: 0.3, harnesses: {} };
-    manager.prepare("INSERT INTO cluster_routing_policies VALUES (?,?,?,?,?,?,?)").run(CLUSTER, JSON.stringify(policy), 1, A, A, new Date(1000).toISOString(), A);
+    // The manager may run any routing configuration, selected or shared; a joiner that
+    // lacks the classifier joins all the same and keeps its own independent selection.
+    ensureRoutingConfigSchema(manager);
+    const config = createRoutingConfig(manager, A, "Manager routing", routingPolicySchema.parse({ enabled: true, classifierId: "typesafe", evalCadence: { mode: "first-message" }, confidenceThreshold: 0.3, harnesses: {} }));
+    setRoutingConfigSelection(manager, config.id);
     const invitation = createMembershipInvitation(manager, A, A, CLUSTER, 1, 1000);
     const request = prepareMembershipJoin(receiver, local(B, "Beta", 4002), invitation, clusterPublicKeyFingerprint(invitation.body.manager.publicKey), REQUEST, 1000, []);
-    assert.throws(() => redeemMembershipInvitation(manager, A, request, invitation.secret, 1000), /missing required routing classifier: typesafe/);
-    assert.deepEqual(listSharingClusterMembers(manager, CLUSTER).map(({ nodeId }) => nodeId), [A], "failed capability validation must not admit the node");
+    const snapshot = redeemMembershipInvitation(manager, A, request, invitation.secret, 1000);
+    assert.deepEqual(listSharingClusterMembers(manager, CLUSTER).map(({ nodeId }) => nodeId), [A, B], "the node joins without any classifier capability check");
+    assert.equal(snapshot.body.clusterId, CLUSTER);
   } finally { manager.close(); receiver.close(); }
 });
 

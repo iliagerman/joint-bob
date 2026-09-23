@@ -33,7 +33,7 @@ let routingClassifiersRequest = null;
 export async function loadRoutingClassifiers() {
   if (state.routingClassifiers) return state.routingClassifiers;
   if (routingClassifiersRequest) return routingClassifiersRequest;
-  routingClassifiersRequest = api("/api/cluster/routing")
+  routingClassifiersRequest = api("/api/routing-configs")
     .then((body) => { state.routingClassifiers = Array.isArray(body.classifiers) ? body.classifiers : []; })
     .catch((error) => { toast(error.message); state.routingClassifiers = []; })
     .then(() => state.routingClassifiers)
@@ -41,15 +41,18 @@ export async function loadRoutingClassifiers() {
   return routingClassifiersRequest;
 }
 
-/** Saves a new classifier choice onto the active routing policy. Leader nodes only. */
+/** Saves a new classifier choice onto this node's active routing configuration.
+    Only the configuration's originating node can change a shared one. */
 async function saveRoutingClassifier(classifierId) {
   try {
-    const body = await api("/api/cluster/routing");
-    const policy = body.policies?.find((entry) => entry.clusterId === "") ?? body.policies?.[0];
-    if (!policy) throw new Error("No routing policy is saved yet");
-    if (!policy.editable) throw new Error("Only the leader node can change the classifier");
-    const saved = await api("/api/cluster/routing", { method: "PUT", body: JSON.stringify({ clusterId: policy.clusterId, policy: { ...policy.policy, classifierId } }) });
-    if (!saved.policy) throw new Error("Saving the classifier failed");
+    const configId = state.routing?.configId;
+    if (!configId) throw new Error("No routing configuration is active on this node");
+    const body = await api("/api/routing-configs");
+    const config = (body.configs ?? []).find((entry) => entry.id === configId);
+    if (!config) throw new Error("The active routing configuration is gone");
+    if (!config.mine) throw new Error("Only the node that created this configuration can change it");
+    const saved = await api(`/api/routing-configs/${configId}`, { method: "PUT", body: JSON.stringify({ name: config.name, policy: { ...config.policy, classifierId } }) });
+    if (!saved.config) throw new Error("Saving the classifier failed");
     state.routing = { ...state.routing, classifierId };
     toast("Classifier updated");
   } catch (error) {
@@ -493,8 +496,8 @@ function renderModelDialog() {
     autoRow.dataset.testid = "model-option-bob-auto";
     autoRow.title = "The difficulty classifier picks the model and reasoning for each prompt";
     elements.modelDialogList.append(autoRow);
-    // Under Bob auto, the scoring model itself is selectable here too. Editing the
-    // choice changes the cluster's routing policy, so it is leader-gated.
+    // Under Bob auto, the scoring model itself is selectable here too. Changing the
+    // choice edits this node's active configuration, so it is owner-gated.
     const classifierRow = document.createElement("label");
     classifierRow.className = "model-option routing-classifier-option";
     classifierRow.dataset.testid = "routing-classifier-option";
@@ -507,7 +510,7 @@ function renderModelDialog() {
     classifierSelect.value = state.routing.classifierId || classifiers[0]?.id || "";
     const editable = state.routing.editable !== false;
     classifierSelect.disabled = !editable;
-    classifierSelect.title = editable ? "Changes the cluster's routing policy" : "Only the leader node can change the classifier";
+    classifierSelect.title = editable ? "Changes this node's active routing configuration" : "Only the node that created this configuration can change the classifier";
     classifierSelect.addEventListener("change", () => { void saveRoutingClassifier(classifierSelect.value); });
     classifierSelect.addEventListener("click", (event) => event.stopPropagation());
     classifierRow.append(classifierLabel, classifierSelect);

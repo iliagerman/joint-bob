@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Routing configurations are now created, stored, and selected independently on each node, with optional sharing to other cluster members. Every node owns its active configuration separately and can share named configurations with the eligible nodes of its clusters.
+
 ## 1.75.1 — 2026-09-23
 
 - The board view is now hidden from navigation, keyboard shortcuts, and preferences.

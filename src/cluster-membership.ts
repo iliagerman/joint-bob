@@ -5,7 +5,6 @@ import { acceptSharingManagerTransfer, addSharingMember, commitSharingManagerTra
 import { clusterPublicKeyFingerprint, ensureClusterIdentitySchema, getOrCreateClusterIdentity, pinClusterPublicKey, pinnedClusterPublicKey, signClusterMessage, verifyClusterMessage } from "./cluster-identity.js";
 import { ensurePeerEndpointSchema, recordMembershipEndpoints } from "./cluster-peer-endpoints.js";
 import { reconcileOwnedResourceTopology } from "./cluster-sharing.js";
-import { assertRoutingClassifierForJoin } from "./routing-policy.js";
 
 const uuid = z.string().uuid().regex(/^[0-9a-f-]+$/);
 const name = z.string().trim().min(1).max(80);
@@ -124,7 +123,6 @@ export function redeemMembershipInvitation(
     const state = getSharingCluster(db, body.clusterId);
     if (state.managerNodeId !== localNodeId || body.manager.nodeId !== localNodeId || state.managerEpoch !== body.managerEpoch) throw new Error("Cluster manager authority changed");
     if (db.prepare("SELECT 1 FROM sharing_manager_transfers WHERE cluster_id=? AND expected_epoch=? AND status<>'committed'").get(body.clusterId, state.managerEpoch)) throw new Error("Cluster has a pending transfer");
-    assertRoutingClassifierForJoin(db, body.clusterId, request.classifierIds);
     const existing = nodeRows(db, body.clusterId).find((row) => row.node_id === request.member.nodeId);
     if (existing && JSON.stringify({ nodeId: existing.node_id, name: existing.name, url: existing.url, publicKey: existing.public_key }) !== JSON.stringify(request.member)) throw new Error("Member descriptor conflict");
     pinClusterPublicKey(db, request.member.nodeId, request.member.publicKey);

@@ -637,18 +637,6 @@
             </label>
             <button class="primary" type="button" id="clusterJoinButton" data-testid="cluster-join-button">Join cluster</button>
           </fieldset>
-          <fieldset class="phase-settings" id="routingPolicyFieldset">
-            <legend>Prompt routing</legend>
-            <p id="routingPolicyStatus" data-testid="routing-status" role="status"></p>
-            <label>Policy cluster<select id="routingClusterSelect" data-testid="routing-cluster-select"></select></label>
-            <label class="checkbox-row"><input type="checkbox" id="routingEnabled" data-testid="routing-enabled" /> Route prompts to a model by difficulty</label>
-            <label>Confidence threshold (0 to 1)<input type="number" id="routingConfidence" min="0" max="1" step="0.05" value="0.3" data-testid="routing-confidence" /></label>
-            <p class="settings-hint">Model options and their required classifier descriptions live under each harness's tab. The classifier uses its fixed question and chooses among those options. Below the confidence threshold, or on any classifier failure, prompts keep the conversation's current model. A manual model pick always wins until Bob auto is selected again.</p>
-            <div class="github-group-actions">
-              <button class="ghost" type="button" id="routingSaveButton" data-testid="routing-save-button">Save routing policy</button>
-              <button class="ghost danger" type="button" id="routingClearButton" data-testid="routing-clear-button">Clear policy</button>
-            </div>
-          </fieldset>
         </section>
 
         <section class="settings-panel" id="settingsPanel-workspaces" role="tabpanel" aria-labelledby="settingsTab-workspaces" tabindex="0" hidden>
@@ -688,17 +676,38 @@
         </section>
 
         <section class="settings-panel" id="settingsPanel-classifiers" role="tabpanel" aria-labelledby="settingsTab-classifiers" tabindex="0" hidden>
-          <p>The model that chooses among the described options configured under each harness. Its API key comes from the matching variable on an attached secret account.</p>
+          <p>Named routing configurations choose the model and reasoning for each prompt by difficulty. Each node keeps its own configurations, picks the active one independently, and can share one with the eligible nodes of its clusters. The classifier's API key comes from the matching variable on an attached secret account.</p>
           <fieldset class="phase-settings">
-            <legend>Classifier</legend>
+            <legend>Active configuration</legend>
+            <p id="routingConfigStatus" data-testid="routing-config-status" role="status"></p>
+            <label>Configuration used on this node<select id="routingActiveConfigSelect" data-testid="routing-active-config-select"></select></label>
+            <p class="settings-hint">Sharing never changes another node's active configuration; every node selects its own. Below the confidence threshold, or on any classifier failure, prompts keep the conversation's current model.</p>
+          </fieldset>
+          <fieldset class="phase-settings">
+            <legend>Configurations</legend>
+            <div class="cluster-inventory" id="routingConfigList" data-testid="routing-config-list"></div>
+            <div class="cluster-create-row">
+              <label class="sr-only" for="routingConfigNameInput">New configuration name</label>
+              <input id="routingConfigNameInput" autocomplete="off" maxlength="80" placeholder="New configuration name" data-testid="routing-config-name-input" />
+              <button class="ghost" type="button" id="routingConfigCreateButton" data-testid="routing-config-create-button">New configuration</button>
+            </div>
+          </fieldset>
+          <fieldset class="phase-settings" id="routingConfigEditor" data-testid="routing-config-editor" hidden>
+            <legend id="routingConfigEditorLegend">Configuration</legend>
+            <label>Name<input id="routingConfigEditorNameInput" autocomplete="off" maxlength="80" data-testid="routing-config-editor-name" /></label>
+            <label class="checkbox-row"><input type="checkbox" id="routingEnabled" data-testid="routing-enabled" /> Route prompts to a model by difficulty</label>
             <label>Classifier model<select id="routingClassifier" data-testid="routing-classifier"></select></label>
             <label>Evaluate the conversation<select id="routingCadence" data-testid="routing-cadence"><option value="first-message">First turn only</option><option value="every-n">Every N user turns</option></select></label>
             <label>User turns between evaluations<input type="number" id="routingCadenceN" min="1" max="500" step="1" value="5" data-testid="routing-cadence-n" /></label>
             <label>Recent messages per evaluation<input type="number" id="routingContextMessages" min="1" max="100" step="1" value="10" data-testid="routing-context-messages" /></label>
-            <p class="settings-hint">At each evaluation, the classifier receives this many recent user and assistant messages, including the current prompt. It uses a fixed question and chooses among the model options described under the active harness. Changes save with the routing policy in the Cluster tab.</p>
+            <label>Confidence threshold (0 to 1)<input type="number" id="routingConfidence" min="0" max="1" step="0.05" value="0.3" data-testid="routing-confidence" /></label>
+            <p class="settings-hint">At each evaluation, the classifier receives this many recent user and assistant messages, including the current prompt, then chooses among the described model options below. Each model option needs a description of the requests it should handle.</p>
             <div class="github-group-actions">
-              <button class="ghost" type="button" id="routingSaveClassifiersButton" data-testid="routing-save-classifiers-button">Save routing policy</button>
+              <button class="primary" type="button" id="routingConfigSaveButton" data-testid="routing-config-save-button">Save configuration</button>
+              <button class="ghost" type="button" id="routingConfigShareButton" data-testid="routing-config-share-button">Share configuration</button>
+              <button class="ghost danger" type="button" id="routingConfigDeleteButton" data-testid="routing-config-delete-button">Delete</button>
             </div>
+            <div id="routingConfigHarnessGrids" data-testid="routing-config-harness-grids"></div>
           </fieldset>
         </section>
 

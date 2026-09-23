@@ -1490,7 +1490,7 @@ test("both prepared nodes become writable and resume replication after restart",
   }
 });
 
-test("routing policy edits from a follower are forwarded to the leader", { timeout: 60_000 }, async () => {
+test("routing configurations share across paired nodes without changing the receiver's selection", { timeout: 180_000 }, async () => {
   const policy = {
     enabled: true,
     classifierId: "typesafe",
@@ -1498,38 +1498,88 @@ test("routing policy edits from a follower are forwarded to the leader", { timeo
     confidenceThreshold: 0.3,
     harnesses: { kiro: { levels: { "8": { modelId: "default", thinkingLevel: "max", description: "Complex cluster-spanning work" } } } },
   };
-  const dbB = new DatabaseSync(path.join(nodeB.dataDir, "node.db"));
-  dbB.exec("PRAGMA busy_timeout=5000");
-  const rowFor = () => dbB.prepare("SELECT cluster_id, revision, leader_node_id FROM cluster_routing_policies WHERE cluster_id = ''").get() as { cluster_id: string; revision: number; leader_node_id: string } | undefined;
+  type ConfigsBody = {
+    configs: Array<{ id: string; name: string; shared: boolean; mine: boolean; ownerNodeId: string; revision: number; policy: typeof policy & { confidenceThreshold: number } }>;
+    selectedId: string;
+  };
+  const readConfigs = async (node: typeof nodeA, session: typeof sessionA) => (await api<ConfigsBody>(node, session, "GET", "/routing-configs")).body;
 
-  const created = await api<{ policy: { revision: number } | null }>(nodeA, sessionA, "PUT", "/cluster/routing", { clusterId: "", policy });
-  assert.equal(created.status, 200, JSON.stringify(created.body));
-  assert.equal(created.body.policy?.revision, 1);
+  // Created on A, local by default, and selected there independently.
+  const created = await api<{ config: { id: string } }>(nodeA, sessionA, "POST", "/routing-configs", { name: "Team routing", policy });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  const configId = created.body.config.id;
+  const select = await api(nodeA, sessionA, "PUT", "/routing-configs/selection", { configId });
+  assert.equal(select.status, 200, "the selection endpoint must not be swallowed by the id route");
+  assert.equal((await readConfigs(nodeA, sessionA)).selectedId, configId);
 
-  const deadline = Date.now() + 20000;
-  let row: { cluster_id: string; revision: number; leader_node_id: string } | undefined;
-  while (!(row = rowFor()) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 200));
-  assert.ok(row, "the routing policy must replicate to the paired node");
-  assert.equal(row.leader_node_id, nodeA.nodeId);
+  // Sharing distributes to the eligible paired node and reports delivery.
+  const shared = await api<{ results: Array<{ nodeId: string; delivered: boolean }> }>(nodeA, sessionA, "POST", `/routing-configs/${configId}/share`, {});
+  assert.equal(shared.status, 200, JSON.stringify(shared.body));
+  assert.deepEqual(shared.body.results.map((result) => [result.nodeId, result.delivered]), [[nodeB.nodeId, true]], "the paired node must receive the share");
 
-  const read = await api<{ policies: Array<{ clusterId: string; editable: boolean; leaderNodeId: string }> }>(nodeB, sessionB, "GET", "/cluster/routing");
-  assert.equal(read.status, 200, JSON.stringify(read.body));
-  const replica = read.body.policies.find((entry) => entry.clusterId === "");
-  assert.ok(replica, "the paired node serves the replicated policy");
-  assert.equal(replica.editable, true, "a paired UI may ask the leader to edit the policy");
+  const onB = await readConfigs(nodeB, sessionB);
+  const replica = onB.configs.find((config) => config.id === configId);
+  assert.ok(replica, "the paired node holds the shared configuration");
+  assert.equal(replica.ownerNodeId, nodeA.nodeId, "the original owner stays the owner");
+  assert.equal(replica.mine, false);
+  assert.equal(onB.selectedId, "", "sharing must not change the receiver's active selection");
 
-  const updated = await api<{ policy: { revision: number; leaderNodeId: string } | null }>(nodeB, sessionB, "PUT", "/cluster/routing", { clusterId: "", policy: { ...policy, confidenceThreshold: 0.5 } });
+  // The receiver adopts it by its own decision; only the owner may change or reshare it.
+  const adopted = await api(nodeB, sessionB, "PUT", "/routing-configs/selection", { configId });
+  assert.equal(adopted.status, 200);
+  assert.equal((await api(nodeB, sessionB, "PUT", `/routing-configs/${configId}`, { name: "Hijacked", policy })).status, 403, "a receiver cannot edit a shared configuration");
+  assert.equal((await api(nodeB, sessionB, "POST", `/routing-configs/${configId}/share`, {})).status, 403, "a receiver cannot reshare a shared configuration");
+  assert.equal((await api(nodeB, sessionB, "DELETE", `/routing-configs/${configId}`)).status, 403, "a receiver cannot delete a shared configuration");
+
+  // An owner edit redistributes to the receiver, still without touching its selection.
+  const updated = await api<{ config: { revision: number }; results: Array<{ nodeId: string; delivered: boolean }> }>(nodeA, sessionA, "PUT", `/routing-configs/${configId}`, { name: "Team routing", policy: { ...policy, confidenceThreshold: 0.5 } });
   assert.equal(updated.status, 200, JSON.stringify(updated.body));
-  assert.equal(updated.body.policy?.revision, 2);
-  assert.equal(updated.body.policy?.leaderNodeId, nodeA.nodeId, "the leader remains the policy author");
-  const converge = Date.now() + 20000;
-  while (rowFor()?.revision !== 2 && Date.now() < converge) await new Promise((resolve) => setTimeout(resolve, 200));
-  assert.equal(rowFor()?.revision, 2, "the revision must converge on the paired node");
+  assert.equal(updated.body.config.revision, 2);
+  assert.ok(updated.body.results.some((result) => result.nodeId === nodeB.nodeId && result.delivered), "the update reaches the existing recipient");
+  let converged = await readConfigs(nodeB, sessionB);
+  assert.equal(converged.configs.find((config) => config.id === configId)?.policy.confidenceThreshold, 0.5, "the receiver converges on the owner's update");
+  assert.equal(converged.selectedId, configId, "the receiver's own selection survives the update");
 
-  const cleared = await api(nodeB, sessionB, "DELETE", "/cluster/routing?clusterId=");
-  assert.equal(cleared.status, 200);
-  const drained = Date.now() + 20000;
-  while (rowFor() && Date.now() < drained) await new Promise((resolve) => setTimeout(resolve, 200));
-  assert.equal(rowFor(), undefined, "clearing the policy must remove it on the paired node too");
-  dbB.close();
+  // An unknown classifier is refused for local authoring but kept on arrival with a warning.
+  const rejected = await api(nodeA, sessionA, "POST", "/routing-configs", { name: "Bad", policy: { ...policy, classifierId: "missing-classifier" } });
+  assert.equal(rejected.status, 400, "local authoring validates the classifier");
+
+  // While the receiver is offline the owner's next edit stays queued, and the receiver
+  // converges once it is back — the maintenance flush retries the pending delivery.
+  await stopDevNode(servers[1]);
+  // A second shared configuration queued behind the same offline receiver must not
+  // colour this edit's result reporting: one share describes only its own targets.
+  const other = await api<{ config: { id: string } }>(nodeA, sessionA, "POST", "/routing-configs", { name: "Other routing", policy });
+  await api(nodeA, sessionA, "POST", `/routing-configs/${other.body.config.id}/share`, {});
+  // The failed delivery's backoff is 2s; wait past it so both configurations'
+  // deliveries are due at the same moment and only scoping can keep them apart.
+  await new Promise((resolve) => setTimeout(resolve, 2_500));
+  const offlineEdit = await api(nodeA, sessionA, "PUT", `/routing-configs/${configId}`, { name: "Team routing", policy: { ...policy, confidenceThreshold: 0.8 } });
+  assert.equal(offlineEdit.status, 200);
+  assert.equal(offlineEdit.body.results.length, 1, "the edit reports only its own configuration's delivery, not the other queued one");
+  assert.ok(offlineEdit.body.results.some((result: { nodeId: string; delivered: boolean }) => result.nodeId === nodeB.nodeId && !result.delivered), "the offline delivery is reported as undelivered");
+  servers[1] = await startDevNode(environment, nodeB);
+  const deadline = Date.now() + 30_000;
+  do {
+    converged = await readConfigs(nodeB, sessionB);
+    if (converged.configs.find((config) => config.id === configId)?.policy.confidenceThreshold === 0.8) break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  } while (Date.now() < deadline);
+  assert.equal(converged.configs.find((config) => config.id === configId)?.policy.confidenceThreshold, 0.8, "the queued edit must reach the restarted node");
+  assert.equal(converged.selectedId, configId, "the selection still survives the retried delivery");
+
+  // Unauthenticated distribution is refused.
+  const unauthenticated = await fetch(`${nodeB.url}/api/cluster/routing-configs/events`, {
+    method: "POST", headers: { Authorization: "Bearer not-a-pairing-token", "Content-Type": "application/json" }, body: JSON.stringify({ events: [] }),
+  });
+  assert.equal(unauthenticated.status, 401);
+
+  // Deleting on the owner removes the receiver's copy; a selection that pointed at it ends.
+  const deleted = await api<{ results: Array<{ nodeId: string; delivered: boolean }> }>(nodeA, sessionA, "DELETE", `/routing-configs/${configId}`);
+  assert.equal(deleted.status, 200);
+  assert.ok(deleted.body.results.some((result) => result.nodeId === nodeB.nodeId && result.delivered), "the delete reaches the receiver");
+  const afterDelete = await readConfigs(nodeB, sessionB);
+  assert.ok(!afterDelete.configs.some((config) => config.id === configId), "the shared copy is gone");
+  assert.equal(afterDelete.selectedId, "", "deleting the selected configuration ends that selection");
+  assert.equal((await readConfigs(nodeA, sessionA)).selectedId, "");
 });

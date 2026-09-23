@@ -7,7 +7,8 @@ import { getClusterNode, listClusterPeers } from "../cluster.js";
 import { getConversationRecord, ensureConversationRecord, listConversationSegments } from "../conversation-records.js";
 import type { DifficultyClassification } from "../classifiers/contract.js";
 import { getDifficultyClassifier } from "../classifiers/registry.js";
-import { automaticRoutingModelAllowed, LEGACY_CLUSTER_ID, routingEvalDue, routingPolicyDatabase, routingPolicyEditableBy, routingPolicyForProject, routingPolicyWarning, type StoredRoutingPolicy } from "../routing-policy.js";
+import { automaticRoutingModelAllowed, routingEvalDue, type RoutingPolicy } from "../routing-policy.js";
+import { activeRoutingConfig, routingConfigDatabase, routingConfigWarning, type StoredRoutingConfig } from "../routing-configs.js";
 import { blockConversationGoal, cancelConversationGoal, getConversationGoal, goalPrompt, goalStatusMessage, parseBobGoalCommand, recordConversationGoalResponse, startConversationGoal, type ConversationGoal } from "../conversation-goals.js";
 import { ConversationOwnershipError } from "../conversation-ownership.js";
 import { buildHandoffContext } from "../handoff-context.js";
@@ -192,28 +193,32 @@ function routingClassifierInput(connection: HarnessChatConnection, queued: Queue
   return messages.slice(-messageLimit).map((message) => `${message.role === "user" ? "User" : "Assistant"}:\n${message.text}`).join("\n\n");
 }
 
-/** Cluster routing: classify recent conversation context and switch the conversation's
-    model to the policy mapping for this harness. Manual picks always win; any failure
-    keeps the conversation's current settings and never blocks the prompt. In manual
-    mode nothing routes: the hand-picked model stands until Bob auto is selected. */
+/** Prompt routing: classify recent conversation context and switch the conversation's
+    model to the active configuration's mapping for this harness. The active named
+    configuration is this node's own choice; manual picks always win; any failure keeps
+    the conversation's current settings and never blocks the prompt. In manual mode
+    nothing routes: the hand-picked model stands until Bob auto is selected. */
 async function routePromptByDifficulty(connection: HarnessChatConnection, queued: QueuedPrompt): Promise<void> {
   if (queued.systemEventId) return;
-  let policy: StoredRoutingPolicy | null = null;
-  try { policy = routingPolicyForProject(connection.project.id); }
-  catch (error) { console.warn("Routing policy resolution failed", error instanceof Error ? error.message.slice(0, 200) : "unknown error"); }
+  let policy: StoredRoutingConfig | null = null;
+  try { policy = activeRoutingConfig(routingConfigDatabase()); }
+  catch (error) { console.warn("Routing configuration resolution failed", error instanceof Error ? error.message.slice(0, 200) : "unknown error"); }
   if (!policy) return;
   const key = queueKey(connection);
   const ordinal = bumpRoutingPromptCount(key);
   const state = readRoutingState(key);
-  const due = routingEvalDue(policy.policy, ordinal, state.lastEvalOrdinal);
+  // A configuration switch or an owner edit takes effect on the next user turn even
+  // when the previous configuration had already consumed its evaluation point.
+  const staleConfig = state.lastEvalOrdinal !== null && (state.configId !== policy.id || state.configRevision !== policy.revision);
+  const due = staleConfig || routingEvalDue(policy.policy, ordinal, state.lastEvalOrdinal);
   if (state.mode === "manual") return;
   if (queued.settings) {
     // A manual per-prompt model pick wins and consumes this evaluation point.
-    if (due) recordRoutingEval(key, ordinal);
+    if (due) recordRoutingEval(key, ordinal, policy);
     return;
   }
   if (!due) return;
-  recordRoutingEval(key, ordinal);
+  recordRoutingEval(key, ordinal, policy);
   const skip = (reason: string, level?: number, confidence?: number): void => {
     publish(connection, { type: "promptRouted", queueId: queued.id, skipped: reason, ...(level !== undefined ? { level } : {}), ...(confidence !== undefined ? { confidence } : {}) });
   };
@@ -418,32 +423,37 @@ async function switchHarness(connection: HarnessChatConnection, engine: HarnessI
 }
 
 /** The routing state clients need to render the pickers: whether the classifier
-    drives this conversation, which classifier won, and whether this node may edit it. */
-async function routingClientState(connection: HarnessChatConnection, localNodeId: string): Promise<{ active: boolean; mode: "auto" | "manual"; classifierId?: string; editable?: boolean; warning?: string } | null> {
-  const policy = routingPolicyForProject(connection.project.id);
-  if (!policy) return null;
-  const db = routingPolicyDatabase();
-  const leaderReachable = policy.clusterId === LEGACY_CLUSTER_ID && (await listClusterPeers()).some((peer) => peer.id === policy.leaderNodeId);
-  const warning = routingPolicyWarning(db, policy.clusterId)?.message;
+    drives this conversation here, which classifier won, and whether this node's own
+    configuration may be edited from the model dialog. */
+async function routingClientState(connection: HarnessChatConnection, localNodeId: string): Promise<{ active: boolean; mode: "auto" | "manual"; classifierId?: string; configId?: string; editable?: boolean; warning?: string } | null> {
+  const config = activeRoutingConfig(routingConfigDatabase());
+  if (!config) return null;
   return {
     active: true,
     mode: readRoutingState(queueKey(connection)).mode,
-    classifierId: policy.policy.classifierId,
-    editable: routingPolicyEditableBy(db, policy, localNodeId) || leaderReachable,
-    ...(warning ? { warning } : {}),
+    classifierId: config.policy.classifierId,
+    configId: config.id,
+    editable: config.ownerNodeId === localNodeId,
+    ...(routingConfigWarning(config) ? { warning: routingConfigWarning(config)! } : {}),
   };
 }
 
 function publishRoutingMode(connection: HarnessChatConnection): void {
   const mode = readRoutingState(queueKey(connection)).mode;
   void getClusterNode().then((local) => routingClientState(connection, local.id)).then((state) => {
-    publish(connection, { type: "routingMode", mode, active: state?.active ?? true, ...(state?.classifierId ? { classifierId: state.classifierId } : {}), ...(state?.editable !== undefined ? { editable: state.editable } : {}), warning: state?.warning ?? "" });
+    publish(connection, { type: "routingMode", mode, active: state?.active ?? false, ...(state?.classifierId ? { classifierId: state.classifierId } : {}), ...(state?.configId ? { configId: state.configId } : {}), ...(state?.editable !== undefined ? { editable: state.editable } : {}), warning: state?.warning ?? "" });
   });
+}
+
+/** Tells every connected client that routing changed — a selection switch, an owner
+    edit, or an arriving share all reach open conversations on their next render. */
+export function broadcastRoutingMode(): void {
+  for (const connection of harnessChatConnections) publishRoutingMode(connection);
 }
 
 /** An explicit model or reasoning pick ends classifier control of the conversation. */
 function markRoutingManual(connection: HarnessChatConnection): void {
-  if (!routingPolicyForProject(connection.project.id)) return;
+  if (!activeRoutingConfig(routingConfigDatabase())) return;
   if (readRoutingState(queueKey(connection)).mode === "manual") return;
   setRoutingMode(queueKey(connection), "manual");
   publishRoutingMode(connection);
@@ -489,7 +499,7 @@ async function controls(connection: HarnessChatConnection, message: ReturnType<t
   if (message.type === "setTools") { if (!message.toolNames) throw new Error("Tools are required"); await connection.shared.session.setTools(message.toolNames); recordQueueSettings(queueKey(connection), currentSettings(connection)); send(connection.socket, { type: "tools", tools: connection.shared.session.tools(), supported: true }); sendHarnessStatus(connection.shared); return true; }
   if (message.type === "setModel") {
     if (message.modelId === "bob-auto") {
-      if (!routingPolicyForProject(connection.project.id)) throw new Error("Prompt routing is not active for this project");
+      if (!activeRoutingConfig(routingConfigDatabase())) throw new Error("Prompt routing is not active on this node");
       setRoutingMode(queueKey(connection), "auto");
       publishRoutingMode(connection);
       sendHarnessStatus(connection.shared);

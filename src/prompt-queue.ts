@@ -39,6 +39,8 @@ export function ensurePromptQueueSchema(db: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS conversation_routing_state (queue_key TEXT PRIMARY KEY, prompt_count INTEGER NOT NULL DEFAULT 0, last_eval_ordinal INTEGER, mode TEXT NOT NULL DEFAULT 'auto' CHECK(mode IN ('auto','manual')), updated_at TEXT NOT NULL, origin_node_id TEXT NOT NULL DEFAULT '');`);
   const routingColumns = db.prepare("PRAGMA table_info(conversation_routing_state)").all() as unknown as Array<{ name: string }>;
   if (routingColumns.some((column) => column.name === "queue_key") && !routingColumns.some((column) => column.name === "mode")) db.exec("ALTER TABLE conversation_routing_state ADD COLUMN mode TEXT NOT NULL DEFAULT 'auto'");
+  if (routingColumns.some((column) => column.name === "queue_key") && !routingColumns.some((column) => column.name === "config_id")) db.exec("ALTER TABLE conversation_routing_state ADD COLUMN config_id TEXT");
+  if (routingColumns.some((column) => column.name === "queue_key") && !routingColumns.some((column) => column.name === "config_revision")) db.exec("ALTER TABLE conversation_routing_state ADD COLUMN config_revision INTEGER");
 }
 
 function queueDatabase(): DatabaseSync {
@@ -436,7 +438,7 @@ export function acknowledgeSystemPrompt(queueKey: string, id: string): boolean {
     return true;
   });
 }
-export interface ConversationRoutingState { promptCount: number; lastEvalOrdinal: number | null; mode: "auto" | "manual" }
+export interface ConversationRoutingState { promptCount: number; lastEvalOrdinal: number | null; mode: "auto" | "manual"; /** The configuration the last evaluation ran under, so a configuration switch re-evaluates. Node-local: never replicated. */ configId: string | null; configRevision: number | null }
 
 const routingStateEventSchema = z.object({
   projectId: z.string().min(1), conversationId: z.string().min(1),
@@ -446,20 +448,22 @@ const routingStateEventSchema = z.object({
 }).strict();
 
 function readRoutingStateRow(db: DatabaseSync, key: string): (ConversationRoutingState & { updatedAt: string; originNodeId: string }) | undefined {
-  const row = db.prepare("SELECT prompt_count, last_eval_ordinal, mode, updated_at, origin_node_id FROM conversation_routing_state WHERE queue_key = ?").get(key) as { prompt_count: number; last_eval_ordinal: number | null; mode: string; updated_at: string; origin_node_id: string } | undefined;
-  return row ? { promptCount: row.prompt_count, lastEvalOrdinal: row.last_eval_ordinal, mode: row.mode === "manual" ? "manual" : "auto", updatedAt: row.updated_at, originNodeId: row.origin_node_id } : undefined;
+  const row = db.prepare("SELECT prompt_count, last_eval_ordinal, mode, config_id, config_revision, updated_at, origin_node_id FROM conversation_routing_state WHERE queue_key = ?").get(key) as { prompt_count: number; last_eval_ordinal: number | null; mode: string; config_id: string | null; config_revision: number | null; updated_at: string; origin_node_id: string } | undefined;
+  return row ? { promptCount: row.prompt_count, lastEvalOrdinal: row.last_eval_ordinal, mode: row.mode === "manual" ? "manual" : "auto", configId: row.config_id, configRevision: row.config_revision, updatedAt: row.updated_at, originNodeId: row.origin_node_id } : undefined;
 }
 
 export function readRoutingState(queueKey: string): ConversationRoutingState {
   const row = readRoutingStateRow(queueDatabase(), logicalQueueKey(queueKey));
-  return { promptCount: row?.promptCount ?? 0, lastEvalOrdinal: row?.lastEvalOrdinal ?? null, mode: row?.mode ?? "auto" };
+  return { promptCount: row?.promptCount ?? 0, lastEvalOrdinal: row?.lastEvalOrdinal ?? null, mode: row?.mode ?? "auto", configId: row?.configId ?? null, configRevision: row?.configRevision ?? null };
 }
 
 function writeRoutingState(db: DatabaseSync, key: string, state: ConversationRoutingState, updatedAt?: string): void {
   const stamp = updatedAt ?? new Date().toISOString();
-  db.prepare(`INSERT INTO conversation_routing_state(queue_key,prompt_count,last_eval_ordinal,mode,updated_at,origin_node_id) VALUES (?,?,?,?,?,?)
-    ON CONFLICT(queue_key) DO UPDATE SET prompt_count=excluded.prompt_count, last_eval_ordinal=excluded.last_eval_ordinal, mode=excluded.mode, updated_at=excluded.updated_at, origin_node_id=excluded.origin_node_id`)
-    .run(key, state.promptCount, state.lastEvalOrdinal, state.mode, stamp, origin(db));
+  // config_id/config_revision are node-local columns: they steer this node's next
+  // evaluation but never join the replicated payload, so older peers stay compatible.
+  db.prepare(`INSERT INTO conversation_routing_state(queue_key,prompt_count,last_eval_ordinal,mode,config_id,config_revision,updated_at,origin_node_id) VALUES (?,?,?,?,?,?,?,?)
+    ON CONFLICT(queue_key) DO UPDATE SET prompt_count=excluded.prompt_count, last_eval_ordinal=excluded.last_eval_ordinal, mode=excluded.mode, config_id=excluded.config_id, config_revision=excluded.config_revision, updated_at=excluded.updated_at, origin_node_id=excluded.origin_node_id`)
+    .run(key, state.promptCount, state.lastEvalOrdinal, state.mode, state.configId, state.configRevision, stamp, origin(db));
   const separator = key.indexOf(":");
   enqueueReplicationEvent(db, {
     originNodeId: origin(db), entityType: "conversation.routing", entityKey: key, operation: "upsert",
@@ -474,20 +478,21 @@ export function bumpRoutingPromptCount(queueKey: string): number {
   return transaction(db, () => {
     const current = readRoutingStateRow(db, key);
     const ordinal = (current?.promptCount ?? 0) + 1;
-    writeRoutingState(db, key, { promptCount: ordinal, lastEvalOrdinal: current?.lastEvalOrdinal ?? null, mode: current?.mode ?? "auto" });
+    writeRoutingState(db, key, { promptCount: ordinal, lastEvalOrdinal: current?.lastEvalOrdinal ?? null, mode: current?.mode ?? "auto", configId: current?.configId ?? null, configRevision: current?.configRevision ?? null });
     return ordinal;
   });
 }
 
-/** Marks an evaluation as consumed at this ordinal, so retries and later prompts
-    continue the cadence from here instead of re-evaluating. */
-export function recordRoutingEval(queueKey: string, ordinal: number): void {
+/** Marks an evaluation as consumed at this ordinal under the given configuration, so
+    retries and later prompts continue the cadence from here instead of re-evaluating,
+    while a configuration or content switch makes the next prompt due again. */
+export function recordRoutingEval(queueKey: string, ordinal: number, config?: { id: string; revision: number }): void {
   if (!Number.isSafeInteger(ordinal) || ordinal < 1) throw new Error("Routing eval ordinal must be a positive integer");
   const db = queueDatabase();
   const key = logicalQueueKey(queueKey);
   transaction(db, () => {
     const current = readRoutingStateRow(db, key);
-    writeRoutingState(db, key, { promptCount: Math.max(current?.promptCount ?? 0, ordinal), lastEvalOrdinal: Math.max(current?.lastEvalOrdinal ?? 0, ordinal), mode: current?.mode ?? "auto" });
+    writeRoutingState(db, key, { promptCount: Math.max(current?.promptCount ?? 0, ordinal), lastEvalOrdinal: Math.max(current?.lastEvalOrdinal ?? 0, ordinal), mode: current?.mode ?? "auto", configId: config?.id ?? current?.configId ?? null, configRevision: config?.revision ?? current?.configRevision ?? null });
   });
 }
 
@@ -498,7 +503,7 @@ export function setRoutingMode(queueKey: string, mode: "auto" | "manual"): void 
   transaction(db, () => {
     const current = readRoutingStateRow(db, key);
     if ((current?.mode ?? "auto") === mode) return;
-    writeRoutingState(db, key, { promptCount: current?.promptCount ?? 0, lastEvalOrdinal: current?.lastEvalOrdinal ?? null, mode });
+    writeRoutingState(db, key, { promptCount: current?.promptCount ?? 0, lastEvalOrdinal: current?.lastEvalOrdinal ?? null, mode, configId: current?.configId ?? null, configRevision: current?.configRevision ?? null });
   });
 }
 

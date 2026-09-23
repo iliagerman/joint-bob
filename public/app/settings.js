@@ -7,6 +7,7 @@ import { loadClusterPanel } from "./cluster-panel.js";
 import { loadUpdatesPanel } from "./updates.js";
 import { elements } from "./elements.js";
 import { loadNtfyServicesPanel } from "./ntfy.js";
+import { loadRoutingConfigs } from "./routing-configs.js";
 import { loadSecretAccounts } from "./secrets.js";
 import { confirmAction, syncNotifyButton, toast } from "./shell.js";
 import { state } from "./state.js";
@@ -91,6 +92,7 @@ function selectSettingsTab(name) {
   for (const panel of elements.settingsPanels) panel.hidden = panel.id !== `settingsPanel-${name}`;
   if (name === "cluster") void loadBrowserStatus();
   if (name === "notifications") void loadNtfyServicesPanel();
+  if (name === "classifiers") void loadRoutingConfigs().catch((error) => { elements.routingConfigStatus.textContent = error.message; });
   if (name === "logs") renderClientLogs();
 }
 
@@ -153,14 +155,9 @@ function createHarnessPanel(descriptor, settings, defaults) {
   output.textContent = `Node defaults — executable: ${defaults[descriptor.id].executable}; config: ${defaults[descriptor.id].configPath}; sessions: ${defaults[descriptor.id].sessionPath}.`;
   const conversation = createConversationControls(descriptor, settings, prefix);
   const runtime = createRuntimeControls(descriptor, settings, defaults, prefix);
-  const routing = document.createElement("fieldset"); routing.className = "phase-settings routing-harness"; routing.dataset.routingHarness = descriptor.id;
-  const routingLegend = document.createElement("legend"); routingLegend.textContent = "Prompt routing levels";
-  const routingHint = document.createElement("p"); routingHint.className = "settings-hint";
-  routingHint.textContent = "Each model option needs a description of the requests it should handle. Jev chooses only among the configured options. Changes save with the routing policy in the Cluster tab.";
-  routing.append(routingLegend, routingHint);
   conversationFields[descriptor.id] = conversation.fields; runtimeFields[descriptor.id] = runtime.fields; defaultsOutputs[descriptor.id] = output;
   runtimeLabels[descriptor.id] = { executable: `${descriptor.label} executable`, configPath: `${descriptor.label} config path`, sessionPath: `${descriptor.label} session path` };
-  panel.append(output, ...conversation.controls, runtime.fieldset, routing); return panel;
+  panel.append(output, ...conversation.controls, runtime.fieldset); return panel;
 }
 
 function selectHarnessTab(name) {

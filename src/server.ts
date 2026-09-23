@@ -10,7 +10,7 @@ import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { discoverMissingPeerProjects } from "./server/cluster-helpers.js";
-import { flushMembershipOutbox, flushReplicationOutbox, flushSecretCredentialOutbox, initializeStartupReadiness, pushRuntimeLeaseSnapshots, reconcileManagedAgentResources, reconcileTaskConversationRecords, reconcileTaskHandoffs, reconcileTicketWorkspaceSync, sweepRuntimeLeases } from "./server/maintenance.js";
+import { flushMembershipOutbox, flushReplicationOutbox, flushRoutingConfigDeliveries, flushSecretCredentialOutbox, initializeStartupReadiness, pushRuntimeLeaseSnapshots, reconcileManagedAgentResources, reconcileTaskConversationRecords, reconcileTaskHandoffs, reconcileTicketWorkspaceSync, sweepRuntimeLeases } from "./server/maintenance.js";
 import { flushPushSubscriptionOutbox } from "./server/push-flush.js";
 import { flushV2ClusterAdministration } from "./server/cluster-manager.js";
 import { reconcileUpdateJobs, startUpdateScheduler } from "./updater.js";
@@ -116,6 +116,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     flushReplicationOutbox().catch((error) => console.warn("Replication flush failed", error));
     pushRuntimeLeaseSnapshots().catch((error) => console.warn("Runtime lease push failed", error));
     flushSecretCredentialOutbox().catch((error) => console.warn("Secret credential flush failed", error));
+    flushRoutingConfigDeliveries().catch((error) => console.warn("Routing configuration flush failed", error));
     flushPushSubscriptionOutbox().catch((error) => console.warn("Push subscription flush failed", error));
     reconcileTaskHandoffs().catch((error) => console.warn("Task handoff reconciliation failed", error));
     discoverMissingPeerProjects().catch((error) => console.warn("Project discovery failed", error));
@@ -130,6 +131,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       pushRuntimeLeaseSnapshots().catch((error) => console.warn("Runtime lease push failed", error));
       sweepRuntimeLeases();
       flushSecretCredentialOutbox().catch((error) => console.warn("Secret credential flush failed", error));
+      flushRoutingConfigDeliveries().catch((error) => console.warn("Routing configuration flush failed", error));
       flushPushSubscriptionOutbox().catch((error) => console.warn("Push subscription flush failed", error));
       reconcileTaskHandoffs().catch((error) => console.warn("Task handoff reconciliation failed", error));
     }, 2_000).unref();
