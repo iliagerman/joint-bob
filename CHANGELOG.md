@@ -3,11 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.79.0 — 2026-09-23
 
 - Quick notes now display alongside conversations in tabbed panels, with notes filterable by project.
-- Classifier edits now persist when Settings is saved with the main Save button.
-- Assistant responses now display a badge showing the harness, model, and reasoning level that produced each message.
+- Messages now display which model, harness, and reasoning level produced each reply.
+- Classifier edits in Settings now persist correctly when saved.
+- Improved cleanup of abandoned background tasks and session maintenance.
 
 ## 1.78.0 — 2026-09-23
 
