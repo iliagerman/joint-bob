@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.78.0 — 2026-09-23
 
-- Quick notes now include a project filter dropdown, letting you view and manage notes from different projects without changing the active project.
+- Project Notes now has dedicated desktop and mobile navigation, its own shortcut, and a project filter that defaults to the active project.
 
 ## 1.77.0 — 2026-09-23
 
