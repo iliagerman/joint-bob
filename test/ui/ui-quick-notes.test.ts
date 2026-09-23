@@ -44,6 +44,15 @@ test("mobile keeps creation actions together and switches conversations and note
   await page.locator(`[data-project-id="${projectId}"] .project-card`).click();
   await page.getByTestId("session-list-loading-bar").waitFor({ state: "hidden" });
 
+  await page.getByTestId("nav-projects-button").click();
+  const projectQuickNote = page.getByTestId("projects-quick-note-create-button");
+  assert.equal(await projectQuickNote.isVisible(), true, "Projects has a mobile quick-note action");
+  await projectQuickNote.click();
+  await page.getByTestId("quick-note-dialog").waitFor({ state: "visible" });
+  assert.equal(await page.getByTestId("quick-note-project-select").inputValue(), projectId, "the Projects action uses the active project");
+  await page.getByTestId("quick-note-cancel-button").click();
+  await page.getByTestId("nav-chats-button").click();
+
   const newConversation = page.getByTestId("new-conversation-mobile-button");
   const newNote = page.getByTestId("quick-note-create-mobile-button");
   const [conversationBox, noteBox] = await Promise.all([newConversation.boundingBox(), newNote.boundingBox()]);

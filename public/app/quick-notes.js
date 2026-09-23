@@ -19,6 +19,7 @@ const convertButton = document.querySelector("#convertQuickNoteButton");
 const saveButton = form.querySelector("[type='submit']");
 const createButton = document.querySelector("#quickNoteButton");
 const mobileCreateButton = document.querySelector("#quickNoteMobileButton");
+const projectsCreateButton = document.querySelector("#projectsQuickNoteButton");
 const section = document.querySelector("#quickNotesSection");
 const conversationsPane = document.querySelector("#conversationListPane");
 const conversationsTab = document.querySelector("#conversationsTab");
@@ -80,6 +81,7 @@ export function toggleQuickNotes() {
 export function renderQuickNotes() {
   createButton.disabled = !state.activeProjectId;
   mobileCreateButton.disabled = !state.activeProjectId;
+  projectsCreateButton.disabled = !state.activeProjectId;
   if (!state.activeProjectId) filterProjectId = null;
   else if (!filterProjectId || (filterProjectId !== "*" && !state.projects.some((project) => project.id === filterProjectId))) filterProjectId = state.activeProjectId;
   renderProjectFilter();
@@ -245,6 +247,7 @@ modelSelect.addEventListener("change", () => renderThinking());
 form.addEventListener("submit", saveNote);
 createButton.addEventListener("click", () => { void openQuickNote(); });
 mobileCreateButton.addEventListener("click", () => { void openQuickNote(); });
+projectsCreateButton.addEventListener("click", () => { void openQuickNote(); });
 conversationsTab.addEventListener("click", showConversations);
 notesTab.addEventListener("click", showQuickNotes);
 openButtons.forEach((button) => button.addEventListener("click", showQuickNotes));

@@ -406,7 +406,7 @@ body.shortcuts-revealed .shortcut-hint { display: grid; }
 /* New conversation controls come from the harness registry. */
 .new-chat-row { margin: 12px 12px 0; }
 .new-chat-harnesses { display: grid; grid-template-columns: repeat(auto-fit, minmax(44px, 1fr)); gap: 8px; }
-.quick-note-mobile { display: none; }
+.quick-note-mobile, .projects-quick-note-mobile { display: none; }
 .new-chat-harness-button { display: inline-grid; place-items: center; padding: 0; }
 .new-chat-harness-icon { width: 19px; height: 19px; }
 .new-chat-harness-icon.pi { color: var(--accent); }
@@ -1974,6 +1974,7 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   .new-chat-harnesses { display: none; }
   .new-chat-mobile, .quick-note-mobile { display: block; width: 100%; }
   .quick-note-mobile { min-height: 40px; border-color: var(--line); }
+  .projects-quick-note-mobile { display: inline-grid; }
   .classification-filter { max-width: none; }
   .chat-toolbar {
     display: grid;
