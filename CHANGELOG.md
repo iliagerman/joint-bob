@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.74.3 — 2026-09-23
 
 - Linux browser sessions are now more stable, ignoring temporary virtual interface changes that could trigger spurious connection failures.
 
