@@ -28,7 +28,7 @@ import type {
 } from "../runtime.js";
 
 const execute = promisify(execFile);
-const modelIds = ["fable", "claude-opus-5", "opus", "sonnet", "haiku"];
+const modelIds = ["fable", "claude-opus-5-5", "claude-opus-5", "opus", "sonnet", "haiku"];
 const effortIds = ["default", "low", "medium", "high", "xhigh", "max"];
 type Listener = (event: HarnessEvent) => void;
 /** Text spoken so far in the running turn, and the tool names its bubbles carry. */

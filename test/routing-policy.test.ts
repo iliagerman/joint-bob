@@ -143,25 +143,29 @@ test("routingEvalDue follows the configured cadence", () => {
 });
 
 
-test("defaultRoutingPolicy uses only the approved Codex routing tiers", () => {
+test("defaultRoutingPolicy keeps editable model tiers inside their harness", () => {
   const generated = defaultRoutingPolicy({
     pi: [
       { provider: "openai-codex", id: "gpt-4.1", label: "GPT 4.1" },
-      { provider: "openai-codex", id: "gpt-5.6-luna", label: "GPT 5.6 Luna" },
-      { provider: "openai-codex", id: "gpt-5.6-terra", label: "GPT 5.6 Terra" },
+      { provider: "zai", id: "glm-5.3-flash", label: "GLM 5.3 Flash" },
+      { provider: "zai", id: "glm-5.3", label: "GLM 5.3" },
+      { provider: "anthropic", id: "claude-opus-5-5", label: "Claude Opus 5.5" },
       { provider: "openai-codex", id: "gpt-5.6-sol", label: "GPT 5.6 Sol" },
       { provider: "openai-codex", id: "gpt-6-astra", label: "GPT 6 Astra" },
     ],
-    kiro: [],
+    claude: [{ provider: "claude", id: "claude-opus-5-5", label: "Claude Opus 5.5" }],
+    kiro: [{ provider: "kiro", id: "default", label: "Kiro default" }],
   });
   const pi = generated.harnesses.pi.levels;
-  assert.deepEqual(Object.entries(pi).filter(([, mapping]) => mapping).map(([level, mapping]) => [level, mapping!.modelId]), [
-    ["1", "gpt-5.6-luna"],
-    ["4", "gpt-5.6-terra"],
-    ["7", "gpt-5.6-sol"],
-    ["10", "gpt-6-astra"],
+  assert.deepEqual(Object.entries(pi).filter(([, mapping]) => mapping).map(([level, mapping]) => [level, mapping!.provider, mapping!.modelId, mapping!.thinkingLevel]), [
+    ["1", "zai", "glm-5.3-flash", "low"],
+    ["4", "zai", "glm-5.3", "high"],
+    ["7", "openai-codex", "gpt-5.6-sol", "high"],
+    ["10", "openai-codex", "gpt-6-astra", "max"],
   ]);
-  assert.ok(Object.values(generated.harnesses.kiro.levels).every((mapping) => !mapping), "harnesses without approved models stay blank");
+  assert.equal(Object.values(pi).some((mapping) => mapping?.modelId === "claude-opus-5-5"), false, "Pi defaults do not borrow Claude models");
+  assert.deepEqual(generated.harnesses.claude.levels["10"], { modelId: "claude-opus-5-5", thinkingLevel: "max", description: "The hardest Claude work requiring Opus 5.5's sustained architectural reasoning and judgment." });
+  assert.ok(Object.values(generated.harnesses.kiro.levels).every((mapping) => !mapping), "Kiro has no guessed defaults");
   assert.equal(generated.contextMessages, 10);
   assert.doesNotThrow(() => validateRoutingPolicy(generated), "generated defaults must satisfy the policy schema");
 });

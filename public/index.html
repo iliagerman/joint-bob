@@ -707,8 +707,8 @@
               <button class="ghost" type="button" id="routingConfigCreateButton" data-testid="routing-config-create-button">New configuration</button>
             </div>
           </fieldset>
-          <fieldset class="phase-settings" id="routingConfigEditor" data-testid="routing-config-editor" hidden>
-            <legend id="routingConfigEditorLegend">Configuration</legend>
+          <section class="routing-config-editor" id="routingConfigEditor" data-testid="routing-config-editor" hidden>
+            <h3 class="routing-config-editor-title" id="routingConfigEditorLegend">Configuration</h3>
             <label>Name<input id="routingConfigEditorNameInput" autocomplete="off" maxlength="80" data-testid="routing-config-editor-name" /></label>
             <label class="checkbox-row"><input type="checkbox" id="routingEnabled" data-testid="routing-enabled" /> Route prompts to a model by difficulty</label>
             <label>Classifier model<select id="routingClassifier" data-testid="routing-classifier"></select></label>
@@ -722,8 +722,9 @@
               <button class="ghost" type="button" id="routingConfigShareButton" data-testid="routing-config-share-button">Share configuration</button>
               <button class="ghost danger" type="button" id="routingConfigDeleteButton" data-testid="routing-config-delete-button">Delete</button>
             </div>
+            <label class="routing-harness-picker">Harness priorities<select id="routingHarnessSelect" data-testid="routing-harness-select"></select></label>
             <div id="routingConfigHarnessGrids" data-testid="routing-config-harness-grids"></div>
-          </fieldset>
+          </section>
         </section>
 
         <section class="settings-panel" id="settingsPanel-resources" role="tabpanel" aria-labelledby="settingsTab-resources" tabindex="0" hidden>

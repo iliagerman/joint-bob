@@ -188,6 +188,7 @@ export const elements = {
   routingConfigEditor: document.querySelector("#routingConfigEditor"),
   routingConfigEditorLegend: document.querySelector("#routingConfigEditorLegend"),
   routingConfigEditorNameInput: document.querySelector("#routingConfigEditorNameInput"),
+  routingHarnessSelect: document.querySelector("#routingHarnessSelect"),
   routingConfigHarnessGrids: document.querySelector("#routingConfigHarnessGrids"),
   routingConfigSaveButton: document.querySelector("#routingConfigSaveButton"),
   routingConfigShareButton: document.querySelector("#routingConfigShareButton"),

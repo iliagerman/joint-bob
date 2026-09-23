@@ -8,6 +8,7 @@ import { confirmAction, toast } from "./shell.js";
     to the eligible nodes of this node's clusters without touching their selection. */
 let routingState = null;
 let editingId = null;
+let activeHarnessId = null;
 
 function routingModelValue(provider, modelId) { return `${provider}\u0000${modelId}`; }
 
@@ -29,21 +30,30 @@ function harnessGridHarnesses(policy) {
   return [...discovered, ...extra];
 }
 
-/** Each harness gets one level grid inside the editor; the saved policy fills them. */
+function selectHarness(id) {
+  activeHarnessId = id;
+  for (const section of elements.routingConfigHarnessGrids.querySelectorAll("[data-routing-harness]")) section.hidden = section.dataset.routingHarness !== id;
+}
+
+/** Builds every harness grid so hidden edits survive, while the picker shows one at a time. */
 function renderHarnessTables(levels, policy) {
+  const harnesses = harnessGridHarnesses(policy);
+  elements.routingHarnessSelect.replaceChildren(...harnesses.map((harness) => new Option(`${harness.label}${harness.notDetected ? " (not detected)" : ""}`, harness.id)));
+  if (!harnesses.some((harness) => harness.id === activeHarnessId)) activeHarnessId = harnesses[0]?.id ?? null;
+  elements.routingHarnessSelect.value = activeHarnessId ?? "";
+  elements.routingHarnessSelect.disabled = !harnesses.length;
   elements.routingConfigHarnessGrids.replaceChildren();
-  for (const harness of harnessGridHarnesses(policy)) {
-    const fieldset = document.createElement("fieldset");
-    fieldset.className = "phase-settings routing-harness";
-    fieldset.dataset.routingHarness = harness.id;
-    const legend = document.createElement("legend");
-    legend.textContent = `${harness.label} model options`;
+  for (const harness of harnesses) {
+    const section = document.createElement("section");
+    section.className = "routing-harness";
+    section.dataset.routingHarness = harness.id;
+    section.setAttribute("aria-label", `${harness.label} model priorities`);
     const hint = document.createElement("p");
     hint.className = "settings-hint";
     hint.textContent = harness.notDetected
       ? "This harness is configured in the saved policy but is not detected on this node. Saved model options are preserved; clearing one removes it."
       : "Each level maps to one model option with its reasoning level and a required description of the requests it should handle. The classifier chooses only among the described options.";
-    fieldset.append(legend, hint);
+    section.append(hint);
     for (let level = 1; level <= levels; level += 1) {
       const row = document.createElement("label");
       row.className = "routing-level-row";
@@ -90,10 +100,11 @@ function renderHarnessTables(levels, policy) {
       model.addEventListener("change", syncDescription);
       syncDescription();
       row.append(levelLabel, model, thinking, description);
-      fieldset.append(row);
+      section.append(row);
     }
-    elements.routingConfigHarnessGrids.append(fieldset);
+    elements.routingConfigHarnessGrids.append(section);
   }
+  selectHarness(activeHarnessId);
 }
 
 function editorControls() {
@@ -278,6 +289,7 @@ mutation(elements.routingConfigSaveButton, saveConfig);
 mutation(elements.routingConfigShareButton, shareConfig);
 mutation(elements.routingConfigDeleteButton, deleteConfig);
 elements.routingActiveConfigSelect.addEventListener("change", () => { selectActiveConfig().catch((error) => toast(error.message)); });
+elements.routingHarnessSelect.addEventListener("change", () => selectHarness(elements.routingHarnessSelect.value));
 for (const control of [elements.routingConfigEditorNameInput, elements.routingEnabled, elements.routingClassifier, elements.routingCadence, elements.routingCadenceN, elements.routingContextMessages, elements.routingConfidence]) {
   control.addEventListener("input", markEditorDirty);
   control.addEventListener("change", markEditorDirty);

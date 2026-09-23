@@ -17,6 +17,7 @@ test("a fresh Claude session defaults to a real, selectable model", async () => 
     assert.equal(settings.reasoning, "medium");
 
     const models = await runtime.models();
+    assert.ok(models.some((model) => model.id === "claude-opus-5-5"), "Claude Opus 5.5 is missing from the runtime catalogue");
     const selected = models.find((model) => model.id === settings.modelId);
     assert.ok(selected, "Default Claude model is missing from the runtime catalogue");
     assert.ok(selected.label.trim());

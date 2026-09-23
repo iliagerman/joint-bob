@@ -1212,9 +1212,15 @@ select.chat-toolbar-control {
 .queued-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 7px; }
 .queued-badge { margin-right: auto; color: var(--muted); font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; }
 .routed-note { margin-top: 6px; color: var(--muted); font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.03em; }
-.routing-level-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) 120px; gap: 8px; align-items: center; margin: 8px 0; }
+.routing-config-editor { display: grid; gap: 10px; }
+.routing-config-editor-title { margin: 4px 0 0; color: var(--text); font-size: 15px; }
+.routing-harness-picker { margin-top: 4px; }
+.routing-harness { display: grid; gap: 8px; }
+.routing-level-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) 120px; gap: 8px; align-items: center; }
 .routing-description { grid-column: 2 / -1; min-width: 0; }
-.routing-harness { margin-top: 10px; }
+@media (max-width: 600px) {
+  .routing-level-row { grid-template-columns: 52px minmax(0, 1fr) 96px; }
+}
 .queued-select { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 11px; }
 .queued-controls button, .queued-editor button, .queued-batch-controls button { min-height: 26px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--muted); font-size: 11px; }
 .queued-controls button:hover, .queued-controls button:focus-visible, .queued-editor button:hover, .queued-editor button:focus-visible, .queued-batch-controls button:hover, .queued-batch-controls button:focus-visible { border-color: var(--line-strong); color: var(--text); }

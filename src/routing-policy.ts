@@ -219,29 +219,31 @@ export function routingEvalDue(policy: RoutingPolicy, promptOrdinal: number, las
 
 export interface DefaultPolicyModel { provider: string; id: string; label: string }
 
-/** Builds the approved automatic-routing tiers. Other harnesses stay blank until
-    configured explicitly, so defaults never guess a model. */
+/** Builds approved tiers per harness. Kiro and unknown harnesses stay blank, so
+    defaults never guess how a native model catalogue ranks its models. */
 export function defaultRoutingPolicy(modelsByHarness: Record<string, DefaultPolicyModel[]>): RoutingPolicy {
   const harnesses: RoutingPolicy["harnesses"] = {};
   for (const adapter of listDiscoveredHarnesses()) {
     if (!adapter.configuration) continue;
     const levelsMap: RoutingPolicy["harnesses"][string]["levels"] = {};
-    if (adapter.id === "pi") {
-      const models = modelsByHarness[adapter.id] ?? [];
-      const tiers = [
-        { level: "1", modelId: "gpt-5.6-luna", thinking: "low", description: "Small, obvious requests such as a factual answer, rename, or one-line edit." },
-        { level: "4", modelId: "gpt-5.6-terra", thinking: "medium", description: "Routine localized work with clear requirements and limited codebase context." },
-        { level: "7", modelId: "gpt-5.6-sol", thinking: "high", description: "Complex multi-file work, architectural changes, or debugging with unclear causes." },
-        { level: "10", modelId: "gpt-6-astra", thinking: "max", description: "Open-ended, high-risk, or cross-system work requiring sustained design and verification." },
-      ];
-      for (const tier of tiers) {
-        const model = models.find((candidate) => candidate.provider === "openai-codex" && candidate.id === tier.modelId);
-        if (!model) continue;
-        const thinkingLevel = adapter.configuration.thinkingLevels.includes(tier.thinking as never)
-          ? tier.thinking
-          : adapter.configuration.thinkingLevels.at(-1)!;
-        levelsMap[tier.level] = { provider: model.provider, modelId: model.id, thinkingLevel, description: tier.description };
-      }
+    const models = modelsByHarness[adapter.id] ?? [];
+    const tiers = adapter.id === "pi"
+      ? [
+        { level: "1", provider: "zai", modelId: "glm-5.3-flash", thinking: "low", description: "Fast, low-cost work such as summaries, lookups, small edits, and requests with an obvious answer." },
+        { level: "4", provider: "zai", modelId: "glm-5.3", thinking: "high", description: "Substantial implementation, analysis, or debugging that benefits from strong reasoning at lower cost." },
+        { level: "7", provider: "openai-codex", modelId: "gpt-5.6-sol", thinking: "high", description: "Complex development work across several files where implementation quality matters more than broad architecture." },
+        { level: "10", provider: "openai-codex", modelId: "gpt-6-astra", thinking: "max", description: "The hardest ambiguous, high-risk, or cross-system architecture requiring sustained reasoning and verification." },
+      ]
+      : adapter.id === "claude"
+        ? [{ level: "10", provider: "claude", modelId: "claude-opus-5-5", thinking: "max", description: "The hardest Claude work requiring Opus 5.5's sustained architectural reasoning and judgment." }]
+        : [];
+    for (const tier of tiers) {
+      const model = models.find((candidate) => candidate.provider === tier.provider && candidate.id === tier.modelId);
+      if (!model) continue;
+      const thinkingLevel = adapter.configuration.thinkingLevels.includes(tier.thinking as never)
+        ? tier.thinking
+        : adapter.configuration.thinkingLevels.at(-1)!;
+      levelsMap[tier.level] = { ...(adapter.configuration.fixedProvider ? {} : { provider: model.provider }), modelId: model.id, thinkingLevel, description: tier.description };
     }
     harnesses[adapter.id] = { levels: levelsMap };
   }
