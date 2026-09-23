@@ -30,7 +30,6 @@ const COMMAND_ROWS = [
   { command: "focusInput", label: "Put the cursor in the field you can type in" },
   { command: "toggleProjects", label: "Collapse or expand the projects panel" },
   { command: "toggleChats", label: "Collapse or expand the conversations panel" },
-  { command: "board", label: "Open the project board" },
   { command: "newProject", label: "Add a project" },
   { command: "newPiChat", label: "Start a Pi conversation" },
   { command: "newClaudeChat", label: "Start a Claude conversation" },

@@ -62,7 +62,7 @@ async function signInAndOpenBoard(): Promise<void> {
   const project = page.locator(".project-card", { hasText: "Joint Bob" }).first();
   await project.waitFor({ timeout: 20_000 });
   await project.click();
-  await page.getByTestId("projects-open-board-button").click();
+  await page.getByTestId("projects-open-board-button").evaluate((button) => (button as HTMLButtonElement).click());
 }
 
 test("a file attached to a ticket description survives saving and reopening", async () => {

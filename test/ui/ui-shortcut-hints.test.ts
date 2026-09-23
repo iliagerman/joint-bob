@@ -94,7 +94,7 @@ test("canvas shares the top toolbar with larger icons and readable shortcut badg
   const tools = page.locator("#projectsPanel .project-actions");
   assert.equal(await tools.locator("#openCanvasButton").count(), 1, "Canvas belongs beside Settings");
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
-  for (const button of await tools.locator("button").all()) {
+  for (const button of await tools.locator("button:visible").all()) {
     const icon = await button.locator("svg").boundingBox();
     assert.ok(icon && icon.width >= 20, `toolbar icon must be at least 20px, got ${icon?.width}`);
     const font = await button.locator(".shortcut-hint").evaluate((badge) => parseFloat(getComputedStyle(badge).fontSize));
@@ -103,8 +103,8 @@ test("canvas shares the top toolbar with larger icons and readable shortcut badg
     const box = await button.boundingBox();
     assert.ok(box && box.height <= 36, `a toolbar button stays icon-sized, got ${box?.height}px tall`);
   }
-  const rows = await tools.locator("button").evaluateAll((buttons) => buttons.map((button) => button.getBoundingClientRect().top));
-  assert.ok(rows.every((top) => top === rows[0]), "all six toolbar buttons fit on one row");
+  const rows = await tools.locator("button:visible").evaluateAll((buttons) => buttons.map((button) => button.getBoundingClientRect().top));
+  assert.ok(rows.every((top) => top === rows[0]), "all visible toolbar buttons fit on one row");
 });
 
 test("chat controls advertise shortcuts", async () => {
@@ -164,24 +164,21 @@ test("a saved chord retitles the badges without a reload", async () => {
   assert.equal(await hint("recent-sessions-open-button").textContent(), "K");
 });
 
-test("the board icon sits between running and settings, and the conversations header keeps running mobile-only", async () => {
-  const order = await page.locator("#projectsPanel .project-actions button[data-testid]")
-    .evaluateAll((nodes) => nodes.map((element) => element.getAttribute("data-testid")));
-  assert.deepEqual(order, [
-    "pending-reviews-open-button",
-    "recent-sessions-open-button",
-    "running-conversations-open-button",
-    "projects-open-board-button",
-    "projects-open-canvas-button",
-    "settings-open-button",
-  ]);
-  assert.equal(await page.locator("#chatsPanel [data-testid='chats-open-board-button']").count(), 0,
-    "the conversations header no longer carries a board button");
-  const conversationsRunning = page.getByTestId("chats-running-conversations-open-button");
-  assert.equal(await conversationsRunning.count(), 1, "the conversations header carries mobile running access");
-  assert.equal(await conversationsRunning.isVisible(), false, "the duplicate running action stays hidden on desktop");
-  assert.equal(await hint("projects-open-board-button").textContent(), "D",
-    "the board advertises its keyboard shortcut");
+test("the board stays hidden from navigation and keyboard shortcuts", async () => {
+  assert.equal(await page.getByTestId("projects-open-board-button").isVisible(), false, "desktop navigation hides the board");
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.getByTestId("nav-chats-button").isVisible(), true, "mobile navigation is visible for the check");
+  assert.equal(await page.getByTestId("nav-board-button").isVisible(), false, "mobile navigation hides the board");
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  await page.getByTestId("settings-open-button").click();
+  await page.getByTestId("settings-dialog").waitFor({ state: "visible" });
+  await page.getByTestId("settings-tab-shortcuts").click();
+  assert.equal(await page.getByTestId("canvas-keymap-board-input").count(), 0, "shortcut settings omit the board");
+  await page.getByTestId("settings-cancel-button").click();
+
+  await page.keyboard.press("Control+Alt+KeyD");
+  assert.equal(await page.locator("body").evaluate((body) => body.classList.contains("view-board")), false, "the old board chord does nothing");
 });
 
 test("the project title keeps collapse while its action row sits above search", async () => {

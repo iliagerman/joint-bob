@@ -46,8 +46,8 @@ test("a global menu reaches settings from every page and names the node and rele
   assert.match(styles, /@media \(max-width: 1023px\)[\s\S]*?#settingsButton, #projectBoardButton, #openCanvasButton, #canvasPanel \{ display: none; \}/);
 });
 
-test("the bottom bar puts Current beside Chats and Board on the far right", async () => {
-  const html = await readFile("public/index.html", "utf8");
+test("the bottom bar keeps the dormant Board entry hidden", async () => {
+  const [html, styles] = await Promise.all([readFile("public/index.html", "utf8"), readFile("public/styles.css", "utf8")]);
   const nav = html.slice(html.indexOf('<nav class="mobile-nav"'), html.indexOf("</nav>"));
   const order = [...nav.matchAll(/id="(nav[A-Za-z]+Button)"/g)].map((match) => match[1]);
 
@@ -59,6 +59,8 @@ test("the bottom bar puts Current beside Chats and Board on the far right", asyn
     "navBoardButton",
   ]);
   assert.match(nav, /data-testid="nav-chat-button"[\s\S]*?<\/span>Current<\/button>/);
+  assert.match(nav, /id="navBoardButton"[^>]*hidden/, "Board stays in the dormant markup but is hidden from users");
+  assert.match(styles, /\.mobile-nav \{[\s\S]*?grid-template-columns: repeat\(4, 1fr\);/, "visible mobile actions fill all four columns");
 });
 
 test("the chat header shows a traffic light, an icon Stop, and the project name", async () => {

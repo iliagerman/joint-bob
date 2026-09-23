@@ -32,9 +32,10 @@ test("canvas is a recursive multi-page view over exact existing conversations", 
   // Every command the keymap can bind has a row in the panel that edits it: the page
   // commands arrive through one generator, everything else as an explicit row.
   for (const command of CANVAS_KEYMAP_COMMANDS) {
-    if (/^page[1-9]$/.test(command)) continue;
+    if (command === "board" || /^page[1-9]$/.test(command)) continue;
     assert.ok(new RegExp(`command: "${command}"`).test(shortcutSettings), `${command} is listed in Settings`);
   }
+  assert.doesNotMatch(shortcutSettings, /command: "board"/, "the dormant Board shortcut stays out of Settings");
   assert.match(shortcutSettings, /\.\.\.[\."123456789"\]]*\.map\(\(digit, index\) => \(\{ command: `page\$\{index \+ 1\}`/,
     "the nine page commands are listed too");
   // The recorder captures modifiers instead of asking for them as checkboxes.

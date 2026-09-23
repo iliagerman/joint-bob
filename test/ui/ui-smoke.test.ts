@@ -138,7 +138,7 @@ test("both side panels have independent collapse and expand shortcuts", async ()
 });
 
 test("other toolbar actions advertise their shortcuts", async () => {
-  for (const id of ["projects-open-board-button", "project-create-button", "session-create-button", "session-create-claude-button", "canvas-finder-button", "canvas-page-add-button"]) {
+  for (const id of ["project-create-button", "session-create-button", "session-create-claude-button", "canvas-finder-button", "canvas-page-add-button"]) {
     assert.equal(await page.getByTestId(id).locator(".shortcut-hint").count(), 1, `${id} needs a shortcut badge`);
   }
 });
@@ -1332,8 +1332,6 @@ test("toolbar shortcuts open the same actions as their buttons", async () => {
   assert.equal(await page.locator("#projectDialog").isVisible(), true, "new-project shortcut opens the project form");
   await page.keyboard.press("Escape");
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
-  await page.keyboard.press("Control+Alt+KeyD");
-  assert.equal(await page.locator("#boardPanel").isVisible(), true, "board shortcut opens the board");
   for (const [key, button] of [["N", "session-create-button"], ["C", "session-create-claude-button"]]) {
     await page.locator(`[data-testid="${button}"]:enabled`).waitFor();
     await page.keyboard.press(`Control+Alt+${key}`);

@@ -157,7 +157,7 @@ export async function initializeApplication() {
   if (!state.canvasPaneMode) {
     state.canvasController?.setKeymap(state.canvasKeymap);
     state.canvasController?.setLayout(state.canvasLayout);
-    setMobileView(preferences.mobileView);
+    setMobileView(preferences.mobileView === "board" ? (state.activeProjectId ? "sessions" : "projects") : preferences.mobileView);
   }
   if (state.canvasPaneMode) {
     if (state.initialProjectId) state.activeProjectId = state.initialProjectId;
@@ -178,7 +178,7 @@ export async function initializeApplication() {
       })
       .catch((error) => console.warn("Could not discover peer projects", error));
   }
-  if (!state.canvasPaneMode) setMobileView(preferences.mobileView);
+  if (!state.canvasPaneMode) setMobileView(preferences.mobileView === "board" ? (state.activeProjectId ? "sessions" : "projects") : preferences.mobileView);
   state.preferencesLoaded = true;
   if (!state.canvasPaneMode) {
     void showWhatsNew(preferences.lastSeenVersion).catch((error) => console.warn("Could not load the changelog", error));

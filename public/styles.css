@@ -1325,7 +1325,7 @@ textarea { flex: 1; resize: none; max-height: 160px; min-height: 46px; border: 1
   bottom: max(8px, env(safe-area-inset-bottom));
   z-index: 40;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 2px;
   padding: 5px;
   border: 1px solid var(--line);

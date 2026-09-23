@@ -161,7 +161,6 @@ if (!state.canvasPaneMode) {
     appCommands: {
       toggleProjects: () => togglePanel("projects"),
       toggleChats: () => togglePanel("chats"),
-      board: () => elements.openBoardButton.click(),
       newProject: () => elements.newProjectButton.click(),
       newPiChat: () => { void startNewHarnessConversation("pi").catch((error) => toast(error.message)); },
       newClaudeChat: () => { void startNewHarnessConversation("claude").catch((error) => toast(error.message)); },

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- The board view is now hidden from navigation, keyboard shortcuts, and preferences.
+
 ## 1.75.0 — 2026-09-23
 
 - Project quick notes let you save reference information without running agents; press Ctrl+Alt+. to create, edit, and move them between projects.
