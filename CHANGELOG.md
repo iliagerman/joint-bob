@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.80.0 — 2026-09-23
 
-- Projects page now has a quick note creation button for faster note-taking while managing projects.
+- Added quick note creation to the projects page for faster note-taking while managing projects.
 
 ## 1.79.0 — 2026-09-23
 
