@@ -168,6 +168,14 @@
             <select class="quick-notes-filter" id="quickNotesProjectFilter" aria-label="Filter notes by project" data-testid="quick-notes-project-filter"></select>
             <button class="ghost quick-note-add" id="quickNoteButton" type="button" disabled aria-label="Add note" title="Add note" data-shortcut-hint="quickNote" data-testid="quick-note-create-button">+</button>
           </div>
+          <div class="quick-note-queue" id="quickNotesQueue" data-testid="quick-notes-queue">
+            <label class="quick-note-queue-toggle"><input type="checkbox" id="quickNotesQueueEnabled" data-testid="quick-notes-queue-enabled" /> Start notes automatically</label>
+            <label class="quick-note-queue-parallel">Parallel
+              <input type="number" id="quickNotesQueueParallel" min="1" max="20" step="1" value="1" data-testid="quick-notes-queue-parallel" aria-label="Notes started in parallel" />
+            </label>
+            <span class="quick-note-queue-running" id="quickNotesQueueRunning" data-testid="quick-notes-queue-running" hidden></span>
+            <p class="quick-note-queue-hint" id="quickNotesQueueHint" data-testid="quick-notes-queue-hint">Applies to every project on this node. The oldest note starts first: 1 runs one conversation at a time, above 1 runs that many in parallel. Scheduled notes wait until their time.</p>
+          </div>
           <div class="quick-note-list" id="quickNoteList" data-testid="quick-note-list" tabindex="-1"></div>
         </section>
         <div class="panel-rail">
@@ -1256,7 +1264,7 @@
         <div>
           <span class="eyebrow">Project note</span>
           <h2 id="quickNoteDialogTitle">New quick note</h2>
-          <p>Saved for reference. No agent runs.</p>
+          <p>Save a paused draft. Start it manually, schedule it, or enable automatic processing.</p>
         </div>
         <label>Project
           <select id="quickNoteProject" name="projectId" required data-testid="quick-note-project-select"></select>
@@ -1277,6 +1285,27 @@
           <label>Thinking
             <select id="quickNoteThinking" name="thinkingLevel" data-testid="quick-note-thinking-select"></select>
           </label>
+        </div>
+        <div class="quick-note-settings quick-note-launch">
+          <label>Runs on
+            <select id="quickNoteNode" name="nodeId" data-testid="quick-note-node-select"></select>
+          </label>
+          <label>Start after
+            <input type="datetime-local" id="quickNoteScheduledAt" name="scheduledAt" data-testid="quick-note-schedule-input" title="The note stays pending until this time" />
+          </label>
+        </div>
+        <div class="field-group">
+          <span class="field-label">Secret accounts</span>
+          <p class="muted compact-copy">These are exported into the conversation the note starts, from its first turn.</p>
+          <div class="secret-scope-list" id="quickNoteSecretList" data-testid="quick-note-secrets-list"></div>
+        </div>
+        <div class="field-group">
+          <span class="field-label">Images</span>
+          <div class="quick-note-images">
+            <button type="button" class="ghost compact" id="quickNoteImageButton" data-testid="quick-note-image-button">Add images</button>
+            <input type="file" id="quickNoteImageInput" accept="image/*" multiple hidden data-testid="quick-note-image-input" aria-label="Attach images to this note" />
+            <div class="attachment-list" id="quickNoteImageList" data-testid="quick-note-image-list"></div>
+          </div>
         </div>
         <p class="quick-note-error" id="quickNoteError" role="alert" hidden></p>
         <div class="dialog-actions">

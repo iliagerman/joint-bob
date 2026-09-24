@@ -19,11 +19,6 @@ const projectSelect = document.querySelector("#newSessionProjectSelect");
 const harnessSelect = document.querySelector("#newSessionHarnessSelect");
 let newSessionNodes = [];
 
-/** Initial node and account selection happens before the conversation starts. */
-function localSessionNode() {
-  return state.sessionNodes.find((node) => node.local);
-}
-
 function checkedNewSessionSecretIds() {
   return [...elements.newSessionSecretList.querySelectorAll("input:checked")].map((input) => input.value);
 }
@@ -200,33 +195,6 @@ export async function startNewHarnessConversation(harnessId) {
   const harness = state.harnesses.find((candidate) => candidate.id === harnessId && candidate.runtimeConfigured);
   if (!harness) throw new Error(`Harness ${harnessId} is unavailable`);
   await openNewSessionNameDialog(harness.newSessionPath, `New ${harness.label} conversation`);
-}
-
-export async function startConversationFromQuickNote(note, onStarted) {
-  if (state.activeProjectId !== note.projectId) throw new Error("Open the note's project before starting it");
-  if (!state.harnesses.length) await loadHarnesses();
-  const harness = state.harnesses.find((candidate) => candidate.id === note.harnessId && candidate.runtimeConfigured);
-  if (!harness) throw new Error(`Harness ${note.harnessId} is unavailable`);
-  const node = localSessionNode() || state.sessionNodes.find((candidate) => candidate.online && candidate.mapped);
-  if (!node?.online || !node.mapped) throw new Error("No online node has this project mapped");
-
-  const title = note.title.trim();
-  const content = note.content.trim();
-  const sessionId = crypto.randomUUID();
-  state.activeNodeId = node.id;
-  state.activeSessionId = sessionId;
-  state.newSessionSecretAccountIds = [];
-  if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: node.id });
-  addOptimisticSession(sessionId, harness.newSessionPath, title, null);
-  openSession(harness.newSessionPath, title);
-  state.pendingSessionTitle = title;
-  state.pendingQuickNoteConversion = {
-    message: content ? `${title}\n\n${content}` : title,
-    provider: note.provider,
-    modelId: note.modelId,
-    thinkingLevel: note.thinkingLevel,
-    onStarted,
-  };
 }
 
 export function renderNewSessionHarnesses() {

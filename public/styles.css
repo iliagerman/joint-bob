@@ -489,12 +489,19 @@ body.shortcuts-revealed .shortcut-hint { display: grid; }
 .conversation-tabs button.active { background: var(--panel); color: var(--text); box-shadow: 0 1px 3px rgb(0 0 0 / 0.16); }
 .conversation-list-pane { display: flex; flex: 1; min-height: 0; flex-direction: column; }
 .conversation-list-pane[hidden] { display: none; }
-.quick-notes-section { flex: 1; min-height: 0; background: color-mix(in srgb, var(--field) 28%, transparent); }
+.quick-notes-section { display: flex; flex-direction: column; flex: 1; min-height: 0; background: color-mix(in srgb, var(--field) 28%, transparent); }
 .quick-notes-section .section-title { min-height: 34px; margin-top: 10px; gap: 6px; }
 .quick-notes-filter { width: min(150px, 45%); min-height: 28px; margin-left: auto; padding: 3px 24px 3px 7px; font-size: 11px; }
 .quick-note-add { display: inline-grid; place-items: center; width: 28px; min-height: 28px; padding: 0; border: 0; border-radius: 7px; color: var(--accent); font-size: 18px; }
 .quick-note-add:hover, .quick-note-add:focus-visible { background: var(--surface); color: var(--text); }
-.quick-note-list { height: calc(100% - 44px); overflow: auto; padding: 0 10px 10px; }
+.quick-note-queue { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 6px 10px 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.quick-note-queue-toggle { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 12px; font-weight: 550; }
+.quick-note-queue-toggle input { width: 15px; height: 15px; min-width: auto; accent-color: var(--ink); }
+.quick-note-queue-parallel { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11.5px; }
+.quick-note-queue-parallel input { width: 58px; min-height: 26px; padding: 2px 6px; font-size: 12px; }
+.quick-note-queue-running { color: var(--accent); font-size: 11.5px; font-weight: 600; }
+.quick-note-queue-hint { flex-basis: 100%; margin: 0; color: var(--muted); font-size: 10.5px; line-height: 1.5; }
+.quick-note-list { flex: 1; min-height: 0; overflow: auto; padding: 0 10px 10px; }
 .quick-note-row-wrap { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border-radius: 8px; }
 .quick-note-row-wrap:hover, .quick-note-row-wrap:focus-within { background: var(--surface); }
 .quick-note-row { display: grid; width: 100%; min-width: 0; min-height: 0; padding: 9px 8px 9px 10px; border: 0; background: transparent; color: var(--text); text-align: left; }
@@ -502,6 +509,8 @@ body.shortcuts-revealed .shortcut-hint { display: grid; }
 .quick-note-row strong { font-size: 12.5px; font-weight: 650; }
 .quick-note-row span { margin-top: 2px; color: var(--muted); font-size: 11.5px; }
 .quick-note-row small { margin-top: 5px; color: var(--muted); font-family: var(--mono); font-size: 9.5px; }
+.quick-note-status.failed { color: var(--danger); }
+.quick-note-schedule-badge { justify-self: start; margin-top: 5px; padding: 1px 7px; border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 999px; color: var(--accent); font-family: var(--mono); font-size: 9px; }
 .quick-note-row-actions { display: flex; gap: 2px; padding-right: 5px; }
 .quick-note-action { display: grid; place-items: center; width: 28px; min-height: 28px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: 13px; opacity: 0.55; }
 .quick-note-action:hover, .quick-note-action:focus-visible { background: var(--panel); color: var(--text); opacity: 1; }
@@ -1563,6 +1572,10 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 .quick-note-card { width: min(680px, calc(100vw - 24px)); }
 .quick-note-card textarea { min-height: 170px; resize: vertical; line-height: 1.5; }
 .quick-note-settings { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.quick-note-launch { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.quick-note-images { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.quick-note-images .attachment-list { justify-content: flex-start; }
+#quickNoteSecretList { max-height: 180px; overflow-y: auto; }
 .quick-note-error { color: var(--danger) !important; }
 .quick-note-card #deleteQuickNoteButton { margin-right: auto; }
 /* Wider than a normal dialog: 80-odd columns is the width most shell output is
@@ -2048,6 +2061,7 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   .composer { padding: 6px 8px 10px; }
   .dialog-card { padding: 20px; }
   .quick-note-settings { grid-template-columns: 1fr; }
+  .quick-note-launch { grid-template-columns: 1fr; }
   .search-shell input, input, select { font-size: 16px; }
   /* The menu is the only way to reach a row's actions, so it needs a real touch target,
      and a wider lane to sit in so the title still clears it. */

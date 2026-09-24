@@ -235,6 +235,14 @@ New conversations use the model and thinking defaults in **Settings > Harnesses*
 
 **Fork conversation** works while the original is running. The fork gets an independent copy of completed history, excluding an unfinished tool exchange and queued work. The original keeps running; later output does not appear in the fork. A request from another node snapshots history on the original's owner.
 
+## Notes and automatic backlog
+
+Notes are paused conversation drafts. Save a title and prompt, choose the agent, model, thinking level, execution node and secret accounts, and attach up to four images. Without a schedule or automatic processing, saving does not start a conversation. **Start conversation** sends the saved draft through the normal conversation queue on the selected node, without falling back to another node.
+
+Set a one-time **Start after** date to make a note eligible at that time. Scheduled notes wait for capacity even when automatic backlog processing is off. For recurring prompts, use Scheduled tasks instead.
+
+In Notes, enable automatic processing and choose the parallel limit. A limit of 1 runs notes one by one; 2 fills up to two running conversations. The limit includes existing conversations, not just notes. The oldest eligible drafts across every project on this node start as slots open. The queue runs on the server, even with the browser closed. Notes and queue settings remain node-local. Failed or interrupted launches stay available for review and are not automatically retried.
+
 ## Scheduled tasks
 
 Open **Scheduled tasks** from a project menu, conversation row menu, or the conversation's More menu. Choose a name, prompt, hourly/daily/weekly schedule, timezone, and execution node. Project tasks choose Pi, Claude, or Kiro and create a fresh conversation each run with that agent's normal project settings and inherited workspace/project credentials. Conversation tasks queue the prompt in the existing conversation, retaining its settings and credentials.

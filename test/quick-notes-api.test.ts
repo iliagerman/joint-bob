@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { api, projectNamed, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, type SignedIn } from "./dev-nodes.js";
 
+interface QuickNoteImage { id: string; kind: string; name: string; mimeType: string; data: string }
 interface QuickNote {
   id: string;
   projectId: string;
@@ -15,9 +16,17 @@ interface QuickNote {
   provider: string | null;
   modelId: string | null;
   thinkingLevel: string | null;
+  nodeId: string | null;
+  secretAccountIds: string[];
+  images: QuickNoteImage[];
+  scheduledAt: string | null;
+  status: string;
+  error: string | null;
+  sessionId: string | null;
   createdAt: string;
   updatedAt: string;
 }
+interface QuickNoteQueue { enabled: boolean; maxParallel: number }
 
 let root: string;
 let environment: DevEnvironment;
@@ -55,6 +64,7 @@ test("quick notes persist settings, move between projects, and delete", async ()
   assert.equal(created.body.note.title, "Check deploy logs");
   assert.equal(created.body.note.harnessId, "pi");
   assert.equal(created.body.note.modelId, "gpt-5.2-codex");
+  assert.equal(created.body.note.status, "pending");
 
   const firstList = await api<{ notes: QuickNote[] }>(node, session, "GET", `/projects/${first.id}/quick-notes`);
   assert.deepEqual(firstList.body.notes.map((note) => note.id), [created.body.note.id]);
@@ -103,4 +113,88 @@ test("quick notes reject missing projects and blank titles", async () => {
     harnessId: "pi",
   });
   assert.equal(blank.status, 400);
+});
+
+test("quick notes store launch metadata and images against each paused draft", async () => {
+  const project = projectNamed(node, "Internal Assistant");
+  const image = { id: "0e0d44a7-0f4b-4a2b-9d64-97fdd63ff631", kind: "image", name: "spike.png", mimeType: "image/png", data: Buffer.from("png-bytes").toString("base64") };
+  const scheduledAt = "2026-02-03T04:05:06.000Z";
+  const created = await api<{ note: QuickNote }>(node, session, "POST", "/quick-notes", {
+    projectId: project.id,
+    title: "Scheduled draft",
+    content: "Later",
+    harnessId: "pi",
+    nodeId: node.nodeId,
+    secretAccountIds: [],
+    images: [image],
+    scheduledAt,
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  const note = created.body.note;
+  assert.equal(note.nodeId, node.nodeId);
+  assert.deepEqual(note.secretAccountIds, []);
+  assert.deepEqual(note.images, [image]);
+  assert.equal(note.scheduledAt, scheduledAt);
+  assert.equal(note.status, "pending");
+
+  const fetched = await api<{ note: QuickNote }>(node, session, "GET", `/quick-notes/${note.id}`);
+  assert.equal(fetched.status, 200);
+  assert.deepEqual(fetched.body.note.images, [image], "a single note keeps returning its images base64");
+
+  const everyProject = await api<{ notes: QuickNote[] }>(node, session, "GET", "/quick-notes");
+  assert.ok(everyProject.body.notes.some((candidate) => candidate.id === note.id), "the backlog spans projects");
+
+  // Draft fields are optional: an old payload still creates a pending note.
+  const legacy = await api<{ note: QuickNote }>(node, session, "POST", "/quick-notes", {
+    projectId: project.id,
+    title: "Legacy shape",
+    content: "Old client",
+    harnessId: "pi",
+  });
+  assert.equal(legacy.status, 201);
+  assert.equal(legacy.body.note.nodeId, null);
+  assert.deepEqual(legacy.body.note.secretAccountIds, []);
+  assert.deepEqual(legacy.body.note.images, []);
+  assert.equal(legacy.body.note.scheduledAt, null);
+
+  const badImage = await api<{ error: string }>(node, session, "POST", "/quick-notes", {
+    projectId: project.id,
+    title: "Bad image",
+    content: "Body",
+    harnessId: "pi",
+    images: [{ id: "not-a-uuid", kind: "image", name: "x.png", mimeType: "image/png", data: image.data }],
+  });
+  assert.equal(badImage.status, 400);
+
+  const badSchedule = await api<{ error: string }>(node, session, "POST", "/quick-notes", {
+    projectId: project.id,
+    title: "Bad schedule",
+    content: "Body",
+    harnessId: "pi",
+    scheduledAt: "next tuesday",
+  });
+  assert.equal(badSchedule.status, 400);
+});
+
+test("the quick note queue defaults off, validates, and updates", async () => {
+  const initial = await api<{ queue: QuickNoteQueue }>(node, session, "GET", "/quick-notes/queue");
+  assert.equal(initial.status, 200);
+  assert.deepEqual(initial.body.queue, { enabled: false, maxParallel: 1 });
+
+  for (const maxParallel of [0, 21, 2.5]) {
+    const rejected = await api<{ error: string }>(node, session, "PUT", "/quick-notes/queue", { queue: { enabled: false, maxParallel } });
+    assert.equal(rejected.status, 400, `maxParallel ${maxParallel} must be rejected`);
+  }
+
+  // The queue stays disabled throughout: unscheduled notes from earlier tests would
+  // otherwise be eligible the moment it switches on.
+  const updated = await api<{ queue: QuickNoteQueue }>(node, session, "PUT", "/quick-notes/queue", { queue: { enabled: false, maxParallel: 4 } });
+  assert.equal(updated.status, 200);
+  assert.deepEqual(updated.body.queue, { enabled: false, maxParallel: 4 });
+
+  const reread = await api<{ queue: QuickNoteQueue }>(node, session, "GET", "/quick-notes/queue");
+  assert.deepEqual(reread.body.queue, { enabled: false, maxParallel: 4 });
+
+  const restored = await api<{ queue: QuickNoteQueue }>(node, session, "PUT", "/quick-notes/queue", { queue: { enabled: false, maxParallel: 1 } });
+  assert.deepEqual(restored.body.queue, { enabled: false, maxParallel: 1 });
 });

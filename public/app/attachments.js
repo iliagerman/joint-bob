@@ -15,7 +15,8 @@ function resetAttachmentInput() {
   elements.attachmentInput.value = "";
 }
 
-function renderAttachmentChips(container, attachments, removeAttachment) {
+/** Chips with preview thumbnails and remove buttons, for any picker that holds attachments. */
+export function renderAttachmentChips(container, attachments, removeAttachment) {
   container.replaceChildren();
   for (const attachment of attachments) {
     const chip = document.createElement("div");
@@ -56,7 +57,8 @@ export function renderTaskAttachments() {
   });
 }
 
-async function attachmentsFromFiles(fileList, current) {
+/** Reads picked files as attachment records, enforcing the shared size and count limits. */
+export async function attachmentsFromFiles(fileList, current) {
   const files = [...fileList];
   const nextAttachments = [];
   for (const file of files) {

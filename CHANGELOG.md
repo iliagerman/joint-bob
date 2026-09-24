@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Quick notes now support scheduling, image attachments, secret account selection, execution node assignment, and automatic backlog processing with configurable parallel limits.
+
 ## 1.87.0 — 2026-09-24
 
 - Restyled Focus mode with aligned headers, transparent icon controls, and separate agent and tools submenus.

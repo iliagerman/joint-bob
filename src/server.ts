@@ -47,6 +47,7 @@ import "./server/routes/projects.js";
 import "./server/routes/quick-notes.js";
 import { cleanupAbandonedByTheWayConversations } from "./server/routes/sessions.js";
 import { startCronScheduler } from "./server/cron.js";
+import { startQuickNoteScheduler } from "./server/quick-note-dispatch.js";
 import "./server/routes/cron.js";
 import "./server/routes/tasks.js";
 import "./server/routes/project-files.js";
@@ -110,6 +111,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     startUpdateScheduler();
     startHarnessUpdateScheduler();
     void startCronScheduler().catch(error => console.error("Scheduled task recovery failed; scheduler not started", error));
+    void startQuickNoteScheduler().catch(error => console.error("Quick note recovery failed; scheduler not started", error));
     void startBrowserMonitors().catch(error => console.error("Browser monitor startup failed", error));
     initializeStartupReadiness()
       .then(async () => { await recoverPendingUpdateRuns(); await reconcileTicketWorkspaceSync(); await reconcileTaskConversationRecords(); })
