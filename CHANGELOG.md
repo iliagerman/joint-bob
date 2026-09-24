@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.83.0 — 2026-09-24
 
 - Browser profile selector now groups saved profiles in a collapsible library with clearer explanations, separated from active browser controls. Stopped sessions are archived by default to keep the active list clean.
 
