@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Notes can now be scheduled to start at a specific time or queued automatically with configurable parallel processing limits, including image attachments and execution node selection.
+
 ## 1.87.1 — 2026-09-24
 
 - Protected background shell tasks from termination while their conversation is actively managing them, even when the conversation has received no input or output.

@@ -51,6 +51,51 @@ after(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
+test("quick note dispatch runs once on the selected peer and never falls back", { timeout: 90_000 }, async () => {
+  const notesRoot = await mkdtemp(path.join(os.tmpdir(), "jb-notes-cluster-"));
+  const notesEnvironment = await seedDevEnvironment(notesRoot, 2);
+  const [source, target] = notesEnvironment.nodes;
+  const log = path.join(notesRoot, "engine.log");
+  const children: ChildProcess[] = [];
+  try {
+    for (const node of notesEnvironment.nodes) children.push(await startDevNode(notesEnvironment, node, { JOINT_BOB_TEST_ENGINE_LOG: log }));
+    const auth = await signIn(notesEnvironment, source);
+    const targetAuth = await signIn(notesEnvironment, target);
+    const project = source.projects[0];
+    const input = { projectId: project.id, title: "Remote paused draft", content: "Synthetic note dispatch", harnessId: "pi", nodeId: target.nodeId, scheduledAt: "2099-01-01T00:00:00.000Z", images: [], secretAccountIds: [] };
+    const created = await api<{ note: { id: string; nodeId: string } }>(source, auth, "POST", "/quick-notes", input);
+    assert.equal(created.status, 201, "quick notes must accept a pinned execution node and schedule");
+    assert.equal(created.body.note.nodeId, target.nodeId);
+    const start = () => api<{ sessionId: string; nodeId: string }>(source, auth, "POST", `/quick-notes/${created.body.note.id}/start`, {});
+    const launched = await start();
+    assert.equal(launched.status, 200, JSON.stringify(launched.body));
+    assert.equal(launched.body.nodeId, target.nodeId);
+    assert.ok(launched.body.sessionId);
+    const duplicate = await start();
+    assert.ok(duplicate.status === 409 || duplicate.status === 200 && duplicate.body.sessionId === launched.body.sessionId, "duplicate start must reject or return the same launch");
+    const deadline = Date.now() + 15_000;
+    let remote: SessionView | undefined;
+    while (Date.now() < deadline) {
+      const listed = await api<{ sessions: SessionView[] }>(target, targetAuth, "GET", `/projects/${project.id}/sessions`);
+      remote = listed.body.sessions.find(row => row.id === launched.body.sessionId);
+      if (remote?.title === input.title && !remote.running) break;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    assert.equal(remote?.title, input.title, "selected peer owns the named conversation");
+    assert.equal(remote?.executionNodeId, target.nodeId);
+    assert.deepEqual((await readFile(log, "utf8")).trim().split("\n"), [`pi:${target.nodeId}`], "exactly one prompt, on the selected node only");
+    await stopDevNode(children[1]);
+    const offline = await api<{ note: { id: string } }>(source, auth, "POST", "/quick-notes", { ...input, title: "Do not fall back" });
+    assert.equal(offline.status, 201, "offline drafts may still be saved");
+    const failed = await api(source, auth, "POST", `/quick-notes/${offline.body.note.id}/start`, {});
+    assert.ok(failed.status >= 400, "an offline pinned node must not silently run locally");
+    assert.deepEqual((await readFile(log, "utf8")).trim().split("\n"), [`pi:${target.nodeId}`]);
+  } finally {
+    await Promise.all(children.map(stopDevNode));
+    await rm(notesRoot, { recursive: true, force: true });
+  }
+});
+
 test("scheduled conversation keeps its active run isolated while edits apply to the next execution", { timeout: 45000 }, async () => {
   const project = nodeA.projects[0];
   const listed = await api<{ sessions: SessionView[] }>(nodeA, sessionA, "GET", `/projects/${project.id}/sessions`);

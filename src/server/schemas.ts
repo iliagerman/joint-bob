@@ -115,18 +115,6 @@ export const replicationBatchSchema = z.object({ events: z.array(replicationEven
 export const replicationReceiptSchema = z.object({ received: z.array(z.string().uuid()).max(100) });
 export const registeredHarnessIdSchema = z.string().refine(isHarnessId, "Harness ID is invalid")
   .refine((value) => listHarnesses().some((harness) => harness.id === value), "Harness is not registered on this node");
-export const quickNoteSchema = z.object({
-  projectId: z.string().trim().min(1).max(120),
-  title: z.string().trim().min(1).max(120),
-  content: z.string().max(100_000),
-  harnessId: registeredHarnessIdSchema,
-  provider: z.string().trim().min(1).max(200).nullable().optional(),
-  modelId: z.string().trim().min(1).max(300).nullable().optional(),
-  thinkingLevel: z.string().trim().min(1).max(40).nullable().optional(),
-}).strict().refine((value) => Boolean(value.provider) === Boolean(value.modelId), {
-  message: "Provider and model must be selected together",
-  path: ["modelId"],
-});
 const runtimeLeaseSchema = z.object({
   engine: registeredHarnessIdSchema,
   sessionId: z.string().min(1).max(200),
@@ -279,6 +267,40 @@ const imageAttachmentSchema = z.object({
   mimeType: z.string().trim().min(1).max(120),
   data: attachmentDataSchema,
 });
+/** Quick note drafts carry their images inline; the node stores the bytes as files. */
+const quickNoteImageSchema = imageAttachmentSchema.extend({
+  id: z.string().uuid().optional(),
+  kind: z.literal("image"),
+}).strict();
+export const quickNoteSchema = z.object({
+  projectId: z.string().trim().min(1).max(120),
+  title: z.string().trim().min(1).max(120),
+  content: z.string().max(100_000),
+  harnessId: registeredHarnessIdSchema,
+  provider: z.string().trim().min(1).max(200).nullable().optional(),
+  modelId: z.string().trim().min(1).max(300).nullable().optional(),
+  thinkingLevel: z.string().trim().min(1).max(40).nullable().optional(),
+  nodeId: z.string().uuid().nullable().optional(),
+  secretAccountIds: z.array(z.string().uuid()).max(100).optional(),
+  images: z.array(quickNoteImageSchema).max(4).optional(),
+  scheduledAt: z.string().datetime().nullable().optional(),
+}).strict().refine((value) => Boolean(value.provider) === Boolean(value.modelId), {
+  message: "Provider and model must be selected together",
+  path: ["modelId"],
+});
+export const quickNoteQueueSchema = z.object({
+  queue: z.object({
+    enabled: z.boolean(),
+    maxParallel: z.number().int().min(1).max(20),
+  }).strict(),
+}).strict();
+export const quickNotePrepareSchema = z.object({
+  projectId: z.string().trim().min(1).max(120),
+  engine: registeredHarnessIdSchema,
+  sessionId: z.string().uuid(),
+  title: z.string().trim().min(1).max(120),
+  secretAccountIds: z.array(z.string().uuid()).max(100).optional(),
+}).strict();
 const fileAttachmentSchema = z.object({
   name: z.string().trim().min(1).max(240),
   mimeType: z.string().trim().min(1).max(120),
