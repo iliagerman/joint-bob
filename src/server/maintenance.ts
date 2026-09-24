@@ -424,8 +424,11 @@ export async function reapInactiveConversations(now = Date.now(), data = resolve
   if (shellReapInProgress) return;
   shellReapInProgress = true;
   try {
-    await reapInactiveHarnessSessions(now);
-    for (const shell of readImplicitShellTasks(data)) {
+    const shells = readImplicitShellTasks(data);
+    const liveCallers = new Set(shells.filter((shell) => shell.callerUntil > now).map((shell) => shell.identity));
+    await reapInactiveHarnessSessions(now, liveCallers);
+    for (const shell of shells) {
+      if (shell.callerUntil > now) continue;
       const conversationId = backgroundTaskConversationId(shell.identity);
       const exists = Boolean(conversationId) && Boolean(await latestConversationSegment(conversationId));
       const reason = abandonedShellReason(shell.startedAt, shell.lastOutputAt, exists, now);

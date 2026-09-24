@@ -8,7 +8,7 @@ import { broadcastToProject, scheduleReviewNotifications, send } from "./realtim
 import { idleSessionTimeoutMs, localWriteGraceMs } from "./state.js";
 
 export interface SharedHarnessSession {
-  engine: HarnessId; projectId: string; cwd: string; session: HarnessSession;
+  engine: HarnessId; projectId: string; conversationId: string; cwd: string; session: HarnessSession;
   clients: Set<WebSocket>; turnInFlight: number; lastLocalEventAt: number; lastActivityAt: number; internalTurn?: boolean;
   liveEvents: HarnessEvent[]; idleTimer: NodeJS.Timeout | null; unsubscribe: () => void; watchdogStopping?: boolean;
   /** True while the running turn came from a scheduled task rather than a person. */
@@ -78,7 +78,7 @@ function subscribe(shared: SharedHarnessSession): () => void {
 async function createSession(engine: HarnessId, options: HarnessOpenOptions): Promise<SharedHarnessSession> {
   const session = await (await getHarnessRuntime(engine)).open(options);
   if (session.id !== options.sessionId) throw new Error(`Harness returned unexpected session ID: ${session.id}`);
-  const shared: SharedHarnessSession = { engine, projectId: options.projectId, cwd: options.cwd, session, clients: new Set(), turnInFlight: 0, lastLocalEventAt: 0, lastActivityAt: 0, liveEvents: [], idleTimer: null, unsubscribe: () => {}, scheduledTurn: false };
+  const shared: SharedHarnessSession = { engine, projectId: options.projectId, conversationId: options.conversationId ?? options.sessionId, cwd: options.cwd, session, clients: new Set(), turnInFlight: 0, lastLocalEventAt: 0, lastActivityAt: 0, liveEvents: [], idleTimer: null, unsubscribe: () => {}, scheduledTurn: false };
   shared.unsubscribe = subscribe(shared);
   harnessSessions.set(harnessSessionKey(options.projectId, engine, session.id), shared);
   return shared;
@@ -109,8 +109,9 @@ export function markHarnessInput(shared: SharedHarnessSession, now = Date.now())
   markHarnessActivity(shared, now);
 }
 
-export async function reapInactiveHarnessSessions(now = Date.now()): Promise<void> {
+export async function reapInactiveHarnessSessions(now = Date.now(), liveShellCallers: ReadonlySet<string> = new Set()): Promise<void> {
   await Promise.all([...harnessSessions.values()].map(async (shared) => {
+    if (liveShellCallers.has(JSON.stringify([shared.projectId, shared.conversationId]))) return;
     if (shared.watchdogStopping || !harnessTurnBusy(shared) || !conversationInactive(shared.lastActivityAt, now)) return;
     shared.watchdogStopping = true;
     try {

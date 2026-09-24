@@ -161,6 +161,7 @@ export interface ImplicitShellTask {
   id: string;
   identity: string;
   startedAt: string;
+  callerUntil: number;
   lastOutputAt?: string;
 }
 
@@ -179,11 +180,11 @@ export function readImplicitShellTasks(dataDirectory: string): ImplicitShellTask
     db.prepare("ATTACH DATABASE ? AS shell_calls").run(`${pathToFileURL(policyFile).href}?mode=ro`);
     if (!db.prepare("SELECT 1 FROM shell_calls.sqlite_master WHERE type='table' AND name='supervised_shell_calls'").get()) return [];
     const rows = db.prepare(
-      `SELECT id,identity,started_at FROM supervisor_tasks
+      `SELECT id,identity,started_at,p.foreground_until FROM supervisor_tasks
+       JOIN shell_calls.supervised_shell_calls p ON p.task_id=supervisor_tasks.id
        WHERE status IN ('starting','running','stopping')
-         AND EXISTS (SELECT 1 FROM shell_calls.supervised_shell_calls p WHERE p.task_id=supervisor_tasks.id)
        ORDER BY started_at`,
-    ).all() as Array<{ id: string; identity: string; started_at: string }>;
+    ).all() as Array<{ id: string; identity: string; started_at: string; foreground_until: number }>;
     const outputDirectory = path.join(realpathSync(dataDirectory), "background-tasks");
     return rows.map((row) => {
       const output = path.resolve(outputDirectory, `${row.id}.log`);
@@ -193,18 +194,16 @@ export function readImplicitShellTasks(dataDirectory: string): ImplicitShellTask
         const uid = process.getuid?.();
         if (entry?.isFile() && !entry.isSymbolicLink() && uid !== undefined && entry.uid === uid && entry.size > 0) lastOutputAt = entry.mtime.toISOString();
       } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-      return { id: row.id, identity: row.identity, startedAt: row.started_at, ...(lastOutputAt ? { lastOutputAt } : {}) };
+      return { id: row.id, identity: row.identity, startedAt: row.started_at, callerUntil: row.foreground_until, ...(lastOutputAt ? { lastOutputAt } : {}) };
     });
   } finally {
     db.close();
   }
 }
 
-/* A tool-call shell is supervised so it can outlive the turn that started it and
-   wake the conversation when it ends. Nothing ends it when that conversation never
-   comes back: the shell keeps running, keeps its release directory pinned, and keeps
-   the conversation advertising background work. Output extends its useful lifetime;
-   a silent process does not keep a conversation running forever. */
+/* A shell with a live caller is protected by its heartbeat. Once the caller
+   leaves, output extends the shell's useful lifetime, but silence must not keep
+   an abandoned process and its release directory alive forever. */
 /* A conversation starting its first turn can run a shell before its record lands,
    so a missing conversation only counts once the shell is older than that window. */
 export const MISSING_CONVERSATION_GRACE_MS = 5 * 60 * 1000;

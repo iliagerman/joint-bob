@@ -15,7 +15,8 @@ const terminal = new Set(["completed", "failed", "stopped", "unknown"]);
 // Commands shorter than this stay out of the Tasks view; longer ones appear while
 // they run and remain there with their output once they finish.
 const VISIBILITY_MS = 5000;
-// Grace before a caller that died without recording its result is shown anyway.
+// A live caller renews this lease even when command output is redirected.
+// After a caller dies, its lease expires and stale-task cleanup can take over.
 const LEASE_GRACE_MS = 20_000;
 const TIMEOUT_EXIT_CODE = 124;
 
@@ -83,7 +84,7 @@ export async function runSupervisedShell({ args, cwd, env, onData, signal, timeo
   let emitted = 0;
   let truncation = false;
   const request = body => requestSupervisor(env.JOINT_BOB_TASK_SOCKET, env.JOINT_BOB_TASK_TOKEN, body, 2000);
-  const show = () => { if (!visible) { visible = true; setState(db, id, "background", 0); } };
+  const show = () => { if (!visible) { visible = true; setState(db, id, "background", Date.now() + LEASE_GRACE_MS); } };
   const stop = () => { if (accepted && !stopSent) { stopSent = true; show(); void request({ action: "stop", id }).catch(() => {}); } };
   signal?.addEventListener("abort", stop, { once: true });
   const drain = async () => {
@@ -111,6 +112,7 @@ export async function runSupervisedShell({ args, cwd, env, onData, signal, timeo
     }
     const started = Date.now();
     const visibleAt = started + VISIBILITY_MS;
+    let renewAt = visibleAt;
     const deadline = limit === undefined ? Infinity : started + limit;
     let timedOut = false;
     // Once the shell has exited, give the supervisor a moment to see the task end
@@ -121,6 +123,10 @@ export async function runSupervisedShell({ args, cwd, env, onData, signal, timeo
       if (signal?.aborted) { stop(); throw new Error("Shell command aborted"); }
       const now = Date.now();
       if (!visible && now >= visibleAt) show();
+      if (now >= renewAt) {
+        db.prepare("UPDATE supervised_shell_calls SET foreground_until=? WHERE task_id=?").run(now + LEASE_GRACE_MS, id);
+        renewAt = now + VISIBILITY_MS;
+      }
       if (!timedOut && now >= deadline) {
         timedOut = true;
         stop();
@@ -151,6 +157,7 @@ export async function runSupervisedShell({ args, cwd, env, onData, signal, timeo
     }
   } finally {
     signal?.removeEventListener("abort", stop);
-    db.close();
+    try { db.prepare("UPDATE supervised_shell_calls SET foreground_until=0 WHERE task_id=?").run(id); }
+    finally { db.close(); }
   }
 }

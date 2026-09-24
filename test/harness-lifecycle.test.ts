@@ -69,11 +69,16 @@ test("inactive harness turns are cancelled once and leave recent turns alone", a
   const stale = makeShared("stale", now - CONVERSATION_INACTIVITY_TIMEOUT_MS - 1);
   makeShared("boundary", now - CONVERSATION_INACTIVITY_TIMEOUT_MS);
   makeShared("recent", now - 1);
+  const awaiting = makeShared("native-session", now - CONVERSATION_INACTIVITY_TIMEOUT_MS - 1);
+  awaiting.conversationId = "logical-conversation";
+  const callers = new Set([JSON.stringify([awaiting.projectId, awaiting.conversationId])]);
 
   try {
-    await reapInactiveHarnessSessions(now);
-    await reapInactiveHarnessSessions(now + 1);
-    assert.deepEqual(cancelled, ["stale", "boundary"], "each silent turn is cancelled once after the timeout");
+    await reapInactiveHarnessSessions(now, callers);
+    await reapInactiveHarnessSessions(now + 1, callers);
+    assert.deepEqual(cancelled, ["stale", "boundary"], "awaited shells protect their logical conversation, not other stale turns");
+    await reapInactiveHarnessSessions(now + 2, new Set());
+    assert.deepEqual(cancelled, ["stale", "boundary", "native-session"], "an expired caller no longer protects a silent turn");
     assert.equal(stale.watchdogStopping, true);
   } finally {
     harnessSessions.clear();

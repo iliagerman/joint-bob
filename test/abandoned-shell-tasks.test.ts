@@ -144,7 +144,16 @@ test("the maintenance watcher stops an abandoned shell process group", { timeout
     supervisor.prepare("UPDATE supervisor_tasks SET started_at=? WHERE id=?").run(old, id);
     supervisor.close();
 
-    await reapInactiveConversations(Date.parse(old) + MISSING_CONVERSATION_GRACE_MS + 1, directory);
+    const now = Date.parse(old) + MISSING_CONVERSATION_GRACE_MS + 1;
+    const caller = new DatabaseSync(path.join(directory, "node.db"));
+    try {
+      for (const state of ["foreground", "background"]) {
+        caller.prepare("UPDATE supervised_shell_calls SET state=?,foreground_until=? WHERE task_id=?").run(state, now + 20_000, id);
+        await reapInactiveConversations(now, directory);
+        assert.equal((await supervisorRequest(directory, { action: "task", id }) as { status: string }).status, "running", "a live caller protects even a silent shell, before and after Tasks visibility");
+      }
+    } finally { caller.close(); }
+    await reapInactiveConversations(now + 20_000, directory);
     let status = "stopping";
     for (let attempt = 0; attempt < 100 && status === "stopping"; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 25));
