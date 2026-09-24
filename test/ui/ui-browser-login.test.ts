@@ -263,13 +263,19 @@ test("pending browser login popup preserves ownership through failure, dismissal
     await dialog.getByTestId("browser-login-dismiss").click(); await dialog.waitFor({ state: "detached" });
     assert.equal(session.loginRequest.id, secondRequestId); assert.equal(commands.some(command => command.action === "close" || command.action === "resumeAgent"), false);
 
+    // A handoff held by another human controller — including the same person's
+    // stale earlier connection — leaves this viewer a spectator with no way to
+    // interact or dismiss. Whoever views this conversation's own sign-in is the
+    // intended controller: the viewer must force-take the handoff (a plain
+    // takeover is refused by the holder check), once per request, and recover
+    // the Done action.
     const otherHumanRequestId = "77777777-7777-4777-8777-777777777777";
     session.loginRequest = { id: otherHumanRequestId, expectedOrigin: "https://accounts.example.test", label: "Other viewer login" }; session.owner = "human"; session.canControl = false;
     await page.evaluate(() => document.dispatchEvent(new Event("browserSessionsChanged"))); await dialog.waitFor(); await dialog.getByTestId("browser-connection-status").filter({ hasText: "Live" }).waitFor({ state: "attached" });
-    await dialog.getByTestId("browser-take-control").filter({ hasText: "Take over control" }).waitFor({ state: "attached" });
-    assert.equal(await dialog.getByTestId("browser-login-done").isDisabled(), true);
-    const beforeOtherDismiss = await page.evaluate(() => (window as any).__loginHttpCommands.slice());
-    assert.equal(beforeOtherDismiss.some((command: any) => command.action === "takeControl" && command.loginRequestId === otherHumanRequestId), false, "another human's request must not be taken automatically");
+    await page.waitForFunction(requestId => (window as any).__loginHttpCommands.some((command: any) => command.action === "takeControl" && command.loginRequestId === requestId && command.force === true), otherHumanRequestId);
+    await dialog.getByTestId("browser-control-status").filter({ hasText: "Human control" }).waitFor({ state: "attached" });
+    await page.waitForFunction(element => !(element as HTMLButtonElement).disabled, await dialog.getByTestId("browser-login-done").elementHandle());
+    assert.equal(await page.evaluate(requestId => (window as any).__loginHttpCommands.filter((command: any) => command.action === "takeControl" && command.loginRequestId === requestId).length, otherHumanRequestId), 1, "the forced recovery must be attempted exactly once per request");
     await page.keyboard.press("Escape"); await dialog.waitFor({ state: "detached" });
 
     await page.clock.pauseAt(new Date(Date.now() + 60_000));

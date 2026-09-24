@@ -47,12 +47,24 @@ export interface BrowserSessionView extends BrowserSessionRecord {
   loginRequest?: BrowserLoginRequest | null;
   /** Viewer-specific; absent on node-wide metadata responses. */
   canControl?: boolean;
+  /** Agent listings only: the conversation's profile grant is gone, so live page
+      and account metadata is redacted; the row stays for closing the session. */
+  accessRevoked?: boolean;
   fileChooser: boolean;
   fileChooserRequest: { id: string; pageId: string } | null;
   dialog: { id: string; pageId: string; type: string; message: string; defaultValue: string } | null;
   downloads: Array<{ id: string; name: string; ready: boolean; error?: string }>;
 }
-export interface BrowserProfile { id: string; projectId: string; label: string; createdAt: string; updatedAt: string; persistent?: boolean; }
+export interface BrowserProfile { id: string; projectId: string; label: string; createdAt: string; updatedAt: string; persistent?: boolean; /** Independent of grants: when false, paired nodes cannot use this profile through the relay. */ crossNodeAccess?: boolean; /** Present on listings; the access grants that make this profile usable. */ grants?: BrowserProfileGrant[]; }
+export type BrowserProfileGrantScope = "global" | "project" | "conversation";
+export interface BrowserProfileGrant { scope: BrowserProfileGrantScope; projectId?: string; conversationId?: string; createdAt: string; }
+export const browserProfileGrantInputSchema = z.object({
+  scope: z.enum(["global", "project", "conversation"]),
+  projectId: z.string().min(1).max(200).optional(),
+  conversationId: z.string().min(1).max(200).optional(),
+}).refine(value => (value.scope === "global") === (value.projectId === undefined && value.conversationId === undefined)
+  && (value.scope === "conversation") === (value.projectId !== undefined && value.conversationId !== undefined)
+  && (value.scope === "project") === (value.projectId !== undefined && value.conversationId === undefined), "Grant scope does not match its project and conversation");
 export interface BrowserCapability { supported: boolean; available: boolean; executable: string | null; reason: string | null; }
 
 const text = z.string().max(100_000);

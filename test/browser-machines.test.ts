@@ -35,7 +35,7 @@ async function agent(index: number, body: unknown, engine: "pi" | "claude" = "pi
 }
 async function seedSession(index: number) {
   const node = env.nodes[index];
-  const code = `import { BrowserStore } from './src/browser-store.ts'; const s = new BrowserStore(); const p=s.createProfile(${JSON.stringify(node.projects[0].id)},'Synthetic account ${randomUUID()}'); const r=s.create({projectId:p.projectId,engine:'pi',conversationId:${JSON.stringify(conversationId)},appNodeId:${JSON.stringify(env.nodes[0].nodeId)},profileId:p.id});s.finish(r.id,'closed');console.log(JSON.stringify(r));s.close();`;
+  const code = `import { BrowserStore } from './src/browser-store.ts'; const s = new BrowserStore(); const p=s.createProfile(${JSON.stringify(node.projects[0].id)},'Synthetic account ${randomUUID()}',true); s.grantProfileAccess(p.id,{scope:'conversation',projectId:p.projectId,conversationId:${JSON.stringify(conversationId)}}); const r=s.create({projectId:p.projectId,engine:'pi',conversationId:${JSON.stringify(conversationId)},appNodeId:${JSON.stringify(env.nodes[0].nodeId)},profileId:p.id});s.finish(r.id,'closed');console.log(JSON.stringify(r));s.close();`;
   return childCode(index,code);
 }
 
@@ -101,6 +101,7 @@ test("legacy exact session-ID lookup resolves its owner without selecting anothe
   assert.equal(found.body.session.nodeId,b.nodeId);
   assert.equal((await request(0,"GET",`/browser/sessions/${randomUUID()}`)).status,404);
   const db=new DatabaseSync(path.join(b.dataDir,"node.db"));
+  db.exec("PRAGMA busy_timeout=5000");
   db.prepare("UPDATE browser_sessions SET state='interrupted',restoreOnRestart=1 WHERE id=?").run(remote.id);
   try {
     const closed=await request(0,"POST",`/browser/sessions/${remote.id}/command`,{action:"close"});
@@ -121,6 +122,7 @@ test("agent discovery follows conversation across nodes and relay keeps paused r
   assert.deepEqual([...new Set(profiles.body.profiles.map((p:any)=>p.nodeId))].sort(),[a.nodeId,b.nodeId].sort());
   const remote=discovery.body.sessions.find((s:any)=>s.nodeId===b.nodeId);
   const db=new DatabaseSync(path.join(b.dataDir,"node.db"));
+  db.exec("PRAGMA busy_timeout=5000");
   db.prepare("UPDATE browser_sessions SET state='interrupted',restoreOnRestart=1,recovery=? WHERE id=?").run(JSON.stringify({origins:["http://127.0.0.1:1234"],activeIndex:0,human:"synthetic-human"}),remote.id);
   try {
     const paused=await agent(0,{operation:"command",profileId:remote.profileId,command:{action:"close"}});
@@ -149,6 +151,7 @@ test("agent downloads use the selected remote account after the default changes"
   const downloadId=randomUUID();
   await childCode(1,`import { BrowserStore } from './src/browser-store.ts';import { mkdirSync,writeFileSync } from 'node:fs';import path from 'node:path';const s=new BrowserStore();s.saveDownload(${JSON.stringify(remote.id)},{id:${JSON.stringify(downloadId)},name:'fixture.txt',ready:true});const folder=path.join(process.env.JOINT_BOB_DATA_DIR,'browser',${JSON.stringify(remote.id)},'downloads');mkdirSync(folder,{recursive:true});writeFileSync(path.join(folder,${JSON.stringify(downloadId)}),'remote fixture bytes');s.close();console.log('null');`);
   const db=new DatabaseSync(path.join(b.dataDir,"node.db"));
+  db.exec("PRAGMA busy_timeout=5000");
   db.prepare("UPDATE browser_sessions SET state='running',restoreOnRestart=0 WHERE id=?").run(remote.id);
   try {
     await request(0,"PUT","/browser/config",{executorNodeId:a.nodeId});
@@ -173,6 +176,7 @@ test("logical conversation preference and remote recovery commands survive engin
   const listed=await agent(0,{operation:"status"},"claude");
   const remote=listed.body.sessions.find((s:any)=>s.nodeId===b.nodeId);
   const db=new DatabaseSync(path.join(b.dataDir,"node.db"));
+  db.exec("PRAGMA busy_timeout=5000");
   db.prepare("UPDATE browser_sessions SET state='interrupted',restoreOnRestart=1,recovery=? WHERE id=?").run(JSON.stringify({origins:[],activeIndex:0,human:null}),remote.id);
   try {assert.equal((await agent(0,{operation:"command",profileId:remote.profileId,command:{action:"close"}},"claude")).status,200);}
   finally {db.close();}
@@ -201,17 +205,48 @@ test("a peer missing the browser endpoint is unavailable, not an empty account i
   fixture.listen(0,"127.0.0.1");await once(fixture,"listening");
   const address=fixture.address();assert.ok(address && typeof address!=="string");
   const db=new DatabaseSync(path.join(a.dataDir,"node.db"));
-  db.prepare("UPDATE cluster_peers SET url=? WHERE id=?").run(`http://127.0.0.1:${address.port}`,b.nodeId);
+  db.exec("PRAGMA busy_timeout=5000");
   try {
+    db.prepare("UPDATE cluster_peers SET url=? WHERE id=?").run(`http://127.0.0.1:${address.port}`,b.nodeId);
     const discovery=await request(0,"GET",`/browser/sessions?${query()}`);
     assert.deepEqual(discovery.body.unavailableNodes.map((n:any)=>n.nodeId),[b.nodeId]);
     assert.equal((await agent(0,{operation:"command",command:{action:"close"}})).status,503);
-  } finally {db.prepare("UPDATE cluster_peers SET url=? WHERE id=?").run(b.url,b.nodeId);db.close();fixture.closeAllConnections();await new Promise<void>(resolve=>fixture.close(()=>resolve()));}
+  } finally {
+    try { db.prepare("UPDATE cluster_peers SET url=? WHERE id=?").run(b.url,b.nodeId); }
+    finally { db.close();fixture.closeAllConnections();await new Promise<void>(resolve=>fixture.close(()=>resolve())); }
+  }
+});
+
+test("cold profile discovery reports unavailable inventory instead of claiming the profile is missing", async () => {
+  const [a, b] = env.nodes;
+  const fixture = createServer(async (incoming, response) => {
+    let body = "";
+    for await (const chunk of incoming) body += chunk;
+    const operation = JSON.parse(body).operation;
+    response.writeHead(operation === "list" ? 200 : 503, { "Content-Type": "application/json" });
+    response.end(JSON.stringify(operation === "list" ? { sessions: [] } : { error: "Profile inventory unavailable" }));
+  });
+  fixture.listen(0, "127.0.0.1"); await once(fixture, "listening");
+  const address = fixture.address(); assert.ok(address && typeof address !== "string");
+  const db = new DatabaseSync(path.join(a.dataDir, "node.db"));
+  db.exec("PRAGMA busy_timeout=5000");
+  try {
+    db.prepare("UPDATE cluster_peers SET url=? WHERE id=?").run(`http://127.0.0.1:${address.port}`, b.nodeId);
+    const result = await request(0, "POST", "/browser/sessions", { projectId: a.projects[0].id, engine: "pi", conversationId, appNodeId: a.nodeId, profileId: randomUUID() });
+    assert.equal(result.status, 503, JSON.stringify(result.body));
+    assert.match(result.body.error, /discovery incomplete/i);
+  } finally {
+    try { db.prepare("UPDATE cluster_peers SET url=? WHERE id=?").run(b.url, b.nodeId); }
+    finally {
+      db.close(); fixture.closeAllConnections();
+      await new Promise<void>(resolve => fixture.close(() => resolve()));
+    }
+  }
 });
 
 test("human explicit owner profile attachment works while an unrelated peer is offline", async () => {
   const [a,b]=env.nodes;
-  const profile=await childCode(0,`import { BrowserStore } from './src/browser-store.ts';const s=new BrowserStore();console.log(JSON.stringify(s.createProfile(${JSON.stringify(a.projects[0].id)},'Selected owner-local account')));s.close();`);
+  const profile=await childCode(0,`import { BrowserStore } from './src/browser-store.ts';const s=new BrowserStore();const p=s.createProfile(${JSON.stringify(a.projects[0].id)},'Selected owner-local account');s.grantProfileAccess(p.id,{scope:'project',projectId:p.projectId});console.log(JSON.stringify(p));s.close();`);
   await stopDevNode(servers[1]);
   try {
     const attach=await request(0,"POST",`/browser/sessions?nodeId=${a.nodeId}`,{projectId:a.projects[0].id,engine:"pi",conversationId:randomUUID(),appNodeId:a.nodeId,profileId:profile.id});
@@ -224,6 +259,7 @@ test("offline discovery is explicit, rejects guesses, and preferences converge a
   const before=await agent(0,{operation:"status"});
   const local=before.body.sessions.find((s:any)=>s.nodeId===a.nodeId);
   const db=new DatabaseSync(path.join(a.dataDir,"node.db"));
+  db.exec("PRAGMA busy_timeout=5000");
   db.prepare("UPDATE browser_sessions SET state='interrupted',restoreOnRestart=1 WHERE id=?").run(local.id);
   await stopDevNode(servers[1]);
   try {
@@ -234,7 +270,7 @@ test("offline discovery is explicit, rejects guesses, and preferences converge a
     assert.equal(named.status,409);
     assert.match(named.body.error,new RegExp(`browser-${a.key}`),"Explicit creation reaches selected node despite unrelated offline peer");
     assert.equal((await agent(0,{operation:"command",profileId:local.profileId,command:{action:"close"}})).status,200);
-    const profile=await childCode(0,`import { BrowserStore } from './src/browser-store.ts';const s=new BrowserStore();console.log(JSON.stringify(s.createProfile(${JSON.stringify(a.projects[0].id)},'Unattached synthetic profile')));s.close();`);
+    const profile=await childCode(0,`import { BrowserStore } from './src/browser-store.ts';const s=new BrowserStore();const p=s.createProfile(${JSON.stringify(a.projects[0].id)},'Granted synthetic profile');s.grantProfileAccess(p.id,{scope:'project',projectId:p.projectId});console.log(JSON.stringify(p));s.close();`);
     const attach=await request(0,"POST",`/browser/sessions?nodeId=${a.nodeId}`,{projectId:a.projects[0].id,engine:"pi",conversationId,appNodeId:a.nodeId,profileId:profile.id});
     assert.equal(attach.status,409);assert.match(attach.body.error,new RegExp(`browser-${a.key}`),"Human can attach a known owner-local profile despite unrelated offline peer");
     const unknown=await request(0,"GET",`/browser/sessions/${randomUUID()}`);assert.equal(unknown.status,503,"Missing exact ID plus offline peer must not select another account");

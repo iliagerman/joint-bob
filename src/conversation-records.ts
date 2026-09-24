@@ -4,6 +4,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { ConversationEngine } from "./conversation-ownership.js";
 import { enqueueReplicationEvent, ensureReplicationSchema, type ReplicationEvent } from "./replication.js";
+import { dropConversationGrantsInDatabase } from "./browser-store.js";
 import { isHarnessId } from "./types.js";
 
 export interface ConversationRecord {
@@ -240,6 +241,16 @@ export function applyConversationRecordEvent(db: DatabaseSync, event: Replicatio
     return;
   }
   if (!payload.record) {
+    // Deleting a conversation also drops its browser profile assignments on this
+    // node, durably: this apply path is the catch-up for peers that were offline
+    // when the deletion happened. Harness-switched segments share one logical
+    // conversation id, so grants keyed on any segment or the logical id go now.
+    const existing = db.prepare("SELECT conversation_id FROM conversation_records WHERE project_id = ? AND engine = ? AND session_id = ?").get(projectId, payload.engine, payload.sessionId) as { conversation_id: string | null } | undefined;
+    const logical = existing?.conversation_id ?? undefined;
+    const segments = logical
+      ? (db.prepare("SELECT session_id AS sessionId FROM conversation_records WHERE project_id = ? AND conversation_id = ?").all(projectId, logical) as Array<{ sessionId: string }>).map(({ sessionId }) => sessionId)
+      : [];
+    for (const conversationId of new Set([payload.sessionId, ...(logical ? [logical] : []), ...segments])) dropConversationGrantsInDatabase(db, projectId, conversationId);
     db.prepare("DELETE FROM conversation_records WHERE project_id = ? AND engine = ? AND session_id = ?").run(projectId, payload.engine, payload.sessionId);
     db.prepare("INSERT INTO conversation_record_tombstones (project_id, engine, session_id, updated_at, origin_node_id) VALUES (?, ?, ?, ?, ?) ON CONFLICT(project_id, engine, session_id) DO UPDATE SET updated_at = excluded.updated_at, origin_node_id = excluded.origin_node_id").run(projectId, payload.engine, payload.sessionId, payload.updatedAt, payload.originNodeId);
     return;

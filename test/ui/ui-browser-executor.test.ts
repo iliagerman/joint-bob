@@ -104,6 +104,7 @@ test("local browser viewer routes HTTP, downloads and WebSocket to owner", async
   }
   const { createBrowserViewer } = runInNewContext(`${source.replace(/export /g, "")}\n({ createBrowserViewer })`, {
     URL, URLSearchParams, location: { href: "https://app.example/browser.html", protocol: "https:" },
+    window: { addEventListener() {}, removeEventListener() {} },
     document: { querySelector: () => null, documentElement: { dataset: {} }, createElement: element, createRange: () => ({ createContextualFragment: () => ({}) }) },
     Option: class { constructor(public label: string, public value: string) {} }, WebSocket: Socket,
     setTimeout: () => 1, clearTimeout() {},
@@ -166,7 +167,10 @@ async function standaloneViewer(search: string, appNodeId: string) {
     URL, URLSearchParams, location: new URL(`https://app.example/browser.html?${search}`),
     document: { querySelector: (selector: string) => selector === "[data-browser-standalone]" ? root : null,
       documentElement: { dataset: {} }, createElement: element, createRange: () => ({ createContextualFragment: () => ({}) }) },
-    window: { addEventListener(name: string, handler: Function) { windowHandlers[name] = handler; } },
+    window: {
+      addEventListener(name: string, handler: Function) { windowHandlers[name] = handler; },
+      removeEventListener(name: string, handler: Function) { if (windowHandlers[name] === handler) delete windowHandlers[name]; },
+    },
     Option: class { constructor(public label: string, public value: string) {} }, WebSocket: Socket,
     setTimeout: () => 1, clearTimeout() {},
     fetch: async (path: string, options: any) => {
@@ -541,7 +545,11 @@ test("browser viewer UI", { timeout: 180_000 }, async (t) => {
         assert.equal(f.starts.length, 2, "different conversations need separate browser sessions");
         assert.notEqual(f.starts[1].conversationId, f.starts[0].conversationId);
         assert.equal(f.starts[1].engine, "claude");
-        assert.equal(f.queries.at(-1)!.searchParams.get("conversationId"), f.starts[1].conversationId);
+        // Global sign-in polling may follow the viewer request; check the last
+        // conversation-scoped lookup rather than racing that background poll.
+        const lookup = f.queries.findLast(url => url.searchParams.has("conversationId"));
+        assert.equal(lookup?.searchParams.get("conversationId"), f.starts[1].conversationId);
+        assert.equal(lookup?.searchParams.get("engine"), "claude");
       } finally { await f.page.close(); }
     });
     await t.test("two accounts stay running while viewer switches and End closes only selected account", async () => {

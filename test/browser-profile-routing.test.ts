@@ -22,7 +22,11 @@ async function fixture(t: TestContext) {
     owner: "agent", fileChooser: false, fileChooserRequest: null, dialog: null, downloads: [] }));
   const runtime = browserRuntime();
   const profiles = [...sessions.map((s, i) => ({ id: s.profileId!, projectId: identity.projectId, label: `Account ${i}` })), { id: randomUUID(), projectId: identity.projectId, label: "Unattached account" }];
+  const grantedIds = new Set(sessions.map(session => session.profileId));
   t.mock.method(runtime, "profiles", async () => profiles);
+  t.mock.method(runtime, "usableProfiles", async () => profiles.filter(profile => grantedIds.has(profile.id)));
+  t.mock.method(runtime, "profileUsable", (id: string, projectId: string, conversationId?: string) => grantedIds.has(id) && projectId === identity.projectId && (!conversationId || conversationId === identity.conversationId));
+  t.mock.method(runtime, "profile", (id: string) => { const profile = profiles.find(profile => profile.id === id); if (!profile) throw new Error("Browser profile not found"); return profile; });
   const executed: string[] = [], started: BrowserStart[] = [];
   t.mock.method(runtime, "list", async (actual: unknown) => { assert.deepEqual(actual, identity); return sessions; });
   t.mock.method(runtime, "get", async (id: string) => { const found = sessions.find(s => s.id === id); assert.ok(found); return found; });
@@ -85,14 +89,14 @@ test("agent can explicitly cancel a failed profile restore without selecting ano
   assert.deepEqual(f.executed, [f.sessions[1].id]);
 });
 
-test("agents discover and reopen only profiles attached to their conversation", async t => {
+test("agents discover and reopen only profiles granted to their conversation", async t => {
   const f = await fixture(t);
   const listed = await f.request({ operation: "profiles" });
   assert.equal(listed.status, 200);
   assert.deepEqual((await listed.json()).profiles.map((p: { id: string }) => p.id), f.sessions.map(s => s.profileId));
   const unattached = await f.request({ operation: "start", profileId: f.profiles[2].id });
   assert.equal(unattached.status, 403);
-  assert.match((await unattached.json()).error, /viewer|attached/i);
+  assert.match((await unattached.json()).error, /not granted/i);
   assert.equal(f.started.length, 0);
   const attached = await f.request({ operation: "start", profileId: f.profiles[0].id });
   assert.equal(attached.status, 200);

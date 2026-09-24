@@ -20,6 +20,25 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
   const machineName = (id) => nodes.find((node) => node.id === id)?.name || id || "Not configured";
   const startNodeId = () => get("start-node").value || preference?.effectiveNodeId;
   const preferenceUrl = () => `/api/browser/preferences?${new URLSearchParams({ projectId: identity.projectId, engine: identity.engine, conversationId: identity.conversationId })}`;
+  // Profile access controls live in their own module, registered on globalThis
+  // by the page or the app shell. When it is absent (synthetic harnesses, a
+  // failed load) the profiles list falls back to its plain legacy rows.
+  const profileAccess = globalThis.createBrowserProfileAccessControls?.({
+    api: request,
+    confirm: confirmAction,
+    machineName,
+    identity: () => identity,
+    accessRequest: (profileId, update) => {
+      const query = new URLSearchParams({ projectId: identity?.projectId || session?.projectId || "" });
+      if (identity?.conversationId) query.set("conversationId", identity.conversationId);
+      return api(browserUrl(`/api/browser/profiles/${encodeURIComponent(profileId)}/access?${query}`, profilesNodeId), { method: "PUT", body: JSON.stringify(update) });
+    },
+    onChanged: (profile) => {
+      const index = profiles.findIndex((candidate) => candidate.id === profile.id);
+      if (index >= 0) profiles[index] = profile;
+      renderProfiles();
+    },
+  }) ?? null;
   root.classList.add("browser-viewer");
   if (loginMode) root.classList.add("browser-login-mode");
   // Static markup only; page content and other dynamic values use textContent.
@@ -107,8 +126,8 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
       </details>
       <details class="browser-details" data-testid="browser-downloads-details"><summary data-testid="browser-downloads-toggle">Downloads</summary><ul data-testid="browser-downloads-list"></ul></details>
       <details class="browser-details" data-testid="browser-profiles-details"><summary data-testid="browser-profiles-toggle">Browser profiles for this project</summary>
-        <p class="browser-hint">Switching accounts changes only this viewer. With multiple accounts, tell the agent which profile ID to use.</p>
-        <p class="browser-hint">Cookies and browser data are saved automatically on this node. Sign in here; no separate Secrets account is required. Opening a profile here attaches all its signed-in websites to this conversation. Keep sensitive accounts in separate profiles. For WhatsApp, take control and scan the QR code with your phone to link this browser. Profiles are not synced to other nodes. Restarts reopen website origins without replaying agent actions. Browser data is not app-encrypted; use FileVault or LUKS for disk protection.</p>
+        <p class="browser-hint">Switching accounts changes only this viewer. Profiles with no assignments remain here on their owning machine. Grant this conversation access before opening one, then tell the agent which profile ID to use.</p>
+        <p class="browser-hint">Cookies and browser data are saved automatically on the profile's machine; no separate Secrets account is required. Keep sensitive accounts in separate profiles. Each profile's Access panel decides who may open it: the creating conversation by default, widened to a project, more conversations, or all projects; you keep manual control regardless of grants. New profiles start node-only; creating one on another browser machine opts it into cross-node use, and Access toggles that anytime. For WhatsApp, take control and scan the QR code with your phone to link this browser. Browser data is not app-encrypted; use FileVault or LUKS for disk protection.</p>
         <form class="browser-profile-form" data-part="profile-form"><input aria-label="Current profile name" placeholder="Rename current profile" maxlength="80" required data-testid="browser-profile-label" /><button class="ghost compact" type="submit" data-testid="browser-save-profile">Rename profile</button></form>
         <ul data-testid="browser-profiles-list"></ul>
       </details>
@@ -353,24 +372,33 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     get("profiles-list").replaceChildren();
     get("profile-select").replaceChildren(new Option("Conversation default", ""), new Option("New named profile…", "new"));
     if (!ownerId) return;
-    const result = await api(browserUrl(`/api/browser/profiles?${new URLSearchParams({ projectId })}`, ownerId));
+    // The conversation's own grants widen the listing beyond project defaults.
+    const result = await api(browserUrl(`/api/browser/profiles?${new URLSearchParams({ projectId, ...(identity?.conversationId ? { conversationId: identity.conversationId } : {}) })}`, ownerId));
     if (disposed || profilesNodeId !== ownerId) return;
     profiles = result.profiles; profilesReady = true;
+    renderProfiles();
+  }
+  function renderProfiles() {
     const selected = get("profile-select").value;
     get("profile-select").replaceChildren(new Option("Conversation default", ""), new Option("New named profile…", "new"), ...profiles.map((profile) => new Option(`${profile.label} · ${profile.persistent ? "Persistent" : "Legacy import"}`, profile.id)));
     get("profile-select").value = selected === "new" || profiles.some((profile) => profile.id === selected) ? selected : "";
-    get("profiles-list").replaceChildren(...profiles.map((profile) => {
+    if (profileAccess) get("profiles-list").replaceChildren(...profiles.map((profile) => profileAccess.renderProfileRow(profile, { onDelete: deleteProfile })));
+    else get("profiles-list").replaceChildren(...profiles.map((profile) => {
       const item = document.createElement("li"), label = document.createElement("span"); label.textContent = `${profile.label} · ${profile.persistent ? "Persistent" : "Legacy import on next start"} · ${profile.id}`;
-      const remove = button("Delete", "delete-profile", async () => {
-        if (!await confirmAction({ title: "Delete browser profile?", message: `Permanently delete “${profile.label}” and its cookies and browser data from this project on this node? End all sessions using it first. Running or restore-pending profiles cannot be deleted.`, confirmLabel: "Delete profile", destructive: true })) return;
-        await operation(async () => {
-          if (startNodeId() !== ownerId) throw new Error("Start machine changed. Choose Delete again on the intended machine.");
-          await api(browserUrl(`/api/browser/profiles/${encodeURIComponent(profile.id)}?${new URLSearchParams({ projectId })}`, ownerId), { method: "DELETE" }); await loadProfiles();
-        });
-      });
+      const remove = button("Delete", "delete-profile", () => { void deleteProfile(profile); });
       remove.setAttribute("aria-label", `Delete browser profile ${profile.label}`); item.append(label, remove); return item;
     }));
     if (!profiles.length) get("profiles-list").textContent = "No browser profiles for this project yet.";
+  }
+  async function deleteProfile(profile) {
+    const projectId = identity?.projectId || session?.projectId;
+    if (!projectId) return;
+    const ownerId = profilesNodeId;
+    if (!await confirmAction({ title: "Delete browser profile?", message: `Permanently delete “${profile.label}” and its cookies and browser data from this project on this node? End all sessions using it first. Running or restore-pending profiles cannot be deleted.`, confirmLabel: "Delete profile", destructive: true })) return;
+    await operation(async () => {
+      if (startNodeId() !== ownerId) throw new Error("Start machine changed. Choose Delete again on the intended machine.");
+      await api(browserUrl(`/api/browser/profiles/${encodeURIComponent(profile.id)}?${new URLSearchParams({ projectId })}`, ownerId), { method: "DELETE" }); await loadProfiles();
+    });
   }
   async function operation(work) {
     if (busy || disposed) return;

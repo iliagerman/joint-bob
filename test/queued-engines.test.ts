@@ -82,7 +82,11 @@ for (const failFirst of [false, true]) test(`update recovery starts every conver
     sockets.push(chat.socket);
     await waitFor(chat.messages, () => chat.messages.some((frame) => frame.type === "ready"));
   }
-  const shared = opened.map((chat) => [...harnessSessions.values()].find((candidate) => candidate.session.id === chat.messages.find((frame) => frame.type === "ready")!.sessionId)!);
+  const shared = await waitForAssertion(async () => {
+    const sessions = opened.map((chat) => [...harnessSessions.values()].find((candidate) => candidate.session.id === chat.messages.find((frame) => frame.type === "ready")!.sessionId)!);
+    assert.ok(sessions.every(Boolean), "both ready conversations must have registered harness sessions");
+    return sessions;
+  }, 5_000);
   const calls: string[][] = [[], []];
   shared.forEach((session, index) => context.mock.method(session.session, "prompt", async (input) => {
     calls[index].push(input.text);

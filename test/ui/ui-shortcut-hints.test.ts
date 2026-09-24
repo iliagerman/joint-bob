@@ -197,11 +197,11 @@ test("the project title keeps collapse while its action row sits above search", 
   assert.equal(cut, false, "the app name and subtitle fit their row");
 });
 
-test("the chat toolbar keeps its controls on one line and hangs the badges below them", async () => {
+test("the chat toolbar splits its controls across two rows and hangs the badges below them", async () => {
   await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
   await page.locator("#sessionList .session-card", { hasText: "Thread-Based Agent Builder" }).click();
   await page.locator("#modelButton:enabled").waitFor();
-  // Wide enough that the toolbar keeps every control on one row, so alignment is unambiguous.
+  // Wide enough that neither row re-wraps, so the two-row split is unambiguous.
   await page.setViewportSize({ width: 1800, height: 900 });
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 
@@ -222,6 +222,13 @@ test("the chat toolbar keeps its controls on one line and hangs the badges below
           const box = range.getBoundingClientRect();
           return Math.round((box.top + box.bottom) / 2 * 10) / 10;
         }),
+      // The trailing actions must stay inside the toolbar box instead of riding off the panel edge.
+      fits: (() => {
+        const barBox = bar.getBoundingClientRect();
+        const visible = [...bar.querySelectorAll("button")].filter((button) => button.getBoundingClientRect().height > 0);
+        const last = visible[visible.length - 1].getBoundingClientRect();
+        return last.right <= barBox.right + 0.5;
+      })(),
     };
   });
 
@@ -245,11 +252,18 @@ test("the chat toolbar keeps its controls on one line and hangs the badges below
   assert.equal(resting.badges, 0, "a resting toolbar shows no badges at all");
   assert.ok(overlays.length >= 7, `every toolbar control carries a badge, saw ${overlays.length}`);
   assert.ok(overlays.every((badge) => badge.below && badge.centred), `each badge sits under its own control, got ${JSON.stringify(overlays)}`);
+  assert.equal(resting.fits, true, "the trailing actions stay inside the toolbar");
+  // The desktop toolbar reads as two rows: the selects and the model button on the
+  // first, the action buttons on the second, so wide screens stop clipping the
+  // trailing actions off the panel edge (92831a3).
   const controlLine = resting.controls[0];
   assert.ok(resting.controls.every((middle) => Math.abs(middle - controlLine) <= 1),
-    `selects and the model button share one line, got ${JSON.stringify(resting.controls)}`);
-  assert.ok(resting.actions.every((middle) => middle !== null && Math.abs(middle - controlLine) <= 2),
-    `action labels sit on the control line (${controlLine}), got ${JSON.stringify(resting.actions)}`);
+    `selects and the model button share the top row, got ${JSON.stringify(resting.controls)}`);
+  const actionLine = resting.actions[0]!;
+  assert.ok(resting.actions.every((middle) => middle !== null && Math.abs(middle - actionLine) <= 2),
+    `action labels share the row below the controls, got ${JSON.stringify(resting.actions)}`);
+  assert.ok(actionLine > controlLine + 8,
+    `the actions sit on their own row (${actionLine}) below the controls (${controlLine})`);
 });
 
 test("the composer shortcut puts the cursor in the message box", async () => {

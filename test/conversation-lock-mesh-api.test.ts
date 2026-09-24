@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import WebSocket from "ws";
-import { stopDevNode } from "./dev-nodes.js";
+import { stopDevNode, waitForDevNode } from "./dev-nodes.js";
 
 interface NodeFixture { dataDir: string; port: number; url: string; id: string; token: string; projectId: string }
 
@@ -61,32 +61,12 @@ async function pairNode(local: NodeFixture, remote: NodeFixture, home: string, r
 }
 
 function startNode(node: NodeFixture, home: string): Promise<ChildProcess> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ["--import", "tsx", "src/server.ts"], {
-      cwd: process.cwd(),
-      env: { ...process.env, PORT: String(node.port), NODE_ENV: "test", HOME: home, JOINT_BOB_DATA_DIR: node.dataDir },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stderr = "";
-    child.stderr!.on("data", (chunk) => { stderr = (stderr + String(chunk)).slice(-8_000); });
-    const timeout = setTimeout(() => {
-      child.kill("SIGKILL");
-      reject(new Error(`Server startup timed out: ${stderr}`));
-    }, 15_000);
-    child.once("exit", (status) => {
-      clearTimeout(timeout);
-      reject(new Error(`Server exited during startup: ${status}: ${stderr}`));
-    });
-    child.once("error", (error) => {
-      clearTimeout(timeout);
-      reject(error);
-    });
-    child.stdout!.on("data", (chunk) => {
-      if (!String(chunk).includes("Joint Bob listening")) return;
-      clearTimeout(timeout);
-      resolve(child);
-    });
+  const child = spawn(process.execPath, ["--import", "tsx", "src/server.ts"], {
+    cwd: process.cwd(),
+    env: { ...process.env, PORT: String(node.port), NODE_ENV: "test", HOME: home, JOINT_BOB_DATA_DIR: node.dataDir },
+    stdio: ["ignore", "pipe", "pipe"],
   });
+  return waitForDevNode(child, node.id, node.url);
 }
 
 // Resolves with the `ready` frame so the test can read the ownership the node published.

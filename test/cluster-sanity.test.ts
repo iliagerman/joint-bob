@@ -21,6 +21,7 @@ import { openPiRuntimeDatabase, publishPiRuntime } from "../src/pi-runtime.js";
 import { startSupervisor } from "../scripts/joint-bob-supervisor.mjs";
 import { supervisorRequest } from "../scripts/supervisor-client.mjs";
 import { backgroundClusterFixture, closeBackgroundClusterFixture, startSyntheticTask } from "./background-tasks-fixture.js";
+import { browserCapability } from "../src/browser-runtime.js";
 
 
 interface PeerView { id: string; name: string; url: string; online: boolean; lastSeenAt?: string; tokenConfigured: boolean }
@@ -1582,4 +1583,217 @@ test("routing configurations share across paired nodes without changing the rece
   assert.ok(!afterDelete.configs.some((config) => config.id === configId), "the shared copy is gone");
   assert.equal(afterDelete.selectedId, "", "deleting the selected configuration ends that selection");
   assert.equal((await readConfigs(nodeA, sessionA)).selectedId, "");
+});
+
+test("browser profile cross-node access toggle and grants gate the relay while the owner node keeps control", { timeout: 90_000 }, async () => {
+  const project = nodeA.projects[0];
+  const unshared = nodeA.projects[2];
+  // Seeded nodes know the shared projects under their own ids; grants on B must
+  // use B's canonical ids (A's ids resolve on B only as aliases).
+  const projectsOnB = await api<{ projects: Array<{ id: string; name: string }> }>(nodeB, sessionB, "GET", "/projects");
+  const projectOnB = projectsOnB.body.projects.find((candidate) => candidate.name === project.name)!;
+  const unsharedOnB = projectsOnB.body.projects.find((candidate) => candidate.name === unshared.name)!;
+  const conversation = randomUUID();
+  // A profile entity on B without launching a browser: write through B's own store.
+  // New profiles are node-only by default, so this fixture opts in explicitly.
+  const issue = await promisify(execFile)(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `import { BrowserStore } from './src/browser-store.ts';
+import { saveClusterProjectGrant } from './src/cluster.ts';
+const store = new BrowserStore();
+const profile = store.createProfile(${JSON.stringify(projectOnB.id)}, 'Relay login');
+store.setProfileCrossNode(profile.id, true);
+store.grantProfileAccess(profile.id, { scope: 'conversation', projectId: ${JSON.stringify(projectOnB.id)}, conversationId: ${JSON.stringify(conversation)} });
+store.grantProfileAccess(profile.id, { scope: 'project', projectId: ${JSON.stringify(unsharedOnB.id)} });
+store.close();
+await saveClusterProjectGrant(${JSON.stringify(nodeA.nodeId)}, [${JSON.stringify(projectOnB.id)}], ${JSON.stringify(nodeB.nodeId)});
+console.log(profile.id);`], { cwd: process.cwd(), env: { ...process.env, HOME: environment.home, JOINT_BOB_DATA_DIR: nodeB.dataDir }, timeout: 15000 });
+  const profileId = issue.stdout.trim();
+
+  // A's invitation grants it only the first project. The shared project sees the
+  // profile through the relay, and the grants metadata hides the project A cannot access.
+  const visible = await api<{ profiles: Array<{ id: string; grants: Array<{ projectId?: string }> }> }>(nodeA, sessionA, "GET", `/browser/profiles?${new URLSearchParams({ projectId: project.id, engine: "pi", conversationId: conversation, nodeId: nodeB.nodeId })}`);
+  assert.equal(visible.status, 200, JSON.stringify(visible.body));
+  assert.deepEqual(visible.body.profiles.map((profile) => profile.id), [profileId]);
+  assert.ok(visible.body.profiles[0].grants.every((grant) => grant.projectId !== unshared.id), "grant metadata must not leak projects the caller cannot access");
+  const unsharedList = await api(nodeA, sessionA, "GET", `/browser/profiles?${new URLSearchParams({ projectId: unshared.id, engine: "pi", conversationId: randomUUID(), nodeId: nodeB.nodeId })}`);
+  assert.ok(unsharedList.status === 403, "the relay enforces the project grant before the profile listing");
+
+  // Granting access to a project the caller is not authorized for is refused.
+  const foreignGrant = await api(nodeA, sessionA, "PUT", `/browser/profiles/${profileId}/access?${new URLSearchParams({ projectId: project.id, conversationId: conversation, nodeId: nodeB.nodeId })}`, { grant: { scope: "project", projectId: nodeA.projects[1].id } });
+  assert.equal(foreignGrant.status, 403, JSON.stringify(foreignGrant.body));
+  assert.match(foreignGrant.body.error, /not shared/i);
+  // Peers may not widen a profile to global scope; that stays on the owning node.
+  const globalGrant = await api(nodeA, sessionA, "PUT", `/browser/profiles/${profileId}/access?${new URLSearchParams({ projectId: project.id, conversationId: conversation, nodeId: nodeB.nodeId })}`, { grant: { scope: "global" } });
+  assert.equal(globalGrant.status, 403, JSON.stringify(globalGrant.body));
+  assert.match(globalGrant.body.error, /owning node|global/i);
+
+  // An ungranted conversation is refused before any launch. The machine is named
+  // explicitly, so the owner answers with the precise grant refusal.
+  const strangerConversation = randomUUID();
+  const start = await fetch(`${nodeA.url}/api/browser/sessions?nodeId=${nodeB.nodeId}`, {
+    method: "POST", headers: { Cookie: sessionA.cookie, "x-csrf-token": sessionA.csrfToken, "Content-Type": "application/json" },
+    body: JSON.stringify({ projectId: project.id, engine: "pi", conversationId: strangerConversation, appNodeId: nodeA.nodeId, profileId }),
+    signal: AbortSignal.timeout(30000),
+  });
+  const startBody = await start.json() as { error: string };
+  assert.equal(start.status, 403, JSON.stringify(startBody));
+  assert.match(startBody.error, /not granted to this conversation/i);
+
+  // The independent toggle: A can flip it through the relay, and once off, every
+  // relayed use is refused while B itself keeps the profile and its grants.
+  const restricted = await api<{ profile: { crossNodeAccess: boolean } }>(nodeA, sessionA, "PUT", `/browser/profiles/${profileId}/access?${new URLSearchParams({ projectId: project.id, conversationId: conversation, nodeId: nodeB.nodeId })}`, { crossNodeAccess: false });
+  assert.equal(restricted.status, 200, JSON.stringify(restricted.body));
+  assert.equal(restricted.body.profile.crossNodeAccess, false);
+  const hidden = await api<{ profiles: Array<{ id: string }> }>(nodeA, sessionA, "GET", `/browser/profiles?${new URLSearchParams({ projectId: project.id, engine: "pi", conversationId: conversation, nodeId: nodeB.nodeId })}`);
+  assert.equal(hidden.body.profiles.length, 0, "a node-restricted profile is hidden from peers");
+  const refused = await fetch(`${nodeA.url}/api/browser/sessions?nodeId=${nodeB.nodeId}`, {
+    method: "POST", headers: { Cookie: sessionA.cookie, "x-csrf-token": sessionA.csrfToken, "Content-Type": "application/json" },
+    body: JSON.stringify({ projectId: project.id, engine: "pi", conversationId: conversation, appNodeId: nodeA.nodeId, profileId }),
+    signal: AbortSignal.timeout(30000),
+  });
+  const refusedBody = await refused.json() as { error: string };
+  assert.equal(refused.status, 403, JSON.stringify(refusedBody));
+  assert.match(refusedBody.error, /restricted to this node/i, "the refusal must name the cross-node restriction, not a missing browser");
+  const ownerView = await api<{ profiles: Array<{ id: string }> }>(nodeB, sessionB, "GET", `/browser/profiles?${new URLSearchParams({ projectId: project.id, engine: "pi", conversationId: conversation })}`);
+  assert.deepEqual(ownerView.body.profiles.map((profile) => profile.id), [profileId], "the owner node is unaffected by its own restriction");
+  const restored = await api<{ profile: { crossNodeAccess: boolean } }>(nodeB, sessionB, "PUT", `/browser/profiles/${profileId}/access?${new URLSearchParams({ projectId: project.id, conversationId: conversation })}`, { crossNodeAccess: true });
+  assert.equal(restored.body.profile.crossNodeAccess, true);
+  const visibleAgain = await api<{ profiles: Array<{ id: string }> }>(nodeA, sessionA, "GET", `/browser/profiles?${new URLSearchParams({ projectId: project.id, engine: "pi", conversationId: conversation, nodeId: nodeB.nodeId })}`);
+  assert.deepEqual(visibleAgain.body.profiles.map((profile) => profile.id), [profileId]);
+});
+
+test("deleting a conversation on one node durably drops its profile grants on the browser-owning peer", { timeout: 90_000 }, async () => {
+  const project = nodeA.projects[0];
+  const sessions = await api<{ sessions: Array<{ id: string; harnessId: string }> }>(nodeA, sessionA, "GET", `/projects/${project.id}/sessions`);
+  const victim = sessions.body.sessions.find((session) => session.harnessId === "claude")!;
+  const conversation = randomUUID();
+  const projectsOnB = await api<{ projects: Array<{ id: string; name: string }> }>(nodeB, sessionB, "GET", "/projects");
+  const projectOnB = projectsOnB.body.projects.find((candidate) => candidate.name === project.name)!;
+  const issue = await promisify(execFile)(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `import { BrowserStore } from './src/browser-store.ts';
+const store = new BrowserStore();
+const profile = store.createProfile(${JSON.stringify(projectOnB.id)}, 'Tombstone login');
+store.setProfileCrossNode(profile.id, true);
+store.grantProfileAccess(profile.id, { scope: 'conversation', projectId: ${JSON.stringify(projectOnB.id)}, conversationId: ${JSON.stringify(conversation)} });
+store.grantProfileAccess(profile.id, { scope: 'conversation', projectId: ${JSON.stringify(projectOnB.id)}, conversationId: ${JSON.stringify(victim.id)} });
+store.close();
+console.log(profile.id);`], { cwd: process.cwd(), env: { ...process.env, HOME: environment.home, JOINT_BOB_DATA_DIR: nodeB.dataDir }, timeout: 15000 });
+  const profileId = issue.stdout.trim();
+  const deleted = await fetch(`${nodeA.url}/api/projects/${project.id}/sessions?${new URLSearchParams({ engine: "claude", sessionId: victim.id })}`, {
+    method: "DELETE", headers: { Cookie: sessionA.cookie, "x-csrf-token": sessionA.csrfToken }, signal: AbortSignal.timeout(30_000),
+  });
+  assert.equal(deleted.status, 204, await deleted.text().catch(() => ""));
+  // The tombstone replicates to B, whose apply path drops that conversation's grants.
+  const deadline = Date.now() + 15_000;
+  let grants: Array<{ conversationId?: string }> = [];
+  do {
+    const access = await api<{ profile: { grants: Array<{ conversationId?: string }> } }>(nodeB, sessionB, "PUT", `/browser/profiles/${profileId}/access?${new URLSearchParams({ projectId: projectOnB.id, conversation })}`, {});
+    assert.equal(access.status, 200, JSON.stringify(access.body));
+    grants = access.body.profile.grants;
+    if (!grants.some((grant) => grant.conversationId === victim.id)) break;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  } while (Date.now() < deadline);
+  assert.ok(!grants.some((grant) => grant.conversationId === victim.id), "the deleted conversation's assignment must reach the browser-owning peer");
+  assert.ok(grants.some((grant) => grant.conversationId === conversation), "unrelated assignments survive");
+  assert.ok((await api<{ profiles: Array<{ id: string }> }>(nodeB, sessionB, "GET", `/browser/profiles?${new URLSearchParams({ projectId: projectOnB.id, engine: "pi", conversationId: conversation })}`)).body.profiles.some(profile => profile.id === profileId), "the durable entity survives");
+});
+
+test("a cold start of a granted peer-owned profile routes to its owner, never to the preference machine", { timeout: 120_000 }, async () => {
+  const project = nodeA.projects[0];
+  const conversation = randomUUID();
+  const projectsOnB = await api<{ projects: Array<{ id: string; name: string }> }>(nodeB, sessionB, "GET", "/projects");
+  const projectOnB = projectsOnB.body.projects.find((candidate) => candidate.name === project.name)!;
+  const issue = await promisify(execFile)(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `import { BrowserStore } from './src/browser-store.ts';
+const store = new BrowserStore();
+const profile = store.createProfile(${JSON.stringify(projectOnB.id)}, 'Cold start login');
+store.setProfileCrossNode(profile.id, true);
+store.grantProfileAccess(profile.id, { scope: 'conversation', projectId: ${JSON.stringify(projectOnB.id)}, conversationId: ${JSON.stringify(conversation)} });
+store.close();
+console.log(profile.id);`], { cwd: process.cwd(), env: { ...process.env, HOME: environment.home, JOINT_BOB_DATA_DIR: nodeB.dataDir }, timeout: 15000 });
+  const profileId = issue.stdout.trim();
+  // Point every default at A, the machine that does NOT hold the profile.
+  assert.equal((await api(nodeA, sessionA, "PUT", "/browser/config", { executorNodeId: nodeA.nodeId })).status, 200);
+  try {
+    const capability = await browserCapability();
+    const started = await fetch(`${nodeA.url}/api/browser/sessions`, {
+      method: "POST", headers: { Cookie: sessionA.cookie, "x-csrf-token": sessionA.csrfToken, "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId: project.id, engine: "pi", conversationId: conversation, appNodeId: nodeA.nodeId, profileId }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    const body = await started.json().catch(() => ({ error: "" })) as { session?: { nodeId: string; id: string }; error: string };
+    if (capability.available) {
+      assert.equal(started.status, 201, JSON.stringify(body));
+      assert.equal(body.session!.nodeId, nodeB.nodeId, "the cold start must land on the profile's owner, not the configured default");
+    } else {
+      // No browser on this host: the request must still be routed to B and fail there,
+      // never fall back to A with a wrong-machine answer.
+      assert.notEqual(started.status, 404);
+      assert.match(body.error, /browser start failed|chrome is not installed/i);
+    }
+  } finally {
+    await api(nodeA, sessionA, "PUT", "/browser/config", { executorNodeId: null });
+  }
+});
+
+test("a node-restricted profile refuses remote browser monitor reads while the owner node's monitors pass the gate", { timeout: 90_000 }, async () => {
+  const project = nodeA.projects[0];
+  const conversation = randomUUID();
+  const projectsOnB = await api<{ projects: Array<{ id: string; name: string }> }>(nodeB, sessionB, "GET", "/projects");
+  const projectOnB = projectsOnB.body.projects.find((candidate) => candidate.name === project.name)!;
+  const issue = await promisify(execFile)(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `import { BrowserStore } from './src/browser-store.ts';
+const store = new BrowserStore();
+const profile = store.createProfile(${JSON.stringify(projectOnB.id)}, 'Monitored login');
+store.setProfileCrossNode(profile.id, true);
+store.grantProfileAccess(profile.id, { scope: 'conversation', projectId: ${JSON.stringify(projectOnB.id)}, conversationId: ${JSON.stringify(conversation)} });
+store.close();
+console.log(profile.id);`], { cwd: process.cwd(), env: { ...process.env, HOME: environment.home, JOINT_BOB_DATA_DIR: nodeB.dataDir }, timeout: 15000 });
+  const profileId = issue.stdout.trim();
+  const checker = { id: "fixture-page", version: 1, name: "Fixture page change", origins: ["https://example.com"], kind: "page-change", readySelector: "body", loginSelector: null, loadingSelector: null, emptySelector: null, account: { selector: "body", attribute: null, format: "text" }, target: { selector: "body", attribute: null, format: "text" }, targetLabel: { selector: "body", attribute: null, format: "text" }, itemsSelector: "body", itemId: null, sender: null, text: { selector: "body", attribute: null, format: "text" }, incomingSelector: null, outgoingSelector: null };
+  const binding = { nodeId: nodeB.nodeId, sessionId: randomUUID(), profileId, pageId: randomUUID(), engine: "pi", conversationId: conversation };
+  const input = { projectId: project.id, name: "Cross-node monitor", checkerId: checker.id, checkerVersion: checker.version, origin: "https://example.com", accountId: "fixture-account", targetIds: ["fixture-target"], intervalSeconds: 3600, binding, readAcknowledged: true };
+  // The monitor row lives on A; its browser binding points at B.
+  assert.equal((await api(nodeA, sessionA, "POST", "/browser/monitors", { nodeId: nodeA.nodeId, command: { action: "installChecker", projectId: project.id, definition: checker } })).status, 200);
+  const created = await api<{ monitor: { id: string; generation: number } }>(nodeA, sessionA, "POST", "/browser/monitors", { nodeId: nodeA.nodeId, command: { action: "create", input } });
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+  const monitorId = created.body.monitor.id;
+  const generation = created.body.monitor.generation;
+  // Cross-node access on: the read passes the gate and fails on the absent browser.
+  const allowed = await api(nodeA, sessionA, "POST", "/browser/monitors", { nodeId: nodeA.nodeId, command: { action: "enable", projectId: project.id, id: monitorId, generation, enabled: true } });
+  assert.equal(allowed.status, 409, JSON.stringify(allowed.body));
+  assert.match(allowed.body.error, /browser-stopped|not running/i, "with cross-node access the read must reach the browser, not be refused at the gate");
+  // Restricting the profile refuses the remote monitor read at the gate.
+  assert.equal((await api(nodeB, sessionB, "PUT", `/browser/profiles/${profileId}/access?${new URLSearchParams({ projectId: projectOnB.id, conversation })}`, { crossNodeAccess: false })).status, 200);
+  const denied = await api(nodeA, sessionA, "POST", "/browser/monitors", { nodeId: nodeA.nodeId, command: { action: "enable", projectId: project.id, id: monitorId, generation, enabled: true } });
+  assert.equal(denied.status, 403, JSON.stringify(denied.body));
+  assert.match(denied.body.error, /restricted to this node/i);
+  // The owner node's own monitor on the same restricted profile passes the gate.
+  assert.equal((await api(nodeB, sessionB, "POST", "/browser/monitors", { nodeId: nodeB.nodeId, command: { action: "installChecker", projectId: projectOnB.id, definition: checker } })).status, 200);
+  const localMonitor = await api<{ monitor: { id: string; generation: number } }>(nodeB, sessionB, "POST", "/browser/monitors", { nodeId: nodeB.nodeId, command: { action: "create", input: { ...input, projectId: projectOnB.id, name: "Owner node monitor" } } });
+  assert.equal(localMonitor.status, 200, JSON.stringify(localMonitor.body));
+  const localEnable = await api(nodeB, sessionB, "POST", "/browser/monitors", { nodeId: nodeB.nodeId, command: { action: "enable", projectId: projectOnB.id, id: localMonitor.body.monitor.id, generation: localMonitor.body.monitor.generation, enabled: true } });
+  assert.equal(localEnable.status, 409, JSON.stringify(localEnable.body));
+  assert.match(localEnable.body.error, /browser-stopped|not running/i, "the owner node's own monitor is not refused by the cross-node gate");
+});
+
+test("a remote start without an explicit profile cannot reopen a node-restricted profile its conversation used before", { timeout: 90_000 }, async () => {
+  const project = nodeA.projects[0];
+  const conversation = randomUUID();
+  const projectsOnB = await api<{ projects: Array<{ id: string; name: string }> }>(nodeB, sessionB, "GET", "/projects");
+  const projectOnB = projectsOnB.body.projects.find((candidate) => candidate.name === project.name)!;
+  // A node-restricted profile this conversation has history with: its closed
+  // session makes it the implicit default for a bare start.
+  const issue = await promisify(execFile)(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `import { BrowserStore } from './src/browser-store.ts';
+const store = new BrowserStore();
+const profile = store.createProfile(${JSON.stringify(projectOnB.id)}, 'Implicit island login');
+store.grantProfileAccess(profile.id, { scope: 'conversation', projectId: ${JSON.stringify(projectOnB.id)}, conversationId: ${JSON.stringify(conversation)} });
+const session = store.create({ projectId: ${JSON.stringify(projectOnB.id)}, engine: 'pi', conversationId: ${JSON.stringify(conversation)}, appNodeId: ${JSON.stringify(randomUUID())}, profileId: profile.id, url: 'https://example.com' });
+store.finish(session.id, 'closed');
+store.close();
+console.log(profile.id);`], { cwd: process.cwd(), env: { ...process.env, HOME: environment.home, JOINT_BOB_DATA_DIR: nodeB.dataDir }, timeout: 15000 });
+  const implicit = await fetch(`${nodeA.url}/api/browser/sessions?nodeId=${nodeB.nodeId}`, {
+    method: "POST", headers: { Cookie: sessionA.cookie, "x-csrf-token": sessionA.csrfToken, "Content-Type": "application/json" },
+    body: JSON.stringify({ projectId: project.id, engine: "pi", conversationId: conversation, appNodeId: nodeA.nodeId }),
+    signal: AbortSignal.timeout(30000),
+  });
+  const body = await implicit.json() as { error: string };
+  assert.equal(implicit.status, 403, JSON.stringify(body));
+  assert.match(body.error, /restricted to this node/i, "the implicit default profile must be gated after resolution, before any launch or navigation");
 });

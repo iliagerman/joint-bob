@@ -7,6 +7,7 @@ import { createByTheWayLease, deleteByTheWayLease, getByTheWayLease, getByTheWay
 import { type ClusterPeer, getClusterMachineToken, getClusterNode, getClusterPeer, listClusterPeers } from "../../cluster.js";
 import { beginConversationRecovery, compareAndSetConversationOwnership, type ConversationEngine, type ConversationOwnership, finishConversationRecovery, getConversationOwnership, type OwnershipApplyResult, sameConversationOwnership, takeConversationOwnership } from "../../conversation-ownership.js";
 import { deleteConversationRecord, getConversationRecord } from "../../conversation-records.js";
+import { dropBrowserConversationGrants } from "../../browser-store.js";
 import { markConversationReviewed, markConversationsReviewed } from "../../conversation-reviews.js";
 import { notificationConversationId, setConversationNotification } from "../../conversation-notifications.js";
 import { clearHarnessSessionCache, getHarness, listHarnessSessions } from "../../harnesses.js";
@@ -705,6 +706,12 @@ export async function deleteLocalConversation(project: ProjectRecord, engine: Co
       }
     }
     await deleteConversationRecord(project.id, target.engine, target.sessionId, local.id);
+  }
+  // A deleted conversation's browser profile assignments go with it. Harness-switched
+  // segments are one conversation, so every segment id and the logical conversation id
+  // drop their grants; the profile entities themselves stay durable.
+  for (const conversationId of new Set([sessionId, ...(session.conversationId ? [session.conversationId] : []), ...targets.map(target => target.sessionId)])) {
+    dropBrowserConversationGrants(project.id, conversationId);
   }
   clearHarnessSessionCache(project.id);
   broadcastToProject(project.id, { type: "sessionsChanged" });

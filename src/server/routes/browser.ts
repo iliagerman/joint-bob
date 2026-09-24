@@ -5,9 +5,9 @@ import { z } from "zod";
 import { app } from "../state.js";
 import { getClusterNode } from "../../cluster.js";
 import { applyBrowserConfiguration, readBrowserConfiguration, browserConfigurationSchema, applyBrowserPreference, readBrowserPreference, browserPreferenceSchema } from "../../browser-configuration.js";
-import { browserIdentitySchema, browserStartSchema, browserCommandSchema, type BrowserActor, type BrowserProfile } from "../../browser-types.js";
+import { browserIdentitySchema, browserStartSchema, browserCommandSchema, type BrowserActor } from "../../browser-types.js";
 import { type AuthSession } from "../../auth.js";
-import { browserRuntime, browserStatus, localBrowserStatus, configureBrowserExecutor, browserPreferences, canonicalBrowserIdentity, authorizeBrowserAgent, requireCompleteDiscovery, type BrowserDiscovery, browserOperation, browserOperationSchema, localBrowserOperation, BrowserRequestError, browserDownload, browserSessionOwner } from "../browser.js";
+import { browserRuntime, browserStatus, localBrowserStatus, configureBrowserExecutor, browserPreferences, canonicalBrowserIdentity, authorizeBrowserAgent, requireCompleteDiscovery, discoverBrowserProfiles, type BrowserDiscovery, browserOperation, browserOperationSchema, profileAccessUpdateSchema, localBrowserOperation, BrowserRequestError, browserDownload, browserSessionOwner } from "../browser.js";
 import { clusterPeerMayAccessProject } from "../cluster-helpers.js";
 import { sendError } from "../http-auth.js";
 import { browserAgentCredential, browserAgentCredentialOrigins } from "../../browser-agent.js";
@@ -21,7 +21,7 @@ function route(handler: (request: Request, response: Response) => Promise<void>)
     void handler(request, response).catch(error => {
       if (response.headersSent) { response.destroy(); return; }
       const message = error instanceof Error ? error.message.split("\n")[0] : "Browser request failed";
-      const status = error instanceof BrowserRequestError ? error.status : error instanceof z.ZodError ? 400 : /not found|unknown (browser|session|profile|download)/i.test(message) ? 404 : 409;
+      const status = error instanceof BrowserRequestError ? error.status : error instanceof z.ZodError ? 400 : /restricted to this node/i.test(message) ? 403 : /not found|unknown (browser|session|profile|download)/i.test(message) ? 404 : 409;
       sendError(response, status, error instanceof z.ZodError ? "Invalid browser request" : message);
     });
   };
@@ -72,10 +72,16 @@ app.delete("/api/browser/sessions/:id", route(async (request,response) => {
   response.json(await browserOperation({operation:"forget",args:{id:id.parse(request.params.id)}},await human(response),targetNode(request)));
 }));
 app.get("/api/browser/profiles", route(async (request,response) => {
-  response.json(await browserOperation({operation:"profiles",args:{projectId:z.string().min(1).parse(request.query.projectId)}},await human(response),targetNode(request)));
+  const args = z.object({ projectId: z.string().min(1), conversationId: z.string().min(1).max(200).optional(), engine: z.string().min(1).max(40).optional() }).parse(request.query);
+  response.json(await browserOperation({operation:"profiles",args:{projectId:args.projectId,...(args.conversationId?{conversationId:args.conversationId}:{})}},await human(response),targetNode(request)));
 }));
 app.delete("/api/browser/profiles/:id", route(async (request,response) => {
   response.json(await browserOperation({operation:"deleteProfile",args:{id:id.parse(request.params.id),projectId:z.string().min(1).parse(request.query.projectId)}},await human(response),targetNode(request)));
+}));
+app.put("/api/browser/profiles/:id/access", route(async (request,response) => {
+  const query = z.object({ projectId: z.string().min(1), conversationId: z.string().min(1).max(200).optional(), engine: z.string().min(1).max(40).optional() }).parse(request.query);
+  const args = { id: id.parse(request.params.id), projectId: query.projectId, ...(query.conversationId ? { conversationId: query.conversationId } : {}), update: profileAccessUpdateSchema.parse(request.body) };
+  response.json(await browserOperation({operation:"profileAccess",args},await human(response),targetNode(request)));
 }));
 app.get("/api/browser/sessions/:id/downloads/:downloadId", route(async (request,response) => {
   const sessionId=id.parse(request.params.id);
@@ -104,11 +110,9 @@ app.post("/api/cluster/browser/operation",route(async (request,response)=>{
   const caller=machine(response);
   const operation=browserOperationSchema.parse(request.body), actor=actorSchema.parse(request.body.actor);
   const identity=actor.kind==="agent" ? await authorizeBrowserAgent(operation,browserIdentitySchema.parse(request.body.identity)) : undefined;
+  // Agents see profiles through their conversation's grants only, never a bare project listing.
+  if(identity && operation.operation==="profiles") operation.args.conversationId=identity.conversationId;
   const result=await localBrowserOperation(operation,actor,caller);
-  if(identity && operation.operation==="profiles") {
-    const attached=new Set((await browserRuntime().list(identity)).map(session=>session.profileId));
-    response.json({profiles:(result as {profiles:BrowserProfile[]}).profiles.filter(profile=>attached.has(profile.id))});return;
-  }
   response.json(result);
 }));
 app.post("/api/cluster/browser/download",route(async (request,response)=>{
@@ -116,6 +120,7 @@ app.post("/api/cluster/browser/download",route(async (request,response)=>{
   const body=z.object({id,downloadId:id}).parse(request.body);
   const session=await browserRuntime().get(body.id);
   if (!(await clusterPeerMayAccessProject(caller,session.projectId))) throw new BrowserRequestError(403,"Project is not shared with this node");
+  if (browserRuntime().profileOrNull(session.profileId)?.crossNodeAccess===false) throw new BrowserRequestError(403,"Browser profile is restricted to this node");
   if(request.body.identity) await authorizeBrowserAgent({operation:"get",args:{id:body.id}},browserIdentitySchema.parse(request.body.identity));
   const file=await browserRuntime().download(body.id,body.downloadId);attachment(response,file.name);response.setHeader("x-browser-filename",encodeURIComponent(file.name));
   await pipeline(createReadStream(file.path),response);
@@ -138,19 +143,15 @@ app.post("/api/browser/agent",route(async (request,response)=>{
     response.json(await browserOperation({operation:"start",args:{...identity,appNodeId:(await getClusterNode()).id,url:body.url,profileId:body.profileId,profileName:body.profileName}},actor,body.nodeId,identity));return;
   }
   const listed=await browserOperation({operation:"list",args:identity},actor,undefined,identity) as BrowserDiscovery;
-  const attached=new Set(listed.sessions.map(session=>session.profileId));
   if(body.operation==="profiles") {
-    const results=await Promise.all([...new Set(listed.sessions.map(session=>session.nodeId))].map(async nodeId=> {
-      const result=await browserOperation({operation:"profiles",args:{projectId:identity.projectId}},actor,nodeId,identity) as {profiles:BrowserProfile[]};
-      return result.profiles.filter(profile=>attached.has(profile.id)).map(profile=>({...profile,nodeId}));
-    }));
-    response.json({profiles:results.flat(),unavailableNodes:listed.unavailableNodes});return;
+    const discovered=await discoverBrowserProfiles(identity,actor);
+    response.json({profiles:discovered.profiles,unavailableNodes:[...listed.unavailableNodes,...discovered.unavailableNodes.filter(node=>!listed.unavailableNodes.some(entry=>entry.nodeId===node.nodeId))]});return;
   }
   if(body.operation==="status") {
     const status=await browserStatus();
     response.json({...listed,nodes:status.nodes,config:status.config,preference:await browserPreferences(identity)});return;
   }
-  if(!body.profileId || !attached.has(body.profileId)) requireCompleteDiscovery(listed);
+  if(!body.profileId || !listed.sessions.some(session=>session.profileId===body.profileId)) requireCompleteDiscovery(listed);
   const ending=body.operation==="command" && body.command.action==="close";
   const sessions=listed.sessions.filter(session=>(session.state==="running" || (ending && session.restoreOnRestart)) && (!body.profileId || session.profileId===body.profileId));
   if(sessions.length>1) throw new BrowserRequestError(409,"Multiple browser profiles are running. Specify --profile ID.");
@@ -160,7 +161,12 @@ app.post("/api/browser/agent",route(async (request,response)=>{
     try {
       const credential=browserAgentCredential(response.locals.browserAgentToken as string,body.accountId,body.variable);
       await browserOperation({operation:"command",args:{id:session.id,command:{action:"fill",selector:body.selector,text:credential.value,expectedOrigin:credential.origin,expectedPageId:session.activePageId!}}},actor,session.nodeId,identity);
-    } catch {
+    } catch (error) {
+      // Only fixed permission errors are safe to disclose. A relayed page error
+      // also arrives as BrowserRequestError and can contain the filled secret.
+      const text=error instanceof Error ? error.message : "";
+      if (["Browser profile grant was revoked for this conversation", "Browser profile is not granted to this conversation", "Browser profile is restricted to this node"].includes(text))
+        throw new BrowserRequestError(403,text);
       throw new BrowserRequestError(409,"Website credential fill failed; inspect the page and account access before continuing");
     }
     response.json({ok:true});return;

@@ -66,7 +66,12 @@ test("native profiles isolate accounts, enforce leases, rename in place and dele
     assert.equal((await runtime.list(start)).filter(row => row.state === "running").length, 2);
     await assert.rejects(runtime.create(start), /explicit.*profile|multiple/i);
     await assert.rejects(runtime.create({ ...start, profileName: "Work" }), /label|name|exists/i);
-    await assert.rejects(runtime.create({ ...start, conversationId: randomUUID(), profileId: first.profileId }), /use|lease|running/i);
+    // Grants, not implicit attachment, decide who may open a profile: grant the
+    // running profile to a second conversation so this refusal names the
+    // one-active-conversation lease, not the conversation grant gate.
+    const otherConversation = randomUUID();
+    runtime.grantProfileAccess(first.profileId!, { scope: "conversation", projectId: start.projectId, conversationId: otherConversation });
+    await assert.rejects(runtime.create({ ...start, conversationId: otherConversation, profileId: first.profileId }), /use|lease|running|active in another conversation/i);
     assert.equal((await runtime.create({ ...start, engine: "claude", profileId: first.profileId })).id, first.id);
     const renamed: any = await runtime.execute(first.id, { action: "saveProfile", label: "Private" }, agent);
     assert.equal(renamed.id, first.profileId);
@@ -171,6 +176,7 @@ test("legacy encrypted snapshot imports once and fresh native auth is never over
   const store = new BrowserStore();
   const state = { cookies: [], origins: [{ origin: "https://example.com", localStorage: [{ name: "auth", value: "dummy" }] }] };
   const profile = store.saveProfile(start.projectId, "Legacy", state);
+  store.grantProfileAccess(profile.id, { scope: "conversation", projectId: start.projectId, conversationId: start.conversationId });
   store.close();
   let runtime = new BrowserRuntime({ capability });
   try {
@@ -282,6 +288,7 @@ test("SQLite lease covers launch and context shutdown, not only running pages", 
   const start = identity();
   const store = new BrowserStore();
   const profile = store.createProfile(start.projectId, "Lease");
+  store.grantProfileAccess(profile.id, { scope: "conversation", projectId: start.projectId, conversationId: start.conversationId });
   let releaseLaunch!: () => void;
   let enteredLaunch!: () => void;
   const entered = new Promise<void>(resolve => { enteredLaunch = resolve; });
@@ -316,6 +323,7 @@ test("failed legacy import retains encrypted snapshot for explicit retry", async
   const store = new BrowserStore();
   const state = { cookies: [], origins: [] };
   const profile = store.saveProfile(start.projectId, "Legacy failed", state);
+  store.grantProfileAccess(profile.id, { scope: "conversation", projectId: start.projectId, conversationId: start.conversationId });
   const runtime = new BrowserRuntime({ capability });
   try {
     await assert.rejects(runtime.create({ ...start, profileId: profile.id }), { message: "Browser start failed on this node: Browser profile import failed" });
@@ -551,6 +559,7 @@ test("a failed profile can retry while another profile is still restoring", asyn
   const store = new BrowserStore();
   const failing = store.createProfile(start.projectId, "Retry");
   const slow = store.createProfile(start.projectId, "Slow");
+  for (const profile of [failing, slow]) store.grantProfileAccess(profile.id, { scope: "conversation", projectId: start.projectId, conversationId: start.conversationId });
   const failedRow = store.create({ ...start, profileId: failing.id });
   store.create({ ...start, profileId: slow.id, url: "https://slow.example" });
   const entered = gate(), release = gate();
@@ -605,6 +614,7 @@ for (const phase of ["capability", "native launch"] as const) {
     const store = new BrowserStore();
     const start = identity();
     const profile = store.createProfile(start.projectId, "Pending");
+    store.grantProfileAccess(profile.id, { scope: "conversation", projectId: start.projectId, conversationId: start.conversationId });
     const row = store.create({ ...start, profileId: profile.id });
     store.checkpoint(row.id, { origins: ["https://example.com"], activeIndex: 0, human: "owner" });
     const entered = gate();
@@ -661,6 +671,7 @@ test("shutdown closes a legacy context whose import finishes after shutdown star
   const store = new BrowserStore();
   const start = identity();
   const profile = store.saveProfile(start.projectId, "Legacy shutdown", { cookies: [], origins: [] });
+  store.grantProfileAccess(profile.id, { scope: "conversation", projectId: start.projectId, conversationId: start.conversationId });
   const entered = gate(), release = gate();
   let closed = false;
   const launch = chromium.launchPersistentContext;
@@ -688,6 +699,7 @@ test("control changes during recovery survive shutdown without replacing saved o
   const store = new BrowserStore();
   const start = identity();
   const profile = store.createProfile(start.projectId, "Restoring control");
+  store.grantProfileAccess(profile.id, { scope: "conversation", projectId: start.projectId, conversationId: start.conversationId });
   const row = store.create({ ...start, profileId: profile.id, url: "https://example.com" });
   const entered = gate();
   const release = gate();

@@ -145,9 +145,9 @@ test("running profile lease is unique across conversations while multiple profil
     const first = store.create({ ...start, profileId: a.id });
     const second = store.create({ ...start, profileId: b.id });
     assert.notEqual(first.id, second.id);
-    assert.throws(() => store.create({ ...start, conversationId: randomUUID(), profileId: a.id }), /UNIQUE/);
+    assert.throws(() => store.create({ ...start, conversationId: randomUUID(), profileId: a.id }), /active in another conversation|UNIQUE/);
     store.finish(first.id, "interrupted", "Restart pending", true);
-    assert.throws(() => store.create({ ...start, conversationId: randomUUID(), profileId: a.id }), /UNIQUE/);
+    assert.throws(() => store.create({ ...start, conversationId: randomUUID(), profileId: a.id }), /active in another conversation|UNIQUE/);
     assert.throws(() => store.deleteProfile(a.id, start.projectId), /pending/);
     store.finish(first.id, "closed");
     store.deleteProfile(a.id, start.projectId);
@@ -172,7 +172,7 @@ test("profile secrets encrypted in node.db, scoped to project, immutable on retr
   assert.deepEqual(store.profileState(profile.id, "project"), secret);
   store.close();
   const reopened = new BrowserStore();
-  assert.deepEqual(reopened.profiles("project"), [profile]);
+  assert.deepEqual(reopened.profiles("project").map(({ id, label, persistent, crossNodeAccess }) => ({ id, label, persistent, crossNodeAccess })), [{ id: profile.id, label: profile.label, persistent: false, crossNodeAccess: false }]);
   reopened.deleteProfile(profile.id, "project");
   assert.throws(() => reopened.profileState(profile.id, "project"), /profile/i);
   reopened.close();

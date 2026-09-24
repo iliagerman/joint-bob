@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -59,6 +59,27 @@ test("actual shell wrapper returns short failures and keeps them out of Tasks", 
   } finally { await f.runtime.close(); await rm(f.root, { recursive: true, force: true }); }
 });
 
+test("short shell waits for slow process-group inspection without claiming a background child", { timeout: 30_000 }, async () => {
+  const f = await fixture();
+  try {
+    const preload = path.join(f.root, "slow-inspection.mjs");
+    await writeFile(preload, `import cp from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
+const original = cp.execFile;
+cp.execFile = function(file, ...args) {
+  if (file === '/bin/ps') {
+    const callback = args.pop();
+    args.push((...result) => setTimeout(() => callback(...result), 3000));
+  }
+  return original.call(this, file, ...args);
+};
+syncBuiltinESMExports();\n`);
+    const result = await wrapper(f, "printf short; exit 7", { NODE_OPTIONS: `--import=${preload}` });
+    assert.equal(result.code, 7, result.stderr);
+    assert.equal(result.stdout, "short", "inspection latency is not evidence of a background process");
+  } finally { await f.runtime.close(); await rm(f.root, { recursive: true, force: true }); }
+});
+
 test("actual shell wrapper waits past five seconds and returns the command's real exit code and output", { timeout: 30_000 }, async () => {
   const f = await fixture();
   try {
@@ -104,11 +125,12 @@ test("a configured time limit stops an overlong command and says so", { timeout:
   let pid = 0;
   try {
     const pidFile = path.join(f.root, "pid");
-    const script = `require('fs').writeFileSync(${JSON.stringify(pidFile)},String(process.pid));setInterval(()=>{},1000)`;
-    const { code, stdout } = await wrapper(f, `exec ${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`, { JOINT_BOB_SHELL_TIMEOUT_MS: "1000" });
+    // Record the shell PID before exec: Node startup itself can exceed the
+    // deadline under load. Give worker startup time, then stop the long sleep.
+    const { code, stdout } = await wrapper(f, `printf '%s' "$$" > ${JSON.stringify(pidFile)}; exec sleep 60`, { JOINT_BOB_SHELL_TIMEOUT_MS: "5000" });
     pid = Number(await readFile(pidFile, "utf8"));
     assert.equal(code, 124);
-    assert.match(stdout, /stopped .* after 1 second/);
+    assert.match(stdout, /stopped .* after 5 seconds/);
     const tasks = await requestSupervisor(f.control.socketPath, f.token, { action: "list" }) as Array<Record<string, unknown>>;
     assert.equal(tasks.length, 1);
     await eventually(async () => requestSupervisor(f.control.socketPath, f.token, { action: "task", id: tasks[0].id }) as Promise<Record<string, unknown>>, (task) => task.status === "stopped", "limited command did not stop");

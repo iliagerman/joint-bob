@@ -5,7 +5,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { chromium, type Browser } from "playwright-core";
+import { type Browser } from "playwright-core";
+import { launchChrome } from "./launch-chrome.js";
 import {
   api,
   seedDevEnvironment,
@@ -125,7 +126,7 @@ test("multiple independent memberships render as a selective cluster canvas", { 
       "browser fixture has exactly the two independent memberships",
     );
 
-    browser = await chromium.launch({ channel: process.env.CHROME_CHANNEL ?? "chrome", headless: process.env.HEADED !== "1" });
+    browser = await launchChrome({ headless: process.env.HEADED !== "1" });
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce", serviceWorkers: "block" });
     const page = await context.newPage();
     const pageErrors: Error[] = [];

@@ -55,6 +55,24 @@
 .browser-details a { color: var(--accent); }
 .browser-profile-form input { flex: 1; width: 0; }
 .browser-profile-form button { flex-shrink: 0; }
+/* Access panel wraps below the label and actions; keyboard and visual order match. */
+.browser-details li { flex-wrap: wrap; }
+.browser-details li [data-testid="browser-profile-access-toggle"] { flex-shrink: 0; }
+.browser-profile-chip { display: inline-block; margin-left: 8px; padding: 1px 8px; border: 1px solid var(--line); border-radius: 999px; font-size: 10px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+.browser-profile-access { display: grid; gap: 8px; flex-basis: 100%; padding: 10px 0 4px; border-top: 1px dashed var(--line); }
+.browser-profile-access[hidden] { display: none; }
+/* Prefixed to out-rank .browser-viewer label's grid: the checkbox and its caption share a line. */
+.browser-viewer .browser-profile-cross-node-row { display: flex; align-items: center; gap: 8px; }
+.browser-viewer .browser-profile-cross-node-row input { min-height: 0; width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+.browser-viewer .browser-profile-cross-node-row span { color: var(--text); font-size: 12px; }
+.browser-profile-grants { display: grid; gap: 4px; }
+.browser-profile-grants > .browser-hint { margin: 0; }
+.browser-profile-grant { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--muted); }
+.browser-profile-grant > span { min-width: 0; overflow-wrap: anywhere; }
+.browser-profile-grant > button { flex-shrink: 0; }
+.browser-profile-access-form { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.browser-viewer .browser-profile-access-form select { flex: 1 1 150px; width: auto; }
+.browser-profile-access-form button { flex-shrink: 0; }
 .browser-footer { border-top: 1px solid var(--line); padding-top: 10px; }
 .browser-only { padding: 8px; }
 .browser-standalone { height: 100%; max-width: 1440px; margin: auto; }
@@ -129,7 +147,6 @@ body.canvas-pane-mode.browser-visible #browserPanel { position: static; height: 
 }
 @container (max-width: 600px) {
   .browser-heading { padding: 10px; }
-  .browser-heading > div { flex-basis: calc(100% - 140px); }
   .browser-heading .eyebrow { display: none; }
   .browser-link { margin-left: auto; }
   .browser-body { padding: 10px; gap: 8px; }

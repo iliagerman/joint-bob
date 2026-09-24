@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import "./browser-profile-access.js";
 import { claimBrowserPanel, releaseBrowserPanel } from "./browser-panel.js";
 import { createBrowserViewer } from "./browser-viewer.js";
 import { elements } from "./elements.js";

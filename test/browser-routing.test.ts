@@ -19,6 +19,7 @@ test("local browser resolves project aliases before listing sessions or saved lo
   try {
     const session=store.create({projectId:project.id,engine:"pi",conversationId:randomUUID(),appNodeId:node.id});
     const profile=store.saveProfile(project.id,"Login",{cookies:[],origins:[]});
+    store.grantProfileAccess(profile.id,{scope:"project",projectId:project.id});
     const listed=await localBrowserOperation({operation:"list",args:{projectId:alias,engine:"pi",conversationId:session.conversationId}},{kind:"agent"}) as {sessions:BrowserSessionView[]};
     assert.equal(listed.sessions[0]?.id,session.id,"same project alias must not hide an existing browser");
     const profiles=await localBrowserOperation({operation:"profiles",args:{projectId:alias}},{kind:"agent"}) as {profiles:BrowserProfile[]};

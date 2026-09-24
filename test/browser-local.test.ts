@@ -56,6 +56,7 @@ test("reopening an attached profile does not require its former app node to rema
   const store=new BrowserStore();
   const identity={projectId:project.id,engine:"pi" as const,conversationId:randomUUID()};
   const profile=store.createProfile(project.id,"Synthetic account");
+  store.grantProfileAccess(profile.id,{scope:"conversation",projectId:project.id,conversationId:identity.conversationId});
   const previous=store.create({...identity,appNodeId:randomUUID(),profileId:profile.id});
   t.mock.method(runtime,"create",async(input:BrowserStart)=>{
     assert.equal(input.appNodeId,node.id,"A new start carries the current app node, not stale provenance");

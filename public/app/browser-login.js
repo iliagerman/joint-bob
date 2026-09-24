@@ -86,8 +86,14 @@ function mount(session) {
     else elements.composer.before(host);
   });
   // On a phone the embedded strip shrinks to almost nothing once the keyboard
-  // opens; start straight in the full-screen popup so only the page shows.
+  // opens; start straight in the full-screen popup so only the page shows. The
+  // mode is decided once, at mount, and the toggle follows it: the
+  // narrow-screen CSS keeps a phone-native sign-in fullscreen-only, while a
+  // panel mounted wide keeps its way to full screen at any later width. The
+  // inline display revert undoes that narrow-screen display:none, which would
+  // otherwise strand the inline panel when the window shrinks below 700px.
   if (window.innerWidth < 700) expandButton.click();
+  else expandButton.style.display = "revert";
   host.querySelector('[data-testid="browser-login-done"]')?.focus();
 }
 

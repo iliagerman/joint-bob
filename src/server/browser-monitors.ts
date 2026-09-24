@@ -170,8 +170,19 @@ export async function localMonitorRead(ownerNodeId: string, value: BrowserMonito
   const authorization = await fetchAuthorization();
   const serialized = JSON.stringify(authorization);
   const binding = authorization.monitor.binding;
+  // A remote monitor owner reads this node's browser through the same profile the
+  // conversation uses: a node-restricted profile refuses it here and again after
+  // every queued page read, exactly like every other relayed browser path.
+  const assertProfileNodeAccess = async () => {
+    if (ownerNodeId === local.id) return;
+    if (browserRuntime().profileOrNull(binding.profileId)?.crossNodeAccess === false) throw new BrowserRequestError(403, "Browser profile is restricted to this node");
+  };
+  await assertProfileNodeAccess();
   return browserRuntime().inspectMonitor({ sessionId: binding.sessionId, projectId: authorization.monitor.projectId, conversationId: binding.conversationId, profileId: binding.profileId, pageId: binding.pageId,
-    assertValid: async () => { if (JSON.stringify(await fetchAuthorization()) !== serialized) throw new BrowserRequestError(409, "Browser monitor read authorization changed"); } },
+    assertValid: async () => {
+      if (JSON.stringify(await fetchAuthorization()) !== serialized) throw new BrowserRequestError(409, "Browser monitor read authorization changed");
+      await assertProfileNodeAccess();
+    } },
   { checker: authorization.checker, origin: authorization.monitor.origin, accountId: authorization.monitor.accountId, targetIds: authorization.monitor.targetIds, checkpoint: authorization.checkpoint });
 }
 

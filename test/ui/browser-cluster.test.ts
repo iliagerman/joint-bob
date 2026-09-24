@@ -87,7 +87,8 @@ test("conversation browser runs independently of its agent node and stays pinned
     const handoffPageId=authoritative.body.session.activePageId!;
     const paused=await agent({operation:'command',command:{action:'evaluate',expression:'window.__agentRan=true'}});
     assert.equal(paused.status,409);assert.match(await paused.text(),/login required/i);
-    await viewer.getByTestId('browser-login-done').waitFor();assert.equal(await viewer.getByTestId('browser-login-done').isDisabled(),true);
+    await viewer.getByTestId('browser-control-status').filter({hasText:'Human control'}).waitFor();
+    await viewer.getByTestId('browser-login-done').waitFor();assert.equal(await viewer.getByTestId('browser-login-done').isDisabled(),false,'Visible sign-in handoff automatically claims human control');
     const takeover=await api<BrowserSessionView>(a,auth,'POST',`/browser/sessions/${session.id}/command?nodeId=${b.nodeId}`,{action:'takeControl',loginRequestId});
     assert.equal(takeover.status,200,JSON.stringify(takeover.body));await viewer.getByTestId('browser-control-status').filter({hasText:'Human control'}).waitFor();
     await viewer.getByTestId('browser-login-done').click();await viewer.getByTestId('browser-error').filter({hasText:/could not be verified/i}).waitFor();
@@ -137,5 +138,97 @@ test("conversation browser runs independently of its agent node and stays pinned
     }));
     fixture.closeAllConnections();fixture.close();await rm(root,{recursive:true,force:true});
     assert.equal(forced, false, 'Browser nodes must exit on SIGTERM without requiring SIGKILL');
+  }
+});
+
+// Scope-grant and cross-node enforcement at the live-browser level: a restricted
+// profile stops already-queued remote commands, and a revoked grant redacts live
+// page metadata from the agent's own listing while the owner node keeps seeing it.
+test("cross-node restriction stops queued remote commands and revoked grants redact agent status", { timeout: 240000 }, async (t) => {
+  const executablePath = await chromeExecutable();
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-browser-grants-"));
+  const servers: ChildProcess[] = [];
+  let viewerBrowser: Browser | undefined;
+  let releaseSlow: (() => void) | undefined;
+  const fixture = http.createServer((request, response) => {
+    if (request.url === "/slow") {
+      response.setHeader("Content-Type", "text/html");
+      setTimeout(() => response.end("<title>Slow page</title>"), releaseSlow ? 4000 : 0);
+      return;
+    }
+    response.setHeader("Content-Type", "text/html");
+    response.end("<title>Grants fixture</title><h1>Loopback fixture</h1>");
+  });
+  fixture.listen(0, "127.0.0.1");
+  await once(fixture, "listening");
+  const fixtureOrigin = `http://127.0.0.1:${(fixture.address() as AddressInfo).port}`;
+  try {
+    const environment = await seedDevEnvironment(root, 2);
+    const [a, b] = environment.nodes;
+    servers.push(await startDevNode(environment, a, { JOINT_BOB_BROWSER_EXECUTABLE: "/browser-disabled-on-source" }));
+    servers.push(await startDevNode(environment, b, { JOINT_BOB_BROWSER_EXECUTABLE: executablePath }));
+    const authA = await signIn(environment, a);
+    const authB = await signIn(environment, b);
+    await api(a, authA, "PUT", "/browser/config", { executorNodeId: b.nodeId });
+    const conversationId = randomUUID(), projectId = a.projects[0].id;
+    const issued = await promisify(execFile)(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `import {browserAgentEnvironment} from './src/browser-agent.ts';const environment=browserAgentEnvironment(${JSON.stringify(projectId)},'pi',${JSON.stringify(conversationId)});console.log(JSON.stringify({url:environment.JOINT_BOB_BROWSER_URL,token:environment.JOINT_BOB_BROWSER_TOKEN}))`], { cwd: process.cwd(), env: { ...process.env, HOME: environment.home, JOINT_BOB_DATA_DIR: a.dataDir, PORT: String(a.port) }, timeout: 15000 });
+    const agentEnv = JSON.parse(issued.stdout) as { url: string; token: string };
+    const agent = async (body: unknown) => fetch(agentEnv.url, { method: "POST", headers: { Authorization: `Bearer ${agentEnv.token}`, "Content-Type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(60000) });
+    // Both queued commands travel the agent relay, so they pass the relay's own
+    // cross-node admission before the toggle and only the queue recheck can stop them.
+    const remoteCommand = (command: unknown) => agent({ operation: "command", profileId: session.profileId, command });
+
+    // A relayed start creates the profile cross-node-enabled, granted to this conversation.
+    releaseSlow = undefined;
+    const started = await (await agent({ operation: "start", url: fixtureOrigin })).json() as { session: BrowserSessionView };
+    const session = started.session;
+    assert.equal(session.nodeId, b.nodeId);
+    assert.equal(session.state, "running");
+    const projectsOnB = await api<{ projects: Array<{ id: string; name: string }> }>(b, authB, "GET", "/projects");
+    const projectOnB = projectsOnB.body.projects.find(candidate => candidate.name === a.projects[0].name)!;
+
+    // Hold one remote command in flight, enqueue a second behind it, then restrict
+    // the profile: the queued command must be refused before touching the page.
+    releaseSlow = () => {};
+    const first = remoteCommand({ action: "navigate", url: `${fixtureOrigin}/slow` });
+    await new Promise(resolve => setTimeout(resolve, 800));
+    const second = remoteCommand({ action: "evaluate", expression: "window.__queued = true" });
+    await new Promise(resolve => setTimeout(resolve, 200));
+    assert.equal((await api<{ profile: { crossNodeAccess: boolean } }>(b, authB, "PUT", `/browser/profiles/${session.profileId}/access?${new URLSearchParams({ projectId: projectOnB.id, conversationId })}`, { crossNodeAccess: false })).status, 200);
+    assert.equal((await first).status, 200, "the admitted command finishes");
+    const refused = await second;
+    const refusal = await refused.json() as { error: string };
+    assert.equal(refused.status, 403, JSON.stringify(refusal));
+    assert.match(refusal.error, /restricted to this node/i, "a command queued before the toggle must be refused when its turn comes");
+    assert.equal((await api(b, authB, "PUT", `/browser/profiles/${session.profileId}/access?${new URLSearchParams({ projectId: projectOnB.id, conversationId })}`, { crossNodeAccess: true })).status, 200, "the owner node re-enables cross-node access");
+
+    // A revoked conversation grant redacts live metadata from the agent's own status…
+    await api(b, authB, "PUT", `/browser/profiles/${session.profileId}/access?${new URLSearchParams({ projectId: projectOnB.id, conversationId })}`, { revoke: { scope: "conversation", projectId: projectOnB.id, conversationId } });
+    const ownerView = await api<{ session: BrowserSessionView }>(b, authB, "GET", `/browser/sessions/${session.id}?nodeId=${b.nodeId}`);
+    assert.ok(ownerView.body.session.tabs.length >= 1, "the owner node still sees live tabs");
+    const status = await (await agent({ operation: "status" })).json() as { sessions: BrowserSessionView[] };
+    const revokedRow = status.sessions.find(row => row.id === session.id)!;
+    assert.equal(revokedRow.accessRevoked, true);
+    assert.deepEqual(revokedRow.tabs, [], "revoked agent listings must not leak live tab URLs and titles");
+    assert.equal(revokedRow.loginRequest, null);
+    // …while the same agent's commands are refused except closing its own session.
+    const blocked = await agent({ operation: "command", profileId: session.profileId, command: { action: "evaluate", expression: "1+1" } });
+    assert.equal(blocked.status, 403);
+    assert.match(await blocked.text(), /revoked/i);
+    const closed = await agent({ operation: "command", profileId: session.profileId, command: { action: "close" } });
+    assert.equal(closed.status, 200, "closing stays available to the revoked conversation");
+    t.diagnostic("Verified queued-remote-command refusal on restriction and revoked-grant status redaction");
+  } finally {
+    await viewerBrowser?.close();
+    let forced = false;
+    await Promise.all(servers.map(async child => {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      const timer = setTimeout(() => { forced = true; child.kill("SIGKILL"); }, 10000);
+      try { await stopDevNode(child); } finally { clearTimeout(timer); }
+    }));
+    fixture.closeAllConnections();
+    await new Promise<void>(resolve => fixture.close(() => resolve()));
+    await rm(root, { recursive: true, force: true });
+    assert.equal(forced, false, "Browser nodes must exit on SIGTERM without requiring SIGKILL");
   }
 });
