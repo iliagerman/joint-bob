@@ -3,9 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.82.0 — 2026-09-24
 
-- Browser profiles now have access management: an Access panel lets you control which conversations and projects can open each profile.
+- Browser profiles persist on their owning node and can grant access to selected conversations, multiple projects, or all projects. Each profile's Access panel manages grants and the separate cross-node sharing setting.
+- Static browser pages no longer leave the viewer blank. Sign-in panels opened on desktop keep their fullscreen toggle when the window narrows.
+- Slow process inspection no longer incorrectly reports that a finished shell command left a background process running.
 
 ## 1.81.1 — 2026-09-24
 
