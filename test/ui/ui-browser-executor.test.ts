@@ -392,7 +392,7 @@ test("browser viewer UI", { timeout: 360_000 }, async (t) => {
         assert.equal(await f.page.getByTestId("browser-url").isVisible(), false, "Closed browser must hide navigation");
         assert.equal(await f.page.getByTestId("browser-send-tab").isVisible(), false, "Closed browser must hide keyboard input");
         assert.equal(await f.page.getByTestId("browser-take-control").isVisible(), false);
-        assert.equal(await f.page.getByTestId("browser-reconnect").isEnabled(), true);
+        await f.page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('[data-testid="browser-reconnect"]')!.disabled);
         await f.page.screenshot({ path: path.resolve("tmp/restyle-closed.png") });
         await f.page.getByRole("button", { name: "Reopen browser", exact: true }).click();
         await f.page.getByTestId("browser-screen").waitFor();
