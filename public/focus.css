@@ -1,0 +1,66 @@
+/* Opt-in layout only. Existing panels, handlers and data remain authoritative. */
+body.focus-ui .shell { display: block; height: calc(var(--focus-height, 100dvh) - 64px); padding: 20px max(16px, calc((100vw - 1180px) / 2)); }
+body.focus-ui .shell > :is(#projectsPanel, #chatsPanel, #chatPanel, #boardPanel, #canvasPanel) { display: none; animation: none; }
+body.focus-ui.view-projects .shell > #projectsPanel,
+body.focus-ui.view-sessions .shell > #chatsPanel,
+body.focus-ui.view-chat .shell > #chatPanel,
+body.focus-ui.view-board .shell > #boardPanel,
+body.focus-ui.view-canvas .shell > #canvasPanel { display: flex; }
+body.focus-ui :is(.mobile-nav, .app-menu, .collapse-button, .panel-rail) { display: none !important; }
+body.focus-ui .back-button { display: inline-grid; }
+body.focus-ui .panel-bar { flex-shrink: 0; border-bottom: 1px solid var(--line-strong); }
+body.focus-ui :is(.panel-bar, .chat-topbar, .panel-scroll, .messages) { animation: none !important; }
+body.focus-ui #projectsPanel .project-actions { display: flex; justify-content: flex-end; }
+body.focus-ui #projectsPanel .project-actions button { width: 40px; }
+body.focus-ui #projectList { padding: 12px 20px; }
+body.focus-ui .project-card { border-bottom: 1px solid var(--line); }
+body.focus-ui .session-card { border-bottom: 1px solid var(--line); }
+.focus-workspace-bar { height: 64px; display: flex; align-items: center; gap: 16px; padding: 0 24px; background: var(--header); border-bottom: 1px solid var(--line-strong); }
+.focus-workspace-bar strong { font: 600 22px var(--serif); }
+.focus-workspace-bar span { color: var(--muted); font: 11px var(--mono); }
+#focusHeaderNew { margin-left: auto; }
+body.focus-ui.view-chat .shell { height: var(--focus-height, 100dvh); padding: 0; }
+body.focus-ui.view-chat .shell > #chatPanel { height: 100%; border: 0; border-radius: 0; }
+body.focus-ui.view-chat #chatPanel .messages { padding-inline: max(20px, calc((100% - 860px) / 2)); }
+body.focus-ui.view-chat #chatPanel .composer { flex-shrink: 0; border-top: 1px solid var(--line-strong); padding-inline: max(16px, calc((100% - 900px) / 2)); padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+body.focus-ui.view-chat #chatPanel .chat-topbar { flex-shrink: 0; border-bottom: 1px solid var(--line-strong); }
+body.focus-ui.view-chat #chatPanel .message { border-bottom: 1px solid var(--line); }
+body.focus-ui.view-chat #commandStrip { display: none; }
+:root[data-theme="dark"] body.focus-ui.view-chat #chatPanel,
+:root[data-theme="dark"] body.focus-ui.view-chat #messages { background: #000; }
+#focusControlsButton { position: fixed; z-index: 55; right: 18px; bottom: 180px; width: 52px; height: 52px; min-width: 0; padding: 0; border-radius: 17px; font-size: 23px; background: var(--ink); color: var(--on-ink); box-shadow: var(--shadow); touch-action: none; user-select: none; cursor: grab; }
+#focusControlsButton[aria-expanded="true"] { background: var(--accent); color: #061f19; }
+.focus-controls { position: fixed; z-index: 54; width: 360px; max-width: calc(100vw - 24px); max-height: calc(var(--focus-height, 100dvh) - 24px); display: flex; flex-direction: column; overflow: hidden; padding: 12px; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--panel); box-shadow: var(--shadow); }
+.focus-controls > header { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); padding-bottom: 10px; }
+.focus-controls > header strong { font: 600 16px var(--serif); }
+.focus-context-scroll { min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.focus-navigation { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; padding-top: 10px; flex-shrink: 0; }
+.focus-navigation button { padding: 8px 5px; font-size: 11px; }
+.focus-controls > p { flex-shrink: 0; color: var(--muted); font-size: 11px; padding: 12px 4px 0; }
+#focusContextActions, .focus-global-actions { display: grid; gap: 6px; padding-top: 12px; }
+.focus-global-actions { flex-shrink: 0; grid-template-columns: 1fr 1fr; margin-top: 12px; border-top: 1px solid var(--line-strong); }
+.focus-global-actions button { min-height: 40px; padding: 8px; font-size: 12px; }
+body.booting :is(#focusWorkspaceBar, #focusControlsButton, #focusControls) { visibility: hidden; }
+.focus-controls button { text-align: left; }
+#focusClose { padding: 4px 12px; }
+/* Move, don't clone, the actual toolbar. All controls retain listeners and state. */
+#focusChatControls #chatToolbar { display: flex; flex-wrap: wrap; padding: 12px 0; border: 0; gap: 10px; }
+#focusChatControls .chat-session-controls { flex: 1 0 100%; }
+#focusChatControls .chat-control { min-width: 0; flex: 1 1 40%; }
+#focusChatControls .chat-toolbar-control { width: 100%; max-width: 100%; }
+#focusChatControls .chat-more { width: 100%; }
+#focusChatControls .chat-more > summary { display: none; }
+#focusChatControls .chat-more-actions { position: static; display: grid; width: 100%; min-width: 0; box-shadow: none; border: 0; background: none; padding: 0; gap: 4px; }
+#focusChatControls #chatMoreMenu:not([open]) > .chat-more-actions { display: grid; }
+#focusChatControls .chat-more-actions button { display: block; width: 100%; min-height: 36px; text-align: left; }
+#focusChatControls :is(#chatRecentSessionsButton, #chatRunningConversationsButton) { display: inline-grid !important; }
+@media (max-width: 700px) {
+  .focus-workspace-bar { height: 60px; padding: 0 12px; gap: 8px; }
+  .focus-workspace-bar strong { font-size: 18px; }
+  .focus-workspace-bar span { display: none; }
+  .focus-workspace-bar button { font-size: 11px; padding: 8px; }
+  body.focus-ui .shell { height: calc(var(--focus-height, 100dvh) - 60px); padding: 10px; }
+  body.focus-ui.view-chat .shell { padding: 0; height: var(--focus-height, 100dvh); }
+  body.focus-ui #projectList { padding: 8px; }
+  #focusControlsButton { width: 48px; height: 48px; right: 14px; bottom: 165px; }
+}

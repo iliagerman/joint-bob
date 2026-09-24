@@ -134,7 +134,7 @@ test("the project secret picker can create a project-owned account and hides own
   // Owned accounts show only in their own project's pickers, never in a workspace picker.
   assert.match(app, /!account\.projectId \|\| account\.projectId === /);
   assert.match(app, /scopeType === "workspace" \? !account\.projectId/);
-  assert.match(app, /account\.projectId === state\.activeProjectId/);
+  assert.match(app, /account\.projectId === state\.newSessionDraft\?\.projectId/);
   // The create request carries the owner and never asks to replicate.
   assert.match(app, /projectId: creatingForProjectId/);
 });

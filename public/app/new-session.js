@@ -3,6 +3,8 @@ import { api, savePreferencesInBackground } from "./api.js";
 import { classificationPicker } from "./classification.js";
 import { conversationTask, loadHarnesses } from "./chat-controls.js";
 import { elements } from "./elements.js";
+import { rememberDraft } from "./composer.js";
+import { selectProject } from "./project-selection.js";
 import { brandIcon } from "./icons.js";
 import { loadSecretAccounts, openNewSecretAccount, providerBadge, secretAccounts } from "./secrets.js";
 import { rememberRecentSession } from "./recents.js";
@@ -13,6 +15,9 @@ import { state } from "./state.js";
 import { cancelHandoffWait } from "./tasks.js";
 
 const classification = classificationPicker(document.querySelector("#newSessionClassification"), "new-session");
+const projectSelect = document.querySelector("#newSessionProjectSelect");
+const harnessSelect = document.querySelector("#newSessionHarnessSelect");
+let newSessionNodes = [];
 
 /** Initial node and account selection happens before the conversation starts. */
 function localSessionNode() {
@@ -31,9 +36,9 @@ function renderNewSessionSecrets(selected = checkedNewSessionSecretIds()) {
     elements.newSessionSecretList.textContent = "No node-local secret accounts yet. Add one below.";
     return;
   }
-  const remote = elements.newSessionNodeSelect.value !== localSessionNode()?.id;
+  const remote = elements.newSessionNodeSelect.value !== newSessionNodes.find(node => node.local)?.id;
   // Project-owned accounts are offered only to conversations in their own project.
-  for (const account of secretAccounts.filter((account) => !account.projectId || account.projectId === state.activeProjectId)) {
+  for (const account of secretAccounts.filter((account) => !account.projectId || account.projectId === state.newSessionDraft?.projectId)) {
     const item = document.createElement("label");
     item.className = "checkbox-row secret-scope-row";
     const input = document.createElement("input");
@@ -119,7 +124,7 @@ export function addOptimisticSession(sessionId, sessionPath, title, color, class
 }
 
 /** A conversation is named up front so the list shows the user's own label from the first turn. */
-async function openNewSessionNameDialog(sessionPath, defaultTitle, sourceTaskId = null) {
+async function openNewSessionNameDialog(sessionPath, defaultTitle, sourceTaskId = null, global = false) {
   const projectId = state.activeProjectId;
   const [settings] = await Promise.all([
     api("/api/settings"),
@@ -127,22 +132,67 @@ async function openNewSessionNameDialog(sessionPath, defaultTitle, sourceTaskId 
   ]);
   if (state.activeProjectId !== projectId) return;
   classification.reset(settings.conversationLabels);
-  state.newSessionDraft = { sessionPath, defaultTitle, sourceTaskId };
+  state.newSessionDraft = { sessionPath, defaultTitle, sourceTaskId, projectId: projectId || state.projects[0]?.id };
+  document.querySelector("#newSessionProjectLabel").hidden = !document.body.classList.contains("focus-ui");
+  projectSelect.replaceChildren(...state.projects.map(project => new Option(project.name, project.id)));
+  projectSelect.value = state.newSessionDraft.projectId || "";
+  projectSelect.disabled = Boolean(sourceTaskId);
+  document.querySelector("#newSessionHarnessLabel").hidden = !global;
+  harnessSelect.replaceChildren(...state.harnesses.filter(harness => harness.runtimeConfigured).map(harness => new Option(harness.label, harness.id)));
+  harnessSelect.value = state.harnesses.find(harness => harness.newSessionPath === sessionPath)?.id || "";
   elements.newSessionNameInput.value = sourceTaskId ? defaultTitle : "";
-  elements.newSessionNodeSelect.replaceChildren(...state.sessionNodes.map((node) => {
-    const option = document.createElement("option");
-    option.value = node.id;
-    option.textContent = node.name;
+  newSessionNodes = [];
+  elements.newSessionNodeSelect.replaceChildren();
+  renderSessionColorSwatches(null, elements.newSessionColorSwatches);
+  elements.newSessionSecretList.replaceChildren();
+  const draft = state.newSessionDraft;
+  loadSecretAccounts().then(() => {
+    if (state.newSessionDraft === draft && elements.newSessionNameDialog.open) renderNewSessionSecrets();
+  }).catch((error) => toast(error.message));
+  elements.newSessionNameDialog.showModal();
+  showWizardStep(1);
+  await loadNewSessionNodes();
+}
+
+async function loadNewSessionNodes() {
+  const draft = state.newSessionDraft;
+  const projectId = draft?.projectId;
+  newSessionNodes = [];
+  elements.newSessionNodeSelect.replaceChildren();
+  elements.newSessionSecretList.replaceChildren();
+  if (!projectId) return;
+  const body = await api(`/api/projects/${encodeURIComponent(projectId)}/session-nodes`);
+  if (state.newSessionDraft !== draft || draft.projectId !== projectId || !elements.newSessionNameDialog.open) return;
+  newSessionNodes = body.nodes;
+  elements.newSessionNodeSelect.replaceChildren(...newSessionNodes.map(node => {
+    const option = new Option(node.name, node.id);
     option.disabled = !node.online || !node.mapped;
     return option;
   }));
-  elements.newSessionNodeSelect.value = localSessionNode()?.id ?? "";
-  renderSessionColorSwatches(null, elements.newSessionColorSwatches);
-  elements.newSessionSecretList.replaceChildren();
-  loadSecretAccounts().then(renderNewSessionSecrets).catch((error) => toast(error.message));
-  elements.newSessionNameDialog.showModal();
-  showWizardStep(1);
+  elements.newSessionNodeSelect.value = (newSessionNodes.find(node => node.local && node.online && node.mapped) || newSessionNodes.find(node => node.online && node.mapped))?.id || "";
+  renderNewSessionSecrets([]);
 }
+
+export async function startGlobalConversation() {
+  if (!state.projects.length) throw new Error("Create a project first");
+  if (!state.harnesses.length) await loadHarnesses();
+  const available = state.harnesses.filter(harness => harness.runtimeConfigured);
+  const harness = available.find(harness => harness.id === state.engine) || available[0];
+  if (!harness) throw new Error("No agent is configured on this node");
+  await openNewSessionNameDialog(harness.newSessionPath, `New ${harness.label} conversation`, null, true);
+}
+
+projectSelect.addEventListener("change", () => {
+  if (!state.newSessionDraft) return;
+  state.newSessionDraft.projectId = projectSelect.value;
+  loadNewSessionNodes().catch(error => toast(error.message));
+});
+harnessSelect.addEventListener("change", () => {
+  const harness = state.harnesses.find(item => item.id === harnessSelect.value);
+  if (!harness || !state.newSessionDraft) return;
+  state.newSessionDraft.sessionPath = harness.newSessionPath;
+  state.newSessionDraft.defaultTitle = `New ${harness.label} conversation`;
+});
 const HARNESS_SHORTCUTS = { pi: "newPiChat", claude: "newClaudeChat", kiro: "newKiroChat" };
 
 export async function startNewHarnessConversation(harnessId) {
@@ -244,22 +294,31 @@ elements.newSessionNameForm.addEventListener("submit", async (event) => {
   const draft = state.newSessionDraft;
   const title = elements.newSessionNameInput.value.trim();
   const color = selectedSessionColor(elements.newSessionColorSwatches);
-  const node = state.sessionNodes.find((candidate) => candidate.id === elements.newSessionNodeSelect.value);
-  if (!node || !node.online || !node.mapped) { toast("Choose an online node with this project mapped"); return; }
+  if (!draft) return;
+  const node = newSessionNodes.find((candidate) => candidate.id === elements.newSessionNodeSelect.value);
+  if (!node || !node.online || !node.mapped) { showWizardStep(3); toast("Choose an online node with this project mapped"); return; }
+  const secretIds = [...elements.newSessionSecretList.querySelectorAll("input:checked:not(:disabled)")].map(input => input.value);
   const submit = elements.newSessionNameForm.querySelector('[type="submit"]');
   if (submit.disabled) return;
   submit.disabled = true;
+  projectSelect.disabled = true;
+  harnessSelect.disabled = true;
   try {
     if (classification.needsOther()) showWizardStep(2);
     const label = classification.value();
     const sessionId = crypto.randomUUID();
-    const projectId = state.activeProjectId;
+    const projectId = draft.projectId;
     if (label) await api(`/api/projects/${encodeURIComponent(projectId)}/sessions/classification`, {
       method: "PUT",
       body: JSON.stringify({ sessionId, engine: harnessIdFromPath(state.harnesses, draft.sessionPath || "new"), classification: label }),
     });
-    if (!elements.newSessionNameDialog.open || state.newSessionDraft !== draft || state.activeProjectId !== projectId) return;
-    state.newSessionSecretAccountIds = [...elements.newSessionSecretList.querySelectorAll("input:checked")].map((input) => input.value);
+    if (!elements.newSessionNameDialog.open || state.newSessionDraft !== draft || draft.projectId !== projectId) return;
+    if (state.activeProjectId !== projectId) {
+      rememberDraft();
+      await selectProject(projectId);
+      if (!elements.newSessionNameDialog.open || state.newSessionDraft !== draft || draft.projectId !== projectId) return;
+    }
+    state.newSessionSecretAccountIds = secretIds;
     state.spinOffSourceTaskId = draft.sourceTaskId;
     state.activeNodeId = node.id;
     if (state.preferencesLoaded) savePreferencesInBackground({ activeNodeId: node.id });
@@ -274,6 +333,8 @@ elements.newSessionNameForm.addEventListener("submit", async (event) => {
     toast(error.message);
   } finally {
     submit.disabled = false;
+    projectSelect.disabled = Boolean(state.newSessionDraft?.sourceTaskId);
+    harnessSelect.disabled = false;
   }
 });
-elements.newSessionNodeSelect.addEventListener("change", renderNewSessionSecrets);
+elements.newSessionNodeSelect.addEventListener("change", () => renderNewSessionSecrets());

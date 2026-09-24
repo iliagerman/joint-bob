@@ -28,6 +28,7 @@ const filterSelect = document.querySelector("#quickNotesProjectFilter");
 const list = document.querySelector("#quickNoteList");
 const openButtons = document.querySelectorAll("[data-notes-open]");
 let editingId = null;
+let preserveView = false;
 let availableModels = null;
 let filterProjectId = null;
 let notesRequestId = 0;
@@ -186,15 +187,17 @@ async function loadOptions() {
   if (!availableModels) availableModels = (await api("/api/models")).models;
 }
 
-export async function openQuickNote(note = null) {
-  if (!state.activeProjectId && !note) { toast("Select a project first"); return; }
+export async function openQuickNote(note = null, { chooseProject = false } = {}) {
+  const defaultProjectId = state.activeProjectId || (chooseProject ? state.projects[0]?.id : null);
+  if (!defaultProjectId && !note) { toast("Select a project first"); return; }
+  preserveView = chooseProject;
   editingId = note?.id || null;
   showError();
   deleteButton.hidden = !editingId;
   convertButton.hidden = !editingId;
   saveButton.disabled = true;
   document.querySelector("#quickNoteDialogTitle").textContent = editingId ? "Edit quick note" : "New quick note";
-  renderProjects(note?.projectId || state.activeProjectId);
+  renderProjects(note?.projectId || defaultProjectId);
   titleInput.value = note?.title || "";
   contentInput.value = note?.content || "";
   dialog.showModal();
@@ -233,7 +236,8 @@ async function saveNote(event) {
       body: JSON.stringify(payload),
     });
     dialog.close();
-    setProjectContentTab("notes");
+    if (preserveView) toast("Note saved");
+    else setProjectContentTab("notes");
     await refreshQuickNotes();
   } catch (error) {
     showError(error.message);

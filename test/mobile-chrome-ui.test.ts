@@ -48,7 +48,8 @@ test("a global menu reaches settings from every page and names the node and rele
 
 test("the bottom bar replaces dormant Board with Notes", async () => {
   const [html, styles] = await Promise.all([readFile("public/index.html", "utf8"), readFile("public/styles.css", "utf8")]);
-  const nav = html.slice(html.indexOf('<nav class="mobile-nav"'), html.indexOf("</nav>"));
+  const navStart = html.indexOf('<nav class="mobile-nav"');
+  const nav = html.slice(navStart, html.indexOf("</nav>", navStart));
   const order = [...nav.matchAll(/id="(nav[A-Za-z]+Button)"/g)].map((match) => match[1]);
 
   assert.deepEqual(order, [

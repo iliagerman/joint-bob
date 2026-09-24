@@ -31,7 +31,7 @@ export function syncChatTitleFromSessions(engineName) {
 export function setPanelCollapsed(panel, collapsed) {
   const panelElement = panel === "projects" ? elements.projectsPanel : elements.chatsPanel;
   document.body.classList.toggle(`${panel}-collapsed`, collapsed);
-  panelElement.classList.toggle("collapsed", collapsed);
+  panelElement.classList.toggle("collapsed", collapsed && !document.body.classList.contains("focus-ui"));
   if (!state.preferencesLoaded) return;
   if (panel === "projects") savePreferencesInBackground({ projectsPanelCollapsed: collapsed });
   else savePreferencesInBackground({ chatsPanelCollapsed: collapsed });
@@ -90,6 +90,7 @@ export function setMobileView(view, updateHistory = true) {
   if (view === "canvas") state.canvasController?.activate().catch((error) => toast(error.message, 8000));
   else state.canvasController?.deactivate();
   if (updateHistory && currentView !== view) history.pushState({ ...history.state, mobileView: view }, "");
+  window.dispatchEvent(new CustomEvent("app-view-changed"));
 }
 
 history.replaceState({ ...history.state, mobileView: "projects" }, "");

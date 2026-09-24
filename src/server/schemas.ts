@@ -564,6 +564,7 @@ export const userPreferencesSchema = z.object({
   legacyMigrated: z.boolean().optional(),
   pinnedProjectIds: z.array(z.string().trim().min(1).max(120)).max(200).optional(),
   pinnedSessionPaths: z.array(z.string().trim().min(1).max(2000)).max(200).optional(),
+  focusUiEnabled: z.boolean().optional(),
   projectsPanelCollapsed: z.boolean().optional(),
   chatsPanelCollapsed: z.boolean().optional(),
   lastSeenVersion: z.string().trim().regex(/^\d+\.\d+\.\d+$/).nullable().optional(),

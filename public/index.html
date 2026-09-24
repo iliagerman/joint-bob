@@ -17,6 +17,7 @@
     <script src="/client-logs.js"></script>
     <link rel="stylesheet" href="/styles.css" />
     <link rel="stylesheet" href="/browser.css" />
+    <link rel="stylesheet" href="/focus.css" />
     <link rel="stylesheet" href="/vendor/codemirror/lib/codemirror.css" />
     <link rel="stylesheet" href="/vendor/codemirror/addon/dialog/dialog.css" />
     <link rel="stylesheet" href="/vendor/xterm/xterm.css" />
@@ -36,6 +37,31 @@
         <div class="app-boot-tagline">Agents, together.</div>
       </div>
     </div>
+    <header class="focus-workspace-bar" id="focusWorkspaceBar" hidden>
+      <strong>Joint Bob</strong><span>Focus workspace</span>
+      <button type="button" data-testid="focus-header-new" id="focusHeaderNew">New conversation</button>
+      <button type="button" data-testid="focus-header-settings" id="focusHeaderSettings">Settings</button>
+    </header>
+    <button type="button" id="focusControlsButton" data-testid="focus-controls-button" aria-label="Show controls" aria-controls="focusControls" aria-expanded="false" title="Click for controls. Drag to move. Double-tap the page to hide or restore." hidden>☰</button>
+    <nav id="focusControls" class="focus-controls" aria-label="Focus controls" hidden>
+      <header><strong id="focusContextTitle">Projects</strong><button type="button" id="focusClose" data-testid="focus-close" aria-label="Close controls">×</button></header>
+      <div class="focus-context-scroll">
+        <div id="focusContextActions"></div>
+        <div id="focusChatControls" hidden></div>
+      </div>
+      <div class="focus-global-actions" aria-label="Workspace actions">
+        <button type="button" id="focusNewConversation" data-testid="focus-new-conversation">New conversation…</button>
+        <button type="button" id="focusNewNote" data-testid="focus-new-note">New note…</button>
+        <button type="button" id="focusReviews" data-testid="focus-reviews">Needs review</button>
+        <button type="button" id="focusRunning" data-testid="focus-running">Running conversations</button>
+      </div>
+      <div class="focus-navigation">
+        <button type="button" id="focusProjects" data-testid="focus-projects">All projects</button>
+        <button type="button" id="focusConversations" data-testid="focus-conversations">Conversations</button>
+        <button type="button" id="focusSettings" data-testid="focus-settings">Settings</button>
+      </div>
+      <p>Drag the floating button to move it. Double-tap the page to hide or restore. Ctrl/⌘ + . opens controls.</p>
+    </nav>
     <div class="shell">
       <section class="panel view-panel" id="projectsPanel" aria-label="Projects">
         <header class="panel-bar">
@@ -479,6 +505,8 @@
         </div>
 
         <section class="settings-panel" id="settingsPanel-account" role="tabpanel" aria-labelledby="settingsTab-account" tabindex="0">
+          <label class="checkbox-row"><input type="checkbox" id="settingsFocusUi" data-testid="settings-focus-ui-toggle" /> Focus interface (experimental)</label>
+          <p class="muted compact-copy">One screen at a time, with floating contextual controls. Saves immediately for your account on this node. Turn off here to restore the classic interface without leaving your conversation.</p>
           <fieldset class="phase-settings">
             <legend>Appearance</legend>
             <button class="ghost" id="themeToggleButton" type="button" aria-label="Switch to dark theme" title="Switch to dark theme" data-testid="settings-theme-toggle-button">☾ Switch to dark theme</button>
@@ -1178,6 +1206,8 @@
           <li><button type="button" class="wizard-step" data-step="3" data-testid="new-session-step-3">3 · Node</button></li>
         </ol>
         <section class="wizard-panel" data-step="1" data-testid="new-session-panel-1">
+          <label id="newSessionProjectLabel" hidden>Project<select id="newSessionProjectSelect" data-testid="new-session-project-select"></select></label>
+          <label id="newSessionHarnessLabel" hidden>Agent<select id="newSessionHarnessSelect" data-testid="new-session-harness-select"></select></label>
           <label>
             Name
             <input id="newSessionNameInput" name="name" autocomplete="off" placeholder="Feature review" data-testid="new-session-name-input" />

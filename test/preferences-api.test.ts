@@ -49,6 +49,18 @@ test("preferences store v6 canvas layouts and reject invalid trees", async () =>
     assert.deepEqual((await defaults.json() as { canvasLayout: unknown }).canvasLayout,
       { version: 6, pages: [{ id: "page-1", name: "Page 1", root: null, focusedPaneId: null, projectFilter: "" }], activePageId: "page-1" });
 
+    const focusDefaults = await fetch(`${node.baseUrl}/api/preferences`, { headers });
+    assert.equal((await focusDefaults.json()).focusUiEnabled, false, "existing accounts keep the classic interface");
+    for (const focusUiEnabled of [true, false]) {
+      const response = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ focusUiEnabled }) });
+      assert.equal(response.status, 200);
+      assert.equal((await response.json()).focusUiEnabled, focusUiEnabled);
+      const read = await fetch(`${node.baseUrl}/api/preferences`, { headers });
+      assert.equal((await read.json()).focusUiEnabled, focusUiEnabled);
+    }
+    const invalidFocus = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ focusUiEnabled: "true" }) });
+    assert.equal(invalidFocus.status, 400);
+
     const pane = (id: string, sessionId: string) => ({ kind: "pane" as const, id, projectId: "p", sessionPath: `/tmp/${sessionId}.jsonl`, sessionId, executionNodeId: null });
     const stored = { version: 6 as const, activePageId: "page", pages: [{ id: "page", name: "Page", root: { kind: "split" as const, id: "split", axis: "row" as const, ratio: 0.4, first: { ...pane("pane-a", "s-a"), harnessId: "kiro" }, second: pane("pane-b", "s-b") }, focusedPaneId: "pane-b", projectFilter: "" }] };
     const saved = await fetch(`${node.baseUrl}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ canvasLayout: stored }) });
