@@ -4,14 +4,15 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import type { HarnessAdapter } from "../src/harnesses/contract.js";
-import { runHarnessUpdates } from "../src/harness-updater.js";
+import type { HarnessUpdateInstructions } from "../src/harnesses/runtime-configuration.js";
+import { harnessUpdateCommand, runHarnessUpdates } from "../src/harness-updater.js";
 
-function adapter(id: string, executable: string, updateArgs?: string[]): HarnessAdapter {
+function adapter(id: string, executable: string, update?: HarnessUpdateInstructions): HarnessAdapter {
   return {
     id, label: id, defaults: { provider: id, modelId: "model", thinkingLevel: "medium" },
     configuration: {
       defaults: () => ({ executable, configPath: os.tmpdir(), sessionPath: os.tmpdir() }),
-      thinkingLevels: ["medium"], restartFields: [], ...(updateArgs ? { updateArgs } : {}),
+      thinkingLevels: ["medium"], restartFields: [], ...(update ? { update } : {}),
     },
     paths: { newSession: `${id}:new`, ownsSession: () => false, ownsTranscript: () => false, sessionId: () => undefined },
     sync: { transcriptRoot: () => os.tmpdir() },
@@ -27,8 +28,8 @@ test("harness updates run each adapter's instructions with its own executable", 
   await chmod(executable, 0o755);
 
   const result = await runHarnessUpdates([
-    adapter("one", executable, ["update"]),
-    adapter("two", executable, ["upgrade", "--yes"]),
+    adapter("one", executable, { type: "self", args: ["update"] }),
+    adapter("two", executable, { type: "self", args: ["upgrade", "--yes"] }),
     adapter("unsupported", executable),
   ]);
 
@@ -50,11 +51,22 @@ test("one failed harness update does not prevent later harnesses", async () => {
   await chmod(succeeded, 0o755);
 
   const result = await runHarnessUpdates([
-    adapter("failed", failed, ["update"]),
-    adapter("succeeded", succeeded, ["update"]),
+    adapter("failed", failed, { type: "self", args: ["update"] }),
+    adapter("succeeded", succeeded, { type: "self", args: ["update"] }),
   ]);
 
   assert.equal(result[0].state, "failed");
   assert.match(result[0].error ?? "", /broken/);
   assert.equal(result[1].state, "succeeded");
+});
+
+test("npm harness updates install into persistent Joint Bob-owned assets", () => {
+  const command = harnessUpdateCommand("pi", "pi", { type: "npm", packageName: "@earendil-works/pi-coding-agent" });
+
+  assert.equal(command.executable, "npm");
+  assert.match(command.cwd, new RegExp(`${path.sep}harnesses${path.sep}pi$`));
+  assert.deepEqual(command.args, [
+    "install", "--prefix", command.cwd, "--no-save", "--package-lock=false", "--omit=dev",
+    "--registry=https://registry.npmjs.org", "@earendil-works/pi-coding-agent@latest",
+  ]);
 });

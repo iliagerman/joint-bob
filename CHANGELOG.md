@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Npm-based harnesses (Claude and Pi) now update through Joint Bob's managed storage instead of self-updates, with Kiro continuing to self-update as before.
+
 ## 1.86.0 — 2026-09-24
 
 - Added automatic updates for agent harnesses, with on-demand trigger available in Settings.

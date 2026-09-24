@@ -9,7 +9,7 @@ import { readTranscriptCwd } from "./shared-paths.js";
 const configuration: HarnessConfiguration = {
   defaults: (home) => ({ executable: detectExecutable("pi"), configPath: path.join(home, ".pi/agent"), sessionPath: path.join(home, ".pi/agent/sessions") }),
   thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
-  updateArgs: ["update", "self", "--approve"],
+  update: { type: "npm", packageName: "@earendil-works/pi-coding-agent" },
   restartFields: ["configPath"],
 };
 

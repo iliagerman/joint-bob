@@ -14,7 +14,7 @@ import { flushMembershipOutbox, flushReplicationOutbox, flushRoutingConfigDelive
 import { flushPushSubscriptionOutbox } from "./server/push-flush.js";
 import { flushV2ClusterAdministration } from "./server/cluster-manager.js";
 import { reconcileUpdateJobs, startUpdateScheduler } from "./updater.js";
-import { startHarnessUpdateScheduler } from "./harness-updater.js";
+import { activateManagedHarnesses, startHarnessUpdateScheduler } from "./harness-updater.js";
 import { flags, port, server } from "./server/state.js";
 import { browserRuntime, closeBrowserRuntime } from "./server/browser.js";
 import { startBrowserMonitors, stopBrowserMonitors } from "./server/browser-monitors.js";
@@ -99,6 +99,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       if (retired) console.log(`Retired ${retired} agent run(s) whose dashboard did not survive the restart`);
     })
     .then(() => {
+  activateManagedHarnesses();
   const bindHost = process.env.JOINT_BOB_BIND_HOST || "0.0.0.0";
   server.listen(port, bindHost, () => {
     const address = server.address();

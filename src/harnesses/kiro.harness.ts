@@ -5,7 +5,7 @@ import { kiroConversationDefault } from "./kiro.defaults.js";
 import { configuredRuntime, detectExecutable, localizeTranscript, type HarnessConfiguration } from "./runtime-configuration.js";
 import { readTranscriptCwd } from "./shared-paths.js";
 
-const configuration: HarnessConfiguration = { defaults: (home) => ({ executable: detectExecutable("kiro-cli"), configPath: path.join(home, ".kiro"), sessionPath: path.join(home, ".kiro/sessions") }), fixedProvider: "kiro", thinkingLevels: ["low", "medium", "high", "xhigh", "max"], updateArgs: ["update"], restartFields: ["executable", "configPath"] };
+const configuration: HarnessConfiguration = { defaults: (home) => ({ executable: detectExecutable("kiro-cli"), configPath: path.join(home, ".kiro"), sessionPath: path.join(home, ".kiro/sessions") }), fixedProvider: "kiro", thinkingLevels: ["low", "medium", "high", "xhigh", "max"], update: { type: "self", args: ["update"] }, restartFields: ["executable", "configPath"] };
 function root(): string { return configuredRuntime("kiro", configuration.defaults(os.homedir())).sessionPath; }
 function within(file: string): boolean { const relative = path.relative(path.join(root(), "joint-bob"), path.resolve(file)); return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative); }
 export default defineHarness({

@@ -4,12 +4,15 @@ import type { RuntimeSettings } from "../settings.js";
 import { value } from "../settings-store.js";
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+export type HarnessUpdateInstructions =
+  | { type: "self"; args: string[] }
+  | { type: "npm"; packageName: string };
+
 export interface HarnessConfiguration {
   defaults(homePath: string): RuntimeSettings;
   thinkingLevels: ThinkingLevel[];
   fixedProvider?: string;
-  /** Arguments this harness passes to its own executable to update itself. */
-  updateArgs?: string[];
+  update?: HarnessUpdateInstructions;
   restartFields: Array<keyof RuntimeSettings>;
 }
 
