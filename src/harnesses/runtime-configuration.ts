@@ -8,6 +8,8 @@ export interface HarnessConfiguration {
   defaults(homePath: string): RuntimeSettings;
   thinkingLevels: ThinkingLevel[];
   fixedProvider?: string;
+  /** Arguments this harness passes to its own executable to update itself. */
+  updateArgs?: string[];
   restartFields: Array<keyof RuntimeSettings>;
 }
 

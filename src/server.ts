@@ -14,6 +14,7 @@ import { flushMembershipOutbox, flushReplicationOutbox, flushRoutingConfigDelive
 import { flushPushSubscriptionOutbox } from "./server/push-flush.js";
 import { flushV2ClusterAdministration } from "./server/cluster-manager.js";
 import { reconcileUpdateJobs, startUpdateScheduler } from "./updater.js";
+import { startHarnessUpdateScheduler } from "./harness-updater.js";
 import { flags, port, server } from "./server/state.js";
 import { browserRuntime, closeBrowserRuntime } from "./server/browser.js";
 import { startBrowserMonitors, stopBrowserMonitors } from "./server/browser-monitors.js";
@@ -106,6 +107,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     void browserRuntime().ready().catch(error => console.warn("Browser profile recovery failed", error));
     reconcileUpdateJobs();
     startUpdateScheduler();
+    startHarnessUpdateScheduler();
     void startCronScheduler().catch(error => console.error("Scheduled task recovery failed; scheduler not started", error));
     void startBrowserMonitors().catch(error => console.error("Browser monitor startup failed", error));
     initializeStartupReadiness()

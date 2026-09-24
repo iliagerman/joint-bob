@@ -9,13 +9,13 @@ test("updates UI enables peer updates, refreshes peer versions, and reloads afte
   const controls = await page.evaluate(`(async () => {
     const updates = await import("/app/updates.js");
     const nativeFetch = window.fetch;
-    window.updateFixture = { currentVersion:"1.2.0", supported:true, updateAvailable:false, release:"old", latest:{release:{version:"1.2.0"}}, activeJob:null, recentJobs:[], fleet:null, autoUpdate:false };
+    window.updateFixture = { currentVersion:"1.2.0", supported:true, updateAvailable:false, release:"old", latest:{release:{version:"1.2.0"}}, activeJob:null, recentJobs:[], fleet:null, autoUpdate:false, harnessUpdates:{running:false,harnesses:[{id:"claude",label:"Claude",state:"idle",checkedAt:null,error:null}]} };
     window.updateInventory = {local:{id:"local",name:"Local"},remote:[{peerId:"peer",name:"Peer",reachable:true,url:"https://peer",inventory:{version:"1.1.0",updates:{supported:true}}}]};
     window.fetch = (url, options) => url === "/api/update/status" ? Promise.resolve(Response.json(window.updateFixture)) : url === "/api/cluster/inventory" ? Promise.resolve(Response.json(window.updateInventory)) : nativeFetch(url, options);
     await updates.loadUpdatesPanel(window.updateInventory);
-    return {allEnabled:!document.querySelector("#updatesInstallAllButton").disabled, localDisabled:document.querySelector("#updatesInstallButton").disabled};
+    return {allEnabled:!document.querySelector("#updatesInstallAllButton").disabled, localDisabled:document.querySelector("#updatesInstallButton").disabled, harnessEnabled:!document.querySelector("#harnessUpdatesButton").disabled, harnessName:document.querySelector("#harnessUpdatesList .updates-node-name").textContent};
   })()`);
-  assert.deepEqual(controls, { allEnabled: true, localDisabled: true });
+  assert.deepEqual(controls, { allEnabled: true, localDisabled: true, harnessEnabled: true, harnessName: "Claude" });
   await page.evaluate(`(async () => {
     window.updateFixture.fleet = { state:"running", target:"1.2.0", entries:[] };
     await (await import("/app/updates.js")).loadUpdatesPanel(window.updateInventory);

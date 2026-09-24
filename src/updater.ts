@@ -15,6 +15,7 @@ import { getClusterNode } from "./cluster.js";
 import { signClusterRequest } from "./cluster-protocol.js";
 import { clusterV2Database } from "./cluster-v2-store.js";
 import { isActiveUpdateTwin, listTwinUpdateTargets } from "./twin-updates.js";
+import { harnessUpdateStatus } from "./harness-updater.js";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dataDir = resolveDataDirectory();
@@ -308,6 +309,7 @@ export interface UpdateStatusView {
   activeJob: UpdateJob | null;
   recentJobs: UpdateJob[];
   fleet: FleetRunView | null;
+  harnessUpdates: ReturnType<typeof harnessUpdateStatus>;
 }
 
 export function updateStatusView(): UpdateStatusView {
@@ -323,6 +325,7 @@ export function updateStatusView(): UpdateStatusView {
     activeJob: activeUpdateJob(),
     recentJobs: recentUpdateJobs(),
     fleet: fleetRunView(latestFleetRun()),
+    harnessUpdates: harnessUpdateStatus(),
   };
 }
 

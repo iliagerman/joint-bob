@@ -821,6 +821,12 @@
             Automatically install updates on this node
           </label>
           <fieldset class="phase-settings">
+            <legend>Agent harnesses</legend>
+            <p>Harnesses update themselves every 24 hours using the executable configured for each harness.</p>
+            <div class="updates-node-list" id="harnessUpdatesList" data-testid="harness-updates-list"></div>
+            <button class="ghost" type="button" id="harnessUpdatesButton" data-testid="harness-updates-button">Update harnesses now</button>
+          </fieldset>
+          <fieldset class="phase-settings">
             <legend>Cluster nodes</legend>
             <p>Update all nodes rolls out the same release one node at a time, this node last, and stops at the first failure.</p>
             <div class="updates-node-list" id="updatesNodeList" data-testid="updates-node-list"></div>

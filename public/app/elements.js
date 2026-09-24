@@ -127,6 +127,8 @@ export const elements = {
   updatesCheckButton: document.querySelector("#updatesCheckButton"),
   updatesInstallButton: document.querySelector("#updatesInstallButton"),
   updatesAutoInput: document.querySelector("#updatesAutoInput"),
+  harnessUpdatesList: document.querySelector("#harnessUpdatesList"),
+  harnessUpdatesButton: document.querySelector("#harnessUpdatesButton"),
   updatesNodeList: document.querySelector("#updatesNodeList"),
   updatesInstallAllButton: document.querySelector("#updatesInstallAllButton"),
   settingsChangelogVersion: document.querySelector("#settingsChangelogVersion"),

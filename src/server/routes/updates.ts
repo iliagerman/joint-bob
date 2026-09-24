@@ -5,6 +5,7 @@ import { ProjectDirectoryImportError } from "../../project-directory-import.js";
 import { getClusterNode } from "../../cluster.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
 import { isActiveUpdateTwin } from "../../twin-updates.js";
+import { startHarnessUpdates } from "../../harness-updater.js";
 import { checkForLatestRelease, installLocalRelease, latestFleetRun, ReleaseFeedError, releaseForVersion, selfUpdateSupported, setAutoUpdate, startFleetUpdate, UpdateRefusalError, updateStatusView } from "../../updater.js";
 import { WorkspaceError } from "../../store.js";
 import { TaskWorkspaceError } from "../../task-workspaces.js";
@@ -53,6 +54,11 @@ app.post("/api/update/check", async (_request, response, next) => {
     await checkForLatestRelease(true);
     updateStatusResponse(response);
   } catch (error) { next(error); }
+});
+
+app.post("/api/update/harnesses", (_request, response) => {
+  startHarnessUpdates();
+  response.status(202).json(updateStatusView());
 });
 
 const updateSettingsSchema = z.object({ autoUpdate: z.boolean() }).strict();

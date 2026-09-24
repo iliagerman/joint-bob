@@ -12,7 +12,7 @@ function stopPolling() {
 }
 
 function maybeStartPolling(status) {
-  const busy = status.activeJob || status.fleet?.state === "running";
+  const busy = status.activeJob || status.fleet?.state === "running" || status.harnessUpdates?.running;
   if (!busy || pollTimer) return;
   pollTimer = setInterval(() => {
     // A node restarting mid-update refuses connections for a while; keep polling
@@ -131,6 +131,20 @@ function renderNodeList(status, inventory) {
   }
 }
 
+function renderHarnessUpdates(status) {
+  elements.harnessUpdatesList.replaceChildren();
+  for (const harness of status.harnessUpdates?.harnesses ?? []) {
+    const checked = harness.checkedAt ? ` · ${new Date(harness.checkedAt).toLocaleString()}` : "";
+    elements.harnessUpdatesList.append(nodeRow({
+      name: harness.label,
+      url: "",
+      version: "",
+      state: harness.state,
+      detail: `${harness.state}${harness.error ? ` — ${harness.error}` : ""}${checked}`,
+    }));
+  }
+}
+
 function renderControls(status) {
   const fleetBusy = status.fleet?.state === "running";
   const installable = status.supported && status.updateAvailable && !status.activeJob && !fleetBusy;
@@ -142,6 +156,8 @@ function renderControls(status) {
   elements.updatesInstallAllButton.disabled = !status.supported || !status.latest.release || (!status.updateAvailable && !peerUpdateAvailable) || Boolean(status.activeJob) || fleetBusy;
   elements.updatesInstallAllButton.textContent = fleetBusy ? `Updating cluster to ${status.fleet.target}…` : "Update all nodes";
   elements.updatesAutoInput.checked = status.autoUpdate;
+  elements.harnessUpdatesButton.disabled = Boolean(status.harnessUpdates?.running);
+  elements.harnessUpdatesButton.textContent = status.harnessUpdates?.running ? "Updating harnesses…" : "Update harnesses now";
 }
 
 async function refreshUpdateStatus() {
@@ -150,6 +166,7 @@ async function refreshUpdateStatus() {
   renderVersionLine(status);
   renderStateLine(status);
   renderControls(status);
+  renderHarnessUpdates(status);
   renderNodeList(status, inventoryCache);
   maybeStartPolling(status);
   return status;
@@ -176,12 +193,23 @@ elements.updatesCheckButton.addEventListener("click", () => {
       renderVersionLine(status);
       renderStateLine(status);
       renderControls(status);
+      renderHarnessUpdates(status);
       renderNodeList(status, inventoryCache);
       maybeStartPolling(status);
       toast(status.latest.release ? `Latest release is ${status.latest.release.version}` : "No release found");
     })
     .catch((error) => toast(error.message))
     .finally(() => { elements.updatesCheckButton.disabled = false; });
+});
+
+elements.harnessUpdatesButton.addEventListener("click", () => {
+  api("/api/update/harnesses", { method: "POST" })
+    .then((status) => {
+      renderControls(status);
+      renderHarnessUpdates(status);
+      maybeStartPolling(status);
+    })
+    .catch((error) => toast(error.message));
 });
 
 elements.updatesAutoInput.addEventListener("change", async () => {

@@ -10,9 +10,9 @@ async function panel() {
     append(...children: any[]) { this.children.push(...children); },
     replaceChildren() { this.children = []; },
   });
-  const elements = Object.fromEntries(["settingsDialog", "settingsForm", "updatesVersionLine", "updatesStateLine", "updatesNodeList", "updatesInstallButton", "updatesInstallAllButton", "updatesAutoInput", "updatesCheckButton"].map((name) => [name, element()]));
+  const elements = Object.fromEntries(["settingsDialog", "settingsForm", "updatesVersionLine", "updatesStateLine", "updatesNodeList", "updatesInstallButton", "updatesInstallAllButton", "updatesAutoInput", "updatesCheckButton", "harnessUpdatesList", "harnessUpdatesButton"].map((name) => [name, element()]));
   const fixture = {
-    status: { currentVersion: "1.2.0", release: "old", supported: true, updateAvailable: false, activeJob: null as any, fleet: null as any, recentJobs: [] as any[], autoUpdate: false, latest: { release: { version: "1.2.0" }, checkedAt: null } },
+    status: { currentVersion: "1.2.0", release: "old", supported: true, updateAvailable: false, activeJob: null as any, fleet: null as any, recentJobs: [] as any[], autoUpdate: false, latest: { release: { version: "1.2.0" }, checkedAt: null }, harnessUpdates: { running: false, harnesses: [{ id: "claude", label: "Claude", state: "idle", checkedAt: null, error: null }] } },
     inventory: { local: { id: "local", name: "Local" }, remote: [{ peerId: "peer", name: "Peer", reachable: true, url: "https://peer", inventory: { version: "1.1.0", updates: { supported: true } } }] },
     elements, timers: new Map<number, Function>(), reloads: 0, offline: false, inventoryReads: 0,
   };
@@ -34,6 +34,19 @@ async function panel() {
     await new Promise((resolve) => setImmediate(resolve));
   } };
 }
+
+test("harness update control renders status and starts updates", async () => {
+  const p = await panel();
+  await p.load();
+  assert.equal(p.elements.harnessUpdatesList.children[0].children[0].textContent, "Claude");
+  p.fixture.status.harnessUpdates.running = true;
+  p.fixture.status.harnessUpdates.harnesses[0].state = "running";
+  await p.elements.harnessUpdatesButton.handlers.click();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(p.elements.harnessUpdatesButton.disabled, true);
+  assert.equal(p.elements.harnessUpdatesButton.textContent, "Updating harnesses…");
+  assert.equal(p.timers.size, 1);
+});
 
 test("fleet button allows outdated peers while this node is current", async () => {
   const p = await panel();
