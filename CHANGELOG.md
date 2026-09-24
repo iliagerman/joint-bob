@@ -3,9 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.87.0 — 2026-09-24
 
-- Enhanced Focus interface with refined mobile gestures: double-tap to toggle the control menu, triple-tap to access recent conversations, and improved compact layout on narrow screens.
+- Restyled Focus mode with aligned headers, transparent icon controls, and separate agent and tools submenus.
+- Replaced the floating menu symbol with the Joint Bob logo and a live pending-review count across projects.
+- Added touch gestures: double-tap hides or restores the floating button without activating a control; triple-tap opens pinnable recent conversations without toggling the button.
 
 ## 1.86.1 — 2026-09-24
 
