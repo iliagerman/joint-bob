@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.81.1 — 2026-09-24
 
 - Background processes in inactive conversations are now stopped automatically after five minutes of no input or output, preventing stalled conversations from holding resources indefinitely.
 
