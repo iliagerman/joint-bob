@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Assistant attribution now displays the classifier's confidence level when routing is active.
+
 ## 1.84.0 — 2026-09-24
 
 - Added an experimental Focus interface in Settings with full-page conversations, a fixed composer, and draggable contextual controls. The classic interface remains the default and can be restored at any time.

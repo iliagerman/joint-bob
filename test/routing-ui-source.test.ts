@@ -21,6 +21,9 @@ test("routing configuration UI wiring stays connected and lives only under Class
   assert.match(socket, /markPromptRouted/);
   assert.match(socket, /payload\.type === "routingMode"/, "the socket must forward routingMode");
   assert.match(transcript, /export function markPromptRouted/, "the transcript must render the routing note");
+  assert.match(transcript, /pendingRoutingConfidence = typeof routing\.confidence === "number"/, "promptRouted must capture the classifier confidence");
+  assert.match(transcript, /pendingRoutingConfidence \* 100/, "the live attribution must show the confidence next to model and thinking level");
+  assert.match(transcript, /if \(role === "user"\) pendingRoutingConfidence = null;/, "the confidence must reset when the next user message starts");
   assert.match(configs, /\/api\/routing-configs/, "the Classifiers panel must load the named configurations");
   assert.match(configs, /routing-configs\/selection/, "the panel must set this node's own active configuration");
   assert.match(configs, /routing-configs\/.*\/share/, "the panel must share a configuration explicitly");

@@ -520,6 +520,10 @@ function appendMessageAttachments(bubble, attachments) {
   if (gallery.childElementCount) bubble.append(gallery);
 }
 
+// Classifier confidence for the most recent routing decision, shown next to the
+// live assistant attribution until the next user message starts a new turn.
+let pendingRoutingConfidence = null;
+
 function assistantAttribution(attribution) {
   const live = attribution === undefined;
   const execution = attribution || {};
@@ -532,9 +536,10 @@ function assistantAttribution(attribution) {
   const label = document.createElement("span");
   label.className = "message-attribution";
   label.dataset.testid = "assistant-attribution";
-  label.setAttribute("aria-label", `${harness} · ${model} · ${reasoning}`);
-  label.title = `${harness} · ${model} · ${reasoning}`;
-  label.append(brandIcon(harnessId, `message-attribution-icon ${harnessId}`), document.createTextNode(`${model} · ${reasoning}`));
+  const confidence = live && pendingRoutingConfidence !== null ? ` · ${Math.round(pendingRoutingConfidence * 100)}%` : "";
+  label.setAttribute("aria-label", `${harness} · ${model} · ${reasoning}${confidence}`);
+  label.title = `${harness} · ${model} · ${reasoning}${confidence}`;
+  label.append(brandIcon(harnessId, `message-attribution-icon ${harnessId}`), document.createTextNode(`${model} · ${reasoning}${confidence}`));
   return label;
 }
 
@@ -546,6 +551,7 @@ function assistantAttribution(attribution) {
 // already seen.
 export function appendMessage(role, text, timestamp = true, attachments = [], read = false, attribution = undefined) {
   elements.messages.querySelector(".empty-state")?.remove();
+  if (role === "user") pendingRoutingConfidence = null;
   const presentation = role === "user" ? transcriptMessagePresentation(text, attachments) : { text, attachments: [] };
   const bubble = document.createElement("article");
   bubble.className = `message ${role}`;
@@ -871,6 +877,7 @@ export function markPromptRouted(routing) {
   const bubble = (routing.queueId && elements.messages.querySelector(`[data-queue-id="${CSS.escape(routing.queueId)}"]`))
     || [...elements.messages.querySelectorAll(".message.user")].at(-1);
   if (!bubble) return;
+  pendingRoutingConfidence = typeof routing.confidence === "number" ? routing.confidence : null;
   const note = bubble.querySelector(".routed-note") || document.createElement("div");
   note.className = "routed-note";
   note.dataset.testid = "routed-note";
@@ -954,7 +961,8 @@ function appendTranscript(messages, segments) {
     // has it. An undated assistant message cannot be tracked and reads as seen.
     const read = role === "user" || !recorded || recorded.getTime() <= lastReadAt(state.activeConversationId);
     const engine = segments?.[segment]?.engine || state.engine;
-    const attribution = role === "assistant" ? message.attribution || { harnessId: engine } : undefined;
+    const currentSegment = !segments?.length || segment === segments.length - 1;
+    const attribution = role === "assistant" ? message.attribution || (currentSegment ? undefined : { harnessId: engine }) : undefined;
     markPendingReview(appendMessage(role, message.text, recorded, [], read, attribution), recorded);
   }
   // A freshly switched segment has no messages yet, but its seam still shows
