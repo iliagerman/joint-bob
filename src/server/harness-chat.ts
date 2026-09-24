@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { internalTaskPrompt } from "../background-task-messages.js";
-import { unlink } from "node:fs/promises";
+import { stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import WebSocket from "ws";
 import { getClusterNode, listClusterPeers } from "../cluster.js";
@@ -76,7 +76,17 @@ function queueKey(connection: HarnessChatConnection): string { return `${connect
 async function ensureCurrentSession(connection: HarnessChatConnection): Promise<void> {
   if (findHarnessSession(connection.project.id, connection.engine, connection.shared.session.id) === connection.shared) return;
   const old = connection.shared;
-  const shared = await openHarnessSession(connection.engine, { projectId: connection.project.id, cwd: connection.cwd, sessionId: old.session.id, sessionPath: old.session.file, conversationId: connection.conversationId, accountIds: connection.accountIds });
+  let sessionPath = old.session.file;
+  // Pi does not flush a new transcript before its first turn. A watcher can
+  // evict that idle draft; reopening its nonexistent file invents a new ID.
+  if (connection.engine === "pi" && sessionPath && !old.session.messages.length) {
+    try { await stat(sessionPath); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      sessionPath = undefined;
+    }
+  }
+  const shared = await openHarnessSession(connection.engine, { projectId: connection.project.id, cwd: connection.cwd, sessionId: old.session.id, sessionPath, conversationId: connection.conversationId, accountIds: connection.accountIds });
   old.clients.delete(connection.socket);
   connection.shared = shared;
   if (connection.socket.readyState === WebSocket.OPEN) attachHarnessClient(shared, connection.socket);

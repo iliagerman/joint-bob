@@ -106,6 +106,28 @@ test("reopening a Pi conversation ignores saved tools unavailable on this node",
   await disconnect(opened);
 });
 
+test("an evicted unflushed Pi draft keeps its identity on the first queued turn", async () => {
+  process.env.JOINT_BOB_TEST_ENGINE_LOG = path.join(root, "engine.log");
+  const { installStubHarnessRuntimes } = await import("./stub-harness-runtime.js");
+  await installStubHarnessRuntimes();
+  const opened = openChat(baseUrl, fixture.cookie, fixture.projectId, "new");
+  sockets.push(opened.socket);
+  await waitFor(opened.messages, () => opened.messages.some(({ type }) => type === "ready"));
+  const id = opened.messages.find(({ type }) => type === "ready")!.sessionId as string;
+  const { findHarnessSession, disposeHarnessSession } = await import("../src/server/harness-sessions.js");
+  const shared = findHarnessSession(fixture.projectId, "pi", id)!;
+  assert.ok(shared);
+  await assert.rejects(readFile(shared.session.file!), { code: "ENOENT" });
+  disposeHarnessSession(shared);
+  opened.socket.send(JSON.stringify({ type: "prompt", message: "First draft turn" }));
+  await waitFor(opened.messages, () => opened.messages.some(({ type }) => type === "promptCompleted" || type === "error"));
+  assert.deepEqual(opened.messages.filter(({ type }) => type === "error"), []);
+  assert.ok(opened.messages.some(({ type }) => type === "promptCompleted"));
+  assert.equal(findHarnessSession(fixture.projectId, "pi", id)?.session.id, id);
+  await disconnect(opened);
+  delete process.env.JOINT_BOB_TEST_ENGINE_LOG;
+});
+
 test("changed Pi tools register a local write while later external transcript edits still reload", async () => {
   const { id, file } = await savedConversation();
   const opened = await connect(file, id);

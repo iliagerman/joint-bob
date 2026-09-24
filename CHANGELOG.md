@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Notes can now be scheduled to start at a specific time or queued automatically with configurable parallel processing limits, including image attachments and execution node selection.
+- Preserved session identity when a Pi draft transcript is evicted before the first turn.
 
 ## 1.87.1 — 2026-09-24
 
