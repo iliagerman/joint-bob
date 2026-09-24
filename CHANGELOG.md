@@ -3,10 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.88.0 — 2026-09-24
 
-- Notes can now be scheduled to start at a specific time or queued automatically with configurable parallel processing limits, including image attachments and execution node selection.
-- Preserved session identity when a Pi draft transcript is evicted before the first turn.
+- Quick notes can now be scheduled to run at a specific time with configurable concurrent processing limits, including support for image attachments and execution node selection.
+- Preserved draft identity when a Pi session is evicted from runtime memory before the first turn.
 
 ## 1.87.1 — 2026-09-24
 
