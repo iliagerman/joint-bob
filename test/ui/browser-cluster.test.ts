@@ -66,10 +66,13 @@ test("conversation browser runs independently of its agent node and stays pinned
     context.setDefaultTimeout(15000);
     await context.addCookies(auth.cookie.split('; ').map(value=>({name:value.slice(0,value.indexOf('=')),value:value.slice(value.indexOf('=')+1),url:a.url})));
     const viewerURL=`${a.url}/browser.html?${new URLSearchParams({browserSessionId:session.id,projectId,engine:'pi',conversationId,appNodeId:a.nodeId,nodeId:b.nodeId})}`;
+    // This fixture is static: the first screencast frame must arrive without
+    // requiring a repaint, input, or navigation on the remote browser.
     let viewer=await context.newPage();await viewer.goto(viewerURL);await viewer.getByTestId('browser-screen').waitFor({timeout:20000});
     const cleared = await api(a, auth, 'PUT', '/browser/config', { executorNodeId: null });
     assert.equal(cleared.status, 200, JSON.stringify(cleared.body));
     await viewer.getByTestId('browser-reconnect').click();
+    await viewer.getByTestId('browser-profile-library-toggle').click();
     await viewer.getByTestId('browser-machines-toggle').click();
     await viewer.getByTestId('browser-machine-status').filter({hasText:'Not configured'}).waitFor();
     assert.match(await viewer.getByTestId('browser-session-status').innerText(), new RegExp(b.name));
@@ -87,10 +90,12 @@ test("conversation browser runs independently of its agent node and stays pinned
     const handoffPageId=authoritative.body.session.activePageId!;
     const paused=await agent({operation:'command',command:{action:'evaluate',expression:'window.__agentRan=true'}});
     assert.equal(paused.status,409);assert.match(await paused.text(),/login required/i);
+    // Viewing a sign-in handoff now takes human control automatically. Do not
+    // race that request with a second, test-only takeover through the API.
     await viewer.getByTestId('browser-control-status').filter({hasText:'Human control'}).waitFor();
-    await viewer.getByTestId('browser-login-done').waitFor();assert.equal(await viewer.getByTestId('browser-login-done').isDisabled(),false,'Visible sign-in handoff automatically claims human control');
-    const takeover=await api<BrowserSessionView>(a,auth,'POST',`/browser/sessions/${session.id}/command?nodeId=${b.nodeId}`,{action:'takeControl',loginRequestId});
-    assert.equal(takeover.status,200,JSON.stringify(takeover.body));await viewer.getByTestId('browser-control-status').filter({hasText:'Human control'}).waitFor();
+    await viewer.locator('[data-testid="browser-login-done"]:enabled').waitFor();
+    const takeover=await api<{session:BrowserSessionView}>(a,auth,'GET',`/browser/sessions/${session.id}?nodeId=${b.nodeId}`);
+    assert.equal(takeover.body.session.owner,'human');
     await viewer.getByTestId('browser-login-done').click();await viewer.getByTestId('browser-error').filter({hasText:/could not be verified/i}).waitFor();
     const premature=await api<{session:BrowserSessionView}>(a,auth,'GET',`/browser/sessions/${session.id}?nodeId=${b.nodeId}`);
     assert.equal(premature.body.session.loginRequest?.id,loginRequestId);assert.equal(premature.body.session.owner,'human');assert.equal(await viewer.getByTestId('browser-resume-agent').isVisible(),false);

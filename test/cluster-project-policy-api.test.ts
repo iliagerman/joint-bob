@@ -33,6 +33,7 @@ test("new selective projects atomically receive owner policy, auto-shares, and C
   try {
     const clusterId = await createCluster(fixture.node, fixture.session);
     const topology = new DatabaseSync(path.join(fixture.node.dataDir, "node.db"));
+    topology.exec("PRAGMA busy_timeout=5000");
     topology.prepare("INSERT INTO sharing_memberships(cluster_id,node_id,auto_share_projects,join_sequence) VALUES(?,?,0,2)").run(clusterId, randomUUID());
     topology.close();
     const legacy = await api<{ error: string }>(fixture.node, fixture.session, "GET", `/sharing/project/${fixture.node.projects[0].id}`);
@@ -73,6 +74,7 @@ test("canonical aliases mutate one owner policy and bulk sharing excludes unadop
     const created = await createProject(fixture.node, fixture.session, "Canonical", path.join(root, "canonical"));
     const alias = `alias-${randomUUID()}`;
     const db = new DatabaseSync(path.join(fixture.node.dataDir, "node.db"));
+    db.exec("PRAGMA busy_timeout=5000");
     db.prepare("INSERT INTO project_aliases(alias_id,project_id,created_at) VALUES(?,?,?)").run(alias, created.body.project.id, new Date().toISOString());
     db.close();
     const changed = await api<SharingView>(fixture.node, fixture.session, "PUT", `/sharing/project/${alias}`, { expectedGeneration: 1, shares: [{ clusterId, projectId: null }] });
@@ -99,6 +101,7 @@ test("project creation rolls back project and policy rows when delivery insertio
     const warmup = await createProject(fixture.node, fixture.session, "Policy schema warmup", path.join(root, "warmup"));
     assert.equal(warmup.status, 201);
     const db = new DatabaseSync(path.join(fixture.node.dataDir, "node.db"));
+    db.exec("PRAGMA busy_timeout=5000");
     db.prepare("INSERT INTO sharing_memberships(cluster_id,node_id,auto_share_projects,join_sequence) VALUES(?,?,0,2)").run(clusterId, randomUUID());
     await api(fixture.node, fixture.session, "PATCH", `/clusters/${clusterId}/membership`, { autoShareProjects: true });
     db.exec("CREATE TRIGGER fail_project_delivery BEFORE INSERT ON cluster_v2_resource_deliveries BEGIN SELECT RAISE(ABORT,'known delivery failure'); END");

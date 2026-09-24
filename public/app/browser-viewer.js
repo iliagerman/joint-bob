@@ -44,15 +44,13 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
   // Static markup only; page content and other dynamic values use textContent.
   root.replaceChildren(document.createRange().createContextualFragment(`
     <header class="browser-heading">
-      <div><span class="eyebrow">Conversation browser</span><h2 data-testid="browser-title">Browser</h2></div>
+      <div><span class="eyebrow">This conversation</span><h2 data-testid="browser-title">Browser</h2></div>
       <div class="browser-heading-actions">
-        <button class="compact danger browser-stop" type="button" data-testid="browser-end">Stop browser</button>
-        <a class="ghost compact browser-link" data-testid="browser-open-tab" target="_blank" rel="noopener">Open in tab</a>
-        <button type="button" class="ghost compact" data-testid="browser-close-viewer">Close viewer</button>
+        <a class="ghost compact browser-link" data-testid="browser-open-tab" target="_blank" rel="noopener" title="Open this viewer in a separate tab">Open in tab ↗</a>
+        <button type="button" class="ghost compact browser-close" data-testid="browser-close-viewer" aria-label="Close viewer" title="Hide viewer, leave browser running">×</button>
       </div>
     </header>
     <div class="browser-body">
-      <p class="browser-notice" data-testid="browser-session-status" role="status">Finding this conversation's browser…</p>
       <p class="browser-error" data-testid="browser-error" role="alert" hidden></p>
       <p class="browser-error" data-testid="browser-discovery-status" role="status" hidden></p>
       <section class="browser-login-notice" data-testid="browser-login-notice" hidden>
@@ -67,23 +65,50 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
         </div>
       </section>
       <div class="browser-setup">
-      <label class="browser-account-picker">Viewing account<select data-testid="browser-session-select" aria-label="Viewing account"></select></label>
-      <div class="browser-start-row" data-part="start">
-        <label>Project profile<select data-testid="browser-profile-select"><option value="">Conversation default</option></select></label>
-        <label data-part="profile-name" hidden>New profile name<input data-testid="browser-profile-name" maxlength="80" placeholder="e.g. Work account" /></label>
-        <button class="primary" type="button" data-testid="browser-start" disabled>Start browser</button>
+        <details class="browser-profile-library" data-testid="browser-profile-library" open>
+          <summary data-testid="browser-profile-library-toggle"><span><strong>Saved profiles</strong><small>Reuse a login, or keep accounts separate</small></span><span class="browser-machine-badge" data-testid="browser-library-machine">Choose a machine</span></summary>
+          <div class="browser-library-body">
+            <p class="browser-hint">A profile keeps cookies and website logins on one machine, separate from your personal Chrome. Reopen the same profile to reuse its saved data.</p>
+            <p class="browser-hint">A name like “WhatsApp” does not open that website or sign you in. New profiles start empty; sign in once inside this browser.</p>
+            <div class="browser-start-row" data-part="start">
+              <label>Profile to open<select data-testid="browser-profile-select" aria-label="Profile to open"><option value="">Conversation default</option></select></label>
+              <label data-part="profile-name" hidden>New profile name<input data-testid="browser-profile-name" maxlength="80" placeholder="e.g. WhatsApp · Personal" /></label>
+              <button class="primary" type="button" data-testid="browser-start" disabled>Start browser</button>
+            </div>
+            <p class="browser-profile-description" data-testid="browser-profile-description" role="status"></p>
+            <p class="browser-hint">An allowed profile exposes all websites signed in there to this conversation. Manage access below before opening an unassigned profile. Website login status is not verified until you open the site.</p>
+            <details class="browser-details browser-machines" data-testid="browser-machines-details">
+              <summary data-testid="browser-machines-toggle">Change browser machine</summary>
+              <div class="browser-machine-fields">
+                <label>Conversation machine<select data-testid="browser-conversation-node" aria-label="Conversation machine"></select></label>
+                <label>Open profiles on<select data-testid="browser-start-node" aria-label="Start on machine"></select></label>
+              </div>
+              <p class="browser-hint" data-testid="browser-machine-status"></p>
+            </details>
+          </div>
+        </details>
+        <section class="browser-current" aria-label="Browsers in this conversation">
+          <label class="browser-account-picker">Browsers in this conversation<select data-testid="browser-session-select" aria-label="Viewing account"></select></label>
+          <p class="browser-current-profile" data-testid="browser-current-profile"></p>
+          <p class="browser-notice" data-testid="browser-session-status" role="status">Finding this conversation's browser…</p>
+          <div class="browser-session-actions" data-part="session-actions">
+            <label class="browser-archive-toggle"><input type="checkbox" data-testid="browser-show-archived" /><span data-part="archived-label">Show archived</span></label>
+            <button class="ghost compact" type="button" data-testid="browser-remove-session">Remove archived session</button>
+            <button class="ghost compact" type="button" data-testid="browser-clear-sessions">Clear archived sessions</button>
+          </div>
+        </section>
       </div>
-      <div class="browser-session-actions" data-part="session-actions">
-        <button class="ghost compact" type="button" data-testid="browser-remove-session">Remove session</button>
-        <button class="ghost compact" type="button" data-testid="browser-clear-sessions">Clear stopped sessions</button>
-      </div>
-      </div>
-      <div class="browser-toolbar">
-        <span class="browser-connection" data-testid="browser-connection-status" role="status">Not connected</span>
-        <button class="ghost compact" type="button" data-testid="browser-reconnect" aria-label="Reconnect viewer">Reconnect</button>
-        <span data-testid="browser-control-status" role="status">Agent control</span>
-        <button class="primary compact" type="button" data-testid="browser-take-control">Take control</button>
-        <button class="ghost compact" type="button" data-testid="browser-resume-agent">Resume agent</button>
+      <div class="browser-toolbar browser-controls">
+        <div class="browser-control-actions">
+          <span data-testid="browser-control-status" role="status">Agent control</span>
+          <button class="primary compact" type="button" data-testid="browser-take-control">Take control</button>
+          <button class="ghost compact" type="button" data-testid="browser-resume-agent">Resume agent</button>
+        </div>
+        <div class="browser-session-tools">
+          <span class="browser-connection" data-testid="browser-connection-status" role="status">Not connected</span>
+          <button class="ghost compact" type="button" data-testid="browser-reconnect" aria-label="Reconnect viewer" title="Reconnect viewer">↻</button>
+          <button class="ghost compact danger browser-stop" type="button" data-testid="browser-end" title="Stop this browser; keep saved logins">Stop browser</button>
+        </div>
       </div>
       <p class="browser-hint" data-part="control-hint">Take control to interact. Viewing does not pause the agent.</p>
       <div class="browser-tabs" data-testid="browser-tabs" aria-label="Browser tabs"></div>
@@ -96,6 +121,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
         <button class="ghost compact" type="button" data-command="newTab" data-testid="browser-new-tab" aria-label="New browser tab" title="New browser tab">+</button>
       </form>
       <div class="browser-stage">
+        <p class="browser-empty browser-blank-help" data-testid="browser-blank-help" hidden>Your profile is open on a blank tab. Take control and enter a website address above. Saved logins apply when you visit the site; a profile name is not a bookmark.</p>
         <p class="browser-empty" data-part="frame-hint">Start a browser to see its live page.</p>
         <button class="primary" type="button" data-testid="browser-reopen" hidden>Reopen browser</button>
         <img class="browser-screen" data-testid="browser-screen" tabindex="0" draggable="false" alt="Live remote browser. Take control, then tap or focus here to use keyboard and mouse. Tab leaves the viewer; use Send Tab to tab within the remote page." hidden />
@@ -116,18 +142,11 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
         <p class="browser-hint">Up to 25 files, 20 MiB total. Files are sent to the remote browser.</p>
       </section>
       <p class="browser-hint" role="status" data-testid="browser-upload-status"></p>
-      <details class="browser-details browser-machines" data-testid="browser-machines-details">
-        <summary data-testid="browser-machines-toggle">Machine settings</summary>
-        <div class="browser-machine-fields">
-          <label>Conversation machine<select data-testid="browser-conversation-node" aria-label="Conversation machine"></select></label>
-          <label>Start on machine<select data-testid="browser-start-node" aria-label="Start on machine"></select></label>
-        </div>
-        <p class="browser-hint" data-testid="browser-machine-status"></p>
-      </details>
       <details class="browser-details" data-testid="browser-downloads-details"><summary data-testid="browser-downloads-toggle">Downloads</summary><ul data-testid="browser-downloads-list"></ul></details>
-      <details class="browser-details" data-testid="browser-profiles-details"><summary data-testid="browser-profiles-toggle">Browser profiles for this project</summary>
-        <p class="browser-hint">Switching accounts changes only this viewer. Profiles with no assignments remain here on their owning machine. Grant this conversation access before opening one, then tell the agent which profile ID to use.</p>
-        <p class="browser-hint">Cookies and browser data are saved automatically on the profile's machine; no separate Secrets account is required. Keep sensitive accounts in separate profiles. Each profile's Access panel decides who may open it: the creating conversation by default, widened to a project, more conversations, or all projects; you keep manual control regardless of grants. New profiles start node-only; creating one on another browser machine opts it into cross-node use, and Access toggles that anytime. For WhatsApp, take control and scan the QR code with your phone to link this browser. Browser data is not app-encrypted; use FileVault or LUKS for disk protection.</p>
+      <details class="browser-details" data-testid="browser-profiles-details"><summary data-testid="browser-profiles-toggle">Manage saved profiles</summary>
+        <p class="browser-hint">Rename the profile you are viewing, or permanently delete a profile on the selected machine. Deleting a profile removes its saved logins. Stopping a browser or archiving a session does not.</p>
+        <p class="browser-hint">Each profile's Access panel decides which conversations and projects may use it. Grant this conversation access before opening a profile. Cross-node access lets another machine use it remotely; cookies and browser data stay on the owning machine. You keep manual control regardless of grants.</p>
+        <p class="browser-hint">Keep sensitive accounts in separate profiles. With multiple browsers, tell the agent which profile to use. Browser data is not app-encrypted; use FileVault or LUKS for disk protection.</p>
         <form class="browser-profile-form" data-part="profile-form"><input aria-label="Current profile name" placeholder="Rename current profile" maxlength="80" required data-testid="browser-profile-label" /><button class="ghost compact" type="submit" data-testid="browser-save-profile">Rename profile</button></form>
         <ul data-testid="browser-profiles-list"></ul>
       </details>
@@ -161,17 +180,31 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     params.set("theme", document.documentElement.dataset.theme || "light");
     get("open-tab").href = `/browser.html?${params}`;
   }
+  function renderProfileChoice() {
+    const selected = get("profile-select").value;
+    const profile = profiles.find(item => item.id === selected);
+    get("library-machine").textContent = machineName(startNodeId());
+    part("profile-name").hidden = selected !== "new";
+    get("start").textContent = selected === "new" ? "Create profile" : profile ? "Open saved profile" : "Start browser";
+    get("profile-description").textContent = profile
+      ? `${profile.label} · ${machineName(profilesNodeId)} · ID ${profile.id}${profile.createdAt ? ` · Saved ${new Date(profile.createdAt).toLocaleDateString()}` : ""}. ${sessions.some(item => item.profileId === profile.id && item.nodeId === profilesNodeId) ? "Used in this conversation." : "Not yet used in this conversation."} Website login status not verified.`
+      : selected === "new" ? "A separate browser with no saved logins. Give it a name that identifies the account, then open a website and sign in."
+      : "Automatic: reuse this conversation's only profile, or create an empty one if none exists. If several profiles are attached, choose one by name above.";
+  }
   function controls() {
+    renderProfileChoice();
     const pendingLogin = Boolean(session?.loginRequest);
     get("start").disabled = !loaded || !profilesReady || busy || !identity?.conversationId || !identity?.appNodeId || !nodes.some((node) => node.id === startNodeId() && node.available && node.reachable);
     get("conversation-node").disabled = get("start-node").disabled = busy || !preference;
-    get("session-select").disabled = loginMode || busy || !sessions.length;
+    get("session-select").disabled = loginMode || busy || !sessions.some((item) => !stopped(item) || get("show-archived").checked);
     const anyStopped = sessions.some(stopped);
+    const showArchived = get("show-archived").checked;
     part("session-actions").hidden = loginMode || !anyStopped;
+    get("show-archived").disabled = busy;
+    get("remove-session").hidden = get("clear-sessions").hidden = !showArchived;
     get("remove-session").disabled = busy || !session || !stopped(session);
     get("clear-sessions").disabled = busy || !anyStopped;
     get("profile-select").disabled = get("profile-name").disabled = busy;
-    get("start").textContent = running() ? "Open profile" : "Start browser";
     get("reopen").hidden = !session?.profileId || running();
     get("reopen").disabled = busy || !identity?.conversationId || !identity?.appNodeId;
     for (const name of ["navigation", "keyboard"]) part(name).hidden = !running();
@@ -206,7 +239,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     }
     root.querySelector(".browser-footer .browser-hint").textContent = request
       ? "Agent browser automation and actions are paused for human verification. Closing this viewer leaves them paused."
-      : "Viewing does not pause the agent. Closing this viewer leaves the browser running.";
+      : "A browser session uses a saved profile. Stopping it keeps saved logins. Closing this viewer leaves the browser running.";
     let restartStatus = "";
     if (session?.restoreOnRestart) {
       restartStatus = running() ? "Restores automatically after restart."
@@ -217,8 +250,14 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
       ? `${session.profileLabel || "Browser"} · ${machineName(session.nodeId)} · Browser ${session.state}${session.error ? `: ${session.error}` : ""}${restartStatus ? ` · ${restartStatus}` : ""}`
       : !loaded ? busy ? "Loading browser session…" : "Browser session has not loaded. Reconnect viewer to retry."
       : "No browser selected. Choose an account or start a project profile.";
-    get("session-select").replaceChildren(...sessions.map((item) => new Option(`${item.profileLabel || item.profileId || "Browser"} · ${machineName(item.nodeId)} · ${item.state}`, item.id)));
-    get("session-select").value = session?.id || "";
+    get("current-profile").textContent = session?.profileId
+      ? `${machineName(session.nodeId)} · Profile ID ${session.profileId.slice(0, 8)}`
+      : session ? "This browser has no saved profile." : "Open a saved profile above to begin.";
+    const archivedCount = sessions.filter(stopped).length;
+    part("archived-label").textContent = `Show archived (${archivedCount})`;
+    const visibleSessions = sessions.filter((item) => !stopped(item) || get("show-archived").checked);
+    get("session-select").replaceChildren(...(visibleSessions.length ? visibleSessions.map((item) => new Option(`${item.profileLabel || "Browser"} · ${machineName(item.nodeId)} · ${item.profileId?.slice(0, 8) || item.id.slice(0, 8)} · ${item.state}`, item.id)) : [new Option("No open browsers", "")]));
+    get("session-select").value = session && visibleSessions.includes(session) ? session.id : "";
     get("control-status").textContent = human() ? "Human control · agent paused" : request ? "Login required · agent paused" : "Agent control";
     part("control-hint").textContent = human()
       ? session.canControl === false
@@ -226,6 +265,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
         : "Human control pauses browser actions from the agent. Closing the viewer does not resume the agent."
       : "Take control to interact. Viewing does not pause the agent.";
     const active = session?.tabs.find((tab) => tab.id === session.activePageId);
+    get("blank-help").hidden = loginMode || !running() || active?.url !== "about:blank";
     if (document.activeElement !== get("url")) get("url").value = active?.url || "";
     const tabs = get("tabs");
     const signature = JSON.stringify([session?.tabs, session?.activePageId, canInput()]);
@@ -327,6 +367,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
       part("frame-hint").hidden = false; part("frame-hint").textContent = "Waiting for this tab's live image…";
     }
     if (next.canControl === undefined && session?.canControl !== undefined) next = { ...next, canControl: session.canControl };
+    if (!session && next.state === "running") get("profile-library").open = false;
     session = next;
     const index = sessions.findIndex((item) => item.id === next.id);
     if (index < 0) sessions.push(next); else sessions[index] = next;
@@ -352,7 +393,8 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
       get(name).replaceChildren(new Option(`${label} · ${machineName(inherited)}`, ""), ...options);
       get(name).value = selected;
     }
-    get("machine-status").textContent = `New browsers use ${machineName(startNodeId())}. Existing accounts stay on their own machines.`;
+    get("machine-status").textContent = `Showing profiles saved on ${machineName(startNodeId())}. Switching machines does not move saved logins or running browsers.`;
+    renderProfileChoice();
   }
   get("conversation-node").addEventListener("change", () => operation(async () => {
     try {
@@ -370,7 +412,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     profilesNodeId = ownerId; profilesReady = false;
     profiles = []; get("profile-select").value = ""; part("profile-name").hidden = true;
     get("profiles-list").replaceChildren();
-    get("profile-select").replaceChildren(new Option("Conversation default", ""), new Option("New named profile…", "new"));
+    get("profile-select").replaceChildren(new Option("Automatic · this conversation's profile", ""), new Option("Create a new profile…", "new"));
     if (!ownerId) return;
     // The conversation's own grants widen the listing beyond project defaults.
     const result = await api(browserUrl(`/api/browser/profiles?${new URLSearchParams({ projectId, ...(identity?.conversationId ? { conversationId: identity.conversationId } : {}) })}`, ownerId));
@@ -380,11 +422,11 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
   }
   function renderProfiles() {
     const selected = get("profile-select").value;
-    get("profile-select").replaceChildren(new Option("Conversation default", ""), new Option("New named profile…", "new"), ...profiles.map((profile) => new Option(`${profile.label} · ${profile.persistent ? "Persistent" : "Legacy import"}`, profile.id)));
+    get("profile-select").replaceChildren(new Option("Automatic · this conversation's profile", ""), ...profiles.map((profile) => new Option(`${profile.label} · ${machineName(profilesNodeId)} · ${profile.id.slice(0, 8)}`, profile.id)), new Option("Create a new profile…", "new"));
     get("profile-select").value = selected === "new" || profiles.some((profile) => profile.id === selected) ? selected : "";
     if (profileAccess) get("profiles-list").replaceChildren(...profiles.map((profile) => profileAccess.renderProfileRow(profile, { onDelete: deleteProfile })));
     else get("profiles-list").replaceChildren(...profiles.map((profile) => {
-      const item = document.createElement("li"), label = document.createElement("span"); label.textContent = `${profile.label} · ${profile.persistent ? "Persistent" : "Legacy import on next start"} · ${profile.id}`;
+      const item = document.createElement("li"), label = document.createElement("span"); label.textContent = `${profile.label} · ${profile.persistent ? "Persistent" : "Legacy import on next start"} · ${machineName(profilesNodeId)} · ID ${profile.id}`;
       const remove = button("Delete", "delete-profile", () => { void deleteProfile(profile); });
       remove.setAttribute("aria-label", `Delete browser profile ${profile.label}`); item.append(label, remove); return item;
     }));
@@ -485,6 +527,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     part("frame-hint").textContent = next ? "Waiting for this account's live image…"
       : startNodeId() ? "Choose a project profile above, then Start browser."
       : "Choose a browser machine in Machine settings, then start a profile.";
+    get("profile-library").open = !next || next.state !== "running";
     sessionVersion++; session = null; acceptSession(next); retry = 0; render(); connect();
   }
   async function loadBrowserSessions() {
@@ -536,7 +579,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
         try { await loadBrowserSessions(); } catch (failure) { failures.push(failure.message); }
         if (disposed) return;
         loaded = true;
-        if (!session && !sessionId) selectSession(sessions.find((candidate) => candidate.state === "running") || sessions[0]);
+        if (!session && !sessionId) selectSession(sessions.find((candidate) => !stopped(candidate)) || null);
         try { await loadProfiles(); } catch (failure) { failures.push(failure.message); }
       }
       if (!disposed) error(failures.join(" "));
@@ -558,7 +601,11 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
     if (disposed || version !== sessionVersion) return;
     selectSession(result.session); await loadProfiles();
   }));
-  get("profile-select").addEventListener("change", () => { part("profile-name").hidden = get("profile-select").value !== "new"; });
+  get("profile-select").addEventListener("change", renderProfileChoice);
+  get("show-archived").addEventListener("change", () => {
+    if (!get("show-archived").checked && session && stopped(session)) selectSession(sessions.find((candidate) => !stopped(candidate)) || null);
+    else render();
+  });
   get("session-select").addEventListener("change", () => operation(async () => {
     const id = get("session-select").value;
     const selected = sessions.find((candidate) => candidate.id === id);
@@ -582,7 +629,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
   get("clear-sessions").addEventListener("click", async () => {
     const targets = sessions.filter(stopped);
     if (!targets.length) return;
-    if (!await confirmAction({ title: "Clear stopped browser sessions?", message: `Removes ${targets.length} stopped session${targets.length === 1 ? "" : "s"} and their download history from this conversation. Saved login profiles and running sessions are kept.`, confirmLabel: "Clear stopped sessions", destructive: true })) return;
+    if (!await confirmAction({ title: "Clear archived browser sessions?", message: `Removes ${targets.length} archived session${targets.length === 1 ? "" : "s"} and their download history from this conversation. Saved login profiles and running sessions are kept.`, confirmLabel: "Clear archived sessions", destructive: true })) return;
     await operation(async () => {
       const failures = [];
       for (const target of targets) {
@@ -617,6 +664,7 @@ export function createBrowserViewer(root, { api: request, identity, sessionId, n
       if (session.id !== id) throw new Error("Viewed account changed. Choose Stop again for the account you want to close.");
       if (running()) await command({ action: "takeControl", force: true });
       await command({ action: "close" });
+      if (!get("show-archived").checked) selectSession(sessions.find((candidate) => !stopped(candidate)) || null);
     });
   });
   get("login-dismiss").addEventListener("click", () => { dispose(); onClose?.(); });

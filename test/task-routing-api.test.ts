@@ -168,7 +168,8 @@ test("task mutations and task watch sockets route through the recorded owner", {
 
     const doneTaskId = "done-owned-by-b";
     await inject(doneTaskId, bId, "No worktree", "done");
-    await waitForTask(c, cAuth, project.id, doneTaskId, () => true);
+    // Seeing the replica on C does not mean the owner B has received it yet.
+    await Promise.all([waitForTask(b, bAuth, project.id, doneTaskId, () => true), waitForTask(c, cAuth, project.id, doneTaskId, () => true)]);
     const merge = await fetch(`${c.baseUrl}/api/projects/${project.id}/tasks/${doneTaskId}/merge`, { method: "POST", headers: cAuth.headers });
     assert.equal(merge.status, 409, c.output());
     assert.match((await merge.json() as { error: string }).error, /no isolated worktree/i);

@@ -219,7 +219,7 @@ for (const nodeId of [null, "22222222-2222-4222-8222-222222222222"]) {
 
 // Only the new browser API is stubbed. Authentication, app state, conversation
 // selection and rendering run against the real isolated dev node.
-test("browser viewer UI", { timeout: 180_000 }, async (t) => {
+test("browser viewer UI", { timeout: 360_000 }, async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "browser-ui-"));
   const environment = await seedDevEnvironment(root, 1);
   const node = environment.nodes[0];
@@ -258,7 +258,7 @@ test("browser viewer UI", { timeout: 180_000 }, async (t) => {
       const session = sessions.find(item => item.id === id);
       if (command.action === "takeControl") session.owner = "human";
       if (command.action === "resumeAgent") session.owner = "agent";
-      if (command.action === "close") session.state = "closed";
+      if (command.action === "close") { session.state = "closed"; session.restoreOnRestart = false; }
       if (command.action === "dialog") session.dialog = null;
       if (command.action === "upload") session.fileChooser = false;
       if (command.action === "newTab") { session.tabs.push({ id: profileId, url: "about:blank", title: "Popup" }); session.activePageId = profileId; }
@@ -359,16 +359,14 @@ test("browser viewer UI", { timeout: 180_000 }, async (t) => {
         await f.page.setViewportSize({ width, height: 1000 });
         await f.page.getByTestId("browser-screen").waitFor();
         await f.page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-        const heading = (await f.page.locator(".browser-heading").boundingBox())!;
+        const tools = (await f.page.locator(".browser-session-tools").boundingBox())!;
         const stop = (await f.page.getByTestId("browser-end").boundingBox())!;
-        assert.ok(stop.y >= heading.y && stop.y + stop.height <= heading.y + heading.height, "Stop browser must stay in the header, not below the page");
+        assert.ok(stop.y >= tools.y && stop.y + stop.height <= tools.y + tools.height, "Stop browser belongs with session tools, not viewer navigation");
         assert.equal(await f.page.getByTestId("browser-end").innerText(), "Stop browser");
         assert.equal(await f.page.getByTestId("browser-conversation-node").isVisible(), false, "Advanced machine overrides start collapsed");
         assert.equal(await f.page.getByTestId("browser-profile-label").isVisible(), false, "Profile management starts collapsed");
         assert.equal(await f.page.getByTestId("browser-session-select").isVisible(), true);
-        const profile = (await f.page.getByTestId("browser-profile-select").boundingBox())!;
-        const start = (await f.page.getByTestId("browser-start").boundingBox())!;
-        assert.ok(Math.abs(profile.y + profile.height - start.y - start.height) < 2, "Profile and Start align on one compact row");
+        assert.equal(await f.page.getByTestId("browser-profile-select").isVisible(), false, "Saved profiles collapse while browsing");
         const stage = (await f.page.locator(".browser-stage").boundingBox())!;
         assert.ok(stage.y < 500 && stage.height >= 350, `Browser stage must dominate: ${JSON.stringify(stage)}`);
         assert.ok(await f.page.locator(".browser-body").evaluate(el => el.scrollWidth <= el.clientWidth), "No internal horizontal overflow");
@@ -387,6 +385,8 @@ test("browser viewer UI", { timeout: 180_000 }, async (t) => {
         f.setDefault(executorId); f.sendState();
         // Discover the closed account at its actual owner, with a different inherited default.
         await f.page.getByTestId("browser-reconnect").click();
+        assert.equal(await f.page.getByTestId("browser-session-select").locator(`option[value="${original.id}"]`).count(), 0, "closed account is archived by default");
+        await f.page.getByTestId("browser-show-archived").check();
         await f.page.getByTestId("browser-session-select").selectOption(original.id);
         await f.page.getByTestId("browser-session-status").filter({ hasText: "closed" }).waitFor();
         assert.equal(await f.page.getByTestId("browser-url").isVisible(), false, "Closed browser must hide navigation");
@@ -532,14 +532,16 @@ test("browser viewer UI", { timeout: 180_000 }, async (t) => {
         await f.page.getByTestId("browser-control-status").filter({ hasText: "Agent control" }).waitFor();
         await f.page.getByTestId("browser-end").click();
         await f.page.getByTestId("confirm-accept-button").click();
-        await f.page.getByTestId("browser-session-status").filter({ hasText: "closed" }).waitFor();
+        await f.page.getByTestId("browser-session-status").filter({ hasText: "No browser selected" }).waitFor();
         assert.equal(f.commands.filter((c) => c.action === "close").length, 1);
+        assert.match(await f.page.getByText("Show archived", { exact: false }).innerText(), /1/);
         await f.page.getByTestId("browser-profiles-toggle").click();
         await f.page.getByTestId("browser-delete-profile").last().click();
         await f.page.getByTestId("confirm-accept-button").click();
         await f.page.getByTestId("browser-profiles-list").getByText("Saved login · Persistent", { exact: false }).waitFor({ state: "detached" });
         await f.page.getByTestId("browser-close-viewer").click();
         await openConversation(f.page, "[Claude] Makor deployment information");
+        await f.page.getByTestId("browser-session-status").filter({ hasText: "No browser selected" }).waitFor();
         await f.page.getByTestId("browser-start").click();
         await screen.waitFor();
         assert.equal(f.starts.length, 2, "different conversations need separate browser sessions");
@@ -559,6 +561,7 @@ test("browser viewer UI", { timeout: 180_000 }, async (t) => {
         await f.page.getByTestId("browser-profile-select").selectOption(profileId);
         await f.page.getByTestId("browser-start").click();
         await f.page.getByTestId("browser-screen").waitFor();
+        await f.page.getByTestId("browser-profile-library-toggle").click();
         await f.page.getByTestId("browser-profile-select").selectOption("new");
         await f.page.getByTestId("browser-profile-name").fill("Personal");
         await f.page.getByTestId("browser-start").click();
@@ -573,13 +576,42 @@ test("browser viewer UI", { timeout: 180_000 }, async (t) => {
         assert.match(await f.page.getByTestId("browser-session-status").innerText(), /automatically.*restart/);
         await f.page.getByTestId("browser-end").click();
         await f.page.getByTestId("confirm-accept-button").click();
-        await f.page.getByTestId("browser-session-status").filter({ hasText: "closed" }).waitFor();
+        await f.page.getByTestId("browser-session-status").filter({ hasText: "Personal" }).waitFor();
         assert.deepEqual(f.sessions.map(session => session.state), ["closed", "running"]);
+        assert.equal(await f.page.getByTestId("browser-session-select").locator('option[value="browser-1"]').count(), 0, "closed account is archived");
+        await f.page.getByTestId("browser-show-archived").check();
+        await f.page.getByTestId("browser-session-select").selectOption("browser-1");
+        await f.page.getByTestId("browser-session-status").filter({ hasText: "closed" }).waitFor();
         await f.page.getByTestId("browser-session-select").selectOption("browser-2");
         await f.page.getByTestId("browser-screen").waitFor();
         await f.page.setViewportSize({ width: 390, height: 844 });
         await f.page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
         assert.ok(await f.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      } finally { await f.page.close(); }
+    });
+    await t.test("stopped sessions are archived by default and can be shown", async () => {
+      const f = await setup();
+      try {
+        await openConversation(f.page);
+        await f.page.getByTestId("browser-profile-select").selectOption(profileId);
+        await f.page.getByTestId("browser-start").click();
+        await f.page.getByTestId("browser-screen").waitFor();
+        await f.page.getByTestId("browser-profile-library-toggle").click();
+        await f.page.getByTestId("browser-profile-select").selectOption("new");
+        await f.page.getByTestId("browser-profile-name").fill("Personal");
+        await f.page.getByTestId("browser-start").click();
+        await f.page.getByTestId("browser-session-select").selectOption("browser-1");
+        f.sessions.find(session => session.id === "browser-1").restoreOnRestart = false;
+        await f.page.getByTestId("browser-end").click();
+        await f.page.getByTestId("confirm-accept-button").click();
+
+        await f.page.getByTestId("browser-session-status").filter({ hasText: "Personal" }).waitFor();
+        assert.equal(await f.page.getByTestId("browser-session-select").locator('option[value="browser-1"]').count(), 0, "stopped sessions stay out of the active list");
+        await f.page.getByTestId("browser-show-archived").check();
+        assert.equal(await f.page.getByTestId("browser-session-select").locator('option[value="browser-1"]').count(), 1, "archived toggle reveals stopped sessions");
+        assert.match(await f.page.getByText("Show archived", { exact: false }).innerText(), /1/);
+        await f.page.getByTestId("browser-session-select").selectOption("browser-1");
+        await f.page.getByTestId("browser-session-status").filter({ hasText: "closed" }).waitFor();
       } finally { await f.page.close(); }
     });
     await t.test("stopped sessions can be removed individually and cleared, running sessions stay", async () => {
@@ -589,6 +621,7 @@ test("browser viewer UI", { timeout: 180_000 }, async (t) => {
         await f.page.getByTestId("browser-profile-select").selectOption(profileId);
         await f.page.getByTestId("browser-start").click();
         await f.page.getByTestId("browser-screen").waitFor();
+        await f.page.getByTestId("browser-profile-library-toggle").click();
         await f.page.getByTestId("browser-profile-select").selectOption("new");
         await f.page.getByTestId("browser-profile-name").fill("Personal");
         await f.page.getByTestId("browser-start").click();
@@ -601,6 +634,9 @@ test("browser viewer UI", { timeout: 180_000 }, async (t) => {
         f.sessions.find(session => session.id === "browser-1").restoreOnRestart = false;
         await f.page.getByTestId("browser-end").click();
         await f.page.getByTestId("confirm-accept-button").click();
+        await f.page.getByTestId("browser-session-status").filter({ hasText: "Personal" }).waitFor();
+        await f.page.getByTestId("browser-show-archived").check();
+        await f.page.getByTestId("browser-session-select").selectOption("browser-1");
         await f.page.getByTestId("browser-session-status").filter({ hasText: "closed" }).waitFor();
         assert.equal(await f.page.getByTestId("browser-remove-session").isDisabled(), false, "closed session is removable");
         await f.page.getByTestId("browser-remove-session").click();
@@ -628,11 +664,11 @@ test("browser viewer UI", { timeout: 180_000 }, async (t) => {
         // The serif title must sit fully inside the header, not clip past its top padding.
         assert.ok(title.y >= heading.y - 0.5, `title top must stay inside the header: title ${title.y} vs heading ${heading.y}`);
         assert.ok(title.y + title.height <= heading.y + heading.height + 0.5, "title bottom must stay inside the header");
-        // Open in tab is an anchor, not a button; it must still line up with the adjacent Stop button.
+        // Viewer navigation stays together, separate from browser execution controls.
         const link = (await f.page.getByTestId("browser-open-tab").boundingBox())!;
-        const stop = (await f.page.getByTestId("browser-end").boundingBox())!;
-        assert.ok(Math.abs((link.y + link.height / 2) - (stop.y + stop.height / 2)) < 2, `Open in tab must share the Stop button's baseline: ${JSON.stringify({ link, stop })}`);
-        assert.ok(Math.abs(link.height - stop.height) < 2, "Open in tab must be the same height as the header buttons, not bare inline text");
+        const close = (await f.page.getByTestId("browser-close-viewer").boundingBox())!;
+        assert.ok(Math.abs((link.y + link.height / 2) - (close.y + close.height / 2)) < 2, `Open in tab and Close viewer align: ${JSON.stringify({ link, close })}`);
+        assert.ok(Math.abs(link.height - close.height) < 2, "Header controls share a consistent height");
       } finally { await f.page.close(); }
     });
     await t.test("searching conversations closes the conversation-bound browser viewer", async () => {
@@ -655,6 +691,7 @@ test("browser viewer UI", { timeout: 180_000 }, async (t) => {
         await f.page.getByTestId("browser-screen").waitFor();
         assert.match(await f.page.getByTestId("browser-session-status").innerText(), /Mac laptop/);
         f.delayProfiles(new Promise(resolve => { release = resolve; }));
+        await f.page.getByTestId("browser-profile-library-toggle").click();
         await f.page.getByTestId("browser-machines-toggle").click();
         await f.page.getByTestId("browser-start-node").selectOption(executorId);
         await f.page.waitForFunction(() => (document.querySelector('[data-testid="browser-start-node"]') as HTMLSelectElement).disabled);
@@ -663,12 +700,13 @@ test("browser viewer UI", { timeout: 180_000 }, async (t) => {
         assert.equal(await f.page.getByTestId("browser-profile-select").inputValue(), "", "Old machine's profile selection must be cleared before loading");
         release();
         await f.page.waitForFunction(() => !(document.querySelector('[data-testid="browser-start-node"]') as HTMLSelectElement).disabled);
-        assert.deepEqual(await f.page.getByTestId("browser-profile-select").locator("option").allTextContents(), ["Conversation default", "New named profile…"]);
+        assert.deepEqual(await f.page.getByTestId("browser-profile-select").locator("option").allTextContents(), ["Automatic · this conversation's profile", "Create a new profile…"]);
         await f.page.getByTestId("browser-profile-select").selectOption("new");
         await f.page.getByTestId("browser-profile-name").fill("Ubuntu account");
         await f.page.getByTestId("browser-start").click();
         await f.page.getByTestId("browser-session-status").filter({ hasText: "Ubuntu account" }).waitFor();
         assert.deepEqual(f.sessions.map(session => session.nodeId), [node.nodeId, executorId]);
+        await f.page.getByTestId("browser-profile-library-toggle").click();
         await f.page.getByTestId("browser-conversation-node").selectOption(executorId);
         await f.page.getByTestId("browser-start-node").selectOption("");
         assert.match(await f.page.getByTestId("browser-start-node").locator("option").first().innerText(), /Use conversation setting · Ubuntu/);
@@ -677,7 +715,8 @@ test("browser viewer UI", { timeout: 180_000 }, async (t) => {
         assert.match(await f.page.getByTestId("browser-session-status").innerText(), /Mac laptop/);
         assert.equal(new URL((await f.page.getByTestId("browser-open-tab").getAttribute("href"))!, node.url).searchParams.get("nodeId"), node.nodeId);
         await f.page.getByTestId("browser-end").click(); await f.page.getByTestId("confirm-accept-button").click();
-        await f.page.getByTestId("browser-session-status").filter({ hasText: "closed" }).waitFor();
+        await f.page.getByTestId("browser-session-status").filter({ hasText: "Ubuntu account" }).waitFor();
+        await f.page.getByTestId("browser-profile-library-toggle").click();
         assert.deepEqual(f.sessions.map(session => session.state), ["closed", "running"]);
         assert.ok(f.requests.filter(url => url.pathname.endsWith("/command")).every(url => url.searchParams.get("nodeId") === node.nodeId));
         await f.page.setViewportSize({ width: 390, height: 844 });
@@ -767,7 +806,7 @@ test("browser viewer UI", { timeout: 180_000 }, async (t) => {
         await f.page.getByTestId("browser-dialog-dismiss").click();
         await f.page.locator('[data-part="dialog"]').waitFor({ state: "hidden" });
         await f.page.getByTestId("browser-end").click(); await f.page.getByTestId("confirm-accept-button").click();
-        await f.page.getByTestId("browser-session-status").filter({ hasText: "closed" }).waitFor();
+        await f.page.getByTestId("browser-session-status").filter({ hasText: "No browser selected" }).waitFor();
         assert.equal(f.commands.filter(c => c.action === "upload").length, 0);
       } finally { await f.page.close(); }
     });

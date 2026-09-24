@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { launchChrome } from "./launch-chrome.js";
-import { seedDevEnvironment, startDevNode, stopDevNode } from "../dev-nodes.js";
+import { seedDevEnvironment, signIn, startDevNode, stopDevNode } from "../dev-nodes.js";
 
 test("conversation actions stay inside the card when sub-agent tasks extend the row", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-agent-actions-"));
@@ -22,10 +22,9 @@ test("conversation actions stay inside the card when sub-agent tasks extend the 
       })) }];
       await route.fulfill({ response, json: body });
     });
+    const login = await signIn(environment, node);
+    await page.context().addCookies(login.cookie.split("; ").map(cookie => ({ name: cookie.slice(0, cookie.indexOf("=")), value: cookie.slice(cookie.indexOf("=") + 1), url: node.url })));
     await page.goto(node.url);
-    await page.getByTestId("login-username-input").fill(environment.username);
-    await page.getByTestId("login-password-input").fill(environment.password);
-    await page.getByTestId("login-submit-button").click();
     await page.getByText("Internal Assistant", { exact: true }).click();
     const found = page.locator("#sessionList .list-row").filter({ has: page.getByTestId("agent-run-toggle") }).first();
     await found.waitFor();

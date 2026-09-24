@@ -10,9 +10,8 @@ const pageId = "33333333-3333-4333-8333-333333333333";
 const requestId = "44444444-4444-4444-8444-444444444444";
 const frameWidth = 1200, frameHeight = 800;
 
-// On a phone the keyboard leaves almost no room for the inline sign-in view.
-// Full screen strips the surrounding app chrome so the remote page gets the
-// whole viewport, and toggling back restores the inline panel.
+// Desktop sign-in can expand from inline to full screen and back. Phones
+// open directly in full screen and hide this toggle (covered by the mobile suite).
 test("sign-in panel expands to full screen and back", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
   const liveSockets = new Set<WebSocketRoute>();
@@ -67,8 +66,8 @@ test("sign-in panel expands to full screen and back", { timeout: 120_000 }, asyn
   const screen = dialog.getByTestId("browser-screen");
   await screen.waitFor({ state: "visible" });
 
-  // A phone-sized viewport: inline, the panel shares the screen with app chrome.
-  await page.setViewportSize({ width: 412, height: 730 });
+  // Keep the desktop toggle available; a phone has no inline mode.
+  await page.setViewportSize({ width: 900, height: 730 });
   const inline = await dialog.evaluate(element => element.getBoundingClientRect().height);
   assert.ok(inline < 700, `inline panel must not already cover the screen: ${inline}px`);
 
@@ -76,7 +75,7 @@ test("sign-in panel expands to full screen and back", { timeout: 120_000 }, asyn
   await expand.click();
   const full = await dialog.evaluate(element => { const box = element.getBoundingClientRect(); return { top: box.top, left: box.left, width: box.width, height: box.height }; });
   assert.ok(full.top <= 1 && full.left <= 1, `full screen panel must start at the viewport corner: ${JSON.stringify(full)}`);
-  assert.ok(full.width >= 411 && full.height >= 729, `full screen panel must cover the viewport: ${JSON.stringify(full)}`);
+  assert.ok(full.width >= 899 && full.height >= 729, `full screen panel must cover the viewport: ${JSON.stringify(full)}`);
   // The Done button stays reachable so the human can finish the handoff.
   await dialog.getByTestId("browser-login-done").waitFor({ state: "visible" });
   await screen.waitFor({ state: "visible" });

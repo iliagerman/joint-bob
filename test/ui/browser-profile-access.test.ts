@@ -172,6 +172,9 @@ test("profile scope grants, cross-node toggle, and human takeover are enforced e
     await viewer.getByTestId("browser-error").filter({ hasText: /revoked/i }).waitFor();
     await viewer.getByTestId("browser-end").click();
     await viewer.getByTestId("browser-confirm-accept").click();
+    await viewer.getByTestId("browser-session-status").filter({ hasText: "No browser selected" }).waitFor();
+    await viewer.getByTestId("browser-show-archived").check();
+    await viewer.getByTestId("browser-session-select").selectOption(sessionB.id);
     await viewer.getByTestId("browser-session-status").filter({ hasText: /closed/ }).waitFor();
     const restored = await agentCall(agentB, { operation: "start", profileId: session.profileId });
     assert.equal(restored.status, 403, "the revoked conversation cannot restart the profile");
