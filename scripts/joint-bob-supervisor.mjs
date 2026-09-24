@@ -443,6 +443,10 @@ export async function startSupervisor({ dataDirectory, app, installation }) {
   let listening = false;
   try {
     store.beginStartup();
+    // The control socket makes this supervisor discoverable to installers. Persist
+    // its installation before exposing that socket so a fast health check cannot
+    // send an update down the legacy installer path.
+    if (installation && !existingInstallation) store.setInstallation(installation);
     await prepareSocket(socketPath);
     const server = runtime.createServer();
     await new Promise((resolve, reject) => { server.once("error", reject); server.listen(socketPath, resolve); });
@@ -452,7 +456,6 @@ export async function startSupervisor({ dataDirectory, app, installation }) {
     store.commitStartup();
     store.reconcileActive();
     runtime.appState = await runtime.launchApp(commandSpec(app));
-    if (installation && !existingInstallation) store.setInstallation(installation);
     runtime.state = "running";
     runtime.scheduleAppRestart(runtime.appState);
     return { socketPath, token, close: () => runtime.close() };
