@@ -37,6 +37,8 @@ test("focus UI is opt-in, uses real conversations, and reverts without losing th
   assert.equal(await page.locator("#chatToolbar").isVisible(), false);
   assert.equal(await page.locator("#chatsPanel").isVisible(), false);
   await page.getByTestId("focus-controls-button").click();
+  assert.equal(await page.locator("#chatToolbar").isVisible(), false);
+  await page.getByTestId("focus-tools").click();
   assert.equal(await page.locator("#chatToolbar").isVisible(), true);
   assert.equal(await page.getByTestId("chat-open-browser-button").isVisible(), true);
   await page.getByTestId("focus-new-conversation").click();
@@ -91,6 +93,7 @@ test("mobile focus gestures, fixed composer and cross-project creation use the l
   const originalTitle = await page.locator("#sessionTitle").innerText();
   // A real fixture transcript, deliberately viewed through a shorter viewport.
   await page.setViewportSize({ width: 390, height: 460 });
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await page.waitForFunction(() => {
     const messages = document.querySelector("#messages")!;
     return messages.scrollHeight > messages.clientHeight;
@@ -107,7 +110,7 @@ test("mobile focus gestures, fixed composer and cross-project creation use the l
   for (const visible of [false, true]) {
     await page.touchscreen.tap(title.x + 10, title.y + 10);
     await page.touchscreen.tap(title.x + 10, title.y + 10);
-    assert.equal(await page.getByTestId("focus-controls-button").isVisible(), visible);
+    await page.waitForFunction(expected => !document.querySelector<HTMLElement>("#focusControlsButton")!.hidden === expected, visible);
   }
   const fab = page.getByTestId("focus-controls-button");
   const start = await fab.boundingBox();

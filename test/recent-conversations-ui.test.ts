@@ -180,7 +180,7 @@ test("the first ten recents are numbered and open with a digit key", async () =>
 });
 
 test("a global shortcut opens the recents dialog", async () => {
-  const app = await appSource();
+  const app = await readFile("public/app/recents.js", "utf8");
 
   // The app has more than one document-level keydown handler now, so this finds the
   // one that owns the recents chord rather than whichever comes first in the bundle.

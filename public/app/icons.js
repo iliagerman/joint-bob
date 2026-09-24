@@ -5,6 +5,14 @@ import { sessionEngine } from "./session-identity.js";
  * builder below stays a single loop.
  */
 const rowMenuIconPaths = {
+  chat: ["M4 4h16v12H9l-5 4z", "M8 8h8M8 12h5"],
+  play: ["m8 5 11 7-11 7z"],
+  close: ["m6 6 12 12M18 6 6 18"],
+  back: ["m14 6-6 6 6 6"],
+  menu: ["M4 7h16M4 12h16M4 17h16"],
+  terminal: ["M3 4h18v16H3z", "m7 8 4 4-4 4M14 16h3"],
+  globe: ["M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18", "M3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18"],
+  clock: ["M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18", "M12 7v5l3 2"],
   pin: [
     "M12 17v5",
     "M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z",

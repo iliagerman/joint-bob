@@ -104,10 +104,13 @@ function pendingReviewCount() {
 
 function renderPendingReviewsBadge() {
   const count = pendingReviewCount();
-  for (const badge of [elements.pendingReviewsBadge, elements.navPendingReviewsBadge]) {
+  for (const badge of [elements.pendingReviewsBadge, elements.navPendingReviewsBadge, document.querySelector("#focusPendingBadge")]) {
     badge.textContent = count > 99 ? "99+" : String(count);
     badge.hidden = count === 0;
   }
+  document.querySelector("#focusControlsButton").setAttribute("aria-label", count
+    ? `Show controls, ${count} conversation${count === 1 ? " needs" : "s need"} review`
+    : "Show controls");
   elements.markAllPendingReviewedButton.disabled = count === 0;
 }
 

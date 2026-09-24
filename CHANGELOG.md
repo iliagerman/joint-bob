@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Enhanced Focus interface with refined mobile gestures: double-tap to toggle the control menu, triple-tap to access recent conversations, and improved compact layout on narrow screens.
+
 ## 1.86.1 — 2026-09-24
 
 - Bundled harness updates now install safely without corrupting the update mechanism.
