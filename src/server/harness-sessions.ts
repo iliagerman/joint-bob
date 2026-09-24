@@ -1,4 +1,5 @@
 import WebSocket from "ws";
+import { conversationInactive } from "../conversation-watchdog.js";
 import { conversationWorkActive } from "../conversation-work.js";
 import { getHarness, getHarnessRuntime, refreshHarnessSessions } from "../harnesses.js";
 import type { HarnessEvent, HarnessOpenOptions, HarnessSession } from "../harnesses/runtime.js";
@@ -8,8 +9,8 @@ import { idleSessionTimeoutMs, localWriteGraceMs } from "./state.js";
 
 export interface SharedHarnessSession {
   engine: HarnessId; projectId: string; cwd: string; session: HarnessSession;
-  clients: Set<WebSocket>; turnInFlight: number; lastLocalEventAt: number; internalTurn?: boolean;
-  liveEvents: HarnessEvent[]; idleTimer: NodeJS.Timeout | null; unsubscribe: () => void;
+  clients: Set<WebSocket>; turnInFlight: number; lastLocalEventAt: number; lastActivityAt: number; internalTurn?: boolean;
+  liveEvents: HarnessEvent[]; idleTimer: NodeJS.Timeout | null; unsubscribe: () => void; watchdogStopping?: boolean;
   /** True while the running turn came from a scheduled task rather than a person. */
   scheduledTurn: boolean;
 }
@@ -49,7 +50,7 @@ function subscribe(shared: SharedHarnessSession): () => void {
   let announcedFile: string | undefined;
   return shared.session.subscribe((event) => {
     const internal = shared.internalTurn === true;
-    shared.lastLocalEventAt = Date.now();
+    markHarnessActivity(shared);
     if (event.type === "agent_start") shared.liveEvents = [];
     if (!internal && shared.turnInFlight) appendEvent(shared.liveEvents, event);
     if (!internal) for (const client of shared.clients) send(client, event);
@@ -77,7 +78,7 @@ function subscribe(shared: SharedHarnessSession): () => void {
 async function createSession(engine: HarnessId, options: HarnessOpenOptions): Promise<SharedHarnessSession> {
   const session = await (await getHarnessRuntime(engine)).open(options);
   if (session.id !== options.sessionId) throw new Error(`Harness returned unexpected session ID: ${session.id}`);
-  const shared: SharedHarnessSession = { engine, projectId: options.projectId, cwd: options.cwd, session, clients: new Set(), turnInFlight: 0, lastLocalEventAt: 0, liveEvents: [], idleTimer: null, unsubscribe: () => {}, scheduledTurn: false };
+  const shared: SharedHarnessSession = { engine, projectId: options.projectId, cwd: options.cwd, session, clients: new Set(), turnInFlight: 0, lastLocalEventAt: 0, lastActivityAt: 0, liveEvents: [], idleTimer: null, unsubscribe: () => {}, scheduledTurn: false };
   shared.unsubscribe = subscribe(shared);
   harnessSessions.set(harnessSessionKey(options.projectId, engine, session.id), shared);
   return shared;
@@ -96,6 +97,32 @@ export async function openHarnessSession(engine: HarnessId, options: HarnessOpen
 function clearIdle(shared: SharedHarnessSession): void {
   if (shared.idleTimer) clearTimeout(shared.idleTimer);
   shared.idleTimer = null;
+}
+
+export function markHarnessActivity(shared: SharedHarnessSession, now = Date.now()): void {
+  shared.lastLocalEventAt = now;
+  shared.lastActivityAt = now;
+}
+
+export function markHarnessInput(shared: SharedHarnessSession, now = Date.now()): void {
+  shared.watchdogStopping = false;
+  markHarnessActivity(shared, now);
+}
+
+export async function reapInactiveHarnessSessions(now = Date.now()): Promise<void> {
+  await Promise.all([...harnessSessions.values()].map(async (shared) => {
+    if (shared.watchdogStopping || !harnessTurnBusy(shared) || !conversationInactive(shared.lastActivityAt, now)) return;
+    shared.watchdogStopping = true;
+    try {
+      await shared.session.cancel();
+      console.warn(`Stopped inactive ${shared.engine} conversation ${shared.session.id}: no input or output since ${new Date(shared.lastActivityAt).toISOString()}`);
+    } catch (error) {
+      shared.watchdogStopping = false;
+      console.warn(`Could not stop inactive ${shared.engine} conversation ${shared.session.id}`, error);
+    } finally {
+      sendHarnessStatus(shared);
+    }
+  }));
 }
 
 export function attachHarnessClient(shared: SharedHarnessSession, socket: WebSocket): void { clearIdle(shared); shared.clients.add(socket); }

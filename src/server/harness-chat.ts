@@ -32,7 +32,7 @@ import { socketMessageSchema } from "./schemas.js";
 import { claimConversationLocally, describeConversationOwner, type ForeignConversationOwner, requireLocalConversationOwner } from "./sessions-helpers.js";
 import { flags } from "./state.js";
 import { broadcastToProject, chatErrorMessage, send } from "./realtime.js";
-import { attachHarnessClient, detachHarnessClient, disposeHarnessSession, findHarnessSession, harnessSessionBusy, harnessTurnBusy, openHarnessSession, sendHarnessStatus, type SharedHarnessSession } from "./harness-sessions.js";
+import { attachHarnessClient, detachHarnessClient, disposeHarnessSession, findHarnessSession, harnessSessionBusy, harnessTurnBusy, markHarnessInput, openHarnessSession, sendHarnessStatus, type SharedHarnessSession } from "./harness-sessions.js";
 
 export interface HarnessChatConnection {
   socket: WebSocket; project: ProjectRecord; taskId: string | null; cwd: string; engine: HarnessId;
@@ -60,6 +60,7 @@ export async function autoCompactBetweenTurns(shared: SharedHarnessSession, thre
   const usage = shared.session.status().contextUsage;
   if (threshold === null || !usage || usage.percent < threshold || shared.turnInFlight > 0 || shared.session.isBusy() || autoCompacted.has(shared.session)) return false;
   shared.turnInFlight += 1;
+  markHarnessInput(shared);
   // A failed attempt counts too: wake-ups poll every two seconds, and retrying a
   // failing compaction on each one floods the log and never reaches the prompt.
   autoCompacted.add(shared.session);
@@ -169,6 +170,7 @@ async function enqueue(connection: HarnessChatConnection, message: string, image
   const suffix = absolute.length ? `Attached: ${absolute.map(({ name }) => name).join(", ")}` : "";
   const displayText = [message.trim(), suffix].filter(Boolean).join("\n\n");
   const queued = enqueuePrompt(queueKey(connection), promptText, displayText, { requestId, messageText: message, promptSuffix: promptText.slice(message.trim().length).trim(), displaySuffix: suffix, attachmentPaths: absolute.map(({ path: file }) => file), images: imageAttachments.map(({ path: file, mimeType }) => ({ path: file, mimeType })), settings: settings === undefined ? null : settings });
+  markHarnessInput(connection.shared);
   publish(connection, { type: "userMessage", text: displayText, scheduled: isScheduledPromptText(message), queued: true, requestId: queued.requestId, queueId: queued.id, revision: queued.revision, editableText: queued.messageText, settings: queued.settings, attachments: absolute.map(({ kind, name, path: attachmentPath }) => ({ kind, name, path: attachmentPath })) });
   refreshHarnessPromptQueue(connection);
   void drainHarnessPromptQueue(connection).catch((error) => publish(connection, { type: "error", error: chatErrorMessage(error) }));
@@ -273,6 +275,7 @@ async function dispatch(connection: HarnessChatConnection, queued: QueuedPrompt)
   const previousInternalTurn = shared.internalTurn;
   shared.internalTurn = Boolean(queued.systemEventId);
   shared.turnInFlight += 1;
+  markHarnessInput(shared);
   try {
     if (queued.settings) await applyQueuedSettings(connection, queued.settings);
     await routePromptByDifficulty(connection, queued);
@@ -333,6 +336,7 @@ async function runGoalTurn(connection: HarnessChatConnection): Promise<boolean> 
   const local = await getClusterNode();
   await ensureCurrentSession(connection);
   connection.shared.turnInFlight += 1;
+  markHarnessInput(connection.shared);
   try {
     await writable(connection);
     await connection.shared.session.preflight();
@@ -401,7 +405,10 @@ async function switchHarness(connection: HarnessChatConnection, engine: HarnessI
   const id = randomUUID();
   const { accountIds } = await getScopeSecretAccounts("conversation", conversationScopeId(connection.engine, old.session.id));
   const shared = await openHarnessSession(engine, { projectId: connection.project.id, cwd: connection.cwd, sessionId: id, conversationId: connection.conversationId, accountIds });
-  if (internal) shared.turnInFlight += 1;
+  if (internal) {
+    shared.turnInFlight += 1;
+    markHarnessInput(shared);
+  }
   try {
     await claimConversationLocally(engine, id, local.id);
     await writable(connection);
@@ -479,6 +486,7 @@ async function controls(connection: HarnessChatConnection, message: ReturnType<t
   if (message.type === "compact") {
     if (harnessSessionBusy(connection.shared)) throw new Error("Conversation is busy");
     connection.shared.turnInFlight += 1;
+    markHarnessInput(connection.shared);
     try {
       await writable(connection);
       await connection.shared.session.compact(message.message, () => writable(connection));

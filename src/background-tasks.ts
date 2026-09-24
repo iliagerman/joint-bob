@@ -2,6 +2,7 @@ import { existsSync, lstatSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { pathToFileURL } from "node:url";
+import { CONVERSATION_INACTIVITY_TIMEOUT_MS } from "./conversation-watchdog.js";
 
 export interface BackgroundTask {
   id: string;
@@ -160,6 +161,7 @@ export interface ImplicitShellTask {
   id: string;
   identity: string;
   startedAt: string;
+  lastOutputAt?: string;
 }
 
 /* A `supervised_shell_calls` row marks a task the harness started inside a tool
@@ -182,7 +184,17 @@ export function readImplicitShellTasks(dataDirectory: string): ImplicitShellTask
          AND EXISTS (SELECT 1 FROM shell_calls.supervised_shell_calls p WHERE p.task_id=supervisor_tasks.id)
        ORDER BY started_at`,
     ).all() as Array<{ id: string; identity: string; started_at: string }>;
-    return rows.map((row) => ({ id: row.id, identity: row.identity, startedAt: row.started_at }));
+    const outputDirectory = path.join(realpathSync(dataDirectory), "background-tasks");
+    return rows.map((row) => {
+      const output = path.resolve(outputDirectory, `${row.id}.log`);
+      let lastOutputAt: string | undefined;
+      try {
+        const entry = path.dirname(output) === outputDirectory ? lstatSync(output) : undefined;
+        const uid = process.getuid?.();
+        if (entry?.isFile() && !entry.isSymbolicLink() && uid !== undefined && entry.uid === uid && entry.size > 0) lastOutputAt = entry.mtime.toISOString();
+      } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      return { id: row.id, identity: row.identity, startedAt: row.started_at, ...(lastOutputAt ? { lastOutputAt } : {}) };
+    });
   } finally {
     db.close();
   }
@@ -191,18 +203,17 @@ export function readImplicitShellTasks(dataDirectory: string): ImplicitShellTask
 /* A tool-call shell is supervised so it can outlive the turn that started it and
    wake the conversation when it ends. Nothing ends it when that conversation never
    comes back: the shell keeps running, keeps its release directory pinned, and keeps
-   the conversation advertising background work. Two things make one abandoned - the
-   conversation it belongs to is gone, or it has outlived any turn it could still be
-   reporting to. */
-export const TOOL_CALL_SHELL_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+   the conversation advertising background work. Output extends its useful lifetime;
+   a silent process does not keep a conversation running forever. */
 /* A conversation starting its first turn can run a shell before its record lands,
    so a missing conversation only counts once the shell is older than that window. */
 export const MISSING_CONVERSATION_GRACE_MS = 5 * 60 * 1000;
 
-export function abandonedShellReason(startedAt: string, conversationExists: boolean, now: number): string | null {
-  const age = now - Date.parse(startedAt);
-  if (!conversationExists && age > MISSING_CONVERSATION_GRACE_MS) return "its conversation is gone";
-  if (age > TOOL_CALL_SHELL_MAX_AGE_MS) return `it started ${startedAt} and outlived the tool call`;
+export function abandonedShellReason(startedAt: string, lastOutputAt: string | undefined, conversationExists: boolean, now: number): string | null {
+  const started = Date.parse(startedAt);
+  if (!conversationExists && now - started > MISSING_CONVERSATION_GRACE_MS) return "its conversation is gone";
+  const lastActivityAt = lastOutputAt && Date.parse(lastOutputAt) > started ? lastOutputAt : startedAt;
+  if (now - Date.parse(lastActivityAt) > CONVERSATION_INACTIVITY_TIMEOUT_MS) return `it had no input or output since ${lastActivityAt}`;
   return null;
 }
 

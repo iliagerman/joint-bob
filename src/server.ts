@@ -10,7 +10,7 @@ import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { discoverMissingPeerProjects } from "./server/cluster-helpers.js";
-import { flushMembershipOutbox, flushReplicationOutbox, flushRoutingConfigDeliveries, flushSecretCredentialOutbox, initializeStartupReadiness, pushRuntimeLeaseSnapshots, reconcileManagedAgentResources, reapAbandonedShellTasks, reconcileTaskConversationRecords, reconcileTaskHandoffs, reconcileTicketWorkspaceSync, sweepRuntimeLeases } from "./server/maintenance.js";
+import { flushMembershipOutbox, flushReplicationOutbox, flushRoutingConfigDeliveries, flushSecretCredentialOutbox, initializeStartupReadiness, pushRuntimeLeaseSnapshots, reconcileManagedAgentResources, reapInactiveConversations, reconcileTaskConversationRecords, reconcileTaskHandoffs, reconcileTicketWorkspaceSync, sweepRuntimeLeases } from "./server/maintenance.js";
 import { flushPushSubscriptionOutbox } from "./server/push-flush.js";
 import { flushV2ClusterAdministration } from "./server/cluster-manager.js";
 import { reconcileUpdateJobs, startUpdateScheduler } from "./updater.js";
@@ -121,7 +121,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     reconcileTaskHandoffs().catch((error) => console.warn("Task handoff reconciliation failed", error));
     discoverMissingPeerProjects().catch((error) => console.warn("Project discovery failed", error));
     setInterval(() => discoverMissingPeerProjects().catch((error) => console.warn("Project discovery failed", error)), 10_000).unref();
-    setInterval(() => reapAbandonedShellTasks().catch((error) => console.warn("Abandoned shell reap failed", error)), 60_000).unref();
+    setInterval(() => reapInactiveConversations().catch((error) => console.warn("Inactive conversation reap failed", error)), 60_000).unref();
     setInterval(() => reconcileManagedAgentResources().catch((error) => console.warn("Agent resource reconciliation failed", error)), 30_000).unref();
     setInterval(() => {
       void initializeStartupReadiness();

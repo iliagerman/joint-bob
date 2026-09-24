@@ -21,7 +21,7 @@ import type { HarnessId } from "../types.js";
 import { fetchPeerInventory } from "./cluster-helpers.js";
 import { broadcastSessionsChangedToAllProjects, scheduleReviewNotifications, wakeQueuedConversations } from "./realtime.js";
 import { replicationReceiptSchema } from "./schemas.js";
-import { harnessSessions, harnessTurnBusy } from "./harness-sessions.js";
+import { harnessSessions, harnessTurnBusy, reapInactiveHarnessSessions } from "./harness-sessions.js";
 import { configuredTicketWorkspacePeers, flags } from "./state.js";
 import { reconcileOutgoingTaskHandoff } from "./task-handoff.js";
 
@@ -420,15 +420,15 @@ let shellReapInProgress = false;
 
 /* Reaps tool-call shells whose turn is never coming back. A job started with
    `joint-bob-task start` is meant to be long-lived and is never reaped. */
-export async function reapAbandonedShellTasks(now = Date.now()): Promise<void> {
+export async function reapInactiveConversations(now = Date.now(), data = resolveDataDirectory()): Promise<void> {
   if (shellReapInProgress) return;
   shellReapInProgress = true;
   try {
-    const data = resolveDataDirectory();
+    await reapInactiveHarnessSessions(now);
     for (const shell of readImplicitShellTasks(data)) {
       const conversationId = backgroundTaskConversationId(shell.identity);
       const exists = Boolean(conversationId) && Boolean(await latestConversationSegment(conversationId));
-      const reason = abandonedShellReason(shell.startedAt, exists, now);
+      const reason = abandonedShellReason(shell.startedAt, shell.lastOutputAt, exists, now);
       if (!reason) continue;
       try {
         await supervisorRequest(data, { action: "stop", id: shell.id });

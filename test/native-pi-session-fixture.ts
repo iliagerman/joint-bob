@@ -53,7 +53,7 @@ export function nativePiSessionFixture(options: FixtureOptions = {}) {
   const session = new PiSession({ projectId, cwd, sessionId: id }, handle as never);
   const shared: SharedHarnessSession = {
     engine: "pi", projectId, cwd, session, clients: new Set(), turnInFlight: 0,
-    lastLocalEventAt: 0, liveEvents: [], idleTimer: null, unsubscribe: () => {},
+    lastLocalEventAt: 0, lastActivityAt: 0, liveEvents: [], idleTimer: null, unsubscribe: () => {}, scheduledTurn: false,
   };
   return {
     session,

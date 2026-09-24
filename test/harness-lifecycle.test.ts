@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { harnessSessions, harnessSessionKey, sendHarnessStatus, type SharedHarnessSession } from "../src/server/harness-sessions.js";
+import { harnessSessions, harnessSessionKey, reapInactiveHarnessSessions, sendHarnessStatus, type SharedHarnessSession } from "../src/server/harness-sessions.js";
+import { CONVERSATION_INACTIVITY_TIMEOUT_MS } from "../src/conversation-watchdog.js";
 import { idleSessionTimeoutMs } from "../src/server/state.js";
 import type { HarnessSession } from "../src/harnesses/runtime.js";
 
@@ -24,6 +25,7 @@ test("native busy state delays detached session disposal until work completes", 
     clients: new Set(),
     turnInFlight: 1,
     lastLocalEventAt: 0,
+    lastActivityAt: 0,
     liveEvents: [],
     idleTimer: null,
     unsubscribe: () => {},
@@ -41,4 +43,39 @@ test("native busy state delays detached session disposal until work completes", 
   context.mock.timers.tick(idleSessionTimeoutMs);
   assert.equal(disposed, true);
   assert.equal(harnessSessions.has(key), false);
+});
+
+test("conversation inactivity is five minutes", () => {
+  assert.equal(CONVERSATION_INACTIVITY_TIMEOUT_MS, 5 * 60 * 1000);
+});
+
+test("inactive harness turns are cancelled once and leave recent turns alone", async () => {
+  const now = Date.parse("2026-01-01T01:00:00.000Z");
+  const cancelled: string[] = [];
+  const makeShared = (id: string, lastActivityAt: number): SharedHarnessSession => {
+    const session = {
+      id, file: undefined, messages: [], isBusy: () => true,
+      status: () => ({ isStreaming: true, isCompacting: false }),
+      cancel: async () => { cancelled.push(id); },
+    } as unknown as HarnessSession;
+    const shared = {
+      engine: "pi", projectId: "watchdog-project", cwd: "/tmp", session,
+      clients: new Set(), turnInFlight: 1, lastLocalEventAt: lastActivityAt,
+      lastActivityAt, liveEvents: [], idleTimer: null, unsubscribe: () => {}, scheduledTurn: false,
+    } as SharedHarnessSession;
+    harnessSessions.set(harnessSessionKey(shared.projectId, shared.engine, id), shared);
+    return shared;
+  };
+  const stale = makeShared("stale", now - CONVERSATION_INACTIVITY_TIMEOUT_MS - 1);
+  makeShared("boundary", now - CONVERSATION_INACTIVITY_TIMEOUT_MS);
+  makeShared("recent", now - 1);
+
+  try {
+    await reapInactiveHarnessSessions(now);
+    await reapInactiveHarnessSessions(now + 1);
+    assert.deepEqual(cancelled, ["stale", "boundary"], "each silent turn is cancelled once after the timeout");
+    assert.equal(stale.watchdogStopping, true);
+  } finally {
+    harnessSessions.clear();
+  }
 });
