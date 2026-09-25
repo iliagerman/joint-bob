@@ -567,7 +567,10 @@ function bindPiCredentials(session: AgentSession, projectId: string, conversatio
       refreshEnvironment();
       refresh = false;
     }
-    return stream(model, { ...context, systemPrompt: [context.systemPrompt, credentialContext].filter(Boolean).join("\n\n") }, options);
+    return stream(model, { ...context, messages: [
+      ...context.messages,
+      { role: "system", content: credentialContext, timestamp: Date.now() },
+    ] }, options);
   };
   return unsubscribe;
 }

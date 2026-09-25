@@ -94,7 +94,7 @@ test("shared capabilities reach Claude, Pi, and Kiro channels with one logical t
 
       const { createPiSession } = await import("../src/pi-service.js");
       pi = await createPiSession({ cwd: root, projectId: project.id, sessionId: conversationId, conversationId });
-      const systemPrompt = pi.session.agent.state.systemPrompt as string;
+      const systemPrompt = pi.session.systemPrompt;
       assert.match(systemPrompt, /FIXTURE_CAPABILITY_TEXT/);
       assert.match(systemPrompt, /Joint Bob tasks/);
       assert.match(systemPrompt, /Joint Bob browser/);

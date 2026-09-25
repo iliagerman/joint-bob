@@ -45,7 +45,7 @@ test("Claude drafts stay unmaterialized and use configured defaults", async () =
   assert.equal(session.file, undefined);
   assert.deepEqual(session.settings(), {
     provider: "claude",
-    modelId: "claude-opus-5",
+    modelId: "claude-opus-5-5",
     reasoning: "medium",
   });
   session.dispose();
@@ -69,7 +69,7 @@ test("restored Claude sessions retain native defaults and saved tools before dis
     const adapter = listDiscoveredHarnesses().find(({ id }) => id === "claude")!;
     const runtime = await adapter.runtime!();
     const session = await runtime.open({ projectId: "project", cwd: root, sessionId: "legacy", sessionPath: `claude:${transcript}` });
-    assert.deepEqual(session.settings(), { provider: "claude", modelId: "claude-opus-5", reasoning: "default" });
+    assert.deepEqual(session.settings(), { provider: "claude", modelId: "claude-opus-5-5", reasoning: "default" });
     await session.configure({ provider: "claude", modelId: "claude-opus-5", reasoning: "default", enabledTools: ["Bash"] });
     assert.deepEqual(session.settings().enabledTools, ["Bash"]);
     assert.deepEqual(session.tools(), [{ name: "Bash", description: "Bash", active: true }]);

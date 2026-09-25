@@ -64,7 +64,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-code": "2.1.239",
-    "@earendil-works/pi-coding-agent": "0.84.2",
+    "@earendil-works/pi-coding-agent": "0.87.1",
     "codemirror": "5.65.16",
     "express": "^4.19.2",
     "nanoid": "^5.0.7",

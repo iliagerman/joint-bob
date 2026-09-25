@@ -13,7 +13,7 @@ test("a fresh Claude session defaults to a real, selectable model", async () => 
   const session = await runtime.open({ cwd, projectId: "claude-default-project", sessionId: "00000000-0000-4000-8000-000000000001" });
   try {
     const settings = session.settings();
-    assert.equal(settings.modelId, "claude-opus-5");
+    assert.equal(settings.modelId, "claude-opus-5-5");
     assert.equal(settings.reasoning, "medium");
 
     const models = await runtime.models();

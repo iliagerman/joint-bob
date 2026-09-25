@@ -83,7 +83,7 @@ test("Pi new and resumed sessions receive browser instructions and one stable me
   for (const sessionPath of [undefined, resumed]) {
     const handle = await createPiSession({ cwd, projectId: project.id, sessionPath });
     try {
-      const instructions = handle.session.agent.state.systemPrompt;
+      const instructions = handle.session.systemPrompt;
       assert.ok(instructions.includes(browserAgentInstructions));
       assert.ok(instructions.includes("Repository test exception:"), "Pi must receive the isolated native browser test exception");
       for (const boundary of ["disposable HOME/data directories", "synthetic test accounts", "loopback fixture servers", "Never use real credentials", "Manual takeover pauses agent commands"]) {
@@ -99,7 +99,7 @@ test("Pi new and resumed sessions receive browser instructions and one stable me
       assert.deepEqual(browserAgentIdentity(first.token), { projectId: project.id, engine: "pi", conversationId: sessionPath ? "canonical-browser-conversation" : handle.session.sessionManager.getSessionId() });
       await saveSecretAccount({ id: account.id, label: "Fixture", provider: "custom", variables: [{ name: "BRIDGE_FIXTURE", kind: "value", value: "changed" }] });
       assert.deepEqual(await execute(), first, "bash spawns must not refresh token or attached secrets");
-      assert.ok(!handle.session.agent.state.systemPrompt.includes(first.token));
+      assert.ok(!handle.session.systemPrompt.includes(first.token));
     } finally { handle.dispose(); }
   }
 });

@@ -30,12 +30,12 @@ test("real Pi sessions reload shared and configured skills without losing sessio
     handle.session.setActiveToolsByName(["read"]);
     const initial = { sessionId: handle.session.sessionId, model: handle.session.model, messages: handle.session.messages };
     assert.equal(handle.session.resourceLoader.getSkills().skills.find((skill) => skill.name === "review")?.description, "shared first");
-    assert.match(handle.session.agent.state.systemPrompt, /shared first/);
+    assert.match(handle.session.systemPrompt, /shared first/);
 
     await writeSkill(shared, "review", "shared second");
     await reloadPiSkills(handle);
     assert.equal(handle.session.resourceLoader.getSkills().skills.find((skill) => skill.name === "review")?.description, "shared second");
-    assert.match(handle.session.agent.state.systemPrompt, /shared second/);
+    assert.match(handle.session.systemPrompt, /shared second/);
     assert.equal(handle.session.sessionId, initial.sessionId);
     assert.equal(handle.session.model, initial.model);
     assert.deepEqual(handle.session.messages, initial.messages);

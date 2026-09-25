@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Upgraded the Pi coding agent with improved system instruction handling and compatibility updates.
+
 ## 1.94.0 — 2026-09-25
 
 - Added two-factor authentication: set up a time-based code in Settings > Account to require a second factor at sign-in, with recovery codes for backup access.

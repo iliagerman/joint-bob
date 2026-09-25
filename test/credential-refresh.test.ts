@@ -43,6 +43,12 @@ after(async () => {
 type Model = Parameters<ModelRuntime["streamSimple"]>[0];
 type Context = Parameters<ModelRuntime["streamSimple"]>[1];
 
+function systemPrompt(context: Context): string {
+  return context.messages.filter((message) => message.role === "system")
+    .map((message) => typeof message.content === "string" ? message.content : message.content.map((part) => part.text).join("\n"))
+    .join("\n");
+}
+
 function response(model: Model) {
   const message = { role: "assistant" as const, content: [{ type: "text" as const, text: "done" }],
     api: model.api, provider: model.provider, model: model.id, stopReason: "stop" as const, timestamp: Date.now(),
@@ -103,9 +109,9 @@ test("existing Pi session refreshes workspace attachment, rotation and removal b
   let label = "";
   f.inspect(async (context) => {
     await checkShell(f.handle, expected);
-    if (label) assert.match(context.systemPrompt!, new RegExp(label));
-    else assert.doesNotMatch(context.systemPrompt!, /Workspace GitHub/);
-    assert.doesNotMatch(context.systemPrompt!, /fixture-token-/);
+    if (label) assert.match(systemPrompt(context), new RegExp(label));
+    else assert.doesNotMatch(systemPrompt(context), /Workspace GitHub/);
+    assert.doesNotMatch(systemPrompt(context), /fixture-token-/);
   });
   await f.prompt("first");
   const saved = await account("Workspace GitHub", "fixture-token-first");
@@ -134,7 +140,7 @@ test("conversation selections use the persisted session id, not stale startup ac
   let expected = "fixture-token-conversation";
   f.inspect(async (context) => {
     await checkShell(f.handle, expected);
-    assert.equal(context.systemPrompt!.includes("Conversation GitHub"), Boolean(expected));
+    assert.equal(systemPrompt(context).includes("Conversation GitHub"), Boolean(expected));
   });
   await f.prompt("selected");
   await secrets.setScopeSecretAccounts("conversation", `pi:${f.handle.session.sessionId}`, []);
@@ -153,8 +159,8 @@ test("Pi snapshots website credentials by origin without exporting plaintext", a
     assert.equal(capture.websiteEnvPresent, false);
     assert.deepEqual(browserAgentCredential(capture.token, saved.id, "LOGIN_PASSWORD"), { origin: "https://login.fixture.test", value: expected });
     assert.deepEqual(browserAgentIdentity(capture.token), { projectId: f.project.id, engine: "pi", conversationId: f.handle.session.sessionId });
-    assert.match(context.systemPrompt!, /Fixture Login|login\.fixture\.test|LOGIN_PASSWORD/);
-    assert.doesNotMatch(context.systemPrompt!, /website-value-(first|second)/);
+    assert.match(systemPrompt(context), /Fixture Login|login\.fixture\.test|LOGIN_PASSWORD/);
+    assert.doesNotMatch(systemPrompt(context), /website-value-(first|second)/);
     if (previousToken) assert.notEqual(capture.token, previousToken);
     previousToken = capture.token;
   });
@@ -183,10 +189,10 @@ for (const method of ["followUp", "steer"] as const) test(`Pi ${method} messages
       await account("Queued GitHub updated", "fixture-token-after", saved.id);
       await f.handle.session[method]("queued");
       await checkShell(f.handle, "fixture-token-before");
-      assert.doesNotMatch(context.systemPrompt!, /Queued GitHub updated/);
+      assert.doesNotMatch(systemPrompt(context), /Queued GitHub updated/);
     } else {
       await checkShell(f.handle, "fixture-token-after");
-      assert.match(context.systemPrompt!, /Queued GitHub updated/);
+      assert.match(systemPrompt(context), /Queued GitHub updated/);
     }
   });
   await f.prompt("running");
@@ -207,7 +213,7 @@ for (const method of ["followUp", "steer"] as const) test(`Pi ${method} keeps a 
       await websiteAccount("Queued Login", "queued-website-after", saved.id);
       await f.handle.session[method]("queued website");
       assert.equal(browserAgentCredential(capture.token, saved.id, "LOGIN_PASSWORD").value, "queued-website-before");
-      assert.doesNotMatch(context.systemPrompt!, /queued-website-(before|after)/);
+      assert.doesNotMatch(systemPrompt(context), /queued-website-(before|after)/);
     } else {
       assert.notEqual(capture.token, firstToken);
       assert.equal(browserAgentCredential(capture.token, saved.id, "LOGIN_PASSWORD").value, "queued-website-after");
