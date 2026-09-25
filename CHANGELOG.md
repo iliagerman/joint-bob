@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.90.0 — 2026-09-25
 
-- Focus mode on mobile now supports touch gestures to create conversations and notes, shows a copyable project path in the header, and compresses the chat header to a single line with live context usage color coding.
+- Mobile Focus mode now uses single-line headers and a colored context percentage that pulses only while working. Tap the project name to view and copy its path; conversation filters live under Project actions.
+- Added a new-conversation button beside search. Draw C to create a conversation, draw N to create a note, or tap four times to open Running. Creation dialogs default to the active project and let you choose another. Desktop layouts stay unchanged.
 
 ## 1.89.0 — 2026-09-25
 
