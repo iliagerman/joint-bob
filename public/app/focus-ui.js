@@ -210,11 +210,11 @@ function installFabDrag() {
   });
 }
 
-// Wait for the complete sequence before activating any control or dialog.
+// Delay gesture controls only; editors need native activation to open mobile keyboards.
 function installTapGestures() {
   let tap = null, sequence = null, timer = null, lastTouch = -Infinity;
   const controls = "button,input,textarea,select,a,summary,label,[contenteditable],[role=button]";
-  const embedded = "#browserPanel,.xterm,.canvas-root";
+  const nativeControls = "input,textarea,select,label,[contenteditable],#browserPanel,.xterm,.canvas-root";
   const clear = () => { clearTimeout(timer); tap = sequence = null; };
   const finish = () => {
     const completed = sequence;
@@ -226,8 +226,8 @@ function installTapGestures() {
     else activateTap(completed.target, controls);
   };
   document.addEventListener("pointerdown", event => {
-    if (!enabled || event.pointerType === "mouse" || event.target.closest(embedded)) return;
-    if (!event.isPrimary) { clear(); return; }
+    if (!enabled || event.pointerType === "mouse") return;
+    if (!event.isPrimary || event.target.closest(nativeControls)) { clear(); return; }
     const now = performance.now();
     if (sequence && (now - sequence.time > 350 || Math.hypot(event.clientX - sequence.x, event.clientY - sequence.y) > 32)) finish();
     clearTimeout(timer);
@@ -244,12 +244,12 @@ function installTapGestures() {
   }, true);
   document.addEventListener("pointercancel", clear, true);
   document.addEventListener("click", event => {
-    if (!enabled || !event.isTrusted || event.detail === 0 || event.target.closest(embedded)) return;
+    if (!enabled || !event.isTrusted || event.detail === 0 || event.target.closest(nativeControls)) return;
     if (event.pointerType ? event.pointerType === "mouse" : performance.now() - lastTouch > 700) return;
     event.preventDefault(); event.stopImmediatePropagation();
   }, true);
   document.addEventListener("dblclick", event => {
-    if (enabled && performance.now() - lastTouch < 700) event.preventDefault();
+    if (enabled && !event.target.closest(nativeControls) && performance.now() - lastTouch < 700) event.preventDefault();
   }, true);
 }
 function activateTap(target, controls) {

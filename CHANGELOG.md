@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Native keyboards in Mobile Focus mode now open immediately in text inputs without gesture delays interfering.
+
 ## 1.92.3 — 2026-09-25
 
 - Claude conversations now default to Opus 5.5.
