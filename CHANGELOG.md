@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.94.0 — 2026-09-25
 
-- Added optional multi-factor authentication. Set up an authenticator in Settings > Account to require a time-based code at sign-in, with recovery codes as backup.
+- Added two-factor authentication: set up a time-based code in Settings > Account to require a second factor at sign-in, with recovery codes for backup access.
+- You can now revoke login sessions from Settings, signing out other devices running Joint Bob.
 
 ## 1.93.1 — 2026-09-25
 
