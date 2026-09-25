@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Fixed mobile Focus UI menu staying open when selecting models and reasoning options instead of closing unexpectedly.
 - Prevented creating routing configurations until existing configurations are loaded.
 - Improved session watcher reliability when file system events arrive out of order.
 

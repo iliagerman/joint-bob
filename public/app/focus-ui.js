@@ -144,7 +144,7 @@ export function initializeFocusUi({ openSettings, startConversation, createNote,
   document.querySelector("#focusProjects").onclick = () => setMobileView("projects");
   document.querySelector("#focusConversations").onclick = () => setMobileView("sessions");
   document.querySelector("#focusClose").onclick = () => showMenu(false);
-  chatHost.addEventListener("click", event => { if (event.target.closest("button:not(:disabled)")) showMenu(false); });
+  chatHost.addEventListener("click", event => { if (!mobileFocusViewport.matches && event.target.closest("button:not(:disabled)")) showMenu(false); });
   toggle.addEventListener("change", async () => {
     const next = toggle.checked;
     toggle.disabled = true;
@@ -264,6 +264,7 @@ function activateTap(target, controls) {
 }
 function installFocusKeys() {
   document.addEventListener("pointerdown", event => {
+    if (mobileFocusViewport.matches && event.target.closest("dialog")) return;
     if (enabled && event.pointerType === "mouse" && !menu.contains(event.target) && !fab.contains(event.target)) showMenu(false);
   });
   document.addEventListener("keydown", event => {
