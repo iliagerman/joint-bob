@@ -146,8 +146,7 @@ function tickDurations() {
     if (bubble._startedAt) bubble.querySelector(".tool-status").textContent = `Running ${formatDuration(Date.now() - bubble._startedAt)}`;
   }
   if (state.lastTurnStartedAt) {
-    elements.turnTimer.hidden = false;
-    elements.turnTimer.textContent = `Working ${formatDuration(Date.now() - state.lastTurnStartedAt)}`;
+    renderTurnTimer("Working", Date.now() - state.lastTurnStartedAt);
   }
   if (!state.toolBubbles.size && !state.lastTurnStartedAt) {
     clearInterval(state.durationTicker);
@@ -165,8 +164,15 @@ export function finishTurnTimer() {
     stamp.dataset.turnDuration = "true";
     stamp.append(` · took ${formatDuration(elapsed)}`);
   }
+  renderTurnTimer("Took", elapsed);
+}
+
+function renderTurnTimer(label, elapsed) {
+  const prefix = document.createElement("span");
+  prefix.className = "turn-timer-label";
+  prefix.textContent = `${label} `;
   elements.turnTimer.hidden = false;
-  elements.turnTimer.textContent = `Took ${formatDuration(elapsed)}`;
+  elements.turnTimer.replaceChildren(prefix, formatDuration(elapsed));
 }
 
 export function clearChat() {

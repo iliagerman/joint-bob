@@ -30,6 +30,12 @@ test("double taps suppress controls, triple taps only open pinnable recents, sin
   assert.equal(await page.getByTestId("quick-note-dialog").isVisible(), false, "double tap must not create a note first");
   const title = await page.locator("#sessionTitle").boundingBox();
   assert.ok(title);
+  for (let i = 0; i < 4; i++) await page.touchscreen.tap(title.x + 10, title.y + 10);
+  await page.getByTestId("running-conversations-dialog").waitFor();
+  assert.equal(await page.getByTestId("recent-sessions-dialog").isVisible(), false, "four taps must not open Recents first");
+  assert.equal(await fab.isVisible(), false, "four taps leave the FAB alone");
+  await page.getByTestId("running-conversations-close-button").tap();
+  await page.getByTestId("running-conversations-dialog").waitFor({ state: "hidden" });
   for (let i = 0; i < 3; i++) await page.touchscreen.tap(title.x + 10, title.y + 10);
   await page.getByTestId("recent-sessions-dialog").waitFor();
   assert.equal(await fab.isVisible(), false, "triple tap must not restore the hidden FAB");

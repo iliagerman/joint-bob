@@ -127,7 +127,8 @@ test("the turn timer counts up while the agent works and reports the total when 
   assert.match(app, /turnTimer: document\.querySelector\("#turnTimer"\)/);
 
   const tick = functionSource(app, "tickDurations");
-  assert.match(tick, /elements\.turnTimer\.textContent = `Working \$\{formatDuration\(Date\.now\(\) - state\.lastTurnStartedAt\)\}`/);
+  assert.match(tick, /renderTurnTimer\("Working", Date\.now\(\) - state\.lastTurnStartedAt\)/);
+  assert.match(functionSource(app, "renderTurnTimer"), /replaceChildren\(prefix, formatDuration\(elapsed\)\)/);
 
   // agent_start begins the count; agent_end stamps the finished turn's total.
   const agentStart = app.slice(app.indexOf('payload.type === "agent_start"'));

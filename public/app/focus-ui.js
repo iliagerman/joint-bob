@@ -6,6 +6,8 @@ import { setMobileView } from "./layout.js";
 import { state } from "./state.js";
 import { refreshRowMenuAnchor } from "./row-menu.js";
 import { toast } from "./shell.js";
+import { initializeMobileProjectControls, syncMobileProjectControls, mobileFocusViewport } from "./focus-project-controls.js";
+import { installCreationGestures } from "./focus-creation-gestures.js";
 
 const fab = document.querySelector("#focusControlsButton");
 const menu = document.querySelector("#focusControls");
@@ -90,6 +92,7 @@ export function setFocusUi(value) {
   toggle.checked = enabled;
   toggle.disabled = state.canvasPaneMode;
   document.body.classList.toggle("focus-ui", enabled);
+  syncMobileProjectControls();
   fab.hidden = !enabled;
   menu.hidden = true;
   for (const [name, panel] of [["projects", elements.projectsPanel], ["chats", elements.chatsPanel]]) {
@@ -130,6 +133,7 @@ export function initializeFocusUi({ openSettings, startConversation, createNote,
   const start = () => { showMenu(false); startConversation().catch(error => toast(error.message)); };
   document.querySelector("#focusSettings").onclick = settings;
   document.querySelector("#focusNewConversation").onclick = start;
+  document.querySelector("#conversationSearchCreateButton").onclick = start;
   decorateControls();
   document.querySelector("#focusAgent").onclick = () => { showSection("agent"); document.querySelector("#focusBack").focus(); };
   document.querySelector("#focusTools").onclick = () => { showSection("tools"); document.querySelector("#focusBack").focus(); };
@@ -152,6 +156,8 @@ export function initializeFocusUi({ openSettings, startConversation, createNote,
   window.addEventListener("resize", resize);
   visualViewport?.addEventListener("resize", resize);
   installFabDrag();
+  initializeMobileProjectControls();
+  installCreationGestures(start, () => document.querySelector("#focusNewNote").click());
   installTapGestures();
   installFocusKeys();
 }
@@ -204,17 +210,18 @@ function installFabDrag() {
   });
 }
 
-// Wait for the complete sequence: a double tap is still a possible triple tap.
+// Wait for the complete sequence before activating any control or dialog.
 function installTapGestures() {
   let tap = null, sequence = null, timer = null, lastTouch = -Infinity;
-  const controls = "button,input,textarea,select,a,summary,label,[contenteditable]";
+  const controls = "button,input,textarea,select,a,summary,label,[contenteditable],[role=button]";
   const embedded = "#browserPanel,.xterm,.canvas-root";
   const clear = () => { clearTimeout(timer); tap = sequence = null; };
   const finish = () => {
     const completed = sequence;
     clear();
     if (!enabled || !completed) return;
-    if (completed.count >= 3) { showMenu(false); openRecentSessions(); }
+    if (completed.count >= 4 && mobileFocusViewport.matches) document.querySelector("#focusRunning").click();
+    else if (completed.count >= 3) { showMenu(false); openRecentSessions(); }
     else if (completed.count === 2) toggleFab();
     else activateTap(completed.target, controls);
   };

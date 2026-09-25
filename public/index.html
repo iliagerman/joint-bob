@@ -138,10 +138,13 @@
           <span class="live-dot" id="chatsLiveDot" title="Auto-refreshing" hidden></span>
           <button type="button" class="mark-all-reviewed-button" id="markAllReviewedButton" disabled title="Mark every conversation needing review as reviewed" data-testid="chats-mark-all-reviewed-button">Mark all reviewed</button>
         </div>
+        <div class="conversation-search-row">
         <label class="search-shell conversation-search" for="sessionSearchInput">
           <span class="sr-only">Search conversations</span>
           <input id="sessionSearchInput" type="search" autocomplete="off" placeholder="Search conversations" data-testid="conversation-list-search-input" />
         </label>
+        <button type="button" class="ghost icon-button focus-search-create" id="conversationSearchCreateButton" aria-label="New conversation" title="New conversation" data-testid="conversation-search-create-button">+</button>
+        </div>
         <div class="chat-filters" id="chatFilters" role="group" aria-label="Filter conversations">
           <button type="button" data-filter="cron" data-testid="chats-filter-cron-button" title="Scheduled conversations"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.2 1.9"/></svg><span class="sr-only">Cron</span><span data-filter-count="cron">0</span></button>
           <button type="button" class="active" data-filter="all" data-testid="chats-filter-all-button" title="All conversations"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="7" cy="7" r="2.5"/><circle cx="17" cy="7" r="2.5"/><circle cx="7" cy="17" r="2.5"/><circle cx="17" cy="17" r="2.5"/></svg><span class="sr-only">All</span><span data-filter-count="all">0</span></button>
@@ -1464,6 +1467,25 @@
           <button class="ghost" value="cancel" type="button" id="cancelProjectRenameButton">Cancel</button>
           <button class="primary" value="default" type="submit" data-testid="project-rename-save-button">Save project</button>
         </div>
+      </form>
+    </dialog>
+
+    <dialog id="focusProjectInfoDialog" aria-labelledby="focusProjectInfoTitle">
+      <form method="dialog" class="dialog-card">
+        <h2 id="focusProjectInfoTitle">Project path</h2>
+        <label for="focusProjectPath" class="sr-only">Project path</label>
+        <input id="focusProjectPath" readonly data-testid="focus-project-path" />
+        <div class="dialog-actions">
+          <button class="ghost" data-testid="focus-project-info-close">Close</button>
+          <button class="primary" type="button" id="focusCopyProjectPath" data-testid="focus-project-copy-path">Copy path</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="focusProjectFiltersDialog" aria-labelledby="focusProjectFiltersTitle">
+      <form method="dialog" class="dialog-card">
+        <h2 id="focusProjectFiltersTitle">Conversation filters</h2>
+        <div id="focusProjectFilters"></div>
+        <div class="dialog-actions"><button class="primary" data-testid="focus-project-filters-close">Done</button></div>
       </form>
     </dialog>
 

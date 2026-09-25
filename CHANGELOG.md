@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Focus mode on mobile now supports touch gestures to create conversations and notes, shows a copyable project path in the header, and compresses the chat header to a single line with live context usage color coding.
+
 ## 1.89.0 — 2026-09-25
 
 - Added conversation commands: auto-run a prompt at conversation start, and submit an end prompt via double-click Send without clearing the draft.

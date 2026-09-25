@@ -6,6 +6,7 @@ import { filteredProjects } from "./layout.js";
 import { loadProjects, refreshProjectsQuietly, selectProject } from "./project-selection.js";
 import { pendingReviewCountForProject } from "./reviews.js";
 import { openRowMenu, pinButton, refreshRowMenuAnchor } from "./row-menu.js";
+import { mobileProjectFilterActions } from "./focus-project-controls.js";
 import { openSecretScope } from "./secrets.js";
 import { openProjectRename } from "./session-identity.js";
 import { isProjectPinned, sortPinnedFirst, togglePinnedProject } from "./session-rows.js";
@@ -191,6 +192,7 @@ function projectPinToggle(project) {
 /** Seven inline buttons crowded the row off the screen; they all live in the menu now. */
 function projectMenuItems(project) {
   return [
+    ...mobileProjectFilterActions(project),
     { label: "Scheduled tasks", icon: "refresh", testid: "project-cron-button", onSelect: () => openScheduledTasks(project.id).catch(error => toast(error.message)) },
     { label: "Automations", icon: "refresh", testid: "project-automations-button", onSelect: () => openAutomations(project.id).catch(error => toast(error.message)) },
     {

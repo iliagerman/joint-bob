@@ -20,6 +20,8 @@ body.focus-ui .conversation-tabs { margin: 12px 16px 0; background: transparent;
 body.focus-ui .conversation-tabs button { background: transparent; border-radius: 0; border-bottom: 2px solid transparent; min-height: 44px; }
 body.focus-ui .conversation-tabs button.active { background: transparent; border-bottom-color: var(--accent); color: var(--text); box-shadow: none; }
 body.focus-ui .conversation-search { margin: 10px 16px 4px; }
+.conversation-search-row { display: contents; }
+.focus-search-create { display: none; }
 body.focus-ui .chat-filters { display: flex; margin: 4px 16px; gap: 4px; }
 body.focus-ui .chat-filters button { flex: 1; min-width: 0; min-height: 40px; padding: 4px; }
 body.focus-ui .classification-filter { display: flex; align-items: center; gap: 12px; margin: 4px 16px; font-size: 12px; }
@@ -39,6 +41,39 @@ body.focus-ui .chat-title-meta { display: contents; }
 body.focus-ui .chat-title-block > h2, body.focus-ui .chat-title-meta > :not(.chat-actions) { grid-column: 1; }
 body.focus-ui .chat-actions { grid-column: 2; grid-row: 1 / span 2; padding: 0; }
 body.focus-ui #abortButton:disabled { display: none; }
+@media (max-width: 700px) {
+body.focus-ui .conversation-search-row { display: flex; align-items: center; gap: 8px; margin: 10px 16px 4px; }
+body.focus-ui .conversation-search-row .conversation-search { display: flex; flex: 1; min-width: 0; margin: 0; }
+body.focus-ui #conversationSearchCreateButton { display: inline-grid; flex: 0 0 44px; height: 44px; color: var(--accent); font-size: 26px; }
+body.focus-ui #chatsPanel .panel-bar { min-height: 52px; padding-block: 4px; }
+body.focus-ui :is(#projectPath, #chatsRecentSessionsButton, #chatsRunningConversationsButton),
+body.focus-ui #conversationListPane .live-row { display: none; }
+body.focus-ui #projectName { cursor: pointer; }
+body.focus-ui #projectName:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+body.focus-ui .chat-topbar { min-height: 52px; gap: 6px; padding-block: 6px; }
+body.focus-ui .chat-topbar .icon-button { width: 32px; min-width: 32px; min-height: 32px; height: 32px; }
+body.focus-ui .chat-title-block { display: flex; align-items: center; gap: 8px; }
+body.focus-ui .chat-title-block > h2 { flex: 1; min-width: 0; font-size: 16px; }
+body.focus-ui .chat-title-meta { display: contents; }
+body.focus-ui .chat-project-name { flex: 0 1 auto; max-width: 64px; font-size: 9px; }
+body.focus-ui .turn-timer { font-size: 10px; }
+body.focus-ui .turn-timer-label, body.focus-ui .context-usage-bar { display: none; }
+body.focus-ui .chat-actions { flex: 0 0 auto; gap: 4px; padding: 0; margin: 0; }
+body.focus-ui #connectionStatus { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); }
+body.focus-ui #contextUsage { color: var(--live); }
+body.focus-ui #contextUsage.warn { color: var(--amber); }
+body.focus-ui #contextUsage.danger { color: var(--danger); }
+body.focus-ui .chat-actions:has(#abortButton:not(:disabled)) #contextUsageText { animation: focus-working 1.4s ease-in-out infinite; }
+body.focus-ui #abortButton { color: var(--danger); }
+body.focus-ui #abortButton:disabled { display: none; }
+}
+#focusProjectFilters { display: grid; gap: 12px; }
+#focusProjectFilters :is(.classification-filter, .done-filter, .chat-filters) { margin: 0; }
+#focusProjectFilters .mark-all-reviewed-button { justify-self: start; }
+@keyframes focus-working { 50% { opacity: .4; } }
+@media (prefers-reduced-motion: reduce) {
+  body.focus-ui .chat-actions:has(#abortButton:not(:disabled)) #contextUsageText { animation: none; }
+}
 :root[data-theme="dark"] body.focus-ui.view-chat :is(#chatPanel, #messages) { background: #000; }
 
 /* Outline glyphs and transparent targets, with one accent on the floating handle. */
