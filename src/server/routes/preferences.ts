@@ -83,8 +83,9 @@ app.put("/api/pins", async (request, response, next) => {
     const session = response.locals.authSession as AuthSession;
     const payload = userPinSchema.parse(request.body);
     const project = await getProject(payload.projectId);
-    if (!project) { sendError(response, 404, "Project not found"); return; }
-    if (payload.kind === "conversation") {
+    if (payload.pinned && !project) { sendError(response, 404, "Project not found"); return; }
+    // Removing an account pin must work even when its transcript or project is gone.
+    if (payload.pinned && project && payload.kind === "conversation") {
       const tasks = await listTasks(project.id);
       const sessions = await listHarnessSessions({ ...project, additionalPaths: tasks.flatMap((task) => task.worktreePath ? [task.worktreePath] : []) });
       if (!sessions.some((candidate) => candidate.id === payload.sessionId && candidate.harnessId === payload.engine)) {
@@ -93,9 +94,10 @@ app.put("/api/pins", async (request, response, next) => {
       }
     }
     const local = await getClusterNode();
+    const projectId = project?.id ?? payload.projectId;
     const target = payload.kind === "project"
-      ? { kind: payload.kind, projectId: project.id } as const
-      : { kind: payload.kind, projectId: project.id, engine: payload.engine, sessionId: payload.sessionId } as const;
+      ? { kind: payload.kind, projectId } as const
+      : { kind: payload.kind, projectId, engine: payload.engine, sessionId: payload.sessionId } as const;
     const pins = setUserPin(session.username, target, payload.pinned, local.id);
     broadcastToAllClients({ type: "pinsChanged" });
     response.json(pins);
