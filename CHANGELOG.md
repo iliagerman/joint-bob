@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.90.1 — 2026-09-25
 
-- Harness updates now preserve custom executable paths instead of always using bundled versions.
+- Updated Claude and Pi harnesses now become active immediately while custom executable paths remain untouched.
 
 ## 1.90.0 — 2026-09-25
 
