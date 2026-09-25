@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 1.93.0 — 2026-09-25
+
+- Pi now defaults to GPT-6 Sol.
+
 ## 1.92.4 — 2026-09-25
 
 - Native keyboards in Mobile Focus mode now open immediately in text inputs without gesture delays interfering.
