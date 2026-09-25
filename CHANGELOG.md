@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added conversation commands: auto-run a prompt at conversation start, and submit an end prompt via double-click Send without clearing the draft.
+
 ## 1.88.0 — 2026-09-24
 
 - Quick notes can now be scheduled to run at a specific time with configurable concurrent processing limits, including support for image attachments and execution node selection.

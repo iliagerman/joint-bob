@@ -61,6 +61,10 @@ test("settings API persists runtime and Syncthing choices without returning secr
       claude: { provider: "claude", modelId: "sonnet", thinkingLevel: "high" },
       kiro: { provider: "kiro", modelId: "default", thinkingLevel: "medium" },
     };
+    const conversationCommands = {
+      start: { enabled: true, prompt: "Pull main before work." },
+      end: { enabled: true, prompt: "Commit, push, and watch CI." },
+    };
     const saved = await fetch(`${node.baseUrl}/api/settings`, {
       method: "PUT",
       headers,
@@ -69,6 +73,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
         claude: { executable: "/usr/local/bin/claude", ...claudeRuntime },
         syncthing: { endpoint: "http://127.0.0.1:8384", apiKey: "secret-api-key" },
         conversationDefaults,
+        conversationCommands,
         conversationHistoryDays: 45,
         projects: { homePath: path.join(root, "JointBob") },
         resources: { skills: [path.join(root, "skills"), path.join(root, "skills")], prompts: [path.join(root, "prompts")], rules: [path.join(root, "rules")], plugins: [path.join(root, "plugins")] },
@@ -82,6 +87,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
       conversationHistoryDays: 45,
       autoCompactThreshold: 70,
       digestAttachments: false,
+      conversationCommands,
       shellCommandTimeoutSeconds: null,
       pi: { executable: "/usr/local/bin/pi", ...piRuntime },
       claude: { executable: "/usr/local/bin/claude", ...claudeRuntime },
@@ -112,6 +118,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
       conversationHistoryDays: 45,
       autoCompactThreshold: 70,
       digestAttachments: false,
+      conversationCommands,
       shellCommandTimeoutSeconds: null,
       pi: { executable: "/usr/local/bin/pi", ...piRuntime },
       claude: { executable: "/usr/local/bin/claude", ...claudeRuntime },
@@ -146,6 +153,7 @@ test("settings API persists runtime and Syncthing choices without returning secr
     assert.equal(preservedResources.status, 200);
     const preserved = await preservedResources.json();
     assert.equal(preserved.conversationHistoryDays, 45);
+    assert.deepEqual(preserved.conversationCommands, conversationCommands, "omitting commands preserves them");
     assert.deepEqual(preserved.resources, { skills: [path.join(root, "skills")], prompts: [path.join(root, "prompts")], rules: [path.join(root, "rules")], plugins: [path.join(root, "plugins")] });
 
     const project = await fetch(`${node.baseUrl}/api/projects`, { method: "POST", headers, body: JSON.stringify({ name: "Resource project", path: path.join(root, "project") }) });

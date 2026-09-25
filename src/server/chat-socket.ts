@@ -8,6 +8,7 @@ import { findHarnessSession, harnessForSessionPath, listHarnesses, listHarnessSe
 import { getProjectLock } from "../project-locks.js";
 import { resolveLocalSessionPath } from "../session-paths.js";
 import { getProject } from "../store.js";
+import { getSettings } from "../settings.js";
 import { listTasks } from "../tasks.js";
 import { attachTerminalSession } from "../terminal-session.js";
 import type { ProjectRecord, SessionSummary } from "../types.js";
@@ -319,11 +320,13 @@ webSocketServer.on("connection", async (socket, request) => {
   }
   const conversationReadOnly = sessionReadOnly || task?.status === "done" || await conversationBelongsToDoneTask(project.id, sessionRequest.engine, ownershipSessionId);
   try {
+    const startCommand = getSettings().conversationCommands.start;
     await attachHarnessChat({
       socket, project, taskId: task?.id ?? null, cwd, engine: sessionRequest.engine,
       sessionId: ownershipSessionId, sessionPath: sessionRequest.sessionPath,
       accountIds: secretAccountIds, readOnly: conversationReadOnly, ownership: foreignOwner,
       listedSessions, handoffContext: spinOffContext,
+      autoStartPrompt: refreshSessionsAfterReady && !sessionRequest.draft && startCommand.enabled ? startCommand.prompt : null,
     });
     if (refreshSessionsAfterReady) broadcastToProject(project.id, { type: "sessionsChanged" });
   } catch (error) {

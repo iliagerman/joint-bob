@@ -28,6 +28,19 @@ export type ResourceType = (typeof RESOURCE_TYPES)[number];
 export interface ResourcePaths { skills: string[]; prompts: string[]; rules: string[]; plugins: string[]; }
 export interface ScopedResourcePaths { global: ResourcePaths; project: ResourcePaths; }
 
+export const DEFAULT_START_CONVERSATION_PROMPT = "Make sure your latest code is from main.";
+export const DEFAULT_END_CONVERSATION_PROMPT = "Make sure all your code is committed and pushed to main. If there is a CI process, monitor it until it passes. If it fails, you need to fix it.";
+
+export interface ConversationCommandsSettings {
+  start: { enabled: boolean; prompt: string };
+  end: { enabled: boolean; prompt: string };
+}
+
+export const DEFAULT_CONVERSATION_COMMANDS: ConversationCommandsSettings = {
+  start: { enabled: false, prompt: DEFAULT_START_CONVERSATION_PROMPT },
+  end: { enabled: false, prompt: DEFAULT_END_CONVERSATION_PROMPT },
+};
+
 export interface SettingsInput {
   pi?: RuntimeSettings;
   claude?: RuntimeSettings;
@@ -42,6 +55,7 @@ export interface SettingsInput {
   shellCommandTimeoutSeconds?: number | null;
   /** Describe images and inline text files for the agent instead of sending raw bytes. */
   digestAttachments?: boolean;
+  conversationCommands?: ConversationCommandsSettings;
   conversationDefaults?: Record<string, ConversationDefault>;
 }
 
@@ -58,6 +72,7 @@ export interface SettingsResponse {
   autoCompactThreshold: number | null;
   shellCommandTimeoutSeconds: number | null;
   digestAttachments: boolean;
+  conversationCommands: ConversationCommandsSettings;
   conversationDefaults: ReturnType<typeof conversationDefaultsSchema.parse>;
   restartRequired: Record<string, boolean>;
 }
@@ -112,6 +127,21 @@ function emptyResourcePaths(): ResourcePaths {
   return { skills: [], prompts: [], rules: [], plugins: [] };
 }
 
+function conversationCommands(): ConversationCommandsSettings {
+  try {
+    const stored = JSON.parse(value("conversationCommands", JSON.stringify(DEFAULT_CONVERSATION_COMMANDS))) as Partial<ConversationCommandsSettings>;
+    const command = (name: "start" | "end") => ({
+      enabled: stored[name]?.enabled === true,
+      prompt: typeof stored[name]?.prompt === "string" && stored[name]!.prompt.trim()
+        ? stored[name]!.prompt.trim()
+        : DEFAULT_CONVERSATION_COMMANDS[name].prompt,
+    });
+    return { start: command("start"), end: command("end") };
+  } catch {
+    return structuredClone(DEFAULT_CONVERSATION_COMMANDS);
+  }
+}
+
 function readResourcePaths(prefix: string): ResourcePaths {
   const result = emptyResourcePaths();
   for (const type of RESOURCE_TYPES) {
@@ -164,6 +194,7 @@ export function getSettings(): SettingsResponse {
     autoCompactThreshold: value("autoCompactThreshold", "70") === "disabled" ? null : Number(value("autoCompactThreshold", "70")),
     shellCommandTimeoutSeconds: value("shellCommandTimeoutSeconds", "unlimited") === "unlimited" ? null : Number(value("shellCommandTimeoutSeconds", "unlimited")),
     digestAttachments: value("digestAttachments", "false") === "true",
+    conversationCommands: conversationCommands(),
     restartRequired: Object.fromEntries(runtimeAdapters().map((adapter) => [adapter.id, false])),
   } as SettingsResponse;
 }
@@ -258,6 +289,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
   const autoCompactThreshold = input.autoCompactThreshold === undefined ? previous.autoCompactThreshold : input.autoCompactThreshold;
   const shellCommandTimeoutSeconds = input.shellCommandTimeoutSeconds === undefined ? previous.shellCommandTimeoutSeconds : input.shellCommandTimeoutSeconds;
   const digestAttachments = input.digestAttachments ?? previous.digestAttachments;
+  const conversationCommands = input.conversationCommands ?? previous.conversationCommands;
   const conversationDefaults = conversationDefaultsSchema.parse(input.conversationDefaults ?? previous.conversationDefaults);
   if (!homePath.trim() || !path.isAbsolute(homePath)) throw new Error("Joint Bob home folder must be absolute");
   db.exec("BEGIN");
@@ -274,6 +306,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
     save(db, "autoCompactThreshold", autoCompactThreshold === null ? "disabled" : String(autoCompactThreshold));
     save(db, "shellCommandTimeoutSeconds", shellCommandTimeoutSeconds === null ? "unlimited" : String(shellCommandTimeoutSeconds));
     save(db, "digestAttachments", String(digestAttachments));
+    save(db, "conversationCommands", JSON.stringify(conversationCommands));
     save(db, "conversationDefaults", JSON.stringify(conversationDefaults));
     for (const type of RESOURCE_TYPES) save(db, `resources.${type}`, JSON.stringify(resources[type]));
     if (input.syncthing.apiKey !== undefined) {
@@ -297,6 +330,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
         autoCompactThresholdChanged: previous.autoCompactThreshold !== settings.autoCompactThreshold,
         shellCommandTimeoutChanged: previous.shellCommandTimeoutSeconds !== settings.shellCommandTimeoutSeconds,
         digestAttachmentsChanged: previous.digestAttachments !== settings.digestAttachments,
+        conversationCommandsChanged: JSON.stringify(previous.conversationCommands) !== JSON.stringify(settings.conversationCommands),
         apiKeyConfigured: settings.syncthing.apiKeyConfigured,
       },
     });

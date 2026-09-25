@@ -100,6 +100,11 @@ test("existing conversations can change and clear classifications through their 
 
 async function configureHarnessDefaults(page: Page) {
   await page.getByTestId("settings-open-button").click();
+  await page.getByTestId("settings-tab-commands").click();
+  await page.getByTestId("settings-start-conversation-enabled").check();
+  await page.getByTestId("settings-start-conversation-prompt").fill("Update from main first.");
+  await page.getByTestId("settings-end-conversation-enabled").check();
+  await page.getByTestId("settings-end-conversation-prompt").fill("Commit, push, and monitor CI.");
   await page.getByTestId("settings-tab-engines").click();
   assert.deepEqual(await page.evaluate(`['Pi', 'Claude'].map(harness => document.querySelector('#settings' + harness + 'DefaultThinking')?.value)`), ["medium", "medium"], "both harnesses need editable medium defaults");
   await page.getByTestId("settings-pi-default-provider").fill("anthropic");
@@ -110,10 +115,15 @@ async function configureHarnessDefaults(page: Page) {
   await page.locator("#settingsClaudeDefaultThinking").selectOption("high");
   await page.getByTestId("settings-save-button").click();
   await page.locator('#settingsDialog[open]').waitFor({ state: "hidden" });
-  assert.deepEqual(await page.evaluate('(async () => (await (await fetch("/api/settings")).json()).conversationDefaults)()'), {
+  const settings = await page.evaluate('(async () => await (await fetch("/api/settings")).json())()');
+  assert.deepEqual(settings.conversationDefaults, {
     pi: { provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "low" },
     claude: { provider: "claude", modelId: "sonnet", thinkingLevel: "high" },
     kiro: { provider: "kiro", modelId: "default", thinkingLevel: "medium" },
+  });
+  assert.deepEqual(settings.conversationCommands, {
+    start: { enabled: true, prompt: "Update from main first." },
+    end: { enabled: true, prompt: "Commit, push, and monitor CI." },
   });
 }
 
@@ -128,6 +138,7 @@ async function assertNewConversationDefaults(page: Page, engine: string, model: 
   await state.dispose();
   const selectedModel = await page.evaluate(async () => (await import("/app/state.js")).state.activeModelKey);
   assert.equal(selectedModel, model, "new conversation uses the configured model");
+  await page.getByText("Update from main first.", { exact: true }).waitFor();
 }
 
 test("conversation menus default review notifications off and persist their toggle", { timeout: 120_000 }, async (t) => {
@@ -174,4 +185,24 @@ test("Settings edit per-harness model and thinking defaults for new conversation
   await page.evaluate('document.querySelector("#settingsDialog").close(); true');
   await assertNewConversationDefaults(page, "pi", "anthropic/claude-sonnet-4-5", "low");
   await assertNewConversationDefaults(page, "claude", "claude/sonnet", "high");
+});
+
+test("double-click Send submits the enabled end conversation prompt without clearing the draft", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await signInAndOpenProject(page, node.url, environment.username, environment.password);
+  const result = await page.evaluate(`(async () => {
+    const { elements } = await import("/app/elements.js");
+    const { state } = await import("/app/state.js");
+    const sent = [];
+    state.conversationCommands = { start: { enabled: false, prompt: "" }, end: { enabled: true, prompt: "Finish and push." } };
+    state.socket = { readyState: WebSocket.OPEN, send: (value) => sent.push(JSON.parse(value)) };
+    elements.sendButton.disabled = false;
+    elements.messageInput.value = "Keep this draft";
+    elements.sendButton.click();
+    elements.sendButton.click();
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    return { sent, draft: elements.messageInput.value };
+  })()`);
+  assert.deepEqual(result.sent, [{ type: "prompt", message: "Finish and push.", images: [], files: [] }]);
+  assert.equal(result.draft, "Keep this draft");
 });

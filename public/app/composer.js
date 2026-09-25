@@ -7,21 +7,25 @@ import { elements } from "./elements.js";
 import { toast } from "./shell.js";
 import { state } from "./state.js";
 
-elements.composer.addEventListener("submit", (event) => {
-  event.preventDefault();
+function sendPrompt(message, attachments = state.attachments, clearComposer = true) {
   hideCommandAutocomplete();
-  const message = elements.messageInput.value.trim();
-  if (!message && state.attachments.length === 0) return;
+  if (!message && attachments.length === 0) return false;
   const payload = {
     type: "prompt",
     message,
     images: state.attachments.filter((attachment) => attachment.kind === "image").map(({ name, mimeType, data }) => ({ name, mimeType, data })),
     files: state.attachments.filter((attachment) => attachment.kind === "file").map(({ name, mimeType, data }) => ({ name, mimeType, data })),
   };
+  // The end command deliberately sends no files while keeping the unsent composer intact.
+  if (attachments !== state.attachments) {
+    payload.images = attachments.filter((attachment) => attachment.kind === "image").map(({ name, mimeType, data }) => ({ name, mimeType, data }));
+    payload.files = attachments.filter((attachment) => attachment.kind === "file").map(({ name, mimeType, data }) => ({ name, mimeType, data }));
+  }
   let sent = false;
-  const route = dispatchComposerInput(message, state.attachments.length > 0, composerCommandHandlers(), () => {
-    sent = sendSocket(payload);
-  });
+  const submit = () => { sent = sendSocket(payload); };
+  let route;
+  if (attachments === state.attachments) route = dispatchComposerInput(message, state.attachments.length > 0, composerCommandHandlers(), submit);
+  else route = dispatchComposerInput(message, attachments.length > 0, composerCommandHandlers(), submit);
   if (route === "command") return;
   if (!sent) {
     toast("Conversation is not connected yet");
@@ -32,10 +36,46 @@ elements.composer.addEventListener("submit", (event) => {
   if (message) rememberPrompt(message);
   state.historyIndex = -1;
   state.historyDraft = "";
-  state.drafts.delete(state.activeSessionPath);
-  elements.messageInput.value = "";
-  elements.messageInput.style.height = "auto";
-  clearAttachments();
+  if (clearComposer) {
+    state.drafts.delete(state.activeSessionPath);
+    elements.messageInput.value = "";
+    elements.messageInput.style.height = "auto";
+    clearAttachments();
+  }
+  return true;
+}
+
+let sendClickTimer = 0;
+const SEND_DOUBLE_CLICK_MS = 280;
+
+function sendEndConversationPrompt() {
+  const command = state.conversationCommands?.end;
+  if (!command?.enabled) return false;
+  sendPrompt(command.prompt, [], false);
+  return true;
+}
+
+elements.composer.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (sendClickTimer) { clearTimeout(sendClickTimer); sendClickTimer = 0; }
+  sendPrompt(elements.messageInput.value.trim());
+});
+
+// Delay a pointer Send click briefly so a second click can replace it with the
+// configured end command. Keyboard submit remains immediate.
+elements.sendButton.addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  if (sendClickTimer) {
+    clearTimeout(sendClickTimer);
+    sendClickTimer = 0;
+    if (!sendEndConversationPrompt()) elements.composer.requestSubmit();
+    return;
+  }
+  sendClickTimer = setTimeout(() => {
+    sendClickTimer = 0;
+    elements.composer.requestSubmit();
+  }, SEND_DOUBLE_CLICK_MS);
 });
 document.querySelectorAll(".command-strip button[data-command]").forEach((button) => {
   button.addEventListener("click", () => {

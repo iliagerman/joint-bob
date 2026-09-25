@@ -503,6 +503,7 @@
           <button class="settings-tab" type="button" data-settings-tab="account" role="tab" id="settingsTab-account" aria-controls="settingsPanel-account" aria-selected="true" data-testid="settings-tab-account">Account</button>
           <button class="settings-tab" type="button" data-settings-tab="notifications" role="tab" id="settingsTab-notifications" aria-controls="settingsPanel-notifications" aria-selected="false" tabindex="-1" data-testid="settings-tab-notifications">Notifications</button>
           <button class="settings-tab" type="button" data-settings-tab="labels" role="tab" id="settingsTab-labels" aria-controls="settingsPanel-labels" aria-selected="false" tabindex="-1" data-testid="settings-tab-labels">Labels</button>
+          <button class="settings-tab" type="button" data-settings-tab="commands" role="tab" id="settingsTab-commands" aria-controls="settingsPanel-commands" aria-selected="false" tabindex="-1" data-testid="settings-tab-commands">Commands</button>
           <button class="settings-tab" type="button" data-settings-tab="secrets" role="tab" id="settingsTab-secrets" aria-controls="settingsPanel-secrets" aria-selected="false" tabindex="-1" data-testid="settings-tab-secrets">Secrets</button>
           <button class="settings-tab" type="button" data-settings-tab="cluster" role="tab" id="settingsTab-cluster" aria-controls="settingsPanel-cluster" aria-selected="false" tabindex="-1" data-testid="settings-tab-cluster">Cluster</button>
           <button class="settings-tab" type="button" data-settings-tab="workspaces" role="tab" id="settingsTab-workspaces" aria-controls="settingsPanel-workspaces" aria-selected="false" tabindex="-1" data-testid="settings-tab-workspaces">Workspaces</button>
@@ -616,6 +617,17 @@
             <textarea id="settingsConversationLabels" rows="8" data-testid="settings-conversation-labels" aria-describedby="settingsLabelsHint"></textarea>
           </label>
           <p class="settings-hint" id="settingsLabelsHint">One label per line, up to 50 labels of 80 characters each. These choices are node-local. Other always allows free text. Changing this list does not change existing conversation classifications.</p>
+        </section>
+
+        <section class="settings-panel" id="settingsPanel-commands" role="tabpanel" aria-labelledby="settingsTab-commands" tabindex="0" hidden>
+          <fieldset class="phase-settings">
+            <legend>Conversation commands</legend>
+            <label class="checkbox-row"><input id="settingsStartConversationEnabled" type="checkbox" data-testid="settings-start-conversation-enabled" /> Run at the start of every new conversation</label>
+            <label>Start conversation prompt<textarea id="settingsStartConversationPrompt" rows="3" maxlength="10000" data-testid="settings-start-conversation-prompt"></textarea></label>
+            <label class="checkbox-row"><input id="settingsEndConversationEnabled" type="checkbox" data-testid="settings-end-conversation-enabled" /> Enable double-click Send to end a conversation</label>
+            <label>End conversation prompt<textarea id="settingsEndConversationPrompt" rows="4" maxlength="10000" data-testid="settings-end-conversation-prompt"></textarea></label>
+            <p class="settings-hint">When enabled, the start prompt runs before your first message. Double-clicking Send submits the end prompt and leaves your draft and attachments untouched.</p>
+          </fieldset>
         </section>
 
         <section class="settings-panel" id="settingsPanel-secrets" role="tabpanel" aria-labelledby="settingsTab-secrets" tabindex="0" hidden>

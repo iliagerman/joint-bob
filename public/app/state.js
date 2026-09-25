@@ -107,6 +107,7 @@ export const state = {
   // Conversations the user has closed out are hidden until this is switched on.
   showDoneConversations: false,
   conversationLabels: [],
+  conversationCommands: null,
   watchSocket: null,
   watchProjectId: null,
   rowMenuAnchor: null,

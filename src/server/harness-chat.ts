@@ -42,7 +42,7 @@ export interface HarnessChatConnection {
 export interface AttachOptions {
   socket: WebSocket; project: ProjectRecord; taskId: string | null; cwd: string; engine: HarnessId; sessionId: string;
   sessionPath?: string; accountIds: string[]; readOnly: boolean; ownership: ForeignConversationOwner | null;
-  listedSessions?: SessionSummary[]; handoffContext: string | null;
+  listedSessions?: SessionSummary[]; handoffContext: string | null; autoStartPrompt: string | null;
 }
 
 export const harnessChatConnections = new Set<HarnessChatConnection>();
@@ -660,7 +660,8 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
   const goal = await getConversationGoal(options.project.id, conversationId);
   const routing = await routingClientState(connection, local.id);
   const routingMode = routing ? routing.mode : "manual";
-  send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, scheduled, scheduledTurn: scheduled && shared.scheduledTurn, bobGoal: goal ?? null, routing: routing ?? { active: false, mode: routingMode }, ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
+  const conversationCommands = getSettings().conversationCommands;
+  send(options.socket, { type: "ready", project: options.project, engine: options.engine, sessionId: shared.session.id, sessionFile: shared.session.file ?? null, messages: browserMessages, status: shared.session.status(), ownership: options.ownership, executionNodeId: local.id, readOnly: options.readOnly, conversationId, scheduled, scheduledTurn: scheduled && shared.scheduledTurn, bobGoal: goal ?? null, routing: routing ?? { active: false, mode: routingMode }, conversationCommands, ...(transcript.segments.length > 1 ? { segments: transcript.segments } : {}) });
   for (const event of shared.liveEvents) send(options.socket, event);
   refreshHarnessPromptQueue(connection);
   options.socket.on("message", (raw) => void handleHarnessChatMessage(connection, raw as Buffer).catch(async (error) => {
@@ -669,5 +670,8 @@ export async function attachHarnessChat(options: AttachOptions): Promise<void> {
     sendHarnessStatus(connection.shared, options.socket);
   }));
   options.socket.on("close", () => { harnessChatConnections.delete(connection); detachHarnessClient(connection.shared, options.socket); });
+  if (options.autoStartPrompt && !shared.session.messages.length && !listQueuedPrompts(queueKey(connection)).length) {
+    await serializeMutation(connection, () => enqueue(connection, options.autoStartPrompt!, [], []));
+  }
   if (!options.ownership && !options.readOnly) void drainHarnessPromptQueue(connection).catch((error) => send(options.socket, { type: "error", error: chatErrorMessage(error) }));
 }

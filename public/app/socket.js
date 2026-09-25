@@ -218,6 +218,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     const openingDraft = state.harnesses.some(({ newSessionPath }) => newSessionPath === state.activeSessionPath);
     state.conversationLock = payload.ownership ?? null;
     state.conversationReadOnly = payload.readOnly === true;
+    state.conversationCommands = payload.conversationCommands || null;
     if (!payload.engine) throw new Error("Ready payload is missing its harness engine");
     state.engine = payload.engine;
     if (payload.executionNodeId) {

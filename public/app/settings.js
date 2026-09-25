@@ -228,6 +228,10 @@ export async function openSettings(tab = "account") {
   elements.settingsShellTimeoutSeconds.value = settings.shellCommandTimeoutSeconds ?? 600;
   elements.settingsShellTimeoutSeconds.disabled = !elements.settingsShellTimeoutEnabled.checked;
   elements.settingsDigestAttachments.checked = settings.digestAttachments;
+  elements.settingsStartConversationEnabled.checked = settings.conversationCommands.start.enabled;
+  elements.settingsStartConversationPrompt.value = settings.conversationCommands.start.prompt;
+  elements.settingsEndConversationEnabled.checked = settings.conversationCommands.end.enabled;
+  elements.settingsEndConversationPrompt.value = settings.conversationCommands.end.prompt;
   elements.settingsRuntimeStatus.textContent = "";
   elements.settingsSkillsStatus.textContent = "";
   fillResourceFields(globalResourceFields, settings.resources);
@@ -257,6 +261,10 @@ async function saveSettings(event) {
       autoCompactThreshold: elements.settingsAutoCompactEnabled.checked ? Number(elements.settingsAutoCompactThreshold.value) : null,
       shellCommandTimeoutSeconds: elements.settingsShellTimeoutEnabled.checked ? Number(elements.settingsShellTimeoutSeconds.value) : null,
       digestAttachments: elements.settingsDigestAttachments.checked,
+      conversationCommands: {
+        start: { enabled: elements.settingsStartConversationEnabled.checked, prompt: elements.settingsStartConversationPrompt.value.trim() },
+        end: { enabled: elements.settingsEndConversationEnabled.checked, prompt: elements.settingsEndConversationPrompt.value.trim() },
+      },
     }),
   });
   state.conversationLabels = saved.conversationLabels;

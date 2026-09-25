@@ -421,6 +421,9 @@ const runtimeSchemaShape = Object.fromEntries(listDiscoveredHarnesses().filter((
 const configuredRuntimeIds = new Set(Object.keys(runtimeSchemaShape));
 export const runtimeCheckSchema = z.object(runtimeSchemaShape).strict().refine((input) => Object.keys(input).length > 0, "Provide at least one runtime") as z.ZodType<Record<string, RuntimeSettings>>;
 export const resourcePathsSchema = z.object({ skills: z.array(absolutePathSchema).max(20), prompts: z.array(absolutePathSchema).max(20), rules: z.array(absolutePathSchema).max(20), plugins: z.array(absolutePathSchema).max(20) }).strict();
+const conversationCommandSchema = z.object({ enabled: z.boolean(), prompt: z.string().trim().min(1).max(10_000) }).strict();
+const conversationCommandsSchema = z.object({ start: conversationCommandSchema, end: conversationCommandSchema }).strict();
+
 export const settingsSchema = z.object({
   conversationDefaults: conversationDefaultsSchema.optional(),
   runtimes: z.record(z.string(), runtimeSettingsSchema).optional().refine((runtimes) => !runtimes || Object.keys(runtimes).every((id) => configuredRuntimeIds.has(id)), "Runtime is not configured"),
@@ -437,6 +440,7 @@ export const settingsSchema = z.object({
   autoCompactThreshold: z.number().int().min(1).max(100).nullable().optional(),
   shellCommandTimeoutSeconds: z.number().int().min(1).max(86_400).nullable().optional(),
   digestAttachments: z.boolean().optional(),
+  conversationCommands: conversationCommandsSchema.optional(),
 }).extend(runtimeSchemaShape) as unknown as z.ZodType<SettingsInput>;
 export const auditQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional().default(100),
