@@ -15,12 +15,28 @@ test("new Pi sessions ignore last-used SDK model and thinking, and honor node ov
   process.env.ANTHROPIC_API_KEY = "test-only-not-a-real-key";
   await mkdir(configPath);
   await writeFile(path.join(configPath, "settings.json"), JSON.stringify({ defaultProvider: "anthropic", defaultModel: "claude-sonnet-4-5", defaultThinkingLevel: "high" }));
+  // The builtin pi catalog does not know gpt-6-sol yet; expose it like a custom store entry.
+  await writeFile(path.join(configPath, "models.json"), JSON.stringify({
+    providers: {
+      "openai-codex": {
+        models: [{
+          id: "gpt-6-sol",
+          name: "GPT-6 Sol",
+          api: "openai-responses",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        }],
+      },
+    },
+  }));
   updateSettings({ ...previous, pi: { ...previous.pi, configPath, sessionPath: path.join(root, "sessions") } });
   try {
     const { createPiSession } = await import("../src/pi-service.js");
     const first = await createPiSession({ cwd: root, projectId: project.id });
     try {
-      assert.equal(first.session.model?.id, "gpt-5.6-sol");
+      assert.equal(first.session.model?.id, "gpt-6-sol");
       assert.equal(first.session.thinkingLevel, "medium");
     } finally { first.dispose(); }
     updateSettings({ ...getSettings(), conversationDefaults: { pi: { provider: "anthropic", modelId: "claude-sonnet-4-5", thinkingLevel: "low" }, claude: { provider: "claude", modelId: "sonnet", thinkingLevel: "high" } } });

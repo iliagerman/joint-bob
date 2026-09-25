@@ -9,7 +9,7 @@ Every deployment is a version. The newest section must always match the
 
 ## 1.92.3 — 2026-09-25
 
-- Claude conversations now default to Opus 5.5.
+- Updated default Pi model to GPT-6 Sol.
 
 ## 1.92.2 — 2026-09-25
 
@@ -18,7 +18,6 @@ Every deployment is a version. The newest section must always match the
 ## 1.92.1 — 2026-09-25
 
 - Fixed project search in creation dialogs when starting conversations and quick notes.
-
 
 ## 1.92.0 — 2026-09-25
 
