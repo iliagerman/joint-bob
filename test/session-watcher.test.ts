@@ -224,6 +224,9 @@ test("shared flat Pi session watcher notifies only the transcript project", asyn
     callbackCount = 0;
 
     const transcript = path.join(flatRoot, "flat-session.jsonl");
+    // Reproduce the create event arriving before the session header is written.
+    await writeFile(transcript, "");
+    await new Promise(resolve => setTimeout(resolve, 150));
     await writeFile(transcript, `${JSON.stringify({ type: "session", cwd: path.join(home, "project-a") })}\n`);
     await waitForCallback(callbacks, "a", transcript);
     await new Promise((resolve) => setTimeout(resolve, 900));

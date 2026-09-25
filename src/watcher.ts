@@ -7,7 +7,7 @@ import type { ProjectRecord } from "./types.js";
 const DEBOUNCE_MS = 750;
 const RESCAN_MS = 15_000;
 export type SessionChangeListener = (projectId: string, changedFiles: string[]) => void;
-interface WatchedProject { paths: SessionProjectPaths; directories: Set<string>; pendingFiles: Set<string>; needsFullRefresh: boolean; debounceTimer: NodeJS.Timeout | null; }
+interface WatchedProject { paths: SessionProjectPaths; directories: Set<string>; pendingFiles: Map<string, ReturnType<typeof listDiscoveredHarnesses>[number]>; needsFullRefresh: boolean; debounceTimer: NodeJS.Timeout | null; }
 interface SharedWatch { watcher: FSWatcher; projects: Set<string>; }
 
 export function sessionWatchDirs(project: SessionProjectPaths): string[] {
@@ -26,7 +26,7 @@ export class SessionWatcher {
     const watched = this.projects.get(project.id);
     const paths = { path: project.path, macPath: project.macPath, locations: project.locations, additionalPaths: "additionalPaths" in project ? project.additionalPaths as string[] | undefined : undefined };
     if (watched) watched.paths = paths;
-    else this.projects.set(project.id, { paths, directories: new Set(), pendingFiles: new Set(), needsFullRefresh: false, debounceTimer: null });
+    else this.projects.set(project.id, { paths, directories: new Set(), pendingFiles: new Map(), needsFullRefresh: false, debounceTimer: null });
     this.watchDirs(project.id);
   }
   removeProject(projectId: string): void {
@@ -92,6 +92,21 @@ export class SessionWatcher {
     return reading;
   }
 
+  private async flush(projectId: string, project: WatchedProject): Promise<void> {
+    const fullRefresh = project.needsFullRefresh;
+    const pending = [...project.pendingFiles];
+    project.needsFullRefresh = false;
+    project.pendingFiles.clear();
+    // A create event can precede the first header write. Read ownership after debounce.
+    const resolved = await Promise.all(pending.map(async ([file, adapter]) => {
+      const cwd = await this.ownerCwd(adapter, file);
+      return cwd && !sessionCwds(project.paths).includes(cwd) ? null : file;
+    }));
+    if (this.projects.get(projectId) !== project) return;
+    const files = resolved.filter((file): file is string => file !== null);
+    if (fullRefresh || files.length) this.listener(projectId, fullRefresh ? [] : files);
+  }
+
   private async handleEvent(projectId: string, dir: string, fileName: string | Buffer | null): Promise<void> {
     const project = this.projects.get(projectId); if (!project) return;
     const name = typeof fileName === "string" ? fileName : Buffer.isBuffer(fileName) ? fileName.toString() : "";
@@ -101,19 +116,12 @@ export class SessionWatcher {
       const adapter = listDiscoveredHarnesses().find((candidate) => candidate.paths.ownsTranscript(file));
       if (!adapter) return;
       const canonicalFile = adapter.paths.canonicalTranscript?.(file) ?? file;
-      const cwd = await this.ownerCwd(adapter, canonicalFile);
-      const current = this.projects.get(projectId);
-      if (current !== project) return;
-      if (cwd && !sessionCwds(current.paths).includes(cwd)) return;
-      current.pendingFiles.add(canonicalFile);
+      project.pendingFiles.set(canonicalFile, adapter);
     }
     if (this.projects.get(projectId) !== project || project.debounceTimer) return;
     project.debounceTimer = setTimeout(() => {
       project.debounceTimer = null;
-      const files = project.needsFullRefresh ? [] : [...project.pendingFiles];
-      project.needsFullRefresh = false;
-      project.pendingFiles.clear();
-      this.listener(projectId, files);
+      void this.flush(projectId, project).catch(error => console.error(`Session watcher refresh failed for ${projectId}:`, error));
     }, DEBOUNCE_MS);
   }
 }

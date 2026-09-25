@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Improved session watcher reliability when file system events arrive out of order.
+
 ## 1.90.1 — 2026-09-25
 
 - Updated Claude and Pi harnesses now become active immediately while custom executable paths remain untouched.
