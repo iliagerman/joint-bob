@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Focus mode tap gestures now skip over the browser viewer, so taps inside the browser no longer trigger unwanted canvas actions.
 - Upgraded the Pi coding agent with improved system instruction handling and compatibility updates.
 - Resolved integration conflicts in project selection and focus mode to ensure consistent behavior across quick notes and new conversations.
 

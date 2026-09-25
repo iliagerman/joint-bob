@@ -214,7 +214,7 @@ function installFabDrag() {
 function installTapGestures() {
   let tap = null, sequence = null, timer = null, lastTouch = -Infinity;
   const controls = "button,input,textarea,select,a,summary,label,[contenteditable],[role=button]";
-  const nativeControls = "input,textarea,select,label,[contenteditable],#browserPanel,.xterm,.canvas-root";
+  const nativeControls = "input,textarea,select,label,[contenteditable],#browserPanel,.browser-viewer,.xterm,.canvas-root";
   const clear = () => { clearTimeout(timer); tap = sequence = null; };
   const finish = () => {
     const completed = sequence;
