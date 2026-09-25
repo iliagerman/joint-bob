@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.91.0 — 2026-09-25
 
 - Review count badge now displays inline within the Needs review button.
 - The N gesture now recognizes more natural curved and varied strokes for creating notes.
