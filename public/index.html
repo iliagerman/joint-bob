@@ -1238,7 +1238,13 @@
           <li><button type="button" class="wizard-step" data-step="3" data-testid="new-session-step-3">3 · Node</button></li>
         </ol>
         <section class="wizard-panel" data-step="1" data-testid="new-session-panel-1">
-          <label id="newSessionProjectLabel" hidden>Project<select id="newSessionProjectSelect" data-testid="new-session-project-select"></select></label>
+          <div class="project-combobox-field" id="newSessionProjectLabel" hidden>
+            <span class="field-label">Project</span>
+            <div class="project-combobox">
+              <input id="newSessionProjectSelect" type="search" role="combobox" aria-label="Project" aria-autocomplete="list" aria-controls="newSessionProjectOptions" aria-expanded="false" autocomplete="off" placeholder="Search projects" data-testid="new-session-project-select" />
+              <div id="newSessionProjectOptions" class="project-combobox-options" role="listbox" hidden></div>
+            </div>
+          </div>
           <label id="newSessionHarnessLabel" hidden>Agent<select id="newSessionHarnessSelect" data-testid="new-session-harness-select"></select></label>
           <label>
             Name

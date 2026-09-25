@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- New conversation project picker now supports searching to quickly find your project.
+
 ## 1.91.0 — 2026-09-25
 
 - Review count badge now displays inline within the Needs review button.

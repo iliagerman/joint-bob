@@ -1852,6 +1852,36 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 .wizard-step.done { color: var(--text); }
 .wizard-step.active { border-color: var(--accent); color: var(--accent); }
 .wizard-panel { display: grid; gap: 12px; align-content: start; }
+.project-combobox-field { display: grid; gap: 6px; min-width: 0; color: var(--text); font-size: 12px; font-weight: 550; }
+.project-combobox { position: relative; }
+.project-combobox input { width: 100%; }
+.project-combobox-options {
+  position: absolute;
+  z-index: 2;
+  top: calc(100% + 4px);
+  right: 0;
+  left: 0;
+  display: grid;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.project-combobox-option {
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: calc(var(--radius-ctl) - 3px);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.project-combobox-option:is(:hover, :focus-visible, [aria-selected="true"]) { background: var(--field); }
 
 .handoff-progress-card progress { width: 100%; accent-color: var(--accent); }
 #handoffProgressStatus { min-height: 2.8em; white-space: pre-line; }
