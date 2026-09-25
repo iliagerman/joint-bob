@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Claude conversations now default to Opus 5.5.
+
 ## 1.92.2 — 2026-09-25
 
 - Fixed project search in creation dialogs for quick notes and new conversations.
@@ -10,6 +14,7 @@ Every deployment is a version. The newest section must always match the
 ## 1.92.1 — 2026-09-25
 
 - Fixed project search in creation dialogs when starting conversations and quick notes.
+
 
 ## 1.92.0 — 2026-09-25
 

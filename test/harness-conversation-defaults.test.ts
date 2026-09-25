@@ -58,7 +58,7 @@ test("Settings persist per-harness defaults and reject invalid thinking", async 
     assert.equal(previous.conversationDefaults.claude.thinkingLevel, "medium");
     const initial = await runtime.open({ cwd: root, projectId: "defaults-project", sessionId: "00000000-0000-4000-8000-000000000002" });
     try {
-      assert.deepEqual(initial.settings(), { provider: "claude", modelId: "claude-opus-5", reasoning: "medium" });
+      assert.deepEqual(initial.settings(), { provider: "claude", modelId: "claude-opus-5-5", reasoning: "medium" });
     } finally { initial.dispose(); }
 
     const conversationDefaults = {
@@ -80,7 +80,7 @@ test("Settings persist per-harness defaults and reject invalid thinking", async 
     await writeFile(sessionPath, `${JSON.stringify({ type: "user", cwd: root, message: { role: "user", content: "Existing session" } })}\n`);
     const restored = await runtime.open({ cwd: root, projectId: "defaults-project", sessionId: "existing-session", sessionPath: `claude:${sessionPath}` });
     try {
-      assert.deepEqual(restored.settings(), { provider: "claude", modelId: "claude-opus-5", reasoning: "default" });
+      assert.deepEqual(restored.settings(), { provider: "claude", modelId: "claude-opus-5-5", reasoning: "default" });
     } finally {
       restored.dispose();
       await rm(sessionPath, { force: true });
