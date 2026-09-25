@@ -6,7 +6,7 @@ import { value } from "../settings-store.js";
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type HarnessUpdateInstructions =
   | { type: "self"; args: string[] }
-  | { type: "npm"; packageName: string };
+  | { type: "npm"; packageName: string; binaryName: string };
 
 export interface HarnessConfiguration {
   defaults(homePath: string): RuntimeSettings;

@@ -7,6 +7,7 @@ import type { HarnessAdapter } from "./harnesses/contract.js";
 import { listDiscoveredHarnesses } from "./harnesses/registry.js";
 import { configuredRuntime, type HarnessUpdateInstructions } from "./harnesses/runtime-configuration.js";
 import { resolveDataDirectory } from "./data-directory.js";
+import { save, settingsDatabase, value } from "./settings-store.js";
 
 const execute = promisify(execFile);
 const UPDATE_INTERVAL_MS = 24 * 60 * 60_000;
@@ -41,15 +42,34 @@ function managedHarnessRoot(id: string): string {
   return path.join(resolveDataDirectory(), "harnesses", id);
 }
 
-function activateManagedHarness(id: string): void {
-  const bin = path.join(managedHarnessRoot(id), "node_modules", ".bin");
-  if (!existsSync(bin)) return;
-  const current = (process.env.PATH ?? "").split(path.delimiter).filter((entry) => entry && entry !== bin);
-  process.env.PATH = [bin, ...current].join(path.delimiter);
+function managedHarnessExecutable(id: string, binaryName: string): string {
+  return path.join(managedHarnessRoot(id), "node_modules", ".bin", `${binaryName}${process.platform === "win32" ? ".cmd" : ""}`);
+}
+
+function usesBundledExecutable(executable: string, binaryName: string, managedExecutable: string): boolean {
+  if (!executable || executable === binaryName || path.resolve(executable) === managedExecutable) return true;
+  const installRoot = process.env.JOINT_BOB_INSTALL_ROOT;
+  if (!installRoot || !path.isAbsolute(executable)) return false;
+  const relative = path.relative(path.resolve(installRoot), path.resolve(executable));
+  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function activateManagedHarness(id: string, binaryName: string): void {
+  const executable = managedHarnessExecutable(id, binaryName);
+  if (!existsSync(executable)) return;
+  const bin = path.dirname(executable);
+  const currentPath = (process.env.PATH ?? "").split(path.delimiter).filter((entry) => entry && entry !== bin);
+  process.env.PATH = [bin, ...currentPath].join(path.delimiter);
+  if (usesBundledExecutable(value(`${id}.executable`), binaryName, executable)) {
+    save(settingsDatabase(), `${id}.executable`, executable);
+  }
 }
 
 export function activateManagedHarnesses(adapters = listDiscoveredHarnesses()): void {
-  for (const adapter of adapters) if (adapter.configuration?.update?.type === "npm") activateManagedHarness(adapter.id);
+  for (const adapter of adapters) {
+    const update = adapter.configuration?.update;
+    if (update?.type === "npm") activateManagedHarness(adapter.id, update.binaryName);
+  }
 }
 
 export function harnessUpdateCommand(id: string, executable: string, instructions: HarnessUpdateInstructions): UpdateCommand {
@@ -80,7 +100,7 @@ export async function runHarnessUpdates(adapters = listDiscoveredHarnesses()): P
         timeout: UPDATE_TIMEOUT_MS,
         maxBuffer: 1024 * 1024,
       });
-      if (configuration.update.type === "npm") activateManagedHarness(adapter.id);
+      if (configuration.update.type === "npm") activateManagedHarness(adapter.id, configuration.update.binaryName);
       results.push(status(adapter, "succeeded"));
     } catch (error) {
       results.push(status(adapter, "failed", updateError(error)));

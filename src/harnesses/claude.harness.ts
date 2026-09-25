@@ -8,7 +8,7 @@ const configuration: HarnessConfiguration = {
   defaults: (home) => ({ executable: detectExecutable("claude"), configPath: path.join(home, ".claude"), sessionPath: path.join(home, ".claude/projects") }),
   fixedProvider: "claude",
   thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
-  update: { type: "npm", packageName: "@anthropic-ai/claude-code" },
+  update: { type: "npm", packageName: "@anthropic-ai/claude-code", binaryName: "claude" },
   restartFields: ["executable", "configPath"],
 };
 function claudeProjectsRoot(): string { return configuredRuntime("claude", configuration.defaults(os.homedir())).sessionPath; }

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Harness updates now preserve custom executable paths instead of always using bundled versions.
+
 ## 1.90.0 — 2026-09-25
 
 - Mobile Focus mode now uses single-line headers and a colored context percentage that pulses only while working. Tap the project name to view and copy its path; conversation filters live under Project actions.

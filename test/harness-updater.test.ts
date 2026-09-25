@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import type { HarnessAdapter } from "../src/harnesses/contract.js";
 import type { HarnessUpdateInstructions } from "../src/harnesses/runtime-configuration.js";
-import { harnessUpdateCommand, runHarnessUpdates } from "../src/harness-updater.js";
+import { activateManagedHarnesses, harnessUpdateCommand, runHarnessUpdates } from "../src/harness-updater.js";
+import { save, settingsDatabase, value } from "../src/settings-store.js";
 
 function adapter(id: string, executable: string, update?: HarnessUpdateInstructions): HarnessAdapter {
   return {
@@ -61,7 +62,7 @@ test("one failed harness update does not prevent later harnesses", async () => {
 });
 
 test("npm harness updates install into persistent Joint Bob-owned assets", () => {
-  const command = harnessUpdateCommand("pi", "pi", { type: "npm", packageName: "@earendil-works/pi-coding-agent" });
+  const command = harnessUpdateCommand("pi", "pi", { type: "npm", packageName: "@earendil-works/pi-coding-agent", binaryName: "pi" });
 
   assert.equal(command.executable, "npm");
   assert.match(command.cwd, new RegExp(`${path.sep}harnesses${path.sep}pi$`));
@@ -69,4 +70,29 @@ test("npm harness updates install into persistent Joint Bob-owned assets", () =>
     "install", "--prefix", command.cwd, "--no-save", "--package-lock=false", "--omit=dev",
     "--registry=https://registry.npmjs.org", "@earendil-works/pi-coding-agent@latest",
   ]);
+});
+
+test("managed harness activation replaces a bundled executable setting", async () => {
+  const id = "managed-test";
+  const update = { type: "npm", packageName: "example-package", binaryName: "example" } as const;
+  const command = harnessUpdateCommand(id, "example", update);
+  const executable = path.join(command.cwd, "node_modules", ".bin", "example");
+  const installRoot = await mkdtemp(path.join(os.tmpdir(), "joint-bob-install-"));
+  await mkdir(path.dirname(executable), { recursive: true });
+  await writeFile(executable, "#!/bin/sh\n");
+  await chmod(executable, 0o755);
+  save(settingsDatabase(), `${id}.executable`, path.join(installRoot, "node_modules", ".bin", "example"));
+  const previousInstallRoot = process.env.JOINT_BOB_INSTALL_ROOT;
+  process.env.JOINT_BOB_INSTALL_ROOT = installRoot;
+  try {
+    activateManagedHarnesses([adapter(id, "example", update)]);
+    assert.equal(value(`${id}.executable`), executable);
+    const customExecutable = path.join(os.tmpdir(), "custom-example");
+    save(settingsDatabase(), `${id}.executable`, customExecutable);
+    activateManagedHarnesses([adapter(id, "example", update)]);
+    assert.equal(value(`${id}.executable`), customExecutable);
+  } finally {
+    if (previousInstallRoot === undefined) delete process.env.JOINT_BOB_INSTALL_ROOT;
+    else process.env.JOINT_BOB_INSTALL_ROOT = previousInstallRoot;
+  }
 });
