@@ -192,16 +192,9 @@ function selectNewSessionProject(project) {
   loadNewSessionNodes().catch(error => toast(error.message));
 }
 
-<<<<<<< Updated upstream
-function renderProjectPicker(selectedId = projectSelect.dataset.projectId, resetValue = false) {
-  const selected = state.projects.find((project) => project.id === selectedId);
-  if (resetValue) projectSelect.value = selected?.name || "";
-  const query = projectSelect.value.trim().toLocaleLowerCase();
-=======
 function renderProjectPicker(selectedId = projectSelect.dataset.projectId, resetValue = false, query = projectSelect.value.trim().toLocaleLowerCase()) {
   const selected = state.projects.find((project) => project.id === selectedId);
   if (resetValue) projectSelect.value = selected?.name || "";
->>>>>>> Stashed changes
   const matches = state.projects.filter((project) => project.name.toLocaleLowerCase().includes(query));
   projectOptions.replaceChildren(...matches.map((project) => {
     const option = document.createElement("button");
@@ -221,11 +214,7 @@ function renderProjectPicker(selectedId = projectSelect.dataset.projectId, reset
 
 projectSelect.addEventListener("focus", () => {
   projectSelect.select();
-<<<<<<< Updated upstream
-  renderProjectPicker();
-=======
   renderProjectPicker(undefined, false, "");
->>>>>>> Stashed changes
   projectOptions.hidden = false;
   projectSelect.setAttribute("aria-expanded", "true");
 });

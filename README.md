@@ -247,11 +247,7 @@ New conversations use the model and thinking defaults in **Settings > Harnesses*
 
 ## Notes and automatic backlog
 
-<<<<<<< Updated upstream
 Notes are paused conversation drafts. Save a title and prompt, choose the agent, model, thinking level, execution node and secret accounts, and attach up to four images. Without a schedule or automatic processing, saving does not start a conversation. **Start conversation** sends the saved draft through the normal conversation queue on the selected node, without falling back to another node.
-=======
-Notes are paused conversation drafts. Save a title and prompt, choose the agent, model, thinking level, execution node and secret accounts, and attach up to four images. Saving alone does not start a conversation. **Start conversation** sends the saved draft through the normal conversation queue on the selected node, without falling back to another node.
->>>>>>> Stashed changes
 
 Set a one-time **Start after** date to make a note eligible at that time. Scheduled notes wait for capacity even when automatic backlog processing is off. For recurring prompts, use Scheduled tasks instead.
 
