@@ -39,8 +39,10 @@ test("the arrow keys walk the conversation's own prompt history", async () => {
   // A sent prompt joins the history and leaves history-browsing mode.
   const submit = app.slice(app.indexOf('elements.composer.addEventListener("submit"'));
   const submitHandler = submit.slice(0, submit.indexOf("\n});"));
-  assert.match(submitHandler, /rememberPrompt\(message\)/);
-  assert.match(submitHandler, /state\.historyIndex = -1/);
+  assert.match(submitHandler, /sendPrompt\(elements\.messageInput\.value\.trim\(\)\)/);
+  const send = functionSource(app, "sendPrompt");
+  assert.match(send, /rememberPrompt\(message\)/);
+  assert.match(send, /state\.historyIndex = -1/);
 });
 
 test("an unsent draft stays with the conversation it was typed in", async () => {
@@ -76,8 +78,8 @@ test("an unsent draft stays with the conversation it was typed in", async () => 
   assert.match(app, /setActiveSessionPath\(payload\.sessionFile\)/);
 
   // Sending clears the draft so returning to the conversation shows an empty composer.
-  const submit = app.slice(app.indexOf('elements.composer.addEventListener("submit"'));
-  assert.match(submit.slice(0, submit.indexOf("\n});")), /state\.drafts\.delete\(state\.activeSessionPath\)/);
+  const send = functionSource(app, "sendPrompt");
+  assert.match(send, /if \(clearComposer\) \{\s*state\.drafts\.delete\(state\.activeSessionPath\)/);
 });
 
 test("the loaded transcript seeds the prompt history so recall works after a reload", async () => {
