@@ -83,6 +83,7 @@ body.focus-ui .focus-action-icon { display: block; }
 body.view-chat #focusControlsButton { bottom: 160px; }
 #focusControlsButton img { display: block; width: 32px; height: 32px; pointer-events: none; }
 .focus-pending-badge { position: absolute; top: -5px; right: -5px; display: grid; place-items: center; min-width: 22px; height: 22px; padding: 0 4px; border: 2px solid var(--panel); border-radius: 999px; background: var(--danger); color: #fff; font: 700 11px/1 var(--sans); pointer-events: none; }
+#focusReviewCount { position: static; flex-shrink: 0; margin-left: auto; border: 0; }
 #focusControlsButton[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
 #focusControlsButton:active { cursor: grabbing; }
 .focus-controls { position: fixed; z-index: 56; width: 336px; max-width: calc(100vw - 24px); max-height: calc(var(--focus-height, 100dvh) - 24px); display: flex; flex-direction: column; overflow: hidden; padding: 8px; border: 1px solid var(--line-strong); border-radius: 20px; background: var(--panel); box-shadow: 0 16px 64px rgb(0 0 0 / .28); }

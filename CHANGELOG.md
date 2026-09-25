@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Review count badge now displays inline within the Needs review button.
+
 ## 1.90.2 — 2026-09-25
 
 - Mobile Focus controls now stay open after model and reasoning changes.

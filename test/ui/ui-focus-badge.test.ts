@@ -14,6 +14,7 @@ test("logo FAB reflects the live cross-project review count and clears at zero",
       sessions: [{ path: "review-fixture.jsonl", title: "Synthetic pending review", agentId: "pi", agentLabel: "Pi", updatedAt: "2026-09-24T12:00:00Z" }],
     })) },
   }));
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(node.url);
   await page.getByTestId("login-username-input").fill(environment.username);
   await page.getByTestId("login-password-input").fill(environment.password);
@@ -25,13 +26,23 @@ test("logo FAB reflects the live cross-project review count and clears at zero",
   await page.waitForFunction(() => document.querySelector("#focusPendingBadge")!.textContent === "2");
   assert.equal(await page.getByTestId("focus-pending-badge").isVisible(), true);
   assert.match(await fab.getAttribute("aria-label") || "", /2.*review/);
+  await fab.click();
+  const menuBadge = page.getByTestId("focus-review-count");
+  assert.equal(await menuBadge.textContent(), "2");
+  assert.equal(await menuBadge.isVisible(), true);
+  const row = await page.getByTestId("focus-reviews").boundingBox();
+  const badge = await menuBadge.boundingBox();
+  assert.ok(row && badge && badge.x >= row.x && badge.x + badge.width <= row.x + row.width, "counter stays inside the Needs review action");
   for (count of [1, 0]) {
-    await fab.click();
     await page.getByTestId("focus-reviews").click();
     await page.getByTestId("pending-reviews-dialog").waitFor();
     await page.waitForFunction(expected => document.querySelector("#focusPendingBadge")!.textContent === String(expected), count);
     await page.getByTestId("pending-reviews-close-button").click();
     assert.equal(await page.getByTestId("focus-pending-badge").isVisible(), count > 0);
     assert.equal(await fab.getAttribute("aria-label"), count ? "Show controls, 1 conversation needs review" : "Show controls");
+    await fab.click();
+    assert.equal(await menuBadge.textContent(), String(count));
+    assert.equal(await menuBadge.isVisible(), count > 0);
+    assert.equal(await page.getByTestId("focus-reviews").getAttribute("aria-label"), count ? "Needs review, 1 conversation" : "Needs review");
   }
 });
