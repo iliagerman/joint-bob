@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Review count badge now displays inline within the Needs review button.
+- The N gesture now recognizes more natural curved and varied strokes for creating notes.
 
 ## 1.90.2 — 2026-09-25
 

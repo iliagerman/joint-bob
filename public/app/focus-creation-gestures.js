@@ -12,15 +12,28 @@ export function recognizeCreationStroke(points) {
 function isCapitalN(points) {
   const start = points[0], end = points.at(-1);
   if (start.x > 0.2 || start.y < 0.8 || end.x < 0.8 || end.y > 0.2) return false;
-  let segment = 0;
-  for (const p of points) {
-    if (segment === 0 && p.y <= 0.15) segment = 1;
-    if (segment === 1 && p.x >= 0.85 && p.y >= 0.85) segment = 2;
-    if (segment === 0 && p.x > 0.2) return false;
-    if (segment === 1 && Math.abs(p.x - p.y) > 0.25) return false;
-    if (segment === 2 && p.x < 0.8) return false;
+  // Recognize two broad vertical turns, allowing curved and slanted sides.
+  let segment = 0, peak = start, valley = start, rightmost = start.x, travel = 0;
+  for (let i = 1; i < points.length; i++) {
+    const p = points[i];
+    if (p.x < rightmost - 0.12) return false;
+    rightmost = Math.max(rightmost, p.x);
+    travel += Math.abs(p.y - points[i - 1].y);
+    if (segment === 0) {
+      if (p.y < peak.y) peak = p;
+      if (p.y - peak.y > 0.3) {
+        if (peak.y > 0.3) return false;
+        segment = 1; valley = p;
+      }
+    } else if (segment === 1) {
+      if (p.y > valley.y) valley = p;
+      if (valley.y - p.y > 0.3) {
+        if (valley.y < 0.7 || valley.x - peak.x < 0.08) return false;
+        segment = 2;
+      }
+    }
   }
-  return segment === 2;
+  return segment === 2 && travel < 3.6;
 }
 
 function isOpenC(points) {
