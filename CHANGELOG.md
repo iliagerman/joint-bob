@@ -3,10 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.94.1 — 2026-09-25
 
 - Focus mode tap gestures now skip over the browser viewer, so taps inside the browser no longer trigger unwanted canvas actions.
-- Upgraded the Pi coding agent with improved system instruction handling and compatibility updates.
+- Shipped the default models catalog for improved Pi agent runtime configuration.
 - Resolved integration conflicts in project selection and focus mode to ensure consistent behavior across quick notes and new conversations.
 
 ## 1.94.0 — 2026-09-25
