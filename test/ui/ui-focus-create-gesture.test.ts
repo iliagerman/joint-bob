@@ -50,13 +50,14 @@ test("mobile search plus and C/N gestures open project-selectable creation witho
   assert.equal(await page.getByTestId("quick-note-project-select").inputValue(), "Internal Assistant");
   await page.getByTestId("quick-note-project-select").fill("Joint Bob");
   await page.getByTestId("quick-note-project-options").getByRole("option", { name: "Joint Bob", exact: true }).click();
-  await page.keyboard.press("Escape");
+  await page.getByTestId("quick-note-cancel-button").tap();
   await page.getByTestId("quick-note-dialog").waitFor({ state: "hidden" });
   const referenceN = [[250, 1420], [280, 1335], [315, 1215], [340, 1080], [365, 990], [400, 935], [400, 1050], [405, 1150], [425, 1270], [455, 1355], [490, 1400], [520, 1395], [550, 1340], [575, 1245], [610, 1120], [650, 1000], [685, 925], [725, 880], [770, 850]];
   await draw(referenceN.map(([x, y]) => ({ x: 100 + (x - 250) * 0.3, y: 320 + (y - 850) * 0.35 })));
   await page.getByTestId("quick-note-dialog").waitFor();
   assert.equal(await page.getByTestId("quick-note-project-select").inputValue(), "Internal Assistant", "the curved N opens Add note for the active project");
-  await page.keyboard.press("Escape");
+  await page.getByTestId("quick-note-cancel-button").tap();
+  await page.getByTestId("quick-note-dialog").waitFor({ state: "hidden" });
   await page.setViewportSize({ width: 1280, height: 900 });
   assert.equal(await page.getByTestId("conversation-search-create-button").isVisible(), false, "desktop unchanged");
 });
