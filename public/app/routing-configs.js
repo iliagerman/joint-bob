@@ -197,6 +197,7 @@ export async function loadRoutingConfigs(preferredEditId = editingId) {
   renderActiveSelect();
   renderConfigList();
   fillEditor(configById(preferredEditId));
+  elements.routingConfigCreateButton.disabled = false;
 }
 
 function editorFormValue() {

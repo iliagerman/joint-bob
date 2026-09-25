@@ -5,6 +5,7 @@ Every deployment is a version. The newest section must always match the
 
 ## Unreleased
 
+- Prevented creating routing configurations until existing configurations are loaded.
 - Improved session watcher reliability when file system events arrive out of order.
 
 ## 1.90.1 — 2026-09-25

@@ -42,7 +42,10 @@ test("routing configurations live under Classifiers, save mappings, and keep una
   // Everything is configured in the Classifiers tab: create, edit, save, activate.
   await openSettingsTab(page, "classifiers");
   await page.getByTestId("routing-config-name-input").fill("Field routing");
+  const created = page.waitForResponse(response => response.url().endsWith("/api/routing-configs") && response.request().method() === "POST");
   await page.getByTestId("routing-config-create-button").click();
+  const creationResponse = await created;
+  assert.equal(creationResponse.ok(), true, JSON.stringify(await creationResponse.json()));
   const editor = page.getByTestId("routing-config-editor");
   await editor.waitFor();
   assert.equal(await editor.evaluate((element) => element.tagName), "SECTION", "routing logic has no outer fieldset container");
