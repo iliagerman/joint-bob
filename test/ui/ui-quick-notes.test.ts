@@ -24,12 +24,15 @@ let browser: Browser;
 let context: BrowserContext;
 let page: Page;
 let authSession: SignedIn;
+<<<<<<< Updated upstream
+=======
 
 async function chooseQuickNoteProject(name: string) {
   const picker = page.getByTestId("quick-note-project-select");
   await picker.fill(name);
   await page.getByTestId("quick-note-project-options").getByRole("option", { name, exact: true }).click();
 }
+>>>>>>> Stashed changes
 
 before(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-ui-quick-notes-"));

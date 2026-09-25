@@ -1,6 +1,6 @@
 import { chordMatches, shortcutPrefix } from "../canvas-layout.js";
 import { sessionHasHarnessIdentity } from "../harness-metadata.js";
-import { api } from "./api.js";
+import { api, savePin } from "./api.js";
 import { attachDigitShortcuts, isRowSelectorQuery, LIST_SHORTCUT_LIMIT, shortcutIndexBadge } from "./list-shortcuts.js";
 import { elements } from "./elements.js";
 import { normalizedQuery, shortSessionTitle } from "./layout.js";
@@ -139,11 +139,22 @@ function recentSessionSearchText(entry) {
   return `${entry.title}\n${project ? project.name : ""}`.toLowerCase();
 }
 
+/**
+ * A pin outlives the recents row and sorts it back to the top the moment the conversation
+ * is opened again, so removing the row clears the pin with it.
+ */
 function forgetRecentSession(entry) {
   state.recentSessions = state.recentSessions.filter((candidate) => recentSessionKey(candidate) !== recentSessionKey(entry));
+  const identity = entry.engine && entry.sessionId ? { projectId: entry.projectId, engine: entry.engine, sessionId: entry.sessionId } : null;
+  if (identity) {
+    state.pinnedConversations = state.pinnedConversations.filter((pin) =>
+      !(pin.projectId === identity.projectId && pin.engine === identity.engine && pin.sessionId === identity.sessionId));
+  }
   if (state.preferencesLoaded) {
     api("/api/recents", { method: "DELETE", body: JSON.stringify({ projectId: entry.projectId, engine: entry.engine, sessionId: entry.sessionId }) })
       .catch((error) => { console.warn("Could not remove recent conversation", error); toast("Could not remove recent conversation"); });
+    // A conversation that is already gone answers 404 here; the row is removed either way.
+    if (identity) void savePin({ kind: "conversation", ...identity }, false).catch((error) => console.warn("Could not clear the conversation pin", error));
   }
   renderRecentSessionsDialog();
 }
@@ -220,7 +231,21 @@ export function renderRecentSessionsDialog() {
       },
     });
 
-    row.append(button, pinToggle);
+    // Without a remove control a pinned row sorts first forever and nothing in the dialog
+    // can drop it.
+    const forget = document.createElement("button");
+    forget.type = "button";
+    forget.className = "ghost icon-button row-action-button forget-button";
+    forget.setAttribute("aria-label", `Remove ${entry.title} from recent conversations`);
+    forget.title = "Remove from recents";
+    forget.textContent = "\u00D7";
+    forget.dataset.testid = "recent-session-forget-button";
+    forget.addEventListener("click", (event) => {
+      event.stopPropagation();
+      forgetRecentSession(entry);
+    });
+
+    row.append(button, pinToggle, forget);
     elements.recentSessionsList.append(row);
   }
 }

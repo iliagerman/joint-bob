@@ -7,6 +7,7 @@ import { loadClusterPanel } from "./cluster-panel.js";
 import { loadUpdatesPanel } from "./updates.js";
 import { elements } from "./elements.js";
 import { loadNtfyServicesPanel } from "./ntfy.js";
+import { loadMfaSettings } from "./mfa.js";
 import { loadRoutingConfigs, saveDirtyRoutingConfig } from "./routing-configs.js";
 import { loadSecretAccounts } from "./secrets.js";
 import { confirmAction, syncNotifyButton, toast } from "./shell.js";
@@ -204,7 +205,7 @@ export function fillResourceFields(fields, resources) { for (const [type, field]
 export function resourceFieldsValue(fields) { return Object.fromEntries(Object.entries(fields).map(([type, field]) => [type, field.value.split("\n").map((line) => line.trim()).filter(Boolean)])); }
 
 export async function openSettings(tab = "account") {
-  const [settings, defaults, harnessBody] = await Promise.all([api("/api/settings"), api("/api/settings/runtime-defaults"), api("/api/harnesses"), loadSecretAccounts(), loadChangelogPanel()]);
+  const [settings, defaults, harnessBody] = await Promise.all([api("/api/settings"), api("/api/settings/runtime-defaults"), api("/api/harnesses"), loadSecretAccounts(), loadChangelogPanel(), loadMfaSettings()]);
   runtimeDefaults = defaults;
   harnessDescriptors = harnessBody.harnesses.filter(({ configuration }) => configuration);
   clearedHarnessesOnSave.clear();

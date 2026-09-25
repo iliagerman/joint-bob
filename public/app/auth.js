@@ -7,6 +7,7 @@ import { elements } from "./elements.js";
 import { setFocusUi } from "./focus-ui.js";
 import { setMobileView, setPanelCollapsed } from "./layout.js";
 import { openProjectImportMapping } from "./project-forms.js";
+import { clearMfaSecrets } from "./mfa.js";
 import { renderProjects } from "./project-list.js";
 import { renderQuickNotes } from "./quick-notes.js";
 import { loadProjects, refreshProjectsQuietly, startProjectSyncPolling } from "./project-selection.js";
@@ -18,6 +19,9 @@ import { closeSocket, closeWatchSocket } from "./socket.js";
 import { BOOT_MINIMUM_MS, BOOT_REQUEST_TIMEOUT_MS, bootStartedAt, LEGACY_PREFERENCE_KEYS, shared, state } from "./state.js";
 import { renderBoardView } from "./tasks.js";
 import { loadWorkspaces } from "./workspaces.js";
+
+// A short-lived password proof, held only in memory. It never authorizes app requests.
+let mfaChallenge = "";
 
 async function migrateLegacyPreferences(preferences) {
   if (preferences.legacyMigrated) return preferences;
@@ -55,6 +59,11 @@ function showLogin() {
 }
 
 export function showSignedOut() {
+  applyAuthStatus({ authenticated: false, setupRequired: false });
+  elements.loginPasswordInput.value = "";
+  elements.newPasswordInput.value = "";
+  loginError();
+  clearMfaSecrets();
   if (state.projectSyncTimer) clearInterval(state.projectSyncTimer);
   state.projectSyncTimer = null;
   state.authenticated = false;
@@ -100,6 +109,13 @@ export function revealApplication() {
 }
 
 function applyAuthStatus(status) {
+  mfaChallenge = "";
+  elements.loginMfaCodeInput.value = "";
+  elements.loginMfaCodeInput.required = false;
+  elements.loginMfaCodeLabel.hidden = true;
+  elements.loginBackButton.hidden = true;
+  elements.loginUsernameLabel.hidden = false;
+  elements.loginUsernameInput.required = true;
   state.authenticated = status.authenticated;
   state.username = status.username || "";
   state.setupRequired = status.setupRequired === true;
@@ -196,6 +212,7 @@ async function submitLogin(event) {
   event.preventDefault();
   loginError();
   elements.loginSubmitButton.disabled = true;
+  elements.loginBackButton.disabled = true;
   try {
     if (state.setupRequired) {
       const response = await api("/api/auth/setup", {
@@ -223,10 +240,24 @@ async function submitLogin(event) {
       await initializeApplication();
       return;
     }
-    const response = await api("/api/auth/login", {
-      method: "POST",
-      body: JSON.stringify({ username: elements.loginUsernameInput.value.trim(), password: elements.loginPasswordInput.value }),
-    });
+    const response = mfaChallenge
+      ? await api("/api/auth/login/mfa", { method: "POST", body: JSON.stringify({ challenge: mfaChallenge, code: elements.loginMfaCodeInput.value.trim() }) })
+      : await api("/api/auth/login", { method: "POST", body: JSON.stringify({ username: elements.loginUsernameInput.value.trim(), password: elements.loginPasswordInput.value }) });
+    if (response.mfaRequired) {
+      mfaChallenge = response.challenge;
+      elements.loginPasswordInput.value = "";
+      elements.loginPasswordInput.required = false;
+      elements.loginPasswordLabel.hidden = true;
+      elements.loginUsernameInput.required = false;
+      elements.loginUsernameLabel.hidden = true;
+      elements.loginMfaCodeLabel.hidden = false;
+      elements.loginMfaCodeInput.required = true;
+      elements.loginBackButton.hidden = false;
+      elements.loginMessage.textContent = "Enter a fresh 6-digit authenticator code or an unused recovery code. Sign-in expires after 5 minutes.";
+      elements.loginSubmitButton.textContent = "Verify and sign in";
+      elements.loginMfaCodeInput.focus();
+      return;
+    }
     applyAuthStatus({ authenticated: true, setupRequired: false, ...response });
     if (state.mustChangePassword) return;
     elements.loginPasswordInput.value = "";
@@ -236,7 +267,13 @@ async function submitLogin(event) {
     loginError(error.message);
   } finally {
     elements.loginSubmitButton.disabled = false;
+    elements.loginBackButton.disabled = false;
   }
 }
 
+elements.loginBackButton.addEventListener("click", () => {
+  applyAuthStatus({ authenticated: false, setupRequired: false });
+  loginError();
+  elements.loginPasswordInput.focus();
+});
 elements.loginForm.addEventListener("submit", submitLogin);

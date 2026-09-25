@@ -53,8 +53,13 @@
         <div id="focusChatControls" hidden></div>
       </div>
       <div class="focus-global-actions" aria-label="Workspace actions">
+<<<<<<< Updated upstream
         <button type="button" id="focusNewConversation" data-testid="focus-new-conversation">New conversation</button>
         <button type="button" id="focusNewNote" data-testid="focus-new-note">New note</button>
+=======
+        <button type="button" id="focusNewConversation" data-testid="focus-new-conversation">New conversation…</button>
+        <button type="button" id="focusNewNote" data-testid="focus-new-note">New note…</button>
+>>>>>>> Stashed changes
         <button type="button" id="focusReviews" data-testid="focus-reviews">Needs review<span id="focusReviewCount" class="focus-pending-badge" data-testid="focus-review-count" aria-hidden="true" hidden>0</span></button>
         <button type="button" id="focusRunning" data-testid="focus-running">Running conversations</button>
       </div>
@@ -474,7 +479,7 @@
           <h2>Welcome to Joint Bob</h2>
           <p id="loginMessage">Sign in to this node.</p>
         </div>
-        <label>
+        <label id="loginUsernameLabel">
           Username
           <input id="loginUsernameInput" name="username" autocomplete="username" required data-testid="login-username-input" />
         </label>
@@ -486,9 +491,49 @@
           New password
           <input id="newPasswordInput" name="newPassword" type="password" autocomplete="new-password" minlength="16" data-testid="login-new-password-input" />
         </label>
+        <label id="loginMfaCodeLabel" hidden>
+          Authenticator or recovery code
+          <input id="loginMfaCodeInput" autocomplete="one-time-code" maxlength="64" spellcheck="false" autocapitalize="off" data-testid="login-mfa-code-input" />
+        </label>
         <p id="loginError" role="alert" hidden></p>
         <div class="dialog-actions">
+          <button class="ghost" id="loginBackButton" type="button" hidden data-testid="login-back-button">Back to password</button>
           <button class="primary" id="loginSubmitButton" type="submit" data-testid="login-submit-button">Sign in</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="mfaDialog" aria-labelledby="mfaTitle" data-testid="mfa-dialog">
+      <form class="dialog-card" id="mfaForm">
+        <div>
+          <span class="eyebrow">Account security</span>
+          <h2 id="mfaTitle">Multi-factor authentication</h2>
+          <p id="mfaMessage"></p>
+        </div>
+        <label id="mfaPasswordLabel">Current password
+          <input id="mfaPasswordInput" type="password" autocomplete="current-password" maxlength="200" data-testid="mfa-password-input" />
+        </label>
+        <div id="mfaSetup" hidden>
+          <p>In your authenticator, add a time-based account using this key. Use 6 digits, a 30-second period, and SHA-1. No online account is needed.</p>
+          <label>Setup key
+            <input id="mfaSetupKey" class="mfa-key" readonly spellcheck="false" autocomplete="off" data-testid="mfa-setup-key" />
+          </label>
+          <p class="settings-hint">Keep this key private. Setup expires after 10 minutes.</p>
+        </div>
+        <label id="mfaCodeLabel"><span id="mfaCodeText">Authenticator or recovery code</span>
+          <input id="mfaCodeInput" autocomplete="one-time-code" maxlength="64" spellcheck="false" autocapitalize="off" data-testid="mfa-code-input" />
+        </label>
+        <div id="mfaRecovery" hidden>
+          <p>Save these codes somewhere safe, separate from your password. Each code works once in place of an authenticator code. They will not be shown again.</p>
+          <label>Recovery codes
+            <textarea id="mfaRecoveryCodes" class="mfa-key" readonly rows="10" spellcheck="false" autocomplete="off" data-testid="mfa-recovery-codes"></textarea>
+          </label>
+        </div>
+        <p id="mfaError" role="alert" hidden data-testid="mfa-error"></p>
+        <div class="dialog-actions">
+          <button class="ghost" id="mfaCancelButton" type="button" data-testid="mfa-cancel-button">Cancel</button>
+          <button class="ghost danger" id="mfaDisableButton" type="button" hidden data-testid="mfa-disable-button">Disable MFA</button>
+          <button class="primary" id="mfaSubmitButton" type="submit" data-testid="mfa-submit-button">Start setup</button>
         </div>
       </form>
     </dialog>
@@ -583,7 +628,13 @@
               <button class="ghost" id="settingsChangePasswordButton" type="button" data-testid="settings-change-password-button">Change password</button>
             </div>
           </fieldset>
-          <button class="ghost danger" id="settingsLogoutButton" type="button">Log out</button>
+          <fieldset class="phase-settings">
+            <legend>Multi-factor authentication</legend>
+            <p id="settingsMfaStatus" role="status" data-testid="settings-mfa-status"></p>
+            <p class="settings-hint">An authenticator code after your password. Setup and verification stay inside Joint Bob, for your account on this node only.</p>
+            <button class="ghost" id="settingsMfaButton" type="button" data-testid="settings-mfa-button">Set up MFA</button>
+          </fieldset>
+          <button class="ghost danger" id="settingsLogoutButton" type="button" data-testid="settings-logout-button">Log out</button>
         </section>
 
         <section class="settings-panel" id="settingsPanel-notifications" role="tabpanel" aria-labelledby="settingsTab-notifications" tabindex="0" hidden>
@@ -1286,6 +1337,8 @@
           <span class="eyebrow">Project note</span>
           <h2 id="quickNoteDialogTitle">New quick note</h2>
           <p>Save a paused draft. Start it manually, schedule it, or enable automatic processing.</p>
+<<<<<<< Updated upstream
+=======
         </div>
         <div class="project-combobox-field">
           <label class="field-label" for="quickNoteProject">Project</label>
@@ -1293,6 +1346,7 @@
             <input id="quickNoteProject" type="search" name="projectId" role="combobox" aria-label="Project" aria-autocomplete="list" aria-controls="quickNoteProjectOptions" aria-expanded="false" autocomplete="off" required placeholder="Search projects" data-testid="quick-note-project-select" />
             <div id="quickNoteProjectOptions" class="project-combobox-options" role="listbox" hidden data-testid="quick-note-project-options"></div>
           </div>
+>>>>>>> Stashed changes
         </div>
         <label>Title
           <input id="quickNoteTitle" name="title" maxlength="120" autocomplete="off" required placeholder="What needs attention?" data-testid="quick-note-title-input" />

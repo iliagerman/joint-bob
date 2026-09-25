@@ -248,3 +248,27 @@ test("the recents dialog shows one row per conversation, dated by its latest mes
   assert.match(open.slice(0, open.indexOf("\n}")), /sessionMatchesRecent\(candidate, entry\)/);
   assert.match(open.slice(0, open.indexOf("\n}")), /await openListedSession\(session\)/);
 });
+
+test("a recents row can be removed from the list", async () => {
+  const [app, styles] = await Promise.all([
+    appSource(),
+    readFile("public/styles.css", "utf8"),
+  ]);
+
+  // Pinned rows sort first forever, so a row needs a remove control of its own. Without
+  // one the only removal path was the stale-entry check inside openRecentSession, which
+  // never fires while the conversation still exists.
+  const removeStart = app.indexOf('forget.dataset.testid = "recent-session-forget-button"');
+  assert.ok(removeStart >= 0, "Missing the recents remove button");
+  assert.match(app.slice(removeStart, removeStart + 400), /forgetRecentSession\(entry\)/);
+  assert.match(app, /row\.append\(button, pinToggle, forget\)/);
+
+  // Removing an entry drops its pin too, so a pinned row cannot come back on the next open.
+  const forgetStart = app.indexOf("function forgetRecentSession(entry)");
+  assert.ok(forgetStart >= 0, "Missing forgetRecentSession");
+  assert.match(app.slice(forgetStart, app.indexOf("\n}", forgetStart)), /savePin\(\{ kind: "conversation"/);
+
+  // The remove button takes the edge lane, so the pin moves over and the title clears both.
+  assert.match(styles, /\.recent-sessions-list \.pin-button \{ right: 46px; \}/);
+  assert.match(styles, /\.recent-sessions-list \.session-card \{[^}]*padding-right: 84px;/);
+});

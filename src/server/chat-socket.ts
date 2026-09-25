@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
-import { sessionCookieName, sessionForId } from "../auth.js";
+import { authSessionEvents, sessionCookieName, sessionForId } from "../auth.js";
 import { getClusterMachineToken, getClusterNode, getClusterPeer } from "../cluster.js";
 import { type ConversationEngine, getConversationOwnership } from "../conversation-ownership.js";
 import { ensureConversationRecord, getConversationRecord, parseConversationDraftPath } from "../conversation-records.js";
@@ -45,6 +45,14 @@ async function directSessionForOpen(project: ProjectRecord, sessionPath: string,
   return findHarnessSession(project, request.engine, sessionPath, sessionId);
 }
 
+const authenticatedSockets = new Map<WebSocket, string>();
+authSessionEvents.on("revoked", (sessionIds: string[]) => {
+  const revoked = new Set(sessionIds);
+  for (const [socket, sessionId] of authenticatedSockets) {
+    if (revoked.has(sessionId)) socket.close(1008, "Login session revoked");
+  }
+});
+
 webSocketServer.on("connection", async (socket, request) => {
   const host = request.headers.host;
   const authorization = typeof request.headers.authorization === "string" ? request.headers.authorization : "";
@@ -65,6 +73,11 @@ webSocketServer.on("connection", async (socket, request) => {
   if (!machineAuthenticated && !browserAuthenticated) {
     socket.close(1008, "Unauthorized");
     return;
+  }
+
+  if (!machineAuthenticated && session) {
+    authenticatedSockets.set(socket, session.id);
+    socket.once("close", () => authenticatedSockets.delete(socket));
   }
 
   if (browserMode && !["browser", "terminal"].includes(browserMode)) { socket.close(1008, "Unsupported socket mode"); return; }

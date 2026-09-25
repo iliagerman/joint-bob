@@ -22,6 +22,7 @@ import { startSupervisor } from "../scripts/joint-bob-supervisor.mjs";
 import { supervisorRequest } from "../scripts/supervisor-client.mjs";
 import { backgroundClusterFixture, closeBackgroundClusterFixture, startSyntheticTask } from "./background-tasks-fixture.js";
 import { browserCapability } from "../src/browser-runtime.js";
+import { authRequest, fixtureTotp } from "./mfa-fixture.js";
 
 
 interface PeerView { id: string; name: string; url: string; online: boolean; lastSeenAt?: string; tokenConfigured: boolean }
@@ -49,6 +50,24 @@ before(async () => {
 after(async () => {
   await Promise.all(servers.map((server) => stopDevNode(server)));
   if (root) await rm(root, { recursive: true, force: true });
+});
+
+test("account MFA stays node-local and a peer cannot complete another node's login challenge", async () => {
+  const setup = await authRequest(nodeA, "/mfa/setup", { currentPassword: environment.password }, sessionA);
+  assert.equal(setup.response.status, 200, "node A supports account MFA enrollment");
+  const enabled = await authRequest(nodeA, "/mfa/confirm", { code: fixtureTotp(setup.body.secret) }, sessionA);
+  assert.equal(enabled.response.status, 200);
+  try {
+    assert.deepEqual((await authRequest(nodeB, "/mfa", undefined, sessionB)).body, { enabled: false, recoveryCodesRemaining: 0 });
+    const pending = await authRequest(nodeA, "/login", { username: environment.username, password: environment.password });
+    assert.equal(pending.body.mfaRequired, true);
+    assert.equal((await authRequest(nodeB, "/login/mfa", { challenge: pending.body.challenge, code: enabled.body.recoveryCodes[0] })).response.status, 401);
+    assert.equal((await authRequest(nodeA, "/login/mfa", { challenge: pending.body.challenge, code: enabled.body.recoveryCodes[0] })).response.status, 200);
+    assert.ok((await signIn(environment, nodeB)).csrfToken, "peer keeps its independent password-only login");
+  } finally {
+    const disabled = await authRequest(nodeA, "/mfa/disable", { currentPassword: environment.password, code: enabled.body.recoveryCodes[1] }, sessionA);
+    assert.equal(disabled.response.status, 200);
+  }
 });
 
 test("quick note dispatch runs once on the selected peer and never falls back", { timeout: 90_000 }, async () => {

@@ -361,7 +361,11 @@ function renderDialogNodes(nodes, savedNodeId) {
 
 function renderDialogSecrets(selectedIds) {
   secretList.replaceChildren();
+<<<<<<< Updated upstream
+  const projectId = projectSelect.value;
+=======
   const projectId = selectedProjectId();
+>>>>>>> Stashed changes
   const remote = !dialogNodes.some((candidate) => candidate.id === nodeSelect.value && candidate.local);
   const offered = secretAccounts.filter((account) => !account.projectId || account.projectId === projectId);
   const offeredIds = new Set(offered.map((account) => account.id));
@@ -396,7 +400,11 @@ function renderDialogSecrets(selectedIds) {
 
 async function loadDialogProjectOptions(note = null) {
   const requestId = ++optionsRequestId;
+<<<<<<< Updated upstream
+  const projectId = projectSelect.value;
+=======
   const projectId = selectedProjectId();
+>>>>>>> Stashed changes
   nodesReady = false;
   updateFormControls();
   nodeSelect.replaceChildren(new Option("Loading…", ""));
@@ -407,7 +415,11 @@ async function loadDialogProjectOptions(note = null) {
       loadSecretAccounts(),
     ]);
     // A slow response from a project the user already left must not paint its options.
+<<<<<<< Updated upstream
+    if (requestId !== optionsRequestId || !dialog.open || projectSelect.value !== projectId) return;
+=======
     if (requestId !== optionsRequestId || !dialog.open || selectedProjectId() !== projectId) return;
+>>>>>>> Stashed changes
     renderDialogNodes(nodesBody.nodes, note?.nodeId || null);
     renderDialogSecrets(note?.secretAccountIds || []);
     nodesReady = true;
@@ -496,7 +508,11 @@ export async function openQuickNote(note = null, { chooseProject = false } = {})
 function collectPayload() {
   const [provider, modelId] = modelSelect.value.split("\u0000");
   return {
+<<<<<<< Updated upstream
+    projectId: projectSelect.value,
+=======
     projectId: selectedProjectId(),
+>>>>>>> Stashed changes
     title: titleInput.value,
     content: contentInput.value,
     harnessId: harnessSelect.value,
@@ -558,6 +574,9 @@ async function startSavedNote(note) {
 
 harnessSelect.addEventListener("change", () => renderModels());
 modelSelect.addEventListener("change", () => renderThinking());
+<<<<<<< Updated upstream
+projectSelect.addEventListener("change", () => { void loadDialogProjectOptions({ nodeId: nodeSelect.value, secretAccountIds: checkedSecretIds() }); });
+=======
 projectSelect.addEventListener("focus", () => {
   projectSelect.select();
   renderProjects(selectedProjectId(), "");
@@ -594,6 +613,7 @@ projectSelect.addEventListener("blur", () => {
     closeProjectPicker();
   }, 0);
 });
+>>>>>>> Stashed changes
 nodeSelect.addEventListener("change", () => renderDialogSecrets(checkedSecretIds()));
 form.addEventListener("submit", saveNote);
 createButton.addEventListener("click", () => { void openQuickNote(); });

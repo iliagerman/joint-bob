@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import express from "express";
+import express, { type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
-import { authenticate, authenticationStatus, type AuthSession, changePassword, clearSessionCookieValue, createAdministrator, listLoginSessions, revokeSession, revokeUserSession, sessionCookieName, sessionCookieValue, sessionForId } from "../../auth.js";
+import { authenticate, authenticationStatus, AuthError, type AuthSession, type MfaLoginChallenge, beginMfaSetup, cancelMfaSetup, changePassword, clearSessionCookieValue, completeMfaLogin, confirmMfaSetup, createAdministrator, listLoginSessions, manageMfa, mfaStatus, revokeSession, revokeUserSession, sessionCookieName, sessionCookieValue, sessionForId } from "../../auth.js";
 import { appVersion } from "../../changelog.js";
 import { clusterInvitationProjects, clusterInvitationStatus, consumeClusterInvitation, createClusterPeer, getClusterMembership, getClusterNode, listClusterPeers, saveClusterPeer, saveClusterProjectGrant } from "../../cluster.js";
 import { captureClusterRawBody, clusterBodyParserError, clusterInvitationConflict, canonicalClusterUrl, rejectEncodedClusterBody, requestCookie, requireCsrf, requireHttpAuth, securityHeaders, sendError } from "../http-auth.js";
@@ -59,6 +59,23 @@ app.get("/api/health", (_request, response) => {
   response.json({ status: "ok", version, release });
 });
 
+function sendLogin(response: Response, result: AuthSession | MfaLoginChallenge): void {
+  if ("mfaRequired" in result) { response.json(result); return; }
+  response.setHeader("Set-Cookie", sessionCookieValue(result));
+  response.json({ mustChangePassword: result.mustChangePassword, csrfToken: result.csrfToken, username: result.username });
+}
+
+function authError(error: unknown, _request: Request, response: Response, next: NextFunction): void {
+  if (error instanceof AuthError) { sendError(response, error.statusCode, error.message); return; }
+  if (error instanceof z.ZodError) { sendError(response, 400, error.errors.map(issue => issue.message).join(", ")); return; }
+  next(error);
+}
+
+const mfaCodeSchema = z.object({ code: z.string().trim().min(1).max(64) }).strict();
+const mfaPasswordSchema = z.object({ currentPassword: z.string().min(1).max(200) }).strict();
+const mfaLoginSchema = mfaCodeSchema.extend({ challenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/) });
+const mfaManagementSchema = mfaPasswordSchema.extend({ code: mfaCodeSchema.shape.code });
+
 app.post("/api/auth/setup", (request, response, next) => {
   try {
     const payload = loginSchema.parse(request.body);
@@ -68,8 +85,7 @@ app.post("/api/auth/setup", (request, response, next) => {
     }
     createAdministrator(payload.username, payload.password, false);
     const session = authenticate(payload.username, payload.password);
-    response.setHeader("Set-Cookie", sessionCookieValue(session));
-    response.status(201).json({ mustChangePassword: false, csrfToken: session.csrfToken, username: session.username });
+    sendLogin(response.status(201), session);
   } catch (error) {
     if (error instanceof z.ZodError) {
       sendError(response, 400, error.errors.map((issue) => issue.message).join(", "));
@@ -83,19 +99,26 @@ app.post("/api/auth/login", (request, response, next) => {
   try {
     const payload = loginSchema.parse(request.body);
     const session = authenticate(payload.username, payload.password);
-    response.setHeader("Set-Cookie", sessionCookieValue(session));
-    response.json({ mustChangePassword: session.mustChangePassword, csrfToken: session.csrfToken, username: session.username });
+    sendLogin(response, session);
   } catch (error) {
     if (error instanceof z.ZodError) {
       sendError(response, 400, error.errors.map((issue) => issue.message).join(", "));
       return;
     }
+    if (error instanceof AuthError) { sendError(response, error.statusCode, error.message); return; }
     if (error instanceof Error && ["Invalid username or password", "Too many login attempts. Try again in 15 minutes"].includes(error.message)) {
       sendError(response, 401, error.message);
       return;
     }
     next(error);
   }
+});
+
+app.post("/api/auth/login/mfa", (request, response, next) => {
+  try {
+    const payload = mfaLoginSchema.parse(request.body);
+    sendLogin(response, completeMfaLogin(payload.challenge, payload.code));
+  } catch (error) { authError(error, request, response, next); }
 });
 
 /** Reports what an invitation would grant without consuming it, so a node can decide to
@@ -165,6 +188,23 @@ app.use("/api", (request, response, next) => {
   }
   next();
 });
+
+const mfaRouter = express.Router();
+mfaRouter.get("/", (_request, response) => { response.json(mfaStatus((response.locals.authSession as AuthSession).userId)); });
+mfaRouter.post("/setup", (request, response) => {
+  const payload = mfaPasswordSchema.parse(request.body);
+  response.json(beginMfaSetup(response.locals.authSession, payload.currentPassword));
+});
+mfaRouter.delete("/setup", (_request, response) => { cancelMfaSetup(response.locals.authSession); response.status(204).send(); });
+mfaRouter.post("/confirm", (request, response) => { response.json(confirmMfaSetup(response.locals.authSession, mfaCodeSchema.parse(request.body).code)); });
+for (const action of ["disable", "recovery-codes"] as const) {
+  mfaRouter.post(`/${action}`, (request, response) => {
+    const payload = mfaManagementSchema.parse(request.body);
+    response.json(manageMfa(response.locals.authSession, payload.currentPassword, payload.code, action));
+  });
+}
+mfaRouter.use(authError);
+app.use("/api/auth/mfa", mfaRouter);
 
 app.post("/api/auth/change-password", (request, response, next) => {
   try {

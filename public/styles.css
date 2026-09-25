@@ -1718,6 +1718,11 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
   padding: 5px;
 }
 .settings-panel[hidden] { display: none; }
+#mfaDialog { max-width: min(520px, calc(100vw - 24px)); }
+#mfaDialog .dialog-actions { flex-wrap: wrap; }
+#mfaDialog .mfa-key { font-family: var(--mono); font-size: 14px; line-height: 1.7; }
+#mfaDialog #mfaSetupKey { font-size: 12px; }
+#mfaError { color: var(--danger); }
 .github-group-list { display: grid; gap: 8px; }
 .github-group-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .github-sync-node-list { display: grid; gap: 8px; max-height: 240px; overflow-y: auto; }
@@ -2323,7 +2328,8 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 .recent-sessions-list:focus { outline: none; }
 /* Outlined rows, like the skills dialog: a plain text list of 20 titles is unreadable. */
 /* The left pad is the shortcut number's lane. */
-.recent-sessions-list .session-card { position: relative; min-height: 0; border: 1px solid var(--line); padding-left: 38px; }
+/* The right pad is the pin and remove lane. */
+.recent-sessions-list .session-card { position: relative; min-height: 0; border: 1px solid var(--line); padding-left: 38px; padding-right: 84px; }
 /* One line each keeps every row the same height and the list scannable. */
 .recent-sessions-list .session-card strong {
   margin-bottom: 2px;
@@ -2335,6 +2341,10 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 .recent-sessions-list .session-card span { -webkit-line-clamp: 1; }
 .recent-sessions-list .session-card.pinned { border-color: color-mix(in srgb, var(--accent) 34%, var(--line)); }
 .recent-sessions-list .pin-button:not(.pinned) { opacity: 0.55; }
+/* Two controls share the row: remove keeps the edge lane, the pin moves over. */
+.recent-sessions-list .pin-button { right: 46px; }
+.recent-sessions-list .forget-button { font-size: 15px; line-height: 1; opacity: 0.55; }
+.recent-sessions-list .forget-button:hover, .recent-sessions-list .forget-button:focus-visible { opacity: 1; color: var(--danger); }
 
 /* ---- Row colours ---- */
 .field-group { display: grid; gap: 6px; }

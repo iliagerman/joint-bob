@@ -13,7 +13,7 @@ export async function api(path, options = {}) {
   const response = await fetch(path, { ...options, cache: "no-store", headers: { ...headers(), ...(options.headers || {}) } });
   if (!response.ok) {
     const body = await response.json().catch(() => ({ error: response.statusText }));
-    if (response.status === 401 && path !== "/api/auth/status" && path !== "/api/auth/login") showSignedOut();
+    if (response.status === 401 && !["/api/auth/status", "/api/auth/login", "/api/auth/login/mfa"].includes(path)) showSignedOut();
     throw new Error(body.error || response.statusText);
   }
   if (response.status === 204) return null;

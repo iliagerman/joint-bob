@@ -146,6 +146,35 @@ test("assistant messages show harness, model, and reasoning attribution", async 
   ]);
 });
 
+test("replayed messages without recorded attribution use the conversation's selected model", async () => {
+  await page.evaluate(async () => {
+    const { handleSocketPayload } = await import("/app/socket.js");
+    const { state } = await import("/app/state.js");
+    state.socket = { readyState: WebSocket.OPEN, send() {} };
+    state.activeModelKey = "";
+    state.thinkingLevel = "off";
+    handleSocketPayload({
+      type: "ready",
+      engine: "pi",
+      sessionId: "legacy-session",
+      conversationId: "legacy-session",
+      messages: [{ id: "1", role: "assistant", text: "Legacy answer" }],
+      status: {
+        model: { provider: "openai-codex", id: "gpt-5.6-sol", label: "GPT 5.6 Sol" },
+        thinkingLevel: "high",
+        availableThinkingLevels: ["off", "high"],
+        isStreaming: false,
+        isBashRunning: false,
+        isCompacting: false,
+        isRetrying: false,
+      },
+      routing: { active: false, mode: "off" },
+    });
+  });
+
+  assert.equal(await page.getByTestId("assistant-attribution").innerText(), "openai-codex/gpt-5.6-sol · high");
+});
+
 test("queued messages stay below replies until they become active", async () => {
   await openEditor();
   await page.evaluate(async () => (await import("/app/chat-transcript.js")).appendMessage("assistant", "Current reply"));

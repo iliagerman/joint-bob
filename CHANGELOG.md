@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added optional multi-factor authentication. Set up an authenticator in Settings > Account to require a time-based code at sign-in, with recovery codes as backup.
+
 ## 1.93.1 — 2026-09-25
 
 - Pinned items can now be removed even if their original project or conversation no longer exists.

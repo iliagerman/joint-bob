@@ -65,6 +65,16 @@ ssh -L 8787:127.0.0.1:8787 <ssh-host>
 
 Then open `http://127.0.0.1:8787/` on your computer.
 
+### Account MFA
+
+Open **Settings > Account > Multi-factor authentication** to add an authenticator to your own login. Confirm your current password, enter the setup key in an offline TOTP authenticator, then confirm its six-digit code. Save the ten single-use recovery codes before closing setup. No external identity provider, email, SMS service, or online authenticator account is needed.
+
+MFA is optional and stays on that account on that node. Existing accounts keep password-only login until setup is confirmed. Other nodes require separate enrollment. Setup keys are encrypted with the node's existing secret key in `~/.joint-bob`; SQLite stores only hashes of recovery codes. Neither belongs to the agent Secrets system or replicates to peers.
+
+After enabling MFA, sign in with your password and a fresh authenticator code, or one unused recovery code if the authenticator is unavailable. Codes expire every 30 seconds and cannot be reused, including the code used to confirm setup. Keep the node and authenticator clocks correct. Password proofs expire after five minutes, and five failed MFA attempts block further attempts for 15 minutes, including across restarts.
+
+Use **Manage MFA** to replace recovery codes or disable MFA. Both require your password and a fresh authenticator or recovery code. Enabling, disabling, or replacing recovery codes signs out your other sessions on that node. If you lose both the authenticator and all recovery codes, there is no password-only web bypass. MFA protects human sign-in, not machine or agent capabilities, and does not replace the private-network deployment requirement.
+
 ### Kiro setup
 
 Kiro is not installed by the Joint Bob installer. Install the official Kiro CLI separately on every execution node, then authenticate it as the OS user that runs Joint Bob:
@@ -237,7 +247,11 @@ New conversations use the model and thinking defaults in **Settings > Harnesses*
 
 ## Notes and automatic backlog
 
+<<<<<<< Updated upstream
 Notes are paused conversation drafts. Save a title and prompt, choose the agent, model, thinking level, execution node and secret accounts, and attach up to four images. Without a schedule or automatic processing, saving does not start a conversation. **Start conversation** sends the saved draft through the normal conversation queue on the selected node, without falling back to another node.
+=======
+Notes are paused conversation drafts. Save a title and prompt, choose the agent, model, thinking level, execution node and secret accounts, and attach up to four images. Saving alone does not start a conversation. **Start conversation** sends the saved draft through the normal conversation queue on the selected node, without falling back to another node.
+>>>>>>> Stashed changes
 
 Set a one-time **Start after** date to make a note eligible at that time. Scheduled notes wait for capacity even when automatic backlog processing is off. For recurring prompts, use Scheduled tasks instead.
 

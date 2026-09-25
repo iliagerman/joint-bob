@@ -268,6 +268,7 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
           ? `New ${harnessLabel(state.harnesses, state.engine)} conversation`
           : `${harnessLabel(state.harnesses, state.engine)} conversation`;
     seedPromptHistory(payload.messages);
+    updateStatus(payload.status);
     console.info("Conversation transcript ready", {
       engine: payload.engine,
       messages: payload.messages?.length || 0,
@@ -288,7 +289,6 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
       showChatEmptyState("Ready for your first message", `${harnessLabel(state.harnesses, state.engine)} will run on ${node?.name || "the selected node"}. The conversation is created when you send.`);
     }
     renderChatSessionControls();
-    updateStatus(payload.status);
     sendSocket({ type: "models" });
     const conversion = state.pendingQuickNoteConversion;
     if (conversion?.provider && conversion.modelId) {

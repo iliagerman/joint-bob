@@ -1,10 +1,24 @@
-import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { EventEmitter } from "node:events";
+import { hostname } from "node:os";
 import { mkdirSync } from "node:fs";
 import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { nanoid } from "nanoid";
 import { appendAuditEvent, ensureAuditSchema } from "./audit.js";
+import { decryptSecretValue, encryptSecretValue } from "./secrets.js";
+import { generateTotpSecret, verifyTotp } from "./totp.js";
+
+export class AuthError extends Error {
+  constructor(public readonly statusCode: number, message: string) { super(message); }
+}
+
+export interface MfaLoginChallenge { mfaRequired: true; challenge: string }
+export interface MfaStatus { enabled: boolean; recoveryCodesRemaining: number }
+
+// Already-open sockets must lose access when MFA changes revoke their login session.
+export const authSessionEvents = new EventEmitter();
 
 export interface AuthStatus {
   authenticated: boolean;
@@ -77,6 +91,27 @@ function authDatabase(): DatabaseSync {
       attempted_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS login_attempts_username_attempted_at ON login_attempts(username, attempted_at);
+    CREATE TABLE IF NOT EXISTS user_mfa (
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      secret_encrypted TEXT NOT NULL,
+      last_used_step INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS mfa_enrollments (
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      session_id TEXT NOT NULL REFERENCES login_sessions(id) ON DELETE CASCADE,
+      secret_encrypted TEXT NOT NULL,
+      expires_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS mfa_recovery_codes (
+      user_id TEXT NOT NULL REFERENCES user_mfa(user_id) ON DELETE CASCADE,
+      code_hash TEXT NOT NULL,
+      PRIMARY KEY (user_id, code_hash)
+    );
+    CREATE TABLE IF NOT EXISTS mfa_login_challenges (
+      challenge_hash TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+      expires_at TEXT NOT NULL
+    );
   `);
   ensureAuditSchema(database);
   return database;
@@ -157,7 +192,7 @@ export function authenticationStatus(session?: AuthSession): AuthStatus {
   return { authenticated: false, setupRequired: userCount(authDatabase()) === 0 };
 }
 
-export function authenticate(username: string, password: string): AuthSession {
+export function authenticate(username: string, password: string): AuthSession | MfaLoginChallenge {
   ensureConfiguredAdministrator();
   const db = authDatabase();
   const normalizedUsername = username.trim();
@@ -178,22 +213,34 @@ export function authenticate(username: string, password: string): AuthSession {
     }
     throw new Error("Invalid username or password");
   }
-  const id = nanoid(32);
-  const csrfToken = randomBytes(32).toString("hex");
-  const now = new Date();
-  db.exec("BEGIN");
+  db.exec("BEGIN IMMEDIATE");
   try {
     db.prepare("DELETE FROM login_attempts WHERE username = ?").run(normalizedUsername.toLowerCase());
-    db.prepare(`
-      INSERT INTO login_sessions (id, user_id, csrf_token, expires_at, created_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(id, row.id, csrfToken, new Date(now.getTime() + sessionLifetimeMs).toISOString(), now.toISOString());
-    appendAuditEvent(db, { eventType: "auth.login.succeeded", actorType: "user", actorId: row.id, entityType: "user", entityId: row.id });
+    if (mfaStatus(row.id).enabled) {
+      checkMfaRateLimit(row.id);
+      const challenge = randomBytes(32).toString("base64url");
+      db.prepare("DELETE FROM mfa_login_challenges WHERE expires_at <= ? OR user_id = ?").run(new Date().toISOString(), row.id);
+      db.prepare("INSERT INTO mfa_login_challenges (challenge_hash, user_id, expires_at) VALUES (?, ?, ?)")
+        .run(digest(challenge), row.id, new Date(Date.now() + 5 * 60_000).toISOString());
+      db.exec("COMMIT");
+      return { mfaRequired: true, challenge };
+    }
+    const session = createLoginSession(db, row);
     db.exec("COMMIT");
+    return session;
   } catch (error) {
     db.exec("ROLLBACK");
     throw error;
   }
+}
+
+function createLoginSession(db: DatabaseSync, row: UserRow): AuthSession {
+  const id = nanoid(32);
+  const csrfToken = randomBytes(32).toString("hex");
+  const now = new Date();
+  db.prepare("INSERT INTO login_sessions (id, user_id, csrf_token, expires_at, created_at) VALUES (?, ?, ?, ?, ?)")
+    .run(id, row.id, csrfToken, new Date(now.getTime() + sessionLifetimeMs).toISOString(), now.toISOString());
+  appendAuditEvent(db, { eventType: "auth.login.succeeded", actorType: "user", actorId: row.id, entityType: "user", entityId: row.id });
   return { id, userId: row.id, username: row.username, csrfToken, mustChangePassword: row.must_change_password === 1 };
 }
 
@@ -232,6 +279,8 @@ export function changePassword(session: AuthSession, currentPassword: string, ne
     db.prepare(`
       UPDATE users SET password_hash = ?, password_salt = ?, must_change_password = 0, updated_at = ? WHERE id = ?
     `).run(passwordDigest(newPassword, salt), salt, new Date().toISOString(), session.userId);
+    db.prepare("DELETE FROM mfa_login_challenges WHERE user_id = ?").run(session.userId);
+    db.prepare("DELETE FROM mfa_enrollments WHERE user_id = ?").run(session.userId);
     appendAuditEvent(db, { eventType: "auth.password.changed", actorType: "user", actorId: session.userId, entityType: "user", entityId: session.userId });
     db.exec("COMMIT");
   } catch (error) {
@@ -256,6 +305,7 @@ export function revokeUserSession(userId: string, sessionId: string): boolean {
     const result = db.prepare("DELETE FROM login_sessions WHERE id = ? AND user_id = ?").run(sessionId, userId);
     if (result.changes === 1) appendAuditEvent(db, { eventType: "auth.session.revoked", actorType: "user", actorId: userId, entityType: "auth.session" });
     db.exec("COMMIT");
+    if (result.changes === 1) authSessionEvents.emit("revoked", [sessionId]);
     return result.changes === 1;
   } catch (error) {
     db.exec("ROLLBACK");
@@ -271,10 +321,151 @@ export function revokeSession(sessionId: string): void {
     const result = db.prepare("DELETE FROM login_sessions WHERE id = ?").run(sessionId);
     if (result.changes === 1) appendAuditEvent(db, { eventType: "auth.session.revoked", actorType: "user", actorId: session!.user_id, entityType: "auth.session" });
     db.exec("COMMIT");
+    if (result.changes === 1) authSessionEvents.emit("revoked", [sessionId]);
   } catch (error) {
     db.exec("ROLLBACK");
     throw error;
   }
+}
+
+function digest(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+export function mfaStatus(userId: string): MfaStatus {
+  const db = authDatabase();
+  return {
+    enabled: Boolean(db.prepare("SELECT 1 FROM user_mfa WHERE user_id = ?").get(userId)),
+    recoveryCodesRemaining: (db.prepare("SELECT count(*) AS count FROM mfa_recovery_codes WHERE user_id = ?").get(userId) as { count: number }).count,
+  };
+}
+
+function checkMfaRateLimit(userId: string): void {
+  if (isRateLimited(`mfa:${userId}`)) throw new AuthError(429, "Too many MFA attempts. Try again in 15 minutes");
+}
+
+/** All factor consumption and the operation it authorizes commit together. Failures
+ * persist separately after rollback, so a rejected operation cannot reset its budget. */
+function mfaAction<T>(userId: string, action: (db: DatabaseSync) => T): T {
+  const db = authDatabase();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    checkMfaRateLimit(userId);
+    const result = action(db);
+    db.prepare("DELETE FROM login_attempts WHERE username = ?").run(`mfa:${userId}`.toLowerCase());
+    db.exec("COMMIT");
+    return result;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    if (error instanceof AuthError && [400, 401].includes(error.statusCode)) {
+      recordLoginAttempt(db, `mfa:${userId}`);
+      appendAuditEvent(db, { eventType: "auth.mfa.failed", actorType: "user", actorId: userId, entityType: "user", entityId: userId });
+    }
+    throw error;
+  }
+}
+
+function requireMfaPassword(db: DatabaseSync, userId: string, password: string): void {
+  const row = db.prepare("SELECT * FROM users WHERE id = ?").get(userId) as UserRow | undefined;
+  if (!row || !timingSafeEqual(passwordDigest(password, row.password_salt), row.password_hash)) throw new AuthError(400, "Current password is incorrect");
+}
+
+function recoveryDigest(userId: string, code: string): string {
+  return digest(`mfa-recovery:${userId}:${code.replace(/[\s-]/g, "").toLowerCase()}`);
+}
+
+function replaceRecoveryCodes(db: DatabaseSync, userId: string): string[] {
+  const codes = Array.from({ length: 10 }, () => randomBytes(10).toString("hex").match(/.{4}/g)!.join("-"));
+  db.prepare("DELETE FROM mfa_recovery_codes WHERE user_id = ?").run(userId);
+  const insert = db.prepare("INSERT INTO mfa_recovery_codes (user_id, code_hash) VALUES (?, ?)");
+  for (const code of codes) insert.run(userId, recoveryDigest(userId, code));
+  return codes;
+}
+
+function consumeMfaCode(db: DatabaseSync, userId: string, code: string): boolean {
+  const row = db.prepare("SELECT secret_encrypted, last_used_step FROM user_mfa WHERE user_id = ?").get(userId) as { secret_encrypted: string; last_used_step: number } | undefined;
+  if (!row) return false;
+  const normalized = code.replace(/\s/g, "");
+  if (/^\d{6}$/.test(normalized)) {
+    const step = verifyTotp(decryptSecretValue(row.secret_encrypted), normalized, Date.now(), row.last_used_step);
+    if (step === undefined) return false;
+    db.prepare("UPDATE user_mfa SET last_used_step = ? WHERE user_id = ?").run(step, userId);
+    return true;
+  }
+  if (!/^[a-f0-9]{20}$/i.test(normalized.replaceAll("-", ""))) return false;
+  return db.prepare("DELETE FROM mfa_recovery_codes WHERE user_id = ? AND code_hash = ?").run(userId, recoveryDigest(userId, normalized)).changes === 1;
+}
+
+export function completeMfaLogin(challenge: string, code: string): AuthSession {
+  const db = authDatabase();
+  const hash = digest(challenge);
+  const row = db.prepare("SELECT users.* FROM mfa_login_challenges JOIN users ON users.id = user_id WHERE challenge_hash = ? AND expires_at > ?")
+    .get(hash, new Date().toISOString()) as UserRow | undefined;
+  if (!row) throw new AuthError(401, "Sign-in expired. Go back and enter your password again");
+  return mfaAction(row.id, (db) => {
+    const claimed = db.prepare("DELETE FROM mfa_login_challenges WHERE challenge_hash = ? AND expires_at > ?").run(hash, new Date().toISOString());
+    if (claimed.changes !== 1) throw new AuthError(401, "Sign-in expired. Go back and enter your password again");
+    if (!consumeMfaCode(db, row.id, code)) throw new AuthError(401, "Invalid or already used code. Use a fresh authenticator code or an unused recovery code");
+    return createLoginSession(db, row);
+  });
+}
+
+export function beginMfaSetup(session: AuthSession, currentPassword: string): { secret: string; otpauthUri: string } {
+  return mfaAction(session.userId, (db) => {
+    requireMfaPassword(db, session.userId, currentPassword);
+    if (mfaStatus(session.userId).enabled) throw new AuthError(409, "MFA is already enabled");
+    const secret = generateTotpSecret();
+    db.prepare("DELETE FROM mfa_enrollments WHERE expires_at <= ?").run(new Date().toISOString());
+    db.prepare("INSERT INTO mfa_enrollments (user_id, session_id, secret_encrypted, expires_at) VALUES (?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET session_id = excluded.session_id, secret_encrypted = excluded.secret_encrypted, expires_at = excluded.expires_at")
+      .run(session.userId, session.id, encryptSecretValue(secret), new Date(Date.now() + 10 * 60_000).toISOString());
+    const label = encodeURIComponent(`Joint Bob:${session.username}@${hostname()}`);
+    return { secret, otpauthUri: `otpauth://totp/${label}?secret=${secret}&issuer=Joint%20Bob&algorithm=SHA1&digits=6&period=30` };
+  });
+}
+
+export function cancelMfaSetup(session: AuthSession): void {
+  authDatabase().prepare("DELETE FROM mfa_enrollments WHERE user_id = ? AND session_id = ?").run(session.userId, session.id);
+}
+
+function invalidateOtherLogins(db: DatabaseSync, session: AuthSession): string[] {
+  const revoked = db.prepare("SELECT id FROM login_sessions WHERE user_id = ? AND id <> ?").all(session.userId, session.id) as Array<{ id: string }>;
+  db.prepare("DELETE FROM login_sessions WHERE user_id = ? AND id <> ?").run(session.userId, session.id);
+  db.prepare("DELETE FROM mfa_login_challenges WHERE user_id = ?").run(session.userId);
+  db.prepare("DELETE FROM mfa_enrollments WHERE user_id = ?").run(session.userId);
+  return revoked.map(row => row.id);
+}
+
+export function confirmMfaSetup(session: AuthSession, code: string): { recoveryCodes: string[] } {
+  const result = mfaAction(session.userId, (db) => {
+    if (mfaStatus(session.userId).enabled) throw new AuthError(409, "MFA is already enabled");
+    const pending = db.prepare("SELECT secret_encrypted FROM mfa_enrollments WHERE user_id = ? AND session_id = ? AND expires_at > ?")
+      .get(session.userId, session.id, new Date().toISOString()) as { secret_encrypted: string } | undefined;
+    if (!pending) throw new AuthError(400, "MFA setup expired. Start setup again");
+    const step = verifyTotp(decryptSecretValue(pending.secret_encrypted), code.replace(/\s/g, ""));
+    if (step === undefined) throw new AuthError(400, "Invalid authenticator code");
+    db.prepare("INSERT INTO user_mfa (user_id, secret_encrypted, last_used_step) VALUES (?, ?, ?)").run(session.userId, pending.secret_encrypted, step);
+    const recoveryCodes = replaceRecoveryCodes(db, session.userId);
+    const revoked = invalidateOtherLogins(db, session);
+    appendAuditEvent(db, { eventType: "auth.mfa.enabled", actorType: "user", actorId: session.userId, entityType: "user", entityId: session.userId });
+    return { recoveryCodes, revoked };
+  });
+  authSessionEvents.emit("revoked", result.revoked);
+  return { recoveryCodes: result.recoveryCodes };
+}
+
+export function manageMfa(session: AuthSession, currentPassword: string, code: string, action: "disable" | "recovery-codes"): { recoveryCodes?: string[] } {
+  const result = mfaAction(session.userId, (db) => {
+    requireMfaPassword(db, session.userId, currentPassword);
+    if (!mfaStatus(session.userId).enabled) throw new AuthError(409, "MFA is not enabled");
+    if (!consumeMfaCode(db, session.userId, code)) throw new AuthError(400, "Invalid or already used code. Use a fresh authenticator code or an unused recovery code");
+    const recoveryCodes = action === "recovery-codes" ? replaceRecoveryCodes(db, session.userId) : undefined;
+    if (action === "disable") db.prepare("DELETE FROM user_mfa WHERE user_id = ?").run(session.userId);
+    const revoked = invalidateOtherLogins(db, session);
+    appendAuditEvent(db, { eventType: action === "disable" ? "auth.mfa.disabled" : "auth.mfa.recovery_regenerated", actorType: "user", actorId: session.userId, entityType: "user", entityId: session.userId });
+    return { recoveryCodes, revoked };
+  });
+  authSessionEvents.emit("revoked", result.revoked);
+  return result.recoveryCodes ? { recoveryCodes: result.recoveryCodes } : {};
 }
 
 // Cookies ignore the port, so every node reachable at the same hostname shares one
