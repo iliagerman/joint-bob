@@ -3,11 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.90.2 — 2026-09-25
 
-- Fixed mobile Focus UI menu staying open when selecting models and reasoning options instead of closing unexpectedly.
-- Prevented creating routing configurations until existing configurations are loaded.
-- Improved session watcher reliability when file system events arrive out of order.
+- Mobile Focus controls now stay open after model and reasoning changes.
+- Routing configuration creation now waits until its defaults are loaded.
+- Fixed unrelated project refreshes when a new transcript's file event arrives before its project header is written.
 
 ## 1.90.1 — 2026-09-25
 
