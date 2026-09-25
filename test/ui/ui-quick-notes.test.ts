@@ -25,6 +25,12 @@ let context: BrowserContext;
 let page: Page;
 let authSession: SignedIn;
 
+async function chooseQuickNoteProject(name: string) {
+  const picker = page.getByTestId("quick-note-project-select");
+  await picker.fill(name);
+  await page.getByTestId("quick-note-project-options").getByRole("option", { name, exact: true }).click();
+}
+
 before(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-ui-quick-notes-"));
   environment = await seedDevEnvironment(root, 1);
@@ -59,7 +65,7 @@ test("mobile keeps creation actions together and switches conversations and note
   assert.equal(await projectQuickNote.isVisible(), true, "Projects has a mobile quick-note action");
   await projectQuickNote.click();
   await page.getByTestId("quick-note-dialog").waitFor({ state: "visible" });
-  assert.equal(await page.getByTestId("quick-note-project-select").inputValue(), projectId, "the Projects action uses the active project");
+  assert.equal(await page.getByTestId("quick-note-project-select").inputValue(), "Internal Assistant", "the Projects action uses the active project");
   await page.getByTestId("quick-note-cancel-button").click();
   await page.getByTestId("nav-chats-button").click();
 
@@ -81,6 +87,22 @@ test("mobile keeps creation actions together and switches conversations and note
   assert.equal(await page.getByTestId("quick-notes-section").isVisible(), true);
   await conversationsTab.click();
   await page.setViewportSize({ width: 1440, height: 900 });
+});
+
+test("quick note project picker filters every project and changes the note destination", async () => {
+  const internalAssistantId = node.projects.find((project) => project.name === "Internal Assistant")!.id;
+  await openNotesTab(internalAssistantId);
+  await page.getByTestId("quick-note-create-button").click();
+  const picker = page.getByTestId("quick-note-project-select");
+  await picker.fill("joint");
+  const options = page.getByTestId("quick-note-project-options");
+  await options.getByRole("option", { name: "Joint Bob", exact: true }).click();
+  assert.equal(await picker.inputValue(), "Joint Bob", "chosen project replaces the search query");
+  await page.getByTestId("quick-note-title-input").fill("Search picker note");
+  await page.getByTestId("quick-note-save-button").click();
+  const jointBob = node.projects.find((project) => project.name === "Joint Bob")!;
+  const notes = await api<{ notes: Array<{ title: string }> }>(node, authSession, "GET", `/projects/${jointBob.id}/quick-notes`);
+  assert.ok(notes.body.notes.some((note) => note.title === "Search picker note"), "note saves to the project selected from filtered results");
 });
 
 test("a quick note can move, start a conversation, and be deleted", async () => {
@@ -108,7 +130,7 @@ test("a quick note can move, start a conversation, and be deleted", async () => 
   assert.equal(await button.locator(".shortcut-hint").count(), 1, "quick note button advertises its shortcut");
   await page.keyboard.press("Control+Alt+.");
   await page.locator("#quickNoteDialog[open]").waitFor();
-  assert.equal(await page.getByTestId("quick-note-project-select").inputValue(), activeProjectId);
+  assert.equal(await page.getByTestId("quick-note-project-select").inputValue(), "Internal Assistant");
   await page.getByTestId("quick-note-title-input").fill("Verify release smoke test");
   await page.getByTestId("quick-note-content-input").fill("Do this manually after deploy.");
   await page.getByTestId("quick-note-save-button").click();
@@ -118,7 +140,7 @@ test("a quick note can move, start a conversation, and be deleted", async () => 
   assert.equal(await page.locator("#sessionList .session-card").count(), conversationCount, "saving a note does not create a conversation");
 
   await row.click();
-  await page.getByTestId("quick-note-project-select").selectOption({ label: "Joint Bob" });
+  await chooseQuickNoteProject("Joint Bob");
   await page.getByTestId("quick-note-save-button").click();
   await row.waitFor({ state: "detached" });
 

@@ -21,7 +21,10 @@ test("focus actions work before choosing a project, on lists and in chat; classi
   for (const action of actions) assert.equal(await page.getByTestId(action).isVisible(), true, `${action} available on Projects`);
   await page.getByTestId("focus-new-note").click();
   await page.getByTestId("quick-note-dialog").waitFor();
-  await page.getByTestId("quick-note-project-select").selectOption({ label: "Joint Bob" });
+  await page.getByTestId("quick-note-save-button").waitFor({ state: "visible" });
+  await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>("[data-testid='quick-note-save-button']")!.disabled);
+  await page.getByTestId("quick-note-project-select").fill("Joint Bob");
+  await page.getByTestId("quick-note-project-options").getByRole("option", { name: "Joint Bob", exact: true }).click();
   await page.getByTestId("quick-note-title-input").fill("Focus action note");
   await page.getByTestId("quick-note-save-button").click();
   await page.getByTestId("quick-note-dialog").waitFor({ state: "hidden" });

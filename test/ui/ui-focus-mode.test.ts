@@ -43,6 +43,8 @@ test("focus UI is opt-in, uses real conversations, and reverts without losing th
   assert.equal(await page.getByTestId("chat-open-browser-button").isVisible(), true);
   await page.getByTestId("focus-new-conversation").click();
   const projectPicker = page.getByTestId("new-session-project-select");
+  await projectPicker.focus();
+  assert.equal(await page.getByTestId("new-session-project-option").count(), node.projects.length, "opening the picker shows every project before searching");
   await projectPicker.fill("joint");
   await page.getByTestId("new-session-project-option").getByText("Joint Bob", { exact: true }).click();
   await page.getByTestId("new-session-name-cancel-button").click();

@@ -11,6 +11,7 @@ import { state } from "./state.js";
 const dialog = document.querySelector("#quickNoteDialog");
 const form = document.querySelector("#quickNoteForm");
 const projectSelect = document.querySelector("#quickNoteProject");
+const projectOptions = document.querySelector("#quickNoteProjectOptions");
 const titleInput = document.querySelector("#quickNoteTitle");
 const contentInput = document.querySelector("#quickNoteContent");
 const harnessSelect = document.querySelector("#quickNoteHarness");
@@ -267,9 +268,39 @@ export async function refreshQuickNotes(projectId) {
   renderQuickNotes();
 }
 
-function renderProjects(selectedId) {
-  projectSelect.replaceChildren(...state.projects.map((project) => new Option(project.name, project.id)));
-  projectSelect.value = selectedId;
+function closeProjectPicker() {
+  projectOptions.hidden = true;
+  projectSelect.setAttribute("aria-expanded", "false");
+}
+
+function selectedProjectId() {
+  return projectSelect.dataset.projectId || "";
+}
+
+function selectNoteProject(project) {
+  projectSelect.value = project.name;
+  projectSelect.dataset.projectId = project.id;
+  projectSelect.setCustomValidity("");
+  closeProjectPicker();
+  void loadDialogProjectOptions({ nodeId: nodeSelect.value, secretAccountIds: checkedSecretIds() });
+}
+
+function renderProjects(selectedId = selectedProjectId(), query = projectSelect.value.trim().toLocaleLowerCase()) {
+  const selected = state.projects.find((project) => project.id === selectedId);
+  const matches = state.projects.filter((project) => project.name.toLocaleLowerCase().includes(query));
+  projectOptions.replaceChildren(...matches.map((project) => {
+    const option = document.createElement("button");
+    option.type = "button";
+    option.role = "option";
+    option.className = "project-combobox-option";
+    option.setAttribute("aria-selected", String(project.id === selectedId));
+    option.textContent = project.name;
+    option.addEventListener("mousedown", (event) => event.preventDefault());
+    option.addEventListener("click", () => selectNoteProject(project));
+    return option;
+  }));
+  if (!matches.length) projectOptions.textContent = "No projects found";
+  if (selected && !query) projectSelect.value = selected.name;
 }
 
 function modelsForHarness() {
@@ -330,7 +361,7 @@ function renderDialogNodes(nodes, savedNodeId) {
 
 function renderDialogSecrets(selectedIds) {
   secretList.replaceChildren();
-  const projectId = projectSelect.value;
+  const projectId = selectedProjectId();
   const remote = !dialogNodes.some((candidate) => candidate.id === nodeSelect.value && candidate.local);
   const offered = secretAccounts.filter((account) => !account.projectId || account.projectId === projectId);
   const offeredIds = new Set(offered.map((account) => account.id));
@@ -365,7 +396,7 @@ function renderDialogSecrets(selectedIds) {
 
 async function loadDialogProjectOptions(note = null) {
   const requestId = ++optionsRequestId;
-  const projectId = projectSelect.value;
+  const projectId = selectedProjectId();
   nodesReady = false;
   updateFormControls();
   nodeSelect.replaceChildren(new Option("Loading…", ""));
@@ -376,7 +407,7 @@ async function loadDialogProjectOptions(note = null) {
       loadSecretAccounts(),
     ]);
     // A slow response from a project the user already left must not paint its options.
-    if (requestId !== optionsRequestId || !dialog.open || projectSelect.value !== projectId) return;
+    if (requestId !== optionsRequestId || !dialog.open || selectedProjectId() !== projectId) return;
     renderDialogNodes(nodesBody.nodes, note?.nodeId || null);
     renderDialogSecrets(note?.secretAccountIds || []);
     nodesReady = true;
@@ -434,7 +465,10 @@ export async function openQuickNote(note = null, { chooseProject = false } = {})
   convertButton.hidden = !editingId;
   saveButton.disabled = true;
   document.querySelector("#quickNoteDialogTitle").textContent = editingId ? "Edit quick note" : "New quick note";
-  renderProjects(note?.projectId || defaultProjectId);
+  const selectedProjectId = note?.projectId || defaultProjectId;
+  projectSelect.dataset.projectId = selectedProjectId;
+  projectSelect.value = state.projects.find((project) => project.id === selectedProjectId)?.name || "";
+  renderProjects(selectedProjectId, "");
   titleInput.value = note?.title || "";
   contentInput.value = note?.content || "";
   scheduleInput.value = note?.scheduledAt ? toDatetimeLocal(note.scheduledAt) : "";
@@ -462,7 +496,7 @@ export async function openQuickNote(note = null, { chooseProject = false } = {})
 function collectPayload() {
   const [provider, modelId] = modelSelect.value.split("\u0000");
   return {
-    projectId: projectSelect.value,
+    projectId: selectedProjectId(),
     title: titleInput.value,
     content: contentInput.value,
     harnessId: harnessSelect.value,
@@ -524,7 +558,42 @@ async function startSavedNote(note) {
 
 harnessSelect.addEventListener("change", () => renderModels());
 modelSelect.addEventListener("change", () => renderThinking());
-projectSelect.addEventListener("change", () => { void loadDialogProjectOptions({ nodeId: nodeSelect.value, secretAccountIds: checkedSecretIds() }); });
+projectSelect.addEventListener("focus", () => {
+  projectSelect.select();
+  renderProjects(selectedProjectId(), "");
+  projectOptions.hidden = false;
+  projectSelect.setAttribute("aria-expanded", "true");
+});
+projectSelect.addEventListener("input", () => {
+  projectSelect.setCustomValidity("Choose a project from the results.");
+  renderProjects(selectedProjectId());
+  projectOptions.hidden = false;
+  projectSelect.setAttribute("aria-expanded", "true");
+});
+projectSelect.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    projectSelect.value = state.projects.find((project) => project.id === selectedProjectId())?.name || "";
+    projectSelect.setCustomValidity("");
+    renderProjects(selectedProjectId(), "");
+    closeProjectPicker();
+    return;
+  }
+  if (event.key !== "Enter") return;
+  const firstMatch = projectOptions.querySelector("[role='option']");
+  if (!firstMatch) return;
+  event.preventDefault();
+  firstMatch.click();
+});
+projectSelect.addEventListener("blur", () => {
+  window.setTimeout(() => {
+    if (projectOptions.matches(":hover")) return;
+    projectSelect.value = state.projects.find((project) => project.id === selectedProjectId())?.name || "";
+    projectSelect.setCustomValidity("");
+    renderProjects(selectedProjectId(), "");
+    closeProjectPicker();
+  }, 0);
+});
 nodeSelect.addEventListener("change", () => renderDialogSecrets(checkedSecretIds()));
 form.addEventListener("submit", saveNote);
 createButton.addEventListener("click", () => { void openQuickNote(); });

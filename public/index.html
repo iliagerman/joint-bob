@@ -1287,9 +1287,13 @@
           <h2 id="quickNoteDialogTitle">New quick note</h2>
           <p>Save a paused draft. Start it manually, schedule it, or enable automatic processing.</p>
         </div>
-        <label>Project
-          <select id="quickNoteProject" name="projectId" required data-testid="quick-note-project-select"></select>
-        </label>
+        <div class="project-combobox-field">
+          <label class="field-label" for="quickNoteProject">Project</label>
+          <div class="project-combobox">
+            <input id="quickNoteProject" type="search" name="projectId" role="combobox" aria-label="Project" aria-autocomplete="list" aria-controls="quickNoteProjectOptions" aria-expanded="false" autocomplete="off" required placeholder="Search projects" data-testid="quick-note-project-select" />
+            <div id="quickNoteProjectOptions" class="project-combobox-options" role="listbox" hidden data-testid="quick-note-project-options"></div>
+          </div>
+        </div>
         <label>Title
           <input id="quickNoteTitle" name="title" maxlength="120" autocomplete="off" required placeholder="What needs attention?" data-testid="quick-note-title-input" />
         </label>
