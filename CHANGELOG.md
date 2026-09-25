@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.92.0 — 2026-09-25
 
-- New conversation project picker now supports searching to quickly find your project.
+- Conversation project picker now supports searching to quickly find your project.
 
 ## 1.91.0 — 2026-09-25
 
