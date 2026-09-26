@@ -106,6 +106,18 @@ export async function loadClusterPanel(preferredClusterId = selectedClusterId) {
   const [inventory, clusterData, projectData] = await Promise.all([
     api("/api/cluster/inventory"), api("/api/clusters"), api("/api/projects?syncStatus=false"),
   ]);
+  if (clusterData.mode === "selective" && !clusterData.migrationRequired) {
+    const access = await Promise.all(clusterData.clusters.map(async cluster => {
+      const data = await api(`/api/clusters/${cluster.id}/sharing`);
+      return [cluster.id, data.projectAccess];
+    }));
+    const nodes = clusterData.clusters.flatMap(cluster => cluster.members);
+    for (const project of projectData.projects) {
+      project.ownerName = nodes.find(node => node.nodeId === project.ownerNodeId)?.name;
+      project.accessByCluster = Object.fromEntries(access.map(([id, projects]) =>
+        [id, projects.find(item => item.id === project.id)]));
+    }
+  }
   if (requestId !== panelRequestId) return inventory;
   if (preferredClusterId !== selectedClusterId) clearGeneratedLink();
   selectedClusterId = preferredClusterId;

@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
+import { randomUUID } from "node:crypto";
+import { addSharingMember, setTrustedTwin } from "../src/cluster-sharing-policy.js";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "./dev-nodes.js";
 
 test("cluster selection adopts local projects, persists workspace inheritance and revokes", {timeout:120_000}, async () => {
@@ -56,5 +58,22 @@ test("cluster selection adopts local projects, persists workspace inheritance an
     const revoked = await api<{shares:unknown[]}>(node,session,"GET",`/sharing/project/${future.body.project.id}`);
     assert.deepEqual(revoked.body.shares,[]);
     assert.equal((await api(node,session,"GET",`/projects/${future.body.project.id}`)).status,200,"revocation preserves local project");
+    const peer = randomUUID(), originalOwner = randomUUID();
+    const policyDb = new DatabaseSync(path.join(node.dataDir, "node.db"));
+    try {
+      addSharingMember(policyDb, clusterId, node.nodeId, peer, 1);
+      setTrustedTwin(policyDb, node.nodeId, peer, true);
+      setTrustedTwin(policyDb, node.nodeId, originalOwner, true);
+      policyDb.prepare("UPDATE sharing_resource_owners SET owner_node_id=? WHERE kind='project' AND resource_id=?").run(originalOwner, other.body.project.id);
+      policyDb.prepare("UPDATE cluster_v2_resource_policy SET owner_node_id=? WHERE kind='project' AND resource_id=?").run(originalOwner, other.body.project.id);
+    } finally { policyDb.close(); }
+    const scope = await api<{ projectAccess: Array<{id:string;ownerNodeId:string;authorizedNodeIds:string[]}> }>(node, session, "GET", endpoint);
+    assert.equal(scope.status, 200);
+    assert.ok(Array.isArray(scope.body.projectAccess), "read API exposes per-project authorized recipients");
+    const twinOnly = scope.body.projectAccess.find(item => item.id === future.body.project.id)!;
+    assert.deepEqual(twinOnly.authorizedNodeIds.sort(), [node.nodeId, peer].sort(), "Twin-only grant needs no clusterIds");
+    const imported = scope.body.projectAccess.find(item => item.id === other.body.project.id)!;
+    assert.equal(imported.ownerNodeId, originalOwner);
+    assert.deepEqual(imported.authorizedNodeIds, [node.nodeId], "local Twin cannot receive an imported third-party project without owner authorization");
   } finally { await Promise.all(children.map(stopDevNode)); await rm(root,{recursive:true,force:true}); }
 });

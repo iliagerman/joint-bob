@@ -39,6 +39,7 @@ test("real nodes save selections and require invitation acceptance before Twins"
     const pa = await ca.newPage(), pb = await cb.newPage();
     await openSharing(pa, a); await openSharing(pb, b);
     const project = a.nodes[0].projects[0].id;
+    await pa.getByTestId("sharing-project-summary").click();
     await pa.getByTestId(`sharing-project-${project}`).check();
     await pa.getByTestId("sharing-save").click(); await pa.getByTestId("confirm-accept-button").click();
     await pa.getByTestId("sharing-status").getByText("Selection saved", { exact: false }).waitFor();

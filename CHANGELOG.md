@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Showed which nodes are authorized to access each shared project in cluster settings, with searchable inventory and detailed owner and recipient information.
+
 ## 1.96.0 — 2026-09-26
 
 - Replaced the cluster selection grid with a dropdown menu for simpler navigation and better keyboard support.

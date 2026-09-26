@@ -28,7 +28,7 @@ test("three-member sharing revokes only the selected twin and preserves peer acr
       data.clusters[0].members.push(...members);
       await route.fulfill({ json: data });
     });
-    await page.route("**/api/clusters/*/sharing", route => route.fulfill({ json: { projects: [], workspaces: [], projectIds: [], workspaceIds: [], pendingDeliveries: 0 } }));
+    await page.route("**/api/clusters/*/sharing", route => route.fulfill({ json: { projectAccess: [], projects: [], workspaces: [], projectIds: [], workspaceIds: [], pendingDeliveries: 0 } }));
     await page.route("**/api/twins", route => route.fulfill({ json: { relationships } }));
     await page.route("**/api/twins/*/sharing", route => route.fulfill({ json: { initialized: true, state: "ready", pendingDeliveries: 0, projectCount: 1, ownerNodeId: node.nodeId } }));
     await page.route(/\/api\/twins\/peer-[ab]$/, async route => {

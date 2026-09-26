@@ -20,7 +20,11 @@ test("sharing controls require consent and render selected scopes and legacy ena
     assert.equal(cluster.status, 201);
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, serviceWorkers: "block" });
     // Controlled HTTP boundary for pending/error states; real disposable server serves the UI.
-    let selection = { projects: [{ id: "p1", name: "Owned project", workspaceId: "w1" }], workspaces: [{ id: "w1", label: "Work" }], projectIds: [] as string[], workspaceIds: [] as string[], pendingDeliveries: 0 };
+    let selection = { projectAccess: [], projects: [{ id: "p1", name: "Owned project", workspaceId: "w1" }], workspaces: [{ id: "w1", label: "Work" }], projectIds: [] as string[], workspaceIds: [] as string[], pendingDeliveries: 0 };
+    for (let index = 0; index < 30; index++) {
+      selection.projects.push({ id: `extra-p${index}`, name: `Extra project ${index}`, workspaceId: `extra-w${index}` });
+      selection.workspaces.push({ id: `extra-w${index}`, label: `Extra workspace ${index}` });
+    }
     let relationships: object[] = [];
     let completion = "pending", initialized = false, failRead = false;
     let writes = 0, completions = 0, revocations = 0, acceptances = 0;
@@ -55,8 +59,31 @@ test("sharing controls require consent and render selected scopes and legacy ena
     await page.getByTestId("settings-open-button").click();
     await page.getByTestId("settings-tab-cluster").click();
     await page.getByTestId("sharing-mode-selected").waitFor({ timeout: 5000 });
+    for (const kind of ["project", "workspace"]) {
+      if (kind === "workspace") await page.setViewportSize({ width: 390, height: 844 });
+      const section = page.getByTestId(`sharing-${kind}-list`);
+      assert.equal(await section.getAttribute("open"), null);
+      await page.getByTestId(`sharing-${kind}-summary`).focus();
+      await page.keyboard.press("Enter");
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const geometry = await section.locator(".cluster-scroll-list").evaluate(element => ({ height: element.clientHeight, scroll: element.scrollHeight }));
+      assert.ok(geometry.scroll > geometry.height && geometry.height <= 300, `${kind}: ${JSON.stringify(geometry)}`);
+      await page.getByTestId(`sharing-${kind}-search`).fill(`Extra ${kind} 29`);
+      assert.equal(await section.locator(".checkbox-row:visible").count(), 1);
+      await page.getByTestId(`sharing-${kind}-search`).fill("");
+    }
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false);
+    await page.setViewportSize({ width: 1440, height: 1000 });
     await page.getByTestId("sharing-project-p1").check();
     await page.getByTestId("sharing-workspace-w1").check();
+    await page.getByTestId("sharing-workspace-search").fill("Work");
+    relationships = [{ relationshipId: "r1", peer: { nodeId: "homeserver", name: "Homeserver" }, status: "active" }];
+    await page.getByTestId("sharing-status").getByText("Twin connections changed.", { exact: false }).waitFor();
+    assert.equal(await page.getByTestId("sharing-workspace-w1").isChecked(), true);
+    assert.equal(await page.getByTestId("sharing-workspace-search").inputValue(), "Work");
+    assert.equal(await page.getByTestId("sharing-workspace-search").evaluate(element => element === document.activeElement), true);
+    assert.equal(await page.getByTestId("sharing-workspace-list").evaluate((element: HTMLDetailsElement) => element.open), true);
+    relationships = [];
     await page.getByTestId("sharing-save").click();
     await page.getByTestId("confirm-cancel-button").click();
     assert.equal(writes, 0);
@@ -78,7 +105,7 @@ test("sharing controls require consent and render selected scopes and legacy ena
     await page.getByText("Approval complete. This existing twin needs no second invitation or approval.", { exact: true }).waitFor();
     assert.match(await page.getByTestId("twin-data-sharing").innerText(), /Sharing not started/);
     assert.match(await page.getByTestId("twin-sharing-status").innerText(), /1 Twin-shared projects/);
-    await page.getByTestId("cluster-details").getByText("Cluster-shared projects on this node · 0", { exact: true }).waitFor();
+    await page.getByTestId("cluster-details").getByText("Shared projects · 0", { exact: true }).waitFor();
     await page.getByTestId("twin-sharing-owner").selectOption(node.nodeId);
     const poll = page.waitForResponse(response => response.url().endsWith("/api/twins/r1/sharing"));
     await poll;

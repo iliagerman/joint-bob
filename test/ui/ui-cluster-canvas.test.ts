@@ -96,7 +96,7 @@ test("cluster dropdown scopes membership details and supports create cancellatio
 
     const researchProjectId = await createProject(nodeA, sessionA, "Research shared");
     const operationsProjectId = await createProject(nodeA, sessionA, "Operations shared");
-    await createProject(nodeA, sessionA, "Private only");
+    const privateProjectId = await createProject(nodeA, sessionA, "Private only");
     await expectStatus(
       api(nodeA, sessionA, "PUT", `/sharing/project/${researchProjectId}`, {
         expectedGeneration: 1,
@@ -113,6 +113,13 @@ test("cluster dropdown scopes membership details and supports create cancellatio
       200,
       "share Operations project",
     );
+
+    for (let index = 0; index < 25; index++) {
+      const id = await createProject(nodeA, sessionA, `Research extra ${index}`);
+      await expectStatus(api(nodeA, sessionA, "PUT", `/sharing/project/${id}`, {
+        expectedGeneration: 1, shares: [{ clusterId: researchId, projectId: null }],
+      }), 200, "share long-list fixture");
+    }
 
     const memberships = await expectStatus(
       api<ClustersResponse>(nodeA, sessionA, "GET", "/clusters"),
@@ -166,8 +173,23 @@ test("cluster dropdown scopes membership details and supports create cancellatio
     assert.equal(order, true, "cluster management precedes machine and browser defaults");
     await selector.selectOption(researchId);
     await details.getByRole("heading", { name: "Research" }).waitFor();
+    const projects = page.getByTestId("cluster-projects");
+    assert.equal(await projects.getAttribute("open"), null, "long project inventory starts collapsed");
+    assert.match(await projects.locator("summary").innerText(), /26/);
+    await projects.locator("summary").focus();
+    await page.keyboard.press("Enter");
+    const search = page.getByTestId("cluster-project-search");
+    await search.fill("Research shared");
+    assert.equal(await projects.locator("li:visible").count(), 1);
+    assert.match(await projects.locator("li:visible").innerText(), /Owner: .*Authorized recipients: Remote fixture node/s);
+    await search.fill("");
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const geometry = await page.getByTestId("cluster-project-list").evaluate(element => ({ height: element.clientHeight, scroll: element.scrollHeight }));
+    assert.ok(geometry.scroll > geometry.height && geometry.height <= 300, JSON.stringify(geometry));
     await assertDetails(details, ["Remote fixture node", "Research shared"], ["Operations shared", "Private only"]);
     assert.equal(await selector.inputValue(), researchId);
+    assert.equal(await page.getByTestId("cluster-machine-section").getAttribute("open"), null);
+    assert.equal(await page.getByTestId("cluster-browser-section").getAttribute("open"), null);
 
     await selector.selectOption(operationsId);
     await details.getByRole("heading", { name: "Operations" }).waitFor();
@@ -188,8 +210,58 @@ test("cluster dropdown scopes membership details and supports create cancellatio
     await selector.selectOption(operationsId);
     await details.getByRole("heading", { name: "Operations" }).waitFor();
     await assertDetails(details, ["Operations shared"], ["Remote fixture node", "Research shared", "Private only"]);
+    await selector.selectOption(researchId);
+    await page.getByTestId("cluster-projects").locator("summary").focus();
+    await page.keyboard.press("Space");
+    await page.getByTestId("cluster-project-search").fill("extra 24");
+    assert.equal(await page.getByTestId("cluster-projects").locator("li:visible").count(), 1);
     const hasPageOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
     assert.equal(hasPageOverflow, false, "settings page has no horizontal overflow at mobile width");
+    await page.getByTestId("sharing-save").waitFor();
+    const selections = page.getByTestId("sharing-project-list");
+    assert.equal(await selections.getAttribute("open"), null);
+    await selections.locator("summary").click();
+    const selectionSearch = page.getByTestId("sharing-project-search");
+    await selectionSearch.fill("Private only");
+    const checkbox = page.getByTestId(`sharing-project-${privateProjectId}`);
+    await checkbox.check();
+    await selectionSearch.focus();
+    await page.waitForResponse(response => response.url().endsWith("/api/twins") && response.request().method() === "GET");
+    assert.equal(await checkbox.isChecked(), true, "poll preserves unsaved selection");
+    assert.equal(await selectionSearch.inputValue(), "Private only");
+    assert.equal(await selectionSearch.evaluate(element => element === document.activeElement), true, "poll preserves focus");
+    assert.equal(await selections.evaluate((element: HTMLDetailsElement) => element.open), true);
+    await page.getByTestId("sharing-save").scrollIntoViewIfNeeded();
+    assert.equal(await page.getByTestId("sharing-save").isVisible(), true);
+
+    await page.getByTestId("cluster-section-summary").focus();
+    await page.keyboard.press("Space");
+    assert.equal(await page.getByTestId("sharing-save").isVisible(), false);
+    await page.getByTestId("cluster-machine-summary").press("Enter");
+    await page.getByTestId("cluster-node-name-input").fill("Unfinished machine name");
+    await page.getByTestId("cluster-machine-summary").press("Space");
+    await page.getByTestId("cluster-section-summary").press("Enter");
+    assert.equal(await selectionSearch.inputValue(), "Private only", "section changes preserve form state");
+    assert.equal(await checkbox.isChecked(), true);
+    await page.getByTestId("cluster-machine-summary").press("Enter");
+    assert.equal(await page.getByTestId("cluster-node-name-input").inputValue(), "Unfinished machine name");
+
+    const invitationTwin = await expectStatus(api<{link:string}>(nodeA, sessionA, "POST", "/twins/invitations", { confirmOwnedData: true }), 201, "invite twin");
+    await expectStatus(api(nodeB, sessionB, "POST", "/twins/accept", { link: invitationTwin.link, confirmOwnedData: true }), 201, "accept twin");
+    const access = await expectStatus(api<{projectAccess:Array<{id:string;ownerNodeId:string;authorizedNodeIds:string[]}>}>(nodeA, sessionA, "GET", `/clusters/${researchId}/sharing`), 200, "read recipient scope");
+    const twinProject = access.projectAccess.find(project => project.id === privateProjectId)!;
+    assert.equal(twinProject.ownerNodeId, nodeA.nodeId);
+    assert.deepEqual(twinProject.authorizedNodeIds.sort(), [nodeA.nodeId, nodeB.nodeId].sort(), "Twin-only project recipients come from policy");
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.reload();
+    await page.getByText("Internal Assistant", { exact: true }).first().waitFor();
+    await page.getByTestId("settings-open-button").click();
+    await page.getByTestId("settings-tab-cluster").click();
+    await page.getByTestId("cluster-selector").selectOption(researchId);
+    await page.getByTestId("cluster-projects").locator("summary").click();
+    await page.getByTestId("cluster-project-search").fill("Private only");
+    assert.match(await page.getByTestId("cluster-project-list").innerText(), /Private only.*Authorized recipients: Remote fixture node/s);
+    assert.match(await page.getByTestId("cluster-projects").innerText(), /does not confirm completed file sync/);
     assert.deepEqual(pageErrors.map((error) => error.message), [], "page emitted no errors");
   } finally {
     if (browser) await browser.close();
@@ -199,7 +271,8 @@ test("cluster dropdown scopes membership details and supports create cancellatio
 });
 
 async function assertDetails(details: import("playwright-core").Locator, present: string[], absent: string[]): Promise<void> {
-  for (const text of present) await details.getByText(text, { exact: true }).waitFor();
+  await details.getByTestId("cluster-projects").evaluate((element: HTMLDetailsElement) => { element.open = true; });
+  for (const text of present) await details.getByText(text, { exact: true }).first().waitFor();
   for (const text of absent) assert.equal(await details.getByText(text, { exact: true }).count(), 0, `${text} does not leak into selected cluster`);
 }
 

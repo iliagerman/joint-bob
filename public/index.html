@@ -694,8 +694,8 @@
 
         <section class="settings-panel" id="settingsPanel-cluster" role="tabpanel" aria-labelledby="settingsTab-cluster" tabindex="0" data-testid="settingsPanel-cluster" hidden>
           <p id="clusterMigrationMessage" class="cluster-message" role="status" hidden></p>
-          <fieldset class="phase-settings" id="fieldsetClusters">
-            <legend>Clusters</legend>
+          <details class="phase-settings" id="fieldsetClusters" data-testid="cluster-section" open>
+            <summary data-testid="cluster-section-summary">Cluster connections and sharing</summary>
             <div class="cluster-toolbar">
               <div id="clusterCanvas" data-testid="cluster-canvas"></div>
               <button class="ghost" type="button" id="clusterNewButton" data-testid="cluster-new-button" aria-expanded="false" aria-controls="clusterCreateForm">New cluster</button>
@@ -715,7 +715,6 @@
               <button class="ghost" type="button" id="clusterShareAllButton" data-testid="cluster-share-all-button" hidden>Share existing owned projects</button>
               <button class="ghost danger" type="button" id="clusterLeaveButton" data-testid="cluster-leave-button" disabled>Leave selected cluster</button>
             </div>
-          </fieldset>
           <details class="phase-settings" id="clusterInviteDetails">
             <summary data-testid="cluster-invite-reveal">Invite a node to selected cluster</summary>
             <p>The link admits one node to the selected cluster. It does not share projects automatically.</p>
@@ -737,8 +736,9 @@
             </label>
             <button class="primary" type="button" id="clusterJoinButton" data-testid="cluster-join-button">Join cluster</button>
           </details>
-          <fieldset class="phase-settings">
-            <legend>This machine</legend>
+          </details>
+          <details class="phase-settings" data-testid="cluster-machine-section">
+            <summary data-testid="cluster-machine-summary">This machine</summary>
             <label>
               Name
               <input id="clusterNodeNameInput" autocomplete="off" data-testid="cluster-node-name-input" />
@@ -748,16 +748,16 @@
               <input id="clusterNodeUrlInput" type="url" autocomplete="off" placeholder="https://machine.tailnet.ts.net" data-testid="cluster-node-url-input" />
             </label>
             <button class="ghost" type="button" id="clusterSaveButton" data-testid="cluster-save-button">Save this machine</button>
-          </fieldset>
-          <fieldset class="phase-settings" id="clusterBrowserSettings">
-            <legend>Browser machines</legend>
+          </details>
+          <details class="phase-settings" id="clusterBrowserSettings" data-testid="cluster-browser-section">
+            <summary data-testid="cluster-browser-summary">Browser machines</summary>
             <p>Choose the default machine for new browsers, independent of where the agent runs. Conversations and individual starts can override it. Existing accounts stay on their original machines. Browsers are never installed automatically. Apply this default with Save settings.</p>
             <label>Default browser machine<select id="settingsBrowserExecutor" data-testid="settings-browser-executor" disabled><option value="">Not configured</option></select></label>
             <div class="github-group-actions">
               <button class="ghost" type="button" id="browserStatusCheck" data-testid="browser-status-check">Check status</button>
             </div>
             <p class="settings-hint" id="browserStatus" data-testid="browser-status" role="status">Browser status has not been checked.</p>
-          </fieldset>
+          </details>
         </section>
 
         <section class="settings-panel" id="settingsPanel-workspaces" role="tabpanel" aria-labelledby="settingsTab-workspaces" tabindex="0" hidden>

@@ -2803,6 +2803,13 @@ body.file-view { overflow: auto; }
 .cluster-detail-list { min-width: 0; margin: 0; padding-left: 22px; }
 .cluster-detail-list li { min-width: 0; padding: 3px 0; overflow-wrap: anywhere; }
 .cluster-detail-list small { display: block; color: var(--muted); font-family: var(--mono); }
+.cluster-scroll-list { max-height: 260px; overflow-y: auto; overscroll-behavior: contain; }
+.cluster-scroll-list [hidden] { display: none; }
+#settingsPanel-cluster summary { cursor: pointer; padding: 10px 0; overflow-wrap: anywhere; }
+#settingsPanel-cluster summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#settingsPanel-cluster details > label { display: grid; gap: 6px; margin: 8px 0; }
+#settingsPanel-cluster details > input, #settingsPanel-cluster details input { min-width: 0; max-width: 100%; }
+#settingsPanel-cluster details { min-width: 0; }
 .cluster-canvas-empty, .cluster-message { margin: 0; color: var(--muted); }
 .cluster-create-row { display: flex; align-items: end; flex-wrap: wrap; gap: 8px; }
 .cluster-create-row label { flex: 1 1 220px; min-width: 0; }

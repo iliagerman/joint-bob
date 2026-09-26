@@ -407,6 +407,7 @@ test("browser viewer UI", { timeout: 360_000 }, async (t) => {
       try {
         await f.page.getByTestId("settings-open-button").click();
         await f.page.getByTestId("settings-tab-cluster").click();
+        await f.page.getByTestId("cluster-browser-summary").click();
         await f.page.getByTestId("browser-status").filter({ hasText: "Mac laptop: Ready" }).waitFor();
         const select = f.page.getByTestId("settings-browser-executor");
         assert.deepEqual(await select.locator("option").allTextContents(), ["Not configured", "Mac laptop", "Ubuntu"]);

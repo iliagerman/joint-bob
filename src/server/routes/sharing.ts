@@ -2,7 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 import { z, ZodError } from "zod";
 import { getClusterNode } from "../../cluster.js";
 import { ensureResourceSharingSchema, getResourcePolicyState, ResourceSharingError, updateResourceSharing } from "../../cluster-sharing.js";
-import { listResourceShares, resourceOwner } from "../../cluster-sharing-policy.js";
+import { listResourceShares, listSharingClusterMembers, resourceOwner } from "../../cluster-sharing-policy.js";
 import { ClusterV2HttpError, selectiveSharingActive } from "../../cluster-v2-mode.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
 import { canonicalProjectId, getProject } from "../../store.js";
@@ -10,6 +10,7 @@ import { sendError } from "../http-auth.js";
 import { app } from "../state.js";
 import { disconnectRevokedRuntimeSockets } from '../runtime-peers.js';
 import { clusterSharingView, updateClusterSelection } from "../../selected-sharing.js";
+import { mayShareProject } from "../sharing-files.js";
 
 const uuid = z.string().uuid().regex(/^[0-9a-f-]+$/);
 const updateSchema = z.object({
@@ -68,7 +69,16 @@ async function policyProject(request: Request, response: Response) {
 
 app.get("/api/clusters/:clusterId/sharing", route(async (request, response) => {
   await requireActive(response);
-  response.json(clusterSharingView(await clusterV2Database(), (await getClusterNode()).id, uuid.parse(request.params.clusterId)));
+  const db = await clusterV2Database(), local = (await getClusterNode()).id;
+  const clusterId = uuid.parse(request.params.clusterId);
+  const selection = clusterSharingView(db, local, clusterId);
+  const members = listSharingClusterMembers(db, clusterId);
+  const projects = db.prepare(`SELECT p.id, o.owner_node_id ownerNodeId FROM projects p
+    JOIN sharing_resource_owners o ON o.kind='project' AND o.resource_id=p.id`).all() as unknown as Array<{ id: string; ownerNodeId: string }>;
+  const projectAccess = projects.map(project => ({ ...project,
+    authorizedNodeIds: members.filter(member => mayShareProject(db, local, member.nodeId, project.id)).map(member => member.nodeId),
+  }));
+  response.json({ ...selection, projectAccess });
 }));
 
 app.put("/api/clusters/:clusterId/sharing", route(async (request, response) => {

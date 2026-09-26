@@ -27,13 +27,27 @@ async function consent(title, message, destructive = false) {
   return approved && current === revision;
 }
 function scopes(data, kind, labelKey, selected) {
-  const group = document.createElement("fieldset"); group.append(text("legend", kind === "project" ? "Projects" : "Whole workspaces (including future projects)"));
+  const group = document.createElement("details"); group.dataset.testid = `sharing-${kind}-list`;
+  const summary = text("summary", ""); summary.dataset.testid = `sharing-${kind}-summary`;
+  const title = kind === "project" ? "Projects" : "Whole workspaces (including future projects)";
+  const updateCount = () => { summary.textContent = `${title} · ${data.length} · ${group.querySelectorAll("input[type=checkbox]:checked").length} selected`; };
+  const label = text("label", `Search ${kind === "project" ? "projects" : "workspaces"}`), search = document.createElement("input");
+  search.type = "search"; search.dataset.testid = `sharing-${kind}-search`; label.append(search);
+  const list = document.createElement("div"); list.className = "cluster-scroll-list";
+  const empty = text("p", "No matches."); empty.hidden = true; empty.setAttribute("role", "status");
+  search.addEventListener("input", () => {
+    for (const row of list.children) row.hidden = !row.textContent.toLowerCase().includes(search.value.trim().toLowerCase());
+    empty.hidden = [...list.children].some(row => !row.hidden);
+  });
+  group.addEventListener("change", updateCount);
+  group.append(summary, label, list, empty);
   for (const item of data) {
     const row = text("label", ""); row.className = "checkbox-row";
     const checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.name = `${kind}Ids`; checkbox.value = item.id; checkbox.checked = selected.includes(item.id);
-    checkbox.dataset.testid = `sharing-${kind}-${item.id}`; row.append(checkbox, document.createTextNode(item[labelKey])); group.append(row);
+    checkbox.dataset.testid = `sharing-${kind}-${item.id}`; row.append(checkbox, document.createTextNode(item[labelKey])); list.append(row);
   }
   if (!data.length) group.append(text("p", "None available on this node."));
+  updateCount();
   return group;
 }
 async function selectedSharing(body, cluster, status) {
@@ -145,7 +159,11 @@ function watchSharing(cluster, relationships, current, reload, updateTwin, statu
       if (checkRelationships) {
         const result = await api("/api/twins");
         if (current !== revision) return;
-        if (signature(result.relationships) !== initialSignature) { await reload(); return; }
+        if (signature(result.relationships) !== initialSignature) {
+          if (!status.parentElement.querySelector('[data-testid="sharing-save"]')) { await reload(); return; }
+          status.textContent = "Twin connections changed. Use Refresh sharing status to load them. Your current selections are unchanged.";
+          return;
+        }
       }
       await Promise.all(active.map(async item => {
         try {

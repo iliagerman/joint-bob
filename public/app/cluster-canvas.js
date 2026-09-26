@@ -11,13 +11,38 @@ function renderDetails(container, cluster, projects, localNodeId) {
     row.append(text("span", member.name), text("small", [member.nodeId === localNodeId ? "this node" : "", member.nodeId === cluster.managerNodeId ? "manager" : ""].filter(Boolean).join(" · ")));
     members.append(row);
   }
-  const shared = projects.filter(project => project.clusterIds?.includes(cluster.id));
+  const shared = projects.filter(project => project.clusterIds?.includes(cluster.id)
+    || project.accessByCluster?.[cluster.id]?.authorizedNodeIds.length > 1);
   const technical = document.createElement("details"); technical.dataset.testid = "cluster-technical";
   technical.append(text("summary", "Membership details"), text("p", `Manager epoch ${cluster.managerEpoch}`));
   for (const member of cluster.members) technical.append(text("p", `${member.name}: admission ${member.joinSequence}`));
-  const projectList = document.createElement("ul"); projectList.className = "cluster-detail-list";
-  for (const project of shared) projectList.append(text("li", project.name));
-  container.append(members, technical, text("h4", `Cluster-shared projects on this node · ${shared.length}`), text("p", "Counts cluster-wide shares. Additional Twin-only sharing appears under the selected peer below."), projectList);
+  container.append(members, technical, projectInventory(shared, cluster));
+}
+
+function projectInventory(projects, cluster) {
+  const section = document.createElement("details"); section.dataset.testid = "cluster-projects";
+  const summary = text("summary", `Shared projects · ${projects.length}`); summary.dataset.testid = "cluster-project-summary";
+  section.append(summary);
+  section.append(text("p", "Authorized access between these nodes, including Twins. This does not confirm completed file sync. Unknown owner names appear as node IDs."));
+  const label = text("label", "Search shared projects"), search = document.createElement("input");
+  search.type = "search"; search.dataset.testid = "cluster-project-search";
+  label.append(search);
+  const list = document.createElement("ul"); list.className = "cluster-detail-list cluster-scroll-list"; list.dataset.testid = "cluster-project-list";
+  const name = id => cluster.members.find(member => member.nodeId === id)?.name || id;
+  for (const project of projects) {
+    const row = document.createElement("li");
+    const access = project.accessByCluster?.[cluster.id];
+    const owner = access?.ownerNodeId || project.ownerNodeId;
+    const recipients = access ? access.authorizedNodeIds.filter(id => id !== owner).map(name) : [];
+    row.append(text("span", project.name), text("small", `Owner: ${project.ownerName || (owner ? name(owner) : "Unknown")} · Authorized recipients: ${access ? recipients.join(", ") || "None in this cluster" : "Unavailable"}`));
+    list.append(row);
+  }
+  const empty = text("p", "No matching projects."); empty.hidden = projects.length > 0; empty.setAttribute("role", "status");
+  search.addEventListener("input", () => {
+    for (const row of list.children) row.hidden = !row.textContent.toLowerCase().includes(search.value.trim().toLowerCase());
+    empty.hidden = [...list.children].some(row => !row.hidden);
+  });
+  section.append(label, list, empty); return section;
 }
 
 export function renderClusterCanvas({ canvas, details, clusters, projects, localNodeId, selectedClusterId, onSelect }) {
