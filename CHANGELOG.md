@@ -3,9 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.97.0 — 2026-09-26
 
-- Showed which nodes are authorized to access each shared project in cluster settings, with searchable inventory and detailed owner and recipient information.
+- Split Cluster settings into collapsible Cluster, This machine, and Browser machines sections.
+- Collapsed long project and workspace lists into searchable, counted lists with bounded scrolling and keyboard controls.
+- Showed each shared project's owner and authorized recipient nodes, including Twin-only sharing, separately from synchronization readiness.
+- Preserved sharing selections and search during background polling while keeping invitation approval updates automatic.
 
 ## 1.96.0 — 2026-09-26
 
