@@ -5,7 +5,7 @@ import { freePort } from "./dev-nodes.js";
 
 export async function startNativeSyncthing(root:string) {
   await mkdir(root,{recursive:true});
-  execFileSync("syncthing",["generate","--home",root,"--no-port-probing"],{env:{...process.env,HOME:root},stdio:"pipe"});
+  execFileSync("syncthing",["generate","--home",root],{env:{...process.env,HOME:root},stdio:"pipe"});
   const gui=await freePort(),listen=await freePort();
   const config=path.join(root,"config.xml");
   let xml=await readFile(config,"utf8");

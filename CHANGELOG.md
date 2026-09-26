@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 1.95.1 — 2026-09-26
+
+- Fixed native synchronization tests to support the Syncthing version supplied by Ubuntu, retaining isolated test configurations and loopback networking.
+
 ## 1.95.0 — 2026-09-26
 
 - Added per-node Twins and Selected sharing controls, explicit consent, Twin badges, live synchronization status, and retry actions.
