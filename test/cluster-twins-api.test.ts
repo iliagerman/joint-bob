@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { applyResourcePolicy, type SignedResourcePolicy } from "../src/cluster-sharing.js";
+import type { SignedResourcePolicy } from "../src/cluster-sharing.js";
 import { isTrustedTwin } from "../src/cluster-sharing-policy.js";
 import {
   api, freePort, seedDevEnvironment, signIn, startDevNode, stopDevNode,
@@ -169,8 +169,8 @@ test("HTTP twins require consent, bootstrap only owned policies, and revoke dura
     const publicP = deliveryStatements(dbA).find((statement) => statement.body.resourceId === projectP.id
       && statement.body.recipientNodeId === nodeB.nodeId && statement.body.context.kind === "cluster");
     assert.ok(publicP, "A must have an A-signed public P policy addressed to B");
-    applyResourcePolicy(dbB, nodeB.nodeId, nodeA.nodeId, publicP);
     await poll(async () => {
+      assert.equal((dbB.prepare("SELECT active FROM cluster_v2_resource_contexts WHERE resource_id=? AND context_kind='cluster' AND context_id=?").get(projectP.id, clusterX) as { active: number } | undefined)?.active, 1);
       assert.ok(dbB.prepare("SELECT 1 FROM projects WHERE id=?").get(projectP.id), "shared project metadata must arrive on B");
     });
 
@@ -206,8 +206,9 @@ test("HTTP twins require consent, bootstrap only owned policies, and revoke dura
     assert.ok(twinA.some((statement) => statement.body.resourceId === privateQ.id && statement.body.ownerNodeId === nodeA.nodeId && statement.body.recipientNodeId === nodeB.nodeId));
     assert.ok(twinB.some((statement) => statement.body.resourceId === ownedR.id && statement.body.ownerNodeId === nodeB.nodeId && statement.body.recipientNodeId === nodeA.nodeId));
     assert.equal(twinB.some((statement) => statement.body.resourceId === projectP.id), false, "received P must not bootstrap as B-owned");
-    const twinQ = twinA.find((statement) => statement.body.resourceId === privateQ.id)!;
-    applyResourcePolicy(dbB, nodeB.nodeId, nodeA.nodeId, twinQ);
+    await poll(async () => {
+      assert.equal((dbB.prepare("SELECT active FROM cluster_v2_resource_contexts WHERE resource_id=? AND context_kind='twin' AND context_id=?").get(privateQ.id, invitation.body.relationshipId) as { active: number } | undefined)?.active, 1);
+    });
 
     dbA.close(); databases.delete(dbA);
     await stopDevNode(childA); children.delete(childA);
