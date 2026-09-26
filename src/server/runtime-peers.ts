@@ -8,6 +8,7 @@ import { isTrustedTwin } from "../cluster-sharing-policy.js";
 import type { DatabaseSync } from "node:sqlite";
 import { ensureConversationRecordSchema } from "../conversation-records.js";
 import { getTaskHandoff } from "../tasks.js";
+import { cronStore } from "../cron.js";
 import { mayShareProject, sharedProjectIds } from "./sharing-files.js";
 import { selectiveSharingActive } from "../cluster-v2-mode.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
@@ -59,7 +60,7 @@ function sessionShared(db:DatabaseSync,local:string,peer:string,engine:unknown,s
  return rows.length===1&&mayShareProject(db,local,peer,rows[0].project_id);
 }
 async function runtimeAllowed(request:Request,db:DatabaseSync,local:string,peer:string):Promise<boolean>{
- const body=request.body as {projectId?:unknown;handoffId?:unknown;record?:{engine?:unknown;sessionId?:unknown};leases?:Array<{engine:unknown;sessionId:unknown}>}|undefined;
+ const body=request.body as {projectId?:unknown;handoffId?:unknown;id?:unknown;input?:{projectId?:unknown};record?:{engine?:unknown;sessionId?:unknown};leases?:Array<{engine:unknown;sessionId:unknown}>}|undefined;
  if(request.path.startsWith('/browser/'))return request.path==='/browser/config'?isTrustedTwin(db,local,peer):true;
  if(request.path==='/background-tasks')return true;
  if(request.path==='/sessions/runtime-snapshot')return Array.isArray(body?.leases)&&body.leases.every((lease:{engine:unknown;sessionId:unknown})=>sessionShared(db,local,peer,lease.engine,lease.sessionId));
@@ -68,6 +69,12 @@ async function runtimeAllowed(request:Request,db:DatabaseSync,local:string,peer:
  if(['/tasks/status','/tasks/commit','/tasks/settle','/tasks/abort'].includes(request.path)){
   if(typeof body?.handoffId!=='string')return false;
   const handoff=await getTaskHandoff(body.handoffId);return Boolean(handoff&&mayShareProject(db,local,peer,handoff.projectId));
+ }
+ if(request.path==='/cron'){
+  // Task commands name the project in their input, or only by task ID. Both must be shared.
+  const stored=typeof body?.id==='string'?cronStore().get(body.id):null;
+  const projects=[body?.projectId,body?.input?.projectId,stored?.projectId].filter(project=>project!==undefined);
+  return projects.length>0&&projects.every(project=>typeof project==='string'&&mayShareProject(db,local,peer,project));
  }
  const id=typeof request.query.projectId==='string'?request.query.projectId:body?.projectId;
  return typeof id==='string'&&mayShareProject(db,local,peer,id);

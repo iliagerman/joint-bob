@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Stopping, editing, deleting or viewing history of a scheduled task owned by another node no longer fails with "Runtime resource is not shared with this node".
+
 ## 1.97.1 — 2026-09-26
 
 - Fixed transfer of Claude subagent sessions during project synchronization.
