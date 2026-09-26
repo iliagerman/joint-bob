@@ -97,6 +97,7 @@ test("twins enroll new project files using native Syncthing and revoke device ac
   assert.equal(ready,true,"ready requires acknowledged sharing and both native Syncthing indexes caught up");
   for(const [sender,recipient]of[[left,right],[right,left]]){
    const db=new DatabaseSync(path.join(sender.dataDir,'node.db'));
+   db.exec('PRAGMA busy_timeout=5000');
    const now=new Date().toISOString();
    const event=enqueueReplicationEvent(db,{originNodeId:sender.nodeId,entityType:'name.override',entityKey:`projects:${created.body.project.id}`,operation:'upsert',payload:{scope:'projects',key:created.body.project.id,name:'Pending rename',updatedAt:now,originNodeId:sender.nodeId}});
    db.prepare('INSERT INTO replication_deliveries VALUES(?,?,0,?,NULL,?)').run(event.id,recipient.nodeId,'2099-01-01T00:00:00.000Z','Synthetic replication delivery failure');
