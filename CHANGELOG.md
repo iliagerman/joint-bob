@@ -3,9 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 1.96.0 — 2026-09-26
 
 - Replaced the cluster selection grid with a dropdown menu for simpler navigation and better keyboard support.
+- Added New cluster and Join cluster actions, with forms shown only when needed.
+- Separated connection approval, data sharing, and synchronization status, with clearer enable and retry guidance.
+- Distinguished cluster-wide project counts from Twin-only sharing and moved technical membership details out of the main workflow.
 
 ## 1.95.1 — 2026-09-26
 
