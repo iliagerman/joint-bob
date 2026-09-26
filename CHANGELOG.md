@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed transfer of Claude subagent sessions during project synchronization.
+
 ## 1.97.0 — 2026-09-26
 
 - Split Cluster settings into collapsible Cluster, This machine, and Browser machines sections.

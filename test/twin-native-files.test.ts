@@ -14,6 +14,13 @@ test("twins enroll new project files using native Syncthing and revoke device ac
  try{
   const a=await seedDevEnvironment(path.join(root,"a"),1),b=await seedDevEnvironment(path.join(root,"b"),1);
   const left=a.nodes[0],right=b.nodes[0];
+  const sourceProject=left.projects.find(project=>project.name==='Internal Assistant')!;
+  const claudeDirectory=sourceProject.path.replace(/^\//,'-').replace(/[\s_.\/]+/g,'-');
+  const childRelative=path.join(claudeDirectory,'parent-session','subagents','agent-shared.jsonl');
+  const childBytes=JSON.stringify({type:'user',cwd:sourceProject.path,message:{role:'user',content:[{text:'Shared Claude child'}]}})+'\n';
+  const sourceChild=path.join(a.home,'.claude','projects',childRelative);
+  await mkdir(path.dirname(sourceChild),{recursive:true});
+  await writeFile(sourceChild,childBytes);
   // The fixture generator reuses demo session UUIDs across independent environments.
   await rm(path.join(b.home,'.pi','sessions'),{recursive:true,force:true});
   await rm(path.join(b.home,'.claude','projects'),{recursive:true,force:true});
@@ -108,7 +115,9 @@ test("twins enroll new project files using native Syncthing and revoke device ac
     assert.ok(status.body.pendingDeliveries>0,'sharing status counts ordinary event deliveries');
    }finally{db.prepare('DELETE FROM replication_deliveries WHERE event_id=?').run(event.id);db.prepare('DELETE FROM replication_outbox WHERE event_id=?').run(event.id);db.close();}
   }
-  const sourceProject=left.projects.find(project=>project.name==='Internal Assistant')!;
+  assert.equal(await readFile(path.join(b.home,'.claude','projects',childRelative),'utf8'),childBytes,'Claude subagent bytes transfer with their parent-qualified identity');
+  const childSessions=await api<{sessions:Array<{id:string;readOnly?:boolean}>}>(right,sb,'GET',`/projects/${sourceProject.id}/sessions`);
+  assert.ok(childSessions.body.sessions.some(session=>session.id==='parent-session/agent-shared'&&session.readOnly),'transferred subagent remains discoverable and read-only');
   const sourceSessions=await api<{sessions:Array<{id:string}>}>(left,sa,"GET",`/projects/${sourceProject.id}/sessions`);
   assert.ok(sourceSessions.body.sessions.length>0,'seeded source has real transcripts');
   const remoteSessions=await api<{sessions:Array<{id:string;draft?:boolean}>}>(right,sb,"GET",`/projects/${sourceProject.id}/sessions`);

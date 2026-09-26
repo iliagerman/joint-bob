@@ -40,6 +40,10 @@ test("Claude sub-agent transcripts list as read-only children of their parent", 
     assert.ok(parent);
     assert.ok(child);
     assert.equal(child.parentSessionPath, `claude:${path.join(projectDir, "parent-session.jsonl")}`);
+    const adapter = (await import("../src/harnesses/claude.harness.js")).default;
+    assert.equal(adapter.paths.sessionId(child.path), child.id, "transfer identity matches the listed subagent identity");
+    assert.equal(adapter.paths.sessionId(parent.path), parent.id);
+    assert.equal(adapter.paths.sessionId(`claude:${path.join(projectDir, "other-parent", "subagents", "agent-abc.jsonl")}`), "other-parent/agent-abc");
     assert.equal(child.readOnly, true);
     assert.equal(child.title, "[Claude] Child task");
     assert.equal(parent.readOnly, undefined);

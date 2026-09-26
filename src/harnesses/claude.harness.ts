@@ -33,7 +33,11 @@ export default defineHarness({
     ownsTranscript: (filePath) => filePath.endsWith(".jsonl") && isWithin(filePath, claudeProjectsRoot()),
     sessionId: (sessionPath) => {
       if (!sessionPath.startsWith("claude:") || sessionPath.startsWith("draft:") || !sessionPath.endsWith(".jsonl")) return undefined;
-      return path.basename(sessionPath.slice("claude:".length), ".jsonl") || undefined;
+      const filePath = sessionPath.slice("claude:".length);
+      const id = path.basename(filePath, ".jsonl");
+      return path.basename(path.dirname(filePath)) === "subagents"
+        ? `${path.basename(path.dirname(path.dirname(filePath)))}/${id}`
+        : id || undefined;
     },
     localize: (sessionPath, homePath) => localizeTranscript(sessionPath, homePath, ".claude", "claude:", "Claude"),
     transcriptFile: (sessionPath) => {
