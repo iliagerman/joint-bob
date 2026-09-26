@@ -474,7 +474,7 @@ export async function prepareTaskHandoff(handoffId: string, projectId: string, p
     saveTask(db, projectId, task);
     db.prepare("UPDATE tasks SET active_handoff_id = ? WHERE project_id = ? AND id = ?").run(handoffId, projectId, task.id);
     const now = new Date().toISOString();
-    db.prepare("UPDATE task_handoffs SET status = 'prepared', handoff_context = ?, worktree_path = ?, worktree_branch = ?, worktree_created = ?, updated_at = ? WHERE handoff_id = ?").run(handoffContext, worktree?.path ?? null, worktree?.branch ?? null, worktree?.created ? 1 : 0, now, handoffId);
+    db.prepare("UPDATE task_handoffs SET status = 'prepared', handoff_context = ?, worktree_path = ?, worktree_branch = ?, worktree_created = ?, updated_at = ? WHERE handoff_id = ?").run(handoffContext, worktree?.path ?? synchronizedWorkspace, worktree?.branch ?? null, worktree?.created ? 1 : 0, now, handoffId);
     appendAuditEvent(db, { eventType: "task.handoff.prepared", actorType: "node", actorId: localNode.id, entityType: "task", entityId: task.id, details: { sourceNodeId: record.sourceNodeId, destinationNodeId, handoffId } });
     db.exec("COMMIT");
     return task;

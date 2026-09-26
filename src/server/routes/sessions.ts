@@ -4,7 +4,10 @@ import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import type { AuthSession } from "../../auth.js";
 import { createByTheWayLease, deleteByTheWayLease, getByTheWayLease, getByTheWayLeaseByToken, listByTheWayLeases } from "../../by-the-way-leases.js";
-import { type ClusterPeer, getClusterMachineToken, getClusterNode, getClusterPeer, listClusterPeers } from "../../cluster.js";
+import { type ClusterPeer, getClusterMachineToken, getClusterNode } from "../../cluster.js";
+import { selectiveSharingActive } from '../../cluster-v2-mode.js';
+import { assertSharedTranscriptReady } from '../shared-transcripts.js';
+import { getRuntimePeer as getClusterPeer, listRuntimePeers as listClusterPeers, runtimeFetch as fetch } from "../runtime-peers.js";
 import { beginConversationRecovery, compareAndSetConversationOwnership, type ConversationEngine, type ConversationOwnership, finishConversationRecovery, getConversationOwnership, type OwnershipApplyResult, sameConversationOwnership, takeConversationOwnership } from "../../conversation-ownership.js";
 import { deleteConversationRecord, getConversationRecord } from "../../conversation-records.js";
 import { dropBrowserConversationGrants } from "../../browser-store.js";
@@ -137,7 +140,7 @@ app.post("/api/projects/:projectId/sessions/fork", async (request, response, nex
   }
 });
 
-app.post("/api/cluster/sessions/fork", async (request, response, next) => {
+app.post(["/api/cluster/sessions/fork", "/api/cluster/v2/runtime/sessions/fork"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const payload = sessionForkSchema.extend({ projectId: z.string().min(1) }).parse(request.body);
@@ -239,7 +242,7 @@ app.post("/api/projects/:projectId/sessions/by-the-way", async (request, respons
   }
 });
 
-app.post("/api/cluster/sessions/by-the-way", async (request, response, next) => {
+app.post(["/api/cluster/sessions/by-the-way", "/api/cluster/v2/runtime/sessions/by-the-way"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const payload = sessionForkSchema.extend({ projectId: z.string().min(1) }).parse(request.body);
@@ -279,7 +282,7 @@ app.post("/api/projects/:projectId/sessions/by-the-way/close", async (request, r
   }
 });
 
-app.post("/api/cluster/sessions/by-the-way/close", async (request, response, next) => {
+app.post(["/api/cluster/sessions/by-the-way/close", "/api/cluster/v2/runtime/sessions/by-the-way/close"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const payload = byTheWayCloseSchema.extend({ projectId: z.string().min(1) }).parse(request.body);
@@ -314,7 +317,7 @@ async function applyOwnershipToPeer(peer: ClusterPeer, record: ConversationOwner
   return result;
 }
 
-app.get("/api/cluster/sessions/ownership", async (request, response, next) => {
+app.get(["/api/cluster/sessions/ownership", "/api/cluster/v2/runtime/sessions/ownership"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const engine = registeredHarnessIdSchema.parse(request.query.engine);
@@ -323,7 +326,7 @@ app.get("/api/cluster/sessions/ownership", async (request, response, next) => {
   } catch (error) { next(error); }
 });
 
-app.post("/api/cluster/sessions/ownership/apply", async (request, response, next) => {
+app.post(["/api/cluster/sessions/ownership/apply", "/api/cluster/v2/runtime/sessions/ownership/apply"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const payload = z.object({ record: ownershipSchema, originNodeId: z.string().uuid() }).parse(request.body);
@@ -342,7 +345,7 @@ async function localConversationTranscriptPresence(project: ProjectRecord, engin
   return { found: Boolean(session), hasTranscript: Boolean(session && !session.draft) };
 }
 
-app.get("/api/cluster/sessions/transcript-presence", async (request, response, next) => {
+app.get(["/api/cluster/sessions/transcript-presence", "/api/cluster/v2/runtime/sessions/transcript-presence"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const query = z.object({ projectId: z.string().min(1), engine: registeredHarnessIdSchema, sessionId: z.string().min(1).max(240) }).parse(request.query);
@@ -388,7 +391,7 @@ async function assertDraftTakeoverReady(project: ProjectRecord, matching: Sessio
   if (!presence.found || presence.hasTranscript) throw new TaskWorktreeError("Wait for the conversation transcript to synchronize to this node before taking ownership");
 }
 
-app.post("/api/cluster/sessions/queue-transfer", async (request, response, next) => {
+app.post(["/api/cluster/sessions/queue-transfer", "/api/cluster/v2/runtime/sessions/queue-transfer"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const payload = z.object({ projectId: z.string().min(1), engine: registeredHarnessIdSchema, sessionId: z.string().min(1) }).parse(request.body);
@@ -464,7 +467,7 @@ async function synchronizeQueueBeforeTakeover(projectId: string, engine: Convers
 }
 
 export async function takeLocalSessionOwnership(project: ProjectRecord, payload: z.infer<typeof routedSessionTakeOwnershipSchema>, requireOnline = false): Promise<{ sessionPath: string; ownership: ConversationOwnership; pendingPeerIds: string[] }> {
-  const [local, sessions, peers] = await Promise.all([getClusterNode(), listHarnessSessions(project), listClusterPeers()]);
+  const [local, sessions, peers] = await Promise.all([getClusterNode(), listHarnessSessions(project), listClusterPeers(project.id)]);
   if (payload.peerId !== local.id) throw new Error("Takeover destination is not this node");
   const matching = payload.sessionId ? sessions.find((session) => session.id === payload.sessionId) : sessions.find((session) => session.path === payload.sessionPath);
   if (!matching) throw new TaskWorktreeError("Conversation was not found on the destination node");
@@ -473,6 +476,7 @@ export async function takeLocalSessionOwnership(project: ProjectRecord, payload:
   const sessionId = matching.id;
   if (conversationIsActive(project.id, engine, sessionId, matching.path)) throw new TaskWorktreeError("Wait for the current turn to finish before taking ownership");
   const unavailable = await synchronizeQueueBeforeTakeover(project.id, engine, sessionId, local.id, peers, requireOnline);
+  if(!matching.draft&&await selectiveSharingActive())await assertSharedTranscriptReady(project.id,matching.path);
   const ownership = await takeConversationOwnership(engine, sessionId, local.id);
   const reachable = peers.filter((peer) => !unavailable.has(peer.id));
   const settled = await Promise.allSettled(reachable.map((peer) => applyOwnershipToPeer(peer, ownership, local.id)));
@@ -605,7 +609,7 @@ app.get("/api/running", async (_request, response, next) => {
   }
 });
 
-app.post("/api/cluster/sessions/take-ownership", async (request, response, next) => {
+app.post(["/api/cluster/sessions/take-ownership", "/api/cluster/v2/runtime/sessions/take-ownership"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const payload = routedSessionTakeOwnershipSchema.parse(request.body);
@@ -647,7 +651,7 @@ app.post("/api/projects/:projectId/sessions/recover", async (request, response, 
     if (!adapter.sessions.recover) throw new Error(`${adapter.label} does not support transcript conflict recovery`);
     if (conversationSessionIsOpen(project.id, payload.engine, payload.sessionId, mapped.path)) throw new Error("Close the local conversation before recovery");
     await requireLocalConversationOwner(payload.engine, payload.sessionId);
-    const peers = await listClusterPeers();
+    const peers = await listClusterPeers(project.id);
     const fenced = await beginConversationRecovery(payload.engine, payload.sessionId, local.id);
     await replicateExactOwnership(peers, fenced, local.id);
     if (conversationSessionIsOpen(project.id, payload.engine, payload.sessionId, mapped.path)) throw new Error("Conversation opened during recovery fencing");
@@ -745,7 +749,7 @@ app.delete("/api/projects/:projectId/sessions", async (request, response, next) 
   }
 });
 
-app.delete("/api/cluster/sessions/delete", async (request, response, next) => {
+app.delete(["/api/cluster/sessions/delete", "/api/cluster/v2/runtime/sessions/delete"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const payload = sessionDeleteSchema.parse(request.body);

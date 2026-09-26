@@ -147,7 +147,7 @@ test("the running and review wiring is present end to end", async () => {
   const listing = server.slice(server.indexOf("async function listProjectSessionsWithReviewState"), server.indexOf("app.get(\"/api/projects/:projectId/sessions\""));
   assert.match(listing, /conversationLeaseState\(session\.harnessId, session\.id\)/);
   // Leases travel on an authenticated cluster route pushed from the periodic loop.
-  assert.match(server, /app\.post\("\/api\/cluster\/sessions\/runtime-snapshot"/);
+  assert.match(server, /app\.post\(\[?"\/api\/cluster\/sessions\/runtime-snapshot"/);
   assert.match(server, /pushRuntimeLeaseSnapshots\(\)\.catch/);
   assert.match(server, /"POST \/cluster\/sessions\/runtime-snapshot"/);
   // Review marks publish durable events, and applying them wakes every watcher.

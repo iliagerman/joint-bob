@@ -53,6 +53,9 @@ jobs:
         if: steps.release.outputs.publish == 'true'
       - run: npm run typecheck
         if: steps.release.outputs.publish == 'true'
+      - name: Install native synchronization test dependency
+        if: steps.release.outputs.publish == 'true'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends syncthing
       - name: Run full test suite
         if: steps.release.outputs.publish == 'true'
         timeout-minutes: 15

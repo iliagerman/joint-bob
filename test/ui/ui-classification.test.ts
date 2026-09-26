@@ -8,6 +8,7 @@ import { launchChrome } from "./launch-chrome.js";
 import { seedDevEnvironment, startDevNode, stopDevNode } from "../dev-nodes.js";
 
 async function assertHorizontalStepper(page: Page): Promise<void> {
+  await page.locator("#newSessionStepList .wizard-step").first().waitFor({ state: "visible" });
   const markers = await page.locator("#newSessionStepList .wizard-step").evaluateAll((steps) => steps.map((step) => {
     const box = step.getBoundingClientRect();
     return { left: box.left, top: box.top };

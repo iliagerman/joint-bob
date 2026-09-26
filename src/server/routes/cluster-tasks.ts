@@ -19,7 +19,7 @@ import { app } from "../state.js";
 import { archiveOwnedTask, assertTaskNotHandoffPending, deleteOwnedTask, handoffOwnedTask, mergeOwnedTask } from "../task-handoff.js";
 import { acquireTaskMergeReservation, beginTaskMergeIfNeeded, mergeReservations, releaseTaskMergeReservation, startTaskRun, taskRunActive } from "../task-runs.js";
 
-app.patch("/api/cluster/tasks/update", async (request, response, next) => {
+app.patch(["/api/cluster/tasks/update", "/api/cluster/v2/runtime/tasks/update"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const routed = routedTaskUpdateSchema.parse(request.body);
@@ -72,7 +72,7 @@ app.patch("/api/cluster/tasks/update", async (request, response, next) => {
   } catch (error) { next(error); }
 });
 
-app.delete("/api/cluster/tasks/delete", async (request, response, next) => {
+app.delete(["/api/cluster/tasks/delete", "/api/cluster/v2/runtime/tasks/delete"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const payload = routedTaskSchema.parse(request.body);
@@ -90,7 +90,7 @@ app.delete("/api/cluster/tasks/delete", async (request, response, next) => {
   }
 });
 
-app.post("/api/cluster/tasks/archive", async (request, response, next) => {
+app.post(["/api/cluster/tasks/archive", "/api/cluster/v2/runtime/tasks/archive"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const payload = routedTaskSchema.parse(request.body);
@@ -107,7 +107,7 @@ app.post("/api/cluster/tasks/archive", async (request, response, next) => {
   }
 });
 
-app.post("/api/cluster/tasks/merge", async (request, response, next) => {
+app.post(["/api/cluster/tasks/merge", "/api/cluster/v2/runtime/tasks/merge"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const payload = routedTaskSchema.parse(request.body);
@@ -125,7 +125,7 @@ app.post("/api/cluster/tasks/merge", async (request, response, next) => {
   }
 });
 
-app.post("/api/cluster/tasks/handoff", async (request, response, next) => {
+app.post(["/api/cluster/tasks/handoff", "/api/cluster/v2/runtime/tasks/handoff"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const payload = routedTaskHandoffSchema.parse(request.body);

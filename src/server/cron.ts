@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import WebSocket from "ws";
-import { getClusterMachineToken, getClusterNode, getClusterPeer } from "../cluster.js";
+import { getClusterMachineToken, getClusterNode } from "../cluster.js";
+import { getRuntimePeer as getClusterPeer, runtimeFetch as fetch, runtimeSocketHeaders } from "./runtime-peers.js";
 import { getConversationOwnership } from "../conversation-ownership.js";
 import { scheduledPromptText } from "../scheduled-prompt.js";
 import { ensureConversationRecord, getConversationRecord, markCronConversation } from "../conversation-records.js";
@@ -63,8 +64,9 @@ export async function queuedCronPrompt(task: CronTask, run: CronRun, sessionId: 
   const token = await getClusterMachineToken();
   const record = await getConversationRecord(task.projectId, task.engine, sessionId);
   const queueKey = `${task.projectId}:${record!.conversationId ?? sessionId}`;
+  const headers=await runtimeSocketHeaders((await getClusterNode()).id,url,token);
   await new Promise<void>((resolve, reject) => {
-    const socket = new WebSocket(url, { headers: { Authorization: `Bearer ${token}` } });
+    const socket = new WebSocket(url, { headers });
     const reasoning = task.reasoning ?? task.model?.reasoning;
     let queueId: string | undefined;
     let settled = false;

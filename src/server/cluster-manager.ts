@@ -15,7 +15,13 @@ import { flushV2MembershipOutbox, mapV2Error, signedPost } from "./cluster-v2.js
 import { clusterRequestRawBody } from "./http-auth.js";
 import { signClusterRequest } from "../cluster-protocol.js";
 import { flushTwinDeliveries } from "./twins.js";
+import { flushTwinSharing } from './twin-sharing.js';
 import { flushProjectMetadataDeliveries } from "./project-metadata.js";
+import { flushSharingFiles } from "./sharing-files.js";
+import { disconnectRevokedRuntimeSockets } from "./runtime-peers.js";
+import { flushScopedCredentials } from "./scoped-credentials.js";
+import { flushSharedTranscripts } from "./shared-transcripts.js";
+import { flushTwinCredentials } from "./replication-v2.js";
 import { flushResourcePolicyDeliveries } from "./resource-policy.js";
 
 const certificatePayloadSchema = z.object({ certificate: managerTransferCertificateSchema }).strict();
@@ -54,7 +60,9 @@ export async function flushV2ClusterAdministration(): Promise<void> {
   if (flushing) return;
   flushing = true;
   try {
+    await disconnectRevokedRuntimeSockets();
     await flushTwinDeliveries();
+    await flushTwinSharing();
     const db = await clusterV2Database(); ensureManagerHttpSchema(db);
     const local = await getClusterNode();
     const steps = db.prepare("SELECT cluster_id,transfer_id,step,peer_id,url,payload FROM cluster_v2_manager_steps ORDER BY cluster_id,transfer_id,step")
@@ -64,6 +72,10 @@ export async function flushV2ClusterAdministration(): Promise<void> {
     await flushV2MembershipOutbox();
     await flushResourcePolicyDeliveries();
     await flushProjectMetadataDeliveries();
+    await flushSharingFiles();
+    await flushTwinCredentials();
+    await flushSharedTranscripts();
+    await flushScopedCredentials();
   } finally { flushing = false; }
 }
 

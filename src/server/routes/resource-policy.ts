@@ -11,6 +11,7 @@ import { ClusterV2HttpError, selectiveSharingActive } from "../../cluster-v2-mod
 import { applyProjectMetadata, applyProjectResourcePolicy } from "../../store.js";
 import { sendError } from "../http-auth.js";
 import { app } from "../state.js";
+import { disconnectRevokedRuntimeSockets } from '../runtime-peers.js';
 
 const envelopeSchema = z.object({ statement: resourcePolicySchema }).strict();
 
@@ -61,6 +62,7 @@ app.post("/api/cluster/v2/resources/policy", (request: Request, response: Respon
       const db = await clusterV2Database();
       applyResourcePolicy(db, local.id, sender, payload.statement);
     }
+    await disconnectRevokedRuntimeSockets();
     response.json({ operationId: payload.statement.body.operationId });
   })().catch((error: unknown) => {
     if (error instanceof z.ZodError) { sendError(response, 400, "Invalid resource policy"); return; }

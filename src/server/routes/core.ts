@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { dispatchSignedRuntime, twinRuntimeGuard } from "../runtime-peers.js";
 import path from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
@@ -171,6 +172,7 @@ app.post("/api/cluster/invitations/redeem", async (request, response, next) => {
 });
 
 app.use("/api", requireHttpAuth, requireCsrf);
+app.use("/api/cluster/v2/runtime", twinRuntimeGuard);
 app.use("/api/cluster", async (request, response, next) => {
   try {
     if (["GET", "HEAD", "OPTIONS"].includes(request.method)) { next(); return; }
@@ -181,6 +183,7 @@ app.use("/api/cluster", async (request, response, next) => {
   } catch (error) { next(error); }
 });
 app.use("/api/cluster", machineProjectAccessGuard);
+app.use(dispatchSignedRuntime);
 app.use("/api", (request, response, next) => {
   if (flags.updatePreparing && !["GET", "HEAD", "OPTIONS"].includes(request.method) && request.path !== "/cluster/v2/update/prepare") {
     response.status(503).json({ error: "Server update in progress" });

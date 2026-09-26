@@ -4,6 +4,8 @@ import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { isHarnessId, type HarnessId } from "./types.js";
+import { selectiveSharingActiveInDatabase } from "./cluster-v2-mode-state.js";
+import { isTrustedTwin, mayReceiveResource } from "./cluster-sharing-policy.js";
 
 export type SecretProvider = "aws" | "google" | "github" | "custom" | "website";
 export type SecretKind = "value" | "file";
@@ -217,6 +219,20 @@ function conversationRows(conversation: SecretConversation): AccountRow[] {
   return [...stored, ...pending].sort((left, right) => left.id.localeCompare(right.id));
 }
 
+function accountAllowedForProject(accountId: string, projectId: string): boolean {
+  const handle = db();
+  if (!selectiveSharingActiveInDatabase(handle)) return true;
+  const { origin_node_id: origin } = handle.prepare("SELECT origin_node_id FROM secret_accounts WHERE id=?").get(accountId) as { origin_node_id: string };
+  const { id: local } = handle.prepare("SELECT id FROM cluster_node LIMIT 1").get() as { id: string };
+  if (!origin || origin === local) return true;
+  if (isTrustedTwin(handle, local, origin)) return true;
+  const policy = handle.prepare("SELECT deleted FROM cluster_v2_resource_policy WHERE kind='project' AND resource_id=?").get(projectId) as { deleted: number } | undefined;
+  if (!policy || policy.deleted || !mayReceiveResource(handle, local, 'project', projectId) || !mayReceiveResource(handle, origin, 'project', projectId)) return false;
+  if (!hasTable('cluster_v2_scoped_secret_copies')) return true;
+  const copy = handle.prepare('SELECT scopes FROM cluster_v2_scoped_secret_copies WHERE peer_id=? AND account_id=?').get(origin, accountId) as { scopes: string } | undefined;
+  return !copy || (JSON.parse(copy.scopes) as Array<{ projectIds: string[] }>).some(scope => scope.projectIds.includes(projectId));
+}
+
 /** Broadest first: workspace, then project, then conversation. Callers apply them in this
     order so the most specific value of a given variable name is written last. */
 function resolved(project: string, conversation?: SecretConversation): ResolvedAccount[] {
@@ -231,7 +247,7 @@ function resolved(project: string, conversation?: SecretConversation): ResolvedA
     ...workspace.map((account) => ({ row: account, scope: "workspace" as const })),
     ...direct.map((account) => ({ row: account, scope: "project" as const })),
     ...session.map((account) => ({ row: account, scope: "conversation" as const })),
-  ];
+  ].filter(account => accountAllowedForProject(account.row.id, projectId));
 }
 
 export async function listSecretAccounts(): Promise<SecretAccount[]> {

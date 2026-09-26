@@ -1,6 +1,7 @@
 import { realpath } from "node:fs/promises";
 import type { Request, Response } from "express";
-import { type ClusterPeer, getClusterNode, getClusterPeer } from "../../cluster.js";
+import { type ClusterPeer, getClusterNode } from "../../cluster.js";
+import { getRuntimePeer as getClusterPeer, runtimeFetch as fetch } from "../runtime-peers.js";
 import {
   gitCommitDetail,
   gitCommitFileDiff,

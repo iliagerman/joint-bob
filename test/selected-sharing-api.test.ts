@@ -1,0 +1,60 @@
+import assert from "node:assert/strict";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { DatabaseSync } from "node:sqlite";
+import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "./dev-nodes.js";
+
+test("cluster selection adopts local projects, persists workspace inheritance and revokes", {timeout:120_000}, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "selected-sharing-"));
+  const children: Awaited<ReturnType<typeof startDevNode>>[] = [];
+  try {
+    const env = await seedDevEnvironment(root, 1), node = env.nodes[0];
+    children.push(await startDevNode(env, node));
+    const session = await signIn(env, node);
+    const cluster = await api<{snapshot:{body:{clusterId:string}}}>(node, session, "POST", "/clusters", {name:"Selected"});
+    assert.equal(cluster.status,201,JSON.stringify(cluster.body));
+    const clusterId = cluster.body.snapshot.body.clusterId;
+    const endpoint = `/clusters/${clusterId}/sharing`;
+    type View = {projects:Array<{id:string;workspaceId:string}>;projectIds:string[];workspaceIds:string[]};
+    const initial = await api<View>(node,session,"GET",endpoint);
+    assert.equal(initial.status,200,"selection endpoint must enumerate local unowned projects");
+    const project = initial.body.projects[0];
+    assert.ok(project);
+    assert.equal((await api(node,session,"PUT",endpoint,{projectIds:[project.id],workspaceIds:[]})).status,400);
+    const db=new DatabaseSync(path.join(node.dataDir,'node.db'));
+    try{db.prepare('UPDATE sharing_memberships SET auto_share_projects=1 WHERE cluster_id=? AND node_id=?').run(clusterId,node.nodeId);}finally{db.close();}
+    const existingDirectory=path.join(root,'existing-grant');await mkdir(existingDirectory);
+    const alreadyShared=await api<{project:{id:string}}>(node,session,'POST','/projects',{name:'Existing grant',type:project.workspaceId,path:existingDirectory,synced:false});
+    assert.equal(alreadyShared.status,201);
+    const existingSelection=await api<View>(node,session,'GET',endpoint);
+    assert.ok(existingSelection.body.projectIds.includes(alreadyShared.body.project.id),'GET must reflect existing automatic grants before selection rows exist');
+    const selected = await api<View>(node,session,"PUT",endpoint,{projectIds:[],workspaceIds:[project.workspaceId],confirmOwnedData:true});
+    assert.equal(selected.status,200,JSON.stringify(selected.body));
+    assert.deepEqual(selected.body.workspaceIds,[project.workspaceId]);
+    const directory = path.join(root,"future"); await mkdir(directory);
+    const future = await api<{project:{id:string}}>(node,session,"POST","/projects",{name:"Future",type:project.workspaceId,path:directory,synced:false});
+    assert.equal(future.status,201,JSON.stringify(future.body));
+    const policy = await api<{shares:Array<{clusterId:string}>}>(node,session,"GET",`/sharing/project/${future.body.project.id}`);
+    assert.deepEqual(policy.body.shares.map(s=>s.clusterId),[clusterId]);
+    const otherDirectory=path.join(root,'unselected-future');await mkdir(otherDirectory);
+    const other=await api<{project:{id:string}}>(node,session,'POST','/projects',{name:'Unselected future',type:project.workspaceId==='personal'?'work':'personal',path:otherDirectory,synced:false});
+    assert.equal(other.status,201,JSON.stringify(other.body));
+    const otherPolicy=await api<{shares:unknown[]}>(node,session,'GET',`/sharing/project/${other.body.project.id}`);
+    assert.deepEqual(otherPolicy.body.shares,[],'explicit selection must disable inherited auto-share-all for future unselected workspaces');
+    const movedIn=await api(node,session,'PATCH',`/projects/${other.body.project.id}`,{type:project.workspaceId});
+    assert.equal(movedIn.status,200,JSON.stringify(movedIn.body));
+    assert.deepEqual((await api<{shares:Array<{clusterId:string}>}>(node,session,'GET',`/sharing/project/${other.body.project.id}`)).body.shares.map(s=>s.clusterId),[clusterId],'moving into a selected workspace inherits sharing');
+    const privateWorkspace=project.workspaceId==='personal'?'work':'personal';
+    assert.equal((await api(node,session,'PATCH',`/projects/${other.body.project.id}`,{type:privateWorkspace})).status,200);
+    assert.deepEqual((await api<{shares:unknown[]}>(node,session,'GET',`/sharing/project/${other.body.project.id}`)).body.shares,[],'moving out revokes inherited sharing');
+    assert.equal((await api(node,session,'PUT',endpoint,{projectIds:[future.body.project.id],workspaceIds:[project.workspaceId],confirmOwnedData:true})).status,200);
+    assert.equal((await api(node,session,'PATCH',`/projects/${future.body.project.id}`,{type:privateWorkspace})).status,200);
+    assert.deepEqual((await api<{shares:Array<{clusterId:string}>}>(node,session,'GET',`/sharing/project/${future.body.project.id}`)).body.shares.map(s=>s.clusterId),[clusterId],'explicit selection survives a workspace move');
+    assert.equal((await api(node,session,"PUT",endpoint,{projectIds:[],workspaceIds:[],confirmOwnedData:true})).status,200);
+    const revoked = await api<{shares:unknown[]}>(node,session,"GET",`/sharing/project/${future.body.project.id}`);
+    assert.deepEqual(revoked.body.shares,[]);
+    assert.equal((await api(node,session,"GET",`/projects/${future.body.project.id}`)).status,200,"revocation preserves local project");
+  } finally { await Promise.all(children.map(stopDevNode)); await rm(root,{recursive:true,force:true}); }
+});

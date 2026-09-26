@@ -18,6 +18,7 @@ export interface ClusterNode {
 
 export interface ClusterPeer extends ClusterNode {
   token: string;
+  signedAuthentication?: boolean;
   pairedAt: string;
   lastSeenAt: string | null;
 }

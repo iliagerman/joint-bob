@@ -2,7 +2,8 @@ import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import WebSocket from "ws";
 import { z } from "zod";
-import { getClusterNode, getClusterPeer, getClusterMachineToken, listClusterPeers } from "../cluster.js";
+import { getClusterNode, getClusterMachineToken } from "../cluster.js";
+import { getRuntimePeer as getClusterPeer, listRuntimePeers as listClusterPeers, runtimeFetch as fetch, runtimeSocketHeaders, trackRuntimeSocket } from "./runtime-peers.js";
 import { applyBrowserConfiguration, readBrowserConfiguration, browserConfigurationSchema, applyBrowserPreference, readBrowserPreference, browserPreferenceSchema } from "../browser-configuration.js";
 import { browserCapability, BrowserRuntime } from "../browser-runtime.js";
 import { browserCommandSchema, browserStartSchema, browserIdentitySchema, browserProfileGrantInputSchema, type BrowserActor, type BrowserProfile, type BrowserSessionView } from "../browser-types.js";
@@ -424,6 +425,7 @@ export async function attachBrowserViewer(socket: WebSocket, url: URL, actor: Br
       const session = await browserRuntime().get(id);
       if (!(await clusterPeerMayAccessProject(machineNodeId, session.projectId))) throw Error("Project is not shared");
       if (browserRuntime().profileOrNull(session.profileId)?.crossNodeAccess === false) throw Error("Browser profile is restricted to this node");
+      trackRuntimeSocket(socket,machineNodeId,session.projectId);
       await browserRuntime().attachViewer(id, socket, actor, true); return;
     }
     const nodeId = idSchema.optional().parse(url.searchParams.get("nodeId") ?? undefined) ?? await browserSessionOwner(id, actor);
@@ -432,7 +434,7 @@ export async function attachBrowserViewer(socket: WebSocket, url: URL, actor: Br
     if (!peer) throw Error("Browser node unavailable");
     const remote = new URL("/ws", peer.url); remote.protocol = remote.protocol === "https:" ? "wss:" : "ws:";
     remote.search = new URLSearchParams({ mode: "browser", browserSessionId: id, controllerId: actor.kind === "human" ? actor.id : "agent" }).toString();
-    const upstream = new WebSocket(remote, { headers: { Authorization: `Bearer ${await getClusterMachineToken()}` }, handshakeTimeout: 10000, maxPayload: 32 * 1024 * 1024 });
+    const upstream = new WebSocket(remote, { headers: await runtimeSocketHeaders(peer.id,remote,await getClusterMachineToken()), handshakeTimeout: 10000, maxPayload: 32 * 1024 * 1024 });
     const queued: Buffer[] = []; let queuedBytes = 0;
     socket.on("message", data => {
       const buffer = Buffer.from(data as Buffer);

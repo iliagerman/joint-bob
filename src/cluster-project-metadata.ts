@@ -9,6 +9,8 @@ import {
 export const portableProjectMetadataSchema = z.object({
   name: z.string().trim().min(1).max(1000),
   color: z.enum(PROJECT_COLORS).nullable(),
+  workspace: z.object({ id: z.string().min(1).max(300).regex(/^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/), label: z.string().min(1).max(40) }).strict().optional(),
+  syncFolderId: z.string().min(1).max(300).regex(/^[A-Za-z0-9._-]+$/).optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 }).strict();
@@ -35,6 +37,9 @@ export function ensureProjectMetadataSchema(db: DatabaseSync): void {
       PRIMARY KEY(owner_node_id,project_id,context_kind,context_id,owner_admission,recipient_admission));
     CREATE TABLE IF NOT EXISTS cluster_v2_project_workspaces(
       workspace_id TEXT PRIMARY KEY,owner_node_id TEXT UNIQUE NOT NULL);
+    CREATE TABLE IF NOT EXISTS cluster_v2_shared_workspaces(
+      owner_node_id TEXT NOT NULL,source_workspace_id TEXT NOT NULL,workspace_id TEXT NOT NULL,
+      PRIMARY KEY(owner_node_id,source_workspace_id));
   `);
 }
 
@@ -42,13 +47,15 @@ function canonicalMetadata(value: unknown): string {
   return JSON.stringify(portableProjectMetadataSchema.parse(value));
 }
 function metadataForProject(db: DatabaseSync, id: string): ProjectMetadataEnvelope["metadata"] {
-  const row = db.prepare("SELECT name,color,created_at,updated_at FROM projects WHERE id=?").get(id) as {
-    name: string; color: typeof PROJECT_COLORS[number] | null; created_at: string; updated_at: string;
+  const row = db.prepare("SELECT p.name,p.color,p.sync_folder_id,p.created_at,p.updated_at,p.workspace_id,w.label workspace_label FROM projects p JOIN workspaces w ON w.id=p.workspace_id WHERE p.id=?").get(id) as {
+    name: string; color: typeof PROJECT_COLORS[number] | null; sync_folder_id: string | null; workspace_id: string; workspace_label: string; created_at: string; updated_at: string;
   };
   const hasOverrides = Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='name_overrides'").get());
   const override = hasOverrides ? db.prepare("SELECT name FROM name_overrides WHERE scope='projects' AND key=?").get(id) as { name: string } | undefined : undefined;
   return portableProjectMetadataSchema.parse({
     name: override?.name ?? row.name, color: row.color,
+    ...(row.sync_folder_id ? { syncFolderId: row.sync_folder_id } : {}),
+    workspace: { id: row.workspace_id, label: row.workspace_label },
     createdAt: row.created_at, updatedAt: row.updated_at,
   });
 }

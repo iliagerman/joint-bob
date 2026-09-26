@@ -1,3 +1,4 @@
+import { inheritWorkspaceSharing } from "./selected-sharing.js";
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { resolveDataDirectory } from "./data-directory.js";
@@ -147,6 +148,7 @@ function saveNewLocalProject(db: DatabaseSync, project: ProjectRecord): void {
       const local = db.prepare("SELECT id FROM cluster_node LIMIT 1").get() as { id: string };
       ensureResourceSharingSchema(db);
       registerLocalSharingResource(db, local.id, { kind: "project", id: project.id });
+      inheritWorkspaceSharing(db, local.id, project.id, project.type ?? "personal");
     }
     db.exec("RELEASE project_create");
   } catch (error) {
@@ -557,16 +559,33 @@ function replicaWorkspace(db: DatabaseSync, owner: string): string {
   return workspaceId;
 }
 
+function incomingWorkspace(db:DatabaseSync,envelope:ProjectMetadataEnvelope):string{
+  const workspace=envelope.metadata.workspace,body=envelope.statement.body;
+  if(!workspace)return replicaWorkspace(db,body.ownerNodeId);
+  const id=body.context.kind==='twin'?workspace.id:`shared-${createHash('sha256').update(`${body.ownerNodeId}\0${workspace.id}`).digest('hex').slice(0,24)}`;
+  if(reservedWorkspaceIds.has(id))throw new ResourceSharingError('Shared workspace ID is reserved',409);
+  const mapping=db.prepare('SELECT workspace_id FROM cluster_v2_shared_workspaces WHERE owner_node_id=? AND source_workspace_id=?').get(body.ownerNodeId,workspace.id) as {workspace_id:string}|undefined;
+  if(body.context.kind!=='twin'&&db.prepare('SELECT 1 FROM workspaces WHERE id=?').get(id)&&mapping?.workspace_id!==id)throw new ResourceSharingError('Shared workspace identity conflict',409);
+  const now=new Date().toISOString();
+  db.prepare(`INSERT INTO workspaces(id,label,created_at,updated_at) VALUES(?,?,?,?)
+    ON CONFLICT(id) DO NOTHING`).run(id,workspace.label,now,now);
+  db.prepare('INSERT OR REPLACE INTO cluster_v2_shared_workspaces VALUES(?,?,?)').run(body.ownerNodeId,workspace.id,id);
+  return id;
+}
+
 function saveIncomingProject(db: DatabaseSync, envelope: ProjectMetadataEnvelope, managedHome: string): void {
   const body = envelope.statement.body;
   const row = db.prepare("SELECT * FROM projects WHERE id=?").get(body.resourceId) as ProjectRow | undefined;
+  const workspaceId=incomingWorkspace(db,envelope);
+  if(tableExists(db,'name_overrides'))db.prepare("UPDATE name_overrides SET name=?,updated_at=? WHERE scope='projects' AND key=? AND origin_node_id=? AND updated_at<=?")
+    .run(envelope.metadata.name,envelope.metadata.updatedAt,body.resourceId,body.ownerNodeId,envelope.metadata.updatedAt);
   if (row) {
-    saveProject(db, { ...rowToProject(db, row), name: envelope.metadata.name,
+    saveProject(db, { ...rowToProject(db, row), name: envelope.metadata.name, type: workspaceId,
+      ...(envelope.metadata.syncFolderId ? { syncFolderId: envelope.metadata.syncFolderId } : {}),
       ...(envelope.metadata.color ? { color: envelope.metadata.color } : { color: undefined }),
       createdAt: envelope.metadata.createdAt, updatedAt: envelope.metadata.updatedAt });
     return;
   }
-  const workspaceId = replicaWorkspace(db, body.ownerNodeId);
   const digest = createHash("sha256").update(`${body.ownerNodeId}\0${body.resourceId}`).digest("hex");
   const replicaPath = path.join(managedHome, workspaceId, "projects", digest);
   if (db.prepare("SELECT 1 FROM projects WHERE path=? AND id<>?").get(replicaPath, body.resourceId)) {
@@ -574,6 +593,7 @@ function saveIncomingProject(db: DatabaseSync, envelope: ProjectMetadataEnvelope
   }
   saveProject(db, { id: body.resourceId, name: envelope.metadata.name, type: workspaceId,
     ...(envelope.metadata.color ? { color: envelope.metadata.color } : {}), path: replicaPath,
+    ...(envelope.metadata.syncFolderId ? { syncFolderId: envelope.metadata.syncFolderId } : {}),
     createdAt: envelope.metadata.createdAt, updatedAt: envelope.metadata.updatedAt });
 }
 
@@ -783,6 +803,10 @@ export async function updateProjectWorkspaceAndPath(projectId: string, workspace
   try {
     db.prepare("UPDATE projects SET workspace_id = ?, path = ?, updated_at = ? WHERE id = ?").run(workspaceId, nextPath, updatedAt, canonicalId);
     db.prepare("UPDATE project_locations SET path = ? WHERE project_id = ? AND path = ?").run(nextPath, canonicalId, project.path);
+    if(selectiveSharingActiveInDatabase(db)){
+      const local=db.prepare('SELECT id FROM cluster_node LIMIT 1').get() as {id:string};
+      inheritWorkspaceSharing(db,local.id,canonicalId,workspaceId);
+    }
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
@@ -893,6 +917,7 @@ export async function deleteWorkspace(workspaceId: string): Promise<void> {
   try {
     db.prepare("DELETE FROM secret_assignments WHERE scope_type = 'workspace' AND scope_id = ?").run(workspaceId);
     db.prepare("DELETE FROM cluster_v2_project_workspaces WHERE workspace_id = ?").run(workspaceId);
+    db.prepare("DELETE FROM cluster_v2_shared_workspaces WHERE workspace_id = ?").run(workspaceId);
     db.prepare("DELETE FROM workspaces WHERE id = ?").run(workspaceId);
     db.exec("COMMIT");
   } catch (error) {

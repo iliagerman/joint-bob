@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
+import { recordSignedPeerSeen } from './cluster-peer-endpoints.js';
 import { pinnedClusterPublicKey, signClusterMessage, verifyClusterMessage } from "./cluster-identity.js";
 
 export class ClusterProtocolError extends Error { readonly statusCode = 401; }
@@ -138,5 +139,6 @@ export function verifyClusterRequest(
   const publicKey = pinnedClusterPublicKey(db, envelope.senderNodeId);
   if (!publicKey || !verifyClusterMessage(publicKey, "http-request", signaturePayload(envelope), signature)) throw invalid();
   consumeNonce(db, envelope.senderNodeId, envelope.nonce, now);
+  recordSignedPeerSeen(db,envelope.senderNodeId,new Date(now).toISOString());
   return envelope.senderNodeId;
 }

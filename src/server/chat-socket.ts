@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
 import { authSessionEvents, sessionCookieName, sessionForId } from "../auth.js";
-import { getClusterMachineToken, getClusterNode, getClusterPeer } from "../cluster.js";
+import { getClusterMachineToken, getClusterNode } from "../cluster.js";
+import { getRuntimePeer as getClusterPeer, runtimeSocketHeaders, signedSocketPeer, trackRuntimeSocket } from "./runtime-peers.js";
+import { selectiveSharingActive } from "../cluster-v2-mode.js";
+import { clusterPeerMayAccessProject } from "./cluster-helpers.js";
 import { type ConversationEngine, getConversationOwnership } from "../conversation-ownership.js";
 import { ensureConversationRecord, getConversationRecord, parseConversationDraftPath } from "../conversation-records.js";
 import { findHarnessSession, harnessForSessionPath, listHarnesses, listHarnessSessions } from "../harnesses.js";
@@ -59,8 +62,14 @@ webSocketServer.on("connection", async (socket, request) => {
   const machineBearer = /^Bearer\s+(.+)$/i.exec(authorization)?.[1];
   const url = new URL(request.url ?? "/", `http://${host || "localhost"}`);
   const browserMode = url.searchParams.get("mode");
-  const browserMachineId = machineBearer && browserMode === "browser" ? await machineCredentialNodeId(machineBearer) : undefined;
-  const machineAuthenticated = Boolean(browserMachineId || (machineBearer && machineTokenMatches(machineBearer, await getClusterMachineToken())));
+  const selective=await selectiveSharingActive();
+  let signedPeer:string|undefined;
+  if(selective&&authorization){
+    try{signedPeer=await signedSocketPeer(url.pathname+url.search,authorization);}
+    catch{socket.close(1008,'Unauthorized');return;}
+  }
+  const browserMachineId = signedPeer ?? (!selective&&machineBearer&&browserMode==='browser'?await machineCredentialNodeId(machineBearer):undefined);
+  const machineAuthenticated = Boolean(signedPeer || (!selective&&(browserMachineId || (machineBearer && machineTokenMatches(machineBearer, await getClusterMachineToken())))));
   const origin = request.headers.origin;
   const cookiePrefix = `${sessionCookieName}=`;
   const session = sessionForId(request.headers.cookie?.split(";").map((entry) => entry.trim()).find((entry) => entry.startsWith(cookiePrefix))?.slice(cookiePrefix.length));
@@ -92,6 +101,10 @@ webSocketServer.on("connection", async (socket, request) => {
   if (!project) {
     socket.close(1008, "Project not found");
     return;
+  }
+  if(signedPeer){
+    if(signedPeer!==(await getClusterNode()).id&&!await clusterPeerMayAccessProject(signedPeer,project.id)){socket.close(1008,'Project is not shared with this node');return;}
+    trackRuntimeSocket(socket,signedPeer,project.id);
   }
   const taskIdResult = socketTaskIdSchema.safeParse(url.searchParams.get("taskId"));
   if (url.searchParams.has("taskId") && !taskIdResult.success) {
@@ -146,7 +159,7 @@ webSocketServer.on("connection", async (socket, request) => {
     if (requestedSessionId) ownerUrl.searchParams.set("sessionId", requestedSessionId);
     // A terminal socket must stay a terminal socket on the owner, not become a session.
     if (url.searchParams.get("mode") === "terminal") ownerUrl.searchParams.set("mode", "terminal");
-    proxySocket(socket, new WebSocket(ownerUrl, { headers: { Authorization: `Bearer ${peer.token}` } }));
+    proxySocket(socket, new WebSocket(ownerUrl, { headers: await runtimeSocketHeaders(peer.id,ownerUrl,peer.token) }));
     return;
   }
   const requestedNodeId = url.searchParams.get("nodeId");
@@ -173,7 +186,7 @@ webSocketServer.on("connection", async (socket, request) => {
       }
       ownerUrl.searchParams.delete("nodeId");
       ownerUrl.searchParams.set("nodeSession", "1");
-      proxySocket(socket, new WebSocket(ownerUrl, { headers: { Authorization: `Bearer ${peer.token}` } }));
+      proxySocket(socket, new WebSocket(ownerUrl, { headers: await runtimeSocketHeaders(peer.id,ownerUrl,peer.token) }));
       return;
     }
   }

@@ -152,12 +152,11 @@ function applyAssignments(handle: DatabaseSync, accountId: string, payload: Secr
 /** Rebuilds the outbox from the accounts that are marked to replicate right now. An account
     switched back to node-local has its queued events removed, so it can no longer leave. */
 function refreshOutbox(handle: DatabaseSync, nodeId: string): void {
-  const local = handle.prepare("SELECT id FROM secret_accounts WHERE replicate = 0").all() as unknown as Array<{ id: string }>;
-  for (const account of local) {
-    handle.prepare("DELETE FROM secret_credential_deliveries WHERE event_id IN (SELECT event_id FROM secret_credential_events WHERE entity_key = ?)").run(account.id);
-    handle.prepare("DELETE FROM secret_credential_events WHERE entity_key = ?").run(account.id);
-  }
-  const replicating = handle.prepare("SELECT id, label, provider, variables_encrypted, updated_at, origin_node_id FROM secret_accounts WHERE replicate = 1").all() as unknown as Array<{ id: string; label: string; provider: SecretProvider; variables_encrypted: string; updated_at: string; origin_node_id: string }>;
+  const obsolete = `SELECT e.event_id FROM secret_credential_events e LEFT JOIN secret_accounts a ON a.id=e.entity_key
+    WHERE a.id IS NULL OR a.replicate=0 OR a.website_origin IS NOT NULL OR a.provider='website' OR a.project_id IS NOT NULL OR e.updated_at<>a.updated_at`;
+  handle.prepare(`DELETE FROM secret_credential_deliveries WHERE event_id IN (${obsolete})`).run();
+  handle.prepare(`DELETE FROM secret_credential_events WHERE event_id IN (${obsolete})`).run();
+  const replicating = handle.prepare("SELECT id, label, provider, variables_encrypted, updated_at, origin_node_id FROM secret_accounts WHERE replicate = 1 AND website_origin IS NULL AND provider<>'website' AND project_id IS NULL").all() as unknown as Array<{ id: string; label: string; provider: SecretProvider; variables_encrypted: string; updated_at: string; origin_node_id: string }>;
   for (const account of replicating) {
     const originNodeId = account.origin_node_id || nodeId;
     if (!account.origin_node_id) handle.prepare("UPDATE secret_accounts SET origin_node_id = ? WHERE id = ?").run(nodeId, account.id);
@@ -176,7 +175,7 @@ function refreshOutbox(handle: DatabaseSync, nodeId: string): void {
 
 /** Enrols every replicating account for delivery to `peerIds` and clears any retry backoff.
     Nothing is ever enrolled automatically: credentials stay on this node until asked for. */
-export async function enqueueSecretCredentialSync(peerIds: string[], actorId?: string): Promise<number> {
+export async function enqueueSecretCredentialSync(peerIds: string[], actorId?: string, localOnly = false): Promise<number> {
   const local = await getClusterNode();
   const handle = db();
   const at = new Date().toISOString();
@@ -185,7 +184,7 @@ export async function enqueueSecretCredentialSync(peerIds: string[], actorId?: s
     refreshOutbox(handle, local.id);
     let enrolled = 0;
     for (const peerId of peerIds) {
-      enrolled += Number(handle.prepare("INSERT OR IGNORE INTO secret_credential_deliveries (event_id, peer_id, attempts, next_attempt_at, delivered_at, last_error) SELECT event_id, ?, 0, ?, NULL, NULL FROM secret_credential_events").run(peerId, at).changes);
+      enrolled += Number(handle.prepare("INSERT OR IGNORE INTO secret_credential_deliveries (event_id, peer_id, attempts, next_attempt_at, delivered_at, last_error) SELECT event_id, ?, 0, ?, NULL, NULL FROM secret_credential_events WHERE (?=0 OR origin_node_id=?)").run(peerId, at, localOnly ? 1 : 0, local.id).changes);
       handle.prepare("UPDATE secret_credential_deliveries SET attempts = 0, next_attempt_at = ?, last_error = NULL WHERE peer_id = ? AND delivered_at IS NULL").run(at, peerId);
     }
     appendAuditEvent(handle, { eventType: "secrets.credentials.sync", actorType: actorId ? "user" : "system", actorId, entityType: "secrets.credentials", entityId: "sync", details: { peers: peerIds.length, enrolled } });

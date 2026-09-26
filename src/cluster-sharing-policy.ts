@@ -84,6 +84,7 @@ export function ensureClusterSharingPolicySchema(db: DatabaseSync): void {
   db.exec(`CREATE TABLE IF NOT EXISTS sharing_clusters(id TEXT PRIMARY KEY, name TEXT NOT NULL, original_node_id TEXT NOT NULL, manager_node_id TEXT, manager_epoch INTEGER NOT NULL CHECK(manager_epoch>0), next_join_sequence INTEGER NOT NULL CHECK(next_join_sequence>0), closed INTEGER NOT NULL CHECK(closed IN (0,1)), CHECK((closed=0 AND manager_node_id IS NOT NULL) OR (closed=1 AND manager_node_id IS NULL)));
 CREATE TABLE IF NOT EXISTS sharing_memberships(cluster_id TEXT NOT NULL REFERENCES sharing_clusters(id), node_id TEXT NOT NULL, auto_share_projects INTEGER NOT NULL DEFAULT 0 CHECK(auto_share_projects IN (0,1)), join_sequence INTEGER NOT NULL CHECK(join_sequence>0), PRIMARY KEY(cluster_id,node_id), UNIQUE(cluster_id,join_sequence));
 CREATE TABLE IF NOT EXISTS sharing_manager_transfers(cluster_id TEXT NOT NULL REFERENCES sharing_clusters(id), transfer_id TEXT NOT NULL, from_node_id TEXT NOT NULL, to_node_id TEXT NOT NULL, expected_epoch INTEGER NOT NULL CHECK(expected_epoch>0), status TEXT NOT NULL CHECK(status IN ('prepared','accepted','committed')), PRIMARY KEY(cluster_id,transfer_id), UNIQUE(cluster_id,expected_epoch));
+CREATE TABLE IF NOT EXISTS sharing_explicit_project_selections(cluster_id TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS sharing_resource_owners(kind TEXT NOT NULL CHECK(kind IN ('project','ticket','secret')), resource_id TEXT NOT NULL, owner_node_id TEXT NOT NULL, project_id TEXT, PRIMARY KEY(kind,resource_id), CHECK((kind='ticket' AND project_id IS NOT NULL AND length(project_id)>0) OR (kind<>'ticket' AND project_id IS NULL)));
 CREATE TABLE IF NOT EXISTS sharing_resource_shares(kind TEXT NOT NULL, resource_id TEXT NOT NULL, cluster_id TEXT NOT NULL REFERENCES sharing_clusters(id), project_id TEXT NOT NULL DEFAULT '', PRIMARY KEY(kind,resource_id,cluster_id,project_id), FOREIGN KEY(kind,resource_id) REFERENCES sharing_resource_owners(kind,resource_id));
 CREATE TABLE IF NOT EXISTS sharing_twins(left_node_id TEXT NOT NULL, right_node_id TEXT NOT NULL, PRIMARY KEY(left_node_id,right_node_id), CHECK(left_node_id < right_node_id));
@@ -229,7 +230,8 @@ export function registerOwnedResource(db: DatabaseSync, resource: OwnedResource,
     }
     db.prepare("INSERT INTO sharing_resource_owners(kind,resource_id,owner_node_id,project_id) VALUES (?,?,?,?)").run(resource.kind, resource.id, resource.ownerNodeId, projectId);
     if (resource.kind === "project" && resource.ownerNodeId === localNodeId) db.prepare(`INSERT INTO sharing_resource_shares(kind,resource_id,cluster_id,project_id)
-      SELECT 'project', ?, cluster_id, '' FROM sharing_memberships WHERE node_id=? AND auto_share_projects=1`).run(resource.id, resource.ownerNodeId);
+      SELECT 'project', ?, cluster_id, '' FROM sharing_memberships WHERE node_id=? AND auto_share_projects=1
+      AND cluster_id NOT IN (SELECT cluster_id FROM sharing_explicit_project_selections)`).run(resource.id, resource.ownerNodeId);
   });
 }
 

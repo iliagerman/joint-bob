@@ -708,14 +708,14 @@
             <div class="cluster-canvas" id="clusterCanvas" data-testid="cluster-canvas"></div>
             <div class="cluster-details" id="clusterDetails" data-testid="cluster-details"></div>
             <div class="cluster-inventory" id="clusterInventory" hidden></div>
+            <div class="cluster-sharing" id="clusterSharing" data-testid="cluster-sharing" hidden></div>
             <div class="cluster-create-row">
               <label>New cluster name<input id="clusterCreateNameInput" autocomplete="off" maxlength="80" data-testid="cluster-create-name-input" /></label>
               <button class="ghost" type="button" id="clusterCreateButton" data-testid="cluster-create-button">Create cluster</button>
             </div>
-            <label class="checkbox-row"><input type="checkbox" id="clusterAutoShareInput" data-testid="cluster-auto-share-input" /> Automatically share projects created in the future</label>
-            <p class="settings-hint">Existing projects are unchanged.</p>
+            <label class="checkbox-row" hidden><input type="checkbox" id="clusterAutoShareInput" name="autoShareProjects" data-testid="cluster-auto-share-input" /> Automatically share projects created in the future</label>
             <div class="github-group-actions">
-              <button class="ghost" type="button" id="clusterShareAllButton" data-testid="cluster-share-all-button">Share existing owned projects</button>
+              <button class="ghost" type="button" id="clusterShareAllButton" data-testid="cluster-share-all-button" hidden>Share existing owned projects</button>
               <button class="ghost danger" type="button" id="clusterLeaveButton" data-testid="cluster-leave-button" disabled>Leave selected cluster</button>
             </div>
           </fieldset>
@@ -738,7 +738,7 @@
             <label>
               Join link
               <div class="cluster-token-row">
-                <input id="clusterInviteLink" readonly aria-readonly="true" autocomplete="off" data-testid="cluster-invite-link-input" />
+                <input id="clusterInviteLink" name="clusterInvitation" spellcheck="false" readonly aria-readonly="true" autocomplete="off" data-testid="cluster-invite-link-input" />
                 <button class="ghost compact" id="copyClusterInviteButton" type="button" data-testid="cluster-invite-copy-button" disabled>Copy link</button>
               </div>
             </label>
@@ -748,7 +748,7 @@
             <p>Joining adds another membership. It does not leave current clusters or share projects automatically.</p>
             <label>
               One-time join link
-              <input id="clusterJoinLinkInput" type="url" autocomplete="off" placeholder="Paste a join link" data-testid="cluster-join-link-input" />
+              <input id="clusterJoinLinkInput" name="clusterJoinLink" spellcheck="false" type="url" autocomplete="off" placeholder="Paste a join link" data-testid="cluster-join-link-input" />
             </label>
             <button class="primary" type="button" id="clusterJoinButton" data-testid="cluster-join-button">Join cluster</button>
           </fieldset>

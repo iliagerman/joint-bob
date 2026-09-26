@@ -6,12 +6,19 @@ describes the infrastructure available and how to use it.
 ## Commands
 
 ```bash
-npm test          # full suite, no browser needed (~1 min)
+npm test          # full suite, including native Syncthing tests; no browser needed
 npm run test:ui   # browser journey against a seeded node (needs Chrome)
 npm run test:all  # both
 npm run typecheck
 npm run build
 ```
+
+Native sharing tests require `syncthing` on `PATH` (`brew install syncthing` on
+macOS, or `sudo apt-get install syncthing` on Ubuntu). The release workflow
+installs this dependency before testing. Tests launch their own instances with
+disposable configuration and data, loopback listeners, and discovery, relays,
+NAT traversal, and automatic upgrades disabled. They stop those instances on
+cleanup; they never use a running production Syncthing service.
 
 `npm run test:ui` points `HOME` at a throwaway directory, but `test/setup.mjs` pins
 `PLAYWRIGHT_BROWSERS_PATH` to the real cache before it does, so a downloaded Chromium

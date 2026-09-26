@@ -12,7 +12,7 @@ import { resolveLocalSessionPath } from "../session-paths.js";
 import { getSettings } from "../settings.js";
 import { canonicalProjectId, getProject, importProject, listProjects, listWorkspaces, projectAliasIds, registerProjectAliases } from "../store.js";
 import { assertSyncthingFolderReady, ensureSyncthingDevice, ensureSyncthingFolder, syncthingDeviceId, syncthingFolderStatuses, syncthingPathForFolderId } from "../syncthing.js";
-import { assertTaskWorkspaceReady, TaskWorkspaceError, taskWorkspaceKey, TICKET_WORKSPACE_FOLDER_ID, TICKET_WORKSPACE_FOLDER_LABEL } from "../task-workspaces.js";
+import { assertTaskWorkspaceReady, TaskWorkspaceError, taskWorkspaceKey, projectTicketSyncFolderId, TICKET_WORKSPACE_FOLDER_ID, TICKET_WORKSPACE_FOLDER_LABEL } from "../task-workspaces.js";
 import { listTasks } from "../tasks.js";
 import type { ProjectRecord, ProjectSyncStatus, TaskRecord } from "../types.js";
 import { validateTaskRepository } from "../worktrees.js";
@@ -20,6 +20,11 @@ import { sessionWatcher } from "./chat.js";
 import { sendError } from "./http-auth.js";
 import { relocateProjectWorkspace } from "./projects.js";
 import { flags } from "./state.js";
+import { runtimeFetch } from "./runtime-peers.js";
+import { selectiveSharingActive } from "../cluster-v2-mode.js";
+import { clusterV2Database } from "../cluster-v2-store.js";
+import { mayShareProject } from "./sharing-files.js";
+import { assertSharedTranscriptReady } from './shared-transcripts.js';
 
 interface PeerInventory {
   node: Awaited<ReturnType<typeof getClusterNode>>;
@@ -33,6 +38,10 @@ interface PeerInventory {
     selection, matched through aliases because each node may know the project under a
     different id. */
 export async function clusterPeerMayAccessProject(machineNodeId: string, projectId: string, grant?: string[]): Promise<boolean> {
+  if(await selectiveSharingActive()){
+    const id=await canonicalProjectId(projectId);
+    return Boolean(id&&mayShareProject(await clusterV2Database(),(await getClusterNode()).id,machineNodeId,id));
+  }
   const selection = grant ?? await clusterProjectGrantFor(machineNodeId);
   if (!selection) return true;
   if (selection.includes(projectId)) return true;
@@ -65,7 +74,7 @@ export async function machineProjectAccessGuard(request: Request, response: Resp
 
 export function publicClusterPeer(peer: ClusterPeer): Omit<ClusterPeer, "token"> & { tokenConfigured: boolean; online: boolean } {
   const { token, ...publicPeer } = peer;
-  return { ...publicPeer, tokenConfigured: Boolean(token), online: Boolean(peer.lastSeenAt && Date.now() - Date.parse(peer.lastSeenAt) <= 90_000) };
+  return { ...publicPeer, tokenConfigured: Boolean(token || peer.signedAuthentication), online: Boolean(peer.lastSeenAt && Date.now() - Date.parse(peer.lastSeenAt) <= 90_000) };
 }
 
 async function runtimeAvailable(engine: TaskRecord["engine"]): Promise<string[]> {
@@ -74,7 +83,7 @@ async function runtimeAvailable(engine: TaskRecord["engine"]): Promise<string[]>
 
 export async function abortPeerTaskHandoff(peer: ClusterPeer, handoffId: string): Promise<boolean> {
   try {
-    const response = await fetch(`${peer.url}/api/cluster/tasks/abort`, { method: "POST", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" }, body: JSON.stringify({ handoffId }), signal: AbortSignal.timeout(30_000) });
+    const response = await runtimeFetch(`${peer.url}/api/cluster/tasks/abort`, { method: "POST", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" }, body: JSON.stringify({ handoffId }), signal: AbortSignal.timeout(30_000) });
     if (response.ok) return true;
     console.warn(`Handoff abort failed: ${response.status}`);
   } catch (error) {
@@ -83,12 +92,16 @@ export async function abortPeerTaskHandoff(peer: ClusterPeer, handoffId: string)
   return false;
 }
 
-async function assertTaskSessionReady(sessionPath: string, syncStatusChecked = false): Promise<void> {
+async function assertTaskSessionReady(projectId:string, task:TaskRecord, syncStatusChecked = false): Promise<void> {
+  const sessionPath=task.sessionPath!;
   const session = resolveLocalSessionPath(sessionPath);
   const adapter = getHarness(session.engine);
   if (!adapter.paths.transcriptFile) throw new Error(`${adapter.label} conversation is not synchronized on this node`);
   try {
-    if (!syncStatusChecked) await assertSyncthingFolderReady(harnessSyncFolderForSessionPath(sessionPath).id, false);
+    if (!syncStatusChecked) {
+      if(await selectiveSharingActive())await assertSharedTranscriptReady(projectId,sessionPath,task.currentNodeId);
+      else await assertSyncthingFolderReady(harnessSyncFolderForSessionPath(sessionPath).id, false);
+    }
     const info = await lstat(adapter.paths.transcriptFile(session.path));
     if (!info.isFile() || info.isSymbolicLink()) throw new Error("Conversation is not a regular file");
   } catch {
@@ -98,11 +111,11 @@ async function assertTaskSessionReady(sessionPath: string, syncStatusChecked = f
 
 export async function assertTaskFilesReady(project: ProjectRecord, task: TaskRecord, syncStatusChecked = false): Promise<void> {
   if (task.worktreePath && !task.worktreeBranch) {
-    if (!syncStatusChecked) await assertSyncthingFolderReady(TICKET_WORKSPACE_FOLDER_ID);
+    if (!syncStatusChecked) await assertSyncthingFolderReady(await selectiveSharingActive()?projectTicketSyncFolderId(project.id):TICKET_WORKSPACE_FOLDER_ID);
     await assertTaskWorkspaceReady(taskWorkspaceKey(task.worktreePath, task.id), task.id);
   } else if (project.syncFolderId && !syncStatusChecked) await assertSyncthingFolderReady(project.syncFolderId);
   if (task.worktreeBranch) await validateTaskRepository(project.path);
-  if (task.sessionPath) await assertTaskSessionReady(task.sessionPath, syncStatusChecked);
+  if (task.sessionPath) await assertTaskSessionReady(project.id,task, syncStatusChecked);
 }
 
 export function taskConversationIdentity(task: TaskRecord): { engine: ConversationEngine; sessionId: string } | null {
@@ -143,15 +156,21 @@ export const peerTaskEligibilitySchema = z.object({
 
 async function taskSyncStatuses(project: ProjectRecord, task: TaskRecord): Promise<TaskSyncStatus[]> {
   const targets: Array<{ id: string; label: string }> = [];
-  if (task.worktreePath && !task.worktreeBranch) targets.push({ id: TICKET_WORKSPACE_FOLDER_ID, label: TICKET_WORKSPACE_FOLDER_LABEL });
+  const selective=await selectiveSharingActive();
+  if (task.worktreePath && !task.worktreeBranch) targets.push({ id: selective?projectTicketSyncFolderId(project.id):TICKET_WORKSPACE_FOLDER_ID, label: TICKET_WORKSPACE_FOLDER_LABEL });
   else if (project.syncFolderId) targets.push({ id: project.syncFolderId, label: project.name });
-  if (task.sessionPath) {
+  if (task.sessionPath&&!selective) {
     const folder = harnessSyncFolderForSessionPath(task.sessionPath);
     targets.push({ id: folder.id, label: folder.label });
   }
   const unique = targets.filter((target, index) => targets.findIndex(({ id }) => id === target.id) === index);
   const statuses = await syncthingFolderStatuses(unique.map((target) => target.id));
-  return unique.map((target) => ({ label: target.label, ...statuses[target.id] }));
+  const result=unique.map((target) => ({ label: target.label, ...statuses[target.id] }));
+  if(task.sessionPath&&selective){
+    try{await assertSharedTranscriptReady(project.id,task.sessionPath,task.currentNodeId);result.push({label:'Conversation transcript',state:'synced',remainingFiles:0,remainingBytes:0});}
+    catch(error){result.push({label:'Conversation transcript',state:'error',remainingFiles:1,remainingBytes:0,message:error instanceof Error?error.message:'Transcript unavailable'});}
+  }
+  return result;
 }
 
 interface TaskEligibility {
@@ -188,7 +207,7 @@ export async function taskHandoffEligibility(projectId: string, task: TaskRecord
 export async function peerTaskEligibilityEntry(peer: ClusterPeer, projectId: string, task: TaskRecord, source = false): Promise<TaskEligibilityEntry> {
   const node = publicClusterPeer(peer);
   try {
-    const remote = await fetch(`${peer.url}/api/cluster/tasks/eligibility`, {
+    const remote = await runtimeFetch(`${peer.url}/api/cluster/tasks/eligibility`, {
       method: "POST",
       headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
       body: JSON.stringify({ projectId, task, source }),

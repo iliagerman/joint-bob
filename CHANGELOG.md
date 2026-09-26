@@ -3,6 +3,18 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added Twins and Selected sharing controls for per-node and whole-workspace data synchronization with explicit consent.
+
+## 1.95.0 — 2026-09-26
+
+- Added per-node Twins and Selected sharing controls, explicit consent, Twin badges, live synchronization status, and retry actions.
+- Accepting a twin invitation now starts sharing automatically. Existing twins can enable sharing in place, preserving project IDs, local paths, and established ownership.
+- Enabled signed project, conversation, task, file, transcript, and eligible credential sharing without legacy bearer peers. Browser profiles, website credentials, and machine-private identities remain local.
+- Added whole-workspace selection with future-project enrollment and scope-aware revocation. Removing sharing preserves local project files.
+- Fixed scoped task handoff and credential transitions, and added native two-node transfer and browser coverage.
+
 ## 1.94.1 — 2026-09-25
 
 - Focus mode tap gestures now skip over the browser viewer, so taps inside the browser no longer trigger unwanted canvas actions.

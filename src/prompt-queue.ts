@@ -394,6 +394,8 @@ export function applyQueuedPromptEvent(db: DatabaseSync, event: ReplicationEvent
     db.prepare("INSERT INTO queued_prompt_settings VALUES (?, ?, ?) ON CONFLICT(queue_key) DO UPDATE SET sequence = excluded.sequence, settings = excluded.settings WHERE excluded.sequence > sequence").run(key, payload.sequence, JSON.stringify(payload.activeSettings));
     return;
   }
+  const identities = db.prepare("SELECT queue_key FROM queued_prompts WHERE id=? UNION SELECT queue_key FROM queued_prompt_tombstones WHERE id=?").all(payload.id,payload.id) as unknown as Array<{queue_key:string}>;
+  if (identities.some(row => row.queue_key.slice(0,row.queue_key.indexOf(':')) !== resolveProjectAlias(db,payload.projectId))) throw new Error("Prompt identity belongs to a different project");
   if (!payload.prompt) {
     db.prepare("DELETE FROM queued_prompts WHERE id = ?").run(payload.id);
     db.prepare("INSERT OR IGNORE INTO queued_prompt_tombstones VALUES (?, ?)").run(payload.id, key);

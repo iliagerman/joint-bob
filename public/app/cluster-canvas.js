@@ -35,7 +35,7 @@ function renderDetails(container, cluster, projects, localNodeId) {
   const memberHeading = document.createElement("h4"); memberHeading.textContent = `Members · ${cluster.members.length}`;
   const memberList = document.createElement("ol"); memberList.className = "cluster-detail-list";
   for (const member of [...cluster.members].sort((a, b) => a.joinSequence - b.joinSequence)) {
-    const item = document.createElement("li");
+    const item = document.createElement("li"); item.dataset.sharingNodeId = member.nodeId;
     const name = document.createElement("span"); name.textContent = member.name;
     const labels = document.createElement("small");
     const badges = [`admission ${member.joinSequence}`];

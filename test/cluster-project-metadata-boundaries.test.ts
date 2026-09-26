@@ -94,7 +94,8 @@ test("metadata capture reads native metadata and its revision from one SQLite sn
     const prior = sourceDb.prepare("SELECT revision FROM cluster_v2_project_metadata_versions WHERE owner_node_id=? AND project_id=?")
       .get(nodeA.nodeId, project.id) as { revision: number } | undefined;
     const revision = (prior?.revision ?? 0) + 1;
-    const payload = JSON.stringify({ name: "Concurrent", color: native.color, createdAt: native.created_at, updatedAt: native.updated_at });
+    const workspace = sourceDb.prepare('SELECT w.id,w.label FROM projects p JOIN workspaces w ON w.id=p.workspace_id WHERE p.id=?').get(project.id);
+    const payload = JSON.stringify({ name: "Concurrent", color: native.color, workspace, createdAt: native.created_at, updatedAt: native.updated_at });
     const originalExec = sourceDb.exec.bind(sourceDb);
     let injected = false;
     sourceDb.exec = ((sql: string) => {

@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { renderClusterSharing } from "./cluster-sharing.js";
 import { renderClusterCanvas } from "./cluster-canvas.js";
 import { elements } from "./elements.js";
 import { loadProjects } from "./project-selection.js";
@@ -57,6 +58,7 @@ function selectCluster(clusterId) {
   if (selectedClusterId !== clusterId) clearGeneratedLink();
   selectedClusterId = clusterId;
   syncControls();
+  void renderClusterSharing(selectedCluster(), panelState.localNodeId);
 }
 
 function renderPanel(inventory, clusterData, projects) {
@@ -72,6 +74,7 @@ function renderPanel(inventory, clusterData, projects) {
   elements.secretSyncButton.disabled = clusterData.mode === "selective";
   elements.secretSyncButton.title = clusterData.mode === "selective" ? "Legacy node-wide secret sync is unavailable with selective cluster memberships" : "";
   syncControls();
+  void renderClusterSharing(clusterData.migrationRequired ? null : selectedCluster(), panelState.localNodeId);
 }
 
 export async function loadClusterPanel(preferredClusterId = selectedClusterId) {

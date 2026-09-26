@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { readBackgroundTaskIdentity, readBackgroundTasks, readPersistedBackgroundTask, type TaskCursor } from "../background-tasks.js";
-import { getClusterMachineToken, getClusterNode, getClusterPeer, listClusterPeers } from "../cluster.js";
+import { getClusterMachineToken, getClusterNode } from "../cluster.js";
+import { getRuntimePeer as getClusterPeer, listRuntimePeers as listClusterPeers, runtimeFetch as fetch } from "./runtime-peers.js";
 import { resolveDataDirectory } from "../data-directory.js";
 import { getProject, projectAliasIds } from "../store.js";
 import { supervisorRequest } from "../../scripts/supervisor-client.mjs";

@@ -1,5 +1,8 @@
 import path from "node:path";
-import { getClusterNode, listClusterPeers } from "../../cluster.js";
+import { z } from 'zod';
+import { getClusterNode } from "../../cluster.js";
+import { listRuntimePeers as listClusterPeers, runtimeFetch } from "../runtime-peers.js";
+import { selectiveSharingActive } from "../../cluster-v2-mode.js";
 import { listHarnessCommands } from "../../commands.js";
 import { ensureManagedHome, managedProjectPath } from "../../managed-home.js";
 import { setProjectName, setSessionClassification, setSessionColor, setSessionDone, setSessionTitle } from "../../names.js";
@@ -11,7 +14,7 @@ import { addProject, getProject, listProjects, listWorkspaces, removeProject, re
 import { ensureSyncthingFolder, rescanSyncthingFolder } from "../../syncthing.js";
 import { listTasks, unmergedWorkspaceBlocksClose } from "../../tasks.js";
 import { sessionWatcher } from "../chat.js";
-import { conversationBelongsToDoneTask, fetchPeerInventory, mappedPathInsideHome } from "../cluster-helpers.js";
+import { clusterPeerMayAccessProject, conversationBelongsToDoneTask, fetchPeerInventory, mappedPathInsideHome } from "../cluster-helpers.js";
 import { sendError } from "../http-auth.js";
 import { assertProjectEditable, notifyPeersOfProjectInventory, projectsWithSharedNames, projectView, relocateProjectWorkspace } from "../projects.js";
 import { broadcastToAllClients, broadcastToProject } from "../realtime.js";
@@ -279,6 +282,15 @@ app.delete("/api/projects/:projectId", async (request, response, next) => {
   }
 });
 
+app.get('/api/cluster/projects/presence',async(request,response,next)=>{
+  try{
+    if(!response.locals.machineAuth){sendError(response,401,'Unauthorized');return;}
+    const projectId=z.string().min(1).parse(request.query.projectId);
+    if(!await clusterPeerMayAccessProject(response.locals.machineNodeId,projectId)){sendError(response,403,'Project is not shared with this node');return;}
+    response.json({mapped:Boolean(await getProject(projectId))});
+  }catch(error){next(error);}
+});
+
 app.get("/api/projects/:projectId/session-nodes", async (request, response, next) => {
   try {
     const project = await getProject(request.params.projectId);
@@ -286,6 +298,13 @@ app.get("/api/projects/:projectId/session-nodes", async (request, response, next
     const local = await getClusterNode();
     const peerNodes = await Promise.all((await listClusterPeers()).map(async (peer) => {
       try {
+        if(await selectiveSharingActive()){
+          if(!await clusterPeerMayAccessProject(peer.id,project.id))return {id:peer.id,name:peer.name,local:false,online:false,mapped:false};
+          const reply=await runtimeFetch(`${peer.url}/api/cluster/projects/presence?projectId=${encodeURIComponent(project.id)}`,{signal:AbortSignal.timeout(3000)});
+          if(!reply.ok)throw new Error('Project presence unavailable');
+          const presence=await reply.json() as {mapped:boolean};
+          return {id:peer.id,name:peer.name,local:false,online:true,mapped:presence.mapped};
+        }
         const inventory = await fetchPeerInventory(peer, 3_000);
         const mapped = inventory.projects.some((entry) => entry.project.id === project.id || entry.aliases?.includes(project.id) || Boolean(project.syncFolderId && entry.project.syncFolderId === project.syncFolderId));
         return { id: peer.id, name: peer.name, local: false, online: true, mapped };

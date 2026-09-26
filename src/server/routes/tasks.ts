@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { getClusterNode, listClusterPeers, getClusterMachineToken } from "../../cluster.js";
+import { getClusterNode, getClusterMachineToken } from "../../cluster.js";
+import { listRuntimePeers as listClusterPeers, runtimeFetch as fetch } from "../runtime-peers.js";
 import { getProject } from "../../store.js";
 import { ensureTicketWorkspaceFolder } from "../../syncthing.js";
 import { createTaskWorkspace, removeTaskWorkspace, TaskWorkspaceError, taskWorkspaceKey, TICKET_MERGE_DIR } from "../../task-workspaces.js";
@@ -40,7 +41,7 @@ app.get("/api/projects/:projectId/tasks/:taskId/eligibility", async (request, re
     const task = (await listTasks(project.id)).find((candidate) => candidate.id === request.params.taskId);
     if (!task) { sendError(response, 404, "Task not found"); return; }
     const local = await getClusterNode();
-    const peers = await listClusterPeers();
+    const peers = await listClusterPeers(project.id);
     const nodes: TaskEligibilityEntry[] = [];
     const localEligibility = task.currentNodeId === local.id ? await taskHandoffEligibility(project.id, task, false) : undefined;
     if (task.currentNodeId !== local.id) {
@@ -323,7 +324,7 @@ app.get("/api/projects/:projectId/tasks/:taskId/merge-conflicts", async (request
   } catch (error) { next(error); }
 });
 
-app.get("/api/cluster/tasks/merge-conflicts", async (request, response, next) => {
+app.get(["/api/cluster/tasks/merge-conflicts", "/api/cluster/v2/runtime/tasks/merge-conflicts"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const project = await getProject(String(request.query.projectId ?? ""));
@@ -393,7 +394,7 @@ app.post("/api/projects/:projectId/tasks/:taskId/discard", async (request, respo
 });
 
 // Cluster mirror for ticket merge actions; routed to the task owner by the public routes.
-app.post("/api/cluster/tasks/merge-action", async (request, response, next) => {
+app.post(["/api/cluster/tasks/merge-action", "/api/cluster/v2/runtime/tasks/merge-action"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const body = z.object({ action: z.enum(["merge", "merge-resume", "merge-restart", "merge-resolve", "discard"]), projectId: z.string(), taskId: z.string(), payload: mergeActionSchema.optional() }).parse(request.body);

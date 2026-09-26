@@ -15,6 +15,7 @@ import { clusterV2Database } from "../cluster-v2-store.js";
 import { activateSelectiveSharing, assertSelectiveSharingCanActivate, ClusterV2HttpError, selectiveSharingActive } from "../cluster-v2-mode.js";
 import { localMembershipDescriptor, mapV2Error } from "./cluster-v2.js";
 import { clusterRequestRawBody, isClusterOriginUrl } from "./http-auth.js";
+import { flushTwinSharing, scheduleTwinSharing } from './twin-sharing.js';
 
 const uuid = z.string().uuid().regex(/^[0-9a-f-]+$/);
 const endpointSchema = z.object({ nodeId: uuid, name: z.string().trim().min(1).max(80), url: z.string().transform((value, context) => {
@@ -30,7 +31,9 @@ export function ensureTwinHttpSchema(db: DatabaseSync): void {
     relationship_id TEXT PRIMARY KEY,endpoint TEXT NOT NULL,signature TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS cluster_v2_twin_deliveries(
     relationship_id TEXT NOT NULL,peer_id TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('certificate','revocation')),
-    payload TEXT NOT NULL,PRIMARY KEY(relationship_id,peer_id,kind))`);
+    payload TEXT NOT NULL,PRIMARY KEY(relationship_id,peer_id,kind));
+  CREATE TABLE IF NOT EXISTS cluster_v2_twin_sharing(relationship_id TEXT PRIMARY KEY,owner_node_id TEXT NOT NULL,error TEXT);
+  CREATE TABLE IF NOT EXISTS cluster_v2_twin_sharing_jobs(relationship_id TEXT PRIMARY KEY,error TEXT)`);
 }
 
 function savepoint<T>(db: DatabaseSync, name: string, action: () => T): T {
@@ -104,7 +107,8 @@ export async function acceptTwinHttpLink(link: unknown): Promise<{relationshipId
     || certificate.acceptorSignature !== acceptance.acceptorSignature) {
     throw new ClusterV2HttpError(503, "Twin peer returned an unrelated certificate");
   }
-  savepoint(db, "twin_http_activate", () => { applyTwinCertificate(db, local.nodeId, certificate); bootstrapOwnedTwinPolicies(db, local.nodeId); });
+  savepoint(db, "twin_http_activate", () => { applyTwinCertificate(db, local.nodeId, certificate); bootstrapOwnedTwinPolicies(db, local.nodeId); scheduleTwinSharing(db, certificate.body.relationshipId); });
+  await flushTwinSharing(certificate.body.relationshipId);
   return { relationshipId: acceptance.body.relationshipId, status:"active" };
 }
 
@@ -123,7 +127,7 @@ export async function confirmTwinHttp(request: Request, response: Response, next
       recordPeerEndpoint(db,{kind:"twin",id:result.body.relationshipId},endpointSchema.parse(JSON.parse(proof.endpoint)));
       recordPeerEndpoint(db,{kind:"twin",id:result.body.relationshipId},payload.acceptor);
       queueDelivery(db,result.body.relationshipId,payload.acceptor.nodeId,"certificate",result);
-      bootstrapOwnedTwinPolicies(db,local.id); return result;
+      bootstrapOwnedTwinPolicies(db,local.id); scheduleTwinSharing(db,result.body.relationshipId); return result;
     });
     response.status(201).json({ certificate });
   } catch (error) { mapTwinError(error, response, next); }
@@ -143,6 +147,7 @@ export function applyRemoteTwinRevocation(db:DatabaseSync,localNodeId:string,rev
   savepoint(db,"twin_http_remote_revoke",()=>{applyTwinRevocation(db,localNodeId,revocation);cleanupRevokedTwin(db,revocation.relationshipId);});
 }
 function cleanupRevokedTwin(db:DatabaseSync,relationshipId:string):void {
+  db.prepare('DELETE FROM cluster_v2_twin_sharing_jobs WHERE relationship_id=?').run(relationshipId);
   db.prepare("UPDATE cluster_v2_resource_contexts SET active=0,effective_shares='[]' WHERE context_kind='twin' AND context_id=?").run(relationshipId);
   db.prepare("DELETE FROM cluster_v2_resource_deliveries WHERE context_kind='twin' AND context_id=? AND json_extract(statement,'$.body.operation')='upsert'").run(relationshipId);
   db.prepare("DELETE FROM cluster_v2_twin_deliveries WHERE relationship_id=? AND kind='certificate'").run(relationshipId);

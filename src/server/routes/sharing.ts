@@ -8,6 +8,8 @@ import { clusterV2Database } from "../../cluster-v2-store.js";
 import { canonicalProjectId, getProject } from "../../store.js";
 import { sendError } from "../http-auth.js";
 import { app } from "../state.js";
+import { disconnectRevokedRuntimeSockets } from '../runtime-peers.js';
+import { clusterSharingView, updateClusterSelection } from "../../selected-sharing.js";
 
 const uuid = z.string().uuid().regex(/^[0-9a-f-]+$/);
 const updateSchema = z.object({
@@ -63,6 +65,20 @@ async function policyProject(request: Request, response: Response) {
   if (!exists) { sendError(response, 409, "Project ownership requires adoption"); return undefined; }
   return { id, db, local: await getClusterNode() };
 }
+
+app.get("/api/clusters/:clusterId/sharing", route(async (request, response) => {
+  await requireActive(response);
+  response.json(clusterSharingView(await clusterV2Database(), (await getClusterNode()).id, uuid.parse(request.params.clusterId)));
+}));
+
+app.put("/api/clusters/:clusterId/sharing", route(async (request, response) => {
+  await requireActive(response);
+  const selection = z.object({ projectIds: z.array(z.string().min(1).max(300)).max(10000),
+    workspaceIds: z.array(z.string().min(1).max(300)).max(10000), confirmOwnedData: z.literal(true) }).strict().parse(request.body);
+  const result=updateClusterSelection(await clusterV2Database(), (await getClusterNode()).id,
+    uuid.parse(request.params.clusterId), selection.projectIds, selection.workspaceIds);
+  await disconnectRevokedRuntimeSockets();response.json(result);
+}));
 
 app.get("/api/sharing/project/:resourceId", route(async (request, response) => {
   const context = await policyProject(request, response);

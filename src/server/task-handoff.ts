@@ -1,6 +1,7 @@
 import type { Response } from "express";
 import { z } from "zod";
-import { type ClusterPeer, getClusterNode, getClusterPeer } from "../cluster.js";
+import { type ClusterPeer, getClusterNode } from "../cluster.js";
+import { getRuntimePeer as getClusterPeer, runtimeFetch as fetch } from "./runtime-peers.js";
 import { getProject } from "../store.js";
 import { removeTaskWorkspace, TaskWorkspaceError, taskWorkspaceKey } from "../task-workspaces.js";
 import { abortOutgoingTaskHandoff, acknowledgeOutgoingTaskHandoff, assertTaskCanBeDeleted, beginOutgoingTaskHandoff, completeTaskHandoff, deleteTask, getTaskHandoff, listTasks, listUnfinishedOutgoingTaskHandoffs, markOutgoingTaskHandoff, type TaskHandoffRecord, unmergedWorkspaceBlocksClose, updateTask } from "../tasks.js";

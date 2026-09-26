@@ -233,6 +233,10 @@ function payloadFor(event: ReplicationEvent): ConversationRecordPayload {
 export function applyConversationRecordEvent(db: DatabaseSync, event: ReplicationEvent): void {
   const payload = payloadFor(event);
   const projectId = resolveProjectAlias(db, payload.projectId);
+  const identities = db.prepare(`SELECT project_id FROM conversation_records WHERE engine=? AND session_id=?
+    UNION SELECT project_id FROM conversation_record_tombstones WHERE engine=? AND session_id=?`)
+    .all(payload.engine,payload.sessionId,payload.engine,payload.sessionId) as unknown as Array<{project_id:string}>;
+  if(identities.some(row=>resolveProjectAlias(db,row.project_id)!==projectId)) throw new Error("Conversation identity belongs to a different project");
   const current = db.prepare("SELECT updated_at, origin_node_id FROM conversation_records WHERE project_id = ? AND engine = ? AND session_id = ? UNION ALL SELECT updated_at, origin_node_id FROM conversation_record_tombstones WHERE project_id = ? AND engine = ? AND session_id = ? ORDER BY updated_at DESC, origin_node_id DESC LIMIT 1").get(projectId, payload.engine, payload.sessionId, projectId, payload.engine, payload.sessionId) as { updated_at: string; origin_node_id: string } | undefined;
   if (current && `${payload.updatedAt}\n${payload.originNodeId}` <= `${current.updated_at}\n${current.origin_node_id}`) {
     // Scheduling is historical provenance. Concurrent transcript discovery must

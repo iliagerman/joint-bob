@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { getClusterMachineToken, getClusterNode, getClusterPeer, listClusterPeers } from "../../cluster.js";
+import { getClusterMachineToken, getClusterNode } from "../../cluster.js";
+import { getRuntimePeer as getClusterPeer, listRuntimePeers as listClusterPeers, runtimeFetch as fetch } from "../runtime-peers.js";
 import { cronInputSchema, cronRunSchema, cronStore, type CronTask } from "../../cron.js";
 import { ensureConversationRecord, markCronConversation } from "../../conversation-records.js";
 import { broadcastToProject } from "../realtime.js";

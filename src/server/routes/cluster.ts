@@ -14,6 +14,7 @@ import { updateInventoryView } from "../../updater.js";
 import { TICKET_WORKSPACE_FOLDER_ID } from "../../task-workspaces.js";
 import { abortPreparedTaskHandoff, acknowledgeIncomingTaskHandoff, commitPreparedTaskHandoff, getTaskHandoff, isTaskHandoffRejected, listTasks, prepareTaskHandoff, rejectTaskHandoff, reserveTaskHandoff, taskHandoffDeletion } from "../../tasks.js";
 import { z } from "zod";
+import { getRuntimePeer, listRuntimePeers } from '../runtime-peers.js';
 import type { HarnessId, TaskRecord } from "../../types.js";
 import { type PreparedTaskWorktree, prepareTaskWorktreeFromBundle, removePreparedTaskWorktree } from "../../worktrees.js";
 import { assertTaskFilesReady, projectWithLocalLocation, publicClusterPeer, syncPairedProjects, taskConversationIdentity, taskHandoffEligibility } from "../cluster-helpers.js";
@@ -22,6 +23,8 @@ import { flushMembershipOutbox } from "../maintenance.js";
 import { broadcastReplicationInvalidations, broadcastSessionsChangedToAllProjects, broadcastToProject } from "../realtime.js";
 import { clusterInvitationCreateSchema, clusterInvitationRedemptionSchema, clusterJoinSchema, clusterMembershipLeaveSchema, clusterMembershipMemberSchema, clusterMembershipSnapshotSchema, clusterNodeSchema, clusterPeerSchema, preparedTaskSchema, pushSubscriptionBatchSchema, replicationBatchSchema, runtimeSnapshotSchema, secretCredentialBatchSchema, taskEligibilitySchema, taskHandoffActionSchema, taskHandoffStatusSchema } from "../schemas.js";
 import { app } from "../state.js";
+import { clusterV2Database } from "../../cluster-v2-store.js";
+import { mayReplicateEvent, replicationPeers } from "../replication-v2.js";
 
 app.post("/api/cluster/invitations", async (request, response, next) => {
   try {
@@ -285,7 +288,7 @@ app.get("/api/cluster/inventory", async (_request, response, next) => {
 
 app.get("/api/cluster/peers", async (_request, response, next) => {
   try {
-    response.json({ peers: (await listClusterPeers()).map(publicClusterPeer) });
+    response.json({ peers: (await listRuntimePeers()).map(publicClusterPeer) });
   } catch (error) {
     next(error);
   }
@@ -388,13 +391,21 @@ app.post("/api/cluster/membership/leave", async (request, response, next) => {
   }
 });
 
-app.post("/api/cluster/events", async (request, response, next) => {
+app.post(["/api/cluster/events", "/api/cluster/v2/events"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) {
       sendError(response, 401, "Unauthorized");
       return;
     }
     const batch = replicationBatchSchema.parse(request.body) as ReplicationBatch;
+    if (response.locals.machineProtocol === 2) {
+      const db = await clusterV2Database(), local = await getClusterNode(), sender = response.locals.machineNodeId as string;
+      if (!replicationPeers(db, local.id).some((peer) => peer.nodeId === sender)
+        || batch.events.some((event) => event.originNodeId !== sender || !mayReplicateEvent(db, local.id, sender, event))) {
+        sendError(response, 403, "Replication event is outside the authenticated peer's sharing scope");
+        return;
+      }
+    }
     const received = await receiveReplicationBatch(batch);
     broadcastReplicationInvalidations(batch.events.filter((event) => received.includes(event.id)));
     response.json({ received });
@@ -404,7 +415,7 @@ app.post("/api/cluster/events", async (request, response, next) => {
 });
 
 /** A peer's current conversation running set; see conversation-runtime.ts for the lease rules. */
-app.post("/api/cluster/sessions/runtime-snapshot", async (request, response, next) => {
+app.post(["/api/cluster/sessions/runtime-snapshot", "/api/cluster/v2/runtime/sessions/runtime-snapshot"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) {
       sendError(response, 401, "Unauthorized");
@@ -458,7 +469,7 @@ app.post("/api/cluster/push/events", async (request, response, next) => {
   } catch (error) { next(error); }
 });
 
-app.post("/api/cluster/tasks/eligibility", async (request, response, next) => {
+app.post(["/api/cluster/tasks/eligibility", "/api/cluster/v2/runtime/tasks/eligibility"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const payload = taskEligibilitySchema.parse(request.body);
@@ -467,7 +478,7 @@ app.post("/api/cluster/tasks/eligibility", async (request, response, next) => {
   } catch (error) { next(error); }
 });
 
-app.post("/api/cluster/tasks/status", async (request, response, next) => {
+app.post(["/api/cluster/tasks/status", "/api/cluster/v2/runtime/tasks/status"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const payload = taskHandoffStatusSchema.parse(request.body);
@@ -477,13 +488,14 @@ app.post("/api/cluster/tasks/status", async (request, response, next) => {
   } catch (error) { next(error); }
 });
 
-app.post("/api/cluster/tasks/prepare", async (request, response, next) => {
+app.post(["/api/cluster/tasks/prepare", "/api/cluster/v2/runtime/tasks/prepare"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const payload = preparedTaskSchema.parse(request.body);
     if (await isTaskHandoffRejected(payload.handoffId)) { sendError(response, 409, `Handoff ${payload.handoffId} is rejected`); return; }
     const task = payload.task as TaskRecord;
-    const source = await getClusterPeer(task.currentNodeId);
+    if(response.locals.machineProtocol===2&&task.currentNodeId!==response.locals.machineNodeId){sendError(response,403,'Task owner does not match authenticated peer');return;}
+    const source = await getRuntimePeer(task.currentNodeId);
     if (!source) { sendError(response, 403, "Task owner is not a known peer"); return; }
     const eligibility = await taskHandoffEligibility(payload.projectId, task);
     if (eligibility.reasons.length) { sendError(response, 409, eligibility.reasons.join("; ")); return; }
@@ -516,7 +528,7 @@ app.post("/api/cluster/tasks/prepare", async (request, response, next) => {
   } catch (error) { next(error); }
 });
 
-app.post("/api/cluster/tasks/commit", async (request, response, next) => {
+app.post(["/api/cluster/tasks/commit", "/api/cluster/v2/runtime/tasks/commit"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const payload = taskHandoffActionSchema.parse(request.body);
@@ -534,7 +546,7 @@ app.post("/api/cluster/tasks/commit", async (request, response, next) => {
   } catch (error) { next(error); }
 });
 
-app.post("/api/cluster/tasks/settle", async (request, response, next) => {
+app.post(["/api/cluster/tasks/settle", "/api/cluster/v2/runtime/tasks/settle"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const payload = taskHandoffActionSchema.parse(request.body);
@@ -544,7 +556,7 @@ app.post("/api/cluster/tasks/settle", async (request, response, next) => {
   } catch (error) { next(error); }
 });
 
-app.post("/api/cluster/tasks/abort", async (request, response, next) => {
+app.post(["/api/cluster/tasks/abort", "/api/cluster/v2/runtime/tasks/abort"], async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
     const payload = taskHandoffActionSchema.parse(request.body);

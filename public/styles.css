@@ -2825,6 +2825,14 @@ body.file-view { overflow: auto; }
 .cluster-island line { stroke: var(--line); stroke-width: 2; }
 .cluster-island circle { fill: var(--panel); stroke: var(--muted); stroke-width: 2; }
 .cluster-island circle[data-manager="true"] { fill: var(--accent); stroke: var(--accent); }
+.cluster-sharing, .cluster-sharing > div:last-child { display: grid; gap: 12px; min-width: 0; }
+.cluster-sharing { border-top: 1px solid var(--line); padding-top: 14px; }
+.cluster-sharing p { margin: 0; overflow-wrap: anywhere; }
+.cluster-sharing fieldset { min-width: 0; display: grid; gap: 10px; border: 1px solid var(--line); border-radius: var(--radius-ctl); }
+.cluster-sharing button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.twin-badge { display: inline-block; width: fit-content; padding: 2px 8px; border: 1px solid var(--accent); border-radius: var(--radius-ctl); color: var(--accent); font-size: 12px; font-weight: 600; }
+.twin-sync-state { display: block; }
+.twin-sync-state[data-state="Error"] { color: var(--danger); }
 .cluster-details { min-width: 0; padding: 14px 0 2px; }
 .cluster-details h3, .cluster-details h4 { margin: 0 0 8px; overflow-wrap: anywhere; }
 .cluster-details h4 { margin-top: 14px; color: var(--muted); font: 11px/1.4 var(--mono); text-transform: uppercase; }

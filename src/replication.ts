@@ -104,8 +104,46 @@ function eventWithinGrant(db: DatabaseSync, event: ReplicationEvent, grant: stri
   return grant.includes(projectId) || grant.includes(resolveProjectAlias(db, projectId));
 }
 
-export async function eventsForPeer(peerId: string, now = new Date()): Promise<ReplicationEvent[]> {
+function selectiveEventsForPeer(db: DatabaseSync, peerId: string, at: string, filter: (event: ReplicationEvent) => boolean): ReplicationEvent[] {
+  const selected: ReplicationEvent[] = [];
+  const page = db.prepare(`SELECT o.rowid cursor, o.* FROM replication_outbox o
+    LEFT JOIN replication_deliveries d ON d.event_id=o.event_id AND d.peer_id=?
+    WHERE o.rowid>? AND (d.event_id IS NULL OR (d.delivered_at IS NULL AND d.next_attempt_at<=?))
+    ORDER BY o.rowid LIMIT 100`);
+  const allocate = db.prepare(`INSERT OR IGNORE INTO replication_deliveries
+    (event_id,peer_id,attempts,next_attempt_at,delivered_at,last_error) VALUES (?,?,0,?,NULL,NULL)`);
+  let cursor = 0;
+  // Keyset pages bound memory. Restarting each poll keeps future grants eligible.
+  while (selected.length < 100) {
+    const rows = page.all(peerId, cursor, at) as unknown as Array<OutboxRow & { cursor: number }>;
+    if (!rows.length) break;
+    for (const row of rows) {
+      cursor = row.cursor;
+      const event = eventFromRow(row);
+      if (!filter(event)) continue;
+      allocate.run(event.id, peerId, at);
+      selected.push(event);
+      if (selected.length === 100) break;
+    }
+  }
+  return selected;
+}
+
+export async function pendingEventsForPeer(peerId:string,filter:(event:ReplicationEvent)=>boolean):Promise<{pending:number;error?:string}>{
+  const db=await replicationDatabase();
+  const rows=db.prepare(`SELECT o.*,d.last_error FROM replication_outbox o LEFT JOIN replication_deliveries d
+    ON d.event_id=o.event_id AND d.peer_id=? WHERE d.delivered_at IS NULL`).iterate(peerId);
+  let pending=0,error:string|undefined;
+  for(const row of rows)if(filter(eventFromRow(row as unknown as OutboxRow))){
+    pending++;
+    if(typeof row.last_error==='string')error??=row.last_error;
+  }
+  return {pending,...(error?{error}:{})};
+}
+
+export async function eventsForPeer(peerId: string, now = new Date(), filter?: (event: ReplicationEvent) => boolean): Promise<ReplicationEvent[]> {
   const db = await replicationDatabase(); const at = now.toISOString();
+  if (filter) return selectiveEventsForPeer(db, peerId, at, filter);
   db.prepare("INSERT OR IGNORE INTO replication_deliveries (event_id, peer_id, attempts, next_attempt_at, delivered_at, last_error) SELECT event_id, ?, 0, ?, NULL, NULL FROM replication_outbox").run(peerId, at);
   const events = (db.prepare(`SELECT o.event_id, o.origin_node_id, o.entity_type, o.entity_key, o.operation, o.payload, o.created_at FROM replication_outbox o JOIN replication_deliveries d ON d.event_id = o.event_id WHERE d.peer_id = ? AND d.delivered_at IS NULL AND d.next_attempt_at <= ? ORDER BY o.created_at, o.event_id LIMIT 100`).all(peerId, at) as unknown as OutboxRow[]).map(eventFromRow);
   // A granted peer never receives events outside its project selection. Blocked events are
@@ -205,6 +243,8 @@ function taskPayload(event: ReplicationEvent): TaskPayload {
 }
 function applyTaskEvent(db: DatabaseSync, event: ReplicationEvent, localTranscripts: ReadonlyMap<string, LocalTranscript> = new Map()): boolean {
   const payload = taskPayload(event); const projectId = resolveProjectAlias(db, payload.projectId); const task = payload.task; const id = task?.id ?? event.entityKey.slice(payload.projectId.length + 1); const updatedAt = task?.updatedAt ?? payload.updatedAt!;
+  const identity = db.prepare("SELECT project_id FROM tasks WHERE id=? UNION SELECT project_id FROM task_tombstones WHERE task_id=?").all(id,id) as unknown as Array<{project_id:string}>;
+  if (identity.some(row => row.project_id !== projectId)) throw new Error("Task identity belongs to a different project");
   const memberTombstones = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'cluster_member_tombstones'").get();
   if (event.operation === "upsert" && memberTombstones && db.prepare("SELECT 1 FROM cluster_member_tombstones WHERE id = ?").get(task!.currentNodeId)) return true;
   const active = db.prepare("SELECT active_handoff_id FROM tasks WHERE project_id = ? AND id = ?").get(projectId, id) as { active_handoff_id: string | null } | undefined;

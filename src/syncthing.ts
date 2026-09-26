@@ -299,6 +299,21 @@ export async function syncthingFolderStatuses(folderIds: string[]): Promise<Reco
   return Object.fromEntries(entries);
 }
 
+export async function syncthingPeerCaughtUp(deviceId: string, folderIds: string[]): Promise<boolean> {
+  if (!await connection()) throw new Error("Syncthing is not configured on this node");
+  const connections = await request<{ connections: Record<string, { connected: boolean }> }>("/rest/system/connections");
+  if (!connections.connections[deviceId]?.connected) return false;
+  const local = await syncthingFolderStatuses(folderIds);
+  for (const id of folderIds) {
+    if (local[id].state !== "synced") return false;
+    const completion = await request<{ completion: number; needItems: number; needBytes: number; needDeletes: number; remoteState: string }>(
+      `/rest/db/completion?folder=${encodeURIComponent(id)}&device=${encodeURIComponent(deviceId)}`);
+    if (completion.completion !== 100 || completion.needItems !== 0 || completion.needBytes !== 0
+      || completion.needDeletes !== 0 || completion.remoteState !== "valid") return false;
+  }
+  return true;
+}
+
 export async function assertSyncthingFolderReady(folderId: string, projectIgnores = true): Promise<void> {
   if (!await connection()) throw new Error("Syncthing is not configured on this node");
   try {
@@ -335,6 +350,15 @@ export async function removeSyncthingDevices(deviceIds: string[], folderIds: str
     await request<void>(`/rest/config/folders/${encodeURIComponent(folder.id)}`, {
       method: "PUT",
       body: JSON.stringify({ ...folder, devices }),
+    });
+  }
+}
+
+export async function pauseSyncthingFolders(folderIds:string[]):Promise<void> {
+  for(const folder of await listSyncthingFolders()){
+    if(!folderIds.includes(folder.id)||folder.paused)continue;
+    await request<void>(`/rest/config/folders/${encodeURIComponent(folder.id)}`,{
+      method:'PUT',body:JSON.stringify({...folder,paused:true}),
     });
   }
 }
@@ -391,6 +415,27 @@ async function ensureFolder(folderId: string, label: string, folderPath: string,
   }
   if (ignorePolicy === "project") await setProjectIgnores(folderId);
   if (ignorePolicy === "resources") await setIgnores(folderId, agentResourceIgnorePatterns, false);
+}
+
+export async function ensureSharedProjectFolder(folderId: string, label: string, folderPath: string, peerDeviceId: string): Promise<void> {
+  const folders = await listSyncthingFolders();
+  const canonical = folders.find(folder => folder.id === folderId);
+  if (canonical && path.resolve(canonical.path) !== path.resolve(folderPath)) throw new Error("Shared folder ID belongs to a different local path");
+  const prior = folders.find(folder => path.resolve(folder.path) === path.resolve(folderPath) && folder.id !== folderId);
+  // Syncthing configuration removal does not delete files. Preserve pause state on remapping.
+  if (prior) {
+    await request<void>(`/rest/config/folders/${encodeURIComponent(prior.id)}`, { method: "DELETE" });
+    if (!canonical) await request<void>("/rest/config/folders", { method: "POST", body: JSON.stringify({ ...prior, id: folderId, label }) });
+  }
+  await ensureSyncthingFolder(folderId, label, folderPath, peerDeviceId);
+}
+
+export async function resumeSharedProjectFolder(folderId: string): Promise<void> {
+  const folder = (await listSyncthingFolders()).find(candidate => candidate.id === folderId);
+  if (!folder) return;
+  if (folder.paused) await request<void>(`/rest/config/folders/${encodeURIComponent(folderId)}`, {
+    method: "PUT", body: JSON.stringify({ ...folder, paused: false }),
+  });
 }
 
 export async function ensureSyncthingFolder(folderId: string, label: string, folderPath: string, peerDeviceId?: string): Promise<void> {

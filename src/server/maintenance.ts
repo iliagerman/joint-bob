@@ -12,6 +12,10 @@ import { enqueueSecretCredentialSync, recordSecretCredentialFailure, recordSecre
 import { currentRoutingConfigTarget, dueRoutingConfigDeliveries, dropRoutingConfigDelivery, recordRoutingConfigDeliveryFailure, recordRoutingConfigDeliverySuccess, routingConfigDatabase, type PendingRoutingConfigDelivery } from "../routing-configs.js";
 import { supervisorRequest } from "../../scripts/supervisor-client.mjs";
 import { signedPost } from "./cluster-v2.js";
+import { selectiveSharingActive } from "../cluster-v2-mode.js";
+import { clusterV2Database } from "../cluster-v2-store.js";
+import { mayReplicateEvent, replicationPeers, sendReplicationV2 } from "./replication-v2.js";
+import { getRuntimePeer, listRuntimePeers, runtimeFetch } from "./runtime-peers.js";
 import { listSecretAccounts, type SecretAccount } from "../secrets.js";
 import { listProjects } from "../store.js";
 import { ensureAgentResourcesFolder, ensureConversationSyncFolders, ensureTicketWorkspaceFolder, pauseEngineSyncFolders, reconcileSyncthingProjectFolders, syncthingDeviceId } from "../syncthing.js";
@@ -97,6 +101,7 @@ async function configureTicketWorkspacePeer(peer: ClusterPeer, localDeviceId: st
 }
 
 export async function reconcileTicketWorkspaceSync(): Promise<void> {
+  if(await selectiveSharingActive())return;
   if (flags.ticketWorkspaceSyncInProgress || Date.now() < flags.ticketWorkspaceSyncRetryAt) return;
   flags.ticketWorkspaceSyncInProgress = true;
   let failed = false;
@@ -161,7 +166,7 @@ export async function reconcileTaskHandoffs(): Promise<void> {
   flags.taskHandoffReconciliationInProgress = true;
   try {
     for (const record of await listUnfinishedOutgoingTaskHandoffs()) {
-      const peer = await getClusterPeer(record.destinationNodeId);
+      const peer = await getRuntimePeer(record.destinationNodeId);
       if (!peer) {
         console.warn(`Task handoff ${record.handoffId} reconciliation failed: peer not found`);
         continue;
@@ -392,13 +397,13 @@ export async function pushRuntimeLeaseSnapshots(): Promise<void> {
       broadcastSessionsChangedToAllProjects();
       for (const project of await listProjects()) scheduleReviewNotifications(project.id);
     }
-    const peers = await listClusterPeers();
+    const peers = await listRuntimePeers();
     if (!peers.length) return;
     const generatedAt = leases.length ? leases[0].updatedAt : new Date().toISOString();
     // One slow peer must not delay the others past the lease TTL.
     await Promise.all(peers.map(async (peer) => {
       try {
-        const response = await fetch(`${peer.url}/api/cluster/sessions/runtime-snapshot`, {
+        const response = await runtimeFetch(`${peer.url}/api/cluster/sessions/runtime-snapshot`, {
           method: "POST",
           // Our own machine token, so the receiving peer can bind the snapshot to
           // this node's identity instead of trusting the declared nodeId.
@@ -454,10 +459,15 @@ export async function flushReplicationOutbox(): Promise<void> {
   if (flags.replicationFlushInProgress) return;
   flags.replicationFlushInProgress = true;
   try {
-    for (const peer of await listClusterPeers()) {
-      const events = await eventsForPeer(peer.id);
+    const selective = await selectiveSharingActive();
+    const db = await clusterV2Database(), local = await getClusterNode();
+    const peers = selective ? replicationPeers(db, local.id).map((peer) => ({ ...peer, id: peer.nodeId, token: "" })) : await listClusterPeers();
+    for (const peer of peers) {
+      const events = await eventsForPeer(peer.id, new Date(), selective
+        ? (event) => event.originNodeId === local.id && mayReplicateEvent(db, local.id, peer.id, event) : undefined);
       if (!events.length) continue;
       try {
+        const result = selective ? await sendReplicationV2({ nodeId: peer.id, name: peer.name, url: peer.url }, events) : await (async () => {
         const response = await fetch(`${peer.url}/api/cluster/events`, {
           method: "POST",
           headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
@@ -465,7 +475,9 @@ export async function flushReplicationOutbox(): Promise<void> {
           signal: AbortSignal.timeout(10_000),
         });
         if (!response.ok) throw new Error(`Peer returned ${response.status}`);
-        const receipt = replicationReceiptSchema.parse(await response.json());
+        return response.json();
+        })();
+        const receipt = replicationReceiptSchema.parse(result);
         await recordPeerReceipt(peer.id, receipt.received);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Peer replication failed";

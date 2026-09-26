@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
-import { getClusterMachineToken, getClusterNode, getClusterPeer } from "../cluster.js";
+import { getClusterMachineToken, getClusterNode } from "../cluster.js";
+import { getRuntimePeer as getClusterPeer, runtimeFetch as fetch, runtimeSocketHeaders } from "./runtime-peers.js";
 import { ensureConversationRecord, getConversationRecord } from "../conversation-records.js";
 import { ensureSessionTitle } from "../names.js";
 import { cancelQueuedPrompt, listQueuedPrompts, queuedSettingsSchema, type QueuedSettings } from "../prompt-queue.js";
@@ -153,7 +154,7 @@ function queueSettingsFor(note: QuickNote, status: { model?: { provider?: string
   return settings;
 }
 
-function launchPromptOverSocket(note: QuickNote, sessionId: string, target: LaunchTarget): LaunchSocket {
+async function launchPromptOverSocket(note: QuickNote, sessionId: string, target: LaunchTarget): Promise<LaunchSocket> {
   const url = new URL(target.url);
   for (const [key, value] of Object.entries({
     projectId: note.projectId,
@@ -174,7 +175,7 @@ function launchPromptOverSocket(note: QuickNote, sessionId: string, target: Laun
   let outcomeResolve!: (outcome: "completed" | "failed" | "abandoned") => void;
   const accepted = new Promise<void>((resolve, reject) => { acceptResolve = resolve; acceptReject = reject; });
   const settled = new Promise<"completed" | "failed" | "abandoned">(resolve => { outcomeResolve = resolve; });
-  const socket = new WebSocket(url, { headers: { Authorization: `Bearer ${target.token}` } });
+  const socket = new WebSocket(url, { headers: await runtimeSocketHeaders(target.nodeId,url,target.token) });
   const reservationKey = `${note.projectId}:${sessionId}`;
 
   const cancelQueuedPromptIfPending = (): void => {
@@ -277,7 +278,7 @@ async function claimAndDispatch(existing: QuickNote, from: QuickNote["status"][]
       throw new QuickNoteLaunchError(400, `Reasoning level is not supported: ${note.thinkingLevel}`);
     }
     const target = await resolveLaunchTarget(note, sessionId);
-    const socket = launchPromptOverSocket(note, sessionId, target);
+    const socket = await launchPromptOverSocket(note, sessionId, target);
     await socket.accepted;
     markQuickNoteStarted(note.id);
     // The slot stays reserved until the prompt (and any background work it
