@@ -9,6 +9,28 @@ let selectedClusterId = null;
 let panelState = null;
 let pendingJoin = { link: "", requestId: "" };
 let invitationRequestId = 0;
+let panelRequestId = 0;
+const createForm = document.getElementById("clusterCreateForm");
+const newButton = document.getElementById("clusterNewButton");
+document.getElementById("settingsPanel-cluster").addEventListener("keydown", event => {
+  if (event.key === "Enter" && event.target.matches("input, select")) event.preventDefault();
+});
+function showCreate(show) {
+  createForm.hidden = !show;
+  newButton.setAttribute("aria-expanded", String(show));
+  if (show) elements.clusterCreateNameInput.focus();
+  else newButton.focus();
+}
+newButton.addEventListener("click", () => showCreate(true));
+createForm.addEventListener("keydown", event => {
+  if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); showCreate(false); }
+  if (event.key === "Enter" && event.target === elements.clusterCreateNameInput) { event.preventDefault(); elements.clusterCreateButton.click(); }
+});
+document.getElementById("clusterCreateCancel").addEventListener("click", () => { elements.clusterCreateNameInput.value = ""; showCreate(false); });
+document.getElementById("clusterJoinReveal").addEventListener("click", () => {
+  document.getElementById("clusterJoinDetails").open = true;
+  elements.clusterJoinLinkInput.focus();
+});
 function renderLegacyInventory(inventory) {
   elements.clusterInventory.replaceChildren();
   const nodes = [{ ...inventory.local, status: "This node", state: "local" }, ...inventory.remote.map((entry) => ({
@@ -39,6 +61,8 @@ function clearGeneratedLink() {
 function syncControls() {
   const cluster = selectedCluster();
   const blocked = panelState.migrationRequired;
+  document.querySelector("#clusterInviteDetails summary").textContent = cluster ? `Invite a node to ${cluster.name}` : "Invite a node to selected cluster";
+  newButton.disabled = blocked;
   const controls = [elements.clusterCreateButton, elements.clusterJoinButton, elements.clusterGenerateInviteButton,
     elements.clusterAutoShareInput, elements.clusterShareAllButton, elements.clusterLeaveButton];
   for (const control of controls) control.disabled = blocked;
@@ -55,7 +79,7 @@ function syncControls() {
 }
 
 function selectCluster(clusterId) {
-  if (selectedClusterId !== clusterId) clearGeneratedLink();
+  if (selectedClusterId !== clusterId) { clearGeneratedLink(); panelRequestId += 1; }
   selectedClusterId = clusterId;
   syncControls();
   void renderClusterSharing(selectedCluster(), panelState.localNodeId);
@@ -78,20 +102,23 @@ function renderPanel(inventory, clusterData, projects) {
 }
 
 export async function loadClusterPanel(preferredClusterId = selectedClusterId) {
-  clearGeneratedLink();
+  const requestId = ++panelRequestId;
   const [inventory, clusterData, projectData] = await Promise.all([
     api("/api/cluster/inventory"), api("/api/clusters"), api("/api/projects?syncStatus=false"),
   ]);
+  if (requestId !== panelRequestId) return inventory;
+  if (preferredClusterId !== selectedClusterId) clearGeneratedLink();
   selectedClusterId = preferredClusterId;
-  elements.clusterNodeNameInput.value = inventory.local.name;
-  elements.clusterNodeUrlInput.value = inventory.local.url;
+  if (!panelState) {
+    elements.clusterNodeNameInput.value = inventory.local.name;
+    elements.clusterNodeUrlInput.value = inventory.local.url;
+  }
   renderPanel(inventory, clusterData, projectData.projects);
   return inventory;
 }
 
-async function refreshAfterError(error) {
+function refreshAfterError(error) {
   toast(error.message);
-  try { await loadClusterPanel(); } catch (refreshError) { toast(refreshError.message); }
 }
 
 async function saveClusterNode() {
@@ -103,8 +130,11 @@ async function saveClusterNode() {
 async function createCluster() {
   const name = elements.clusterCreateNameInput.value.trim();
   if (!name) throw new Error("Cluster name is required");
+  const current = panelRequestId;
   const result = await api("/api/clusters", { method: "POST", body: JSON.stringify({ name }) });
+  if (current !== panelRequestId) return;
   elements.clusterCreateNameInput.value = "";
+  showCreate(false);
   await loadClusterPanel(result.snapshot.body.clusterId); toast("Cluster created");
 }
 
@@ -123,7 +153,9 @@ async function joinCluster() {
   const link = elements.clusterJoinLinkInput.value.trim();
   if (!link) throw new Error("Join link is required");
   if (pendingJoin.link !== link) pendingJoin = { link, requestId: crypto.randomUUID() };
+  const current = panelRequestId;
   const result = await api("/api/clusters/join", { method: "POST", body: JSON.stringify(pendingJoin) });
+  if (current !== panelRequestId) return;
   pendingJoin = { link: "", requestId: "" };
   await loadClusterPanel(result.snapshot.body.clusterId); toast("Cluster membership added");
 }
@@ -132,15 +164,18 @@ async function setAutoShare() {
   const cluster = selectedCluster();
   if (!cluster) throw new Error("Select a cluster first");
   await api(`/api/clusters/${cluster.id}/membership`, { method: "PATCH", body: JSON.stringify({ autoShareProjects: elements.clusterAutoShareInput.checked }) });
-  await loadClusterPanel(cluster.id); toast("Future project sharing updated");
+  if (selectedClusterId === cluster.id) await loadClusterPanel();
+  toast("Future project sharing updated");
 }
 
 async function shareAllProjects() {
   const cluster = selectedCluster();
   if (!cluster) throw new Error("Select a cluster first");
   if (!await confirmAction({ title: "Share existing projects?", message: `Share every existing project owned by this node with ${cluster.name}?`, confirmLabel: "Share projects" })) return;
+  if (selectedClusterId !== cluster.id) return;
   await api(`/api/clusters/${cluster.id}/share-all-projects`, { method: "POST", body: JSON.stringify({}) });
-  await loadClusterPanel(cluster.id); toast("Existing owned projects shared");
+  if (selectedClusterId === cluster.id) await loadClusterPanel();
+  toast("Existing owned projects shared");
 }
 
 async function leaveCluster() {
@@ -149,8 +184,10 @@ async function leaveCluster() {
   if (!await confirmAction({ eyebrow: "Leave cluster", title: last ? "Close this cluster?" : "Leave this cluster?",
     message: last ? "You are the last member. Leaving closes this cluster." : `Leave ${cluster.name}? Other memberships are unchanged.`,
     confirmLabel: last ? "Close cluster" : "Leave cluster", destructive: true })) return;
+  if (selectedClusterId !== cluster.id) return;
   await api(`/api/clusters/${cluster.id}/leave`, { method: "POST", body: JSON.stringify({ expectedEpoch: cluster.managerEpoch }) });
-  selectedClusterId = null; await loadClusterPanel(); await loadProjects(); toast(last ? "Cluster closed" : "Left cluster");
+  if (selectedClusterId === cluster.id) { selectedClusterId = null; await loadClusterPanel(); }
+  await loadProjects(); toast(last ? "Cluster closed" : "Left cluster");
 }
 
 async function openSecretSyncDialog() {

@@ -100,7 +100,8 @@ async function poll(assertion: () => Promise<void>, deadlineMs = 20_000): Promis
 }
 
 function deliveryStatements(db: DatabaseSync): SignedResourcePolicy[] {
-  return (db.prepare("SELECT statement FROM cluster_v2_resource_deliveries").all() as Array<{ statement: string }>)
+  // Delivery rows disappear after acknowledgement; signed emissions remain durable.
+  return (db.prepare("SELECT statement FROM cluster_v2_resource_contexts WHERE json_extract(statement,'$.body.ownerNodeId')=(SELECT id FROM cluster_node LIMIT 1)").all() as Array<{ statement: string }>)
     .map((row) => JSON.parse(row.statement) as SignedResourcePolicy);
 }
 
@@ -169,8 +170,9 @@ test("HTTP twins require consent, bootstrap only owned policies, and revoke dura
       && statement.body.recipientNodeId === nodeB.nodeId && statement.body.context.kind === "cluster");
     assert.ok(publicP, "A must have an A-signed public P policy addressed to B");
     applyResourcePolicy(dbB, nodeB.nodeId, nodeA.nodeId, publicP);
-    dbB.prepare("INSERT INTO projects(id,name,workspace_id,path,created_at,updated_at) VALUES(?,?,?,?,?,?)")
-      .run(projectP.id, projectP.name, projectP.type, path.join(root, "b-received-p"), projectP.createdAt, projectP.updatedAt);
+    await poll(async () => {
+      assert.ok(dbB.prepare("SELECT 1 FROM projects WHERE id=?").get(projectP.id), "shared project metadata must arrive on B");
+    });
 
     const deniedInvitation = await twinApi(nodeA, sessionA, "POST", "/twins/invitations", {});
     assert.equal(deniedInvitation.status, 400);

@@ -43,7 +43,7 @@ async function createProject(node: SeededNode, session: SignedIn, name: string):
   return body.project.id;
 }
 
-test("multiple independent memberships render as a selective cluster canvas", { timeout: 180_000 }, async () => {
+test("cluster dropdown scopes membership details and supports create cancellation, keyboard and mobile", { timeout: 180_000 }, async () => {
   const roots: string[] = [];
   const servers: ChildProcess[] = [];
   let browser: Browser | undefined;
@@ -143,53 +143,49 @@ test("multiple independent memberships render as a selective cluster canvas", { 
 
     const canvas = page.getByTestId("cluster-canvas");
     await canvas.waitFor({ state: "visible", timeout: 15_000 });
-    const clusterButtons = canvas.getByTestId("cluster-canvas-cluster");
+    const selector = page.getByRole("combobox", { name: "Cluster", exact: true });
+    await selector.waitFor({ timeout: 3000 });
+    assert.equal(await selector.evaluate(element => element.tagName), "SELECT");
+    const clusterButtons = selector.locator("option");
     assert.equal(await clusterButtons.count(), 2);
-    const researchButton = canvas.locator(`[data-testid="cluster-canvas-cluster"][data-cluster-id="${researchId}"]`);
-    const operationsButton = canvas.locator(`[data-testid="cluster-canvas-cluster"][data-cluster-id="${operationsId}"]`);
-    await assert.doesNotReject(researchButton.getAttribute("aria-label"));
-    await assert.doesNotReject(operationsButton.getAttribute("aria-label"));
-    assert.match(await researchButton.getAttribute("aria-label") ?? "", /Research/i);
-    assert.match(await operationsButton.getAttribute("aria-label") ?? "", /Operations/i);
-    assert.equal(await researchButton.evaluate((element) => element.tagName), "BUTTON");
-    assert.equal(await operationsButton.evaluate((element) => element.tagName), "BUTTON");
-
-    const canvasBox = await canvas.boundingBox();
-    const researchBox = await researchButton.boundingBox();
-    const operationsBox = await operationsButton.boundingBox();
-    assert.ok(canvasBox && canvasBox.width >= 280 && canvasBox.height >= 160, `canvas is substantial: ${JSON.stringify(canvasBox)}`);
-    assert.ok(researchBox && operationsBox, "both cluster buttons have visible bounds");
-    assert.ok(
-      researchBox.x + researchBox.width <= operationsBox.x || operationsBox.x + operationsBox.width <= researchBox.x
-        || researchBox.y + researchBox.height <= operationsBox.y || operationsBox.y + operationsBox.height <= researchBox.y,
-      "cluster buttons do not overlap",
-    );
-    assert.ok(await canvas.locator("svg, canvas").count() > 0, "canvas contains a real SVG or canvas diagram");
+    await page.getByTestId("cluster-new-button").click();
+    await page.getByTestId("cluster-create-name-input").fill("Cancelled cluster");
+    await page.getByTestId("cluster-create-cancel").click();
+    assert.equal(await page.getByTestId("cluster-create-name-input").isVisible(), false);
+    assert.deepEqual(await selector.locator("option").allTextContents().then(names => names.sort()), ["Operations", "Research"]);
 
     const details = page.getByTestId("cluster-details");
-    await researchButton.click();
+    assert.equal(await page.getByTestId("cluster-technical").getAttribute("open"), null);
+    const order = await page.getByTestId("settingsPanel-cluster").evaluate(panel => {
+      const selector = panel.querySelector("#clusterSelector")!;
+      const machine = panel.querySelector("#clusterNodeNameInput")!;
+      const browser = panel.querySelector("#settingsBrowserExecutor")!;
+      return Boolean(selector.compareDocumentPosition(machine) & Node.DOCUMENT_POSITION_FOLLOWING)
+        && Boolean(machine.compareDocumentPosition(browser) & Node.DOCUMENT_POSITION_FOLLOWING);
+    });
+    assert.equal(order, true, "cluster management precedes machine and browser defaults");
+    await selector.selectOption(researchId);
     await details.getByRole("heading", { name: "Research" }).waitFor();
     await assertDetails(details, ["Remote fixture node", "Research shared"], ["Operations shared", "Private only"]);
-    assert.equal(await researchButton.getAttribute("aria-pressed"), "true");
-    assert.equal(await operationsButton.getAttribute("aria-pressed"), "false");
+    assert.equal(await selector.inputValue(), researchId);
 
-    await operationsButton.click();
+    await selector.selectOption(operationsId);
     await details.getByRole("heading", { name: "Operations" }).waitFor();
     await assertDetails(details, ["Operations shared"], ["Remote fixture node", "Research shared", "Private only"]);
-    assert.equal(await researchButton.getAttribute("aria-pressed"), "false");
-    assert.equal(await operationsButton.getAttribute("aria-pressed"), "true");
+    assert.equal(await selector.inputValue(), operationsId);
 
-    await researchButton.focus();
-    await researchButton.press("Enter");
+    await selector.focus();
+    await selector.press("Home");
+    await selector.press("r");
+    await selector.press("Enter");
     await details.getByRole("heading", { name: "Research" }).waitFor();
     await assertDetails(details, ["Remote fixture node", "Research shared"], ["Operations shared", "Private only"]);
     assert.equal(await page.getByTestId("settingsPanel-cluster").getByTestId("cluster-invite-project-input").count(), 0);
     await assertTextAbsent(page.getByTestId("settingsPanel-cluster"), "Replace cluster");
 
     await page.setViewportSize({ width: 390, height: 844 });
-    await operationsButton.scrollIntoViewIfNeeded();
-    await operationsButton.focus();
-    await operationsButton.press("Enter");
+    await selector.scrollIntoViewIfNeeded();
+    await selector.selectOption(operationsId);
     await details.getByRole("heading", { name: "Operations" }).waitFor();
     await assertDetails(details, ["Operations shared"], ["Remote fixture node", "Research shared", "Private only"]);
     const hasPageOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);

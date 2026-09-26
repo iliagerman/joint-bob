@@ -11,7 +11,8 @@ function button(label, id, action) {
   const control = text("button", label); control.type = "button"; control.className = "ghost"; control.dataset.testid = id;
   control.addEventListener("click", async () => {
     control.disabled = true;
-    try { await action(); } catch (error) { const status = container.querySelector('[data-testid="sharing-status"]'); status.textContent = error.message; }
+    const current = revision;
+    try { await action(); } catch (error) { if (current === revision) { const status = container.querySelector('[data-testid="sharing-status"]'); status.textContent = error.message; } }
     finally { control.disabled = false; }
   });
   return control;
@@ -21,7 +22,9 @@ function input(label, id, readonly = false) {
   wrapper.append(field); return { wrapper, field };
 }
 async function consent(title, message, destructive = false) {
-  return confirmAction({ title, message: `${message} ${disclosure}`, confirmLabel: destructive ? "Revoke twin access" : "Confirm sharing", destructive });
+  const current = revision;
+  const approved = await confirmAction({ title, message: `${message} ${disclosure}`, confirmLabel: destructive ? "Revoke twin access" : "Confirm sharing", destructive });
+  return approved && current === revision;
 }
 function scopes(data, kind, labelKey, selected) {
   const group = document.createElement("fieldset"); group.append(text("legend", kind === "project" ? "Projects" : "Whole workspaces (including future projects)"));
@@ -38,8 +41,8 @@ async function selectedSharing(body, cluster, status) {
   if (!body.isConnected) return;
   const projects = scopes(data.projects, "project", "name", data.projectIds);
   const workspaces = scopes(data.workspaces, "workspace", "label", data.workspaceIds);
-  status.textContent = `${data.pendingDeliveries} pending deliveries`;
-  body.append(text("p", `Share outbound from this node with all members of ${cluster.name}, not just one peer. Cluster members: ${cluster.members.map(member => member.name || member.nodeId).join(", ")}. You can add or remove selections later. Removing sharing does not delete existing files.`), projects, workspaces);
+  status.textContent = `Cluster-wide selected sharing · ${data.pendingDeliveries} pending deliveries. Membership alone does not enable Twin sharing.`;
+  body.append(text("h4", "Connection approval"), text("p", "No active twin connection with this peer. To connect as Twins, choose Twins, generate an invitation and accept it on the other node."), text("h4", "Data sharing"), text("p", `Share outbound from this node with all members of ${cluster.name}, not just one peer. Cluster members: ${cluster.members.map(member => member.name || member.nodeId).join(", ")}. You can add or remove selections later. Removing sharing does not delete existing files.`), projects, workspaces);
   body.append(button("Save selected sharing", "sharing-save", async () => {
     if (!await consent("Save selected sharing?", `Update sharing with all members of ${cluster.name}? Existing files remain on other nodes.`)) return;
     const checked = group => [...group.querySelectorAll("input:checked")].map(control => control.value);
@@ -68,14 +71,21 @@ function syncLabel(data) {
 function twinSharing(body, relationship, cluster, localNodeId, reload) {
   const section = document.createElement("fieldset");
   const peer = cluster.members.find(member => member.nodeId === relationship.peer.nodeId);
-  section.append(text("legend", `Twin · ${peer.name || peer.nodeId}`)); body.append(section);
+  section.append(text("legend", `Twin · ${peer.name || peer.nodeId}`), text("h4", "Connection approval"), text("p", "Approval complete. This existing twin needs no second invitation or approval.")); body.append(section);
+  const sharingState = text("p", "Checking sharing…"); sharingState.dataset.testid = "twin-data-sharing";
+  section.append(text("h4", "Data sharing"), sharingState, text("h4", "Synchronization status"));
   const status = text("p", "Checking synchronization…"); status.dataset.testid = "twin-sharing-status"; status.setAttribute("role", "status");
-  const actions = document.createElement("div"); section.append(status, actions);
+  const technical = document.createElement("details");
+  technical.append(text("summary", "Transfer details"));
+  const deliveryStatus = text("p", ""); technical.append(deliveryStatus);
+  const actions = document.createElement("div"); section.append(status, technical, actions);
   let previousMode;
   return data => {
     if (!body.isConnected) return;
-    if (data.readError) { status.textContent = `Error · ${data.readError}. Check peer connectivity. Status retries automatically, or use Refresh sharing status.`; return; }
-    status.textContent = `${syncLabel(data)} · ${data.projectCount} projects · ${data.pendingDeliveries} pending deliveries${data.error ? ` · ${data.error}. Check peer connectivity and retry.` : ""}`;
+    if (data.readError) { sharingState.textContent = "Sharing status unavailable. Refresh to check again."; status.textContent = `Error · ${data.readError}. Check peer connectivity. Status retries automatically, or use Refresh sharing status.`; return; }
+    sharingState.textContent = data.initialized ? "Enabled for current and future eligible data." : "Sharing not started. Enable sharing below; no action is needed on the other node.";
+    status.textContent = `${syncLabel(data)} · ${data.projectCount} Twin-shared projects${data.error ? ` · ${data.error}. Check peer connectivity and retry.` : ""}`;
+    deliveryStatus.textContent = `${data.pendingDeliveries} pending deliveries`;
     const mode = !data.initialized ? "enable" : data.state === "error" ? "retry" : "sync";
     if (mode === previousMode) return;
     previousMode = mode; actions.replaceChildren();
@@ -168,22 +178,23 @@ export async function renderClusterSharing(cluster, localNodeId) {
   const controls = document.createElement("div"); controls.className = "github-group-actions";
   let body = document.createElement("div"), updateTwin = () => {};
   function resetBody() { const next = document.createElement("div"); body.replaceWith(next); body = next; }
-  const reload = () => renderClusterSharing(cluster, localNodeId);
+  const reload = () => current === revision ? renderClusterSharing(cluster, localNodeId) : Promise.resolve();
   const peer = peerSelector(cluster, localNodeId, reload);
-  container.append(text("h3", "Node sharing mode"), text("p", disclosure));
+  const exclusions = document.createElement("details"); exclusions.append(text("summary", "What stays local"), text("p", disclosure));
+  container.append(text("h3", "Peer connection and sharing"), text("p", "Membership alone does not share data. Twin sharing includes all eligible current and future projects, workspaces, conversations, tasks, files and credentials."), exclusions);
   if (!peer) { container.append(text("p", "No other nodes in this cluster. Add a member to choose sharing between two nodes.")); return; }
   container.append(peer, controls, status, body);
   controls.append(button("Refresh sharing status", "sharing-refresh", reload));
   try {
     const { relationships } = await api("/api/twins"); if (current !== revision) return;
     const active = relationships.filter(item => item.status === "active" && item.peer.nodeId === selectedPeers.get(cluster.id));
-    const selected = button("Selected sharing", "sharing-mode-selected", async () => {
+    const selected = button(active.length ? "Revoke selected twin access" : "Cluster-wide selected sharing",  "sharing-mode-selected", async () => {
       if (active.length) {
         if (!await consent("Switch to Selected sharing?", `Revoke twin access with ${cluster.members.find(member => member.nodeId === selectedPeers.get(cluster.id)).name || selectedPeers.get(cluster.id)} only? Existing files remain. Other twins and explicit cluster shares are unchanged.`, true)) return;
         let pending = false;
         for (const item of active) { const result = await api(`/api/twins/${item.relationshipId}`, { method: "DELETE" }); pending ||= result.pending; }
         await reload();
-        if (pending) container.querySelector('[data-testid="sharing-status"]').append(document.createTextNode(" · Twin access revoked locally; peer revocation delivery pending. Refresh to check sharing."));
+        if (pending && current + 1 === revision) container.querySelector('[data-testid="sharing-status"]').append(document.createTextNode(" · Twin access revoked locally; peer revocation delivery pending. Refresh to check sharing."));
         return;
       }
       selected.setAttribute("aria-pressed", "true"); twins.setAttribute("aria-pressed", "false"); resetBody(); await selectedSharing(body, cluster, status);
@@ -199,7 +210,10 @@ export async function renderClusterSharing(cluster, localNodeId) {
     if (active.length) {
       status.textContent = "Twin relationship established. Synchronization status is separate below.";
       for (const item of active) updateTwin = twinSharing(body, item, cluster, localNodeId, reload);
-    } else await selectedSharing(body, cluster, status);
+    } else {
+      status.textContent = "Connection approval: not established as Twins. For twin sharing, choose Twins and accept the invitation on the other node. Cluster-wide selected sharing is independent.";
+      await selectedSharing(body, cluster, status);
+    }
     if (current !== revision) return;
     watchSharing(cluster, relationships, current, reload, (item, data) => {
       if (item.peer.nodeId === selectedPeers.get(cluster.id)) updateTwin(data);

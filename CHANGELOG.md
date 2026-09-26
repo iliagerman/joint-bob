@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Replaced the cluster selection grid with a dropdown menu for simpler navigation and better keyboard support.
+
 ## 1.95.1 — 2026-09-26
 
 - Fixed native synchronization tests to support the Syncthing version supplied by Ubuntu, retaining isolated test configurations and loopback networking.

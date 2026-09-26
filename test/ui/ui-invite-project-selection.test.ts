@@ -41,11 +41,13 @@ test("invitations add membership without selecting projects or replacing cluster
   await page.getByTestId("settings-open-button").click();
   await page.getByTestId("settings-tab-cluster").click();
 
+  await page.getByTestId("cluster-new-button").click();
   await page.getByTestId("cluster-create-name-input").fill("First cluster");
   await page.getByTestId("cluster-create-button").click();
-  const first = page.getByTestId("cluster-canvas-cluster").filter({ hasText: "First cluster" });
-  await first.waitFor();
-  const clusterId = await first.getAttribute("data-cluster-id");
+  const selector = page.getByTestId("cluster-selector");
+  await page.getByTestId("cluster-details").getByRole("heading", { name: "First cluster", exact: true }).waitFor();
+  const clusterId = await selector.inputValue();
+  await page.getByTestId("cluster-invite-reveal").click();
   assert.ok(clusterId);
 
   const posted = page.waitForRequest((request) => request.url().endsWith(`/api/clusters/${clusterId}/invitations`) && request.method() === "POST");
@@ -55,16 +57,17 @@ test("invitations add membership without selecting projects or replacing cluster
   assert.equal(await page.getByTestId("settingsPanel-cluster").locator('input[type="checkbox"][data-testid="cluster-invite-project-input"]').count(), 0);
   await page.waitForFunction(() => (document.querySelector("#clusterInviteLink") as HTMLInputElement).value !== "");
 
+  await page.getByTestId("cluster-new-button").click();
   await page.getByTestId("cluster-create-name-input").fill("Second cluster");
   await page.getByTestId("cluster-create-button").click();
-  const second = page.getByTestId("cluster-canvas-cluster").filter({ hasText: "Second cluster" });
-  await second.waitFor();
-  assert.equal(await page.getByTestId("cluster-canvas-cluster").count(), 2);
-  await first.waitFor();
-
-  await first.click();
-  await second.click();
-  const secondClusterId = await second.getAttribute("data-cluster-id");
+  await page.getByTestId("cluster-details").getByRole("heading", { name: "Second cluster", exact: true }).waitFor();
+  assert.equal(await selector.locator("option").count(), 2);
+  const secondClusterId = await selector.inputValue();
+  await page.getByTestId("cluster-join-reveal").click();
+  await page.getByTestId("cluster-join-link-input").fill("https://example.invalid/manual-membership-link");
+  await selector.selectOption(clusterId);
+  assert.equal(await page.getByTestId("cluster-join-link-input").inputValue(), "https://example.invalid/manual-membership-link", "cluster switching preserves independent join draft");
+  await selector.selectOption(secondClusterId);
   assert.ok(secondClusterId);
   let releaseResponse!: () => void;
   const responseRelease = new Promise<void>((resolve) => { releaseResponse = resolve; });
@@ -81,13 +84,25 @@ test("invitations add membership without selecting projects or replacing cluster
     const delivered = page.waitForResponse((response) => response.url().endsWith(`/api/clusters/${secondClusterId}/invitations`) && response.request().method() === "POST");
     await page.getByTestId("cluster-invite-generate-button").click();
     await fetchedResponse;
-    await first.click();
+    await selector.selectOption(clusterId);
     releaseResponse();
     const response = await delivered;
     await response.finished();
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     assert.equal(await page.getByTestId("cluster-invite-link-input").inputValue(), "");
     assert.equal(await page.getByTestId("cluster-invite-copy-button").isDisabled(), true);
+    assert.equal(await selector.inputValue(), clusterId, "late invitation cannot switch selected cluster");
+    await page.route("**/api/clusters/join", async route => {
+      assert.equal(route.request().method(), "POST");
+      const body = route.request().postDataJSON();
+      assert.equal(body.link, "https://example.invalid/manual-membership-link");
+      assert.equal(typeof body.requestId, "string");
+      assert.equal(body.clusterId, undefined, "joining is not scoped to the selected membership");
+      await route.fulfill({ status: 400, json: { error: "Fixture invitation expired. Ask for a new link." } });
+    });
+    await page.getByTestId("cluster-join-button").click();
+    await page.getByText("Fixture invitation expired. Ask for a new link.", { exact: true }).waitFor();
+    assert.equal(await page.getByTestId("cluster-join-link-input").inputValue(), "https://example.invalid/manual-membership-link");
   } finally {
     releaseResponse();
     await page.unroute(invitationUrl);

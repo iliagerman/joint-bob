@@ -15,12 +15,11 @@ async function signIn(page: Page, url: string, username: string, password: strin
 }
 
 async function openSettingsTab(page: Page, tab: string) {
-  await page.locator("#settingsDialog[open]").waitFor({ state: "hidden" }).catch(() => {});
-  // The shell re-renders its buttons about once a second; retry the click through the jitter.
-  for (let attempt = 0; attempt < 10 && !(await page.locator("#settingsDialog[open]").count()); attempt += 1) {
-    await page.getByTestId("settings-open-button").click({ force: true }).catch(() => {});
-    await page.waitForTimeout(300);
+  if (await page.locator("#settingsDialog[open]").isVisible()) {
+    await page.getByTestId("settings-cancel-button").click();
+    await page.locator("#settingsDialog[open]").waitFor({ state: "hidden" });
   }
+  await page.getByTestId("settings-open-button").click();
   await page.locator("#settingsDialog[open]").waitFor();
   await page.getByTestId(`settings-tab-${tab}`).click();
 }

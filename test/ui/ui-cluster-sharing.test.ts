@@ -75,6 +75,15 @@ test("sharing controls require consent and render selected scopes and legacy ena
     await page.getByTestId("sharing-refresh").click();
     await page.getByRole("button", { name: "Enable sharing", exact: true }).waitFor({ timeout: 5000 });
     assert.equal(await page.getByTestId("twin-sharing-owner").inputValue(), "homeserver", "legacy owner defaults to cluster manager");
+    await page.getByText("Approval complete. This existing twin needs no second invitation or approval.", { exact: true }).waitFor();
+    assert.match(await page.getByTestId("twin-data-sharing").innerText(), /Sharing not started/);
+    assert.match(await page.getByTestId("twin-sharing-status").innerText(), /1 Twin-shared projects/);
+    await page.getByTestId("cluster-details").getByText("Cluster-shared projects on this node · 0", { exact: true }).waitFor();
+    await page.getByTestId("twin-sharing-owner").selectOption(node.nodeId);
+    const poll = page.waitForResponse(response => response.url().endsWith("/api/twins/r1/sharing"));
+    await poll;
+    assert.equal(await page.getByTestId("twin-sharing-owner").inputValue(), node.nodeId, "poll preserves unfinished owner selection");
+    await page.getByTestId("twin-sharing-owner").selectOption("homeserver");
     assert.equal(await page.getByText("Up to date", { exact: true }).count(), 0);
     await page.getByTestId("twin-enable-sharing").click(); await page.getByTestId("confirm-cancel-button").click(); assert.equal(completions, 0);
     await page.getByTestId("twin-enable-sharing").click(); await page.getByTestId("confirm-accept-button").click();
@@ -107,6 +116,7 @@ test("sharing controls require consent and render selected scopes and legacy ena
       assert.equal(await field.getAttribute("spellcheck"), "false");
       assert.ok(await field.evaluate((element: HTMLInputElement) => element.labels?.length), `${id} has a native label`);
     }
+    await page.getByTestId("cluster-sharing").getByText("What stays local", { exact: true }).click();
     assert.match(await page.getByTestId("cluster-sharing").innerText(), /Browser profiles, website credentials and machine-local identities stay local/);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByTestId("twin-accept-link").scrollIntoViewIfNeeded();

@@ -62,6 +62,7 @@ for (const theme of ["light", "dark"]) test(`focus mobile headers and transparen
   await page.getByTestId("focus-settings").click();
   await page.getByTestId("settings-focus-ui-toggle").uncheck();
   await page.getByTestId("settings-cancel-button").click();
+  await page.locator("#chatPanel > #chatToolbar").waitFor({ state: "attached" });
   assert.equal(await page.locator("#chatPanel > #chatToolbar").count(), 1);
   assert.deepEqual(errors, [], "focus navigation has no page errors");
 });

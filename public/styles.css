@@ -2789,42 +2789,6 @@ body.file-view { overflow: auto; }
 .canvas-session-option:hover, .canvas-session-option:focus-visible { background: var(--field); }
 .canvas-picker-empty { margin: 0; color: var(--muted); font-size: 12.5px; }
 
-/* Selective membership map: compact topology cards, not presence indicators. */
-.cluster-canvas {
-  min-height: 180px;
-  min-width: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
-  gap: 12px;
-  padding: 14px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-ctl);
-  background-color: var(--panel);
-  background-image: radial-gradient(var(--line) .8px, transparent .8px);
-  background-size: 14px 14px;
-}
-.cluster-island {
-  min-width: 0;
-  min-height: 150px;
-  display: grid;
-  grid-template-rows: auto 1fr auto;
-  gap: 8px;
-  padding: 14px;
-  border: 1px solid var(--line);
-  border-radius: 18px 12px 20px 10px;
-  background: var(--panel);
-  color: var(--text);
-  text-align: left;
-}
-.cluster-island:hover { border-color: var(--muted); }
-.cluster-island[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
-.cluster-island:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.cluster-island-title { font-weight: 700; overflow-wrap: anywhere; }
-.cluster-island-meta { color: var(--muted); font: 10px/1.4 var(--mono); text-transform: uppercase; letter-spacing: .05em; }
-.cluster-island svg { width: 100%; height: 72px; pointer-events: none; }
-.cluster-island line { stroke: var(--line); stroke-width: 2; }
-.cluster-island circle { fill: var(--panel); stroke: var(--muted); stroke-width: 2; }
-.cluster-island circle[data-manager="true"] { fill: var(--accent); stroke: var(--accent); }
 .cluster-sharing, .cluster-sharing > div:last-child { display: grid; gap: 12px; min-width: 0; }
 .cluster-sharing { border-top: 1px solid var(--line); padding-top: 14px; }
 .cluster-sharing p { margin: 0; overflow-wrap: anywhere; }
@@ -2842,8 +2806,15 @@ body.file-view { overflow: auto; }
 .cluster-canvas-empty, .cluster-message { margin: 0; color: var(--muted); }
 .cluster-create-row { display: flex; align-items: end; flex-wrap: wrap; gap: 8px; }
 .cluster-create-row label { flex: 1 1 220px; min-width: 0; }
-@media (max-width: 390px) { .cluster-canvas { grid-template-columns: minmax(0, 1fr); padding: 9px; } }
-@media (prefers-reduced-motion: reduce) { .cluster-island { transition: none; } }
+.cluster-create-row[hidden] { display: none; }
+.cluster-toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.cluster-toolbar > div { flex: 1 1 200px; min-width: 0; }
+.cluster-toolbar select { width: 100%; min-width: 0; }
+#settingsPanel-cluster summary { cursor: pointer; padding: 10px 0; }
+#settingsPanel-cluster details { min-width: 0; }
+#settingsPanel-cluster summary:focus-visible { outline: 2px solid var(--accent); }
+.cluster-sharing h4 { margin: 4px 0 0; }
+#settingsPanel-cluster input, #settingsPanel-cluster select { max-width: 100%; }
 
 /* A pane frame is the whole page: the shell collapses to the chat panel alone. */
 body.canvas-pane-mode .shell { display: block; height: 100dvh; padding: 0; }
