@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.1.2 — 2026-09-27
 
 - Twin nodes that receive the same project through both cluster sharing and twin sharing now keep it in one workspace instead of listing it twice.
 
