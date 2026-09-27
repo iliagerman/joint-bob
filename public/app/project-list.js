@@ -60,6 +60,12 @@ export function renderProjects() {
 /** Remembered for this page view only — preferences live on the server and Web Storage is banned here. */
 const collapsedProjectGroups = new Set();
 
+/** A shared workspace names the node it comes from, as in the workspace picker. */
+function groupLabel(workspace, typeId) {
+  if (!workspace) return typeId;
+  return workspace.source ? `${workspace.label} · ${workspace.source.name}` : workspace.label;
+}
+
 /** Groups follow the order types are configured in Settings; anything unknown sorts last. */
 function groupedProjects(projects) {
   const byType = new Map();
@@ -72,7 +78,7 @@ function groupedProjects(projects) {
   const unknown = [...byType.keys()].filter((typeId) => !configured.includes(typeId)).sort();
   return [...configured, ...unknown].map((typeId) => ({
     id: typeId,
-    label: shared.workspaces.find((workspace) => workspace.id === typeId)?.label || typeId,
+    label: groupLabel(shared.workspaces.find((workspace) => workspace.id === typeId), typeId),
     projects: sortPinnedFirst(byType.get(typeId), (project) => isProjectPinned(project.id)),
   }));
 }

@@ -11,6 +11,11 @@ export async function loadWorkspaces() {
   fillWorkspaceSelect();
 }
 
+/** A shared workspace names the node it comes from: two nodes can both have "Contigos". */
+export function workspaceName(workspace) {
+  return workspace.source ? `${workspace.label} · ${workspace.source.name}` : workspace.label;
+}
+
 /** Keeps the create-project picker in step with the workspaces configured in Settings. */
 function fillWorkspaceSelect() {
   const previous = elements.projectWorkspaceInput.value;
@@ -18,7 +23,14 @@ function fillWorkspaceSelect() {
   for (const workspace of shared.workspaces) {
     const option = document.createElement("option");
     option.value = workspace.id;
-    option.textContent = workspace.label;
+    option.textContent = workspaceName(workspace);
+    elements.projectWorkspaceInput.append(option);
+  }
+  if (!shared.workspaces.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.disabled = true;
+    option.textContent = "Create a workspace in Settings > Workspaces first";
     elements.projectWorkspaceInput.append(option);
   }
   elements.projectWorkspaceInput.value = shared.workspaces.some((workspace) => workspace.id === previous) ? previous : shared.workspaces[0]?.id ?? "";
@@ -39,7 +51,7 @@ function renderWorkspaces() {
     row.dataset.testid = "workspace-row";
 
     const name = document.createElement("strong");
-    name.textContent = workspace.label;
+    name.textContent = workspaceName(workspace);
     row.append(name);
 
     const folder = document.createElement("code");

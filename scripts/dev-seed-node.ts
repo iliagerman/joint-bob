@@ -34,7 +34,7 @@ await mkdir(job.dataDir, { recursive: true });
 
 const { updateSettings } = await import("../src/settings.js");
 const { authenticationStatus, createAdministrator } = await import("../src/auth.js");
-const { addProject, importProject } = await import("../src/store.js");
+const { addProject, importProject, saveWorkspace } = await import("../src/store.js");
 const { updateClusterNode } = await import("../src/cluster.js");
 
 updateSettings({
@@ -47,6 +47,9 @@ updateSettings({
 if (authenticationStatus().setupRequired) createAdministrator(job.admin.username, job.admin.password, false);
 
 const node = await updateClusterNode(job.node.name, job.node.url);
+// Nodes start without workspaces; the demo projects live in these two.
+await saveWorkspace({ id: "personal", label: "Personal" });
+await saveWorkspace({ id: "work", label: "Work" });
 const projects = [];
 if (job.mirrorProjects) for (const project of job.mirrorProjects) projects.push(await importProject(project, project.path));
 else for (const demo of job.projects) projects.push(await addProject(demo.name, demo.path));

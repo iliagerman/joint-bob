@@ -9,6 +9,8 @@ export type WorkspaceId = string;
 export interface WorkspaceRecord {
   id: string;
   label: string;
+  /** The node that shares this workspace; absent for this node's own workspaces. */
+  source?: { nodeId: string; name: string };
 }
 
 /** A fixed palette keeps project accents legible in both themes. */

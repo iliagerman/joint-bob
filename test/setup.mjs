@@ -23,6 +23,8 @@ process.stdout.write('{"models":[{"model_id":"default","model_name":"Kiro defaul
   process.env.PATH = `${testBin}${path.delimiter}${process.env.PATH}`;
 }
 process.env.JOINT_BOB_BIND_HOST = "127.0.0.1";
+// Nodes start without workspaces; test fixtures create projects in these two.
+process.env.JOINT_BOB_TEST_DEFAULT_WORKSPACES = "1";
 // Native-service launch settings must not leak into disposable test fixtures.
 delete process.env.JOINT_BOB_RELEASE;
 delete process.env.MASTER_BOB_RELEASE;

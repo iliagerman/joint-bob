@@ -387,10 +387,11 @@ function dropLegacyGitHubSchema(db: DatabaseSync): void {
   for (const table of legacyGitHubTables) db.exec(`DROP TABLE IF EXISTS ${table}`);
 }
 
-/** Seeded once, on a brand-new node only, so a deleted workspace stays deleted across restarts. */
-function seedWorkspaces(db: DatabaseSync): void {
-  const existing = db.prepare("SELECT COUNT(*) AS total FROM workspaces").get() as { total: number };
-  if (existing.total > 0) return;
+/** Nodes start without workspaces. Test fixtures, which create projects in "personal" and
+    "work", ask for those two on a brand-new node. */
+function seedTestWorkspaces(db: DatabaseSync): void {
+  if (process.env.JOINT_BOB_TEST_DEFAULT_WORKSPACES !== "1") return;
+  if ((db.prepare("SELECT COUNT(*) AS total FROM workspaces").get() as { total: number }).total > 0) return;
   const now = new Date().toISOString();
   const seed = db.prepare("INSERT INTO workspaces (id, label, created_at, updated_at) VALUES (?, ?, ?, ?)");
   seed.run("personal", "Personal", now, now);
@@ -452,10 +453,10 @@ async function initializeProjectDatabase(): Promise<DatabaseSync> {
       db.exec("ALTER TABLE projects ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'personal'");
     }
     dropWorkspaceCheckConstraint(db);
+    seedTestWorkspaces(db);
     if (!tableHasColumn(db, "projects", "color")) {
       db.exec("ALTER TABLE projects ADD COLUMN color TEXT");
     }
-    seedWorkspaces(db);
     // Reads the github_* tables and workspaces.github_group, so it must precede the drop below.
     ensureWorkspaceSecretsMigration(db);
     dropLegacyGitHubSchema(db);
@@ -906,7 +907,17 @@ export function workspaceIdFromLabel(label: string): string {
 export async function listWorkspaces(): Promise<WorkspaceRecord[]> {
   const db = await projectDatabase();
   const rows = db.prepare("SELECT id, label FROM workspaces ORDER BY created_at, id").all() as unknown as Array<{ id: string; label: string }>;
-  return rows.map((row) => ({ id: row.id, label: row.label }));
+  // A cluster copy of another node's workspace keeps its label, so it names that node to
+  // tell it apart. A twin's workspace merges into this node's own under the same id.
+  const sharedTable = db.prepare("SELECT 1 FROM sqlite_master WHERE name='cluster_v2_shared_workspaces'").get();
+  const endpointTable = db.prepare("SELECT 1 FROM sqlite_master WHERE name='cluster_v2_peer_endpoints'").get();
+  const owner = sharedTable ? db.prepare("SELECT owner_node_id FROM cluster_v2_shared_workspaces WHERE workspace_id=? AND workspace_id<>source_workspace_id LIMIT 1") : undefined;
+  const name = endpointTable ? db.prepare("SELECT name FROM cluster_v2_peer_endpoints WHERE node_id=? LIMIT 1") : undefined;
+  return rows.map((row) => {
+    const nodeId = (owner?.get(row.id) as { owner_node_id: string } | undefined)?.owner_node_id;
+    if (!nodeId) return { id: row.id, label: row.label };
+    return { id: row.id, label: row.label, source: { nodeId, name: (name?.get(nodeId) as { name: string } | undefined)?.name ?? nodeId } };
+  });
 }
 
 export async function saveWorkspace(input: { id?: string; label: string }): Promise<WorkspaceRecord> {
