@@ -225,12 +225,18 @@ test("node settings leave shell commands unlimited by default and can cap their 
 
 test("harness settings and model picker follow runtime metadata", { timeout: 120_000 }, async (t) => {
   const { page, environment, node } = await nativeUiFixture(t);
+  await page.route("**/api/harnesses/kiro/model-options", (route) => route.fulfill({ json: {
+    providers: [{ id: "kiro", label: "Kiro" }],
+    models: [{ provider: "kiro", id: "default", label: "Kiro default", thinkingLevels: ["default", "high"] }, { provider: "kiro", id: "fixture-model", label: "Fixture model", thinkingLevels: ["default", "high"] }],
+  } }));
   await signIn(page, node.url, environment.username, environment.password);
   await openHarnessSettings(page);
 
   for (const id of ["pi", "claude", "kiro"]) await page.getByTestId(`harness-tab-${id}`).waitFor();
   await page.getByTestId("harness-tab-kiro").click();
-  await page.getByTestId("settings-kiro-default-model").fill("fixture-model");
+  await page.getByTestId("settings-kiro-default-model").click();
+  await page.getByTestId("settings-kiro-default-model").fill("fixture");
+  await page.locator('[data-testid="settings-kiro-default-model-option"][data-value="fixture-model"]').click();
   await page.getByTestId("settings-kiro-default-thinking").selectOption("high");
   await page.getByTestId("settings-save-button").click();
   await page.locator("#settingsDialog[open]").waitFor({ state: "hidden" });
@@ -248,7 +254,8 @@ test("harness settings and model picker follow runtime metadata", { timeout: 120
   await waitForHarnesses(page);
   await openHarnessSettings(page);
   await page.getByTestId("harness-tab-kiro").click();
-  assert.equal(await page.getByTestId("settings-kiro-default-model").inputValue(), "fixture-model");
+  assert.equal(await page.getByTestId("settings-kiro-default-model").getAttribute("data-value"), "fixture-model");
+  assert.equal(await page.getByTestId("settings-kiro-default-model").inputValue(), "Fixture model");
   assert.equal(await page.getByTestId("settings-kiro-default-thinking").inputValue(), "high");
   for (const id of ["pi", "claude"]) {
     await page.getByTestId(`harness-tab-${id}`).click();
@@ -299,6 +306,57 @@ test("harness settings and model picker follow runtime metadata", { timeout: 120
   assert.match(await page.getByTestId("chat-message-input").getAttribute("placeholder") || "", /Kiro|work/);
   assert.match(await page.locator("#messages").innerText(), /Kiro will run/);
   assert.doesNotMatch(await page.locator("#messages").innerText(), /Pi will run/);
+});
+
+test("harness settings choose provider and model from searchable dropdowns of what the harness offers", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await page.route("**/api/harnesses/pi/model-options", (route) => route.fulfill({ json: {
+    providers: [{ id: "anthropic", label: "anthropic" }, { id: "openai-codex", label: "openai-codex" }],
+    models: [
+      { provider: "anthropic", id: "claude-sonnet-4-5", label: "Claude Sonnet 4.5", thinkingLevels: ["off", "low", "high"] },
+      { provider: "openai-codex", id: "gpt-6-sol", label: "GPT 6 Sol", thinkingLevels: ["off", "medium", "xhigh"] },
+      { provider: "openai-codex", id: "gpt-5.6-luna", label: "GPT 5.6 Luna", thinkingLevels: ["off", "low"] },
+    ],
+  } }));
+  await signIn(page, node.url, environment.username, environment.password);
+  await openHarnessSettings(page);
+  await page.getByTestId("harness-tab-pi").click();
+  const provider = page.getByTestId("settings-pi-default-provider");
+  const model = page.getByTestId("settings-pi-default-model");
+  const providerOptions = page.getByTestId("settings-pi-default-provider-option");
+  const modelOptions = page.getByTestId("settings-pi-default-model-option");
+
+  await provider.click();
+  await provider.fill("anthro");
+  assert.deepEqual(await providerOptions.allTextContents(), ["anthropic"], "typing filters providers");
+  await provider.press("Enter");
+  await model.click();
+  assert.deepEqual(await modelOptions.locator(":scope").evaluateAll((items) => items.map((item) => item.getAttribute("data-value"))), ["claude-sonnet-4-5"], "models follow the chosen provider");
+  await modelOptions.first().click();
+  assert.deepEqual(await page.locator("#settingsPiDefaultThinking option").allTextContents(), ["off", "low", "high"], "thinking follows the chosen model");
+
+  await provider.click();
+  await providerOptions.filter({ hasText: "openai-codex" }).click();
+  assert.equal(await model.getAttribute("data-value"), "", "switching provider asks for a model of that provider");
+  await model.click();
+  await model.fill("sol");
+  assert.equal(await modelOptions.count(), 1, "typing filters models by label or ID");
+  await model.press("Enter");
+  assert.equal(await model.inputValue(), "GPT 6 Sol");
+  assert.deepEqual(await page.locator("#settingsPiDefaultThinking option").allTextContents(), ["off", "medium", "xhigh"]);
+
+  await model.click();
+  await model.fill("not a listed model");
+  assert.equal(await modelOptions.count(), 0);
+  await model.press("Escape");
+  assert.equal(await page.locator("#settingsDialog").evaluate((dialog: HTMLDialogElement) => dialog.open), true, "Escape closes only the list");
+  assert.equal(await model.inputValue(), "GPT 6 Sol", "an unlisted entry cannot be chosen");
+
+  await page.locator("#settingsPiDefaultThinking").selectOption("xhigh");
+  await page.getByTestId("settings-save-button").click();
+  await page.locator("#settingsDialog[open]").waitFor({ state: "hidden" });
+  const defaults = await page.evaluate(async () => (await (await fetch("/api/settings")).json()).conversationDefaults);
+  assert.deepEqual(defaults.pi, { provider: "openai-codex", modelId: "gpt-6-sol", thinkingLevel: "xhigh" });
 });
 
 test("listing-only harness metadata does not offer execution or break settings", { timeout: 120_000 }, async (t) => {

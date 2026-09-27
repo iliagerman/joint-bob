@@ -34,7 +34,7 @@ test("built-in harnesses expose lazy runtime sessions", async () => {
   for (const adapter of adapters) {
     assert.equal(typeof adapter.runtime, "function");
     const runtime = await adapter.runtime!();
-    for (const method of ["open", "models", "validateSettings", "readiness"] as const) assert.equal(typeof runtime[method], "function", `${adapter.id}.${method}`);
+    for (const method of ["open", "models", "providers", "validateSettings", "readiness"] as const) assert.equal(typeof runtime[method], "function", `${adapter.id}.${method}`);
   }
 });
 

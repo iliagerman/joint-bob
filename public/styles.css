@@ -1889,7 +1889,8 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   text-align: left;
   cursor: pointer;
 }
-.project-combobox-option:is(:hover, :focus-visible, [aria-selected="true"]) { background: var(--field); }
+.project-combobox-option:is(:hover, :focus-visible, [aria-selected="true"], .active) { background: var(--field); }
+.project-combobox-option-detail { display: block; color: var(--muted); font-family: var(--mono); font-size: 11px; overflow-wrap: anywhere; }
 
 .handoff-progress-card progress { width: 100%; accent-color: var(--accent); }
 #handoffProgressStatus { min-height: 2.8em; white-space: pre-line; }
@@ -2860,6 +2861,7 @@ body.canvas-pane-mode #chatPanel { display: flex !important; height: 100dvh; bor
 /* The reset button sits in a grid fieldset; keep it at its own width instead of stretching. */
 [data-harness-panel] .phase-settings > button { justify-self: start; }
 [data-harness-panel][hidden] { display: none; }
+[data-harness-panel] .model-options-status:empty { display: none; }
 .engine-overrides { display: grid; gap: 10px; }
 .engine-overrides summary { cursor: pointer; color: var(--text); font-weight: 600; }
 .engine-overrides[open] summary { margin-bottom: 2px; }

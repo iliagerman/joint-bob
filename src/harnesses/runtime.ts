@@ -10,6 +10,8 @@ export interface HarnessPrompt {
   onStarted?: () => void;
 }
 export interface HarnessOpenOptions { projectId: string; cwd: string; sessionId: string; sessionPath?: string; conversationId?: string; accountIds?: string[] }
+/** A model provider this harness can use on this node right now. */
+export interface HarnessProvider { id: string; label: string }
 export interface HarnessTool { name: string; description: string; active: boolean }
 export interface HarnessSession {
   readonly id: string; readonly file: string | undefined; readonly messages: ChatMessage[];
@@ -25,6 +27,8 @@ export interface HarnessSession {
 export interface HarnessRuntime {
   open(options: HarnessOpenOptions): Promise<HarnessSession>;
   models(): Promise<Array<ModelSummary & { thinkingLevels: string[] }>>;
+  /** Providers with usable configuration on this node; every model from `models()` belongs to one of them. */
+  providers(): Promise<HarnessProvider[]>;
   validateSettings(settings: HarnessModelSettings): Promise<void>;
   readiness(cwd: string, env?: NodeJS.ProcessEnv): Promise<string[]>;
   externalRunning?: () => Promise<Array<{ sessionId: string; runId: string }>>;

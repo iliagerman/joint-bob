@@ -98,7 +98,20 @@ test("existing conversations can change and clear classifications through their 
   assert.equal(await page.evaluate('Boolean(document.querySelector(\'[data-testid="session-classification-button"]\'))'), false, "read-only conversations must not offer classification edits");
 });
 
+/** Chooses an option in a searchable Settings dropdown by typing part of it. */
+async function pickOption(page: Page, testid: string, query: string, value: string) {
+  await page.getByTestId(testid).click();
+  await page.getByTestId(testid).fill(query);
+  await page.locator(`[data-testid="${testid}-option"][data-value="${value}"]`).click();
+  assert.equal(await page.getByTestId(testid).getAttribute("data-value"), value);
+}
+
 async function configureHarnessDefaults(page: Page) {
+  // The seeded node has no Pi provider signed in, so offer one.
+  await page.route("**/api/harnesses/pi/model-options", (route) => route.fulfill({ json: {
+    providers: [{ id: "anthropic", label: "anthropic" }],
+    models: [{ provider: "anthropic", id: "claude-sonnet-4-5", label: "Claude Sonnet 4.5", thinkingLevels: ["off", "low", "medium", "high"] }],
+  } }));
   await page.getByTestId("settings-open-button").click();
   await page.getByTestId("settings-tab-commands").click();
   await page.getByTestId("settings-start-conversation-enabled").check();
@@ -107,11 +120,11 @@ async function configureHarnessDefaults(page: Page) {
   await page.getByTestId("settings-end-conversation-prompt").fill("Commit, push, and monitor CI.");
   await page.getByTestId("settings-tab-engines").click();
   assert.deepEqual(await page.evaluate(`['Pi', 'Claude'].map(harness => document.querySelector('#settings' + harness + 'DefaultThinking')?.value)`), ["medium", "medium"], "both harnesses need editable medium defaults");
-  await page.getByTestId("settings-pi-default-provider").fill("anthropic");
-  await page.getByTestId("settings-pi-default-model").fill("claude-sonnet-4-5");
+  await pickOption(page, "settings-pi-default-provider", "anthrop", "anthropic");
+  await pickOption(page, "settings-pi-default-model", "sonnet", "claude-sonnet-4-5");
   await page.locator("#settingsPiDefaultThinking").selectOption("low");
   await page.getByTestId("harness-tab-claude").click();
-  await page.getByTestId("settings-claude-default-model").fill("sonnet");
+  await pickOption(page, "settings-claude-default-model", "sonn", "sonnet");
   await page.locator("#settingsClaudeDefaultThinking").selectOption("high");
   await page.getByTestId("settings-save-button").click();
   await page.locator('#settingsDialog[open]').waitFor({ state: "hidden" });
@@ -181,7 +194,7 @@ test("Settings edit per-harness model and thinking defaults for new conversation
   await page.getByTestId("settings-open-button").click();
   await page.locator('#settingsDialog[open]').waitFor();
   assert.equal(await page.locator("#settingsPiDefaultThinking").inputValue(), "low", "saved defaults survive reload");
-  assert.equal(await page.locator("#settingsClaudeDefaultModel").inputValue(), "sonnet");
+  assert.equal(await page.locator("#settingsClaudeDefaultModel").getAttribute("data-value"), "sonnet");
   await page.evaluate('document.querySelector("#settingsDialog").close(); true');
   await assertNewConversationDefaults(page, "pi", "anthropic/claude-sonnet-4-5", "low");
   await assertNewConversationDefaults(page, "claude", "claude/sonnet", "high");

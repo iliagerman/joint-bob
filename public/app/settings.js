@@ -13,6 +13,7 @@ import { loadSecretAccounts } from "./secrets.js";
 import { confirmAction, syncNotifyButton, toast } from "./shell.js";
 import { state } from "./state.js";
 import { renderSessions } from "./session-list.js";
+import { createSearchableSelect } from "./searchable-select.js";
 import { refreshSessionsQuietly } from "./socket.js";
 import { loadWorkspaces } from "./workspaces.js";
 
@@ -113,20 +114,56 @@ function controlPrefix(id) { return id[0].toUpperCase() + id.slice(1); }
 function labeledControl(text, control) { const label = document.createElement("label"); label.append(text, control); return label; }
 function makeInput(id, testid) { const input = document.createElement("input"); input.id = id; input.dataset.testid = testid; input.autocomplete = "off"; return input; }
 
+const UNAVAILABLE = " (not available on this node)";
+
+/** Keeps a saved choice listed even when the harness no longer offers it, so saving leaves it unchanged. */
+function withSaved(options, value) {
+  return !value || options.some((option) => option.value === value) ? options : [{ value, label: `${value}${UNAVAILABLE}` }, ...options];
+}
+
 function createConversationControls(descriptor, settings, prefix) {
-  const fields = {};
   const defaults = settings.conversationDefaults[descriptor.id];
-  if (!descriptor.configuration.fixedProvider) {
-    fields.provider = makeInput(`settings${prefix}DefaultProvider`, `settings-${descriptor.id}-default-provider`);
-    fields.provider.maxLength = 200; fields.provider.required = true; fields.provider.value = defaults.provider;
-  }
-  const model = makeInput(`settings${prefix}DefaultModel`, `settings-${descriptor.id}-default-model`);
-  model.maxLength = 300; model.required = true; model.value = defaults.modelId;
+  const fixedProvider = descriptor.configuration.fixedProvider;
+  const provider = fixedProvider ? null : createSearchableSelect({ id: `settings${prefix}DefaultProvider`, testid: `settings-${descriptor.id}-default-provider`, placeholder: "Search providers", emptyText: "No providers found" });
+  const model = createSearchableSelect({ id: `settings${prefix}DefaultModel`, testid: `settings-${descriptor.id}-default-model`, placeholder: "Search models", emptyText: "No models found" });
+  for (const picker of [provider, model].filter(Boolean)) picker.input.required = true;
+  provider?.setValue(defaults.provider); model.setValue(defaults.modelId);
   const thinking = document.createElement("select");
   thinking.id = `settings${prefix}DefaultThinking`; thinking.dataset.testid = `settings-${descriptor.id}-default-thinking`;
-  for (const level of descriptor.configuration.thinkingLevels) thinking.add(new Option(level, level));
-  thinking.value = defaults.thinkingLevel;
-  return { fields: { ...fields, model, thinking }, controls: [fields.provider && labeledControl("New conversation provider", fields.provider), labeledControl("New conversation model", model), labeledControl("New conversation thinking", thinking)].filter(Boolean) };
+  const status = document.createElement("output"); status.className = "engine-readiness model-options-status"; status.dataset.testid = `settings-${descriptor.id}-model-options-status`;
+
+  let catalog = { providers: [], models: [] };
+  const selectedProvider = () => provider ? provider.value : fixedProvider;
+  function fillThinking(levels, current) {
+    thinking.replaceChildren(...levels.map((level) => new Option(level, level)));
+    thinking.value = levels.includes(current) ? current : levels.includes("default") ? "default" : levels[0];
+  }
+  function refreshModels() {
+    const models = catalog.models.filter((candidate) => candidate.provider === selectedProvider());
+    model.setOptions(withSaved(models.map(({ id, label }) => ({ value: id, label: label || id, detail: id })), model.value));
+    const chosen = models.find(({ id }) => id === model.value);
+    fillThinking(chosen?.thinkingLevels?.length ? chosen.thinkingLevels : descriptor.configuration.thinkingLevels, thinking.value);
+  }
+  provider?.onChange(() => {
+    // A model belongs to one provider, so switching provider asks for a new model.
+    if (!catalog.models.some((candidate) => candidate.provider === provider.value && candidate.id === model.value)) model.setValue("");
+    refreshModels();
+  });
+  model.onChange(refreshModels);
+  fillThinking(descriptor.configuration.thinkingLevels, defaults.thinkingLevel);
+  provider?.setOptions(withSaved([], defaults.provider));
+  model.setOptions(withSaved([], defaults.modelId));
+
+  status.textContent = "Loading available models…";
+  const loaded = api(`/api/harnesses/${encodeURIComponent(descriptor.id)}/model-options`).then((body) => {
+    catalog = body;
+    provider?.setOptions(withSaved(body.providers.map(({ id, label }) => ({ value: id, label: label || id, detail: id })), provider.value));
+    refreshModels();
+    status.textContent = body.models.length ? "" : `${descriptor.label} has no models available on this node.`;
+  }).catch((error) => { status.textContent = `Could not load ${descriptor.label} models: ${error.message}`; });
+
+  const controls = [provider && labeledControl("New conversation provider", provider.root), labeledControl("New conversation model", model.root), status, labeledControl("New conversation thinking", thinking)].filter(Boolean);
+  return { fields: { provider, model, thinking }, controls, loaded };
 }
 
 function createRuntimeControls(descriptor, settings, defaults, prefix) {
@@ -193,7 +230,7 @@ function renderHarnessSettings(descriptors, settings, defaults) {
 function conversationDefaultsValue() {
   return Object.fromEntries(harnessDescriptors.map((descriptor) => {
     const fields = conversationFields[descriptor.id];
-    return [descriptor.id, { provider: fields.provider ? fields.provider.value.trim() : descriptor.configuration.fixedProvider, modelId: fields.model.value.trim(), thinkingLevel: fields.thinking.value }];
+    return [descriptor.id, { provider: fields.provider ? fields.provider.value : descriptor.configuration.fixedProvider, modelId: fields.model.value, thinkingLevel: fields.thinking.value }];
   }));
 }
 function renderRuntimeReadiness(readiness) { elements.settingsRuntimeStatus.textContent = Object.entries(readiness).flatMap(([id, fields]) => Object.entries(fields).map(([field, result]) => `${runtimeLabels[id][field]}: ${result.message}`)).join(". "); }

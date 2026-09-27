@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Harness model and provider pickers in Settings now support searching to quickly find available options.
+
 ## 2.1.6 — 2026-09-27
 
 - New projects no longer automatically create AGENTS.md. Existing instruction files are left untouched.

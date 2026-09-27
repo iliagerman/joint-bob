@@ -115,6 +115,22 @@ app.get("/api/harnesses", (_request, response) => {
   })) });
 });
 
+// The providers and models a harness can use on this node, for the Settings pickers.
+app.get("/api/harnesses/:id/model-options", async (request, response, next) => {
+  try {
+    const id = request.params.id;
+    if (!isHarnessId(id) || !listHarnesses().some((adapter) => adapter.id === id && adapter.runtime)) {
+      response.status(404).json({ error: "Unknown harness" });
+      return;
+    }
+    const runtime = await getHarnessRuntime(id);
+    const [providers, models] = await Promise.all([runtime.providers(), runtime.models()]);
+    response.json({ providers, models });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get("/api/models", async (request, response, next) => {
   try {
     const raw = request.query.harnessId;

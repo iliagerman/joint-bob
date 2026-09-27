@@ -343,6 +343,10 @@ const runtime: HarnessRuntime = {
     return modelIds.map((id) => ({ provider: "claude", id, label: id, thinkingLevels: effortIds }));
   },
 
+  async providers() {
+    return [{ id: "claude", label: "Claude" }];
+  },
+
   async validateSettings(settings) {
     validate(settings);
   },

@@ -667,6 +667,10 @@ const runtime: HarnessRuntime = {
     return discoverModels();
   },
 
+  async providers() {
+    return [{ id: "kiro", label: "Kiro" }];
+  },
+
   async validateSettings(settings) {
     validate(settings);
   },

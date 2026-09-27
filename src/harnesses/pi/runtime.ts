@@ -276,6 +276,12 @@ const runtime: HarnessRuntime = {
     }));
   },
 
+  async providers() {
+    // Pi lists only models whose provider has usable authentication, so their providers are the configured ones.
+    const ids = [...new Set((await service.listAvailableModels()).map((model) => model.provider))];
+    return ids.sort().map((id) => ({ id, label: id }));
+  },
+
   async validateSettings(settings) {
     const available = await service.listAvailableModels();
     if (!available.some((model) => model.provider === settings.provider && model.id === settings.modelId)) {
