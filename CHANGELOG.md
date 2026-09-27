@@ -3,9 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.1.3 — 2026-09-27
 
 - Shared workspaces now display which cluster node they come from, letting you distinguish between workspaces with the same name from different nodes.
+- New nodes no longer automatically create default "Personal" and "Work" workspaces; create one in Settings before adding a project.
 
 ## 2.1.2 — 2026-09-27
 
