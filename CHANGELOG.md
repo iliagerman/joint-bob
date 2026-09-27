@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.4.0 — 2026-09-27
 
 - Every dropdown now shows its chevron with room beside it; long choices no longer run under the arrow on wide screens.
 - The chat toolbar's agent, node, reasoning and model pickers show their dropdown arrow again.
