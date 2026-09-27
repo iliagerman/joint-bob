@@ -51,6 +51,9 @@ test("focus chat header stays one line with elapsed time and a working-only colo
   await page.screenshot({ path: "tmp/focus-single-line-header.png" });
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await page.locator("body.focus-ui").count(), 0, "focus mode only applies to mobile screens");
+  assert.equal(await page.getByTestId("focus-controls-button").isVisible(), false, "desktop has no focus controls handle");
+  assert.equal(await page.getByTestId("settings-focus-ui-toggle").isChecked(), true, "the saved preference stays on");
   assert.equal(await page.locator(".context-usage-bar").isVisible(), true, "desktop retains the context bar");
   assert.match(await page.locator("#turnTimer").innerText(), /^Working /, "desktop retains its status label");
 });

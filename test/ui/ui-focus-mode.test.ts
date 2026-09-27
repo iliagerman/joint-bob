@@ -21,6 +21,8 @@ test("focus UI is opt-in, uses real conversations, and reverts without losing th
   assert.equal(await page.locator("body").evaluate(el => el.classList.contains("focus-ui")), false);
   await page.unroute("**/api/preferences");
   await page.getByTestId("settings-focus-ui-toggle").check();
+  // Focus mode only applies to mobile screens.
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForFunction(() => document.body.classList.contains("focus-ui"));
   await page.locator("#cancelSettingsButton").click();
   await page.reload();
@@ -56,6 +58,7 @@ test("focus UI is opt-in, uses real conversations, and reverts without losing th
   await page.getByTestId("settings-focus-ui-toggle").uncheck();
   await page.waitForFunction(() => !document.body.classList.contains("focus-ui"));
   await page.locator("#cancelSettingsButton").click();
+  await page.setViewportSize({ width: 1280, height: 720 });
   assert.equal(await page.locator("#projectsPanel").isVisible(), true);
   assert.equal(await page.locator("#chatsPanel").isVisible(), true);
   assert.equal(await page.locator("#chatPanel > #chatToolbar").isVisible(), true, "real toolbar returns to original parent");

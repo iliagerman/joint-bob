@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Focus mode now applies only to mobile screens; your preference is saved across sessions, but desktops keep the classic layout.
+
 ## 2.0.2 — 2026-09-27
 
 - Startup transcript cleanup now covers all harness types and continues even if individual projects encounter errors.

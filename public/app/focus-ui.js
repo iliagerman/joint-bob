@@ -16,6 +16,7 @@ const chatHost = document.querySelector("#focusChatControls");
 const context = document.querySelector("#focusContextActions");
 const toolbarHome = document.createComment("Chat toolbar location");
 let enabled = false;
+let preferred = false;
 let position = null;
 
 function currentView() {
@@ -86,10 +87,16 @@ function syncView() {
   if (view === "canvas") proxyAction("Add conversation", elements.canvasAddButton, "chat");
 }
 
-/** Layout only: never reload a session or change the user's panel-collapse preferences. */
+/** Layout only: never reload a session or change the user's panel-collapse preferences.
+ *  The saved preference applies to mobile screens only; desktops keep the classic layout. */
 export function setFocusUi(value) {
-  enabled = Boolean(value) && !state.canvasPaneMode;
-  toggle.checked = enabled;
+  preferred = Boolean(value);
+  applyFocusUi();
+}
+
+function applyFocusUi() {
+  enabled = preferred && mobileFocusViewport.matches && !state.canvasPaneMode;
+  toggle.checked = preferred && !state.canvasPaneMode;
   toggle.disabled = state.canvasPaneMode;
   document.body.classList.toggle("focus-ui", enabled);
   syncMobileProjectControls();
@@ -149,10 +156,11 @@ export function initializeFocusUi({ openSettings, startConversation, createNote,
     const next = toggle.checked;
     toggle.disabled = true;
     try { await savePreferences({ focusUiEnabled: next }); setFocusUi(next); }
-    catch (error) { toggle.checked = enabled; toast(`Could not save interface preference: ${error.message}`); }
+    catch (error) { toggle.checked = preferred; toast(`Could not save interface preference: ${error.message}`); }
     finally { toggle.disabled = state.canvasPaneMode; }
   });
   window.addEventListener("app-view-changed", syncView);
+  mobileFocusViewport.addEventListener("change", applyFocusUi);
   window.addEventListener("resize", resize);
   visualViewport?.addEventListener("resize", resize);
   installFabDrag();

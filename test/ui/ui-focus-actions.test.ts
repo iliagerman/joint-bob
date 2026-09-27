@@ -14,6 +14,8 @@ test("focus actions work before choosing a project, on lists and in chat; classi
   await page.locator(".project-card").first().waitFor();
   await page.getByTestId("settings-open-button").click();
   await page.getByTestId("settings-focus-ui-toggle").check();
+  // Focus mode only applies to mobile screens.
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForFunction(() => document.body.classList.contains("focus-ui"));
   await page.getByTestId("settings-cancel-button").click();
   // No active project yet: note creation must still offer a project picker.
