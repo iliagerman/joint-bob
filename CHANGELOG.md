@@ -3,10 +3,6 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
-
-- Website secrets now replicate to paired nodes while keeping their origin binding.
-
 ## 2.1.5 — 2026-09-27
 
 - Running indicators now appear immediately when you start a conversation instead of delaying up to five seconds.
