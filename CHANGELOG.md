@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.3.2 — 2026-09-27
 
 - Harness model and provider selectors in Settings now display as closed dropdown buttons showing your selection, opening to a search-enabled list only when needed.
 
