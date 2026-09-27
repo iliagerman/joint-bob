@@ -101,7 +101,7 @@ test("existing conversations can change and clear classifications through their 
 /** Chooses an option in a searchable Settings dropdown by typing part of it. */
 async function pickOption(page: Page, testid: string, query: string, value: string) {
   await page.getByTestId(testid).click();
-  await page.getByTestId(testid).fill(query);
+  await page.getByTestId(`${testid}-search`).fill(query);
   await page.locator(`[data-testid="${testid}-option"][data-value="${value}"]`).click();
   assert.equal(await page.getByTestId(testid).getAttribute("data-value"), value);
 }

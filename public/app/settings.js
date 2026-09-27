@@ -124,9 +124,8 @@ function withSaved(options, value) {
 function createConversationControls(descriptor, settings, prefix) {
   const defaults = settings.conversationDefaults[descriptor.id];
   const fixedProvider = descriptor.configuration.fixedProvider;
-  const provider = fixedProvider ? null : createSearchableSelect({ id: `settings${prefix}DefaultProvider`, testid: `settings-${descriptor.id}-default-provider`, placeholder: "Search providers", emptyText: "No providers found" });
-  const model = createSearchableSelect({ id: `settings${prefix}DefaultModel`, testid: `settings-${descriptor.id}-default-model`, placeholder: "Search models", emptyText: "No models found" });
-  for (const picker of [provider, model].filter(Boolean)) picker.input.required = true;
+  const provider = fixedProvider ? null : createSearchableSelect({ id: `settings${prefix}DefaultProvider`, testid: `settings-${descriptor.id}-default-provider`, prompt: "Choose a provider", placeholder: "Search providers", emptyText: "No providers found" });
+  const model = createSearchableSelect({ id: `settings${prefix}DefaultModel`, testid: `settings-${descriptor.id}-default-model`, prompt: "Choose a model", placeholder: "Search models", emptyText: "No models found" });
   provider?.setValue(defaults.provider); model.setValue(defaults.modelId);
   const thinking = document.createElement("select");
   thinking.id = `settings${prefix}DefaultThinking`; thinking.dataset.testid = `settings-${descriptor.id}-default-thinking`;
@@ -283,6 +282,11 @@ export async function openSettings(tab = "account") {
 
 async function saveSettings(event) {
   event.preventDefault();
+  for (const descriptor of harnessDescriptors) {
+    const { provider, model } = conversationFields[descriptor.id];
+    if (provider && !provider.value) throw new Error(`Choose a ${descriptor.label} provider for new conversations`);
+    if (!model.value) throw new Error(`Choose a ${descriptor.label} model for new conversations`);
+  }
   const runtime = runtimeFieldsValue();
   for (const harness of clearedHarnessesOnSave) runtime[harness] = blankHarnessPayload();
   const invalid = invalidRuntimeOverrides(await checkRuntimePaths(), runtime);

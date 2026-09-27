@@ -1,93 +1,116 @@
 /**
- * A dropdown whose text box filters its options. Only a listed option can be chosen: typing
- * narrows the list, and leaving the box without choosing restores the current choice.
+ * A dropdown with a search box. The closed control looks and acts like a select: it shows the
+ * current choice behind a chevron and cannot be typed into. Opening it shows a search box over
+ * the list; typing narrows the list, and only a listed option can be chosen.
  *
- * Options are `{ value, label, detail? }`; the box shows the label and matches label, value, and detail.
+ * Options are `{ value, label, detail? }`; search matches label, value, and detail.
  */
-export function createSearchableSelect({ id, testid, placeholder = "Search", emptyText = "No matches" }) {
+export function createSearchableSelect({ id, testid, prompt = "Choose…", placeholder = "Search", emptyText = "No matches" }) {
   const root = document.createElement("div");
-  root.className = "project-combobox";
-  const input = document.createElement("input");
-  input.id = id; input.type = "search"; input.role = "combobox"; input.autocomplete = "off"; input.spellcheck = false;
-  input.placeholder = placeholder; input.dataset.testid = testid; input.dataset.value = "";
-  input.setAttribute("aria-autocomplete", "list"); input.setAttribute("aria-expanded", "false");
+  root.className = "searchable-select";
+  const trigger = document.createElement("button");
+  trigger.type = "button"; trigger.id = id; trigger.className = "searchable-select-trigger";
+  trigger.dataset.testid = testid; trigger.dataset.value = "";
+  trigger.setAttribute("aria-haspopup", "listbox"); trigger.setAttribute("aria-expanded", "false");
+  const popover = document.createElement("div");
+  popover.className = "searchable-select-popover"; popover.hidden = true;
+  const search = document.createElement("input");
+  search.type = "search"; search.role = "combobox"; search.autocomplete = "off"; search.spellcheck = false;
+  search.placeholder = placeholder; search.dataset.testid = `${testid}-search`;
+  search.setAttribute("aria-autocomplete", "list"); search.setAttribute("aria-expanded", "true");
   const list = document.createElement("div");
-  list.id = `${id}Options`; list.className = "project-combobox-options"; list.role = "listbox"; list.hidden = true; list.dataset.testid = `${testid}-options`;
-  input.setAttribute("aria-controls", list.id);
-  root.append(input, list);
+  list.id = `${id}Options`; list.className = "searchable-select-options"; list.role = "listbox"; list.dataset.testid = `${testid}-options`;
+  search.setAttribute("aria-controls", list.id); trigger.setAttribute("aria-controls", list.id);
+  popover.append(search, list);
+  root.append(trigger, popover);
 
   let options = [];
   let active = -1;
   const listeners = [];
-  const selected = () => options.find((option) => option.value === input.dataset.value);
-  const showSelected = () => { input.value = selected()?.label ?? input.dataset.value; };
-  const close = () => { list.hidden = true; input.setAttribute("aria-expanded", "false"); input.removeAttribute("aria-activedescendant"); };
+  const selected = () => options.find((option) => option.value === trigger.dataset.value);
+  const showSelected = () => {
+    const label = selected()?.label ?? trigger.dataset.value;
+    trigger.textContent = label || prompt;
+    trigger.classList.toggle("empty", !label);
+  };
+
+  function close({ focusTrigger = false } = {}) {
+    popover.hidden = true; trigger.setAttribute("aria-expanded", "false"); search.removeAttribute("aria-activedescendant");
+    if (focusTrigger) trigger.focus();
+  }
 
   function highlight(index) {
     const items = [...list.querySelectorAll("[role='option']")];
     active = items.length ? (index + items.length) % items.length : -1;
     items.forEach((item, position) => item.classList.toggle("active", position === active));
-    if (active < 0) { input.removeAttribute("aria-activedescendant"); return; }
-    input.setAttribute("aria-activedescendant", items[active].id);
+    if (active < 0) { search.removeAttribute("aria-activedescendant"); return; }
+    search.setAttribute("aria-activedescendant", items[active].id);
     items[active].scrollIntoView({ block: "nearest" });
   }
 
   function choose(option) {
-    const changed = option.value !== input.dataset.value;
-    input.dataset.value = option.value;
-    showSelected(); close();
+    const changed = option.value !== trigger.dataset.value;
+    trigger.dataset.value = option.value;
+    showSelected(); close({ focusTrigger: true });
     if (changed) for (const listener of listeners) listener(option.value);
   }
 
-  function render(query) {
-    const needle = query.trim().toLocaleLowerCase();
+  function render() {
+    const needle = search.value.trim().toLocaleLowerCase();
     const matches = options.filter((option) => !needle || [option.label, option.value, option.detail].some((text) => text?.toLocaleLowerCase().includes(needle)));
     list.replaceChildren(...matches.map((option, index) => {
       const item = document.createElement("button");
       item.type = "button"; item.role = "option"; item.id = `${id}Option${index}`; item.tabIndex = -1;
-      item.className = "project-combobox-option"; item.dataset.testid = `${testid}-option`; item.dataset.value = option.value;
-      item.setAttribute("aria-selected", String(option.value === input.dataset.value));
+      item.className = "searchable-select-option"; item.dataset.testid = `${testid}-option`; item.dataset.value = option.value;
+      item.setAttribute("aria-selected", String(option.value === trigger.dataset.value));
       item.textContent = option.label;
       if (option.detail && option.detail !== option.label) {
-        const detail = document.createElement("span"); detail.className = "project-combobox-option-detail"; detail.textContent = option.detail; item.append(detail);
+        const detail = document.createElement("span"); detail.className = "searchable-select-option-detail"; detail.textContent = option.detail; item.append(detail);
       }
       item.addEventListener("mousedown", (event) => event.preventDefault());
       item.addEventListener("click", () => choose(option));
       return item;
     }));
     if (!matches.length) list.textContent = emptyText;
-    highlight(0);
+    const current = matches.findIndex((option) => option.value === trigger.dataset.value);
+    highlight(needle || current < 0 ? 0 : current);
   }
 
-  function open(query) { render(query); list.hidden = false; input.setAttribute("aria-expanded", "true"); }
+  function open() {
+    search.value = ""; popover.hidden = false; trigger.setAttribute("aria-expanded", "true");
+    render(); search.focus();
+  }
 
-  input.addEventListener("focus", () => { input.select(); open(""); });
-  input.addEventListener("click", () => { if (list.hidden) open(""); });
-  input.addEventListener("input", () => open(input.value));
-  input.addEventListener("keydown", (event) => {
+  trigger.addEventListener("click", () => (popover.hidden ? open() : close()));
+  trigger.addEventListener("keydown", (event) => {
+    if (["ArrowDown", "ArrowUp"].includes(event.key) && popover.hidden) { event.preventDefault(); open(); }
+  });
+  search.addEventListener("input", render);
+  search.addEventListener("keydown", (event) => {
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
-      if (list.hidden) open(""); else highlight(active + (event.key === "ArrowDown" ? 1 : -1));
+      highlight(active + (event.key === "ArrowDown" ? 1 : -1));
     } else if (event.key === "Enter") {
-      const item = list.querySelectorAll("[role='option']")[active];
-      if (list.hidden || !item) return;
       event.preventDefault();
-      item.click();
-    } else if (event.key === "Escape" && !list.hidden) {
+      list.querySelectorAll("[role='option']")[active]?.click();
+    } else if (event.key === "Escape") {
       // Keep the dialog open; only the list closes.
       event.preventDefault(); event.stopPropagation();
-      showSelected(); close();
+      close({ focusTrigger: true });
+    } else if (event.key === "Tab") {
+      close();
     }
   });
-  input.addEventListener("blur", () => { showSelected(); close(); });
+  root.addEventListener("focusout", (event) => { if (!root.contains(event.relatedTarget)) close(); });
 
+  showSelected();
   return {
     root,
-    input,
-    get value() { return input.dataset.value; },
+    trigger,
+    get value() { return trigger.dataset.value; },
     /** Replaces the options. The current choice is kept, so a value missing from them must be listed by the caller to stay visible. */
-    setOptions(next) { options = next; showSelected(); if (!list.hidden) render(input.value); },
-    setValue(value) { input.dataset.value = value; showSelected(); },
+    setOptions(next) { options = next; showSelected(); if (!popover.hidden) render(); },
+    setValue(value) { trigger.dataset.value = value; showSelected(); },
     onChange(listener) { listeners.push(listener); },
   };
 }

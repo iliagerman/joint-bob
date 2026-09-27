@@ -235,7 +235,7 @@ test("harness settings and model picker follow runtime metadata", { timeout: 120
   for (const id of ["pi", "claude", "kiro"]) await page.getByTestId(`harness-tab-${id}`).waitFor();
   await page.getByTestId("harness-tab-kiro").click();
   await page.getByTestId("settings-kiro-default-model").click();
-  await page.getByTestId("settings-kiro-default-model").fill("fixture");
+  await page.getByTestId("settings-kiro-default-model-search").fill("fixture");
   await page.locator('[data-testid="settings-kiro-default-model-option"][data-value="fixture-model"]').click();
   await page.getByTestId("settings-kiro-default-thinking").selectOption("high");
   await page.getByTestId("settings-save-button").click();
@@ -255,7 +255,7 @@ test("harness settings and model picker follow runtime metadata", { timeout: 120
   await openHarnessSettings(page);
   await page.getByTestId("harness-tab-kiro").click();
   assert.equal(await page.getByTestId("settings-kiro-default-model").getAttribute("data-value"), "fixture-model");
-  assert.equal(await page.getByTestId("settings-kiro-default-model").inputValue(), "Fixture model");
+  assert.equal(await page.getByTestId("settings-kiro-default-model").textContent(), "Fixture model");
   assert.equal(await page.getByTestId("settings-kiro-default-thinking").inputValue(), "high");
   for (const id of ["pi", "claude"]) {
     await page.getByTestId(`harness-tab-${id}`).click();
@@ -323,13 +323,18 @@ test("harness settings choose provider and model from searchable dropdowns of wh
   await page.getByTestId("harness-tab-pi").click();
   const provider = page.getByTestId("settings-pi-default-provider");
   const model = page.getByTestId("settings-pi-default-model");
+  const providerSearch = page.getByTestId("settings-pi-default-provider-search");
+  const modelSearch = page.getByTestId("settings-pi-default-model-search");
+  assert.equal(await provider.evaluate((element) => element.tagName), "BUTTON", "the closed picker is a dropdown, not a text box");
+  assert.match(await provider.evaluate((element) => getComputedStyle(element).backgroundImage), /svg/, "the closed picker shows a dropdown chevron");
   const providerOptions = page.getByTestId("settings-pi-default-provider-option");
   const modelOptions = page.getByTestId("settings-pi-default-model-option");
 
   await provider.click();
-  await provider.fill("anthro");
+  assert.equal(await providerSearch.evaluate((element) => element === document.activeElement), true, "opening the dropdown focuses its search box");
+  await providerSearch.fill("anthro");
   assert.deepEqual(await providerOptions.allTextContents(), ["anthropic"], "typing filters providers");
-  await provider.press("Enter");
+  await providerSearch.press("Enter");
   await model.click();
   assert.deepEqual(await modelOptions.locator(":scope").evaluateAll((items) => items.map((item) => item.getAttribute("data-value"))), ["claude-sonnet-4-5"], "models follow the chosen provider");
   await modelOptions.first().click();
@@ -338,25 +343,47 @@ test("harness settings choose provider and model from searchable dropdowns of wh
   await provider.click();
   await providerOptions.filter({ hasText: "openai-codex" }).click();
   assert.equal(await model.getAttribute("data-value"), "", "switching provider asks for a model of that provider");
+  assert.equal(await model.textContent(), "Choose a model");
+  await page.getByTestId("settings-save-button").click();
+  await page.getByText("Choose a Pi model for new conversations").waitFor();
   await model.click();
-  await model.fill("sol");
+  await modelSearch.fill("sol");
   assert.equal(await modelOptions.count(), 1, "typing filters models by label or ID");
-  await model.press("Enter");
-  assert.equal(await model.inputValue(), "GPT 6 Sol");
+  await modelSearch.press("Enter");
+  assert.equal(await model.textContent(), "GPT 6 Sol");
   assert.deepEqual(await page.locator("#settingsPiDefaultThinking option").allTextContents(), ["off", "medium", "xhigh"]);
 
   await model.click();
-  await model.fill("not a listed model");
+  await modelSearch.fill("not a listed model");
   assert.equal(await modelOptions.count(), 0);
-  await model.press("Escape");
+  await modelSearch.press("Escape");
   assert.equal(await page.locator("#settingsDialog").evaluate((dialog: HTMLDialogElement) => dialog.open), true, "Escape closes only the list");
-  assert.equal(await model.inputValue(), "GPT 6 Sol", "an unlisted entry cannot be chosen");
+  assert.equal(await modelSearch.isVisible(), false);
+  assert.equal(await model.textContent(), "GPT 6 Sol", "an unlisted entry cannot be chosen");
 
   await page.locator("#settingsPiDefaultThinking").selectOption("xhigh");
   await page.getByTestId("settings-save-button").click();
   await page.locator("#settingsDialog[open]").waitFor({ state: "hidden" });
   const defaults = await page.evaluate(async () => (await (await fetch("/api/settings")).json()).conversationDefaults);
   assert.deepEqual(defaults.pi, { provider: "openai-codex", modelId: "gpt-6-sol", thinkingLevel: "xhigh" });
+});
+
+test("on a phone the harness pickers open as a list of options", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await signIn(page, node.url, environment.username, environment.password);
+  await page.setViewportSize({ width: 390, height: 844 });
+  // The phone layout keeps Settings behind the menu; open it the way that menu does.
+  await page.evaluate(async () => (await import("/app/settings.js")).openSettings("engines"));
+  await page.locator("#settingsDialog[open]").waitFor();
+  await page.getByTestId("harness-tab-claude").click();
+  const model = page.getByTestId("settings-claude-default-model");
+  await model.click();
+  const options = page.getByTestId("settings-claude-default-model-option");
+  await options.first().waitFor({ state: "visible" });
+  assert.ok(await options.count() > 1, "the Claude models are listed");
+  await options.filter({ hasText: /^haiku$/ }).click();
+  assert.equal(await model.textContent(), "haiku");
+  assert.equal(await page.getByTestId("settings-claude-default-model-search").isVisible(), false, "choosing closes the list");
 });
 
 test("listing-only harness metadata does not offer execution or break settings", { timeout: 120_000 }, async (t) => {

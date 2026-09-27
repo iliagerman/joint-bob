@@ -1889,8 +1889,62 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   text-align: left;
   cursor: pointer;
 }
-.project-combobox-option:is(:hover, :focus-visible, [aria-selected="true"], .active) { background: var(--field); }
-.project-combobox-option-detail { display: block; color: var(--muted); font-family: var(--mono); font-size: 11px; overflow-wrap: anywhere; }
+.project-combobox-option:is(:hover, :focus-visible, [aria-selected="true"]) { background: var(--field); }
+
+/* A select with a search box: the closed control matches <select>, chevron included. */
+.searchable-select { position: relative; min-width: 0; }
+.searchable-select-trigger {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-ctl);
+  padding: 11px 34px 11px 13px;
+  background-color: var(--surface);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1.5 1.75 6 6.25l4.5-4.5' fill='none' stroke='%238b9198' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 11px;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.searchable-select-trigger.empty { color: var(--muted); }
+.searchable-select-trigger[aria-expanded="true"] { border-color: var(--line-strong); }
+.searchable-select-popover {
+  position: absolute;
+  z-index: 3;
+  top: calc(100% + 4px);
+  right: 0;
+  left: 0;
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  box-shadow: var(--shadow, 0 10px 30px rgb(0 0 0 / 0.25));
+}
+.searchable-select-popover[hidden] { display: none; }
+.searchable-select-options { display: grid; max-height: 220px; overflow-y: auto; color: var(--muted); }
+.searchable-select-option {
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: calc(var(--radius-ctl) - 3px);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.searchable-select-option:is(:hover, :focus-visible, .active) { background: var(--field); }
+.searchable-select-option[aria-selected="true"] { font-weight: 650; }
+.searchable-select-option-detail { display: block; color: var(--muted); font-family: var(--mono); font-size: 11px; font-weight: 400; overflow-wrap: anywhere; }
 
 .handoff-progress-card progress { width: 100%; accent-color: var(--accent); }
 #handoffProgressStatus { min-height: 2.8em; white-space: pre-line; }
@@ -2018,6 +2072,7 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   .messages { padding-inline: clamp(16px, 4vw, 56px); }
   textarea { max-height: min(40dvh, 360px); font-size: 14px; }
   input, select { padding: 10px 13px; }
+  .searchable-select-trigger { padding: 10px 34px 10px 13px; }
   .install-banner { bottom: 16px; }
   #chatsRecentSessionsButton, #chatRecentSessionsButton { display: none !important; }
   #chatsRunningConversationsButton { display: none !important; }
@@ -2101,7 +2156,7 @@ label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
   .dialog-card { padding: 20px; }
   .quick-note-settings { grid-template-columns: 1fr; }
   .quick-note-launch { grid-template-columns: 1fr; }
-  .search-shell input, input, select { font-size: 16px; }
+  .search-shell input, input, select, .searchable-select-trigger { font-size: 16px; }
   /* The menu is the only way to reach a row's actions, so it needs a real touch target,
      and a wider lane to sit in so the title still clears it. */
   .row-menu-button { min-height: 34px; min-width: 34px; }
