@@ -6,9 +6,9 @@ import path from "node:path";
 import test from "node:test";
 import { type Page } from "playwright-core";
 import { launchChrome } from "./launch-chrome.js";
-import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment } from "../dev-nodes.js";
+import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, type SignedIn } from "../dev-nodes.js";
 
-async function openSharing(page: Page, environment: DevEnvironment) {
+async function openCluster(page: Page, environment: DevEnvironment) {
   await page.goto(environment.nodes[0].url);
   await page.getByTestId("login-username-input").fill(environment.username);
   await page.getByTestId("login-password-input").fill(environment.password);
@@ -16,66 +16,98 @@ async function openSharing(page: Page, environment: DevEnvironment) {
   await page.getByText("Internal Assistant", { exact: true }).waitFor();
   await page.getByTestId("settings-open-button").click();
   await page.getByTestId("settings-tab-cluster").click();
-  await page.getByTestId("sharing-mode-selected").waitFor({ timeout: 5000 });
+  await page.getByTestId("cluster-member").first().waitFor();
 }
 
-test("real nodes save selections and require invitation acceptance before Twins", { timeout: 120_000 }, async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-ui-sharing-pair-"));
+async function relationships(node: SeededNode, session: SignedIn): Promise<Array<{ relationshipId: string; status: string }>> {
+  return (await api<{ relationships: Array<{ relationshipId: string; status: string }> }>(node, session, "GET", "/twins")).body.relationships;
+}
+
+test("cluster members pair as twins by request and acceptance, and unpair from the node row", { timeout: 180_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-ui-twin-requests-"));
   const a = await seedDevEnvironment(path.join(root, "a"), 1), b = await seedDevEnvironment(path.join(root, "b"), 1);
   const servers: Awaited<ReturnType<typeof startDevNode>>[] = [];
   let browser: Awaited<ReturnType<typeof launchChrome>> | undefined;
   try {
-    servers.push(await startDevNode(a, a.nodes[0]));
-    servers.push(await startDevNode(b, b.nodes[0]));
-    browser = await launchChrome({ headless: true });
-    const sa = await signIn(a, a.nodes[0]), sb = await signIn(b, b.nodes[0]);
-    const cluster = await api<{ snapshot: { body: { clusterId: string } } }>(a.nodes[0], sa, "POST", "/clusters", { name: "Home" });
-    assert.equal(cluster.status, 201); const id = cluster.body.snapshot.body.clusterId;
-    const invitation = await api<{ link: string }>(a.nodes[0], sa, "POST", `/clusters/${id}/invitations`, { expectedEpoch: 1 });
-    assert.equal(invitation.status, 201);
-    assert.equal((await api(b.nodes[0], sb, "POST", "/clusters/join", { link: invitation.body.link, requestId: randomUUID() })).status, 201);
-    const ca = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: "block" });
-    const cb = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: "block" });
-    const pa = await ca.newPage(), pb = await cb.newPage();
-    await openSharing(pa, a); await openSharing(pb, b);
-    const project = a.nodes[0].projects[0].id;
-    await pa.getByTestId("sharing-project-summary").click();
-    await pa.getByTestId(`sharing-project-${project}`).check();
-    await pa.getByTestId("sharing-save").click(); await pa.getByTestId("confirm-accept-button").click();
-    await pa.getByTestId("sharing-status").getByText("Selection saved", { exact: false }).waitFor();
-    const selection = await api<{ projectIds: string[] }>(a.nodes[0], sa, "GET", `/clusters/${id}/sharing`);
-    assert.equal(selection.status, 200); assert.deepEqual(selection.body.projectIds, [project]);
-    await pa.getByTestId("sharing-mode-twins").click(); await pa.getByTestId("twin-invite").click();
+    servers.push(await startDevNode(a, a.nodes[0]), await startDevNode(b, b.nodes[0]));
+    const [nodeA, nodeB] = [a.nodes[0], b.nodes[0]];
+    const sa = await signIn(a, nodeA), sb = await signIn(b, nodeB);
+    const cluster = await api<{ snapshot: { body: { clusterId: string } } }>(nodeA, sa, "POST", "/clusters", { name: "Home" });
+    assert.equal(cluster.status, 201);
+    const invitation = await api<{ link: string }>(nodeA, sa, "POST", `/clusters/${cluster.body.snapshot.body.clusterId}/invitations`, { expectedEpoch: 1 });
+    assert.equal((await api(nodeB, sb, "POST", "/clusters/join", { link: invitation.body.link, requestId: randomUUID() })).status, 201);
+    browser = await launchChrome({ headless: process.env.HEADED !== "1" });
+    const pa = await (await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: "block" })).newPage();
+    const pb = await (await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: "block" })).newPage();
+    for (const page of [pa, pb]) page.setDefaultTimeout(15_000);
+    await openCluster(pa, a); await openCluster(pb, b);
+
+    // Asking needs consent; cancelling sends nothing.
+    await pa.getByTestId(`cluster-member-make-twin-${nodeB.nodeId}`).click();
     await pa.getByTestId("confirm-cancel-button").click();
-    assert.equal((await api<{ relationships: object[] }>(a.nodes[0], sa, "GET", "/twins")).body.relationships.length, 0);
-    await pa.getByTestId("twin-invite").click(); await pa.getByTestId("confirm-accept-button").click();
-    await pa.waitForFunction(() => (document.querySelector('[data-testid="twin-link"]') as HTMLInputElement).value.length > 0);
-    const link = await pa.getByTestId("twin-link").inputValue();
-    assert.equal(await pa.getByTestId("cluster-sharing").getByText("Up to date", { exact: false }).count(), 0);
-    await pb.getByTestId("sharing-mode-twins").click(); await pb.getByTestId("twin-accept-link").fill(link);
-    await pb.getByTestId("twin-accept").click(); await pb.getByTestId("confirm-cancel-button").click();
-    assert.equal((await api<{ relationships: object[] }>(b.nodes[0], sb, "GET", "/twins")).body.relationships.length, 0);
-    await pb.getByTestId("twin-accept").click();
-    const accepted = pb.waitForResponse(response => response.url().endsWith("/api/twins/accept"));
-    await pb.getByTestId("confirm-accept-button").click(); assert.equal((await accepted).status(), 201);
-    for (const [environment, session] of [[a, sa], [b, sb]] as const) {
-      const twins = await api<{ relationships: Array<{ status: string }> }>(environment.nodes[0], session, "GET", "/twins");
-      assert.equal(twins.body.relationships[0].status, "active");
+    assert.deepEqual((await api<{ requests: unknown[] }>(nodeB, sb, "GET", "/twins/requests")).body.requests, []);
+    await pa.getByTestId(`cluster-member-make-twin-${nodeB.nodeId}`).click();
+    await pa.getByTestId("confirm-accept-button").click();
+    await pa.getByTestId(`cluster-member-requested-${nodeB.nodeId}`).waitFor();
+
+    // The other node sees the request without reloading, and can decline it.
+    const banner = pb.getByTestId("cluster-twin-request");
+    await banner.waitFor({ timeout: 10_000 });
+    assert.match(await banner.innerText(), /asks to be twins with this node \(via Home\)/);
+    await pb.getByTestId(`cluster-member-accept-${nodeA.nodeId}`).waitFor();
+    await banner.getByTestId("cluster-twin-request-decline").click();
+    await banner.waitFor({ state: "detached" });
+    await pa.getByTestId(`cluster-member-make-twin-${nodeB.nodeId}`).waitFor({ timeout: 10_000 });
+    assert.deepEqual(await relationships(nodeA, sa), [], "a declined request pairs nothing");
+
+    // Ask again; accepting needs consent too.
+    await pa.getByTestId(`cluster-member-make-twin-${nodeB.nodeId}`).click();
+    await pa.getByTestId("confirm-accept-button").click();
+    await banner.waitFor({ timeout: 10_000 });
+    await banner.getByTestId("cluster-twin-request-accept").click();
+    await pb.getByTestId("confirm-cancel-button").click();
+    assert.deepEqual(await relationships(nodeB, sb), []);
+    await banner.getByTestId("cluster-twin-request-accept").click();
+    const accepted = pb.waitForResponse((response) => /\/api\/twins\/requests\/[^/]+\/accept$/.test(response.url()));
+    await pb.getByTestId("confirm-accept-button").click();
+    assert.equal((await accepted).status(), 201);
+    for (const [node, session] of [[nodeA, sa], [nodeB, sb]] as const) {
+      assert.deepEqual((await relationships(node, session)).map((item) => item.status), ["active"]);
     }
-    await pb.getByTestId("twin-sharing-status").waitFor();
-    assert.equal(await pb.getByRole("button", { name: /Complete sharing/i }).count(), 0, "acceptance must start sharing without a completion action");
-    await pa.getByTestId("twin-sharing-status").waitFor({ timeout: 15000 });
-    for (const [environment, session, page, peer] of [[a, sa, pa, b.nodes[0]], [b, sb, pb, a.nodes[0]]] as const) {
-      const twins = await api<{ relationships: Array<{ relationshipId: string }> }>(environment.nodes[0], session, "GET", "/twins");
-      const sharing = await api<{ initialized: boolean; projectCount: number }>(environment.nodes[0], session, "GET", `/twins/${twins.body.relationships[0].relationshipId}/sharing`);
-      assert.equal(sharing.body.initialized, true, "acceptance initializes durable sharing on both nodes");
-      assert.ok(sharing.body.projectCount > 0, "acceptance registers existing projects without another click");
-      assert.equal(await page.getByTestId("twin-enable-sharing").count(), 0);
-      assert.equal(await page.getByTestId(`cluster-member-twin-${peer.nodeId}`).innerText(), "Twin");
+    await pb.getByTestId(`cluster-member-twin-${nodeA.nodeId}`).waitFor();
+    await pa.getByTestId(`cluster-member-twin-${nodeB.nodeId}`).waitFor({ timeout: 10_000 });
+    // The twins section lists the new twin with its connection and sync state.
+    const twinRow = pa.getByTestId("cluster-nodes").getByTestId("cluster-node-row").filter({ hasText: nodeB.name });
+    await twinRow.getByTestId("twin-sharing-status").waitFor({ timeout: 10_000 });
+    const strip = pa.getByTestId("cluster-strip");
+    assert.equal(await strip.locator('.cluster-wire[data-twin="true"]').count(), 1, "the strip joins the twins with a dashed wire");
+    const [{ relationshipId }] = await relationships(nodeA, sa);
+    const sharing = await api<{ initialized: boolean }>(nodeA, sa, "GET", `/twins/${relationshipId}/sharing`);
+    assert.equal(sharing.body.initialized, true, "accepting starts sharing without another step");
+
+    // Unpairing from the node row asks first, then revokes.
+    await pa.getByTestId(`cluster-member-unpair-${nodeB.nodeId}`).click();
+    await pa.getByTestId("confirm-cancel-button").click();
+    assert.equal((await relationships(nodeA, sa))[0].status, "active");
+    await pa.getByTestId(`cluster-member-unpair-${nodeB.nodeId}`).click();
+    await pa.getByTestId("confirm-accept-button").click();
+    await pa.getByTestId(`cluster-member-make-twin-${nodeB.nodeId}`).waitFor();
+    assert.equal((await relationships(nodeA, sa))[0].status, "revoked");
+
+    // Pairing by link still works for nodes outside any cluster, and its fields are labelled.
+    await pa.getByTestId("cluster-twin-link").locator("summary").click();
+    await pa.getByTestId("twin-invite").click();
+    await pa.getByTestId("confirm-cancel-button").click();
+    assert.equal(await pa.getByTestId("twin-link").inputValue(), "");
+    await pa.getByTestId("twin-invite").click();
+    await pa.getByTestId("confirm-accept-button").click();
+    await pa.waitForFunction(() => (document.querySelector('[data-testid="twin-link"]') as HTMLInputElement).value.startsWith("http"));
+    for (const id of ["twin-link", "twin-accept-link", "cluster-invite-link-input", "cluster-join-link-input"]) {
+      const field = pa.getByTestId(id);
+      assert.ok(await field.getAttribute("name"), `${id} has a form name`);
+      assert.equal(await field.getAttribute("autocomplete"), "off");
+      assert.equal(await field.getAttribute("spellcheck"), "false");
+      assert.ok(await field.evaluate((element: HTMLInputElement) => element.labels?.length), `${id} has a label`);
     }
-    await pa.getByTestId("sharing-mode-selected").click(); await pa.getByTestId("confirm-accept-button").click();
-    await pa.getByTestId("sharing-save").waitFor();
-    const revoked = await api<{ relationships: Array<{ status: string }> }>(a.nodes[0], sa, "GET", "/twins");
-    assert.equal(revoked.body.relationships[0].status, "revoked");
   } finally { await browser?.close(); await Promise.all(servers.map(stopDevNode)); await rm(root, { recursive: true, force: true }); }
 });

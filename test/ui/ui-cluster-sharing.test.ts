@@ -6,51 +6,78 @@ import test from "node:test";
 import { launchChrome } from "./launch-chrome.js";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "../dev-nodes.js";
 
-test("sharing controls require consent and render selected scopes and legacy enable, automatic sync status and retry", { timeout: 120_000 }, async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-sharing-ui-"));
+const homeserver = "11111111-1111-4111-8111-111111111111";
+const beta = "22222222-2222-4222-8222-222222222222";
+
+test("cluster sharing is one selection for the whole cluster, and twin states, requests and unpairing act per twin", { timeout: 150_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-cluster-sharing-ui-"));
   const environment = await seedDevEnvironment(root, 1);
   const node = environment.nodes[0];
   let server: Awaited<ReturnType<typeof startDevNode>> | undefined;
   let browser: Awaited<ReturnType<typeof launchChrome>> | undefined;
   try {
     server = await startDevNode(environment, node);
-    browser = await launchChrome({ headless: true });
     const session = await signIn(environment, node);
-    const cluster = await api<{ snapshot: { body: { clusterId: string } } }>(node, session, "POST", "/clusters", { name: "Home" });
-    assert.equal(cluster.status, 201);
+    assert.equal((await api(node, session, "POST", "/clusters", { name: "Home" })).status, 201);
+    browser = await launchChrome({ headless: process.env.HEADED !== "1" });
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, serviceWorkers: "block" });
-    // Controlled HTTP boundary for pending/error states; real disposable server serves the UI.
+    page.setDefaultTimeout(15_000);
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+
+    // A controlled HTTP boundary for states two real nodes cannot reach on demand; the real server serves the page.
+    const calls: string[] = [];
     let selection = { projectAccess: [], projects: [{ id: "p1", name: "Owned project", workspaceId: "w1" }], workspaces: [{ id: "w1", label: "Work" }], projectIds: [] as string[], workspaceIds: [] as string[], pendingDeliveries: 0 };
     for (let index = 0; index < 30; index++) {
       selection.projects.push({ id: `extra-p${index}`, name: `Extra project ${index}`, workspaceId: `extra-w${index}` });
       selection.workspaces.push({ id: `extra-w${index}`, label: `Extra workspace ${index}` });
     }
-    let relationships: object[] = [];
-    let completion = "pending", initialized = false, failRead = false;
-    let writes = 0, completions = 0, revocations = 0, acceptances = 0;
-    await page.route("**/api/clusters", async route => {
+    let relationships = [{ relationshipId: "r1", peer: { nodeId: homeserver }, status: "active" }];
+    let requests = [{ relationshipId: "q1", direction: "incoming", peerNodeId: beta, peerName: "Beta", clusterId: "", expiresAt: Date.now() + 600_000 }];
+    let twin = { initialized: false, state: "pending", ownerNodeId: node.nodeId, projectCount: 2, pendingDeliveries: 1 } as Record<string, unknown>;
+    let failRead = false, sharingPosts = 0;
+    await page.route("**/api/clusters", async (route) => {
       const response = await route.fetch(); const data = await response.json();
-      data.clusters[0].members.push({ nodeId: "homeserver", name: "Homeserver" });
-      data.clusters[0].managerNodeId = "homeserver";
+      data.clusters[0].members.push({ nodeId: homeserver, name: "Homeserver", url: "https://homeserver.test", joinSequence: 2 }, { nodeId: beta, name: "Beta", url: "https://beta.test", joinSequence: 3 });
+      data.clusters[0].managerNodeId = homeserver;
+      for (const item of requests) item.clusterId ||= data.clusters[0].id;
       await route.fulfill({ json: data });
     });
-    await page.route("**/api/clusters/*/sharing", async route => {
-      if (route.request().method() === "PUT") { const body = route.request().postDataJSON(); assert.equal(body.confirmOwnedData, true); selection = { ...selection, projectIds: body.projectIds, workspaceIds: body.workspaceIds }; writes++; }
+    await page.route("**/api/clusters/*/sharing", async (route) => {
+      if (route.request().method() === "PUT") {
+        const body = route.request().postDataJSON(); assert.equal(body.confirmOwnedData, true);
+        selection = { ...selection, projectIds: body.projectIds, workspaceIds: body.workspaceIds }; calls.push("put-sharing");
+      }
       await route.fulfill({ json: selection });
     });
-    await page.route("**/api/twins", route => route.fulfill({ json: { relationships } }));
-    await page.route("**/api/twins/accept", async route => {
-      assert.deepEqual(route.request().postDataJSON(), { link: "synthetic-twin-invitation", confirmOwnedData: true });
-      acceptances++; initialized = true; completion = "pending";
-      relationships = [{ relationshipId: "r1", peer: { nodeId: "homeserver", name: "Homeserver" }, status: "active" }];
-      await route.fulfill({ status: 201, json: { status: "active" } });
+    await page.route("**/api/clusters/*/membership", async (route) => { calls.push(`patch-membership:${route.request().postDataJSON().autoShareProjects}`); await route.fulfill({ json: { ok: true } }); });
+    await page.route("**/api/twins", (route) => route.fulfill({ json: { relationships } }));
+    await page.route("**/api/twins/requests", (route) => route.fulfill({ json: { requests } }));
+    await page.route("**/api/twins/requests/q1/accept", async (route) => {
+      assert.deepEqual(route.request().postDataJSON(), { confirmOwnedData: true });
+      calls.push("accept"); requests = []; relationships = [...relationships, { relationshipId: "r2", peer: { nodeId: beta }, status: "active" }];
+      await route.fulfill({ status: 201, json: { relationshipId: "r2", status: "active" } });
     });
-    await page.route("**/api/twins/r1/sharing", async route => {
+    await page.route("**/api/cluster/inventory", (route) => route.fulfill({ json: { local: { name: node.name, url: node.url }, remote: [
+      { peerId: homeserver, name: "Homeserver", url: "https://homeserver.test", reachable: true },
+      { peerId: beta, name: "Beta", url: "https://beta.test", reachable: false, error: "Peer unavailable" }] } }));
+    await page.route("**/api/twins/r1/sharing", async (route) => {
       if (failRead) { await route.fulfill({ status: 503, json: { error: "Status service unavailable" } }); return; }
-      if (route.request().method() === "POST") { assert.equal(route.request().postDataJSON().confirmOwnedData, true); assert.equal(route.request().postDataJSON().ownerNodeId, completions === 0 ? "homeserver" : node.nodeId, "retry preserves established owner even when manager differs"); completions++; initialized = true; completion = completions === 1 ? "error" : "pending"; }
-      await route.fulfill({ json: { initialized, state: completion, ownerNodeId: node.nodeId, projectCount: 1, pendingDeliveries: completion === "pending" ? 1 : 0, ...(completion === "error" ? { error: "Peer unavailable" } : {}) } });
+      if (route.request().method() === "POST") {
+        const body = route.request().postDataJSON(); assert.equal(body.confirmOwnedData, true);
+        calls.push(`sharing:${body.ownerNodeId}`);
+        twin = ++sharingPosts === 1 ? { ...twin, initialized: true, state: "error", error: "Peer unavailable" } : { ...twin, initialized: true, state: "pending", error: undefined };
+      }
+      await route.fulfill({ json: twin });
     });
-    await page.route("**/api/twins/r1", async route => { assert.equal(route.request().method(), "DELETE"); revocations++; relationships = []; await route.fulfill({ json: { status: "revoked", pending: false } }); });
+    await page.route("**/api/twins/r2/sharing", (route) => route.fulfill({ json: { initialized: true, state: "ready", pendingDeliveries: 0, projectCount: 1, ownerNodeId: node.nodeId } }));
+    await page.route(/\/api\/twins\/r[12]$/, async (route) => {
+      assert.equal(route.request().method(), "DELETE");
+      const id = route.request().url().split("/").at(-1)!;
+      calls.push(`unpair:${id}`); relationships = relationships.filter((item) => item.relationshipId !== id);
+      await route.fulfill({ json: { status: "revoked", pending: false } });
+    });
+
     await page.goto(node.url);
     await page.getByTestId("login-username-input").fill(environment.username);
     await page.getByTestId("login-password-input").fill(environment.password);
@@ -58,105 +85,92 @@ test("sharing controls require consent and render selected scopes and legacy ena
     await page.getByText("Internal Assistant", { exact: true }).waitFor();
     await page.getByTestId("settings-open-button").click();
     await page.getByTestId("settings-tab-cluster").click();
-    await page.getByTestId("sharing-mode-selected").waitFor({ timeout: 5000 });
+    await page.getByTestId("sharing-save").waitFor();
+
+    // One selection for the whole cluster, with long lists that scroll and search.
+    const sharing = page.getByTestId("cluster-sharing");
+    assert.match(await sharing.innerText(), /shared with every node in Home \(Homeserver, Beta\)[\s\S]*no per-node sharing/);
+    assert.equal(await page.getByLabel("Sharing peer").count(), 0, "there is no per-node sharing picker");
     for (const kind of ["project", "workspace"]) {
-      if (kind === "workspace") await page.setViewportSize({ width: 390, height: 844 });
-      const section = page.getByTestId(`sharing-${kind}-list`);
-      assert.equal(await section.getAttribute("open"), null);
-      await page.getByTestId(`sharing-${kind}-summary`).focus();
-      await page.keyboard.press("Enter");
-      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-      const geometry = await section.locator(".cluster-scroll-list").evaluate(element => ({ height: element.clientHeight, scroll: element.scrollHeight }));
+      const list = page.getByTestId(`sharing-${kind}-list`).locator(".cluster-scroll-list");
+      const geometry = await list.evaluate((element) => ({ height: element.clientHeight, scroll: element.scrollHeight }));
       assert.ok(geometry.scroll > geometry.height && geometry.height <= 300, `${kind}: ${JSON.stringify(geometry)}`);
-      await page.getByTestId(`sharing-${kind}-search`).fill(`Extra ${kind} 29`);
-      assert.equal(await section.locator(".checkbox-row:visible").count(), 1);
+      await page.getByTestId(`sharing-${kind}-search`).fill(`xtr ${kind} 29`);
+      assert.equal(await list.locator(".checkbox-row:visible").count(), 1);
       await page.getByTestId(`sharing-${kind}-search`).fill("");
     }
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false);
-    await page.setViewportSize({ width: 1440, height: 1000 });
     await page.getByTestId("sharing-project-p1").check();
     await page.getByTestId("sharing-workspace-w1").check();
-    await page.getByTestId("sharing-workspace-search").fill("Work");
-    relationships = [{ relationshipId: "r1", peer: { nodeId: "homeserver", name: "Homeserver" }, status: "active" }];
-    await page.getByTestId("sharing-status").getByText("Twin connections changed.", { exact: false }).waitFor();
-    assert.equal(await page.getByTestId("sharing-workspace-w1").isChecked(), true);
-    assert.equal(await page.getByTestId("sharing-workspace-search").inputValue(), "Work");
-    assert.equal(await page.getByTestId("sharing-workspace-search").evaluate(element => element === document.activeElement), true);
-    assert.equal(await page.getByTestId("sharing-workspace-list").evaluate((element: HTMLDetailsElement) => element.open), true);
-    relationships = [];
+    await page.getByTestId("cluster-auto-share-input").check();
+    // A twin poll must not reset an unsaved selection.
+    await page.waitForResponse((response) => response.url().endsWith("/api/twins/requests"));
+    await page.waitForResponse((response) => response.url().endsWith("/api/twins/requests"));
+    assert.equal(await page.getByTestId("sharing-project-p1").isChecked(), true, "polling keeps the unsaved selection");
     await page.getByTestId("sharing-save").click();
     await page.getByTestId("confirm-cancel-button").click();
-    assert.equal(writes, 0);
+    assert.deepEqual(calls, []);
     await page.getByTestId("sharing-save").click();
     await page.getByTestId("confirm-accept-button").click();
-    await page.getByTestId("sharing-status").getByText("Selection saved", { exact: false }).waitFor();
-    assert.deepEqual(selection.projectIds, ["p1"]); assert.deepEqual(selection.workspaceIds, ["w1"]);
-    await page.getByTestId("sharing-project-p1").uncheck();
-    await page.getByTestId("sharing-workspace-w1").uncheck();
-    await page.getByTestId("sharing-save").click();
-    const removed = page.waitForResponse(response => response.url().endsWith("/sharing") && response.request().method() === "PUT");
-    await page.getByTestId("confirm-accept-button").click(); await removed;
-    await page.getByTestId("sharing-status").getByText("Selection saved", { exact: false }).waitFor();
-    assert.deepEqual(selection.projectIds, []); assert.deepEqual(selection.workspaceIds, []);
-    relationships = [{ relationshipId: "r1", peer: { nodeId: "homeserver", name: "Homeserver" }, status: "active" }];
-    await page.getByTestId("sharing-refresh").click();
-    await page.getByRole("button", { name: "Enable sharing", exact: true }).waitFor({ timeout: 5000 });
-    assert.equal(await page.getByTestId("twin-sharing-owner").inputValue(), "homeserver", "legacy owner defaults to cluster manager");
-    await page.getByText("Approval complete. This existing twin needs no second invitation or approval.", { exact: true }).waitFor();
-    assert.match(await page.getByTestId("twin-data-sharing").innerText(), /Sharing not started/);
-    assert.match(await page.getByTestId("twin-sharing-status").innerText(), /1 Twin-shared projects/);
-    await page.getByTestId("cluster-details").getByText("Shared projects · 0", { exact: true }).waitFor();
-    await page.getByTestId("twin-sharing-owner").selectOption(node.nodeId);
-    const poll = page.waitForResponse(response => response.url().endsWith("/api/twins/r1/sharing"));
-    await poll;
-    assert.equal(await page.getByTestId("twin-sharing-owner").inputValue(), node.nodeId, "poll preserves unfinished owner selection");
-    await page.getByTestId("twin-sharing-owner").selectOption("homeserver");
-    assert.equal(await page.getByText("Up to date", { exact: true }).count(), 0);
-    await page.getByTestId("twin-enable-sharing").click(); await page.getByTestId("confirm-cancel-button").click(); assert.equal(completions, 0);
-    await page.getByTestId("twin-enable-sharing").click(); await page.getByTestId("confirm-accept-button").click();
-    await page.getByTestId("twin-sharing-status").getByText("Peer unavailable", { exact: false }).waitFor(); assert.equal(completions, 1);
-    assert.equal(await page.getByTestId("twin-sharing-owner").count(), 0, "established owner cannot be reassigned on retry");
-    await page.getByTestId("twin-retry-sharing").click(); await page.getByTestId("confirm-accept-button").click();
-    await page.getByTestId("twin-sharing-status").getByText("Syncing", { exact: false }).waitFor(); assert.equal(completions, 2);
-    completion = "ready";
-    await page.getByTestId("twin-sharing-status").getByText("Up to date", { exact: false }).waitFor({ timeout: 10000 });
-    await page.getByTestId("cluster-member-sync-homeserver").getByText("Up to date", { exact: false }).waitFor();
-    assert.equal(await page.getByTestId("cluster-member-twin-homeserver").innerText(), "Twin");
+    await page.getByTestId("sharing-status").getByText("Saved", { exact: false }).waitFor();
+    assert.deepEqual(calls.splice(0), ["put-sharing", "patch-membership:true"], "automatic sharing is applied after the selection that resets it");
+    assert.deepEqual([selection.projectIds, selection.workspaceIds], [["p1"], ["w1"]]);
+
+    // An incoming request shows as a banner and on the requesting node's row.
+    const banner = page.getByTestId("cluster-twin-request");
+    assert.match(await banner.innerText(), /Beta asks to be twins with this node \(via Home\)/);
+    await page.getByTestId(`cluster-member-accept-${beta}`).waitFor();
+
+    // The existing twin never started sharing: choose the original owner and enable it.
+    const twins = page.getByTestId("cluster-nodes");
+    const homeRow = twins.getByTestId("cluster-node-row").filter({ hasText: "Homeserver" });
+    await homeRow.getByText("Connected", { exact: true }).waitFor();
+    assert.match(await homeRow.getByTestId("twin-sharing-status").innerText(), /Not enabled · 2 twin-shared projects/);
+    await page.getByTestId(`cluster-member-twin-${homeserver}`).waitFor();
+    assert.equal(await page.getByTestId(`cluster-member-sync-${homeserver}`).innerText(), "Not enabled");
+    await homeRow.getByTestId("twin-sharing-owner").selectOption(homeserver);
+    await page.waitForResponse((response) => response.url().endsWith("/api/twins/requests"));
+    assert.equal(await homeRow.getByTestId("twin-sharing-owner").inputValue(), homeserver, "polling keeps an unfinished owner choice");
+    await homeRow.getByTestId("twin-enable-sharing").click();
+    await page.getByTestId("confirm-cancel-button").click();
+    assert.deepEqual(calls, []);
+    await homeRow.getByTestId("twin-enable-sharing").click();
+    await page.getByTestId("confirm-accept-button").click();
+    await homeRow.getByTestId("twin-sharing-status").getByText("Peer unavailable", { exact: false }).waitFor();
+    assert.deepEqual(calls.splice(0), [`sharing:${homeserver}`]);
+    assert.equal(await homeRow.getByTestId("twin-sharing-owner").count(), 0, "an established owner cannot be reassigned on retry");
+    assert.equal(await page.getByTestId(`cluster-member-sync-${homeserver}`).innerText(), "Error");
+    await homeRow.getByTestId("twin-retry-sharing").click();
+    await page.getByTestId("confirm-accept-button").click();
+    await homeRow.getByTestId("twin-sharing-status").getByText("Syncing", { exact: false }).waitFor();
+    assert.deepEqual(calls.splice(0), [`sharing:${node.nodeId}`], "retry keeps the owner the twin already has");
+    twin = { ...twin, state: "ready", pendingDeliveries: 0 };
+    await page.getByTestId(`cluster-member-sync-${homeserver}`).getByText("Up to date", { exact: true }).waitFor({ timeout: 10_000 });
     failRead = true;
-    await page.getByTestId("twin-sharing-status").getByText("Status service unavailable", { exact: false }).waitFor({ timeout: 10000 });
-    assert.doesNotMatch(await page.getByTestId("twin-sharing-status").innerText(), /Up to date/);
+    await homeRow.getByTestId("twin-sharing-status").getByText("Status service unavailable", { exact: false }).waitFor({ timeout: 10_000 });
+    assert.equal(await page.getByTestId(`cluster-member-sync-${homeserver}`).innerText(), "Error");
     failRead = false;
-    await page.getByTestId("twin-sharing-status").getByText("Up to date", { exact: false }).waitFor({ timeout: 10000 });
-    completion = "error";
-    await page.getByTestId("twin-sharing-status").getByText("Peer unavailable", { exact: false }).waitFor({ timeout: 10000 });
-    await page.getByTestId("cluster-member-sync-homeserver").getByText("Error", { exact: false }).waitFor();
-    await page.getByTestId("sharing-mode-selected").click(); await page.getByTestId("confirm-cancel-button").click(); assert.equal(revocations, 0);
-    await page.getByTestId("sharing-mode-selected").click(); await page.getByTestId("confirm-accept-button").click();
-    await page.getByTestId("sharing-save").waitFor(); assert.equal(revocations, 1);
-    await page.getByTestId("sharing-mode-twins").click();
-    await page.getByTestId("twin-invite").click(); await page.getByTestId("confirm-cancel-button").click();
-    await page.getByTestId("twin-link").waitFor();
-    for (const id of ["twin-link", "twin-accept-link", "cluster-invite-link-input", "cluster-join-link-input"]) {
-      const field = page.getByTestId(id);
-      assert.ok(await field.getAttribute("name"), `${id} has a meaningful form name`);
-      assert.equal(await field.getAttribute("autocomplete"), "off");
-      assert.equal(await field.getAttribute("spellcheck"), "false");
-      assert.ok(await field.evaluate((element: HTMLInputElement) => element.labels?.length), `${id} has a native label`);
-    }
-    await page.getByTestId("cluster-sharing").getByText("What stays local", { exact: true }).click();
-    assert.match(await page.getByTestId("cluster-sharing").innerText(), /Browser profiles and machine-local identities stay local/);
+    await page.getByTestId(`cluster-member-sync-${homeserver}`).getByText("Up to date", { exact: true }).waitFor({ timeout: 10_000 });
+
+    // Accepting Beta's request makes a second twin; unpairing one leaves the other.
+    await banner.getByTestId("cluster-twin-request-accept").click();
+    await page.getByTestId("confirm-accept-button").click();
+    await page.getByTestId(`cluster-member-twin-${beta}`).waitFor();
+    assert.equal(await banner.count(), 0);
+    const betaRow = twins.getByTestId("cluster-node-row").filter({ hasText: "Beta" });
+    assert.match(await betaRow.getByTestId("cluster-node-status").innerText(), /Not connected — Peer unavailable/);
+    assert.equal(await betaRow.getAttribute("data-state"), "offline");
+    await page.getByTestId(`cluster-member-unpair-${beta}`).click();
+    await page.getByTestId("confirm-cancel-button").click();
+    assert.deepEqual(calls.splice(0), ["accept"]);
+    await page.getByTestId(`cluster-member-unpair-${beta}`).click();
+    await page.getByTestId("confirm-accept-button").click();
+    await page.getByTestId(`cluster-member-make-twin-${beta}`).waitFor();
+    assert.deepEqual(calls.splice(0), ["unpair:r2"], "only the chosen twin is unpaired");
+    await page.getByTestId(`cluster-member-twin-${homeserver}`).waitFor();
+
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.getByTestId("twin-accept-link").scrollIntoViewIfNeeded();
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false, "sharing controls fit mobile viewport");
-    await page.getByTestId("twin-accept-link").fill("synthetic-twin-invitation");
-    await page.getByTestId("twin-accept").click(); await page.getByTestId("confirm-cancel-button").click(); assert.equal(acceptances, 0);
-    await page.getByTestId("twin-accept").click(); await page.getByTestId("confirm-accept-button").click();
-    await page.getByTestId("twin-sharing-status").getByText("Syncing", { exact: false }).waitFor();
-    assert.equal(acceptances, 1);
-    assert.equal(completions, 2, "acceptance needs no extra sharing POST");
-    assert.equal(await page.getByRole("button", { name: /Complete sharing/i }).count(), 0, "acceptance must not offer a manual completion step");
-    assert.equal(await page.getByTestId("twin-enable-sharing").count(), 0);
-    completion = "ready";
-    await page.getByTestId("twin-sharing-status").getByText("Up to date", { exact: false }).waitFor({ timeout: 10000 });
+    await page.getByTestId("cluster-nodes").scrollIntoViewIfNeeded();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false, "the cluster page fits a phone");
+    assert.deepEqual(pageErrors, []);
   } finally { await browser?.close(); if (server) await stopDevNode(server); await rm(root, { recursive: true, force: true }); }
 });

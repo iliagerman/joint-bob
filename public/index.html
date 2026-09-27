@@ -102,6 +102,7 @@
           <button class="ghost icon-button projects-quick-note-mobile" id="projectsQuickNoteButton" type="button" disabled aria-label="New quick note" title="New quick note" data-testid="projects-quick-note-create-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5h9l3 3V20.5H6z"/><path d="M15 3.5v3h3M12 10v6M9 13h6"/></svg></button>
           <button class="primary icon-button" id="newProjectButton" data-shortcut-hint="newProject" type="button" aria-label="Add project" title="Add project" data-testid="project-create-button">+</button>
         </div>
+        <div class="list-filter-row" id="projectFilterRow" role="group" aria-label="Filter projects" hidden></div>
         <div class="panel-scroll project-list" id="projectList"></div>
         <div class="panel-rail">
           <button class="ghost icon-button" id="expandProjectsButton" data-shortcut-hint="toggleProjects" type="button" aria-label="Expand projects panel" title="Expand projects panel" data-testid="projects-panel-expand-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 6l6 6-6 6"/></svg></button>
@@ -152,12 +153,7 @@
           <button type="button" data-filter="review" data-testid="chats-filter-review-button" title="Needs review"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 13h4l1.6 2.5h4.8L16 13h4"/><path d="M4 13 6.4 5.6A2 2 0 0 1 8.3 4.2h7.4a2 2 0 0 1 1.9 1.4L20 13v4.3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg><span class="sr-only">Needs review</span><span data-filter-count="review">0</span></button>
           <button type="button" data-filter="done" data-testid="chats-filter-done-button" title="Reviewed"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 2.7 2.7L16.5 9"/></svg><span class="sr-only">Reviewed</span><span data-filter-count="done">0</span></button>
         </div>
-        <label class="classification-filter" for="conversationClassificationFilter">Classification
-          <select id="conversationClassificationFilter" data-testid="conversation-classification-filter">
-            <option value="">All labels</option>
-            <option value="unclassified">Unclassified</option>
-          </select>
-        </label>
+        <div class="classification-filter list-filter-row" id="conversationFilterRow" role="group" aria-label="Filter conversations by label and cluster"></div>
         <label class="done-filter" for="showDoneConversations">
           <input type="checkbox" id="showDoneConversations" data-testid="show-done-conversations-toggle" />
           Show done
@@ -705,48 +701,60 @@
         </section>
 
         <section class="settings-panel" id="settingsPanel-cluster" role="tabpanel" aria-labelledby="settingsTab-cluster" tabindex="0" data-testid="settingsPanel-cluster" hidden>
-          <details class="phase-settings" id="fieldsetClusters" data-testid="cluster-section" open>
-            <summary data-testid="cluster-section-summary">Cluster connections and sharing</summary>
-            <div class="cluster-toolbar">
-              <div id="clusterCanvas" data-testid="cluster-canvas"></div>
-              <button class="ghost" type="button" id="clusterNewButton" data-testid="cluster-new-button" aria-expanded="false" aria-controls="clusterCreateForm">New cluster</button>
-              <button class="ghost" type="button" id="clusterJoinReveal" data-testid="cluster-join-reveal">Join cluster</button>
-            </div>
-            <div class="cluster-create-row" id="clusterCreateForm" hidden>
-              <label>New cluster name<input id="clusterCreateNameInput" autocomplete="off" maxlength="80" data-testid="cluster-create-name-input" /></label>
-              <button class="ghost" type="button" id="clusterCreateButton" data-testid="cluster-create-button">Create cluster</button>
-              <button class="ghost" type="button" id="clusterCreateCancel" data-testid="cluster-create-cancel">Cancel</button>
-            </div>
-            <p class="settings-hint">Cluster actions apply immediately. They do not require Save settings.</p>
-            <div class="cluster-details" id="clusterDetails" data-testid="cluster-details"></div>
-            <div class="cluster-inventory" id="clusterNodes" data-testid="cluster-nodes"></div>
-            <div class="cluster-sharing" id="clusterSharing" data-testid="cluster-sharing" hidden></div>
-            <label class="checkbox-row" hidden><input type="checkbox" id="clusterAutoShareInput" name="autoShareProjects" data-testid="cluster-auto-share-input" /> Automatically share projects created in the future</label>
-            <div class="github-group-actions">
-              <button class="ghost" type="button" id="clusterShareAllButton" data-testid="cluster-share-all-button" hidden>Share existing owned projects</button>
-              <button class="ghost danger" type="button" id="clusterLeaveButton" data-testid="cluster-leave-button" disabled>Leave selected cluster</button>
-            </div>
-          <details class="phase-settings" id="clusterInviteDetails">
-            <summary data-testid="cluster-invite-reveal">Invite a node to selected cluster</summary>
-            <p>The link admits one node to the selected cluster. It does not share projects automatically.</p>
-            <button class="ghost" type="button" id="clusterGenerateInviteButton" data-testid="cluster-invite-generate-button">Generate one-time link</button>
-            <label>
-              Join link
-              <div class="cluster-token-row">
-                <input id="clusterInviteLink" name="clusterInvitation" spellcheck="false" readonly aria-readonly="true" autocomplete="off" data-testid="cluster-invite-link-input" />
-                <button class="ghost compact" id="copyClusterInviteButton" type="button" data-testid="cluster-invite-copy-button" disabled>Copy link</button>
+          <p class="settings-hint">Cluster actions apply immediately. They do not require Save settings.</p>
+          <div class="cluster-requests" id="clusterTwinRequests" data-testid="cluster-twin-requests"></div>
+          <div class="cluster-layout" id="fieldsetClusters" data-testid="cluster-section">
+            <div class="cluster-list-pane">
+              <label class="search-shell cluster-search" for="clusterSearchInput">
+                <span class="sr-only">Find a cluster or node</span>
+                <input id="clusterSearchInput" type="search" autocomplete="off" spellcheck="false" placeholder="Find a cluster or node" data-testid="cluster-search-input" />
+              </label>
+              <p class="cluster-search-status" id="clusterSearchStatus" role="status" data-testid="cluster-search-status"></p>
+              <div class="cluster-list" id="clusterCanvas" role="list" aria-label="Clusters" data-testid="cluster-canvas"></div>
+              <div class="cluster-list-actions">
+                <button class="ghost compact" type="button" id="clusterNewButton" data-testid="cluster-new-button" aria-expanded="false" aria-controls="clusterCreateForm">New cluster</button>
+                <button class="ghost compact" type="button" id="clusterJoinReveal" data-testid="cluster-join-reveal" aria-expanded="false" aria-controls="clusterJoinDetails">Join cluster</button>
               </div>
-            </label>
-          </details>
-          <details class="phase-settings" id="clusterJoinDetails">
-            <summary data-testid="cluster-join-summary">Join an existing cluster</summary>
-            <p>Joining adds another membership. It does not leave current clusters or share projects automatically.</p>
-            <label>
-              One-time join link
-              <input id="clusterJoinLinkInput" name="clusterJoinLink" spellcheck="false" type="url" autocomplete="off" placeholder="Paste a join link" data-testid="cluster-join-link-input" />
-            </label>
-            <button class="primary" type="button" id="clusterJoinButton" data-testid="cluster-join-button">Join cluster</button>
-          </details>
+              <div class="cluster-create-row" id="clusterCreateForm" hidden>
+                <label>New cluster name<input id="clusterCreateNameInput" autocomplete="off" maxlength="80" data-testid="cluster-create-name-input" /></label>
+                <div class="cluster-form-actions">
+                  <button class="primary compact" type="button" id="clusterCreateButton" data-testid="cluster-create-button">Create</button>
+                  <button class="ghost compact" type="button" id="clusterCreateCancel" data-testid="cluster-create-cancel">Cancel</button>
+                </div>
+              </div>
+              <div class="cluster-create-row" id="clusterJoinDetails" data-testid="cluster-join-form" hidden>
+                <p>Joining adds another membership. It does not leave your other clusters or share anything by itself.</p>
+                <label>One-time join link<input id="clusterJoinLinkInput" name="clusterJoinLink" spellcheck="false" type="url" autocomplete="off" placeholder="Paste a join link" data-testid="cluster-join-link-input" /></label>
+                <div class="cluster-form-actions">
+                  <button class="primary compact" type="button" id="clusterJoinButton" data-testid="cluster-join-button">Join</button>
+                  <button class="ghost compact" type="button" id="clusterJoinCancel" data-testid="cluster-join-cancel">Cancel</button>
+                </div>
+              </div>
+            </div>
+            <div class="cluster-detail" id="clusterDetailPane" data-testid="cluster-detail-pane">
+              <div id="clusterDetails" data-testid="cluster-details"></div>
+              <div class="cluster-invite" id="clusterInviteDetails" data-testid="cluster-invite-section" hidden>
+                <p>The link admits one node to this cluster. It shares nothing by itself, and it works once, for 15 minutes.</p>
+                <button class="ghost compact" type="button" id="clusterGenerateInviteButton" data-testid="cluster-invite-generate-button">Generate one-time link</button>
+                <label>
+                  Join link
+                  <div class="cluster-token-row">
+                    <input id="clusterInviteLink" name="clusterInvitation" spellcheck="false" readonly aria-readonly="true" autocomplete="off" data-testid="cluster-invite-link-input" />
+                    <button class="ghost compact" id="copyClusterInviteButton" type="button" data-testid="cluster-invite-copy-button" disabled>Copy link</button>
+                  </div>
+                </label>
+              </div>
+              <div class="cluster-columns" id="clusterColumns" hidden>
+                <section class="cluster-received" id="clusterReceived" data-testid="cluster-received"></section>
+                <section class="cluster-sharing" id="clusterSharing" data-testid="cluster-sharing"></section>
+              </div>
+            </div>
+          </div>
+          <details class="phase-settings" id="clusterTwinsSection" data-testid="cluster-twins-section" open>
+            <summary data-testid="cluster-twins-summary">This node and its twins</summary>
+            <p>Twins copy everything they own to each other: projects, conversations, files and credentials. To pair with a node in one of your clusters, choose Make twin next to it above. To pair with a node outside your clusters, use a link.</p>
+            <div class="cluster-inventory" id="clusterNodes" data-testid="cluster-nodes"></div>
+            <div id="clusterTwinLink" data-testid="cluster-twin-link"></div>
           </details>
           <details class="phase-settings" data-testid="cluster-machine-section">
             <summary data-testid="cluster-machine-summary">This machine</summary>

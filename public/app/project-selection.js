@@ -2,6 +2,7 @@ import { api, savePreferencesInBackground } from "./api.js";
 import { clearAttachments } from "./attachments.js";
 import { loadHarnesses, loadSessionNodes, setComposerEnabled } from "./chat-controls.js";
 import { clearChat, showChatEmptyState } from "./chat-transcript.js";
+import { loadClusterDirectory } from "./cluster-filters.js";
 import { hideCommandAutocomplete } from "./composer-dialogs.js";
 import { elements } from "./elements.js";
 import { setMobileView } from "./layout.js";
@@ -52,6 +53,7 @@ export async function loadProjects() {
     setListLoading("projects", false);
   }
   void loadHarnesses().catch((error) => toast(error.message, 8000));
+  void loadClusterDirectory().catch((error) => console.warn("Could not load clusters for the list filters", error));
   void api("/api/settings").then((settings) => {
     state.conversationLabels = settings.conversationLabels;
     renderSessions();
@@ -133,7 +135,7 @@ async function startCanvasPaneConversation() {
 }
 
 export async function selectProject(projectId, shouldRender = true, preserveSession = false) {
-  if (state.activeProjectId !== projectId) state.classificationFilter = "";
+  if (state.activeProjectId !== projectId) state.classificationFilters.clear();
   showConversations();
   state.activeProjectId = projectId;
   state.skills = [];

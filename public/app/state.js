@@ -98,8 +98,17 @@ export const state = {
   conversationSegments: null,
   // Previous review watermark for the conversation currently being opened.
   reviewHighlightAfter: null,
-  chatFilter: "all",
-  classificationFilter: "",
+  // Chosen status chips; none chosen shows every status.
+  chatFilters: new Set(),
+  // Chosen conversation labels ("label:<name>" or "unclassified"); none chosen shows all.
+  classificationFilters: new Set(),
+  // Chosen clusters for each list: a cluster ID, "local" for this node, or "twin" (projects only).
+  projectClusterFilters: new Set(),
+  sessionClusterFilters: new Set(),
+  // Memberships and active twins, loaded with the project list for the cluster filters.
+  clusters: [],
+  localNodeId: null,
+  twinNodeIds: [],
   // Conversations the user has closed out are hidden until this is switched on.
   showDoneConversations: false,
   conversationLabels: [],

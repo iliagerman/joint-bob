@@ -3,6 +3,7 @@ import { openScheduledTasks } from "./cron.js";
 import { clearAttachments } from "./attachments.js";
 import { renderChatSessionControls, setComposerEnabled } from "./chat-controls.js";
 import { clearChat } from "./chat-transcript.js";
+import { createMultiSelect } from "./multi-select.js";
 import { elements } from "./elements.js";
 import { agentIcon, sessionAgentId } from "./icons.js";
 import { filteredSessions, normalizedQuery, selectedProject, sessionDisplayState, setMobileView, shortSessionTitle, updateChatFilterCounts } from "./layout.js";
@@ -19,17 +20,29 @@ import { closeSocket, refreshSessionsQuietly } from "./socket.js";
 import { state } from "./state.js";
 import { activeChatSession } from "./terminal.js";
 
+const classificationFilter = createMultiSelect({ id: "conversationClassificationFilter", testid: "conversation-classification-filter", label: "Labels", prompt: "All labels", placeholder: "Search labels" });
+document.querySelector("#conversationFilterRow").prepend(classificationFilter.root);
+
 function renderClassificationFilter() {
-  const selected = state.classificationFilter;
+  const selected = state.classificationFilters;
   const labels = new Set([...state.conversationLabels, ...state.sessions.map((session) => session.classification).filter(Boolean)]);
-  // Keep a selected retired label visible until the user clears it or changes project.
-  if (selected.startsWith("label:")) labels.add(selected.slice(6));
-  elements.classificationFilter.replaceChildren(
-    new Option("All labels", ""),
-    new Option("Unclassified", "unclassified"),
-    ...[...labels].sort((left, right) => left.localeCompare(right)).map((label) => new Option(label, `label:${label}`)),
-  );
-  elements.classificationFilter.value = selected;
+  // Keep a selected retired label listed until the user clears it or changes project.
+  for (const value of selected) if (value.startsWith("label:")) labels.add(value.slice(6));
+  classificationFilter.setOptions([
+    { value: "unclassified", label: "Unclassified" },
+    ...[...labels].sort((left, right) => left.localeCompare(right)).map((label) => ({ value: `label:${label}`, label })),
+  ]);
+  classificationFilter.setValues(selected);
+}
+
+const chatFilterNames = { active: "running", review: "needs review", done: "reviewed", cron: "scheduled" };
+
+function syncChatFilterChips() {
+  for (const chip of elements.chatFilters.querySelectorAll("button[data-filter]")) {
+    const active = chip.dataset.filter === "all" ? !state.chatFilters.size : state.chatFilters.has(chip.dataset.filter);
+    chip.classList.toggle("active", active);
+    chip.setAttribute("aria-pressed", String(active));
+  }
 }
 
 export function renderSessions() {
@@ -66,9 +79,9 @@ export function renderSessions() {
   if (sessions.length === 0) {
     const empty = document.createElement("p");
     empty.className = "muted";
-    empty.textContent = state.classificationFilter || normalizedQuery(elements.sessionSearchInput.value || "")
+    empty.textContent = state.classificationFilters.size || state.sessionClusterFilters.size || normalizedQuery(elements.sessionSearchInput.value || "")
       ? "No matching conversations."
-      : `No ${state.chatFilter} conversations.`;
+      : `No ${[...state.chatFilters].map((filter) => chatFilterNames[filter]).join(" or ")} conversations.`;
     elements.sessionList.append(empty);
     return;
   }
@@ -397,8 +410,8 @@ async function forkSessionFromRow(session) {
   // A remote fork may arrive before its replicated record or transcript does.
   state.sessions = [body.session, ...state.sessions.filter((candidate) => candidate.id !== body.session.id)];
   elements.sessionSearchInput.value = "";
-  state.chatFilter = "all";
-  for (const chip of elements.chatFilters.querySelectorAll("button[data-filter]")) chip.classList.toggle("active", chip.dataset.filter === "all");
+  state.chatFilters.clear();
+  syncChatFilterChips();
   renderSessions();
   openListedSession(body.session);
   toast("Conversation forked");
@@ -455,19 +468,24 @@ async function removeSessionFromRow(session, sessionActive) {
 }
 for (const button of elements.chatFilters.querySelectorAll("button[data-filter]")) {
   button.addEventListener("click", () => {
-    state.chatFilter = button.dataset.filter;
-    for (const chip of elements.chatFilters.querySelectorAll("button[data-filter]")) {
-      chip.classList.toggle("active", chip === button);
-    }
+    const filter = button.dataset.filter;
+    if (filter === "all") state.chatFilters.clear();
+    else if (state.chatFilters.has(filter)) state.chatFilters.delete(filter);
+    else state.chatFilters.add(filter);
+    syncChatFilterChips();
     renderSessions();
   });
 }
+syncChatFilterChips();
 elements.sessionSearchInput.addEventListener("input", () => renderSessions());
 elements.showDoneConversations.addEventListener("change", () => {
   state.showDoneConversations = elements.showDoneConversations.checked;
   renderSessions();
 });
-elements.classificationFilter.addEventListener("change", () => {
-  state.classificationFilter = elements.classificationFilter.value;
+classificationFilter.onChange((values) => {
+  state.classificationFilters = values;
   renderSessions();
+});
+window.addEventListener("cluster-filters-changed", (event) => {
+  if (event.detail.list === "sessions") renderSessions();
 });

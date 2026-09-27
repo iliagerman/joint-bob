@@ -35,8 +35,11 @@
           "title": "Frontend",
           "columns": ["File", "Responsibility"],
           "rows": [
-            ["`public/app/cluster-panel.js`", "Settings > Cluster: this node's name and URL, create, invite, join, leave."],
-            ["`public/app/cluster-sharing.js`", "Selected sharing per cluster, the twin handshake and status, and **This machine is lost**."],
+            ["`public/app/cluster-panel.js`", "Settings > Cluster: the cluster list and the open cluster's nodes, what this node gets from it and shares with it; create, invite, join, leave; this node's name and URL."],
+            ["`public/app/cluster-canvas.js`", "The cluster list with fuzzy search over cluster and node names, and the node strip that marks this node, the manager, and twins."],
+            ["`public/app/cluster-twins.js`", "Twin requests between cluster members, each twin's sync state, unpairing, pairing by link, and **Machine lost**."],
+            ["`public/app/cluster-filters.js`", "The Clusters filters above the project and conversation lists."],
+            ["`public/app/cluster-sharing.js`", "What this node shares with a cluster: one selection that reaches every member."],
             ["`public/app/updates.js`", "Settings > Updates node list: this node and its twins."]
           ]
         }
@@ -56,7 +59,10 @@
             ["POST", "`/api/clusters/:id/invitations`", "One-time invitation link (15 minutes)."],
             ["POST", "`/api/clusters/join`", "Join another cluster. Existing memberships are kept."],
             ["GET/PUT", "`/api/clusters/:id/sharing`", "The projects and workspaces this node shares with the cluster."],
-            ["POST", "`/api/twins/invitations`, `/api/twins/accept`", "Two-sided twin handshake."],
+            ["POST", "`/api/twins/invitations`, `/api/twins/accept`", "Two-sided twin handshake by link."],
+            ["POST", "`/api/clusters/:id/members/:nodeId/twin-request`", "Ask another member of the cluster to be twins (`{ confirmOwnedData: true }`). The request reaches that node over the cluster's signed channel and expires after 15 minutes."],
+            ["GET", "`/api/twins/requests`", "Open twin requests this node sent or received."],
+            ["POST/DELETE", "`/api/twins/requests/:id/accept`, `/api/twins/requests/:id`", "Accept a received request (`{ confirmOwnedData: true }`), or decline it and tell the requester."],
             ["POST", "`/api/twins/:id/lost`", "Declare the twin lost (`{ confirmLost: true }`)."],
             ["GET", "`/api/cluster/inventory`", "This node and every twin with its version and update capability."]
           ]
@@ -71,6 +77,7 @@
             ["POST", "`/api/cluster/v2/events`", "Direct events between twins."],
             ["POST", "`/api/cluster/v2/membership/descriptor`", "A member reports its new name and URL to the manager."],
             ["POST", "`/api/cluster/v2/twins/descriptor`", "A twin reports its new name and URL."],
+            ["POST", "`/api/cluster/v2/twins/requests`, `/api/cluster/v2/twins/requests/decline`", "A co-member delivers its signed twin invitation, or reports that the request was declined. The invitation must be signed by the sender's pinned key."],
             ["POST", "`/api/cluster/v2/succession`", "The lost machine's twin announces the succession with the dual-signed certificate."],
             ["POST", "`/api/cluster/v2/push/events`, `/api/cluster/v2/ntfy/services`", "Push subscriptions and ntfy servers, twins only."],
             ["POST", "`/api/cluster/v2/update/inventory`", "A twin's version and update capability."],
@@ -89,7 +96,8 @@
             { "heading": "Membership", "body": "Every node creates an Ed25519 identity. A cluster's manager signs the member list; members are numbered by join order. A node can be a member of any number of clusters and presents one URL to all of them." },
             { "heading": "What a peer may see", "body": "A peer sees a project if it is a twin of the project's owner, or it shares a cluster with the owner and the owner selected the project (or its workspace) for that cluster. Every member of that cluster receives it. Data outside any project, canvas shortcuts, push subscriptions, and ntfy servers go to twins only." },
             { "heading": "Isolation between clusters", "body": "A node in clusters X and Y shares each project only with the cluster it selected. Members of X and Y do not learn about each other and cannot authenticate to each other." },
-            { "heading": "Twins", "body": "Twins are the same user's machines. Both sides consent; afterwards each shares everything it owns with the other: projects, conversations, tasks, files, transcripts, credentials, routing configurations, and update rights." },
+            { "heading": "Twins", "body": "Twins are the same user's machines. Both sides consent: in Settings > Cluster, choose **Make twin** next to a node of a shared cluster, and that node's owner accepts the request; a node outside every cluster pairs by link instead. Afterwards each shares everything it owns with the other: projects, conversations, tasks, files, transcripts, credentials, routing configurations, and update rights." },
+            { "heading": "List filters", "body": "The **Clusters** filter above the project list shows projects shared through the chosen clusters, **Only on this node** for projects this node owns and shares nowhere, and **From twins** for projects a twin owns. Above the conversation list it filters by where the agent runs: **This node**, or another member of a chosen cluster. Choosing several options shows everything that matches any of them, and the same goes for the status chips and labels." },
             { "heading": "Deleted conversations", "body": "Deleting a conversation removes its transcript on every node that holds a copy: when the deletion arrives, and at start-up for copies left behind by older releases. A deleted conversation is never offered or copied in again." }
           ]
         },
@@ -108,7 +116,7 @@
           "kind": "numbered",
           "title": "Recovering a lost machine",
           "items": [
-            { "heading": "Declare it lost", "body": "On a twin of the lost machine, open Settings > Cluster, choose the twin, and select **This machine is lost**. Only a twin can do this: the dual-signed twin certificate proves the lost machine trusted it." },
+            { "heading": "Declare it lost", "body": "On a twin of the lost machine, open Settings > Cluster and, under This node and its twins, select **Machine lost** next to it. Only a twin can do this: the dual-signed twin certificate proves the lost machine trusted it." },
             { "heading": "Ownership moves", "body": "The twin becomes the owner of everything the lost machine owned and reissues its sharing. Other members verify the certificate against the keys they already hold and accept the twin as the new owner." },
             { "heading": "Clusters", "body": "The manager removes the lost machine. When the lost machine was the manager, the most senior remaining member takes over management and removes it." },
             { "heading": "Rebuild", "body": "Install Joint Bob on the new or repaired machine and pair it as a twin with the survivor. It receives everything again. Invite it to its clusters again." }

@@ -41,12 +41,14 @@ test("invitations add membership without selecting projects or replacing cluster
   await page.getByTestId("settings-open-button").click();
   await page.getByTestId("settings-tab-cluster").click();
 
+  await page.getByTestId("cluster-list-empty").waitFor();
   await page.getByTestId("cluster-new-button").click();
   await page.getByTestId("cluster-create-name-input").fill("First cluster");
   await page.getByTestId("cluster-create-button").click();
-  const selector = page.getByTestId("cluster-selector");
+  const selected = () => page.locator('[data-testid="cluster-item"][aria-pressed="true"]').getAttribute("data-cluster-id");
+  const choose = (name: string) => page.getByTestId("cluster-item").filter({ hasText: name }).click();
   await page.getByTestId("cluster-details").getByRole("heading", { name: "First cluster", exact: true }).waitFor();
-  const clusterId = await selector.inputValue();
+  const clusterId = await selected();
   await page.getByTestId("cluster-invite-reveal").click();
   assert.ok(clusterId);
 
@@ -61,13 +63,15 @@ test("invitations add membership without selecting projects or replacing cluster
   await page.getByTestId("cluster-create-name-input").fill("Second cluster");
   await page.getByTestId("cluster-create-button").click();
   await page.getByTestId("cluster-details").getByRole("heading", { name: "Second cluster", exact: true }).waitFor();
-  assert.equal(await selector.locator("option").count(), 2);
-  const secondClusterId = await selector.inputValue();
+  assert.equal(await page.getByTestId("cluster-item").count(), 2);
+  const secondClusterId = await selected();
+  assert.equal(await page.getByTestId("cluster-invite-link-input").isVisible(), false, "a new cluster starts with the invite closed");
   await page.getByTestId("cluster-join-reveal").click();
   await page.getByTestId("cluster-join-link-input").fill("https://example.invalid/manual-membership-link");
-  await selector.selectOption(clusterId);
+  await choose("First cluster");
   assert.equal(await page.getByTestId("cluster-join-link-input").inputValue(), "https://example.invalid/manual-membership-link", "cluster switching preserves independent join draft");
-  await selector.selectOption(secondClusterId);
+  await choose("Second cluster");
+  await page.getByTestId("cluster-invite-reveal").click();
   assert.ok(secondClusterId);
   let releaseResponse!: () => void;
   const responseRelease = new Promise<void>((resolve) => { releaseResponse = resolve; });
@@ -84,14 +88,14 @@ test("invitations add membership without selecting projects or replacing cluster
     const delivered = page.waitForResponse((response) => response.url().endsWith(`/api/clusters/${secondClusterId}/invitations`) && response.request().method() === "POST");
     await page.getByTestId("cluster-invite-generate-button").click();
     await fetchedResponse;
-    await selector.selectOption(clusterId);
+    await choose("First cluster");
     releaseResponse();
     const response = await delivered;
     await response.finished();
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     assert.equal(await page.getByTestId("cluster-invite-link-input").inputValue(), "");
     assert.equal(await page.getByTestId("cluster-invite-copy-button").isDisabled(), true);
-    assert.equal(await selector.inputValue(), clusterId, "late invitation cannot switch selected cluster");
+    assert.equal(await selected(), clusterId, "late invitation cannot switch selected cluster");
     await page.route("**/api/clusters/join", async route => {
       assert.equal(route.request().method(), "POST");
       const body = route.request().postDataJSON();

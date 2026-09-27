@@ -19,6 +19,7 @@ import { receiveFileEnrollment } from "../sharing-files.js";
 import { isTrustedTwin } from "../../cluster-sharing-policy.js";
 import { receiveSecretCredentialEvents, type SecretCredentialEvent } from "../../secret-replication.js";
 import { secretCredentialBatchSchema } from "../schemas.js";
+import { acceptTwinRequest, declineTwinRequest, listTwinRequests, receiveTwinRequest, receiveTwinRequestDecline, requestTwin } from "../twin-requests.js";
 import { adoptionInventory, adoptionInventorySchema, adoptTwinProjects, completeTwinSharing, localTwinSharingStatus, resumeTwinProjectFolders, scheduleTwinSharing, sharingTwin, twinSharingStatus } from "../twin-sharing.js";
 
 const uuid = z.string().uuid().regex(/^[0-9a-f-]+$/);
@@ -105,6 +106,27 @@ app.post("/api/twins/accept",handler(async(request,response)=>{
 app.get("/api/twins",handler(async(_request,response)=>{
   localOnly(response); const local=await getClusterNode(),db=await clusterV2Database();ensureTwinHttpSchema(db);
   response.json({relationships:listTwinRelationships(db,local.id).map(item=>({...item,endpoint:peerEndpoint(db,"twin",item.relationshipId,item.peer.nodeId),pendingDeliveries:pendingTwinDeliveries(db,item.relationshipId)}))});
+}));
+/** Twin requests inside a shared cluster; see src/server/twin-requests.ts. */
+app.get("/api/twins/requests",handler(async(_request,response)=>{
+  localOnly(response); response.json({requests:await listTwinRequests()});
+}));
+app.post("/api/clusters/:clusterId/members/:nodeId/twin-request",handler(async(request,response)=>{
+  localOnly(response); z.object({confirmOwnedData:z.literal(true)}).strict().parse(request.body);
+  response.status(201).json({request:await requestTwin(uuid.parse(request.params.clusterId),uuid.parse(request.params.nodeId))});
+}));
+app.post("/api/twins/requests/:relationshipId/accept",handler(async(request,response)=>{
+  localOnly(response); z.object({confirmOwnedData:z.literal(true)}).strict().parse(request.body);
+  response.status(201).json(await acceptTwinRequest(uuid.parse(request.params.relationshipId)));
+}));
+app.delete("/api/twins/requests/:relationshipId",handler(async(request,response)=>{
+  localOnly(response); await declineTwinRequest(uuid.parse(request.params.relationshipId)); response.json({ok:true});
+}));
+app.post("/api/cluster/v2/twins/requests",handler(async(request,response)=>{
+  await receiveTwinRequest(machineOnly(response),request.body); response.json({ok:true});
+}));
+app.post("/api/cluster/v2/twins/requests/decline",handler(async(request,response)=>{
+  await receiveTwinRequestDecline(machineOnly(response),request.body); response.json({ok:true});
 }));
 /** The twin is gone for good: this node takes over what it owned (see src/cluster-succession.ts). */
 app.post("/api/twins/:relationshipId/lost",handler(async(request,response)=>{

@@ -1,6 +1,7 @@
 import { savePreferencesInBackground } from "./api.js";
 import { conversationTask } from "./chat-controls.js";
 import { elements } from "./elements.js";
+import { projectMatchesClusters, sessionMatchesClusters } from "./cluster-filters.js";
 import { addSessionToCanvas } from "./session-list.js";
 import { formatDate, setTheme, toast } from "./shell.js";
 import { state } from "./state.js";
@@ -130,11 +131,17 @@ function isVisible(session) {
 
 function matchesClassification(session) {
   const value = session.classification ? `label:${session.classification}` : "unclassified";
-  return !state.classificationFilter || state.classificationFilter === value;
+  return !state.classificationFilters.size || state.classificationFilters.has(value);
+}
+
+/** Status chips combine: choosing Running and Needs review shows both. None chosen is All. */
+function matchesChatFilters(session) {
+  if (!state.chatFilters.size) return true;
+  return [...state.chatFilters].some((filter) => filter === "cron" ? Boolean(session.cronTaskId) : sessionChatState(session) === filter);
 }
 
 export function updateChatFilterCounts() {
-  const sessions = state.sessions.filter((session) => matchesClassification(session) && isVisible(session));
+  const sessions = state.sessions.filter((session) => matchesClassification(session) && sessionMatchesClusters(session) && isVisible(session));
   const counts = { all: sessions.length, active: 0, review: 0, done: 0, cron: sessions.filter(session => session.cronTaskId).length };
   for (const session of sessions) counts[sessionChatState(session)] += 1;
   for (const count of elements.chatFilters.querySelectorAll("[data-filter-count]")) {
@@ -145,17 +152,17 @@ export function updateChatFilterCounts() {
 export function filteredSessions() {
   const query = normalizedQuery(elements.sessionSearchInput.value || "");
   return state.sessions.filter((session) => {
-    if (!matchesClassification(session) || !isVisible(session)) return false;
+    if (!matchesClassification(session) || !sessionMatchesClusters(session) || !isVisible(session)) return false;
     const searchableText = `${shortSessionTitle(session)}\n${session.firstMessage || ""}\n${session.path || ""}`.toLowerCase();
     if (query && !searchableText.includes(query)) return false;
-    return state.chatFilter === "all" || (state.chatFilter === "cron" ? Boolean(session.cronTaskId) : sessionChatState(session) === state.chatFilter);
+    return matchesChatFilters(session);
   });
 }
 
 export function filteredProjects() {
   const query = normalizedQuery(elements.projectSearchInput.value || "");
-  if (!query) return state.projects;
-  return state.projects.filter((project) => `${project.name}\n${project.path}`.toLowerCase().includes(query));
+  return state.projects.filter((project) => projectMatchesClusters(project)
+    && (!query || `${project.name}\n${project.path}`.toLowerCase().includes(query)));
 }
 
 elements.themeToggleButton.addEventListener("click", () => {

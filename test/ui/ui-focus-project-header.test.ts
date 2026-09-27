@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { multiSelect } from "./multi-select.js";
 import { nativeUiFixture } from "./native-ui-fixture.js";
 import { api, signIn } from "../dev-nodes.js";
 
@@ -28,7 +29,7 @@ test("mobile project header hides clutter, offers copyable path and moves real f
   await page.locator("#focusContextActions button", { hasText: "Project actions" }).click();
   await page.getByTestId("project-conversation-filters-button").click();
   await page.locator("#focusProjectFiltersDialog").waitFor();
-  await page.getByTestId("conversation-classification-filter").selectOption("unclassified");
+  await multiSelect(page, "conversation-classification-filter").choose("Unclassified");
   await page.getByTestId("show-done-conversations-toggle").check();
   await page.getByTestId("focus-project-filters-close").click();
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -36,7 +37,7 @@ test("mobile project header hides clutter, offers copyable path and moves real f
   assert.equal(await page.locator("#projectPath").isVisible(), true);
   assert.equal(await page.locator("#chatsRecentSessionsButton").isVisible(), false, "desktop keeps its existing global Recents control");
   assert.equal(await page.locator("#chatsRunningConversationsButton").isVisible(), false);
-  assert.equal(await page.getByTestId("conversation-classification-filter").inputValue(), "unclassified");
+  assert.deepEqual(await multiSelect(page, "conversation-classification-filter").selected(), ["Unclassified"]);
   assert.equal(await page.getByTestId("show-done-conversations-toggle").isChecked(), true);
   assert.equal(await page.locator("#projectName").getAttribute("role"), null);
 });

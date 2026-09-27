@@ -280,3 +280,6 @@ async function removeProject(project) {
   await loadProjects();
 }
 elements.projectSearchInput.addEventListener("input", () => renderProjects());
+window.addEventListener("cluster-filters-changed", (event) => {
+  if (event.detail.list === "projects") renderProjects();
+});

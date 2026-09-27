@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Cluster settings now let you find cluster members with fuzzy search, pair twins directly from a shared cluster with request notifications, and filter projects and conversations by cluster.
+
 ## 2.4.1 — 2026-09-28
 
 - Running conversations clear after Claude exits or stops reporting activity, and the count updates when the conversation list changes.

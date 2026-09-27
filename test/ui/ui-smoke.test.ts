@@ -230,10 +230,11 @@ test("settings sub-tabs, shortcut search, and the account panel stay focused", a
   await page.getByTestId("canvas-keymap-search-input").fill("");
   assert.equal(await splitRow.isVisible(), true, "clearing the search brings rows back");
 
-  // Cluster: leaving is offered and, on a lone node, disabled.
+  // Cluster: a lone node explains clusters and offers to create or join one.
   await page.getByTestId("settings-tab-cluster").click();
-  await page.getByTestId("cluster-leave-button").waitFor();
-  assert.ok(await page.getByTestId("cluster-leave-button").isDisabled(), "a lone node cannot leave");
+  await page.getByTestId("cluster-list-empty").waitFor();
+  assert.equal(await page.getByTestId("cluster-new-button").isVisible(), true);
+  assert.equal(await page.getByTestId("cluster-join-reveal").isVisible(), true);
 
   // Resources: every path list can be pasted into or browsed to.
   await page.getByTestId("settings-tab-resources").click();

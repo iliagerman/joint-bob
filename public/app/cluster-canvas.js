@@ -1,61 +1,114 @@
-function text(tag, value) { const node = document.createElement(tag); node.textContent = value; return node; }
+import { fuzzyMatch } from "./fuzzy.js";
 
-function renderDetails(container, cluster, projects, localNodeId) {
+/**
+ * The cluster list and the node strip. The list shows each cluster with its members' faces
+ * and what this node shares into it and gets from it; typing in the search box narrows it to
+ * clusters whose name, or one of whose nodes, fuzzily matches. The strip draws the selected
+ * cluster's nodes in a row: this node first and filled in, the manager with a star, and a
+ * dashed line to each twin.
+ */
+
+function text(tag, value, className) {
+  const node = document.createElement(tag); node.textContent = value;
+  if (className) node.className = className;
+  return node;
+}
+
+function initials(name) {
+  const words = String(name || "?").replace(/'s\b/g, "").trim().split(/[\s._-]+/).filter(Boolean);
+  return (words.length > 1 ? words[0][0] + words[1][0] : (words[0] || "?").slice(0, 2)).toUpperCase();
+}
+
+export function nodeAvatar(member, { local, manager, twin, small = false }) {
+  const avatar = text("span", initials(member.name || member.nodeId), "cluster-avatar");
+  if (local) avatar.dataset.local = "true";
+  if (twin) avatar.dataset.twin = "true";
+  if (small) avatar.dataset.small = "true";
+  if (manager) avatar.append(text("span", "★", "cluster-avatar-manager"));
+  avatar.setAttribute("aria-hidden", "true");
+  return avatar;
+}
+
+export function clusterProjectCounts(cluster, projects) {
+  const inCluster = projects.filter((project) => project.clusterIds?.includes(cluster.id));
+  return {
+    shared: inCluster.filter((project) => project.locallyOwned !== false).length,
+    received: inCluster.filter((project) => project.locallyOwned === false).length,
+  };
+}
+
+/** Which clusters and nodes match `query`, best cluster first. An empty query matches everything. */
+export function searchClusters(clusters, query) {
+  const results = new Map();
+  for (const cluster of clusters) {
+    const clusterScore = query ? fuzzyMatch(query, cluster.name) : 0;
+    const nodes = query ? cluster.members.filter((member) => fuzzyMatch(query, member.name, member.url) !== null).map((member) => member.nodeId) : [];
+    const nodeScore = Math.max(...cluster.members.map((member) => fuzzyMatch(query, member.name, member.url) ?? -Infinity));
+    const score = clusterScore ?? (nodes.length ? nodeScore : null);
+    if (score !== null) results.set(cluster.id, { score, nodes });
+  }
+  return results;
+}
+
+export function renderClusterList(container, clusters, { projects, localNodeId, twinNodeIds, selectedClusterId, matches, onSelect }) {
   container.replaceChildren();
-  if (!cluster) { container.append(text("p", "Create or join a cluster to get started. Membership alone does not share data.")); return; }
-  const manager = cluster.members.find(member => member.nodeId === cluster.managerNodeId);
-  container.append(text("h3", cluster.name), text("p", `Manager: ${manager.name} · ${cluster.members.length} members`));
-  const members = document.createElement("ul"); members.className = "cluster-detail-list";
-  for (const member of [...cluster.members].sort((a, b) => a.joinSequence - b.joinSequence)) {
-    const row = document.createElement("li"); row.dataset.sharingNodeId = member.nodeId;
-    row.append(text("span", member.name), text("small", [member.nodeId === localNodeId ? "this node" : "", member.nodeId === cluster.managerNodeId ? "manager" : ""].filter(Boolean).join(" · ")));
-    members.append(row);
+  if (!clusters.length) {
+    const empty = text("p", "You are not in a cluster yet. Create one, or join one with a link from another node.", "cluster-list-empty");
+    empty.dataset.testid = "cluster-list-empty";
+    container.append(empty);
+    return;
   }
-  const shared = projects.filter(project => project.clusterIds?.includes(cluster.id)
-    || project.accessByCluster?.[cluster.id]?.authorizedNodeIds.length > 1);
-  const technical = document.createElement("details"); technical.dataset.testid = "cluster-technical";
-  technical.append(text("summary", "Membership details"), text("p", `Manager epoch ${cluster.managerEpoch}`));
-  for (const member of cluster.members) technical.append(text("p", `${member.name}: admission ${member.joinSequence}`));
-  container.append(members, technical, projectInventory(shared, cluster));
+  const visible = clusters.filter((cluster) => matches.has(cluster.id))
+    .sort((left, right) => matches.get(right.id).score - matches.get(left.id).score || left.name.localeCompare(right.name));
+  if (!visible.length) {
+    const empty = text("p", "No cluster or node matches.", "cluster-list-empty");
+    empty.dataset.testid = "cluster-list-no-match";
+    container.append(empty);
+    return;
+  }
+  for (const cluster of visible) {
+    const item = document.createElement("button");
+    item.type = "button"; item.className = "cluster-item"; item.role = "listitem";
+    item.dataset.testid = "cluster-item"; item.dataset.clusterId = cluster.id;
+    item.setAttribute("aria-pressed", String(cluster.id === selectedClusterId));
+    const counts = clusterProjectCounts(cluster, projects);
+    const top = document.createElement("span"); top.className = "cluster-item-top";
+    top.append(text("strong", cluster.name), text("span", `${cluster.members.length} node${cluster.members.length === 1 ? "" : "s"}`));
+    const faces = document.createElement("span"); faces.className = "cluster-faces";
+    for (const member of [...cluster.members].sort((left, right) => left.joinSequence - right.joinSequence)) {
+      const avatar = nodeAvatar(member, { local: member.nodeId === localNodeId, twin: twinNodeIds.includes(member.nodeId), small: true });
+      if (matches.get(cluster.id).nodes.includes(member.nodeId)) avatar.dataset.match = "true";
+      faces.append(avatar);
+    }
+    const matched = matches.get(cluster.id).nodes.map((nodeId) => cluster.members.find((member) => member.nodeId === nodeId)?.name).filter(Boolean);
+    const summary = text("span", `↑ you share ${counts.shared} · ↓ you get ${counts.received}${matched.length ? ` · matches ${matched.join(", ")}` : ""}`, "cluster-item-counts");
+    summary.dataset.testid = "cluster-item-counts";
+    item.append(top, faces, summary);
+    item.setAttribute("aria-label", `${cluster.name}, ${cluster.members.length} nodes, you share ${counts.shared}, you get ${counts.received}`);
+    item.addEventListener("click", () => onSelect(cluster.id));
+    container.append(item);
+  }
 }
 
-function projectInventory(projects, cluster) {
-  const section = document.createElement("details"); section.dataset.testid = "cluster-projects";
-  const summary = text("summary", `Shared projects · ${projects.length}`); summary.dataset.testid = "cluster-project-summary";
-  section.append(summary);
-  section.append(text("p", "Authorized access between these nodes, including Twins. This does not confirm completed file sync. Unknown owner names appear as node IDs."));
-  const label = text("label", "Search shared projects"), search = document.createElement("input");
-  search.type = "search"; search.dataset.testid = "cluster-project-search";
-  label.append(search);
-  const list = document.createElement("ul"); list.className = "cluster-detail-list cluster-scroll-list"; list.dataset.testid = "cluster-project-list";
-  const name = id => cluster.members.find(member => member.nodeId === id)?.name || id;
-  for (const project of projects) {
-    const row = document.createElement("li");
-    const access = project.accessByCluster?.[cluster.id];
-    const owner = access?.ownerNodeId || project.ownerNodeId;
-    const recipients = access ? access.authorizedNodeIds.filter(id => id !== owner).map(name) : [];
-    row.append(text("span", project.name), text("small", `Owner: ${project.ownerName || (owner ? name(owner) : "Unknown")} · Authorized recipients: ${access ? recipients.join(", ") || "None in this cluster" : "Unavailable"}`));
-    list.append(row);
-  }
-  const empty = text("p", "No matching projects."); empty.hidden = projects.length > 0; empty.setAttribute("role", "status");
-  search.addEventListener("input", () => {
-    for (const row of list.children) row.hidden = !row.textContent.toLowerCase().includes(search.value.trim().toLowerCase());
-    empty.hidden = [...list.children].some(row => !row.hidden);
+/** The selected cluster's nodes in a row, this node first and then its twins, joined by wires. */
+export function renderNodeStrip(cluster, { localNodeId, twinNodeIds }) {
+  const strip = document.createElement("div"); strip.className = "cluster-strip"; strip.dataset.testid = "cluster-strip";
+  strip.setAttribute("aria-hidden", "true");
+  const rank = (member) => member.nodeId === localNodeId ? 0 : twinNodeIds.includes(member.nodeId) ? 1 : 2;
+  const members = [...cluster.members].sort((left, right) => rank(left) - rank(right) || left.joinSequence - right.joinSequence);
+  const localPresent = members.some((member) => member.nodeId === localNodeId);
+  members.forEach((member, index) => {
+    const twin = twinNodeIds.includes(member.nodeId);
+    if (index) {
+      const wire = document.createElement("span"); wire.className = "cluster-wire";
+      if (twin && localPresent) wire.dataset.twin = "true";
+      strip.append(wire);
+    }
+    const stop = document.createElement("span"); stop.className = "cluster-stop";
+    const local = member.nodeId === localNodeId;
+    stop.append(nodeAvatar(member, { local, manager: member.nodeId === cluster.managerNodeId, twin }),
+      text("span", local ? `${member.name || member.nodeId} (you)` : member.name || member.nodeId, "cluster-stop-label"));
+    strip.append(stop);
   });
-  section.append(label, list, empty); return section;
-}
-
-export function renderClusterCanvas({ canvas, details, clusters, projects, localNodeId, selectedClusterId, onSelect }) {
-  canvas.replaceChildren();
-  const label = text("label", "Cluster"), select = document.createElement("select");
-  select.id = "clusterSelector"; select.dataset.testid = "cluster-selector"; label.htmlFor = select.id;
-  for (const cluster of clusters) { const option = text("option", cluster.name); option.value = cluster.id; select.append(option); }
-  if (!clusters.length) { const option = text("option", "No clusters yet"); option.value = ""; select.append(option); select.disabled = true; }
-  select.value = selectedClusterId || "";
-  select.addEventListener("change", () => {
-    renderDetails(details, clusters.find(cluster => cluster.id === select.value), projects, localNodeId);
-    onSelect(select.value);
-  });
-  label.append(select); canvas.append(label);
-  renderDetails(details, clusters.find(cluster => cluster.id === selectedClusterId), projects, localNodeId);
+  return strip;
 }
