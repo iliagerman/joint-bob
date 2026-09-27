@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- New projects no longer automatically create AGENTS.md. Existing instruction files are left untouched.
+
 ## 2.1.5 — 2026-09-27
 
 - Running indicators now appear immediately when you start a conversation instead of delaying up to five seconds.

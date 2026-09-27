@@ -24,6 +24,7 @@ interface AddProjectOptions {
   syncFolderId?: string;
   type?: WorkspaceId;
   color?: string;
+  /** @deprecated Accepted for compatibility; projects never generate instructions. */
   writeInstructions?: boolean;
 }
 
@@ -472,31 +473,6 @@ async function initializeProjectDatabase(): Promise<DatabaseSync> {
   return db;
 }
 
-function syncInstructions(project: ProjectRecord): string {
-  return `# Agent setup notes
-
-This project is managed by Joint Bob.
-
-## Synchronization
-
-- Local path on this node: \`${project.path}\`
-- Syncthing folder ID: \`${project.syncFolderId}\`
-- Install Joint Bob on each additional node and map this project to that node's local folder.
-- Verify synchronization is idle before taking over an active session.
-
-Do not synchronize .git or machine-specific credentials.
-`;
-}
-
-async function writeProjectInstructions(project: ProjectRecord): Promise<void> {
-  const filePath = path.join(project.path, "AGENTS.md");
-  try {
-    await fs.writeFile(filePath, syncInstructions(project), { flag: "wx" });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-  }
-}
-
 export async function listProjects(): Promise<ProjectRecord[]> {
   const db = await projectDatabase();
   const rows = db.prepare("SELECT * FROM projects ORDER BY updated_at DESC").all() as unknown as ProjectRow[];
@@ -734,7 +710,6 @@ export async function addProject(name: string, folderPath: string, options: AddP
     createdAt: now,
     updatedAt: now,
   };
-  if (options.synced && options.writeInstructions !== false) await writeProjectInstructions(project);
   saveNewLocalProject(db, project);
   return project;
 }
