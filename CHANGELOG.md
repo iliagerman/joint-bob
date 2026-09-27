@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Running indicators now appear immediately when you start a conversation instead of delaying up to five seconds.
+
 ## 2.1.3 — 2026-09-27
 
 - Shared workspaces now display which cluster node they come from, letting you distinguish between workspaces with the same name from different nodes.

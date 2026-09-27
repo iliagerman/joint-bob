@@ -78,13 +78,13 @@ export async function refreshRunningConversations() {
   if (elements.runningConversationsDialog.open) renderRunningConversationsDialog();
 }
 
-/** Running state changes arrive in bursts of invalidations; trail behind them like the review inbox. */
+/** Coalesce duplicate socket invalidations without delaying visible running feedback. */
 export function scheduleRunningRefresh() {
   if (runningRefreshTimer) return;
   runningRefreshTimer = setTimeout(() => {
     runningRefreshTimer = null;
     refreshRunningConversations().catch((error) => console.warn("Could not refresh running conversations", error));
-  }, 5000);
+  }, 100);
 }
 
 function startRunningRefresh() {
