@@ -461,6 +461,7 @@ async function initializeProjectDatabase(): Promise<DatabaseSync> {
     dropLegacyGitHubSchema(db);
     await migrateLegacyProjects(db);
     ensureResourceSharingSchema(db);
+    mergeAllTwinWorkspaceCopies(db);
     localNodeId = (await getClusterNode()).id;
   } catch (error) {
     db.close();
@@ -552,13 +553,46 @@ function replicaWorkspace(db: DatabaseSync, owner: string): string {
   return workspaceId;
 }
 
+function isActiveTwin(db:DatabaseSync,nodeId:string):boolean{
+  return tableExists(db,'cluster_v2_twin_relationships')&&Boolean(db.prepare("SELECT 1 FROM cluster_v2_twin_relationships WHERE peer_node_id=? AND status='active'").get(nodeId));
+}
+
+/** A twin's workspaces are this node's own, so fold any per-owner copy a cluster share made back into them. */
+function mergeTwinWorkspaceCopies(db:DatabaseSync,owner:string):void{
+  const copies=db.prepare('SELECT source_workspace_id,workspace_id FROM cluster_v2_shared_workspaces WHERE owner_node_id=? AND workspace_id<>source_workspace_id').all(owner) as Array<{source_workspace_id:string;workspace_id:string}>;
+  for(const copy of copies){
+    const now=new Date().toISOString();
+    db.prepare('INSERT INTO workspaces(id,label,created_at,updated_at) SELECT ?,label,?,? FROM workspaces WHERE id=? ON CONFLICT(id) DO NOTHING').run(copy.source_workspace_id,now,now,copy.workspace_id);
+    db.prepare('UPDATE projects SET workspace_id=? WHERE workspace_id=?').run(copy.source_workspace_id,copy.workspace_id);
+    db.prepare("UPDATE OR IGNORE secret_assignments SET scope_id=? WHERE scope_type='workspace' AND scope_id=?").run(copy.source_workspace_id,copy.workspace_id);
+    db.prepare("DELETE FROM secret_assignments WHERE scope_type='workspace' AND scope_id=?").run(copy.workspace_id);
+    db.prepare('UPDATE cluster_v2_shared_workspaces SET workspace_id=? WHERE owner_node_id=? AND source_workspace_id=?').run(copy.source_workspace_id,owner,copy.source_workspace_id);
+    db.prepare('DELETE FROM workspaces WHERE id=?').run(copy.workspace_id);
+  }
+}
+
+function mergeAllTwinWorkspaceCopies(db:DatabaseSync):void{
+  if(!tableExists(db,'cluster_v2_shared_workspaces'))return;
+  const owners=db.prepare('SELECT DISTINCT owner_node_id FROM cluster_v2_shared_workspaces WHERE workspace_id<>source_workspace_id').all() as Array<{owner_node_id:string}>;
+  db.exec('BEGIN IMMEDIATE');
+  try{
+    for(const {owner_node_id} of owners)if(isActiveTwin(db,owner_node_id))mergeTwinWorkspaceCopies(db,owner_node_id);
+    db.exec('COMMIT');
+  }catch(error){
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
 function incomingWorkspace(db:DatabaseSync,envelope:ProjectMetadataEnvelope):string{
   const workspace=envelope.metadata.workspace,body=envelope.statement.body;
   if(!workspace)return replicaWorkspace(db,body.ownerNodeId);
-  const id=body.context.kind==='twin'?workspace.id:`shared-${createHash('sha256').update(`${body.ownerNodeId}\0${workspace.id}`).digest('hex').slice(0,24)}`;
+  // A cluster share from a twin reuses the twin's workspace id, like a twin share does.
+  const merged=body.context.kind==='twin'||isActiveTwin(db,body.ownerNodeId);
+  const id=merged?workspace.id:`shared-${createHash('sha256').update(`${body.ownerNodeId}\0${workspace.id}`).digest('hex').slice(0,24)}`;
   if(reservedWorkspaceIds.has(id))throw new ResourceSharingError('Shared workspace ID is reserved',409);
   const mapping=db.prepare('SELECT workspace_id FROM cluster_v2_shared_workspaces WHERE owner_node_id=? AND source_workspace_id=?').get(body.ownerNodeId,workspace.id) as {workspace_id:string}|undefined;
-  if(body.context.kind!=='twin'&&db.prepare('SELECT 1 FROM workspaces WHERE id=?').get(id)&&mapping?.workspace_id!==id)throw new ResourceSharingError('Shared workspace identity conflict',409);
+  if(!merged&&db.prepare('SELECT 1 FROM workspaces WHERE id=?').get(id)&&mapping?.workspace_id!==id)throw new ResourceSharingError('Shared workspace identity conflict',409);
   const now=new Date().toISOString();
   db.prepare(`INSERT INTO workspaces(id,label,created_at,updated_at) VALUES(?,?,?,?)
     ON CONFLICT(id) DO NOTHING`).run(id,workspace.label,now,now);
@@ -606,6 +640,7 @@ export async function applyProjectMetadata(
     if (!hasCurrentResourcePolicyContext(db, localNodeId, envelope.statement)) {
       throw new ResourceSharingError("Unauthorized project metadata context", 403);
     }
+    if (isActiveTwin(db, body.ownerNodeId)) mergeTwinWorkspaceCopies(db, body.ownerNodeId);
     const isNewer = validateProjectMetadataVersion(db, envelope);
     const nativeProject = db.prepare("SELECT 1 FROM projects WHERE id=?").get(body.resourceId);
     if (isNewer) saveIncomingProject(db, envelope, managedHome);
