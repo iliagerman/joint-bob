@@ -5,7 +5,7 @@
  *
  * Options are `{ value, label, detail? }`; search matches label, value, and detail.
  */
-export function createSearchableSelect({ id, testid, prompt = "Choose…", placeholder = "Search", emptyText = "No matches" }) {
+export function createSearchableSelect({ id, testid, label, prompt = "Choose…", placeholder = "Search", emptyText = "No matches", optionTestid = `${testid}-option`, listTestid = `${testid}-options` }) {
   const root = document.createElement("div");
   root.className = "searchable-select";
   const trigger = document.createElement("button");
@@ -19,8 +19,9 @@ export function createSearchableSelect({ id, testid, prompt = "Choose…", place
   search.placeholder = placeholder; search.dataset.testid = `${testid}-search`;
   search.setAttribute("aria-autocomplete", "list"); search.setAttribute("aria-expanded", "true");
   const list = document.createElement("div");
-  list.id = `${id}Options`; list.className = "searchable-select-options"; list.role = "listbox"; list.dataset.testid = `${testid}-options`;
+  list.id = `${id}Options`; list.className = "searchable-select-options"; list.role = "listbox"; list.dataset.testid = listTestid;
   search.setAttribute("aria-controls", list.id); trigger.setAttribute("aria-controls", list.id);
+  if (label) { trigger.setAttribute("aria-label", label); search.setAttribute("aria-label", `Search ${label.toLocaleLowerCase()}`); }
   popover.append(search, list);
   root.append(trigger, popover);
 
@@ -61,7 +62,7 @@ export function createSearchableSelect({ id, testid, prompt = "Choose…", place
     list.replaceChildren(...matches.map((option, index) => {
       const item = document.createElement("button");
       item.type = "button"; item.role = "option"; item.id = `${id}Option${index}`; item.tabIndex = -1;
-      item.className = "searchable-select-option"; item.dataset.testid = `${testid}-option`; item.dataset.value = option.value;
+      item.className = "searchable-select-option"; item.dataset.testid = optionTestid; item.dataset.value = option.value;
       item.setAttribute("aria-selected", String(option.value === trigger.dataset.value));
       item.textContent = option.label;
       if (option.detail && option.detail !== option.label) {
@@ -111,6 +112,8 @@ export function createSearchableSelect({ id, testid, prompt = "Choose…", place
     /** Replaces the options. The current choice is kept, so a value missing from them must be listed by the caller to stay visible. */
     setOptions(next) { options = next; showSelected(); if (!popover.hidden) render(); },
     setValue(value) { trigger.dataset.value = value; showSelected(); },
+    get disabled() { return trigger.disabled; },
+    set disabled(value) { trigger.disabled = value; if (value) close(); },
     onChange(listener) { listeners.push(listener); },
   };
 }

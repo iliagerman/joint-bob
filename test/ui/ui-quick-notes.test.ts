@@ -26,8 +26,8 @@ let page: Page;
 let authSession: SignedIn;
 
 async function chooseQuickNoteProject(name: string) {
-  const picker = page.getByTestId("quick-note-project-select");
-  await picker.fill(name);
+  await page.getByTestId("quick-note-project-select").click();
+  await page.getByTestId("quick-note-project-select-search").fill(name);
   await page.getByTestId("quick-note-project-options").getByRole("option", { name, exact: true }).click();
 }
 
@@ -65,7 +65,7 @@ test("mobile keeps creation actions together and switches conversations and note
   assert.equal(await projectQuickNote.isVisible(), true, "Projects has a mobile quick-note action");
   await projectQuickNote.click();
   await page.getByTestId("quick-note-dialog").waitFor({ state: "visible" });
-  assert.equal(await page.getByTestId("quick-note-project-select").inputValue(), "Internal Assistant", "the Projects action uses the active project");
+  assert.equal(await page.getByTestId("quick-note-project-select").textContent(), "Internal Assistant", "the Projects action uses the active project");
   await page.getByTestId("quick-note-cancel-button").click();
   await page.getByTestId("nav-chats-button").click();
 
@@ -94,10 +94,11 @@ test("quick note project picker filters every project and changes the note desti
   await openNotesTab(internalAssistantId);
   await page.getByTestId("quick-note-create-button").click();
   const picker = page.getByTestId("quick-note-project-select");
-  await picker.fill("joint");
+  await picker.click();
+  await page.getByTestId("quick-note-project-select-search").fill("joint");
   const options = page.getByTestId("quick-note-project-options");
   await options.getByRole("option", { name: "Joint Bob", exact: true }).click();
-  assert.equal(await picker.inputValue(), "Joint Bob", "chosen project replaces the search query");
+  assert.equal(await picker.textContent(), "Joint Bob", "the chosen project shows in the closed dropdown");
   await page.getByTestId("quick-note-title-input").fill("Search picker note");
   await page.getByTestId("quick-note-save-button").click();
   const jointBob = node.projects.find((project) => project.name === "Joint Bob")!;
@@ -130,7 +131,7 @@ test("a quick note can move, start a conversation, and be deleted", async () => 
   assert.equal(await button.locator(".shortcut-hint").count(), 1, "quick note button advertises its shortcut");
   await page.keyboard.press("Control+Alt+.");
   await page.locator("#quickNoteDialog[open]").waitFor();
-  assert.equal(await page.getByTestId("quick-note-project-select").inputValue(), "Internal Assistant");
+  assert.equal(await page.getByTestId("quick-note-project-select").textContent(), "Internal Assistant");
   await page.getByTestId("quick-note-title-input").fill("Verify release smoke test");
   await page.getByTestId("quick-note-content-input").fill("Do this manually after deploy.");
   await page.getByTestId("quick-note-save-button").click();

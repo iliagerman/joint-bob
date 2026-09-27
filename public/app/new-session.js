@@ -8,6 +8,7 @@ import { selectProject } from "./project-selection.js";
 import { brandIcon } from "./icons.js";
 import { loadSecretAccounts, openNewSecretAccount, providerBadge, secretAccounts } from "./secrets.js";
 import { rememberRecentSession } from "./recents.js";
+import { createSearchableSelect } from "./searchable-select.js";
 import { renderSessionColorSwatches, selectedSessionColor } from "./session-identity.js";
 import { chooseOption, toast } from "./shell.js";
 import { openSession } from "./socket.js";
@@ -15,8 +16,8 @@ import { state } from "./state.js";
 import { cancelHandoffWait } from "./tasks.js";
 
 const classification = classificationPicker(document.querySelector("#newSessionClassification"), "new-session");
-const projectSelect = document.querySelector("#newSessionProjectSelect");
-const projectOptions = document.querySelector("#newSessionProjectOptions");
+const projectPicker = createSearchableSelect({ id: "newSessionProjectSelect", testid: "new-session-project-select", optionTestid: "new-session-project-option", label: "Project", prompt: "Choose a project", placeholder: "Search projects", emptyText: "No projects found" });
+document.querySelector("#newSessionProjectPicker").replaceWith(projectPicker.root);
 const harnessSelect = document.querySelector("#newSessionHarnessSelect");
 let newSessionNodes = [];
 
@@ -130,8 +131,9 @@ async function openNewSessionNameDialog(sessionPath, defaultTitle, sourceTaskId 
   classification.reset(settings.conversationLabels);
   state.newSessionDraft = { sessionPath, defaultTitle, sourceTaskId, projectId: projectId || state.projects[0]?.id };
   document.querySelector("#newSessionProjectLabel").hidden = !document.body.classList.contains("focus-ui");
-  renderProjectPicker(state.newSessionDraft.projectId, true);
-  projectSelect.disabled = Boolean(sourceTaskId);
+  projectPicker.setOptions(state.projects.map((project) => ({ value: project.id, label: project.name })));
+  projectPicker.setValue(state.newSessionDraft.projectId || "");
+  projectPicker.disabled = Boolean(sourceTaskId);
   document.querySelector("#newSessionHarnessLabel").hidden = !global;
   harnessSelect.replaceChildren(...state.harnesses.filter(harness => harness.runtimeConfigured).map(harness => new Option(harness.label, harness.id)));
   harnessSelect.value = state.harnesses.find(harness => harness.newSessionPath === sessionPath)?.id || "";
@@ -177,71 +179,10 @@ export async function startGlobalConversation() {
   await openNewSessionNameDialog(harness.newSessionPath, `New ${harness.label} conversation`, null, true);
 }
 
-function closeProjectPicker() {
-  projectOptions.hidden = true;
-  projectSelect.setAttribute("aria-expanded", "false");
-}
-
-function selectNewSessionProject(project) {
-  if (!state.newSessionDraft) return;
-  projectSelect.value = project.name;
-  projectSelect.dataset.projectId = project.id;
-  closeProjectPicker();
-  if (state.newSessionDraft.projectId === project.id) return;
-  state.newSessionDraft.projectId = project.id;
+projectPicker.onChange((projectId) => {
+  if (!state.newSessionDraft || state.newSessionDraft.projectId === projectId) return;
+  state.newSessionDraft.projectId = projectId;
   loadNewSessionNodes().catch(error => toast(error.message));
-}
-
-function renderProjectPicker(selectedId = projectSelect.dataset.projectId, resetValue = false, query = projectSelect.value.trim().toLocaleLowerCase()) {
-  const selected = state.projects.find((project) => project.id === selectedId);
-  if (resetValue) projectSelect.value = selected?.name || "";
-  const matches = state.projects.filter((project) => project.name.toLocaleLowerCase().includes(query));
-  projectOptions.replaceChildren(...matches.map((project) => {
-    const option = document.createElement("button");
-    option.type = "button";
-    option.role = "option";
-    option.className = "project-combobox-option";
-    option.dataset.testid = "new-session-project-option";
-    option.setAttribute("aria-selected", String(project.id === selectedId));
-    option.textContent = project.name;
-    option.addEventListener("mousedown", (event) => event.preventDefault());
-    option.addEventListener("click", () => selectNewSessionProject(project));
-    return option;
-  }));
-  if (!matches.length) projectOptions.textContent = "No projects found";
-  if (selected && !query) projectSelect.value = selected.name;
-}
-
-projectSelect.addEventListener("focus", () => {
-  projectSelect.select();
-  renderProjectPicker(undefined, false, "");
-  projectOptions.hidden = false;
-  projectSelect.setAttribute("aria-expanded", "true");
-});
-projectSelect.addEventListener("input", () => {
-  renderProjectPicker();
-  projectOptions.hidden = false;
-  projectSelect.setAttribute("aria-expanded", "true");
-});
-projectSelect.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") {
-    event.preventDefault();
-    renderProjectPicker(undefined, true);
-    closeProjectPicker();
-    return;
-  }
-  if (event.key !== "Enter") return;
-  const firstMatch = projectOptions.querySelector("[role='option']");
-  if (!firstMatch) return;
-  event.preventDefault();
-  firstMatch.click();
-});
-projectSelect.addEventListener("blur", () => {
-  window.setTimeout(() => {
-    if (projectOptions.matches(":hover")) return;
-    renderProjectPicker(undefined, true);
-    closeProjectPicker();
-  }, 0);
 });
 harnessSelect.addEventListener("change", () => {
   const harness = state.harnesses.find(item => item.id === harnessSelect.value);
@@ -330,7 +271,7 @@ elements.newSessionNameForm.addEventListener("submit", async (event) => {
   const submit = elements.newSessionNameForm.querySelector('[type="submit"]');
   if (submit.disabled) return;
   submit.disabled = true;
-  projectSelect.disabled = true;
+  projectPicker.disabled = true;
   harnessSelect.disabled = true;
   try {
     if (classification.needsOther()) showWizardStep(2);
@@ -362,7 +303,7 @@ elements.newSessionNameForm.addEventListener("submit", async (event) => {
     toast(error.message);
   } finally {
     submit.disabled = false;
-    projectSelect.disabled = Boolean(state.newSessionDraft?.sourceTaskId);
+    projectPicker.disabled = Boolean(state.newSessionDraft?.sourceTaskId);
     harnessSelect.disabled = false;
   }
 });

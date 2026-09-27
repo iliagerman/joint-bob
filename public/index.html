@@ -1273,10 +1273,7 @@
         <section class="wizard-panel" data-step="1" data-testid="new-session-panel-1">
           <div class="project-combobox-field" id="newSessionProjectLabel" hidden>
             <span class="field-label">Project</span>
-            <div class="project-combobox">
-              <input id="newSessionProjectSelect" type="search" role="combobox" aria-label="Project" aria-autocomplete="list" aria-controls="newSessionProjectOptions" aria-expanded="false" autocomplete="off" placeholder="Search projects" data-testid="new-session-project-select" />
-              <div id="newSessionProjectOptions" class="project-combobox-options" role="listbox" hidden></div>
-            </div>
+            <div id="newSessionProjectPicker"></div>
           </div>
           <label id="newSessionHarnessLabel" hidden>Agent<select id="newSessionHarnessSelect" data-testid="new-session-harness-select"></select></label>
           <label>
@@ -1322,10 +1319,7 @@
         </div>
         <div class="project-combobox-field">
           <label class="field-label" for="quickNoteProject">Project</label>
-          <div class="project-combobox">
-            <input id="quickNoteProject" type="search" name="projectId" role="combobox" aria-label="Project" aria-autocomplete="list" aria-controls="quickNoteProjectOptions" aria-expanded="false" autocomplete="off" required placeholder="Search projects" data-testid="quick-note-project-select" />
-            <div id="quickNoteProjectOptions" class="project-combobox-options" role="listbox" hidden data-testid="quick-note-project-options"></div>
-          </div>
+          <div id="quickNoteProjectPicker"></div>
         </div>
         <label>Title
           <input id="quickNoteTitle" name="title" maxlength="120" autocomplete="off" required placeholder="What needs attention?" data-testid="quick-note-title-input" />

@@ -46,9 +46,9 @@ test("focus UI is opt-in, uses real conversations, and reverts without losing th
   await page.getByTestId("focus-new-conversation").click();
   const projectPicker = page.getByTestId("new-session-project-select");
   await projectPicker.waitFor({ state: "visible" });
-  await projectPicker.focus();
+  await projectPicker.click();
   assert.equal(await page.getByTestId("new-session-project-option").count(), node.projects.length, "opening the picker shows every project before searching");
-  await projectPicker.fill("joint");
+  await page.getByTestId("new-session-project-select-search").fill("joint");
   await page.getByTestId("new-session-project-option").getByText("Joint Bob", { exact: true }).click();
   await page.getByTestId("new-session-name-cancel-button").click();
   assert.equal(await page.locator("#sessionTitle").innerText(), title, "cancelling another-project wizard keeps current chat");
@@ -131,7 +131,8 @@ test("mobile focus gestures, fixed composer and cross-project creation use the l
   assert.equal(await page.locator("#focusControls").isVisible(), false, "drag does not open menu");
   await fab.tap();
   await page.getByTestId("focus-new-conversation").click();
-  await page.getByTestId("new-session-project-select").fill("joint");
+  await page.getByTestId("new-session-project-select").click();
+  await page.getByTestId("new-session-project-select-search").fill("joint");
   await page.getByTestId("new-session-project-option").getByText("Joint Bob", { exact: true }).click();
   await page.getByTestId("new-session-name-input").fill("Cross-project focus conversation");
   await page.getByTestId("new-session-step-3").click();

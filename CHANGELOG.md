@@ -3,6 +3,13 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Every dropdown now shows its chevron with room beside it; long choices no longer run under the arrow on wide screens.
+- The chat toolbar's agent, node, reasoning and model pickers show their dropdown arrow again.
+- The project pickers in New conversation and Quick note are searchable dropdowns like the harness pickers in Settings.
+- Starting a conversation from an edited quick note no longer refuses with "Save the project change" when the project did not change.
+
 ## 2.3.2 — 2026-09-27
 
 - Harness model and provider selectors in Settings now display as closed dropdown buttons showing your selection, opening to a search-enabled list only when needed.

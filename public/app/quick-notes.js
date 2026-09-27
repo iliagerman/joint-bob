@@ -3,6 +3,7 @@ import { attachmentsFromFiles, renderAttachmentChips } from "./attachments.js";
 import { loadHarnesses } from "./chat-controls.js";
 import { setMobileView } from "./layout.js";
 import { selectProject } from "./project-selection.js";
+import { createSearchableSelect } from "./searchable-select.js";
 import { loadSecretAccounts, providerBadge, secretAccounts } from "./secrets.js";
 import { confirmAction, toast } from "./shell.js";
 import { openSession } from "./socket.js";
@@ -10,8 +11,8 @@ import { state } from "./state.js";
 
 const dialog = document.querySelector("#quickNoteDialog");
 const form = document.querySelector("#quickNoteForm");
-const projectSelect = document.querySelector("#quickNoteProject");
-const projectOptions = document.querySelector("#quickNoteProjectOptions");
+const projectPicker = createSearchableSelect({ id: "quickNoteProject", testid: "quick-note-project-select", listTestid: "quick-note-project-options", label: "Project", prompt: "Choose a project", placeholder: "Search projects", emptyText: "No projects found" });
+document.querySelector("#quickNoteProjectPicker").replaceWith(projectPicker.root);
 const titleInput = document.querySelector("#quickNoteTitle");
 const contentInput = document.querySelector("#quickNoteContent");
 const harnessSelect = document.querySelector("#quickNoteHarness");
@@ -268,39 +269,8 @@ export async function refreshQuickNotes(projectId) {
   renderQuickNotes();
 }
 
-function closeProjectPicker() {
-  projectOptions.hidden = true;
-  projectSelect.setAttribute("aria-expanded", "false");
-}
-
 function selectedProjectId() {
-  return projectSelect.dataset.projectId || "";
-}
-
-function selectNoteProject(project) {
-  projectSelect.value = project.name;
-  projectSelect.dataset.projectId = project.id;
-  projectSelect.setCustomValidity("");
-  closeProjectPicker();
-  void loadDialogProjectOptions({ nodeId: nodeSelect.value, secretAccountIds: checkedSecretIds() });
-}
-
-function renderProjects(selectedId = selectedProjectId(), query = projectSelect.value.trim().toLocaleLowerCase()) {
-  const selected = state.projects.find((project) => project.id === selectedId);
-  const matches = state.projects.filter((project) => project.name.toLocaleLowerCase().includes(query));
-  projectOptions.replaceChildren(...matches.map((project) => {
-    const option = document.createElement("button");
-    option.type = "button";
-    option.role = "option";
-    option.className = "project-combobox-option";
-    option.setAttribute("aria-selected", String(project.id === selectedId));
-    option.textContent = project.name;
-    option.addEventListener("mousedown", (event) => event.preventDefault());
-    option.addEventListener("click", () => selectNoteProject(project));
-    return option;
-  }));
-  if (!matches.length) projectOptions.textContent = "No projects found";
-  if (selected && !query) projectSelect.value = selected.name;
+  return projectPicker.value;
 }
 
 function modelsForHarness() {
@@ -466,9 +436,8 @@ export async function openQuickNote(note = null, { chooseProject = false } = {})
   saveButton.disabled = true;
   document.querySelector("#quickNoteDialogTitle").textContent = editingId ? "Edit quick note" : "New quick note";
   const selectedProjectId = note?.projectId || defaultProjectId;
-  projectSelect.dataset.projectId = selectedProjectId;
-  projectSelect.value = state.projects.find((project) => project.id === selectedProjectId)?.name || "";
-  renderProjects(selectedProjectId, "");
+  projectPicker.setOptions(state.projects.map((project) => ({ value: project.id, label: project.name })));
+  projectPicker.setValue(selectedProjectId || "");
   titleInput.value = note?.title || "";
   contentInput.value = note?.content || "";
   scheduleInput.value = note?.scheduledAt ? toDatetimeLocal(note.scheduledAt) : "";
@@ -522,6 +491,7 @@ async function saveNote(event) {
   event.preventDefault();
   showError();
   if (saveButton.disabled) return;
+  if (!selectedProjectId()) { showError("Choose a project for this note."); return; }
   formSaving = true;
   updateFormControls();
   try {
@@ -558,41 +528,8 @@ async function startSavedNote(note) {
 
 harnessSelect.addEventListener("change", () => renderModels());
 modelSelect.addEventListener("change", () => renderThinking());
-projectSelect.addEventListener("focus", () => {
-  projectSelect.select();
-  renderProjects(selectedProjectId(), "");
-  projectOptions.hidden = false;
-  projectSelect.setAttribute("aria-expanded", "true");
-});
-projectSelect.addEventListener("input", () => {
-  projectSelect.setCustomValidity("Choose a project from the results.");
-  renderProjects(selectedProjectId());
-  projectOptions.hidden = false;
-  projectSelect.setAttribute("aria-expanded", "true");
-});
-projectSelect.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") {
-    event.preventDefault();
-    projectSelect.value = state.projects.find((project) => project.id === selectedProjectId())?.name || "";
-    projectSelect.setCustomValidity("");
-    renderProjects(selectedProjectId(), "");
-    closeProjectPicker();
-    return;
-  }
-  if (event.key !== "Enter") return;
-  const firstMatch = projectOptions.querySelector("[role='option']");
-  if (!firstMatch) return;
-  event.preventDefault();
-  firstMatch.click();
-});
-projectSelect.addEventListener("blur", () => {
-  window.setTimeout(() => {
-    if (projectOptions.matches(":hover")) return;
-    projectSelect.value = state.projects.find((project) => project.id === selectedProjectId())?.name || "";
-    projectSelect.setCustomValidity("");
-    renderProjects(selectedProjectId(), "");
-    closeProjectPicker();
-  }, 0);
+projectPicker.onChange(() => {
+  void loadDialogProjectOptions({ nodeId: nodeSelect.value, secretAccountIds: checkedSecretIds() });
 });
 nodeSelect.addEventListener("change", () => renderDialogSecrets(checkedSecretIds()));
 form.addEventListener("submit", saveNote);
@@ -617,7 +554,7 @@ async function removeNote(note) {
 convertButton.addEventListener("click", () => {
   const note = state.quickNotes.find((candidate) => candidate.id === editingId);
   if (!note || !form.reportValidity()) return;
-  if (projectSelect.value !== note.projectId) {
+  if (selectedProjectId() !== note.projectId) {
     showError("Save the project change before starting this conversation.");
     return;
   }

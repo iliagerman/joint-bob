@@ -25,7 +25,7 @@ body.focus-ui .conversation-search { margin: 10px 16px 4px; }
 body.focus-ui .chat-filters { display: flex; margin: 4px 16px; gap: 4px; }
 body.focus-ui .chat-filters button { flex: 1; min-width: 0; min-height: 40px; padding: 4px; }
 body.focus-ui .classification-filter { display: flex; align-items: center; gap: 12px; margin: 4px 16px; font-size: 12px; }
-body.focus-ui .classification-filter select { min-width: 0; flex: 1; min-height: 36px; padding: 6px 10px; font-size: 13px; }
+body.focus-ui .classification-filter select { min-width: 0; flex: 1; min-height: 36px; padding: 6px 30px 6px 10px; background-position: right 10px center; font-size: 13px; }
 body.focus-ui .done-filter { margin: 4px 16px 8px; font-size: 12px; }
 body.focus-ui .section-title.live-row { margin: 8px 16px 0; }
 body.focus-ui .section-title.live-row > span:first-child { display: none; }
