@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.4.1 — 2026-09-28
 
-- Running conversations now clear correctly when their child processes exit, instead of remaining marked as running indefinitely.
+- Running conversations clear after Claude exits or stops reporting activity, and the count updates when the conversation list changes.
 
 ## 2.4.0 — 2026-09-27
 
