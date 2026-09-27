@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.1.4 — 2026-09-27
 
-- Website secret accounts now replicate to other nodes while keeping their origin binding, so credentials stay secure at their bound origins instead of being exported into the shell environment.
+- Website secrets can now be replicated to paired nodes like any other secret. They stay bound to their website on every node and are only used through sign-in fill, never exposed in the shell.
 
 ## 2.1.3 — 2026-09-27
 
