@@ -144,7 +144,7 @@ test("sharing controls require consent and render selected scopes and legacy ena
       assert.ok(await field.evaluate((element: HTMLInputElement) => element.labels?.length), `${id} has a native label`);
     }
     await page.getByTestId("cluster-sharing").getByText("What stays local", { exact: true }).click();
-    assert.match(await page.getByTestId("cluster-sharing").innerText(), /Browser profiles, website credentials and machine-local identities stay local/);
+    assert.match(await page.getByTestId("cluster-sharing").innerText(), /Browser profiles and machine-local identities stay local/);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByTestId("twin-accept-link").scrollIntoViewIfNeeded();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false, "sharing controls fit mobile viewport");

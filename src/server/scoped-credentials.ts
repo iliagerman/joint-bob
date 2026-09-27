@@ -5,12 +5,15 @@ import {getClusterNode} from '../cluster.js';
 import {isTrustedTwin} from '../cluster-sharing-policy.js';
 import {clusterV2Database} from '../cluster-v2-store.js';
 import { ClusterV2HttpError } from '../cluster-v2-errors.js';
-import {decryptSecretValue,encryptSecretValue,ensureSecretSchema} from '../secrets.js';
+import {decryptSecretValue,encryptSecretValue,ensureSecretSchema,normalizeWebsiteOrigin} from '../secrets.js';
 import {mayShareProject,sharedProjectIds} from './sharing-files.js';
 import {replicationPeers,signedPeerPost} from './replication-v2.js';
 
 const scopeSchema=z.object({type:z.enum(['workspace','project','conversation']),id:z.string().min(1).max(300),projectIds:z.array(z.string().min(1).max(300)).min(1).max(10000)}).strict();
-const accountSchema=z.object({id:z.string().uuid(),label:z.string().trim().min(1).max(64),provider:z.enum(['aws','google','github','custom']),variables:z.array(z.object({name:z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),kind:z.enum(['value','file']),value:z.string().max(100000)}).strict()).min(1).max(20),scopes:z.array(scopeSchema).min(1).max(1000),updatedAt:z.string().datetime()}).strict();
+const websiteOriginSchema=z.string().max(2048).refine(value=>{try{return normalizeWebsiteOrigin(value)===value;}catch{return false;}},'Website origin is invalid');
+const accountSchema=z.object({id:z.string().uuid(),label:z.string().trim().min(1).max(64),provider:z.enum(['aws','google','github','custom','website']),websiteOrigin:websiteOriginSchema.optional(),variables:z.array(z.object({name:z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),kind:z.enum(['value','file']),value:z.string().max(100000)}).strict()).min(1).max(20),scopes:z.array(scopeSchema).min(1).max(1000),updatedAt:z.string().datetime()}).strict()
+ .refine(account=>account.provider!=='website'||account.websiteOrigin!==undefined,'Website secret accounts require a website origin')
+ .refine(account=>account.websiteOrigin===undefined||account.variables.every(variable=>variable.kind==='value'),'Website credential accounts cannot contain file variables');
 export const scopedCredentialSchema=z.object({accounts:z.array(accountSchema).max(10000)}).strict();
 type Account=z.infer<typeof accountSchema>;
 function ensureSchema(db:DatabaseSync):void{
@@ -30,10 +33,10 @@ function scopesForAccount(db:DatabaseSync,accountId:string,allowed:string[]):Acc
 }
 function snapshot(db:DatabaseSync,local:string,peer:string):Account[]{
  const allowed=sharedProjectIds(db,local,peer);
- const rows=db.prepare(`SELECT id,label,provider,variables_encrypted,updated_at FROM secret_accounts a WHERE replicate=1
-  AND website_origin IS NULL AND project_id IS NULL AND provider<>'website' AND (origin_node_id='' OR origin_node_id=?)
-  AND NOT EXISTS(SELECT 1 FROM cluster_v2_scoped_secret_copies c WHERE c.account_id=a.id)`).all(local) as unknown as Array<{id:string;label:string;provider:Account['provider'];variables_encrypted:string;updated_at:string}>;
- return rows.flatMap(row=>{const scopes=scopesForAccount(db,row.id,allowed);return scopes.length?[accountSchema.parse({id:row.id,label:row.label,provider:row.provider,variables:JSON.parse(decryptSecretValue(row.variables_encrypted)),updatedAt:row.updated_at,scopes})]:[];});
+ const rows=db.prepare(`SELECT id,label,provider,website_origin,variables_encrypted,updated_at FROM secret_accounts a WHERE replicate=1
+  AND project_id IS NULL AND (origin_node_id='' OR origin_node_id=?)
+  AND NOT EXISTS(SELECT 1 FROM cluster_v2_scoped_secret_copies c WHERE c.account_id=a.id)`).all(local) as unknown as Array<{id:string;label:string;provider:Account['provider'];website_origin:string|null;variables_encrypted:string;updated_at:string}>;
+ return rows.flatMap(row=>{const scopes=scopesForAccount(db,row.id,allowed);return scopes.length?[accountSchema.parse({id:row.id,label:row.label,provider:row.provider,...(row.website_origin?{websiteOrigin:row.website_origin}:{}),variables:JSON.parse(decryptSecretValue(row.variables_encrypted)),updatedAt:row.updated_at,scopes})]:[];});
 }
 function localScope(db:DatabaseSync,peer:string,scope:Account['scopes'][number]):string{
  if(scope.type!=='workspace')return scope.id;
@@ -59,8 +62,8 @@ function applyAccount(db:DatabaseSync,local:string,peer:string,account:Account):
   if(scope.type==='workspace'&&account.scopes[index].projectIds.some(id=>!(db.prepare('SELECT 1 FROM projects WHERE id=? AND workspace_id=?').get(id,scope.id))))throw new ClusterV2HttpError(403,'Invalid workspace credential scope');
   if(scope.type==='conversation'&&!account.scopes[index].projectIds.some(id=>db.prepare("SELECT 1 FROM conversation_records WHERE project_id=? AND engine||':'||session_id=?").get(id,scope.id)))throw new ClusterV2HttpError(403,'Invalid conversation credential scope');
  }
- db.prepare(`INSERT INTO secret_accounts(id,label,provider,variables_encrypted,replicate,origin_node_id,created_at,updated_at) VALUES(?,?,?,?,0,?,?,?)
-  ON CONFLICT(id) DO UPDATE SET label=excluded.label,provider=excluded.provider,variables_encrypted=excluded.variables_encrypted,updated_at=excluded.updated_at`).run(account.id,account.label,account.provider,encryptSecretValue(JSON.stringify(account.variables)),peer,account.updatedAt,account.updatedAt);
+ db.prepare(`INSERT INTO secret_accounts(id,label,provider,variables_encrypted,replicate,website_origin,origin_node_id,created_at,updated_at) VALUES(?,?,?,?,0,?,?,?,?)
+  ON CONFLICT(id) DO UPDATE SET label=excluded.label,provider=excluded.provider,variables_encrypted=excluded.variables_encrypted,website_origin=excluded.website_origin,updated_at=excluded.updated_at`).run(account.id,account.label,account.provider,encryptSecretValue(JSON.stringify(account.variables)),account.websiteOrigin??null,peer,account.updatedAt,account.updatedAt);
  db.prepare('DELETE FROM secret_assignments WHERE account_id=?').run(account.id);
  for(const scope of scopes)db.prepare('INSERT INTO secret_assignments VALUES(?,?,?)').run(scope.type,scope.id,account.id);
  db.prepare('INSERT OR REPLACE INTO cluster_v2_scoped_secret_copies VALUES(?,?,?,?)').run(peer,account.id,JSON.stringify(account.scopes),hash);

@@ -69,7 +69,7 @@ export async function flushTwinCredentials(): Promise<void> {
   for (const peer of peers) {
     const events = (await secretCredentialEventsForPeer(peer.nodeId)).filter(event => event.originNodeId === local.id);
     const activeIds=(db.prepare(`SELECT id FROM secret_accounts WHERE replicate=1 AND origin_node_id=?
-      AND website_origin IS NULL AND provider<>'website' AND project_id IS NULL`).all(local.id) as unknown as Array<{id:string}>).map(row=>row.id);
+      AND project_id IS NULL`).all(local.id) as unknown as Array<{id:string}>).map(row=>row.id);
     try {
       const reply = await signedPeerPost(peer, "/api/cluster/v2/twins/credentials", { events, activeIds }) as { received: string[] };
       if (!Array.isArray(reply.received) || reply.received.some(id => !events.some(event => event.id === id))) throw new Error("Invalid credential receipt");

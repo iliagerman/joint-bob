@@ -5,7 +5,7 @@ const container = document.getElementById("clusterSharing");
 let revision = 0;
 let refreshTimer;
 const selectedPeers = new Map();
-const disclosure = "Browser profiles, website credentials and machine-local identities stay local. Eligible environment secrets replicate only when permitted.";
+const disclosure = "Browser profiles and machine-local identities stay local. Secret accounts, including website credentials, replicate only when marked to replicate.";
 function text(tag, content) { const element = document.createElement(tag); element.textContent = content; return element; }
 function button(label, id, action) {
   const control = text("button", label); control.type = "button"; control.className = "ghost"; control.dataset.testid = id;

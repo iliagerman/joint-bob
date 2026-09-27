@@ -261,7 +261,6 @@ export async function saveSecretAccount(input: SecretAccountInput): Promise<Secr
   const old = input.id ? accountRow(id) : undefined;
   const websiteOrigin = input.websiteOrigin === undefined ? old?.website_origin ?? null : input.websiteOrigin === null ? null : normalizeWebsiteOrigin(input.websiteOrigin);
   if (input.provider === "website" && !websiteOrigin) throw new Error("Website secret accounts require a website origin");
-  if (websiteOrigin && input.replicate) throw new Error("Website credential accounts cannot replicate");
   if (websiteOrigin && input.variables.some((variable) => variable.kind === "file")) throw new Error("Website credential accounts cannot contain file variables");
   // Ownership is fixed at creation: an edit keeps the stored owner and ignores any other.
   const projectId = old ? old.project_id : input.projectId === undefined ? null : canonicalScopeId("project", input.projectId);

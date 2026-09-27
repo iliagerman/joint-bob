@@ -190,8 +190,8 @@ function openSecretAccount(account = null, projectId = null, onSaved = null) {
   // Node-local is the default, so a new account never leaves this node by accident.
   // Project-owned accounts never leave this node either, so the toggle is locked off for them.
   const ownedByProject = Boolean(projectId || account?.projectId);
-  elements.secretAccountReplicateInput.checked = Boolean(account?.replicate) && !elements.secretAccountOriginInput.value && !ownedByProject;
-  elements.secretAccountReplicateInput.disabled = Boolean(elements.secretAccountOriginInput.value) || ownedByProject;
+  elements.secretAccountReplicateInput.checked = Boolean(account?.replicate) && !ownedByProject;
+  elements.secretAccountReplicateInput.disabled = ownedByProject;
   elements.secretVariableRows.replaceChildren();
   // A new account has no rows yet, so the preset below fills them; an edited one keeps its own.
   account?.variables.forEach((item) => secretRow(item));
@@ -260,9 +260,6 @@ elements.secretAccountProviderInput.addEventListener("change", () => {
   applySecretProviderPreset();
 });
 elements.secretAccountOriginInput.addEventListener("input", () => {
-  const bound = Boolean(elements.secretAccountOriginInput.value.trim());
-  elements.secretAccountReplicateInput.disabled = bound;
-  if (bound) elements.secretAccountReplicateInput.checked = false;
   for (const row of elements.secretVariableRows.children) refreshSecretValueControl(row);
 });
 
