@@ -66,8 +66,11 @@ test("cluster changes travel through two hubs, survive a down hub, and reach a r
     await eventually(async () => {
       for (const node of [b, c, d]) assert.equal(lockedBy(node, project.id), a.nodeId, `${node.nodeId} must receive the change`);
     });
-    const hubs = query<{ node_id: string }>(a, "SELECT DISTINCT node_id FROM cluster_v2_hub_queue WHERE delivered_at IS NOT NULL").map((row) => row.node_id).sort();
-    assert.deepEqual(hubs, [b.nodeId, d.nodeId].sort(), "the origin sends only to the lowest and highest numbered other members");
+    // A member can get the change relayed through a hub before the origin records its own send as delivered.
+    await eventually(async () => {
+      const hubs = query<{ node_id: string }>(a, "SELECT DISTINCT node_id FROM cluster_v2_hub_queue WHERE delivered_at IS NOT NULL").map((row) => row.node_id).sort();
+      assert.deepEqual(hubs, [b.nodeId, d.nodeId].sort(), "the origin sends only to the lowest and highest numbered other members");
+    });
     const relayedToC = query<{ from_node_id: string }>(c, "SELECT from_node_id FROM cluster_v2_relay_log l JOIN replication_inbox i ON i.event_id=l.event_id WHERE l.cluster_id=?", clusterId);
     assert.ok(relayedToC.length > 0 && relayedToC.every((row) => row.from_node_id !== a.nodeId), "a middle member receives the change from a hub, not from the origin");
 
@@ -78,8 +81,10 @@ test("cluster changes travel through two hubs, survive a down hub, and reach a r
       for (const node of [c, d]) assert.equal(lockedBy(node, project.id), null, `${node.nodeId} must receive the change while the low hub is down`);
     });
     const secondEvent = query<{ event_id: string }>(a, "SELECT event_id FROM replication_outbox WHERE entity_type='project.lock' ORDER BY rowid DESC LIMIT 1")[0].event_id;
-    const secondHubs = query<{ node_id: string }>(a, "SELECT node_id FROM cluster_v2_hub_queue WHERE event_id=? AND delivered_at IS NOT NULL", secondEvent).map((row) => row.node_id).sort();
-    assert.deepEqual(secondHubs, [c.nodeId, d.nodeId].sort(), "the next member in line replaces the down low hub");
+    await eventually(async () => {
+      const secondHubs = query<{ node_id: string }>(a, "SELECT node_id FROM cluster_v2_hub_queue WHERE event_id=? AND delivered_at IS NOT NULL", secondEvent).map((row) => row.node_id).sort();
+      assert.deepEqual(secondHubs, [c.nodeId, d.nodeId].sort(), "the next member in line replaces the down low hub");
+    });
 
     assert.equal(lockedBy(b, project.id), a.nodeId, "the offline member still holds the old state");
     children.set("node1", await startDevNode(environments[1], b));
