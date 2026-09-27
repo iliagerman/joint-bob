@@ -92,7 +92,9 @@ test("a conversation deleted on one twin loses its transcript on both and never 
     const database = new DatabaseSync(path.join(right.dataDir, "node.db"));
     try {
       database.prepare("INSERT INTO conversation_record_tombstones (project_id, engine, session_id, updated_at, origin_node_id) VALUES (?, 'pi', ?, ?, ?)")
-        .run(projectId, lateDeleted, new Date().toISOString(), right.nodeId);
+        // Dated ahead so the owner's own record for it, created when it offers the
+        // transcript, cannot replace this deletion before the transfer is checked.
+        .run(projectId, lateDeleted, "2999-01-01T00:00:00.000Z", right.nodeId);
     } finally { database.close(); }
     for (const id of [lateDeleted, control]) await writeFile(path.join(piRoot(a), `${id}.jsonl`), piTranscript(id, directory));
     await eventually(async () => assert.equal(await exists(path.join(piRoot(b), `${control}.jsonl`)), true, "transcript sharing ran"));
