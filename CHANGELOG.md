@@ -3,9 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.2.0 — 2026-09-27
 
-- Harness model and provider pickers in Settings now support searching to quickly find available options.
+- Harness model and provider pickers in Settings now use searchable dropdowns instead of free-text fields, with options fetched from each harness's runtime.
+- Selected thinking level now updates automatically to match the chosen model.
+- Previously saved provider and model selections remain visible even if the harness no longer offers them.
 
 ## 2.1.6 — 2026-09-27
 
