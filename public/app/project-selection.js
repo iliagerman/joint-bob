@@ -9,6 +9,7 @@ import { addOptimisticSession } from "./new-session.js";
 import { renderProjects } from "./project-list.js";
 import { refreshQuickNotes, renderQuickNotes, showConversations } from "./quick-notes.js";
 import { openListedSession, refreshPendingReviews } from "./reviews.js";
+import { refreshRunningConversations } from "./running.js";
 import { renderSessions } from "./session-list.js";
 import { setListLoading, subscribeToPush, toast } from "./shell.js";
 import { closeSocket, ensureWatchSocket, openSession } from "./socket.js";
@@ -36,8 +37,10 @@ export function startProjectSyncPolling() {
   if (state.pendingReviewsTimer) clearInterval(state.pendingReviewsTimer);
   state.pendingReviewsTimer = setInterval(() => {
     refreshPendingReviews().catch((error) => console.warn("Could not refresh pending reviews", error));
+    refreshRunningConversations().catch((error) => console.warn("Could not refresh running conversations", error));
   }, 60_000);
   refreshPendingReviews().catch((error) => console.warn("Could not load pending reviews", error));
+  refreshRunningConversations().catch((error) => console.warn("Could not load running conversations", error));
 }
 
 export async function loadProjects() {

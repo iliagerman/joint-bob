@@ -9,6 +9,8 @@ import { state } from "./state.js";
 
 let runningProjects = [];
 let refreshInterval;
+let runningRefreshTimer;
+let runningVersion = 0;
 /** Rows 1-10 carry a digit shortcut; the refresh re-render renumbers the list. */
 let runningShortcuts = [];
 
@@ -56,10 +58,33 @@ function renderRunningEntry(group, entry) {
   elements.runningConversationsList.append(button);
 }
 
-async function refreshRunningConversations() {
+function renderRunningBadges() {
+  const count = runningProjects.reduce((total, group) => total + group.sessions.length, 0);
+  for (const badge of document.querySelectorAll("[data-running-count]")) {
+    badge.textContent = count > 99 ? "99+" : String(count);
+    badge.hidden = count === 0;
+  }
+  for (const trigger of document.querySelectorAll("[data-running-conversations-open]")) {
+    trigger.setAttribute("aria-label", count ? `Running conversations, ${count} running` : "Running conversations");
+  }
+}
+
+export async function refreshRunningConversations() {
+  const version = ++runningVersion;
   const body = await api("/api/running");
+  if (version !== runningVersion) return;
   runningProjects = body.projects;
+  renderRunningBadges();
   if (elements.runningConversationsDialog.open) renderRunningConversationsDialog();
+}
+
+/** Running state changes arrive in bursts of invalidations; trail behind them like the review inbox. */
+export function scheduleRunningRefresh() {
+  if (runningRefreshTimer) return;
+  runningRefreshTimer = setTimeout(() => {
+    runningRefreshTimer = null;
+    refreshRunningConversations().catch((error) => console.warn("Could not refresh running conversations", error));
+  }, 5000);
 }
 
 function startRunningRefresh() {

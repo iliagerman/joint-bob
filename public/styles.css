@@ -1432,6 +1432,9 @@ textarea { flex: 1; resize: none; max-height: 160px; min-height: 46px; border: 1
 }
 .reviews-badge[hidden] { display: none; }
 .mobile-nav .reviews-badge { top: 4px; right: calc(50% - 24px); }
+/* The running count reuses the review badge shape in the live colour. */
+[data-running-conversations-open] { position: relative; }
+.running-badge { background: var(--live); }
 
 /* ---- Dialogs, toasts, banner ---- */
 dialog { border: 0; padding: 0; background: transparent; color: var(--text); max-width: 100vw; max-height: 100dvh; overflow: visible; }

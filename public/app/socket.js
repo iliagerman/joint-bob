@@ -11,6 +11,7 @@ import { setMobileView, shortSessionTitle, syncChatTitleFromSessions } from "./l
 import { refreshProjectsQuietly } from "./project-selection.js";
 import { loadRecentSessions } from "./recents.js";
 import { schedulePendingReviewsRefresh } from "./reviews.js";
+import { scheduleRunningRefresh } from "./running.js";
 import { saveSessionColor, saveSessionTitle } from "./session-identity.js";
 import { renderSessions } from "./session-list.js";
 import { maybeNotifyTurnComplete, playCompletionSound, setConnecting, setStatus, subscribeToPush, toast } from "./shell.js";
@@ -556,6 +557,7 @@ const INVALIDATION_HANDLERS = {
   sessionsChanged: () => {
     refreshSessionsQuietly();
     schedulePendingReviewsRefresh();
+    scheduleRunningRefresh();
   },
   browserSessionsChanged: () => document.dispatchEvent(new Event("browserSessionsChanged")),
   projectsChanged: () => refreshProjectsQuietly(),
@@ -673,6 +675,7 @@ export function ensureWatchSocket() {
     // including the gap between the initial HTTP load and subscribing.
     refreshSessionsQuietly();
     schedulePendingReviewsRefresh();
+    scheduleRunningRefresh();
     loadPins().catch((error) => console.warn(error));
     loadRecentSessions().catch((error) => console.warn(error));
     state.watchPingTimer = setInterval(() => {
@@ -704,6 +707,7 @@ document.addEventListener("visibilitychange", () => {
   refreshSessionsQuietly();
   loadPins().catch((error) => console.warn(error));
   schedulePendingReviewsRefresh();
+  scheduleRunningRefresh();
 });
 window.addEventListener("pageshow", (event) => {
   if (event.persisted) {

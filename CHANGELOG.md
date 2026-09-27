@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Running conversations now show a live count badge, so you can see at a glance how many conversations are running across all projects.
+
 ## 2.0.4 — 2026-09-27
 
 - Cluster relay events no longer stall when they arrive out of order.
