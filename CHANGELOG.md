@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.3.0 — 2026-09-27
 
-- Nodes can now restrict terminal access from other cluster members through Settings, with separate controls for twin nodes and other nodes.
+- Nodes can now control terminal access from other cluster members separately for twin nodes (allowed by default) and other nodes (refused by default), with controls in Settings > Terminal access.
 
 ## 2.2.0 — 2026-09-27
 
