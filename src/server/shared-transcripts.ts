@@ -97,7 +97,17 @@ async function extendsTranscript(existing:string,incoming:string,size:number):Pr
   }
  }finally{await left.close();await right.close();}
 }
-async function receiveTranscript(db:DatabaseSync,peer:PeerEndpoint,projectId:string,entry:Entry):Promise<void>{
+// The background flush and a takeover can fetch the same transcript at once; the loser would
+// see the winner's rename as a local edit. One receive per conversation at a time.
+const activeReceives=new Map<string,Promise<void>>();
+function receiveTranscript(db:DatabaseSync,peer:PeerEndpoint,projectId:string,entry:Entry):Promise<void>{
+ const key=JSON.stringify([peer.nodeId,projectId,entry.engine,entry.sessionId]);
+ const run=(activeReceives.get(key)??Promise.resolve()).then(()=>receiveTranscriptNow(db,peer,projectId,entry));
+ const settled=run.catch(()=>undefined).finally(()=>{if(activeReceives.get(key)===settled)activeReceives.delete(key);});
+ activeReceives.set(key,settled);
+ return run;
+}
+async function receiveTranscriptNow(db:DatabaseSync,peer:PeerEndpoint,projectId:string,entry:Entry):Promise<void>{
  const adapter=getHarness(entry.engine),root=path.resolve(adapter.sync.transcriptRoot()),destination=path.resolve(root,entry.relativePath);
  if(!within(root,destination)||!adapter.paths.ownsTranscript(destination)||(adapter.paths.sessionId(destination)??adapter.paths.sessionId(`${entry.engine}:${destination}`))!==entry.sessionId)throw new Error('Invalid shared transcript identity');
  const receipt=db.prepare('SELECT path,hash FROM cluster_v2_transcript_receipts WHERE peer_id=? AND project_id=? AND engine=? AND session_id=?').get(peer.nodeId,projectId,entry.engine,entry.sessionId) as {path:string;hash:string}|undefined;
