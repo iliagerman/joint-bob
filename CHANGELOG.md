@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.1.0 — 2026-09-27
 
 - Running conversations now show a live count badge, so you can see at a glance how many conversations are running across all projects.
 
