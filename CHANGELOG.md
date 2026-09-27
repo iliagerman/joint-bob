@@ -3,9 +3,14 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.0.0 — 2026-09-27
 
-- Added multi-cluster membership without limits, twin pairing for automatic data synchronization and recovery, and two-hub cluster dissemination; removed legacy bearer-token pairing.
+- Nodes now support unlimited cluster membership, removing the previous five-member limit.
+- Cluster sharing is now scoped per cluster; selected projects and workspaces reach cluster members only, while twin sharing remains unchanged.
+- Project events now replicate through dual hubs per cluster with origin signatures and relay tracking for improved reliability.
+- Added lost machine recovery: declare a paired twin lost to assume ownership, with automatic succession to the next senior member.
+- Removed legacy bearer-token pairing authentication and related routes.
+- Codex routing now supports the gpt-6-sol model.
 
 ## 1.97.2 — 2026-09-26
 
