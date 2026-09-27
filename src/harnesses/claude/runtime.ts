@@ -11,7 +11,7 @@ import {
 } from "../../claude-service.js";
 import { stripHandoffEnvelope } from "../../handoff-context.js";
 import { preflightQueuedClaude } from "../../queued-preflight.js";
-import { listRunningClaudeSessions } from "../../claude-runtime.js";
+import { listRunningClaudeSessions, stopClaudeSession } from "../../claude-runtime.js";
 import { agentCredentialContext, agentEnvironment, persistConversationSecretAccounts } from "../../secrets.js";
 import { getSettings } from "../../settings.js";
 import { claudeConversationDefault } from "../claude.defaults.js";
@@ -237,7 +237,12 @@ class ClaudeSession implements HarnessSession {
       },
     });
     this.child = run.child;
-    const result = await run.done;
+    let result: Awaited<typeof run.done>;
+    try {
+      result = await run.done;
+    } finally {
+      stopClaudeSession(this.id, this.nativeFile ?? claudeSessionFilePath(this.options.cwd, this.id));
+    }
     this.pushAssistant(turn);
     if (!result.ok) throw new Error(result.error ?? (result.sawOutput ? "Claude prompt failed after output" : "Claude prompt failed before output"));
     this.markStarted(input, state);

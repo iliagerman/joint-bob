@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Running conversations now clear correctly when their child processes exit, instead of remaining marked as running indefinitely.
+
 ## 2.4.0 — 2026-09-27
 
 - Every dropdown now shows its chevron with room beside it; long choices no longer run under the arrow on wide screens.

@@ -599,6 +599,7 @@ export async function refreshSessionsQuietly() {
 
 async function refreshSessionSnapshot(projectId) {
   const previousStates = new Map(state.sessions.map((session) => [session.path, session.reviewState]));
+  const previouslyRunning = new Set(state.sessions.filter((session) => session.running).map((session) => session.path));
   try {
     const body = await api(`/api/projects/${encodeURIComponent(projectId)}/sessions`);
     // The active project can change mid-request; a late response must not
@@ -606,6 +607,8 @@ async function refreshSessionSnapshot(projectId) {
     if (state.activeProjectId !== projectId) return;
     const newlyNeedsReview = body.sessions.some((session) => session.reviewState === "needs_review" && previousStates.get(session.path) !== "needs_review");
     state.sessions = body.sessions;
+    const nowRunning = state.sessions.filter((session) => session.running).map((session) => session.path);
+    if (nowRunning.length !== previouslyRunning.size || nowRunning.some((path) => !previouslyRunning.has(path))) scheduleRunningRefresh();
     const activeSession = state.sessions.find((session) => session.id === state.activeSessionId || session.path === state.activeSessionPath);
     // The list can arrive after the conversation opened, so the header takes the
     // list's name as soon as it exists rather than keeping its harness fallback.

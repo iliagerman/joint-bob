@@ -23,9 +23,15 @@ test("Claude hook lifecycle tracks running transcripts", async () => {
     }
     assert.throws(() => runtime.recordClaudeHookEvent({}), /session_id/);
     runtime.recordClaudeHookEvent(input("UserPromptSubmit"));
+    runtime.stopClaudeSession("other-session", transcript);
+    assert.equal(runtime.isClaudeSessionRunning(`claude:${transcript}`), true, "another session cannot clear this one");
+    runtime.stopClaudeSession("session", transcript);
+    assert.equal(runtime.isClaudeSessionRunning(`claude:${transcript}`), false, "child exit clears a missed Stop hook");
+    runtime.recordClaudeHookEvent(input("UserPromptSubmit"));
     const db = new DatabaseSync(path.join(root, "node.db"));
-    db.prepare("UPDATE claude_runtime_sessions SET updated_at = ? WHERE transcript_path = ?").run(new Date(Date.now() - 13 * 60 * 60 * 1000).toISOString(), transcript);
+    db.prepare("UPDATE claude_runtime_sessions SET updated_at = ? WHERE transcript_path = ?").run(new Date(Date.now() - 11 * 60 * 1000).toISOString(), transcript);
     assert.equal(runtime.isClaudeSessionRunning(`claude:${transcript}`), false);
+    assert.equal(runtime.listRunningClaudeSessions().length, 0, "missing Stop expires from running list");
     db.close();
   } finally {
     if (previous === undefined) delete process.env.PI_WEB_DATA_DIR;

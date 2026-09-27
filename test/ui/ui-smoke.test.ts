@@ -1291,6 +1291,31 @@ test("the pending reviews list opens on its own key and its rows answer to digit
   }
 });
 
+test("running badge follows active conversation changes without waiting for the minute poll", async () => {
+  await page.locator(".project-card", { hasText: "Internal Assistant" }).first().click();
+  const project = node.projects.find((candidate) => candidate.name === "Internal Assistant")!;
+  const target = await page.evaluate(async (projectId) => {
+    const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/sessions`);
+    return (await response.json()).sessions[0];
+  }, project.id) as { id: string; harnessId: string };
+  const database = openFixtureDatabase();
+  const badge = page.getByTestId("running-conversations-badge");
+  try {
+    const now = new Date();
+    database.prepare(`INSERT INTO conversation_runtime_leases
+      (engine, session_id, owner_node_id, ownership_epoch, run_id, updated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(target.harnessId, target.id, node.nodeId, 1, randomUUID(), now.toISOString(), new Date(now.getTime() + 60_000).toISOString());
+    await page.evaluate(async () => (await import("/app/socket.js")).refreshSessionsQuietly());
+    await badge.waitFor({ state: "visible", timeout: 10_000 });
+    assert.equal(await badge.textContent(), "1");
+  } finally {
+    database.prepare("DELETE FROM conversation_runtime_leases WHERE engine = ? AND session_id = ?").run(target.harnessId, target.id);
+    database.close();
+    await page.evaluate(async () => (await import("/app/socket.js")).refreshSessionsQuietly());
+  }
+  await badge.waitFor({ state: "hidden", timeout: 10_000 });
+});
+
 test("running conversations open their live conversation in another project", async () => {
   const currentProject = await page.getByTestId("chat-project-name").textContent();
   const project = node.projects.find((candidate) => candidate.name !== currentProject)!;

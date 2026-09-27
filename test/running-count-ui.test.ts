@@ -21,5 +21,6 @@ test("the running count refreshes with the review inbox triggers", async () => {
   assert.match(app, /export function scheduleRunningRefresh\(\)/);
   assert.match(app, /document\.querySelectorAll\("\[data-running-count\]"\)/);
   const socket = await readFile("public/app/socket.js", "utf8");
-  assert.equal(socket.match(/scheduleRunningRefresh\(\);/g)?.length, socket.match(/schedulePendingReviewsRefresh\(\);/g)?.length);
+  assert.equal(socket.match(/scheduleRunningRefresh\(\);/g)?.length, (socket.match(/schedulePendingReviewsRefresh\(\);/g)?.length ?? 0) + 1);
+  assert.match(socket, /nowRunning\.some\(\(path\) => !previouslyRunning\.has\(path\)\)\) scheduleRunningRefresh\(\);/);
 });

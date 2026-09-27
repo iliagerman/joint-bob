@@ -14,7 +14,9 @@ const dataDir = resolveDataDirectory();
 const databasePath = path.join(dataDir, "node.db");
 const runningEvents = new Set(["UserPromptSubmit", "PreToolUse", "PostToolUse"]);
 const stoppedEvents = new Set(["SessionStart", "Stop", "StopFailure", "SessionEnd"]);
-const staleAfterMs = 12 * 60 * 60 * 1000;
+// Hooks have no heartbeat or guaranteed Stop after an interrupted Claude process.
+// Bound a missing Stop without treating a short quiet tool call as finished.
+const staleAfterMs = 10 * 60 * 1000;
 let database: DatabaseSync | undefined;
 
 function runtimeDatabase(): DatabaseSync {
@@ -65,6 +67,13 @@ export function recordClaudeHookEvent(input: unknown): void {
     db.exec("ROLLBACK");
     throw error;
   }
+}
+
+// A Claude child launched by Joint Bob has definitely stopped when its process exits,
+// even if its Stop hook was skipped. Do not clear another transcript with the same ID.
+export function stopClaudeSession(sessionId: string, transcriptPath: string): void {
+  runtimeDatabase().prepare("UPDATE claude_runtime_sessions SET running = 0, updated_at = ? WHERE session_id = ? AND transcript_path = ?")
+    .run(new Date().toISOString(), sessionId, path.resolve(transcriptPath));
 }
 
 export function isClaudeSessionRunning(sessionPath: string): boolean {
