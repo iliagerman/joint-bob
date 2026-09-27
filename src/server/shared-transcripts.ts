@@ -15,7 +15,7 @@ import { clearHarnessSessionCache, getHarness, harnessForSessionPath, listHarnes
 import { getProject } from "../store.js";
 import { listTasks } from '../tasks.js';
 import { getConversationOwnership } from "../conversation-ownership.js";
-import { ensureConversationRecord } from "../conversation-records.js";
+import { deletedConversationKeys, ensureConversationRecord } from "../conversation-records.js";
 import { replicationPeers } from "./replication-v2.js";
 import { mayShareProject, sharedProjectIds } from "./sharing-files.js";
 
@@ -49,7 +49,9 @@ async function sourceTranscripts(peer:string,projectId:string){
   if(!id)throw new Error('Task conversation has no transcript identity');
   entries.push({engine:adapter.id,id,path:task.sessionPath});
  }
- const unique=[...new Map(entries.filter(entry=>!entry.path.startsWith('draft:')).map(entry=>[`${entry.engine}:${entry.id}`,entry])).values()];
+ // A leftover copy of a conversation deleted on any node is never offered.
+ const deleted=await deletedConversationKeys(projectId);
+ const unique=[...new Map(entries.filter(entry=>!entry.path.startsWith('draft:')&&!deleted.has(`${entry.engine}:${entry.id}`)).map(entry=>[`${entry.engine}:${entry.id}`,entry])).values()];
  for(const entry of unique)await ensureConversationRecord(projectId,entry.engine,entry.id,local.id);
  return unique;
 }
@@ -122,6 +124,9 @@ async function receiveTranscript(db:DatabaseSync,peer:PeerEndpoint,projectId:str
   }
   if(existing){const current=await stat(destination);if(current.size!==existing.size||current.mtimeMs!==existing.mtimeMs)throw new Error('Local transcript changed during transfer');}
   await sharedTranscriptProject(peer.nodeId,projectId);
+  // A peer that has not heard of a deletion yet may still offer the conversation, and a
+  // deletion may arrive while its transcript downloads.
+  if((await deletedConversationKeys(projectId)).has(`${entry.engine}:${entry.sessionId}`))return;
   await rename(temporary,destination);
   db.prepare('INSERT OR REPLACE INTO cluster_v2_transcript_receipts VALUES(?,?,?,?,?,?)').run(peer.nodeId,projectId,entry.engine,entry.sessionId,destination,entry.hash);
   clearHarnessSessionCache(projectId);

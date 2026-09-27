@@ -89,7 +89,8 @@
             { "heading": "Membership", "body": "Every node creates an Ed25519 identity. A cluster's manager signs the member list; members are numbered by join order. A node can be a member of any number of clusters and presents one URL to all of them." },
             { "heading": "What a peer may see", "body": "A peer sees a project if it is a twin of the project's owner, or it shares a cluster with the owner and the owner selected the project (or its workspace) for that cluster. Every member of that cluster receives it. Data outside any project, canvas shortcuts, push subscriptions, and ntfy servers go to twins only." },
             { "heading": "Isolation between clusters", "body": "A node in clusters X and Y shares each project only with the cluster it selected. Members of X and Y do not learn about each other and cannot authenticate to each other." },
-            { "heading": "Twins", "body": "Twins are the same user's machines. Both sides consent; afterwards each shares everything it owns with the other: projects, conversations, tasks, files, transcripts, credentials, routing configurations, and update rights." }
+            { "heading": "Twins", "body": "Twins are the same user's machines. Both sides consent; afterwards each shares everything it owns with the other: projects, conversations, tasks, files, transcripts, credentials, routing configurations, and update rights." },
+            { "heading": "Deleted conversations", "body": "Deleting a conversation removes its transcript on every node that holds a copy: when the deletion arrives, and at start-up for copies left behind by older releases. A deleted conversation is never offered or copied in again." }
           ]
         },
         {

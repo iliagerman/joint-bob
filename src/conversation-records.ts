@@ -217,6 +217,13 @@ export async function deleteConversationRecord(projectId: string, engine: Conver
   } catch (error) { db.exec("ROLLBACK"); throw error; }
 }
 
+/** Conversations of a project that were deleted on some node, as `engine:sessionId`. */
+export async function deletedConversationKeys(projectId: string): Promise<Set<string>> {
+  const db = await database();
+  const rows = db.prepare("SELECT engine, session_id FROM conversation_record_tombstones WHERE project_id = ?").all(resolveProjectAlias(db, projectId)) as Array<{ engine: string; session_id: string }>;
+  return new Set(rows.map((row) => `${row.engine}:${row.session_id}`));
+}
+
 function resolveProjectAlias(db: DatabaseSync, projectId: string): string {
   if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'project_aliases'").get()) return projectId;
   return (db.prepare("SELECT project_id FROM project_aliases WHERE alias_id = ?").get(projectId) as { project_id: string } | undefined)?.project_id ?? projectId;

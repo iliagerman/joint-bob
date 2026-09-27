@@ -10,6 +10,7 @@ import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { flushHubDeliveries, pullFromHubs } from "./server/cluster-hubs.js";
+import { removeAllDeletedTranscripts } from "./server/deleted-transcripts.js";
 import { flushSuccessionNotices } from "./server/succession.js";
 import { flushReplicationOutbox, flushRoutingConfigDeliveries, initializeStartupReadiness, pushRuntimeLeaseSnapshots, reconcileManagedAgentResources, reapInactiveConversations, reconcileTaskConversationRecords, reconcileTaskHandoffs, sweepRuntimeLeases } from "./server/maintenance.js";
 import { flushPushSubscriptionOutbox } from "./server/push-flush.js";
@@ -125,6 +126,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     flushPushSubscriptionOutbox().catch((error) => console.warn("Push subscription flush failed", error));
     reconcileTaskHandoffs().catch((error) => console.warn("Task handoff reconciliation failed", error));
     pullFromHubs().catch((error) => console.warn("Hub pull failed", error));
+    removeAllDeletedTranscripts().catch((error) => console.warn("Removing deleted conversation transcripts failed", error));
     setInterval(() => pullFromHubs().catch((error) => console.warn("Hub pull failed", error)), 60_000).unref();
     setInterval(() => reapInactiveConversations().catch((error) => console.warn("Inactive conversation reap failed", error)), 60_000).unref();
     setInterval(() => reconcileManagedAgentResources().catch((error) => console.warn("Agent resource reconciliation failed", error)), 30_000).unref();

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Deleted conversations now remove their transcripts from all paired nodes, with automatic cleanup of leftovers from earlier releases.
+
 ## 2.0.0 — 2026-09-27
 
 - Nodes now support unlimited cluster membership, removing the previous five-member limit.

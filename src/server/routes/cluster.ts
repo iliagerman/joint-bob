@@ -2,6 +2,7 @@ import { getClusterNode, updateClusterNode } from "../../cluster.js";
 import { getConversationOwnership, takeConversationOwnership } from "../../conversation-ownership.js";
 import { applyRuntimeLeaseSnapshot, conversationRuntimeDatabase, type RuntimeLeaseInput } from "../../conversation-runtime.js";
 import { receiveReplicationBatch, type ReplicationBatch } from "../../replication.js";
+import { removeTranscriptsDeletedBy } from "../deleted-transcripts.js";
 import { type PushSubscriptionEvent, receivePushSubscriptionEvents } from "../../push.js";
 import { getProject } from "../../store.js";
 import { abortPreparedTaskHandoff, acknowledgeIncomingTaskHandoff, commitPreparedTaskHandoff, getTaskHandoff, isTaskHandoffRejected, listTasks, prepareTaskHandoff, rejectTaskHandoff, reserveTaskHandoff, taskHandoffDeletion } from "../../tasks.js";
@@ -73,7 +74,9 @@ app.post("/api/cluster/v2/events", async (request, response, next) => {
       return;
     }
     const received = await receiveReplicationBatch(batch);
-    broadcastReplicationInvalidations(batch.events.filter((event) => received.includes(event.id)));
+    const applied = batch.events.filter((event) => received.includes(event.id));
+    await removeTranscriptsDeletedBy(applied);
+    broadcastReplicationInvalidations(applied);
     response.json({ received });
   } catch (error) {
     next(error);

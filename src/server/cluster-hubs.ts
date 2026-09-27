@@ -16,6 +16,7 @@ import { isTrustedTwin, listSharingClusterMembers, listSharingMemberships, mayRe
 import { ClusterV2HttpError } from "../cluster-v2-errors.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { ensureReplicationSchema, receiveReplicationBatch, type ReplicationEvent } from "../replication.js";
+import { removeTranscriptsDeletedBy } from "./deleted-transcripts.js";
 import { ensureResourceSharingSchema } from "../cluster-sharing.js";
 import { signedPost } from "./cluster-v2.js";
 import { broadcastReplicationInvalidations } from "./realtime.js";
@@ -212,7 +213,9 @@ export function acceptEnvelopes(db: DatabaseSync, local: string, clusterId: stri
 async function applyEnvelopes(db: DatabaseSync, clusterId: string, from: string, envelopes: RelayEnvelope[]): Promise<string[]> {
   const received = await receiveReplicationBatch({ events: envelopes.map((envelope) => envelope.event) });
   for (const envelope of envelopes) logEnvelope(db, clusterId, envelope, from);
-  broadcastReplicationInvalidations(envelopes.filter((envelope) => received.includes(envelope.event.id)).map((envelope) => envelope.event));
+  const applied = envelopes.filter((envelope) => received.includes(envelope.event.id)).map((envelope) => envelope.event);
+  await removeTranscriptsDeletedBy(applied);
+  broadcastReplicationInvalidations(applied);
   return received;
 }
 
