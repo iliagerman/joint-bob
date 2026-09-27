@@ -18,7 +18,8 @@ test("selective outbox allocates only eligible deliveries and revisits future gr
     assert.deepEqual(result.map(event => event.id), [ids[349]], "blocked backlog must not starve eligible events");
     assert.equal((db.prepare("SELECT count(*) n FROM replication_deliveries WHERE peer_id=?").get(peer) as {n:number}).n, 1,
       "unselected events must not allocate peer delivery rows");
-    const later = await eventsForPeer(peer, new Date(), event => event.id === ids[0]);
+    // Refused events are offered again by the next full search, a few minutes later.
+    const later = await eventsForPeer(peer, new Date(Date.now() + 6 * 60_000), event => event.id === ids[0]);
     assert.deepEqual(later.map(event => event.id), [ids[0]], "a later grant must revisit blocked events");
   } finally {
     db.prepare("DELETE FROM replication_deliveries WHERE peer_id=?").run(peer);

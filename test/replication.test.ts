@@ -87,8 +87,9 @@ test("SQLite name replication is atomic, idempotent, ordered, and retryable", as
 
     const peerId = randomUUID();
     // The sharing filter decides what a peer may receive: a refusing filter queues nothing.
+    // A later grant reaches the peer at the next full search, a few minutes on.
     assert.deepEqual(await replication.eventsForPeer(peerId, new Date("2026-03-01T00:00:00.000Z"), () => false), []);
-    const due = await replication.eventsForPeer(peerId, new Date("2026-03-01T00:00:00.000Z"), () => true);
+    const due = await replication.eventsForPeer(peerId, new Date("2026-03-01T00:06:00.000Z"), () => true);
     assert.ok(due.length > 0);
     await replication.recordPeerFailure(peerId, [due[0].id], "offline", new Date("2026-03-01T00:00:00.000Z"));
     const failed = db.prepare("SELECT attempts, next_attempt_at, delivered_at, last_error FROM replication_deliveries WHERE event_id = ? AND peer_id = ?").get(due[0].id, peerId) as { attempts: number; next_attempt_at: string; delivered_at: string | null; last_error: string | null };

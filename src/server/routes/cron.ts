@@ -22,13 +22,13 @@ const commandSchema = z.discriminatedUnion("action", [
 ]);
 type Command = z.infer<typeof commandSchema>;
 
-async function routeCommand(nodeId: string, command: Command): Promise<unknown> {
+async function routeCommand(nodeId: string, command: Command, timeoutMs = 15000): Promise<unknown> {
   if (nodeId === (await getClusterNode()).id) return manageCron(command);
   const peer = await getRuntimePeer(nodeId);
   if (!peer) throw new Error("Scheduled task owner is unavailable");
   const reply = await runtimeFetch(`${peer.url}/api/cluster/cron`, {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(command), signal: AbortSignal.timeout(15000),
+    body: JSON.stringify(command), signal: AbortSignal.timeout(timeoutMs),
   });
   const body = await reply.json() as { error?: string };
   if (!reply.ok) throw new Error(body.error || `Scheduled task owner returned ${reply.status}`);
@@ -91,9 +91,11 @@ app.post("/api/cron", async (request, response, next) => {
 });
 app.get("/api/projects/:projectId/cron", async (request, response, next) => {
   try {
-    const nodes = [await getClusterNode(), ...await listRuntimePeers()];
+    // Only nodes that may hold this project's tasks, and a short wait: opening a project
+    // must not stall on one slow or unreachable member.
+    const nodes = [await getClusterNode(), ...await listRuntimePeers(request.params.projectId)];
     const results = await Promise.all(nodes.map(async node => {
-      try { return { nodeId: node.id, ...await routeCommand(node.id, { action: "list", projectId: request.params.projectId }) as { tasks: unknown[] } }; }
+      try { return { nodeId: node.id, ...await routeCommand(node.id, { action: "list", projectId: request.params.projectId }, 3000) as { tasks: unknown[] } }; }
       catch (error) { return { nodeId: node.id, tasks: [], error: error instanceof Error ? error.message : String(error) }; }
     }));
     response.json({ tasks: results.flatMap(result => result.tasks), errors: results.filter(result => "error" in result) });

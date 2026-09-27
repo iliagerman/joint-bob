@@ -108,7 +108,9 @@ async function receiveTranscript(db:DatabaseSync,peer:PeerEndpoint,projectId:str
  if(existing&&receipt?.hash===entry.hash)return;
  if(existing&&!receipt){
   const project=await sharedTranscriptProject(peer.nodeId,projectId);
-  if(!(await listHarnessSessions(project)).some(session=>session.harnessId===entry.engine&&session.id===entry.sessionId))throw new Error('Transcript identity collides with a local conversation');
+  // A harness-switched conversation is listed once; its earlier segments are local too.
+  const local=(await listHarnessSessions(project)).flatMap(session=>session.segments?.length?session.segments.map(segment=>`${segment.engine}:${segment.sessionId}`):[`${session.harnessId}:${session.id}`]);
+  if(!local.includes(`${entry.engine}:${entry.sessionId}`))throw new Error('Transcript identity collides with a local conversation');
  }
  await safeParent(root,destination);
  const target='/api/cluster/v2/transcripts/file?'+new URLSearchParams({projectId,engine:entry.engine,sessionId:entry.sessionId});

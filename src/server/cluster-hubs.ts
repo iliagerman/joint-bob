@@ -44,7 +44,8 @@ export function ensureHubSchema(db: DatabaseSync): void {
 CREATE TABLE IF NOT EXISTS cluster_v2_hub_queue(event_id TEXT NOT NULL, cluster_id TEXT NOT NULL, slot TEXT NOT NULL CHECK(slot IN ('low','high')), node_id TEXT, attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT NOT NULL, delivered_at TEXT, last_error TEXT, PRIMARY KEY(event_id,cluster_id,slot));
 CREATE TABLE IF NOT EXISTS cluster_v2_hub_cursor(singleton INTEGER PRIMARY KEY CHECK(singleton=1), outbox_rowid INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS cluster_v2_hub_projects(cluster_id TEXT NOT NULL, project_id TEXT NOT NULL, PRIMARY KEY(cluster_id,project_id));
-CREATE TABLE IF NOT EXISTS cluster_v2_pull_cursors(source_node_id TEXT NOT NULL, cluster_id TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(source_node_id,cluster_id));`);
+CREATE TABLE IF NOT EXISTS cluster_v2_pull_cursors(source_node_id TEXT NOT NULL, cluster_id TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(source_node_id,cluster_id));
+CREATE TABLE IF NOT EXISTS cluster_v2_relay_deferred(cluster_id TEXT NOT NULL, event_id TEXT NOT NULL, event TEXT NOT NULL, signature TEXT NOT NULL, from_node_id TEXT NOT NULL, received_at TEXT NOT NULL, PRIMARY KEY(cluster_id,event_id));`);
 }
 
 function canonical(event: ReplicationEvent): string {
@@ -190,11 +191,21 @@ export async function flushHubDeliveries(): Promise<void> {
     const db = await clusterV2Database(), local = (await getClusterNode()).id;
     enqueueOwnEvents(db, local);
     await deliverToHubs(db, local);
+    // Events set aside may fit now that other data arrived, by any path.
+    for (const { clusterId } of listSharingMemberships(db, local)) await applyDeferred(db, local, clusterId);
   } finally { flushing = false; }
 }
 
+const DEFERRED_MS = 7 * 24 * 60 * 60 * 1000;
+
+function inScope(db: DatabaseSync, local: string, sender: string, event: ReplicationEvent): boolean {
+  return mayReplicateEvent(db, local, event.originNodeId, event) && mayReplicateEvent(db, local, sender, event);
+}
+
 /** Accepts events a cluster member sent: each must carry its origin's valid signature, and
-    this node, the origin, and the sender must all be allowed to see the event's project. */
+    this node, the origin, and the sender must all be allowed to see the event's project.
+    An event whose project this node cannot place yet (a conversation's ownership before
+    its record) is set aside and applied once it can; it never blocks the rest. */
 export function acceptEnvelopes(db: DatabaseSync, local: string, clusterId: string, sender: string, envelopes: RelayEnvelope[]): RelayEnvelope[] {
   ensureHubSchema(db);
   if (!isMember(db, clusterId, local) || !isMember(db, clusterId, sender)) throw new ClusterV2HttpError(403, "Sender and receiver must share the cluster");
@@ -203,14 +214,17 @@ export function acceptEnvelopes(db: DatabaseSync, local: string, clusterId: stri
     if (!isMember(db, clusterId, event.originNodeId) || !key || !verifyClusterMessage(key, "replication-event", canonical(event), envelope.signature)) {
       throw new ClusterV2HttpError(403, "Relayed event signature is invalid");
     }
-    if (!mayReplicateEvent(db, local, event.originNodeId, event) || !mayReplicateEvent(db, local, sender, event)) {
-      throw new ClusterV2HttpError(403, "Relayed event is outside the cluster's sharing scope");
-    }
   }
-  return envelopes;
+  const now = new Date().toISOString();
+  return envelopes.filter((envelope) => {
+    if (inScope(db, local, sender, envelope.event)) return true;
+    db.prepare("INSERT OR IGNORE INTO cluster_v2_relay_deferred VALUES(?,?,?,?,?,?)")
+      .run(clusterId, envelope.event.id, JSON.stringify(envelope.event), envelope.signature, sender, now);
+    return false;
+  });
 }
 
-async function applyEnvelopes(db: DatabaseSync, clusterId: string, from: string, envelopes: RelayEnvelope[]): Promise<string[]> {
+async function applyBatch(db: DatabaseSync, clusterId: string, from: string, envelopes: RelayEnvelope[]): Promise<string[]> {
   const received = await receiveReplicationBatch({ events: envelopes.map((envelope) => envelope.event) });
   for (const envelope of envelopes) logEnvelope(db, clusterId, envelope, from);
   const applied = envelopes.filter((envelope) => received.includes(envelope.event.id)).map((envelope) => envelope.event);
@@ -219,15 +233,37 @@ async function applyEnvelopes(db: DatabaseSync, clusterId: string, from: string,
   return received;
 }
 
+/** Applies set-aside events that this node can place now, until none are left that it can. */
+async function applyDeferred(db: DatabaseSync, local: string, clusterId: string): Promise<void> {
+  db.prepare("DELETE FROM cluster_v2_relay_deferred WHERE received_at<?").run(new Date(Date.now() - DEFERRED_MS).toISOString());
+  for (;;) {
+    const rows = db.prepare("SELECT event,signature,from_node_id FROM cluster_v2_relay_deferred WHERE cluster_id=? ORDER BY rowid").all(clusterId) as unknown as Array<{ event: string; signature: string; from_node_id: string }>;
+    const ready = rows.map((row) => ({ from: row.from_node_id, envelope: { event: JSON.parse(row.event) as ReplicationEvent, signature: row.signature } }))
+      .filter(({ from, envelope }) => isMember(db, clusterId, from) && inScope(db, local, from, envelope.event));
+    if (!ready.length) return;
+    for (const { from, envelope } of ready) {
+      await applyBatch(db, clusterId, from, [envelope]);
+      db.prepare("DELETE FROM cluster_v2_relay_deferred WHERE cluster_id=? AND event_id=?").run(clusterId, envelope.event.id);
+    }
+  }
+}
+
+async function applyEnvelopes(db: DatabaseSync, local: string, clusterId: string, from: string, envelopes: RelayEnvelope[]): Promise<string[]> {
+  const received = envelopes.length ? await applyBatch(db, clusterId, from, envelopes) : [];
+  await applyDeferred(db, local, clusterId);
+  return received;
+}
+
 /** A hub or member receiving relayed events. A hub (`relay: true`, sent by the origin)
     forwards them to every other member of the cluster that may see them. */
 export async function receiveRelay(sender: string, input: z.infer<typeof relayRequestSchema>): Promise<string[]> {
   const db = await clusterV2Database(), local = (await getClusterNode()).id;
+  if (input.relay && input.envelopes.some((envelope) => envelope.event.originNodeId !== sender)) throw new ClusterV2HttpError(403, "Only the origin asks a hub to relay");
   const envelopes = acceptEnvelopes(db, local, input.clusterId, sender, input.envelopes as RelayEnvelope[]);
-  if (input.relay && envelopes.some((envelope) => envelope.event.originNodeId !== sender)) throw new ClusterV2HttpError(403, "Only the origin asks a hub to relay");
-  const received = await applyEnvelopes(db, input.clusterId, sender, envelopes);
+  const received = await applyEnvelopes(db, local, input.clusterId, sender, envelopes);
   if (input.relay) void forward(db, local, input.clusterId, sender, envelopes);
-  return received;
+  // Set-aside events count as received: this node applies them itself once it can.
+  return [...received, ...input.envelopes.map((envelope) => envelope.event.id).filter((id) => !envelopes.some((envelope) => envelope.event.id === id))];
 }
 
 async function forward(db: DatabaseSync, local: string, clusterId: string, origin: string, envelopes: RelayEnvelope[]): Promise<void> {
@@ -254,7 +290,7 @@ async function pullFrom(db: DatabaseSync, local: string, clusterId: string, sour
   for (;;) {
     const after = (db.prepare("SELECT seq FROM cluster_v2_pull_cursors WHERE source_node_id=? AND cluster_id=?").get(source, clusterId) as { seq: number } | undefined)?.seq ?? 0;
     const page = await signedPost<{ envelopes: RelayEnvelope[]; next: number }>(db, local, source, clusterId, "/api/cluster/v2/relay/pull", { clusterId, after });
-    if (page.envelopes.length) await applyEnvelopes(db, clusterId, source, acceptEnvelopes(db, local, clusterId, source, page.envelopes));
+    if (page.envelopes.length) await applyEnvelopes(db, local, clusterId, source, acceptEnvelopes(db, local, clusterId, source, page.envelopes));
     db.prepare("INSERT INTO cluster_v2_pull_cursors VALUES(?,?,?) ON CONFLICT(source_node_id,cluster_id) DO UPDATE SET seq=excluded.seq").run(source, clusterId, page.next);
     if (page.next === after) return;
   }

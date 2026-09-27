@@ -41,7 +41,8 @@ let databasePromise: Promise<DatabaseSync> | undefined;
 export function ensureReplicationSchema(db: DatabaseSync): void {
   db.exec(`CREATE TABLE IF NOT EXISTS replication_outbox (event_id TEXT PRIMARY KEY, origin_node_id TEXT NOT NULL, entity_type TEXT NOT NULL, entity_key TEXT NOT NULL, operation TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS replication_inbox (event_id TEXT PRIMARY KEY, origin_node_id TEXT NOT NULL, received_at TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS replication_deliveries (event_id TEXT NOT NULL, peer_id TEXT NOT NULL, attempts INTEGER NOT NULL, next_attempt_at TEXT NOT NULL, delivered_at TEXT, last_error TEXT, PRIMARY KEY (event_id, peer_id));`);
+    CREATE TABLE IF NOT EXISTS replication_deliveries (event_id TEXT NOT NULL, peer_id TEXT NOT NULL, attempts INTEGER NOT NULL, next_attempt_at TEXT NOT NULL, delivered_at TEXT, last_error TEXT, PRIMARY KEY (event_id, peer_id));
+    CREATE INDEX IF NOT EXISTS replication_deliveries_pending ON replication_deliveries(peer_id, next_attempt_at) WHERE delivered_at IS NULL;`);
 }
 
 export function ensureTaskSchema(db: DatabaseSync): void {
@@ -97,19 +98,34 @@ export function replicationEventProjectId(event: ReplicationEvent): string | und
   return typeof payload.projectId === "string" && payload.projectId ? payload.projectId : undefined;
 }
 
+// Where the search for events a peer has no delivery row for resumes. Events the sharing
+// filter refused stay behind the mark; a full search every few minutes (and after a
+// restart) offers them again, so a later grant still reaches the peer.
+const unallocatedScan = new Map<string, { rowid: number; fullAt: number }>();
+const FULL_SCAN_MS = 5 * 60_000;
+
 function selectiveEventsForPeer(db: DatabaseSync, peerId: string, at: string, filter: (event: ReplicationEvent) => boolean): ReplicationEvent[] {
   const selected: ReplicationEvent[] = [];
+  const due = db.prepare(`SELECT o.* FROM replication_deliveries d JOIN replication_outbox o ON o.event_id=d.event_id
+    WHERE d.peer_id=? AND d.delivered_at IS NULL AND d.next_attempt_at<=? ORDER BY o.rowid LIMIT 100`).all(peerId, at) as unknown as OutboxRow[];
+  for (const row of due) {
+    const event = eventFromRow(row);
+    if (filter(event)) selected.push(event);
+  }
   const page = db.prepare(`SELECT o.rowid cursor, o.* FROM replication_outbox o
-    LEFT JOIN replication_deliveries d ON d.event_id=o.event_id AND d.peer_id=?
-    WHERE o.rowid>? AND (d.event_id IS NULL OR (d.delivered_at IS NULL AND d.next_attempt_at<=?))
+    WHERE o.rowid>? AND NOT EXISTS (SELECT 1 FROM replication_deliveries d WHERE d.event_id=o.event_id AND d.peer_id=?)
     ORDER BY o.rowid LIMIT 100`);
   const allocate = db.prepare(`INSERT OR IGNORE INTO replication_deliveries
     (event_id,peer_id,attempts,next_attempt_at,delivered_at,last_error) VALUES (?,?,0,?,NULL,NULL)`);
-  let cursor = 0;
-  // Keyset pages bound memory. Restarting each poll keeps future grants eligible.
+  const now = Date.parse(at), previous = unallocatedScan.get(peerId);
+  const full = !previous || now - previous.fullAt >= FULL_SCAN_MS;
+  let cursor = full ? 0 : previous.rowid;
+  const fullAt = full ? now : previous.fullAt;
+  // Taken before searching: an event added meanwhile has a higher rowid and is found next time.
+  const newest = (db.prepare("SELECT max(rowid) id FROM replication_outbox").get() as { id: number | null }).id ?? 0;
   while (selected.length < 100) {
-    const rows = page.all(peerId, cursor, at) as unknown as Array<OutboxRow & { cursor: number }>;
-    if (!rows.length) break;
+    const rows = page.all(cursor, peerId) as unknown as Array<OutboxRow & { cursor: number }>;
+    if (!rows.length) { cursor = Math.max(cursor, newest); break; }
     for (const row of rows) {
       cursor = row.cursor;
       const event = eventFromRow(row);
@@ -119,13 +135,17 @@ function selectiveEventsForPeer(db: DatabaseSync, peerId: string, at: string, fi
       if (selected.length === 100) break;
     }
   }
+  unallocatedScan.set(peerId, { rowid: cursor, fullAt });
   return selected;
 }
 
 export async function pendingEventsForPeer(peerId:string,filter:(event:ReplicationEvent)=>boolean):Promise<{pending:number;error?:string}>{
   const db=await replicationDatabase();
-  const rows=db.prepare(`SELECT o.*,d.last_error FROM replication_outbox o LEFT JOIN replication_deliveries d
-    ON d.event_id=o.event_id AND d.peer_id=? WHERE d.delivered_at IS NULL`).iterate(peerId);
+  // Undelivered rows, plus events the poll has not reached yet.
+  const rows=db.prepare(`SELECT o.*,d.last_error FROM replication_deliveries d JOIN replication_outbox o ON o.event_id=d.event_id
+    WHERE d.peer_id=? AND d.delivered_at IS NULL
+    UNION ALL SELECT o.*,NULL FROM replication_outbox o WHERE o.rowid>?
+      AND NOT EXISTS (SELECT 1 FROM replication_deliveries d WHERE d.event_id=o.event_id AND d.peer_id=?)`).iterate(peerId,unallocatedScan.get(peerId)?.rowid??0,peerId);
   let pending=0,error:string|undefined;
   for(const row of rows)if(filter(eventFromRow(row as unknown as OutboxRow))){
     pending++;

@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Cluster relay events no longer stall on ordering dependencies, conversation transcripts across harness switches are now recognized, and project pages open faster with optimized task polling.
+
 ## 2.0.3 — 2026-09-27
 
 - Focus mode now applies only to mobile screens; your preference is saved across sessions, but desktops keep the classic layout.
