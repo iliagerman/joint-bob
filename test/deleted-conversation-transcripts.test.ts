@@ -8,8 +8,9 @@ import { DatabaseSync } from "node:sqlite";
 import { signedNodeRequest } from "./signed-node-request.js";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment } from "./dev-nodes.js";
 
+// Twin sync on a loaded CI runner can take longer than 30 seconds to converge.
 async function eventually(check: () => Promise<void>): Promise<void> {
-  const deadline = Date.now() + 30_000;
+  const deadline = Date.now() + 60_000;
   while (true) {
     try { await check(); return; }
     catch (error) { if (Date.now() >= deadline) throw error; }

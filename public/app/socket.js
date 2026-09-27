@@ -492,6 +492,9 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
     setStatus(`${harnessLabel(state.harnesses, state.engine)} is working`, true);
     state.lastTurnStartedAt = Date.now();
     state.sessionBusy = true;
+    // The turn starting means the agent has everything sent before it.
+    markUserMessagesRead();
+    startDurationTicker();
     const session = state.sessions.find((candidate) => state.activeSessionId
       ? candidate.id === state.activeSessionId : candidate.path === state.activeSessionPath);
     if (session && !session.turnRunning) {
@@ -499,9 +502,6 @@ export function handleSocketPayload(payload, scrollOnReady = false) {
       session.running = true;
       renderSessions();
     }
-    // The turn starting means the agent has everything sent before it.
-    markUserMessagesRead();
-    startDurationTicker();
   }
   if (payload.type === "agent_end") {
     clearThinkingBubble();
