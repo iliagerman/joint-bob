@@ -3,9 +3,9 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.3.1 — 2026-09-27
 
-- Fixed the release pipeline so versions since 2.1.4 publish again. No behaviour changes.
+- Fixed the release pipeline so versions since 2.1.5 publish again. No behaviour changes.
 
 ## 2.3.0 — 2026-09-27
 
