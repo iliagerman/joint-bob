@@ -376,6 +376,7 @@ export const settingsSchema = z.object({
   autoCompactThreshold: z.number().int().min(1).max(100).nullable().optional(),
   shellCommandTimeoutSeconds: z.number().int().min(1).max(86_400).nullable().optional(),
   digestAttachments: z.boolean().optional(),
+  remoteTerminal: z.object({ twins: z.boolean(), otherNodes: z.boolean() }).strict().optional(),
   conversationCommands: conversationCommandsSchema.optional(),
 }).extend(runtimeSchemaShape) as unknown as z.ZodType<SettingsInput>;
 export const auditQuerySchema = z.object({

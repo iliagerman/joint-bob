@@ -8,7 +8,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import WebSocket, { WebSocketServer } from "ws";
-import { pairTwinNodes, seedDevEnvironment, signIn, startDevNode, stopDevNode, type SeededNode } from "./dev-nodes.js";
+import { api, pairTwinNodes, seedDevEnvironment, signIn, startDevNode, stopDevNode, type SeededNode } from "./dev-nodes.js";
 
 function sessionCookie(response: Response): string {
   const value = response.headers.get("set-cookie");
@@ -222,6 +222,30 @@ test("embedded terminal proxies to the selected twin with a signed socket", { ti
     assert.equal(forwardedUrl.searchParams.get("mode"), "terminal");
     assert.equal(forwardedUrl.searchParams.get("nodeSession"), "1");
     assert.equal(forwardedUrl.searchParams.has("nodeId"), false);
+    socket.close();
+
+    const terminalFlags = async (): Promise<Record<string, unknown>> => {
+      const nodes = await api<{ nodes: Array<{ id: string; terminal: boolean }> }>(a, sessionA, "GET", `/projects/${project.id}/session-nodes`);
+      return Object.fromEntries(nodes.body.nodes.map((node) => [node.id, node.terminal]));
+    };
+    assert.deepEqual(await terminalFlags(), { [a.nodeId]: true, [b.nodeId]: true }, "a twin may open a terminal by default");
+
+    // B switches twins off: A's browser loses B's terminal in the node list and on the socket.
+    const sessionB = await signIn(environment, b);
+    const settingsB = (await api<Record<string, unknown>>(b, sessionB, "GET", "/settings")).body;
+    assert.equal((await api(b, sessionB, "PUT", "/settings", { ...settingsB, remoteTerminal: { twins: false, otherNodes: false } })).status, 200);
+    assert.deepEqual(await terminalFlags(), { [a.nodeId]: true, [b.nodeId]: false });
+    socket = new WebSocket(remoteUrl, { origin: a.url, headers: { Cookie: sessionA.cookie } });
+    const refused = socket;
+    const closed = new Promise<{ code: number; reason: string }>((resolve) => refused.once("close", (code, reason) => resolve({ code, reason: reason.toString() })));
+    assert.deepEqual(await nextMessage(socket), { type: "terminalError", error: `Terminal access from other nodes is disabled on ${b.name}` });
+    assert.deepEqual(await closed, { code: 4031, reason: `Terminal access from other nodes is disabled on ${b.name}` });
+
+    // A browser signed in to B directly still gets B's own terminal.
+    const localUrl = new URL(`/ws?mode=terminal&projectId=${project.id}&nodeId=${b.nodeId}`, b.url);
+    localUrl.protocol = "ws:";
+    socket = new WebSocket(localUrl, { origin: b.url, headers: { Cookie: sessionB.cookie } });
+    assert.equal((await nextMessage(socket)).type, "terminalReady");
   } finally {
     socket?.terminate();
     await proxy?.close();

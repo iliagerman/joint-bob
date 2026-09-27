@@ -7,7 +7,7 @@ import { listConversationRecords } from "../conversation-records.js";
 import type { ConversationEngine } from "../conversation-ownership.js";
 import { getHarness, getHarnessRuntime, harnessForSessionPath } from "../harnesses.js";
 import { resolveLocalSessionPath } from "../session-paths.js";
-import { getSettings } from "../settings.js";
+import { getSettings, remoteTerminalAllowed, remoteTerminalSettings } from "../settings.js";
 import { canonicalProjectId, getProject, listProjects, listWorkspaces } from "../store.js";
 import { assertSyncthingFolderReady, syncthingFolderStatuses } from "../syncthing.js";
 import { assertTaskWorkspaceReady, TaskWorkspaceError, taskWorkspaceKey, projectTicketSyncFolderId, TICKET_WORKSPACE_FOLDER_LABEL } from "../task-workspaces.js";
@@ -18,6 +18,7 @@ import { runtimeFetch } from "./runtime-peers.js";
 import { recordSignedPeerSeen } from "../cluster-peer-endpoints.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { mayShareProject } from "./sharing-files.js";
+import { isTrustedTwin } from "../cluster-sharing-policy.js";
 import { assertSharedTranscriptReady } from './shared-transcripts.js';
 
 interface PeerInventory {
@@ -32,6 +33,13 @@ interface PeerInventory {
 export async function clusterPeerMayAccessProject(machineNodeId: string, projectId: string): Promise<boolean> {
   const id = await canonicalProjectId(projectId);
   return Boolean(id && mayShareProject(await clusterV2Database(), (await getClusterNode()).id, machineNodeId, id));
+}
+
+/** Whether a node that relays a browser to this one may open a terminal here. This node itself always may. */
+export async function peerMayOpenTerminal(machineNodeId: string): Promise<boolean> {
+  const local = await getClusterNode();
+  if (machineNodeId === local.id) return true;
+  return remoteTerminalAllowed(remoteTerminalSettings(), isTrustedTwin(await clusterV2Database(), local.id, machineNodeId));
 }
 
 export function publicClusterPeer(peer: ClusterPeer): ClusterPeer & { online: boolean } {

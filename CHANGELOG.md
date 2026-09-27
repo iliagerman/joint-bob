@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Nodes can now restrict terminal access from other cluster members through Settings, with separate controls for twin nodes and other nodes.
+
 ## 2.2.0 — 2026-09-27
 
 - Harness model and provider pickers in Settings now use searchable dropdowns instead of free-text fields, with options fetched from each harness's runtime.

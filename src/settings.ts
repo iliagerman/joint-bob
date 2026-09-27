@@ -41,6 +41,21 @@ export const DEFAULT_CONVERSATION_COMMANDS: ConversationCommandsSettings = {
   end: { enabled: false, prompt: DEFAULT_END_CONVERSATION_PROMPT },
 };
 
+export interface RemoteTerminalSettings { twins: boolean; otherNodes: boolean }
+
+/** Twins may open a terminal here unless this node says otherwise; any other node may not. */
+export function remoteTerminalSettings(): RemoteTerminalSettings {
+  return {
+    twins: value("remoteTerminal.twins", "true") === "true",
+    otherNodes: value("remoteTerminal.otherNodes", "false") === "true",
+  };
+}
+
+/** A browser signed in to this node always gets its terminal; a peer node is decided by this node's settings. */
+export function remoteTerminalAllowed(settings: RemoteTerminalSettings, peerIsTwin: boolean): boolean {
+  return peerIsTwin ? settings.twins : settings.otherNodes;
+}
+
 export interface SettingsInput {
   pi?: RuntimeSettings;
   claude?: RuntimeSettings;
@@ -55,6 +70,8 @@ export interface SettingsInput {
   shellCommandTimeoutSeconds?: number | null;
   /** Describe images and inline text files for the agent instead of sending raw bytes. */
   digestAttachments?: boolean;
+  /** Which other nodes may open a terminal on this node through a signed peer socket. */
+  remoteTerminal?: RemoteTerminalSettings;
   conversationCommands?: ConversationCommandsSettings;
   conversationDefaults?: Record<string, ConversationDefault>;
 }
@@ -72,6 +89,7 @@ export interface SettingsResponse {
   autoCompactThreshold: number | null;
   shellCommandTimeoutSeconds: number | null;
   digestAttachments: boolean;
+  remoteTerminal: RemoteTerminalSettings;
   conversationCommands: ConversationCommandsSettings;
   conversationDefaults: ReturnType<typeof conversationDefaultsSchema.parse>;
   restartRequired: Record<string, boolean>;
@@ -194,6 +212,7 @@ export function getSettings(): SettingsResponse {
     autoCompactThreshold: value("autoCompactThreshold", "70") === "disabled" ? null : Number(value("autoCompactThreshold", "70")),
     shellCommandTimeoutSeconds: value("shellCommandTimeoutSeconds", "unlimited") === "unlimited" ? null : Number(value("shellCommandTimeoutSeconds", "unlimited")),
     digestAttachments: value("digestAttachments", "false") === "true",
+    remoteTerminal: remoteTerminalSettings(),
     conversationCommands: conversationCommands(),
     restartRequired: Object.fromEntries(runtimeAdapters().map((adapter) => [adapter.id, false])),
   } as SettingsResponse;
@@ -289,6 +308,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
   const autoCompactThreshold = input.autoCompactThreshold === undefined ? previous.autoCompactThreshold : input.autoCompactThreshold;
   const shellCommandTimeoutSeconds = input.shellCommandTimeoutSeconds === undefined ? previous.shellCommandTimeoutSeconds : input.shellCommandTimeoutSeconds;
   const digestAttachments = input.digestAttachments ?? previous.digestAttachments;
+  const remoteTerminal = { ...previous.remoteTerminal, ...input.remoteTerminal };
   const conversationCommands = input.conversationCommands ?? previous.conversationCommands;
   const conversationDefaults = conversationDefaultsSchema.parse(input.conversationDefaults ?? previous.conversationDefaults);
   if (!homePath.trim() || !path.isAbsolute(homePath)) throw new Error("Joint Bob home folder must be absolute");
@@ -306,6 +326,8 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
     save(db, "autoCompactThreshold", autoCompactThreshold === null ? "disabled" : String(autoCompactThreshold));
     save(db, "shellCommandTimeoutSeconds", shellCommandTimeoutSeconds === null ? "unlimited" : String(shellCommandTimeoutSeconds));
     save(db, "digestAttachments", String(digestAttachments));
+    save(db, "remoteTerminal.twins", String(remoteTerminal.twins));
+    save(db, "remoteTerminal.otherNodes", String(remoteTerminal.otherNodes));
     save(db, "conversationCommands", JSON.stringify(conversationCommands));
     save(db, "conversationDefaults", JSON.stringify(conversationDefaults));
     for (const type of RESOURCE_TYPES) save(db, `resources.${type}`, JSON.stringify(resources[type]));
@@ -330,6 +352,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
         autoCompactThresholdChanged: previous.autoCompactThreshold !== settings.autoCompactThreshold,
         shellCommandTimeoutChanged: previous.shellCommandTimeoutSeconds !== settings.shellCommandTimeoutSeconds,
         digestAttachmentsChanged: previous.digestAttachments !== settings.digestAttachments,
+        remoteTerminalChanged: JSON.stringify(previous.remoteTerminal) !== JSON.stringify(settings.remoteTerminal),
         conversationCommandsChanged: JSON.stringify(previous.conversationCommands) !== JSON.stringify(settings.conversationCommands),
         apiKeyConfigured: settings.syncthing.apiKeyConfigured,
       },

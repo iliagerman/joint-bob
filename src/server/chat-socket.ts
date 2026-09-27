@@ -4,7 +4,7 @@ import WebSocket from "ws";
 import { authSessionEvents, sessionCookieName, sessionForId } from "../auth.js";
 import { getClusterNode } from "../cluster.js";
 import { getRuntimePeer, runtimeSocketHeaders, signedSocketPeer, trackRuntimeSocket } from "./runtime-peers.js";
-import { clusterPeerMayAccessProject } from "./cluster-helpers.js";
+import { clusterPeerMayAccessProject, peerMayOpenTerminal } from "./cluster-helpers.js";
 import { type ConversationEngine, getConversationOwnership } from "../conversation-ownership.js";
 import { ensureConversationRecord, getConversationRecord, parseConversationDraftPath } from "../conversation-records.js";
 import { findHarnessSession, harnessForSessionPath, listHarnesses, listHarnessSessions } from "../harnesses.js";
@@ -209,6 +209,13 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
   const lockedByPeer = heldLock && heldLock.nodeId !== local.id ? heldLock : undefined;
 
   if (url.searchParams.get("mode") === "terminal") {
+    // A peer relaying a browser signed in elsewhere is decided by this node's settings, whoever owns the project.
+    if (signedPeer && !await peerMayOpenTerminal(signedPeer)) {
+      const reason = `Terminal access from other nodes is disabled on ${local.name}`;
+      socket.send(JSON.stringify({ type: "terminalError", error: reason }));
+      socket.close(4031, reason);
+      return;
+    }
     if (lockedByPeer) {
       socket.close(1008, `Project is locked by ${lockedByPeer.nodeName}`);
       return;

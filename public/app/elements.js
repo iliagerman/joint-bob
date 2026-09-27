@@ -141,6 +141,8 @@ export const elements = {
   settingsShellTimeoutEnabled: document.querySelector("#settingsShellTimeoutEnabled"),
   settingsShellTimeoutSeconds: document.querySelector("#settingsShellTimeoutSeconds"),
   settingsDigestAttachments: document.querySelector("#settingsDigestAttachments"),
+  settingsRemoteTerminalTwins: document.querySelector("#settingsRemoteTerminalTwins"),
+  settingsRemoteTerminalOtherNodes: document.querySelector("#settingsRemoteTerminalOtherNodes"),
   settingsStartConversationEnabled: document.querySelector("#settingsStartConversationEnabled"),
   settingsStartConversationPrompt: document.querySelector("#settingsStartConversationPrompt"),
   settingsEndConversationEnabled: document.querySelector("#settingsEndConversationEnabled"),

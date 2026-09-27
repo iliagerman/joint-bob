@@ -129,10 +129,10 @@ async function openProjectTerminal() {
     if (payload.type === "terminalError") emulator.write(`\r\nError: ${payload.error}\r\n`);
     if (payload.type === "terminalExit") emulator.write(`\r\n[Shell exited${payload.code === null ? "" : ` with code ${payload.code}`}]\r\n`);
   });
-  socket.addEventListener("close", () => {
+  socket.addEventListener("close", (event) => {
     if (state.terminalSocket !== socket) return;
     state.terminalSocket = null;
-    setTerminalStatus("idle", "Disconnected");
+    setTerminalStatus("idle", event.code === 4031 && event.reason ? event.reason : "Disconnected");
   });
   socket.addEventListener("error", () => {
     if (state.terminalSocket === socket) emulator.write("\r\nCould not connect to terminal.\r\n");
