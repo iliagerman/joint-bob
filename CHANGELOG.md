@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.0.3 — 2026-09-27
 
 - Focus mode now applies only to mobile screens; your preference is saved across sessions, but desktops keep the classic layout.
 
