@@ -3,9 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.0.4 — 2026-09-27
 
-- Cluster relay events no longer stall on ordering dependencies, conversation transcripts across harness switches are now recognized, and project pages open faster with optimized task polling.
+- Cluster relay events no longer stall when they arrive out of order.
+- Shared conversations and transcripts are now properly accessible to all cluster members across harness switches.
+- Project pages load faster with optimized polling of scheduled tasks.
 
 ## 2.0.3 — 2026-09-27
 
