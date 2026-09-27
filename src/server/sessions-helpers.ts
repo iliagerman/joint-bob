@@ -3,7 +3,7 @@ import { backgroundTaskConversationId, readActiveBackgroundTaskIdentities } from
 import { resolveDataDirectory } from "../data-directory.js";
 import { agentWorkActive, applyConversationWork, listConversationWork, refreshConversationWork } from "../conversation-work.js";
 import { getClusterNode } from "../cluster.js";
-import { getRuntimePeer as getClusterPeer } from "./runtime-peers.js";
+import { getRuntimePeer } from "./runtime-peers.js";
 import { claimConversationOwnership, type ConversationEngine, type ConversationOwnership, ConversationOwnershipError, type ConversationOwnershipStatus, getConversationOwnership, healStaleLocalClaim } from "../conversation-ownership.js";
 import { conversationReviewNotificationPaths, setConversationReviewNotifications, syncConversationReviewDetails } from "../conversation-reviews.js";
 import { conversationNotifications, notificationConversationId, setConversationNotification } from "../conversation-notifications.js";
@@ -20,7 +20,7 @@ import type { ProjectRecord, SessionSummary } from "../types.js";
 import { listUserPins } from "../user-pins.js";
 import { sessionWatcher } from "./chat.js";
 import { findHarnessSession, harnessTurnBusy } from "./harness-sessions.js";
-import { taskConfig, taskCwd, taskPhase } from "./task-runs.js";
+import { taskConfig, taskPhase } from "./task-runs.js";
 
 /**
  * Shared by the per-project conversation list and the cross-project review inbox, so both
@@ -183,7 +183,7 @@ export async function describeConversationOwner(ownership: ConversationOwnership
   const otherNodeId = ownership.status === "conflict" && ownership.ownerNodeId === localId
     ? ownership.transferToNodeId ?? ownership.ownerNodeId
     : ownership.ownerNodeId;
-  const peer = await getClusterPeer(otherNodeId);
+  const peer = await getRuntimePeer(otherNodeId);
   return { nodeId: otherNodeId, nodeName: peer?.name ?? "another node", status: ownership.status };
 }
 

@@ -10,6 +10,7 @@ import {
   prepareMembershipJoin,
   redeemMembershipInvitation,
   removeMembershipMember,
+  updateMembershipDescriptor,
   type MembershipEntry,
 } from "../src/cluster-membership.js";
 import { clusterPublicKeyFingerprint, getOrCreateClusterIdentity, pinnedClusterPublicKey, signClusterMessage } from "../src/cluster-identity.js";
@@ -281,4 +282,38 @@ test("removal publishes tombstone and queues the removed endpoint", () => {
     assert.deepEqual(removed.body.departures, [{ nodeId: B, joinSequence: 2 }]);
     assert.ok(listMembershipDeliveries(manager).some((delivery) => delivery.peerId === B && delivery.revision === 3));
   } finally { manager.close(); receiver.close(); }
+});
+
+test("signed membership snapshots carry more than five members", () => {
+  const manager = db(), receivers: DatabaseSync[] = [];
+  try {
+    createMembershipCluster(manager, local(A, "Alpha", 4001), { id: CLUSTER, name: "Team" });
+    let snapshot = getMembershipSnapshot(manager, CLUSTER);
+    for (let index = 2; index <= 7; index += 1) {
+      const receiver = db(); receivers.push(receiver);
+      const nodeId = `00000000-0000-4000-8000-00000000010${index}`;
+      const invitation = createMembershipInvitation(manager, A, A, CLUSTER, 1);
+      const request = prepareMembershipJoin(receiver, local(nodeId, `Node ${index}`, 4000 + index), invitation, clusterPublicKeyFingerprint(invitation.body.manager.publicKey), `20000000-0000-4000-8000-00000000010${index}`);
+      snapshot = redeemMembershipInvitation(manager, A, request, invitation.secret);
+      applyMembershipSnapshot(receiver, nodeId, snapshot);
+    }
+    assert.equal(snapshot.body.members.length, 7);
+    assert.equal(listSharingClusterMembers(receivers.at(-1)!, CLUSTER).length, 7);
+  } finally { manager.close(); for (const receiver of receivers) receiver.close(); }
+});
+
+test("the manager republishes a member's new name and URL to every member", () => {
+  const manager = db(), member = db();
+  try {
+    createMembershipCluster(manager, local(A, "Alpha", 4001), { id: CLUSTER, name: "Team" });
+    applyMembershipSnapshot(member, B, join(manager, member).snapshot);
+    const snapshot = updateMembershipDescriptor(manager, A, CLUSTER, { nodeId: B, name: "Beta renamed", url: "http://127.0.0.1:5002" });
+    const updated = snapshot.body.members.find((entry) => entry.nodeId === B)!;
+    assert.equal(updated.name, "Beta renamed");
+    assert.equal(updated.url, "http://127.0.0.1:5002");
+    assert.ok(listMembershipDeliveries(manager).some((delivery) => delivery.peerId === B && delivery.revision === snapshot.body.revision), "the new snapshot is queued for the member");
+    applyMembershipSnapshot(member, B, snapshot);
+    assert.equal(getMembershipSnapshot(member, CLUSTER).body.members.find((entry) => entry.nodeId === B)?.url, "http://127.0.0.1:5002", "members install the republished descriptor");
+    assert.throws(() => updateMembershipDescriptor(member, B, CLUSTER, { nodeId: B, name: "Self promoted", url: "http://127.0.0.1:5003" }), /manager/i);
+  } finally { manager.close(); member.close(); }
 });

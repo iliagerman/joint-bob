@@ -1,33 +1,12 @@
 import { api } from "./api.js";
 import { elements } from "./elements.js";
 import { renderProjects } from "./project-list.js";
-import { loadProjects, selectProject } from "./project-selection.js";
+import { selectProject } from "./project-selection.js";
 import { renderProjectColorSwatches, selectedProjectColor } from "./session-identity.js";
-import { confirmAction, toast } from "./shell.js";
+import { toast } from "./shell.js";
 import { refreshSessionsQuietly } from "./socket.js";
 import { state } from "./state.js";
-import { handoffTaskToPeer } from "./tasks.js";
 import { loadWorkspaces } from "./workspaces.js";
-
-function showNextProjectImport() {
-  state.activeProjectImport = state.pendingProjectImports.shift() || null;
-  if (!state.activeProjectImport) {
-    elements.projectImportDialog.close();
-    toast("Project mappings saved");
-    return;
-  }
-  const pending = state.activeProjectImport;
-  elements.projectImportTitle.textContent = `Map ${pending.name} on this node`;
-  elements.projectImportRemotePath.textContent = `Remote folder: ${pending.remotePath}`;
-  elements.projectImportPathInput.value = pending.suggestedPath;
-  elements.projectImportBrowser.hidden = true;
-  if (!elements.projectImportDialog.open) elements.projectImportDialog.showModal();
-}
-
-export function openProjectImportMapping(pendingProjects) {
-  state.pendingProjectImports = [...pendingProjects];
-  showNextProjectImport();
-}
 
 async function loadFolderPickerDirectory(requestedPath) {
   const query = requestedPath ? `?path=${encodeURIComponent(requestedPath)}` : "";
@@ -66,25 +45,6 @@ async function openFolderPicker(target, title, apiPath = "/api/filesystem/direct
   elements.folderPickerDialog.showModal();
 }
 
-async function loadProjectImportDirectory(requestedPath) {
-  const query = requestedPath ? `?path=${encodeURIComponent(requestedPath)}` : "";
-  const listing = await api(`/api/filesystem/directories${query}`);
-  state.projectImportBrowserPath = listing.currentPath;
-  state.projectImportParentPath = listing.parentPath;
-  elements.projectImportCurrentPath.textContent = listing.currentPath;
-  elements.projectImportParentButton.disabled = !listing.parentPath;
-  elements.projectImportDirectoryList.replaceChildren();
-  for (const directory of listing.directories) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "folder-browser-entry";
-    button.dataset.testid = "project-import-directory-button";
-    button.textContent = directory.name;
-    button.addEventListener("click", () => loadProjectImportDirectory(directory.path).catch((error) => toast(error.message, 8000)));
-    elements.projectImportDirectoryList.append(button);
-  }
-  elements.projectImportBrowser.hidden = false;
-}
 /** Mirrors managedFolderName in src/managed-home.ts so the suggested path matches what the server creates. */
 function projectFolderName(projectName) {
   return projectName.trim()
@@ -142,60 +102,6 @@ browseResourcePaths(elements.settingsResourcePromptsPaths, "Add a prompts folder
 browseResourcePaths(elements.settingsResourceRulesPaths, "Add a rules folder", elements.settingsResourceRulesBrowse);
 browseResourcePaths(elements.settingsResourcePluginsPaths, "Add a plugins folder", elements.settingsResourcePluginsBrowse);
 elements.settingsProjectHomeBrowseButton.addEventListener("click", () => openFolderPicker(elements.settingsProjectHome, "Choose Joint Bob home folder").catch((error) => toast(error.message, 8000)));
-elements.projectImportBrowseButton.addEventListener("click", async () => {
-  const pending = state.activeProjectImport;
-  if (pending?.mapOnPeer) {
-    const apiPath = `/api/cluster/peers/${encodeURIComponent(pending.peerId)}/filesystem/directories`;
-    await openFolderPicker(elements.projectImportPathInput, `Choose folder on ${pending.name} destination`, apiPath).catch((error) => toast(error.message, 8000));
-    return;
-  }
-  try {
-    await loadProjectImportDirectory(elements.projectImportPathInput.value.trim());
-  } catch {
-    await loadProjectImportDirectory().catch((error) => toast(error.message, 8000));
-  }
-});
-elements.projectImportParentButton.addEventListener("click", () => {
-  if (state.projectImportParentPath) loadProjectImportDirectory(state.projectImportParentPath).catch((error) => toast(error.message, 8000));
-});
-elements.projectImportUseFolderButton.addEventListener("click", () => {
-  elements.projectImportPathInput.value = state.projectImportBrowserPath;
-  elements.projectImportBrowser.hidden = true;
-  elements.projectImportPathInput.focus();
-});
-elements.cancelProjectImportButton.addEventListener("click", () => {
-  state.pendingProjectImports = [];
-  state.activeProjectImport = null;
-  elements.projectImportDialog.close();
-});
-elements.skipProjectImportButton.addEventListener("click", showNextProjectImport);
-elements.projectImportForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  try {
-    const pending = state.activeProjectImport;
-    if (!pending) throw new Error("No project is waiting for a local mapping");
-    const route = pending.mapOnPeer
-      ? `/api/cluster/peers/${encodeURIComponent(pending.peerId)}/projects/${encodeURIComponent(pending.projectId)}/map`
-      : "/api/cluster/projects/map";
-    const body = pending.mapOnPeer
-      ? { localPath: elements.projectImportPathInput.value.trim() }
-      : { peerId: pending.peerId, projectId: pending.projectId, localPath: elements.projectImportPathInput.value.trim() };
-    await api(route, { method: "POST", body: JSON.stringify(body) });
-    await loadProjects();
-    if (pending.handoffTaskId) {
-      const task = state.tasks.find((candidate) => candidate.id === pending.handoffTaskId);
-      const node = state.sessionNodes.find((candidate) => candidate.id === pending.peerId);
-      if (task && node && await confirmAction({
-        eyebrow: "Project mapped",
-        title: `Handoff "${task.title}" to ${node.name}?`,
-        confirmLabel: "Handoff task",
-      })) await handoffTaskToPeer(task, node);
-    }
-    showNextProjectImport();
-  } catch (error) {
-    toast(error.message, 8000);
-  }
-});
 elements.cancelProjectPathButton.addEventListener("click", () => elements.projectPathDialog.close());
 elements.projectPathForm.addEventListener("submit", async (event) => {
   event.preventDefault();

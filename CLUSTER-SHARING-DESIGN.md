@@ -1,6 +1,10 @@
 # Completed design: clusters, resource sharing, and twins
 
-Planning status: complete for review and implementation sequencing. Feature implementation remains incomplete. This document resolves the open architectural choices in `CLUSTER-SHARING-PLAN.md` and supersedes its instructions to select a protocol or file strategy later. It does not claim the existing policy module implements the wire protocol or the UI.
+Status: implemented. The current behaviour, API, and upgrade notes are in [docs/features/clusters.html](docs/features/clusters.html). This document keeps the original design rationale. Where they differ, the implementation superseded it:
+
+- There is no member limit, and one mode: the legacy bearer-token pairing, its migration workflow (§8), and the selective-sharing switch were removed rather than migrated.
+- Project events inside a cluster travel through two hubs with origin signatures and catch-up pulls instead of from the origin to every member.
+- A manager that its twin declares lost is replaced by the most senior remaining member (§2 said no failover).
 
 ## 1. Product behavior
 

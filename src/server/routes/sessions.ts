@@ -4,10 +4,9 @@ import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import type { AuthSession } from "../../auth.js";
 import { createByTheWayLease, deleteByTheWayLease, getByTheWayLease, getByTheWayLeaseByToken, listByTheWayLeases } from "../../by-the-way-leases.js";
-import { type ClusterPeer, getClusterMachineToken, getClusterNode } from "../../cluster.js";
-import { selectiveSharingActive } from '../../cluster-v2-mode.js';
+import { type ClusterPeer, getClusterNode } from "../../cluster.js";
 import { assertSharedTranscriptReady } from '../shared-transcripts.js';
-import { getRuntimePeer as getClusterPeer, listRuntimePeers as listClusterPeers, runtimeFetch as fetch } from "../runtime-peers.js";
+import { getRuntimePeer, listRuntimePeers, runtimeFetch } from "../runtime-peers.js";
 import { beginConversationRecovery, compareAndSetConversationOwnership, type ConversationEngine, type ConversationOwnership, finishConversationRecovery, getConversationOwnership, type OwnershipApplyResult, sameConversationOwnership, takeConversationOwnership } from "../../conversation-ownership.js";
 import { deleteConversationRecord, getConversationRecord } from "../../conversation-records.js";
 import { dropBrowserConversationGrants } from "../../browser-store.js";
@@ -118,12 +117,12 @@ app.post("/api/projects/:projectId/sessions/fork", async (request, response, nex
     const local = await getClusterNode();
     const ownership = await getConversationOwnership(payload.engine, payload.sessionId);
     if (ownership && ownership.ownerNodeId !== local.id) {
-      const peer = await getClusterPeer(ownership.ownerNodeId);
+      const peer = await getRuntimePeer(ownership.ownerNodeId);
       if (!peer) throw new ConversationForkError(409, "Conversation owner is unavailable");
       let routed: globalThis.Response;
       try {
-        routed = await fetch(`${peer.url}/api/cluster/sessions/fork`, {
-          method: "POST", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
+        routed = await runtimeFetch(`${peer.url}/api/cluster/sessions/fork`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ...payload, projectId: project.id }), signal: AbortSignal.timeout(30_000),
         });
       } catch { throw new ConversationForkError(409, "Conversation owner is unavailable; fork was not confirmed"); }
@@ -203,7 +202,7 @@ async function byTheWayOwner(engine: ConversationEngine, sessionId: string, requ
   const ownership = await getConversationOwnership(engine, sessionId);
   const ownerNodeId = requestedNodeId ?? ownership?.ownerNodeId;
   if (!ownerNodeId || ownerNodeId === local.id) return undefined;
-  const peer = await getClusterPeer(ownerNodeId);
+  const peer = await getRuntimePeer(ownerNodeId);
   if (!peer) throw new ConversationDeleteError(409, "Conversation owner is unavailable");
   return peer;
 }
@@ -215,8 +214,8 @@ app.post("/api/projects/:projectId/sessions/by-the-way", async (request, respons
     const payload = sessionForkSchema.parse(request.body);
     const peer = await byTheWayOwner(payload.engine, payload.sessionId);
     if (peer) {
-      const routed = await fetch(`${peer.url}/api/cluster/sessions/by-the-way`, {
-        method: "POST", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
+      const routed = await runtimeFetch(`${peer.url}/api/cluster/sessions/by-the-way`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...payload, projectId: project.id }), signal: AbortSignal.timeout(30_000),
       });
       const body = await routed.json();
@@ -225,8 +224,8 @@ app.post("/api/projects/:projectId/sessions/by-the-way", async (request, respons
         try {
           await createByTheWayLease(project.id, result.session.harnessId, result.session.id, result.token);
         } catch (error) {
-          await fetch(`${peer.url}/api/cluster/sessions/by-the-way/close`, {
-            method: "POST", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
+          await runtimeFetch(`${peer.url}/api/cluster/sessions/by-the-way/close`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ projectId: project.id, engine: result.session.harnessId, sessionId: result.session.id, token: result.token }), signal: AbortSignal.timeout(30_000),
           }).catch((cleanupError) => console.warn("Could not roll back remote By the Way fork", cleanupError));
           throw error;
@@ -262,8 +261,8 @@ app.post("/api/projects/:projectId/sessions/by-the-way/close", async (request, r
     const payload = byTheWayCloseSchema.parse(request.body);
     const peer = await byTheWayOwner(payload.engine, payload.sessionId, payload.nodeId);
     if (peer) {
-      const routed = await fetch(`${peer.url}/api/cluster/sessions/by-the-way/close`, {
-        method: "POST", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
+      const routed = await runtimeFetch(`${peer.url}/api/cluster/sessions/by-the-way/close`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...payload, projectId: project.id }), signal: AbortSignal.timeout(30_000),
       });
       const body = await routed.json();
@@ -306,10 +305,9 @@ function ownershipEvent(record: ConversationOwnership, originNodeId: string) {
 class OwnershipAcknowledgementError extends Error {}
 
 async function applyOwnershipToPeer(peer: ClusterPeer, record: ConversationOwnership, originNodeId: string): Promise<OwnershipApplyResult> {
-  const token = await getClusterMachineToken();
-  const response = await fetch(`${peer.url}/api/cluster/sessions/ownership/apply`, {
+  const response = await runtimeFetch(`${peer.url}/api/cluster/sessions/ownership/apply`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ record, originNodeId }), signal: AbortSignal.timeout(3_000),
   });
   const result = await response.json() as OwnershipApplyResult & { error?: string };
@@ -382,7 +380,7 @@ async function assertDraftTakeoverReady(project: ProjectRecord, matching: Sessio
   url.searchParams.set("sessionId", matching.id);
   let response: globalThis.Response;
   try {
-    response = await fetch(url, { headers: { Authorization: `Bearer ${await getClusterMachineToken()}` }, signal: AbortSignal.timeout(3_000) });
+    response = await runtimeFetch(url, { signal: AbortSignal.timeout(3_000) });
   } catch {
     throw new TaskWorktreeError("Conversation owner is unavailable; cannot verify transcript synchronization");
   }
@@ -423,14 +421,16 @@ async function synchronizeQueueBeforeTakeover(projectId: string, engine: Convers
   const unavailable = new Set<string>();
   const current = await getConversationOwnership(engine, sessionId);
   if (current?.ownerNodeId === localId && current.status === "owned") return unavailable;
-  const token = await getClusterMachineToken();
   await Promise.all(peers.map(async (peer) => {
     const url = new URL("/api/cluster/sessions/ownership", peer.url);
     url.searchParams.set("engine", engine); url.searchParams.set("sessionId", sessionId);
     let body: unknown;
     try {
-      const reply = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(3_000) });
-      if (!reply.ok) throw new TaskWorktreeError("Cannot verify queue ownership on peer");
+      const reply = await runtimeFetch(url, { signal: AbortSignal.timeout(3_000) });
+      if (!reply.ok) {
+        const refusal = await reply.json().catch(() => ({})) as { error?: string };
+        throw new TaskWorktreeError(`Cannot verify queue ownership on ${peer.name} (${reply.status}${refusal.error ? `: ${refusal.error}` : ""})`);
+      }
       body = await reply.json();
     } catch (error) {
       if (!peerIsUnreachable(error)) throw error;
@@ -450,8 +450,8 @@ async function synchronizeQueueBeforeTakeover(projectId: string, engine: Convers
   if (!source || unavailable.has(source.id)) return unavailable;
   let snapshot: { events: ReplicationEvent[] };
   try {
-    const response = await fetch(`${source.url}/api/cluster/sessions/queue-transfer`, {
-      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    const response = await runtimeFetch(`${source.url}/api/cluster/sessions/queue-transfer`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ projectId, engine, sessionId }), signal: AbortSignal.timeout(3_000),
     });
     if (!response.ok) throw new TaskWorktreeError("Queue transfer was not acknowledged by its owner; wait for dispatch to finish and retry");
@@ -467,7 +467,7 @@ async function synchronizeQueueBeforeTakeover(projectId: string, engine: Convers
 }
 
 export async function takeLocalSessionOwnership(project: ProjectRecord, payload: z.infer<typeof routedSessionTakeOwnershipSchema>, requireOnline = false): Promise<{ sessionPath: string; ownership: ConversationOwnership; pendingPeerIds: string[] }> {
-  const [local, sessions, peers] = await Promise.all([getClusterNode(), listHarnessSessions(project), listClusterPeers(project.id)]);
+  const [local, sessions, peers] = await Promise.all([getClusterNode(), listHarnessSessions(project), listRuntimePeers(project.id)]);
   if (payload.peerId !== local.id) throw new Error("Takeover destination is not this node");
   const matching = payload.sessionId ? sessions.find((session) => session.id === payload.sessionId) : sessions.find((session) => session.path === payload.sessionPath);
   if (!matching) throw new TaskWorktreeError("Conversation was not found on the destination node");
@@ -476,7 +476,9 @@ export async function takeLocalSessionOwnership(project: ProjectRecord, payload:
   const sessionId = matching.id;
   if (conversationIsActive(project.id, engine, sessionId, matching.path)) throw new TaskWorktreeError("Wait for the current turn to finish before taking ownership");
   const unavailable = await synchronizeQueueBeforeTakeover(project.id, engine, sessionId, local.id, peers, requireOnline);
-  if(!matching.draft&&await selectiveSharingActive())await assertSharedTranscriptReady(project.id,matching.path);
+  // An unreachable owner cannot refresh the transcript; takeover continues from the local copy.
+  const currentOwner = (await getConversationOwnership(engine, sessionId))?.ownerNodeId;
+  if (!matching.draft && !(currentOwner && unavailable.has(currentOwner))) await assertSharedTranscriptReady(project.id, matching.path);
   const ownership = await takeConversationOwnership(engine, sessionId, local.id);
   const reachable = peers.filter((peer) => !unavailable.has(peer.id));
   const settled = await Promise.allSettled(reachable.map((peer) => applyOwnershipToPeer(peer, ownership, local.id)));
@@ -629,10 +631,10 @@ app.post("/api/projects/:projectId/sessions/take-ownership", async (request, res
     const payload = sessionTakeOwnershipSchema.parse(request.body);
     const local = await getClusterNode();
     if (payload.peerId === local.id) { response.json(await takeLocalSessionOwnership(project, { ...payload, projectId: project.id })); return; }
-    const peer = await getClusterPeer(payload.peerId);
+    const peer = await getRuntimePeer(payload.peerId);
     if (!peer) { sendError(response, 404, "Peer not found"); return; }
-    const routed = await fetch(`${peer.url}/api/cluster/sessions/take-ownership`, {
-      method: "POST", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
+    const routed = await runtimeFetch(`${peer.url}/api/cluster/sessions/take-ownership`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...payload, projectId: project.id }), signal: AbortSignal.timeout(35_000),
     });
     response.status(routed.status).json(await routed.json());
@@ -651,7 +653,7 @@ app.post("/api/projects/:projectId/sessions/recover", async (request, response, 
     if (!adapter.sessions.recover) throw new Error(`${adapter.label} does not support transcript conflict recovery`);
     if (conversationSessionIsOpen(project.id, payload.engine, payload.sessionId, mapped.path)) throw new Error("Close the local conversation before recovery");
     await requireLocalConversationOwner(payload.engine, payload.sessionId);
-    const peers = await listClusterPeers(project.id);
+    const peers = await listRuntimePeers(project.id);
     const fenced = await beginConversationRecovery(payload.engine, payload.sessionId, local.id);
     await replicateExactOwnership(peers, fenced, local.id);
     if (conversationSessionIsOpen(project.id, payload.engine, payload.sessionId, mapped.path)) throw new Error("Conversation opened during recovery fencing");
@@ -729,11 +731,11 @@ app.delete("/api/projects/:projectId/sessions", async (request, response, next) 
     const local = await getClusterNode();
     const ownership = await getConversationOwnership(payload.engine, payload.sessionId);
     if (ownership && ownership.ownerNodeId !== local.id) {
-      const peer = await getClusterPeer(ownership.ownerNodeId);
+      const peer = await getRuntimePeer(ownership.ownerNodeId);
       if (!peer) throw new ConversationDeleteError(409, "Conversation owner is unavailable");
-      const routed = await fetch(`${peer.url}/api/cluster/sessions/delete`, {
+      const routed = await runtimeFetch(`${peer.url}/api/cluster/sessions/delete`, {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload), signal: AbortSignal.timeout(30_000),
       });
       if (routed.status === 204) { response.status(204).send(); return; }

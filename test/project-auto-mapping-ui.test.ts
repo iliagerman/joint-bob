@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { appSource, serverSource } from "./source.js";
 
-test("managed home project creation and imported mappings use node folder pickers", async () => {
+test("managed home project creation and imports use node folder pickers", async () => {
   const [html, app, server] = await Promise.all([
     readFile("public/index.html", "utf8"),
     appSource(),
@@ -37,13 +37,14 @@ test("managed home project creation and imported mappings use node folder picker
   assert.match(server, /importProjectDirectory/);
   assert.doesNotMatch(app, /api\("\/api\/projects",\s*\{[\s\S]{0,300}path:/);
   assert.match(app, /openFolderPicker/);
-  assert.match(app, /\/api\/cluster\/projects\/discover/);
-  assert.match(app, /mapOnPeer/);
-  assert.match(app, /Project is not mapped on this node/);
+  // Peer project discovery and the import-mapping dialog were retired with the legacy cluster layer.
+  assert.doesNotMatch(app, /\/api\/cluster\/projects\/discover/);
+  assert.doesNotMatch(app, /mapOnPeer/);
   assert.ok(app.includes('.replace(/[^a-z0-9._-]+/g, "_")'));
   assert.doesNotMatch(app, /value === "work" \? "Work" : "Projects"/);
-  assert.match(server, /\/api\/cluster\/peers\/:peerId\/filesystem\/directories/);
-  assert.match(server, /\/api\/cluster\/peers\/:peerId\/projects\/:projectId\/map/);
+  assert.match(server, /app\.get\("\/api\/filesystem\/directories"/);
+  assert.doesNotMatch(server, /\/api\/cluster\/peers\/:peerId\/filesystem\/directories/);
+  assert.doesNotMatch(server, /\/api\/cluster\/peers\/:peerId\/projects\/:projectId\/map/);
   assert.match(app, /project-sync-status/);
   for (const label of ["Synced", "Syncing", "Paused", "Error", "Unavailable"]) assert.match(app, new RegExp(label));
   assert.ok(app.includes('status.state === "error" && status.message ? `Error: ${status.message}`'));

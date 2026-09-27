@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { getClusterNode, getClusterMachineToken } from "../../cluster.js";
-import { listRuntimePeers as listClusterPeers, runtimeFetch as fetch } from "../runtime-peers.js";
+import { getClusterNode } from "../../cluster.js";
+import { listRuntimePeers, runtimeFetch } from "../runtime-peers.js";
 import { getProject } from "../../store.js";
 import { ensureTicketWorkspaceFolder } from "../../syncthing.js";
 import { createTaskWorkspace, removeTaskWorkspace, TaskWorkspaceError, taskWorkspaceKey, TICKET_MERGE_DIR } from "../../task-workspaces.js";
@@ -41,7 +41,7 @@ app.get("/api/projects/:projectId/tasks/:taskId/eligibility", async (request, re
     const task = (await listTasks(project.id)).find((candidate) => candidate.id === request.params.taskId);
     if (!task) { sendError(response, 404, "Task not found"); return; }
     const local = await getClusterNode();
-    const peers = await listClusterPeers(project.id);
+    const peers = await listRuntimePeers(project.id);
     const nodes: TaskEligibilityEntry[] = [];
     const localEligibility = task.currentNodeId === local.id ? await taskHandoffEligibility(project.id, task, false) : undefined;
     if (task.currentNodeId !== local.id) {
@@ -109,7 +109,7 @@ app.patch("/api/projects/:projectId/tasks/:taskId", async (request, response, ne
     const local = await getClusterNode();
     const peer = await ownerPeer(existing, local.id);
     if (peer) {
-      const routed = await fetch(`${peer.url}/api/cluster/tasks/update`, { method: "PATCH", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" }, body: JSON.stringify({ projectId: project.id, taskId: existing.id, update: payload }), signal: AbortSignal.timeout(30_000) });
+      const routed = await runtimeFetch(`${peer.url}/api/cluster/tasks/update`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: project.id, taskId: existing.id, update: payload }), signal: AbortSignal.timeout(30_000) });
       await mirrorTaskResponse(response, routed);
       return;
     }
@@ -170,7 +170,7 @@ app.post("/api/projects/:projectId/tasks/:taskId/handoff", async (request, respo
     const local = await getClusterNode();
     const peer = await ownerPeer(task, local.id);
     if (peer) {
-      const routed = await fetch(`${peer.url}/api/cluster/tasks/handoff`, { method: "POST", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" }, body: JSON.stringify({ projectId: project.id, taskId: task.id, peerId: payload.peerId }), signal: AbortSignal.timeout(30_000) });
+      const routed = await runtimeFetch(`${peer.url}/api/cluster/tasks/handoff`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: project.id, taskId: task.id, peerId: payload.peerId }), signal: AbortSignal.timeout(30_000) });
       await mirrorTaskResponse(response, routed);
       return;
     }
@@ -196,7 +196,7 @@ app.post("/api/projects/:projectId/tasks/:taskId/archive", async (request, respo
     const local = await getClusterNode();
     const peer = await ownerPeer(task, local.id);
     if (peer) {
-      const routed = await fetch(`${peer.url}/api/cluster/tasks/archive`, { method: "POST", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" }, body: JSON.stringify({ projectId: project.id, taskId: task.id }), signal: AbortSignal.timeout(30_000) });
+      const routed = await runtimeFetch(`${peer.url}/api/cluster/tasks/archive`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: project.id, taskId: task.id }), signal: AbortSignal.timeout(30_000) });
       await mirrorTaskResponse(response, routed);
       return;
     }
@@ -220,7 +220,7 @@ app.post("/api/projects/:projectId/tasks/:taskId/merge", async (request, respons
     const local = await getClusterNode();
     const peer = await ownerPeer(task, local.id);
     if (peer) {
-      const routed = await fetch(`${peer.url}/api/cluster/tasks/merge-action`, { method: "POST", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" }, body: JSON.stringify({ action: "merge", projectId: project.id, taskId: task.id }), signal: AbortSignal.timeout(120_000) });
+      const routed = await runtimeFetch(`${peer.url}/api/cluster/tasks/merge-action`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "merge", projectId: project.id, taskId: task.id }), signal: AbortSignal.timeout(120_000) });
       await mirrorTaskResponse(response, routed);
       return;
     }
@@ -261,7 +261,7 @@ app.post("/api/projects/:projectId/tasks/:taskId/merge-resume", async (request, 
     const local = await getClusterNode();
     const peer = await ownerPeer(task, local.id);
     if (peer) {
-      const routed = await fetch(`${peer.url}/api/cluster/tasks/merge-action`, { method: "POST", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" }, body: JSON.stringify({ action: "merge-resume", projectId: project.id, taskId: task.id }), signal: AbortSignal.timeout(30_000) });
+      const routed = await runtimeFetch(`${peer.url}/api/cluster/tasks/merge-action`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "merge-resume", projectId: project.id, taskId: task.id }), signal: AbortSignal.timeout(30_000) });
       await mirrorTaskResponse(response, routed);
       return;
     }
@@ -286,7 +286,7 @@ app.post("/api/projects/:projectId/tasks/:taskId/merge-restart", async (request,
     const local = await getClusterNode();
     const peer = await ownerPeer(task, local.id);
     if (peer) {
-      const routed = await fetch(`${peer.url}/api/cluster/tasks/merge-action`, { method: "POST", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" }, body: JSON.stringify({ action: "merge-restart", projectId: project.id, taskId: task.id }), signal: AbortSignal.timeout(120_000) });
+      const routed = await runtimeFetch(`${peer.url}/api/cluster/tasks/merge-action`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "merge-restart", projectId: project.id, taskId: task.id }), signal: AbortSignal.timeout(120_000) });
       await mirrorTaskResponse(response, routed);
       return;
     }
@@ -316,7 +316,7 @@ app.get("/api/projects/:projectId/tasks/:taskId/merge-conflicts", async (request
     const local = await getClusterNode();
     const peer = await ownerPeer(task, local.id);
     if (peer) {
-      const routed = await fetch(`${peer.url}/api/cluster/tasks/merge-conflicts?projectId=${encodeURIComponent(project.id)}&taskId=${encodeURIComponent(task.id)}`, { headers: { Authorization: `Bearer ${await getClusterMachineToken()}` }, signal: AbortSignal.timeout(30_000) });
+      const routed = await runtimeFetch(`${peer.url}/api/cluster/tasks/merge-conflicts?projectId=${encodeURIComponent(project.id)}&taskId=${encodeURIComponent(task.id)}`, { signal: AbortSignal.timeout(30_000) });
       await mirrorTaskResponse(response, routed);
       return;
     }
@@ -347,7 +347,7 @@ app.post("/api/projects/:projectId/tasks/:taskId/merge-resolve", async (request,
     const local = await getClusterNode();
     const peer = await ownerPeer(task, local.id);
     if (peer) {
-      const routed = await fetch(`${peer.url}/api/cluster/tasks/merge-action`, { method: "POST", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" }, body: JSON.stringify({ action: "merge-resolve", projectId: project.id, taskId: task.id, payload }), signal: AbortSignal.timeout(30_000) });
+      const routed = await runtimeFetch(`${peer.url}/api/cluster/tasks/merge-action`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "merge-resolve", projectId: project.id, taskId: task.id, payload }), signal: AbortSignal.timeout(30_000) });
       await mirrorTaskResponse(response, routed);
       return;
     }
@@ -374,7 +374,7 @@ app.post("/api/projects/:projectId/tasks/:taskId/discard", async (request, respo
     const local = await getClusterNode();
     const peer = await ownerPeer(task, local.id);
     if (peer) {
-      const routed = await fetch(`${peer.url}/api/cluster/tasks/merge-action`, { method: "POST", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" }, body: JSON.stringify({ action: "discard", projectId: project.id, taskId: task.id }), signal: AbortSignal.timeout(30_000) });
+      const routed = await runtimeFetch(`${peer.url}/api/cluster/tasks/merge-action`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "discard", projectId: project.id, taskId: task.id }), signal: AbortSignal.timeout(30_000) });
       await mirrorTaskResponse(response, routed);
       return;
     }
@@ -446,7 +446,7 @@ app.delete("/api/projects/:projectId/tasks/:taskId", async (request, response, n
     const local = await getClusterNode();
     const peer = await ownerPeer(task, local.id);
     if (peer) {
-      const routed = await fetch(`${peer.url}/api/cluster/tasks/delete`, { method: "DELETE", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" }, body: JSON.stringify({ projectId: project.id, taskId: task.id }), signal: AbortSignal.timeout(30_000) });
+      const routed = await runtimeFetch(`${peer.url}/api/cluster/tasks/delete`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: project.id, taskId: task.id }), signal: AbortSignal.timeout(30_000) });
       await mirrorTaskResponse(response, routed);
       return;
     }

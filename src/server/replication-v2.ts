@@ -5,7 +5,7 @@ import { signClusterRequest } from "../cluster-protocol.js";
 import { ensureResourceSharingSchema } from "../cluster-sharing.js";
 import { enqueueSecretCredentialSync, secretCredentialEventsForPeer, recordSecretCredentialReceipt, recordSecretCredentialFailure } from "../secret-replication.js";
 import { isTrustedTwin, mayReceiveResource } from "../cluster-sharing-policy.js";
-import { ClusterV2HttpError } from '../cluster-v2-mode.js';
+import { ClusterV2HttpError } from '../cluster-v2-errors.js';
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { replicationEventProjectId, type ReplicationEvent } from "../replication.js";
 
@@ -23,19 +23,24 @@ export function replicationPeers(db: DatabaseSync, local: string): PeerEndpoint[
   return [...new Map(rows.map((row) => [row.nodeId, row])).values()];
 }
 
+/** The project an event belongs to, resolving conversation events through their record. */
+export function replicationEventProject(db: DatabaseSync, event: ReplicationEvent): string | undefined {
+  const project = replicationEventProjectId(event);
+  if (project || !["conversation.ownership", "name.override"].includes(event.entityType)) return project;
+  const payload = event.payload as { sessionId?: string; key?: string };
+  const table = db.prepare("SELECT 1 FROM sqlite_master WHERE name='conversation_records'").get();
+  const rows = table ? db.prepare("SELECT DISTINCT project_id FROM conversation_records WHERE session_id=?").all(payload.sessionId ?? payload.key ?? "") as unknown as Array<{project_id:string}> : [];
+  return rows.length === 1 ? rows[0].project_id : undefined;
+}
+
 export function mayReplicateEvent(db: DatabaseSync, local: string, peer: string, event: ReplicationEvent): boolean {
-  let project = replicationEventProjectId(event);
-  // User-global keys cannot safely carry third-party project data through a twin.
-  if (["cluster.routing", "canvas.shortcut"].includes(event.entityType)) return false;
-  if (!project && ["conversation.ownership", "name.override"].includes(event.entityType)) {
-    const payload = event.payload as { sessionId?: string; key?: string };
-    const table = db.prepare("SELECT 1 FROM sqlite_master WHERE name='conversation_records'").get();
-    if (!table) return false;
-    const rows = db.prepare("SELECT DISTINCT project_id FROM conversation_records WHERE session_id=?").all(payload.sessionId ?? payload.key ?? "") as unknown as Array<{project_id:string}>;
-    if (rows.length !== 1) return false;
-    project = rows[0].project_id;
-  }
-  if (!project) return false;
+  // Routing configurations have their own distribution (routing-configs.ts).
+  if (event.entityType === "cluster.routing") return false;
+  // Canvas shortcuts belong to the user, not a project: only the user's twins get them.
+  if (event.entityType === "canvas.shortcut") return isTrustedTwin(db, local, peer);
+  const project = replicationEventProject(db, event);
+  // Data outside any project stays on the user's own machines: twins only.
+  if (!project) return isTrustedTwin(db, local, peer);
   const policy = db.prepare("SELECT deleted FROM cluster_v2_resource_policy WHERE kind='project' AND resource_id=?")
     .get(project) as { deleted: number } | undefined;
   return Boolean(policy && !policy.deleted && mayReceiveResource(db, local, "project", project)

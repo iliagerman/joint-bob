@@ -253,37 +253,22 @@ function seedNodeDatabase(job: unknown): Promise<Record<string, unknown>> {
   });
 }
 
-interface SeededNode extends NodeSpec { nodeId: string; token: string; projects: Array<{ id: string; name: string; path: string }> }
+interface SeededNode extends NodeSpec { nodeId: string; projects: Array<{ id: string; name: string; path: string }> }
 
+// Node B mirrors node A's projects under the same IDs. `pairTwinNodes` in
+// test/dev-nodes.ts (or the dev:cluster script) then pairs the running nodes as twins.
 const seeded: SeededNode[] = [];
 for (const spec of nodeSpecs) {
   const result = await seedNodeDatabase({
-    mode: "seed",
     dataDir: spec.dataDir,
     home,
     node: { name: spec.name, url: spec.url },
     admin: { username, password },
     paths: { piSessions: piSessionRoot, claudeConfig: claudeConfigRoot, claudeProjects: claudeProjectsRoot, projectsHome: path.join(home, "JointBob") },
     projects: demoProjects.map((demo) => ({ name: demo.name, path: path.join(projectsRoot, demo.directory) })),
-  }) as { nodeId: string; token: string; projects: SeededNode["projects"] };
+    ...(seeded.length ? { mirrorProjects: seeded[0].projects } : {}),
+  }) as { nodeId: string; projects: SeededNode["projects"] };
   seeded.push({ ...spec, ...result });
-}
-
-// Each node gets the other as a paired peer, and every project is aliased to its
-// twin so a conversation can be handed between nodes.
-for (const node of seeded) {
-  const others = seeded.filter((other) => other.nodeId !== node.nodeId);
-  if (!others.length) continue;
-  await seedNodeDatabase({
-    mode: "pair",
-    dataDir: node.dataDir,
-    home,
-    peers: others.map((other) => ({ id: other.nodeId, name: other.name, url: other.url, token: other.token })),
-    aliases: node.projects.map((project) => ({
-      projectId: project.id,
-      aliasIds: others.flatMap((other) => other.projects.filter((twin) => twin.path === project.path).map((twin) => twin.id)),
-    })),
-  });
 }
 
 const summary = {
@@ -297,7 +282,7 @@ const summary = {
   projects: seeded[0].projects,
   nodes: seeded.map((node) => ({
     key: node.key, name: node.name, port: node.port, url: node.url, dataDir: node.dataDir,
-    cookieName: node.cookieName, nodeId: node.nodeId, projects: node.projects,
+    cookieName: node.cookieName, nodeId: node.nodeId, projects: node.projects.map(({ id, name, path: projectPath }) => ({ id, name, path: projectPath })),
   })),
 };
 

@@ -1,13 +1,16 @@
 import type { AuthSession } from "../../auth.js";
 import { getHarnessRuntime, listHarnesses } from "../../harnesses.js";
 import { addNtfyService, deleteNtfyService, getNtfyService, importNtfyService, listNtfyServices, setDefaultNtfyService } from "../../ntfy.js";
-import { listClusterPeers } from "../../cluster.js";
 import { isHarnessId } from "../../types.js";
 import { deletePushSubscription, getVapidPublicKey, savePushSubscription } from "../../push.js";
 import { sendError } from "../http-auth.js";
 import { flushPushSubscriptionOutbox } from "../push-flush.js";
 import { ntfyServiceSchema, pushSubscribeSchema, pushUnsubscribeSchema, sharedNtfyServiceSchema } from "../schemas.js";
 import { app } from "../state.js";
+import { getClusterNode } from "../../cluster.js";
+import { isTrustedTwin } from "../../cluster-sharing-policy.js";
+import { clusterV2Database } from "../../cluster-v2-store.js";
+import { replicationPeers, signedPeerPost } from "../replication-v2.js";
 import type { AgentCapabilityIdentity } from "../../agent-capabilities.js";
 import { NtfyRequestError, ntfyAgentRequest, ntfyAgentRequestSchema } from "../../ntfy-publish.js";
 
@@ -71,27 +74,31 @@ app.put("/api/ntfy/services/:id/default", (request, response) => {
   response.json({ ok: true });
 });
 
+/** Copies one ntfy server, token included, to every active twin. Never to other cluster
+    members: the token publishes to this user's topics. */
 app.post("/api/ntfy/services/:id/share", async (request, response, next) => {
   try {
     const service = getNtfyService(request.params.id);
     if (!service) { sendError(response, 404, "ntfy service not found"); return; }
-    const results = await Promise.all((await listClusterPeers()).map(async (peer) => {
+    const db = await clusterV2Database(), local = await getClusterNode();
+    const twins = replicationPeers(db, local.id).filter((peer) => isTrustedTwin(db, local.id, peer.nodeId));
+    const results = await Promise.all(twins.map(async (peer) => {
       try {
-        const shared = await fetch(`${peer.url}/api/cluster/ntfy/services`, { method: "POST", headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" }, body: JSON.stringify(service), signal: AbortSignal.timeout(10_000) });
-        if (!shared.ok) throw new Error(`HTTP ${shared.status}`);
-        await shared.body?.cancel();
-        return { peerId: peer.id, ok: true };
+        await signedPeerPost(peer, "/api/cluster/v2/ntfy/services", service);
+        return { peerId: peer.nodeId, ok: true };
       } catch (error) {
-        return { peerId: peer.id, ok: false, error: error instanceof Error ? error.message : "Share failed" };
+        return { peerId: peer.nodeId, ok: false, error: error instanceof Error ? error.message : "Share failed" };
       }
     }));
     response.json({ results });
   } catch (error) { next(error); }
 });
 
-app.post("/api/cluster/ntfy/services", (request, response, next) => {
+app.post("/api/cluster/v2/ntfy/services", async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const db = await clusterV2Database(), local = await getClusterNode();
+    if (!isTrustedTwin(db, local.id, response.locals.machineNodeId as string)) { sendError(response, 403, "ntfy servers are shared only between twins"); return; }
     response.status(201).json({ service: importNtfyService(sharedNtfyServiceSchema.parse(request.body)) });
   } catch (error) { next(error); }
 });

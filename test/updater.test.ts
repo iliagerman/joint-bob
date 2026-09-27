@@ -331,7 +331,8 @@ test("the updates settings tab is wired into the settings dialog and the service
   assert.match(html, /data-testid="updates-auto-input"/);
   assert.match(html, /data-testid="updates-install-all-button"/);
   assert.match(elements, /updatesInstallAllButton/);
-  assert.match(settingsModule, /await loadUpdatesPanel\(clusterInventory\);/);
+  assert.match(settingsModule, /await loadClusterPanel\(\);\n  await loadUpdatesPanel\(\);/);
+  assert.doesNotMatch(settingsModule, /clusterInventory/);
   assert.match(worker, /"\/app\/updates\.js"/);
 });
 

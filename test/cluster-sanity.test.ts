@@ -1,8 +1,8 @@
-// Two-node sanity suite: seeds the paired dev cluster `npm run dev:cluster`
-// starts, runs both nodes for real, and checks the cluster features a single
-// node cannot exercise — pairing, shared project inventory, project aliasing,
-// live node-to-node traffic, and continuing a conversation on the other
-// node through ownership takeover.
+// Two-node sanity suite: seeds the dev cluster `npm run dev:cluster` starts, runs
+// both nodes for real, pairs them as twins, and checks the cluster features a
+// single node cannot exercise — shared project inventory, live node-to-node
+// traffic, and continuing a conversation on the other node through ownership
+// takeover.
 import assert from "node:assert/strict";
 import { execFile, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -14,19 +14,16 @@ import { DatabaseSync } from "node:sqlite";
 import test, { after, before } from "node:test";
 import { promisify } from "node:util";
 import WebSocket from "ws";
-import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, type SignedIn } from "./dev-nodes.js";
+import { api, pairTwinNodes, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, type SignedIn } from "./dev-nodes.js";
 import { getOrCreateClusterIdentity } from "../src/cluster-identity.js";
 import { signClusterRequest } from "../src/cluster-protocol.js";
 import { openPiRuntimeDatabase, publishPiRuntime } from "../src/pi-runtime.js";
 import { startSupervisor } from "../scripts/joint-bob-supervisor.mjs";
-import { supervisorRequest } from "../scripts/supervisor-client.mjs";
-import { backgroundClusterFixture, closeBackgroundClusterFixture, startSyntheticTask } from "./background-tasks-fixture.js";
+import { startSyntheticTask } from "./background-tasks-fixture.js";
 import { browserCapability } from "../src/browser-runtime.js";
 import { authRequest, fixtureTotp } from "./mfa-fixture.js";
+import { signedNodeRequest } from "./signed-node-request.js";
 
-
-interface PeerView { id: string; name: string; url: string; online: boolean; lastSeenAt?: string; tokenConfigured: boolean }
-interface InventoryView { node: { id: string }; projects: Array<{ project: { id: string; name: string }; aliases: string[] }> }
 interface SessionView { id: string; path: string; title: string; harnessId: string; executionNodeId?: string }
 interface PinsView { projectIds: string[]; conversations: Array<{ projectId: string; engine: string; sessionId: string }> }
 interface RecentSessionView { recentSessions: Array<{ projectId: string; engine: string; sessionId: string; title: string; openedAt: string }> }
@@ -44,6 +41,7 @@ before(async () => {
   environment = await seedDevEnvironment(root, 2);
   [nodeA, nodeB] = environment.nodes;
   servers = await Promise.all(environment.nodes.map((node) => startDevNode(environment, node)));
+  await pairTwinNodes(environment);
   [sessionA, sessionB] = await Promise.all([signIn(environment, nodeA), signIn(environment, nodeB)]);
 }, { timeout: 120_000 });
 
@@ -78,6 +76,7 @@ test("quick note dispatch runs once on the selected peer and never falls back", 
   const children: ChildProcess[] = [];
   try {
     for (const node of notesEnvironment.nodes) children.push(await startDevNode(notesEnvironment, node, { JOINT_BOB_TEST_ENGINE_LOG: log }));
+    await pairTwinNodes(notesEnvironment);
     const auth = await signIn(notesEnvironment, source);
     const targetAuth = await signIn(notesEnvironment, target);
     const project = source.projects[0];
@@ -260,7 +259,7 @@ test("conversation classification replicates to a peer and can be cleared there"
   await waitForLabel(nodeA, sessionA, projectA.id, undefined);
 });
 
-test("background tasks route list, output, stop, offline, and grant denial across two nodes", { timeout: 60_000 }, async () => {
+test("background tasks route list, output, stop, and offline across two nodes", { timeout: 60_000 }, async () => {
   interface Runtime { close(): Promise<void> }
   const runtimeA = await startSupervisor({
     dataDirectory: nodeA.dataDir,
@@ -324,18 +323,6 @@ test("background tasks route list, output, stop, offline, and grant denial acros
     servers[1] = await startDevNode(environment, nodeB);
     sessionB = await signIn(environment, nodeB);
 
-    const grants = new DatabaseSync(path.join(nodeB.dataDir, "node.db"));
-    try {
-      grants.prepare("INSERT INTO cluster_project_grants VALUES (?, ?, ?, ?)").run(nodeA.nodeId, "[]", new Date().toISOString(), nodeB.nodeId);
-      const denied = await operation({ action: "get", id: taskB });
-      assert.equal(denied.status, 403, JSON.stringify(denied.body));
-      assert.equal(denied.body.error, "Project is not shared with this node");
-      const deniedDiscovery = await api(nodeA, sessionA, "GET", `/background-tasks?projectId=${projectA.id}&conversationId=${conversationId}`);
-      assert.equal(deniedDiscovery.status, 403, "permission denial must not become an empty successful discovery");
-    } finally {
-      grants.prepare("DELETE FROM cluster_project_grants WHERE node_id = ?").run(nodeA.nodeId);
-      grants.close();
-    }
   } finally {
     await runtimeA.close();
     await runtimeB.close();
@@ -523,20 +510,6 @@ test("a replicated review survives a cold listing on the other node and new acti
   await waitState(nodeB, sessionB, projectB.id, "needs_review", nextActivityAt);
 });
 
-test("each node is paired with the other and holds its machine token", async () => {
-  const [peersA, peersB] = await Promise.all([
-    api<{ peers: PeerView[] }>(nodeA, sessionA, "GET", "/cluster/peers"),
-    api<{ peers: PeerView[] }>(nodeB, sessionB, "GET", "/cluster/peers"),
-  ]);
-  assert.equal(peersA.body.peers.length, 1, "node A has exactly one peer");
-  assert.equal(peersB.body.peers.length, 1, "node B has exactly one peer");
-  assert.equal(peersA.body.peers[0].id, nodeB.nodeId);
-  assert.equal(peersA.body.peers[0].url, nodeB.url);
-  assert.equal(peersB.body.peers[0].id, nodeA.nodeId);
-  assert.equal(peersB.body.peers[0].url, nodeA.url);
-  assert.ok(peersA.body.peers[0].tokenConfigured && peersB.body.peers[0].tokenConfigured, "both sides hold a machine token");
-});
-
 test("saving this node's identity updates every peer before the request completes", async () => {
   const renamedUrl = `http://localhost:${new URL(nodeA.url).port}`;
   const saved = await api<{ node: { name: string; url: string } }>(nodeA, sessionA, "PUT", "/cluster/node", {
@@ -547,10 +520,10 @@ test("saving this node's identity updates every peer before the request complete
   assert.equal(saved.body.node.name, "Renamed node A");
   assert.equal(saved.body.node.url, renamedUrl);
 
-  const peersB = await api<{ peers: PeerView[] }>(nodeB, sessionB, "GET", "/cluster/peers");
-  const nodeAOnB = peersB.body.peers.find((peer) => peer.id === nodeA.nodeId);
-  assert.equal(nodeAOnB?.name, "Renamed node A");
-  assert.equal(nodeAOnB?.url, renamedUrl);
+  const twinsB = await api<{ relationships: Array<{ peer: { nodeId: string }; endpoint: { name: string; url: string } }> }>(nodeB, sessionB, "GET", "/twins");
+  const nodeAOnB = twinsB.body.relationships.find((relationship) => relationship.peer.nodeId === nodeA.nodeId);
+  assert.equal(nodeAOnB?.endpoint.name, "Renamed node A");
+  assert.equal(nodeAOnB?.endpoint.url, renamedUrl);
 });
 
 test("workspace secret attachments replicate to the same workspace on a peer", async () => {
@@ -572,17 +545,6 @@ test("workspace secret attachments replicate to the same workspace on a peer", a
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   assert.fail("workspace attachment did not replicate to node B");
-});
-
-test("every project on one node is aliased to its twin on the other", async () => {
-  const inventory = await api<InventoryView>(nodeA, sessionA, "GET", "/cluster/local-inventory");
-  assert.equal(inventory.status, 200);
-  assert.equal(inventory.body.node.id, nodeA.nodeId);
-  for (const entry of inventory.body.projects) {
-    const twin = nodeB.projects.find((project) => project.name === entry.project.name);
-    assert.ok(twin, `node B has a twin of ${entry.project.name}`);
-    assert.ok(entry.aliases.includes(twin.id), `${entry.project.name} is aliased to node B's copy`);
-  }
 });
 
 test("review writes wake same-node tabs even when they watch another project", async () => {
@@ -730,27 +692,6 @@ test("recent conversations merge concurrent opens, map project twins, and wake r
   } finally { socket.close(); }
 });
 
-test("the two nodes reach each other over the network with their machine tokens", async () => {
-  const lastSeen = async (): Promise<number> => {
-    const peers = (await api<{ peers: PeerView[] }>(nodeA, sessionA, "GET", "/cluster/peers")).body.peers;
-    const peer = peers.find((candidate) => candidate.id === nodeB.nodeId);
-    assert.ok(peer, "node A still has node B as a peer");
-    return new Date(peer.lastSeenAt ?? 0).getTime();
-  };
-
-  // Seeding stamps `lastSeenAt` once. Only a real call from the peer moves it on,
-  // so a later timestamp proves the nodes are actually talking, not just paired
-  // on paper. The running servers poll each other every few seconds.
-  const before = await lastSeen();
-  const deadline = Date.now() + 45_000;
-  let latest = before;
-  while (latest <= before && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
-    latest = await lastSeen();
-  }
-  assert.ok(latest > before, `node B checked in with node A (last seen moved from ${before} to ${latest})`);
-});
-
 test("a conversation continues on the other node through takeover", async () => {
   const project = nodeA.projects.find((candidate) => candidate.name === "Internal Assistant")!;
   const sessions = await api<{ sessions: SessionView[] }>(nodeA, sessionA, "GET", `/projects/${project.id}/sessions`);
@@ -844,11 +785,11 @@ test("takeover honors a live queue refusal but survives a connection lost during
   let failure: "refuse" | "disconnect" | "partial" = "refuse";
   const peer = createServer((request, response) => {
     response.setHeader("Content-Type", "application/json");
-    if (request.url?.startsWith("/api/cluster/sessions/ownership?")) {
+    if (request.url?.startsWith("/api/cluster/v2/runtime/sessions/ownership?")) {
       response.end(JSON.stringify({ ownership: { engine: "claude", sessionId: target.id, ownerNodeId: nodeB.nodeId, epoch: 1, status: "owned", transferToNodeId: null } }));
-    } else if (request.url === "/api/cluster/sessions/queue-transfer" && failure === "disconnect") {
+    } else if (request.url === "/api/cluster/v2/runtime/sessions/queue-transfer" && failure === "disconnect") {
       request.socket.destroy();
-    } else if (request.url === "/api/cluster/sessions/queue-transfer" && failure === "partial") {
+    } else if (request.url === "/api/cluster/v2/runtime/sessions/queue-transfer" && failure === "partial") {
       response.writeHead(200);
       response.write('{"events":');
       setTimeout(() => request.socket.destroy(), 20);
@@ -996,74 +937,16 @@ test("a canvas shortcut assigned on one node reaches the same account on the oth
   await untilShortcuts(nodeB, sessionB, (rows) => rows.length === 0, "node B still holds the released binding");
 });
 
-test("fleet updates exclude legacy peers", { timeout: 60_000 }, async () => {
-  const version = JSON.parse(await readFile("package.json", "utf8")).version;
-  let peerVersion = "0.0.1";
-  let installs = 0;
-  const feed = createServer((request, response) => {
-    response.setHeader("Content-Type", "application/json");
-    if (request.url === "/releases/latest") {
-      response.end(JSON.stringify({ tag_name: `v${version}`, draft: false, prerelease: false, assets: [
-        { name: "joint-bob.tar.gz", browser_download_url: "https://example.invalid/release.tar.gz" },
-        { name: "joint-bob.tar.gz.sha256", browser_download_url: "https://example.invalid/release.tar.gz.sha256" },
-      ] }));
-    } else if (request.url === "/api/health") response.end(JSON.stringify({ version: peerVersion }));
-    else if (request.url === "/api/cluster/update/install") {
-      installs++;
-      peerVersion = version;
-      response.end(JSON.stringify({ accepted: true }));
-    } else { response.statusCode = 404; response.end("{}"); }
-  });
-  await stopDevNode(servers[1]);
-  await stopDevNode(servers[0]);
-  await new Promise<void>((resolve) => feed.listen(Number(new URL(nodeB.url).port), "127.0.0.1", resolve));
-  try {
-    servers[0] = await startDevNode(environment, nodeA, { JOINT_BOB_RELEASE: "a".repeat(40), JOINT_BOB_RELEASE_API: nodeB.url });
-    sessionA = await signIn(environment, nodeA);
-    const result = await api<{ state: string; error?: string; entries: Array<{ nodeId: string }> }>(nodeA, sessionA, "POST", "/update/install-all");
-    assert.equal(result.status, 202, `current coordinator must accept fleet update: ${JSON.stringify(result.body)}`);
-    assert.deepEqual(result.body.entries.map((entry) => entry.nodeId), [nodeA.nodeId], "legacy peer is not a fleet target");
-    let state = result.body.state;
-    for (let attempt = 0; state === "running" && attempt < 100; attempt++) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      state = (await api<{ state: string }>(nodeA, sessionA, "GET", "/update/install-all")).body.state;
-    }
-    assert.equal(state, "succeeded", "skip coordinator install when already on target");
-    assert.equal(installs, 0, "legacy peer receives no install request");
-    assert.equal(peerVersion, "0.0.1", "legacy peer remains unchanged");
-    const status = await api<{ activeJob: unknown; recentJobs: unknown[] }>(nodeA, sessionA, "GET", "/update/status");
-    assert.equal(status.body.activeJob, null);
-    assert.equal(status.body.recentJobs.length, 0, "coordinator must not spawn an installer");
-  } finally {
-    await stopDevNode(servers[0]);
-    feed.closeAllConnections();
-    await new Promise<void>((resolve) => feed.close(() => resolve()));
-    servers[0] = await startDevNode(environment, nodeA);
-    servers[1] = await startDevNode(environment, nodeB);
-    sessionA = await signIn(environment, nodeA);
-    sessionB = await signIn(environment, nodeB);
-  }
-});
-
-test("cluster inventory reports each node's version and denies peer updates despite machine auth", async () => {
+test("the updates inventory reports each twin's version and update capability", async () => {
   const manifest = JSON.parse(await readFile("package.json", "utf8"));
   interface InventoryEntry { peerId: string; reachable: boolean; inventory?: { version: string; updates?: { supported: boolean; activeJob: unknown } } }
   const inventory = await api<{ local: { id: string }; remote: InventoryEntry[] }>(nodeA, sessionA, "GET", "/cluster/inventory");
   assert.equal(inventory.status, 200);
   assert.equal(inventory.body.remote.length, 1);
   const peer = inventory.body.remote[0];
-  assert.ok(peer.reachable, "node B answers its inventory call");
+  assert.ok(peer.reachable, "the twin answers its signed inventory call");
   assert.equal(peer.inventory?.version, manifest.version, "the peer reports its running version");
   assert.equal(peer.inventory?.updates?.supported, false, "a dev node reports itself not update-capable");
-
-  const installUrl = `${nodeB.url}/api/cluster/update/install`;
-  const unauthenticated = await fetch(installUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: "9.9.9" }) });
-  assert.equal(unauthenticated.status, 401, "the fleet install route rejects session-less callers");
-
-  const { token } = (await api<{ token: string }>(nodeA, sessionA, "GET", "/cluster/invite")).body;
-  const machineAuthenticated = await fetch(installUrl, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ version: "9.9.9" }) });
-  assert.equal(machineAuthenticated.status, 403, "a paired machine peer is forbidden from requesting an update");
-  assert.match(((await machineAuthenticated.json()) as { error: string }).error, /forbidden/i);
 });
 
 test("a node opens new conversations while its peer is down, and the claim replicates when it returns", async () => {
@@ -1117,26 +1000,6 @@ test("a node opens new conversations while its peer is down, and the claim repli
   assert.fail("the claim did not replicate to node B after it returned");
 });
 
-test("queue-transfer refuses a machine peer whose grant excludes the project", async () => {
-  const project = nodeA.projects[0];
-  const token = (await api<{ token: string }>(nodeB, sessionB, "GET", "/cluster/invite")).body.token;
-  const db = new DatabaseSync(path.join(nodeA.dataDir, "node.db"));
-  db.exec("PRAGMA busy_timeout = 5000;");
-  assert.equal(db.prepare("SELECT 1 FROM cluster_project_grants WHERE node_id = ?").get(nodeB.nodeId), undefined);
-  try {
-    db.prepare("INSERT INTO cluster_project_grants VALUES (?, ?, ?, ?)").run(nodeB.nodeId, "[]", new Date().toISOString(), nodeA.nodeId);
-    const response = await fetch(`${nodeA.url}/api/cluster/sessions/queue-transfer`, {
-      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId: project.id, engine: "claude", sessionId: "not-a-session" }),
-    });
-    assert.equal(response.status, 403, await response.clone().text());
-    assert.deepEqual(await response.json(), { error: "Project is not shared with this node" });
-  } finally {
-    db.prepare("DELETE FROM cluster_project_grants WHERE node_id = ?").run(nodeB.nodeId);
-    db.close();
-  }
-});
-
 async function queueTransferFixture() {
   const projectA = nodeA.projects.find((project) => project.name === "Joint Bob")!;
   const projectB = nodeB.projects.find((project) => project.name === "Joint Bob")!;
@@ -1176,8 +1039,7 @@ test("queue takeover retries a lost fenced response, copies pending settings and
     await waitForQueueFrame(messages, () => messages.some((frame) => frame.type === "queuedPromptCancelled"));
     opened.socket.send(JSON.stringify({ type: "prompt", message: "run on destination", queueSettings: { provider: "claude", modelId: "haiku", reasoning: "high" } }));
     await waitForQueueFrame(messages, () => messages.filter((frame) => frame.type === "error").length === 2);
-    const token = (await api<{ token: string }>(nodeB, sessionB, "GET", "/cluster/invite")).body.token;
-    const fenced = await fetch(`${nodeA.url}/api/cluster/sessions/queue-transfer`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ projectId: projectA.id, engine: "claude", sessionId: conversation.id }) });
+    const fenced = await signedNodeRequest(environment, nodeB, nodeA, "POST", "/api/cluster/v2/runtime/sessions/queue-transfer", { projectId: projectA.id, engine: "claude", sessionId: conversation.id });
     assert.equal(fenced.status, 200, await fenced.clone().text());
     assert.equal(readOwnershipRow(nodeA, "claude", conversation.id)!.status, "transferring");
     // Discard the response, as if the network failed after the source fenced.
@@ -1469,7 +1331,8 @@ test("chat ntfy sends use the replicated conversation destination on another nod
     const reviewEnabled = await api(nodeA, sessionA, "PUT", `/projects/${projectA.id}/sessions/review-notifications`, { sessionPath: fileA, enabled: true });
     assert.equal(reviewEnabled.status, 200);
     await listReady(nodeB, sessionB, projectB.id, (row) => row.ntfyEnabled === true && row.reviewNotificationsEnabled === true, "notification flags did not replicate to node B");
-    assert.equal((await api(nodeB, sessionB, "POST", `/projects/${projectB.id}/sessions/take-ownership`, { peerId: nodeB.nodeId, sessionId: id, sessionPath: fileB })).status, 200);
+    const takenOver = await api(nodeB, sessionB, "POST", `/projects/${projectB.id}/sessions/take-ownership`, { peerId: nodeB.nodeId, sessionId: id, sessionPath: fileB });
+    assert.equal(takenOver.status, 200, JSON.stringify(takenOver.body));
     const activity = new Date().toISOString();
     await writeFile(fileB, fixture(projectB.path, activity));
     await listReady(nodeB, sessionB, projectB.id, (row) => row.reviewState === "needs_review", "node B did not need review");
@@ -1547,10 +1410,7 @@ test("both prepared nodes become writable and resume replication after restart",
     const node = nodes[index];
     const response = await api(node, sessions[index], "POST", "/update/install", {});
     assert.equal(response.status, 409, `${node.key} must reach validation rather than the stale update fence`);
-    const { token } = (await api<{ token: string }>(nodes[1 - index], sessions[1 - index], "GET", "/cluster/invite")).body;
-    const replication = await fetch(`${node.url}/api/cluster/events`, {
-      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ events: [] }),
-    });
+    const replication = await signedNodeRequest(environment, nodes[1 - index], node, "POST", "/api/cluster/v2/events", { events: [] });
     assert.equal(replication.status, 200, `${node.key} accepts authenticated replication after recovery`);
   }
 });
@@ -1634,8 +1494,8 @@ test("routing configurations share across paired nodes without changing the rece
   assert.equal(converged.selectedId, configId, "the selection still survives the retried delivery");
 
   // Unauthenticated distribution is refused.
-  const unauthenticated = await fetch(`${nodeB.url}/api/cluster/routing-configs/events`, {
-    method: "POST", headers: { Authorization: "Bearer not-a-pairing-token", "Content-Type": "application/json" }, body: JSON.stringify({ events: [] }),
+  const unauthenticated = await fetch(`${nodeB.url}/api/cluster/v2/routing-configs`, {
+    method: "POST", headers: { Authorization: "Bearer not-a-signature", "Content-Type": "application/json" }, body: JSON.stringify({ events: [] }),
   });
   assert.equal(unauthenticated.status, 401);
 
@@ -1649,42 +1509,27 @@ test("routing configurations share across paired nodes without changing the rece
   assert.equal((await readConfigs(nodeA, sessionA)).selectedId, "");
 });
 
-test("browser profile cross-node access toggle and grants gate the relay while the owner node keeps control", { timeout: 90_000 }, async () => {
+test("browser profile cross-node access toggle gates the relay while the owner node keeps control", { timeout: 90_000 }, async () => {
   const project = nodeA.projects[0];
-  const unshared = nodeA.projects[2];
-  // Seeded nodes know the shared projects under their own ids; grants on B must
-  // use B's canonical ids (A's ids resolve on B only as aliases).
-  const projectsOnB = await api<{ projects: Array<{ id: string; name: string }> }>(nodeB, sessionB, "GET", "/projects");
-  const projectOnB = projectsOnB.body.projects.find((candidate) => candidate.name === project.name)!;
-  const unsharedOnB = projectsOnB.body.projects.find((candidate) => candidate.name === unshared.name)!;
+  // Twins hold the mirrored projects under the same ids.
+  const projectOnB = project;
   const conversation = randomUUID();
   // A profile entity on B without launching a browser: write through B's own store.
   // New profiles are node-only by default, so this fixture opts in explicitly.
   const issue = await promisify(execFile)(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `import { BrowserStore } from './src/browser-store.ts';
-import { saveClusterProjectGrant } from './src/cluster.ts';
 const store = new BrowserStore();
 const profile = store.createProfile(${JSON.stringify(projectOnB.id)}, 'Relay login');
 store.setProfileCrossNode(profile.id, true);
 store.grantProfileAccess(profile.id, { scope: 'conversation', projectId: ${JSON.stringify(projectOnB.id)}, conversationId: ${JSON.stringify(conversation)} });
-store.grantProfileAccess(profile.id, { scope: 'project', projectId: ${JSON.stringify(unsharedOnB.id)} });
 store.close();
-await saveClusterProjectGrant(${JSON.stringify(nodeA.nodeId)}, [${JSON.stringify(projectOnB.id)}], ${JSON.stringify(nodeB.nodeId)});
 console.log(profile.id);`], { cwd: process.cwd(), env: { ...process.env, HOME: environment.home, JOINT_BOB_DATA_DIR: nodeB.dataDir }, timeout: 15000 });
   const profileId = issue.stdout.trim();
 
-  // A's invitation grants it only the first project. The shared project sees the
-  // profile through the relay, and the grants metadata hides the project A cannot access.
+  // The twin sees the profile through the relay.
   const visible = await api<{ profiles: Array<{ id: string; grants: Array<{ projectId?: string }> }> }>(nodeA, sessionA, "GET", `/browser/profiles?${new URLSearchParams({ projectId: project.id, engine: "pi", conversationId: conversation, nodeId: nodeB.nodeId })}`);
   assert.equal(visible.status, 200, JSON.stringify(visible.body));
   assert.deepEqual(visible.body.profiles.map((profile) => profile.id), [profileId]);
-  assert.ok(visible.body.profiles[0].grants.every((grant) => grant.projectId !== unshared.id), "grant metadata must not leak projects the caller cannot access");
-  const unsharedList = await api(nodeA, sessionA, "GET", `/browser/profiles?${new URLSearchParams({ projectId: unshared.id, engine: "pi", conversationId: randomUUID(), nodeId: nodeB.nodeId })}`);
-  assert.ok(unsharedList.status === 403, "the relay enforces the project grant before the profile listing");
 
-  // Granting access to a project the caller is not authorized for is refused.
-  const foreignGrant = await api(nodeA, sessionA, "PUT", `/browser/profiles/${profileId}/access?${new URLSearchParams({ projectId: project.id, conversationId: conversation, nodeId: nodeB.nodeId })}`, { grant: { scope: "project", projectId: nodeA.projects[1].id } });
-  assert.equal(foreignGrant.status, 403, JSON.stringify(foreignGrant.body));
-  assert.match(foreignGrant.body.error, /not shared/i);
   // Peers may not widen a profile to global scope; that stays on the owning node.
   const globalGrant = await api(nodeA, sessionA, "PUT", `/browser/profiles/${profileId}/access?${new URLSearchParams({ projectId: project.id, conversationId: conversation, nodeId: nodeB.nodeId })}`, { grant: { scope: "global" } });
   assert.equal(globalGrant.status, 403, JSON.stringify(globalGrant.body));

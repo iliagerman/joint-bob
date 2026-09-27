@@ -1,7 +1,7 @@
 import { realpath } from "node:fs/promises";
 import type { Request, Response } from "express";
 import { type ClusterPeer, getClusterNode } from "../../cluster.js";
-import { getRuntimePeer as getClusterPeer, runtimeFetch as fetch } from "../runtime-peers.js";
+import { getRuntimePeer, runtimeFetch } from "../runtime-peers.js";
 import {
   gitCommitDetail,
   gitCommitFileDiff,
@@ -57,9 +57,9 @@ function queryOptional(request: Request, name: string): string | undefined {
 async function proxyGitJson(response: Response, peer: ClusterPeer, clusterRoute: string, query: Record<string, string | undefined>, request?: Request): Promise<void> {
   const url = new URL(clusterRoute, peer.url);
   for (const [key, value] of Object.entries(query)) if (value) url.searchParams.set(key, value);
-  const routed = await fetch(url, {
+  const routed = await runtimeFetch(url, {
     method: request?.method ?? "GET",
-    headers: { Authorization: `Bearer ${peer.token}`, ...(request ? { "Content-Type": "application/json" } : {}) },
+    headers: { ...(request ? { "Content-Type": "application/json" } : {}) },
     ...(request ? { body: JSON.stringify(request.body) } : {}),
     // A review turn can take minutes; the ask route needs a longer ceiling than reads.
     signal: AbortSignal.timeout(request ? 6 * 60_000 : 30_000),
@@ -93,7 +93,7 @@ async function withOwningNode(
   const localNode = await getClusterNode();
   if (taskId) nodeId = await taskOwnerNodeId(projectId, taskId, nodeId);
   if (nodeId && nodeId !== localNode.id) {
-    const peer = await getClusterPeer(nodeId);
+    const peer = await getRuntimePeer(nodeId);
     if (!peer) { sendError(response, 404, "Git node not found"); return; }
     await proxyGitJson(response, peer, clusterRoute, { ...query, projectId, taskId }, forwardRequest);
     return;
@@ -298,7 +298,7 @@ app.post("/api/projects/:projectId/git/ask", async (request, response, next) => 
     const localNode = await getClusterNode();
     if (taskId) nodeId = await taskOwnerNodeId(projectId, taskId, nodeId);
     if (nodeId && nodeId !== localNode.id) {
-      const peer = await getClusterPeer(nodeId);
+      const peer = await getRuntimePeer(nodeId);
       if (!peer) { sendError(response, 404, "Git node not found"); return; }
       await proxyGitJson(response, peer, "/api/cluster/git/ask", { projectId, taskId }, request);
       return;
@@ -352,7 +352,7 @@ app.post("/api/projects/:projectId/git/reviews/:threadId/ask", async (request, r
     const localNode = await getClusterNode();
     if (taskId) nodeId = await taskOwnerNodeId(projectId, taskId, nodeId);
     if (nodeId && nodeId !== localNode.id) {
-      const peer = await getClusterPeer(nodeId);
+      const peer = await getRuntimePeer(nodeId);
       if (!peer) { sendError(response, 404, "Git node not found"); return; }
       await proxyGitJson(response, peer, "/api/cluster/git/reviews/ask", { projectId, taskId, threadId: request.params.threadId }, request);
       return;

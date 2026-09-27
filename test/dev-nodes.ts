@@ -170,6 +170,27 @@ export async function api<T>(node: SeededNode, session: SignedIn, method: string
   return { status: response.status, body: await response.json() as T };
 }
 
+/** Pairs a seeded two-node environment as twins through the real handshake, with
+    node A owning the mirrored projects. Both nodes must be running. Resolves once the
+    relationship is active on both nodes and node B lists every project of node A. */
+export async function pairTwinNodes(environment: DevEnvironment): Promise<string> {
+  const [a, b] = environment.nodes;
+  const [sessionA, sessionB] = await Promise.all([signIn(environment, a), signIn(environment, b)]);
+  const invitation = await api<{ link: string; relationshipId: string }>(a, sessionA, "POST", "/twins/invitations", { confirmOwnedData: true });
+  if (invitation.status !== 201) throw new Error(`Twin invitation failed: ${invitation.status} ${JSON.stringify(invitation.body)}`);
+  const accepted = await api(b, sessionB, "POST", "/twins/accept", { link: invitation.body.link, confirmOwnedData: true });
+  if (accepted.status !== 201) throw new Error(`Twin acceptance failed: ${accepted.status} ${JSON.stringify(accepted.body)}`);
+  const sharing = await api(a, sessionA, "POST", `/twins/${invitation.body.relationshipId}/sharing`, { ownerNodeId: a.nodeId, confirmOwnedData: true });
+  if (sharing.status !== 200) throw new Error(`Twin sharing failed: ${sharing.status} ${JSON.stringify(sharing.body)}`);
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    const listed = await api<{ projects: Array<{ id: string }> }>(b, sessionB, "GET", "/projects?syncStatus=false");
+    if (a.projects.every((project) => listed.body.projects.some((candidate) => candidate.id === project.id))) return invitation.body.relationshipId;
+    if (Date.now() > deadline) throw new Error(`Node B never listed node A's projects: ${JSON.stringify(listed.body)}`);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+}
+
 export function projectNamed(node: SeededNode, name: string): SeededNode["projects"][number] {
   const project = node.projects.find((candidate) => candidate.name === name);
   if (!project) throw new Error(`Node ${node.key} has no project named ${name}`);

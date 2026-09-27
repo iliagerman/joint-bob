@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { createDecipheriv, createHash, randomUUID } from "node:crypto";
-import { createServer } from "node:http";
+import { type ChildProcess } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import webpush from "web-push";
+import { api, pairTwinNodes, seedDevEnvironment, signIn, startDevNode, stopDevNode, type SeededNode } from "./dev-nodes.js";
+import { signedNodeRequest } from "./signed-node-request.js";
 
 type PushModule = typeof import("../src/push.js");
 
@@ -221,37 +223,51 @@ test("malformed replication events are rejected before anything is written", asy
   });
 });
 
-test("the cluster push events route accepts a peer machine token over HTTP", async () => {
+test("the signed push events route accepts twins and refuses other cluster members", { timeout: 150_000 }, async () => {
+  // A subscription batch built in-process: the wire shape a node's push flush sends.
+  let events: Awaited<ReturnType<PushModule["pushSubscriptionEventsForPeer"]>> = [];
   await withDataDir(async () => {
-    // Untagged imports share the server's module graph, so the route and this
-    // test operate on the same database.
-    const { createApp } = await import(`../src/app.js?push-route-${Date.now()}`);
-    const { getClusterMachineToken } = await import("../src/cluster.js");
-    const push = await import("../src/push.js") as PushModule;
-    const server = createServer(createApp());
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-    try {
-      const address = server.address();
-      if (!address || typeof address === "string") throw new Error("Test server did not bind");
-      const base = `http://127.0.0.1:${address.port}`;
-      await push.savePushSubscription(subscription, "user-a", "*", "*", "Joint Bob");
-      const events = await push.pushSubscriptionEventsForPeer(randomUUID());
-      assert.equal(events.length, 1);
-
-      const unauthenticated = await fetch(`${base}/api/cluster/push/events`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ events }),
-      });
-      assert.equal(unauthenticated.status, 401);
-
-      const response = await fetch(`${base}/api/cluster/push/events`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${await getClusterMachineToken()}` },
-        body: JSON.stringify({ events }),
-      });
-      assert.equal(response.status, 200, await response.clone().text());
-      assert.deepEqual(await response.json(), { received: [events[0].id] });
-    } finally {
-      await new Promise((resolve) => server.close(resolve));
-    }
+    const push = await freshPush("signed-route");
+    await push.savePushSubscription(subscription, "user-a", "*", "*", "Joint Bob");
+    events = await push.pushSubscriptionEventsForPeer(randomUUID());
   });
+  assert.equal(events.length, 1);
+
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-push-route-"));
+  const servers: ChildProcess[] = [];
+  try {
+    const environment = await seedDevEnvironment(root, 2);
+    const [nodeA, nodeB] = environment.nodes;
+    servers.push(...await Promise.all(environment.nodes.map((node) => startDevNode(environment, node))));
+    const [sessionA, sessionB] = await Promise.all([signIn(environment, nodeA), signIn(environment, nodeB)]);
+    const target = "/api/cluster/v2/push/events";
+    const batchFrom = (sender: SeededNode) => ({ events: events.map((event) => ({ ...event, id: randomUUID(), originNodeId: sender.nodeId })) });
+
+    const unauthenticated = await fetch(new URL(target, nodeB.url), {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(batchFrom(nodeA)),
+    });
+    assert.equal(unauthenticated.status, 401);
+
+    // Sharing a cluster is not enough: push subscriptions carry no project, so they reach twins only.
+    const cluster = await api<{ snapshot: { body: { clusterId: string } } }>(nodeA, sessionA, "POST", "/clusters", { name: "Push route" });
+    assert.equal(cluster.status, 201, JSON.stringify(cluster.body));
+    const clusterId = cluster.body.snapshot.body.clusterId;
+    const invitation = await api<{ link: string }>(nodeA, sessionA, "POST", `/clusters/${clusterId}/invitations`, { expectedEpoch: 1 });
+    assert.equal(invitation.status, 201, JSON.stringify(invitation.body));
+    const joined = await api(nodeB, sessionB, "POST", "/clusters/join", { link: invitation.body.link, requestId: randomUUID() });
+    assert.equal(joined.status, 201, JSON.stringify(joined.body));
+    const member = await signedNodeRequest(environment, nodeA, nodeB, "POST", target, batchFrom(nodeA));
+    assert.equal(member.status, 403, await member.clone().text());
+    assert.match(await member.text(), /Push subscriptions replicate only between twins/);
+
+    await pairTwinNodes(environment);
+    const twinBatch = batchFrom(nodeA);
+    const twin = await signedNodeRequest(environment, nodeA, nodeB, "POST", target, twinBatch);
+    assert.equal(twin.status, 200, await twin.clone().text());
+    assert.deepEqual(await twin.json(), { received: [twinBatch.events[0].id] });
+  } finally {
+    await Promise.all(servers.map((server) => stopDevNode(server)));
+    await rm(root, { recursive: true, force: true });
+  }
 });
+

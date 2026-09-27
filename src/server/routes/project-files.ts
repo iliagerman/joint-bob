@@ -6,7 +6,7 @@ import { Readable } from "node:stream";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { type ClusterPeer, getClusterNode } from "../../cluster.js";
-import { getRuntimePeer as getClusterPeer, runtimeFetch as fetch } from "../runtime-peers.js";
+import { getRuntimePeer, runtimeFetch } from "../runtime-peers.js";
 import { ConversationOwnershipError } from "../../conversation-ownership.js";
 import { listHarnessSessions } from "../../harnesses.js";
 import { getProject } from "../../store.js";
@@ -304,7 +304,7 @@ async function proxyProjectFileResolution(peer: ClusterPeer, projectId: string, 
   url.searchParams.set("projectId", projectId);
   url.searchParams.set("path", requestedPath);
   if (taskId) url.searchParams.set("taskId", taskId);
-  const routed = await fetch(url, { headers: { Authorization: `Bearer ${peer.token}` }, signal: AbortSignal.timeout(30_000) });
+  const routed = await runtimeFetch(url, { signal: AbortSignal.timeout(30_000) });
   const body = await routed.json().catch(() => null) as { path?: unknown; error?: unknown } | null;
   if (!routed.ok) {
     if (typeof body?.error === "string") throw new ProjectFileError(routed.status, body.error);
@@ -320,7 +320,7 @@ async function proxyProjectFile(response: Response, peer: ClusterPeer, projectId
   url.searchParams.set("path", requestedPath);
   if (taskId) url.searchParams.set("taskId", taskId);
   if (download) url.searchParams.set("download", "1");
-  const routed = await fetch(url, { headers: { Authorization: `Bearer ${peer.token}` }, signal: AbortSignal.timeout(30_000) });
+  const routed = await runtimeFetch(url, { signal: AbortSignal.timeout(30_000) });
   for (const header of ["content-type", "content-disposition", "content-length"] as const) {
     const value = routed.headers.get(header);
     if (value) response.setHeader(header, value);
@@ -368,7 +368,7 @@ app.get("/api/projects/:projectId/file-resolution", async (request, response, ne
     const local = await getClusterNode();
     const effectiveNodeId = taskId ? await taskOwnerNodeId(request.params.projectId, taskId, requestedNodeId) : requestedNodeId;
     if (effectiveNodeId && effectiveNodeId !== local.id) {
-      const peer = await getClusterPeer(effectiveNodeId);
+      const peer = await getRuntimePeer(effectiveNodeId);
       if (!peer) { sendError(response, 404, "File node not found"); return; }
       const resolution = await proxyProjectFileResolution(peer, request.params.projectId, requestedPath, taskId);
       response.json(projectFileLinks(request.params.projectId, resolution.path, effectiveNodeId, taskId));
@@ -390,7 +390,7 @@ app.get("/api/projects/:projectId/file", async (request, response, next) => {
     const local = await getClusterNode();
     if (taskId) requestedNodeId = await taskOwnerNodeId(request.params.projectId, taskId, requestedNodeId);
     if (requestedNodeId && requestedNodeId !== local.id) {
-      const peer = await getClusterPeer(requestedNodeId);
+      const peer = await getRuntimePeer(requestedNodeId);
       if (!peer) { sendError(response, 404, "File node not found"); return; }
       await proxyProjectFile(response, peer, request.params.projectId, requestedPath, request.query.download === "1", taskId);
       return;
@@ -404,9 +404,9 @@ async function proxyProjectFileContent(response: Response, peer: ClusterPeer, pr
   url.searchParams.set("projectId", projectId);
   url.searchParams.set("path", requestedPath);
   if (taskId) url.searchParams.set("taskId", taskId);
-  const routed = await fetch(url, {
+  const routed = await runtimeFetch(url, {
     method: request?.method ?? "GET",
-    headers: { Authorization: `Bearer ${peer.token}`, ...(request ? { "Content-Type": "application/json" } : {}) },
+    headers: { ...(request ? { "Content-Type": "application/json" } : {}) },
     ...(request ? { body: JSON.stringify(request.body) } : {}),
     signal: AbortSignal.timeout(30_000),
   });
@@ -448,7 +448,7 @@ for (const method of ["get", "put"] as const) {
       const local = await getClusterNode();
       if (taskId) nodeId = await taskOwnerNodeId(request.params.projectId, taskId, nodeId);
       if (nodeId && nodeId !== local.id) {
-        const peer = await getClusterPeer(nodeId);
+        const peer = await getRuntimePeer(nodeId);
         if (!peer) { sendError(response, 404, "File node not found"); return; }
         await proxyProjectFileContent(response, peer, request.params.projectId, requestedPath, method === "put" ? request : undefined, taskId);
         return;
@@ -539,9 +539,9 @@ async function copyProjectFile(projectId: string, requestedPath: string, payload
 async function proxyProjectFileJson(response: Response, peer: ClusterPeer, clusterRoute: string, query: Record<string, string>, request?: Request): Promise<void> {
   const url = new URL(clusterRoute, peer.url);
   for (const [key, value] of Object.entries(query)) if (value) url.searchParams.set(key, value);
-  const routed = await fetch(url, {
+  const routed = await runtimeFetch(url, {
     method: request?.method ?? "GET",
-    headers: { Authorization: `Bearer ${peer.token}`, ...(request ? { "Content-Type": "application/json" } : {}) },
+    headers: { ...(request ? { "Content-Type": "application/json" } : {}) },
     ...(request ? { body: JSON.stringify(request.body) } : {}),
     signal: AbortSignal.timeout(30_000),
   });
@@ -591,7 +591,7 @@ app.get("/api/projects/:projectId/files", async (request, response, next) => {
     const local = await getClusterNode();
     if (taskId) nodeId = await taskOwnerNodeId(request.params.projectId, taskId, nodeId);
     if (nodeId && nodeId !== local.id) {
-      const peer = await getClusterPeer(nodeId);
+      const peer = await getRuntimePeer(nodeId);
       if (!peer) { sendError(response, 404, "File node not found"); return; }
       await proxyProjectFileJson(response, peer, "/api/cluster/project-files", { projectId: request.params.projectId, dir, taskId: taskId ?? "" });
       return;
@@ -615,7 +615,7 @@ for (const [route, clusterRoute, handler] of [
       const local = await getClusterNode();
       if (taskId) nodeId = await taskOwnerNodeId(request.params.projectId, taskId, nodeId);
       if (nodeId && nodeId !== local.id) {
-        const peer = await getClusterPeer(nodeId);
+        const peer = await getRuntimePeer(nodeId);
         if (!peer) { sendError(response, 404, "File node not found"); return; }
         await proxyProjectFileJson(response, peer, clusterRoute, { projectId: request.params.projectId, path: requestedPath, taskId: taskId ?? "" }, request);
         return;

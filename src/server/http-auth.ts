@@ -1,18 +1,14 @@
-import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { NextFunction, Request, Response } from "express";
-import { z } from "zod";
 import { type AuthSession, sessionCookieName, sessionForId } from "../auth.js";
-import { type ClusterPeer, getClusterMachineToken, getClusterNode, listClusterPeers } from "../cluster.js";
-import { clusterMembershipMemberSchema } from "./schemas.js";
-import { machineRoutes } from "./state.js";
+import { getClusterNode } from "../cluster.js";
 import { browserAgentIdentity } from "../browser-agent.js";
 import { backgroundTaskAgentIdentity } from "../background-task-agent.js";
 import { ntfyAgentIdentity } from "../ntfy-agent.js";
 import { getOrCreateClusterIdentity, pinClusterPublicKey } from "../cluster-identity.js";
 import { ClusterProtocolError, verifyClusterRequest } from "../cluster-protocol.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
-import { ClusterV2HttpError, selectiveSharingActive } from "../cluster-v2-mode.js";
+import { ClusterV2HttpError } from "../cluster-v2-errors.js";
 
 const clusterRawBodies = new WeakMap<IncomingMessage, Buffer>();
 
@@ -66,33 +62,6 @@ export function isClusterOriginUrl(value: string): boolean {
   return isSecureClusterUrl(value) && !url.username && !url.password && url.pathname === "/" && !url.search && !url.hash;
 }
 
-export function parseClusterInvitationLink(link: string): { inviterUrl: string; invitationId: string; secret: string } {
-  const invitationUrl = new URL(link);
-  if (!isSecureClusterUrl(invitationUrl.href) || invitationUrl.username || invitationUrl.password) throw new Error("Cluster invitation link is invalid");
-  const [invitationId, secret, extra] = invitationUrl.hash.slice(1).split(".");
-  if (invitationUrl.pathname !== "/join" || invitationUrl.search || extra || !secret) throw new Error("Cluster invitation link is invalid");
-  return {
-    inviterUrl: invitationUrl.origin,
-    invitationId: z.string().uuid().parse(invitationId),
-    secret: z.string().regex(/^[A-Za-z0-9_-]{43}$/).parse(secret),
-  };
-}
-
-export function clusterInvitationConflict(member: z.infer<typeof clusterMembershipMemberSchema>, localNode: Awaited<ReturnType<typeof getClusterNode>>, peers: ClusterPeer[], retry: boolean): string | undefined {
-  const normalizedUrl = canonicalClusterUrl(member.url);
-  if (member.id === localNode.id || (localNode.url && normalizedUrl === canonicalClusterUrl(localNode.url))) return "A node cannot join itself";
-  const idPeer = peers.find((peer) => peer.id === member.id);
-  const urlPeer = peers.find((peer) => canonicalClusterUrl(peer.url) === normalizedUrl);
-  const samePeer = idPeer && canonicalClusterUrl(idPeer.url) === normalizedUrl && idPeer.token === member.token && (!urlPeer || urlPeer.id === member.id);
-  if (retry && samePeer) return undefined;
-  if (idPeer || urlPeer) return "A cluster member already uses this identity or URL";
-  return undefined;
-}
-
-export function prospectiveClusterNode(node: Awaited<ReturnType<typeof getClusterNode>>, name: string, url: string): Awaited<ReturnType<typeof getClusterNode>> {
-  return node.name === name && node.url === url ? node : { ...node, name, url, updatedAt: new Date().toISOString() };
-}
-
 export function securityHeaders(request: Request, response: Response, next: NextFunction): void {
   // xterm.js sizes its rows by injecting a <style> element it rewrites on every
   // resize, and paints ANSI colours through per-cell style attributes. Neither can
@@ -116,21 +85,9 @@ function bearerToken(request: Request): string | undefined {
   return match?.[1];
 }
 
-export function machineTokenMatches(candidate: string, expected: string): boolean {
-  const actual = Buffer.from(candidate);
-  const expectedToken = Buffer.from(expected);
-  return actual.length === expectedToken.length && timingSafeEqual(actual, expectedToken);
-}
-
 export function requestCookie(request: Request, name: string): string | undefined {
   const prefix = `${name}=`;
   return request.header("cookie")?.split(";").map((entry) => entry.trim()).find((entry) => entry.startsWith(prefix))?.slice(prefix.length);
-}
-
-export async function machineCredentialNodeId(token: string): Promise<string | undefined> {
-  const [local, localToken, peers] = await Promise.all([getClusterNode(), getClusterMachineToken(), listClusterPeers()]);
-  if (machineTokenMatches(token, localToken)) return local.id;
-  return peers.find((peer) => machineTokenMatches(token, peer.token))?.id;
 }
 
 export function clusterRequestRawBody(request: Request): Buffer {
@@ -176,16 +133,6 @@ export async function requireHttpAuth(request: Request, response: Response, next
   if (request.path === "/ntfy/agent" && request.method === "POST" && token) {
     const identity = ntfyAgentIdentity(token);
     if (identity) { response.locals.ntfyAgent = identity; next(); return; }
-  }
-  const machineNodeId = machineRoutes.has(`${request.method} ${request.path}`) && token
-    ? await machineCredentialNodeId(token)
-    : undefined;
-  if (machineNodeId) {
-    if (await selectiveSharingActive()) { sendError(response, 409, "Legacy machine authentication is disabled in selective sharing mode"); return; }
-    response.locals.machineAuth = true;
-    response.locals.machineNodeId = machineNodeId;
-    next();
-    return;
   }
   const session = sessionForId(requestCookie(request, sessionCookieName));
   if (!session) {

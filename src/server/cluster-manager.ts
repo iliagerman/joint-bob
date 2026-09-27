@@ -10,8 +10,8 @@ import {
 import { verifyClusterRequest } from "../cluster-protocol.js";
 import { getSharingCluster } from "../cluster-sharing-policy.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
-import { ClusterV2HttpError, selectiveSharingActive } from "../cluster-v2-mode.js";
-import { flushV2MembershipOutbox, mapV2Error, signedPost } from "./cluster-v2.js";
+import { ClusterV2HttpError } from "../cluster-v2-errors.js";
+import { flushV2MembershipOutbox, mapV2Error } from "./cluster-v2.js";
 import { clusterRequestRawBody } from "./http-auth.js";
 import { signClusterRequest } from "../cluster-protocol.js";
 import { flushTwinDeliveries } from "./twins.js";
@@ -134,7 +134,6 @@ export function acknowledgeManagerCertificate(
 
 export async function receiveManagerCertificate(request: Request, response: Response, next: NextFunction): Promise<void> {
   try {
-    if (!await selectiveSharingActive()) throw new ClusterV2HttpError(409, "Selective sharing is not active");
     const payload = certificatePayloadSchema.parse(request.body);
     const raw = clusterRequestRawBody(request), local = await getClusterNode(), db = await clusterV2Database();
     ensureManagerHttpSchema(db); db.exec("SAVEPOINT manager_certificate_http");

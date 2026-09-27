@@ -3,7 +3,12 @@ import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { type ChildProcess } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
 import test from "node:test";
+import { api, pairTwinNodes, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "./dev-nodes.js";
+import { signedNodeRequest } from "./signed-node-request.js";
 import type { BrowserChecker } from "../src/browser-monitor-checkers.js";
 import { resolveDataDirectory } from "../src/data-directory.js";
 
@@ -27,7 +32,7 @@ function sessionCookie(response: Response): string {
 test("browser monitor API enforces authentication, scope, and validation", async () => {
   const { createApp } = await import(`../src/app.js?monitor-api=${Date.now()}-${Math.random()}`);
   const { addProject } = await import("../src/store.js");
-  const { getClusterMachineToken, getClusterNode } = await import("../src/cluster.js");
+  const { getClusterNode } = await import("../src/cluster.js");
   const { browserMonitorStore } = await import("../src/browser-monitors.js");
   const server = createServer(createApp());
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -155,7 +160,8 @@ test("browser monitor API enforces authentication, scope, and validation", async
     assert.equal(response.status, 401);
     response = await request("POST", "/api/browser/monitors", historyCommand, true, false);
     assert.equal(response.status, 403);
-    const token = await getClusterMachineToken();
+    // Bearer machine tokens no longer exist; machine callers sign (see the twin test below).
+    const token = "legacy-machine-token";
     response = await request("POST", "/api/browser/monitors", historyCommand, false, false, token);
     assert.equal(response.status, 401);
     for (const bad of [
@@ -195,7 +201,7 @@ test("browser monitor API enforces authentication, scope, and validation", async
     store.delete(foreignEnabled.id, foreignEnabled.generation);
 
     response = await request("POST", "/api/cluster/browser/monitor-authorize", { reference: { kind: "run", projectId: project.id, monitorId: created.id, generation: enabled.generation, runId: randomUUID() } }, false, false, token);
-    assert.equal(response.status, 409);
+    assert.equal(response.status, 401);
     response = await request("POST", "/api/browser/monitors", command(node.id, { action: "delete", projectId: project.id, id: created.id, generation: enabled.generation }));
     assert.equal(response.status, 409);
     response = await request("POST", "/api/browser/monitors", command(node.id, { action: "enable", projectId: project.id, id: created.id, generation: enabled.generation, enabled: false }));
@@ -206,14 +212,55 @@ test("browser monitor API enforces authentication, scope, and validation", async
     assert.equal(response.status, 403);
     response = await request("POST", "/api/browser/monitors", command(node.id, { action: "list", projectId: project.id }), false, false, token);
     assert.equal(response.status, 401);
-    response = await request("POST", "/api/cluster/browser/monitor-authorize", { reference: { kind: "run", projectId: project.id, monitorId: created.id, generation: paused.generation, runId: randomUUID() } }, false, false, token);
-    assert.equal(response.status, 409);
-    response = await request("POST", "/api/cluster/browser/monitor-authorize", { reference: { kind: "run", projectId: project.id, monitorId: randomUUID(), generation: 1, runId: randomUUID() } }, false, false, token);
-    assert.equal(response.status, 404);
 
     response = await request("POST", "/api/browser/monitors", command(node.id, { action: "delete", projectId: project.id, id: created.id, generation: paused.generation }));
     assert.equal(response.status, 200); assert.deepEqual(await response.json(), { deleted: true });
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
+
+test("monitor read authorization answers a signed twin and refuses everything else", { timeout: 150_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-monitor-twin-"));
+  const servers: ChildProcess[] = [];
+  try {
+    const environment = await seedDevEnvironment(root, 2);
+    const [a, b] = environment.nodes;
+    for (const node of environment.nodes) servers.push(await startDevNode(environment, node));
+    await pairTwinNodes(environment);
+    const session = await signIn(environment, a);
+    const project = a.projects[0];
+    const manage = (value: unknown) => api<{ monitor: { id: string; generation: number }; error?: string }>(a, session, "POST", "/browser/monitors", { nodeId: a.nodeId, command: value });
+    assert.equal((await manage({ action: "installChecker", projectId: project.id, definition: checker() })).status, 200);
+    const binding = { nodeId: b.nodeId, sessionId: randomUUID(), profileId: randomUUID(), pageId: randomUUID(), engine: "pi" as const, conversationId: "conversation" };
+    const input = { projectId: project.id, name: "Inbox", checkerId: "fixture", checkerVersion: 1, origin: "https://fixture.example.test", accountId: "account", targetIds: ["target"], intervalSeconds: 10, binding, readAcknowledged: false };
+    const created = await manage({ action: "create", input });
+    assert.equal(created.status, 200, JSON.stringify(created.body));
+    const target = "/api/cluster/v2/runtime/browser/monitor-authorize";
+    const authorize = async (monitorId: string, generation: number) => {
+      const response = await signedNodeRequest(environment, b, a, "POST", target, { reference: { kind: "run", projectId: project.id, monitorId, generation, runId: randomUUID() } });
+      return { status: response.status, body: await response.json() as { error: string } };
+    };
+    let result = await authorize(created.body.monitor.id, created.body.monitor.generation);
+    assert.deepEqual(result, { status: 409, body: { error: "Browser monitor read is not acknowledged" } });
+    const acknowledged = await manage({ action: "update", projectId: project.id, id: created.body.monitor.id, generation: created.body.monitor.generation, patch: { readAcknowledged: true } });
+    assert.equal(acknowledged.status, 200, JSON.stringify(acknowledged.body));
+    result = await authorize(created.body.monitor.id, created.body.monitor.generation);
+    assert.deepEqual(result, { status: 409, body: { error: "Browser monitor read authorization changed" } });
+    result = await authorize(created.body.monitor.id, acknowledged.body.monitor.generation);
+    assert.deepEqual(result, { status: 409, body: { error: "Browser monitor run is not authorized" } }, "a paused monitor has no running run to read");
+    result = await authorize(randomUUID(), 1);
+    assert.equal(result.status, 404);
+
+    const reference = { reference: { kind: "run", projectId: project.id, monitorId: created.body.monitor.id, generation: acknowledged.body.monitor.generation, runId: randomUUID() } };
+    const human = await fetch(new URL(target, a.url), { method: "POST", headers: { Cookie: session.cookie, "x-csrf-token": session.csrfToken, "Content-Type": "application/json" }, body: JSON.stringify(reference) });
+    assert.equal(human.status, 401, "a signed-in user is not a machine caller");
+    const bearer = await fetch(new URL(target, a.url), { method: "POST", headers: { Authorization: "Bearer legacy-machine-token", "Content-Type": "application/json" }, body: JSON.stringify(reference) });
+    assert.equal(bearer.status, 401);
+    const machineOnHumanRoute = await signedNodeRequest(environment, b, a, "POST", "/api/browser/monitors", { nodeId: a.nodeId, command: { action: "list", projectId: project.id } });
+    assert.equal(machineOnHumanRoute.status, 401, "a signature does not open human routes");
+  } finally {
+    await Promise.all(servers.map(stopDevNode));
+    await rm(root, { recursive: true, force: true });
   }
 });

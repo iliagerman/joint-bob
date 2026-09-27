@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import type WebSocket from 'ws';
-import { type ClusterPeer, getClusterNode, listClusterPeers } from "../cluster.js";
+import { type ClusterPeer, getClusterNode } from "../cluster.js";
 import { signClusterRequest, verifyClusterRequest } from "../cluster-protocol.js";
 import { getOrCreateClusterIdentity, pinClusterPublicKey } from "../cluster-identity.js";
 import { machineRoutes } from "./state.js";
@@ -10,7 +10,6 @@ import { ensureConversationRecordSchema } from "../conversation-records.js";
 import { getTaskHandoff } from "../tasks.js";
 import { cronStore } from "../cron.js";
 import { mayShareProject, sharedProjectIds } from "./sharing-files.js";
-import { selectiveSharingActive } from "../cluster-v2-mode.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { replicationPeers } from "./replication-v2.js";
 
@@ -19,13 +18,11 @@ export function trackRuntimeSocket(socket:WebSocket,peer:string,projectId:string
  runtimeSockets.set(socket,{peer,projectId});socket.once('close',()=>runtimeSockets.delete(socket));
 }
 export async function disconnectRevokedRuntimeSockets():Promise<void>{
- if(!await selectiveSharingActive())return;
  const db=await clusterV2Database(),local=await getClusterNode();
  for(const [socket,scope]of runtimeSockets)if(scope.peer!==local.id&&!mayShareProject(db,local.id,scope.peer,scope.projectId))socket.close(1008,'Project sharing was revoked');
 }
 
 export async function listRuntimePeers(projectId?:string): Promise<ClusterPeer[]> {
- if(!await selectiveSharingActive())return listClusterPeers();
  const db=await clusterV2Database(),local=await getClusterNode();
  return replicationPeers(db,local.id).filter(peer=>projectId?mayShareProject(db,local.id,peer.nodeId,projectId):isTrustedTwin(db,local.id,peer.nodeId)||sharedProjectIds(db,local.id,peer.nodeId).length>0).map(peer=>{
   const activity=db.prepare('SELECT created_at,updated_at,last_seen_at FROM cluster_v2_peer_activity WHERE node_id=?').get(peer.nodeId) as {created_at:string;updated_at:string;last_seen_at:string|null};
@@ -36,7 +33,6 @@ export async function listRuntimePeers(projectId?:string): Promise<ClusterPeer[]
 export async function getRuntimePeer(id:string):Promise<ClusterPeer|undefined>{return (await listRuntimePeers()).find(peer=>peer.id===id);}
 
 export async function runtimeFetch(input:string|URL,init:RequestInit={}):Promise<globalThis.Response>{
- if(!await selectiveSharingActive())return globalThis.fetch(input,init);
  const url=new URL(input),peer=(await listRuntimePeers()).find(peer=>new URL(peer.url).origin===url.origin);
  if(!peer||!url.pathname.startsWith("/api/cluster/"))throw new Error("No authorized runtime peer for request");
  url.pathname=url.pathname.replace("/api/cluster/","/api/cluster/v2/runtime/");
@@ -57,6 +53,8 @@ function sessionShared(db:DatabaseSync,local:string,peer:string,engine:unknown,s
  if(typeof engine!=='string'||typeof sessionId!=='string')return false;
  ensureConversationRecordSchema(db);
  const rows=db.prepare('SELECT DISTINCT project_id FROM conversation_records WHERE engine=? AND session_id=?').all(engine,sessionId) as unknown as Array<{project_id:string}>;
+ // A conversation this node does not know carries no project data; only a twin may ask about it.
+ if(!rows.length)return isTrustedTwin(db,local,peer);
  return rows.length===1&&mayShareProject(db,local,peer,rows[0].project_id);
 }
 async function runtimeAllowed(request:Request,db:DatabaseSync,local:string,peer:string):Promise<boolean>{
@@ -68,7 +66,9 @@ async function runtimeAllowed(request:Request,db:DatabaseSync,local:string,peer:
  if(request.path==='/sessions/ownership/apply')return sessionShared(db,local,peer,body?.record?.engine,body?.record?.sessionId);
  if(['/tasks/status','/tasks/commit','/tasks/settle','/tasks/abort'].includes(request.path)){
   if(typeof body?.handoffId!=='string')return false;
-  const handoff=await getTaskHandoff(body.handoffId);return Boolean(handoff&&mayShareProject(db,local,peer,handoff.projectId));
+  // An unknown handoff exposes nothing: its handler answers 404 or records the refusal
+  // that fences a late prepare, so the source can settle it.
+  const handoff=await getTaskHandoff(body.handoffId);return !handoff||mayShareProject(db,local,peer,handoff.projectId);
  }
  if(request.path==='/cron'){
   // Task commands name the project in their input, or only by task ID. Both must be shared.
@@ -89,9 +89,10 @@ export function dispatchSignedRuntime(request:Request,response:Response,next:Nex
  request.url=request.url.replace(prefix,'/api/cluster/');next();
 }
 
-export async function runtimeSocketHeaders(peerId:string,url:URL,legacyToken:string):Promise<{Authorization:string}>{
- if(!await selectiveSharingActive())return {Authorization:`Bearer ${legacyToken}`};
+export async function runtimeSocketHeaders(peerId:string,url:URL):Promise<{Authorization:string}>{
  const db=await clusterV2Database(),local=await getClusterNode();
+ // A never-paired node signs its own sockets too, so it may not have an identity yet.
+ if(peerId===local.id)pinClusterPublicKey(db,local.id,getOrCreateClusterIdentity(db,local.id).publicKey);
  if(peerId!==local.id&&!replicationPeers(db,local.id).some(peer=>peer.nodeId===peerId))throw new Error('Runtime peer is no longer authorized');
  return {Authorization:signClusterRequest(db,local.id,peerId,'GET',url.pathname+url.search,Buffer.alloc(0))};
 }

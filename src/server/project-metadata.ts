@@ -9,7 +9,6 @@ import {
 } from "../cluster-project-metadata.js";
 import { resourcePolicyDeliveryIsCurrent } from "../cluster-sharing.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
-import { selectiveSharingActive } from "../cluster-v2-mode.js";
 import { listProjects } from "../store.js";
 
 const acknowledgementSchema = z.object({
@@ -28,7 +27,6 @@ function requestFor(db: DatabaseSync, local: string, delivery: ProjectMetadataDe
 }
 
 export async function flushProjectMetadataDeliveries(): Promise<void> {
-  if (!await selectiveSharingActive()) return;
   await listProjects();
   const local = await getClusterNode();
   const db = await clusterV2Database();

@@ -1,6 +1,6 @@
 # Joint Bob
 
-Joint Bob is a private web workspace for running Pi, Claude, and Kiro coding agents from a computer or phone. It can manage projects on one machine or synchronize projects and ticket workspaces across a small cluster with Syncthing.
+Joint Bob is a private web workspace for running Pi, Claude, and Kiro coding agents from a computer or phone. It can manage projects on one machine, or join any number of clusters of machines and share chosen projects with each of them.
 
 Joint Bob runs as your OS user. Application files live in `~/.local/share/joint-bob/app`, and node-local state lives in `~/.joint-bob`.
 
@@ -30,7 +30,7 @@ Pick the smallest setup that fits your use case:
 | Multiple computers without Tailscale | No | Your private network and trusted HTTPS reverse proxy on every node | Yes |
 | Temporary EC2 smoke test | No | Operator-restricted self-signed HTTPS | Test only |
 
-For one local node, install and use the local URL. For a remote node without Tailscale, keep port `8787` closed to the network and use an SSH tunnel. A cluster needs a stable HTTPS origin for every node and two-way network reachability between all nodes.
+For one local node, install and use the local URL. For a remote node without Tailscale, keep port `8787` closed to the network and use an SSH tunnel. A cluster needs a stable HTTPS origin for every node. Changes travel through two hubs per cluster, but handing a conversation or ticket to another machine calls it directly, so every node of a cluster should reach every other node.
 
 ## Install a node
 
@@ -113,11 +113,11 @@ A node can also update itself. Open **Settings > Updates** to check the newest G
 
 ## Update from the app
 
-**Settings → Updates** shows the version this node runs, the newest published release, and every node in the cluster.
+**Settings → Updates** shows the version this node runs, the newest published release, and this node's twins.
 
 - **Check for updates** reads the GitHub release feed. Only a published, non-prerelease `v<major>.<minor>.<patch>` release carrying both `joint-bob.tar.gz` and `joint-bob.tar.gz.sha256` counts as installable.
 - **Install** downloads that release, verifies its SHA-256 checksum before extracting, confirms the archive's `package.json` version matches the target, and installs it through the packaged CLI. The swap runs in a detached helper so it survives the service restart it causes. A failed swap restores and restarts the previous installation.
-- **Update all nodes** rolls the release out one node at a time, peers first and this node last, so the node driving the rollout is the last one to restart.
+- **Update all nodes** rolls the release out one node at a time, twins first and this node last, so the node driving the rollout is the last one to restart. Only twins accept a remote update.
 - **Update automatically** installs a newer release on its own. It checks every six hours and waits six hours after a failure before trying again.
 
 Updates are only available on an installed node. A development checkout reports `development checkout`, disables the controls, and answers the update endpoints with `409`.
@@ -182,37 +182,40 @@ For multiple nodes without Tailscale, provide each node with a stable HTTPS orig
 
 Cluster URLs must be HTTPS origins with no path, query, username, or password. Loopback HTTP is accepted for local use only. Do not use self-signed certificates for a persistent cluster unless every connecting browser and Node.js runtime explicitly trusts your private certificate authority.
 
-## Add another node
+## Clusters, sharing, and twins
 
-Install Joint Bob and configure private HTTPS on the new machine first. Tailscale Serve is the easiest option, but any mutually reachable trusted HTTPS origin works. Then:
+Install Joint Bob and configure private HTTPS on every machine first. Tailscale Serve is the easiest option, but any mutually reachable trusted HTTPS origin works. On every node, set its name and private HTTPS origin in **Settings > Cluster**, and select a **Joint Bob home folder** in **Settings > Projects**.
 
-1. On an existing node, open **Settings > Cluster**.
-2. Select **Generate one-time link** and copy the link.
-3. Open the new node and create its administrator.
-4. On the new node, open **Settings > Cluster**.
-5. Set the node name and its private HTTPS origin, either its Tailscale Serve URL or its trusted private reverse-proxy URL.
-6. Paste the link under **Join an existing cluster**, then select **Join cluster**.
-7. On every node, open **Settings > Projects** and select a **Joint Bob home folder**.
+A node can belong to any number of clusters, and a cluster has no member limit.
 
-A join link works once. Creating another link invalidates the previous unused link from that node. Generate one link per new node and keep it inside the private cluster network.
+1. On one node, create a cluster in **Settings > Cluster**. That node manages it.
+2. Select **Generate one-time link** for the cluster and copy the link. A link works once and expires after 15 minutes.
+3. On the joining node, paste the link under **Join an existing cluster** and select **Join cluster**. Joining another cluster keeps the node's existing memberships.
+4. Choose what to share. Joining shares nothing: in **Selected sharing**, pick the projects or whole workspaces this node shares with the cluster. Every member of the cluster receives them; projects added to a selected workspace later are shared too. Members of your other clusters never see them.
 
-Pairing exchanges cluster membership, project inventory, Joint Bob machine credentials, and Syncthing device IDs. Joint Bob then adds each paired device and managed folder to the local Syncthing configuration. A cluster supports up to five active nodes. Remove an old node before adding a sixth.
+**Twins** are the same user's machines, for example your laptop and your home server. Both sides consent through a twin invitation; afterwards they share everything they own: projects, conversations, tasks, files, transcripts, credentials, routing configurations, push notifications, and update rights. Use twins for your own machines and clusters for machines you share with others.
+
+Inside a cluster, a change travels to two hubs, the lowest and highest numbered other members that answer, which forward it to everyone else. A node that was offline pulls what it missed from the hubs when it returns.
+
+If a machine is gone for good, open **Settings > Cluster** on one of its twins, choose the twin, and select **This machine is lost**. The twin becomes the owner of everything the lost machine owned and removes it from its clusters; when it was a cluster's manager, the most senior remaining member takes over. Install Joint Bob on the replacement and pair it as a twin with the survivor to get everything back. Keep every cluster manager twinned with another machine you own: a lost manager without a twin cannot be replaced.
+
+See [docs/features/clusters.html](docs/features/clusters.html) for the full model, the API, and upgrade notes.
 
 ### How synchronization works
 
 Syncthing is a companion process, not code embedded in the Joint Bob server and not a hosted Joint Bob service. The installer supplies a checksum-verified Syncthing binary. It can adopt a compatible running daemon; otherwise it starts `joint-bob-syncthing.service` on Linux or `com.joint-bob.syncthing` on macOS. Joint Bob discovers the daemon's local API key and controls it through Syncthing's loopback REST API. The API endpoint must stay on a loopback address.
 
-Syncthing has no user accounts. Each node has a cryptographic device ID. Joint Bob exchanges those IDs through the one-time cluster pairing flow, so users do not need to open the Syncthing GUI, create an account, or configure device and folder sharing by hand. File transport uses Syncthing's encrypted device-to-device protocol. Depending on network reachability, Syncthing may connect directly or through its configured discovery and relay services.
+Syncthing has no user accounts. Each node has a cryptographic device ID. Joint Bob exchanges those IDs over its signed cluster API and shares each project's folder only with the nodes allowed to see that project, so users do not need to open the Syncthing GUI, create an account, or configure device and folder sharing by hand. File transport uses Syncthing's encrypted device-to-device protocol. Depending on network reachability, Syncthing may connect directly or through its configured discovery and relay services.
 
 Joint Bob and Syncthing have separate jobs:
 
-- Joint Bob's authenticated HTTPS API exchanges cluster membership, project inventory, task state, and other application events.
-- Syncthing transfers managed project files, the shared ticket-workspace tree, and dedicated Pi, Claude, and Kiro conversation-transcript folders.
+- Joint Bob's signed HTTPS API exchanges cluster membership, project policy and metadata, task state, conversation transcripts, and other application events.
+- Syncthing transfers each shared project's files and its ticket workspaces.
 - Each node keeps its own `~/.joint-bob/node.db`. Joint Bob never synchronizes the SQLite database as a file.
-- Pi, Claude, and Kiro configuration, authentication files, OAuth state, MCP authentication, and daemon control keys remain node-local. Joint Bob syncs transcript roots instead of complete engine directories and pauses legacy `dot-pi` and `dot-claude` folders if they exist.
-- Secret accounts remain node-local unless a user selects **Settings > Secrets > Sync to nodes**. That encrypted replication uses the Joint Bob cluster API, not Syncthing.
+- Pi, Claude, and Kiro configuration, authentication files, OAuth state, MCP authentication, and daemon control keys remain node-local. Joint Bob pauses legacy `dot-pi`, `dot-claude`, whole-transcript, and global ticket folders if they exist.
+- A secret account marked to replicate reaches twins, and reaches cluster members only for the shared projects it is attached to. That encrypted replication uses the Joint Bob cluster API, not Syncthing.
 
-Users still install Joint Bob on every node, create a local Joint Bob administrator on every node, configure mutually reachable private HTTPS origins, choose a Joint Bob home folder, and pair nodes with a one-time link. Pi, Claude, and Kiro authentication is separate and must be completed on every node that will run that engine. Tailscale authentication is required only when Tailscale provides the private network.
+Users still install Joint Bob on every node, create a local Joint Bob administrator on every node, configure mutually reachable private HTTPS origins, choose a Joint Bob home folder, and join clusters or pair twins with a one-time link. Pi, Claude, and Kiro authentication is separate and must be completed on every node that will run that engine. Tailscale authentication is required only when Tailscale provides the private network.
 
 ## Projects and ticket workspaces
 
@@ -279,7 +282,7 @@ For website sign-in, create a **Custom** account such as `Mobile`, set Website o
 
 Website sign-in uses the ordinary page: the agent inspects, fills, submits, and verifies the login, but arbitrary sites are not guaranteed to accept it. MFA, CAPTCHA, and rejected passwords stop for a human without retries or bypass attempts. Credentials are necessarily supplied to the trusted page at the user-authorized origin and may be read by that page's scripts or a privileged local host.
 
-Website-bound accounts intentionally stay on their credential node and cannot replicate, because older peers cannot enforce origin binding. An authorized paired browser can still receive an ephemeral fill. Moving an agent to a node without the account does not grant access. Clearing Website origin turns the account back into ordinary environment credentials, which stay node-local unless explicitly replicated through **Settings > Secrets > Sync to nodes**. Workspace attachments follow replicated ordinary accounts when the destination has the same workspace. Secrets never use filesystem synchronization. Existing manually signed-in browser profiles remain usable without Secrets.
+Website-bound accounts intentionally stay on their credential node and cannot replicate, because older peers cannot enforce origin binding. An authorized paired browser can still receive an ephemeral fill. Moving an agent to a node without the account does not grant access. Clearing Website origin turns the account back into ordinary environment credentials, which stay node-local unless marked to replicate. Workspace attachments follow replicated ordinary accounts when the destination has the same workspace. Secrets never use filesystem synchronization. Existing manually signed-in browser profiles remain usable without Secrets.
 
 ## Conversation browsers
 
@@ -444,7 +447,7 @@ For UI and cluster work, run throwaway nodes instead of your real one:
 
 ```bash
 npm run dev:local            # one node on http://127.0.0.1:8791
-npm run dev:cluster          # two paired nodes on :8791 and :8792
+npm run dev:cluster          # two twin nodes on :8791 and :8792
 just dev                     # same as dev:local
 just dev-cluster             # same as dev:cluster
 npm run dev:seed -- --force  # rebuild the dummy data from scratch
@@ -453,7 +456,7 @@ just dev-reset               # same thing, two nodes
 
 Everything lives under `.dev-env/` in the checkout: one SQLite database per node, a shared `HOME`, three dummy projects, and dummy Pi and Claude transcripts. It never reads or writes `~/.joint-bob`, `~/.pi`, or `~/.claude`, so an installed node on this machine keeps running untouched — which is why the dev nodes default to ports 8791 and 8792 rather than 8790.
 
-In cluster mode the two nodes are paired before they start, and every project is aliased to its twin, so pairing, project inventory, and conversation handover work without any manual setup.
+In cluster mode node B holds node A's projects under the same IDs, and the script pairs the two nodes as twins once both answer, so project inventory and conversation handover work without any manual setup.
 
 Sign in with `dev` / `joint-bob-dev-password` (override with `JOINT_BOB_DEV_USERNAME` and `JOINT_BOB_DEV_PASSWORD`; the password must be at least 16 characters). Put the environment somewhere else with `JOINT_BOB_DEV_ROOT`. Reset it by deleting `.dev-env/`.
 
@@ -473,7 +476,7 @@ npm run test:all  # both
 just test-ui      # same as npm run test:ui
 ```
 
-`test/cluster-sanity.test.ts` runs inside `npm test`: it starts both paired nodes and checks pairing, shared project inventory, project aliasing, live node-to-node traffic, and conversation handover.
+`test/cluster-sanity.test.ts` runs inside `npm test`: it starts two twin nodes and checks shared project inventory, live node-to-node traffic, and conversation handover. `test/multi-cluster.test.ts`, `test/cluster-hubs.test.ts`, and `test/lost-machine-recovery.test.ts` cover a node in two clusters, two-hub dissemination with catch-up, and taking over a lost machine.
 
 `test/ui/ui-smoke.test.ts` drives a real Chrome through sign-in, the project list, a conversation transcript, and the canvas picker, and fails on any console error or failed request. It uses `playwright-core` against your installed Chrome, so there is no browser download. It sits outside the `test/*.test.ts` glob on purpose: a browser suite that silently skips itself would report success while testing nothing.
 

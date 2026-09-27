@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { getClusterMachineToken, getClusterNode } from "../../cluster.js";
-import { getRuntimePeer as getClusterPeer, listRuntimePeers as listClusterPeers, runtimeFetch as fetch } from "../runtime-peers.js";
+import { getClusterNode } from "../../cluster.js";
+import { getRuntimePeer, listRuntimePeers, runtimeFetch } from "../runtime-peers.js";
 import { cronInputSchema, cronRunSchema, cronStore, type CronTask } from "../../cron.js";
 import { ensureConversationRecord, markCronConversation } from "../../conversation-records.js";
 import { broadcastToProject } from "../realtime.js";
@@ -24,10 +24,10 @@ type Command = z.infer<typeof commandSchema>;
 
 async function routeCommand(nodeId: string, command: Command): Promise<unknown> {
   if (nodeId === (await getClusterNode()).id) return manageCron(command);
-  const peer = await getClusterPeer(nodeId);
+  const peer = await getRuntimePeer(nodeId);
   if (!peer) throw new Error("Scheduled task owner is unavailable");
-  const reply = await fetch(`${peer.url}/api/cluster/cron`, {
-    method: "POST", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
+  const reply = await runtimeFetch(`${peer.url}/api/cluster/cron`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(command), signal: AbortSignal.timeout(15000),
   });
   const body = await reply.json() as { error?: string };
@@ -91,7 +91,7 @@ app.post("/api/cron", async (request, response, next) => {
 });
 app.get("/api/projects/:projectId/cron", async (request, response, next) => {
   try {
-    const nodes = [await getClusterNode(), ...await listClusterPeers()];
+    const nodes = [await getClusterNode(), ...await listRuntimePeers()];
     const results = await Promise.all(nodes.map(async node => {
       try { return { nodeId: node.id, ...await routeCommand(node.id, { action: "list", projectId: request.params.projectId }) as { tasks: unknown[] } }; }
       catch (error) { return { nodeId: node.id, tasks: [], error: error instanceof Error ? error.message : String(error) }; }

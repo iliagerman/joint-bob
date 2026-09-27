@@ -33,7 +33,7 @@ test("the projects list is grouped by type and each group collapses", async () =
   assert.match(serviceWorker, /const CACHE_NAME = "joint-bob-v\d+";/);
 });
 
-test("the branded boot screen releases before project discovery", async () => {
+test("the branded boot screen releases before project loading", async () => {
   const [html, app, styles, boot] = await Promise.all([
     readFile("public/index.html", "utf8"),
     appSource(),
@@ -60,10 +60,11 @@ test("the branded boot screen releases before project discovery", async () => {
   assert.match(app, /api\("\/api\/preferences", \{ signal: AbortSignal\.timeout\(BOOT_REQUEST_TIMEOUT_MS\) \}\)/);
   assert.match(app, /function revealApplication\(\)/);
   assert.match(app, /if \(!status\.authenticated\) \{\s*revealApplication\(\);\s*showLogin\(\);/);
-  assert.match(app, /void api\("\/api\/cluster\/projects\/discover"[\s\S]*?\.then\(async \(discovery\) =>/);
+  // Peer project discovery was retired with the legacy cluster layer; boot must not wait on it.
+  assert.doesNotMatch(app, /\/api\/cluster\/projects\/discover/);
 
   const themeReady = app.indexOf("setTheme(preferences.theme");
   const reveal = app.indexOf("revealApplication();", themeReady);
-  const discovery = app.indexOf('api("/api/cluster/projects/discover"', themeReady);
-  assert.ok(themeReady >= 0 && reveal > themeReady && reveal < discovery, "boot must release before project discovery");
+  const projects = app.indexOf("await loadProjects();", themeReady);
+  assert.ok(themeReady >= 0 && reveal > themeReady && reveal < projects, "boot must release before project loading");
 });

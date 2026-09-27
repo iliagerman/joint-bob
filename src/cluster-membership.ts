@@ -1,10 +1,11 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
-import { acceptSharingManagerTransfer, addSharingMember, commitSharingManagerTransfer, createSharingCluster, ensureClusterSharingPolicySchema, getSharingCluster, listSharingClusterMembers, prepareSharingManagerTransfer, removeSharingMember } from "./cluster-sharing-policy.js";
+import { acceptSharingManagerTransfer, addSharingMember, removeLostSharingMember, commitSharingManagerTransfer, createSharingCluster, ensureClusterSharingPolicySchema, getSharingCluster, listSharingClusterMembers, prepareSharingManagerTransfer, removeSharingMember } from "./cluster-sharing-policy.js";
 import { clusterPublicKeyFingerprint, ensureClusterIdentitySchema, getOrCreateClusterIdentity, pinClusterPublicKey, pinnedClusterPublicKey, signClusterMessage, verifyClusterMessage } from "./cluster-identity.js";
 import { ensurePeerEndpointSchema, recordMembershipEndpoints } from "./cluster-peer-endpoints.js";
 import { reconcileOwnedResourceTopology } from "./cluster-sharing.js";
+import { successorOf } from "./cluster-succession.js";
 
 const uuid = z.string().uuid().regex(/^[0-9a-f-]+$/);
 const name = z.string().trim().min(1).max(80);
@@ -19,7 +20,7 @@ const origin = z.string().transform((value, context) => {
 const nodeSchema = z.object({ nodeId: uuid, name, url: origin, publicKey: key }).strict();
 const entrySchema = nodeSchema.extend({ joinSequence: positive, invitedByNodeId: uuid.nullable() }).strict();
 const departureSchema = z.object({ nodeId: uuid, joinSequence: positive }).strict();
-const bodySchema = z.object({ clusterId: uuid, name, originalNodeId: uuid, managerNodeId: uuid.nullable(), managerEpoch: positive, revision: positive, nextJoinSequence: positive, closed: z.boolean(), members: z.array(entrySchema).max(5), departures: z.array(departureSchema) }).strict().superRefine((body, context) => {
+const bodySchema = z.object({ clusterId: uuid, name, originalNodeId: uuid, managerNodeId: uuid.nullable(), managerEpoch: positive, revision: positive, nextJoinSequence: positive, closed: z.boolean(), members: z.array(entrySchema), departures: z.array(departureSchema) }).strict().superRefine((body, context) => {
   const memberIds = new Set<string>(), ranks = new Set<number>(), departed = new Set<string>(); let previous = 0;
   for (const member of body.members) { if (memberIds.has(member.nodeId) || ranks.has(member.joinSequence) || member.joinSequence <= previous) context.addIssue({ code: z.ZodIssueCode.custom, message: "Members must have distinct identities and sorted ranks" }); memberIds.add(member.nodeId); ranks.add(member.joinSequence); previous = member.joinSequence; }
   previous = 0; for (const item of body.departures) { const pair = `${item.nodeId}:${item.joinSequence}`; if (departed.has(pair) || ranks.has(item.joinSequence) || item.joinSequence <= previous) context.addIssue({ code: z.ZodIssueCode.custom, message: "Departures must be distinct, sorted, and not active" }); departed.add(pair); ranks.add(item.joinSequence); previous = item.joinSequence; }
@@ -134,9 +135,48 @@ export function redeemMembershipInvitation(
   });
 }
 
+/** The manager records a member's new name and URL and republishes the snapshot to
+    every member, so peers reach the member at its new address. */
+export function updateMembershipDescriptor(db: DatabaseSync, localNodeId: string, clusterId: string, member: { nodeId: string; name: string; url: string }): SignedMembershipSnapshot {
+  ensureMembershipSchema(db);
+  return transaction(db, () => {
+    if (getSharingCluster(db, clusterId).managerNodeId !== localNodeId) throw new Error("Only the cluster manager updates member descriptors");
+    const updated = db.prepare("UPDATE cluster_v2_membership_nodes SET name=?, url=? WHERE cluster_id=? AND node_id=?")
+      .run(name.parse(member.name), origin.parse(member.url), clusterId, uuid.parse(member.nodeId));
+    if (updated.changes !== 1) throw new Error("Unknown cluster member");
+    return publish(db, clusterId, localNodeId, nodeRows(db, clusterId));
+  });
+}
+/** Removes a machine its twin declared lost (cluster-succession.ts). The manager removes it;
+    when the lost machine was the manager, the most senior remaining member takes over. */
+export function removeLostMember(db: DatabaseSync, localNodeId: string, clusterId: string, lostNodeId: string): SignedMembershipSnapshot {
+  ensureMembershipSchema(db);
+  return transaction(db, () => {
+    if (!successorOf(db, lostNodeId)) throw new Error("The machine has not been declared lost by its twin");
+    const state = getSharingCluster(db, clusterId), takesOver = state.managerNodeId === lostNodeId;
+    if (!takesOver && state.managerNodeId !== localNodeId) throw new Error("Only the cluster manager removes a lost member");
+    const target = listSharingClusterMembers(db, clusterId).find((member) => member.nodeId === lostNodeId);
+    if (!target) throw new Error("Target is not a member");
+    db.prepare("INSERT OR IGNORE INTO cluster_v2_membership_departures VALUES(?,?,?)").run(clusterId, lostNodeId, target.joinSequence);
+    removeLostSharingMember(db, clusterId, lostNodeId, takesOver ? localNodeId : undefined);
+    db.prepare("DELETE FROM cluster_v2_membership_nodes WHERE cluster_id=? AND node_id=?").run(clusterId, lostNodeId);
+    return publish(db, clusterId, localNodeId, nodeRows(db, clusterId));
+  });
+}
+
+/** A snapshot signed by a new manager is valid only when the previous manager was declared
+    lost by its twin and the signer is the most senior remaining member. */
+function lostManagerSucceeded(db: DatabaseSync, previous: SignedMembershipSnapshot, incoming: SignedMembershipSnapshot): boolean {
+  const lostManager = previous.body.managerNodeId;
+  if (!lostManager || !successorOf(db, lostManager)) return false;
+  const senior = previous.body.members.filter((member) => member.nodeId !== lostManager).sort((left, right) => left.joinSequence - right.joinSequence)[0];
+  return senior?.nodeId === incoming.signerNodeId && incoming.body.managerNodeId === incoming.signerNodeId
+    && !incoming.body.members.some((member) => member.nodeId === lostManager);
+}
+
 export function removeMembershipMember(db:DatabaseSync, localNodeId:string, actorNodeId:string, clusterId:string, targetNodeId:string, expectedEpoch:number):SignedMembershipSnapshot { ensureMembershipSchema(db); return transaction(db,()=>{ const state=getSharingCluster(db,clusterId); if(state.managerNodeId!==localNodeId||state.managerEpoch!==expectedEpoch) throw new Error("Cluster manager authority changed"); const old=nodeRows(db,clusterId), target=listSharingClusterMembers(db,clusterId).find(x=>x.nodeId===targetNodeId); if(!target) throw new Error("Target is not a member"); db.prepare("INSERT OR IGNORE INTO cluster_v2_membership_departures VALUES(?,?,?)").run(clusterId,targetNodeId,target.joinSequence); removeSharingMember(db,clusterId,actorNodeId,targetNodeId); db.prepare("DELETE FROM cluster_v2_membership_nodes WHERE cluster_id=? AND node_id=?").run(clusterId,targetNodeId); return publish(db,clusterId,localNodeId,[...old,...nodeRows(db,clusterId)]); }); }
 
-function verifyEvolution(previous:SignedMembershipSnapshot, incoming:SignedMembershipSnapshot):void { const old=previous.body, next=incoming.body; if(next.managerEpoch!==old.managerEpoch||next.originalNodeId!==old.originalNodeId||(!next.closed&&next.managerNodeId!==old.managerNodeId)) throw new Error("Manager activation certificate required"); if(next.nextJoinSequence<old.nextJoinSequence) throw new Error("Join sequence cannot decrease"); const tombstones=new Set(next.departures.map(x=>`${x.nodeId}:${x.joinSequence}`)); for(const departed of old.departures) if(!tombstones.has(`${departed.nodeId}:${departed.joinSequence}`)) throw new Error("Missing departure tombstone"); for(const member of old.members) { const current=next.members.find(x=>x.nodeId===member.nodeId); if(current&&current.joinSequence===member.joinSequence) { if(current.publicKey!==member.publicKey) throw new Error("Member key cannot change"); continue; } if(!tombstones.has(`${member.nodeId}:${member.joinSequence}`)) throw new Error("Missing departure tombstone"); if(current&&current.joinSequence<old.nextJoinSequence) throw new Error("Admission rank cannot change"); } for(const member of next.members) if(!old.members.some(x=>x.nodeId===member.nodeId&&x.joinSequence===member.joinSequence)&&member.joinSequence<old.nextJoinSequence) throw new Error("Manager cannot manufacture an old rank"); }
+function verifyEvolution(previous:SignedMembershipSnapshot, incoming:SignedMembershipSnapshot, managerSucceeded=false):void { const old=previous.body, next=incoming.body; if(managerSucceeded ? next.managerEpoch!==old.managerEpoch+1||next.originalNodeId!==old.originalNodeId : next.managerEpoch!==old.managerEpoch||next.originalNodeId!==old.originalNodeId||(!next.closed&&next.managerNodeId!==old.managerNodeId)) throw new Error("Manager activation certificate required"); if(next.nextJoinSequence<old.nextJoinSequence) throw new Error("Join sequence cannot decrease"); const tombstones=new Set(next.departures.map(x=>`${x.nodeId}:${x.joinSequence}`)); for(const departed of old.departures) if(!tombstones.has(`${departed.nodeId}:${departed.joinSequence}`)) throw new Error("Missing departure tombstone"); for(const member of old.members) { const current=next.members.find(x=>x.nodeId===member.nodeId); if(current&&current.joinSequence===member.joinSequence) { if(current.publicKey!==member.publicKey) throw new Error("Member key cannot change"); continue; } if(!tombstones.has(`${member.nodeId}:${member.joinSequence}`)) throw new Error("Missing departure tombstone"); if(current&&current.joinSequence<old.nextJoinSequence) throw new Error("Admission rank cannot change"); } for(const member of next.members) if(!old.members.some(x=>x.nodeId===member.nodeId&&x.joinSequence===member.joinSequence)&&member.joinSequence<old.nextJoinSequence) throw new Error("Manager cannot manufacture an old rank"); }
 interface PreferenceRow { node_id: string; join_sequence: number; auto_share_projects: number }
 
 function purgeDepartedAdmissionShares(db: DatabaseSync, body: MembershipSnapshotBody): void {
@@ -219,14 +259,15 @@ export function applyMembershipSnapshot(db: DatabaseSync, localNodeId: string, i
         if (JSON.stringify(previous) === canonical) return;
         throw new Error("Closed cluster cannot reopen");
       }
-      if (snapshot.signerNodeId !== previous.body.managerNodeId) throw new Error("Manager activation certificate required");
+      const managerSucceeded = snapshot.signerNodeId !== previous.body.managerNodeId && lostManagerSucceeded(db, previous, snapshot);
+      if (snapshot.signerNodeId !== previous.body.managerNodeId && !managerSucceeded) throw new Error("Manager activation certificate required");
       verificationKey = pinnedClusterPublicKey(db, snapshot.signerNodeId)!;
       if (snapshot.body.revision < previous.body.revision) throw new Error("Stale membership snapshot");
       if (snapshot.body.revision === previous.body.revision) {
         if (JSON.stringify(previous) === canonical) return;
         throw new Error("Conflicting membership snapshot revision");
       }
-      verifyEvolution(previous, snapshot);
+      verifyEvolution(previous, snapshot, managerSucceeded);
     } else {
       pending = pendingJoin(db, snapshot.body.clusterId);
       if (!pending) throw new Error("Snapshot requires an accepted pending invitation");

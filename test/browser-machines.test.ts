@@ -9,7 +9,8 @@ import test, { before, after } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { api, seedDevEnvironment, startDevNode, stopDevNode, signIn, type DevEnvironment, type SignedIn } from "./dev-nodes.js";
+import { signedNodeRequest } from "./signed-node-request.js";
+import { api, seedDevEnvironment, startDevNode, stopDevNode, signIn, type DevEnvironment, type SignedIn, pairTwinNodes } from "./dev-nodes.js";
 
 let root: string, env: DevEnvironment, logins: SignedIn[];
 const servers: ChildProcess[] = [];
@@ -18,6 +19,7 @@ before(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "browser-machines-"));
   env = await seedDevEnvironment(root, 2);
   for (const node of env.nodes) servers.push(await startDevNode(env, node, { JOINT_BOB_BROWSER_EXECUTABLE: `/missing/browser-${node.key}` }));
+  await pairTwinNodes(env);
   logins = await Promise.all(env.nodes.map(node => signIn(env, node)));
 }, { timeout: 120000 });
 after(async () => { await Promise.all(servers.map(stopDevNode)); await rm(root, { recursive: true, force: true }); });
@@ -129,8 +131,7 @@ test("agent discovery follows conversation across nodes and relay keeps paused r
     assert.equal(paused.status,409);
     assert.match(paused.body.error,/human|paused/i);
     assert.equal(db.prepare("SELECT restoreOnRestart FROM browser_sessions WHERE id=?").get(remote.id)?.restoreOnRestart,1);
-    const token=(await request(0,"GET","/cluster/invite")).body.token;
-    const relay=async(body:unknown)=>fetch(`${b.url}/api/cluster/browser/operation`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const relay=async(body:unknown)=>signedNodeRequest(env,a,b,"POST","/api/cluster/v2/runtime/browser/operation",body);
     const identity={projectId:a.projects[0].id,engine:"pi",conversationId};
     assert.equal((await relay({operation:"command",args:{id:remote.id,command:{action:"takeControl"}},actor:{kind:"agent"},identity})).status,409);
     assert.equal((await relay({operation:"get",args:{id:remote.id},actor:{kind:"agent"},identity:{...identity,conversationId:"forged"}})).status,403);
@@ -182,21 +183,39 @@ test("logical conversation preference and remote recovery commands survive engin
   finally {db.close();}
 });
 
-test("preference replication and browser relay enforce project sharing", async () => {
-  const [a,b]=env.nodes;
-  const db=new DatabaseSync(path.join(b.dataDir,"node.db"));
-  db.exec("PRAGMA busy_timeout=5000");
-  db.prepare("INSERT INTO cluster_project_grants VALUES (?,?,?,?)").run(a.nodeId,"[]",new Date().toISOString(),b.nodeId);
+test("preference replication and browser relay enforce project sharing", { timeout: 150000 }, async () => {
+  // Twins share everything, so the denial needs two independent nodes in a cluster with selected sharing.
+  const clusterRoot=await mkdtemp(path.join(os.tmpdir(),"browser-machines-cluster-"));
+  const children:ChildProcess[]=[];
   try {
-    const token=(await request(0,"GET","/cluster/invite")).body.token;
-    for(const [route,body] of [
-      ["preferences",{identity:{projectId:a.projects[0].id,engine:"pi",conversationId},preference:null}],
-      ["operation",{operation:"profiles",args:{projectId:a.projects[0].id},actor:{kind:"human",id:"fixture"}}],
-    ] as const) {
-      const response=await fetch(`${b.url}/api/cluster/browser/${route}`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify(body)});
-      assert.equal(response.status,403,route);
+    const ownerEnv=await seedDevEnvironment(path.join(clusterRoot,"owner"),1),memberEnv=await seedDevEnvironment(path.join(clusterRoot,"member"),1);
+    const owner=ownerEnv.nodes[0],member=memberEnv.nodes[0];
+    children.push(await startDevNode(ownerEnv,owner,{JOINT_BOB_BROWSER_EXECUTABLE:"/missing/browser-owner"}));
+    children.push(await startDevNode(memberEnv,member,{JOINT_BOB_BROWSER_EXECUTABLE:"/missing/browser-member"}));
+    const ownerLogin=await signIn(ownerEnv,owner),memberLogin=await signIn(memberEnv,member);
+    const cluster=await api<{snapshot:{body:{clusterId:string}}}>(owner,ownerLogin,"POST","/clusters",{name:"Browser sharing"});
+    assert.equal(cluster.status,201,JSON.stringify(cluster.body));
+    const clusterId=cluster.body.snapshot.body.clusterId;
+    const invitation=await api<{link:string}>(owner,ownerLogin,"POST",`/clusters/${clusterId}/invitations`,{expectedEpoch:1});
+    assert.equal(invitation.status,201,JSON.stringify(invitation.body));
+    assert.equal((await api(member,memberLogin,"POST","/clusters/join",{link:invitation.body.link,requestId:randomUUID()})).status,201);
+    const [shared,hidden]=owner.projects;
+    assert.equal((await api(owner,ownerLogin,"PUT",`/clusters/${clusterId}/sharing`,{projectIds:[shared.id],workspaceIds:[],confirmOwnedData:true})).status,200);
+    const relay=(route:string,projectId:string)=>signedNodeRequest(memberEnv,member,owner,"POST",`/api/cluster/v2/runtime/browser/${route}`,route==="preferences"
+      ?{identity:{projectId,engine:"pi",conversationId},preference:null}
+      :{operation:"profiles",args:{projectId},actor:{kind:"human",id:"fixture"}});
+    for(const route of ["preferences","operation"]) {
+      let selected=0;
+      const deadline=Date.now()+30000;
+      // Sharing reaches the owner's policy asynchronously; the selected project is the positive control.
+      while((selected=(await relay(route,shared.id)).status)===403&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,200));
+      assert.notEqual(selected,403,`${route}: a selected project is reachable`);
+      assert.equal((await relay(route,hidden.id)).status,403,`${route}: an unselected project is refused`);
     }
-  } finally {db.prepare("DELETE FROM cluster_project_grants WHERE node_id=?").run(a.nodeId);db.close();}
+  } finally {
+    await Promise.all(children.map(stopDevNode));
+    await rm(clusterRoot,{recursive:true,force:true});
+  }
 });
 
 test("a peer missing the browser endpoint is unavailable, not an empty account inventory", async () => {
@@ -207,12 +226,12 @@ test("a peer missing the browser endpoint is unavailable, not an empty account i
   const db=new DatabaseSync(path.join(a.dataDir,"node.db"));
   db.exec("PRAGMA busy_timeout=5000");
   try {
-    db.prepare("UPDATE cluster_peers SET url=? WHERE id=?").run(`http://127.0.0.1:${address.port}`,b.nodeId);
+    db.prepare("UPDATE cluster_v2_peer_endpoints SET url=? WHERE node_id=?").run(`http://127.0.0.1:${address.port}`,b.nodeId);
     const discovery=await request(0,"GET",`/browser/sessions?${query()}`);
     assert.deepEqual(discovery.body.unavailableNodes.map((n:any)=>n.nodeId),[b.nodeId]);
     assert.equal((await agent(0,{operation:"command",command:{action:"close"}})).status,503);
   } finally {
-    try { db.prepare("UPDATE cluster_peers SET url=? WHERE id=?").run(b.url,b.nodeId); }
+    try { db.prepare("UPDATE cluster_v2_peer_endpoints SET url=? WHERE node_id=?").run(b.url,b.nodeId); }
     finally { db.close();fixture.closeAllConnections();await new Promise<void>(resolve=>fixture.close(()=>resolve())); }
   }
 });
@@ -231,12 +250,12 @@ test("cold profile discovery reports unavailable inventory instead of claiming t
   const db = new DatabaseSync(path.join(a.dataDir, "node.db"));
   db.exec("PRAGMA busy_timeout=5000");
   try {
-    db.prepare("UPDATE cluster_peers SET url=? WHERE id=?").run(`http://127.0.0.1:${address.port}`, b.nodeId);
+    db.prepare("UPDATE cluster_v2_peer_endpoints SET url=? WHERE node_id=?").run(`http://127.0.0.1:${address.port}`, b.nodeId);
     const result = await request(0, "POST", "/browser/sessions", { projectId: a.projects[0].id, engine: "pi", conversationId, appNodeId: a.nodeId, profileId: randomUUID() });
     assert.equal(result.status, 503, JSON.stringify(result.body));
     assert.match(result.body.error, /discovery incomplete/i);
   } finally {
-    try { db.prepare("UPDATE cluster_peers SET url=? WHERE id=?").run(b.url, b.nodeId); }
+    try { db.prepare("UPDATE cluster_v2_peer_endpoints SET url=? WHERE node_id=?").run(b.url, b.nodeId); }
     finally {
       db.close(); fixture.closeAllConnections();
       await new Promise<void>(resolve => fixture.close(() => resolve()));

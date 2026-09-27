@@ -97,7 +97,7 @@ against it, and signs in.
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "./dev-nodes.js";
 
 const root = await mkdtemp(path.join(os.tmpdir(), "my-test-"));
-const environment = await seedDevEnvironment(root, 1);   // or 2 for a paired cluster
+const environment = await seedDevEnvironment(root, 1);   // or 2, then pairTwinNodes(environment) once both run
 const node = environment.nodes[0];
 const server = await startDevNode(environment, node);
 const session = await signIn(environment, node);
@@ -107,7 +107,8 @@ const response = await api<{ projects: Array<{ name: string }> }>(node, session,
 
 | Export | Purpose |
 | --- | --- |
-| `seedDevEnvironment(root, 1 \| 2)` | Builds one node, or two already-paired nodes, on free ports. Returns their ids, urls, data directories, cookie names, and seeded projects |
+| `seedDevEnvironment(root, 1 \| 2)` | Builds one node, or two nodes on free ports where node B holds node A's projects under the same IDs. Returns their ids, urls, data directories, cookie names, and seeded projects |
+| `pairTwinNodes(environment)` | Pairs a running two-node environment as twins through the real handshake, node A owning the projects, and resolves once node B lists them |
 | `startDevNode(environment, node)` | Spawns `src/server.ts` for that node and resolves once it is listening |
 | `stopDevNode(child)` | Stops it. Always call this in a `finally` or `after` |
 | `signIn(environment, node)` | Signs the seeded administrator in, returns its cookie and CSRF token |
@@ -172,11 +173,21 @@ cookie or signing into the second silently signs you out of the first.
 
 ### Cluster suite — `test/cluster-sanity.test.ts`
 
-Runs inside `npm test`. It starts both paired nodes and checks pairing, shared
-project inventory, project aliasing, live node-to-node traffic, and continuing
-a conversation on the other node through ownership takeover. Extend it when you
+Runs inside `npm test`. It starts two nodes, pairs them as twins, and checks
+shared project inventory, live node-to-node traffic, and continuing a
+conversation on the other node through ownership takeover. Extend it when you
 touch replication, ownership, or anything else that only means something with
 two nodes.
+
+Machine-to-machine requests are signed. Use `signedNodeRequest` in
+`test/signed-node-request.ts` to send one from a seeded node, and the
+`/api/cluster/v2/...` routes; there are no bearer machine tokens.
+
+Three suites build clusters from separately seeded nodes: `test/multi-cluster.test.ts`
+(one node in two clusters, each receiving only its own project),
+`test/cluster-hubs.test.ts` (two-hub dissemination, a down hub, catch-up of a
+returning member, forged relays), and `test/lost-machine-recovery.test.ts` (a
+twin taking over a lost manager and a rebuilt machine recovering).
 
 ### Scheduled tasks, conversation settings, and updates
 

@@ -39,12 +39,15 @@ test("twins replicate project events over signed transport without bearer peers"
       assert.ok(accounts.body.accounts.some(account => account.id === secret.body.account.id), "eligible credentials must use signed twin transport");
     });
     await eventually(async()=>{
-      const peers=await api<{peers:Array<{id:string;online:boolean;tokenConfigured:boolean;lastSeenAt:string}>}>(left,sa,'GET','/cluster/peers');
-      const peer=peers.body.peers.find(peer=>peer.id===right.nodeId);
-      assert.ok(peer,'signed twin must appear in the public node inventory');
-      assert.equal(peer.tokenConfigured,true,'signed authentication is configured without a bearer token');
-      assert.equal(peer.online,true,'successful signed traffic marks the twin online');
-      assert.ok(Date.parse(peer.lastSeenAt)>Date.now()-90000);
+      const inventory=await api<{remote:Array<{peerId:string;reachable:boolean}>}>(left,sa,'GET','/cluster/inventory');
+      const peer=inventory.body.remote.find(peer=>peer.peerId===right.nodeId);
+      assert.ok(peer,'signed twin must appear in the node inventory');
+      assert.equal(peer.reachable,true,'the twin answers signed inventory requests without a bearer token');
+      const db=new DatabaseSync(path.join(left.dataDir,'node.db'));
+      try{
+        const activity=db.prepare('SELECT last_seen_at FROM cluster_v2_peer_activity WHERE node_id=?').get(right.nodeId) as {last_seen_at:string|null}|undefined;
+        assert.ok(activity?.last_seen_at&&Date.parse(activity.last_seen_at)>Date.now()-90000,'successful signed traffic records the twin as recently seen');
+      }finally{db.close();}
     });
     const directory = path.join(root, "project");
     await mkdir(directory);

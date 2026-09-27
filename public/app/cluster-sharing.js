@@ -224,6 +224,14 @@ export async function renderClusterSharing(cluster, localNodeId) {
       if (!active.length) handshake(body, reload);
     });
     controls.prepend(selected, twins);
+    if (active.length) controls.append(button("This machine is lost", "sharing-twin-lost", async () => {
+      const name = cluster.members.find(member => member.nodeId === selectedPeers.get(cluster.id)).name || selectedPeers.get(cluster.id);
+      if (!await consent("Declare this machine lost?", `Only when ${name} is gone for good. This node becomes the owner of everything ${name} owned, removes it from its clusters, and revokes the twin. A rebuilt machine gets everything back by pairing as a twin with this node.`, true)) return;
+      let projects = 0;
+      for (const item of active) projects += (await api(`/api/twins/${item.relationshipId}/lost`, { method: "POST", body: JSON.stringify({ confirmLost: true }) })).projects;
+      await reload();
+      if (current + 1 === revision) container.querySelector('[data-testid="sharing-status"]').textContent = `${name} was declared lost. This node now owns its ${projects} project${projects === 1 ? "" : "s"}.`;
+    }));
     selected.setAttribute("aria-pressed", String(!active.length)); twins.setAttribute("aria-pressed", String(active.length > 0));
     if (active.length) {
       status.textContent = "Twin relationship established. Synchronization status is separate below.";

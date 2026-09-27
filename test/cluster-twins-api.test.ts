@@ -15,7 +15,6 @@ import {
 
 interface ClusterStatus {
   clusters: Array<{ id: string; members: Array<{ nodeId: string }> }>;
-  mode: "legacy" | "selective";
 }
 interface TwinView {
   relationshipId: string;
@@ -330,7 +329,7 @@ test("twin endpoint substitution and cookie bootstrap cannot bypass proof", { ti
       const dbB = dbFor(nodeB);
       assert.equal((dbB.prepare("SELECT count(*) count FROM cluster_v2_public_keys WHERE node_id=?").get(nodeA.nodeId) as { count: number }).count, 0);
       assert.equal((dbB.prepare("SELECT count(*) count FROM cluster_v2_twin_relationships").get() as { count: number }).count, 0);
-      assert.equal((await clusters(nodeB, sessionB)).mode, "legacy", "invalid link activated selective mode");
+      assert.deepEqual((await clusters(nodeB, sessionB)).clusters, [], "invalid link changed cluster membership");
       dbB.close();
     }
 

@@ -12,7 +12,7 @@ import { browserCapability } from "../../src/browser-runtime.js";
 import type { BrowserChecker } from "../../src/browser-monitor-checkers.js";
 import type { MonitorEvent, MonitorRecord, MonitorRun } from "../../src/browser-monitor-types.js";
 import type { BrowserSessionView } from "../../src/browser-types.js";
-import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type SeededNode, type SignedIn } from "../dev-nodes.js";
+import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type SeededNode, type SignedIn, pairTwinNodes } from "../dev-nodes.js";
 
 type Message = { id: string; senderId: string; direction: "incoming" | "outgoing"; text: string };
 type FixtureState = { accountId: string; messages: Message[] };
@@ -83,10 +83,11 @@ test("native browser monitor remains owner-authoritative across detection, repla
     const [nodeA, nodeB] = environment.nodes;
     const serverA = await startDevNode(environment, nodeA, { JOINT_BOB_BROWSER_EXECUTABLE: "/browser-disabled-on-monitor-owner" }); children.add(serverA);
     const serverB = await startDevNode(environment, nodeB, { JOINT_BOB_BROWSER_EXECUTABLE: capability.executable }); children.add(serverB);
+    await pairTwinNodes(environment);
     const [authA, authB] = await Promise.all([signIn(environment, nodeA), signIn(environment, nodeB)]);
     const projectA = nodeA.projects.find(project => project.name === "Joint Bob")!;
     const projectB = nodeB.projects.find(project => project.name === projectA.name)!;
-    assert.ok(projectA && projectB); assert.notEqual(projectA.id, projectB.id);
+    assert.ok(projectA && projectB); assert.equal(projectA.id, projectB.id, "twins hold the mirrored project under the same id");
     const origin = `http://127.0.0.1:${(fixture.address() as AddressInfo).port}`;
     const conversationId = randomUUID();
 

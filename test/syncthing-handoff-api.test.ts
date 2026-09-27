@@ -1,3 +1,5 @@
+// Two real twin nodes, each with its own HOME and a fake Syncthing, hand a ticket
+// across only once both sides report the shared project folder synchronized.
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -8,9 +10,11 @@ import path from "node:path";
 import test from "node:test";
 import WebSocket from "ws";
 import type { TaskRecord } from "../src/types.js";
+import { projectTicketSyncFolderId } from "../src/task-workspaces.js";
+import { freePort, pairTwinNodes, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, type SignedIn } from "./dev-nodes.js";
+import { signedNodeRequest } from "./signed-node-request.js";
 
-interface NodeProcess { baseUrl: string; child: ChildProcess; homeDir: string; output: () => string; }
-interface Session { headers: Record<string, string>; }
+interface TwinNode extends SeededNode { home: string }
 interface TaskReadyPayload {
   type: string;
   engine: string;
@@ -22,73 +26,99 @@ interface TaskReadyPayload {
   readOnly: boolean;
 }
 interface SyncthingStatus { state: string; needTotalItems: number; needBytes: number; errors?: unknown[] | number; }
+interface Job { root: string; key: string; claudeExecutable: string; project?: { name: string; path: string }; mirror?: { project: SeededNode["projects"][number]; path: string }; events?: unknown[] }
+
+const username = "admin";
+const password = "syncthing-handoff-password";
+// Syncthing device IDs are eight groups of seven base32 characters.
+const SOURCE_DEVICE = Array(8).fill("SOURCEA").join("-");
+const DESTINATION_DEVICE = Array(8).fill("DESTINA").join("-");
 
 async function listen(server: Server): Promise<number> {
   return await new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve((server.address() as { port: number }).port)));
 }
 
-async function startNode(root: string, name: string, syncthingUrl: string): Promise<NodeProcess> {
-  const homeDir = path.join(root, `${name}-home`);
-  await mkdir(homeDir, { recursive: true });
-  let output = "";
-  const child = spawn(process.execPath, ["--import", "tsx", "src/server.ts"], {
-    cwd: path.resolve("."),
-    env: { ...process.env, PORT: "0", HOME: homeDir, PI_WEB_DATA_DIR: path.join(root, `${name}-data`), MASTER_BOB_ADMIN_USERNAME: "admin", MASTER_BOB_INITIAL_PASSWORD: "initial-password", PI_MOBILE_WEB_SYNCTHING_URL: syncthingUrl, PI_MOBILE_WEB_SYNCTHING_API_KEY: "test-key" },
-    stdio: ["ignore", "pipe", "pipe"],
+function runScript(dataDir: string, home: string, code: string, args: string[] = []): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", code, "--", ...args], {
+      cwd: process.cwd(), env: { ...process.env, HOME: home, JOINT_BOB_DATA_DIR: dataDir }, stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("close", (status) => status === 0 ? resolve(stdout.trim()) : reject(new Error(stderr || `child exited ${status}`)));
   });
-  child.stdout.on("data", (chunk) => { output += chunk; });
-  child.stderr.on("data", (chunk) => { output += chunk; });
-  for (let attempt = 0; attempt < 1200; attempt += 1) {
-    if (child.exitCode !== null) throw new Error(`${name} exited during startup (${child.exitCode})\n${output}`);
-    const match = output.match(/listening on http:\/\/127\.0\.0\.1:(\d+)/);
-    if (match && (await fetch(`http://127.0.0.1:${match[1]}/api/health`)).ok) return { baseUrl: `http://127.0.0.1:${match[1]}`, child, homeDir, output: () => output };
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  child.kill("SIGTERM");
-  throw new Error(`${name} did not become healthy\n${output}`);
 }
 
-async function stopNode(node: NodeProcess): Promise<void> {
-  if (node.child.exitCode !== null) return;
-  let stopped = false;
-  node.child.once("exit", () => { stopped = true; });
-  node.child.kill("SIGKILL");
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    if (stopped) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error("Node process did not stop");
+/** Seeds one stopped node: its own HOME, an administrator, its identity, one project,
+    and any locally originated replication events (which it replicates to its twin once running). */
+async function seedNode(job: Job): Promise<TwinNode> {
+  const port = await freePort();
+  const home = path.join(job.root, `${job.key}-home`);
+  const node = { key: job.key, name: `Node ${job.key}`, port, url: `http://127.0.0.1:${port}`, dataDir: path.join(job.root, `${job.key}-data`), cookieName: `mb_session_syncthing_${job.key}` };
+  await mkdir(home, { recursive: true });
+  const output = await runScript(node.dataDir, home, `
+    const job = JSON.parse(process.argv[1]);
+    const { updateSettings } = await import('./src/settings.ts');
+    const { createAdministrator } = await import('./src/auth.ts');
+    const { addProject, importProject } = await import('./src/store.ts');
+    const { updateClusterNode } = await import('./src/cluster.ts');
+    const { receiveReplicationBatch } = await import('./src/replication.ts');
+    updateSettings({ pi: { executable: '', configPath: '', sessionPath: '' }, claude: { executable: job.claudeExecutable, configPath: '', sessionPath: '' }, syncthing: { endpoint: '' }, projects: { homePath: job.home + '/JointBob' } });
+    createAdministrator(job.username, job.password, false);
+    const cluster = await updateClusterNode(job.name, job.url);
+    const project = job.mirror ? await importProject(job.mirror.project, job.mirror.path) : await addProject(job.project.name, job.project.path, { synced: true });
+    const events = (job.events ?? []).map((event) => JSON.parse(JSON.stringify(event).replaceAll('__NODE__', cluster.id).replaceAll('__PROJECT__', project.id)));
+    if (events.length) await receiveReplicationBatch({ events });
+    console.log(JSON.stringify({ nodeId: cluster.id, project }));
+  `, [JSON.stringify({ ...job, ...node, home, username, password })]);
+  const parsed = JSON.parse(output) as { nodeId: string; project: SeededNode["projects"][number] };
+  return { ...node, home, nodeId: parsed.nodeId, projects: [parsed.project] };
 }
 
-async function login(node: NodeProcess): Promise<Session> {
-  const response = await fetch(`${node.baseUrl}/api/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: "admin", password: "initial-password" }) });
-  const body = await response.json() as { csrfToken: string };
-  const cookie = response.headers.get("set-cookie")?.split(";", 1)[0];
-  if (!cookie) throw new Error(node.output());
-  const headers = { Cookie: cookie, "X-CSRF-Token": body.csrfToken, "Content-Type": "application/json" };
-  await fetch(`${node.baseUrl}/api/auth/change-password`, { method: "POST", headers, body: JSON.stringify({ currentPassword: "initial-password", newPassword: "replacement-password" }) });
-  return { headers };
+function nodeEnvironment(root: string, nodes: TwinNode[]): DevEnvironment {
+  return { root, home: nodes[0].home, username, password, nodes };
 }
 
-async function waitForTask(node: NodeProcess, auth: Session, projectId: string, taskId: string, predicate: (task: any) => boolean): Promise<any> {
-  for (let attempt = 0; attempt < 80; attempt += 1) {
-    const body = await (await fetch(`${node.baseUrl}/api/projects/${projectId}/tasks`, { headers: auth.headers })).json() as { tasks: any[] };
+// Each node runs with its own HOME, so its conversation roots differ from its twin's.
+async function startNode(node: TwinNode, syncthingUrl: string): Promise<ChildProcess> {
+  return startDevNode({ root: path.dirname(node.home), home: node.home, username, password, nodes: [node] }, node, { PI_MOBILE_WEB_SYNCTHING_URL: syncthingUrl, PI_MOBILE_WEB_SYNCTHING_API_KEY: "test-key" });
+}
+
+function headers(session: SignedIn): Record<string, string> {
+  return { Cookie: session.cookie, "x-csrf-token": session.csrfToken, "Content-Type": "application/json" };
+}
+
+async function waitForTask(node: TwinNode, auth: SignedIn, projectId: string, taskId: string, predicate: (task: any) => boolean): Promise<any> {
+  let last: unknown;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const body = await (await fetch(`${node.url}/api/projects/${projectId}/tasks`, { headers: headers(auth) })).json() as { tasks: any[] };
     const task = body.tasks.find((item) => item.id === taskId);
+    last = task;
     if (task && predicate(task)) return task;
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
-  throw new Error(node.output());
+  throw new Error(`Task ${taskId} on node ${node.key} never matched: ${JSON.stringify(last)}`);
 }
 
-async function openTaskSocket(node: NodeProcess, auth: Session, projectId: string, taskId: string, sessionPath: string, sessionId?: string): Promise<{ socket: WebSocket; ready: TaskReadyPayload }> {
-  const url = new URL("/ws", node.baseUrl);
+async function waitUntil(what: string, check: () => Promise<boolean>): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (await check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  throw new Error(`Timed out waiting for ${what}`);
+}
+
+async function openTaskSocket(node: TwinNode, auth: SignedIn, projectId: string, taskId: string, sessionPath: string, sessionId?: string): Promise<{ socket: WebSocket; ready: TaskReadyPayload }> {
+  const url = new URL("/ws", node.url);
   url.protocol = "ws:";
   url.searchParams.set("projectId", projectId);
   url.searchParams.set("taskId", taskId);
   if (sessionId) url.searchParams.set("sessionId", sessionId);
   url.searchParams.set("sessionPath", sessionPath);
   return await new Promise((resolve, reject) => {
-    const socket = new WebSocket(url, { headers: { Origin: node.baseUrl, Cookie: auth.headers.Cookie } });
+    const socket = new WebSocket(url, { headers: { Origin: node.url, Cookie: auth.cookie } });
     const timeout = setTimeout(() => {
       socket.close();
       reject(new Error("Task WebSocket did not send ready"));
@@ -120,9 +150,13 @@ function nextSocketPayload(socket: WebSocket, type: string): Promise<Record<stri
   });
 }
 
+function taskEvent(task: Record<string, unknown>): Record<string, unknown> {
+  return { id: randomUUID(), originNodeId: "__NODE__", entityType: "task", entityKey: `__PROJECT__:${task.id}`, operation: "upsert", payload: { projectId: "__PROJECT__", task, originNodeId: "__NODE__" }, createdAt: task.updatedAt };
+}
+
 class FakeSyncthing {
   readonly requests: Array<{ method: string; url: string }> = [];
-  readonly folders: Array<{ id: string; label: string; path: string; type: string; devices: Array<{ deviceID: string }> }> = [];
+  readonly folders: Array<{ id: string; label: string; path: string; type: string; paused?: boolean; devices: Array<{ deviceID: string }> }> = [];
   readonly devices: Array<{ deviceID: string; name: string; addresses: string[] }> = [];
   statusSequence: SyncthingStatus[] = [];
   status: SyncthingStatus = { state: "idle", needTotalItems: 0, needBytes: 0 };
@@ -151,6 +185,14 @@ class FakeSyncthing {
         if (request.method === "GET" && url.startsWith("/rest/db/ignores?folder=")) { response.end(JSON.stringify({ ignore: [] })); return; }
         if (request.method === "POST" && url.startsWith("/rest/db/ignores?folder=")) { response.end("{}"); return; }
         if (request.method === "GET" && url.startsWith("/rest/db/status?folder=")) { response.end(JSON.stringify(this.statusSequence.shift() ?? this.status)); return; }
+        if (request.method === "DELETE" && url.startsWith("/rest/config/folders/")) {
+          const id = decodeURIComponent(url.slice("/rest/config/folders/".length));
+          this.folders.splice(this.folders.findIndex((candidate) => candidate.id === id), 1);
+          response.end("{}");
+          return;
+        }
+        if (request.method === "GET" && url === "/rest/system/connections") { response.end(JSON.stringify({ connections: Object.fromEntries(this.devices.map((device) => [device.deviceID, { connected: true }])) })); return; }
+        if (request.method === "GET" && url.startsWith("/rest/db/completion?")) { response.end(JSON.stringify({ completion: 100, needItems: 0, needBytes: 0, needDeletes: 0, remoteState: "valid" })); return; }
         response.statusCode = 404;
         response.end();
       });
@@ -167,52 +209,43 @@ class FakeSyncthing {
   }
 }
 
-test("Syncthing readiness fences handoff ownership until both nodes are synchronized", { timeout: 120_000 }, async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "pi-mobile-web-syncthing-handoff-"));
-  const nodes: NodeProcess[] = [];
+test("Syncthing readiness fences handoff ownership until both nodes are synchronized", { timeout: 180_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jb-syncthing-handoff-"));
+  const children: ChildProcess[] = [];
   const sourceSyncthing = new FakeSyncthing();
   const destinationSyncthing = new FakeSyncthing();
   try {
-    const [sourceUrl, destinationUrl] = await Promise.all([sourceSyncthing.start("SOURCE"), destinationSyncthing.start("DESTINATION")]);
-    const [source, destination] = await Promise.all([startNode(root, "source", sourceUrl), startNode(root, "destination", destinationUrl)]);
-    nodes.push(source, destination);
-    const [sourceAuth, destinationAuth] = await Promise.all([login(source), login(destination)]);
-    for (const [node, auth, name] of [[source, sourceAuth, "Source"], [destination, destinationAuth, "Destination"]] as const) {
-      assert.equal((await fetch(`${node.baseUrl}/api/cluster/node`, { method: "PUT", headers: auth.headers, body: JSON.stringify({ name, url: node.baseUrl }) })).status, 200);
-    }
-    const destinationToken = (await (await fetch(`${destination.baseUrl}/api/cluster/invite`, { headers: destinationAuth.headers })).json() as { token: string }).token;
-    assert.equal((await fetch(`${source.baseUrl}/api/cluster/peers`, { method: "POST", headers: sourceAuth.headers, body: JSON.stringify({ url: destination.baseUrl, token: destinationToken }) })).status, 201, source.output());
-    const [sourceId, destinationId] = await Promise.all([
-      (async () => ((await (await fetch(`${source.baseUrl}/api/cluster/node`, { headers: sourceAuth.headers })).json() as { node: { id: string } }).node.id))(),
-      (async () => ((await (await fetch(`${destination.baseUrl}/api/cluster/node`, { headers: destinationAuth.headers })).json() as { node: { id: string } }).node.id))(),
-    ]);
-    const sourceProjectPath = path.join(root, "source-project");
-    const destinationProjectPath = path.join(destination.homeDir, "project");
-    await Promise.all([mkdir(sourceProjectPath, { recursive: true }), mkdir(destinationProjectPath, { recursive: true })]);
-    const project = (await (await fetch(`${source.baseUrl}/api/projects`, { method: "POST", headers: sourceAuth.headers, body: JSON.stringify({ name: "shared", path: sourceProjectPath, synced: true }) })).json() as { project: { id: string; syncFolderId: string } }).project;
+    const [sourceUrl, destinationUrl] = await Promise.all([sourceSyncthing.start(SOURCE_DEVICE), destinationSyncthing.start(DESTINATION_DEVICE)]);
+    const seededTask = { id: "synced-task", title: "Synced", description: "No Git", status: "backlog", engine: "pi", planMode: false, reviewMode: false, phaseConfig: {}, sessionPath: null, worktreePath: null, worktreeBranch: null, mergedAt: null, currentNodeId: "__NODE__", leaseOwnerNodeId: null, leaseExpiresAt: null, executionState: "idle", handoffContext: null, originNodeId: "__NODE__", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" };
+    const source = await seedNode({ root, key: "source", claudeExecutable: "", project: { name: "shared", path: path.join(root, "source-project") }, events: [taskEvent(seededTask)] });
+    const project = source.projects[0] as SeededNode["projects"][number] & { syncFolderId?: string };
     assert.ok(project.syncFolderId);
-    assert.equal((await fetch(`${destination.baseUrl}/api/cluster/projects/import`, { method: "POST", headers: destinationAuth.headers, body: JSON.stringify({ peerId: sourceId }) })).status, 200);
-    assert.equal((await fetch(`${destination.baseUrl}/api/cluster/projects/map`, { method: "POST", headers: destinationAuth.headers, body: JSON.stringify({ peerId: sourceId, projectId: project.id, localPath: destinationProjectPath }) })).status, 201, destination.output());
-    const task = { id: "synced-task", title: "Synced", description: "No Git", status: "backlog", engine: "pi", planMode: false, reviewMode: false, phaseConfig: {}, sessionPath: null, worktreePath: null, worktreeBranch: null, mergedAt: null, currentNodeId: sourceId, leaseOwnerNodeId: null, leaseExpiresAt: null, executionState: "idle", handoffContext: null, originNodeId: sourceId, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" };
-    const sourceToken = (await (await fetch(`${source.baseUrl}/api/cluster/invite`, { headers: sourceAuth.headers })).json() as { token: string }).token;
-    assert.equal((await fetch(`${source.baseUrl}/api/cluster/events`, { method: "POST", headers: { Authorization: `Bearer ${sourceToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ events: [{ id: randomUUID(), originNodeId: sourceId, entityType: "task", entityKey: `${project.id}:${task.id}`, operation: "upsert", payload: { projectId: project.id, task, originNodeId: sourceId }, createdAt: task.updatedAt }] }) })).status, 200);
+    const destination = await seedNode({ root, key: "destination", claudeExecutable: "", mirror: { project, path: path.join(root, "destination-home", "project") } });
+    const [sourceId, destinationId] = [source.nodeId, destination.nodeId];
+    const task = { ...seededTask, currentNodeId: sourceId, originNodeId: sourceId };
+    children.push(await startNode(source, sourceUrl), await startNode(destination, destinationUrl));
+    await pairTwinNodes(nodeEnvironment(root, [source, destination]));
+    const [sourceAuth, destinationAuth] = await Promise.all([signIn(nodeEnvironment(root, [source]), source), signIn(nodeEnvironment(root, [destination]), destination)]);
     await Promise.all([waitForTask(source, sourceAuth, project.id, task.id, () => true), waitForTask(destination, destinationAuth, project.id, task.id, () => true)]);
+    // Each twin enrolls the shared project's own Syncthing folders with the other's device.
+    await waitUntil("per-project folder enrollment", async () => [[sourceSyncthing, DESTINATION_DEVICE], [destinationSyncthing, SOURCE_DEVICE]].every(([syncthing, peer]) =>
+      (syncthing as FakeSyncthing).folders.find((folder) => folder.id === project.syncFolderId)?.devices.some((device) => device.deviceID === peer)));
 
     destinationSyncthing.status = { state: "syncing", needTotalItems: 1, needBytes: 2048 };
-    const readiness = await fetch(`${source.baseUrl}/api/projects/${project.id}/tasks/${task.id}/eligibility`, { headers: sourceAuth.headers });
-    assert.equal(readiness.status, 200, source.output());
+    const readiness = await fetch(`${source.url}/api/projects/${project.id}/tasks/${task.id}/eligibility`, { headers: headers(sourceAuth) });
+    assert.equal(readiness.status, 200);
     const destinationEntry = (await readiness.json() as { nodes: Array<{ node: { id: string }; eligible: boolean; waitingForSync: boolean; syncStatuses: Array<{ state: string; remainingFiles: number; remainingBytes: number }> }> }).nodes.find((entry) => entry.node.id === destinationId);
     assert.ok(destinationEntry);
     assert.equal(destinationEntry.eligible, false);
     assert.equal(destinationEntry.waitingForSync, true);
     assert.deepEqual(destinationEntry.syncStatuses.find((status) => status.state === "syncing"), { label: "shared", state: "syncing", remainingFiles: 1, remainingBytes: 2048, message: "Syncthing is synchronizing this folder" });
-    const rejected = await fetch(`${source.baseUrl}/api/projects/${project.id}/tasks/${task.id}/handoff`, { method: "POST", headers: sourceAuth.headers, body: JSON.stringify({ peerId: destinationId }) });
-    assert.equal(rejected.status, 409, source.output());
+    const rejected = await fetch(`${source.url}/api/projects/${project.id}/tasks/${task.id}/handoff`, { method: "POST", headers: headers(sourceAuth), body: JSON.stringify({ peerId: destinationId }) });
+    assert.equal(rejected.status, 409);
     assert.equal((await waitForTask(source, sourceAuth, project.id, task.id, (candidate) => candidate.executionState === "idle")).currentNodeId, sourceId);
 
     destinationSyncthing.status = { state: "idle", needTotalItems: 0, needBytes: 0, errors: 1 };
-    const errorReadiness = await fetch(`${source.baseUrl}/api/projects/${project.id}/tasks/${task.id}/eligibility`, { headers: sourceAuth.headers });
-    assert.equal(errorReadiness.status, 200, source.output());
+    const errorReadiness = await fetch(`${source.url}/api/projects/${project.id}/tasks/${task.id}/eligibility`, { headers: headers(sourceAuth) });
+    assert.equal(errorReadiness.status, 200);
     const errorDestinationEntry = (await errorReadiness.json() as { nodes: Array<{ node: { id: string }; eligible: boolean; waitingForSync: boolean; syncStatuses: Array<{ state: string }> }> }).nodes.find((entry) => entry.node.id === destinationId);
     assert.ok(errorDestinationEntry);
     assert.equal(errorDestinationEntry.eligible, false);
@@ -221,118 +254,100 @@ test("Syncthing readiness fences handoff ownership until both nodes are synchron
 
     destinationSyncthing.status = { state: "idle", needTotalItems: 0, needBytes: 0 };
     sourceSyncthing.status = { state: "scanning", needTotalItems: 0, needBytes: 0 };
-    const sourceReadiness = await fetch(`${source.baseUrl}/api/projects/${project.id}/tasks/${task.id}/eligibility`, { headers: sourceAuth.headers });
-    assert.equal(sourceReadiness.status, 200, source.output());
+    const sourceReadiness = await fetch(`${source.url}/api/projects/${project.id}/tasks/${task.id}/eligibility`, { headers: headers(sourceAuth) });
+    assert.equal(sourceReadiness.status, 200);
     const sourceEntry = (await sourceReadiness.json() as { source: { node: { id: string }; eligible: boolean; waitingForSync: boolean; syncStatuses: Array<{ state: string }> } }).source;
     assert.equal(sourceEntry.node.id, sourceId);
     assert.equal(sourceEntry.eligible, false);
     assert.equal(sourceEntry.waitingForSync, true);
     assert.equal(sourceEntry.syncStatuses.find((status) => status.state === "syncing")?.state, "syncing");
-    const remoteReadiness = await fetch(`${destination.baseUrl}/api/projects/${project.id}/tasks/${task.id}/eligibility`, { headers: destinationAuth.headers });
-    assert.equal(remoteReadiness.status, 200, destination.output());
+    const remoteReadiness = await fetch(`${destination.url}/api/projects/${project.id}/tasks/${task.id}/eligibility`, { headers: headers(destinationAuth) });
+    assert.equal(remoteReadiness.status, 200);
     const remoteSourceEntry = (await remoteReadiness.json() as { source: { node: { id: string }; waitingForSync: boolean; syncStatuses: Array<{ state: string }> } }).source;
     assert.equal(remoteSourceEntry.node.id, sourceId);
     assert.equal(remoteSourceEntry.waitingForSync, true);
     assert.equal(remoteSourceEntry.syncStatuses.find((status) => status.state === "syncing")?.state, "syncing");
 
+    assert.ok(sourceSyncthing.ignoreRequests() > 0);
+    assert.ok(destinationSyncthing.ignoreRequests() > 0);
+    for (const [syncthing, peerDevice] of [[sourceSyncthing, DESTINATION_DEVICE], [destinationSyncthing, SOURCE_DEVICE]] as const) {
+      assert.ok(!syncthing.folders.some((folder) => folder.id === "dot-pi"));
+      assert.ok(!syncthing.folders.some((folder) => folder.id === "dot-claude"));
+      // A twin never receives whole transcript roots or the global ticket folder; it gets the
+      // shared project's folder and that project's ticket folder.
+      for (const id of ["joint-bob-conversations-pi", "joint-bob-conversations-claude", "joint-bob-ticket-workspaces"]) {
+        assert.equal(syncthing.folders.find((folder) => folder.id === id)?.devices.some((device) => device.deviceID === peerDevice) ?? false, false, id);
+      }
+      assert.ok(syncthing.folders.find((folder) => folder.id === project.syncFolderId)?.devices.some((device) => device.deviceID === peerDevice));
+      assert.ok(syncthing.folders.find((folder) => folder.id === projectTicketSyncFolderId(project.id))?.devices.some((device) => device.deviceID === peerDevice));
+    }
+
     sourceSyncthing.status = { state: "idle", needTotalItems: 0, needBytes: 0 };
     destinationSyncthing.statusSequence = [destinationSyncthing.status, { state: "syncing", needTotalItems: 1, needBytes: 0 }];
-    const pending = await fetch(`${source.baseUrl}/api/projects/${project.id}/tasks/${task.id}/handoff`, { method: "POST", headers: sourceAuth.headers, body: JSON.stringify({ peerId: destinationId }) });
-    assert.equal(pending.status, 202, source.output());
+    const pending = await fetch(`${source.url}/api/projects/${project.id}/tasks/${task.id}/handoff`, { method: "POST", headers: headers(sourceAuth), body: JSON.stringify({ peerId: destinationId }) });
+    assert.equal(pending.status, 202);
     const restored = await waitForTask(source, sourceAuth, project.id, task.id, (candidate) => candidate.currentNodeId === sourceId && candidate.executionState === "idle");
     assert.equal(restored.currentNodeId, sourceId);
     assert.equal((await waitForTask(destination, destinationAuth, project.id, task.id, (candidate) => candidate.executionState === "idle")).currentNodeId, sourceId);
 
     destinationSyncthing.statusSequence = [];
-    const completed = await fetch(`${source.baseUrl}/api/projects/${project.id}/tasks/${task.id}/handoff`, { method: "POST", headers: sourceAuth.headers, body: JSON.stringify({ peerId: destinationId }) });
-    assert.equal(completed.status, 200, source.output());
+    const completed = await fetch(`${source.url}/api/projects/${project.id}/tasks/${task.id}/handoff`, { method: "POST", headers: headers(sourceAuth), body: JSON.stringify({ peerId: destinationId }) });
+    assert.equal(completed.status, 200);
     await Promise.all([
       waitForTask(source, sourceAuth, project.id, task.id, (candidate) => candidate.currentNodeId === destinationId && candidate.executionState === "idle"),
       waitForTask(destination, destinationAuth, project.id, task.id, (candidate) => candidate.currentNodeId === destinationId && candidate.executionState === "idle"),
     ]);
-    assert.ok(sourceSyncthing.ignoreRequests() > 0);
-    assert.ok(destinationSyncthing.ignoreRequests() > 0);
-    for (const syncthing of [sourceSyncthing, destinationSyncthing]) {
-      assert.ok(!syncthing.folders.some((folder) => folder.id === "dot-pi"));
-      assert.ok(!syncthing.folders.some((folder) => folder.id === "dot-claude"));
-    }
-    for (const [syncthing, node, peerDevice] of [[sourceSyncthing, source, "DESTINATION"], [destinationSyncthing, destination, "SOURCE"]] as const) {
-      assert.equal(syncthing.folders.find((folder) => folder.id === "joint-bob-conversations-pi")?.path, path.join(node.homeDir, ".pi", "agent", "sessions"));
-      assert.equal(syncthing.folders.find((folder) => folder.id === "joint-bob-conversations-claude")?.path, path.join(node.homeDir, ".claude", "projects"));
-      assert.ok(syncthing.folders.find((folder) => folder.id === "joint-bob-conversations-pi")?.devices.some((device) => device.deviceID === peerDevice));
-      assert.ok(syncthing.folders.find((folder) => folder.id === "joint-bob-conversations-claude")?.devices.some((device) => device.deviceID === peerDevice));
-    }
-    assert.ok(sourceSyncthing.folders.find((folder) => folder.id === "joint-bob-ticket-workspaces")?.devices.some((device) => device.deviceID === "DESTINATION"));
-    assert.ok(destinationSyncthing.folders.find((folder) => folder.id === "joint-bob-ticket-workspaces")?.devices.some((device) => device.deviceID === "SOURCE"));
   } finally {
-    await Promise.all(nodes.map(stopNode));
+    await Promise.all(children.map(stopDevNode));
     await Promise.all([sourceSyncthing.stop(), destinationSyncthing.stop()]);
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("task handoff preserves an undiscovered Claude ticket transcript and moves its ownership", { timeout: 120_000 }, async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "pi-mobile-web-ticket-handoff-"));
-  const nodes: NodeProcess[] = [];
+test("task handoff preserves an undiscovered Claude ticket transcript and moves its ownership", { timeout: 180_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jb-ticket-handoff-"));
+  const children: ChildProcess[] = [];
   const sourceSyncthing = new FakeSyncthing();
   const destinationSyncthing = new FakeSyncthing();
   try {
-    const [sourceUrl, destinationUrl] = await Promise.all([sourceSyncthing.start("SOURCE"), destinationSyncthing.start("DESTINATION")]);
-    const [source, destination] = await Promise.all([startNode(root, "source", sourceUrl), startNode(root, "destination", destinationUrl)]);
-    nodes.push(source, destination);
-    const [sourceAuth, destinationAuth] = await Promise.all([login(source), login(destination)]);
-    for (const [node, auth, name] of [[source, sourceAuth, "Source"], [destination, destinationAuth, "Destination"]] as const) {
-      assert.equal((await fetch(`${node.baseUrl}/api/cluster/node`, { method: "PUT", headers: auth.headers, body: JSON.stringify({ name, url: node.baseUrl }) })).status, 200);
-      assert.equal((await fetch(`${node.baseUrl}/api/settings`, { method: "PUT", headers: auth.headers, body: JSON.stringify({ pi: { executable: "", configPath: "", sessionPath: "" }, claude: { executable: "true", configPath: "", sessionPath: "" }, syncthing: { endpoint: node === source ? sourceUrl : destinationUrl } }) })).status, 200);
-    }
-    const destinationToken = (await (await fetch(`${destination.baseUrl}/api/cluster/invite`, { headers: destinationAuth.headers })).json() as { token: string }).token;
-    assert.equal((await fetch(`${source.baseUrl}/api/cluster/peers`, { method: "POST", headers: sourceAuth.headers, body: JSON.stringify({ url: destination.baseUrl, token: destinationToken }) })).status, 201, source.output());
-    const [sourceId, destinationId, sourceToken] = await Promise.all([
-      (async () => ((await (await fetch(`${source.baseUrl}/api/cluster/node`, { headers: sourceAuth.headers })).json() as { node: { id: string } }).node.id))(),
-      (async () => ((await (await fetch(`${destination.baseUrl}/api/cluster/node`, { headers: destinationAuth.headers })).json() as { node: { id: string } }).node.id))(),
-      (async () => ((await (await fetch(`${source.baseUrl}/api/cluster/invite`, { headers: sourceAuth.headers })).json() as { token: string }).token))(),
-    ]);
-    const sourceProjectPath = path.join(root, "source-project");
-    const destinationProjectPath = path.join(destination.homeDir, "project");
-    await Promise.all([mkdir(sourceProjectPath, { recursive: true }), mkdir(destinationProjectPath, { recursive: true })]);
-    const project = (await (await fetch(`${source.baseUrl}/api/projects`, { method: "POST", headers: sourceAuth.headers, body: JSON.stringify({ name: "shared", path: sourceProjectPath, synced: true }) })).json() as { project: { id: string } }).project;
-    assert.equal((await fetch(`${destination.baseUrl}/api/cluster/projects/import`, { method: "POST", headers: destinationAuth.headers, body: JSON.stringify({ peerId: sourceId }) })).status, 200);
-    assert.equal((await fetch(`${destination.baseUrl}/api/cluster/projects/map`, { method: "POST", headers: destinationAuth.headers, body: JSON.stringify({ peerId: sourceId, projectId: project.id, localPath: destinationProjectPath }) })).status, 201, destination.output());
-
+    const [sourceUrl, destinationUrl] = await Promise.all([sourceSyncthing.start(SOURCE_DEVICE), destinationSyncthing.start(DESTINATION_DEVICE)]);
     const sessionId = randomUUID();
-    const sourceSessionFile = path.join(source.homeDir, ".claude", "projects", "-legacy-ticket", `${sessionId}.jsonl`);
-    const destinationSessionFile = path.join(destination.homeDir, ".claude", "projects", "-legacy-ticket", `${sessionId}.jsonl`);
+    const sourceSessionFile = path.join(root, "source-home", ".claude", "projects", "-legacy-ticket", `${sessionId}.jsonl`);
+    const destinationSessionFile = path.join(root, "destination-home", ".claude", "projects", "-legacy-ticket", `${sessionId}.jsonl`);
     const transcript = `${JSON.stringify({ type: "user", sessionId, cwd: "/legacy/ticket", timestamp: "2026-01-01T00:00:00.000Z", message: { role: "user", content: "preserved ticket message" } })}\n`;
     await Promise.all([
       mkdir(path.dirname(sourceSessionFile), { recursive: true }).then(() => writeFile(sourceSessionFile, transcript)),
       mkdir(path.dirname(destinationSessionFile), { recursive: true }).then(() => writeFile(destinationSessionFile, transcript)),
     ]);
     const now = "2026-01-01T00:00:00.000Z";
-    const task: TaskRecord = {
+    const seededTask = {
       id: "legacy-ticket-task", title: "Legacy ticket", description: "Preserve transcript", attachments: [], status: "done", engine: "claude", planMode: false, reviewMode: false, phaseConfig: {}, sessionPath: `claude:${sourceSessionFile}`, worktreePath: null, worktreeBranch: null, mergedAt: null,
       mergeState: "none", conflictCount: 0, mergeWarning: null, mergeTx: null, mergeDigests: null, runKind: null,
-      currentNodeId: sourceId, leaseOwnerNodeId: null, leaseExpiresAt: null, executionState: "idle", handoffContext: null, originNodeId: sourceId, createdAt: now, updatedAt: now,
+      currentNodeId: "__NODE__", leaseOwnerNodeId: null, leaseExpiresAt: null, executionState: "idle", handoffContext: null, originNodeId: "__NODE__", createdAt: now, updatedAt: now,
     };
-    const record = { projectId: project.id, engine: "claude", sessionId, createdAt: now, updatedAt: now, originNodeId: sourceId, taskId: task.id };
+    const record = { projectId: "__PROJECT__", engine: "claude", sessionId, createdAt: now, updatedAt: now, originNodeId: "__NODE__", taskId: seededTask.id };
+    // Claims are local-first: node A records its own ownership, which replicates to its twin.
+    const ownershipRecord = { engine: "claude", sessionId, ownerNodeId: "__NODE__", epoch: 1, status: "owned", transferToNodeId: null };
     const events = [
-      { id: randomUUID(), originNodeId: sourceId, entityType: "task", entityKey: `${project.id}:${task.id}`, operation: "upsert", payload: { projectId: project.id, task, originNodeId: sourceId }, createdAt: now },
-      { id: randomUUID(), originNodeId: sourceId, entityType: "conversation.record", entityKey: `${project.id}:claude:${sessionId}`, operation: "upsert", payload: { projectId: project.id, engine: "claude", sessionId, record, updatedAt: now, originNodeId: sourceId }, createdAt: now },
+      taskEvent(seededTask),
+      { id: randomUUID(), originNodeId: "__NODE__", entityType: "conversation.record", entityKey: `__PROJECT__:claude:${sessionId}`, operation: "upsert", payload: { projectId: "__PROJECT__", engine: "claude", sessionId, record, updatedAt: now, originNodeId: "__NODE__" }, createdAt: now },
+      { id: randomUUID(), originNodeId: "__NODE__", entityType: "conversation.ownership", entityKey: `claude:${sessionId}`, operation: "upsert", payload: { ...ownershipRecord, originNodeId: "__NODE__" }, createdAt: now },
     ];
-    assert.equal((await fetch(`${source.baseUrl}/api/cluster/events`, { method: "POST", headers: { Authorization: `Bearer ${sourceToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ events }) })).status, 200, source.output());
+    const source = await seedNode({ root, key: "source", claudeExecutable: "true", project: { name: "shared", path: path.join(root, "source-project") }, events });
+    const project = source.projects[0];
+    const destination = await seedNode({ root, key: "destination", claudeExecutable: "true", mirror: { project, path: path.join(root, "destination-home", "project") } });
+    const [sourceId, destinationId] = [source.nodeId, destination.nodeId];
+    const environment = nodeEnvironment(root, [source, destination]);
+    const task = { ...seededTask, currentNodeId: sourceId, originNodeId: sourceId } as TaskRecord;
+    children.push(await startNode(source, sourceUrl), await startNode(destination, destinationUrl));
+    await pairTwinNodes(environment);
+    const [sourceAuth, destinationAuth] = await Promise.all([signIn(nodeEnvironment(root, [source]), source), signIn(nodeEnvironment(root, [destination]), destination)]);
     await Promise.all([waitForTask(source, sourceAuth, project.id, task.id, () => true), waitForTask(destination, destinationAuth, project.id, task.id, () => true)]);
+    const ownershipTarget = `/api/cluster/v2/runtime/sessions/ownership?engine=claude&sessionId=${sessionId}`;
+    await waitUntil("replicated ownership", async () => ((await (await signedNodeRequest(environment, source, destination, "GET", ownershipTarget)).json()) as { ownership: { ownerNodeId: string } | null }).ownership?.ownerNodeId === sourceId);
 
-    // Claims are local-first, so the handoff's owner is established by applying the
-    // same ownership record through the replication endpoint instead of the removed
-    // coordinator claim.
-    const ownershipRecord = { engine: "claude", sessionId, ownerNodeId: sourceId, epoch: 1, status: "owned", transferToNodeId: null };
-    for (const node of [source, destination]) {
-      const apply = await fetch(`${node.baseUrl}/api/cluster/sessions/ownership/apply`, { method: "POST", headers: { Authorization: `Bearer ${sourceToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ record: ownershipRecord, originNodeId: sourceId }) });
-      assert.equal(apply.status, 200, node.output());
-      assert.equal(((await apply.json()) as { accepted: boolean }).accepted, true, node.output());
-    }
-
-    const handoff = await fetch(`${source.baseUrl}/api/projects/${project.id}/tasks/${task.id}/handoff`, { method: "POST", headers: sourceAuth.headers, body: JSON.stringify({ peerId: destinationId }) });
-    assert.equal(handoff.status, 200, source.output());
+    const handoff = await fetch(`${source.url}/api/projects/${project.id}/tasks/${task.id}/handoff`, { method: "POST", headers: headers(sourceAuth), body: JSON.stringify({ peerId: destinationId }) });
+    assert.equal(handoff.status, 200);
     const handedOff = await handoff.json() as { task: TaskRecord };
     assert.equal(handedOff.task.sessionPath, `claude:${destinationSessionFile}`);
     await Promise.all([
@@ -355,15 +370,15 @@ test("task handoff preserves an undiscovered Claude ticket transcript and moves 
     assert.equal(ready.executionNodeId, destinationId);
     assert.equal(ready.readOnly, true);
 
-    const renamed = await fetch(`${destination.baseUrl}/api/projects/${project.id}/sessions/title`, {
+    const renamed = await fetch(`${destination.url}/api/projects/${project.id}/sessions/title`, {
       method: "PUT",
-      headers: destinationAuth.headers,
+      headers: headers(destinationAuth),
       body: JSON.stringify({ engine: "claude", sessionId, title: "Mutated title" }),
     });
     assert.equal(renamed.status, 409, "Done conversation title must be immutable");
-    const removed = await fetch(`${source.baseUrl}/api/projects/${project.id}/sessions?engine=claude&sessionId=${sessionId}&taskId=${task.id}`, {
+    const removed = await fetch(`${source.url}/api/projects/${project.id}/sessions?engine=claude&sessionId=${sessionId}&taskId=${task.id}`, {
       method: "DELETE",
-      headers: sourceAuth.headers,
+      headers: headers(sourceAuth),
     });
     assert.equal(removed.status, 409, "Done conversation transcript must not be removable");
 
@@ -371,11 +386,11 @@ test("task handoff preserves an undiscovered Claude ticket transcript and moves 
     opened.socket.send(JSON.stringify({ type: "prompt", message: "mutate a finished ticket" }));
     assert.deepEqual(await rejected, { type: "error", error: "Done ticket conversations are read-only" });
     opened.socket.close();
-    const ownership = await (await fetch(`${destination.baseUrl}/api/cluster/sessions/ownership?engine=claude&sessionId=${sessionId}`, { headers: { Authorization: `Bearer ${destinationToken}` } })).json() as { ownership: { ownerNodeId: string; status: string } };
+    const ownership = await (await signedNodeRequest(environment, source, destination, "GET", ownershipTarget)).json() as { ownership: { ownerNodeId: string; status: string } };
     assert.equal(ownership.ownership.ownerNodeId, destinationId);
     assert.equal(ownership.ownership.status, "owned");
   } finally {
-    await Promise.all(nodes.map(stopNode));
+    await Promise.all(children.map(stopDevNode));
     await Promise.all([sourceSyncthing.stop(), destinationSyncthing.stop()]);
     await rm(root, { recursive: true, force: true });
   }

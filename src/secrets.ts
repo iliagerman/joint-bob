@@ -4,7 +4,6 @@ import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { isHarnessId, type HarnessId } from "./types.js";
-import { selectiveSharingActiveInDatabase } from "./cluster-v2-mode-state.js";
 import { isTrustedTwin, mayReceiveResource } from "./cluster-sharing-policy.js";
 
 export type SecretProvider = "aws" | "google" | "github" | "custom" | "website";
@@ -221,10 +220,11 @@ function conversationRows(conversation: SecretConversation): AccountRow[] {
 
 function accountAllowedForProject(accountId: string, projectId: string): boolean {
   const handle = db();
-  if (!selectiveSharingActiveInDatabase(handle)) return true;
   const { origin_node_id: origin } = handle.prepare("SELECT origin_node_id FROM secret_accounts WHERE id=?").get(accountId) as { origin_node_id: string };
+  // An account created here has no origin until it first replicates.
+  if (!origin) return true;
   const { id: local } = handle.prepare("SELECT id FROM cluster_node LIMIT 1").get() as { id: string };
-  if (!origin || origin === local) return true;
+  if (origin === local) return true;
   if (isTrustedTwin(handle, local, origin)) return true;
   const policy = handle.prepare("SELECT deleted FROM cluster_v2_resource_policy WHERE kind='project' AND resource_id=?").get(projectId) as { deleted: number } | undefined;
   if (!policy || policy.deleted || !mayReceiveResource(handle, local, 'project', projectId) || !mayReceiveResource(handle, origin, 'project', projectId)) return false;

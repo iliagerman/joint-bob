@@ -1,203 +1,25 @@
-import { AGENT_RESOURCES_FOLDER_ID } from "../../agent-resources.js";
-import { assertClusterDepartureAllowed, clusterProjectGrantFor, createClusterInvitation, createClusterPeer, getClusterMachineToken, getClusterMembership, getClusterNode, getClusterPeer, leaveCluster, listClusterPeers, markClusterPeerSeen, mergeClusterMembership, removeClusterPeer, saveClusterPeer, setClusterInviter, updateClusterNode } from "../../cluster.js";
+import { getClusterNode, updateClusterNode } from "../../cluster.js";
 import { getConversationOwnership, takeConversationOwnership } from "../../conversation-ownership.js";
-import { listHarnessSyncFolders } from "../../harnesses.js";
 import { applyRuntimeLeaseSnapshot, conversationRuntimeDatabase, type RuntimeLeaseInput } from "../../conversation-runtime.js";
 import { receiveReplicationBatch, type ReplicationBatch } from "../../replication.js";
-import { receiveSecretCredentialEvents, type SecretCredentialEvent } from "../../secret-replication.js";
 import { type PushSubscriptionEvent, receivePushSubscriptionEvents } from "../../push.js";
-import { getSettings } from "../../settings.js";
-import { canonicalProjectId, getProject, listProjects, projectAliasIds, updateProjectSyncFolderId } from "../../store.js";
-import { removeSyncthingDevices, syncthingDeviceId, syncthingFolderIdForPath } from "../../syncthing.js";
-import { appVersion } from "../../changelog.js";
-import { updateInventoryView } from "../../updater.js";
-import { TICKET_WORKSPACE_FOLDER_ID } from "../../task-workspaces.js";
+import { getProject } from "../../store.js";
 import { abortPreparedTaskHandoff, acknowledgeIncomingTaskHandoff, commitPreparedTaskHandoff, getTaskHandoff, isTaskHandoffRejected, listTasks, prepareTaskHandoff, rejectTaskHandoff, reserveTaskHandoff, taskHandoffDeletion } from "../../tasks.js";
-import { z } from "zod";
-import { getRuntimePeer, listRuntimePeers } from '../runtime-peers.js';
+import { getRuntimePeer } from '../runtime-peers.js';
 import type { HarnessId, TaskRecord } from "../../types.js";
 import { type PreparedTaskWorktree, prepareTaskWorktreeFromBundle, removePreparedTaskWorktree } from "../../worktrees.js";
-import { assertTaskFilesReady, projectWithLocalLocation, publicClusterPeer, syncPairedProjects, taskConversationIdentity, taskHandoffEligibility } from "../cluster-helpers.js";
-import { canonicalClusterUrl, parseClusterInvitationLink, prospectiveClusterNode, sendError } from "../http-auth.js";
-import { flushMembershipOutbox } from "../maintenance.js";
+import { assertTaskFilesReady, taskConversationIdentity, taskHandoffEligibility } from "../cluster-helpers.js";
+import { sendError } from "../http-auth.js";
 import { broadcastReplicationInvalidations, broadcastSessionsChangedToAllProjects, broadcastToProject } from "../realtime.js";
-import { clusterInvitationCreateSchema, clusterInvitationRedemptionSchema, clusterJoinSchema, clusterMembershipLeaveSchema, clusterMembershipMemberSchema, clusterMembershipSnapshotSchema, clusterNodeSchema, clusterPeerSchema, preparedTaskSchema, pushSubscriptionBatchSchema, replicationBatchSchema, runtimeSnapshotSchema, secretCredentialBatchSchema, taskEligibilitySchema, taskHandoffActionSchema, taskHandoffStatusSchema } from "../schemas.js";
+import { clusterNodeSchema, preparedTaskSchema, pushSubscriptionBatchSchema, replicationBatchSchema, runtimeSnapshotSchema, taskEligibilitySchema, taskHandoffActionSchema, taskHandoffStatusSchema } from "../schemas.js";
 import { app } from "../state.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
-import { mayReplicateEvent, replicationPeers } from "../replication-v2.js";
-
-app.post("/api/cluster/invitations", async (request, response, next) => {
-  try {
-    const payload = clusterInvitationCreateSchema.parse(request.body);
-    const node = await getClusterNode();
-    if (!node.url) { sendError(response, 409, "Configure this node's public Tailscale URL before generating an invitation"); return; }
-    if ((await listClusterPeers()).length >= 4) { sendError(response, 409, "A cluster supports at most five nodes"); return; }
-    // Selection is canonicalised here and frozen server-side: the link carries no project
-    // ids, so the joining node can never widen its own access.
-    const canonical: string[] = [];
-    for (const projectId of payload.projectIds) {
-      const resolved = await canonicalProjectId(projectId);
-      if (!resolved) { sendError(response, 400, `Unknown project: ${projectId}`); return; }
-      if (!canonical.includes(resolved)) canonical.push(resolved);
-    }
-    if (!canonical.length) { sendError(response, 400, "Share at least one project"); return; }
-    const invitation = await createClusterInvitation(canonical);
-    const link = new URL("/join", `${node.url}/`);
-    link.hash = `${invitation.id}.${invitation.secret}`;
-    response.status(201).json({ link: link.href, projectIds: canonical });
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.post("/api/cluster/join", async (request, response, next) => {
-  try {
-    const payload = clusterJoinSchema.parse(request.body);
-    let invitation: ReturnType<typeof parseClusterInvitationLink>;
-    try {
-      invitation = parseClusterInvitationLink(payload.link);
-    } catch {
-      sendError(response, 400, "Cluster invitation link is invalid");
-      return;
-    }
-    const [currentNode, peers, machineToken] = await Promise.all([getClusterNode(), listClusterPeers(), getClusterMachineToken()]);
-    // Preflight validates the invitation without consuming it, so a node already in a
-    // cluster only leaves after it knows the new invitation is usable. A failed preflight
-    // leaves the current cluster untouched.
-    const preflightResponse = await fetch(`${invitation.inviterUrl}/api/cluster/invitations/preflight`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ invitationId: invitation.invitationId, secret: invitation.secret, nodeId: currentNode.id }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!preflightResponse.ok) {
-      const body = await preflightResponse.json().catch(() => ({})) as { error?: string };
-      sendError(response, preflightResponse.status, body.error ?? `Inviting node returned ${preflightResponse.status}`);
-      return;
-    }
-    const preflight = z.object({ status: z.enum(["accepted", "active", "expired", "invalid", "used", "retry"]), inviterNodeId: z.string().uuid(), inviterName: z.string(), projectIds: z.array(z.string()) }).parse(await preflightResponse.json());
-    if (preflight.status === "invalid") { sendError(response, 401, "Invalid cluster invitation"); return; }
-    if (preflight.status === "expired") { sendError(response, 410, "Cluster invitation has expired"); return; }
-    if (preflight.status === "used") { sendError(response, 410, "Cluster invitation has already been used"); return; }
-    const alreadyMemberHere = peers.some((peer) => canonicalClusterUrl(peer.url) === invitation.inviterUrl);
-    // Accepting a new invitation always means leaving the current cluster first: a retry
-    // against the cluster this node already belongs to keeps its existing membership.
-    if (peers.length && !(alreadyMemberHere && preflight.status === "retry")) {
-      // Validate the departure before telling anyone: a leave that would fail locally after
-      // the peers already dropped this node strands it between two clusters.
-      try {
-        await assertClusterDepartureAllowed();
-      } catch (error) {
-        if (error instanceof Error && error.message.startsWith("Transfer owned tasks and settle handoffs")) {
-          sendError(response, 409, error.message);
-          return;
-        }
-        throw error;
-      }
-      const leftAt = new Date().toISOString();
-      for (const peer of peers) {
-        // Best-effort notice so peers drop this node immediately; membership tombstones
-        // converge the rest even when a peer is unreachable. `leftAt` lets a peer that
-        // receives this late, after a re-pairing, ignore it instead of rolling the
-        // membership back.
-        await fetch(`${peer.url}/api/cluster/membership/leave`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${machineToken}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ nodeId: currentNode.id, leftAt }),
-          signal: AbortSignal.timeout(3_000),
-        }).catch(() => undefined);
-      }
-      await leaveCluster();
-    }
-    const prospective = prospectiveClusterNode(currentNode, payload.name, payload.url);
-    // A fresh version timestamp clears this node's removal tombstones on the inviter, and
-    // leaving rotated the credential, so the token is read after the leave.
-    const member = { ...prospective, updatedAt: new Date().toISOString(), token: await getClusterMachineToken() };
-    const redeemResponse = await fetch(`${invitation.inviterUrl}/api/cluster/invitations/redeem`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ invitationId: invitation.invitationId, secret: invitation.secret, member }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!redeemResponse.ok) {
-      const body = await redeemResponse.json().catch(() => ({})) as { error?: string };
-      sendError(response, redeemResponse.status, body.error ?? `Inviting node returned ${redeemResponse.status}`);
-      return;
-    }
-    const redemption = clusterInvitationRedemptionSchema.parse(await redeemResponse.json());
-    const localNode = await updateClusterNode(payload.name, payload.url);
-    await setClusterInviter(redemption.inviterNodeId);
-    await mergeClusterMembership(redemption.membership, redemption.inviterNodeId);
-    const inviter = await getClusterPeer(redemption.inviterNodeId);
-    if (!inviter) throw new Error("Inviting node was not added to cluster membership");
-    const confirmation = await fetch(`${inviter.url}/api/cluster/membership/sync`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${inviter.token}`, "Content-Type": "application/json" },
-      body: JSON.stringify(await getClusterMembership()),
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (!confirmation.ok) throw new Error(`Cluster membership confirmation failed: inviting node returned ${confirmation.status}`);
-    const localImport = await syncPairedProjects(inviter, localNode.id);
-    response.status(201).json({ peers: (await listClusterPeers()).map(publicClusterPeer), pending: localImport.pending });
-  } catch (error) {
-    next(error);
-  }
-});
-
-async function notifyPeersOfDeparture(peers: Awaited<ReturnType<typeof listClusterPeers>>, nodeId: string, machineToken: string, leftAt: string): Promise<void> {
-  const departureHeaders = { Authorization: `Bearer ${machineToken}`, "Content-Type": "application/json" };
-  const inventories = await Promise.all(peers.map(async (peer) => {
-    const reachable = await fetch(`${peer.url}/api/health`, { signal: AbortSignal.timeout(3_000) });
-    if (!reachable.ok) throw new Error(`${peer.name} rejected cluster departure preflight (${reachable.status})`);
-    const inventory = await fetch(`${peer.url}/api/cluster/inventory`, {
-      headers: { Authorization: `Bearer ${peer.token}` }, signal: AbortSignal.timeout(3_000),
-    });
-    return inventory.ok ? await inventory.json() as { syncDeviceId?: unknown } : {};
-  }));
-  const peerDeviceIds = inventories.map((inventory) => inventory.syncDeviceId).filter((deviceId): deviceId is string => typeof deviceId === "string" && Boolean(deviceId));
-  const projectFolderIds = (await listProjects()).map((project) => project.syncFolderId).filter((folderId): folderId is string => Boolean(folderId));
-  const folderIds = [TICKET_WORKSPACE_FOLDER_ID, AGENT_RESOURCES_FOLDER_ID, ...listHarnessSyncFolders().map((folder) => folder.id), ...projectFolderIds];
-  await removeSyncthingDevices(peerDeviceIds, folderIds);
-  await Promise.all(peers.map(async (peer) => {
-    const departure = await fetch(`${peer.url}/api/cluster/membership/leave`, {
-      method: "POST", headers: departureHeaders, body: JSON.stringify({ nodeId, leftAt }), signal: AbortSignal.timeout(3_000),
-    });
-    if (!departure.ok) throw new Error(`${peer.name} rejected cluster departure (${departure.status})`);
-  }));
-}
-
-// Voluntary departure from this node's own Settings: notify every reachable peer so
-// they drop this node, then settle local membership. An offline peer blocks departure.
-app.post("/api/cluster/leave", async (_request, response, next) => {
-  try {
-    const peers = await listClusterPeers();
-    try {
-      await assertClusterDepartureAllowed();
-    } catch (error) {
-      if (error instanceof Error && error.message.startsWith("Transfer owned tasks and settle handoffs")) {
-        sendError(response, 409, error.message);
-        return;
-      }
-      throw error;
-    }
-    const currentNode = await getClusterNode();
-    const machineToken = await getClusterMachineToken();
-    const leftAt = new Date().toISOString();
-    await notifyPeersOfDeparture(peers, currentNode.id, machineToken, leftAt);
-    await leaveCluster();
-    response.json({ notified: peers.length });
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.get("/api/cluster/invite", async (_request, response, next) => {
-  try {
-    response.json({ token: await getClusterMachineToken() });
-  } catch (error) {
-    next(error);
-  }
-});
+import { mayReplicateEvent, replicationPeers, signedPeerPost } from "../replication-v2.js";
+import { listTwinUpdateTargets } from "../../twin-updates.js";
+import { publishNodeDescriptor } from "../cluster-v2.js";
+import { receiveRelay, relayPage, relayPullSchema, relayRequestSchema } from "../cluster-hubs.js";
+import { ClusterV2HttpError } from "../../cluster-v2-errors.js";
+import { isTrustedTwin } from "../../cluster-sharing-policy.js";
 
 app.get("/api/cluster/node", async (_request, response, next) => {
   try {
@@ -211,71 +33,22 @@ app.put("/api/cluster/node", async (request, response, next) => {
   try {
     const payload = clusterNodeSchema.parse(request.body);
     const node = await updateClusterNode(payload.name, payload.url);
-    await flushMembershipOutbox();
+    await publishNodeDescriptor();
     response.json({ node });
   } catch (error) {
     next(error);
   }
 });
 
-app.get("/api/cluster/local-inventory", async (request, response, next) => {
-  try {
-    const node = await getClusterNode();
-    let projects = await listProjects();
-    // A granted machine peer only discovers the projects its invitation selected; session
-    // users and legacy peers (no grant row) still see everything this node holds.
-    if (response.locals.machineAuth && response.locals.machineNodeId !== node.id) {
-      const grant = await clusterProjectGrantFor(response.locals.machineNodeId as string);
-      if (grant) {
-        const allowed = new Set(grant);
-        const visible: typeof projects = [];
-        for (const project of projects) {
-          const aliases = await projectAliasIds(project.id);
-          if (allowed.has(project.id) || aliases.some((alias) => allowed.has(alias))) visible.push(project);
-        }
-        projects = visible;
-      }
-    }
-    let syncDeviceId: string | undefined;
-    let syncError: string | undefined;
-    try {
-      syncDeviceId = await syncthingDeviceId();
-      for (const project of projects) {
-        if (project.syncFolderId) continue;
-        const folderId = await syncthingFolderIdForPath(project.path);
-        if (folderId) Object.assign(project, await updateProjectSyncFolderId(project.id, folderId));
-      }
-    } catch (error) {
-      syncError = error instanceof Error ? error.message : "Syncthing unavailable";
-    }
-    const inventory = await Promise.all(projects.map(async (project) => ({
-      project: projectWithLocalLocation(project, node.id),
-      aliases: await projectAliasIds(project.id),
-      tasks: await listTasks(project.id),
-    })));
-    response.json({ node, syncDeviceId, syncError, projectRoot: getSettings().projects.homePath, projects: inventory, version: appVersion(), release: process.env.JOINT_BOB_RELEASE ?? process.env.MASTER_BOB_RELEASE ?? "development", updates: updateInventoryView(), generatedAt: new Date().toISOString() });
-  } catch (error) {
-    next(error);
-  }
-});
-
+/** The Settings > Updates node list: this node and every active twin, the nodes
+    "Update all nodes" installs on. */
 app.get("/api/cluster/inventory", async (_request, response, next) => {
   try {
     const local = await getClusterNode();
-    const peers = await listClusterPeers();
-    const remote = await Promise.all(peers.map(async (peer) => {
-      // A peer that cannot answer still has to be identifiable: the settings list draws
-      // one row per node, and a row can only name a node it was told the name of.
-      const identity = { peerId: peer.id, name: peer.name, url: peer.url, lastSeenAt: peer.lastSeenAt };
+    const remote = await Promise.all(listTwinUpdateTargets(await clusterV2Database(), local.id).map(async (twin) => {
+      const identity = { peerId: twin.nodeId, name: twin.name, url: twin.url };
       try {
-        const peerResponse = await fetch(`${peer.url}/api/cluster/local-inventory`, {
-          headers: { Authorization: `Bearer ${await getClusterMachineToken()}` },
-          signal: AbortSignal.timeout(3_000),
-        });
-        if (!peerResponse.ok) throw new Error(`Peer returned ${peerResponse.status}`);
-        const inventory = await peerResponse.json();
-        await markClusterPeerSeen(peer.id);
-        return { ...identity, lastSeenAt: new Date().toISOString(), reachable: true, inventory };
+        return { ...identity, reachable: true, inventory: await signedPeerPost(twin, "/api/cluster/v2/update/inventory", {}) };
       } catch (error) {
         return { ...identity, reachable: false, error: error instanceof Error ? error.message : "Peer unavailable" };
       }
@@ -286,125 +59,18 @@ app.get("/api/cluster/inventory", async (_request, response, next) => {
   }
 });
 
-app.get("/api/cluster/peers", async (_request, response, next) => {
-  try {
-    response.json({ peers: (await listRuntimePeers()).map(publicClusterPeer) });
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.post("/api/cluster/peers", async (request, response, next) => {
-  try {
-    const payload = clusterPeerSchema.parse(request.body);
-    const peerUrl = payload.url.replace(/\/$/, "");
-    const nodeResponse = await fetch(`${peerUrl}/api/cluster/node`, {
-      headers: { Authorization: `Bearer ${payload.token}` },
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (!nodeResponse.ok) throw new Error(`Peer ${peerUrl} returned ${nodeResponse.status}`);
-    const peerNode = clusterMembershipMemberSchema.omit({ token: true }).parse((await nodeResponse.json()).node);
-    const localNode = await getClusterNode();
-    if (!localNode.url) throw new Error("Configure this node's public Tailscale URL before pairing");
-    await saveClusterPeer(createClusterPeer(peerNode, payload.token));
-    const acceptResponse = await fetch(`${peerUrl}/api/cluster/peers/accept`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${payload.token}`, "Content-Type": "application/json" },
-      body: JSON.stringify(await getClusterMembership()),
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (!acceptResponse.ok) throw new Error(`Peer pairing failed: ${peerUrl} returned ${acceptResponse.status}`);
-    const remoteSnapshot = clusterMembershipSnapshotSchema.parse(await acceptResponse.json());
-    await mergeClusterMembership(remoteSnapshot, peerNode.id);
-    const peer = await getClusterPeer(peerNode.id);
-    if (!peer) throw new Error("Paired peer was not added to cluster membership");
-    const confirmation = await fetch(`${peerUrl}/api/cluster/membership/sync`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
-      body: JSON.stringify(await getClusterMembership()),
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (!confirmation.ok) throw new Error(`Peer membership confirmation failed: ${peerUrl} returned ${confirmation.status}`);
-    const localImport = await syncPairedProjects(peer, localNode.id);
-    response.status(201).json({ peer: publicClusterPeer(peer), pending: localImport.pending });
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.post("/api/cluster/peers/accept", async (request, response, next) => {
-  try {
-    if (!response.locals.machineAuth) {
-      sendError(response, 401, "Unauthorized");
-      return;
-    }
-    const snapshot = clusterMembershipSnapshotSchema.parse(request.body);
-    await mergeClusterMembership(snapshot, response.locals.machineNodeId as string | undefined);
-    response.status(201).json(await getClusterMembership());
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.post("/api/cluster/membership/sync", async (request, response, next) => {
-  try {
-    const snapshot = clusterMembershipSnapshotSchema.parse(request.body);
-    await mergeClusterMembership(snapshot, response.locals.machineNodeId as string | undefined);
-    response.json({ ok: true });
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.post("/api/cluster/membership/leave", async (request, response, next) => {
-  try {
-    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
-    const payload = clusterMembershipLeaveSchema.parse(request.body);
-    const callerNodeId = response.locals.machineNodeId as string;
-    const localNode = await getClusterNode();
-    if (payload.nodeId === callerNodeId && payload.nodeId !== localNode.id) {
-      // Voluntary leave: the authenticated caller announces its own departure. A notice
-      // that lost a race against the caller's re-pairing (peer row newer than the notice)
-      // must not tear down the fresh membership.
-      const departing = await getClusterPeer(callerNodeId);
-      if (departing && departing.updatedAt > payload.leftAt) {
-        response.status(204).send();
-        return;
-      }
-      await removeClusterPeer(callerNodeId);
-      response.status(204).send();
-      return;
-    }
-    if (payload.nodeId === localNode.id && localNode.invitedByNodeId === callerNodeId) {
-      // Forced drop: only the node that created this node's invitation may end it.
-      await leaveCluster();
-      response.status(204).send();
-      return;
-    }
-    sendError(response, 403, "Only the node that created this member's invitation can remove it");
-  } catch (error) {
-    if (error instanceof Error && error.message.startsWith("Transfer owned tasks and settle handoffs")) {
-      sendError(response, 409, error.message);
-      return;
-    }
-    next(error);
-  }
-});
-
-app.post(["/api/cluster/events", "/api/cluster/v2/events"], async (request, response, next) => {
+app.post("/api/cluster/v2/events", async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) {
       sendError(response, 401, "Unauthorized");
       return;
     }
     const batch = replicationBatchSchema.parse(request.body) as ReplicationBatch;
-    if (response.locals.machineProtocol === 2) {
-      const db = await clusterV2Database(), local = await getClusterNode(), sender = response.locals.machineNodeId as string;
-      if (!replicationPeers(db, local.id).some((peer) => peer.nodeId === sender)
-        || batch.events.some((event) => event.originNodeId !== sender || !mayReplicateEvent(db, local.id, sender, event))) {
-        sendError(response, 403, "Replication event is outside the authenticated peer's sharing scope");
-        return;
-      }
+    const db = await clusterV2Database(), local = await getClusterNode(), sender = response.locals.machineNodeId as string;
+    if (!replicationPeers(db, local.id).some((peer) => peer.nodeId === sender)
+      || batch.events.some((event) => event.originNodeId !== sender || !mayReplicateEvent(db, local.id, sender, event))) {
+      sendError(response, 403, "Replication event is outside the authenticated peer's sharing scope");
+      return;
     }
     const received = await receiveReplicationBatch(batch);
     broadcastReplicationInvalidations(batch.events.filter((event) => received.includes(event.id)));
@@ -446,24 +112,32 @@ app.post(["/api/cluster/sessions/runtime-snapshot", "/api/cluster/v2/runtime/ses
   }
 });
 
-// Kept for one release as a clean refusal: a peer on an older build gets 410 rather than a
-// half-applied write into tables this build no longer has.
-app.post("/api/cluster/github/events", (request, response) => {
-  if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
-  sendError(response, 410, "GitHub credential groups were replaced by secret accounts; upgrade this peer");
-});
-
-app.post("/api/cluster/secrets/events", async (request, response, next) => {
+app.post("/api/cluster/v2/relay", async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
-    const payload = secretCredentialBatchSchema.parse(request.body);
-    response.json({ received: await receiveSecretCredentialEvents(payload.events as SecretCredentialEvent[]) });
-  } catch (error) { next(error); }
+    response.json({ received: await receiveRelay(response.locals.machineNodeId as string, relayRequestSchema.parse(request.body)) });
+  } catch (error) {
+    if (error instanceof ClusterV2HttpError) { sendError(response, error.statusCode, error.message); return; }
+    next(error);
+  }
 });
 
-app.post("/api/cluster/push/events", async (request, response, next) => {
+app.post("/api/cluster/v2/relay/pull", async (request, response, next) => {
   try {
     if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    response.json(await relayPage(response.locals.machineNodeId as string, relayPullSchema.parse(request.body)));
+  } catch (error) {
+    if (error instanceof ClusterV2HttpError) { sendError(response, error.statusCode, error.message); return; }
+    next(error);
+  }
+});
+
+/** Push subscriptions arrive only from active twins; see push-flush.ts. */
+app.post("/api/cluster/v2/push/events", async (request, response, next) => {
+  try {
+    if (!response.locals.machineAuth) { sendError(response, 401, "Unauthorized"); return; }
+    const db = await clusterV2Database(), local = await getClusterNode();
+    if (!isTrustedTwin(db, local.id, response.locals.machineNodeId as string)) { sendError(response, 403, "Push subscriptions replicate only between twins"); return; }
     const payload = pushSubscriptionBatchSchema.parse(request.body);
     response.json({ received: await receivePushSubscriptionEvents(payload.events as PushSubscriptionEvent[]) });
   } catch (error) { next(error); }

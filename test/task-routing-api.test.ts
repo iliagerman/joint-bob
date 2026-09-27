@@ -1,75 +1,49 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
-import { spawn, type ChildProcess } from "node:child_process";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { execFileSync, type ChildProcess } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import WebSocket from "ws";
+import { api, pairTwinNodes, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, type SignedIn } from "./dev-nodes.js";
 
-interface NodeProcess { baseUrl: string; child: ChildProcess; homeDir: string; output: () => string; }
-interface Session { headers: Record<string, string>; }
+interface TaskView { id: string; title: string; currentNodeId: string; executionState: string; leaseOwnerNodeId: string | null; leaseExpiresAt: string | null }
 
-async function startNode(root: string, name: string): Promise<NodeProcess> {
-  const homeDir = path.join(root, `${name}-home`);
-  await mkdir(homeDir, { recursive: true });
-  let output = "";
-  const child = spawn(process.execPath, ["--import", "tsx", "src/server.ts"], { cwd: path.resolve("."), env: { ...process.env, PORT: "0", HOME: homeDir, PI_WEB_DATA_DIR: path.join(root, `${name}-data`), MASTER_BOB_ADMIN_USERNAME: "admin", MASTER_BOB_INITIAL_PASSWORD: "initial-password" }, stdio: ["ignore", "pipe", "pipe"] });
-  child.stdout.on("data", (chunk) => { output += chunk; });
-  child.stderr.on("data", (chunk) => { output += chunk; });
-  for (let attempt = 0; attempt < 1200; attempt += 1) {
-    if (child.exitCode !== null) throw new Error(`${name} exited during startup (${child.exitCode})\n${output}`);
-    const match = output.match(/listening on http:\/\/127\.0\.0\.1:(\d+)/);
-    if (match && (await fetch(`http://127.0.0.1:${match[1]}/api/health`)).ok) return { baseUrl: `http://127.0.0.1:${match[1]}`, child, homeDir, output: () => output };
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  child.kill("SIGTERM");
-  throw new Error(`${name} did not become healthy\n${output}`);
+/** Creates a ticket the way its owner does (creating one through the API needs Syncthing). */
+function createTaskOn(environment: DevEnvironment, node: SeededNode, projectId: string, title: string, status = "backlog", phaseConfig: Record<string, unknown> = {}): { id: string } {
+  const project = node.projects.find((candidate) => candidate.id === projectId)!;
+  const script = `import { createTask } from "./src/tasks.ts"; process.stdout.write(JSON.stringify(await createTask(${JSON.stringify(project.id)}, ${JSON.stringify(project.path)}, ${JSON.stringify(title)}, "", ${JSON.stringify(status)}, "pi", false, false, ${JSON.stringify(phaseConfig)}))); process.exit(0);`;
+  return JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], { env: { ...process.env, HOME: environment.home, JOINT_BOB_DATA_DIR: node.dataDir }, encoding: "utf8" })) as { id: string };
 }
 
-async function stopNode(node: NodeProcess): Promise<void> {
-  if (node.child.exitCode !== null) return;
-  node.child.kill("SIGTERM");
-  await new Promise((resolve) => node.child.once("exit", resolve));
+function updateOwnerRow(node: SeededNode, sql: string, ...values: Array<string | null>): void {
+  const db = new DatabaseSync(path.join(node.dataDir, "node.db"));
+  try {
+    db.exec("PRAGMA busy_timeout=5000");
+    assert.equal(db.prepare(sql).run(...values).changes, 1);
+  } finally { db.close(); }
 }
 
-async function login(node: NodeProcess): Promise<Session> {
-  const response = await fetch(`${node.baseUrl}/api/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: "admin", password: "initial-password" }) });
-  const body = await response.json() as { csrfToken: string };
-  const cookie = response.headers.get("set-cookie")?.split(";", 1)[0];
-  if (!cookie) throw new Error(node.output());
-  const headers = { Cookie: cookie, "X-CSRF-Token": body.csrfToken, "Content-Type": "application/json" };
-  assert.equal((await fetch(`${node.baseUrl}/api/auth/change-password`, { method: "POST", headers, body: JSON.stringify({ currentPassword: "initial-password", newPassword: "replacement-password" }) })).status, 204);
-  return { headers };
-}
-
-async function nodeId(node: NodeProcess, auth: Session): Promise<string> {
-  return ((await (await fetch(`${node.baseUrl}/api/cluster/node`, { headers: auth.headers })).json()) as { node: { id: string } }).node.id;
-}
-
-async function pair(source: NodeProcess, sourceAuth: Session, destination: NodeProcess, destinationAuth: Session): Promise<void> {
-  const token = ((await (await fetch(`${destination.baseUrl}/api/cluster/invite`, { headers: destinationAuth.headers })).json()) as { token: string }).token;
-  const response = await fetch(`${source.baseUrl}/api/cluster/peers`, { method: "POST", headers: sourceAuth.headers, body: JSON.stringify({ url: destination.baseUrl, token }) });
-  assert.equal(response.status, 201, source.output());
-}
-
-async function waitForTask(node: NodeProcess, auth: Session, projectId: string, taskId: string, predicate: (task: any) => boolean): Promise<any> {
-  for (let attempt = 0; attempt < 80; attempt += 1) {
-    const response = await fetch(`${node.baseUrl}/api/projects/${projectId}/tasks`, { headers: auth.headers });
-    const task = ((await response.json()) as { tasks: any[] }).tasks.find((item) => item.id === taskId);
+async function waitForTask(node: SeededNode, auth: SignedIn, projectId: string, taskId: string, predicate: (task: TaskView) => boolean): Promise<TaskView> {
+  let last: unknown;
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const listed = await api<{ tasks: TaskView[] }>(node, auth, "GET", `/projects/${projectId}/tasks`);
+    last = listed.body;
+    const task = listed.body.tasks.find((item) => item.id === taskId);
     if (task && predicate(task)) return task;
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
-  throw new Error(node.output());
+  throw new Error(`Node ${node.key} never reached the expected state for ${taskId}: ${JSON.stringify(last)}`);
 }
 
-async function waitForAbsentTask(node: NodeProcess, auth: Session, projectId: string, taskId: string): Promise<void> {
+async function waitForAbsentTask(node: SeededNode, auth: SignedIn, projectId: string, taskId: string): Promise<void> {
   for (let attempt = 0; attempt < 200; attempt += 1) {
-    const body = await (await fetch(`${node.baseUrl}/api/projects/${projectId}/tasks`, { headers: auth.headers })).json() as { tasks: any[] };
-    if (!body.tasks.some((task) => task.id === taskId)) return;
+    const listed = await api<{ tasks: TaskView[] }>(node, auth, "GET", `/projects/${projectId}/tasks`);
+    if (!listed.body.tasks.some((task) => task.id === taskId)) return;
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
-  throw new Error(node.output());
+  throw new Error(`Node ${node.key} still lists ${taskId}`);
 }
 
 function closeCode(socket: WebSocket): Promise<number> {
@@ -79,109 +53,91 @@ function closeCode(socket: WebSocket): Promise<number> {
   });
 }
 
-function socketMessage(socket: WebSocket): Promise<any> {
+function socketMessage(socket: WebSocket): Promise<unknown> {
   return new Promise((resolve, reject) => {
     socket.once("message", (raw) => resolve(JSON.parse(raw.toString())));
     socket.once("error", reject);
   });
 }
 
-test("task mutations and task watch sockets route through the recorded owner", { timeout: 120_000 }, async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "pi-mobile-web-task-routing-"));
-  const nodes: NodeProcess[] = [];
+test("task mutations and task watch sockets route through the recorded owner", { timeout: 150_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-task-routing-"));
+  const servers: ChildProcess[] = [];
   try {
-    const [a, b, c] = await Promise.all([startNode(root, "a"), startNode(root, "b"), startNode(root, "c")]);
-    nodes.push(a, b, c);
-    const [aAuth, bAuth, cAuth] = await Promise.all([login(a), login(b), login(c)]);
-    for (const [node, auth, name] of [[a, aAuth, "A"], [b, bAuth, "B"], [c, cAuth, "C"]] as const) {
-      assert.equal((await fetch(`${node.baseUrl}/api/cluster/node`, { method: "PUT", headers: auth.headers, body: JSON.stringify({ name, url: node.baseUrl }) })).status, 200);
-    }
-    await pair(a, aAuth, b, bAuth);
-    await pair(a, aAuth, c, cAuth);
-    await pair(b, bAuth, c, cAuth);
-    const [aId, bId] = await Promise.all([nodeId(a, aAuth), nodeId(b, bAuth)]);
+    const environment = await seedDevEnvironment(root, 2);
+    const [a, b] = environment.nodes;
+    for (const node of environment.nodes) servers.push(await startDevNode(environment, node));
+    let outputA = "";
+    servers[0].stdout?.on("data", (chunk) => { outputA += chunk; });
+    servers[0].stderr?.on("data", (chunk) => { outputA += chunk; });
+    await pairTwinNodes(environment);
+    const [aAuth, bAuth] = await Promise.all([signIn(environment, a), signIn(environment, b)]);
+    const project = a.projects[0];
+    const request = (node: SeededNode, auth: SignedIn, method: string, endpoint: string, body?: unknown) => fetch(`${node.url}/api${endpoint}`, {
+      method, headers: { Cookie: auth.cookie, "x-csrf-token": auth.csrfToken, "Content-Type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
 
-    const projectPath = path.join(root, "project");
-    await Promise.all([mkdir(projectPath, { recursive: true }), mkdir(path.join(b.homeDir, "project"), { recursive: true }), mkdir(path.join(c.homeDir, "project"), { recursive: true })]);
-    const created = await fetch(`${a.baseUrl}/api/projects`, { method: "POST", headers: aAuth.headers, body: JSON.stringify({ name: "shared", path: projectPath }) });
-    assert.equal(created.status, 201);
-    const project = (await created.json() as { project: { id: string } }).project;
-    for (const [node, auth] of [[b, bAuth], [c, cAuth]] as const) {
-      assert.equal((await fetch(`${node.baseUrl}/api/cluster/projects/import`, { method: "POST", headers: auth.headers, body: JSON.stringify({ peerId: aId }) })).status, 200, node.output());
-      assert.equal((await fetch(`${node.baseUrl}/api/cluster/projects/map`, { method: "POST", headers: auth.headers, body: JSON.stringify({ peerId: aId, projectId: project.id, localPath: path.join(node.homeDir, "project") }) })).status, 201, node.output());
-    }
-
-    const aToken = ((await (await fetch(`${a.baseUrl}/api/cluster/invite`, { headers: aAuth.headers })).json()) as { token: string }).token;
-    const inject = async (id: string, ownerId: string, title: string, status = "backlog", sessionPath: string | null = null, executionState = "idle", leaseOwnerNodeId: string | null = null, leaseExpiresAt: string | null = null, phaseConfig: Record<string, unknown> = {}) => {
-      const task = { id, title, description: "No runtime", status, engine: "pi", planMode: false, reviewMode: false, phaseConfig, sessionPath, worktreePath: null, worktreeBranch: null, mergedAt: null, currentNodeId: ownerId, leaseOwnerNodeId, leaseExpiresAt, executionState, handoffContext: null, originNodeId: aId, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: `2026-01-01T00:00:0${id.length % 10}.000Z` };
-      const response = await fetch(`${a.baseUrl}/api/cluster/events`, { method: "POST", headers: { Authorization: `Bearer ${aToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ events: [{ id: randomUUID(), originNodeId: aId, entityType: "task", entityKey: `${project.id}:${id}`, operation: "upsert", payload: { projectId: project.id, task, originNodeId: aId }, createdAt: task.updatedAt }] }) });
-      assert.equal(response.status, 200, a.output());
-    };
-
-    const routedTaskId = "task-owned-by-b";
-    await inject(routedTaskId, bId, "Before", "backlog", "watch");
-    await Promise.all([waitForTask(a, aAuth, project.id, routedTaskId, () => true), waitForTask(b, bAuth, project.id, routedTaskId, (task) => task.sessionPath === "watch"), waitForTask(c, cAuth, project.id, routedTaskId, (task) => task.sessionPath === "watch")]);
-    const socketUrl = new URL(`/ws?projectId=${encodeURIComponent(project.id)}&sessionPath=watch&taskId=${routedTaskId}`, c.baseUrl);
+    const routed = createTaskOn(environment, b, project.id, "Before");
+    await waitForTask(a, aAuth, project.id, routed.id, (task) => task.currentNodeId === b.nodeId);
+    const socketUrl = new URL(`/ws?projectId=${encodeURIComponent(project.id)}&sessionPath=watch&taskId=${routed.id}`, a.url);
     socketUrl.protocol = "ws:";
-    const watch = new WebSocket(socketUrl, { origin: c.baseUrl, headers: { Cookie: cAuth.headers.Cookie } });
+    const watch = new WebSocket(socketUrl, { origin: a.url, headers: { Cookie: aAuth.cookie } });
     assert.deepEqual(await socketMessage(watch), { type: "watchReady" });
     const watchClosed = closeCode(watch);
     watch.close();
     await watchClosed;
-    const unauthenticated = new WebSocket(socketUrl, { origin: c.baseUrl });
+    const unauthenticated = new WebSocket(socketUrl, { origin: a.url });
     assert.equal(await closeCode(unauthenticated), 1008);
 
-    const patched = await fetch(`${c.baseUrl}/api/projects/${project.id}/tasks/${routedTaskId}`, { method: "PATCH", headers: cAuth.headers, body: JSON.stringify({ title: "After" }) });
-    assert.equal(patched.status, 200, c.output());
-    await Promise.all([waitForTask(a, aAuth, project.id, routedTaskId, (task) => task.title === "After"), waitForTask(b, bAuth, project.id, routedTaskId, (task) => task.title === "After"), waitForTask(c, cAuth, project.id, routedTaskId, (task) => task.title === "After")]);
-    assert.equal((await fetch(`${a.baseUrl}/api/projects/${project.id}/tasks/${routedTaskId}`, { method: "DELETE", headers: aAuth.headers })).status, 204, a.output());
-    await Promise.all([waitForAbsentTask(a, aAuth, project.id, routedTaskId), waitForAbsentTask(b, bAuth, project.id, routedTaskId), waitForAbsentTask(c, cAuth, project.id, routedTaskId)]);
+    const patched = await request(a, aAuth, "PATCH", `/projects/${project.id}/tasks/${routed.id}`, { title: "After" });
+    assert.equal(patched.status, 200, await patched.text());
+    await Promise.all([waitForTask(a, aAuth, project.id, routed.id, (task) => task.title === "After"), waitForTask(b, bAuth, project.id, routed.id, (task) => task.title === "After")]);
+    assert.equal((await request(a, aAuth, "DELETE", `/projects/${project.id}/tasks/${routed.id}`)).status, 204);
+    await Promise.all([waitForAbsentTask(a, aAuth, project.id, routed.id), waitForAbsentTask(b, bAuth, project.id, routed.id)]);
 
-    const activeTaskId = "active-owned-by-b";
-    await inject(activeTaskId, bId, "Active", "backlog", null, "running", bId, new Date(Date.now() + 60_000).toISOString());
-    await Promise.all([waitForTask(a, aAuth, project.id, activeTaskId, (task) => task.executionState === "running"), waitForTask(b, bAuth, project.id, activeTaskId, (task) => task.executionState === "running")]);
-    const activeDeletion = await fetch(`${a.baseUrl}/api/projects/${project.id}/tasks/${activeTaskId}`, { method: "DELETE", headers: aAuth.headers });
-    assert.equal(activeDeletion.status, 409, a.output());
+    // Only the owner knows its task is running; the non-owner's delete must ask it, not guess.
+    const active = createTaskOn(environment, b, project.id, "Active");
+    await waitForTask(a, aAuth, project.id, active.id, () => true);
+    updateOwnerRow(b, "UPDATE tasks SET execution_state = 'running', lease_owner_node_id = ?, lease_expires_at = ? WHERE id = ?", b.nodeId, new Date(Date.now() + 60_000).toISOString(), active.id);
+    const activeDeletion = await request(a, aAuth, "DELETE", `/projects/${project.id}/tasks/${active.id}`);
+    assert.equal(activeDeletion.status, 409);
     assert.deepEqual(await activeDeletion.json(), { error: "Wait for task agent to finish before deleting" });
-    await Promise.all([waitForTask(a, aAuth, project.id, activeTaskId, (task) => task.executionState === "running"), waitForTask(b, bAuth, project.id, activeTaskId, (task) => task.executionState === "running")]);
-    const bDb = new (await import("node:sqlite")).DatabaseSync(path.join(root, "b-data", "node.db"));
-    bDb.prepare("UPDATE tasks SET execution_state = 'idle', lease_owner_node_id = NULL, lease_expires_at = NULL, lease_token = NULL WHERE project_id = ? AND id = ?").run(project.id, activeTaskId);
-    bDb.close();
-    assert.equal((await fetch(`${a.baseUrl}/api/projects/${project.id}/tasks/${activeTaskId}`, { method: "DELETE", headers: aAuth.headers })).status, 204, a.output());
-    await Promise.all([waitForAbsentTask(a, aAuth, project.id, activeTaskId), waitForAbsentTask(b, bAuth, project.id, activeTaskId)]);
+    await waitForTask(b, bAuth, project.id, active.id, (task) => task.executionState === "running");
+    updateOwnerRow(b, "UPDATE tasks SET execution_state = 'idle', lease_owner_node_id = NULL, lease_expires_at = NULL, lease_token = NULL WHERE id = ?", active.id);
+    assert.equal((await request(a, aAuth, "DELETE", `/projects/${project.id}/tasks/${active.id}`)).status, 204);
+    await Promise.all([waitForAbsentTask(a, aAuth, project.id, active.id), waitForAbsentTask(b, bAuth, project.id, active.id)]);
 
-    const invalidModelTaskId = "invalid-model-setup";
-    await inject(invalidModelTaskId, aId, "Invalid model setup", "backlog", null, "idle", null, null, { in_progress: { engine: "pi", provider: "task-test-missing-provider", modelId: "task-test-missing-model", effort: "default" } });
-    await waitForTask(a, aAuth, project.id, invalidModelTaskId, () => true);
-    const invalidModelStart = await fetch(`${a.baseUrl}/api/projects/${project.id}/tasks/${invalidModelTaskId}`, { method: "PATCH", headers: aAuth.headers, body: JSON.stringify({ status: "in_progress" }) });
-    assert.equal(invalidModelStart.status, 200, a.output());
-    const failedSetup = await waitForTask(a, aAuth, project.id, invalidModelTaskId, (task) => task.executionState === "failed");
+    const invalidModel = createTaskOn(environment, a, project.id, "Invalid model setup", "backlog", { in_progress: { engine: "pi", provider: "task-test-missing-provider", modelId: "task-test-missing-model", effort: "default" } });
+    const invalidModelStart = await request(a, aAuth, "PATCH", `/projects/${project.id}/tasks/${invalidModel.id}`, { status: "in_progress" });
+    assert.equal(invalidModelStart.status, 200, await invalidModelStart.text());
+    const failedSetup = await waitForTask(a, aAuth, project.id, invalidModel.id, (task) => task.executionState === "failed");
     assert.equal(failedSetup.leaseOwnerNodeId, null);
     assert.equal(failedSetup.leaseExpiresAt, null);
-    const aDb = new (await import("node:sqlite")).DatabaseSync(path.join(root, "a-data", "node.db"));
-    assert.equal((aDb.prepare("SELECT lease_token FROM tasks WHERE project_id = ? AND id = ?").get(project.id, invalidModelTaskId) as { lease_token: string | null }).lease_token, null);
-    aDb.close();
-    assert.match(a.output(), /Task start failed Error: Model not found: task-test-missing-provider\/task-test-missing-model/);
-    assert.doesNotMatch(a.output(), /Pi task run failed/);
-    assert.equal((await fetch(`${a.baseUrl}/api/projects/${project.id}/tasks/${invalidModelTaskId}`, { method: "DELETE", headers: aAuth.headers })).status, 204, a.output());
-    await waitForAbsentTask(a, aAuth, project.id, invalidModelTaskId);
+    const aDb = new DatabaseSync(path.join(a.dataDir, "node.db"));
+    try {
+      assert.equal((aDb.prepare("SELECT lease_token FROM tasks WHERE project_id = ? AND id = ?").get(project.id, invalidModel.id) as { lease_token: string | null }).lease_token, null);
+    } finally { aDb.close(); }
+    assert.match(outputA, /Task start failed Error: Model not found: task-test-missing-provider\/task-test-missing-model/);
+    assert.doesNotMatch(outputA, /Pi task run failed/);
+    assert.equal((await request(a, aAuth, "DELETE", `/projects/${project.id}/tasks/${invalidModel.id}`)).status, 204);
+    await waitForAbsentTask(a, aAuth, project.id, invalidModel.id);
 
-    const doneTaskId = "done-owned-by-b";
-    await inject(doneTaskId, bId, "No worktree", "done");
-    // Seeing the replica on C does not mean the owner B has received it yet.
-    await Promise.all([waitForTask(b, bAuth, project.id, doneTaskId, () => true), waitForTask(c, cAuth, project.id, doneTaskId, () => true)]);
-    const merge = await fetch(`${c.baseUrl}/api/projects/${project.id}/tasks/${doneTaskId}/merge`, { method: "POST", headers: cAuth.headers });
-    assert.equal(merge.status, 409, c.output());
+    const done = createTaskOn(environment, b, project.id, "No worktree", "done");
+    updateOwnerRow(b, "UPDATE tasks SET worktree_path = NULL WHERE id = ?", done.id);
+    await waitForTask(a, aAuth, project.id, done.id, () => true);
+    const merge = await request(a, aAuth, "POST", `/projects/${project.id}/tasks/${done.id}/merge`);
+    assert.equal(merge.status, 409);
     assert.match((await merge.json() as { error: string }).error, /no isolated worktree/i);
 
-    const handoffTaskId = "task-owned-by-a";
-    await inject(handoffTaskId, aId, "Handoff", "backlog");
-    await waitForTask(c, cAuth, project.id, handoffTaskId, () => true);
-    const handoff = await fetch(`${c.baseUrl}/api/projects/${project.id}/tasks/${handoffTaskId}/handoff`, { method: "POST", headers: cAuth.headers, body: JSON.stringify({ peerId: bId }) });
-    assert.equal(handoff.status, 200, c.output());
-    await Promise.all([waitForTask(a, aAuth, project.id, handoffTaskId, (task) => task.currentNodeId === bId), waitForTask(b, bAuth, project.id, handoffTaskId, (task) => task.currentNodeId === bId), waitForTask(c, cAuth, project.id, handoffTaskId, (task) => task.currentNodeId === bId)]);
+    const handoff = createTaskOn(environment, a, project.id, "Handoff");
+    // Without Syncthing a ticket workspace never reports synchronized, so hand off a ticket that has none.
+    updateOwnerRow(a, "UPDATE tasks SET worktree_path = NULL WHERE id = ?", handoff.id);
+    await waitForTask(b, bAuth, project.id, handoff.id, (task) => task.currentNodeId === a.nodeId);
+    const handedOff = await request(b, bAuth, "POST", `/projects/${project.id}/tasks/${handoff.id}/handoff`, { peerId: b.nodeId });
+    assert.equal(handedOff.status, 200, await handedOff.text());
+    await Promise.all([waitForTask(a, aAuth, project.id, handoff.id, (task) => task.currentNodeId === b.nodeId), waitForTask(b, bAuth, project.id, handoff.id, (task) => task.currentNodeId === b.nodeId)]);
   } finally {
-    await Promise.all(nodes.map(stopNode));
+    await Promise.all(servers.map(stopDevNode));
     await rm(root, { recursive: true, force: true });
   }
 });

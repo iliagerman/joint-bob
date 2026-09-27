@@ -9,7 +9,7 @@
 #
 # Usage:
 #   ./scripts/dev-local.sh                      # one node on :8791
-#   ./scripts/dev-local.sh cluster              # two paired nodes on :8791 and :8792
+#   ./scripts/dev-local.sh cluster              # two twin nodes on :8791 and :8792
 #   PORT=9000 ./scripts/dev-local.sh            # different port for the first node
 #   JOINT_BOB_DEV_ROOT=/tmp/jb ./scripts/dev-local.sh
 #
@@ -66,7 +66,10 @@ if [ "${NODES}" = "2" ]; then require_free_port "${PORT_B}"; fi
 if [ "${NODES}" = "2" ]; then
   run_node b "${PORT_B}" &
   NODE_B_PID=$!
-  trap 'kill "${NODE_B_PID}" 2>/dev/null || true' EXIT INT TERM
+  # Pair the nodes as twins once both answer.
+  node --import tsx scripts/dev-pair-twins.ts "http://127.0.0.1:${PORT_A}" "http://127.0.0.1:${PORT_B}" &
+  PAIR_PID=$!
+  trap 'kill "${NODE_B_PID}" "${PAIR_PID}" 2>/dev/null || true' EXIT INT TERM
 fi
 
 run_node a "${PORT_A}"

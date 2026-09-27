@@ -6,7 +6,7 @@ import path from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { nanoid } from "nanoid";
 import { ensureWorkspaceSecretsMigration, rekeySecretAssignments } from "./secrets-migration.js";
-import { selectiveSharingActiveInDatabase } from "./cluster-v2-mode-state.js";
+import { getClusterNode } from "./cluster.js";
 import {
   applyResourcePolicy, ensureResourceSharingSchema, registerLocalSharingResource,
   ResourceSharingError, hasCurrentResourcePolicyContext, type SignedResourcePolicy,
@@ -58,6 +58,7 @@ const legacyStorePath = path.join(dataDir, "projects.json");
 const databasePath = path.join(dataDir, "node.db");
 let database: DatabaseSync | null = null;
 let databaseInitialization: Promise<DatabaseSync> | null = null;
+let localNodeId = "";
 
 function slug(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "project";
@@ -75,11 +76,8 @@ function rowToProject(db: DatabaseSync, row: ProjectRow): ProjectRecord {
     ORDER BY node_id
   `).all(row.id) as unknown as ProjectLocationRow[];
   const locations = locationRows.map((location) => ({ nodeId: location.nodeId, path: location.path }));
-  const sharing = selectiveSharingActiveInDatabase(db)
-    ? db.prepare("SELECT owner_node_id FROM sharing_resource_owners WHERE kind='project' AND resource_id=?")
-      .get(row.id) as { owner_node_id: string } | undefined
-    : undefined;
-  const local = sharing ? db.prepare("SELECT id FROM cluster_node LIMIT 1").get() as { id: string } : undefined;
+  const sharing = db.prepare("SELECT owner_node_id FROM sharing_resource_owners WHERE kind='project' AND resource_id=?")
+    .get(row.id) as { owner_node_id: string } | undefined;
   return {
     id: row.id,
     name: row.name,
@@ -93,8 +91,8 @@ function rowToProject(db: DatabaseSync, row: ProjectRow): ProjectRecord {
     updatedAt: row.updated_at,
     ...(sharing ? {
       ownerNodeId: sharing.owner_node_id,
-      locallyOwned: sharing.owner_node_id === local!.id,
-      clusterIds: resourceClusterIds(db, local!.id, "project", row.id),
+      locallyOwned: sharing.owner_node_id === localNodeId,
+      clusterIds: resourceClusterIds(db, localNodeId, "project", row.id),
     } : {}),
   };
 }
@@ -144,12 +142,8 @@ function saveNewLocalProject(db: DatabaseSync, project: ProjectRecord): void {
   db.exec("SAVEPOINT project_create");
   try {
     saveProject(db, project);
-    if (selectiveSharingActiveInDatabase(db)) {
-      const local = db.prepare("SELECT id FROM cluster_node LIMIT 1").get() as { id: string };
-      ensureResourceSharingSchema(db);
-      registerLocalSharingResource(db, local.id, { kind: "project", id: project.id });
-      inheritWorkspaceSharing(db, local.id, project.id, project.type ?? "personal");
-    }
+    registerLocalSharingResource(db, localNodeId, { kind: "project", id: project.id });
+    inheritWorkspaceSharing(db, localNodeId, project.id, project.type ?? "personal");
     db.exec("RELEASE project_create");
   } catch (error) {
     db.exec("ROLLBACK TO project_create; RELEASE project_create");
@@ -466,6 +460,8 @@ async function initializeProjectDatabase(): Promise<DatabaseSync> {
     ensureWorkspaceSecretsMigration(db);
     dropLegacyGitHubSchema(db);
     await migrateLegacyProjects(db);
+    ensureResourceSharingSchema(db);
+    localNodeId = (await getClusterNode()).id;
   } catch (error) {
     db.close();
     throw error;
@@ -502,9 +498,7 @@ async function writeProjectInstructions(project: ProjectRecord): Promise<void> {
 export async function listProjects(): Promise<ProjectRecord[]> {
   const db = await projectDatabase();
   const rows = db.prepare("SELECT * FROM projects ORDER BY updated_at DESC").all() as unknown as ProjectRow[];
-  if (!selectiveSharingActiveInDatabase(db)) return rows.map((row) => rowToProject(db, row));
-  const local = (db.prepare("SELECT id FROM cluster_node LIMIT 1").get() as { id: string }).id;
-  return rows.filter((row) => projectMetadataVisible(db, local, row.id)).map((row) => rowToProject(db, row));
+  return rows.filter((row) => projectMetadataVisible(db, localNodeId, row.id)).map((row) => rowToProject(db, row));
 }
 
 export async function canonicalProjectId(projectId: string): Promise<string | undefined> {
@@ -515,7 +509,6 @@ function applyProjectResourcePolicyInDatabase(
   db: DatabaseSync, localNodeId: string, senderNodeId: string, input: SignedResourcePolicy,
 ): void {
   ensureResourceSharingSchema(db);
-  if (!selectiveSharingActiveInDatabase(db)) throw new ResourceSharingError("Selective sharing is not active", 409);
   if (input.body.kind !== "project") throw new ResourceSharingError("Invalid project policy", 400);
   const resourceId = input.body.resourceId;
   const canonical = resolveProjectId(db, resourceId);
@@ -666,10 +659,7 @@ export async function getProject(projectId: string): Promise<ProjectRecord | und
   if (!canonicalId) return undefined;
   const row = db.prepare("SELECT * FROM projects WHERE id = ?").get(canonicalId) as ProjectRow | undefined;
   if (!row) return undefined;
-  if (selectiveSharingActiveInDatabase(db)) {
-    const local = (db.prepare("SELECT id FROM cluster_node LIMIT 1").get() as { id: string }).id;
-    if (!projectMetadataVisible(db, local, row.id)) return undefined;
-  }
+  if (!projectMetadataVisible(db, localNodeId, row.id)) return undefined;
   return rowToProject(db, row);
 }
 
@@ -803,10 +793,7 @@ export async function updateProjectWorkspaceAndPath(projectId: string, workspace
   try {
     db.prepare("UPDATE projects SET workspace_id = ?, path = ?, updated_at = ? WHERE id = ?").run(workspaceId, nextPath, updatedAt, canonicalId);
     db.prepare("UPDATE project_locations SET path = ? WHERE project_id = ? AND path = ?").run(nextPath, canonicalId, project.path);
-    if(selectiveSharingActiveInDatabase(db)){
-      const local=db.prepare('SELECT id FROM cluster_node LIMIT 1').get() as {id:string};
-      inheritWorkspaceSharing(db,local.id,canonicalId,workspaceId);
-    }
+    inheritWorkspaceSharing(db, localNodeId, canonicalId, workspaceId);
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");

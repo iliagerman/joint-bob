@@ -214,8 +214,8 @@ export async function openSettings(tab = "account") {
   selectSettingsTab(tab);
   renderHarnessSettings(harnessDescriptors, settings, defaults);
   void fillShortcutSettings();
-  const clusterInventory = await loadClusterPanel();
-  await loadUpdatesPanel(clusterInventory);
+  await loadClusterPanel();
+  await loadUpdatesPanel();
   await loadWorkspaces();
   elements.settingsRestartMessage.hidden = true;
   elements.settingsRestartMessage.textContent = "";

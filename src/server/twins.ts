@@ -6,14 +6,10 @@ import { clusterPublicKeyFingerprint, pinClusterPublicKey, signClusterMessage, v
 import { peerEndpoint, recordPeerEndpoint } from "../cluster-peer-endpoints.js";
 import { signClusterRequest, verifyClusterRequest } from "../cluster-protocol.js";
 import { ensureResourceSharingSchema, queueResourcePolicyBootstrap } from "../cluster-sharing.js";
-import {
-  applyTwinCertificate, applyTwinRevocation, confirmTwinAcceptance, createTwinInvitation,
-  prepareTwinAcceptance, revokeTwinRelationship, twinAcceptanceSchema, twinCertificateSchema,
-  twinInvitationSchema, twinRevocationSchema, type TwinCertificate, type TwinRevocation,
-} from "../cluster-twins.js";
+import { applyTwinCertificate, applyTwinRevocation, confirmTwinAcceptance, createTwinInvitation, prepareTwinAcceptance, revokeTwinRelationship, twinAcceptanceSchema, twinCertificateSchema, twinInvitationSchema, type TwinCertificate, type TwinRevocation } from "../cluster-twins.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
-import { activateSelectiveSharing, assertSelectiveSharingCanActivate, ClusterV2HttpError, selectiveSharingActive } from "../cluster-v2-mode.js";
-import { localMembershipDescriptor, mapV2Error } from "./cluster-v2.js";
+import { ClusterV2HttpError } from "../cluster-v2-errors.js";
+import { localMembershipDescriptor } from "./cluster-v2.js";
 import { clusterRequestRawBody, isClusterOriginUrl } from "./http-auth.js";
 import { flushTwinSharing, scheduleTwinSharing } from './twin-sharing.js';
 
@@ -73,13 +69,11 @@ export function parseTwinLink(link: unknown): z.infer<typeof linkWrapperSchema> 
 }
 
 export async function createTwinHttpInvitation(): Promise<{link:string;relationshipId:string}> {
-  await assertSelectiveSharingCanActivate();
   const endpoint = await localMembershipDescriptor(), db = await clusterV2Database(); ensureTwinHttpSchema(db);
   return savepoint(db, "twin_http_invite", () => {
     const invitation = createTwinInvitation(db, endpoint.nodeId);
     const endpointSignature = signClusterMessage(db, endpoint.nodeId, "twin-endpoint", endpointPayload(invitation.body.relationshipId, endpoint, invitation.body.inviter.publicKey));
     db.prepare("INSERT INTO cluster_v2_twin_endpoint_invitations VALUES(?,?,?)").run(invitation.body.relationshipId, JSON.stringify(endpoint), endpointSignature);
-    activateSelectiveSharing(db);
     const wrapper = { invitation, endpoint, endpointSignature };
     return { link: `${endpoint.url}/join#twin-v2.${Buffer.from(JSON.stringify(wrapper)).toString("base64url")}`, relationshipId: invitation.body.relationshipId };
   });
@@ -87,13 +81,12 @@ export async function createTwinHttpInvitation(): Promise<{link:string;relations
 
 export async function acceptTwinHttpLink(link: unknown): Promise<{relationshipId:string;status:"active"}> {
   const wrapper = parseTwinLink(link);
-  await assertSelectiveSharingCanActivate();
   const local = await localMembershipDescriptor(), db = await clusterV2Database(); ensureTwinHttpSchema(db);
   const acceptance = savepoint(db, "twin_http_accept", () => {
     const result = prepareTwinAcceptance(db, local.nodeId, wrapper.invitation, wrapper.invitation.body.inviter.fingerprint);
     recordPeerEndpoint(db, { kind:"twin", id:result.body.relationshipId }, wrapper.endpoint);
     recordPeerEndpoint(db, { kind:"twin", id:result.body.relationshipId }, local);
-    activateSelectiveSharing(db); return result;
+    return result;
   });
   const target = "/api/cluster/v2/twins/confirm", body = Buffer.from(JSON.stringify({ acceptance, acceptor: local, secret: wrapper.invitation.secret }));
   let response: globalThis.Response;
@@ -114,7 +107,6 @@ export async function acceptTwinHttpLink(link: unknown): Promise<{relationshipId
 
 export async function confirmTwinHttp(request: Request, response: Response, next: NextFunction): Promise<void> {
   try {
-    if (!await selectiveSharingActive()) throw new ClusterV2HttpError(409, "Selective sharing is not active");
     const payload = confirmSchema.parse(request.body), raw = clusterRequestRawBody(request);
     const local = await getClusterNode(), db = await clusterV2Database(); ensureTwinHttpSchema(db);
     const certificate = savepoint(db, "twin_http_confirm", () => {

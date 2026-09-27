@@ -109,7 +109,7 @@ async function forgeProjectPolicy(
   }
 }
 
-test("signed project policy cannot claim an unadopted local project", { timeout: 120_000 }, async () => {
+test("signed project policy cannot claim a local project registered at creation", { timeout: 120_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-resource-policy-collision-"));
   const children = new Set<Child>();
   const databases = new Set<DatabaseSync>();
@@ -128,15 +128,18 @@ test("signed project policy cannot claim an unadopted local project", { timeout:
     const statement = await forgeProjectPolicy(nodeA, nodeB, clusterId, projectId);
     const dbB = openDb(nodeB); databases.add(dbB);
     const projectBefore = dbB.prepare("SELECT * FROM projects WHERE id=?").get(projectId);
-    assert.deepEqual(resourceRows(dbB, projectId), { owners: 0, policies: 0, contexts: 0 });
+    const registered = { owners: 1, policies: 1, contexts: 0 };
+    assert.deepEqual(resourceRows(dbB, projectId), registered, "node B registered its own project when it was created");
+    assert.equal(policy(dbB, projectId)?.owner, nodeB.nodeId);
 
     const invalid = structuredClone(statement);
     invalid.signature = `${invalid.signature.slice(0, -1)}${invalid.signature.endsWith("A") ? "B" : "A"}`;
     assert.equal((await signedPost(nodeA, nodeB, invalid)).status, 401);
-    assert.deepEqual(resourceRows(dbB, projectId), { owners: 0, policies: 0, contexts: 0 });
-    assert.equal((await signedPost(nodeA, nodeB, statement)).status, 409);
+    assert.deepEqual(resourceRows(dbB, projectId), registered);
+    assert.equal((await signedPost(nodeA, nodeB, statement)).status, 403, "another node cannot take over the original owner of a registered project");
     assert.deepEqual(dbB.prepare("SELECT * FROM projects WHERE id=?").get(projectId), projectBefore);
-    assert.deepEqual(resourceRows(dbB, projectId), { owners: 0, policies: 0, contexts: 0 });
+    assert.deepEqual(resourceRows(dbB, projectId), registered);
+    assert.deepEqual({ ...policy(dbB, projectId) }, { owner: nodeB.nodeId, generation: 1, deleted: 0 }, "the forged claim leaves node B's ownership intact");
   } finally {
     for (const db of databases) db.close();
     await Promise.all([...children].map(stopDevNode));
@@ -172,7 +175,8 @@ test("signed project policy cannot claim a local project alias", { timeout: 120_
     assert.deepEqual(dbB.prepare("SELECT * FROM projects WHERE id=?").get(canonicalId), projectBefore);
     assert.deepEqual(dbB.prepare("SELECT * FROM project_aliases WHERE alias_id=?").get(aliasId), aliasBefore);
     assert.deepEqual(resourceRows(dbB, aliasId), { owners: 0, policies: 0, contexts: 0 });
-    assert.deepEqual(resourceRows(dbB, canonicalId), { owners: 0, policies: 0, contexts: 0 });
+    assert.deepEqual(resourceRows(dbB, canonicalId), { owners: 1, policies: 1, contexts: 0 });
+    assert.deepEqual({ ...policy(dbB, canonicalId) }, { owner: nodeB.nodeId, generation: 1, deleted: 0 }, "the canonical project keeps the ownership registered at creation");
   } finally {
     for (const db of databases) db.close();
     await Promise.all([...children].map(stopDevNode));

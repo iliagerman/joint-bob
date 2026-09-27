@@ -5,7 +5,7 @@ import { peerEndpoint } from "../cluster-peer-endpoints.js";
 import { signClusterRequest } from "../cluster-protocol.js";
 import { registerLocalSharingResource } from "../cluster-sharing.js";
 import { isTrustedTwin, mayReceiveResource, registerOwnedResource } from "../cluster-sharing-policy.js";
-import { ClusterV2HttpError } from "../cluster-v2-mode.js";
+import { ClusterV2HttpError } from "../cluster-v2-errors.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { sharingFilesStatus, sharedProjectIds } from "./sharing-files.js";
 import { flushSharedTranscripts, sharedTranscriptStatus } from "./shared-transcripts.js";

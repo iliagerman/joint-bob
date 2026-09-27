@@ -121,8 +121,6 @@ export function addSharingMember(db: DatabaseSync, clusterId: string, managerNod
     if (state.manager_node_id !== managerNodeId || state.manager_epoch !== expectedManagerEpoch) throw new Error("Cluster manager authority changed");
     if (membershipExists(db, clusterId, nodeId)) return;
     if (db.prepare("SELECT 1 FROM sharing_manager_transfers WHERE cluster_id=? AND expected_epoch=? AND status<>'committed'").get(clusterId, state.manager_epoch)) throw new Error("Cluster has a pending transfer");
-    const count = (db.prepare("SELECT count(*) AS count FROM sharing_memberships WHERE cluster_id=?").get(clusterId) as unknown as CountRow).count;
-    if (count >= 5) throw new Error("A cluster may have at most five current members");
     validatePositiveInteger(state.next_join_sequence, "Next join sequence");
     if (state.next_join_sequence === Number.MAX_SAFE_INTEGER) throw new Error("Join sequence exhausted");
     db.prepare("INSERT INTO sharing_memberships(cluster_id,node_id,join_sequence) VALUES (?,?,?)").run(clusterId, nodeId, state.next_join_sequence);
@@ -151,6 +149,22 @@ function removeMember(db: DatabaseSync, clusterId: string, actorNodeId: string, 
   db.prepare(`DELETE FROM sharing_resource_shares WHERE cluster_id=? AND EXISTS
     (SELECT 1 FROM sharing_resource_owners o WHERE o.kind=sharing_resource_shares.kind AND o.resource_id=sharing_resource_shares.resource_id AND o.owner_node_id=?)`).run(clusterId, nodeId);
   db.prepare("DELETE FROM sharing_memberships WHERE cluster_id=? AND node_id=?").run(clusterId, nodeId); clearInvalidSecretScopes(db);
+}
+/** Removes a member its twin proved lost (cluster-succession.ts), whatever its seniority.
+    A lost manager is first replaced by the most senior remaining member. */
+export function removeLostSharingMember(db: DatabaseSync, clusterId: string, nodeId: string, successorManager?: string): void {
+  inSavepoint(db, () => {
+    const state = clusterRow(db, clusterId); if (state.closed) throw new Error("Cluster is closed");
+    membershipRow(db, clusterId, nodeId);
+    if (state.manager_node_id === nodeId) {
+      const remaining = listSharingClusterMembers(db, clusterId).filter((member) => member.nodeId !== nodeId);
+      if (!successorManager || remaining[0]?.nodeId !== successorManager) throw new Error("Only the most senior remaining member replaces a lost manager");
+      db.prepare("UPDATE sharing_clusters SET manager_node_id=?,manager_epoch=manager_epoch+1 WHERE id=?").run(successorManager, clusterId);
+    }
+    db.prepare(`DELETE FROM sharing_resource_shares WHERE cluster_id=? AND EXISTS
+      (SELECT 1 FROM sharing_resource_owners o WHERE o.kind=sharing_resource_shares.kind AND o.resource_id=sharing_resource_shares.resource_id AND o.owner_node_id=?)`).run(clusterId, nodeId);
+    db.prepare("DELETE FROM sharing_memberships WHERE cluster_id=? AND node_id=?").run(clusterId, nodeId); clearInvalidSecretScopes(db);
+  });
 }
 function toMembership(row: MembershipRow): SharingMembership {
   return { clusterId: row.cluster_id, nodeId: row.node_id, autoShareProjects: row.auto_share_projects === 1, joinSequence: row.join_sequence };

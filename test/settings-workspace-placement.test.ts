@@ -24,7 +24,8 @@ test("workspaces live in the Workspaces tab and every credential lives in the Se
   const secrets = settingsPanel(html, "secrets");
   assert.match(secrets, /id="secretAccountList"/);
   assert.match(secrets, /id="secretAccountAddButton"/);
-  assert.match(secrets, /id="secretSyncButton"/);
+  // Replicating accounts reach twins automatically; the manual sync button is gone.
+  assert.doesNotMatch(secrets, /id="secretSyncButton"/);
 });
 
 test("focused controls in a settings panel are not clipped by its scroll box", async () => {

@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
+import type { IncomingMessage } from "node:http";
 import WebSocket from "ws";
 import { authSessionEvents, sessionCookieName, sessionForId } from "../auth.js";
-import { getClusterMachineToken, getClusterNode } from "../cluster.js";
-import { getRuntimePeer as getClusterPeer, runtimeSocketHeaders, signedSocketPeer, trackRuntimeSocket } from "./runtime-peers.js";
-import { selectiveSharingActive } from "../cluster-v2-mode.js";
+import { getClusterNode } from "../cluster.js";
+import { getRuntimePeer, runtimeSocketHeaders, signedSocketPeer, trackRuntimeSocket } from "./runtime-peers.js";
 import { clusterPeerMayAccessProject } from "./cluster-helpers.js";
 import { type ConversationEngine, getConversationOwnership } from "../conversation-ownership.js";
 import { ensureConversationRecord, getConversationRecord, parseConversationDraftPath } from "../conversation-records.js";
@@ -19,7 +19,6 @@ import { webSocketCloseReason } from "../websocket.js";
 import { proxySocket, sessionWatcher } from "./chat.js";
 import { attachHarnessChat } from "./harness-chat.js";
 import { conversationBelongsToDoneTask, taskConversationIdentity } from "./cluster-helpers.js";
-import { machineCredentialNodeId, machineTokenMatches } from "./http-auth.js";
 import { attachBrowserViewer } from "./browser.js";
 import { broadcastToProject, send } from "./realtime.js";
 import { socketSecretAccountIdsSchema, socketTaskIdSchema } from "./schemas.js";
@@ -56,20 +55,27 @@ authSessionEvents.on("revoked", (sessionIds: string[]) => {
   }
 });
 
-webSocketServer.on("connection", async (socket, request) => {
+// A connection must never take the node down: a peer can hand this node malformed task
+// or session data, so any unexpected failure closes that socket and is logged.
+webSocketServer.on("connection", (socket, request) => {
+  handleConnection(socket, request).catch((error) => {
+    console.error("WebSocket connection failed", error);
+    socket.close(1011, "Connection failed");
+  });
+});
+
+async function handleConnection(socket: WebSocket, request: IncomingMessage): Promise<void> {
   const host = request.headers.host;
   const authorization = typeof request.headers.authorization === "string" ? request.headers.authorization : "";
-  const machineBearer = /^Bearer\s+(.+)$/i.exec(authorization)?.[1];
   const url = new URL(request.url ?? "/", `http://${host || "localhost"}`);
   const browserMode = url.searchParams.get("mode");
-  const selective=await selectiveSharingActive();
   let signedPeer:string|undefined;
-  if(selective&&authorization){
+  if(authorization){
     try{signedPeer=await signedSocketPeer(url.pathname+url.search,authorization);}
     catch{socket.close(1008,'Unauthorized');return;}
   }
-  const browserMachineId = signedPeer ?? (!selective&&machineBearer&&browserMode==='browser'?await machineCredentialNodeId(machineBearer):undefined);
-  const machineAuthenticated = Boolean(signedPeer || (!selective&&(browserMachineId || (machineBearer && machineTokenMatches(machineBearer, await getClusterMachineToken())))));
+  const browserMachineId = signedPeer;
+  const machineAuthenticated = Boolean(signedPeer);
   const origin = request.headers.origin;
   const cookiePrefix = `${sessionCookieName}=`;
   const session = sessionForId(request.headers.cookie?.split(";").map((entry) => entry.trim()).find((entry) => entry.startsWith(cookiePrefix))?.slice(cookiePrefix.length));
@@ -159,7 +165,7 @@ webSocketServer.on("connection", async (socket, request) => {
     if (requestedSessionId) ownerUrl.searchParams.set("sessionId", requestedSessionId);
     // A terminal socket must stay a terminal socket on the owner, not become a session.
     if (url.searchParams.get("mode") === "terminal") ownerUrl.searchParams.set("mode", "terminal");
-    proxySocket(socket, new WebSocket(ownerUrl, { headers: await runtimeSocketHeaders(peer.id,ownerUrl,peer.token) }));
+    proxySocket(socket, new WebSocket(ownerUrl, { headers: await runtimeSocketHeaders(peer.id,ownerUrl) }));
     return;
   }
   const requestedNodeId = url.searchParams.get("nodeId");
@@ -174,7 +180,7 @@ webSocketServer.on("connection", async (socket, request) => {
     const ownership = requestedSessionId ? await getConversationOwnership(routingEngine, requestedSessionId) : undefined;
     const targetNodeId = requestedNodeId || ownership?.ownerNodeId;
     if (targetNodeId && targetNodeId !== local.id) {
-      const peer = await getClusterPeer(targetNodeId);
+      const peer = await getRuntimePeer(targetNodeId);
       if (!peer) { socket.close(1011, "Execution node is unavailable"); return; }
       const ownerUrl = new URL("/ws", peer.url);
       ownerUrl.protocol = ownerUrl.protocol === "https:" ? "wss:" : "ws:";
@@ -186,7 +192,7 @@ webSocketServer.on("connection", async (socket, request) => {
       }
       ownerUrl.searchParams.delete("nodeId");
       ownerUrl.searchParams.set("nodeSession", "1");
-      proxySocket(socket, new WebSocket(ownerUrl, { headers: await runtimeSocketHeaders(peer.id,ownerUrl,peer.token) }));
+      proxySocket(socket, new WebSocket(ownerUrl, { headers: await runtimeSocketHeaders(peer.id,ownerUrl) }));
       return;
     }
   }
@@ -361,4 +367,4 @@ webSocketServer.on("connection", async (socket, request) => {
     socket.close(1011, webSocketCloseReason(message));
   }
 
-});
+}

@@ -1,20 +1,15 @@
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
-import { createServer } from "node:net";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import WebSocket from "ws";
+import { freePort, pairTwinNodes, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, type SignedIn } from "./dev-nodes.js";
+import { signedNodeRequest } from "./signed-node-request.js";
 
-interface NodeFixture {
-  dataDir: string;
-  port: number;
-  url: string;
-  id: string;
-  token: string;
-  projectId: string;
-}
+const username = "admin";
+const password = "claude-takeover-password";
 
 function runScript(dataDir: string, home: string, code: string, args: string[] = []): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -29,133 +24,64 @@ function runScript(dataDir: string, home: string, code: string, args: string[] =
   });
 }
 
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const socket = createServer();
-    socket.once("error", reject);
-    socket.listen(0, "127.0.0.1", () => {
-      const address = socket.address();
-      if (!address || typeof address === "string") throw new Error("Could not allocate test port");
-      socket.close(() => resolve(address.port));
-    });
-  });
-}
-
 // Both nodes share one HOME, which is what Syncthing's wholesale replication of
 // ~/.claude looks like from the transcript's point of view. What differs is the
-// project checkout path, and that is exactly what the defect turns on.
-async function initializeNode(dataDir: string, home: string, projectPath: string, peerProjectPath: string, port: number): Promise<NodeFixture> {
-  const url = `http://127.0.0.1:${port}`;
-  const output = await runScript(dataDir, home, `
-    const cluster = await import('./src/cluster.ts');
-    const store = await import('./src/store.ts');
-    const settings = await import('./src/settings.ts');
-    const node = await cluster.updateClusterNode('node-' + process.argv[1], process.argv[2]);
-    const project = await store.addProject('Takeover project', process.argv[3]);
-    await store.updateProjectMacPath(project.id, process.argv[4]);
-    settings.updateSettings({ pi: { executable: '', configPath: process.argv[5], sessionPath: process.argv[6] }, claude: { executable: '', configPath: process.argv[7], sessionPath: process.argv[8] }, syncthing: { endpoint: '' }, projects: { homePath: process.argv[9] } });
-    console.log(JSON.stringify({ node, token: await cluster.getClusterMachineToken(), projectId: project.id }));
-  `, [
-    String(port), url, projectPath, peerProjectPath,
-    path.join(home, ".pi"), path.join(home, ".pi", "sessions"),
-    path.join(home, ".claude"), path.join(home, ".claude", "projects"),
-    path.join(home, "JointBob"),
-  ]);
-  const parsed = JSON.parse(output) as { node: { id: string }; token: string; projectId: string };
-  return { dataDir, port, url, id: parsed.node.id, token: parsed.token, projectId: parsed.projectId };
+// project checkout path, and that is exactly what the defect turns on. Node A owns
+// the project; node B records the same project ID at its own checkout, as a twin
+// that mirrors node A's projects would.
+async function initializeNode(root: string, key: string, home: string, projectPath: string, mirror?: SeededNode["projects"][number]): Promise<SeededNode> {
+  const port = await freePort();
+  const node = { key, name: `node-${key}`, port, url: `http://127.0.0.1:${port}`, dataDir: path.join(root, `node-${key}-data`), cookieName: `mb_session_takeover_${key}` };
+  const output = await runScript(node.dataDir, home, `
+    const job = JSON.parse(process.argv[1]);
+    const { updateSettings } = await import('./src/settings.ts');
+    const { createAdministrator } = await import('./src/auth.ts');
+    const { addProject, importProject } = await import('./src/store.ts');
+    const { updateClusterNode } = await import('./src/cluster.ts');
+    updateSettings({ pi: { executable: '', configPath: job.home + '/.pi', sessionPath: job.home + '/.pi/sessions' }, claude: { executable: '', configPath: job.home + '/.claude', sessionPath: job.home + '/.claude/projects' }, syncthing: { endpoint: '' }, projects: { homePath: job.home + '/JointBob' } });
+    createAdministrator(job.username, job.password, false);
+    const cluster = await updateClusterNode(job.name, job.url);
+    const project = job.mirror ? await importProject(job.mirror, job.projectPath) : await addProject('Takeover project', job.projectPath);
+    console.log(JSON.stringify({ nodeId: cluster.id, project }));
+  `, [JSON.stringify({ ...node, home, username, password, projectPath, mirror })]);
+  const parsed = JSON.parse(output) as { nodeId: string; project: SeededNode["projects"][number] };
+  return { ...node, nodeId: parsed.nodeId, projects: [parsed.project] };
 }
 
-async function pairNode(local: NodeFixture, remote: NodeFixture, home: string): Promise<void> {
-  await runScript(local.dataDir, home, `
-    const cluster = await import('./src/cluster.ts');
-    const store = await import('./src/store.ts');
-    const now = new Date().toISOString();
-    await cluster.saveClusterPeer({ id: process.argv[1], name: 'peer', url: process.argv[2], token: process.argv[3], pairedAt: now, lastSeenAt: now, createdAt: now, updatedAt: now });
-    await store.registerProjectAliases(process.argv[4], [process.argv[5]]);
-  `, [remote.id, remote.url, remote.token, local.projectId, remote.projectId]);
-}
-
-async function listedClaudeSessionIds(node: NodeFixture, home: string): Promise<string[]> {
+async function listedClaudeSessionIds(node: SeededNode, home: string): Promise<string[]> {
   const output = await runScript(node.dataDir, home, `
     const store = await import('./src/store.ts');
     const claude = await import('./src/claude-service.ts');
     const project = await store.getProject(process.argv[1]);
     console.log(JSON.stringify((await claude.listClaudeSessions(project)).map((session) => session.id)));
-  `, [node.projectId]);
+  `, [node.projects[0].id]);
   return JSON.parse(output) as string[];
 }
 
-function startNode(node: NodeFixture, home: string, invocationLog: string, holdDir: string, children: ChildProcess[]): Promise<ChildProcess> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ["--import", "tsx", "--import", "./test/stub-harness-bootstrap.ts", "src/server.ts"], {
-      cwd: process.cwd(),
-      env: { ...process.env, PORT: String(node.port), NODE_ENV: "test", HOME: home, JOINT_BOB_DATA_DIR: node.dataDir, JOINT_BOB_TEST_ENGINE_LOG: invocationLog, JOINT_BOB_TEST_ENGINE_HOLD_DIR: holdDir },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    // Track immediately: a later startup failure must not leak this server.
-    children.push(child);
-    let stderr = "";
-    child.stderr!.on("data", (chunk) => { stderr = (stderr + chunk).slice(-4000); });
-    const timeout = setTimeout(() => {
-      child.kill("SIGTERM");
-      reject(new Error(`Server startup timed out: ${stderr}`));
-    }, 60_000);
-    child.once("error", (error) => { clearTimeout(timeout); reject(error); });
-    child.once("exit", (status) => {
-      clearTimeout(timeout);
-      reject(new Error(`Server exited during startup: ${status}: ${stderr}`));
-    });
-    child.stdout!.on("data", (chunk) => {
-      if (!String(chunk).includes("Joint Bob listening")) return;
-      clearTimeout(timeout);
-      resolve(child);
-    });
-  });
-}
-
-async function stopNode(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  await new Promise<void>((resolve) => {
-    const timeout = setTimeout(() => child.kill("SIGKILL"), 5_000);
-    child.once("exit", () => { clearTimeout(timeout); resolve(); });
-    child.kill("SIGTERM");
-  });
-}
-
-/** Claims are local-first, so a test that needs a peer-owned conversation applies the
-    same ownership record through the replication endpoint every node serves. */
-async function seedConversationOwnership(nodes: NodeFixture[], engine: "pi" | "claude", sessionId: string, owner: NodeFixture): Promise<void> {
-  const record = { engine, sessionId, ownerNodeId: owner.id, epoch: 1, status: "owned", transferToNodeId: null };
-  for (const node of nodes) {
-    const apply = await machinePostAs(owner, node, "/api/cluster/sessions/ownership/apply", { record, originNodeId: owner.id });
-    assert.equal(apply.status, 200, JSON.stringify(apply.body));
-    assert.equal(apply.body.accepted, true, JSON.stringify(apply.body));
-  }
-}
-
-async function machinePostAs(authenticator: NodeFixture, target: NodeFixture, route: string, body: unknown): Promise<{ status: number; body: Record<string, unknown> }> {
-  const response = await fetch(`${target.url}${route}`, {
-    method: "POST", headers: { Authorization: `Bearer ${authenticator.token}`, "Content-Type": "application/json" }, body: JSON.stringify(body),
+/** The takeover a user starts from the conversation on this node. */
+async function takeOwnership(node: SeededNode, session: SignedIn, body: { sessionId: string; sessionPath: string }): Promise<{ status: number; body: Record<string, unknown> }> {
+  const response = await fetch(`${node.url}/api/projects/${node.projects[0].id}/sessions/take-ownership`, {
+    method: "POST",
+    headers: { Cookie: session.cookie, "x-csrf-token": session.csrfToken, "Content-Type": "application/json" },
+    body: JSON.stringify({ peerId: node.nodeId, ...body }),
   });
   return { status: response.status, body: await response.json() as Record<string, unknown> };
 }
 
-async function machinePost(node: NodeFixture, route: string, body: unknown): Promise<{ status: number; body: Record<string, unknown> }> {
-  return machinePostAs(node, node, route, body);
-}
-
-async function machineGet(node: NodeFixture, route: string): Promise<{ status: number; body: Record<string, unknown> }> {
-  const response = await fetch(`${node.url}${route}`, { headers: { Authorization: `Bearer ${node.token}` } });
-  return { status: response.status, body: await response.json() as Record<string, unknown> };
-}
-
-function openConversation(node: NodeFixture, projectId: string, sessionPath: string): Promise<WebSocket> {
+function openConversation(environment: DevEnvironment, node: SeededNode, sessionPath: string): Promise<WebSocket> {
+  const url = new URL("/ws", node.url.replace(/^http/, "ws"));
+  url.searchParams.set("projectId", node.projects[0].id);
+  url.searchParams.set("sessionPath", sessionPath);
+  url.searchParams.set("nodeSession", "1");
+  // A routed node session, signed by the node that serves it.
+  const authorization = execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+    import {DatabaseSync} from 'node:sqlite';
+    import {signClusterRequest} from './src/cluster-protocol.ts';
+    const db=new DatabaseSync(process.env.JOINT_BOB_DATA_DIR+'/node.db');
+    process.stdout.write(signClusterRequest(db,${JSON.stringify(node.nodeId)},${JSON.stringify(node.nodeId)},'GET',${JSON.stringify(url.pathname + url.search)},Buffer.alloc(0)));db.close();
+  `], { env: { ...process.env, HOME: environment.home, JOINT_BOB_DATA_DIR: node.dataDir }, encoding: "utf8" });
   return new Promise((resolve, reject) => {
-    const url = new URL("/ws", node.url.replace(/^http/, "ws"));
-    url.searchParams.set("projectId", projectId);
-    url.searchParams.set("sessionPath", sessionPath);
-    url.searchParams.set("nodeSession", "1");
-    const socket = new WebSocket(url, { headers: { Authorization: `Bearer ${node.token}` } });
+    const socket = new WebSocket(url, { headers: { Authorization: authorization } });
     const timeout = setTimeout(() => reject(new Error("WebSocket ready timed out")), 10_000);
     socket.on("message", (raw) => {
       const event = JSON.parse(raw.toString()) as { type?: string };
@@ -187,7 +113,7 @@ function claudeProjectDirName(cwd: string): string {
   return cwd.replace(/^\//, "-").replace(/[\s_.\/]+/g, "-");
 }
 
-test("a Claude conversation is claimed from a node whose checkout sits elsewhere and resumes its existing transcript", async () => {
+test("a Claude conversation is claimed from a node whose checkout sits elsewhere and resumes its existing transcript", { timeout: 180_000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-claude-takeover-"));
   const home = path.join(root, "home");
   const projectA = path.join(root, "checkout-a", "project");
@@ -200,7 +126,8 @@ test("a Claude conversation is claimed from a node whose checkout sits elsewhere
   const localPath = path.join(localDir, `${sessionId}.jsonl`);
   const invocationLog = path.join(root, "invocations.log");
   const holdDir = path.join(root, "engine-holds");
-  const children: ChildProcess[] = [];
+  const engineEnv = { JOINT_BOB_TEST_ENGINE_LOG: invocationLog, JOINT_BOB_TEST_ENGINE_HOLD_DIR: holdDir };
+  const children = new Map<SeededNode, ChildProcess>();
   const sockets: WebSocket[] = [];
   try {
     await Promise.all([
@@ -213,29 +140,30 @@ test("a Claude conversation is claimed from a node whose checkout sits elsewhere
     const originalTranscript = `${JSON.stringify({ type: "user", sessionId, cwd: projectA, timestamp: "2026-01-01T00:00:00.000Z", message: { role: "user", content: "preserve me" } })}\n`;
     await writeFile(sourcePath, originalTranscript);
 
-    const [nodeA, nodeB] = await Promise.all([
-      initializeNode(path.join(root, "node-a-data"), home, projectA, projectB, await freePort()),
-      initializeNode(path.join(root, "node-b-data"), home, projectB, projectA, await freePort()),
-    ]);
-    await Promise.all([pairNode(nodeA, nodeB, home), pairNode(nodeB, nodeA, home)]);
-    await startNode(nodeA, home, invocationLog, holdDir, children);
-    await startNode(nodeB, home, invocationLog, holdDir, children);
+    const nodeA = await initializeNode(root, "a", home, projectA);
+    const nodeB = await initializeNode(root, "b", home, projectB, nodeA.projects[0]);
+    const environment: DevEnvironment = { root, home, username, password, nodes: [nodeA, nodeB] };
+    for (const node of [nodeA, nodeB]) children.set(node, await startDevNode(environment, node, engineEnv));
+    await pairTwinNodes(environment);
+    const [sessionA, sessionB] = await Promise.all([signIn(environment, nodeA), signIn(environment, nodeB)]);
 
-    await seedConversationOwnership([nodeA, nodeB], "claude", sessionId, nodeA);
+    // Node A owns the conversation first; the claim is applied on node B before it answers.
+    const claimed = await takeOwnership(nodeA, sessionA, { sessionId, sessionPath: `claude:${sourcePath}` });
+    assert.equal(claimed.status, 200, JSON.stringify(claimed.body));
+    assert.equal((claimed.body.ownership as Record<string, unknown>).ownerNodeId, nodeA.nodeId);
+    assert.deepEqual(claimed.body.pendingPeerIds, []);
 
     // FR1.1/FR1.2 — the takeover no longer refuses a `claude:` path and derives the engine from it.
-    const takeover = await machinePost(nodeB, "/api/cluster/sessions/take-ownership", {
-      projectId: nodeB.projectId, peerId: nodeB.id, sessionId, sessionPath: `claude:${sourcePath}`,
-    });
+    const takeover = await takeOwnership(nodeB, sessionB, { sessionId, sessionPath: `claude:${sourcePath}` });
     assert.equal(takeover.status, 200, JSON.stringify(takeover.body));
     const ownership = takeover.body.ownership as Record<string, unknown>;
     assert.equal(ownership.engine, "claude");
-    assert.equal(ownership.ownerNodeId, nodeB.id);
+    assert.equal(ownership.ownerNodeId, nodeB.nodeId);
     assert.deepEqual(takeover.body.pendingPeerIds, []);
 
     // FR3.1/FR3.2 — node B lists the conversation and its turn resumes the existing transcript.
     assert.deepEqual(await listedClaudeSessionIds(nodeB, home), [sessionId]);
-    const socket = await openConversation(nodeB, nodeB.projectId, `claude:${sourcePath}`);
+    const socket = await openConversation(environment, nodeB, `claude:${sourcePath}`);
     sockets.push(socket);
     assert.equal((await prompt(socket, "continue on node B")).type, "textDelta");
 
@@ -252,24 +180,22 @@ test("a Claude conversation is claimed from a node whose checkout sits elsewhere
     for (const open of sockets.splice(0)) open.terminate();
 
     // FR1.4 — a peer that is offline does not fail the takeover; it is reported as pending.
-    await stopNode(children.shift()!);
-    const offlineTakeover = await machinePost(nodeB, "/api/cluster/sessions/take-ownership", {
-      projectId: nodeB.projectId, peerId: nodeB.id, sessionId, sessionPath: `claude:${localPath}`,
-    });
+    await stopDevNode(children.get(nodeA)!);
+    const offlineTakeover = await takeOwnership(nodeB, sessionB, { sessionId, sessionPath: `claude:${localPath}` });
     assert.equal(offlineTakeover.status, 200, JSON.stringify(offlineTakeover.body));
-    assert.deepEqual(offlineTakeover.body.pendingPeerIds, [nodeA.id]);
+    assert.deepEqual(offlineTakeover.body.pendingPeerIds, [nodeA.nodeId]);
     const offlineOwnership = offlineTakeover.body.ownership as Record<string, unknown>;
-    assert.equal(offlineOwnership.ownerNodeId, nodeB.id);
+    assert.equal(offlineOwnership.ownerNodeId, nodeB.nodeId);
 
     // FR1.4 — ownership survives a restart of the claiming node.
-    await stopNode(children.pop()!);
-    await startNode(nodeB, home, invocationLog, holdDir, children);
-    const persisted = await machineGet(nodeB, `/api/cluster/sessions/ownership?engine=claude&sessionId=${encodeURIComponent(sessionId)}`);
+    await stopDevNode(children.get(nodeB)!);
+    children.set(nodeB, await startDevNode(environment, nodeB, engineEnv));
+    const persisted = await signedNodeRequest(environment, nodeA, nodeB, "GET", `/api/cluster/v2/runtime/sessions/ownership?engine=claude&sessionId=${encodeURIComponent(sessionId)}`);
     assert.equal(persisted.status, 200);
-    assert.deepEqual(persisted.body.ownership, offlineOwnership);
+    assert.deepEqual((await persisted.json() as { ownership: unknown }).ownership, offlineOwnership);
   } finally {
     for (const socket of sockets) socket.close();
-    await Promise.all(children.map(stopNode));
+    await Promise.all([...children.values()].map(stopDevNode));
     await rm(root, { recursive: true, force: true });
   }
 });

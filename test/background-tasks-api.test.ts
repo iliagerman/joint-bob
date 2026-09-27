@@ -150,7 +150,8 @@ test("background task discovery tolerates a rolling-upgrade peer without weakeni
     const db = new DatabaseSync(path.join(f.nodeA.dataDir, "node.db"));
     try {
       db.exec("PRAGMA busy_timeout=5000");
-      db.prepare("UPDATE cluster_peers SET url = ? WHERE id = ?").run(`http://127.0.0.1:${address.port}`, f.nodeB.nodeId);
+      // Node A now reaches its twin B at an address answering like a node that predates the route.
+      assert.equal(db.prepare("UPDATE cluster_v2_peer_endpoints SET url = ? WHERE node_id = ?").run(`http://127.0.0.1:${address.port}`, f.nodeB.nodeId).changes > 0, true);
     } finally {
       db.close();
     }

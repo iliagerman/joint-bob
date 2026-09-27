@@ -167,6 +167,7 @@ test("defaultRoutingPolicy keeps editable model tiers inside their harness", () 
   assert.deepEqual(generated.harnesses.claude.levels["10"], { modelId: "claude-opus-5-5", thinkingLevel: "max", description: "The hardest Claude work requiring Opus 5.5's sustained architectural reasoning and judgment." });
   assert.ok(Object.values(generated.harnesses.kiro.levels).every((mapping) => !mapping), "Kiro has no guessed defaults");
   assert.equal(generated.contextMessages, 10);
+  assert.deepEqual(generated.evalCadence, { mode: "every-n", n: 1 });
   assert.doesNotThrow(() => validateRoutingPolicy(generated), "generated defaults must satisfy the policy schema");
 });
 

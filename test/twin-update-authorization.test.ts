@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createDecipheriv, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -17,26 +17,6 @@ const isolatedServerEnv = {
 };
 type Child = Awaited<ReturnType<typeof startDevNode>>;
 
-async function legacyToken(node: SeededNode): Promise<string> {
-  const key = Buffer.from((await readFile(path.join(node.dataDir, "secret.key"), "utf8")).trim(), "base64");
-  const db = new DatabaseSync(path.join(node.dataDir, "node.db"), { readOnly: true });
-  try {
-    const row = db.prepare("SELECT token FROM cluster_machine_credentials WHERE singleton = 1").get() as { token: string };
-    const [iv, tag, encrypted] = row.token.split(".");
-    const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(iv, "base64"));
-    decipher.setAuthTag(Buffer.from(tag, "base64"));
-    return Buffer.concat([decipher.update(Buffer.from(encrypted, "base64")), decipher.final()]).toString("utf8");
-  } finally { db.close(); }
-}
-
-function machinePost(node: SeededNode, token: string, endpoint: string, body: unknown): Promise<Response> {
-  return fetch(`${node.url}/api${endpoint}`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-}
-
 function updateJobCount(node: SeededNode): number {
   const db = new DatabaseSync(path.join(node.dataDir, "node.db"), { readOnly: true });
   try {
@@ -48,33 +28,6 @@ async function removeFixture(root: string, children: Child[]): Promise<void> {
   await Promise.all(children.map(stopDevNode));
   await rm(root, { recursive: true, force: true });
 }
-
-test("legacy cluster peers cannot request remote update installation", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-update-peer-"));
-  const children: Child[] = [];
-  try {
-    const environment = await seedDevEnvironment(root, 2);
-    const [nodeA, nodeB] = environment.nodes;
-    children.push(await startDevNode(environment, nodeA, isolatedServerEnv), await startDevNode(environment, nodeB, isolatedServerEnv));
-    const response = await machinePost(nodeB, await legacyToken(nodeA), "/cluster/update/install", { version: "99.0.0" });
-    assert.equal(response.status, 403, "an ordinary paired peer must be forbidden before installer eligibility checks");
-    assert.equal(updateJobCount(nodeB), 0, "a denied update must not create an update job");
-  } finally { await removeFixture(root, children); }
-});
-
-test("legacy cluster peers cannot fence a node for update preparation", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-prepare-peer-"));
-  const children: Child[] = [];
-  try {
-    const environment = await seedDevEnvironment(root, 2);
-    const [nodeA, nodeB] = environment.nodes;
-    children.push(await startDevNode(environment, nodeA, isolatedServerEnv), await startDevNode(environment, nodeB, isolatedServerEnv));
-    const response = await machinePost(nodeB, await legacyToken(nodeA), "/update/prepare", {});
-    const health = await fetch(`${nodeB.url}/api/health`);
-    assert.equal(response.status, 403, "an ordinary paired peer must not prepare another node for update");
-    assert.equal(health.status, 200, "denied preparation must leave the node healthy");
-  } finally { await removeFixture(root, children); }
-});
 
 async function createMembership(manager: SeededNode, managerSession: SignedIn, joiner: SeededNode, joinerSession: SignedIn, clusterId: string): Promise<void> {
   const invitation = await api<{ link: string }>(manager, managerSession, "POST", `/clusters/${clusterId}/invitations`, { expectedEpoch: 1 });

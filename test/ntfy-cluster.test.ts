@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "./dev-nodes.js";
+import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, pairTwinNodes } from "./dev-nodes.js";
 
 interface ServiceView { id: string; name: string; url: string; hasToken: boolean; isDefault: boolean }
 
@@ -12,6 +12,7 @@ test("an ntfy service can be shared to paired nodes and a default can be selecte
   const environment = await seedDevEnvironment(root, 2);
   const [nodeA, nodeB] = environment.nodes;
   const servers = await Promise.all(environment.nodes.map((node) => startDevNode(environment, node)));
+  await pairTwinNodes(environment);
   try {
     const [sessionA, sessionB] = await Promise.all([signIn(environment, nodeA), signIn(environment, nodeB)]);
     const first = await api<{ service: ServiceView }>(nodeA, sessionA, "POST", "/ntfy/services", { name: "Home", url: "https://ntfy.home.example", token: "home-secret" });

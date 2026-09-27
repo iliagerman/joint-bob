@@ -10,7 +10,7 @@ Choose one deployment route with the human, install Joint Bob as a native user s
 
 The installer handles Syncthing. It supplies a pinned, checksum-verified binary, adopts a compatible running daemon or starts one, and lets Joint Bob discover its loopback REST API and API key. Syncthing has no user account. Do not ask the human to create one or to configure the Syncthing GUI.
 
-During cluster pairing, Joint Bob exchanges Syncthing device IDs and configures devices and managed folders through the local REST API. Syncthing transfers project files, ticket-workspace files, and dedicated Pi and Claude conversation-transcript folders. Joint Bob's authenticated HTTPS API transfers cluster metadata and application events. Node SQLite databases, engine configuration and authentication, and secrets remain node-local. A user may explicitly replicate a secret account through Joint Bob's encrypted cluster API.
+When a project is shared, Joint Bob exchanges Syncthing device IDs and configures that project's folders through the local REST API, only for the nodes allowed to see it. Syncthing transfers project and ticket-workspace files. Joint Bob's signed HTTPS API transfers cluster membership, conversation transcripts, and application events. Node SQLite databases and engine configuration and authentication remain node-local. A secret account marked to replicate reaches twins, and cluster members only for shared projects it is attached to.
 
 Treat Joint Bob HTTPS and Syncthing file transport as separate network paths. Every cluster node still needs a stable, mutually reachable private HTTPS origin for Joint Bob. Syncthing uses its encrypted device protocol and may connect directly or through its configured discovery and relay services.
 
@@ -246,19 +246,20 @@ Do not open port `8787` to the public internet. Stop and report missing network 
 
 ## Pair options 4 and 5
 
-Pairing is a human-controlled browser step:
+Joining a cluster and pairing twins are human-controlled browser steps:
 
-1. On an existing node, open **Settings > Cluster** and select **Generate one-time link**.
-2. On the new node, open **Settings > Cluster**.
-3. Set its node name and stable private HTTPS origin.
-4. Have the human paste the link under **Join an existing cluster** and select **Join cluster**.
-5. Repeat with a new one-time link for each additional node.
-6. Confirm every node has a **Joint Bob home folder** under **Settings > Projects**.
-7. Confirm mapped projects and ticket workspaces report a healthy sync state before handing work between nodes.
+1. On every node, open **Settings > Cluster** and set its node name and stable private HTTPS origin.
+2. On the node that manages the cluster, create the cluster if it does not exist and select **Generate one-time link**.
+3. Have the human paste the link on the joining node under **Join an existing cluster** and select **Join cluster**. A node may belong to several clusters; joining another keeps its memberships.
+4. Repeat with a new one-time link for each additional node. A cluster has no member limit.
+5. Membership shares nothing. Have the human choose the projects or workspaces each node shares with the cluster under **Selected sharing**.
+6. For machines the human owns, suggest pairing them as **Twins** instead: they then share everything they own.
+7. Confirm every node has a **Joint Bob home folder** under **Settings > Projects**.
+8. Confirm shared projects and ticket workspaces report a healthy sync state before handing work between nodes.
 
-Pairing configures Syncthing device and folder sharing. Do not send the human to the Syncthing GUI or ask for a Syncthing account. Joint Bob shares dedicated conversation-transcript roots, not complete engine directories. It pauses legacy `dot-pi` and `dot-claude` folders.
+Joint Bob configures Syncthing device and folder sharing per shared project. Do not send the human to the Syncthing GUI or ask for a Syncthing account.
 
-Treat each one-time link as a secret. Do not print it in logs, shell history, or your completion report. A cluster supports five active nodes.
+Treat each one-time link as a secret. Do not print it in logs, shell history, or your completion report.
 
 ## Complete option 6: temporary EC2 smoke test
 

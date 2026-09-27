@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { appVersion } from "../src/changelog.js";
-import { getClusterNode, saveClusterPeer } from "../src/cluster.js";
+import { getClusterNode } from "../src/cluster.js";
 import { getOrCreateClusterIdentity } from "../src/cluster-identity.js";
 import { recordPeerEndpoint } from "../src/cluster-peer-endpoints.js";
 import { verifyClusterRequest } from "../src/cluster-protocol.js";
@@ -87,14 +87,15 @@ test("fleet dispatch uses only direct active twins, signed exact acknowledgement
   getOrCreateClusterIdentity(dbE, E);
 
   let cRequests = 0;
-  const legacyC = await listen((request, response) => {
+  const clusterC = await listen((request, response) => {
     cRequests++;
     response.setHeader("content-type", "application/json");
     if (request.url === "/api/health") response.end(JSON.stringify({ version: appVersion() }));
     else { response.statusCode = 404; response.end("{}"); }
   });
-  servers.push(legacyC.server);
-  await saveClusterPeer({ id: C, name: "Legacy C", url: legacyC.url, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), invitedByNodeId: local.id, token: "fixture-token", pairedAt: new Date().toISOString(), lastSeenAt: null });
+  servers.push(clusterC.server);
+  // C is reachable as a fellow cluster member, but a cluster is not an update relationship.
+  recordPeerEndpoint(dbA, { kind: "cluster", id: randomUUID() }, { nodeId: C, name: "Cluster C", url: clusterC.url });
 
   const bcInvite = createTwinInvitation(dbB, B);
   const bcAccept = prepareTwinAcceptance(dbC, C, bcInvite, bcInvite.body.inviter.fingerprint);
@@ -163,7 +164,7 @@ test("fleet dispatch uses only direct active twins, signed exact acknowledgement
   };
   pair();
 
-  await t.test("excludes legacy, transitive, and pending nodes and keeps local last", async () => {
+  await t.test("excludes cluster-only, transitive, and pending nodes and keeps local last", async () => {
     cRequests = 0;
     dRequests = 0;
     const run = await updater.startFleetUpdate();

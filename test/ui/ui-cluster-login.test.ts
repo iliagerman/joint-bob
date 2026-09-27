@@ -15,7 +15,7 @@ import path from "node:path";
 import test, { after, before } from "node:test";
 import { type Browser, type BrowserContext, type Page } from "playwright-core";
 import { launchChrome } from "./launch-chrome.js";
-import { seedDevEnvironment, startDevNode, stopDevNode, type DevEnvironment } from "../dev-nodes.js";
+import { seedDevEnvironment, startDevNode, stopDevNode, type DevEnvironment, pairTwinNodes } from "../dev-nodes.js";
 
 let root: string;
 let environment: DevEnvironment;
@@ -28,6 +28,7 @@ before(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-ui-cluster-"));
   environment = await seedDevEnvironment(root, 2);
   servers = await Promise.all(environment.nodes.map((node) => startDevNode(environment, node)));
+  await pairTwinNodes(environment);
 
   browser = await launchChrome({ headless: process.env.HEADED !== "1" });
   // One context: both tabs share a cookie jar, the way two tabs in a real

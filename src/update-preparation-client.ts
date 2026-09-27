@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { getClusterMachineToken, getClusterNode } from "./cluster.js";
+import { getClusterNode } from "./cluster.js";
 import { getOrCreateClusterIdentity } from "./cluster-identity.js";
 import { signClusterRequest } from "./cluster-protocol.js";
 import { clusterV2Database } from "./cluster-v2-store.js";
@@ -12,18 +12,6 @@ const preparationResponseSchema = z.object({
 async function recoveryCount(response: Response): Promise<number> {
   if (!response.ok) throw new Error(`Service update preparation failed (${response.status})`);
   return preparationResponseSchema.parse(await response.json()).recoveryCount;
-}
-
-async function prepareLegacyUpdate(port: number): Promise<number> {
-  const token = await getClusterMachineToken();
-  const response = await fetch(`http://127.0.0.1:${port}/api/update/prepare`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: "{}",
-    redirect: "error",
-    signal: AbortSignal.timeout(90_000),
-  });
-  return recoveryCount(response);
 }
 
 export async function prepareLocalUpdate(port: number): Promise<number> {
@@ -41,6 +29,5 @@ export async function prepareLocalUpdate(port: number): Promise<number> {
     redirect: "error",
     signal: AbortSignal.timeout(90_000),
   });
-  if (response.status === 401 || response.status === 404) return prepareLegacyUpdate(port);
   return recoveryCount(response);
 }

@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import { randomUUID } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
-import { createServer, type AddressInfo } from "node:http";
 import { DatabaseSync } from "node:sqlite";
 import os from "node:os";
 import path from "node:path";
@@ -380,19 +379,9 @@ test("peer launches need replicating accounts and respect project locks", async 
   const { endpoint, queue } = await syntheticPromptQueue();
   context.mock.method(server, "address", () => endpoint.address());
   const project = await addProject("dispatch-peer", path.join(projectRoot, "dispatch-peer"));
-  // A fake selected node: one HTTP server for prepare and the /ws upgrade.
-  let prepareRequests = 0;
-  const peerHttp = createServer((request, response) => {
-    prepareRequests += request.url?.includes("/prepare") ? 1 : 0;
-    response.setHeader("Content-Type", "application/json");
-    response.end(JSON.stringify({ ok: true }));
-  });
-  await new Promise<void>(resolve => peerHttp.listen(0, "127.0.0.1", resolve));
-  const peerPort = (peerHttp.address() as AddressInfo).port;
-  const { saveClusterPeer } = await import("../src/cluster.js");
-  const now = new Date().toISOString();
+  // The replication check runs before the target node is resolved: an unknown node would
+  // otherwise fail as unavailable instead.
   const peerId = randomUUID();
-  await saveClusterPeer({ id: peerId, name: "selected-peer", url: `http://127.0.0.1:${peerPort}`, token: "peer-token", pairedAt: now, lastSeenAt: now, createdAt: now, updatedAt: now });
   const local = await saveSecretAccount({ label: "Local only", provider: "custom", variables: [{ name: "LOCAL_TOKEN", kind: "value", value: "secret" }] });
   try {
     const remote = createQuickNote({ projectId: project.id, title: "Replicate me", content: "Body", harnessId: "pi", nodeId: peerId, secretAccountIds: [local.id] });
@@ -401,7 +390,6 @@ test("peer launches need replicating accounts and respect project locks", async 
       assert.match(error.message, /replicate/i);
       return true;
     });
-    assert.equal(prepareRequests, 0, "a non-replicating account must fail before touching the peer");
     assert.equal(getQuickNoteQueue().enabled, false);
 
     // A project locked by another node never launches, locally or remotely.
@@ -424,7 +412,6 @@ test("peer launches need replicating accounts and respect project locks", async 
     assert.equal(queue.urls.length, 0);
   } finally {
     await closeEndpoint(endpoint);
-    await new Promise<void>(resolve => peerHttp.close(() => resolve()));
   }
 });
 

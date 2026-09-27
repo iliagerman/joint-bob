@@ -1,0 +1,179 @@
+{
+  "title": "Clusters, sharing, and twins",
+  "eyebrow": "Feature · Multi-node",
+  "profile": "Node administrators",
+  "subtitle": "A Joint Bob node can belong to any number of clusters. Membership alone shares nothing: a node shares chosen projects or whole workspaces with a cluster, and every member of that cluster receives them. Twins are the same user's machines and share everything they own. Changes travel through two hubs per cluster, and a twin can take over a machine that is gone for good.",
+  "badges": [
+    { "label": "Multiple clusters per node", "variant": "added" },
+    { "label": "No member limit", "variant": "changed" },
+    { "label": "Two-hub dissemination", "variant": "added" },
+    { "label": "Lost-machine recovery", "variant": "added" },
+    { "label": "Legacy bearer pairing removed", "variant": "removed" }
+  ],
+  "sections": [
+    {
+      "title": "Architecture",
+      "blocks": [
+        {
+          "kind": "table",
+          "title": "Backend",
+          "columns": ["Module", "Responsibility"],
+          "rows": [
+            ["`src/cluster.ts`", "This node's identity only: id, name, URL. Drops the retired bearer-pairing tables on start."],
+            ["`src/cluster-identity.ts`, `src/cluster-protocol.ts`", "Ed25519 node keys and signed machine requests (sender, recipient, method, target, body hash, timestamp, nonce)."],
+            ["`src/cluster-membership.ts`", "Signed membership snapshots per cluster: one manager, immutable join sequence, departures. Lost-member removal and manager succession."],
+            ["`src/cluster-sharing-policy.ts`, `src/cluster-sharing.ts`", "Who may receive a resource (`mayReceiveResource`) and owner-signed resource policy statements per sharing context."],
+            ["`src/selected-sharing.ts`", "Per-cluster selection of projects and whole workspaces; projects added to a selected workspace later are shared too."],
+            ["`src/cluster-twins.ts`, `src/server/twins.ts`, `src/server/twin-sharing.ts`", "Dual-signed twin relationships and full sharing between twins."],
+            ["`src/server/cluster-hubs.ts`", "Two-hub dissemination of project events inside each cluster, the relay log, and catch-up pulls."],
+            ["`src/cluster-succession.ts`, `src/server/succession.ts`", "Declaring a twin lost: ownership moves to the twin, the lost machine leaves its clusters."],
+            ["`src/server/runtime-peers.ts`", "Signed cross-node calls (`/api/cluster/v2/runtime/...`) for handoff, takeover, browser, cron, files, and sockets."]
+          ]
+        },
+        {
+          "kind": "table",
+          "title": "Frontend",
+          "columns": ["File", "Responsibility"],
+          "rows": [
+            ["`public/app/cluster-panel.js`", "Settings > Cluster: this node's name and URL, create, invite, join, leave."],
+            ["`public/app/cluster-sharing.js`", "Selected sharing per cluster, the twin handshake and status, and **This machine is lost**."],
+            ["`public/app/updates.js`", "Settings > Updates node list: this node and its twins."]
+          ]
+        }
+      ]
+    },
+    {
+      "title": "API Endpoints",
+      "blocks": [
+        {
+          "kind": "table",
+          "title": "Signed-in user",
+          "columns": ["Method", "Path", "Description"],
+          "rows": [
+            ["GET/PUT", "`/api/cluster/node`", "Read or change this node's name and URL. A change is republished to every cluster (through its manager) and every twin."],
+            ["GET", "`/api/clusters`", "This node's clusters, members, and manager."],
+            ["POST", "`/api/clusters`", "Create a cluster; this node becomes its manager."],
+            ["POST", "`/api/clusters/:id/invitations`", "One-time invitation link (15 minutes)."],
+            ["POST", "`/api/clusters/join`", "Join another cluster. Existing memberships are kept."],
+            ["GET/PUT", "`/api/clusters/:id/sharing`", "The projects and workspaces this node shares with the cluster."],
+            ["POST", "`/api/twins/invitations`, `/api/twins/accept`", "Two-sided twin handshake."],
+            ["POST", "`/api/twins/:id/lost`", "Declare the twin lost (`{ confirmLost: true }`)."],
+            ["GET", "`/api/cluster/inventory`", "This node and every twin with its version and update capability."]
+          ]
+        },
+        {
+          "kind": "table",
+          "title": "Signed machine requests",
+          "columns": ["Method", "Path", "Description"],
+          "rows": [
+            ["POST", "`/api/cluster/v2/relay`", "Relayed project events with their origin's signature. `relay: true` asks a hub to forward."],
+            ["POST", "`/api/cluster/v2/relay/pull`", "Events after a cursor in the sender's relay log that the caller may see."],
+            ["POST", "`/api/cluster/v2/events`", "Direct events between twins."],
+            ["POST", "`/api/cluster/v2/membership/descriptor`", "A member reports its new name and URL to the manager."],
+            ["POST", "`/api/cluster/v2/twins/descriptor`", "A twin reports its new name and URL."],
+            ["POST", "`/api/cluster/v2/succession`", "The lost machine's twin announces the succession with the dual-signed certificate."],
+            ["POST", "`/api/cluster/v2/push/events`, `/api/cluster/v2/ntfy/services`", "Push subscriptions and ntfy servers, twins only."],
+            ["POST", "`/api/cluster/v2/update/inventory`", "A twin's version and update capability."],
+            ["*", "`/api/cluster/v2/runtime/...`", "Cross-node runtime calls, each checked against the project it names."]
+          ]
+        }
+      ]
+    },
+    {
+      "title": "How It Works",
+      "blocks": [
+        {
+          "kind": "numbered",
+          "title": "Sharing",
+          "items": [
+            { "heading": "Membership", "body": "Every node creates an Ed25519 identity. A cluster's manager signs the member list; members are numbered by join order. A node can be a member of any number of clusters and presents one URL to all of them." },
+            { "heading": "What a peer may see", "body": "A peer sees a project if it is a twin of the project's owner, or it shares a cluster with the owner and the owner selected the project (or its workspace) for that cluster. Every member of that cluster receives it. Data outside any project, canvas shortcuts, push subscriptions, and ntfy servers go to twins only." },
+            { "heading": "Isolation between clusters", "body": "A node in clusters X and Y shares each project only with the cluster it selected. Members of X and Y do not learn about each other and cannot authenticate to each other." },
+            { "heading": "Twins", "body": "Twins are the same user's machines. Both sides consent; afterwards each shares everything it owns with the other: projects, conversations, tasks, files, transcripts, credentials, routing configurations, and update rights." }
+          ]
+        },
+        {
+          "kind": "numbered",
+          "title": "Two-hub dissemination",
+          "items": [
+            { "heading": "Hubs", "body": "For each cluster, the node that makes a change sends it only to two hubs: the lowest and the highest numbered other members that answer. If a hub does not answer, the next member in line takes its place." },
+            { "heading": "Forwarding", "body": "A hub applies the change and forwards it to every other member of that cluster that may see it. Each relayed event carries its origin's signature; a hub cannot forge or alter it." },
+            { "heading": "Catch-up", "body": "Every node keeps each cluster event it holds in a relay log. At start-up and every minute a node pulls everything after its cursor from the two hubs, so a node that was offline, or missed a forward, catches up. A project shared with a cluster later sends its earlier events once." },
+            { "heading": "Twins", "body": "Twins keep direct delivery. A cluster whose other members are all twins of this node needs no hubs." }
+          ]
+        },
+        {
+          "kind": "numbered",
+          "title": "Recovering a lost machine",
+          "items": [
+            { "heading": "Declare it lost", "body": "On a twin of the lost machine, open Settings > Cluster, choose the twin, and select **This machine is lost**. Only a twin can do this: the dual-signed twin certificate proves the lost machine trusted it." },
+            { "heading": "Ownership moves", "body": "The twin becomes the owner of everything the lost machine owned and reissues its sharing. Other members verify the certificate against the keys they already hold and accept the twin as the new owner." },
+            { "heading": "Clusters", "body": "The manager removes the lost machine. When the lost machine was the manager, the most senior remaining member takes over management and removes it." },
+            { "heading": "Rebuild", "body": "Install Joint Bob on the new or repaired machine and pair it as a twin with the survivor. It receives everything again. Invite it to its clusters again." }
+          ]
+        },
+        {
+          "kind": "callout",
+          "variant": "warn",
+          "title": "A lost manager without a twin",
+          "body": "A cluster whose manager is lost and had no twin cannot choose a new manager. Keep the machine that manages a cluster twinned with another machine you own."
+        }
+      ]
+    },
+    {
+      "title": "Access Control",
+      "blocks": [
+        {
+          "kind": "bullets",
+          "items": [
+            "Every machine request is signed and checked against the sender's pinned key, a 60-second clock window, and a replay-proof nonce. Bearer machine tokens are no longer accepted anywhere.",
+            "Runtime calls are authorized by the project they name. A request for a project that is not shared with the caller returns 403.",
+            "Relayed events are accepted only with a valid origin signature, from a member of the cluster, for a project the receiver, the origin, and the sender may all see.",
+            "Only the lost machine's twin can succeed it. A succession notice from anyone else returns 403.",
+            "Remote update installation requires an active twin.",
+            "A connection that fails on malformed data closes that socket only; it never stops the node."
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Upgrading",
+      "blocks": [
+        {
+          "kind": "bullets",
+          "items": [
+            "Update every node of a cluster to this release. Older nodes do not relay or pull, and reject member lists with more than five members.",
+            "Legacy bearer-token pairing is removed. A node that still has a legacy pairing loses it and must join through a cluster invitation or pair as a twin.",
+            "A node older than 1.59.0 must first upgrade to a release between 1.59.0 and 1.97.x.",
+            "The retired pairing tables are dropped on start; the node keeps its identity."
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Known limits",
+      "blocks": [
+        {
+          "kind": "bullets",
+          "items": [
+            "Relay logs and the event outbox are not pruned yet.",
+            "Shared agent skills (the agent-resources Syncthing folder) do not synchronize between nodes.",
+            "A node advertises one URL to all its clusters, so every cluster must reach it at that URL.",
+            "Tasks still assigned to a lost machine keep that assignment until they are handed off."
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Related Features",
+      "blocks": [
+        {
+          "kind": "related",
+          "items": [
+            { "href": "../index.html", "title": "Documentation index", "description": "All Joint Bob feature documents." }
+          ]
+        }
+      ]
+    }
+  ]
+}

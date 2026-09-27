@@ -5,8 +5,9 @@ import { ProjectDirectoryImportError } from "../../project-directory-import.js";
 import { getClusterNode } from "../../cluster.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
 import { isActiveUpdateTwin } from "../../twin-updates.js";
+import { isTrustedTwin } from "../../cluster-sharing-policy.js";
 import { startHarnessUpdates } from "../../harness-updater.js";
-import { checkForLatestRelease, installLocalRelease, latestFleetRun, ReleaseFeedError, releaseForVersion, selfUpdateSupported, setAutoUpdate, startFleetUpdate, UpdateRefusalError, updateStatusView } from "../../updater.js";
+import { checkForLatestRelease, installLocalRelease, latestFleetRun, ReleaseFeedError, releaseForVersion, selfUpdateSupported, setAutoUpdate, startFleetUpdate, UpdateRefusalError, updateInventoryView, updateStatusView } from "../../updater.js";
 import { WorkspaceError } from "../../store.js";
 import { TaskWorkspaceError } from "../../task-workspaces.js";
 import { TaskWorktreeError } from "../../worktrees.js";
@@ -106,8 +107,16 @@ app.get("/api/update/install-all", (_request, response) => {
   response.json(latestFleetRun());
 });
 
-app.post("/api/cluster/update/install", (_request, response) => {
-  sendError(response, 403, "Legacy remote update installation is forbidden");
+/** A twin's view of this node for its Settings > Updates list. */
+app.post("/api/cluster/v2/update/inventory", async (_request, response, next) => {
+  try {
+    const [node, database] = await Promise.all([getClusterNode(), clusterV2Database()]);
+    if (response.locals.machineProtocol !== 2 || !isTrustedTwin(database, node.id, response.locals.machineNodeId as string)) {
+      sendError(response, 403, "An active direct twin relationship is required");
+      return;
+    }
+    response.json({ version: appVersion(), updates: updateInventoryView() });
+  } catch (error) { next(error); }
 });
 
 const remoteInstallSchema = z.object({

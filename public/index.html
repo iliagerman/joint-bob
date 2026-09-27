@@ -689,11 +689,10 @@
             <button class="settings-subtab" type="button" data-secret-tab="website" aria-pressed="false" data-testid="secret-tab-website">Website</button>
             <button class="settings-subtab" type="button" data-secret-tab="custom" aria-pressed="false" data-testid="secret-tab-custom">Custom</button>
           </div>
-          <fieldset class="phase-settings"><legend>Secret accounts</legend><p>Attached accounts are exported into every new agent session in that scope, so the AWS CLI, gcloud, the gh CLI and git push work without being asked for keys. The most specific scope wins per variable name.</p><div id="secretAccountList" class="secret-account-list" data-testid="secret-account-list"></div><div class="github-group-actions"><button class="ghost" type="button" id="secretAccountAddButton" data-testid="secret-account-add-button">Add account</button><button class="ghost" type="button" id="secretSyncButton" data-testid="secret-sync-open-button">Sync to nodes</button></div></fieldset>
+          <fieldset class="phase-settings"><legend>Secret accounts</legend><p>Attached accounts are exported into every new agent session in that scope, so the AWS CLI, gcloud, the gh CLI and git push work without being asked for keys. The most specific scope wins per variable name.</p><div id="secretAccountList" class="secret-account-list" data-testid="secret-account-list"></div><div class="github-group-actions"><button class="ghost" type="button" id="secretAccountAddButton" data-testid="secret-account-add-button">Add account</button></div></fieldset>
         </section>
 
         <section class="settings-panel" id="settingsPanel-cluster" role="tabpanel" aria-labelledby="settingsTab-cluster" tabindex="0" data-testid="settingsPanel-cluster" hidden>
-          <p id="clusterMigrationMessage" class="cluster-message" role="status" hidden></p>
           <details class="phase-settings" id="fieldsetClusters" data-testid="cluster-section" open>
             <summary data-testid="cluster-section-summary">Cluster connections and sharing</summary>
             <div class="cluster-toolbar">
@@ -708,7 +707,7 @@
             </div>
             <p class="settings-hint">Cluster actions apply immediately. They do not require Save settings.</p>
             <div class="cluster-details" id="clusterDetails" data-testid="cluster-details"></div>
-            <div class="cluster-inventory" id="clusterInventory" hidden></div>
+            <div class="cluster-inventory" id="clusterNodes" data-testid="cluster-nodes"></div>
             <div class="cluster-sharing" id="clusterSharing" data-testid="cluster-sharing" hidden></div>
             <label class="checkbox-row" hidden><input type="checkbox" id="clusterAutoShareInput" name="autoShareProjects" data-testid="cluster-auto-share-input" /> Automatically share projects created in the future</label>
             <div class="github-group-actions">
@@ -945,36 +944,6 @@
         <div class="changelog-list" id="whatsNewList" data-testid="whats-new-list"></div>
         <div class="dialog-actions">
           <button class="primary" type="submit" data-testid="whats-new-dismiss-button">Got it</button>
-        </div>
-      </form>
-    </dialog>
-
-    <dialog id="projectImportDialog" data-testid="project-import-dialog">
-      <form method="dialog" class="dialog-card" id="projectImportForm">
-        <div>
-          <span class="eyebrow">Node mapping</span>
-          <h2 id="projectImportTitle">Map imported project</h2>
-          <p id="projectImportRemotePath" class="muted compact-copy"></p>
-        </div>
-        <label>
-          Local project folder on this node
-          <div class="folder-input-row">
-            <input id="projectImportPathInput" name="localPath" autocomplete="off" required data-testid="project-import-path-input" />
-            <button class="ghost" type="button" id="projectImportBrowseButton" data-testid="project-import-browse-button">Browse</button>
-          </div>
-        </label>
-        <section class="folder-browser" id="projectImportBrowser" aria-label="Folders on this node" hidden>
-          <div class="folder-browser-toolbar">
-            <button class="ghost compact" type="button" id="projectImportParentButton" data-testid="project-import-parent-button">Parent</button>
-            <code id="projectImportCurrentPath"></code>
-          </div>
-          <div class="folder-browser-list" id="projectImportDirectoryList"></div>
-          <button class="ghost" type="button" id="projectImportUseFolderButton" data-testid="project-import-use-folder-button">Use this folder</button>
-        </section>
-        <div class="dialog-actions">
-          <button class="ghost" type="button" id="cancelProjectImportButton" data-testid="project-import-cancel-button">Cancel</button>
-          <button class="ghost" type="button" id="skipProjectImportButton" data-testid="project-import-skip-button">Skip</button>
-          <button class="primary" value="default" type="submit" data-testid="project-import-save-button">Map and sync</button>
         </div>
       </form>
     </dialog>
@@ -1438,21 +1407,6 @@
       </form>
     </dialog>
 
-    <dialog id="secretSyncDialog" data-testid="secret-sync-dialog">
-      <form method="dialog" class="dialog-card" id="secretSyncForm">
-        <div>
-          <span class="eyebrow">Node credentials</span>
-          <h2>Sync secret accounts</h2>
-          <p>Copies the accounts you marked to replicate to the nodes you pick, over the authenticated cluster link. Node-local accounts never leave this node.</p>
-        </div>
-        <label class="checkbox-row"><input id="secretSyncAllInput" type="checkbox" data-testid="secret-sync-all-input" /> All nodes</label>
-        <div class="github-sync-node-list" id="secretSyncNodeList" data-testid="secret-sync-node-list"></div>
-        <div class="dialog-actions">
-          <button class="ghost" type="button" id="cancelSecretSyncButton" data-testid="secret-sync-cancel-button">Cancel</button>
-          <button class="primary" type="submit" data-testid="secret-sync-submit-button">Sync</button>
-        </div>
-      </form>
-    </dialog>
 
     <dialog id="projectDialog">
       <form method="dialog" class="dialog-card" id="projectForm">

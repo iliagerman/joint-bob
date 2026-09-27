@@ -11,7 +11,6 @@ import {
   routingConfigShareTargets, routingConfigWarning, RoutingConfigError, selectedRoutingConfigId, setRoutingConfigSelection, updateRoutingConfig,
 } from "../src/routing-configs.js";
 import { ensureClusterSharingPolicySchema } from "../src/cluster-sharing-policy.js";
-import { ensureSelectiveSharingModeSchema } from "../src/cluster-v2-mode-state.js";
 import { ensureRoutingPolicySchema, routingPolicySchema, type RoutingPolicy } from "../src/routing-policy.js";
 
 let dataDirectory: string;
@@ -179,13 +178,13 @@ test("delivery enrolment keeps one pending event per target and retries survive 
   const config = createRoutingConfig(db, nodeB, "Outbox", policy());
   const first = routingConfigEventFor(config);
   const second = routingConfigEventFor({ ...config, revision: 2, policy: policy({ confidenceThreshold: 0.9 }) });
-  const targets = [{ nodeId: nodeA, name: "Alpha", url: "http://127.0.0.1:4001", kind: "legacy" as const }];
+  const targets = [{ nodeId: nodeA, name: "Alpha", url: "http://127.0.0.1:4001", kind: "twin" as const }];
   enqueueRoutingConfigDeliveries(db, first, targets);
   enqueueRoutingConfigDeliveries(db, second, targets);
   const due = dueRoutingConfigDeliveries(db);
   assert.equal(due.length, 1, "a newer event replaces the older pending one for the same target");
   assert.equal(due[0].event.revision, 2);
-  assert.equal(due[0].kind, "legacy");
+  assert.equal(due[0].kind, "twin");
   assert.equal(due[0].event.policy.confidenceThreshold, 0.9, "the retry carries the newest content");
   dropRoutingConfigDelivery(db, due[0].id);
   deleteRoutingConfig(db, nodeB, config.id);
@@ -195,7 +194,7 @@ test("due deliveries and pending counts stay scoped to one configuration", () =>
   const db = routingConfigDatabase();
   const owner = createRoutingConfig(db, nodeB, "Outbox", policy());
   const other = createRoutingConfig(db, nodeB, "Other", policy());
-  const targets = [{ nodeId: nodeA, name: "Alpha", url: "http://127.0.0.1:4001", kind: "legacy" as const }];
+  const targets = [{ nodeId: nodeA, name: "Alpha", url: "http://127.0.0.1:4001", kind: "twin" as const }];
   enqueueRoutingConfigDeliveries(db, routingConfigEventFor(owner), targets);
   enqueueRoutingConfigDeliveries(db, routingConfigEventFor(other), targets);
   assert.equal(dueRoutingConfigDeliveries(db).length, 2, "the unscoped view still covers every configuration");
@@ -206,15 +205,16 @@ test("due deliveries and pending counts stay scoped to one configuration", () =>
   deleteRoutingConfig(db, nodeB, other.id);
 });
 
-test("share targets follow membership: legacy peers pair-wise, selective clusters member-wise", () => {
-  const db = routingConfigDatabase();
-  assert.deepEqual(routingConfigShareTargets(db, nodeB, [{ id: nodeA, name: "Alpha", url: "http://127.0.0.1:4001" }]).map((target) => [target.nodeId, target.kind]), [[nodeA, "legacy"]]);
+test("share targets follow membership: a node with no cluster or twin has no targets", () => {
+  const handle = migrationDatabase();
+  try {
+    assert.deepEqual(routingConfigShareTargets(handle, nodeB), [], "no paired peer list exists outside clusters and twins");
+  } finally { handle.close(); }
 });
 
 test("pending deliveries re-resolve current eligibility instead of the enrolled cluster", () => {
   const handle = migrationDatabase();
   try {
-    handle.exec("INSERT INTO cluster_v2_mode(singleton, active) VALUES (1, 1)");
     handle.exec("CREATE TABLE IF NOT EXISTS cluster_v2_membership_nodes(cluster_id TEXT,node_id TEXT,name TEXT,url TEXT,public_key TEXT,invited_by_node_id TEXT,PRIMARY KEY(cluster_id,node_id))");
     const low = "10000000-0000-4000-8000-000000000001";
     const high = "90000000-0000-4000-8000-000000000009";
@@ -225,20 +225,18 @@ test("pending deliveries re-resolve current eligibility instead of the enrolled 
       handle.prepare("INSERT INTO cluster_v2_membership_nodes(cluster_id,node_id,name,url,public_key,invited_by_node_id) VALUES (?,?,?,?,?,NULL)").run(clusterId, nodeA, "Alpha", "http://127.0.0.1:4001", "key");
     }
     // A delivery enrolled under the first cluster still resolves while both exist.
-    const both = currentRoutingConfigTarget(handle, nodeB, [], nodeA);
+    const both = currentRoutingConfigTarget(handle, nodeB, nodeA);
     assert.equal(both?.kind, "cluster");
     assert.equal(both?.clusterId, low);
     // The original membership is removed but the second shared cluster remains: the peer
     // stays eligible through it, so the pending delivery must not be dropped.
     handle.prepare("DELETE FROM sharing_memberships WHERE cluster_id = ? AND node_id = ?").run(low, nodeB);
-    const throughSecond = currentRoutingConfigTarget(handle, nodeB, [], nodeA);
+    const throughSecond = currentRoutingConfigTarget(handle, nodeB, nodeA);
     assert.equal(throughSecond?.kind, "cluster", "a peer still in a second shared cluster remains a target");
     assert.equal(throughSecond?.clusterId, high, "the push uses the currently shared cluster");
     // No current membership at all: dropped.
     handle.prepare("DELETE FROM sharing_memberships WHERE cluster_id = ? AND node_id = ?").run(high, nodeB);
-    assert.equal(currentRoutingConfigTarget(handle, nodeB, [], nodeA), null);
-    // A legacy pending stops transmitting once selective mode is active.
-    assert.equal(currentRoutingConfigTarget(handle, nodeB, [{ id: nodeA, name: "Alpha", url: "http://127.0.0.1:4001" }], nodeA), null, "legacy targets are not eligible in selective mode");
+    assert.equal(currentRoutingConfigTarget(handle, nodeB, nodeA), null);
   } finally { handle.close(); }
 });
 
@@ -248,7 +246,6 @@ function migrationDatabase(): DatabaseSync {
   ensureRoutingPolicySchema(handle);
   ensureRoutingConfigSchema(handle);
   ensureClusterSharingPolicySchema(handle);
-  ensureSelectiveSharingModeSchema(handle);
   handle.exec("CREATE TABLE IF NOT EXISTS cluster_node (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), id TEXT NOT NULL, name TEXT NOT NULL, url TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)");
   handle.prepare("INSERT INTO cluster_node (singleton, id, name, url, created_at, updated_at) VALUES (1, ?, 'local', 'http://localhost', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')").run(nodeB);
   return handle;
@@ -276,7 +273,6 @@ test("legacy cluster policies migrate into locally owned configurations with the
 test("multiple v2 policies migrate into separate configurations and the effective one is selected", () => {
   const handle = migrationDatabase();
   try {
-    handle.exec("INSERT INTO cluster_v2_mode(singleton, active) VALUES (1, 1)");
     handle.exec("CREATE TABLE IF NOT EXISTS cluster_v2_membership_nodes(cluster_id TEXT,node_id TEXT,name TEXT,url TEXT,public_key TEXT,invited_by_node_id TEXT,PRIMARY KEY(cluster_id,node_id))");
     const low = "10000000-0000-4000-8000-000000000001";
     const high = "90000000-0000-4000-8000-000000000009";

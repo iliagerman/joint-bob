@@ -6,7 +6,7 @@ import { z } from "zod";
 import { getClusterNode } from "../cluster.js";
 import { signClusterRequest } from "../cluster-protocol.js";
 import { mayReceiveResource } from "../cluster-sharing-policy.js";
-import { ClusterV2HttpError, selectiveSharingActive } from "../cluster-v2-mode.js";
+import { ClusterV2HttpError } from "../cluster-v2-errors.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { clearHarnessSessionCache, listHarnessSyncFolders } from "../harnesses.js";
 import { getProject, updateProjectSyncFolderId } from "../store.js";
@@ -94,7 +94,6 @@ export async function sharingFilesStatus(db:DatabaseSync,local:string,peer:strin
 }
 
 export async function flushSharingFiles():Promise<void>{
- if(!await selectiveSharingActive())return;
  const db=await clusterV2Database(),local=await getClusterNode();ensureSchema(db);
  await revokeFiles(db,local.id);
  const device=await syncthingDeviceId();

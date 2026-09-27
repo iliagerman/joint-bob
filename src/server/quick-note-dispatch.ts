@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
-import { getClusterMachineToken, getClusterNode } from "../cluster.js";
-import { getRuntimePeer as getClusterPeer, runtimeFetch as fetch, runtimeSocketHeaders } from "./runtime-peers.js";
+import { getClusterNode } from "../cluster.js";
+import { getRuntimePeer, runtimeFetch, runtimeSocketHeaders } from "./runtime-peers.js";
 import { ensureConversationRecord, getConversationRecord } from "../conversation-records.js";
 import { ensureSessionTitle } from "../names.js";
 import { cancelQueuedPrompt, listQueuedPrompts, queuedSettingsSchema, type QueuedSettings } from "../prompt-queue.js";
@@ -103,7 +103,7 @@ async function validateLaunchContext(projectId: string, accountIds: string[], re
   }
 }
 
-interface LaunchTarget { url: URL; token: string; nodeId: string }
+interface LaunchTarget { url: URL; nodeId: string }
 
 async function resolveLaunchTarget(note: QuickNote, sessionId: string): Promise<LaunchTarget> {
   const local = await getClusterNode();
@@ -117,13 +117,13 @@ async function resolveLaunchTarget(note: QuickNote, sessionId: string): Promise<
   if (targetNodeId === local.id) {
     const address = server.address();
     if (!address || typeof address === "string") throw new QuickNoteLaunchError(502, "Quick note executor server is not listening");
-    return { url: new URL(`ws://127.0.0.1:${address.port}/ws`), token: await getClusterMachineToken(), nodeId: targetNodeId };
+    return { url: new URL(`ws://127.0.0.1:${address.port}/ws`), nodeId: targetNodeId };
   }
-  const peer = await getClusterPeer(targetNodeId);
+  const peer = await getRuntimePeer(targetNodeId);
   if (!peer) throw new QuickNoteLaunchError(502, "The selected node is unavailable");
-  const reply = await fetch(`${peer.url}/api/cluster/quick-notes/prepare`, {
+  const reply = await runtimeFetch(`${peer.url}/api/cluster/quick-notes/prepare`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ projectId: project.id, engine: note.harnessId, sessionId, title: note.title, secretAccountIds: note.secretAccountIds }),
     signal: AbortSignal.timeout(15_000),
   });
@@ -133,7 +133,7 @@ async function resolveLaunchTarget(note: QuickNote, sessionId: string): Promise<
   }
   const url = new URL("/ws", peer.url);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  return { url, token: peer.token, nodeId: targetNodeId };
+  return { url, nodeId: targetNodeId };
 }
 
 interface LaunchSocket {
@@ -175,7 +175,7 @@ async function launchPromptOverSocket(note: QuickNote, sessionId: string, target
   let outcomeResolve!: (outcome: "completed" | "failed" | "abandoned") => void;
   const accepted = new Promise<void>((resolve, reject) => { acceptResolve = resolve; acceptReject = reject; });
   const settled = new Promise<"completed" | "failed" | "abandoned">(resolve => { outcomeResolve = resolve; });
-  const socket = new WebSocket(url, { headers: await runtimeSocketHeaders(target.nodeId,url,target.token) });
+  const socket = new WebSocket(url, { headers: await runtimeSocketHeaders(target.nodeId,url) });
   const reservationKey = `${note.projectId}:${sessionId}`;
 
   const cancelQueuedPromptIfPending = (): void => {

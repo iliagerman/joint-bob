@@ -9,8 +9,9 @@ import { listTasks, updateTask } from "./tasks.js";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { discoverMissingPeerProjects } from "./server/cluster-helpers.js";
-import { flushMembershipOutbox, flushReplicationOutbox, flushRoutingConfigDeliveries, flushSecretCredentialOutbox, initializeStartupReadiness, pushRuntimeLeaseSnapshots, reconcileManagedAgentResources, reapInactiveConversations, reconcileTaskConversationRecords, reconcileTaskHandoffs, reconcileTicketWorkspaceSync, sweepRuntimeLeases } from "./server/maintenance.js";
+import { flushHubDeliveries, pullFromHubs } from "./server/cluster-hubs.js";
+import { flushSuccessionNotices } from "./server/succession.js";
+import { flushReplicationOutbox, flushRoutingConfigDeliveries, initializeStartupReadiness, pushRuntimeLeaseSnapshots, reconcileManagedAgentResources, reapInactiveConversations, reconcileTaskConversationRecords, reconcileTaskHandoffs, sweepRuntimeLeases } from "./server/maintenance.js";
 import { flushPushSubscriptionOutbox } from "./server/push-flush.js";
 import { flushV2ClusterAdministration } from "./server/cluster-manager.js";
 import { reconcileUpdateJobs, startUpdateScheduler } from "./updater.js";
@@ -114,29 +115,27 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     void startQuickNoteScheduler().catch(error => console.error("Quick note recovery failed; scheduler not started", error));
     void startBrowserMonitors().catch(error => console.error("Browser monitor startup failed", error));
     initializeStartupReadiness()
-      .then(async () => { await recoverPendingUpdateRuns(); await reconcileTicketWorkspaceSync(); await reconcileTaskConversationRecords(); })
-      .catch((error) => console.warn("Ticket workspace sync failed", error));
-    flushMembershipOutbox().catch((error) => console.warn("Membership flush failed", error));
+      .then(async () => { await recoverPendingUpdateRuns(); await reconcileTaskConversationRecords(); })
+      .catch((error) => console.warn("Startup recovery failed", error));
     flushV2ClusterAdministration().catch((error) => console.warn("V2 cluster administration flush failed", error));
     flushReplicationOutbox().catch((error) => console.warn("Replication flush failed", error));
+    flushHubDeliveries().catch((error) => console.warn("Hub delivery failed", error));
     pushRuntimeLeaseSnapshots().catch((error) => console.warn("Runtime lease push failed", error));
-    flushSecretCredentialOutbox().catch((error) => console.warn("Secret credential flush failed", error));
     flushRoutingConfigDeliveries().catch((error) => console.warn("Routing configuration flush failed", error));
     flushPushSubscriptionOutbox().catch((error) => console.warn("Push subscription flush failed", error));
     reconcileTaskHandoffs().catch((error) => console.warn("Task handoff reconciliation failed", error));
-    discoverMissingPeerProjects().catch((error) => console.warn("Project discovery failed", error));
-    setInterval(() => discoverMissingPeerProjects().catch((error) => console.warn("Project discovery failed", error)), 10_000).unref();
+    pullFromHubs().catch((error) => console.warn("Hub pull failed", error));
+    setInterval(() => pullFromHubs().catch((error) => console.warn("Hub pull failed", error)), 60_000).unref();
     setInterval(() => reapInactiveConversations().catch((error) => console.warn("Inactive conversation reap failed", error)), 60_000).unref();
     setInterval(() => reconcileManagedAgentResources().catch((error) => console.warn("Agent resource reconciliation failed", error)), 30_000).unref();
     setInterval(() => {
       void initializeStartupReadiness();
-      reconcileTicketWorkspaceSync().catch((error) => console.warn("Ticket workspace sync failed", error));
-      flushMembershipOutbox().catch((error) => console.warn("Membership flush failed", error));
       flushV2ClusterAdministration().catch((error) => console.warn("V2 cluster administration flush failed", error));
       flushReplicationOutbox().catch((error) => console.warn("Replication flush failed", error));
+      flushHubDeliveries().catch((error) => console.warn("Hub delivery failed", error));
+      flushSuccessionNotices().catch((error) => console.warn("Succession notice delivery failed", error));
       pushRuntimeLeaseSnapshots().catch((error) => console.warn("Runtime lease push failed", error));
       sweepRuntimeLeases();
-      flushSecretCredentialOutbox().catch((error) => console.warn("Secret credential flush failed", error));
       flushRoutingConfigDeliveries().catch((error) => console.warn("Routing configuration flush failed", error));
       flushPushSubscriptionOutbox().catch((error) => console.warn("Push subscription flush failed", error));
       reconcileTaskHandoffs().catch((error) => console.warn("Task handoff reconciliation failed", error));

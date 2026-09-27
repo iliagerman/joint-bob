@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
-import { api, projectNamed, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, type SignedIn } from "./dev-nodes.js";
+import { api, projectNamed, seedDevEnvironment, signIn, startDevNode, stopDevNode, type SeededNode, type SignedIn, pairTwinNodes } from "./dev-nodes.js";
 
 interface QuickNote { id: string; title: string; status: string; error: string | null; sessionId: string | null }
 
@@ -39,6 +39,7 @@ test("quick note launches run on the selected node and never fall back", { timeo
     const [a, b] = environment.nodes;
     const log = path.join(root, "engine.log");
     for (const node of [a, b]) children.push(await startDevNode(environment, node, { JOINT_BOB_TEST_ENGINE_LOG: log }));
+    await pairTwinNodes(environment);
     const sessionA = await signIn(environment, a);
     const projectA = projectNamed(a, "Internal Assistant");
 

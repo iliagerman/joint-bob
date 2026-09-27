@@ -329,12 +329,6 @@ export function updateStatusView(): UpdateStatusView {
   };
 }
 
-/** The cluster inventory surface: enough for another node's UI to draw one row. */
-export function updateInventoryView(): { supported: boolean; activeJob: UpdateJob | null; lastError: string | null } {
-  reconcileUpdateJobs();
-  return { supported: selfUpdateSupported(), activeJob: activeUpdateJob(), lastError: preferencesRow().latest_error };
-}
-
 // ---- Fleet rollout: one coordinator drives peers one at a time, itself last. ----
 
 export interface FleetNodeState {
@@ -359,6 +353,11 @@ export interface FleetRun {
 export type FleetRunView = FleetRun;
 
 let currentFleetRun: FleetRun | null = null;
+
+export function updateInventoryView(): { supported: boolean; activeJob: UpdateJob | null; lastError: string | null } {
+  reconcileUpdateJobs();
+  return { supported: selfUpdateSupported(), activeJob: activeUpdateJob(), lastError: preferencesRow().latest_error };
+}
 
 export function latestFleetRun(): FleetRun | null {
   return currentFleetRun;

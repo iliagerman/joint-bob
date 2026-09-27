@@ -24,7 +24,6 @@ interface SnapshotResponse {
 interface InvitationResponse { link: string }
 interface ProjectResponse { project: { id: string } }
 interface ClustersResponse {
-  mode: string;
   clusters: Array<{ id: string; name: string }>;
 }
 
@@ -126,7 +125,6 @@ test("cluster dropdown scopes membership details and supports create cancellatio
       200,
       "list fixture memberships",
     );
-    assert.equal(memberships.mode, "selective");
     assert.deepEqual(
       memberships.clusters.map(({ id, name }) => ({ id, name })).sort((left, right) => left.name.localeCompare(right.name)),
       [{ id: operationsId, name: "Operations" }, { id: researchId, name: "Research" }],

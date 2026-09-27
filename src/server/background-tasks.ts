@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { readBackgroundTaskIdentity, readBackgroundTasks, readPersistedBackgroundTask, type TaskCursor } from "../background-tasks.js";
-import { getClusterMachineToken, getClusterNode } from "../cluster.js";
-import { getRuntimePeer as getClusterPeer, listRuntimePeers as listClusterPeers, runtimeFetch as fetch } from "./runtime-peers.js";
+import { getClusterNode } from "../cluster.js";
+import { getRuntimePeer, listRuntimePeers, runtimeFetch } from "./runtime-peers.js";
 import { resolveDataDirectory } from "../data-directory.js";
 import { getProject, projectAliasIds } from "../store.js";
 import { supervisorRequest } from "../../scripts/supervisor-client.mjs";
@@ -174,13 +174,12 @@ export async function routeBackgroundTaskOperation(nodeId: string, commandInput:
   const command = backgroundTaskCommandSchema.parse(commandInput);
   const local = await getClusterNode();
   if (nodeId === local.id) return localBackgroundTaskOperation(command);
-  const peer = await getClusterPeer(nodeId);
+  const peer = await getRuntimePeer(nodeId);
   if (!peer) throw new TaskRequestError(404, "Cluster node not found");
   try {
-    const response = await fetch(`${peer.url}/api/cluster/background-tasks`, {
+    const response = await runtimeFetch(`${peer.url}/api/cluster/background-tasks`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${await getClusterMachineToken()}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(command),
@@ -216,7 +215,7 @@ export async function discoverBackgroundTasks(projectId: string, conversationId:
   const command = backgroundTaskCommandSchema.parse({ action: "list", projectId, conversationId });
   await projectScope(command);
   const local = await getClusterNode();
-  const peers = (await listClusterPeers()).filter((peer) => peer.id !== local.id);
+  const peers = (await listRuntimePeers()).filter((peer) => peer.id !== local.id);
   const allowed = [];
   for (const peer of peers) {
     if (await clusterPeerMayAccessProject(peer.id, projectId)) allowed.push(peer);

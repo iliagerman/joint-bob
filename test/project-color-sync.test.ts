@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -50,10 +50,10 @@ test("clearing a colour on the source node clears it on the importing node too",
   });
 });
 
-test("a colour change tells the peers to pull the project inventory", async () => {
-  const server = await serverSource();
+test("a colour change rides the project metadata delivered to peers", async () => {
+  const [server, metadata] = await Promise.all([serverSource(), readFile("src/cluster-project-metadata.ts", "utf8")]);
 
-  // Without the notification the new colour sits on this node until an unrelated sync happens.
-  assert.match(server, /const colorChanged = payload\.color !== undefined && payload\.color !== \(existing\.color \?\? null\);/);
-  assert.match(server, /if \(typeChanged \|\| colorChanged\) await notifyPeersOfProjectInventory\(\);/);
+  // Without the colour in the portable metadata the new colour sits on this node forever.
+  assert.match(metadata, /name: override\?\.name \?\? row\.name, color: row\.color,/);
+  assert.match(server, /await flushProjectMetadataDeliveries\(\);/);
 });

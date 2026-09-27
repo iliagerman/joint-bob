@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync, type ChildProcess } from "node:child_process";
 import test from "node:test";
 import WebSocket from "ws";
+import { pairTwinNodes, seedDevEnvironment, startDevNode, stopDevNode, type DevEnvironment, type SeededNode } from "./dev-nodes.js";
 
 function sessionCookie(response: Response): string {
   const value = response.headers.get("set-cookie");
@@ -16,6 +18,20 @@ function closeCode(socket: WebSocket): Promise<number> {
     socket.once("close", (code) => resolve(code));
     socket.once("error", reject);
   });
+}
+
+function signedSocketAuthorization(environment: DevEnvironment, sender: SeededNode, recipient: SeededNode, target: string): string {
+  return execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+    import { DatabaseSync } from "node:sqlite";
+    import { signClusterRequest } from "./src/cluster-protocol.ts";
+    import { getOrCreateClusterIdentity } from "./src/cluster-identity.ts";
+    const db = new DatabaseSync(process.env.JOINT_BOB_DATA_DIR + "/node.db");
+    db.exec("PRAGMA busy_timeout=5000");
+    // The same lazy creation the server performs, so a never-paired node can sign too.
+    getOrCreateClusterIdentity(db, ${JSON.stringify(sender.nodeId)});
+    process.stdout.write(signClusterRequest(db, ${JSON.stringify(sender.nodeId)}, ${JSON.stringify(recipient.nodeId)}, "GET", ${JSON.stringify(target)}, Buffer.alloc(0)));
+    db.close();
+  `], { env: { ...process.env, HOME: environment.home, JOINT_BOB_DATA_DIR: sender.dataDir }, encoding: "utf8" });
 }
 
 function message(socket: WebSocket): Promise<unknown> {
@@ -74,15 +90,11 @@ test("WebSockets require a changed-password session cookie and exact same origin
     const queryToken = new WebSocket(`${socketUrl}&token=anything`, { origin });
     assert.equal(await closeCode(queryToken), 1008);
 
-    const machineToken = (await (await fetch(`${baseUrl}/api/cluster/invite`, { headers: { Cookie: cookie } })).json() as { token: string }).token;
-    const machineWithoutTask = new WebSocket(socketUrl, { headers: { Authorization: `Bearer ${machineToken}` } });
-    assert.equal(await closeCode(machineWithoutTask), 1008);
-
-    const routedMachineSession = new WebSocket(`${socketUrl}&nodeSession=1`, { headers: { Authorization: `Bearer ${machineToken}` } });
-    assert.deepEqual(await message(routedMachineSession), { type: "watchReady" });
-    const routedMachineClosed = closeCode(routedMachineSession);
-    routedMachineSession.close();
-    await routedMachineClosed;
+    // Machine sockets are signed now; a bearer token, even on a routed node session, is not a credential.
+    for (const bearerUrl of [socketUrl, `${socketUrl}&nodeSession=1`]) {
+      const bearer = new WebSocket(bearerUrl, { headers: { Authorization: "Bearer legacy-machine-token" } });
+      assert.equal(await closeCode(bearer), 1008);
+    }
 
     const crossOrigin = new WebSocket(socketUrl, { origin: "http://example.test", headers: { Cookie: cookie } });
     assert.equal(await closeCode(crossOrigin), 1008);
@@ -101,5 +113,49 @@ test("WebSockets require a changed-password session cookie and exact same origin
     if (previousPassword === undefined) delete process.env.MASTER_BOB_INITIAL_PASSWORD;
     else process.env.MASTER_BOB_INITIAL_PASSWORD = previousPassword;
     await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("machine WebSockets accept only a fresh signature from a paired twin", { timeout: 120_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-websocket-signed-"));
+  const servers: ChildProcess[] = [];
+  try {
+    const environment = await seedDevEnvironment(root, 2);
+    const [a, b] = environment.nodes;
+    for (const node of environment.nodes) servers.push(await startDevNode(environment, node));
+    const target = `/ws?projectId=${encodeURIComponent(a.projects[0].id)}&sessionPath=watch&nodeSession=1`;
+    const socketUrl = new URL(target, a.url);
+    socketUrl.protocol = "ws:";
+
+    const unpaired = new WebSocket(socketUrl, { headers: { Authorization: signedSocketAuthorization(environment, b, a, target) } });
+    assert.equal(await closeCode(unpaired), 1008, "a node that is not a twin or cluster member must be refused");
+
+    await pairTwinNodes(environment);
+    const unsigned = new WebSocket(socketUrl);
+    assert.equal(await closeCode(unsigned), 1008);
+    const bearer = new WebSocket(socketUrl, { headers: { Authorization: "Bearer legacy-machine-token" } });
+    assert.equal(await closeCode(bearer), 1008);
+
+    const authorization = signedSocketAuthorization(environment, b, a, target);
+    const signed = new WebSocket(socketUrl, { headers: { Authorization: authorization } });
+    assert.deepEqual(await message(signed), { type: "watchReady" });
+    const signedClosed = closeCode(signed);
+    signed.close();
+    await signedClosed;
+
+    const replayed = new WebSocket(socketUrl, { headers: { Authorization: authorization } });
+    assert.equal(await closeCode(replayed), 1008, "a signature is single-use");
+
+    const otherTarget = new WebSocket(socketUrl, { headers: { Authorization: signedSocketAuthorization(environment, b, a, target.replace("nodeSession=1", "nodeSession=0")) } });
+    assert.equal(await closeCode(otherTarget), 1008, "a signature only covers the exact socket URL it was made for");
+
+    const unroutedTarget = `/ws?projectId=${encodeURIComponent(a.projects[0].id)}&sessionPath=watch`;
+    const unroutedUrl = new URL(unroutedTarget, a.url);
+    unroutedUrl.protocol = "ws:";
+    const unrouted = new WebSocket(unroutedUrl, { headers: { Authorization: signedSocketAuthorization(environment, b, a, unroutedTarget) } });
+    assert.equal(await closeCode(unrouted), 1008, "a signed peer socket must name a task or a routed node session");
+  } finally {
+    await Promise.all(servers.map(stopDevNode));
+    await rm(root, { recursive: true, force: true });
   }
 });

@@ -86,7 +86,10 @@ test("SQLite name replication is atomic, idempotent, ordered, and retryable", as
     assert.equal(db.prepare("SELECT 1 FROM conversation_records WHERE session_id = ?").get(conversationId), undefined);
 
     const peerId = randomUUID();
-    const due = await replication.eventsForPeer(peerId, new Date("2026-03-01T00:00:00.000Z"));
+    // The sharing filter decides what a peer may receive: a refusing filter queues nothing.
+    assert.deepEqual(await replication.eventsForPeer(peerId, new Date("2026-03-01T00:00:00.000Z"), () => false), []);
+    const due = await replication.eventsForPeer(peerId, new Date("2026-03-01T00:00:00.000Z"), () => true);
+    assert.ok(due.length > 0);
     await replication.recordPeerFailure(peerId, [due[0].id], "offline", new Date("2026-03-01T00:00:00.000Z"));
     const failed = db.prepare("SELECT attempts, next_attempt_at, delivered_at, last_error FROM replication_deliveries WHERE event_id = ? AND peer_id = ?").get(due[0].id, peerId) as { attempts: number; next_attempt_at: string; delivered_at: string | null; last_error: string | null };
     assert.equal(failed.attempts, 1);
@@ -206,24 +209,6 @@ test("SQLite name replication is atomic, idempotent, ordered, and retryable", as
         settings.updateSettings({ ...settings.getSettings(), claude: previousSettings.claude });
       }
     });
-
-    const tombstonedOwner = randomUUID();
-    await cluster.mergeClusterMembership({ members: [], removed: [{ id: tombstonedOwner, removedAt: "2026-05-01T00:00:00.000Z", originNodeId: node.id }] });
-    const tombstonedTask = { ...handoffTask, id: "tombstoned-owner-task", title: "Rejected", currentNodeId: tombstonedOwner, originNodeId: tombstonedOwner, createdAt: "2026-05-02T00:00:00.000Z", updatedAt: "2026-05-02T00:00:00.000Z" };
-    const tombstonedTaskEvent = (task: typeof tombstonedTask) => ({
-      id: randomUUID(), originNodeId: tombstonedOwner, entityType: "task", entityKey: `project-atomic:${task.id}`, operation: "upsert" as const,
-      payload: { projectId: "project-atomic", task, originNodeId: tombstonedOwner }, createdAt: task.updatedAt,
-    });
-    const rejectedEvent = tombstonedTaskEvent(tombstonedTask);
-    await replication.receiveReplicationBatch({ events: [rejectedEvent] });
-    await replication.receiveReplicationBatch({ events: [rejectedEvent] });
-    assert.equal(db.prepare("SELECT 1 FROM tasks WHERE project_id = ? AND id = ?").get("project-atomic", tombstonedTask.id), undefined);
-    assert.equal((db.prepare("SELECT COUNT(*) AS count FROM replication_inbox WHERE event_id = ?").get(rejectedEvent.id) as { count: number }).count, 1);
-
-    await cluster.mergeClusterMembership({ members: [{ id: tombstonedOwner, name: "Re-paired", url: "https://repaired.tailnet.ts.net", token: "repaired-token", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-06-01T00:00:00.000Z" }] });
-    const acceptedTask = { ...tombstonedTask, title: "Accepted", updatedAt: "2026-06-02T00:00:00.000Z" };
-    await replication.receiveReplicationBatch({ events: [tombstonedTaskEvent(acceptedTask)] });
-    assert.equal((db.prepare("SELECT title FROM tasks WHERE project_id = ? AND id = ?").get("project-atomic", tombstonedTask.id) as { title: string }).title, "Accepted");
   } finally {
     if (previous === undefined) delete process.env.PI_WEB_DATA_DIR;
     else process.env.PI_WEB_DATA_DIR = previous;

@@ -216,15 +216,6 @@ export async function listSyncthingFolders(): Promise<SyncthingFolder[]> {
   return request<SyncthingFolder[]>("/rest/config/folders");
 }
 
-export async function syncthingFolderIdForPath(folderPath: string): Promise<string | undefined> {
-  const resolvedPath = path.resolve(folderPath);
-  return (await listSyncthingFolders()).find((folder) => path.resolve(folder.path) === resolvedPath)?.id;
-}
-
-export async function syncthingPathForFolderId(folderId: string): Promise<string | undefined> {
-  return (await listSyncthingFolders()).find((folder) => folder.id === folderId)?.path;
-}
-
 export async function rescanSyncthingFolder(folderId: string): Promise<void> {
   await request<void>(`/rest/db/scan?folder=${encodeURIComponent(folderId)}`, { method: "POST" });
 }

@@ -180,9 +180,8 @@ async function reloadInventory() {
   }
 }
 
-export async function loadUpdatesPanel(inventory) {
-  inventoryCache = inventory;
-  if (!inventoryCache) await reloadInventory();
+export async function loadUpdatesPanel() {
+  await reloadInventory();
   await refreshUpdateStatus();
 }
 

@@ -11,7 +11,7 @@ import { type ReplicationEvent } from "./replication.js";
 /** The routing policy of the implicit legacy cluster, where every peer sees every project. */
 export const LEGACY_CLUSTER_ID = "";
 export const ROUTING_LEVELS = 10;
-export const CODEX_ROUTING_MODELS = ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-astra"] as const;
+export const CODEX_ROUTING_MODELS = ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-sol", "gpt-6-astra"] as const;
 const codexRoutingModels = new Set<string>(CODEX_ROUTING_MODELS);
 
 export function automaticRoutingModelAllowed(provider: string | undefined, modelId: string): boolean {
@@ -247,5 +247,7 @@ export function defaultRoutingPolicy(modelsByHarness: Record<string, DefaultPoli
     }
     harnesses[adapter.id] = { levels: levelsMap };
   }
-  return { enabled: true, classifierId: listDifficultyClassifiers()[0]?.id ?? "typesafe", evalCadence: { mode: "first-message" }, contextMessages: 10, confidenceThreshold: 0.3, harnesses };
+  // Evaluate every user turn by default. The classifier is deliberately best-effort, so
+  // a failed or low-confidence evaluation leaves the current model in place.
+  return { enabled: true, classifierId: listDifficultyClassifiers()[0]?.id ?? "typesafe", evalCadence: { mode: "every-n", n: 1 }, contextMessages: 10, confidenceThreshold: 0.3, harnesses };
 }

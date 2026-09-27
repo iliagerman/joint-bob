@@ -1,0 +1,18 @@
+{
+  "title": "Joint Bob documentation",
+  "eyebrow": "Index",
+  "subtitle": "Feature documents for Joint Bob. Installation, pairing, and service management are in the repository README.",
+  "sections": [
+    {
+      "title": "Features",
+      "blocks": [
+        {
+          "kind": "related",
+          "items": [
+            { "href": "features/clusters.html", "title": "Clusters, sharing, and twins", "description": "Multiple clusters per node, selected sharing, twins, two-hub dissemination, and lost-machine recovery." }
+          ]
+        }
+      ]
+    }
+  ]
+}

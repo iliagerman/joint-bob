@@ -1,8 +1,7 @@
 import path from "node:path";
 import { z } from 'zod';
 import { getClusterNode } from "../../cluster.js";
-import { listRuntimePeers as listClusterPeers, runtimeFetch } from "../runtime-peers.js";
-import { selectiveSharingActive } from "../../cluster-v2-mode.js";
+import { listRuntimePeers, runtimeFetch } from "../runtime-peers.js";
 import { listHarnessCommands } from "../../commands.js";
 import { ensureManagedHome, managedProjectPath } from "../../managed-home.js";
 import { setProjectName, setSessionClassification, setSessionColor, setSessionDone, setSessionTitle } from "../../names.js";
@@ -14,9 +13,9 @@ import { addProject, getProject, listProjects, listWorkspaces, removeProject, re
 import { ensureSyncthingFolder, rescanSyncthingFolder } from "../../syncthing.js";
 import { listTasks, unmergedWorkspaceBlocksClose } from "../../tasks.js";
 import { sessionWatcher } from "../chat.js";
-import { clusterPeerMayAccessProject, conversationBelongsToDoneTask, fetchPeerInventory, mappedPathInsideHome } from "../cluster-helpers.js";
+import { clusterPeerMayAccessProject, conversationBelongsToDoneTask, mappedPathInsideHome } from "../cluster-helpers.js";
 import { sendError } from "../http-auth.js";
-import { assertProjectEditable, notifyPeersOfProjectInventory, projectsWithSharedNames, projectView, relocateProjectWorkspace } from "../projects.js";
+import { assertProjectEditable, projectsWithSharedNames, projectView, relocateProjectWorkspace } from "../projects.js";
 import { broadcastToAllClients, broadcastToProject } from "../realtime.js";
 import { projectListQuerySchema, projectLockSchema, projectPathMappingSchema, projectSchema, projectUpdateSchema, registeredHarnessIdSchema, sessionClassificationSchema, sessionColorSchema, sessionDoneSchema, sessionTitleSchema } from "../schemas.js";
 import { app } from "../state.js";
@@ -93,7 +92,6 @@ app.post("/api/projects", async (request, response, next) => {
     });
     if (payload.synced && project.syncFolderId) {
       await ensureSyncthingFolder(project.syncFolderId, project.name, project.path);
-      await notifyPeersOfProjectInventory();
     }
     sessionWatcher.ensureProject(project);
     broadcastToAllClients({ type: "projectsChanged" });
@@ -140,9 +138,7 @@ app.patch("/api/projects/:projectId", async (request, response, next) => {
       project = await renameProject(project.id, payload.name);
       await setProjectName(project.id, payload.name);
     }
-    const colorChanged = payload.color !== undefined && payload.color !== (existing.color ?? null);
     if (payload.color !== undefined) project = await updateProjectColor(project.id, payload.color);
-    if (typeChanged || colorChanged) await notifyPeersOfProjectInventory();
     broadcastToAllClients({ type: "projectsChanged" });
     response.json({ project: await projectView(project) });
   } catch (error) {
@@ -296,18 +292,13 @@ app.get("/api/projects/:projectId/session-nodes", async (request, response, next
     const project = await getProject(request.params.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
     const local = await getClusterNode();
-    const peerNodes = await Promise.all((await listClusterPeers()).map(async (peer) => {
+    const peerNodes = await Promise.all((await listRuntimePeers()).map(async (peer) => {
       try {
-        if(await selectiveSharingActive()){
-          if(!await clusterPeerMayAccessProject(peer.id,project.id))return {id:peer.id,name:peer.name,local:false,online:false,mapped:false};
-          const reply=await runtimeFetch(`${peer.url}/api/cluster/projects/presence?projectId=${encodeURIComponent(project.id)}`,{signal:AbortSignal.timeout(3000)});
-          if(!reply.ok)throw new Error('Project presence unavailable');
-          const presence=await reply.json() as {mapped:boolean};
-          return {id:peer.id,name:peer.name,local:false,online:true,mapped:presence.mapped};
-        }
-        const inventory = await fetchPeerInventory(peer, 3_000);
-        const mapped = inventory.projects.some((entry) => entry.project.id === project.id || entry.aliases?.includes(project.id) || Boolean(project.syncFolderId && entry.project.syncFolderId === project.syncFolderId));
-        return { id: peer.id, name: peer.name, local: false, online: true, mapped };
+        if(!await clusterPeerMayAccessProject(peer.id,project.id))return {id:peer.id,name:peer.name,local:false,online:false,mapped:false};
+        const reply=await runtimeFetch(`${peer.url}/api/cluster/projects/presence?projectId=${encodeURIComponent(project.id)}`,{signal:AbortSignal.timeout(3000)});
+        if(!reply.ok)throw new Error('Project presence unavailable');
+        const presence=await reply.json() as {mapped:boolean};
+        return {id:peer.id,name:peer.name,local:false,online:true,mapped:presence.mapped};
       } catch {
         return { id: peer.id, name: peer.name, local: false, online: false, mapped: false };
       }

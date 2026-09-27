@@ -1,32 +1,28 @@
 import { agentWorkActive, listConversationWork, refreshConversationWork } from "../conversation-work.js";
-import { AGENT_RESOURCES_FOLDER_ID, agentResourcesRoot, reconcileAgentResources } from "../agent-resources.js";
-import { type ClusterPeer, dueMembershipDeliveries, getClusterMachineToken, getClusterMembership, getClusterNode, getClusterPeer, listClusterPeers, recordMembershipDelivered, recordMembershipFailure } from "../cluster.js";
+import { reconcileAgentResources } from "../agent-resources.js";
+import { getClusterNode } from "../cluster.js";
 import { getConversationOwnership } from "../conversation-ownership.js";
 import { abandonedShellReason, backgroundTaskConversationId, readActiveBackgroundTaskIdentities, readImplicitShellTasks } from "../background-tasks.js";
 import { resolveDataDirectory } from "../data-directory.js";
 import { ensureConversationRecord, latestConversationSegment } from "../conversation-records.js";
 import { conversationRuntimeDatabase, type RuntimeLeaseInput, sweepExpiredRuntimeLeases } from "../conversation-runtime.js";
-import { getHarnessRuntime, harnessForSessionPath, listHarnesses, listHarnessSyncFolders } from "../harnesses.js";
+import { getHarnessRuntime, harnessForSessionPath, listHarnesses } from "../harnesses.js";
 import { eventsForPeer, recordPeerFailure, recordPeerReceipt } from "../replication.js";
-import { enqueueSecretCredentialSync, recordSecretCredentialFailure, recordSecretCredentialReceipt, secretCredentialEventsForPeer } from "../secret-replication.js";
 import { currentRoutingConfigTarget, dueRoutingConfigDeliveries, dropRoutingConfigDelivery, recordRoutingConfigDeliveryFailure, recordRoutingConfigDeliverySuccess, routingConfigDatabase, type PendingRoutingConfigDelivery } from "../routing-configs.js";
 import { supervisorRequest } from "../../scripts/supervisor-client.mjs";
 import { signedPost } from "./cluster-v2.js";
-import { selectiveSharingActive } from "../cluster-v2-mode.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
-import { mayReplicateEvent, replicationPeers, sendReplicationV2 } from "./replication-v2.js";
+import { isTrustedTwin } from "../cluster-sharing-policy.js";
+import { mayReplicateEvent, replicationPeers, sendReplicationV2, signedPeerPost } from "./replication-v2.js";
 import { getRuntimePeer, listRuntimePeers, runtimeFetch } from "./runtime-peers.js";
-import { listSecretAccounts, type SecretAccount } from "../secrets.js";
 import { listProjects } from "../store.js";
-import { ensureAgentResourcesFolder, ensureConversationSyncFolders, ensureTicketWorkspaceFolder, pauseEngineSyncFolders, reconcileSyncthingProjectFolders, syncthingDeviceId } from "../syncthing.js";
-import { TICKET_WORKSPACE_FOLDER_ID, ticketWorkspaceRoot } from "../task-workspaces.js";
+import { reconcileSyncthingProjectFolders } from "../syncthing.js";
 import { listTasks, listUnfinishedOutgoingTaskHandoffs } from "../tasks.js";
 import type { HarnessId } from "../types.js";
-import { fetchPeerInventory } from "./cluster-helpers.js";
 import { broadcastSessionsChangedToAllProjects, scheduleReviewNotifications, wakeQueuedConversations } from "./realtime.js";
 import { replicationReceiptSchema } from "./schemas.js";
 import { harnessSessions, harnessTurnBusy, reapInactiveHarnessSessions } from "./harness-sessions.js";
-import { configuredTicketWorkspacePeers, flags } from "./state.js";
+import { flags } from "./state.js";
 import { reconcileOutgoingTaskHandoff } from "./task-handoff.js";
 
 /* Syncthing is often still binding its API port when the node boots beside it. A
@@ -78,89 +74,6 @@ export async function initializeStartupReadiness(): Promise<void> {
   }
 }
 
-async function configureTicketWorkspacePeer(peer: ClusterPeer, localDeviceId: string, localDeviceName: string): Promise<void> {
-  const inventory = await fetchPeerInventory(peer);
-  if (!inventory.syncDeviceId) throw new Error("Peer Syncthing device ID is unavailable");
-  await ensureTicketWorkspaceFolder(ticketWorkspaceRoot(), inventory.syncDeviceId, inventory.node.name);
-  await ensureAgentResourcesFolder(agentResourcesRoot(), inventory.syncDeviceId, inventory.node.name);
-  const conversationFolders = listHarnessSyncFolders();
-  await ensureConversationSyncFolders(conversationFolders, inventory.syncDeviceId, inventory.node.name);
-  for (const folderId of [
-    TICKET_WORKSPACE_FOLDER_ID,
-    AGENT_RESOURCES_FOLDER_ID,
-    ...conversationFolders.map((folder) => folder.id),
-  ]) {
-    const response = await fetch(`${peer.url}/api/cluster/sync/share`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ folderId, deviceId: localDeviceId, deviceName: localDeviceName }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) throw new Error(`Peer managed folder share failed: ${response.status}`);
-  }
-}
-
-export async function reconcileTicketWorkspaceSync(): Promise<void> {
-  if(await selectiveSharingActive())return;
-  if (flags.ticketWorkspaceSyncInProgress || Date.now() < flags.ticketWorkspaceSyncRetryAt) return;
-  flags.ticketWorkspaceSyncInProgress = true;
-  let failed = false;
-  try {
-    const peers = await listClusterPeers();
-    const localDeviceId = await syncthingDeviceId();
-    if (!localDeviceId) return;
-    await pauseEngineSyncFolders();
-    await ensureTicketWorkspaceFolder();
-    await ensureConversationSyncFolders(listHarnessSyncFolders());
-    await ensureAgentResourcesFolder(agentResourcesRoot());
-    if (!peers.length) return;
-    const localNode = await getClusterNode();
-    for (const peer of peers) {
-      if (configuredTicketWorkspacePeers.has(peer.id)) continue;
-      try {
-        await configureTicketWorkspacePeer(peer, localDeviceId, localNode.name);
-        configuredTicketWorkspacePeers.add(peer.id);
-      } catch (error) {
-        failed = true;
-        console.warn(`Ticket workspace sync to ${peer.id} failed`, error);
-      }
-    }
-  } catch (error) {
-    failed = true;
-    throw error;
-  } finally {
-    if (failed) flags.ticketWorkspaceSyncRetryAt = Date.now() + 60_000;
-    flags.ticketWorkspaceSyncInProgress = false;
-  }
-}
-
-export async function flushMembershipOutbox(): Promise<void> {
-  if (flags.membershipFlushInProgress) return;
-  flags.membershipFlushInProgress = true;
-  try {
-    for (const delivery of await dueMembershipDeliveries()) {
-      const peer = await getClusterPeer(delivery.peerId);
-      if (!peer) continue;
-      try {
-        const response = await fetch(`${peer.url}/api/cluster/membership/sync`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
-          body: JSON.stringify(await getClusterMembership()),
-          signal: AbortSignal.timeout(5_000),
-        });
-        if (!response.ok) throw new Error(`Peer returned ${response.status}`);
-        await recordMembershipDelivered(peer.id, delivery.generation);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Peer membership sync failed";
-        await recordMembershipFailure(peer.id, delivery.generation, message);
-        console.warn(`Membership sync to ${peer.id} failed: ${message}`);
-      }
-    }
-  } finally {
-    flags.membershipFlushInProgress = false;
-  }
-}
-
 export async function reconcileTaskHandoffs(): Promise<void> {
   if (flags.taskHandoffReconciliationInProgress) return;
   flags.taskHandoffReconciliationInProgress = true;
@@ -179,35 +92,6 @@ export async function reconcileTaskHandoffs(): Promise<void> {
   }
 }
 
-/** Pushes everything currently enrolled for this peer, one 100-event batch at a time,
-    until the peer has acknowledged all of it or a batch fails. */
-export async function pushSecretCredentialsToPeer(peer: ClusterPeer): Promise<{ delivered: number; error?: string }> {
-  let delivered = 0;
-  for (;;) {
-    const events = await secretCredentialEventsForPeer(peer.id);
-    if (!events.length) return { delivered };
-    try {
-      const response = await fetch(`${peer.url}/api/cluster/secrets/events`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ events }),
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!response.ok) throw new Error(`Peer returned ${response.status}`);
-      const receipt = replicationReceiptSchema.parse(await response.json());
-      // A peer that acknowledges nothing would loop forever on the same batch.
-      if (!receipt.received.length) throw new Error("Peer acknowledged no events");
-      await recordSecretCredentialReceipt(peer.id, receipt.received);
-      delivered += receipt.received.length;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Peer secret credential replication failed";
-      await recordSecretCredentialFailure(peer.id, events.map((event) => event.id), message);
-      console.warn(`Secret credential replication to ${peer.id} failed: ${message}`);
-      return { delivered, error: message };
-    }
-  }
-}
-
 class RevokedDeliveryTargetError extends Error {
   constructor() { super("Target is no longer an eligible member"); }
 }
@@ -220,20 +104,9 @@ class RevokedDeliveryTargetError extends Error {
     rather than retried or transmitted. */
 async function pushPendingRoutingConfigDelivery(localNodeId: string, delivery: PendingRoutingConfigDelivery): Promise<void> {
   const db = routingConfigDatabase();
-  const peers = await listClusterPeers();
-  const current = currentRoutingConfigTarget(db, localNodeId, peers, delivery.nodeId);
+  const current = currentRoutingConfigTarget(db, localNodeId, delivery.nodeId);
   if (!current) throw new RevokedDeliveryTargetError();
-  if (current.kind === "legacy") {
-    const peer = peers.find((candidate) => candidate.id === current.nodeId)!;
-    const response = await fetch(`${peer.url}/api/cluster/routing-configs/events`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${peer.token}` },
-      body: JSON.stringify({ events: [delivery.event] }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) throw new Error(`Peer returned ${response.status}`);
-    return;
-  }
+  if (current.kind === "twin") { await signedPeerPost(current, "/api/cluster/v2/routing-configs", { events: [delivery.event] }); return; }
   await signedPost(db, localNodeId, current.nodeId, current.clusterId!, "/api/cluster/v2/routing-configs", { events: [delivery.event] });
 }
 
@@ -271,40 +144,6 @@ export async function flushRoutingConfigDeliveries(configId?: string): Promise<A
   } finally {
     routingConfigFlushInProgress = false;
   }
-}
-
-/** Retries deliveries an enrolled event still owes a peer, whether a save or a manual sync
-    enrolled it. */
-export async function flushSecretCredentialOutbox(): Promise<void> {
-  if (flags.secretCredentialFlushInProgress) return;
-  flags.secretCredentialFlushInProgress = true;
-  try {
-    for (const peer of await listClusterPeers()) await pushSecretCredentialsToPeer(peer);
-  } finally {
-    flags.secretCredentialFlushInProgress = false;
-  }
-}
-
-/** A saved account marked to replicate leaves for every paired node right away, so the
-    checkbox means what it says. The manual "Sync to nodes" action remains for retries and
-    for nodes paired after the save. */
-export async function replicateWorkspaceSecretChanges(accountIds: string[], actorId: string): Promise<void> {
-  const changed = new Set(accountIds);
-  const account = (await listSecretAccounts()).find((candidate) => candidate.replicate && changed.has(candidate.id));
-  if (account) await replicateSecretAccount(account, actorId);
-}
-
-export async function replicateSecretAccount(account: SecretAccount, actorId: string): Promise<Array<{ peerId: string; name: string; delivered: number; error?: string }> | undefined> {
-  if (!account.replicate) return undefined;
-  const peers = await listClusterPeers();
-  if (!peers.length) return [];
-  await enqueueSecretCredentialSync(peers.map((peer) => peer.id), actorId);
-  const results: Array<{ peerId: string; name: string; delivered: number; error?: string }> = [];
-  for (const peer of peers) {
-    const outcome = await pushSecretCredentialsToPeer(peer);
-    results.push({ peerId: peer.id, name: peer.name, delivered: outcome.delivered, ...(outcome.error ? { error: outcome.error } : {}) });
-  }
-  return results;
 }
 
 /** A peer's current conversation running set. See conversation-runtime.ts for the lease rules. */
@@ -407,7 +246,7 @@ export async function pushRuntimeLeaseSnapshots(): Promise<void> {
           method: "POST",
           // Our own machine token, so the receiving peer can bind the snapshot to
           // this node's identity instead of trusting the declared nodeId.
-          headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ nodeId: local.id, generatedAt, leases }),
           signal: AbortSignal.timeout(5_000),
         });
@@ -459,30 +298,18 @@ export async function flushReplicationOutbox(): Promise<void> {
   if (flags.replicationFlushInProgress) return;
   flags.replicationFlushInProgress = true;
   try {
-    const selective = await selectiveSharingActive();
     const db = await clusterV2Database(), local = await getClusterNode();
-    const peers = selective ? replicationPeers(db, local.id).map((peer) => ({ ...peer, id: peer.nodeId, token: "" })) : await listClusterPeers();
-    for (const peer of peers) {
-      const events = await eventsForPeer(peer.id, new Date(), selective
-        ? (event) => event.originNodeId === local.id && mayReplicateEvent(db, local.id, peer.id, event) : undefined);
+    // Twins get every event directly; cluster members get project events through the hubs (cluster-hubs.ts).
+    for (const peer of replicationPeers(db, local.id).filter((peer) => isTrustedTwin(db, local.id, peer.nodeId))) {
+      const events = await eventsForPeer(peer.nodeId, new Date(), (event) => event.originNodeId === local.id && mayReplicateEvent(db, local.id, peer.nodeId, event));
       if (!events.length) continue;
       try {
-        const result = selective ? await sendReplicationV2({ nodeId: peer.id, name: peer.name, url: peer.url }, events) : await (async () => {
-        const response = await fetch(`${peer.url}/api/cluster/events`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ events }),
-          signal: AbortSignal.timeout(10_000),
-        });
-        if (!response.ok) throw new Error(`Peer returned ${response.status}`);
-        return response.json();
-        })();
-        const receipt = replicationReceiptSchema.parse(result);
-        await recordPeerReceipt(peer.id, receipt.received);
+        const receipt = replicationReceiptSchema.parse(await sendReplicationV2(peer, events));
+        await recordPeerReceipt(peer.nodeId, receipt.received);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Peer replication failed";
-        await recordPeerFailure(peer.id, events.map((event) => event.id), message);
-        console.warn(`Replication to ${peer.id} failed: ${message}`);
+        await recordPeerFailure(peer.nodeId, events.map((event) => event.id), message);
+        console.warn(`Replication to ${peer.nodeId} failed: ${message}`);
       }
     }
   } finally {

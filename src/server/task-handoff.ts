@@ -1,7 +1,7 @@
 import type { Response } from "express";
 import { z } from "zod";
 import { type ClusterPeer, getClusterNode } from "../cluster.js";
-import { getRuntimePeer as getClusterPeer, runtimeFetch as fetch } from "./runtime-peers.js";
+import { getRuntimePeer, runtimeFetch } from "./runtime-peers.js";
 import { getProject } from "../store.js";
 import { removeTaskWorkspace, TaskWorkspaceError, taskWorkspaceKey } from "../task-workspaces.js";
 import { abortOutgoingTaskHandoff, acknowledgeOutgoingTaskHandoff, assertTaskCanBeDeleted, beginOutgoingTaskHandoff, completeTaskHandoff, deleteTask, getTaskHandoff, listTasks, listUnfinishedOutgoingTaskHandoffs, markOutgoingTaskHandoff, type TaskHandoffRecord, unmergedWorkspaceBlocksClose, updateTask } from "../tasks.js";
@@ -13,7 +13,7 @@ import { taskHandoffDeletionSchema } from "./schemas.js";
 import { taskHandoffContext, taskRunActive } from "./task-runs.js";
 
 export async function ownerPeer(task: TaskRecord, localId: string): Promise<ClusterPeer | undefined> {
-  return task.currentNodeId === localId ? undefined : getClusterPeer(task.currentNodeId);
+  return task.currentNodeId === localId ? undefined : getRuntimePeer(task.currentNodeId);
 }
 
 export function assertTaskNotHandoffPending(task: TaskRecord): void {
@@ -64,7 +64,7 @@ export async function deleteOwnedTask(project: ProjectRecord, task: TaskRecord):
 type RemoteHandoffStatus = "pending" | "prepared" | "committed" | "aborted" | "missing";
 
 async function remoteHandoffStatus(record: TaskHandoffRecord, peer: ClusterPeer): Promise<RemoteHandoffStatus> {
-  const response = await fetch(`${peer.url}/api/cluster/tasks/status`, { method: "POST", headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ handoffId: record.handoffId }), signal: AbortSignal.timeout(10_000) });
+  const response = await runtimeFetch(`${peer.url}/api/cluster/tasks/status`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ handoffId: record.handoffId }), signal: AbortSignal.timeout(10_000) });
   if (response.status === 404) return "missing";
   if (!response.ok) throw new Error(`Peer handoff status failed: ${response.status}`);
   const remote = z.object({ status: z.enum(["pending", "prepared", "committed", "aborted"]), taskId: z.string(), projectId: z.string(), sourceNodeId: z.string().uuid(), destinationNodeId: z.string().uuid() }).parse(await response.json());
@@ -74,7 +74,7 @@ async function remoteHandoffStatus(record: TaskHandoffRecord, peer: ClusterPeer)
 
 async function settlePeerTaskHandoff(peer: ClusterPeer, handoffId: string): Promise<boolean> {
   try {
-    const response = await fetch(`${peer.url}/api/cluster/tasks/settle`, { method: "POST", headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ handoffId }), signal: AbortSignal.timeout(30_000) });
+    const response = await runtimeFetch(`${peer.url}/api/cluster/tasks/settle`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ handoffId }), signal: AbortSignal.timeout(30_000) });
     return response.ok;
   } catch {
     return false;
@@ -82,12 +82,12 @@ async function settlePeerTaskHandoff(peer: ClusterPeer, handoffId: string): Prom
 }
 
 async function commitOutgoingTaskHandoff(record: TaskHandoffRecord): Promise<TaskRecord | null> {
-  const peer = await getClusterPeer(record.destinationNodeId);
+  const peer = await getRuntimePeer(record.destinationNodeId);
   if (!peer) throw new Error("Peer not found");
   const project = await getProject(record.projectId);
   if (!project) throw new Error("Handoff project is not mapped on this node");
   await assertTaskFilesReady(project, record.task);
-  const response = await fetch(`${peer.url}/api/cluster/tasks/commit`, { method: "POST", headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ handoffId: record.handoffId }), signal: AbortSignal.timeout(30_000) });
+  const response = await runtimeFetch(`${peer.url}/api/cluster/tasks/commit`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ handoffId: record.handoffId }), signal: AbortSignal.timeout(30_000) });
   if (!response.ok) throw new Error(`Peer handoff commit failed: ${response.status}`);
   const committed = z.object({ task: z.object({ id: z.string(), currentNodeId: z.string().uuid(), executionState: z.literal("idle"), sessionPath: z.string().nullable() }).passthrough().nullable(), deleted: taskHandoffDeletionSchema.optional() }).parse(await response.json());
   if (committed.task === null) {
@@ -120,7 +120,7 @@ async function resumeRemotePendingHandoff(record: TaskHandoffRecord, peer: Clust
   }
   const handoffContext = await taskHandoffContext(project, task);
   await assertTaskFilesReady(project, task);
-  const response = await fetch(`${peer.url}/api/cluster/tasks/prepare`, { method: "POST", headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ projectId: record.projectId, task, handoffId: record.handoffId, handoffContext, handoffVersion: record.createdAt, bundle }), signal: AbortSignal.timeout(30_000) });
+  const response = await runtimeFetch(`${peer.url}/api/cluster/tasks/prepare`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: record.projectId, task, handoffId: record.handoffId, handoffContext, handoffVersion: record.createdAt, bundle }), signal: AbortSignal.timeout(30_000) });
   if (!response.ok) return undefined;
   await markOutgoingTaskHandoff(record.handoffId, "prepared");
   return commitOutgoingTaskHandoff(record);
@@ -163,7 +163,7 @@ export async function handoffOwnedTask(project: ProjectRecord, task: TaskRecord,
   if (task.executionState === "handoff_pending") {
     const record = (await listUnfinishedOutgoingTaskHandoffs()).find((candidate) => candidate.projectId === project.id && candidate.taskId === task.id);
     if (!record || record.destinationNodeId !== peerId) throw new TaskWorktreeError("Task handoff is awaiting destination commit");
-    const peer = await getClusterPeer(peerId);
+    const peer = await getRuntimePeer(peerId);
     if (!peer) throw new Error("Peer not found");
     try {
       const reconciled = await reconcileOutgoingTaskHandoff(record, peer);
@@ -174,9 +174,9 @@ export async function handoffOwnedTask(project: ProjectRecord, task: TaskRecord,
     }
   }
   if (taskRunActive(task.id) || (task.leaseExpiresAt && Date.parse(task.leaseExpiresAt) > Date.now())) throw new TaskWorktreeError("Task has an active run or lease");
-  const peer = await getClusterPeer(peerId);
+  const peer = await getRuntimePeer(peerId);
   if (!peer) throw new Error("Peer not found");
-  const eligibility = await fetch(`${peer.url}/api/cluster/tasks/eligibility`, { method: "POST", headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ projectId: project.id, task }), signal: AbortSignal.timeout(3_000) });
+  const eligibility = await runtimeFetch(`${peer.url}/api/cluster/tasks/eligibility`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: project.id, task }), signal: AbortSignal.timeout(3_000) });
   if (!eligibility.ok) throw new Error(`Peer eligibility check failed: ${eligibility.status}`);
   const eligibilityResult = peerTaskEligibilitySchema.parse(await eligibility.json());
   if (!eligibilityResult.eligible) throw new TaskWorktreeError(eligibilityResult.reasons.join("; "));
@@ -214,7 +214,7 @@ export async function handoffOwnedTask(project: ProjectRecord, task: TaskRecord,
   }
   try {
     await assertTaskFilesReady(project, task);
-    const prepared = await fetch(`${peer.url}/api/cluster/tasks/prepare`, { method: "POST", headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ projectId: project.id, task: outgoing.task, handoffId: outgoing.handoffId, handoffContext, handoffVersion: outgoing.createdAt, bundle }), signal: AbortSignal.timeout(30_000) });
+    const prepared = await runtimeFetch(`${peer.url}/api/cluster/tasks/prepare`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: project.id, task: outgoing.task, handoffId: outgoing.handoffId, handoffContext, handoffVersion: outgoing.createdAt, bundle }), signal: AbortSignal.timeout(30_000) });
     if (!prepared.ok) return pendingHandoffResponse((await listTasks(project.id)).find((candidate) => candidate.id === task.id) as TaskRecord, peer);
   } catch {
     return pendingHandoffResponse((await listTasks(project.id)).find((candidate) => candidate.id === task.id) as TaskRecord, peer);

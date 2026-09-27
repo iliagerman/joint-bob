@@ -3,13 +3,15 @@ import { z } from "zod";
 import { getClusterNode } from "../../cluster.js";
 import { applyTwinCertificate, listTwinRelationships, twinCertificateSchema, twinRevocationSchema } from "../../cluster-twins.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
-import { ClusterV2HttpError, selectiveSharingActive } from "../../cluster-v2-mode.js";
+import { ClusterV2HttpError } from "../../cluster-v2-errors.js";
 import {
   acceptTwinHttpLink, applyRemoteTwinRevocation, bootstrapOwnedTwinPolicies,
   createTwinHttpInvitation, ensureTwinHttpSchema, mapTwinError, pendingTwinDeliveries,
   revokeTwinHttp,
 } from "../twins.js";
 import { app } from "../state.js";
+import { declareTwinLost, receiveSuccession, successionNoticeSchema } from "../succession.js";
+import { peerEndpoint, recordPeerEndpoint } from "../../cluster-peer-endpoints.js";
 import { disconnectRevokedRuntimeSockets } from '../runtime-peers.js';
 import { receiveScopedCredentials } from "../scoped-credentials.js";
 import { sharedTranscriptFile, sharedTranscriptInventory, transcriptQuery } from "../shared-transcripts.js";
@@ -102,7 +104,17 @@ app.post("/api/twins/accept",handler(async(request,response)=>{
 }));
 app.get("/api/twins",handler(async(_request,response)=>{
   localOnly(response); const local=await getClusterNode(),db=await clusterV2Database();ensureTwinHttpSchema(db);
-  response.json({relationships:listTwinRelationships(db,local.id).map(item=>({...item,pendingDeliveries:pendingTwinDeliveries(db,item.relationshipId)}))});
+  response.json({relationships:listTwinRelationships(db,local.id).map(item=>({...item,endpoint:peerEndpoint(db,"twin",item.relationshipId,item.peer.nodeId),pendingDeliveries:pendingTwinDeliveries(db,item.relationshipId)}))});
+}));
+/** The twin is gone for good: this node takes over what it owned (see src/cluster-succession.ts). */
+app.post("/api/twins/:relationshipId/lost",handler(async(request,response)=>{
+  localOnly(response); z.object({confirmLost:z.literal(true)}).strict().parse(request.body);
+  response.json(await declareTwinLost(uuid.parse(request.params.relationshipId)));
+}));
+app.post("/api/cluster/v2/succession",handler(async(request,response)=>{
+  const sender=machineOnly(response);
+  await receiveSuccession(sender,successionNoticeSchema.parse(request.body));
+  response.json({ok:true});
 }));
 app.delete("/api/twins/:relationshipId",handler(async(request,response)=>{
   localOnly(response); const local=await getClusterNode(),db=await clusterV2Database(),relationshipId=uuid.parse(request.params.relationshipId);
@@ -110,8 +122,15 @@ app.delete("/api/twins/:relationshipId",handler(async(request,response)=>{
   await disconnectRevokedRuntimeSockets();
   response.json({relationshipId,status:"revoked",pending:result.pending});
 }));
+/** A twin reports its new name and URL; this node reaches it at the new address. */
+app.post("/api/cluster/v2/twins/descriptor",handler(async(request,response)=>{
+  const sender=machineOnly(response),local=await getClusterNode(),db=await clusterV2Database();
+  const payload=z.object({relationshipId:uuid,name:z.string(),url:z.string()}).strict().parse(request.body);
+  if(sharingTwin(db,local.id,payload.relationshipId)!==sender)throw new ClusterV2HttpError(403,'Forbidden');
+  recordPeerEndpoint(db,{kind:"twin",id:payload.relationshipId},{nodeId:sender,name:payload.name,url:payload.url});
+  response.json({ok:true});
+}));
 app.post("/api/cluster/v2/twins/certificate",handler(async(request,response)=>{
-  if(!await selectiveSharingActive()) throw new ClusterV2HttpError(409,"Selective sharing is not active");
   const sender=machineOnly(response),certificate=twinCertificateSchema.parse(z.object({certificate:twinCertificateSchema}).strict().parse(request.body).certificate);
   const local=await getClusterNode();
   const other=certificate.body.inviter.nodeId===local.id?certificate.body.acceptor.nodeId:certificate.body.inviter.nodeId;
@@ -120,7 +139,6 @@ app.post("/api/cluster/v2/twins/certificate",handler(async(request,response)=>{
   response.json({ok:true});
 }));
 app.post("/api/cluster/v2/twins/revocation",handler(async(request,response)=>{
-  if(!await selectiveSharingActive()) throw new ClusterV2HttpError(409,"Selective sharing is not active");
   const sender=machineOnly(response),revocation=twinRevocationSchema.parse(z.object({revocation:twinRevocationSchema}).strict().parse(request.body).revocation);
   if(sender!==revocation.signerNodeId) throw new ClusterV2HttpError(403,"Forbidden");
   const local=await getClusterNode(),db=await clusterV2Database();ensureTwinHttpSchema(db);

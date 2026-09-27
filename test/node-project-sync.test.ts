@@ -5,7 +5,6 @@ import { DatabaseSync } from "node:sqlite";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { appSource, serverSource } from "./source.js";
 
 async function withStore(run: (root: string, store: typeof import("../src/store.js")) => Promise<void>): Promise<void> {
   const root = await mkdtemp(path.join(os.tmpdir(), "master-bob-node-sync-"));
@@ -135,89 +134,6 @@ test("an unmapped project cannot be imported without an explicit local path", as
   });
 });
 
-test("late project aliases atomically rekey replicated project state", async () => {
-  await withStore(async (root, store) => {
-    const canonicalPath = path.join(root, "canonical");
-    const canonical = await store.addProject("canonical", canonicalPath, { synced: true, syncFolderId: "shared-folder" });
-    const aliasId = "incoming-project-id";
-    const taskId = "replicated-before-alias";
-    const tombstonedTaskId = "deleted-after-alias";
-    const originNodeId = "remote-node";
-    const tasks = await import(new URL(`../src/tasks.ts?late-alias=${Date.now()}-${Math.random()}`, import.meta.url).href);
-    const names = await import(new URL(`../src/names.ts?late-alias=${Date.now()}-${Math.random()}`, import.meta.url).href);
-    const replication = await import(new URL(`../src/replication.ts?late-alias=${Date.now()}-${Math.random()}`, import.meta.url).href);
-    await tasks.listTasks(aliasId);
-
-    const replicatedTask = {
-      id: taskId,
-      title: "Arrived before alias",
-      description: "replicated",
-      status: "backlog" as const,
-      engine: "pi" as const,
-      planMode: false,
-      reviewMode: false,
-      phaseConfig: {},
-      sessionPath: null,
-      worktreePath: null,
-      worktreeBranch: null,
-      mergedAt: null,
-      currentNodeId: originNodeId,
-      leaseOwnerNodeId: null,
-      leaseExpiresAt: null,
-      executionState: "idle" as const,
-      handoffContext: null,
-      originNodeId,
-      createdAt: "2026-03-01T00:00:00.000Z",
-      updatedAt: "2026-03-01T00:00:00.000Z",
-    };
-    await replication.receiveReplicationBatch({ events: [
-      {
-        id: randomUUID(), originNodeId, entityType: "task", entityKey: `${aliasId}:${taskId}`, operation: "upsert",
-        payload: { projectId: aliasId, task: replicatedTask, originNodeId }, createdAt: replicatedTask.updatedAt,
-      },
-      {
-        id: randomUUID(), originNodeId, entityType: "name.override", entityKey: `projects:${aliasId}`, operation: "upsert",
-        payload: { scope: "projects", key: aliasId, name: "Alias name wins", updatedAt: "2026-03-01T00:00:00.000Z", originNodeId }, createdAt: "2026-03-01T00:00:00.000Z",
-      },
-    ] });
-
-    const db = new DatabaseSync(path.join(root, "data", "node.db"));
-    db.prepare("INSERT INTO task_tombstones (project_id, task_id, updated_at, origin_node_id) VALUES (?, ?, ?, ?)").run(canonical.id, taskId, "2026-02-01T00:00:00.000Z", "canonical-node");
-    db.prepare(`INSERT INTO tasks (id, project_id, title, description, status, engine, plan_mode, review_mode, phase_config, session_path, worktree_path, worktree_branch, merged_at, created_at, updated_at, current_node_id, lease_owner_node_id, lease_expires_at, execution_state, handoff_context, origin_node_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(tombstonedTaskId, canonical.id, "Canonical task", "older than delete", "backlog", "pi", 0, 0, "{}", null, null, null, null, "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z", originNodeId, null, null, "idle", null, originNodeId);
-    db.prepare("INSERT INTO task_tombstones (project_id, task_id, updated_at, origin_node_id) VALUES (?, ?, ?, ?)").run(aliasId, tombstonedTaskId, "2026-02-01T00:00:00.000Z", originNodeId);
-    db.prepare("INSERT INTO name_override_tombstones (scope, key, updated_at, origin_node_id) VALUES ('projects', ?, ?, ?)").run(canonical.id, "2026-02-01T00:00:00.000Z", "canonical-node");
-    db.prepare(`INSERT INTO task_handoffs (handoff_id, project_id, protocol_project_id, task_id, source_node_id, destination_node_id, direction, status, task_json, handoff_context, worktree_path, worktree_branch, worktree_created, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'incoming', 'pending', ?, NULL, NULL, NULL, 0, ?, ?)`)
-      .run("incoming-handoff", aliasId, aliasId, "handoff-task", originNodeId, "destination-node", JSON.stringify(replicatedTask), "2026-03-02T00:00:00.000Z", "2026-03-02T00:00:00.000Z");
-    db.close();
-
-    await store.registerProjectAliases(canonical.id, ["z-alias", aliasId, "a-alias", aliasId, canonical.id]);
-    assert.deepEqual(await store.projectAliasIds(canonical.id), ["a-alias", aliasId, "z-alias"]);
-
-    const canonicalTasks = await tasks.listTasks(canonical.id);
-    const aliasProject = await store.getProject(aliasId);
-    assert.equal(aliasProject?.id, canonical.id);
-    assert.deepEqual(await tasks.listTasks(aliasProject!.id), canonicalTasks);
-    assert.equal(canonicalTasks.find((task) => task.id === taskId)?.title, "Arrived before alias");
-    assert.equal(canonicalTasks.some((task) => task.id === tombstonedTaskId), false);
-
-    const rekeyed = new DatabaseSync(path.join(root, "data", "node.db"));
-    for (const table of ["tasks", "task_tombstones", "task_handoffs"]) {
-      assert.equal((rekeyed.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE project_id = ?`).get(aliasId) as { count: number }).count, 0);
-    }
-    const tombstones = rekeyed.prepare("SELECT project_id, task_id FROM task_tombstones").all() as Array<{ project_id: string; task_id: string }>;
-    assert.deepEqual(tombstones.map(({ project_id, task_id }) => ({ project_id, task_id })), [{ project_id: canonical.id, task_id: tombstonedTaskId }]);
-    const handoff = rekeyed.prepare("SELECT project_id, protocol_project_id FROM task_handoffs WHERE handoff_id = 'incoming-handoff'").get() as { project_id: string; protocol_project_id: string };
-    assert.equal(handoff.project_id, canonical.id);
-    assert.equal(handoff.protocol_project_id, aliasId);
-    const overrides = rekeyed.prepare("SELECT key, name FROM name_overrides WHERE scope = 'projects'").all() as Array<{ key: string; name: string }>;
-    assert.deepEqual(overrides.map(({ key, name }) => ({ key, name })), [{ key: canonical.id, name: "Alias name wins" }]);
-    assert.equal(rekeyed.prepare("SELECT 1 FROM name_override_tombstones WHERE scope = 'projects' AND key IN (?, ?)").get(aliasId, canonical.id), undefined);
-    rekeyed.close();
-    assert.deepEqual(await names.projectNameOverrides(), { [canonical.id]: "Alias name wins" });
-  });
-});
-
 test("project removal atomically settles project task state and reservations", async () => {
   await withStore(async (root, store) => {
     const tasks = await import(new URL(`../src/tasks.ts?project-remove=${Date.now()}-${Math.random()}`, import.meta.url).href);
@@ -331,21 +247,6 @@ test("project removal atomically settles project task state and reservations", a
     }
     raceDb.close();
   });
-});
-
-test("sync UI provides pending mapping and a node filesystem picker", async () => {
-  const [server, app, html] = await Promise.all([
-    serverSource(),
-    appSource(),
-    readFile("public/index.html", "utf8"),
-  ]);
-
-  assert.match(server, /pending/);
-  assert.match(server, /\/api\/cluster\/projects\/map/);
-  assert.match(server, /\/api\/filesystem\/directories/);
-  assert.match(app, /openProjectImportMapping/);
-  assert.match(html, /id="projectImportDialog"/);
-  assert.match(html, /data-testid="project-import-browse-button"/);
 });
 
 test("removing a project deletes the secret accounts it owns along with their files", async () => {

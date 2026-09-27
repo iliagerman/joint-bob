@@ -6,9 +6,9 @@ import {
   managerTransferAcceptanceSchema, managerTransferOfferSchema, prepareMembershipManagerTransfer,
   receiveMembershipManagerOffer,
 } from "../../cluster-membership.js";
-import { getSharingCluster, listSharingClusterMembers } from "../../cluster-sharing-policy.js";
+import { listSharingClusterMembers } from "../../cluster-sharing-policy.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
-import { ClusterV2HttpError, selectiveSharingActive } from "../../cluster-v2-mode.js";
+import { ClusterV2HttpError } from "../../cluster-v2-errors.js";
 import { ensureManagerHttpSchema, queueManagerStep } from "../cluster-manager.js";
 import { mapV2Error } from "../cluster-v2.js";
 import { app } from "../state.js";
@@ -26,7 +26,6 @@ function machineOnly(response: Response): string {
   if (response.locals.machineProtocol !== 2 || typeof response.locals.machineNodeId !== "string") throw new ClusterV2HttpError(401, "Unauthorized");
   return response.locals.machineNodeId as string;
 }
-async function active(): Promise<void> { if (!await selectiveSharingActive()) throw new ClusterV2HttpError(409, "Selective sharing is not active"); }
 function savepoint<T>(db: Awaited<ReturnType<typeof clusterV2Database>>, action: () => T): T {
   db.exec("SAVEPOINT manager_http_route");
   try { const result = action(); db.exec("RELEASE manager_http_route"); return result; }
@@ -34,7 +33,7 @@ function savepoint<T>(db: Awaited<ReturnType<typeof clusterV2Database>>, action:
 }
 
 app.post("/api/clusters/:clusterId/manager-transfer", handler(async (request, response) => {
-  localOnly(response); await active();
+  localOnly(response);
   const clusterId = uuid.parse(request.params.clusterId), payload = prepareSchema.parse(request.body);
   const local = await getClusterNode(), db = await clusterV2Database(); ensureManagerHttpSchema(db);
   const transfer = savepoint(db, () => {
@@ -47,7 +46,7 @@ app.post("/api/clusters/:clusterId/manager-transfer", handler(async (request, re
 }));
 
 app.get("/api/clusters/:clusterId/manager-transfer/:transferId", handler(async (request, response) => {
-  localOnly(response); await active();
+  localOnly(response);
   const clusterId = uuid.parse(request.params.clusterId), transferId = uuid.parse(request.params.transferId);
   const local = await getClusterNode(), db = await clusterV2Database(); ensureManagerHttpSchema(db);
   if (!listSharingClusterMembers(db, clusterId).some((member) => member.nodeId === local.id)) throw new ClusterV2HttpError(403, "Forbidden");
@@ -55,7 +54,7 @@ app.get("/api/clusters/:clusterId/manager-transfer/:transferId", handler(async (
 }));
 
 app.post("/api/clusters/:clusterId/manager-transfer/:transferId/accept", handler(async (request, response) => {
-  localOnly(response); await active(); emptySchema.parse(request.body);
+  localOnly(response);emptySchema.parse(request.body);
   const clusterId = uuid.parse(request.params.clusterId), transferId = uuid.parse(request.params.transferId);
   const local = await getClusterNode(), db = await clusterV2Database(); ensureManagerHttpSchema(db);
   const transfer = savepoint(db, () => {
@@ -70,7 +69,7 @@ app.post("/api/clusters/:clusterId/manager-transfer/:transferId/accept", handler
 }));
 
 app.post("/api/cluster/v2/manager-transfer/offer", handler(async (request, response) => {
-  await active(); const sender = machineOnly(response), { offer } = offerSchema.parse(request.body);
+const sender = machineOnly(response), { offer } = offerSchema.parse(request.body);
   const local = await getClusterNode();
   if (sender !== offer.body.fromNodeId || local.id !== offer.body.toNodeId) throw new ClusterV2HttpError(403, "Forbidden");
   const db = await clusterV2Database(); ensureManagerHttpSchema(db); receiveMembershipManagerOffer(db, local.id, offer);
@@ -78,7 +77,7 @@ app.post("/api/cluster/v2/manager-transfer/offer", handler(async (request, respo
 }));
 
 app.post("/api/cluster/v2/manager-transfer/acceptance", handler(async (request, response) => {
-  await active(); const sender = machineOnly(response), { acceptance } = acceptanceSchema.parse(request.body);
+const sender = machineOnly(response), { acceptance } = acceptanceSchema.parse(request.body);
   const offer = acceptance.offer, local = await getClusterNode();
   if (sender !== offer.body.toNodeId || local.id !== offer.body.fromNodeId) throw new ClusterV2HttpError(403, "Forbidden");
   const db = await clusterV2Database(); ensureManagerHttpSchema(db);

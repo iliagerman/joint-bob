@@ -6,11 +6,10 @@ import { clearChat } from "./chat-transcript.js";
 import { elements } from "./elements.js";
 import { setFocusUi } from "./focus-ui.js";
 import { setMobileView, setPanelCollapsed } from "./layout.js";
-import { openProjectImportMapping } from "./project-forms.js";
 import { clearMfaSecrets } from "./mfa.js";
 import { renderProjects } from "./project-list.js";
 import { renderQuickNotes } from "./quick-notes.js";
-import { loadProjects, refreshProjectsQuietly, startProjectSyncPolling } from "./project-selection.js";
+import { loadProjects, startProjectSyncPolling } from "./project-selection.js";
 import { renderSessions } from "./session-list.js";
 import { showWhatsNew } from "./settings.js";
 import { setTheme, syncNotifyButton, updateInstallButton } from "./shell.js";
@@ -188,15 +187,6 @@ export async function initializeApplication() {
   revealApplication();
   await loadWorkspaces();
   await loadProjects();
-  if (!state.canvasPaneMode) {
-    void api("/api/cluster/projects/discover", { method: "POST" })
-      .then(async (discovery) => {
-        await loadWorkspaces();
-        await refreshProjectsQuietly();
-        if (discovery.pending.length) openProjectImportMapping(discovery.pending);
-      })
-      .catch((error) => console.warn("Could not discover peer projects", error));
-  }
   if (!state.canvasPaneMode) setMobileView(preferences.mobileView === "board" ? (state.activeProjectId ? "sessions" : "projects") : preferences.mobileView);
   state.preferencesLoaded = true;
   if (!state.canvasPaneMode) {

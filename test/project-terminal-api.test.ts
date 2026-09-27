@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
-import { createServer } from "node:http";
+import { type ChildProcess } from "node:child_process";
+import { createServer, request as httpRequest, type IncomingMessage } from "node:http";
+import { connect, type Socket } from "node:net";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import WebSocket, { WebSocketServer } from "ws";
+import { pairTwinNodes, seedDevEnvironment, signIn, startDevNode, stopDevNode, type SeededNode } from "./dev-nodes.js";
 
 function sessionCookie(response: Response): string {
   const value = response.headers.get("set-cookie");
@@ -19,6 +22,83 @@ function nextMessage(socket: WebSocket): Promise<Record<string, unknown>> {
     socket.once("message", (raw) => { clearTimeout(timer); resolve(JSON.parse(raw.toString()) as Record<string, unknown>); });
     socket.once("error", (error) => { clearTimeout(timer); reject(error); });
   });
+}
+
+type UpgradeMode = "reject" | "forward" | "stub";
+interface PeerProxy {
+  url: string;
+  mode: UpgradeMode;
+  stubMessage: unknown;
+  upgrades: Array<{ url: string; authorization?: string }>;
+  requests: Array<{ method: string; url: string; body: string }>;
+  close(): Promise<void>;
+}
+
+/** Stands between node A and its twin B, so the test can see and shape what A sends B. */
+async function peerProxy(upstream: SeededNode): Promise<PeerProxy> {
+  const target = new URL(upstream.url);
+  const stubs = new WebSocketServer({ noServer: true });
+  stubs.on("connection", (socket) => socket.send(JSON.stringify(proxy.stubMessage)));
+  const sockets = new Set<Socket>();
+  const server = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(chunk as Buffer);
+    const body = Buffer.concat(chunks);
+    proxy.requests.push({ method: request.method ?? "", url: request.url ?? "", body: body.toString() });
+    const forwarded = httpRequest({ host: target.hostname, port: target.port, method: request.method, path: request.url, headers: request.headers }, (reply) => {
+      response.writeHead(reply.statusCode ?? 502, reply.headers);
+      reply.pipe(response);
+    });
+    forwarded.on("error", () => { response.statusCode = 502; response.end(); });
+    forwarded.end(body);
+  });
+  server.on("connection", (socket) => { sockets.add(socket); socket.once("close", () => sockets.delete(socket)); });
+  server.on("upgrade", (request: IncomingMessage, socket: Socket, head: Buffer) => {
+    proxy.upgrades.push({ url: request.url ?? "", authorization: request.headers.authorization });
+    if (proxy.mode === "reject") { socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n"); return; }
+    if (proxy.mode === "stub") { stubs.handleUpgrade(request, socket, head, (upgraded) => stubs.emit("connection", upgraded, request)); return; }
+    const link = connect(Number(target.port), target.hostname, () => {
+      const lines = [`${request.method} ${request.url} HTTP/1.1`];
+      for (let index = 0; index < request.rawHeaders.length; index += 2) lines.push(`${request.rawHeaders[index]}: ${request.rawHeaders[index + 1]}`);
+      link.write(`${lines.join("\r\n")}\r\n\r\n`);
+      link.write(head);
+      socket.pipe(link);
+      link.pipe(socket);
+    });
+    sockets.add(link);
+    link.on("error", () => socket.destroy());
+    socket.on("error", () => link.destroy());
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Proxy did not bind");
+  const proxy: PeerProxy = {
+    url: `http://127.0.0.1:${address.port}`,
+    mode: "forward",
+    stubMessage: { type: "ready" },
+    upgrades: [],
+    requests: [],
+    close: async () => {
+      stubs.close();
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+  return proxy;
+}
+
+/** Points node A at the proxy for its twin B, the address A learned when they paired. */
+function routePeerThrough(node: SeededNode, peer: SeededNode, url: string): void {
+  const db = new DatabaseSync(path.join(node.dataDir, "node.db"));
+  try {
+    db.exec("PRAGMA busy_timeout=5000");
+    assert.equal(db.prepare("UPDATE cluster_v2_peer_endpoints SET url = ? WHERE node_id = ?").run(url, peer.nodeId).changes > 0, true);
+  } finally { db.close(); }
+}
+
+function signedEnvelope(authorization: string | undefined): { senderNodeId: string; recipientNodeId: string; target: string } {
+  assert.match(authorization ?? "", /^JointBobV2 /, "peer sockets must carry a signed request, not a bearer token");
+  return (JSON.parse(Buffer.from(authorization!.slice("JointBobV2 ".length), "base64url").toString("utf8")) as { envelope: { senderNodeId: string; recipientNodeId: string; target: string } }).envelope;
 }
 
 function outputUntil(socket: WebSocket, expected: string[], input: string): Promise<string> {
@@ -39,7 +119,7 @@ function outputUntil(socket: WebSocket, expected: string[], input: string): Prom
   });
 }
 
-test("embedded terminal runs in the project directory or proxies to the selected peer", async () => {
+test("embedded terminal runs in the project directory or the ticket workspace", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-terminal-"));
   const previousDataDir = process.env.PI_WEB_DATA_DIR;
   const previousUsername = process.env.MASTER_BOB_ADMIN_USERNAME;
@@ -48,15 +128,12 @@ test("embedded terminal runs in the project directory or proxies to the selected
   process.env.MASTER_BOB_ADMIN_USERNAME = "admin";
   process.env.MASTER_BOB_INITIAL_PASSWORD = "initial-password";
 
-  const peerHttpServer = createServer();
-  const peerSockets = new WebSocketServer({ noServer: true });
   let appServer: import("node:http").Server | undefined;
   let socket: WebSocket | undefined;
-  let forwarded: { authorization?: string; url?: string } = {};
   try {
     const moduleUrl = new URL(`../src/server.ts?terminal=${Date.now()}`, import.meta.url);
     ({ server: appServer } = await import(moduleUrl.href));
-    const { getClusterNode, saveClusterPeer } = await import("../src/cluster.js");
+    const { getClusterNode } = await import("../src/cluster.js");
     const { createTask } = await import("../src/tasks.js");
     await new Promise<void>((resolve) => appServer?.listen(0, "127.0.0.1", resolve));
     const address = appServer.address();
@@ -105,46 +182,50 @@ test("embedded terminal runs in the project directory or proxies to the selected
     socket.close();
     await rm(path.dirname(ticket.worktreePath ?? ""), { recursive: true, force: true });
 
-    peerHttpServer.on("upgrade", (request, rawSocket, head) => {
-      forwarded = { authorization: request.headers.authorization, url: request.url };
-      peerSockets.handleUpgrade(request, rawSocket, head, (upstream) => peerSockets.emit("connection", upstream, request));
-    });
-    const peerId = randomUUID();
-    peerSockets.on("connection", (upstream) => upstream.send(JSON.stringify({ type: "terminalReady", cwd: "/remote/project", nodeId: peerId })));
-    await new Promise<void>((resolve) => peerHttpServer.listen(0, "127.0.0.1", resolve));
-    const peerAddress = peerHttpServer.address();
-    if (!peerAddress || typeof peerAddress === "string") throw new Error("Peer server did not bind");
-    await saveClusterPeer({
-      id: peerId,
-      name: "Mac",
-      url: `http://127.0.0.1:${peerAddress.port}`,
-      token: "peer-machine-token",
-      pairedAt: new Date().toISOString(),
-      lastSeenAt: new Date().toISOString(),
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-
-    const remoteUrl = new URL(`/ws?mode=terminal&projectId=${project.id}&nodeId=${peerId}`, baseUrl);
-    remoteUrl.protocol = "ws:";
-    socket = new WebSocket(remoteUrl, { origin: baseUrl, headers: { Cookie: cookie } });
-    assert.deepEqual(await nextMessage(socket), { type: "terminalReady", cwd: "/remote/project", nodeId: peerId });
-    assert.equal(forwarded.authorization, "Bearer peer-machine-token");
-    const forwardedUrl = new URL(forwarded.url ?? "", "http://peer");
-    assert.equal(forwardedUrl.searchParams.get("mode"), "terminal");
-    assert.equal(forwardedUrl.searchParams.get("nodeSession"), "1");
-    assert.equal(forwardedUrl.searchParams.has("nodeId"), false);
   } finally {
     socket?.terminate();
-    peerSockets.close();
     if (appServer?.listening) await new Promise<void>((resolve) => appServer?.close(() => resolve()));
-    if (peerHttpServer.listening) await new Promise<void>((resolve) => peerHttpServer.close(() => resolve()));
     if (previousDataDir === undefined) delete process.env.PI_WEB_DATA_DIR;
     else process.env.PI_WEB_DATA_DIR = previousDataDir;
     if (previousUsername === undefined) delete process.env.MASTER_BOB_ADMIN_USERNAME;
     else process.env.MASTER_BOB_ADMIN_USERNAME = previousUsername;
     if (previousPassword === undefined) delete process.env.MASTER_BOB_INITIAL_PASSWORD;
     else process.env.MASTER_BOB_INITIAL_PASSWORD = previousPassword;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("embedded terminal proxies to the selected twin with a signed socket", { timeout: 150_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-terminal-twin-"));
+  const servers: ChildProcess[] = [];
+  let proxy: PeerProxy | undefined;
+  let socket: WebSocket | undefined;
+  try {
+    const environment = await seedDevEnvironment(root, 2);
+    const [a, b] = environment.nodes;
+    for (const node of environment.nodes) servers.push(await startDevNode(environment, node));
+    await pairTwinNodes(environment);
+    const sessionA = await signIn(environment, a);
+    const project = a.projects[0];
+    proxy = await peerProxy(b);
+    routePeerThrough(a, b, proxy.url);
+    const remoteUrl = new URL(`/ws?mode=terminal&projectId=${project.id}&nodeId=${b.nodeId}`, a.url);
+    remoteUrl.protocol = "ws:";
+    socket = new WebSocket(remoteUrl, { origin: a.url, headers: { Cookie: sessionA.cookie } });
+    assert.deepEqual(await nextMessage(socket), { type: "terminalReady", cwd: project.path, nodeId: b.nodeId });
+    const output = await outputUntil(socket, ["remote-terminal-ok"], "printf remote-terminal-ok\n");
+    assert.match(output, /remote-terminal-ok/);
+    const upgrade = proxy.upgrades.at(-1)!;
+    const envelope = signedEnvelope(upgrade.authorization);
+    assert.deepEqual([envelope.senderNodeId, envelope.recipientNodeId, envelope.target], [a.nodeId, b.nodeId, upgrade.url]);
+    const forwardedUrl = new URL(upgrade.url, "http://peer");
+    assert.equal(forwardedUrl.searchParams.get("mode"), "terminal");
+    assert.equal(forwardedUrl.searchParams.get("nodeSession"), "1");
+    assert.equal(forwardedUrl.searchParams.has("nodeId"), false);
+  } finally {
+    socket?.terminate();
+    await proxy?.close();
+    await Promise.all(servers.map(stopDevNode));
     await rm(root, { recursive: true, force: true });
   }
 });

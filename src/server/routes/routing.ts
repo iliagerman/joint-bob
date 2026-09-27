@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { listDifficultyClassifiers } from "../../classifiers/registry.js";
-import { getClusterNode, listClusterPeers } from "../../cluster.js";
-import { listSharingClusterMembers, listSharingMemberships } from "../../cluster-sharing-policy.js";
+import { getClusterNode } from "../../cluster.js";
+import { isTrustedTwin, listSharingClusterMembers, listSharingMemberships } from "../../cluster-sharing-policy.js";
 import { getHarnessRuntime, listHarnesses } from "../../harnesses.js";
 import { applyRoutingConfigEvents, createRoutingConfig, deleteRoutingConfig, enqueueRoutingConfigDeliveries, getRoutingConfig, listRoutingConfigs, pendingRoutingConfigDeliveryCount, routingConfigDatabase, routingConfigEventFor, routingConfigEventSchema, routingConfigShareTargets, routingConfigWarning, RoutingConfigError, setRoutingConfigSelection, updateRoutingConfig, type RoutingConfigEvent, type StoredRoutingConfig } from "../../routing-configs.js";
 import { automaticRoutingModelAllowed, defaultRoutingPolicy, listRoutingPolicies, RoutingPolicyError, routingPolicyDatabase, validateRoutingPolicy } from "../../routing-policy.js";
@@ -44,12 +44,9 @@ function configView(localNodeId: string, config: StoredRoutingConfig, ownerNames
   };
 }
 
-/** Display names for configuration owners: this node, legacy peers, and known cluster members. */
+/** Display names for configuration owners: this node and known cluster members. */
 async function ownerNames(local: { id: string; name: string }): Promise<Map<string, string>> {
   const names = new Map<string, string>([[local.id, local.name]]);
-  try {
-    for (const peer of await listClusterPeers()) names.set(peer.id, peer.name);
-  } catch { /* Names are display-only. */ }
   const db = routingPolicyDatabase();
   if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'cluster_v2_membership_nodes'").get()) {
     for (const row of db.prepare("SELECT node_id, name FROM cluster_v2_membership_nodes").all() as unknown as Array<{ node_id: string; name: string }>) names.set(row.node_id, row.name);
@@ -62,7 +59,7 @@ async function ownerNames(local: { id: string; name: string }): Promise<Map<stri
 async function distribute(event: RoutingConfigEvent): Promise<Array<{ nodeId: string; name: string; delivered: boolean; error?: string }>> {
   const local = await getClusterNode();
   const db = routingConfigDatabase();
-  const targets = routingConfigShareTargets(routingPolicyDatabase(), local.id, await listClusterPeers());
+  const targets = routingConfigShareTargets(routingPolicyDatabase(), local.id);
   enqueueRoutingConfigDeliveries(db, event, targets);
   const results = await flushRoutingConfigDeliveries(event.configId);
   if (!results.length && targets.length && pendingRoutingConfigDeliveryCount(db, event.configId) > 0) {
@@ -86,7 +83,7 @@ app.get("/api/routing-configs", async (_request, response, next) => {
       classifiers: listDifficultyClassifiers().map(({ id, label, variableName }) => ({ id, label, variableName })),
       harnesses,
       defaultPolicy: defaultRoutingPolicy(Object.fromEntries(harnesses.map((harness) => [harness.id, harness.models.map(({ provider, id, label }) => ({ provider, id, label }))]))),
-      shareTargets: routingConfigShareTargets(policies, local.id, await listClusterPeers()).map(({ nodeId, name, kind, clusterName }) => ({ nodeId, name, kind, ...(clusterName ? { clusterName } : {}) })),
+      shareTargets: routingConfigShareTargets(policies, local.id).map(({ nodeId, name, kind, clusterName }) => ({ nodeId, name, kind, ...(clusterName ? { clusterName } : {}) })),
       // Kept for older callers: the retired per-cluster policies are listed read-only until the migration empties them.
       policies: listRoutingPolicies(policies).map((stored) => ({ ...stored, editable: false, localLeader: false, leaderName: stored.leaderNodeId, warning: null })),
     });
@@ -192,31 +189,6 @@ app.post("/api/routing-configs/:id/share", async (request, response, next) => {
   }
 });
 
-/** Legacy paired peers distribute configurations over the same authenticated
-    pairing-token transport secret credential events use. The token proves membership in
-    the pairing mesh; each event's owner must be a paired peer, and the events apply as
-    that owner — the same trust model secret credential replication uses. */
-app.post("/api/cluster/routing-configs/events", async (request, response, next) => {
-  try {
-    if (!response.locals.machineAuth) throw new RoutingConfigError(401, "Unauthorized");
-    const batch = eventBatchSchema.parse(request.body);
-    const peers = new Set((await listClusterPeers()).map((peer) => peer.id));
-    for (const event of batch.events) {
-      if (!peers.has(event.ownerNodeId)) throw new RoutingConfigError(403, "Only a paired node's routing configurations may arrive here");
-    }
-    const received: string[] = [];
-    for (const [owner, events] of batch.events.reduce((groups, event) => { groups.set(event.ownerNodeId, [...(groups.get(event.ownerNodeId) ?? []), event]); return groups; }, new Map<string, typeof batch.events>())) {
-      received.push(...applyRoutingConfigEvents(routingConfigDatabase(), events, owner));
-    }
-    broadcastRoutingMode();
-    response.json({ received });
-  } catch (error) {
-    if (error instanceof RoutingConfigError) { sendError(response, error.statusCode, error.message); return; }
-    if (error instanceof z.ZodError) { sendError(response, 400, error.errors.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ")); return; }
-    next(error);
-  }
-});
-
 /** Selective cluster members distribute configurations over the signed v2 cluster
     protocol. The signature proves the sender's node identity; membership is checked
     against every cluster this node belongs to, so nothing propagates beyond it. */
@@ -227,9 +199,9 @@ app.post("/api/cluster/v2/routing-configs", async (request, response, next) => {
     const local = await getClusterNode();
     const db = routingConfigDatabase();
     const v2db = await clusterV2Database();
-    const eligible = listSharingMemberships(v2db, local.id).some((membership) =>
+    const eligible = isTrustedTwin(v2db, local.id, sender) || listSharingMemberships(v2db, local.id).some((membership) =>
       listSharingClusterMembers(v2db, membership.clusterId).some((member) => member.nodeId === sender));
-    if (!eligible) throw new RoutingConfigError(403, "Only a node sharing a cluster membership may distribute routing configurations");
+    if (!eligible) throw new RoutingConfigError(403, "Only a twin or a node sharing a cluster membership may distribute routing configurations");
     const batch = eventBatchSchema.parse(request.body);
     const received = applyRoutingConfigEvents(db, batch.events, sender);
     broadcastRoutingMode();

@@ -7,7 +7,7 @@ import {
 import { projectMetadataEnvelopeSchema } from "../../cluster-project-metadata.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
 import { getSettings } from "../../settings.js";
-import { ClusterV2HttpError, selectiveSharingActive } from "../../cluster-v2-mode.js";
+import { ClusterV2HttpError } from "../../cluster-v2-errors.js";
 import { applyProjectMetadata, applyProjectResourcePolicy } from "../../store.js";
 import { sendError } from "../http-auth.js";
 import { app } from "../state.js";
@@ -25,7 +25,6 @@ function protocolStatus(error: Error): number | undefined {
 
 app.post("/api/cluster/v2/resources/project-metadata", (request: Request, response: Response, next: NextFunction) => {
   void (async () => {
-    if (!await selectiveSharingActive()) throw new ClusterV2HttpError(409, "Selective sharing is not active");
     if (response.locals.machineProtocol !== 2 || typeof response.locals.machineNodeId !== "string") {
       throw new ClusterV2HttpError(401, "Unauthorized");
     }
@@ -49,7 +48,6 @@ app.post("/api/cluster/v2/resources/project-metadata", (request: Request, respon
 
 app.post("/api/cluster/v2/resources/policy", (request: Request, response: Response, next: NextFunction) => {
   void (async () => {
-    if (!await selectiveSharingActive()) throw new ClusterV2HttpError(409, "Selective sharing is not active");
     if (response.locals.machineProtocol !== 2 || typeof response.locals.machineNodeId !== "string") {
       throw new ClusterV2HttpError(401, "Unauthorized");
     }

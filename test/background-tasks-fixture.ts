@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { startSupervisor } from "../scripts/joint-bob-supervisor.mjs";
 import { supervisorRequest } from "../scripts/supervisor-client.mjs";
-import { seedDevEnvironment, startDevNode, stopDevNode, type DevEnvironment, type SeededNode } from "./dev-nodes.js";
+import { seedDevEnvironment, startDevNode, stopDevNode, type DevEnvironment, type SeededNode, pairTwinNodes } from "./dev-nodes.js";
 
 interface Runtime {
   close(): Promise<void>;
@@ -66,6 +66,7 @@ export async function backgroundClusterFixture(extraEnv: (root: string) => Recor
     for (const node of nodes) runtimes.push(await supervisor(root, node));
     const env = extraEnv(root);
     for (const node of nodes) servers.push(await startDevNode(environment, node, env));
+    await pairTwinNodes(environment);
     return {
       root,
       environment,

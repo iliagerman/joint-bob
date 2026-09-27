@@ -9,7 +9,7 @@ import { z } from "zod";
 import { getClusterNode } from "../cluster.js";
 import { signClusterRequest } from "../cluster-protocol.js";
 import type { PeerEndpoint } from "../cluster-peer-endpoints.js";
-import { ClusterV2HttpError, selectiveSharingActive } from "../cluster-v2-mode.js";
+import { ClusterV2HttpError } from "../cluster-v2-errors.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { clearHarnessSessionCache, getHarness, harnessForSessionPath, listHarnessSessions } from "../harnesses.js";
 import { getProject } from "../store.js";
@@ -159,7 +159,6 @@ export function sharedTranscriptStatus(db:DatabaseSync,local:string,peer:string)
  return {pending,...(failure?{error:failure.error}:{})};
 }
 async function runSharedTranscripts():Promise<void>{
- if(!await selectiveSharingActive())return;
  const db=await clusterV2Database(),local=await getClusterNode();ensureSchema(db);
  for(const peer of replicationPeers(db,local.id))for(const projectId of sharedProjectIds(db,local.id,peer.nodeId))try{
   if(!await getProject(projectId))continue;

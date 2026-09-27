@@ -437,6 +437,18 @@ export function updateResourceSharing(
   });
 }
 
+/** A successor reissues policy for a resource it took over from a lost twin
+    (cluster-succession.ts), so every recipient learns the new owner's shares. */
+export function reissueResourcePolicy(db: DatabaseSync, local: string, kind: PolicyKind, id: string): void {
+  transaction(db, () => {
+    const existing = policyRow(db, kind, id);
+    if (!existing || existing.owner_node_id !== local) throw new Error("Only the owner reissues resource policy");
+    const generation = existing.generation + 1;
+    db.prepare("UPDATE cluster_v2_resource_policy SET generation=? WHERE kind=? AND resource_id=?").run(generation, kind, id);
+    emit(db, local, kind, id, generation, existing.deleted ? "delete" : "upsert");
+  });
+}
+
 export function deleteSharedResource(
   db: DatabaseSync, local: string, kind: PolicyKind, id: string, expected: number,
 ): ResourcePolicyState {

@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SignedIn } from "../dev-nodes.js";
+import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, type DevEnvironment, type SignedIn, pairTwinNodes } from "../dev-nodes.js";
 import type { BrowserSessionView } from "../../src/browser-types.js";
 
 const browserEnv = process.env.CHROME_PATH ? { JOINT_BOB_BROWSER_EXECUTABLE: process.env.CHROME_PATH } : {};
@@ -184,6 +184,7 @@ test("native browser machines preserve independent accounts and human pause thro
     assert.ok(address && typeof address !== "string");
     const environment = await seedDevEnvironment(root, 2);
     for (const node of environment.nodes) servers.push(await startDevNode(environment, node, browserEnv));
+    await pairTwinNodes(environment);
     flow = new Lifecycle(environment, await signIn(environment, environment.nodes[0]), `http://127.0.0.1:${address.port}`);
     accounts = await createAccounts(flow);
     t.diagnostic(`Native accounts created on A/B/B: ${JSON.stringify(accounts.map(({ id, profileId, nodeId }) => ({ id, profileId, nodeId })))}`);

@@ -13,7 +13,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import type { Browser } from "playwright-core";
 import { chromeExecutable, launchChrome } from "./launch-chrome.js";
-import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "../dev-nodes.js";
+import { api, pairTwinNodes, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "../dev-nodes.js";
 import type { BrowserSessionView } from "../../src/browser-types.js";
 
 // Real servers, real cluster calls, real Chrome, real viewer. No browser API stubs.
@@ -36,6 +36,7 @@ test("conversation browser runs independently of its agent node and stays pinned
     const environment=await seedDevEnvironment(root,2);const [a,b]=environment.nodes;
     servers.push(await startDevNode(environment,a,{JOINT_BOB_BROWSER_EXECUTABLE:'/browser-disabled-on-source'}));
     servers.push(await startDevNode(environment,b,{JOINT_BOB_BROWSER_EXECUTABLE:executablePath}));
+    await pairTwinNodes(environment);
     const auth=await signIn(environment,a);t.diagnostic('Paired nodes started');
     const configured = await api(a, auth, 'PUT', '/browser/config', { executorNodeId: b.nodeId });
     assert.equal(configured.status, 200, JSON.stringify(configured.body));
@@ -172,6 +173,7 @@ test("cross-node restriction stops queued remote commands and revoked grants red
     const [a, b] = environment.nodes;
     servers.push(await startDevNode(environment, a, { JOINT_BOB_BROWSER_EXECUTABLE: "/browser-disabled-on-source" }));
     servers.push(await startDevNode(environment, b, { JOINT_BOB_BROWSER_EXECUTABLE: executablePath }));
+    await pairTwinNodes(environment);
     const authA = await signIn(environment, a);
     const authB = await signIn(environment, b);
     await api(a, authA, "PUT", "/browser/config", { executorNodeId: b.nodeId });

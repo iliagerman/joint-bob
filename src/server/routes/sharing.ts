@@ -3,7 +3,7 @@ import { z, ZodError } from "zod";
 import { getClusterNode } from "../../cluster.js";
 import { ensureResourceSharingSchema, getResourcePolicyState, ResourceSharingError, updateResourceSharing } from "../../cluster-sharing.js";
 import { listResourceShares, listSharingClusterMembers, resourceOwner } from "../../cluster-sharing-policy.js";
-import { ClusterV2HttpError, selectiveSharingActive } from "../../cluster-v2-mode.js";
+import { ClusterV2HttpError } from "../../cluster-v2-errors.js";
 import { clusterV2Database } from "../../cluster-v2-store.js";
 import { canonicalProjectId, getProject } from "../../store.js";
 import { sendError } from "../http-auth.js";
@@ -24,7 +24,6 @@ function localOnly(response: Response): void {
 }
 async function requireActive(response: Response): Promise<void> {
   localOnly(response);
-  if (!await selectiveSharingActive()) throw new ClusterV2HttpError(409, "Selective sharing is not active");
 }
 function route(action: (request: Request, response: Response) => Promise<void>) {
   return (request: Request, response: Response, next: NextFunction): void => {

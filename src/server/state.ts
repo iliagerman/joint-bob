@@ -27,8 +27,6 @@ export const machineRoutes = new Set([
   "GET /cluster/projects/presence",
   "POST /cluster/cron",
   "POST /cluster/quick-notes/prepare",
-  "POST /cluster/routing-configs/events",
-  "GET /cluster/node",
   "POST /cluster/background-tasks",
   "POST /cluster/browser/status",
   "POST /cluster/browser/config",
@@ -38,13 +36,6 @@ export const machineRoutes = new Set([
   "POST /cluster/browser/monitor-manage",
   "POST /cluster/browser/monitor-read",
   "POST /cluster/browser/monitor-authorize",
-  "GET /cluster/local-inventory",
-  "POST /cluster/peers/accept",
-  "POST /cluster/membership/sync",
-  "POST /cluster/membership/leave",
-  "POST /cluster/projects/import",
-  "POST /cluster/projects/map",
-  "GET /cluster/filesystem/directories",
   "GET /cluster/project-file",
   "GET /cluster/project-file-resolution",
   "GET /cluster/project-file-content",
@@ -59,7 +50,6 @@ export const machineRoutes = new Set([
   "GET /cluster/git/commit-diff",
   "POST /cluster/git/ask",
   "POST /cluster/git/reviews/ask",
-  "POST /cluster/sync/share",
   "DELETE /cluster/sessions/delete",
   "POST /cluster/sessions/fork",
   "POST /cluster/sessions/by-the-way",
@@ -70,11 +60,6 @@ export const machineRoutes = new Set([
   "GET /cluster/sessions/ownership",
   "POST /cluster/sessions/ownership/apply",
   "POST /cluster/sessions/runtime-snapshot",
-  "POST /cluster/events",
-  "POST /cluster/github/events",
-  "POST /cluster/ntfy/services",
-  "POST /cluster/secrets/events",
-  "POST /cluster/push/events",
   "POST /cluster/tasks/eligibility",
   "POST /cluster/tasks/status",
   "POST /cluster/tasks/prepare",
@@ -107,4 +92,3 @@ export const idleSessionTimeoutMs = 30 * 60 * 1000;
 export const localWriteGraceMs = 15_000;
 export const watchClients = new Map<string, Set<WebSocket>>();
 export const updateContinuationPrompt = "A service update interrupted this turn. Inspect the transcript and working tree, continue unfinished work, and do not repeat completed side effects.";
-export const configuredTicketWorkspacePeers = new Set<string>();

@@ -38,8 +38,11 @@ if [ -z "${managed_binary}" ]; then
   extracted_binary="$(find "${extract_root}" -type f -name syncthing -perm -u+x -print -quit)"
   [ -n "${extracted_binary}" ] || { echo "Syncthing archive has no executable" >&2; exit 1; }
   mkdir -p "$(dirname "${BINARY}")"
-  cp "${extracted_binary}" "${BINARY}"
-  chmod 755 "${BINARY}"
+  # Rename into place: a running Syncthing keeps the old file, and Linux refuses to
+  # overwrite the binary of a running process.
+  cp "${extracted_binary}" "${BINARY}.new"
+  chmod 755 "${BINARY}.new"
+  mv -f "${BINARY}.new" "${BINARY}"
   managed_binary="${BINARY}"
 fi
 
@@ -56,6 +59,8 @@ Description=Joint Bob managed Syncthing
 After=network-online.target
 
 [Service]
+# Joint Bob pins the Syncthing version; a self-upgrade would make the next install reject it.
+Environment=STNOUPGRADE=1
 ExecStart=${managed_binary} serve --no-browser --no-restart
 Restart=on-failure
 RestartSec=5
@@ -73,7 +78,7 @@ UNIT
       cat > "${plist}" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict><key>Label</key><string>com.joint-bob.syncthing</string><key>ProgramArguments</key><array><string>${escaped_binary}</string><string>serve</string><string>--no-browser</string><string>--no-restart</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><true/></dict></plist>
+<plist version="1.0"><dict><key>Label</key><string>com.joint-bob.syncthing</string><key>ProgramArguments</key><array><string>${escaped_binary}</string><string>serve</string><string>--no-browser</string><string>--no-restart</string></array><key>EnvironmentVariables</key><dict><key>STNOUPGRADE</key><string>1</string></dict><key>RunAtLoad</key><true/><key>KeepAlive</key><true/></dict></plist>
 PLIST
       launchctl bootout "gui/$(id -u)/com.joint-bob.syncthing" >/dev/null 2>&1 || true
       launchctl bootstrap "gui/$(id -u)" "${plist}"

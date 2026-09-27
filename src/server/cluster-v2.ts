@@ -4,11 +4,13 @@ import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { getClusterNode } from "../cluster.js";
 import { clusterPublicKeyFingerprint, pinClusterPublicKey } from "../cluster-identity.js";
-import { applyMembershipSnapshot, ensureMembershipSchema, listMembershipDeliveries, acknowledgeMembershipDelivery, prepareMembershipJoin, redeemMembershipInvitation, type MembershipInvitation, type MembershipJoinRequest, type SignedMembershipSnapshot } from "../cluster-membership.js";
+import { applyMembershipSnapshot, ensureMembershipSchema, updateMembershipDescriptor, listMembershipDeliveries, acknowledgeMembershipDelivery, prepareMembershipJoin, redeemMembershipInvitation, type MembershipInvitation, type MembershipJoinRequest, type SignedMembershipSnapshot } from "../cluster-membership.js";
 import { ClusterProtocolError, signClusterRequest, verifyClusterRequest } from "../cluster-protocol.js";
-import { getSharingCluster, listSharingClusterMembers } from "../cluster-sharing-policy.js";
+import { getSharingCluster, listSharingClusterMembers, listSharingMemberships } from "../cluster-sharing-policy.js";
+import { listTwinUpdateTargets } from "../twin-updates.js";
+import { signedPeerPost } from "./replication-v2.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
-import { activateSelectiveSharing, assertSelectiveSharingCanActivate, ClusterV2HttpError, selectiveSharingActive } from "../cluster-v2-mode.js";
+import { ClusterV2HttpError } from "../cluster-v2-errors.js";
 import { clusterRequestRawBody, isClusterOriginUrl, sendError } from "./http-auth.js";
 import { listDifficultyClassifiers } from "../classifiers/registry.js";
 
@@ -132,14 +134,13 @@ async function executeJoinV2Membership(parsed: ReturnType<typeof parseV2Invitati
   let joinRequest: MembershipJoinRequest;
   if (prior) joinRequest = joinRequestSchema.parse(JSON.parse(prior.request));
   else {
-    await assertSelectiveSharingCanActivate();
     const local = await localMembershipDescriptor();
     db.exec("SAVEPOINT cluster_v2_prepare_join");
     try {
       joinRequest = prepareMembershipJoin(db, local, parsed.invitation, parsed.fingerprint, requestId, Date.now(), listDifficultyClassifiers().map(({ id }) => id));
       db.prepare("INSERT OR IGNORE INTO cluster_v2_membership_nodes VALUES(?,?,?,?,?,NULL)").run(joinRequest.clusterId, parsed.invitation.body.manager.nodeId, parsed.invitation.body.manager.name, parsed.invitation.body.manager.url, parsed.invitation.body.manager.publicKey);
       db.prepare("INSERT INTO cluster_v2_join_attempts VALUES(?,?,?,?,?)").run(requestId, joinRequest.invitationId, joinRequest.clusterId, hash, JSON.stringify(joinRequest));
-      activateSelectiveSharing(db); db.exec("RELEASE cluster_v2_prepare_join");
+      db.exec("RELEASE cluster_v2_prepare_join");
     } catch (error) { db.exec("ROLLBACK TO cluster_v2_prepare_join; RELEASE cluster_v2_prepare_join"); throw error; }
   }
   const result = await signedPost<{ snapshot: SignedMembershipSnapshot }>(db, joinRequest.member.nodeId, parsed.invitation.body.manager.nodeId, joinRequest.clusterId, "/api/cluster/v2/membership/redeem", { request: joinRequest, secret: parsed.secret });
@@ -170,7 +171,6 @@ export function mapV2Error(error: unknown, response: Response, next: NextFunctio
 
 export async function redeemV2Membership(request: Request, response: Response, next: NextFunction): Promise<void> {
   try {
-    if (!await selectiveSharingActive()) throw new ClusterV2HttpError(409, "Selective sharing is not active");
     const payload = redeemSchema.parse(request.body);
     const raw = clusterRequestRawBody(request);
     const local = await getClusterNode();
@@ -229,4 +229,20 @@ export function clusterManager(db: DatabaseSync, clusterId: string): string {
   const manager = getSharingCluster(db, clusterId).managerNodeId;
   if (!manager) throw new ClusterV2HttpError(409, "Cluster is closed");
   return manager;
+}
+
+/** Sends this node's current name and URL to every peer that stores it: each cluster
+    through its manager, which republishes the signed membership, and each twin directly. */
+export async function publishNodeDescriptor(): Promise<void> {
+  const db = await clusterV2Database(), local = await getClusterNode();
+  const descriptor = { name: local.name, url: local.url };
+  for (const membership of listSharingMemberships(db, local.id)) {
+    const manager = clusterManager(db, membership.clusterId);
+    if (manager === local.id) updateMembershipDescriptor(db, local.id, membership.clusterId, { nodeId: local.id, ...descriptor });
+    else await signedPost(db, local.id, manager, membership.clusterId, "/api/cluster/v2/membership/descriptor", { clusterId: membership.clusterId, ...descriptor });
+  }
+  for (const twin of listTwinUpdateTargets(db, local.id)) {
+    await signedPeerPost(twin, "/api/cluster/v2/twins/descriptor", { relationshipId: twin.relationshipId, ...descriptor });
+  }
+  await flushV2MembershipOutbox();
 }

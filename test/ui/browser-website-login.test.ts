@@ -13,7 +13,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { chromeExecutable } from "./launch-chrome.js";
 import type { BrowserSessionView } from "../../src/browser-types.js";
-import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "../dev-nodes.js";
+import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, pairTwinNodes } from "../dev-nodes.js";
 import { waitForAssertion } from "../async-assertion.js";
 
 const run = promisify(execFile);
@@ -80,6 +80,7 @@ test("origin-bound snapshot signs in on the designated browser node", { timeout:
     const [source, executor] = environment.nodes;
     servers.push(await startDevNode(environment, source, { JOINT_BOB_BROWSER_EXECUTABLE: "/invalid/source-browser" }));
     servers.push(await startDevNode(environment, executor, { JOINT_BOB_BROWSER_EXECUTABLE: executable }));
+    await pairTwinNodes(environment);
     const auth = await signIn(environment, source);
     const projectId = source.projects[0].id, conversationId = randomUUID();
     const fixturePort = (website.address() as AddressInfo).port;

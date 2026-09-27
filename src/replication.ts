@@ -4,7 +4,6 @@ import { promises as fs } from "node:fs";
 import { resolveDataDirectory } from "./data-directory.js";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { clusterProjectGrantFor } from "./cluster.js";
 import { applyConversationOwnershipEvent, ensureConversationOwnershipSchema } from "./conversation-ownership.js";
 import { applyCanvasShortcutEvent, ensureCanvasShortcutSchema } from "./canvas-shortcuts.js";
 import { applyConversationReviewEvent, ensureConversationReviewReplicaSchema } from "./conversation-reviews.js";
@@ -98,12 +97,6 @@ export function replicationEventProjectId(event: ReplicationEvent): string | und
   return typeof payload.projectId === "string" && payload.projectId ? payload.projectId : undefined;
 }
 
-function eventWithinGrant(db: DatabaseSync, event: ReplicationEvent, grant: string[]): boolean {
-  const projectId = replicationEventProjectId(event);
-  if (!projectId) return true;
-  return grant.includes(projectId) || grant.includes(resolveProjectAlias(db, projectId));
-}
-
 function selectiveEventsForPeer(db: DatabaseSync, peerId: string, at: string, filter: (event: ReplicationEvent) => boolean): ReplicationEvent[] {
   const selected: ReplicationEvent[] = [];
   const page = db.prepare(`SELECT o.rowid cursor, o.* FROM replication_outbox o
@@ -141,22 +134,10 @@ export async function pendingEventsForPeer(peerId:string,filter:(event:Replicati
   return {pending,...(error?{error}:{})};
 }
 
-export async function eventsForPeer(peerId: string, now = new Date(), filter?: (event: ReplicationEvent) => boolean): Promise<ReplicationEvent[]> {
-  const db = await replicationDatabase(); const at = now.toISOString();
-  if (filter) return selectiveEventsForPeer(db, peerId, at, filter);
-  db.prepare("INSERT OR IGNORE INTO replication_deliveries (event_id, peer_id, attempts, next_attempt_at, delivered_at, last_error) SELECT event_id, ?, 0, ?, NULL, NULL FROM replication_outbox").run(peerId, at);
-  const events = (db.prepare(`SELECT o.event_id, o.origin_node_id, o.entity_type, o.entity_key, o.operation, o.payload, o.created_at FROM replication_outbox o JOIN replication_deliveries d ON d.event_id = o.event_id WHERE d.peer_id = ? AND d.delivered_at IS NULL AND d.next_attempt_at <= ? ORDER BY o.created_at, o.event_id LIMIT 100`).all(peerId, at) as unknown as OutboxRow[]).map(eventFromRow);
-  // A granted peer never receives events outside its project selection. Blocked events are
-  // marked delivered so they drain instead of blocking the queue forever.
-  const grant = await clusterProjectGrantFor(peerId);
-  if (!grant) return events;
-  const allowed = events.filter((event) => eventWithinGrant(db, event, grant));
-  const blocked = events.filter((event) => !eventWithinGrant(db, event, grant)).map((event) => event.id);
-  if (blocked.length) {
-    const settle = db.prepare("UPDATE replication_deliveries SET delivered_at = COALESCE(delivered_at, ?), last_error = NULL WHERE peer_id = ? AND event_id = ?");
-    for (const id of blocked) settle.run(at, peerId, id);
-  }
-  return allowed;
+/** The next due events for one peer. `filter` is the sharing check: only events it
+    accepts are allocated a delivery row, so a peer never queues data it may not see. */
+export async function eventsForPeer(peerId: string, now: Date, filter: (event: ReplicationEvent) => boolean): Promise<ReplicationEvent[]> {
+  return selectiveEventsForPeer(await replicationDatabase(), peerId, now.toISOString(), filter);
 }
 export async function recordPeerReceipt(peerId: string, eventIds: string[]): Promise<void> { if (!eventIds.length) return; const db = await replicationDatabase(); db.exec("BEGIN IMMEDIATE"); try { const update = db.prepare("UPDATE replication_deliveries SET delivered_at = COALESCE(delivered_at, ?), last_error = NULL WHERE peer_id = ? AND event_id = ?"); for (const id of eventIds) update.run(new Date().toISOString(), peerId, id); db.exec("COMMIT"); } catch (error) { db.exec("ROLLBACK"); throw error; } }
 export async function recordPeerFailure(peerId: string, eventIds: string[], message: string, now = new Date()): Promise<void> { if (!eventIds.length) return; const db = await replicationDatabase(); db.exec("BEGIN IMMEDIATE"); try { const current = db.prepare("SELECT attempts FROM replication_deliveries WHERE peer_id = ? AND event_id = ? AND delivered_at IS NULL"); const update = db.prepare("UPDATE replication_deliveries SET attempts = ?, next_attempt_at = ?, last_error = ? WHERE peer_id = ? AND event_id = ? AND delivered_at IS NULL"); for (const id of eventIds) { const row = current.get(peerId, id) as { attempts: number } | undefined; if (!row) continue; const attempts = row.attempts + 1; update.run(attempts, new Date(now.getTime() + Math.min(300, 2 ** Math.min(attempts, 8)) * 1000).toISOString(), message, peerId, id); } db.exec("COMMIT"); } catch (error) { db.exec("ROLLBACK"); throw error; } }
@@ -245,8 +226,6 @@ function applyTaskEvent(db: DatabaseSync, event: ReplicationEvent, localTranscri
   const payload = taskPayload(event); const projectId = resolveProjectAlias(db, payload.projectId); const task = payload.task; const id = task?.id ?? event.entityKey.slice(payload.projectId.length + 1); const updatedAt = task?.updatedAt ?? payload.updatedAt!;
   const identity = db.prepare("SELECT project_id FROM tasks WHERE id=? UNION SELECT project_id FROM task_tombstones WHERE task_id=?").all(id,id) as unknown as Array<{project_id:string}>;
   if (identity.some(row => row.project_id !== projectId)) throw new Error("Task identity belongs to a different project");
-  const memberTombstones = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'cluster_member_tombstones'").get();
-  if (event.operation === "upsert" && memberTombstones && db.prepare("SELECT 1 FROM cluster_member_tombstones WHERE id = ?").get(task!.currentNodeId)) return true;
   const active = db.prepare("SELECT active_handoff_id FROM tasks WHERE project_id = ? AND id = ?").get(projectId, id) as { active_handoff_id: string | null } | undefined;
   const current = db.prepare("SELECT updated_at, origin_node_id FROM tasks WHERE project_id = ? AND id = ? UNION ALL SELECT updated_at, origin_node_id FROM task_tombstones WHERE project_id = ? AND task_id = ? ORDER BY updated_at DESC, origin_node_id DESC LIMIT 1").get(projectId, id, projectId, id) as { updated_at: string; origin_node_id: string } | undefined;
   if (active?.active_handoff_id) {
@@ -307,10 +286,7 @@ const REPLICATION_APPLIERS: Record<string, ReplicationApplier> = {
 
 export async function receiveReplicationBatch(batch: ReplicationBatch): Promise<string[]> {
   const db = await replicationDatabase();
-  // Read the local grant before the write transaction: it lives in the cluster store,
-  // and initialising that connection while holding this transaction's write lock deadlocks.
-  const localNode = (db.prepare("SELECT id FROM cluster_node WHERE singleton = 1").get() as { id: string } | undefined)?.id;
-  const localGrant = localNode ? await clusterProjectGrantFor(localNode) : undefined;
+  const localNode = (db.prepare("SELECT id FROM cluster_node WHERE singleton = 1").get() as { id: string }).id;
   const localTranscripts = new Map<string, LocalTranscript>();
   if (batch.events.some((event) => event.entityType === "task" && event.operation === "upsert")) {
     for (const adapter of listDiscoveredHarnesses()) {
@@ -327,11 +303,6 @@ export async function receiveReplicationBatch(batch: ReplicationBatch): Promise<
     const received: string[] = [];
     for (const event of batch.events) {
       if (!insert.run(event.id, event.originNodeId, new Date().toISOString()).changes) {
-        received.push(event.id);
-        continue;
-      }
-      if (localGrant && !eventWithinGrant(db, event, localGrant)) {
-        remove.run(event.id);
         received.push(event.id);
         continue;
       }

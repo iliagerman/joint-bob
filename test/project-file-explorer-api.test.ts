@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { type ChildProcess } from "node:child_process";
 import test from "node:test";
+import { api, pairTwinNodes, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "./dev-nodes.js";
+import { signedNodeRequest } from "./signed-node-request.js";
 
 function cookie(response: Response): string {
   const value = response.headers.get("set-cookie");
@@ -43,14 +46,6 @@ test("project files can be listed, deleted, and copied between folders", async (
     await writeFile(path.join(projectPath, "readme.md"), "# hello\n");
     await writeFile(path.join(projectPath, "notes.txt"), "keep\n");
     await writeFile(path.join(projectPath, "docs", "guide.md"), "guide\n");
-
-    const { getClusterMachineToken } = await import("../src/cluster.ts");
-    const machineToken = await getClusterMachineToken();
-    const clusterFilesUrl = new URL(`${baseUrl}/api/cluster/project-files`);
-    clusterFilesUrl.searchParams.set("projectId", project.id);
-    const clusterListed = await fetch(clusterFilesUrl, { headers: { Authorization: `Bearer ${machineToken}` } });
-    assert.equal(clusterListed.status, 200);
-    assert.deepEqual((await clusterListed.json() as { entries: Array<{ name: string }> }).entries.map((entry) => entry.name), ["docs", "notes.txt", "readme.md"]);
 
     const filesUrl = (dir?: string): string => {
       const url = new URL(`${baseUrl}/api/projects/${project.id}/files`);
@@ -121,6 +116,31 @@ test("project files can be listed, deleted, and copied between folders", async (
     if (previousDataDir === undefined) delete process.env.PI_WEB_DATA_DIR; else process.env.PI_WEB_DATA_DIR = previousDataDir;
     if (previousUsername === undefined) delete process.env.MASTER_BOB_ADMIN_USERNAME; else process.env.MASTER_BOB_ADMIN_USERNAME = previousUsername;
     if (previousPassword === undefined) delete process.env.MASTER_BOB_INITIAL_PASSWORD; else process.env.MASTER_BOB_INITIAL_PASSWORD = previousPassword;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a twin lists project files through a signed runtime request", { timeout: 150_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-file-explorer-twin-"));
+  const servers: ChildProcess[] = [];
+  try {
+    const environment = await seedDevEnvironment(root, 2);
+    const [a, b] = environment.nodes;
+    for (const node of environment.nodes) servers.push(await startDevNode(environment, node));
+    await pairTwinNodes(environment);
+    const project = a.projects[0];
+    await writeFile(path.join(project.path, "twin-visible.txt"), "listed for the twin\n");
+    const target = `/api/cluster/v2/runtime/project-files?projectId=${encodeURIComponent(project.id)}`;
+    assert.equal((await fetch(new URL(target, a.url))).status, 401, "an unsigned machine request is refused");
+    assert.equal((await fetch(new URL(target, a.url), { headers: { Authorization: "Bearer legacy-machine-token" } })).status, 401, "bearer machine tokens are gone");
+    const remote = await signedNodeRequest(environment, b, a, "GET", target);
+    assert.equal(remote.status, 200);
+    const remoteNames = (await remote.json() as { entries: Array<{ name: string }> }).entries.map((entry) => entry.name);
+    assert.ok(remoteNames.includes("twin-visible.txt"), JSON.stringify(remoteNames));
+    const local = await api<{ entries: Array<{ name: string }> }>(a, await signIn(environment, a), "GET", `/projects/${project.id}/files`);
+    assert.deepEqual(remoteNames, local.body.entries.map((entry) => entry.name), "the twin sees the owner's listing");
+  } finally {
+    await Promise.all(servers.map(stopDevNode));
     await rm(root, { recursive: true, force: true });
   }
 });

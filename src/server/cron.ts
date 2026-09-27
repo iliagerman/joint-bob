@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import WebSocket from "ws";
-import { getClusterMachineToken, getClusterNode } from "../cluster.js";
-import { getRuntimePeer as getClusterPeer, runtimeFetch as fetch, runtimeSocketHeaders } from "./runtime-peers.js";
+import { getClusterNode } from "../cluster.js";
+import { getRuntimePeer, runtimeFetch, runtimeSocketHeaders } from "./runtime-peers.js";
 import { getConversationOwnership } from "../conversation-ownership.js";
 import { scheduledPromptText } from "../scheduled-prompt.js";
 import { ensureConversationRecord, getConversationRecord, markCronConversation } from "../conversation-records.js";
@@ -42,9 +42,9 @@ async function prepareConversation(task: CronTask): Promise<string> {
     const ownership = await getConversationOwnership(task.engine, task.sessionId);
     let ready = await cronConversationReady(project.id, task.sessionId, task.engine);
     if (ownership && ownership.ownerNodeId !== local.id) {
-      const peer = await getClusterPeer(ownership.ownerNodeId);
+      const peer = await getRuntimePeer(ownership.ownerNodeId);
       if (!peer) throw new Error("Conversation owner is unavailable");
-      const reply = await fetch(`${peer.url}/api/cluster/cron`, { method: "POST", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" }, body: JSON.stringify({ action: "ready", projectId: project.id, sessionId: task.sessionId, engine: task.engine }), signal: AbortSignal.timeout(5000) });
+      const reply = await runtimeFetch(`${peer.url}/api/cluster/cron`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "ready", projectId: project.id, sessionId: task.sessionId, engine: task.engine }), signal: AbortSignal.timeout(5000) });
       const body = await reply.json() as { ready: boolean; error?: string };
       if (!reply.ok) throw new Error(body.error || "Cannot verify conversation owner");
       ready = ready && body.ready;
@@ -61,10 +61,9 @@ export async function queuedCronPrompt(task: CronTask, run: CronRun, sessionId: 
   if (!address || typeof address === "string") throw new Error("Scheduled executor server is not listening");
   const url = new URL(`ws://127.0.0.1:${address.port}/ws`);
   for (const [key, value] of Object.entries({ projectId: task.projectId, sessionId, sessionPath: `draft:${task.engine}:${sessionId}`, nodeSession: "1" })) url.searchParams.set(key, value);
-  const token = await getClusterMachineToken();
   const record = await getConversationRecord(task.projectId, task.engine, sessionId);
   const queueKey = `${task.projectId}:${record!.conversationId ?? sessionId}`;
-  const headers=await runtimeSocketHeaders((await getClusterNode()).id,url,token);
+  const headers=await runtimeSocketHeaders((await getClusterNode()).id,url);
   await new Promise<void>((resolve, reject) => {
     const socket = new WebSocket(url, { headers });
     const reasoning = task.reasoning ?? task.model?.reasoning;

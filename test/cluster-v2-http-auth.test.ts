@@ -8,7 +8,7 @@ import { getOrCreateClusterIdentity, pinClusterPublicKey } from "../src/cluster-
 import { signClusterRequest } from "../src/cluster-protocol.js";
 import { clusterV2Database } from "../src/cluster-v2-store.js";
 import { authenticate, createAdministrator, sessionCookieName } from "../src/auth.js";
-import { getClusterMachineToken, getClusterNode } from "../src/cluster.js";
+import { getClusterNode } from "../src/cluster.js";
 import { app, server } from "../src/server.js";
 
 const senderId = randomUUID();
@@ -89,8 +89,7 @@ test("v2 authentication cannot be bypassed by Express route casing", async () =>
   assert.equal((await send(mixedCaseTarget, "POST", body, undefined, sessionHeaders)).status, 401);
   assert.equal(probeInvocations, initialInvocations);
 
-  const legacyBearer = `Bearer ${await getClusterMachineToken()}`;
-  assert.equal((await send(mixedCaseTarget, "POST", body, legacyBearer)).status, 401);
+  assert.equal((await send(mixedCaseTarget, "POST", body, "Bearer synthetic-machine-token")).status, 401, "bearer machine tokens are not a v2 credential");
   assert.equal(probeInvocations, initialInvocations);
 
   const mixedCaseAuthorization = signClusterRequest(senderDatabase, senderId, recipientId, "POST", mixedCaseTarget, body);

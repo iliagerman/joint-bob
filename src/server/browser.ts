@@ -2,8 +2,8 @@ import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import WebSocket from "ws";
 import { z } from "zod";
-import { getClusterNode, getClusterMachineToken } from "../cluster.js";
-import { getRuntimePeer as getClusterPeer, listRuntimePeers as listClusterPeers, runtimeFetch as fetch, runtimeSocketHeaders, trackRuntimeSocket } from "./runtime-peers.js";
+import { getClusterNode } from "../cluster.js";
+import { getRuntimePeer, listRuntimePeers, runtimeFetch, runtimeSocketHeaders, trackRuntimeSocket } from "./runtime-peers.js";
 import { applyBrowserConfiguration, readBrowserConfiguration, browserConfigurationSchema, applyBrowserPreference, readBrowserPreference, browserPreferenceSchema } from "../browser-configuration.js";
 import { browserCapability, BrowserRuntime } from "../browser-runtime.js";
 import { browserCommandSchema, browserStartSchema, browserIdentitySchema, browserProfileGrantInputSchema, type BrowserActor, type BrowserProfile, type BrowserSessionView } from "../browser-types.js";
@@ -24,7 +24,7 @@ export async function browserStatus(nodeId?: string) {
   if (nodeId && idSchema.parse(nodeId) !== (await getClusterNode()).id) return (await peerRequest(nodeId, "status", {}, 5000)).json();
   const own = await localBrowserStatus();
   const nodes = [{ ...own.node, ...own.capability, reachable: true, runningCount: own.runningCount }];
-  nodes.push(...await Promise.all((await listClusterPeers()).map(async peer => {
+  nodes.push(...await Promise.all((await listRuntimePeers()).map(async peer => {
     try {
       const status = await (await peerRequest(peer.id, "status", {}, 5000)).json() as Awaited<ReturnType<typeof localBrowserStatus>>;
       applyBrowserConfiguration(browserConfigurationSchema.parse(status.config));
@@ -37,13 +37,13 @@ export async function browserStatus(nodeId?: string) {
 }
 async function knownNode(nodeId: string): Promise<void> {
   idSchema.parse(nodeId);
-  if (nodeId !== (await getClusterNode()).id && !(await getClusterPeer(nodeId))) throw new BrowserRequestError(503, "Browser node is no longer paired");
+  if (nodeId !== (await getClusterNode()).id && !(await getRuntimePeer(nodeId))) throw new BrowserRequestError(503, "Browser node is no longer paired");
 }
 export async function configureBrowserExecutor(executorNodeId: string | null) {
   if (executorNodeId) await knownNode(executorNodeId);
   await browserStatus();
   applyBrowserConfiguration({ executorNodeId, originNodeId: (await getClusterNode()).id, updatedAt: nextVersion(readBrowserConfiguration().updatedAt) });
-  await Promise.all((await listClusterPeers()).map(async peer => {
+  await Promise.all((await listRuntimePeers()).map(async peer => {
     try { await peerRequest(peer.id, "config", readBrowserConfiguration(), 5000); }
     catch (error) { console.warn(`Browser configuration sync to ${peer.id} failed`, error); }
   }));
@@ -78,19 +78,19 @@ export async function browserPreferences(input: z.infer<typeof browserIdentitySc
   return { nodeId: preference?.nodeId ?? null, effectiveNodeId: preference?.nodeId ?? readBrowserConfiguration().executorNodeId };
 }
 async function sharedBrowserPeers(projectId?: string) {
-  const peers = await listClusterPeers();
+  const peers = await listRuntimePeers();
   if (!projectId) return peers;
   return (await Promise.all(peers.map(async peer => await clusterPeerMayAccessProject(peer.id, projectId) ? peer : null))).filter(peer => peer !== null);
 }
 
 // Relay browser control only. Website network traffic remains executor-local.
 async function peerRequest(peerId: string, route: string, body: unknown, timeout = 60000): Promise<Response> {
-  const peer = await getClusterPeer(peerId);
+  const peer = await getRuntimePeer(peerId);
   if (!peer) throw new BrowserRequestError(503, "Browser node is no longer paired");
   let response: Response;
   try {
-    response = await fetch(`${peer.url}/api/cluster/browser/${route}`, {
-      method: "POST", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
+    response = await runtimeFetch(`${peer.url}/api/cluster/browser/${route}`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body), signal: AbortSignal.timeout(timeout),
     });
   } catch { throw new BrowserRequestError(503, "Browser node is unreachable. Its browser is not moved to another node."); }
@@ -392,7 +392,7 @@ export async function browserSessionOwner(id: string, actor: BrowserActor, ident
   const local = await getClusterNode();
   try { await localBrowserOperation({ operation: "get", args: { id } }, actor); owners.push(local.id); }
   catch (error) { if (!(error instanceof Error) || error.message !== "Browser session not found") throw error; }
-  await Promise.all((await listClusterPeers()).map(async peer => {
+  await Promise.all((await listRuntimePeers()).map(async peer => {
     try {
       await (await peerRequest(peer.id, "operation", { operation: "get", args: { id }, actor, identity }, 5000)).json();
       owners.push(peer.id);
@@ -430,11 +430,11 @@ export async function attachBrowserViewer(socket: WebSocket, url: URL, actor: Br
     }
     const nodeId = idSchema.optional().parse(url.searchParams.get("nodeId") ?? undefined) ?? await browserSessionOwner(id, actor);
     if (nodeId === (await getClusterNode()).id) { await browserRuntime().attachViewer(id, socket, actor, false); return; }
-    const peer = await getClusterPeer(nodeId);
+    const peer = await getRuntimePeer(nodeId);
     if (!peer) throw Error("Browser node unavailable");
     const remote = new URL("/ws", peer.url); remote.protocol = remote.protocol === "https:" ? "wss:" : "ws:";
     remote.search = new URLSearchParams({ mode: "browser", browserSessionId: id, controllerId: actor.kind === "human" ? actor.id : "agent" }).toString();
-    const upstream = new WebSocket(remote, { headers: await runtimeSocketHeaders(peer.id,remote,await getClusterMachineToken()), handshakeTimeout: 10000, maxPayload: 32 * 1024 * 1024 });
+    const upstream = new WebSocket(remote, { headers: await runtimeSocketHeaders(peer.id,remote), handshakeTimeout: 10000, maxPayload: 32 * 1024 * 1024 });
     const queued: Buffer[] = []; let queuedBytes = 0;
     socket.on("message", data => {
       const buffer = Buffer.from(data as Buffer);

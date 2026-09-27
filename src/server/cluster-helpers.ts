@@ -2,26 +2,20 @@ import { lstat, realpath, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
-import type { NextFunction, Request, Response } from "express";
-import { type ClusterPeer, clusterProjectGrantFor, getClusterMachineToken, getClusterNode, listClusterPeers, markClusterPeerSeen } from "../cluster.js";
+import { type ClusterPeer, getClusterNode } from "../cluster.js";
 import { listConversationRecords } from "../conversation-records.js";
 import type { ConversationEngine } from "../conversation-ownership.js";
-import { getHarness, getHarnessRuntime, harnessForSessionPath, harnessSyncFolderForSessionPath } from "../harnesses.js";
-import { managedProjectPath } from "../managed-home.js";
+import { getHarness, getHarnessRuntime, harnessForSessionPath } from "../harnesses.js";
 import { resolveLocalSessionPath } from "../session-paths.js";
 import { getSettings } from "../settings.js";
-import { canonicalProjectId, getProject, importProject, listProjects, listWorkspaces, projectAliasIds, registerProjectAliases } from "../store.js";
-import { assertSyncthingFolderReady, ensureSyncthingDevice, ensureSyncthingFolder, syncthingDeviceId, syncthingFolderStatuses, syncthingPathForFolderId } from "../syncthing.js";
-import { assertTaskWorkspaceReady, TaskWorkspaceError, taskWorkspaceKey, projectTicketSyncFolderId, TICKET_WORKSPACE_FOLDER_ID, TICKET_WORKSPACE_FOLDER_LABEL } from "../task-workspaces.js";
+import { canonicalProjectId, getProject, listProjects, listWorkspaces } from "../store.js";
+import { assertSyncthingFolderReady, syncthingFolderStatuses } from "../syncthing.js";
+import { assertTaskWorkspaceReady, TaskWorkspaceError, taskWorkspaceKey, projectTicketSyncFolderId, TICKET_WORKSPACE_FOLDER_LABEL } from "../task-workspaces.js";
 import { listTasks } from "../tasks.js";
 import type { ProjectRecord, ProjectSyncStatus, TaskRecord } from "../types.js";
 import { validateTaskRepository } from "../worktrees.js";
-import { sessionWatcher } from "./chat.js";
-import { sendError } from "./http-auth.js";
-import { relocateProjectWorkspace } from "./projects.js";
-import { flags } from "./state.js";
 import { runtimeFetch } from "./runtime-peers.js";
-import { selectiveSharingActive } from "../cluster-v2-mode.js";
+import { recordSignedPeerSeen } from "../cluster-peer-endpoints.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
 import { mayShareProject } from "./sharing-files.js";
 import { assertSharedTranscriptReady } from './shared-transcripts.js';
@@ -33,48 +27,15 @@ interface PeerInventory {
   projects: Array<{ project: ProjectRecord; aliases?: string[] }>;
 }
 
-/** May the authenticated machine peer see this project? A peer without a grant row is a
-    legacy pairing and stays unrestricted; a granted peer sees exactly its invitation's
-    selection, matched through aliases because each node may know the project under a
-    different id. */
-export async function clusterPeerMayAccessProject(machineNodeId: string, projectId: string, grant?: string[]): Promise<boolean> {
-  if(await selectiveSharingActive()){
-    const id=await canonicalProjectId(projectId);
-    return Boolean(id&&mayShareProject(await clusterV2Database(),(await getClusterNode()).id,machineNodeId,id));
-  }
-  const selection = grant ?? await clusterProjectGrantFor(machineNodeId);
-  if (!selection) return true;
-  if (selection.includes(projectId)) return true;
-  const canonical = await canonicalProjectId(projectId);
-  if (canonical && selection.includes(canonical)) return true;
-  const aliases = canonical ? await projectAliasIds(canonical) : [];
-  return aliases.some((alias) => selection.includes(alias));
+/** May the authenticated machine peer see this project? Only when the project is
+    shared with it through a common cluster, or it is a twin of the owner. */
+export async function clusterPeerMayAccessProject(machineNodeId: string, projectId: string): Promise<boolean> {
+  const id = await canonicalProjectId(projectId);
+  return Boolean(id && mayShareProject(await clusterV2Database(), (await getClusterNode()).id, machineNodeId, id));
 }
 
-/** Machine-route gate: any cluster machine call that names a project is refused unless the
-    calling peer's grant covers it. Calls that do not name a project pass through; their own
-    handlers decide. Secret traffic never names a project, so it is unaffected by design. */
-export async function machineProjectAccessGuard(request: Request, response: Response, next: NextFunction): Promise<void> {
-  try {
-    if (!response.locals.machineAuth) { next(); return; }
-    const machineNodeId = response.locals.machineNodeId as string;
-    // Callers on older builds present the receiver's own token; treat them as legacy.
-    if (machineNodeId === (await getClusterNode()).id) { next(); return; }
-    const grant = await clusterProjectGrantFor(machineNodeId);
-    if (!grant) { next(); return; }
-    const candidate = typeof request.query.projectId === "string" ? request.query.projectId
-      : (request.body as { projectId?: unknown } | undefined)?.projectId;
-    if (typeof candidate !== "string" || !candidate) { next(); return; }
-    if (await clusterPeerMayAccessProject(machineNodeId, candidate, grant)) { next(); return; }
-    sendError(response, 403, "Project is not shared with this node");
-  } catch (error) {
-    next(error);
-  }
-}
-
-export function publicClusterPeer(peer: ClusterPeer): Omit<ClusterPeer, "token"> & { tokenConfigured: boolean; online: boolean } {
-  const { token, ...publicPeer } = peer;
-  return { ...publicPeer, tokenConfigured: Boolean(token || peer.signedAuthentication), online: Boolean(peer.lastSeenAt && Date.now() - Date.parse(peer.lastSeenAt) <= 90_000) };
+export function publicClusterPeer(peer: ClusterPeer): ClusterPeer & { online: boolean } {
+  return { ...peer, online: Boolean(peer.lastSeenAt && Date.now() - Date.parse(peer.lastSeenAt) <= 90_000) };
 }
 
 async function runtimeAvailable(engine: TaskRecord["engine"]): Promise<string[]> {
@@ -83,7 +44,7 @@ async function runtimeAvailable(engine: TaskRecord["engine"]): Promise<string[]>
 
 export async function abortPeerTaskHandoff(peer: ClusterPeer, handoffId: string): Promise<boolean> {
   try {
-    const response = await runtimeFetch(`${peer.url}/api/cluster/tasks/abort`, { method: "POST", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" }, body: JSON.stringify({ handoffId }), signal: AbortSignal.timeout(30_000) });
+    const response = await runtimeFetch(`${peer.url}/api/cluster/tasks/abort`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ handoffId }), signal: AbortSignal.timeout(30_000) });
     if (response.ok) return true;
     console.warn(`Handoff abort failed: ${response.status}`);
   } catch (error) {
@@ -99,8 +60,7 @@ async function assertTaskSessionReady(projectId:string, task:TaskRecord, syncSta
   if (!adapter.paths.transcriptFile) throw new Error(`${adapter.label} conversation is not synchronized on this node`);
   try {
     if (!syncStatusChecked) {
-      if(await selectiveSharingActive())await assertSharedTranscriptReady(projectId,sessionPath,task.currentNodeId);
-      else await assertSyncthingFolderReady(harnessSyncFolderForSessionPath(sessionPath).id, false);
+      await assertSharedTranscriptReady(projectId,sessionPath,task.currentNodeId);
     }
     const info = await lstat(adapter.paths.transcriptFile(session.path));
     if (!info.isFile() || info.isSymbolicLink()) throw new Error("Conversation is not a regular file");
@@ -111,7 +71,7 @@ async function assertTaskSessionReady(projectId:string, task:TaskRecord, syncSta
 
 export async function assertTaskFilesReady(project: ProjectRecord, task: TaskRecord, syncStatusChecked = false): Promise<void> {
   if (task.worktreePath && !task.worktreeBranch) {
-    if (!syncStatusChecked) await assertSyncthingFolderReady(await selectiveSharingActive()?projectTicketSyncFolderId(project.id):TICKET_WORKSPACE_FOLDER_ID);
+    if (!syncStatusChecked) await assertSyncthingFolderReady(projectTicketSyncFolderId(project.id));
     await assertTaskWorkspaceReady(taskWorkspaceKey(task.worktreePath, task.id), task.id);
   } else if (project.syncFolderId && !syncStatusChecked) await assertSyncthingFolderReady(project.syncFolderId);
   if (task.worktreeBranch) await validateTaskRepository(project.path);
@@ -156,17 +116,12 @@ export const peerTaskEligibilitySchema = z.object({
 
 async function taskSyncStatuses(project: ProjectRecord, task: TaskRecord): Promise<TaskSyncStatus[]> {
   const targets: Array<{ id: string; label: string }> = [];
-  const selective=await selectiveSharingActive();
-  if (task.worktreePath && !task.worktreeBranch) targets.push({ id: selective?projectTicketSyncFolderId(project.id):TICKET_WORKSPACE_FOLDER_ID, label: TICKET_WORKSPACE_FOLDER_LABEL });
+  if (task.worktreePath && !task.worktreeBranch) targets.push({ id: projectTicketSyncFolderId(project.id), label: TICKET_WORKSPACE_FOLDER_LABEL });
   else if (project.syncFolderId) targets.push({ id: project.syncFolderId, label: project.name });
-  if (task.sessionPath&&!selective) {
-    const folder = harnessSyncFolderForSessionPath(task.sessionPath);
-    targets.push({ id: folder.id, label: folder.label });
-  }
   const unique = targets.filter((target, index) => targets.findIndex(({ id }) => id === target.id) === index);
   const statuses = await syncthingFolderStatuses(unique.map((target) => target.id));
   const result=unique.map((target) => ({ label: target.label, ...statuses[target.id] }));
-  if(task.sessionPath&&selective){
+  if(task.sessionPath){
     try{await assertSharedTranscriptReady(project.id,task.sessionPath,task.currentNodeId);result.push({label:'Conversation transcript',state:'synced',remainingFiles:0,remainingBytes:0});}
     catch(error){result.push({label:'Conversation transcript',state:'error',remainingFiles:1,remainingBytes:0,message:error instanceof Error?error.message:'Transcript unavailable'});}
   }
@@ -209,133 +164,26 @@ export async function peerTaskEligibilityEntry(peer: ClusterPeer, projectId: str
   try {
     const remote = await runtimeFetch(`${peer.url}/api/cluster/tasks/eligibility`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ projectId, task, source }),
       signal: AbortSignal.timeout(3_000),
     });
     if (!remote.ok) throw new Error(`Peer returned ${remote.status}`);
     const result = peerTaskEligibilitySchema.parse(await remote.json());
-    await markClusterPeerSeen(peer.id);
+    recordSignedPeerSeen(await clusterV2Database(), peer.id);
     return { node: { ...node, online: true }, ...result };
   } catch (error) {
     return { node: { ...node, online: false }, eligible: false, reasons: [error instanceof Error ? `Peer unreachable: ${error.message}` : "Peer unreachable"], syncStatuses: [], waitingForSync: false };
   }
 }
 
-export function projectWithLocalLocation(project: ProjectRecord, nodeId: string): ProjectRecord {
-  const locations = new Map((project.locations ?? []).map((location) => [location.nodeId, location]));
-  locations.set(nodeId, { nodeId, path: project.path });
-  return { ...project, locations: [...locations.values()].sort((left, right) => left.nodeId.localeCompare(right.nodeId)) };
-}
 
-export async function fetchPeerInventory(peer: ClusterPeer, timeoutMs = 10_000): Promise<PeerInventory> {
-  // Our own machine token identifies the caller, which is what lets the peer filter
-  // this inventory down to the projects our invitation granted us.
-  const response = await fetch(`${peer.url}/api/cluster/local-inventory`, {
-    headers: { Authorization: `Bearer ${await getClusterMachineToken()}` },
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  if (!response.ok) throw new Error(`Peer returned ${response.status}`);
-  const inventory = await response.json() as PeerInventory;
-  await markClusterPeerSeen(peer.id);
-  return inventory;
-}
-
-export type ProjectImportResult = {
-  imported: string[];
-  skipped: string[];
-  pending: Array<{ peerId: string; projectId: string; name: string; remotePath: string; syncFolderId?: string; suggestedPath: string }>;
-};
-
-export async function importProjectsFromPeer(peer: ClusterPeer, missingOnly = false): Promise<ProjectImportResult> {
-  const inventory = await fetchPeerInventory(peer);
-  const imported: string[] = [];
-  const skipped: string[] = [];
-  const localProjects = await listProjects();
-  const pending: ProjectImportResult["pending"] = [];
-  for (const entry of inventory.projects) {
-    const remoteProject = entry.project;
-    const localWorkspace = await localWorkspaceId(remoteProject.type);
-    const existing = await getProject(remoteProject.id) ?? localProjects.find((project) => remoteProject.syncFolderId !== undefined && project.syncFolderId === remoteProject.syncFolderId);
-    if (existing && missingOnly) {
-      skipped.push(remoteProject.name);
-      continue;
-    }
-    let localPath = existing?.path;
-    if (existing && existing.type !== localWorkspace) {
-      localPath = (await relocateProjectWorkspace(existing, localWorkspace)).path;
-    }
-    if (!localPath && remoteProject.syncFolderId) {
-      try {
-        localPath = await syncthingPathForFolderId(remoteProject.syncFolderId);
-      } catch {
-        localPath = undefined;
-      }
-    }
-    if (!existing && !localPath) {
-      localPath = managedProjectPath(getSettings().projects.homePath, localWorkspace, remoteProject.name);
-    }
-    if (!existing && !localPath) {
-      pending.push({
-        peerId: peer.id,
-        projectId: remoteProject.id,
-        name: remoteProject.name,
-        remotePath: remoteProject.path,
-        ...(remoteProject.syncFolderId ? { syncFolderId: remoteProject.syncFolderId } : {}),
-        suggestedPath: managedProjectPath(getSettings().projects.homePath, localWorkspace, remoteProject.name),
-      });
-      continue;
-    }
-    const importedProject = !existing && localPath
-      ? await mapProjectFromPeer(peer, inventory, entry, localPath)
-      : await importProject({ ...remoteProject, type: localWorkspace }, localPath, inventory.node.id);
-    await registerProjectAliases(importedProject.id, [remoteProject.id, ...(entry.aliases ?? [])]);
-    imported.push(remoteProject.name);
-  }
-  return { imported, skipped, pending };
-}
-
-export async function syncPairedProjects(peer: ClusterPeer, localNodeId: string): Promise<ProjectImportResult> {
-  const localImport = await importProjectsFromPeer(peer);
-  // The reverse import is best effort: a peer may still hold a credential this node rotated
-  // moments ago during membership merging, and the periodic project discovery reconciles
-  // anything this call misses. Failing the whole join for it would leave an established
-  // membership reporting an error.
-  const response = await fetch(`${peer.url}/api/cluster/projects/import`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ peerId: localNodeId }),
-    signal: AbortSignal.timeout(10_000),
-  }).catch((error) => {
-    console.warn(`Reverse project import to ${peer.id} failed`, error);
-    return undefined;
-  });
-  if (response && !response.ok) console.warn(`Reverse project import to ${peer.id} failed: ${peer.url} returned ${response.status}`);
-  return localImport;
-}
-
-export async function discoverMissingPeerProjects(): Promise<void> {
-  if (!flags.startupReady || flags.projectDiscoveryInProgress) return;
-  flags.projectDiscoveryInProgress = true;
-  try {
-    for (const peer of await listClusterPeers()) {
-      try {
-        await importProjectsFromPeer(peer, true);
-      } catch (error) {
-        console.warn(`Project discovery from ${peer.id} failed`, error);
-      }
-    }
-  } finally {
-    flags.projectDiscoveryInProgress = false;
-  }
-}
-
+/** A peer can carry a workspace this node never defined; fall back to a local one rather than inventing a folder. */
 export function requirePathInsideHome(candidate: string, homeDirectory: string): void {
   const relative = path.relative(homeDirectory, candidate);
   if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("Folder must be inside this node's home directory");
 }
 
-/** A peer can carry a workspace this node never defined; fall back to a local one rather than inventing a folder. */
 async function localWorkspaceId(candidate: string | undefined): Promise<string> {
   const workspaces = await listWorkspaces();
   if (candidate && workspaces.some((workspace) => workspace.id === candidate)) return candidate;
@@ -371,25 +219,3 @@ export async function mappedPathInsideHome(candidate: string): Promise<string> {
   return resolved;
 }
 
-export async function mapProjectFromPeer(peer: ClusterPeer, inventory: PeerInventory, entry: PeerInventory["projects"][number], requestedPath: string): Promise<ProjectRecord> {
-  const remoteProject = entry.project;
-  const localPath = await mappedPathInsideHome(requestedPath);
-  if (remoteProject.syncFolderId) {
-    if (inventory.syncDeviceId) await ensureSyncthingDevice(inventory.syncDeviceId, inventory.node.name);
-    await ensureSyncthingFolder(remoteProject.syncFolderId, remoteProject.name, localPath, inventory.syncDeviceId);
-    const localDeviceId = await syncthingDeviceId();
-    if (localDeviceId) {
-      const shareResponse = await fetch(`${peer.url}/api/cluster/sync/share`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ folderId: remoteProject.syncFolderId, deviceId: localDeviceId, deviceName: (await getClusterNode()).name }),
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!shareResponse.ok) throw new Error(`Peer Syncthing share failed: ${shareResponse.status}`);
-    }
-  }
-  const project = await importProject({ ...remoteProject, type: await localWorkspaceId(remoteProject.type) }, localPath, inventory.node.id);
-  await registerProjectAliases(project.id, [remoteProject.id, ...(entry.aliases ?? [])]);
-  sessionWatcher.ensureProject(project);
-  return project;
-}

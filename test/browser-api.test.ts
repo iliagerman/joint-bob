@@ -5,11 +5,11 @@ import path from "node:path";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { execFile, type ChildProcess } from "node:child_process";
+import { execFile, execFileSync, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import test, { before, after } from "node:test";
 import WebSocket from "ws";
-import { api, seedDevEnvironment, startDevNode, stopDevNode, signIn, type DevEnvironment, type SeededNode, type SignedIn } from "./dev-nodes.js";
+import { api, seedDevEnvironment, startDevNode, stopDevNode, signIn, type DevEnvironment, type SeededNode, type SignedIn, pairTwinNodes } from "./dev-nodes.js";
 
 let root: string, environment: DevEnvironment, logins: SignedIn[];
 const servers: ChildProcess[] = [];
@@ -17,9 +17,20 @@ before(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-browser-api-"));
   environment = await seedDevEnvironment(root, 2);
   for (const node of environment.nodes) servers.push(await startDevNode(environment, node, { JOINT_BOB_BROWSER_EXECUTABLE: "/nonexistent/browser-for-api-test" }));
+  await pairTwinNodes(environment);
   logins = await Promise.all(environment.nodes.map(node => signIn(environment, node)));
 }, { timeout: 120000 });
 after(async () => { await Promise.all(servers.map(stopDevNode)); if (root) await rm(root, { recursive: true, force: true }); });
+
+function signedSocketAuthorization(sender: SeededNode, recipient: SeededNode, target: string): string {
+  return execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+    import { DatabaseSync } from "node:sqlite";
+    import { signClusterRequest } from "./src/cluster-protocol.ts";
+    const db = new DatabaseSync(process.env.JOINT_BOB_DATA_DIR + "/node.db");
+    process.stdout.write(signClusterRequest(db, ${JSON.stringify(sender.nodeId)}, ${JSON.stringify(recipient.nodeId)}, "GET", ${JSON.stringify(target)}, Buffer.alloc(0)));
+    db.close();
+  `], { env: { ...process.env, HOME: environment.home, JOINT_BOB_DATA_DIR: sender.dataDir }, encoding: "utf8" });
+}
 
 async function seedProfile(node: SeededNode, label: string) {
   await promisify(execFile)(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `import { BrowserStore } from './src/browser-store.ts'; const store = new BrowserStore(); const profile = store.saveProfile(${JSON.stringify(node.projects[0].id)}, ${JSON.stringify(label)}, {cookies:[],origins:[]}); store.grantProfileAccess(profile.id, {scope:'project', projectId:profile.projectId}); store.setProfileCrossNode(profile.id, true); store.close();`], {
@@ -95,20 +106,25 @@ test("saved logins stay node-local; a viewer explicitly chooses its browser's no
 
 test("removed raw browser tunnels are refused for signed-in users and paired nodes", { timeout: 15000 }, async () => {
   const [a, b] = environment.nodes;
-  const token = (await api<{ token: string }>(a, logins[0], "GET", "/cluster/invite")).body.token;
   const fixture = createServer((_request, response) => response.end("local app"));
   fixture.listen(0, "127.0.0.1"); await once(fixture, "listening");
   const url = new URL("/ws", b.url); url.protocol = "ws:";
   url.search = new URLSearchParams({ mode: "browserTunnel", projectId: b.projects[0].id, host: "localhost", port: String((fixture.address() as AddressInfo).port) }).toString();
   try {
-    for (const headers of [{ Cookie: logins[1].cookie, Origin: b.url }, { Authorization: `Bearer ${token}` }]) {
+    const target = url.pathname + url.search;
+    // A signed-in user and a signed twin both authenticate, then the removed mode is refused; a bearer token never authenticates.
+    for (const [headers, expected] of [
+      [{ Cookie: logins[1].cookie, Origin: b.url }, "Unsupported socket mode"],
+      [{ Authorization: "Bearer legacy-machine-token" }, "Unauthorized"],
+      [{ Authorization: signedSocketAuthorization(a, b, target) }, "Unsupported socket mode"],
+    ] as const) {
       const socket = new WebSocket(url, { headers });
       try {
-        const code = await new Promise<number>((resolve, reject) => {
-          socket.once("close", resolve); socket.once("error", reject);
+        const closed = await new Promise<{ code: number; reason: string }>((resolve, reject) => {
+          socket.once("close", (code, reason) => resolve({ code, reason: reason.toString() })); socket.once("error", reject);
           socket.once("message", () => reject(new Error("Raw browser tunnel must not open")));
         });
-        assert.equal(code, 1008);
+        assert.deepEqual(closed, { code: 1008, reason: expected });
       } finally { socket.terminate(); }
     }
   } finally { fixture.closeAllConnections(); await new Promise<void>(resolve => fixture.close(() => resolve())); }

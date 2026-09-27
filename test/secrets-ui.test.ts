@@ -78,8 +78,9 @@ test("accounts attach at all three scopes and carry a replication toggle", async
   }
   assert.match(html, /data-testid="secret-account-replicate-toggle"/);
   assert.match(app, /secretAccountReplicateInput\.checked/);
-  assert.match(app, /api\("\/api\/secrets\/sync"/);
-  assert.match(html, /data-testid="secret-sync-dialog"/);
+  // Replicating accounts go to twins automatically; the manual "Sync to nodes" dialog is gone.
+  assert.doesNotMatch(app, /\/api\/secrets\/sync/);
+  assert.doesNotMatch(html, /data-testid="secret-sync-dialog"/);
 });
 
 test("the new-conversation dialog picks the accounts the conversation starts with", async () => {
@@ -119,12 +120,12 @@ test("saving a replicating account pushes it instead of stranding it", async () 
   const app = await appSource();
   const handler = /secretAccountForm\.addEventListener\("submit",[\s\S]*?\n\}\);/.exec(app)?.[0] ?? "";
   assert.ok(handler, "secret account submit handler is missing");
-  // The server pushes a replicating save to every paired node; the picker stays
-  // in Settings for retries and newly paired nodes.
+  // The server replicates a replicating save to every twin; there is no manual sync step.
   assert.match(handler, /saveSecretAccount/);
   assert.match(app, /const saved = await api\(/);
-  assert.match(app, /saved\.syncResults/);
-  assert.doesNotMatch(handler, /openSecretSyncDialog\(\)/);
+  assert.match(app, /toast\(payload\.replicate \? "Secret account saved\. Twins receive it automatically" : "Secret account saved"\)/);
+  assert.doesNotMatch(app, /syncResults/);
+  assert.doesNotMatch(app, /openSecretSyncDialog/);
 });
 
 test("the project secret picker can create a project-owned account and hides owned accounts elsewhere", async () => {

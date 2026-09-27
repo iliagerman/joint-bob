@@ -5,8 +5,8 @@ import { browserCheckerStore } from "../browser-checker-store.js";
 import { BrowserMonitorCheckError, BrowserMonitorScheduler } from "../browser-monitor-scheduler.js";
 import { monitorBindingSchema, monitorCheckpointSchema, monitorCheckResultSchema, monitorInputSchema, type MonitorCheckResult, type MonitorInput, type MonitorRecord } from "../browser-monitor-types.js";
 import { browserMonitorStore } from "../browser-monitors.js";
-import { getClusterMachineToken, getClusterNode } from "../cluster.js";
-import { getRuntimePeer as getClusterPeer, listRuntimePeers as listClusterPeers, runtimeFetch as fetch } from "./runtime-peers.js";
+import { getClusterNode } from "../cluster.js";
+import { getRuntimePeer, listRuntimePeers, runtimeFetch } from "./runtime-peers.js";
 import { getProject } from "../store.js";
 import { browserRuntime, BrowserRequestError } from "./browser.js";
 import { clusterPeerMayAccessProject } from "./cluster-helpers.js";
@@ -74,7 +74,7 @@ function checkerFor(monitor: Pick<MonitorInput, "projectId" | "checkerId" | "che
 
 async function knownNode(nodeId: string): Promise<void> {
   const local = await getClusterNode();
-  if (nodeId !== local.id && !(await getClusterPeer(nodeId))) throw new BrowserRequestError(404, "Browser node is not paired");
+  if (nodeId !== local.id && !(await getRuntimePeer(nodeId))) throw new BrowserRequestError(404, "Browser node is not paired");
 }
 
 async function previewMonitor(monitor: MonitorRecord): Promise<MonitorCheckResult> {
@@ -196,12 +196,12 @@ export async function routeMonitorRead(browserNodeId: string, reference: Browser
 
 const failureHealth = z.enum(["needs-login", "wrong-account", "target-missing", "incompatible", "browser-stopped", "paused-by-human", "unavailable", "error"]);
 async function peerRequest(nodeId: string, suffix: "monitor-manage" | "monitor-read" | "monitor-authorize", body: unknown, signal?: AbortSignal): Promise<Response> {
-  const peer = await getClusterPeer(nodeId);
+  const peer = await getRuntimePeer(nodeId);
   if (!peer) throw new BrowserRequestError(503, "Browser monitor node is unavailable; no fallback was selected");
   let response: Response;
   try {
     const timeout = AbortSignal.timeout(15_000);
-    response = await fetch(`${peer.url}/api/cluster/browser/${suffix}`, { method: "POST", headers: { Authorization: `Bearer ${await getClusterMachineToken()}`, "Content-Type": "application/json" }, body: JSON.stringify(body), signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
+    response = await runtimeFetch(`${peer.url}/api/cluster/browser/${suffix}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
   } catch { throw new BrowserRequestError(503, "Browser monitor node is unavailable; no fallback was selected"); }
   if (!response.ok) {
     const parsed = z.object({ error: z.string().min(1).max(2000), health: failureHealth.optional() }).strict().safeParse(await response.json());
@@ -223,7 +223,7 @@ export async function listBrowserMonitors(value: string): Promise<unknown> {
   const local = await getClusterNode();
   const own = await manageBrowserMonitor({ action: "list", projectId: project.id }, `${local.id}:system`) as { monitors: MonitorRecord[]; runtime: ReturnType<typeof browserMonitorRuntimeStatus> };
   const monitors = [...own.monitors], nodes = [{ nodeId: local.id, runtime: own.runtime }], unavailableNodes: Array<{ nodeId: string; reason: string }> = [];
-  const peers = await listClusterPeers();
+  const peers = await listRuntimePeers();
   for (const peer of peers) {
     if (!(await clusterPeerMayAccessProject(peer.id, project.id))) continue;
     try {

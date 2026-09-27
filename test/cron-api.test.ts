@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { ChildProcess } from "node:child_process";
-import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "./dev-nodes.js";
+import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode, pairTwinNodes } from "./dev-nodes.js";
 import type { CronTask } from "../src/cron.js";
 
 async function until(check: () => Promise<boolean>): Promise<void> {
@@ -118,6 +118,7 @@ test("cron API routes to execution owner, persists, runs fresh project conversat
     const [a, b] = environment.nodes;
     const log = path.join(root, "engine.log");
     for (const node of [a, b]) children.push(await startDevNode(environment, node, { JOINT_BOB_TEST_ENGINE_LOG: log }));
+    await pairTwinNodes(environment);
     const auth = await signIn(environment, a);
     const projectId = a.projects[0].id;
     const input = { projectId, name: "Scheduled report", prompt: "Give a report", engine: "claude", sessionId: null, ownerNodeId: b.nodeId, enabled: true, schedule: { frequency: "hourly", hour: 9, minute: (new Date().getUTCMinutes() + 30) % 60, weekday: 1, timezone: "UTC" } };
@@ -194,7 +195,7 @@ test("cron API routes to execution owner, persists, runs fresh project conversat
     dbB.close();
     const previousRunId = (await api<{ tasks: CronTask[] }>(b, authBInitial, "GET", `/projects/${projectId}/cron`)).body.tasks.find(task => task.id === conversation.body.task.id)!.lastRun!.id;
     const peerDb = openNodeDb(b.dataDir);
-    peerDb.prepare("UPDATE cluster_peers SET url = 'http://127.0.0.1:1'").run();
+    assert.ok(Number(peerDb.prepare("UPDATE cluster_v2_peer_endpoints SET url = 'http://127.0.0.1:1' WHERE node_id = ?").run(a.nodeId).changes) > 0, "node B must know node A's endpoint to make it unreachable");
     peerDb.close();
     makeDue(b.dataDir, conversation.body.task.id);
     await until(async () => {
@@ -203,7 +204,7 @@ test("cron API routes to execution owner, persists, runs fresh project conversat
       return run?.status === "succeeded" && run.id !== previousRunId;
     });
     const restorePeerDb = openNodeDb(b.dataDir);
-    restorePeerDb.prepare("UPDATE cluster_peers SET url = ? WHERE id = ?").run(a.url, a.nodeId);
+    restorePeerDb.prepare("UPDATE cluster_v2_peer_endpoints SET url = ? WHERE node_id = ?").run(new URL(a.url).origin, a.nodeId);
     restorePeerDb.close();
     const paused = await api<{ task: CronTask }>(a, auth, "POST", "/cron", { nodeId: b.nodeId, command: { action: "update", id, input: { ...input, enabled: false } } });
     assert.equal(paused.body.task.enabled, false);

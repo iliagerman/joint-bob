@@ -1,6 +1,6 @@
 import path from "node:path";
 import { z } from "zod";
-import { getClusterNode, listClusterPeers } from "../cluster.js";
+import { getClusterNode } from "../cluster.js";
 import { managedProjectRelocationPath } from "../managed-home.js";
 import { projectNameOverrides } from "../names.js";
 import { ProjectDirectoryImportError, relocateProjectDirectory } from "../project-directory-import.js";
@@ -104,23 +104,6 @@ export async function relocateProjectWorkspace(project: ProjectRecord, nextWorks
     if (rollbackFailures.length) throw new AggregateError([error, ...rollbackFailures], "Project relocation rollback failed");
     throw error;
   }
-}
-
-export async function notifyPeersOfProjectInventory(): Promise<void> {
-  const [local, peers] = await Promise.all([getClusterNode(), listClusterPeers()]);
-  await Promise.all(peers.map(async (peer) => {
-    try {
-      const response = await fetch(`${peer.url}/api/cluster/projects/import`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${peer.token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ peerId: local.id }),
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!response.ok) throw new Error(`Peer returned ${response.status}`);
-    } catch (error) {
-      console.warn(`Project inventory notification to ${peer.id} failed`, error);
-    }
-  }));
 }
 
 export const workspaceSchema = z.object({

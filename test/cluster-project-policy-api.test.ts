@@ -27,7 +27,7 @@ async function createProject(node: SeededNode, session: SignedIn, name: string, 
   return api<{ project: Project }>(node, session, "POST", "/projects", { name, path: projectPath, synced: false });
 }
 
-test("new selective projects atomically receive owner policy, auto-shares, and CAS semantics", async () => {
+test("new projects atomically receive owner policy, auto-shares, and CAS semantics", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-project-policy-"));
   const fixture = await startFixture(root);
   try {
@@ -36,9 +36,11 @@ test("new selective projects atomically receive owner policy, auto-shares, and C
     topology.exec("PRAGMA busy_timeout=5000");
     topology.prepare("INSERT INTO sharing_memberships(cluster_id,node_id,auto_share_projects,join_sequence) VALUES(?,?,0,2)").run(clusterId, randomUUID());
     topology.close();
-    const legacy = await api<{ error: string }>(fixture.node, fixture.session, "GET", `/sharing/project/${fixture.node.projects[0].id}`);
-    assert.equal(legacy.status, 409);
-    assert.equal(legacy.body.error, "Project ownership requires adoption");
+    const seeded = await api<SharingView>(fixture.node, fixture.session, "GET", `/sharing/project/${fixture.node.projects[0].id}`);
+    assert.equal(seeded.status, 200, "projects are registered for sharing when they are created");
+    assert.equal(seeded.body.ownerNodeId, fixture.node.nodeId);
+    assert.equal(seeded.body.generation, 1);
+    assert.deepEqual(seeded.body.shares, []);
 
     const privateCreated = await createProject(fixture.node, fixture.session, "Private new", path.join(root, "private"));
     assert.equal(privateCreated.status, 201);
@@ -66,7 +68,7 @@ test("new selective projects atomically receive owner policy, auto-shares, and C
   }
 });
 
-test("canonical aliases mutate one owner policy and bulk sharing excludes unadopted projects", async () => {
+test("canonical aliases mutate one owner policy and bulk sharing covers every registered project once", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-project-alias-"));
   const fixture = await startFixture(root);
   try {
@@ -83,10 +85,12 @@ test("canonical aliases mutate one owner policy and bulk sharing excludes unadop
     assert.equal(canonical.body.generation, 2);
     const bulk = await api<{ shared: number }>(fixture.node, fixture.session, "POST", `/clusters/${clusterId}/share-all-projects`, {});
     assert.equal(bulk.status, 200);
-    assert.equal(bulk.body.shared, 0);
+    assert.equal(bulk.body.shared, fixture.node.projects.length, "every seeded project is shared; the alias-shared project is not counted again");
     const repeat = await api<{ shared: number }>(fixture.node, fixture.session, "POST", `/clusters/${clusterId}/share-all-projects`, {});
     assert.equal(repeat.body.shared, 0);
-    assert.equal((await api(fixture.node, fixture.session, "GET", `/sharing/project/${fixture.node.projects[0].id}`)).status, 409);
+    const seeded = await api<SharingView>(fixture.node, fixture.session, "GET", `/sharing/project/${fixture.node.projects[0].id}`);
+    assert.equal(seeded.status, 200);
+    assert.deepEqual(seeded.body.shares, [{ clusterId, projectId: null }]);
   } finally {
     await stopDevNode(fixture.child);
     await rm(root, { recursive: true, force: true });

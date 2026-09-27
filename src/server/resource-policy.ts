@@ -8,7 +8,6 @@ import {
   resourcePolicyDeliveryIsCurrent, type SignedResourcePolicy,
 } from "../cluster-sharing.js";
 import { clusterV2Database } from "../cluster-v2-store.js";
-import { selectiveSharingActive } from "../cluster-v2-mode.js";
 
 const acknowledgementSchema = z.object({ operationId: z.string().uuid() }).strict();
 const target = "/api/cluster/v2/resources/policy";
@@ -25,7 +24,6 @@ function policyRequest(
 }
 
 export async function flushResourcePolicyDeliveries(): Promise<void> {
-  if (!await selectiveSharingActive()) return;
   const local = await getClusterNode();
   const db = await clusterV2Database();
   for (const delivery of listResourcePolicyDeliveries(db)) {

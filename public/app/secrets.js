@@ -289,17 +289,7 @@ async function saveSecretAccount() {
   const notify = onAccountSaved;
   elements.secretAccountDialog.close(); await loadSecretAccounts();
   if (notify) notify(saved.account);
-  // The server pushes a replicating save to every paired node; the Sync to nodes
-  // button in Settings stays for retries and newly paired nodes.
-  if (!payload.replicate) {
-    toast("Secret account saved");
-    return;
-  }
-  const results = saved.syncResults ?? [];
-  const failed = results.filter((result) => result.error);
-  if (!results.length) toast("Saved. No paired nodes yet — pair one in the Cluster tab, then use Sync to nodes");
-  else if (failed.length) toast(`Synced ${results.length - failed.length} of ${results.length} nodes; ${failed[0].name}: ${failed[0].error}`, 8000);
-  else toast(`Saved and synced to ${results.length} ${results.length === 1 ? "node" : "nodes"}`);
+  toast(payload.replicate ? "Secret account saved. Twins receive it automatically" : "Secret account saved");
 }
 
 elements.secretAccountForm.addEventListener("submit", (event) => {

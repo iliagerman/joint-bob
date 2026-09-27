@@ -167,6 +167,15 @@ function verifiedCertificate(value: unknown): TwinCertificate {
   if (!verifyClusterMessage(certificate.body.inviter.publicKey, "twin-relationship", relationshipPayload(certificate.body), certificate.inviterSignature)) throw new Error("Twin certificate signature is invalid");
   return certificate;
 }
+/** Checks both participants' signatures on a twin certificate. */
+export function verifyTwinCertificate(value: unknown): TwinCertificate { return verifiedCertificate(value); }
+
+/** The dual-signed certificate of an active or revoked relationship this node takes part in. */
+export function storedTwinCertificate(db: DatabaseSync, relationshipId: string): TwinCertificate {
+  ensureTwinSchema(db); const row = relationship(db, relationshipId);
+  if (!row || !row.inviter_signature) throw new Error("Unknown twin relationship");
+  return verifiedCertificate({ body: JSON.parse(row.body), acceptorSignature: row.acceptor_signature, inviterSignature: row.inviter_signature });
+}
 export function applyTwinCertificate(db: DatabaseSync, localNodeId: string, value: TwinCertificate): void {
   ensureTwinSchema(db); const certificate = verifiedCertificate(value); const body = certificate.body;
   if (localNodeId !== body.inviter.nodeId && localNodeId !== body.acceptor.nodeId) throw new Error("Local node is not a twin participant");

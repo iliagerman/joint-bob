@@ -16,8 +16,6 @@ interface Snapshot {
   };
 }
 interface ClusterStatus {
-  mode: "legacy" | "selective";
-  migrationRequired: boolean;
   clusters: Array<{
     id: string;
     managerNodeId: string | null;
@@ -131,7 +129,7 @@ test("v2 HTTP membership preserves independent clusters and routes authority thr
   }
 });
 
-test("malformed v2 invitation objects return 400 without activating selective mode", async () => {
+test("malformed v2 invitation objects return 400 without joining a cluster", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-v2-malformed-"));
   const environment = await seedDevEnvironment(root, 1);
   const node = environment.nodes[0];
@@ -146,42 +144,8 @@ test("malformed v2 invitation objects return 400 without activating selective mo
       });
       assert.equal(response.status, 400, JSON.stringify(response.body));
       const status = await call<ClusterStatus>(node, session, "GET", "/clusters");
-      assert.equal(status.body.mode, "legacy");
       assert.deepEqual(status.body.clusters, []);
     }
-  } finally {
-    await stopDevNode(child);
-  }
-});
-
-test("selective mode blocks authenticated legacy mutations before payload handling", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-v2-legacy-http-gate-"));
-  const environment = await seedDevEnvironment(root, 1);
-  const node = environment.nodes[0];
-  const child = await startDevNode(environment, node);
-  try {
-    const session = await signIn(environment, node);
-    assert.equal((await call(node, session, "POST", "/clusters", { name: "selective" })).status, 201);
-    for (const endpoint of ["/cluster/peers", "/cluster/join", "/cluster/leave", "/cluster/invitations"]) {
-      const response = await call<{ error: string }>(node, session, "POST", endpoint, {});
-      assert.equal(response.status, 409, `${endpoint}: ${JSON.stringify(response.body)}`);
-      assert.equal(response.body.error, "Legacy sharing is disabled in selective sharing mode");
-    }
-  } finally {
-    await stopDevNode(child);
-  }
-});
-
-test("selective activation rejects legacy paired nodes", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "joint-bob-v2-legacy-gate-"));
-  const environment = await seedDevEnvironment(root, 2);
-  const node = environment.nodes[0];
-  const child = await startDevNode(environment, node);
-  try {
-    const session = await signIn(environment, node);
-    const response = await call<{ error: string }>(node, session, "POST", "/clusters", { name: "blocked" });
-    assert.equal(response.status, 409);
-    assert.equal(response.body.error, "Legacy sharing requires migration before selective sharing");
   } finally {
     await stopDevNode(child);
   }

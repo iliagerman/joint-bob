@@ -7,7 +7,6 @@ import { requestPinChat } from "./chat-transcript.js";
 import { elements } from "./elements.js";
 import { selectedProject, setMobileView } from "./layout.js";
 import { openFileAction } from "./project-files.js";
-import { openProjectImportMapping } from "./project-forms.js";
 import { openRowMenu, refreshRowMenuAnchor } from "./row-menu.js";
 import { renderSessions } from "./session-list.js";
 import { chooseOption, confirmAction, toast } from "./shell.js";
@@ -368,11 +367,6 @@ async function handoffTask(task) {
     });
     const selected = candidates.find((entry) => entry.node.id === nodeId);
     if (!selected) return;
-    if (selected.reasons.includes("Project is not mapped on this node")) {
-      const project = selectedProject();
-      openProjectImportMapping([{ peerId: selected.node.id, projectId: project.id, name: project.name, remotePath: project.path, suggestedPath: "", mapOnPeer: true, handoffTaskId: task.id }]);
-      return;
-    }
     if (!selected.eligible && !selected.waitingForSync) throw new Error(selected.reasons.join("; "));
     await handoffTaskToPeer(task, selected.node);
   } catch (error) {

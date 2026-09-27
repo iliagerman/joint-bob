@@ -47,7 +47,7 @@ function transfer(db: DatabaseSync, clusterId: string, from: string, to: string,
   commitSharingManagerTransfer(db, clusterId, from, id);
 }
 
-test("creator state, immutable per-cluster ranks, cap, and idempotent retry", () => {
+test("creator state, immutable per-cluster ranks, no member cap, and idempotent retry", () => {
   const db = database(); try {
     create(db); create(db, C2, B);
     assert.deepEqual(getSharingCluster(db, C), { id: C, name: "Cluster", originalNodeId: A, managerNodeId: A, managerEpoch: 1, closed: false });
@@ -55,7 +55,8 @@ test("creator state, immutable per-cluster ranks, cap, and idempotent retry", ()
     admit(db, C2, B, D); admit(db, C2, B, A); admit(db, C2, B, E); admit(db, C2, B, F);
     assert.deepEqual(listSharingClusterMembers(db, C).map((m) => [m.nodeId, m.joinSequence]), [[A, 1], [B, 2], [D, 3], [E, 4], [F, 5]]);
     assert.deepEqual(listSharingMemberships(db, A).map((m) => [m.clusterId, m.joinSequence]), [[C, 1], [C2, 3]]);
-    assert.throws(() => admit(db, C, A, G), /five|5/i);
+    admit(db, C, A, G);
+    assert.equal(listSharingClusterMembers(db, C).length, 6);
     setAutoShareProjects(db, C, B, true); admit(db, C, A, B);
     assert.deepEqual(listSharingClusterMembers(db, C)[1], { clusterId: C, nodeId: B, autoShareProjects: true, joinSequence: 2 });
   } finally { db.close(); }

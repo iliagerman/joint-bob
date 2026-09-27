@@ -174,10 +174,6 @@ export function harnessForSessionPath(sessionPath: string): HarnessAdapter {
   return resolveHarnessForSessionPath(adapters, sessionPath);
 }
 
-export function harnessSyncFolderForSessionPath(sessionPath: string): HarnessSyncFolder {
-  return syncFolder(harnessForSessionPath(sessionPath));
-}
-
 export function refreshHarnessSessions(projectId: string, changedFiles: string[]): Promise<void> {
   return sessionCatalog.refresh(projectId, changedFiles);
 }

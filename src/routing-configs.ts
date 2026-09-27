@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { getDifficultyClassifier } from "./classifiers/registry.js";
+import { listTwinUpdateTargets } from "./twin-updates.js";
 import { listSharingClusterMembers, listSharingMemberships } from "./cluster-sharing-policy.js";
-import { selectiveSharingActiveInDatabase } from "./cluster-v2-mode-state.js";
 import { routingPolicySchema, readRoutingPolicy, routingPolicyDatabase, type RoutingPolicy } from "./routing-policy.js";
 
 /** Named classifier/routing configurations, modelled on secret accounts: each node
@@ -25,9 +25,9 @@ export interface RoutingConfigShareTarget {
   nodeId: string;
   name: string;
   url: string;
-  /** `legacy` peers authenticate with the pairing token; `cluster` members use the signed v2 cluster protocol. */
-  kind: "legacy" | "cluster";
+  kind: "cluster" | "twin";
   clusterId?: string;
+  relationshipId?: string;
   clusterName?: string;
 }
 
@@ -36,7 +36,7 @@ export interface PendingRoutingConfigDelivery {
   id: number;
   configId: string;
   event: RoutingConfigEvent;
-  kind: "legacy" | "cluster";
+  kind: "cluster" | "twin";
   nodeId: string;
   url: string;
   name: string;
@@ -53,13 +53,25 @@ export class RoutingConfigError extends Error {
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[0-9a-f]{12}$/i;
 
+const DELIVERY_COLUMNS = `id INTEGER PRIMARY KEY AUTOINCREMENT, config_id TEXT NOT NULL, event_id TEXT NOT NULL, event TEXT NOT NULL, target_kind TEXT NOT NULL CHECK(target_kind IN ('cluster','twin')), target_node_id TEXT NOT NULL, target_url TEXT NOT NULL, target_name TEXT NOT NULL, cluster_id TEXT, attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT NOT NULL, last_error TEXT, created_at TEXT NOT NULL, UNIQUE(target_node_id, config_id)`;
+
 export function ensureRoutingConfigSchema(db: DatabaseSync): void {
   db.exec(`CREATE TABLE IF NOT EXISTS routing_configs(id TEXT PRIMARY KEY, name TEXT NOT NULL, policy TEXT NOT NULL, owner_node_id TEXT NOT NULL, shared INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL CHECK(revision>0), created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS routing_config_selection(singleton INTEGER PRIMARY KEY CHECK(singleton=1), config_id TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS routing_config_inbox(event_id TEXT PRIMARY KEY, origin_node_id TEXT NOT NULL, received_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS routing_config_tombstones(config_id TEXT PRIMARY KEY, owner_node_id TEXT NOT NULL, revision INTEGER NOT NULL, deleted_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS routing_config_deliveries(id INTEGER PRIMARY KEY AUTOINCREMENT, config_id TEXT NOT NULL, event_id TEXT NOT NULL, event TEXT NOT NULL, target_kind TEXT NOT NULL CHECK(target_kind IN ('legacy','cluster')), target_node_id TEXT NOT NULL, target_url TEXT NOT NULL, target_name TEXT NOT NULL, cluster_id TEXT, attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT NOT NULL, last_error TEXT, created_at TEXT NOT NULL, UNIQUE(target_node_id, config_id));
+CREATE TABLE IF NOT EXISTS routing_config_deliveries(${DELIVERY_COLUMNS});
 CREATE TABLE IF NOT EXISTS routing_config_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
+  // Deliveries from before twins were distribution targets only allowed 'legacy' and 'cluster'.
+  const deliveries = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='routing_config_deliveries'").get() as { sql: string };
+  if (!deliveries.sql.includes("'twin'")) {
+    db.exec(`SAVEPOINT routing_delivery_kinds;
+CREATE TABLE routing_config_deliveries_next(${DELIVERY_COLUMNS});
+INSERT INTO routing_config_deliveries_next SELECT id, config_id, event_id, event, 'cluster', target_node_id, target_url, target_name, cluster_id, attempts, next_attempt_at, last_error, created_at FROM routing_config_deliveries;
+DROP TABLE routing_config_deliveries;
+ALTER TABLE routing_config_deliveries_next RENAME TO routing_config_deliveries;
+RELEASE routing_delivery_kinds;`);
+  }
 }
 
 function assertConfigName(name: string): void {
@@ -248,34 +260,33 @@ export function applyRoutingConfigEvents(db: DatabaseSync, events: RoutingConfig
   }
 }
 
-/** The nodes a shared configuration may be distributed to right now: legacy paired
-    peers, or — when selective sharing is active — every member of every cluster this
-    node belongs to. Membership decides eligibility; nothing propagates beyond it. */
-export function routingConfigShareTargets(db: DatabaseSync, localNodeId: string, legacyPeers: Array<{ id: string; name: string; url: string }>): RoutingConfigShareTarget[] {
+/** The nodes a shared configuration may be distributed to right now: every member of
+    every cluster this node belongs to, and every active twin. Nothing propagates
+    beyond them. */
+export function routingConfigShareTargets(db: DatabaseSync, localNodeId: string): RoutingConfigShareTarget[] {
   ensureRoutingConfigSchema(db);
-  if (selectiveSharingActiveInDatabase(db)) {
-    const targets = new Map<string, RoutingConfigShareTarget>();
-    for (const membership of listSharingMemberships(db, localNodeId)) {
-      for (const member of listSharingClusterMembers(db, membership.clusterId)) {
-        if (member.nodeId === localNodeId || targets.has(member.nodeId)) continue;
-        const descriptor = db.prepare("SELECT name, url FROM cluster_v2_membership_nodes WHERE cluster_id = ? AND node_id = ?").get(membership.clusterId, member.nodeId) as { name: string; url: string } | undefined;
-        if (!descriptor) continue;
-        const clusterName = (db.prepare("SELECT name FROM sharing_clusters WHERE id = ?").get(membership.clusterId) as { name: string } | undefined)?.name;
-        targets.set(member.nodeId, { nodeId: member.nodeId, name: descriptor.name, url: descriptor.url, kind: "cluster", clusterId: membership.clusterId, ...(clusterName ? { clusterName } : {}) });
-      }
+  const targets = new Map<string, RoutingConfigShareTarget>();
+  for (const membership of listSharingMemberships(db, localNodeId)) {
+    for (const member of listSharingClusterMembers(db, membership.clusterId)) {
+      if (member.nodeId === localNodeId || targets.has(member.nodeId)) continue;
+      const descriptor = db.prepare("SELECT name, url FROM cluster_v2_membership_nodes WHERE cluster_id = ? AND node_id = ?").get(membership.clusterId, member.nodeId) as { name: string; url: string } | undefined;
+      if (!descriptor) continue;
+      const clusterName = (db.prepare("SELECT name FROM sharing_clusters WHERE id = ?").get(membership.clusterId) as { name: string } | undefined)?.name;
+      targets.set(member.nodeId, { nodeId: member.nodeId, name: descriptor.name, url: descriptor.url, kind: "cluster", clusterId: membership.clusterId, ...(clusterName ? { clusterName } : {}) });
     }
-    return [...targets.values()];
   }
-  return legacyPeers.map((peer) => ({ nodeId: peer.id, name: peer.name, url: peer.url, kind: "legacy" as const }));
+  for (const twin of listTwinUpdateTargets(db, localNodeId)) {
+    if (!targets.has(twin.nodeId)) targets.set(twin.nodeId, { nodeId: twin.nodeId, name: twin.name, url: twin.url, kind: "twin", relationshipId: twin.relationshipId });
+  }
+  return [...targets.values()];
 }
 
 /** Re-resolves a pending delivery's target against current eligibility: the peer
-    must still be reachable through a current cluster membership (or legacy pairing) —
-    never merely through the cluster the delivery was originally enrolled under. A
-    peer that left one shared cluster but remains in another stays eligible through
-    that one, and a legacy pending stops transmitting once selective mode is active. */
-export function currentRoutingConfigTarget(db: DatabaseSync, localNodeId: string, legacyPeers: Array<{ id: string; name: string; url: string }>, targetNodeId: string): RoutingConfigShareTarget | null {
-  return routingConfigShareTargets(db, localNodeId, legacyPeers).find((target) => target.nodeId === targetNodeId) ?? null;
+    must still be reachable through a current cluster membership — never merely
+    through the cluster the delivery was originally enrolled under. A peer that left
+    one shared cluster but remains in another stays eligible through that one. */
+export function currentRoutingConfigTarget(db: DatabaseSync, localNodeId: string, targetNodeId: string): RoutingConfigShareTarget | null {
+  return routingConfigShareTargets(db, localNodeId).find((target) => target.nodeId === targetNodeId) ?? null;
 }
 
 /** Enrols the latest event of one configuration for delivery to the given targets.
@@ -321,7 +332,7 @@ export function dueRoutingConfigDeliveries(db: DatabaseSync, now = new Date(), c
   ensureRoutingConfigSchema(db);
   const scoped = configId !== undefined;
   const sql = `SELECT id, config_id, event, target_kind, target_node_id, target_url, target_name, cluster_id, attempts, next_attempt_at FROM routing_config_deliveries WHERE next_attempt_at <= ?${scoped ? " AND config_id = ?" : ""} ORDER BY created_at, id LIMIT 50`;
-  const rows = db.prepare(sql).all(...(scoped ? [now.toISOString(), configId] : [now.toISOString()])) as unknown as Array<{ id: number; config_id: string; event: string; target_kind: "legacy" | "cluster"; target_node_id: string; target_url: string; target_name: string; cluster_id: string | null; attempts: number; next_attempt_at: string }>;
+  const rows = db.prepare(sql).all(...(scoped ? [now.toISOString(), configId] : [now.toISOString()])) as unknown as Array<{ id: number; config_id: string; event: string; target_kind: "cluster" | "twin"; target_node_id: string; target_url: string; target_name: string; cluster_id: string | null; attempts: number; next_attempt_at: string }>;
   return rows.map((row) => ({ id: row.id, configId: row.config_id, event: routingConfigEventSchema.parse(JSON.parse(row.event)), kind: row.target_kind, nodeId: row.target_node_id, url: row.target_url, name: row.target_name, clusterId: row.cluster_id, attempts: row.attempts, nextAttemptAt: row.next_attempt_at }));
 }
 
@@ -364,9 +375,9 @@ export function migrateRoutingConfigs(db: DatabaseSync, localNodeId: string): nu
       insertConfigRow(db, config);
       created.push({ config, legacy, clusterId: stored.clusterId, enabled: stored.policy.enabled });
     }
-    const effective = selectiveSharingActiveInDatabase(db)
-      ? created.filter((entry) => !entry.legacy && entry.enabled).sort((left, right) => left.clusterId.localeCompare(right.clusterId))[0]
-      : created.find((entry) => entry.legacy && entry.enabled);
+    // An enabled cluster policy wins; a node that only had the node-wide policy keeps it selected.
+    const effective = created.filter((entry) => !entry.legacy && entry.enabled).sort((left, right) => left.clusterId.localeCompare(right.clusterId))[0]
+      ?? created.find((entry) => entry.legacy && entry.enabled);
     setRoutingConfigSelection(db, effective?.config.id ?? "");
     if (hasPolicies) {
       db.exec("DELETE FROM cluster_routing_policies; DELETE FROM cluster_routing_pending; DELETE FROM cluster_v2_routing_deliveries;");

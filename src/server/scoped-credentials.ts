@@ -4,7 +4,7 @@ import {z} from 'zod';
 import {getClusterNode} from '../cluster.js';
 import {isTrustedTwin} from '../cluster-sharing-policy.js';
 import {clusterV2Database} from '../cluster-v2-store.js';
-import {ClusterV2HttpError} from '../cluster-v2-mode.js';
+import { ClusterV2HttpError } from '../cluster-v2-errors.js';
 import {decryptSecretValue,encryptSecretValue,ensureSecretSchema} from '../secrets.js';
 import {mayShareProject,sharedProjectIds} from './sharing-files.js';
 import {replicationPeers,signedPeerPost} from './replication-v2.js';

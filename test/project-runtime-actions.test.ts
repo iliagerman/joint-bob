@@ -15,7 +15,7 @@ test("project loading does not wait for runtime or peer status discovery", async
   assert.doesNotMatch(loader, /loadModels\(\)/);
   assert.ok(loader.indexOf('api("/api/projects?syncStatus=false")') < loader.indexOf("void loadHarnesses()"));
   assert.match(app, /void loadSessionNodes\(projectId\)\.catch/);
-  assert.match(server, /Promise\.all\(\(await listClusterPeers\(\)\)\.map/);
+  assert.match(server, /Promise\.all\(\(await listRuntimePeers\(\)\)\.map/);
 });
 
 test("harness selection keeps conversation identity until the server confirms the switch", async () => {

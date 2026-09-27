@@ -62,9 +62,8 @@ test("every secrets endpoint returns metadata only and the three scopes round-tr
     assert.equal(account.replicate, true);
     assert.deepEqual(account.variables, [{ name: "GH_TOKEN", kind: "value", configured: true }]);
 
-    // A replicating save pushes to every paired node on its own; with none paired the
-    // result list is empty rather than absent, so the UI can say so.
-    assert.deepEqual((JSON.parse(createdText) as { syncResults?: Array<unknown> }).syncResults, []);
+    // A replicating save reaches twins through replication; the response carries no per-node sync results.
+    assert.ok(!("syncResults" in (JSON.parse(createdText) as Record<string, unknown>)));
     const localSave = await fetch(`${node.baseUrl}/api/secrets/accounts`, {
       method: "POST", headers, body: JSON.stringify({ label: "Node-local", provider: "custom", variables: [{ name: "LOCAL_TOKEN", kind: "value", value: "stays" }] }),
     });

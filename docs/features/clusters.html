@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clusters, sharing, and twins</title>
+<style>
+  :root {
+    --bg: #0b0f14;
+    --panel: #131922;
+    --panel-alt: #182030;
+    --border: #222b39;
+    --border-strong: #2f3a4c;
+    --text: #e6ebf2;
+    --text-strong: #f5f7fa;
+    --muted: #8893a5;
+    --dim: #5b6778;
+    --added: #3fb950;
+    --added-bg: rgba(63,185,80,0.14);
+    --changed: #f5b041;
+    --changed-bg: rgba(245,176,65,0.14);
+    --removed: #f47272;
+    --removed-bg: rgba(244,114,114,0.14);
+    --unchanged: #8893a5;
+    --unchanged-bg: rgba(136,147,165,0.14);
+    --info: #6ea8fe;
+    --info-bg: rgba(110,168,254,0.14);
+    --accent: #6ea8fe;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.6;
+    margin: 0;
+    padding: 0;
+  }
+  body {
+    background:
+      radial-gradient(ellipse 60% 50% at 50% -10%, rgba(110,168,254,0.08), transparent 70%),
+      var(--bg);
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .page {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 40px 36px 80px;
+  }
+
+  /* Hero */
+  header.hero {
+    padding-bottom: 28px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 34px;
+  }
+  .eyebrow {
+    color: var(--muted);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    font-weight: 600;
+    margin-bottom: 14px;
+  }
+  .hero-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 28px;
+    flex-wrap: wrap;
+  }
+  .hero-left h1 {
+    margin: 0 0 14px;
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text-strong);
+    line-height: 1.15;
+    background: linear-gradient(90deg, #ffffff 0%, #c7d3eb 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .hero-left .subtitle {
+    color: var(--muted);
+    font-size: 15px;
+    line-height: 1.55;
+    max-width: 820px;
+  }
+  .hero-right {
+    text-align: right;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+    min-width: 180px;
+  }
+  .profile-pill {
+    border: 1px solid var(--border-strong);
+    background: var(--panel);
+    color: var(--muted);
+    padding: 5px 12px;
+    border-radius: 999px;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  .gen-line {
+    color: var(--dim);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .hero-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 18px;
+  }
+  .badge {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    padding: 3px 9px;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  .badge-added    { color: var(--added);    background: var(--added-bg);    border-color: rgba(63,185,80,0.35); }
+  .badge-changed  { color: var(--changed);  background: var(--changed-bg);  border-color: rgba(245,176,65,0.35); }
+  .badge-removed  { color: var(--removed);  background: var(--removed-bg);  border-color: rgba(244,114,114,0.35); }
+  .badge-info     { color: var(--info);     background: var(--info-bg);     border-color: rgba(110,168,254,0.35); }
+  .badge-unchanged{ color: var(--unchanged);background: var(--unchanged-bg);border-color: rgba(136,147,165,0.35); }
+
+  /* TOC */
+  .toc {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 22px;
+    margin-bottom: 32px;
+  }
+  .toc-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 22px;
+    counter-reset: toc;
+  }
+  .toc-list li {
+    counter-increment: toc;
+    font-size: 12px;
+    color: var(--muted);
+    letter-spacing: 0.04em;
+  }
+  .toc-list li::before {
+    content: counter(toc, decimal-leading-zero) "  ";
+    color: var(--dim);
+    font-family: var(--mono);
+    font-size: 11px;
+    margin-right: 6px;
+  }
+  .toc-list a { color: var(--muted); }
+  .toc-list a:hover { color: var(--accent); text-decoration: none; }
+
+  /* Sections */
+  .doc-section {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 26px 28px;
+    margin-bottom: 22px;
+    scroll-margin-top: 24px;
+  }
+  .section-heading {
+    margin: 0 0 14px;
+    font-size: 12px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+  }
+  .section-lede {
+    color: var(--muted);
+    font-size: 14px;
+    margin: 0 0 20px;
+    max-width: 820px;
+  }
+  .block-subtitle {
+    margin: 22px 0 10px;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--dim);
+    font-weight: 600;
+  }
+  .block-subtitle:first-child { margin-top: 4px; }
+
+  /* Prose */
+  .doc-para {
+    color: #c3cbd8;
+    margin: 0 0 14px;
+    font-size: 14px;
+    line-height: 1.65;
+  }
+  .doc-para:last-child { margin-bottom: 0; }
+
+  /* Tables */
+  .table-wrap {
+    overflow-x: auto;
+    margin: 0 0 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel-alt);
+  }
+  .doc-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .doc-table th {
+    text-align: left;
+    padding: 11px 14px;
+    font-size: 10.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+    background: rgba(255,255,255,0.015);
+  }
+  .doc-table td {
+    padding: 10px 14px;
+    color: #c3cbd8;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  .doc-table tr:last-child td { border-bottom: none; }
+  .doc-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+  /* Bullets */
+  .doc-bullets {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 14px;
+  }
+  .doc-bullets li {
+    display: flex;
+    gap: 12px;
+    padding: 5px 0;
+    color: #c3cbd8;
+    font-size: 14px;
+  }
+  .bullet-dot {
+    flex-shrink: 0;
+    width: 14px;
+    text-align: center;
+    color: var(--accent);
+    font-weight: 700;
+    line-height: 1.6;
+  }
+
+  /* Numbered */
+  .doc-numbered {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 14px;
+    counter-reset: num;
+  }
+  .doc-numbered li {
+    display: flex;
+    gap: 14px;
+    padding: 10px 14px;
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 10px;
+  }
+  .numbered-marker {
+    flex-shrink: 0;
+    width: 32px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(110,168,254,0.1);
+    border: 1px solid rgba(110,168,254,0.25);
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 700;
+    border-radius: 5px;
+    letter-spacing: 0.06em;
+  }
+  .numbered-content { flex: 1; min-width: 0; }
+  .numbered-heading {
+    font-weight: 600;
+    color: var(--text-strong);
+    font-size: 14px;
+    margin-bottom: 4px;
+  }
+  .numbered-body { color: #c3cbd8; font-size: 13.5px; line-height: 1.6; }
+
+  /* Definition list */
+  .doc-dl { margin: 0 0 14px; }
+  .dl-row {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 18px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .dl-row:last-child { border-bottom: none; }
+  .dl-row dt {
+    color: var(--text-strong);
+    font-weight: 600;
+    font-family: var(--mono);
+    font-size: 12.5px;
+  }
+  .dl-row dd {
+    color: #c3cbd8;
+    margin: 0;
+    font-size: 13.5px;
+    line-height: 1.55;
+  }
+  @media (max-width: 720px) {
+    .dl-row { grid-template-columns: 1fr; gap: 4px; }
+  }
+
+  /* Callouts */
+  .callout {
+    border-left: 3px solid var(--accent);
+    padding: 12px 16px;
+    background: rgba(110,168,254,0.06);
+    border-radius: 6px;
+    margin: 0 0 14px;
+    font-size: 13.5px;
+    color: var(--text);
+  }
+  .callout-info { border-left-color: var(--accent); background: rgba(110,168,254,0.06); }
+  .callout-good { border-left-color: var(--added); background: rgba(63,185,80,0.06); }
+  .callout-warn { border-left-color: var(--changed); background: rgba(245,176,65,0.06); }
+  .callout-bad  { border-left-color: var(--removed); background: rgba(244,114,114,0.06); }
+  .callout-title {
+    font-weight: 700;
+    margin-bottom: 4px;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .callout-body { color: #c3cbd8; }
+
+  /* Code */
+  .code-wrap {
+    position: relative;
+    margin: 0 0 14px;
+  }
+  .code-title {
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .code-lang {
+    position: absolute;
+    top: 10px;
+    right: 14px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--dim);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  pre {
+    font-family: var(--mono);
+    background: #0a1018;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: #d8e0ee;
+    margin: 0;
+  }
+  pre code {
+    font-family: inherit;
+    background: transparent;
+    padding: 0;
+    border: none;
+  }
+
+  /* Inline code */
+  code.inline {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: #cddaf2;
+    background: rgba(110,168,254,0.08);
+    padding: 1px 6px;
+    border-radius: 4px;
+    border: 1px solid rgba(110,168,254,0.15);
+  }
+
+  /* Inline emphasis */
+  .inline-strong {
+    color: var(--text-strong);
+    font-weight: 600;
+  }
+  .inline-em {
+    color: var(--text);
+    font-style: italic;
+  }
+
+  /* Doc links inside inline text */
+  a.doc-link {
+    color: var(--accent);
+    border-bottom: 1px dotted rgba(110,168,254,0.4);
+  }
+  a.doc-link:hover {
+    border-bottom-color: var(--accent);
+    text-decoration: none;
+  }
+
+  /* Related feature cards */
+  .related-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 10px;
+    margin: 0;
+  }
+  .related-card {
+    display: block;
+    position: relative;
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 44px 14px 16px;
+    color: var(--text);
+    transition: border-color 120ms ease, transform 120ms ease;
+  }
+  .related-card:hover {
+    border-color: rgba(110,168,254,0.45);
+    text-decoration: none;
+    transform: translateY(-1px);
+  }
+  .related-title {
+    font-weight: 600;
+    color: var(--text-strong);
+    font-size: 13.5px;
+    margin-bottom: 3px;
+  }
+  .related-desc {
+    color: var(--muted);
+    font-size: 12.5px;
+    line-height: 1.45;
+  }
+  .related-arrow {
+    position: absolute;
+    right: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--dim);
+    font-size: 16px;
+    transition: color 120ms ease, transform 120ms ease;
+  }
+  .related-card:hover .related-arrow {
+    color: var(--accent);
+    transform: translateY(-50%) translateX(2px);
+  }
+
+  .empty-row {
+    color: var(--dim);
+    font-size: 12px;
+    padding: 4px 0;
+  }
+
+  /* Figures / images */
+  .doc-figure {
+    margin: 0 0 18px;
+    padding: 14px;
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    text-align: center;
+  }
+  .doc-figure img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 6px;
+    display: block;
+    margin: 0 auto;
+    background: #0a1018;
+  }
+  .image-caption {
+    margin-top: 10px;
+    color: var(--muted);
+    font-size: 12.5px;
+    font-style: italic;
+  }
+
+  /* Info card grid — non-linking card tiles for key-point breakdowns. */
+  .info-card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 12px;
+    margin: 0 0 14px;
+  }
+  .info-card {
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .info-card .card-icon {
+    font-size: 20px;
+    margin-bottom: 8px;
+    color: var(--accent);
+  }
+  .info-card-title {
+    font-weight: 600;
+    color: var(--text-strong);
+    font-size: 13.5px;
+    margin-bottom: 4px;
+  }
+  .info-card-desc {
+    color: var(--muted);
+    font-size: 12.5px;
+    line-height: 1.55;
+  }
+
+  @media (max-width: 820px) {
+    .page { padding: 24px 18px 60px; }
+    .hero-row { flex-direction: column; }
+    .hero-right { align-items: flex-start; text-align: left; }
+    .hero-left h1 { font-size: 26px; }
+  }
+</style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <div class="eyebrow">Feature · Multi-node</div>
+      <div class="hero-row">
+        <div class="hero-left">
+          <h1>Clusters, sharing, and twins</h1>
+          <div class="subtitle">A Joint Bob node can belong to any number of clusters. Membership alone shares nothing: a node shares chosen projects or whole workspaces with a cluster, and every member of that cluster receives them. Twins are the same user&#x27;s machines and share everything they own. Changes travel through two hubs per cluster, and a twin can take over a machine that is gone for good.</div>
+        </div>
+        <div class="hero-right">
+          <span class="profile-pill">Node administrators</span>
+          <span class="gen-line">Generated 2026-09-27</span>
+        </div>
+      </div>
+      <div class="hero-badges"><span class="badge badge-added">Multiple clusters per node</span><span class="badge badge-changed">No member limit</span><span class="badge badge-added">Two-hub dissemination</span><span class="badge badge-added">Lost-machine recovery</span><span class="badge badge-removed">Legacy bearer pairing removed</span></div>
+    </header>
+
+    <nav class="toc"><ol class="toc-list"><li><a href="#architecture">Architecture</a></li><li><a href="#api-endpoints">API Endpoints</a></li><li><a href="#how-it-works">How It Works</a></li><li><a href="#access-control">Access Control</a></li><li><a href="#upgrading">Upgrading</a></li><li><a href="#known-limits">Known limits</a></li><li><a href="#related-features">Related Features</a></li></ol></nav>
+
+    <section class="doc-section" id="architecture">  <h2 class="section-heading">Architecture</h2>    <h3 class="block-subtitle">Backend</h3><div class="table-wrap"><table class="doc-table"><thead><tr><th>Module</th><th>Responsibility</th></tr></thead><tbody><tr><td><code class="inline">src/cluster.ts</code></td><td>This node&#x27;s identity only: id, name, URL. Drops the retired bearer-pairing tables on start.</td></tr><tr><td><code class="inline">src/cluster-identity.ts</code>, <code class="inline">src/cluster-protocol.ts</code></td><td>Ed25519 node keys and signed machine requests (sender, recipient, method, target, body hash, timestamp, nonce).</td></tr><tr><td><code class="inline">src/cluster-membership.ts</code></td><td>Signed membership snapshots per cluster: one manager, immutable join sequence, departures. Lost-member removal and manager succession.</td></tr><tr><td><code class="inline">src/cluster-sharing-policy.ts</code>, <code class="inline">src/cluster-sharing.ts</code></td><td>Who may receive a resource (<code class="inline">mayReceiveResource</code>) and owner-signed resource policy statements per sharing context.</td></tr><tr><td><code class="inline">src/selected-sharing.ts</code></td><td>Per-cluster selection of projects and whole workspaces; projects added to a selected workspace later are shared too.</td></tr><tr><td><code class="inline">src/cluster-twins.ts</code>, <code class="inline">src/server/twins.ts</code>, <code class="inline">src/server/twin-sharing.ts</code></td><td>Dual-signed twin relationships and full sharing between twins.</td></tr><tr><td><code class="inline">src/server/cluster-hubs.ts</code></td><td>Two-hub dissemination of project events inside each cluster, the relay log, and catch-up pulls.</td></tr><tr><td><code class="inline">src/cluster-succession.ts</code>, <code class="inline">src/server/succession.ts</code></td><td>Declaring a twin lost: ownership moves to the twin, the lost machine leaves its clusters.</td></tr><tr><td><code class="inline">src/server/runtime-peers.ts</code></td><td>Signed cross-node calls (<code class="inline">/api/cluster/v2/runtime/...</code>) for handoff, takeover, browser, cron, files, and sockets.</td></tr></tbody></table></div><h3 class="block-subtitle">Frontend</h3><div class="table-wrap"><table class="doc-table"><thead><tr><th>File</th><th>Responsibility</th></tr></thead><tbody><tr><td><code class="inline">public/app/cluster-panel.js</code></td><td>Settings &gt; Cluster: this node&#x27;s name and URL, create, invite, join, leave.</td></tr><tr><td><code class="inline">public/app/cluster-sharing.js</code></td><td>Selected sharing per cluster, the twin handshake and status, and <strong class="inline-strong">This machine is lost</strong>.</td></tr><tr><td><code class="inline">public/app/updates.js</code></td><td>Settings &gt; Updates node list: this node and its twins.</td></tr></tbody></table></div></section>
+<section class="doc-section" id="api-endpoints">  <h2 class="section-heading">API Endpoints</h2>    <h3 class="block-subtitle">Signed-in user</h3><div class="table-wrap"><table class="doc-table"><thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead><tbody><tr><td>GET/PUT</td><td><code class="inline">/api/cluster/node</code></td><td>Read or change this node&#x27;s name and URL. A change is republished to every cluster (through its manager) and every twin.</td></tr><tr><td>GET</td><td><code class="inline">/api/clusters</code></td><td>This node&#x27;s clusters, members, and manager.</td></tr><tr><td>POST</td><td><code class="inline">/api/clusters</code></td><td>Create a cluster; this node becomes its manager.</td></tr><tr><td>POST</td><td><code class="inline">/api/clusters/:id/invitations</code></td><td>One-time invitation link (15 minutes).</td></tr><tr><td>POST</td><td><code class="inline">/api/clusters/join</code></td><td>Join another cluster. Existing memberships are kept.</td></tr><tr><td>GET/PUT</td><td><code class="inline">/api/clusters/:id/sharing</code></td><td>The projects and workspaces this node shares with the cluster.</td></tr><tr><td>POST</td><td><code class="inline">/api/twins/invitations</code>, <code class="inline">/api/twins/accept</code></td><td>Two-sided twin handshake.</td></tr><tr><td>POST</td><td><code class="inline">/api/twins/:id/lost</code></td><td>Declare the twin lost (<code class="inline">{ confirmLost: true }</code>).</td></tr><tr><td>GET</td><td><code class="inline">/api/cluster/inventory</code></td><td>This node and every twin with its version and update capability.</td></tr></tbody></table></div><h3 class="block-subtitle">Signed machine requests</h3><div class="table-wrap"><table class="doc-table"><thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead><tbody><tr><td>POST</td><td><code class="inline">/api/cluster/v2/relay</code></td><td>Relayed project events with their origin&#x27;s signature. <code class="inline">relay: true</code> asks a hub to forward.</td></tr><tr><td>POST</td><td><code class="inline">/api/cluster/v2/relay/pull</code></td><td>Events after a cursor in the sender&#x27;s relay log that the caller may see.</td></tr><tr><td>POST</td><td><code class="inline">/api/cluster/v2/events</code></td><td>Direct events between twins.</td></tr><tr><td>POST</td><td><code class="inline">/api/cluster/v2/membership/descriptor</code></td><td>A member reports its new name and URL to the manager.</td></tr><tr><td>POST</td><td><code class="inline">/api/cluster/v2/twins/descriptor</code></td><td>A twin reports its new name and URL.</td></tr><tr><td>POST</td><td><code class="inline">/api/cluster/v2/succession</code></td><td>The lost machine&#x27;s twin announces the succession with the dual-signed certificate.</td></tr><tr><td>POST</td><td><code class="inline">/api/cluster/v2/push/events</code>, <code class="inline">/api/cluster/v2/ntfy/services</code></td><td>Push subscriptions and ntfy servers, twins only.</td></tr><tr><td>POST</td><td><code class="inline">/api/cluster/v2/update/inventory</code></td><td>A twin&#x27;s version and update capability.</td></tr><tr><td>*</td><td><code class="inline">/api/cluster/v2/runtime/...</code></td><td>Cross-node runtime calls, each checked against the project it names.</td></tr></tbody></table></div></section>
+<section class="doc-section" id="how-it-works">  <h2 class="section-heading">How It Works</h2>    <h3 class="block-subtitle">Sharing</h3><ol class="doc-numbered"><li>  <span class="numbered-marker">01</span>  <div class="numbered-content"><div class="numbered-heading">Membership</div><div class="numbered-body">Every node creates an Ed25519 identity. A cluster&#x27;s manager signs the member list; members are numbered by join order. A node can be a member of any number of clusters and presents one URL to all of them.</div></div></li><li>  <span class="numbered-marker">02</span>  <div class="numbered-content"><div class="numbered-heading">What a peer may see</div><div class="numbered-body">A peer sees a project if it is a twin of the project&#x27;s owner, or it shares a cluster with the owner and the owner selected the project (or its workspace) for that cluster. Every member of that cluster receives it. Data outside any project, canvas shortcuts, push subscriptions, and ntfy servers go to twins only.</div></div></li><li>  <span class="numbered-marker">03</span>  <div class="numbered-content"><div class="numbered-heading">Isolation between clusters</div><div class="numbered-body">A node in clusters X and Y shares each project only with the cluster it selected. Members of X and Y do not learn about each other and cannot authenticate to each other.</div></div></li><li>  <span class="numbered-marker">04</span>  <div class="numbered-content"><div class="numbered-heading">Twins</div><div class="numbered-body">Twins are the same user&#x27;s machines. Both sides consent; afterwards each shares everything it owns with the other: projects, conversations, tasks, files, transcripts, credentials, routing configurations, and update rights.</div></div></li></ol><h3 class="block-subtitle">Two-hub dissemination</h3><ol class="doc-numbered"><li>  <span class="numbered-marker">01</span>  <div class="numbered-content"><div class="numbered-heading">Hubs</div><div class="numbered-body">For each cluster, the node that makes a change sends it only to two hubs: the lowest and the highest numbered other members that answer. If a hub does not answer, the next member in line takes its place.</div></div></li><li>  <span class="numbered-marker">02</span>  <div class="numbered-content"><div class="numbered-heading">Forwarding</div><div class="numbered-body">A hub applies the change and forwards it to every other member of that cluster that may see it. Each relayed event carries its origin&#x27;s signature; a hub cannot forge or alter it.</div></div></li><li>  <span class="numbered-marker">03</span>  <div class="numbered-content"><div class="numbered-heading">Catch-up</div><div class="numbered-body">Every node keeps each cluster event it holds in a relay log. At start-up and every minute a node pulls everything after its cursor from the two hubs, so a node that was offline, or missed a forward, catches up. A project shared with a cluster later sends its earlier events once.</div></div></li><li>  <span class="numbered-marker">04</span>  <div class="numbered-content"><div class="numbered-heading">Twins</div><div class="numbered-body">Twins keep direct delivery. A cluster whose other members are all twins of this node needs no hubs.</div></div></li></ol><h3 class="block-subtitle">Recovering a lost machine</h3><ol class="doc-numbered"><li>  <span class="numbered-marker">01</span>  <div class="numbered-content"><div class="numbered-heading">Declare it lost</div><div class="numbered-body">On a twin of the lost machine, open Settings &gt; Cluster, choose the twin, and select <strong class="inline-strong">This machine is lost</strong>. Only a twin can do this: the dual-signed twin certificate proves the lost machine trusted it.</div></div></li><li>  <span class="numbered-marker">02</span>  <div class="numbered-content"><div class="numbered-heading">Ownership moves</div><div class="numbered-body">The twin becomes the owner of everything the lost machine owned and reissues its sharing. Other members verify the certificate against the keys they already hold and accept the twin as the new owner.</div></div></li><li>  <span class="numbered-marker">03</span>  <div class="numbered-content"><div class="numbered-heading">Clusters</div><div class="numbered-body">The manager removes the lost machine. When the lost machine was the manager, the most senior remaining member takes over management and removes it.</div></div></li><li>  <span class="numbered-marker">04</span>  <div class="numbered-content"><div class="numbered-heading">Rebuild</div><div class="numbered-body">Install Joint Bob on the new or repaired machine and pair it as a twin with the survivor. It receives everything again. Invite it to its clusters again.</div></div></li></ol><div class="callout callout-warn">  <div class="callout-title">A lost manager without a twin</div>  <div class="callout-body">A cluster whose manager is lost and had no twin cannot choose a new manager. Keep the machine that manages a cluster twinned with another machine you own.</div></div></section>
+<section class="doc-section" id="access-control">  <h2 class="section-heading">Access Control</h2>    <ul class="doc-bullets"><li><span class="bullet-dot">•</span><span>Every machine request is signed and checked against the sender&#x27;s pinned key, a 60-second clock window, and a replay-proof nonce. Bearer machine tokens are no longer accepted anywhere.</span></li><li><span class="bullet-dot">•</span><span>Runtime calls are authorized by the project they name. A request for a project that is not shared with the caller returns 403.</span></li><li><span class="bullet-dot">•</span><span>Relayed events are accepted only with a valid origin signature, from a member of the cluster, for a project the receiver, the origin, and the sender may all see.</span></li><li><span class="bullet-dot">•</span><span>Only the lost machine&#x27;s twin can succeed it. A succession notice from anyone else returns 403.</span></li><li><span class="bullet-dot">•</span><span>Remote update installation requires an active twin.</span></li><li><span class="bullet-dot">•</span><span>A connection that fails on malformed data closes that socket only; it never stops the node.</span></li></ul></section>
+<section class="doc-section" id="upgrading">  <h2 class="section-heading">Upgrading</h2>    <ul class="doc-bullets"><li><span class="bullet-dot">•</span><span>Update every node of a cluster to this release. Older nodes do not relay or pull, and reject member lists with more than five members.</span></li><li><span class="bullet-dot">•</span><span>Legacy bearer-token pairing is removed. A node that still has a legacy pairing loses it and must join through a cluster invitation or pair as a twin.</span></li><li><span class="bullet-dot">•</span><span>A node older than 1.59.0 must first upgrade to a release between 1.59.0 and 1.97.x.</span></li><li><span class="bullet-dot">•</span><span>The retired pairing tables are dropped on start; the node keeps its identity.</span></li></ul></section>
+<section class="doc-section" id="known-limits">  <h2 class="section-heading">Known limits</h2>    <ul class="doc-bullets"><li><span class="bullet-dot">•</span><span>Relay logs and the event outbox are not pruned yet.</span></li><li><span class="bullet-dot">•</span><span>Shared agent skills (the agent-resources Syncthing folder) do not synchronize between nodes.</span></li><li><span class="bullet-dot">•</span><span>A node advertises one URL to all its clusters, so every cluster must reach it at that URL.</span></li><li><span class="bullet-dot">•</span><span>Tasks still assigned to a lost machine keep that assignment until they are handed off.</span></li></ul></section>
+<section class="doc-section" id="related-features">  <h2 class="section-heading">Related Features</h2>    <div class="related-grid"><a class="related-card" href="../index.html">  <div class="related-title">Documentation index</div>  <div class="related-desc">All Joint Bob feature documents.</div>  <div class="related-arrow">→</div></a></div></section>
+  </div>
+</body>
+</html>
