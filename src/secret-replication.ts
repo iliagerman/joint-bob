@@ -5,7 +5,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { appendAuditEvent, ensureAuditSchema } from "./audit.js";
 import { getClusterNode } from "./cluster.js";
-import { decryptSecretValue, encryptSecretValue, ensureSecretSchema, type SecretKind, type SecretProvider } from "./secrets.js";
+import { decryptSecretValue, encryptSecretValue, ensureSecretSchema, normalizeWebsiteOrigin, type SecretKind, type SecretProvider } from "./secrets.js";
 
 /** The material a replicating account carries to a peer. Values travel in the event body,
     which the mesh transport already authenticates and encrypts in flight; each side stores
@@ -23,7 +23,7 @@ export interface SecretAccountPayload {
   workspaceIds?: string[];
   /** Every scope attachment, including projects the receiving node may not share yet. */
   assignments?: SecretAssignmentPayload[];
-  /** Rejected when received: website credentials are node-local. */
+  /** Website accounts keep their origin binding on every node, so values stay out of the shell. */
   websiteOrigin?: string | null;
 }
 
@@ -81,13 +81,15 @@ function validateEvent(event: SecretCredentialEvent): void {
   if (!event.updatedAt || Number.isNaN(Date.parse(event.updatedAt))) throw new Error("Secret credential event needs an ISO updatedAt");
   if (!event.originNodeId) throw new Error("Secret credential event needs an origin node ID");
   const value = event.value;
-  if (value?.websiteOrigin != null) throw new Error("Website credential events cannot be replicated");
   if (!value || typeof value.label !== "string" || !value.label.trim() || value.label.length > 64) throw new Error("Secret credential event needs a label");
-  if (!(["aws", "google", "github", "custom"] as string[]).includes(value.provider)) throw new Error("Secret credential event provider is invalid");
+  if (!(["aws", "google", "github", "custom", "website"] as string[]).includes(value.provider)) throw new Error("Secret credential event provider is invalid");
+  if (value.provider === "website" && value.websiteOrigin == null) throw new Error("Website secret accounts require a website origin");
+  if (value.websiteOrigin != null && (typeof value.websiteOrigin !== "string" || normalizeWebsiteOrigin(value.websiteOrigin) !== value.websiteOrigin)) throw new Error("Secret credential event website origin is invalid");
   if (!Array.isArray(value.variables) || value.variables.length < 1 || value.variables.length > 20) throw new Error("Secret credential event needs between 1 and 20 variables");
   for (const variable of value.variables) {
     if (!variable || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(variable.name)) throw new Error("Secret credential event variable name is invalid");
     if (variable.kind !== "value" && variable.kind !== "file") throw new Error("Secret credential event variable kind must be value or file");
+    if (value.websiteOrigin != null && variable.kind === "file") throw new Error("Website credential accounts cannot contain file variables");
     if (typeof variable.value !== "string" || variable.value.length > 100000) throw new Error("Secret credential event variable value is invalid");
   }
   if (value.workspaceIds !== undefined && (!Array.isArray(value.workspaceIds) || value.workspaceIds.length > 100 || new Set(value.workspaceIds).size !== value.workspaceIds.length || value.workspaceIds.some((id) => typeof id !== "string" || !id || id !== id.trim() || id.length > 300))) {
@@ -112,17 +114,27 @@ function assignments(handle: DatabaseSync, accountId: string): SecretAssignmentP
     .map((row) => ({ scopeType: row.scope_type, scopeId: row.scope_id }));
 }
 
-function applyWorkspaceAssignments(handle: DatabaseSync, accountId: string, ids: string[] | undefined, variables: SecretAccountPayload["variables"]): void {
-  if (ids === undefined) return;
-  const incomingNames = new Set(variables.map((variable) => variable.name));
-  const assigned = handle.prepare("SELECT a.variables_encrypted FROM secret_assignments s JOIN secret_accounts a ON a.id = s.account_id WHERE s.scope_type = 'workspace' AND s.scope_id = ? AND a.id != ? AND a.website_origin IS NULL");
-  for (const id of ids) {
-    const rows = assigned.all(id, accountId) as unknown as Array<{ variables_encrypted: string }>;
-    for (const row of rows) {
-      const existing = JSON.parse(decryptSecretValue(row.variables_encrypted)) as SecretAccountPayload["variables"];
-      if (existing.some((variable) => incomingNames.has(variable.name))) throw new Error("Selected secret accounts have duplicate environment variable names");
-    }
+/** The same collision rules the local setter enforces, for one scope: two website accounts
+    bound to one origin, or two ordinary accounts exporting one variable name, would make the
+    winner depend on row order. */
+function assertNoScopeCollision(handle: DatabaseSync, scopeType: SecretAssignmentPayload["scopeType"], scopeId: string, accountId: string, value: SecretAccountPayload): void {
+  if (value.websiteOrigin != null) {
+    const duplicate = handle.prepare("SELECT 1 FROM secret_assignments s JOIN secret_accounts a ON a.id = s.account_id WHERE s.scope_type = ? AND s.scope_id = ? AND a.id != ? AND a.website_origin = ?").get(scopeType, scopeId, accountId, value.websiteOrigin);
+    if (duplicate) throw new Error("Selected website accounts have duplicate origins");
+    return;
   }
+  const incomingNames = new Set(value.variables.map((variable) => variable.name));
+  const rows = handle.prepare("SELECT a.variables_encrypted FROM secret_assignments s JOIN secret_accounts a ON a.id = s.account_id WHERE s.scope_type = ? AND s.scope_id = ? AND a.id != ? AND a.website_origin IS NULL").all(scopeType, scopeId, accountId) as unknown as Array<{ variables_encrypted: string }>;
+  for (const row of rows) {
+    const existing = JSON.parse(decryptSecretValue(row.variables_encrypted)) as SecretAccountPayload["variables"];
+    if (existing.some((variable) => incomingNames.has(variable.name))) throw new Error("Selected secret accounts have duplicate environment variable names");
+  }
+}
+
+function applyWorkspaceAssignments(handle: DatabaseSync, accountId: string, value: SecretAccountPayload): void {
+  const ids = value.workspaceIds;
+  if (ids === undefined) return;
+  for (const id of ids) assertNoScopeCollision(handle, "workspace", id, accountId, value);
   handle.prepare("DELETE FROM secret_assignments WHERE scope_type = 'workspace' AND account_id = ?").run(accountId);
   const insert = handle.prepare("INSERT INTO secret_assignments (scope_type, scope_id, account_id) SELECT 'workspace', id, ? FROM workspaces WHERE id = ?");
   for (const id of ids) insert.run(accountId, id);
@@ -131,20 +143,13 @@ function applyWorkspaceAssignments(handle: DatabaseSync, accountId: string, ids:
 /** Applies the full attachment set. Project and conversation rows are stored even when the
     scope does not exist on this node yet, so an attachment activates on its own once the
     project arrives through a later invitation. */
-function applyAssignments(handle: DatabaseSync, accountId: string, payload: SecretAssignmentPayload[] | undefined, variables: SecretAccountPayload["variables"]): void {
-  if (payload === undefined) return;
-  const incomingNames = new Set(variables.map((variable) => variable.name));
-  const collision = handle.prepare("SELECT a.variables_encrypted FROM secret_assignments s JOIN secret_accounts a ON a.id = s.account_id WHERE s.scope_type = ? AND s.scope_id = ? AND a.id != ? AND a.website_origin IS NULL");
+function applyAssignments(handle: DatabaseSync, accountId: string, value: SecretAccountPayload): void {
+  if (value.assignments === undefined) return;
   handle.prepare("DELETE FROM secret_assignments WHERE account_id = ?").run(accountId);
   const insert = handle.prepare("INSERT INTO secret_assignments (scope_type, scope_id, account_id) VALUES (?, ?, ?)");
-  for (const entry of payload) {
+  for (const entry of value.assignments) {
     if (entry.scopeType === "workspace" && !handle.prepare("SELECT 1 FROM workspaces WHERE id = ?").get(entry.scopeId)) continue;
-    // The same duplicate-variable rule the local setter enforces, for every scope: two
-    // accounts exporting one name into one scope would make the winner depend on row order.
-    for (const row of collision.all(entry.scopeType, entry.scopeId, accountId) as unknown as Array<{ variables_encrypted: string }>) {
-      const existing = JSON.parse(decryptSecretValue(row.variables_encrypted)) as SecretAccountPayload["variables"];
-      if (existing.some((variable) => incomingNames.has(variable.name))) throw new Error("Selected secret accounts have duplicate environment variable names");
-    }
+    assertNoScopeCollision(handle, entry.scopeType, entry.scopeId, accountId, value);
     insert.run(entry.scopeType, entry.scopeId, accountId);
   }
 }
@@ -153,10 +158,10 @@ function applyAssignments(handle: DatabaseSync, accountId: string, payload: Secr
     switched back to node-local has its queued events removed, so it can no longer leave. */
 function refreshOutbox(handle: DatabaseSync, nodeId: string): void {
   const obsolete = `SELECT e.event_id FROM secret_credential_events e LEFT JOIN secret_accounts a ON a.id=e.entity_key
-    WHERE a.id IS NULL OR a.replicate=0 OR a.website_origin IS NOT NULL OR a.provider='website' OR a.project_id IS NOT NULL OR e.updated_at<>a.updated_at`;
+    WHERE a.id IS NULL OR a.replicate=0 OR a.project_id IS NOT NULL OR e.updated_at<>a.updated_at`;
   handle.prepare(`DELETE FROM secret_credential_deliveries WHERE event_id IN (${obsolete})`).run();
   handle.prepare(`DELETE FROM secret_credential_events WHERE event_id IN (${obsolete})`).run();
-  const replicating = handle.prepare("SELECT id, label, provider, variables_encrypted, updated_at, origin_node_id FROM secret_accounts WHERE replicate = 1 AND website_origin IS NULL AND provider<>'website' AND project_id IS NULL").all() as unknown as Array<{ id: string; label: string; provider: SecretProvider; variables_encrypted: string; updated_at: string; origin_node_id: string }>;
+  const replicating = handle.prepare("SELECT id, label, provider, variables_encrypted, website_origin, updated_at, origin_node_id FROM secret_accounts WHERE replicate = 1 AND project_id IS NULL").all() as unknown as Array<{ id: string; label: string; provider: SecretProvider; variables_encrypted: string; website_origin: string | null; updated_at: string; origin_node_id: string }>;
   for (const account of replicating) {
     const originNodeId = account.origin_node_id || nodeId;
     if (!account.origin_node_id) handle.prepare("UPDATE secret_accounts SET origin_node_id = ? WHERE id = ?").run(nodeId, account.id);
@@ -167,7 +172,7 @@ function refreshOutbox(handle: DatabaseSync, nodeId: string): void {
     if (known) handle.prepare("UPDATE secret_accounts SET updated_at = ? WHERE id = ?").run(updatedAt, account.id);
     insertEvent(handle, {
       id: randomUUID(), entityKey: account.id, operation: "upsert",
-      value: { label: account.label, provider: account.provider, variables: JSON.parse(decryptSecretValue(account.variables_encrypted)), workspaceIds: workspaceIds(handle, account.id), assignments: assignments(handle, account.id) },
+      value: { label: account.label, provider: account.provider, variables: JSON.parse(decryptSecretValue(account.variables_encrypted)), ...(account.website_origin ? { websiteOrigin: account.website_origin } : {}), workspaceIds: workspaceIds(handle, account.id), assignments: assignments(handle, account.id) },
       updatedAt, originNodeId, createdAt: new Date().toISOString(),
     });
   }
@@ -212,10 +217,10 @@ export async function receiveSecretCredentialEvents(events: SecretCredentialEven
       // A local edit bumps updated_at to now, so it outranks anything the peer still holds (FR7.4).
       if (!current || compareVersion({ updated_at: event.updatedAt, origin_node_id: event.originNodeId }, current) > 0) {
         // Re-encrypted here with this node's own key, never stored under the sender's.
-        handle.prepare("INSERT INTO secret_accounts (id, label, provider, variables_encrypted, replicate, origin_node_id, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET label = excluded.label, provider = excluded.provider, variables_encrypted = excluded.variables_encrypted, origin_node_id = excluded.origin_node_id, updated_at = excluded.updated_at")
-          .run(event.entityKey, event.value.label, event.value.provider, encryptSecretValue(JSON.stringify(event.value.variables)), event.originNodeId, event.updatedAt, event.updatedAt);
-        if (event.value.assignments !== undefined) applyAssignments(handle, event.entityKey, event.value.assignments, event.value.variables);
-        applyWorkspaceAssignments(handle, event.entityKey, event.value.workspaceIds, event.value.variables);
+        handle.prepare("INSERT INTO secret_accounts (id, label, provider, variables_encrypted, replicate, website_origin, origin_node_id, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET label = excluded.label, provider = excluded.provider, variables_encrypted = excluded.variables_encrypted, website_origin = excluded.website_origin, origin_node_id = excluded.origin_node_id, updated_at = excluded.updated_at")
+          .run(event.entityKey, event.value.label, event.value.provider, encryptSecretValue(JSON.stringify(event.value.variables)), event.value.websiteOrigin ?? null, event.originNodeId, event.updatedAt, event.updatedAt);
+        applyAssignments(handle, event.entityKey, event.value);
+        applyWorkspaceAssignments(handle, event.entityKey, event.value);
       }
       insertEvent(handle, event);
       received.push(event.id);

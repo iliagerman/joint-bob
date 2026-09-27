@@ -50,7 +50,10 @@ test("website origin validation allows secure and loopback origins only", async 
     assert.equal(secrets.normalizeWebsiteOrigin("http://127.0.0.1"), "http://127.0.0.1");
     assert.equal(secrets.normalizeWebsiteOrigin("http://[::1]"), "http://[::1]");
     for (const origin of ["http://example.com", "https://u:p@example.com", "https://example.com/path", "https://example.com/?q=1", "https://example.com/#x"]) assert.throws(() => secrets.normalizeWebsiteOrigin(origin));
-    await assert.rejects(() => secrets.saveSecretAccount({ label: "Bad", provider: "custom", websiteOrigin: "https://example.com", replicate: true, variables: [variable("x")] }), /replicate/i);
+    // Website accounts replicate like any other account and keep their origin binding.
+    const shared = await secrets.saveSecretAccount({ label: "Shared", provider: "custom", websiteOrigin: "https://example.com", replicate: true, variables: [variable("x")] });
+    assert.equal(shared.replicate, true);
+    assert.equal(shared.websiteOrigin, "https://example.com");
     await assert.rejects(() => secrets.saveSecretAccount({ label: "Bad", provider: "custom", websiteOrigin: "https://example.com", variables: [{ name: "FILE", kind: "file", value: "x" }] }), /file/i);
   });
 });
@@ -152,10 +155,7 @@ test("the website provider requires an origin and keeps its structured login var
     await assert.rejects(() => secrets.saveSecretAccount({ id: account.id, label: "Login", provider: "website", websiteOrigin: null, variables: [
       { name: "LOGIN_USERNAME", kind: "value" as const, value: "user" }, { name: "LOGIN_PASSWORD", kind: "value" as const, value: "synthetic-pass" },
     ] }), /website origin/i);
-    // Website accounts never replicate and never hold file variables.
-    await assert.rejects(() => secrets.saveSecretAccount({ label: "Bad", provider: "website", websiteOrigin: "https://other.example", replicate: true, variables: [
-      { name: "LOGIN_PASSWORD", kind: "value" as const, value: "x" },
-    ] }), /replicate/i);
+    // Website accounts never hold file variables.
     await assert.rejects(() => secrets.saveSecretAccount({ label: "Bad", provider: "website", websiteOrigin: "https://other.example", variables: [
       { name: "LOGIN_PASSWORD", kind: "file" as const, value: "x" },
     ] }), /file/i);

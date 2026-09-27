@@ -44,7 +44,7 @@ test("website secrets stay masked, origin-bound, editable, and usable in project
     await page.getByTestId("secret-account-provider-input").selectOption("custom");
     const origin = page.getByTestId("secret-account-origin-input");
     await origin.fill("https://mobile.example");
-    assert.equal(await page.getByTestId("secret-account-replicate-toggle").isDisabled(), true);
+    assert.equal(await page.getByTestId("secret-account-replicate-toggle").isEnabled(), true, "website accounts may replicate");
     await page.getByTestId("secret-account-label-input").fill("Mobile login");
     const names = page.getByTestId("secret-variable-name-input");
     const values = page.getByTestId("secret-variable-value-input");

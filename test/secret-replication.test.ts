@@ -254,6 +254,72 @@ test("ordinary replicated variables do not collide with bound website accounts",
   });
 });
 
+/** Secrets resolve project scopes against the projects table, which the node schema owns. */
+function seedProject(dataDir: string): void {
+  const database = new DatabaseSync(path.join(dataDir, "node.db"));
+  try { database.exec("CREATE TABLE workspaces (id TEXT PRIMARY KEY); CREATE TABLE projects (id TEXT PRIMARY KEY, workspace_id TEXT); INSERT INTO workspaces VALUES ('work'); INSERT INTO projects VALUES ('project-a', 'work')"); }
+  finally { database.close(); }
+}
+
+test("a replicating website account travels with its origin binding", async () => {
+  await withNode("website-outbox", async ({ secrets, replication }) => {
+    const website = await secrets.saveSecretAccount({ label: "Login", provider: "website", websiteOrigin: "https://app.example.com", replicate: true, variables: [
+      { name: "LOGIN_USERNAME", kind: "value", value: "synthetic-user" }, { name: "LOGIN_PASSWORD", kind: "value", value: "synthetic-pass" },
+    ] });
+    const peerId = randomUUID();
+    await replication.enqueueSecretCredentialSync([peerId]);
+    const events = await replication.secretCredentialEventsForPeer(peerId);
+    assert.deepEqual(events.map((event: { entityKey: string }) => event.entityKey), [website.id]);
+    assert.equal(events[0].value.provider, "website");
+    assert.equal(events[0].value.websiteOrigin, "https://app.example.com");
+  });
+});
+
+test("a received website account keeps its origin binding and attachments", async () => {
+  await withNode("website-receive", async ({ dataDir, secrets, replication }) => {
+    seedProject(dataDir);
+    const accountId = randomUUID();
+    await replication.receiveSecretCredentialEvents([{
+      id: randomUUID(), entityKey: accountId, operation: "upsert",
+      value: { label: "Login", provider: "website", websiteOrigin: "https://app.example.com", variables: [{ name: "LOGIN_PASSWORD", kind: "value", value: "synthetic-pass" }], assignments: [{ scopeType: "project", scopeId: "project-a" }] },
+      updatedAt: "2026-01-01T00:00:00.000Z", originNodeId: randomUUID(), createdAt: "2026-01-01T00:00:00.000Z",
+    }]);
+    const [account] = await secrets.listSecretAccounts();
+    assert.equal(account.websiteOrigin, "https://app.example.com");
+    assert.equal(account.replicate, true);
+    // A stored origin is what keeps values out of the shell and inside login-fill (website-secrets.test.ts).
+    assert.deepEqual(await secrets.getScopeSecretAccounts("project", "project-a"), { accountIds: [accountId] });
+  });
+});
+
+test("a received website account with an origin already bound in its scope is rejected", async () => {
+  await withNode("website-duplicate", async ({ dataDir, secrets, replication }) => {
+    seedProject(dataDir);
+    const local = await secrets.saveSecretAccount({ label: "Local", provider: "website", websiteOrigin: "https://app.example.com", variables: [{ name: "LOGIN_PASSWORD", kind: "value", value: "local" }] });
+    await secrets.setScopeSecretAccounts("project", "project-a", [local.id]);
+    await assert.rejects(() => replication.receiveSecretCredentialEvents([{
+      id: randomUUID(), entityKey: randomUUID(), operation: "upsert",
+      value: { label: "Remote", provider: "website", websiteOrigin: "https://app.example.com", variables: [{ name: "OTHER_PASSWORD", kind: "value", value: "remote" }], assignments: [{ scopeType: "project", scopeId: "project-a" }] },
+      updatedAt: "2026-01-01T00:00:00.000Z", originNodeId: randomUUID(), createdAt: "2026-01-01T00:00:00.000Z",
+    }]), /duplicate origins/);
+    assert.deepEqual((await secrets.listSecretAccounts()).map((account: { id: string }) => account.id), [local.id]);
+  });
+});
+
+test("malformed website events are rejected", async () => {
+  await withNode("website-reject", async ({ secrets, replication }) => {
+    const event = (value: Record<string, unknown>) => ({
+      id: randomUUID(), entityKey: randomUUID(), operation: "upsert" as const,
+      value: { label: "Login", provider: "website", variables: [{ name: "LOGIN_PASSWORD", kind: "value", value: "x" }], ...value },
+      updatedAt: "2026-01-01T00:00:00.000Z", originNodeId: randomUUID(), createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    await assert.rejects(() => replication.receiveSecretCredentialEvents([event({})]), /website origin/i);
+    await assert.rejects(() => replication.receiveSecretCredentialEvents([event({ websiteOrigin: "http://example.com" })]), /HTTPS/);
+    await assert.rejects(() => replication.receiveSecretCredentialEvents([event({ websiteOrigin: "https://example.com", variables: [{ name: "FILE", kind: "file", value: "x" }] })]), /file/i);
+    assert.deepEqual(await secrets.listSecretAccounts(), []);
+  });
+});
+
 test("malformed peer input is rejected rather than half-applied", async () => {
   await withNode("reject", async ({ secrets, replication }) => {
     const base = {

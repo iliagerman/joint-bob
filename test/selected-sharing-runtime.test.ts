@@ -35,8 +35,9 @@ test("selected projects transfer only their files, transcripts and attached elig
   await writeFile(path.join(shared.path,"selected.txt"),"selected file bytes");
   const selectedAccount=await api<{account:{id:string}}>(left,sa,'POST','/secrets/accounts',{label:'Selected credential',provider:'custom',replicate:true,variables:[{name:'SELECTED_SECRET',kind:'value',value:'synthetic-selected-value'}]});
   const hiddenAccount=await api<{account:{id:string}}>(left,sa,'POST','/secrets/accounts',{label:'Private credential',provider:'custom',replicate:true,variables:[{name:'PRIVATE_SECRET',kind:'value',value:'synthetic-private-value'}]});
-  assert.equal(selectedAccount.status,201);assert.equal(hiddenAccount.status,201);
-  assert.equal((await api(left,sa,'PUT',`/secrets/scopes/project/${shared.id}`,{accountIds:[selectedAccount.body.account.id]})).status,200);
+  const websiteAccount=await api<{account:{id:string}}>(left,sa,'POST','/secrets/accounts',{label:'Selected login',provider:'website',websiteOrigin:'https://app.example.com',replicate:true,variables:[{name:'LOGIN_PASSWORD',kind:'value',value:'synthetic-login-value'}]});
+  assert.equal(selectedAccount.status,201);assert.equal(hiddenAccount.status,201);assert.equal(websiteAccount.status,201,JSON.stringify(websiteAccount.body));
+  assert.equal((await api(left,sa,'PUT',`/secrets/scopes/project/${shared.id}`,{accountIds:[selectedAccount.body.account.id,websiteAccount.body.account.id]})).status,200);
   assert.equal((await api(left,sa,'PUT',`/secrets/scopes/project/${hidden.id}`,{accountIds:[hiddenAccount.body.account.id]})).status,200);
   const selection=`/clusters/${clusterId}/sharing`;
   assert.equal((await api(left,sa,"PUT",selection,{projectIds:[shared.id],workspaceIds:[],confirmOwnedData:true})).status,200);
@@ -61,6 +62,8 @@ test("selected projects transfer only their files, transcripts and attached elig
    const secrets=await api<{accounts:Array<{id:string}>}>(right,sb,'GET','/secrets');
    assert.ok(secrets.body.accounts.some(account=>account.id===selectedAccount.body.account.id),'selected project credentials must arrive');
    assert.equal(secrets.body.accounts.some(account=>account.id===hiddenAccount.body.account.id),false,'unselected credentials must stay local');
+   const website=(secrets.body.accounts as Array<{id:string;websiteOrigin?:string}>).find(account=>account.id===websiteAccount.body.account.id);
+   assert.equal(website?.websiteOrigin,'https://app.example.com','selected website credentials arrive bound to their origin');
   });
   const privateSessions=await api<{sessions:Array<{id:string;harnessId:string}>}>(left,sa,'GET',`/projects/${hidden.id}/sessions`);
   const privateSession=privateSessions.body.sessions[0];assert.ok(privateSession);
