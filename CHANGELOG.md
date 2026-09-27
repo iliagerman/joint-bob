@@ -3,9 +3,16 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.5.0 — 2026-09-28
 
-- Cluster settings now let you find cluster members with fuzzy search, pair twins directly from a shared cluster with request notifications, and filter projects and conversations by cluster.
+- Settings > Cluster now lists your clusters beside the one you open, with each cluster's nodes and what this node shares into it and gets from it.
+- Fuzzy search over cluster and node names finds a cluster or node from a few letters.
+- Make twin next to a node of a shared cluster sends it a twin request; its owner accepts or declines from a banner or the node's row, with no link to copy.
+- Twins can be unpaired or declared lost from the twins section, and nodes outside every cluster can still pair by link.
+- Sharing with a cluster is one selection that reaches every member; the per-node sharing picker is gone.
+- The project and conversation lists have a Clusters filter: by cluster, only on this node, or from twins for projects, and by where the agent runs for conversations.
+- Conversation status filters combine, so Running and Needs review can be shown together.
+- The label filter can choose several labels at once.
 
 ## 2.4.1 — 2026-09-28
 
