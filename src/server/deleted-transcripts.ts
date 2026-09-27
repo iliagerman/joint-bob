@@ -23,12 +23,11 @@ export async function removeDeletedTranscripts(projectId: string): Promise<void>
     const adapter = getHarness(engine);
     for (const sessionPath of await adapter.sessions.files(scope)) {
       const sessionId = adapter.paths.sessionId(sessionPath) ?? adapter.paths.sessionId(`${adapter.id}:${sessionPath}`);
-      if (!sessionId || !deleted.has(`${engine}:${sessionId}`)) continue;
-      const file = adapter.paths.transcriptFile?.(sessionPath);
-      if (!file) continue;
-      const info = await lstat(file).catch((error) => { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; });
+      // `files` returns plain transcript paths, which only some harnesses accept as session paths.
+      if (!sessionId || !deleted.has(`${engine}:${sessionId}`) || !adapter.paths.ownsTranscript(sessionPath)) continue;
+      const info = await lstat(sessionPath).catch((error) => { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; });
       if (!info?.isFile() || info.isSymbolicLink()) continue;
-      await unlink(file);
+      await unlink(sessionPath);
       removed = true;
     }
   }
@@ -45,5 +44,7 @@ export async function removeTranscriptsDeletedBy(events: ReplicationEvent[]): Pr
 }
 
 export async function removeAllDeletedTranscripts(): Promise<void> {
-  for (const project of await listProjects()) await removeDeletedTranscripts(project.id);
+  for (const project of await listProjects()) {
+    await removeDeletedTranscripts(project.id).catch((error) => console.warn(`Removing deleted transcripts of project ${project.id} failed`, error));
+  }
 }

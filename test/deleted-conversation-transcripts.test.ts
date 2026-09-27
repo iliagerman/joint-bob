@@ -98,11 +98,25 @@ test("a conversation deleted on one twin loses its transcript on both and never 
     await eventually(async () => assert.equal(await exists(path.join(piRoot(b), `${control}.jsonl`)), true, "transcript sharing ran"));
     assert.equal(await exists(path.join(piRoot(b), `${lateDeleted}.jsonl`)), false, "a deleted conversation's transcript is not copied in");
 
-    // Leftovers from before this fix are removed when the node starts.
+    // Leftovers from before this fix are removed when the node starts, for every harness.
+    const remote = await api<{ projects: Array<{ id: string; path: string }> }>(right, sb, "GET", "/projects");
+    const remotePath = remote.body.projects.find((project) => project.id === projectId)!.path;
+    const claudeDeleted = randomUUID();
+    const claudeFile = path.join(b.home, ".claude", "projects", remotePath.replace(/^\//, "-").replace(/[\s_.\/]+/g, "-"), `${claudeDeleted}.jsonl`);
     await stopDevNode(children.pop()!);
+    const stopped = new DatabaseSync(path.join(right.dataDir, "node.db"));
+    try {
+      stopped.prepare("INSERT INTO conversation_record_tombstones (project_id, engine, session_id, updated_at, origin_node_id) VALUES (?, 'claude', ?, ?, ?)")
+        .run(projectId, claudeDeleted, new Date().toISOString(), right.nodeId);
+    } finally { stopped.close(); }
     await writeFile(path.join(piRoot(b), `${deleted}.jsonl`), piTranscript(deleted, directory));
+    await mkdir(path.dirname(claudeFile), { recursive: true });
+    await writeFile(claudeFile, `${JSON.stringify({ type: "user", sessionId: claudeDeleted, cwd: remotePath, timestamp: new Date().toISOString(), message: { role: "user", content: "Synthetic turn" } })}\n`);
     children.push(await startDevNode(b, right));
-    await eventually(async () => assert.equal(await exists(path.join(piRoot(b), `${deleted}.jsonl`)), false, "start-up removes a deleted conversation's leftover transcript"));
+    await eventually(async () => {
+      assert.equal(await exists(path.join(piRoot(b), `${deleted}.jsonl`)), false, "start-up removes a deleted Pi conversation's leftover transcript");
+      assert.equal(await exists(claudeFile), false, "start-up removes a deleted Claude conversation's leftover transcript");
+    });
     assert.equal(await exists(path.join(piRoot(b), `${kept}.jsonl`)), true, "start-up keeps live transcripts");
   } finally {
     await Promise.all(children.map((child) => stopDevNode(child)));
