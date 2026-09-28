@@ -42,6 +42,7 @@ async function waitForBackground(node: SeededNode, session: Signed, projectId: s
 function linkSegments(node: SeededNode, projectId: string, conversationId: string, segments: Array<{ engine: string; sessionId: string }>): void {
   const db = new DatabaseSync(path.join(node.dataDir, "node.db"));
   try {
+    db.exec("PRAGMA busy_timeout=5000");
     const insert = db.prepare(`INSERT OR REPLACE INTO conversation_records
       (project_id, engine, session_id, created_at, updated_at, origin_node_id, task_id, conversation_id, segment_index)
       VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)`);
