@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.11.3 — 2026-09-28
+
+- Retain fresh transcript discovery when listing scopes change, avoiding stale metadata exposed by Linux file watchers.
+- Keep the task-query indexes, faster linked-resource startup checks, and startup performance diagnostics from the preceding candidate.
+
 ## 2.11.2 — 2026-09-28
 
 - Keep viewer and background transcript caches separate without repeatedly rescanning the same conversations.

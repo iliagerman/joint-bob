@@ -12,7 +12,7 @@ function adapter(list: (project: HarnessProject) => Promise<SessionSummary[]>) {
   });
 }
 
-test("alternating viewer and background scopes share their pending catalog scans", async (t) => {
+test("concurrent reads of the same scope share their pending catalog scan", async (t) => {
   const release = Promise.withResolvers<void>();
   t.after(() => release.resolve());
   let scans = 0;
@@ -20,31 +20,28 @@ test("alternating viewer and background scopes share their pending catalog scans
   const refresh = t.mock.method(harness.sessions, "refresh", async (_project, sessions) => sessions);
   const catalog = new HarnessSessionCatalog([harness]);
   const viewer = { ...project, includedSessionIds: ["pi:pinned"], historyDays: 30 };
-  const pending = [catalog.list(project), catalog.list(viewer), catalog.list(project), catalog.list(viewer)];
+  const pending = [catalog.list(project), catalog.list(project), catalog.list(viewer), catalog.list(viewer)];
   release.resolve();
   await Promise.all(pending);
   assert.equal(scans, 2, "one transcript scan per scope, not one per request");
   await catalog.refresh(project.id, ["/tmp/scoped-catalog/changed.jsonl"]);
-  assert.equal(refresh.mock.callCount(), 2, "watcher events update both cached scopes");
-  await catalog.list(project);
+  assert.equal(refresh.mock.callCount(), 1, "watcher events update the retained scope");
   await catalog.list(viewer);
   assert.equal(scans, 2);
 });
 
-test("catalog scope retention is bounded and evicts least-recently-used scopes", async () => {
-  const scans = new Map<number, number>();
-  const catalog = new HarnessSessionCatalog([adapter(async (scope) => {
-    const days = scope.historyDays!;
-    scans.set(days, (scans.get(days) ?? 0) + 1);
-    return [];
-  })]);
-  for (const historyDays of [1, 2, 3, 4, 1, 5, 1]) await catalog.list({ ...project, historyDays });
-  assert.equal(scans.get(1), 1, "recently used scope stays cached");
-  await catalog.list({ ...project, historyDays: 2 });
-  assert.equal(scans.get(2), 2, "oldest unused scope gets evicted");
+test("scope changes retain the existing fresh-listing behavior", async () => {
+  let scans = 0;
+  const catalog = new HarnessSessionCatalog([adapter(async () => { scans++; return []; })]);
+  await catalog.list(project);
+  await catalog.list({ ...project, includedSessionIds: ["pi:pinned"] });
+  await catalog.list(project);
+  assert.equal(scans, 3, "returning to an old scope must not resurrect its stale snapshot");
+  await catalog.list(project);
+  assert.equal(scans, 3, "unchanged scope remains cached");
   catalog.clear(project.id);
-  await catalog.list({ ...project, historyDays: 1 });
-  assert.equal(scans.get(1), 2, "project invalidation clears all its scopes");
+  await catalog.list(project);
+  assert.equal(scans, 4, "explicit invalidation clears the current scope");
 });
 
 test("an evicted scan failure cannot discard a replacement for the same scope", async (t) => {
