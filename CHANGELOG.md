@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed sync conflict resolution for nodes that do not own the project to only clear their own git metadata instead of waiting for the owner.
+
 ## 2.10.3 — 2026-09-28
 
 - Background sync operations and internal work are now hidden from conversation lists.

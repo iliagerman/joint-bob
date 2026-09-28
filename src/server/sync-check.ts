@@ -186,13 +186,16 @@ async function mayResolve(project: ProjectRecord, localNodeId: string): Promise<
   return !lock || lock.nodeId === localNodeId;
 }
 
-/** `owner` gates synced files; `.git` leftovers are node-local, so every node clears its own. */
+/** Synced copies belong to the project's owner node; `.git` leftovers are node-local, so every node clears its own. */
+export function conflictsForNode(conflicts: SyncConflict[], owner: boolean): SyncConflict[] {
+  return owner ? conflicts : conflicts.filter((conflict) => conflict.gitMetadata);
+}
+
 async function checkProjectConflicts(project: ProjectRecord, settings: SyncCheckSettings, now: number, owner: boolean): Promise<{ resolved: number; unresolved: SyncCheckStatus["unresolved"] }> {
   const unresolved: SyncCheckStatus["unresolved"] = [];
   let resolved = 0;
   const needsAgent: SyncConflict[] = [];
-  for (const conflict of await findSyncConflicts(project.id, project.path)) {
-    if (!owner && !conflict.gitMetadata) continue;
+  for (const conflict of conflictsForNode(await findSyncConflicts(project.id, project.path), owner)) {
     let outcome: SyncConflictOutcome;
     try { outcome = await resolveTrivialConflict(conflict, now); } catch (error) {
       unresolved.push({ projectId: project.id, path: path.relative(project.path, conflict.conflictPath), reason: error instanceof Error ? error.message : "Could not read the conflict copy" });

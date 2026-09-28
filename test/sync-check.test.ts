@@ -3,7 +3,7 @@ import { access, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { conflictOriginalPath, CONFLICT_SETTLE_MS, findSyncConflicts, resolveTrivialConflict, syncResolverPrompt } from "../src/server/sync-check.js";
+import { conflictOriginalPath, conflictsForNode, CONFLICT_SETTLE_MS, findSyncConflicts, resolveTrivialConflict, syncResolverPrompt } from "../src/server/sync-check.js";
 import { api, seedDevEnvironment, signIn, startDevNode, stopDevNode } from "./dev-nodes.js";
 
 const STAMP = "sync-conflict-20260920-112403-5CHB2CY";
@@ -80,6 +80,13 @@ test("obvious conflicts are fixed without a model and real edits are left for th
     assert.equal(await resolveTrivialConflict(image), "manual");
     assert.equal(await present(image.conflictPath), true, "binary copies stay for the user");
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("a node that does not own the project only clears its own git leftovers", () => {
+  const synced = { projectId: "p", root: "/p", conflictPath: `/p/a.${STAMP}.md`, originalPath: "/p/a.md", relativePath: "a.md" };
+  const git = { projectId: "p", root: "/p", conflictPath: `/p/.git/index.${STAMP}`, originalPath: "/p/.git/index", relativePath: ".git/index", gitMetadata: true };
+  assert.deepEqual(conflictsForNode([synced, git], true), [synced, git]);
+  assert.deepEqual(conflictsForNode([synced, git], false), [git], "synced copies wait for the owner node");
 });
 
 test("the resolver prompt names every pair and forbids unrelated changes", () => {
