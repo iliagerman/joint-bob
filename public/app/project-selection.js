@@ -135,6 +135,7 @@ async function startCanvasPaneConversation() {
 }
 
 export async function selectProject(projectId, shouldRender = true, preserveSession = false) {
+  const started = performance.now();
   if (state.activeProjectId !== projectId) state.classificationFilters.clear();
   showConversations();
   state.activeProjectId = projectId;
@@ -168,22 +169,30 @@ export async function selectProject(projectId, shouldRender = true, preserveSess
   void refreshQuickNotes(projectId).catch((error) => {
     if (state.activeProjectId === projectId) toast(error.message, 8000);
   });
+  // Rows already carry agent labels; model discovery is needed by controls, not the list.
+  if (!state.harnesses.length) void loadHarnesses().then(() => {
+    if (state.activeProjectId === projectId) renderSessions();
+  }).catch((error) => toast(error.message, 8000));
+  const requestStarted = performance.now();
   let body;
   try {
     const byTheWayQuery = state.byTheWayToken ? `?byTheWayToken=${encodeURIComponent(state.byTheWayToken)}` : "";
-    [body] = await Promise.all([
-      api(`/api/projects/${encodeURIComponent(projectId)}/sessions${byTheWayQuery}`),
-      state.harnesses.length ? undefined : loadHarnesses(),
-    ]);
+    body = await api(`/api/projects/${encodeURIComponent(projectId)}/sessions${byTheWayQuery}`);
   } finally {
     if (state.activeProjectId === projectId) setListLoading("sessions", false);
   }
   // A newer switch can land while this request is in flight; a late response
   // must never paint one project's conversations under another.
   if (state.activeProjectId !== projectId) return;
+  const renderStarted = performance.now();
   state.sessions = body.sessions;
   if (shouldRender) renderProjects();
   renderSessions();
+  const ready = performance.now();
+  if (ready - started >= 500) console.info("[performance] project.open", {
+    durationMs: Math.round(ready - started), requestMs: Math.round(renderStarted - requestStarted),
+    renderMs: Math.round(ready - renderStarted), conversations: body.sessions.length,
+  });
   if (!state.canvasPaneMode) {
     ensureWatchSocket();
     subscribeToPush().catch((error) => console.warn("Push subscription failed", error));

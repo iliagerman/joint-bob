@@ -255,6 +255,12 @@ interface ClaudeSessionFacts {
 }
 
 const claudeSessionFactsCache = new Map<string, ClaudeSessionFacts>();
+const claudeSessionFactsInFlight = new Map<string, {
+  mtimeMs: number;
+  size: number;
+  startPrompt: string;
+  promise: Promise<ClaudeSessionFacts>;
+}>();
 
 // Reading every transcript in a directory at once peaked above 1 GB of
 // resident memory on a 340-file project, so listing reads a fixed number at
@@ -292,6 +298,22 @@ function transcriptEventTime(records: UnknownRecord[], pick: "first" | "last"): 
 async function claudeSessionFacts(filePath: string, fileStat: Stats, startPrompt = getSettings().conversationCommands.start.prompt.trim()): Promise<ClaudeSessionFacts> {
   const cached = claudeSessionFactsCache.get(filePath);
   if (cached && cached.mtimeMs === fileStat.mtimeMs && cached.size === fileStat.size && cached.startPrompt === startPrompt) return cached;
+  const pending = claudeSessionFactsInFlight.get(filePath);
+  if (pending && pending.mtimeMs === fileStat.mtimeMs && pending.size === fileStat.size && pending.startPrompt === startPrompt) return pending.promise;
+  const promise = readClaudeSessionFacts(filePath, fileStat, startPrompt);
+  const entry = { mtimeMs: fileStat.mtimeMs, size: fileStat.size, startPrompt, promise };
+  claudeSessionFactsInFlight.set(filePath, entry);
+  try {
+    const facts = await promise;
+    // A changed stamp or prompt may have started another read while this waited.
+    if (claudeSessionFactsInFlight.get(filePath) === entry) claudeSessionFactsCache.set(filePath, facts);
+    return facts;
+  } finally {
+    if (claudeSessionFactsInFlight.get(filePath) === entry) claudeSessionFactsInFlight.delete(filePath);
+  }
+}
+
+async function readClaudeSessionFacts(filePath: string, fileStat: Stats, startPrompt: string): Promise<ClaudeSessionFacts> {
   const records = parseCompletedJsonl(await readFile(filePath, "utf8")) as UnknownRecord[];
   let customTitle = "";
   let aiTitle = "";
@@ -312,7 +334,6 @@ async function claudeSessionFacts(filePath: string, fileStat: Stats, startPrompt
     lastEventAt: transcriptEventTime(records, "last"),
     contextUsage: claudeContextUsage(records),
   };
-  claudeSessionFactsCache.set(filePath, facts);
   return facts;
 }
 

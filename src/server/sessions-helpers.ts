@@ -103,45 +103,51 @@ export async function listProjectSessionsWithReviewState(project: ProjectRecord,
   const backgroundTaskConversations = new Set([...backgroundTasks]
     .map(backgroundTaskConversationId)
     .filter(Boolean));
-  await Promise.all(listHarnesses().map(async (adapter) => {
+  await measureOperation("sessions.external_runtime", () => Promise.all(listHarnesses().map(async (adapter) => {
     if (!adapter.runtime) return;
     const runtime = await getHarnessRuntime(adapter.id);
     if (!runtime.externalRunning) return;
     externalRunning.set(adapter.id, new Set((await runtime.externalRunning()).map((run) => run.sessionId)));
-  }));
-  const listedSessions = applyConversationWork(sessions.map((session) => {
-    const task = (session.taskId ? tasksById.get(session.taskId) : undefined) ?? tasksBySessionPath.get(session.path);
-    const shared = findHarnessSession(project.id, session.harnessId, session.id);
-    const config = task?.executionState === "running" ? taskConfig(task, taskPhase(task)) : undefined;
-    const agentId = config?.engine ?? session.harnessId;
-    const liveModel = shared?.session.status().model?.label;
-    const agentModel = config?.modelId || liveModel;
-    const work = listConversationWork(session.harnessId, session.id);
-    const lease = conversationLeaseState(session.harnessId, session.id);
-    const backgroundRunning = work.some((entry) => agentWorkActive(entry.summary)) || lease.backgroundRunning || backgroundTaskConversations.has(session.conversationId ?? session.id);
-    const turnRunning = Boolean(shared && harnessTurnBusy(shared) || task?.executionState === "running" || externalRunning.get(session.harnessId)?.has(session.id) || lease.running && !lease.backgroundRunning);
-    return {
-      ...session,
-      agentId,
-      agentLabel: getHarness(agentId).label,
-      ...(agentModel ? { agentModel } : {}),
-      taskStatus: task?.status,
-      taskId: task?.id,
-      agentRuns: work.length ? work.map((entry) => entry.summary).sort((left, right) => left.runId.localeCompare(right.runId)) : undefined,
-      turnRunning,
-      backgroundRunning,
-      running: turnRunning || backgroundRunning,
-      engine: session.harnessId,
-      sessionId: session.id,
-    };
-  }));
-  // Internal snapshots do not belong to a viewer and must not create review records.
-  const reviewDetails = userId ? syncConversationReviewDetails(userId, username, project.id, listedSessions.filter((session) => !session.readOnly)) : new Map();
-  const ownership = await Promise.all(listedSessions.map((session) => getConversationOwnership(session.harnessId, session.id)));
-  const notifications = userId
-    ? await migratePortableNotifications(userId, username, project.id, listedSessions)
-    : new Map<string, { enabled: boolean; originNodeId: string }>();
-  const ntfyPaths = userId ? await ntfySubscribedSessionPaths(userId, project.id) : new Set<string>();
+  })));
+  const { listedSessions, reviewDetails } = await measureOperation("sessions.decoration_review", () => {
+    const listedSessions = applyConversationWork(sessions.map((session) => {
+      const task = (session.taskId ? tasksById.get(session.taskId) : undefined) ?? tasksBySessionPath.get(session.path);
+      const shared = findHarnessSession(project.id, session.harnessId, session.id);
+      const config = task?.executionState === "running" ? taskConfig(task, taskPhase(task)) : undefined;
+      const agentId = config?.engine ?? session.harnessId;
+      const liveModel = shared?.session.status().model?.label;
+      const agentModel = config?.modelId || liveModel;
+      const work = listConversationWork(session.harnessId, session.id);
+      const lease = conversationLeaseState(session.harnessId, session.id);
+      const backgroundRunning = work.some((entry) => agentWorkActive(entry.summary)) || lease.backgroundRunning || backgroundTaskConversations.has(session.conversationId ?? session.id);
+      const turnRunning = Boolean(shared && harnessTurnBusy(shared) || task?.executionState === "running" || externalRunning.get(session.harnessId)?.has(session.id) || lease.running && !lease.backgroundRunning);
+      return {
+        ...session,
+        agentId,
+        agentLabel: getHarness(agentId).label,
+        ...(agentModel ? { agentModel } : {}),
+        taskStatus: task?.status,
+        taskId: task?.id,
+        agentRuns: work.length ? work.map((entry) => entry.summary).sort((left, right) => left.runId.localeCompare(right.runId)) : undefined,
+        turnRunning,
+        backgroundRunning,
+        running: turnRunning || backgroundRunning,
+        engine: session.harnessId,
+        sessionId: session.id,
+      };
+    }));
+    // Internal snapshots do not belong to a viewer and must not create review records.
+    const reviewDetails = userId ? syncConversationReviewDetails(userId, username, project.id, listedSessions.filter((session) => !session.readOnly)) : new Map();
+    return { listedSessions, reviewDetails };
+  });
+  const ownership = await measureOperation("sessions.ownership", () => Promise.all(listedSessions.map((session) => getConversationOwnership(session.harnessId, session.id))));
+  const { notifications, ntfyPaths } = await measureOperation("sessions.notifications", async () => {
+    const notifications = userId
+      ? await migratePortableNotifications(userId, username, project.id, listedSessions)
+      : new Map<string, { enabled: boolean; originNodeId: string }>();
+    const ntfyPaths = userId ? await ntfySubscribedSessionPaths(userId, project.id) : new Set<string>();
+    return { notifications, ntfyPaths };
+  });
   return listedSessions.map((session, index) => {
     const { engine: _engine, sessionId: _sessionId, ...summary } = session;
     return {
