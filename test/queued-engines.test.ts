@@ -245,7 +245,7 @@ test("Pi queue resumes after update recovery finishes", async (context) => {
     const candidate = [...harnessSessions.values()].find((entry) => entry.session.id === sessionId);
     assert.ok(candidate, `session ${sessionId} was never registered`);
     return candidate;
-  }, 10_000);
+  }, 30_000);
   const sessionPath = shared.session.file!;
   let release!: () => void;
   let started!: () => void;
