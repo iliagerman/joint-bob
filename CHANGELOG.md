@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Claude sub-agent transcripts no longer appear as unlabeled draft conversations.
+
 ## 2.6.2 — 2026-09-28
 
 - Transcript synchronization now reuses file hashes when transcripts are unchanged.

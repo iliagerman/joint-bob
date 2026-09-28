@@ -93,6 +93,13 @@ function publishLegacyRecords(db: DatabaseSync): void {
   } catch (error) { db.exec("ROLLBACK"); throw error; }
 }
 
+// Older releases recorded Claude sub-agent transcripts ("parent/agent-id") as conversations,
+// which listed as unlabeled drafts. Every node drops its own copies locally: a tombstone
+// would stop the sub-agent transcripts from being shared with their parent.
+function removeSubagentRecords(db: DatabaseSync): void {
+  db.prepare("DELETE FROM conversation_records WHERE engine = 'claude' AND session_id LIKE '%/%'").run();
+}
+
 async function database(): Promise<DatabaseSync> {
   if (!databasePromise) databasePromise = (async () => {
     await mkdir(dataDir, { recursive: true, mode: 0o700 });
@@ -101,6 +108,7 @@ async function database(): Promise<DatabaseSync> {
     ensureConversationRecordSchema(db);
     ensureReplicationSchema(db);
     publishLegacyRecords(db);
+    removeSubagentRecords(db);
     return db;
   })();
   return databasePromise;
@@ -251,6 +259,8 @@ export function applyConversationRecordEvent(db: DatabaseSync, event: Replicatio
     if (payload.record?.cronTaskId) db.prepare("UPDATE conversation_records SET cron_task_id = ? WHERE project_id = ? AND engine = ? AND session_id = ? AND cron_task_id IS NULL").run(payload.record.cronTaskId, projectId, payload.engine, payload.sessionId);
     return;
   }
+  // Releases before the sub-agent fix still send these; they are never conversations.
+  if (payload.record && payload.engine === "claude" && payload.sessionId.includes("/")) return;
   if (!payload.record) {
     // Deleting a conversation also drops its browser profile assignments on this
     // node, durably: this apply path is the catch-up for peers that were offline

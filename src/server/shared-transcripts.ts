@@ -45,7 +45,7 @@ export async function sharedTranscriptProject(peer:string,id:string){
 async function sourceTranscripts(peer:string,projectId:string){
  const project=await sharedTranscriptProject(peer,projectId),sessions=await listHarnessSessions(project);
  const local=await getClusterNode();
- const entries=sessions.flatMap(session=>session.segments?.length?session.segments.map(segment=>({engine:segment.engine,id:segment.sessionId,path:segment.path})): [{engine:session.harnessId,id:session.id,path:session.path}]);
+ const entries:Array<{engine:string;id:string;path:string;subagent?:boolean}>=sessions.flatMap(session=>session.segments?.length?session.segments.map(segment=>({engine:segment.engine,id:segment.sessionId,path:segment.path})): [{engine:session.harnessId,id:session.id,path:session.path,subagent:Boolean(session.parentSessionPath)}]);
  // Ticket conversations live under ticket working directories, not the project's cwd.
  for(const task of await listTasks(projectId)){
   if(!task.sessionPath||task.sessionPath==='watch'||task.currentNodeId!==local.id)continue;
@@ -56,7 +56,8 @@ async function sourceTranscripts(peer:string,projectId:string){
  // A leftover copy of a conversation deleted on any node is never offered.
  const deleted=await deletedConversationKeys(projectId);
  const unique=[...new Map(entries.filter(entry=>!entry.path.startsWith('draft:')&&!deleted.has(`${entry.engine}:${entry.id}`)).map(entry=>[`${entry.engine}:${entry.id}`,entry])).values()];
- for(const entry of unique)await ensureConversationRecord(projectId,entry.engine,entry.id,local.id);
+ // A sub-agent transcript travels with its parent but is never a conversation of its own.
+ for(const entry of unique)if(!entry.subagent)await ensureConversationRecord(projectId,entry.engine,entry.id,local.id);
  return unique;
 }
 export async function sharedTranscriptFile(peer:string,projectId:string,engine:string,sessionId:string):Promise<string>{
