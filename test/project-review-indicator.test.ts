@@ -28,7 +28,8 @@ test("the badge refreshes with the cross-project review snapshot", async () => {
 
   // The inbox is the only source that spans every project, so the project list
   // has to re-render whenever that snapshot changes.
-  const refresh = functionBody(app, "async function refreshPendingReviews() {");
+  // Coalesced refreshes all land in the snapshot loop, which renders after each read.
+  const refresh = functionBody(app, "async function refreshPendingReviewSnapshots() {");
   assert.match(refresh, /renderProjects\(\);/);
 });
 
