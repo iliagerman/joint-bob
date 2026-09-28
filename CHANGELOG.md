@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.10.0 — 2026-09-28
+
+- HTML project files can now be opened directly in the browser with a sandboxed view that runs scripts safely.
+
 ## 2.9.1 — 2026-09-28
 
 - Failed quick note runs now stay separate from pending notes and open their original conversation without resuming or resending the prompt.

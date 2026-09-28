@@ -28,6 +28,14 @@ interface ProjectFileResolution {
   viewUrl: string;
   downloadUrl: string;
   contentUrl: string;
+  browserUrl: string;
+}
+
+type ProjectFileMode = "view" | "download" | "browser";
+
+function projectFileMode(query: Request["query"]): ProjectFileMode {
+  if (query.download === "1") return "download";
+  return query.browser === "1" ? "browser" : "view";
 }
 
 function projectPathInside(root: string, candidate: string): boolean {
@@ -132,15 +140,15 @@ async function projectFileResolution(projectId: string, requestedPath: string, t
 }
 
 function projectFileLinks(projectId: string, relativePath: string, nodeId?: string, taskId?: string): ProjectFileResolution {
-  const makeUrl = (route: string, download = false): string => {
+  const makeUrl = (route: string, mode: ProjectFileMode = "view"): string => {
     const url = new URL(`/api/projects/${encodeURIComponent(projectId)}/${route}`, "http://joint-bob.local");
     url.searchParams.set("path", relativePath);
     if (nodeId) url.searchParams.set("nodeId", nodeId);
     if (taskId) url.searchParams.set("taskId", taskId);
-    if (download) url.searchParams.set("download", "1");
+    if (mode !== "view") url.searchParams.set(mode, "1");
     return `${url.pathname}${url.search}`;
   };
-  return { path: relativePath, viewUrl: makeUrl("file"), downloadUrl: makeUrl("file", true), contentUrl: makeUrl("file-content") };
+  return { path: relativePath, viewUrl: makeUrl("file"), downloadUrl: makeUrl("file", "download"), contentUrl: makeUrl("file-content"), browserUrl: makeUrl("file", "browser") };
 }
 
 function fileVersion(bytes: Buffer): string { return createHash("sha256").update(bytes).digest("hex"); }
@@ -235,10 +243,25 @@ function fileViewPage(fileName: string, language: string, source: string): strin
 `;
 }
 
-async function sendProjectFile(response: Response, projectId: string, requestedPath: string, download: boolean, taskId?: string): Promise<void> {
+// "Open in browser" shows an HTML file as the page it is. It runs from the app's own
+// origin, so the sandbox directive gives it an opaque origin instead: its scripts run,
+// but they cannot read the app's cookies, storage, or authenticated API responses.
+const BROWSER_FILE_EXTENSIONS = new Set([".html", ".htm"]);
+const BROWSER_FILE_CSP = "sandbox allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-downloads";
+
+async function sendProjectFile(response: Response, projectId: string, requestedPath: string, mode: ProjectFileMode, taskId?: string): Promise<void> {
+  const download = mode === "download";
   try {
     const { resolved, info } = await resolveProjectFile(projectId, requestedPath, taskId);
     const fileName = path.basename(resolved).replace(/["\r\n]/g, "");
+    if (mode === "browser" && BROWSER_FILE_EXTENSIONS.has(path.extname(resolved).toLowerCase())) {
+      response.setHeader("Content-Security-Policy", BROWSER_FILE_CSP);
+      response.setHeader("Content-Type", "text/html; charset=utf-8");
+      response.setHeader("Content-Disposition", `inline; filename="${fileName}"`);
+      response.setHeader("Content-Length", String(info.size));
+      createReadStream(resolved).pipe(response);
+      return;
+    }
     // Only text renders on the page. A binary or oversized file falls through to the
     // byte stream below, which is what an image or a PDF needs anyway.
     const viewable = !download && !INLINE_PROJECT_FILE_TYPES[path.extname(resolved).toLowerCase()] && info.size <= TEXT_FILE_LIMIT;
@@ -314,14 +337,17 @@ async function proxyProjectFileResolution(peer: ClusterPeer, projectId: string, 
   return { path: body.path };
 }
 
-async function proxyProjectFile(response: Response, peer: ClusterPeer, projectId: string, requestedPath: string, download: boolean, taskId?: string): Promise<void> {
+async function proxyProjectFile(response: Response, peer: ClusterPeer, projectId: string, requestedPath: string, mode: ProjectFileMode, taskId?: string): Promise<void> {
   const url = new URL("/api/cluster/project-file", peer.url);
   url.searchParams.set("projectId", projectId);
   url.searchParams.set("path", requestedPath);
   if (taskId) url.searchParams.set("taskId", taskId);
-  if (download) url.searchParams.set("download", "1");
+  if (mode !== "view") url.searchParams.set(mode, "1");
   const routed = await runtimeFetch(url, { signal: AbortSignal.timeout(30_000) });
-  for (const header of ["content-type", "content-disposition", "content-length"] as const) {
+  // The peer's sandbox policy must replace this node's own CSP, or the page is held
+  // to the app's script-src 'self'.
+  const headers = ["content-type", "content-disposition", "content-length", ...(mode === "browser" ? ["content-security-policy"] as const : [])];
+  for (const header of headers) {
     const value = routed.headers.get(header);
     if (value) response.setHeader(header, value);
   }
@@ -349,7 +375,7 @@ app.get("/api/cluster/project-file", async (request, response, next) => {
     const projectId = typeof request.query.projectId === "string" ? request.query.projectId : "";
     const requestedPath = typeof request.query.path === "string" ? request.query.path : "";
     const taskId = typeof request.query.taskId === "string" ? request.query.taskId : undefined;
-    await sendProjectFile(response, projectId, requestedPath, request.query.download === "1", taskId);
+    await sendProjectFile(response, projectId, requestedPath, projectFileMode(request.query), taskId);
   } catch (error) { next(error); }
 });
 
@@ -392,10 +418,10 @@ app.get("/api/projects/:projectId/file", async (request, response, next) => {
     if (requestedNodeId && requestedNodeId !== local.id) {
       const peer = await getRuntimePeer(requestedNodeId);
       if (!peer) { sendError(response, 404, "File node not found"); return; }
-      await proxyProjectFile(response, peer, request.params.projectId, requestedPath, request.query.download === "1", taskId);
+      await proxyProjectFile(response, peer, request.params.projectId, requestedPath, projectFileMode(request.query), taskId);
       return;
     }
-    await sendProjectFile(response, request.params.projectId, requestedPath, request.query.download === "1", taskId);
+    await sendProjectFile(response, request.params.projectId, requestedPath, projectFileMode(request.query), taskId);
   } catch (error) { next(error); }
 });
 

@@ -44,6 +44,8 @@ function resetFileEditor() {
   elements.fileEditorStatus.textContent = "";
   elements.fileActionDownloadLink.removeAttribute("href");
   elements.fileActionDownloadLink.setAttribute("aria-disabled", "true");
+  elements.fileActionBrowserLink.removeAttribute("href");
+  elements.fileActionBrowserLink.hidden = true;
   elements.fileActionViewButton.disabled = true;
   elements.fileActionEditButton.disabled = true;
 }
@@ -62,6 +64,10 @@ export async function openFileAction(path, taskId) {
     elements.fileActionPath.textContent = body.path;
     elements.fileActionDownloadLink.href = body.downloadUrl;
     elements.fileActionDownloadLink.removeAttribute("aria-disabled");
+    if (body.browserUrl && /\.html?$/i.test(body.path)) {
+      elements.fileActionBrowserLink.href = body.browserUrl;
+      elements.fileActionBrowserLink.hidden = false;
+    }
     elements.fileActionViewButton.disabled = false;
     elements.fileActionEditButton.disabled = false;
     elements.fileActionStatus.textContent = "";
@@ -180,7 +186,9 @@ elements.fileActionCancelButton.addEventListener("click", attemptCloseFileEditor
 elements.fileEditorSaveButton.addEventListener("click", () => saveProjectFile());
 elements.fileEditorCancelButton.addEventListener("click", attemptCloseFileEditor);
 elements.fileActionDialog.addEventListener("cancel", (event) => { event.preventDefault(); attemptCloseFileEditor(); });
-elements.fileActionDownloadLink.addEventListener("click", () => setTimeout(() => {
-  elements.fileActionDialog.close();
-  resetFileEditor();
-}));
+for (const link of [elements.fileActionDownloadLink, elements.fileActionBrowserLink]) {
+  link.addEventListener("click", () => setTimeout(() => {
+    elements.fileActionDialog.close();
+    resetFileEditor();
+  }));
+}

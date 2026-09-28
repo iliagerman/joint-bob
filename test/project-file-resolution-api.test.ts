@@ -43,6 +43,21 @@ test("project file references resolve only within their project", async () => {
     const content = await fetch(`${baseUrl}${body.contentUrl}`, { headers });
     assert.equal((await content.json() as { content: string }).content, "export const config = true;\n");
 
+    // An HTML file opens as its own page, sandboxed away from the app's origin; a
+    // non-HTML file ignores the browser flag and keeps the rendered view.
+    const reportHtml = "<!doctype html><script>document.title = 'ran'</script><h1>Report</h1>";
+    await writeFile(path.join(projectPath, "report.html"), reportHtml);
+    const report = await (await fetch(`${baseUrl}/api/projects/${project.id}/file-resolution?path=report.html`, { headers })).json() as { browserUrl: string };
+    const page = await fetch(`${baseUrl}${report.browserUrl}`, { headers });
+    assert.equal(page.status, 200);
+    assert.equal(page.headers.get("content-type"), "text/html; charset=utf-8");
+    assert.match(page.headers.get("content-security-policy") ?? "", /^sandbox allow-scripts /);
+    assert.doesNotMatch(page.headers.get("content-security-policy") ?? "", /allow-same-origin/);
+    assert.equal(await page.text(), reportHtml);
+    const codeInBrowser = await fetch(`${baseUrl}/api/projects/${project.id}/file?path=src/config.ts&browser=1`, { headers });
+    assert.match(codeInBrowser.headers.get("content-security-policy") ?? "", /script-src 'self'/);
+    assert.match(await codeInBrowser.text(), /file-view\.js/);
+
     await mkdir(path.join(projectPath, "a"), { recursive: true });
     await mkdir(path.join(projectPath, "b"), { recursive: true });
     await writeFile(path.join(projectPath, "a", "notes.txt"), "a\n");

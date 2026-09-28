@@ -392,6 +392,7 @@ export const elements = {
   fileActionViewButton: document.querySelector("#fileActionViewButton"),
   fileActionStatus: document.querySelector("#fileActionStatus"),
   fileActionDownloadLink: document.querySelector("#fileActionDownloadLink"),
+  fileActionBrowserLink: document.querySelector("#fileActionBrowserLink"),
   fileActionCancelButton: document.querySelector("#fileActionCancelButton"),
   fileActionEditButton: document.querySelector("#fileActionEditButton"),
   fileEditorView: document.querySelector("#fileEditorView"),
