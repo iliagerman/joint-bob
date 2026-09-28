@@ -331,7 +331,9 @@ test("the updates settings tab is wired into the settings dialog and the service
   assert.match(html, /data-testid="updates-auto-input"/);
   assert.match(html, /data-testid="updates-install-all-button"/);
   assert.match(elements, /updatesInstallAllButton/);
-  assert.match(settingsModule, /await loadClusterPanel\(\);\n  await loadUpdatesPanel\(\);/);
+  assert.match(settingsModule, /for \(const load of \[[^\]]*loadClusterPanel, loadUpdatesPanel[^\]]*\]\)/);
+  assert.match(settingsModule, /void load\(\)\.catch/);
+  assert.doesNotMatch(settingsModule, /await load(?:Cluster|Updates)Panel\(\)/, "optional panels must not block opening Settings");
   assert.doesNotMatch(settingsModule, /clusterInventory/);
   assert.match(worker, /"\/app\/updates\.js"/);
 });
