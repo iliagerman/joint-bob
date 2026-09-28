@@ -3,7 +3,7 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.12.2 — 2026-09-28
 
 - Restored mobile double-tap, triple-tap, conversation, note, and draggable focus controls.
 - Accepted matching earlier conversation segments from twins without trusting stale session listings.
