@@ -287,6 +287,9 @@ let settingsLoading = false;
 let settingsReady = false;
 
 export async function openSettings(tab = "account") {
+  // Reopening a closed dialog must not wait for its previous request to finish.
+  if (!elements.settingsDialog.open) elements.settingsDialog.showModal();
+  selectSettingsTab(tab);
   if (settingsLoading) return;
   settingsLoading = true;
   settingsReady = false;
@@ -294,33 +297,34 @@ export async function openSettings(tab = "account") {
   save.disabled = true;
   elements.settingsForm.setAttribute("aria-busy", "true");
   elements.settingsRestartMessage.hidden = false;
+  elements.settingsRestartMessage.classList.add("is-loading");
   elements.settingsRestartMessage.textContent = "Loading settings…";
-  for (const panel of elements.settingsPanels) panel.inert = true;
-  for (const button of elements.settingsTabs) button.disabled = true;
-  elements.settingsTabsSelect.disabled = true;
-  if (!elements.settingsDialog.open) elements.settingsDialog.showModal();
+  // Navigation stays usable. Cluster actions have their own loading guard and
+  // do not depend on local harness/model discovery or Save settings.
+  for (const panel of elements.settingsPanels) panel.inert = panel.id !== "settingsPanel-cluster";
+  for (const load of [loadSecretAccounts, loadChangelogPanel, loadMfaSettings, loadClusterPanel, loadUpdatesPanel, loadWorkspaces]) {
+    void load().catch((error) => toast(error.message));
+  }
   try {
-    await loadSettings(tab);
+    await loadSettings();
     settingsReady = true;
     save.disabled = false;
   } finally {
     settingsLoading = false;
     elements.settingsForm.removeAttribute("aria-busy");
-    for (const panel of elements.settingsPanels) panel.inert = !settingsReady;
-    for (const button of elements.settingsTabs) button.disabled = !settingsReady;
-    elements.settingsTabsSelect.disabled = !settingsReady;
+    elements.settingsRestartMessage.classList.remove("is-loading");
+    for (const panel of elements.settingsPanels) panel.inert = !settingsReady && panel.id !== "settingsPanel-cluster";
     if (!settingsReady) elements.settingsRestartMessage.textContent = "Could not load settings. Close and try again.";
   }
 }
 
-async function loadSettings(tab) {
+async function loadSettings() {
   const [settings, defaults, harnessBody] = await Promise.all([api("/api/settings"), api("/api/settings/runtime-defaults"), api("/api/harnesses")]);
   runtimeDefaults = defaults;
   harnessDescriptors = harnessBody.harnesses.filter(({ configuration }) => configuration);
   clearedHarnessesOnSave.clear();
   elements.settingsUsername.textContent = state.username;
   for (const input of [elements.settingsCurrentPassword, elements.settingsNewPassword, elements.settingsNewPasswordRepeat]) input.value = "";
-  selectSettingsTab(tab);
   renderHarnessSettings(harnessDescriptors, settings, defaults);
   void fillShortcutSettings();
   elements.settingsRestartMessage.hidden = true;
@@ -348,10 +352,6 @@ async function loadSettings(tab) {
   state.syncthingEndpoint = settings.syncthing.endpoint;
   elements.completionSoundSelect.value = state.completionSound;
   syncNotifyButton();
-  // Optional panels can wait on peers or GitHub. They never gate the dialog or saving local settings.
-  for (const load of [loadSecretAccounts, loadChangelogPanel, loadMfaSettings, loadClusterPanel, loadUpdatesPanel, loadWorkspaces]) {
-    void load().catch((error) => toast(error.message));
-  }
 }
 
 async function saveSettings(event) {

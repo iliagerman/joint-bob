@@ -1661,16 +1661,23 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 #themeToggleButton { justify-self: start; }
 /* One size for every tab: switching tabs must never move or resize the dialog. */
 .settings-card {
+  display: flex;
+  flex-direction: column;
   gap: 14px;
-  width: min(1000px, calc(100vw - 24px));
+  width: min(1680px, calc(100vw - 48px));
+  height: min(1000px, calc(100dvh - 48px));
+  overflow: hidden;
 }
 /* Tab sidebar beside the panel, so ten sections read as a list instead of a strip
    that runs off the edge. The sidebar is the fixed column; the panel takes the rest. */
 .settings-body {
   display: grid;
-  grid-template-columns: 184px minmax(0, 1fr);
-  gap: 14px;
-  align-items: start;
+  flex: 1;
+  min-height: 0;
+  grid-template-columns: 208px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 18px;
+  align-items: stretch;
 }
 /* Tab strip: scrolls sideways on narrow screens rather than wrapping into a tall block. */
 .settings-tabs {
@@ -1690,7 +1697,8 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 .settings-tabs--sidebar {
   flex-direction: column;
   align-items: stretch;
-  height: min(440px, 58dvh);
+  height: 100%;
+  min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -1732,7 +1740,8 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
   display: grid;
   gap: 12px;
   align-content: start;
-  height: min(440px, 58dvh);
+  height: 100%;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
@@ -1807,7 +1816,8 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 
 /* Too narrow for a side-by-side split: the sidebar folds back into the strip above. */
 @media (max-width: 720px) {
-  .settings-body { grid-template-columns: minmax(0, 1fr); }
+  .settings-card { width: calc(100vw - 24px); height: calc(100dvh - 24px); }
+  .settings-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 12px; }
   /* On phones the section list becomes a dropdown instead of a horizontal strip. */
   .settings-tabs--sidebar { display: none; }
   .settings-tabs-select {
@@ -1838,6 +1848,22 @@ dialog::backdrop { background: rgba(10, 11, 13, 0.5); backdrop-filter: blur(6px)
 .settings-session-row span { flex: 1; color: var(--muted); font-family: var(--mono); font-size: 10.5px; overflow-wrap: anywhere; }
 .settings-restart-message { margin: 0; color: var(--amber) !important; font-size: 12px !important; }
 .settings-restart-message[hidden] { display: none; }
+.settings-load-status { display: flex; align-items: center; gap: 10px; color: var(--muted); }
+.settings-load-status[hidden] { display: none; }
+.settings-load-status.is-loading::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: queued-force-spin 0.7s linear infinite;
+}
+.settings-restart-message.is-loading { color: var(--muted) !important; }
+.cluster-content { display: grid; gap: 12px; min-width: 0; }
+.cluster-content[hidden] { display: none; }
+@media (prefers-reduced-motion: reduce) { .settings-load-status.is-loading::before { animation: none; } }
 label { display: grid; gap: 6px; min-width: 0; color: var(--muted); }
 .compact-copy { font-size: 12px; line-height: 1.4; }
 .confirm-card { width: min(420px, calc(100vw - 24px)); }

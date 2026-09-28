@@ -14,6 +14,10 @@ import { confirmAction, toast } from "./shell.js";
  */
 
 const panel = document.getElementById("settingsPanel-cluster");
+const content = document.getElementById("clusterContent");
+const loading = document.getElementById("clusterLoading");
+const loadMessage = document.getElementById("clusterLoadMessage");
+const retry = document.getElementById("clusterRetry");
 const search = document.getElementById("clusterSearchInput");
 const searchStatus = document.getElementById("clusterSearchStatus");
 const requestsBanner = document.getElementById("clusterTwinRequests");
@@ -191,39 +195,66 @@ function selectCluster(clusterId) {
 
 // ---- loading ----
 
-export async function loadClusterPanel(preferredClusterId = selectedClusterId) {
+export async function loadClusterPanel(preferredClusterId = selectedClusterId, { background = false } = {}) {
   const requestId = ++panelRequestId;
-  const [{ node }, clusterData, projectData] = await Promise.all([
-    api("/api/cluster/node"), api("/api/clusters"), api("/api/projects?syncStatus=false"),
-  ]);
-  twins.localNodeId = node.id;
-  try { twinSignature = await refreshTwins(); } catch (error) { toast(`Could not load twins: ${error.message}`); }
-  if (requestId !== panelRequestId) return;
-  data = { clusters: clusterData.clusters, projects: projectData.projects, localNodeId: node.id };
-  const nextClusterId = data.clusters.some((cluster) => cluster.id === preferredClusterId) ? preferredClusterId : data.clusters[0]?.id || null;
-  // Another cluster's invite link must not stay on screen for the one now open.
-  if (nextClusterId !== selectedClusterId) { clearGeneratedLink(); invite.hidden = true; }
-  selectedClusterId = nextClusterId;
-  if (!machineLoaded) {
-    elements.clusterNodeNameInput.value = node.name;
-    elements.clusterNodeUrlInput.value = node.url;
-    machineLoaded = true;
+  clearTimeout(pollTimer);
+  panel.setAttribute("aria-busy", "true");
+  content.hidden = !background || !data.localNodeId;
+  content.inert = true;
+  loading.hidden = false;
+  loading.classList.add("is-loading");
+  loadMessage.textContent = background ? "Refreshing clusters…" : "Loading clusters…";
+  retry.hidden = true;
+  try {
+    const [{ node }, clusterData, projectData] = await Promise.all([
+      api("/api/cluster/node"), api("/api/clusters"), api("/api/projects?syncStatus=false"),
+    ]);
+    if (requestId !== panelRequestId) return;
+    twins.localNodeId = node.id;
+    try { twinSignature = await refreshTwins(); } catch (error) { toast(`Could not load twins: ${error.message}`); }
+    if (requestId !== panelRequestId) return;
+    data = { clusters: clusterData.clusters, projects: projectData.projects, localNodeId: node.id };
+    const nextClusterId = data.clusters.some((cluster) => cluster.id === preferredClusterId) ? preferredClusterId : data.clusters[0]?.id || null;
+    // Another cluster's invite link must not stay on screen for the one now open.
+    if (nextClusterId !== selectedClusterId) { clearGeneratedLink(); invite.hidden = true; }
+    selectedClusterId = nextClusterId;
+    if (!machineLoaded) {
+      elements.clusterNodeNameInput.value = node.name;
+      elements.clusterNodeUrlInput.value = node.url;
+      machineLoaded = true;
+    }
+    render();
+    content.hidden = false;
+    content.inert = false;
+    loading.hidden = true;
+    refreshTwinInventory().then(() => { if (requestId === panelRequestId) renderTwinSection(elements.clusterNodes, data.clusters, onTwinChange); })
+      .catch((error) => toast(error.message));
+    schedulePoll();
+  } catch (error) {
+    if (requestId !== panelRequestId) return;
+    loadMessage.textContent = `Could not load clusters: ${error.message}`;
+    retry.hidden = false;
+    throw error;
+  } finally {
+    if (requestId === panelRequestId) {
+      panel.removeAttribute("aria-busy");
+      loading.classList.remove("is-loading");
+    }
   }
-  render();
-  refreshTwinInventory().then(() => { if (requestId === panelRequestId) renderTwinSection(elements.clusterNodes, data.clusters, onTwinChange); })
-    .catch((error) => toast(error.message));
-  schedulePoll();
 }
+
+retry.addEventListener("click", () => { void loadClusterPanel().catch((error) => toast(error.message)); });
 
 /** Twin requests and sync state change on other machines, so they are polled while Settings is open. */
 function schedulePoll() {
   clearTimeout(pollTimer);
   pollTimer = setTimeout(async () => {
     if (!panel.closest("dialog")?.open) return;
-    if (panel.checkVisibility()) {
+    if (panel.checkVisibility() && !panel.hasAttribute("aria-busy")) {
+      const requestId = panelRequestId;
       try {
         const signature = await refreshTwins();
-        if (signature !== twinSignature) { twinSignature = signature; render({ sharing: false }); }
+        if (requestId === panelRequestId && signature !== twinSignature) { twinSignature = signature; render({ sharing: false }); }
       } catch (error) { console.warn("Could not refresh twins", error); }
     }
     schedulePoll();
@@ -232,7 +263,7 @@ function schedulePoll() {
 
 /** Refreshes the main project list and its cluster filters after membership or sharing changes. */
 async function afterMembershipChange(clusterId = selectedClusterId) {
-  await loadClusterPanel(clusterId);
+  await loadClusterPanel(clusterId, { background: true });
   await Promise.all([loadClusterDirectory(), refreshProjectsQuietly()]).catch((error) => console.warn("Could not refresh the project list", error));
 }
 

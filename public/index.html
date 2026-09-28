@@ -738,6 +738,11 @@
 
         <section class="settings-panel" id="settingsPanel-cluster" role="tabpanel" aria-labelledby="settingsTab-cluster" tabindex="0" data-testid="settingsPanel-cluster" hidden>
           <p class="settings-hint">Cluster actions apply immediately. They do not require Save settings.</p>
+          <div class="settings-load-status" id="clusterLoading" role="status" data-testid="cluster-loading" hidden>
+            <span id="clusterLoadMessage">Loading clusters…</span>
+            <button class="ghost compact" type="button" id="clusterRetry" data-testid="cluster-retry" hidden>Retry</button>
+          </div>
+          <div class="cluster-content" id="clusterContent" data-testid="cluster-content" hidden>
           <div class="cluster-requests" id="clusterTwinRequests" data-testid="cluster-twin-requests"></div>
           <div class="cluster-layout" id="fieldsetClusters" data-testid="cluster-section">
             <div class="cluster-list-pane">
@@ -813,6 +818,7 @@
             </div>
             <p class="settings-hint" id="browserStatus" data-testid="browser-status" role="status">Browser status has not been checked.</p>
           </details>
+          </div>
         </section>
 
         <section class="settings-panel" id="settingsPanel-workspaces" role="tabpanel" aria-labelledby="settingsTab-workspaces" tabindex="0" hidden>
@@ -982,7 +988,7 @@
         </section>
         </div>
 
-        <p class="settings-restart-message" id="settingsRestartMessage" role="status" hidden></p>
+        <p class="settings-restart-message settings-load-status" id="settingsRestartMessage" role="status" hidden></p>
         <div class="dialog-actions">
           <button class="ghost" type="button" id="cancelSettingsButton" data-testid="settings-cancel-button">Close</button>
           <button class="primary" type="submit" data-testid="settings-save-button">Save settings</button>

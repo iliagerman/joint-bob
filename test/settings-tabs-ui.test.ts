@@ -81,11 +81,13 @@ test("settings tabs absorb notification, secret, and cluster configuration", asy
   assert.match(app, /api\("\/api\/workspaces"\)/);
   assert.match(app, /function fillWorkspaceSelect/);
 
-  // The dialog widens on the dense tabs, and its opening focus draws no ring.
+  // All sections share a larger viewport-bounded dialog; opening focus draws no ring.
   assert.match(app, /elements\.settingsForm\.dataset\.tab = name/);
   assert.doesNotMatch(styles, /\.settings-card\[data-tab=/);
-  assert.match(styles, /\.settings-card \{[^}]*width: min\(1000px/);
-  assert.match(styles, /\.settings-panel \{[^}]*height: min\(440px/);
+  assert.match(styles, /\.settings-card \{[^}]*width: min\(1680px/);
+  assert.match(styles, /\.settings-card \{[^}]*height: min\(1000px/);
+  assert.match(styles, /\.settings-body \{[^}]*min-height: 0/);
+  assert.match(styles, /\.settings-panel \{[^}]*height: 100%/);
   assert.match(html, /class="dialog-heading" tabindex="-1" autofocus/);
   assert.match(styles, /\.dialog-heading:focus \{ outline: none; \}/);
 

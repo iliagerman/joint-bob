@@ -3,6 +3,12 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.12.1 — 2026-09-28
+
+- Give Settings a larger, screen-sized layout with visible navigation and save controls on small screens.
+- Open and reopen Settings immediately during slow requests, and load Cluster independently of local harness settings.
+- Show loading spinners for clusters and sharing, with a retry action when cluster loading fails.
+
 ## 2.12.0 — 2026-09-28
 
 - Project rows now display which clusters they are shared through and the owning node when received from another node.

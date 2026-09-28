@@ -58,15 +58,23 @@ function scopeList(kind, items, labelKey, selected) {
 export async function renderClusterSharing(cluster, { localNodeId, onSaved }) {
   const current = ++revision;
   container.replaceChildren();
+  container.removeAttribute("aria-busy");
   if (!cluster) return;
+  container.setAttribute("aria-busy", "true");
   const others = cluster.members.filter((member) => member.nodeId !== localNodeId).map((member) => member.name || member.nodeId);
   const heading = document.createElement("h4"); heading.className = "cluster-section-title";
   heading.append(text("span", `You share with ${cluster.name}`));
-  const status = text("p", "Loading sharing…", "cluster-muted"); status.dataset.testid = "sharing-status"; status.setAttribute("role", "status");
+  const status = text("p", "Loading sharing…", "settings-load-status is-loading"); status.dataset.testid = "sharing-status"; status.setAttribute("role", "status");
   container.append(heading, status);
   let data;
   try { data = await api(`/api/clusters/${cluster.id}/sharing`); }
   catch (error) { if (current === revision) status.textContent = `Sharing unavailable: ${error.message}`; return; }
+  finally {
+    if (current === revision) {
+      status.classList.remove("is-loading");
+      container.removeAttribute("aria-busy");
+    }
+  }
   if (current !== revision) return;
   const note = text("p", "", "cluster-callout");
   note.append(document.createTextNode("Whatever you tick here is shared with "), text("strong", "every node"),

@@ -111,7 +111,9 @@ test("cluster sharing is one selection for the whole cluster, and twin states, r
     assert.deepEqual(calls, []);
     await page.getByTestId("sharing-save").click();
     await page.getByTestId("confirm-accept-button").click();
-    await page.getByTestId("sharing-status").getByText("Saved", { exact: false }).waitFor();
+    // The sharing panel is replaced by the refreshed response; its inline status is transient.
+    await page.getByText("Sharing with Home saved", { exact: true }).waitFor();
+    await page.getByTestId("sharing-save").waitFor();
     assert.deepEqual(calls.splice(0), ["put-sharing", "patch-membership:true"], "automatic sharing is applied after the selection that resets it");
     assert.deepEqual([selection.projectIds, selection.workspaceIds], [["p1"], ["w1"]]);
 
