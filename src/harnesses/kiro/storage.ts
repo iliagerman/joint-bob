@@ -257,12 +257,38 @@ export async function listKiroSessionFiles(project: HarnessProject): Promise<str
     .map((entry) => path.join(aliasRoot(), entry.name));
   const filtered = await filesInHistory(project, candidates);
   const cwdSet = new Set(sessionCwds(project).map((cwd) => path.resolve(cwd)));
-  const sessions = await mapWithConcurrency(filtered, 8, async (file) => ({ file, value: await readKiroSession(file) }));
+  const sessions = await mapWithConcurrency(filtered, 8, async (file) => ({ file, value: await readKiroListing(file) }));
   return sessions.filter(({ value }) => cwdSet.has(path.resolve(value.cwd))).map(({ file }) => file);
 }
 
-function sessionSummary(file: string, value: KiroStoredSession): SessionSummary {
-  const first = value.messages.find((message) => message.role === "user")?.text;
+type KiroListing = Pick<KiroStoredSession, "id" | "cwd" | "modelId" | "title" | "createdAt" | "updatedAt"> & { firstMessage?: string };
+
+// Every project listing scans the one shared alias root, and the running and
+// review views list every project at once. Parsing each transcript per call
+// saturated the event loop, so listings reuse a parse until the file changes.
+const listingCache = new Map<string, { mtimeMs: number; size: number; listing: KiroListing }>();
+
+async function readKiroListing(sessionPath: string): Promise<KiroListing> {
+  const file = await validateFilePath(sessionPath);
+  const info = await stat(file);
+  const cached = listingCache.get(file);
+  if (cached && cached.mtimeMs === info.mtimeMs && cached.size === info.size) return cached.listing;
+  const session = await readKiroSession(file);
+  const listing: KiroListing = {
+    id: session.id,
+    cwd: session.cwd,
+    modelId: session.modelId,
+    title: session.title,
+    firstMessage: session.messages.find((message) => message.role === "user")?.text,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+  };
+  listingCache.set(file, { mtimeMs: info.mtimeMs, size: info.size, listing });
+  return listing;
+}
+
+function sessionSummary(file: string, value: KiroListing): SessionSummary {
+  const first = value.firstMessage;
   return {
     id: value.id,
     path: `kiro:${file}`,
@@ -278,7 +304,7 @@ function sessionSummary(file: string, value: KiroStoredSession): SessionSummary 
 }
 
 export async function listKiroSessions(project: HarnessProject): Promise<SessionSummary[]> {
-  return mapWithConcurrency(await listKiroSessionFiles(project), 8, async (file) => sessionSummary(file, await readKiroSession(file)));
+  return mapWithConcurrency(await listKiroSessionFiles(project), 8, async (file) => sessionSummary(file, await readKiroListing(file)));
 }
 
 export async function refreshKiroSessions(
@@ -294,7 +320,7 @@ export async function refreshKiroSessions(
   const cwdSet = new Set(sessionCwds(project).map((cwd) => path.resolve(cwd)));
   const refreshed = await mapWithConcurrency(selected, 8, async (file) => {
     try {
-      const value = await readKiroSession(file);
+      const value = await readKiroListing(file);
       return cwdSet.has(path.resolve(value.cwd)) ? sessionSummary(file, value) : null;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;

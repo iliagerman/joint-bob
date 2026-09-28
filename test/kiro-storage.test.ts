@@ -117,3 +117,34 @@ test("Kiro history cutoff excludes old files unless explicitly included", async 
   assert.equal(sessions[0].title, "Kiro conversation");
   assert.deepEqual(await (await import("../src/harnesses/kiro/storage.js")).loadKiroMessages(base, `kiro:${file}`), []);
 });
+
+test("Kiro listings reuse unchanged transcripts and reread appended ones", async (t) => {
+  const { root, file } = await fixture();
+  t.after(async () => rm(root, { recursive: true, force: true }));
+  await appendKiroRecord(file, { type: "message", role: "user", text: "first question", timestamp: "2025-01-01T00:00:01Z" });
+  const base = project(root);
+  assert.equal((await listKiroSessions(base))[0].title, "first question");
+
+  const originalReadFile = fs.promises.readFile;
+  let transcriptReads = 0;
+  fs.promises.readFile = (async (...args: Parameters<typeof originalReadFile>) => {
+    if (args[0] === file) transcriptReads += 1;
+    return originalReadFile(...args);
+  }) as typeof fs.promises.readFile;
+  syncBuiltinESMExports();
+  try {
+    await listKiroSessionFiles(base);
+    await listKiroSessions(base);
+    await refreshKiroSessions(base, [], [file]);
+    assert.equal(transcriptReads, 0, "an unchanged transcript is not parsed again");
+
+    await appendKiroRecord(file, { type: "title", title: "Renamed later", timestamp: "2025-01-01T00:00:02Z" });
+    const [listed] = await listKiroSessions(base);
+    assert.equal(listed.title, "Renamed later");
+    assert.equal(listed.updatedAt, "2025-01-01T00:00:02Z");
+    assert.equal(transcriptReads, 1, "a changed transcript is parsed once");
+  } finally {
+    fs.promises.readFile = originalReadFile;
+    syncBuiltinESMExports();
+  }
+});

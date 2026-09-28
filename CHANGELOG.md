@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Improved performance when listing Kiro sessions by reusing transcript data when files haven't changed.
+
 ## 2.6.0 — 2026-09-28
 
 - Agents with authorized credentials can opt out of automatic ordinary sign-in pauses while MFA, CAPTCHA, and human takeover remain protected.
