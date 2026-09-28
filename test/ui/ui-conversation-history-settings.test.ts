@@ -35,8 +35,12 @@ after(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
+// Reopening keeps the last values on screen until the reload finishes, so wait for it.
+const settingsLoaded = () => page.waitForFunction(() => !document.querySelector("#settingsForm")!.hasAttribute("aria-busy"));
+
 test("conversation history window saves and reloads", async () => {
   await page.getByTestId("settings-open-button").click();
+  await settingsLoaded();
   const input = page.getByTestId("settings-conversation-history-days");
   await page.waitForFunction(() => (document.querySelector("#settingsConversationHistoryDays") as HTMLInputElement).value === "30");
   assert.equal(await input.inputValue(), "30");
@@ -45,6 +49,7 @@ test("conversation history window saves and reloads", async () => {
     await page.getByTestId("settings-save-button").click();
     await page.getByTestId("settings-dialog").waitFor({ state: "hidden" });
     await page.getByTestId("settings-open-button").click();
+    await settingsLoaded();
     await page.waitForFunction((expected) => (document.querySelector("#settingsConversationHistoryDays") as HTMLInputElement).value === expected, value);
     assert.equal(await input.inputValue(), value);
   }
