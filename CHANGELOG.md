@@ -3,6 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## 2.10.5 — 2026-09-28
+
+- Settings now opens immediately with a loading indicator, without waiting for cluster, update, or other optional panels. Saving stays disabled until local settings load safely.
+- Added private, rotating performance logs to diagnose slow requests, conversation loading, CPU saturation, and event-loop stalls without recording credentials or message contents.
+
 ## 2.10.4 — 2026-09-28
 
 - Old Syncthing conflict copies inside a project's `.git` folder are now cleared on every machine, not only on the machine that owns the project.

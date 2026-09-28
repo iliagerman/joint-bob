@@ -283,8 +283,38 @@ export const projectResourceFields = { skills: elements.projectResourceSkillsPat
 export function fillResourceFields(fields, resources) { for (const [type, field] of Object.entries(fields)) field.value = (resources[type] || []).join("\n"); }
 export function resourceFieldsValue(fields) { return Object.fromEntries(Object.entries(fields).map(([type, field]) => [type, field.value.split("\n").map((line) => line.trim()).filter(Boolean)])); }
 
+let settingsLoading = false;
+let settingsReady = false;
+
 export async function openSettings(tab = "account") {
-  const [settings, defaults, harnessBody] = await Promise.all([api("/api/settings"), api("/api/settings/runtime-defaults"), api("/api/harnesses"), loadSecretAccounts(), loadChangelogPanel(), loadMfaSettings()]);
+  if (settingsLoading) return;
+  settingsLoading = true;
+  settingsReady = false;
+  const save = elements.settingsForm.querySelector('[type="submit"]');
+  save.disabled = true;
+  elements.settingsForm.setAttribute("aria-busy", "true");
+  elements.settingsRestartMessage.hidden = false;
+  elements.settingsRestartMessage.textContent = "Loading settings…";
+  for (const panel of elements.settingsPanels) panel.inert = true;
+  for (const button of elements.settingsTabs) button.disabled = true;
+  elements.settingsTabsSelect.disabled = true;
+  if (!elements.settingsDialog.open) elements.settingsDialog.showModal();
+  try {
+    await loadSettings(tab);
+    settingsReady = true;
+    save.disabled = false;
+  } finally {
+    settingsLoading = false;
+    elements.settingsForm.removeAttribute("aria-busy");
+    for (const panel of elements.settingsPanels) panel.inert = !settingsReady;
+    for (const button of elements.settingsTabs) button.disabled = !settingsReady;
+    elements.settingsTabsSelect.disabled = !settingsReady;
+    if (!settingsReady) elements.settingsRestartMessage.textContent = "Could not load settings. Close and try again.";
+  }
+}
+
+async function loadSettings(tab) {
+  const [settings, defaults, harnessBody] = await Promise.all([api("/api/settings"), api("/api/settings/runtime-defaults"), api("/api/harnesses")]);
   runtimeDefaults = defaults;
   harnessDescriptors = harnessBody.harnesses.filter(({ configuration }) => configuration);
   clearedHarnessesOnSave.clear();
@@ -293,9 +323,6 @@ export async function openSettings(tab = "account") {
   selectSettingsTab(tab);
   renderHarnessSettings(harnessDescriptors, settings, defaults);
   void fillShortcutSettings();
-  await loadClusterPanel();
-  await loadUpdatesPanel();
-  await loadWorkspaces();
   elements.settingsRestartMessage.hidden = true;
   elements.settingsRestartMessage.textContent = "";
   elements.settingsProjectHome.value = settings.projects.homePath;
@@ -321,11 +348,15 @@ export async function openSettings(tab = "account") {
   state.syncthingEndpoint = settings.syncthing.endpoint;
   elements.completionSoundSelect.value = state.completionSound;
   syncNotifyButton();
-  if (!elements.settingsDialog.open) elements.settingsDialog.showModal();
+  // Optional panels can wait on peers or GitHub. They never gate the dialog or saving local settings.
+  for (const load of [loadSecretAccounts, loadChangelogPanel, loadMfaSettings, loadClusterPanel, loadUpdatesPanel, loadWorkspaces]) {
+    void load().catch((error) => toast(error.message));
+  }
 }
 
 async function saveSettings(event) {
   event.preventDefault();
+  if (!settingsReady || settingsLoading) return;
   for (const descriptor of harnessDescriptors) {
     const { provider, model } = conversationFields[descriptor.id];
     if (provider && !provider.value) throw new Error(`Choose a ${descriptor.label} provider for new conversations`);

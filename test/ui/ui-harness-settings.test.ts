@@ -221,6 +221,7 @@ test("node settings configure or disable automatic context compaction", { timeou
   await page.getByTestId("settings-open-button").click();
   await page.locator("#settingsDialog[open]").waitFor();
 
+  await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
   const enabled = page.getByTestId("settings-auto-compact-enabled");
   const threshold = page.getByTestId("settings-auto-compact-threshold");
   assert.equal(await enabled.isChecked(), true);
@@ -245,6 +246,7 @@ test("node settings leave shell commands unlimited by default and can cap their 
   await page.getByTestId("settings-open-button").click();
   await page.locator("#settingsDialog[open]").waitFor();
 
+  await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
   const enabled = page.getByTestId("settings-shell-timeout-enabled");
   const seconds = page.getByTestId("settings-shell-timeout-seconds");
   assert.equal(await enabled.isChecked(), false);
@@ -258,6 +260,7 @@ test("node settings leave shell commands unlimited by default and can cap their 
 
   await page.getByTestId("settings-open-button").click();
   await page.locator("#settingsDialog[open]").waitFor();
+  await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
   assert.equal(await enabled.isChecked(), true);
   assert.equal(await seconds.inputValue(), "900");
   await enabled.uncheck();
@@ -469,6 +472,7 @@ test("node settings run the sync check by default and let the user pick its harn
   await page.getByTestId("settings-open-button").click();
   await page.locator("#settingsDialog[open]").waitFor();
 
+  await page.locator('[data-testid="settings-save-button"]:enabled').waitFor();
   const enabled = page.getByTestId("settings-sync-check-enabled");
   const harness = page.getByTestId("settings-sync-check-harness");
   assert.equal(await enabled.isChecked(), true, "the sync check is on by default");

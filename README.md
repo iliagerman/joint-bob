@@ -503,6 +503,8 @@ just update             # both nodes
 
 Each deployment creates a mode-`0600` SQLite backup before replacing an installed copy and verifies the reported release. Deployment logs are written to `~/.joint-bob/logs/push-deploy.log`.
 
+Performance diagnostics are enabled automatically in `~/.joint-bob/logs/performance.jsonl`, with one rotated `.1` file, up to 5 MiB each and owner-only permissions. Requests and session-loading stages taking at least 500 ms include a shared request ID; requests still waiting after 10 seconds are recorded too. Runtime samples every 10 seconds include CPU, memory, active requests, and event-loop delay/utilization. These distinguish slow peer or disk work from a blocked server. Logs contain route templates, not URLs, query strings, headers, bodies, credentials, or conversation contents.
+
 For staged application changes, the `pre-commit` hook asks Claude Haiku to add an entry under `## Unreleased`. On a push to `main`, the `pre-push` hook reviews the pushed commit range, writes release notes, bumps the version, and stops the first push so the release files can be committed. The next push waits for the remote to confirm the exact commit, then deploys it. Pushes without application changes do not deploy through the local hook.
 
 Every push to `main` also runs the GitHub **Release** workflow. For a version not yet published, it runs typecheck, tests, and build, then tags that exact commit as `v<version>` and publishes `joint-bob.tar.gz` with its SHA-256 checksum. **Settings > Updates** can discover the release once those assets are published. Creating a release does not force an installation; nodes update through Settings or their automatic-update preference.

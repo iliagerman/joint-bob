@@ -21,6 +21,7 @@ import { listUserPins } from "../user-pins.js";
 import { sessionWatcher } from "./chat.js";
 import { findHarnessSession, harnessTurnBusy } from "./harness-sessions.js";
 import { taskConfig, taskPhase } from "./task-runs.js";
+import { measureOperation } from "./performance-diagnostics.js";
 
 /**
  * Shared by the per-project conversation list and the cross-project review inbox, so both
@@ -84,21 +85,22 @@ export async function listReviewScopeSessions(project: ProjectRecord, userId: st
 }
 
 export async function listProjectSessionsWithReviewState(project: ProjectRecord, userId: string, username: string, historyDays = getSettings().conversationHistoryDays, includeTemporarySessionId?: string): Promise<SessionSummary[]> {
-  const scope = await reviewScope(project, userId, username, historyDays);
+  const scope = await measureOperation("sessions.review_scope", () => reviewScope(project, userId, username, historyDays));
   const tasks = scope.tasks;
   const searchProject = scope.project;
   sessionWatcher.ensureProject(searchProject);
   const temporarySessionIds = await listByTheWaySessionIds(project.id);
-  const sessions = (await listHarnessSessions(searchProject, scope.includedSessionPaths, scope.includedSessionIds))
+  const sessions = (await measureOperation("sessions.transcript_catalog", () => listHarnessSessions(searchProject, scope.includedSessionPaths, scope.includedSessionIds)))
     .filter((session) => !temporarySessionIds.has(session.id) || session.id === includeTemporarySessionId);
   const tasksBySessionPath = new Map(tasks.filter((task) => task.sessionPath).map((task) => [task.sessionPath, task]));
   const tasksById = new Map(tasks.map((task) => [task.id, task]));
-  await refreshConversationWork();
+  await measureOperation("sessions.agent_dashboards", refreshConversationWork);
   const externalRunning = new Map<string, Set<string>>();
   // A supervised command the agent left running keeps its conversation in the background
   // state. The identity names the logical conversation, which survives a harness switch,
   // so the project half never has to match an alias.
-  const backgroundTaskConversations = new Set([...readActiveBackgroundTaskIdentities(resolveDataDirectory())]
+  const backgroundTasks = await measureOperation("sessions.supervisor_tasks", () => readActiveBackgroundTaskIdentities(resolveDataDirectory()));
+  const backgroundTaskConversations = new Set([...backgroundTasks]
     .map(backgroundTaskConversationId)
     .filter(Boolean));
   await Promise.all(listHarnesses().map(async (adapter) => {

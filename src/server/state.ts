@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import express from "express";
 import WebSocket, { WebSocketServer } from "ws";
+import { performanceDiagnostics } from "./performance-diagnostics.js";
 
 /** Node-wide mutable flags shared by several server modules. */
 export const flags = {
@@ -78,10 +79,13 @@ export const machineRoutes = new Set([
   "POST /update/prepare",
 ]);
 export const app = express();
+app.use("/api", performanceDiagnostics.middleware);
 export function createApp(): express.Express {
   return app;
 }
 export const server = createServer(app);
+server.on("listening", performanceDiagnostics.start);
+server.on("close", () => { void performanceDiagnostics.stop(); });
 export const webSocketServer = new WebSocketServer({ server, path: "/ws" });
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 export const publicDir = path.resolve(dirname, "../../public");
