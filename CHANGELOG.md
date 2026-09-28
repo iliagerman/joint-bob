@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Quick notes now enforce parallel limits per project instead of globally, so notes in different projects can run independently.
+
 ## 2.8.0 — 2026-09-28
 
 - Quick notes can now be searched by title or content to quickly find the ones you need.

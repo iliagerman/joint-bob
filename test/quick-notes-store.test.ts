@@ -225,6 +225,7 @@ test("missing image bytes fail visibly and never silently become empty", async (
     // Dispatch eligibility is metadata-only, so planning still works without the bytes.
     const summaries = notes.listPendingQuickNoteSummaries();
     assert.deepEqual(summaries.map((summary) => summary.id), [note.id]);
+    assert.equal(summaries[0].projectId, project.id);
     assert.equal(summaries[0].status, "pending");
     assert.equal(summaries[0].scheduledAt, null);
     assert.ok(summaries[0].createdAt);

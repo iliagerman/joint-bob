@@ -19,48 +19,66 @@ import {
   setQuickNoteQueue,
   type QuickNote,
 } from "../src/quick-notes.js";
-import { launchQuickNote, planQuickNoteLaunches, prepareQuickNoteConversation, QuickNoteLaunchError } from "../src/server/quick-note-dispatch.js";
+import { launchQuickNote, planQuickNoteLaunches, prepareQuickNoteConversation, runningConversationCounts, QuickNoteLaunchError } from "../src/server/quick-note-dispatch.js";
 import { server } from "../src/server/state.js";
 
 test("queue planning honors saved order before creation time", () => {
   const first = { ...planNote("older", "2026-01-01T08:00:00.000Z"), position: 2 };
   const second = { ...planNote("newer", "2026-01-01T09:00:00.000Z"), position: 1 };
-  assert.deepEqual(planQuickNoteLaunches([first, second], { enabled: true, maxParallel: 1 }, 0, Date.now()), ["newer"]);
+  assert.deepEqual(planQuickNoteLaunches([first, second], { enabled: true, maxParallel: 1 }, running(0), Date.now()), ["newer"]);
 });
 
 const minute = 60_000;
 
-interface PlanNote { id: string; status: QuickNote["status"]; createdAt: string; scheduledAt: string | null }
+interface PlanNote { id: string; projectId: string; status: QuickNote["status"]; createdAt: string; scheduledAt: string | null }
 
-function planNote(id: string, createdAt: string, scheduledAt: string | null = null, status: QuickNote["status"] = "pending"): PlanNote {
-  return { id, status, createdAt, scheduledAt };
+function planNote(id: string, createdAt: string, scheduledAt: string | null = null, status: QuickNote["status"] = "pending", projectId = "project-a"): PlanNote {
+  return { id, projectId, status, createdAt, scheduledAt };
+}
+
+function running(count: number): Map<string, number> {
+  return new Map([["project-a", count]]);
 }
 
 test("queue planning starts only eligible notes oldest-first within the parallel limit", () => {
   const now = Date.parse("2026-01-01T09:00:00.000Z");
   const queue = { enabled: true, maxParallel: 2 };
-  assert.deepEqual(planQuickNoteLaunches([planNote("unscheduled", "2026-01-01T08:00:01.000Z")], { enabled: false, maxParallel: 1 }, 0, now), []);
-  assert.deepEqual(planQuickNoteLaunches([planNote("unscheduled", "2026-01-01T08:00:01.000Z")], queue, 2, now), [], "a full node starts nothing");
-  assert.deepEqual(planQuickNoteLaunches([planNote("unscheduled", "2026-01-01T08:00:01.000Z")], queue, 0, now), ["unscheduled"]);
-  assert.deepEqual(planQuickNoteLaunches([planNote("future", "2026-01-01T08:00:01.000Z", new Date(now + 30 * minute).toISOString())], queue, 0, now), [], "a scheduled note never starts early");
-  assert.deepEqual(planQuickNoteLaunches([planNote("future", "2026-01-01T08:00:01.000Z", new Date(now + 30 * minute).toISOString())], { enabled: false, maxParallel: 1 }, 0, now), []);
-  assert.deepEqual(planQuickNoteLaunches([planNote("due", "2026-01-01T08:00:01.000Z", new Date(now - minute).toISOString())], { enabled: false, maxParallel: 1 }, 0, now), ["due"], "a due scheduled note starts even with the queue disabled");
-  assert.deepEqual(planQuickNoteLaunches([planNote("due", "2026-01-01T08:00:01.000Z", new Date(now).toISOString())], { enabled: false, maxParallel: 1 }, 0, now), ["due"], "due means due at the current instant");
+  assert.deepEqual(planQuickNoteLaunches([planNote("unscheduled", "2026-01-01T08:00:01.000Z")], { enabled: false, maxParallel: 1 }, running(0), now), []);
+  assert.deepEqual(planQuickNoteLaunches([planNote("unscheduled", "2026-01-01T08:00:01.000Z")], queue, running(2), now), [], "a full project starts nothing");
+  assert.deepEqual(planQuickNoteLaunches([planNote("unscheduled", "2026-01-01T08:00:01.000Z")], queue, running(0), now), ["unscheduled"]);
+  assert.deepEqual(planQuickNoteLaunches([planNote("future", "2026-01-01T08:00:01.000Z", new Date(now + 30 * minute).toISOString())], queue, running(0), now), [], "a scheduled note never starts early");
+  assert.deepEqual(planQuickNoteLaunches([planNote("future", "2026-01-01T08:00:01.000Z", new Date(now + 30 * minute).toISOString())], { enabled: false, maxParallel: 1 }, running(0), now), []);
+  assert.deepEqual(planQuickNoteLaunches([planNote("due", "2026-01-01T08:00:01.000Z", new Date(now - minute).toISOString())], { enabled: false, maxParallel: 1 }, running(0), now), ["due"], "a due scheduled note starts even with the queue disabled");
+  assert.deepEqual(planQuickNoteLaunches([planNote("due", "2026-01-01T08:00:01.000Z", new Date(now).toISOString())], { enabled: false, maxParallel: 1 }, running(0), now), ["due"], "due means due at the current instant");
   assert.deepEqual(planQuickNoteLaunches([
     planNote("oldest", "2026-01-01T08:00:01.000Z"),
     planNote("blocked", "2026-01-01T08:00:02.000Z", new Date(now + minute).toISOString()),
     planNote("newest", "2026-01-01T08:00:03.000Z"),
-  ], queue, 1, now), ["oldest"], "the limit wins and unscheduled notes wait their FIFO turn");
+  ], queue, running(1), now), ["oldest"], "the limit wins and unscheduled notes wait their FIFO turn");
   assert.deepEqual(planQuickNoteLaunches([
     planNote("oldest", "2026-01-01T08:00:01.000Z"),
     planNote("middle", "2026-01-01T08:00:02.000Z"),
     planNote("newest", "2026-01-01T08:00:03.000Z"),
-  ], queue, 0, now), ["oldest", "middle"]);
+  ], queue, running(0), now), ["oldest", "middle"]);
   assert.deepEqual(planQuickNoteLaunches([
     planNote("running", "2026-01-01T08:00:01.000Z", null, "started"),
     planNote("failed", "2026-01-01T08:00:02.000Z", null, "failed"),
     planNote("pending", "2026-01-01T08:00:03.000Z"),
-  ], queue, 0, now), ["pending"], "only pending notes dispatch automatically");
+  ], queue, running(0), now), ["pending"], "only pending notes dispatch automatically");
+});
+
+test("parallel limit counts each project separately", () => {
+  const now = Date.parse("2026-01-01T09:00:00.000Z");
+  const notes = [
+    planNote("a-first", "2026-01-01T08:00:00.000Z"),
+    planNote("b-first", "2026-01-01T08:00:01.000Z", null, "pending", "project-b"),
+    planNote("a-second", "2026-01-01T08:00:02.000Z"),
+    planNote("b-second", "2026-01-01T08:00:03.000Z", null, "pending", "project-b"),
+  ];
+  const queue = { enabled: true, maxParallel: 1 };
+  assert.deepEqual(planQuickNoteLaunches(notes, queue, new Map(), now), ["a-first", "b-first"]);
+  assert.deepEqual(planQuickNoteLaunches(notes, queue, running(1), now), ["b-first"], "busy project A cannot block project B");
+  assert.deepEqual(planQuickNoteLaunches(notes, queue, new Map([["project-b", 1]]), now), ["a-first"], "busy project B cannot block project A");
 });
 
 /** Synthetic /ws endpoint speaking the machine prompt-queue protocol; no model runs. */
@@ -161,6 +179,27 @@ test("a manual launch drives the /ws prompt-queue protocol with images, settings
     queue.complete();
     await new Promise(resolve => setTimeout(resolve, 50));
     assert.equal(getQuickNote(note.id)?.status, "completed", "the slot is kept until prompt completion");
+  } finally {
+    await closeEndpoint(endpoint);
+  }
+});
+
+test("launch reservations count only in their own project", async (context) => {
+  const { endpoint, queue } = await syntheticPromptQueue();
+  context.mock.method(server, "address", () => endpoint.address());
+  const first = await addProject("dispatch-count-a", path.join(projectRoot, "dispatch-count-a"));
+  const second = await addProject("dispatch-count-b", path.join(projectRoot, "dispatch-count-b"));
+  const note = createQuickNote({ projectId: first.id, title: "Busy A", content: "Body", harnessId: "pi" });
+  try {
+    const launch = launchQuickNote(note.id);
+    await waitForPrompts(queue);
+    const counts = await runningConversationCounts();
+    assert.equal(counts.get(first.id), 1);
+    assert.equal(counts.get(second.id), 0, "another project's slot stays free");
+    queue.accept();
+    await launch;
+    queue.complete();
+    await new Promise(resolve => setTimeout(resolve, 50));
   } finally {
     await closeEndpoint(endpoint);
   }

@@ -231,8 +231,8 @@ export function listAllQuickNotes(): QuickNote[] {
 }
 
 /** Dispatch and display share the saved backlog order. */
-export function listPendingQuickNoteSummaries(): Array<Pick<QuickNote, "id" | "status" | "createdAt" | "scheduledAt" | "position">> {
-  return db().prepare("SELECT id, status, position, created_at AS createdAt, scheduled_at AS scheduledAt FROM quick_notes WHERE status = 'pending' ORDER BY position, created_at, id").all() as unknown as Array<Pick<QuickNote, "id" | "status" | "createdAt" | "scheduledAt" | "position">>;
+export function listPendingQuickNoteSummaries(): Array<Pick<QuickNote, "id" | "projectId" | "status" | "createdAt" | "scheduledAt" | "position">> {
+  return db().prepare("SELECT id, project_id AS projectId, status, position, created_at AS createdAt, scheduled_at AS scheduledAt FROM quick_notes WHERE status = 'pending' ORDER BY position, created_at, id").all() as unknown as Array<Pick<QuickNote, "id" | "projectId" | "status" | "createdAt" | "scheduledAt" | "position">>;
 }
 
 /** Swap two backlog slots atomically, including across project filters. */

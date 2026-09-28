@@ -41,42 +41,45 @@ export class QuickNoteLaunchError extends Error {
 const REASONING_LEVELS = ["default", "off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const LAUNCH_TIMEOUT_MS = 30_000;
 
-/** Logical ids of claimed launches whose runtime has not shown up in the
-    conversation listing yet; they hold queue slots until their turn settles. */
-const reservations = new Set<string>();
+/** Claimed launches hold project queue slots until their turns settle. */
+const reservations = new Map<string, string>();
 let dispatchPass: Promise<void> | null = null;
 
-export interface QuickNotePlanCandidate { id: string; status: QuickNote["status"]; createdAt: string; scheduledAt: string | null; position?: number }
+export interface QuickNotePlanCandidate { id: string; projectId: string; status: QuickNote["status"]; createdAt: string; scheduledAt: string | null; position?: number }
 
 /** Pure dispatch decision: saved-order pending notes that may start now.
-    A scheduled note only runs once due (even with the queue off); an
-    unscheduled note only runs with the queue on; the parallel limit caps all. */
-export function planQuickNoteLaunches(notes: QuickNotePlanCandidate[], queue: QuickNoteQueue, running: number, now: number): string[] {
-  if (running >= queue.maxParallel) return [];
+    Scheduled notes run once due (even with the queue off); unscheduled notes
+    require the queue. The parallel limit applies independently per project. */
+export function planQuickNoteLaunches(notes: QuickNotePlanCandidate[], queue: QuickNoteQueue, running: Map<string, number>, now: number): string[] {
   const chosen: string[] = [];
+  const slots = new Map(running);
   for (const note of [...notes].filter((note) => note.status === "pending").sort((left, right) => (left.position ?? 0) - (right.position ?? 0) || left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))) {
-    if (running + chosen.length >= queue.maxParallel) break;
+    const count = slots.get(note.projectId) ?? 0;
+    if (count >= queue.maxParallel) continue;
     if (note.scheduledAt !== null) {
       if (Date.parse(note.scheduledAt) > now) continue;
     } else if (!queue.enabled) continue;
     chosen.push(note.id);
+    slots.set(note.projectId, count + 1);
   }
   return chosen;
 }
 
-/** Every conversation this node knows is running, across projects, plus launch
-    reservations. Logical ids are deduplicated so a harness-switched group or a
-    reserved-but-not-yet-visible launch counts once. */
-export async function runningConversationCount(): Promise<number> {
-  const running = new Set<string>();
+/** Running conversations and launch reservations, deduplicated by logical id
+    within each project (including harness-switched conversations). */
+export async function runningConversationCounts(): Promise<Map<string, number>> {
+  const running = new Map<string, Set<string>>();
   const projects = await projectsWithSharedNames(false);
   await Promise.all(projects.map(async (project) => {
-    for (const session of await listProjectSessionsWithReviewState(project, "", "")) {
-      if (session.running) running.add(`${project.id}:${session.conversationId ?? session.id}`);
-    }
+    const sessions = await listProjectSessionsWithReviewState(project, "", "");
+    running.set(project.id, new Set(sessions.filter(session => session.running).map(session => `${project.id}:${session.conversationId ?? session.id}`)));
   }));
-  for (const reservation of reservations) running.add(reservation);
-  return running.size;
+  for (const [reservation, projectId] of reservations) {
+    const active = running.get(projectId) ?? new Set<string>();
+    active.add(reservation);
+    running.set(projectId, active);
+  }
+  return new Map([...running].map(([projectId, active]) => [projectId, active.size]));
 }
 
 /** Ensures the conversation record, title, and credentials exist on the node that
@@ -271,7 +274,7 @@ async function claimAndDispatch(existing: QuickNote, from: QuickNote["status"][]
   const note = claimQuickNoteForLaunch(existing.id, sessionId, launchRequestId, from);
   if (!note) return undefined;
   const reservationKey = `${note.projectId}:${sessionId}`;
-  reservations.add(reservationKey);
+  reservations.set(reservationKey, note.projectId);
   try {
     await validateLaunchContext(note.projectId, note.secretAccountIds, Boolean(note.nodeId && note.nodeId !== (await getClusterNode()).id));
     if (note.thinkingLevel && !REASONING_LEVELS.includes(note.thinkingLevel as (typeof REASONING_LEVELS)[number])) {
@@ -304,12 +307,12 @@ export async function dispatchQuickNotes(now = Date.now()): Promise<void> {
     const queue = getQuickNoteQueue();
     const dueScheduled = pending.some((note) => note.scheduledAt !== null && Date.parse(note.scheduledAt) <= now);
     if (!queue.enabled && !dueScheduled) return;
-    const running = await runningConversationCount();
+    const running = await runningConversationCounts();
     for (const noteId of planQuickNoteLaunches(pending, queue, running, now)) {
-      const count = await runningConversationCount();
+      const counts = await runningConversationCounts();
       if (quickNoteQueueSuspended() || flags.updatePreparing) break;
       const latestQueue = getQuickNoteQueue();
-      if (!planQuickNoteLaunches(listPendingQuickNoteSummaries().filter(note => note.id === noteId), latestQueue, count, now).length) continue;
+      if (!planQuickNoteLaunches(listPendingQuickNoteSummaries().filter(note => note.id === noteId), latestQueue, counts, now).length) continue;
       try {
         const note = getQuickNote(noteId);
         if (note) await claimAndDispatch(note, ["pending"]);
