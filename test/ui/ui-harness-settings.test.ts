@@ -462,3 +462,25 @@ test("listing-only harness metadata does not offer execution or break settings",
   assert.equal(await page.getByTestId("cron-engine").locator("option[value=archive]").count(), 0);
   await page.locator("#cronDialog").evaluate((dialog: HTMLDialogElement) => dialog.close());
 });
+
+test("node settings run the sync check by default and let the user pick its harness", { timeout: 120_000 }, async (t) => {
+  const { page, environment, node } = await nativeUiFixture(t);
+  await signIn(page, node.url, environment.username, environment.password);
+  await page.getByTestId("settings-open-button").click();
+  await page.locator("#settingsDialog[open]").waitFor();
+
+  const enabled = page.getByTestId("settings-sync-check-enabled");
+  const harness = page.getByTestId("settings-sync-check-harness");
+  assert.equal(await enabled.isChecked(), true, "the sync check is on by default");
+  assert.equal(await harness.inputValue(), "pi");
+  await page.getByTestId("settings-sync-check-model").waitFor({ state: "attached" });
+
+  await harness.selectOption("claude");
+  await enabled.uncheck();
+  await page.getByTestId("settings-save-button").click();
+  await page.locator("#settingsDialog[open]").waitFor({ state: "hidden" });
+  const saved = await page.evaluate(async () => (await (await fetch("/api/settings")).json()) as { syncCheck: Record<string, unknown>; conversationDefaults: Record<string, Record<string, unknown>> });
+  assert.equal(saved.syncCheck.enabled, false);
+  assert.equal(saved.syncCheck.harnessId, "claude");
+  assert.equal(saved.syncCheck.modelId, saved.conversationDefaults.claude.modelId, "a new harness starts from its conversation default model");
+});

@@ -122,15 +122,18 @@ function withSaved(options, value) {
   return !value || options.some((option) => option.value === value) ? options : [{ value, label: `${value}${UNAVAILABLE}` }, ...options];
 }
 
-function createConversationControls(descriptor, settings, prefix) {
-  const defaults = settings.conversationDefaults[descriptor.id];
+function createConversationControls(descriptor, settings, prefix, options = {}) {
+  const defaults = options.current ?? settings.conversationDefaults[descriptor.id];
+  const idPrefix = options.idPrefix ?? `settings${prefix}Default`;
+  const testPrefix = options.testPrefix ?? `settings-${descriptor.id}-default`;
+  const labelPrefix = options.label ?? "New conversation";
   const fixedProvider = descriptor.configuration.fixedProvider;
-  const provider = fixedProvider ? null : createSearchableSelect({ id: `settings${prefix}DefaultProvider`, testid: `settings-${descriptor.id}-default-provider`, prompt: "Choose a provider", placeholder: "Search providers", emptyText: "No providers found" });
-  const model = createSearchableSelect({ id: `settings${prefix}DefaultModel`, testid: `settings-${descriptor.id}-default-model`, prompt: "Choose a model", placeholder: "Search models", emptyText: "No models found" });
+  const provider = fixedProvider ? null : createSearchableSelect({ id: `${idPrefix}Provider`, testid: `${testPrefix}-provider`, prompt: "Choose a provider", placeholder: "Search providers", emptyText: "No providers found" });
+  const model = createSearchableSelect({ id: `${idPrefix}Model`, testid: `${testPrefix}-model`, prompt: "Choose a model", placeholder: "Search models", emptyText: "No models found" });
   provider?.setValue(defaults.provider); model.setValue(defaults.modelId);
   const thinking = document.createElement("select");
-  thinking.id = `settings${prefix}DefaultThinking`; thinking.dataset.testid = `settings-${descriptor.id}-default-thinking`;
-  const status = document.createElement("output"); status.className = "engine-readiness model-options-status"; status.dataset.testid = `settings-${descriptor.id}-model-options-status`;
+  thinking.id = `${idPrefix}Thinking`; thinking.dataset.testid = `${testPrefix}-thinking`;
+  const status = document.createElement("output"); status.className = "engine-readiness model-options-status"; status.dataset.testid = options.testPrefix ? `${options.testPrefix}-model-options-status` : `settings-${descriptor.id}-model-options-status`;
 
   let catalog = { providers: [], models: [] };
   const selectedProvider = () => provider ? provider.value : fixedProvider;
@@ -162,7 +165,7 @@ function createConversationControls(descriptor, settings, prefix) {
     status.textContent = body.models.length ? "" : `${descriptor.label} has no models available on this node.`;
   }).catch((error) => { status.textContent = `Could not load ${descriptor.label} models: ${error.message}`; });
 
-  const controls = [provider && labeledControl("New conversation provider", provider.root), labeledControl("New conversation model", model.root), status, labeledControl("New conversation thinking", thinking)].filter(Boolean);
+  const controls = [provider && labeledControl(`${labelPrefix} provider`, provider.root), labeledControl(`${labelPrefix} model`, model.root), status, labeledControl(`${labelPrefix} thinking`, thinking)].filter(Boolean);
   return { fields: { provider, model, thinking }, controls, loaded };
 }
 
@@ -233,6 +236,45 @@ function conversationDefaultsValue() {
     return [descriptor.id, { provider: fields.provider ? fields.provider.value : descriptor.configuration.fixedProvider, modelId: fields.model.value, thinkingLevel: fields.thinking.value }];
   }));
 }
+let syncCheckFields = null;
+
+/** The sync check picks its own harness and model; switching harness starts from that harness's conversation default. */
+function renderSyncCheckModel(settings, harnessId, current) {
+  const descriptor = harnessDescriptors.find(({ id }) => id === harnessId);
+  if (!descriptor) { elements.settingsSyncCheckModel.replaceChildren(); syncCheckFields = null; return; }
+  const controls = createConversationControls(descriptor, settings, "", { current: current ?? settings.conversationDefaults[descriptor.id], idPrefix: "settingsSyncCheck", testPrefix: "settings-sync-check", label: "Sync check" });
+  syncCheckFields = { descriptor, ...controls.fields };
+  elements.settingsSyncCheckModel.replaceChildren(...controls.controls);
+}
+
+function renderSyncCheckSettings(settings) {
+  const sync = settings.syncCheck;
+  const runnable = harnessDescriptors.filter(({ runtimeConfigured }) => runtimeConfigured);
+  const choices = runnable.some(({ id }) => id === sync.harnessId) ? runnable : [...runnable, harnessDescriptors.find(({ id }) => id === sync.harnessId)].filter(Boolean);
+  elements.settingsSyncCheckEnabled.checked = sync.enabled;
+  elements.settingsSyncCheckHarness.replaceChildren(...choices.map(({ id, label }) => new Option(label, id)));
+  elements.settingsSyncCheckHarness.value = sync.harnessId;
+  elements.settingsSyncCheckHarness.onchange = () => renderSyncCheckModel(settings, elements.settingsSyncCheckHarness.value);
+  renderSyncCheckModel(settings, sync.harnessId, sync);
+  elements.settingsSyncCheckStatus.textContent = "";
+  api("/api/settings/sync-check").then((status) => { elements.settingsSyncCheckStatus.textContent = syncCheckSummary(status); }).catch(() => {});
+}
+
+function syncCheckSummary(status) {
+  if (!status.lastCheckAt) return "Not checked yet on this node.";
+  const parts = [`Last checked ${new Date(status.lastCheckAt).toLocaleString()}.`, `${status.resolvedTotal} conflict${status.resolvedTotal === 1 ? "" : "s"} fixed since the node started.`];
+  if (status.unresolved.length) parts.push(`Needs a look: ${status.unresolved.map((item) => `${item.path} (${item.reason})`).join("; ")}.`);
+  if (status.folderIssues.length) parts.push(`Folder issues: ${status.folderIssues.map((item) => item.message).join("; ")}.`);
+  if (status.lastError) parts.push(`Last error: ${status.lastError}.`);
+  return parts.join(" ");
+}
+
+function syncCheckValue() {
+  if (!syncCheckFields) return undefined;
+  const { descriptor, provider, model, thinking } = syncCheckFields;
+  return { enabled: elements.settingsSyncCheckEnabled.checked, harnessId: descriptor.id, provider: provider ? provider.value : descriptor.configuration.fixedProvider, modelId: model.value, thinkingLevel: thinking.value };
+}
+
 function renderRuntimeReadiness(readiness) { elements.settingsRuntimeStatus.textContent = Object.entries(readiness).flatMap(([id, fields]) => Object.entries(fields).map(([field, result]) => `${runtimeLabels[id][field]}: ${result.message}`)).join(". "); }
 async function checkRuntimePaths() { const readiness = await api("/api/settings/runtime-check", { method: "POST", body: JSON.stringify(runtimeFieldsValue()) }); renderRuntimeReadiness(readiness); return readiness; }
 function useHarnessDefaults(id) { clearedHarnessesOnSave.add(id); for (const input of Object.values(runtimeFields[id])) input.value = ""; checkRuntimePaths().catch((error) => toast(error.message)); }
@@ -266,6 +308,7 @@ export async function openSettings(tab = "account") {
   elements.settingsShellTimeoutSeconds.value = settings.shellCommandTimeoutSeconds ?? 600;
   elements.settingsShellTimeoutSeconds.disabled = !elements.settingsShellTimeoutEnabled.checked;
   elements.settingsDigestAttachments.checked = settings.digestAttachments;
+  renderSyncCheckSettings(settings);
   elements.settingsRemoteTerminalTwins.checked = settings.remoteTerminal.twins;
   elements.settingsRemoteTerminalOtherNodes.checked = settings.remoteTerminal.otherNodes;
   elements.settingsStartConversationEnabled.checked = settings.conversationCommands.start.enabled;
@@ -288,6 +331,8 @@ async function saveSettings(event) {
     if (provider && !provider.value) throw new Error(`Choose a ${descriptor.label} provider for new conversations`);
     if (!model.value) throw new Error(`Choose a ${descriptor.label} model for new conversations`);
   }
+  const syncCheck = syncCheckValue();
+  if (syncCheck && (!syncCheck.provider || !syncCheck.modelId)) throw new Error("Choose a model for the sync check");
   const runtime = runtimeFieldsValue();
   for (const harness of clearedHarnessesOnSave) runtime[harness] = blankHarnessPayload();
   const invalid = invalidRuntimeOverrides(await checkRuntimePaths(), runtime);
@@ -306,6 +351,7 @@ async function saveSettings(event) {
       autoCompactThreshold: elements.settingsAutoCompactEnabled.checked ? Number(elements.settingsAutoCompactThreshold.value) : null,
       shellCommandTimeoutSeconds: elements.settingsShellTimeoutEnabled.checked ? Number(elements.settingsShellTimeoutSeconds.value) : null,
       digestAttachments: elements.settingsDigestAttachments.checked,
+      ...(syncCheck ? { syncCheck } : {}),
       remoteTerminal: { twins: elements.settingsRemoteTerminalTwins.checked, otherNodes: elements.settingsRemoteTerminalOtherNodes.checked },
       conversationCommands: {
         start: { enabled: elements.settingsStartConversationEnabled.checked, prompt: elements.settingsStartConversationPrompt.value.trim() },

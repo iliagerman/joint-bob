@@ -1,4 +1,5 @@
 import path from "node:path";
+import { runSyncCheck, syncCheckStatus } from "../sync-check.js";
 import { z } from "zod";
 import { syncLocalSkills } from "../../agent-resources.js";
 import { listAuditEvents } from "../../audit.js";
@@ -272,6 +273,14 @@ app.get("/api/settings", (_request, response) => {
   response.json(getSettings());
 });
 
+app.get("/api/settings/sync-check", (_request, response) => {
+  response.json(syncCheckStatus());
+});
+
+app.post("/api/settings/sync-check/run", async (_request, response, next) => {
+  try { response.json(await runSyncCheck()); } catch (error) { next(error); }
+});
+
 app.get("/api/settings/runtime-defaults", (_request, response) => {
   response.json(getRuntimeDefaults());
 });
@@ -309,7 +318,8 @@ app.put("/api/settings", async (request, response, next) => {
       /^(Pi|Claude) (config|session) path must (not be under the OS temporary directory|be under the current home directory)$/.test(error.message) ||
       error.message === "Pi and Claude session paths must not overlap" ||
       /^(Pi|Claude) executable must be a command name or absolute path$/.test(error.message) ||
-      error.message.includes("Resource paths") || error.message.includes("resource paths")
+      error.message.includes("Resource paths") || error.message.includes("resource paths") ||
+      error.message.startsWith("Sync check ")
     )) {
       sendError(response, 400, error.message);
       return;

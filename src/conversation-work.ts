@@ -7,6 +7,8 @@ export interface ConversationWork {
   sessionId: string;
   summary: AgentRunSummary;
   descriptor?: AgentRunDescriptor;
+  /** When this node last heard about the run. */
+  observedAt?: string;
 }
 
 function database(): ReturnType<typeof conversationRuntimeDatabase> {
@@ -27,7 +29,7 @@ export function agentWorkActive(run: AgentRunSummary): boolean {
 export function recordConversationWork(work: ConversationWork): void {
   database().prepare(`INSERT INTO conversation_work VALUES (?, ?, ?, ?)
     ON CONFLICT(engine, session_id, run_id) DO UPDATE SET payload = excluded.payload`)
-    .run(work.engine, work.sessionId, work.summary.runId, JSON.stringify(work));
+    .run(work.engine, work.sessionId, work.summary.runId, JSON.stringify({ ...work, observedAt: new Date().toISOString() }));
 }
 
 export function listConversationWork(engine?: HarnessId, sessionId?: string): ConversationWork[] {
@@ -47,6 +49,22 @@ function failActiveTasks(summary: AgentRunSummary, error: string): AgentRunSumma
     status: "failed",
     tasks: summary.tasks.map((task) => ["queued", "running"].includes(task.status) ? { ...task, status: "failed", error } : task),
   };
+}
+
+/**
+ * Fails background runs nobody can report on anymore: no dashboard watches them, the
+ * caller says no agent process is left for their conversation, and nothing has been
+ * heard about them for `staleMs`. Returns the conversations that changed.
+ */
+export function failStaleConversationWork(alive: (engine: HarnessId, sessionId: string) => boolean, staleMs: number, now = Date.now()): Array<{ engine: HarnessId; sessionId: string }> {
+  const stale = new Map<string, { engine: HarnessId; sessionId: string }>();
+  for (const work of listConversationWork()) {
+    if (work.descriptor || !agentWorkActive(work.summary) || alive(work.engine, work.sessionId)) continue;
+    const observedAt = work.observedAt ? Date.parse(work.observedAt) : 0;
+    if (now - observedAt < staleMs) continue;
+    stale.set(`${work.engine}\n${work.sessionId}`, { engine: work.engine, sessionId: work.sessionId });
+  }
+  return [...stale.values()].filter(({ engine, sessionId }) => failUnobservedConversationWork(engine, sessionId, "Joint Bob stopped tracking this run: it went quiet and no agent process is left"));
 }
 
 export function failUnobservedConversationWork(engine: HarnessId, sessionId: string, error: string): boolean {

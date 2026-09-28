@@ -265,6 +265,22 @@ export async function releaseTaskLease(projectId: string, taskId: string, nodeId
   } catch (error) { db.exec("ROLLBACK"); throw error; }
 }
 
+/** Marks a ticket run failed when this node holds its expired lease but no run is left to finish it. */
+export async function releaseStaleTaskLease(projectId: string, taskId: string, nodeId: string, now = new Date()): Promise<TaskRecord | undefined> {
+  const db = await taskDatabase();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const current = db.prepare("SELECT * FROM tasks WHERE project_id = ? AND id = ? AND execution_state = 'running' AND lease_owner_node_id = ? AND (lease_expires_at IS NULL OR lease_expires_at <= ?)").get(projectId, taskId, nodeId, now.toISOString()) as unknown as TaskRow | undefined;
+    if (!current) { db.exec("COMMIT"); return undefined; }
+    db.prepare("UPDATE tasks SET lease_owner_node_id = NULL, lease_expires_at = NULL, lease_token = NULL, execution_state = 'failed', run_kind = NULL, updated_at = ?, origin_node_id = ? WHERE project_id = ? AND id = ?").run(nextTaskUpdatedAt(current.updated_at), nodeId, projectId, taskId);
+    const task = rowToTask(db.prepare("SELECT * FROM tasks WHERE project_id = ? AND id = ?").get(projectId, taskId) as unknown as TaskRow);
+    publishTask(db, projectId, task);
+    appendAuditEvent(db, { eventType: "task.lease.released", actorType: "node", actorId: nodeId, entityType: "task", entityId: taskId, details: { reason: "stale" } });
+    db.exec("COMMIT");
+    return task;
+  } catch (error) { db.exec("ROLLBACK"); throw error; }
+}
+
 export async function completeTaskLease(projectId: string, taskId: string, nodeId: string, leaseToken: string, update: TaskUpdate): Promise<TaskRecord> {
   const db = await taskDatabase();
   db.exec("BEGIN IMMEDIATE");

@@ -11,6 +11,8 @@ export interface SharedHarnessSession {
   engine: HarnessId; projectId: string; conversationId: string; cwd: string; session: HarnessSession;
   clients: Set<WebSocket>; turnInFlight: number; lastLocalEventAt: number; lastActivityAt: number; internalTurn?: boolean;
   liveEvents: HarnessEvent[]; idleTimer: NodeJS.Timeout | null; unsubscribe: () => void; watchdogStopping?: boolean;
+  /** When the inactivity watchdog cancelled this turn; a turn still busy long after is a zombie. */
+  watchdogStoppedAt?: number;
   /** Original server time survives browser reconnects while this turn is running. */
   turnStartedAt?: string;
   /** True while the running turn came from a scheduled task rather than a person. */
@@ -120,6 +122,7 @@ export async function reapInactiveHarnessSessions(now = Date.now(), liveShellCal
     shared.watchdogStopping = true;
     try {
       await shared.session.cancel();
+      shared.watchdogStoppedAt = now;
       console.warn(`Stopped inactive ${shared.engine} conversation ${shared.session.id}: no input or output since ${new Date(shared.lastActivityAt).toISOString()}`);
     } catch (error) {
       shared.watchdogStopping = false;
@@ -128,6 +131,29 @@ export async function reapInactiveHarnessSessions(now = Date.now(), liveShellCal
       sendHarnessStatus(shared);
     }
   }));
+}
+
+/** A cancelled turn that still reports busy this long after the watchdog stopped it is not coming back. */
+export const ZOMBIE_TURN_GRACE_MS = 10 * 60_000;
+
+/**
+ * Drops harness sessions whose turn the watchdog already cancelled but which still
+ * report busy, so the conversation stops showing as running. The next prompt opens a
+ * fresh session from the transcript.
+ */
+export function dropZombieHarnessSessions(now = Date.now()): SharedHarnessSession[] {
+  const dropped: SharedHarnessSession[] = [];
+  for (const [key, shared] of harnessSessions) {
+    if (!shared.watchdogStoppedAt || now - shared.watchdogStoppedAt < ZOMBIE_TURN_GRACE_MS || !harnessTurnBusy(shared)) continue;
+    harnessSessions.delete(key);
+    clearIdle(shared);
+    try { shared.unsubscribe(); shared.session.dispose(); } catch (error) {
+      console.warn(`Could not dispose stuck ${shared.engine} conversation ${shared.session.id}`, error);
+    }
+    console.warn(`Released stuck ${shared.engine} conversation ${shared.session.id}: still busy ${Math.round((now - shared.watchdogStoppedAt) / 60_000)} minutes after it was stopped`);
+    dropped.push(shared);
+  }
+  return dropped;
 }
 
 export function attachHarnessClient(shared: SharedHarnessSession, socket: WebSocket): void { clearIdle(shared); shared.clients.add(socket); }

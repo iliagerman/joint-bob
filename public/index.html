@@ -613,6 +613,19 @@
             </label>
             <p class="settings-hint">When on, this node describes uploaded images and browser screenshots with a vision-capable Pi model and inlines small text files, sending the words and the file path instead of the raw image so the harness does not carry every picture in its history. Agents can still open the file. When off, attachments are sent as today.</p>
           </fieldset>
+          <fieldset class="phase-settings" data-testid="settings-sync-check">
+            <legend>Sync check</legend>
+            <label class="checkbox-row">
+              <input id="settingsSyncCheckEnabled" type="checkbox" data-testid="settings-sync-check-enabled" />
+              Check file sync in the background and fix problems quietly
+            </label>
+            <label>Sync check harness
+              <select id="settingsSyncCheckHarness" data-testid="settings-sync-check-harness"></select>
+            </label>
+            <div id="settingsSyncCheckModel"></div>
+            <output id="settingsSyncCheckStatus" class="engine-readiness" data-testid="settings-sync-check-status"></output>
+            <p class="settings-hint">Every few minutes this node looks for Syncthing conflict copies in the projects it owns and for folders stuck in an error state. It removes duplicate copies, restores copies whose original is gone, rescans broken folders, and asks the chosen harness and model to merge real two-sided edits. Binary and very large files are left for you.</p>
+          </fieldset>
           <fieldset class="phase-settings">
             <legend>Terminal access</legend>
             <label class="checkbox-row">

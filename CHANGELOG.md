@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Added automatic background sync checking to quietly resolve Syncthing conflict copies and folder errors.
+
 ## 2.8.1 — 2026-09-28
 
 - Quick notes now enforce parallel limits per project instead of globally, so notes in different projects can run independently.

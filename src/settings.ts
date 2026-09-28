@@ -2,6 +2,7 @@ import { accessSync, constants as fsConstants, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import { z } from "zod";
 import { appendAuditEvent } from "./audit.js";
 import { resolveDataDirectory } from "./data-directory.js";
 import { conversationLabelsSchema, DEFAULT_CONVERSATION_LABELS } from "./conversation-labels.js";
@@ -43,6 +44,39 @@ export const DEFAULT_CONVERSATION_COMMANDS: ConversationCommandsSettings = {
 
 export interface RemoteTerminalSettings { twins: boolean; otherNodes: boolean }
 
+/** The background check that finds Syncthing conflict copies and folder errors and fixes them quietly. */
+export interface SyncCheckSettings extends ConversationDefault { enabled: boolean; harnessId: string }
+
+export const syncCheckSchema = z.object({
+  enabled: z.boolean(),
+  harnessId: z.string().trim().min(1).max(100),
+  provider: z.string().trim().min(1).max(200),
+  modelId: z.string().trim().min(1).max(300),
+  thinkingLevel: z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]),
+}).strict();
+
+/** On by default, driven by Pi (or the first harness that can run) with that harness's default model. */
+function defaultSyncCheck(defaults: Record<string, ConversationDefault>): SyncCheckSettings {
+  const runnable = listDiscoveredHarnesses().filter((adapter) => adapter.runtime && defaults[adapter.id]);
+  const harnessId = runnable.find((adapter) => adapter.id === "pi")?.id ?? runnable[0]?.id ?? "pi";
+  return { enabled: true, harnessId, ...(defaults[harnessId] ?? { provider: "", modelId: "", thinkingLevel: "off" }) };
+}
+
+function syncCheck(defaults: Record<string, ConversationDefault>): SyncCheckSettings {
+  const stored = setting("syncCheck");
+  if (!stored) return defaultSyncCheck(defaults);
+  const parsed = syncCheckSchema.safeParse(JSON.parse(stored.value));
+  return parsed.success ? parsed.data : defaultSyncCheck(defaults);
+}
+
+function validateSyncCheck(input: SyncCheckSettings): SyncCheckSettings {
+  const parsed = syncCheckSchema.parse(input);
+  const adapter = listDiscoveredHarnesses().find((candidate) => candidate.id === parsed.harnessId);
+  if (!adapter?.runtime) throw new Error(`Sync check harness ${parsed.harnessId} cannot run agents on this node`);
+  if (adapter.configuration?.fixedProvider && parsed.provider !== adapter.configuration.fixedProvider) throw new Error(`Sync check provider must be ${adapter.configuration.fixedProvider}`);
+  return parsed;
+}
+
 /** Twins may open a terminal here unless this node says otherwise; any other node may not. */
 export function remoteTerminalSettings(): RemoteTerminalSettings {
   return {
@@ -70,6 +104,7 @@ export interface SettingsInput {
   shellCommandTimeoutSeconds?: number | null;
   /** Describe images and inline text files for the agent instead of sending raw bytes. */
   digestAttachments?: boolean;
+  syncCheck?: SyncCheckSettings;
   /** Which other nodes may open a terminal on this node through a signed peer socket. */
   remoteTerminal?: RemoteTerminalSettings;
   conversationCommands?: ConversationCommandsSettings;
@@ -89,6 +124,7 @@ export interface SettingsResponse {
   autoCompactThreshold: number | null;
   shellCommandTimeoutSeconds: number | null;
   digestAttachments: boolean;
+  syncCheck: SyncCheckSettings;
   remoteTerminal: RemoteTerminalSettings;
   conversationCommands: ConversationCommandsSettings;
   conversationDefaults: ReturnType<typeof conversationDefaultsSchema.parse>;
@@ -196,8 +232,9 @@ export function getScopedResourcePaths(projectId?: string): ScopedResourcePaths 
 export function getSettings(): SettingsResponse {
   const runtimes = runtimeRecord((adapter) => configuredRuntime(adapter.id, adapter.configuration.defaults(os.homedir())));
   const defaults = Object.fromEntries(listDiscoveredHarnesses().map((adapter) => [adapter.id, adapter.defaults]));
+  const conversationDefaults = conversationDefaultsSchema.parse(JSON.parse(value("conversationDefaults", JSON.stringify(defaults))));
   return {
-    conversationDefaults: conversationDefaultsSchema.parse(JSON.parse(value("conversationDefaults", JSON.stringify(defaults)))),
+    conversationDefaults,
     ...runtimes,
     runtimes,
     runtimeOverrides: runtimeRecord((adapter) => runtimeOverrides(adapter.id)),
@@ -212,6 +249,7 @@ export function getSettings(): SettingsResponse {
     autoCompactThreshold: value("autoCompactThreshold", "70") === "disabled" ? null : Number(value("autoCompactThreshold", "70")),
     shellCommandTimeoutSeconds: value("shellCommandTimeoutSeconds", "unlimited") === "unlimited" ? null : Number(value("shellCommandTimeoutSeconds", "unlimited")),
     digestAttachments: value("digestAttachments", "false") === "true",
+    syncCheck: syncCheck(conversationDefaults),
     remoteTerminal: remoteTerminalSettings(),
     conversationCommands: conversationCommands(),
     restartRequired: Object.fromEntries(runtimeAdapters().map((adapter) => [adapter.id, false])),
@@ -308,6 +346,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
   const autoCompactThreshold = input.autoCompactThreshold === undefined ? previous.autoCompactThreshold : input.autoCompactThreshold;
   const shellCommandTimeoutSeconds = input.shellCommandTimeoutSeconds === undefined ? previous.shellCommandTimeoutSeconds : input.shellCommandTimeoutSeconds;
   const digestAttachments = input.digestAttachments ?? previous.digestAttachments;
+  const syncCheckSettings = input.syncCheck ? validateSyncCheck(input.syncCheck) : undefined;
   const remoteTerminal = { ...previous.remoteTerminal, ...input.remoteTerminal };
   const conversationCommands = input.conversationCommands ?? previous.conversationCommands;
   const conversationDefaults = conversationDefaultsSchema.parse(input.conversationDefaults ?? previous.conversationDefaults);
@@ -326,6 +365,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
     save(db, "autoCompactThreshold", autoCompactThreshold === null ? "disabled" : String(autoCompactThreshold));
     save(db, "shellCommandTimeoutSeconds", shellCommandTimeoutSeconds === null ? "unlimited" : String(shellCommandTimeoutSeconds));
     save(db, "digestAttachments", String(digestAttachments));
+    if (syncCheckSettings) save(db, "syncCheck", JSON.stringify(syncCheckSettings));
     save(db, "remoteTerminal.twins", String(remoteTerminal.twins));
     save(db, "remoteTerminal.otherNodes", String(remoteTerminal.otherNodes));
     save(db, "conversationCommands", JSON.stringify(conversationCommands));
@@ -352,6 +392,7 @@ export function updateSettings(input: SettingsInput, actorId?: string): Settings
         autoCompactThresholdChanged: previous.autoCompactThreshold !== settings.autoCompactThreshold,
         shellCommandTimeoutChanged: previous.shellCommandTimeoutSeconds !== settings.shellCommandTimeoutSeconds,
         digestAttachmentsChanged: previous.digestAttachments !== settings.digestAttachments,
+        syncCheckChanged: JSON.stringify(previous.syncCheck) !== JSON.stringify(settings.syncCheck),
         remoteTerminalChanged: JSON.stringify(previous.remoteTerminal) !== JSON.stringify(settings.remoteTerminal),
         conversationCommandsChanged: JSON.stringify(previous.conversationCommands) !== JSON.stringify(settings.conversationCommands),
         apiKeyConfigured: settings.syncthing.apiKeyConfigured,

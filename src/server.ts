@@ -12,7 +12,8 @@ import { fileURLToPath } from "node:url";
 import { flushHubDeliveries, pullFromHubs } from "./server/cluster-hubs.js";
 import { removeAllDeletedTranscripts } from "./server/deleted-transcripts.js";
 import { flushSuccessionNotices } from "./server/succession.js";
-import { flushReplicationOutbox, flushRoutingConfigDeliveries, initializeStartupReadiness, pushRuntimeLeaseSnapshots, reconcileManagedAgentResources, reapInactiveConversations, reconcileTaskConversationRecords, reconcileTaskHandoffs, sweepRuntimeLeases } from "./server/maintenance.js";
+import { flushReplicationOutbox, flushRoutingConfigDeliveries, initializeStartupReadiness, pushRuntimeLeaseSnapshots, reconcileManagedAgentResources, reapInactiveConversations, reconcileTaskConversationRecords, reconcileTaskHandoffs, sweepRuntimeLeases, sweepStaleConversations } from "./server/maintenance.js";
+import { runSyncCheck } from "./server/sync-check.js";
 import { flushPushSubscriptionOutbox } from "./server/push-flush.js";
 import { flushV2ClusterAdministration } from "./server/cluster-manager.js";
 import { reconcileUpdateJobs, startUpdateScheduler } from "./updater.js";
@@ -130,6 +131,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     removeAllDeletedTranscripts().catch((error) => console.warn("Removing deleted conversation transcripts failed", error));
     setInterval(() => pullFromHubs().catch((error) => console.warn("Hub pull failed", error)), 60_000).unref();
     setInterval(() => reapInactiveConversations().catch((error) => console.warn("Inactive conversation reap failed", error)), 60_000).unref();
+    setInterval(() => sweepStaleConversations().catch((error) => console.warn("Stale conversation sweep failed", error)), 60_000).unref();
+    setInterval(() => void runSyncCheck(), 5 * 60_000).unref();
     setInterval(() => reconcileManagedAgentResources().catch((error) => console.warn("Agent resource reconciliation failed", error)), 30_000).unref();
     setInterval(() => {
       void initializeStartupReadiness();

@@ -1,11 +1,11 @@
-import { agentWorkActive, listConversationWork, refreshConversationWork } from "../conversation-work.js";
+import { agentWorkActive, failStaleConversationWork, listConversationWork, refreshConversationWork } from "../conversation-work.js";
 import { reconcileAgentResources } from "../agent-resources.js";
 import { getClusterNode } from "../cluster.js";
 import { getConversationOwnership } from "../conversation-ownership.js";
 import { abandonedShellReason, backgroundTaskConversationId, readActiveBackgroundTaskIdentities, readImplicitShellTasks } from "../background-tasks.js";
 import { resolveDataDirectory } from "../data-directory.js";
 import { ensureConversationRecord, latestConversationSegment } from "../conversation-records.js";
-import { conversationRuntimeDatabase, type RuntimeLeaseInput, sweepExpiredRuntimeLeases } from "../conversation-runtime.js";
+import { conversationLeaseRunning, conversationRuntimeDatabase, type RuntimeLeaseInput, sweepExpiredRuntimeLeases } from "../conversation-runtime.js";
 import { getHarnessRuntime, harnessForSessionPath, listHarnesses } from "../harnesses.js";
 import { eventsForPeer, recordPeerFailure, recordPeerReceipt } from "../replication.js";
 import { currentRoutingConfigTarget, dueRoutingConfigDeliveries, dropRoutingConfigDelivery, recordRoutingConfigDeliveryFailure, recordRoutingConfigDeliverySuccess, routingConfigDatabase, type PendingRoutingConfigDelivery } from "../routing-configs.js";
@@ -17,13 +17,14 @@ import { mayReplicateEvent, replicationPeers, sendReplicationV2, signedPeerPost 
 import { getRuntimePeer, listRuntimePeers, runtimeFetch } from "./runtime-peers.js";
 import { listProjects } from "../store.js";
 import { reconcileSyncthingProjectFolders } from "../syncthing.js";
-import { listTasks, listUnfinishedOutgoingTaskHandoffs } from "../tasks.js";
+import { listTasks, listUnfinishedOutgoingTaskHandoffs, releaseStaleTaskLease } from "../tasks.js";
 import type { HarnessId } from "../types.js";
-import { broadcastSessionsChangedToAllProjects, scheduleReviewNotifications, wakeQueuedConversations } from "./realtime.js";
+import { broadcastSessionsChangedToAllProjects, broadcastToProject, scheduleReviewNotifications, wakeQueuedConversations } from "./realtime.js";
 import { replicationReceiptSchema } from "./schemas.js";
-import { harnessSessions, harnessTurnBusy, reapInactiveHarnessSessions } from "./harness-sessions.js";
+import { dropZombieHarnessSessions, harnessSessions, harnessTurnBusy, reapInactiveHarnessSessions } from "./harness-sessions.js";
 import { flags } from "./state.js";
 import { reconcileOutgoingTaskHandoff } from "./task-handoff.js";
+import { harnessTaskRuns } from "./task-runs.js";
 
 /* Syncthing is often still binding its API port when the node boots beside it. A
    single failed attempt used to leave the node "starting" for its whole lifetime,
@@ -286,6 +287,72 @@ export async function reapInactiveConversations(now = Date.now(), data = resolve
     }
   } finally {
     shellReapInProgress = false;
+  }
+}
+
+/** Background work unheard of this long, with no agent process left, is not running. */
+export const STALE_WORK_MS = 15 * 60_000;
+/** A ticket must look abandoned for this long before its run is marked failed. */
+export const STALE_TASK_RUN_MS = 5 * 60_000;
+const staleTaskRunsSince = new Map<string, number>();
+let staleSweepInProgress = false;
+
+/* Housekeeping for conversations stuck showing "running" when nothing runs: a turn the
+   watchdog cancelled that never let go, background work whose process died without
+   reporting, and a ticket run whose lease expired with no run left to finish it. Once
+   cleared, the normal review rules move the conversation to needs-review. */
+export async function sweepStaleConversations(now = Date.now()): Promise<number> {
+  if (staleSweepInProgress) return 0;
+  staleSweepInProgress = true;
+  try {
+    const zombies = dropZombieHarnessSessions(now);
+    const alive = new Set<string>();
+    for (const shared of harnessSessions.values()) if (harnessTurnBusy(shared)) alive.add(`${shared.engine}\n${shared.session.id}`);
+    for (const adapter of listHarnesses()) {
+      if (!adapter.runtime) continue;
+      const external = (await getHarnessRuntime(adapter.id)).externalRunning;
+      if (external) for (const run of await external()) alive.add(`${adapter.id}\n${run.sessionId}`);
+    }
+    for (const identity of readActiveBackgroundTaskIdentities(resolveDataDirectory())) {
+      const conversationId = backgroundTaskConversationId(identity);
+      const segment = conversationId ? await latestConversationSegment(conversationId) : undefined;
+      if (segment) alive.add(`${segment.engine}\n${segment.sessionId}`);
+    }
+    const failedWork = failStaleConversationWork((engine, sessionId) => alive.has(`${engine}\n${sessionId}`) || conversationLeaseRunning(engine, sessionId), STALE_WORK_MS, now);
+    for (const work of failedWork) console.warn(`Cleared stale background work for ${work.engine} conversation ${work.sessionId}`);
+
+    const local = await getClusterNode();
+    const liveShared = new Set(harnessSessions.values());
+    const seen = new Set<string>();
+    let clearedTasks = 0;
+    for (const project of await listProjects()) {
+      for (const task of await listTasks(project.id)) {
+        const run = harnessTaskRuns.get(task.id);
+        const abandoned = task.executionState === "running" && task.leaseOwnerNodeId === local.id
+          && (!run || !liveShared.has(run.shared))
+          && (!task.leaseExpiresAt || Date.parse(task.leaseExpiresAt) <= now);
+        if (!abandoned) continue;
+        seen.add(task.id);
+        const since = staleTaskRunsSince.get(task.id) ?? now;
+        staleTaskRunsSince.set(task.id, since);
+        if (now - since < STALE_TASK_RUN_MS) continue;
+        if (run) harnessTaskRuns.delete(task.id);
+        if (!await releaseStaleTaskLease(project.id, task.id, local.id, new Date(now))) continue;
+        console.warn(`Marked stuck ticket run ${task.id} failed: its lease expired and no agent is running it`);
+        clearedTasks += 1;
+        broadcastToProject(project.id, { type: "tasksChanged" });
+      }
+    }
+    for (const taskId of staleTaskRunsSince.keys()) if (!seen.has(taskId)) staleTaskRunsSince.delete(taskId);
+
+    const cleared = zombies.length + failedWork.length + clearedTasks;
+    if (cleared) {
+      broadcastSessionsChangedToAllProjects();
+      for (const project of await listProjects()) scheduleReviewNotifications(project.id);
+    }
+    return cleared;
+  } finally {
+    staleSweepInProgress = false;
   }
 }
 
