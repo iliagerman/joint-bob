@@ -22,6 +22,12 @@ import {
 import { launchQuickNote, planQuickNoteLaunches, prepareQuickNoteConversation, QuickNoteLaunchError } from "../src/server/quick-note-dispatch.js";
 import { server } from "../src/server/state.js";
 
+test("queue planning honors saved order before creation time", () => {
+  const first = { ...planNote("older", "2026-01-01T08:00:00.000Z"), position: 2 };
+  const second = { ...planNote("newer", "2026-01-01T09:00:00.000Z"), position: 1 };
+  assert.deepEqual(planQuickNoteLaunches([first, second], { enabled: true, maxParallel: 1 }, 0, Date.now()), ["newer"]);
+});
+
 const minute = 60_000;
 
 interface PlanNote { id: string; status: QuickNote["status"]; createdAt: string; scheduledAt: string | null }

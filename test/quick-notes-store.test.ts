@@ -23,6 +23,17 @@ test("quick notes persist without creating a conversation", async () => {
       modelId: "gpt-5.2-codex",
     });
     assert.equal(created.title, "Keep this");
+    const second = notes.createQuickNote({ projectId: project.id, title: "Second", content: "", harnessId: "pi" });
+    notes.moveQuickNote(second.id, created.id);
+    assert.deepEqual(notes.listQuickNotes(project.id).map(note => note.id), [second.id, created.id], "saved order follows move up");
+    assert.deepEqual(notes.listPendingQuickNoteSummaries().map(note => note.id), [second.id, created.id], "dispatch uses saved order");
+    notes.updateQuickNote(second.id, { projectId: project.id, title: "Edited", content: "", harnessId: "pi" });
+    assert.equal(notes.listQuickNotes(project.id)[0].id, second.id, "editing preserves order");
+    notes.moveQuickNote(second.id, created.id);
+    assert.deepEqual(notes.listQuickNotes(project.id).map(note => note.id), [created.id, second.id]);
+    notes.claimQuickNoteForLaunch(second.id, "session", "request");
+    assert.throws(() => notes.moveQuickNote(second.id, created.id), /backlog/);
+    notes.deleteQuickNote(second.id);
     assert.deepEqual(notes.listQuickNotes(project.id), [created]);
     assert.equal(notes.getQuickNote(created.id)?.content, "An inert reminder");
     assert.equal(notes.deleteQuickNote(created.id), true);

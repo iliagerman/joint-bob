@@ -54,6 +54,33 @@ after(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
+test("notes can be reordered and retain order after reload", async () => {
+  const projectId = node.projects.find(project => project.name === "Internal Assistant")!.id;
+  const ids: string[] = [];
+  try {
+    for (const title of ["Order first", "Order second"]) {
+      const result = await api<{ note: { id: string } }>(node, authSession, "POST", "/quick-notes", { projectId, title, content: "", harnessId: "pi" });
+      ids.push(result.body.note.id);
+    }
+    await openNotesTab(projectId);
+    const rows = page.getByTestId("quick-note-row");
+    assert.deepEqual(await rows.locator("strong").allTextContents(), ["Order first", "Order second"]);
+    await page.getByTestId("quick-note-move-up").nth(1).click();
+    await page.waitForFunction(() => document.querySelector('[data-testid="quick-note-row"] strong')?.textContent === "Order second");
+    assert.deepEqual(await rows.locator("strong").allTextContents(), ["Order second", "Order first"]);
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await openNotesTab(projectId);
+    assert.deepEqual(await rows.locator("strong").allTextContents(), ["Order second", "Order first"]);
+    assert.equal(await page.getByTestId("quick-note-move-up").first().isDisabled(), true);
+    assert.equal(await page.getByTestId("quick-note-move-down").last().isDisabled(), true);
+    await page.getByTestId("conversations-tab").click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByTestId("nav-projects-button").click();
+  } finally {
+    for (const id of ids) await fetch(`${node.url}/api/quick-notes/${id}`, { method: "DELETE", headers: { Cookie: authSession.cookie, "x-csrf-token": authSession.csrfToken } });
+  }
+});
+
 test("mobile keeps creation actions together and switches conversations and notes with tabs", async () => {
   await page.setViewportSize({ width: 390, height: 844 });
   const projectId = node.projects.find((project) => project.name === "Internal Assistant")!.id;

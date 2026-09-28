@@ -11,6 +11,7 @@ const noteSchema = quickNoteSchema.innerType().extend({
   id: z.string().min(1).max(120),
   status: z.enum(["pending", "starting", "started", "completed", "failed"]),
   error: z.string().nullable(), sessionId: z.string().nullable(), launchRequestId: z.string().nullable(),
+  position: z.number().int().optional().default(0),
   createdAt: z.string().datetime(), updatedAt: z.string().datetime(),
   provider: z.string().nullable(), modelId: z.string().nullable(), thinkingLevel: z.string().nullable(),
   nodeId: z.string().uuid().nullable(), secretAccountIds: z.array(z.string().uuid()),
@@ -85,7 +86,7 @@ export async function listSharedQuickNotes(projectId?: string): Promise<QuickNot
     : db.prepare("SELECT owner_node_id, note FROM shared_quick_notes").all();
   return (rows as Array<{ owner_node_id: string; note: string }>).map(row => {
     const note = JSON.parse(row.note) as QuickNote;
-    return { ...note, nodeId: note.nodeId ?? row.owner_node_id };
+    return { ...note, ownerNodeId: row.owner_node_id, nodeId: note.nodeId ?? row.owner_node_id };
   });
 }
 
@@ -99,7 +100,7 @@ export async function sharedQuickNote(id: string) {
   return { note: { ...note, nodeId: note.nodeId ?? row.owner_node_id }, peer: peers.find(peer => peer.nodeId === row.owner_node_id)! };
 }
 
-export async function forwardQuickNote(id: string, action: "edit" | "delete" | "start", input?: unknown): Promise<unknown> {
+export async function forwardQuickNote(id: string, action: "edit" | "delete" | "start" | "move", input?: unknown): Promise<unknown> {
   const shared = await sharedQuickNote(id);
   if (!shared) throw new ClusterV2HttpError(404, "Quick note not found");
   const { db, local } = await context();
@@ -107,6 +108,11 @@ export async function forwardQuickNote(id: string, action: "edit" | "delete" | "
   if (action === "edit") {
     const payload = quickNoteSchema.parse(input);
     if (!mayShareProject(db, local.id, shared.peer.nodeId, payload.projectId)) throw new ClusterV2HttpError(403, "Destination project is not shared with the note's home node");
+  }
+  if (action === "move") {
+    const { targetId } = z.object({ targetId: z.string().min(1).max(120) }).strict().parse(input);
+    const target = await sharedQuickNote(targetId);
+    if (!target || target.peer.nodeId !== shared.peer.nodeId) throw new ClusterV2HttpError(409, "Notes have separate home-node queues");
   }
   try {
     const result = await signedPeerPost(shared.peer, "/api/cluster/v2/quick-notes/action", { id, action, ...(input ? { input } : {}) });

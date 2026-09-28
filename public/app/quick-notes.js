@@ -250,6 +250,27 @@ export function renderQuickNotes() {
     remove.title = "Delete note";
     remove.textContent = "×";
     remove.addEventListener("click", () => { void removeNote(note).catch((error) => toast(error.message)); });
+    const queue = state.quickNotes.filter(candidate => candidate.ownerNodeId === note.ownerNodeId);
+    const index = queue.findIndex(candidate => candidate.id === note.id);
+    for (const [direction, offset, label] of [["up", -1, "↑"], ["down", 1, "↓"]]) {
+      const move = document.createElement("button");
+      move.type = "button";
+      move.className = "quick-note-action";
+      move.dataset.testid = `quick-note-move-${direction}`;
+      move.setAttribute("aria-label", `Move ${note.title} ${direction}`);
+      move.title = `Move ${direction} in execution order on this note's home node`;
+      move.textContent = label;
+      const target = queue[index + offset];
+      move.disabled = !target;
+      move.addEventListener("click", async () => {
+        for (const control of list.querySelectorAll('[data-testid^="quick-note-move-"]')) control.disabled = true;
+        try {
+          await api(`/api/quick-notes/${encodeURIComponent(note.id)}/move`, { method: "POST", body: JSON.stringify({ targetId: target.id }) });
+          await refreshQuickNotes();
+        } catch (error) { toast(error.message); renderQuickNotes(); }
+      });
+      actions.append(move);
+    }
     actions.append(start, remove);
     row.append(button, actions);
     list.append(row);
@@ -265,7 +286,7 @@ export async function refreshQuickNotes(projectId) {
   const projectIds = filterProjectId === "*" ? state.projects.map((project) => project.id) : [filterProjectId];
   const bodies = await Promise.all(projectIds.map((id) => api(`/api/projects/${encodeURIComponent(id)}/quick-notes`)));
   if (requestId !== notesRequestId || state.activeProjectId !== activeProjectId) return;
-  state.quickNotes = bodies.flatMap((body) => body.notes).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  state.quickNotes = bodies.flatMap((body) => body.notes).sort((left, right) => (left.ownerNodeId || "").localeCompare(right.ownerNodeId || "") || (left.position ?? 0) - (right.position ?? 0) || left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
   renderQuickNotes();
 }
 

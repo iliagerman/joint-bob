@@ -174,7 +174,7 @@
               <input type="number" id="quickNotesQueueParallel" min="1" max="20" step="1" value="1" data-testid="quick-notes-queue-parallel" aria-label="Notes started in parallel" />
             </label>
             <span class="quick-note-queue-running" id="quickNotesQueueRunning" data-testid="quick-notes-queue-running" hidden></span>
-            <p class="quick-note-queue-hint" id="quickNotesQueueHint" data-testid="quick-notes-queue-hint">Applies to every project on this node. The oldest note starts first: 1 runs one conversation at a time, above 1 runs that many in parallel. Scheduled notes wait until their time.</p>
+            <p class="quick-note-queue-hint" id="quickNotesQueueHint" data-testid="quick-notes-queue-hint">Applies to every project on this node. Use the arrows to set execution order; choose All projects to order across projects. Parallel 1 runs one conversation at a time; higher values allow overlapping runs. Scheduled notes wait until their time. Each home node has its own queue.</p>
           </div>
           <div class="quick-note-list" id="quickNoteList" data-testid="quick-note-list" tabindex="-1"></div>
         </section>

@@ -44,6 +44,8 @@ test("notes inherit selected project grants and lose access on revocation", { ti
       const denied = await signedNodeRequest(right, b, a, "POST", "/api/cluster/v2/quick-notes/action", { id: privateNote.body.note.id, action, ...(action === "edit" ? { input } : {}) });
       assert.equal(denied.status, 403, `${action} must check the actual note project`);
     }
+    const deniedReorder = await signedNodeRequest(right, b, a, "POST", "/api/cluster/v2/quick-notes/action", { id: visible.body.note.id, action: "move", input: { targetId: privateNote.body.note.id } });
+    assert.equal(deniedReorder.status, 403, "reorder must authorize the target project too");
     const deniedMove = await api(b, sb, "PATCH", `/quick-notes/${visible.body.note.id}`, { ...input, projectId: projectNamed(b, "Internal Assistant").id });
     assert.equal(deniedMove.status, 403, "cannot move a remote note into a project its home cannot access");
     const edit = await api(b, sb, "PATCH", `/quick-notes/${visible.body.note.id}`, { ...input, title: "Edited across cluster" });
@@ -83,6 +85,14 @@ test("shared project notes can be read, edited, started and deleted from either 
     const read = await api<{ note: QuickNote }>(b, sb, "GET", `/quick-notes/${id}`);
     assert.equal(read.status, 200);
     assert.deepEqual(read.body.note.images, created.body.note.images, "image bytes survive sharing");
+    const second = await api<{ note: QuickNote }>(a, sa, "POST", "/quick-notes", { ...input, title: "Second" });
+    await api(b, sb, "GET", `/projects/${projectId}/quick-notes`);
+    assert.equal((await api(b, sb, "POST", `/quick-notes/${second.body.note.id}/move`, { targetId: id })).status, 200);
+    for (const [node, session] of [[a, sa], [b, sb]] as const) {
+      const ordered = await api<{ notes: QuickNote[] }>(node, session, "GET", `/projects/${projectId}/quick-notes`);
+      assert.deepEqual(ordered.body.notes.map(note => note.id), [second.body.note.id, id], "both nodes display the owner's reordered queue");
+    }
+    await fetch(`${a.url}/api/quick-notes/${second.body.note.id}`, { method: "DELETE", headers: { Cookie: sa.cookie, "x-csrf-token": sa.csrfToken } });
     const edited = await api<{ note: QuickNote }>(b, sb, "PATCH", `/quick-notes/${id}`, { ...input, title: "Edited on peer", content: "Peer edit" });
     assert.equal(edited.status, 200, JSON.stringify(edited.body));
     assert.equal((await api<{ note: QuickNote }>(a, sa, "GET", `/quick-notes/${id}`)).body.note.content, "Peer edit");

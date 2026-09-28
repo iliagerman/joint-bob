@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Quick notes can now be reordered with up and down arrows to control execution sequence.
+
 ## 2.6.3 — 2026-09-28
 
 - Claude sub-agent transcripts no longer appear as unlabeled draft conversations.

@@ -3,17 +3,34 @@ import { authorizeQuickNotePeer, forwardQuickNote, listSharedQuickNotes, offered
 import { mapV2Error } from "../cluster-v2.js";
 import { getProject } from "../../store.js";
 import { getClusterNode } from "../../cluster.js";
-import { createQuickNote, deleteQuickNote, getQuickNote, getQuickNoteQueue, listAllQuickNotes, listQuickNotes, setQuickNoteQueue, updateQuickNote } from "../../quick-notes.js";
+import { createQuickNote, deleteQuickNote, getQuickNote, getQuickNoteQueue, listAllQuickNotes, listQuickNotes, moveQuickNote, setQuickNoteQueue, updateQuickNote } from "../../quick-notes.js";
 import { launchQuickNote, prepareQuickNoteConversation, QuickNoteLaunchError } from "../quick-note-dispatch.js";
 import { sendError } from "../http-auth.js";
 import { quickNotePrepareSchema, quickNoteQueueSchema, quickNoteSchema } from "../schemas.js";
 import { app } from "../state.js";
 
+const moveSchema = z.object({ targetId: z.string().min(1).max(120) }).strict();
+const noteOrder = (a: { position: number; createdAt: string; id: string }, b: { position: number; createdAt: string; id: string }) =>
+  (a.position ?? 0) - (b.position ?? 0) || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
+
+app.post("/api/quick-notes/:noteId/move", async (request, response, next) => {
+  try {
+    const input = moveSchema.parse(request.body);
+    if (!getQuickNote(request.params.noteId)) {
+      response.json(await forwardQuickNote(request.params.noteId, "move", input));
+      return;
+    }
+    try { moveQuickNote(request.params.noteId, input.targetId); }
+    catch (error) { sendError(response, 409, (error as Error).message); return; }
+    response.json({ ok: true });
+  } catch (error) { mapV2Error(error, response, next); }
+});
+
 app.get("/api/projects/:projectId/quick-notes", async (request, response, next) => {
   try {
     const project = await getProject(request.params.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
-    response.json({ notes: [...listQuickNotes(project.id), ...await listSharedQuickNotes(project.id)].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)) });
+    response.json({ notes: [...listQuickNotes(project.id), ...await listSharedQuickNotes(project.id)].sort(noteOrder) });
   } catch (error) {
     next(error);
   }
@@ -38,7 +55,7 @@ app.put("/api/quick-notes/queue", async (request, response, next) => {
 
 app.get("/api/quick-notes", async (_request, response, next) => {
   try {
-    response.json({ notes: [...listAllQuickNotes(), ...await listSharedQuickNotes()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)) });
+    response.json({ notes: [...listAllQuickNotes(), ...await listSharedQuickNotes()].sort(noteOrder) });
   } catch (error) {
     next(error);
   }
@@ -120,7 +137,7 @@ app.post("/api/cluster/v2/quick-notes/list", async (request, response, next) => 
 
 app.post("/api/cluster/v2/quick-notes/action", async (request, response, next) => {
   try {
-    const payload = z.object({ id: z.string().min(1).max(120), action: z.enum(["edit", "delete", "start"]), input: quickNoteSchema.optional() }).strict().parse(request.body);
+    const payload = z.object({ id: z.string().min(1).max(120), action: z.enum(["edit", "delete", "start", "move"]), input: z.union([quickNoteSchema, moveSchema]).optional() }).strict().parse(request.body);
     const note = getQuickNote(payload.id);
     if (!note) { sendError(response, 404, "Quick note not found"); return; }
     const peer = response.locals.machineNodeId as string;
@@ -133,6 +150,17 @@ app.post("/api/cluster/v2/quick-notes/action", async (request, response, next) =
       await authorizeQuickNotePeer(peer, project.id);
       if (getQuickNote(note.id)?.projectId !== note.projectId) { sendError(response, 409, "Quick note changed during authorization"); return; }
       response.json({ note: updateQuickNote(note.id, { ...input, projectId: project.id }) });
+    } else if (payload.action === "move") {
+      const { targetId } = moveSchema.parse(payload.input);
+      const target = getQuickNote(targetId);
+      if (!target) { sendError(response, 409, "Target note is not in this queue"); return; }
+      await authorizeQuickNotePeer(peer, target.projectId);
+      if (getQuickNote(note.id)?.projectId !== note.projectId || getQuickNote(target.id)?.projectId !== target.projectId) {
+        sendError(response, 409, "Quick note changed during authorization"); return;
+      }
+      try { moveQuickNote(note.id, targetId); }
+      catch (error) { sendError(response, 409, (error as Error).message); return; }
+      response.json({ ok: true });
     } else if (payload.action === "delete") {
       deleteQuickNote(note.id);
       response.json({ ok: true });

@@ -40,6 +40,7 @@ export interface QuickNote {
   error: string | null;
   sessionId: string | null;
   launchRequestId: string | null;
+  position: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -85,6 +86,7 @@ interface QuickNoteRow {
   error: string | null;
   session_id: string | null;
   launch_request_id: string | null;
+  position: number;
   created_at: string;
   updated_at: string;
 }
@@ -122,6 +124,7 @@ function db(): DatabaseSync {
     CREATE INDEX IF NOT EXISTS quick_notes_project_updated ON quick_notes(project_id, updated_at DESC);`);
   const columns = (database.prepare("PRAGMA table_info(quick_notes)").all() as Array<{ name: string }>).map((column) => column.name);
   const migration: Array<[string, string]> = [
+    ["position", "INTEGER NOT NULL DEFAULT 0"],
     ["node_id", "TEXT"],
     ["secret_account_ids", "TEXT NOT NULL DEFAULT '[]'"],
     ["scheduled_at", "TEXT"],
@@ -131,6 +134,8 @@ function db(): DatabaseSync {
     ["launch_request_id", "TEXT"],
   ];
   for (const [column, definition] of migration) if (!columns.includes(column)) database.exec(`ALTER TABLE quick_notes ADD COLUMN ${column} ${definition}`);
+  if (!columns.includes("position")) database.exec(`WITH ranked AS (SELECT id, ROW_NUMBER() OVER (ORDER BY created_at, id) AS rank FROM quick_notes)
+    UPDATE quick_notes SET position = (SELECT rank FROM ranked WHERE ranked.id = quick_notes.id)`);
   database.exec(`CREATE TABLE IF NOT EXISTS quick_note_images (
       id TEXT NOT NULL,
       note_id TEXT NOT NULL REFERENCES quick_notes(id) ON DELETE CASCADE,
@@ -205,6 +210,7 @@ function fromRow(row: QuickNoteRow, tolerateMissing = false): QuickNote {
     error: missingImage || row.error,
     sessionId: row.session_id,
     launchRequestId: row.launch_request_id,
+    position: row.position,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -216,17 +222,35 @@ function noteRow(id: string): QuickNoteRow | undefined {
 
 /** Backlog listing for one project: paused drafts and failed launches only. */
 export function listQuickNotes(projectId: string): QuickNote[] {
-  return (db().prepare("SELECT * FROM quick_notes WHERE project_id = ? AND status IN ('pending', 'failed') ORDER BY updated_at DESC, id").all(projectId) as unknown as QuickNoteRow[]).map(row => fromRow(row, true));
+  return (db().prepare("SELECT * FROM quick_notes WHERE project_id = ? AND status IN ('pending', 'failed') ORDER BY position, created_at, id").all(projectId) as unknown as QuickNoteRow[]).map(row => fromRow(row, true));
 }
 
 /** Backlog listing across every project on this node. */
 export function listAllQuickNotes(): QuickNote[] {
-  return (db().prepare("SELECT * FROM quick_notes WHERE status IN ('pending', 'failed') ORDER BY updated_at DESC, id").all() as unknown as QuickNoteRow[]).map(row => fromRow(row, true));
+  return (db().prepare("SELECT * FROM quick_notes WHERE status IN ('pending', 'failed') ORDER BY position, created_at, id").all() as unknown as QuickNoteRow[]).map(row => fromRow(row, true));
 }
 
-/** Dispatch order: every pending note on the node, oldest first. */
-export function listPendingQuickNoteSummaries(): Array<Pick<QuickNote, "id" | "status" | "createdAt" | "scheduledAt">> {
-  return db().prepare("SELECT id, status, created_at AS createdAt, scheduled_at AS scheduledAt FROM quick_notes WHERE status = 'pending' ORDER BY created_at, id").all() as unknown as Array<Pick<QuickNote, "id" | "status" | "createdAt" | "scheduledAt">>;
+/** Dispatch and display share the saved backlog order. */
+export function listPendingQuickNoteSummaries(): Array<Pick<QuickNote, "id" | "status" | "createdAt" | "scheduledAt" | "position">> {
+  return db().prepare("SELECT id, status, position, created_at AS createdAt, scheduled_at AS scheduledAt FROM quick_notes WHERE status = 'pending' ORDER BY position, created_at, id").all() as unknown as Array<Pick<QuickNote, "id" | "status" | "createdAt" | "scheduledAt" | "position">>;
+}
+
+/** Swap two backlog slots atomically, including across project filters. */
+export function moveQuickNote(id: string, targetId: string): void {
+  const database = db();
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    const note = noteRow(id), target = noteRow(targetId);
+    if (!note || !target || ![note.status, target.status].every(status => ["pending", "failed"].includes(status))) {
+      throw new Error("Only backlog notes on the same home node can be reordered");
+    }
+    database.prepare("UPDATE quick_notes SET position = CASE id WHEN ? THEN ? ELSE ? END WHERE id IN (?, ?)")
+      .run(id, target.position, note.position, id, targetId);
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 export function getQuickNote(id: string): QuickNote | undefined {
@@ -254,13 +278,14 @@ function insertNote(input: QuickNoteInput, id: string, now: string, status: Quic
     error: null,
     session_id: null,
     launch_request_id: null,
+    position: (db().prepare("SELECT COALESCE(MAX(position), 0) + 1 AS position FROM quick_notes").get() as { position: number }).position,
     created_at: now,
     updated_at: now,
   };
   db().prepare(`INSERT INTO quick_notes
-    (id, project_id, title, content, harness_id, provider, model_id, thinking_level, node_id, secret_account_ids, scheduled_at, status, error, session_id, launch_request_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(row.id, row.project_id, row.title, row.content, row.harness_id, row.provider, row.model_id, row.thinking_level, row.node_id, row.secret_account_ids, row.scheduled_at, row.status, row.error, row.session_id, row.launch_request_id, row.created_at, row.updated_at);
+    (id, project_id, title, content, harness_id, provider, model_id, thinking_level, node_id, secret_account_ids, scheduled_at, status, error, session_id, launch_request_id, created_at, updated_at, position)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(row.id, row.project_id, row.title, row.content, row.harness_id, row.provider, row.model_id, row.thinking_level, row.node_id, row.secret_account_ids, row.scheduled_at, row.status, row.error, row.session_id, row.launch_request_id, row.created_at, row.updated_at, row.position);
   return row;
 }
 

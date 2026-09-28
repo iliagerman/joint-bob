@@ -46,15 +46,15 @@ const LAUNCH_TIMEOUT_MS = 30_000;
 const reservations = new Set<string>();
 let dispatchPass: Promise<void> | null = null;
 
-export interface QuickNotePlanCandidate { id: string; status: QuickNote["status"]; createdAt: string; scheduledAt: string | null }
+export interface QuickNotePlanCandidate { id: string; status: QuickNote["status"]; createdAt: string; scheduledAt: string | null; position?: number }
 
-/** Pure dispatch decision: oldest-first pending notes that may start now.
+/** Pure dispatch decision: saved-order pending notes that may start now.
     A scheduled note only runs once due (even with the queue off); an
     unscheduled note only runs with the queue on; the parallel limit caps all. */
 export function planQuickNoteLaunches(notes: QuickNotePlanCandidate[], queue: QuickNoteQueue, running: number, now: number): string[] {
   if (running >= queue.maxParallel) return [];
   const chosen: string[] = [];
-  for (const note of [...notes].filter((note) => note.status === "pending").sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))) {
+  for (const note of [...notes].filter((note) => note.status === "pending").sort((left, right) => (left.position ?? 0) - (right.position ?? 0) || left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))) {
     if (running + chosen.length >= queue.maxParallel) break;
     if (note.scheduledAt !== null) {
       if (Date.parse(note.scheduledAt) > now) continue;
