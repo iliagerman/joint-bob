@@ -22,6 +22,10 @@ test("a streaming assistant bubble is flushed to markdown whenever the stream le
   assert.match(app, /payload\.type === "agent_end"\) \{[\s\S]*finalizeAssistantBubble\(\);/);
   assert.match(app, /payload\.type === "assistantError"\) \{[\s\S]*finalizeAssistantBubble\(\);/);
 
+  // Dropping the bubble drops its raw text too, so the text block after a tool
+  // call does not repeat every earlier block of the turn.
+  assert.match(app, /function finalizeAssistantBubble\(\) \{[^}]*state\.assistantBubble = null;\s*state\.assistantRawText = "";\s*\}/);
+
   // The old bare drops are gone from those handlers.
   assert.doesNotMatch(app, /payload\.type === "userMessage"\) \{\s*appendMessage\("user", payload\.text\);\s*state\.assistantBubble = null;/);
   assert.doesNotMatch(app, /payload\.type === "toolStart"\) \{\s*clearThinkingBubble\(\);\s*state\.assistantBubble = null;/);

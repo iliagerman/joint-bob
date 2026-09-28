@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Fixed chat bubbles repeating earlier text when followed by tool calls.
+
 ## 2.7.2 — 2026-09-28
 
 - The project list now shows a divider between projects and between each node's group of projects.

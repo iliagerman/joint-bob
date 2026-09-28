@@ -416,10 +416,12 @@ export function renderBubbleContent(bubble, text, flush = false) {
 // The Claude harness streams text deltas with no completion event, so a bubble
 // left in plain-text mode never gets its markdown pass and shows raw "##" and
 // backticks until the transcript is reloaded. Flush it whenever the stream
-// moves on from the current assistant bubble.
+// moves on from the current assistant bubble. The raw text goes with it, or the
+// next bubble after a tool call would repeat every earlier block of the turn.
 export function finalizeAssistantBubble() {
   if (state.assistantBubble) renderBubbleContent(state.assistantBubble, state.assistantBubble._raw, true);
   state.assistantBubble = null;
+  state.assistantRawText = "";
 }
 
 function copyGlyph(name) {
