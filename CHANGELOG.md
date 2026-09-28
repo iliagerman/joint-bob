@@ -3,10 +3,11 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
-## Unreleased
+## 2.7.0 — 2026-09-28
 
 - Quick notes can now be reordered with up and down arrows to control execution sequence.
 - Added Skills & tools dialog to browse available skills and MCP servers in conversations and projects, and import skills from local folders.
+- Settings section list is now a dropdown on mobile phones.
 
 ## 2.6.3 — 2026-09-28
 
