@@ -6,6 +6,7 @@ Every deployment is a version. The newest section must always match the
 ## Unreleased
 
 - Restored mobile double-tap, triple-tap, conversation, note, and draggable focus controls.
+- Accepted matching earlier conversation segments from twins without trusting stale session listings.
 
 ## 2.12.1 — 2026-09-28
 

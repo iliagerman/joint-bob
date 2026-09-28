@@ -124,12 +124,6 @@ async function receiveTranscriptNow(db:DatabaseSync,peer:PeerEndpoint,projectId:
  const existing=await lstat(destination).catch(error=>{if((error as NodeJS.ErrnoException).code==='ENOENT')return undefined;throw error;});
  if(existing&&(!existing.isFile()||existing.isSymbolicLink()))throw new Error('Shared transcript destination is not a regular file');
  if(existing&&receipt?.hash===entry.hash)return;
- if(existing&&!receipt){
-  const project=await sharedTranscriptProject(peer.nodeId,projectId);
-  // A harness-switched conversation is listed once; its earlier segments are local too.
-  const local=(await listHarnessSessions(project)).flatMap(session=>session.segments?.length?session.segments.map(segment=>`${segment.engine}:${segment.sessionId}`):[`${session.harnessId}:${session.id}`]);
-  if(!local.includes(`${entry.engine}:${entry.sessionId}`))throw new Error('Transcript identity collides with a local conversation');
- }
  await safeParent(root,destination);
  const target='/api/cluster/v2/transcripts/file?'+new URLSearchParams({projectId,engine:entry.engine,sessionId:entry.sessionId});
  const response=await peerGet(peer,target);if(!response.body)throw new Error('Empty transcript response');
@@ -139,8 +133,8 @@ async function receiveTranscriptNow(db:DatabaseSync,peer:PeerEndpoint,projectId:
   if(bytes!==entry.size||hash.digest('hex')!==entry.hash)throw new Error('Transcript changed during transfer');
   // Unowned legacy copies may only extend a matching transcript, never truncate it.
   if(existing&&!ownership){
+   await extendsTranscript(destination,temporary,Math.min(existing.size,entry.size));
    if(existing.size>entry.size)return;
-   await extendsTranscript(destination,temporary,existing.size);
   }
   if(existing){const current=await stat(destination);if(current.size!==existing.size||current.mtimeMs!==existing.mtimeMs)throw new Error('Local transcript changed during transfer');}
   await sharedTranscriptProject(peer.nodeId,projectId);
