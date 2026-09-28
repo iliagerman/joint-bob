@@ -14,6 +14,7 @@ import {
   listPendingQuickNoteSummaries,
   quickNoteQueueSuspended,
   markQuickNoteStarted,
+  markQuickNoteDispatched,
   recoverUncertainQuickNoteLaunches,
   type QuickNote,
   type QuickNoteQueue,
@@ -223,6 +224,8 @@ async function launchPromptOverSocket(note: QuickNote, sessionId: string, target
       let settings: QueuedSettings | undefined;
       try { settings = queueSettingsFor(note, event.status as { model?: { provider?: string; id?: string }; thinkingLevel?: string }); }
       catch (error) { failLaunch(error instanceof Error ? error.message : "Quick note model settings are invalid"); return; }
+      try { markQuickNoteDispatched(note.id); }
+      catch (error) { failLaunch(error instanceof Error ? error.message : "Could not record quick note dispatch"); return; }
       promptSent = true;
       socket.send(JSON.stringify({
         type: "prompt",
@@ -260,7 +263,7 @@ export async function launchQuickNote(noteId: string): Promise<QuickNote> {
   const existing = getQuickNote(noteId);
   if (!existing) throw new QuickNoteLaunchError(404, "Quick note not found");
   if (existing.status === "starting") throw new QuickNoteLaunchError(409, "The quick note is already starting");
-  if (existing.status === "started" || existing.status === "completed") throw new QuickNoteLaunchError(409, "The quick note has already been started");
+  if (existing.dispatchedAt || existing.status === "started" || existing.status === "completed") throw new QuickNoteLaunchError(409, "The quick note has already been started");
   const note = await claimAndDispatch(existing, ["pending", "failed"]);
   if (!note) throw new QuickNoteLaunchError(409, "The quick note is already starting");
   return note;

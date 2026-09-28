@@ -210,7 +210,18 @@ export function renderQuickNotes() {
     list.append(empty);
     return;
   }
+  const pending = document.createElement("section");
+  pending.dataset.testid = "quick-note-pending";
+  const failedRuns = document.createElement("section");
+  failedRuns.dataset.testid = "quick-note-failed-runs";
+  for (const [group, heading] of [[pending, "Pending notes"], [failedRuns, "Failed / interrupted runs"]]) {
+    const title = document.createElement("h3");
+    title.className = "quick-note-group-title";
+    title.textContent = heading;
+    group.append(title);
+  }
   for (const note of notes) {
+    const consumed = Boolean(note.dispatchedAt);
     const row = document.createElement("div");
     row.className = "quick-note-row-wrap";
     if (note.status === "failed") row.classList.add("failed");
@@ -242,18 +253,23 @@ export function renderQuickNotes() {
       badge.textContent = `Waits until ${formatSchedule(note.scheduledAt)}`;
       button.append(badge);
     }
-    button.addEventListener("click", () => openQuickNote(note));
+    button.addEventListener("click", () => {
+      if (consumed) void openNoteConversation(note).catch((error) => toast(error.message, 8000));
+      else void openQuickNote(note);
+    });
 
     const actions = document.createElement("div");
     actions.className = "quick-note-row-actions";
     const start = document.createElement("button");
     start.type = "button";
-    start.className = "quick-note-action quick-note-start";
-    start.dataset.testid = "quick-note-start-button";
-    start.setAttribute("aria-label", `Start ${note.title} as a conversation`);
-    start.title = "Start as conversation";
-    start.textContent = "▶";
-    start.addEventListener("click", () => { void startSavedNote(note).catch((error) => toast(error.message, 8000)); });
+    start.className = consumed ? "quick-note-action quick-note-open" : "quick-note-action quick-note-start";
+    start.dataset.testid = consumed ? "quick-note-open-conversation" : "quick-note-start-button";
+    start.setAttribute("aria-label", consumed ? `Open conversation for ${note.title}` : `Start ${note.title} as a conversation`);
+    start.title = consumed ? "Open conversation without resuming" : "Start as conversation";
+    start.textContent = consumed ? "Open conversation" : "▶";
+    start.addEventListener("click", () => {
+      void (consumed ? openNoteConversation(note) : startSavedNote(note)).catch((error) => toast(error.message, 8000));
+    });
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "quick-note-action quick-note-remove";
@@ -262,9 +278,9 @@ export function renderQuickNotes() {
     remove.title = "Delete note";
     remove.textContent = "×";
     remove.addEventListener("click", () => { void removeNote(note).catch((error) => toast(error.message)); });
-    const queue = state.quickNotes.filter(candidate => candidate.ownerNodeId === note.ownerNodeId);
+    const queue = state.quickNotes.filter(candidate => !candidate.dispatchedAt && candidate.ownerNodeId === note.ownerNodeId);
     const index = queue.findIndex(candidate => candidate.id === note.id);
-    for (const [direction, offset, label] of [["up", -1, "↑"], ["down", 1, "↓"]]) {
+    for (const [direction, offset, label] of consumed ? [] : [["up", -1, "↑"], ["down", 1, "↓"]]) {
       const move = document.createElement("button");
       move.type = "button";
       move.className = "quick-note-action";
@@ -285,8 +301,10 @@ export function renderQuickNotes() {
     }
     actions.append(start, remove);
     row.append(button, actions);
-    list.append(row);
+    (consumed ? failedRuns : pending).append(row);
   }
+  if (pending.children.length > 1) list.append(pending);
+  if (failedRuns.children.length > 1) list.append(failedRuns);
 }
 
 export async function refreshQuickNotes(projectId) {
@@ -453,6 +471,10 @@ imageInput.addEventListener("change", async (event) => {
 dialog.addEventListener("close", () => { ++dialogGeneration; ++optionsRequestId; });
 
 export async function openQuickNote(note = null, { chooseProject = false } = {}) {
+  if (note?.dispatchedAt) {
+    await openNoteConversation(note).catch((error) => toast(error.message, 8000));
+    return;
+  }
   const defaultProjectId = state.activeProjectId || (chooseProject ? state.projects[0]?.id : null);
   if (!defaultProjectId && !note) { toast("Select a project first"); return; }
   preserveView = chooseProject;
@@ -539,6 +561,21 @@ async function saveNote(event) {
     formSaving = false;
     updateFormControls();
   }
+}
+
+/** Resolve the existing transcript, never a draft path or a new prompt. */
+async function openNoteConversation(note) {
+  if (!note.sessionId) throw new Error("This note has no linked conversation.");
+  const { sessions } = await api(`/api/projects/${encodeURIComponent(note.projectId)}/sessions`);
+  const session = sessions.find((candidate) => candidate.id === note.sessionId
+    || candidate.conversationId === note.sessionId
+    || candidate.segments?.some((segment) => segment.sessionId === note.sessionId));
+  if (!session) throw new Error("The linked conversation is unavailable. Nothing was restarted.");
+  if (state.activeProjectId !== note.projectId) await selectProject(note.projectId);
+  state.activeNodeId = session.executionNodeId || note.nodeId || state.sessionNodes.find((node) => node.local)?.id;
+  state.activeSessionId = session.id;
+  showConversations();
+  openSession(session.path, session.title || note.title);
 }
 
 /** The backend owns the entire launch — credentials, images, model — and hands back

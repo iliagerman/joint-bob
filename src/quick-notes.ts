@@ -7,8 +7,8 @@ import { resolveDataDirectory } from "./data-directory.js";
 
 /**
  * Quick notes are paused drafts. They sit in a node-local backlog until they are
- * launched through the prompt queue; only `pending` and `failed` notes are
- * backlog, because a started note lives on as a conversation of its own.
+ * launched through the prompt queue. A dispatched note is consumed even if its
+ * conversation fails. Failed runs remain visible separately, never as drafts.
  */
 export type QuickNoteStatus = "pending" | "starting" | "started" | "completed" | "failed";
 
@@ -40,6 +40,8 @@ export interface QuickNote {
   error: string | null;
   sessionId: string | null;
   launchRequestId: string | null;
+  /** Durable before sending: even an uncertain send must never become a draft again. */
+  dispatchedAt: string | null;
   position: number;
   createdAt: string;
   updatedAt: string;
@@ -86,6 +88,7 @@ interface QuickNoteRow {
   error: string | null;
   session_id: string | null;
   launch_request_id: string | null;
+  dispatched_at: string | null;
   position: number;
   created_at: string;
   updated_at: string;
@@ -134,6 +137,12 @@ function db(): DatabaseSync {
     ["launch_request_id", "TEXT"],
   ];
   for (const [column, definition] of migration) if (!columns.includes(column)) database.exec(`ALTER TABLE quick_notes ADD COLUMN ${column} ${definition}`);
+  // Older failed attempts cannot prove whether their prompt was sent. Preserve
+  // their conversation link and treat them as consumed rather than risk replay.
+  if (!columns.includes("dispatched_at")) database.exec(`BEGIN IMMEDIATE;
+    ALTER TABLE quick_notes ADD COLUMN dispatched_at TEXT;
+    UPDATE quick_notes SET dispatched_at = updated_at WHERE session_id IS NOT NULL;
+    COMMIT;`);
   if (!columns.includes("position")) database.exec(`WITH ranked AS (SELECT id, ROW_NUMBER() OVER (ORDER BY created_at, id) AS rank FROM quick_notes)
     UPDATE quick_notes SET position = (SELECT rank FROM ranked WHERE ranked.id = quick_notes.id)`);
   database.exec(`CREATE TABLE IF NOT EXISTS quick_note_images (
@@ -210,6 +219,7 @@ function fromRow(row: QuickNoteRow, tolerateMissing = false): QuickNote {
     error: missingImage || row.error,
     sessionId: row.session_id,
     launchRequestId: row.launch_request_id,
+    dispatchedAt: row.dispatched_at,
     position: row.position,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -220,19 +230,19 @@ function noteRow(id: string): QuickNoteRow | undefined {
   return db().prepare("SELECT * FROM quick_notes WHERE id = ?").get(id) as unknown as QuickNoteRow | undefined;
 }
 
-/** Backlog listing for one project: paused drafts and failed launches only. */
+/** Visible notes for one project: drafts, launch failures, and consumed failed runs. */
 export function listQuickNotes(projectId: string): QuickNote[] {
   return (db().prepare("SELECT * FROM quick_notes WHERE project_id = ? AND status IN ('pending', 'failed') ORDER BY position, created_at, id").all(projectId) as unknown as QuickNoteRow[]).map(row => fromRow(row, true));
 }
 
-/** Backlog listing across every project on this node. */
+/** Visible notes across every project on this node. */
 export function listAllQuickNotes(): QuickNote[] {
   return (db().prepare("SELECT * FROM quick_notes WHERE status IN ('pending', 'failed') ORDER BY position, created_at, id").all() as unknown as QuickNoteRow[]).map(row => fromRow(row, true));
 }
 
 /** Dispatch and display share the saved backlog order. */
 export function listPendingQuickNoteSummaries(): Array<Pick<QuickNote, "id" | "projectId" | "status" | "createdAt" | "scheduledAt" | "position">> {
-  return db().prepare("SELECT id, project_id AS projectId, status, position, created_at AS createdAt, scheduled_at AS scheduledAt FROM quick_notes WHERE status = 'pending' ORDER BY position, created_at, id").all() as unknown as Array<Pick<QuickNote, "id" | "projectId" | "status" | "createdAt" | "scheduledAt" | "position">>;
+  return db().prepare("SELECT id, project_id AS projectId, status, position, created_at AS createdAt, scheduled_at AS scheduledAt FROM quick_notes WHERE status = 'pending' AND dispatched_at IS NULL ORDER BY position, created_at, id").all() as unknown as Array<Pick<QuickNote, "id" | "projectId" | "status" | "createdAt" | "scheduledAt" | "position">>;
 }
 
 /** Swap two backlog slots atomically, including across project filters. */
@@ -241,7 +251,7 @@ export function moveQuickNote(id: string, targetId: string): void {
   database.exec("BEGIN IMMEDIATE");
   try {
     const note = noteRow(id), target = noteRow(targetId);
-    if (!note || !target || ![note.status, target.status].every(status => ["pending", "failed"].includes(status))) {
+    if (!note || !target || note.dispatched_at || target.dispatched_at || ![note.status, target.status].every(status => ["pending", "failed"].includes(status))) {
       throw new Error("Only backlog notes on the same home node can be reordered");
     }
     database.prepare("UPDATE quick_notes SET position = CASE id WHEN ? THEN ? ELSE ? END WHERE id IN (?, ?)")
@@ -278,6 +288,7 @@ function insertNote(input: QuickNoteInput, id: string, now: string, status: Quic
     error: null,
     session_id: null,
     launch_request_id: null,
+    dispatched_at: null,
     position: (db().prepare("SELECT COALESCE(MAX(position), 0) + 1 AS position FROM quick_notes").get() as { position: number }).position,
     created_at: now,
     updated_at: now,
@@ -301,6 +312,7 @@ export function updateQuickNote(id: string, input: QuickNoteInput): QuickNote | 
   const row = noteRow(id);
   if (!row) return undefined;
   const existing = fromRow(row, true);
+  if (row.dispatched_at) throw new Error("This note was already dispatched; its launch cannot be edited. Open its conversation instead");
   if (!["pending", "failed"].includes(row.status)) throw new Error("Wait for the quick note launch to finish before editing it");
   input.images?.forEach(decodeImage);
   const updatedAt = new Date().toISOString();
@@ -325,12 +337,19 @@ export function deleteQuickNote(id: string): boolean {
     scheduler's dispatch pass can launch the same note twice. */
 export function claimQuickNoteForLaunch(id: string, sessionId: string, launchRequestId: string, from: QuickNoteStatus[] = ["pending"]): QuickNote | undefined {
   const placeholders = from.map(() => "?").join(", ");
-  const changed = db().prepare(`UPDATE quick_notes SET status = 'starting', session_id = ?, launch_request_id = ?, error = NULL, updated_at = ? WHERE id = ? AND status IN (${placeholders})`)
+  const changed = db().prepare(`UPDATE quick_notes SET status = 'starting', session_id = ?, launch_request_id = ?, error = NULL, updated_at = ? WHERE id = ? AND dispatched_at IS NULL AND status IN (${placeholders})`)
     .run(sessionId, launchRequestId, new Date().toISOString(), id, ...from).changes > 0;
   return changed ? getQuickNote(id) : undefined;
 }
 
+/** Persist before socket.send, so a crash or lost acknowledgement cannot re-arm the note. */
+export function markQuickNoteDispatched(id: string): void {
+  db().prepare("UPDATE quick_notes SET dispatched_at = COALESCE(dispatched_at, ?), updated_at = ? WHERE id = ? AND status = 'starting'")
+    .run(new Date().toISOString(), new Date().toISOString(), id);
+}
+
 export function markQuickNoteStarted(id: string): void {
+  markQuickNoteDispatched(id);
   db().prepare("UPDATE quick_notes SET status = 'started', updated_at = ? WHERE id = ? AND status = 'starting'").run(new Date().toISOString(), id);
 }
 

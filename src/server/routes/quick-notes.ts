@@ -85,10 +85,12 @@ app.post("/api/quick-notes", async (request, response, next) => {
 
 app.patch("/api/quick-notes/:noteId", async (request, response, next) => {
   try {
-    if (!getQuickNote(request.params.noteId)) {
+    const existing = getQuickNote(request.params.noteId);
+    if (!existing) {
       response.json(await forwardQuickNote(request.params.noteId, "edit", request.body));
       return;
     }
+    if (existing.dispatchedAt) { sendError(response, 409, "This note was already dispatched; open its conversation instead"); return; }
     const payload = quickNoteSchema.parse(request.body);
     const project = await getProject(payload.projectId);
     if (!project) { sendError(response, 404, "Project not found"); return; }
@@ -144,6 +146,7 @@ app.post("/api/cluster/v2/quick-notes/action", async (request, response, next) =
     await authorizeQuickNotePeer(peer, note.projectId);
     if (getQuickNote(note.id)?.projectId !== note.projectId) { sendError(response, 409, "Quick note changed during authorization"); return; }
     if (payload.action === "edit") {
+      if (note.dispatchedAt) { sendError(response, 409, "This note was already dispatched; open its conversation instead"); return; }
       const input = quickNoteSchema.parse(payload.input);
       const project = await getProject(input.projectId);
       if (!project) { sendError(response, 404, "Project not found"); return; }

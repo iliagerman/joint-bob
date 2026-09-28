@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Failed quick note runs now open their original conversation when clicked, instead of being retryable as new drafts.
+
 ## 2.9.0 — 2026-09-28
 
 - Background sync automatically cleans up Syncthing conflicts and fixes folder errors, running every five minutes by default.

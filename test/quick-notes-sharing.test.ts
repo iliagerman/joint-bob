@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { signedNodeRequest } from "./signed-node-request.js";
 import { api, projectNamed, seedDevEnvironment, signIn, startDevNode, stopDevNode, pairTwinNodes } from "./dev-nodes.js";
 import type { QuickNote } from "../src/quick-notes.js";
@@ -108,6 +109,23 @@ test("shared project notes can be read, edited, started and deleted from either 
     assert.equal(started.body.nodeId, a.nodeId, "unset execution node means the note's home, not the viewing peer");
     assert.ok(started.body.sessionId);
     assert.ok(!(await api<{ notes: QuickNote[] }>(b, sb, "GET", `/projects/${projectId}/quick-notes`)).body.notes.some(n => n.id === launchable.body.note.id));
+
+    await eventually(async () => {
+      const settled = await api<{ note: QuickNote }>(a, sa, "GET", `/quick-notes/${launchable.body.note.id}`);
+      assert.equal(settled.body.note.status, "completed");
+    });
+    const database = new DatabaseSync(path.join(a.dataDir, "node.db"));
+    try {
+      database.prepare("UPDATE quick_notes SET status = 'failed', error = ? WHERE id = ?")
+        .run("Failed after output", launchable.body.note.id);
+    } finally { database.close(); }
+    const failedRuns = await api<{ notes: QuickNote[] }>(b, sb, "GET", `/projects/${projectId}/quick-notes`);
+    const failedRun = failedRuns.body.notes.find(note => note.id === launchable.body.note.id)!;
+    assert.ok(failedRun.dispatchedAt, "the peer must retain the consumed marker for failed runs");
+    assert.equal(failedRun.sessionId, started.body.sessionId, "the original conversation link survives sharing");
+    assert.equal(failedRun.nodeId, a.nodeId);
+    assert.equal((await api(b, sb, "POST", `/quick-notes/${failedRun.id}/start`, {})).status, 409);
+    assert.equal((await api(b, sb, "PATCH", `/quick-notes/${failedRun.id}`, { ...input, images: [] })).status, 409);
 
     const offlineNote = await api<{ note: QuickNote }>(a, sa, "POST", "/quick-notes", { ...input, images: [] });
     await api(b, sb, "GET", `/projects/${projectId}/quick-notes`);

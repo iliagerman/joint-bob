@@ -11,6 +11,7 @@ const noteSchema = quickNoteSchema.innerType().extend({
   id: z.string().min(1).max(120),
   status: z.enum(["pending", "starting", "started", "completed", "failed"]),
   error: z.string().nullable(), sessionId: z.string().nullable(), launchRequestId: z.string().nullable(),
+  dispatchedAt: z.string().datetime().nullable().optional().default(null),
   position: z.number().int().optional().default(0),
   createdAt: z.string().datetime(), updatedAt: z.string().datetime(),
   provider: z.string().nullable(), modelId: z.string().nullable(), thinkingLevel: z.string().nullable(),

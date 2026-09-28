@@ -293,7 +293,7 @@ test("a refused conversation surfaces the wire error on the note", async (contex
   }
 });
 
-test("a prompt that fails mid-turn returns the note to failed", async (context) => {
+test("a prompt that fails mid-turn remains consumed and cannot be launched again", async (context) => {
   const { endpoint, queue } = await syntheticPromptQueue();
   context.mock.method(server, "address", () => endpoint.address());
   const project = await addProject("dispatch-failed-prompt", path.join(projectRoot, "dispatch-failed-prompt"));
@@ -309,7 +309,12 @@ test("a prompt that fails mid-turn returns the note to failed", async (context) 
       if (Date.now() > deadline) throw new Error(`note status stayed ${getQuickNote(note.id)?.status}`);
       await new Promise(resolve => setTimeout(resolve, 10));
     }
-    assert.match(getQuickNote(note.id)!.error!, /Model exploded/);
+    const failed = getQuickNote(note.id)!;
+    assert.match(failed.error!, /Model exploded/);
+    assert.ok(failed.dispatchedAt, "wire dispatch remains durable after a prompt failure");
+    await assert.rejects(launchQuickNote(note.id), (error: unknown) => error instanceof QuickNoteLaunchError && error.status === 409);
+    assert.equal(getQuickNote(note.id)!.sessionId, failed.sessionId);
+    assert.equal(queue.prompts.length, 1, "failed runs never resend the original prompt");
   } finally {
     await closeEndpoint(endpoint);
   }
