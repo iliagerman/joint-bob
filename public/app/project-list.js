@@ -147,6 +147,8 @@ function projectRow(project) {
     syncStatus.textContent = status.state === "error" && status.message ? `Error: ${status.message}` : syncLabels[status.state] || syncLabels.unavailable;
     syncStatus.title = status.message || "";
     button.append(name, projectPath, syncStatus);
+    const clusterBadge = projectClusterBadge(project);
+    if (clusterBadge) button.append(clusterBadge);
     const reviewCount = pendingReviewCountForProject(project.id);
     if (reviewCount) {
       const reviewBadge = document.createElement("em");
@@ -182,6 +184,21 @@ function projectRow(project) {
 
     row.append(button, pinToggle, menuButton);
     return row;
+}
+
+/** Names the clusters a project is shared through, and the node it came from when another node owns it. */
+function projectClusterBadge(project) {
+  const clusters = (project.clusterIds || []).map((id) => state.clusters.find((cluster) => cluster.id === id)).filter(Boolean);
+  if (!clusters.length) return null;
+  const badge = document.createElement("em");
+  badge.className = "project-cluster-badge";
+  badge.dataset.testid = "project-cluster-badge";
+  const names = clusters.map((cluster) => cluster.name).sort((left, right) => left.localeCompare(right)).join(", ");
+  const owner = project.locallyOwned === false
+    && clusters.flatMap((cluster) => cluster.members).find((member) => member.nodeId === project.ownerNodeId);
+  badge.textContent = owner ? `◇ ${names} · from ${owner.name || owner.nodeId}` : `◇ ${names}`;
+  badge.title = owner ? `Shared with this node through ${names}` : `Shared through ${names}`;
+  return badge;
 }
 
 /** Pinning is the one action worth a tap of its own, on projects exactly as on

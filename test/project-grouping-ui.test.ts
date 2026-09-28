@@ -68,3 +68,14 @@ test("the branded boot screen releases before project loading", async () => {
   const projects = app.indexOf("await loadProjects();", themeReady);
   assert.ok(themeReady >= 0 && reveal > themeReady && reveal < projects, "boot must release before project loading");
 });
+
+test("each project row names the clusters it is shared through", async () => {
+  const [app, styles] = await Promise.all([appSource(), readFile("public/styles.css", "utf8")]);
+
+  assert.match(app, /function projectClusterBadge\(project\)/);
+  assert.match(app, /dataset\.testid = "project-cluster-badge"/);
+  // Names come from the loaded cluster directory, and a received project names the node it came from.
+  assert.match(app, /state\.clusters\.find\(\(cluster\) => cluster\.id === id\)/);
+  assert.match(app, /project\.locallyOwned === false/);
+  assert.match(styles, /\.project-card \.project-cluster-badge \{/);
+});

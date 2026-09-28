@@ -3,6 +3,10 @@
 Every deployment is a version. The newest section must always match the
 `version` field in `package.json`; the pre-push hook writes it for you.
 
+## Unreleased
+
+- Project rows now display which clusters they are shared through.
+
 ## 2.11.4 — 2026-09-28
 
 - Browser sign-in handoffs now remain available when their conversation continues from another app node.
